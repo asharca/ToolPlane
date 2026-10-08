@@ -1,10 +1,13 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { Blob as NodeBlob } from 'node:buffer';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState } from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BundledFiles } from '@/components/dashboard/FilePathTree';
 import { RuntimeFileDraftsInput, type RuntimeFileDraft } from '@/components/dashboard/RuntimeFileDraftsInput';
 import { RuntimeFilesEditor } from '@/components/dashboard/RuntimeFilesEditor';
 
+beforeEach(() => vi.stubGlobal('Blob', NodeBlob));
+afterEach(() => vi.unstubAllGlobals());
 const actions = vi.hoisted(() => ({ reveal: vi.fn() }));
 vi.mock('@/lib/workspace/runtime-files-actions', () => ({
   revealDeploymentRuntimeFileAction: actions.reveal,
@@ -13,18 +16,20 @@ vi.mock('@/lib/workspace/runtime-files-actions', () => ({
 }));
 
 describe('file tree consumers', () => {
-  it('distinguishes identical basenames and previews untrusted bundle text literally', () => {
+  it('distinguishes identical basenames and previews untrusted bundle text literally', async () => {
     render(<BundledFiles ariaLabel="Bundle" files={[
       { path: 'a/config.json', content: 'first configuration' },
       { path: 'b/config.json', content: '<script>bad()</script>', encoding: 'utf8' },
     ]} />);
     const files = screen.getAllByRole('treeitem', { name: 'config.json' });
     fireEvent.click(files[1]);
-    expect(screen.getByText('b/config.json')).toBeInTheDocument();
-    expect(screen.getByText('<script>bad()</script>')).toBeInTheDocument();
+    expect(await screen.findByRole('dialog', { name: 'b/config.json' })).toBeInTheDocument();
+    expect(await screen.findByText('<script>bad()</script>')).toBeInTheDocument();
     expect(document.querySelector('script')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     fireEvent.click(files[0]);
-    expect(screen.getByText('first configuration')).toBeInTheDocument();
+    expect(await screen.findByText('first configuration')).toBeInTheDocument();
     expect(screen.queryByText('<script>bad()</script>')).not.toBeInTheDocument();
   });
 

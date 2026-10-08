@@ -8,8 +8,9 @@ import { useTranslations } from 'next-intl';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import type { Terminal as XtermTerminal } from '@xterm/xterm';
 import type { FitAddon as XtermFitAddon } from '@xterm/addon-fit';
-import { ArrowLeft, Download, FileText, Folder, Loader2, RefreshCw, TerminalIcon, Trash2, Upload } from 'lucide-react';
-import { AssistantMarkdown } from '@/components/dashboard/ConversationMessage';
+import { Download, Folder, Loader2, RefreshCw, TerminalIcon, Trash2, Upload } from 'lucide-react';
+import { FilePreviewDialog } from '@/components/dashboard/FilePreviewDialog';
+import { previewType } from '@/lib/file-preview';
 import { parseSandboxDirectoryText, type SandboxFileEntry } from '@/lib/sandboxes/file-list';
 import { FileTree, FileTreeFile, FileTreeFolder } from '@/components/motion/file-tree';
 
@@ -42,38 +43,6 @@ type DownloadPayload = {
   content?: string;
   encoding?: string;
 };
-
-type FilePreview = {
-  path: string;
-  kind: 'text' | 'markdown' | 'image' | 'pdf' | 'unsupported';
-  content?: string;
-  url?: string;
-};
-
-const IMAGE_MIME_TYPES: Record<string, string> = {
-  avif: 'image/avif',
-  bmp: 'image/bmp',
-  gif: 'image/gif',
-  jpeg: 'image/jpeg',
-  jpg: 'image/jpeg',
-  png: 'image/png',
-  webp: 'image/webp',
-};
-const TEXT_EXTENSIONS = new Set([
-  'bash', 'c', 'cc', 'conf', 'cpp', 'css', 'csv', 'env', 'go', 'h', 'hpp', 'html',
-  'ini', 'java', 'js', 'json', 'jsonl', 'jsx', 'log', 'mjs', 'py', 'rs', 'scss',
-  'sh', 'sql', 'toml', 'ts', 'tsx', 'txt', 'xml', 'yaml', 'yml', 'zsh',
-]);
-
-function previewType(path: string): { kind: FilePreview['kind']; mimeType?: string } {
-  const filename = path.split('/').pop() ?? '';
-  const extension = filename.includes('.') ? filename.split('.').pop()?.toLowerCase() ?? '' : '';
-  if (extension === 'md' || extension === 'mdx') return { kind: 'markdown' };
-  if (extension === 'pdf') return { kind: 'pdf', mimeType: 'application/pdf' };
-  if (IMAGE_MIME_TYPES[extension]) return { kind: 'image', mimeType: IMAGE_MIME_TYPES[extension] };
-  if (!extension || TEXT_EXTENSIONS.has(extension)) return { kind: 'text' };
-  return { kind: 'unsupported' };
-}
 
 function textFromResult(result: RpcResult | null): string {
   return result?.content?.[0]?.text ?? JSON.stringify(result, null, 2);
@@ -149,9 +118,11 @@ export async function callSandboxTool(
   name: string,
   args: Record<string, unknown>,
   fallbackError: string,
+  signal?: AbortSignal,
 ): Promise<string> {
   const res = await fetch(rpcApiBase, {
     method: 'POST',
+    signal,
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       jsonrpc: '2.0',
@@ -232,7 +203,7 @@ export function SandboxConsole({
   const [loadingPath, setLoadingPath] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [selectedPath, setSelectedPath] = useState('');
-  const [preview, setPreview] = useState<FilePreview | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [terminalStatus, setTerminalStatus] = useState(
     running ? t('terminalConnecting') : waitingForConnector ? t('waitingForConnector') : t('terminalStopped'),
   );
@@ -260,7 +231,7 @@ export function SandboxConsole({
       setEntriesByPath({});
       setExpandedPaths([rootPath]);
       setSelectedDirectory(rootPath);
-      setPreview(null);
+      setPreviewOpen(false);
       setSelectedPath('');
       setFileError('');
       try {
@@ -283,7 +254,7 @@ export function SandboxConsole({
       setEntriesByPath({});
       setExpandedPaths([rootPath]);
       setSelectedDirectory(rootPath);
-      setPreview(null);
+      setPreviewOpen(false);
       setSelectedPath('');
       setFileError('');
     }
@@ -292,10 +263,6 @@ export function SandboxConsole({
     loadedDirectoryRef.current = key;
     void refreshTree();
   }, [refreshTree, rootPath, rpcBase, running, terminalOnly]);
-
-  useEffect(() => () => {
-    if (preview?.url) URL.revokeObjectURL(preview.url);
-  }, [preview?.url]);
 
   const flushInput = useCallback(() => {
     const sessionId = sessionIdRef.current;
@@ -432,39 +399,32 @@ export function SandboxConsole({
     };
   }, [compactView, compact, filesOnly, flushInput, initialPath, queueInput, resizeTerminal, running, t, terminalBase, terminalGeneration, terminalOnly, waitingForConnector]);
 
-  async function openFile(path: string) {
+  function openFile(path: string) {
     setSelectedPath(path);
-    setPreview(null);
-    setLoadingPath(path);
     setFileError('');
-    try {
-      const type = previewType(path);
-      if (type.kind === 'unsupported') {
-        setPreview({ path, kind: type.kind });
-        return;
-      }
-      if (type.kind === 'image' || type.kind === 'pdf') {
-        const raw = await callSandboxTool(rpcBase, 'download_file', { path }, t('toolCallFailed'));
-        const payload = JSON.parse(raw) as DownloadPayload;
-        const { blob } = decodeBase64File(
-          payload,
-          path.split('/').pop() || 'sandbox-file',
-          t('invalidDownloadResponse'),
-          type.mimeType,
-        );
-        setPreview({ path, kind: type.kind, url: URL.createObjectURL(blob) });
-        return;
-      }
-      const raw = await callSandboxTool(rpcBase, 'read_file', { path }, t('toolCallFailed'));
-      const payload = JSON.parse(raw) as { content?: unknown };
-      if (typeof payload.content !== 'string') throw new Error(t('filePreviewUnavailable'));
-      setPreview({ path, kind: type.kind, content: payload.content });
-    } catch (error) {
-      setFileError(String(error instanceof Error ? error.message : error));
-    } finally {
-      setLoadingPath(null);
-    }
+    setPreviewOpen(true);
   }
+
+  const toolCallFailed = t('toolCallFailed');
+  const invalidDownloadResponse = t('invalidDownloadResponse');
+  const filePreviewUnavailable = t('filePreviewUnavailable');
+
+  const loadPreview = useCallback(async (signal: AbortSignal): Promise<Blob> => {
+    const type = previewType(selectedPath);
+    if (type.kind === 'image' || type.kind === 'pdf') {
+      const raw = await callSandboxTool(rpcBase, 'download_file', { path: selectedPath }, toolCallFailed, signal);
+      return decodeBase64File(
+        JSON.parse(raw) as DownloadPayload,
+        selectedPath.split('/').pop() || 'sandbox-file',
+        invalidDownloadResponse,
+        type.mimeType,
+      ).blob;
+    }
+    const raw = await callSandboxTool(rpcBase, 'read_file', { path: selectedPath }, toolCallFailed, signal);
+    const payload = JSON.parse(raw) as { content?: unknown };
+    if (typeof payload.content !== 'string') throw new Error(filePreviewUnavailable);
+    return new Blob([payload.content], { type: 'text/plain;charset=utf-8' });
+  }, [rpcBase, selectedPath, toolCallFailed, invalidDownloadResponse, filePreviewUnavailable]);
 
   async function downloadFile(path: string) {
     setLoadingPath(path);
@@ -491,7 +451,7 @@ export function SandboxConsole({
       await callSandboxTool(rpcBase, 'delete_file', { path }, t('toolCallFailed'));
       if (selectedPath === path) {
         setSelectedPath('');
-        setPreview(null);
+        setPreviewOpen(false);
       }
       const directory = parentPath(path);
       const listing = await loadDirectory(directory);
@@ -632,18 +592,18 @@ export function SandboxConsole({
           setSelectedDirectory(directory ? path : parentPath(path));
           if (directory) {
             setSelectedPath('');
-            setPreview(null);
-          } else void openFile(path);
+            setPreviewOpen(false);
+          } else openFile(path);
         }}>
           <FileTreeFolder value={rootPath} name={rootName} disabled={!running || loadingPath !== null || uploading} icon={loadingPath === rootPath ? <Loader2 className="size-4 animate-spin" /> : undefined}>
             {renderTreeEntries(rootPath)}
           </FileTreeFolder>
         </FileTree>
-        {fileError ? <p role="alert" className="px-3 py-2 text-sm text-destructive">{fileError}</p> : null}
+        {fileError && !previewOpen ? <p role="alert" className="px-3 py-2 text-sm text-destructive">{fileError}</p> : null}
         {!running || rootEntries?.length === 0 || entriesByPath[selectedDirectory]?.length === 0 ? <p role="status" className="px-3 py-2 text-sm text-muted-foreground">
           {!running ? waitingForConnector ? t('waitingForConnectorSession') : t('startTheSandboxToBrowseFiles') : t('noFilesInThisDirectory')}
         </p> : null}
-        {selectedPath && !preview ? <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border p-2">
+        {selectedPath && !previewOpen ? <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border p-2">
           <span className="min-w-0 break-all text-xs text-muted-foreground">{displayWorkspacePath(selectedPath, workspaceRoot)} · {formatSize(selectedEntry?.size ?? null)}</span>
           <div className="flex items-center gap-1">
             <Button type="button" onClick={() => void downloadFile(selectedPath)} disabled={!running || loadingPath !== null || uploading} variant="ghost" size="icon" aria-label={t('downloadFile')}><Download className="size-3.5" /></Button>
@@ -654,36 +614,18 @@ export function SandboxConsole({
     </aside>
   );
 
-  const previewPanel = preview ? (
-    <section className={`absolute inset-0 flex min-h-0 flex-col overflow-hidden bg-card ${compact ? '' : 'border border-border'}`}>
-      <div className={`flex items-center justify-between gap-3 px-4 py-3 ${compact ? '' : 'border-b border-border'}`}>
-        <Button type="button" onClick={() => { setPreview(null); setSelectedPath(''); }} variant="ghost" size="icon" className="shrink-0" title={t('close')} aria-label={t('close')}><ArrowLeft className="size-4" /></Button>
-        <div className="min-w-0 flex-1 truncate font-mono text-xs font-medium text-foreground">{displayWorkspacePath(preview.path, workspaceRoot)}</div>
-        <span className="shrink-0 text-xs text-muted-foreground">{formatSize(selectedEntry?.size ?? null)}</span>
-        <Button type="button" onClick={() => void downloadFile(preview.path)} disabled={loadingPath !== null} variant="ghost" size="icon" className="shrink-0" title={t('downloadFile')} aria-label={t('downloadFile')}><Download className="size-4" /></Button>
-        <Button type="button" onClick={() => void deleteFile(preview.path)} disabled={!running || loadingPath !== null || uploading} variant="ghost" size="icon" title={t('deleteFile')} aria-label={t('deleteFile')}><Trash2 className="size-4" /></Button>
-        {fileError ? <p role="alert" className="text-sm text-destructive">{fileError}</p> : null}
-      </div>
-      {preview.kind === 'image' && preview.url ? (
-        <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto bg-muted/20 p-4">
-          {/* eslint-disable-next-line @next/next/no-img-element -- preview source is a short-lived local blob URL. */}
-          <img src={preview.url} alt={preview.path.split('/').pop() || preview.path} className="max-h-full max-w-full object-contain" />
-        </div>
-      ) : preview.kind === 'pdf' && preview.url ? (
-        <iframe src={preview.url} title={preview.path.split('/').pop() || preview.path} sandbox="" referrerPolicy="no-referrer" className="min-h-0 flex-1 bg-border" />
-      ) : preview.kind === 'markdown' ? (
-        <div className="min-h-0 flex-1 overflow-auto p-4 text-sm leading-6"><AssistantMarkdown text={preview.content ?? ''} /></div>
-      ) : preview.kind === 'text' ? (
-        <pre className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words p-4 font-mono text-xs leading-5 text-foreground">{preview.content}</pre>
-      ) : (
-        <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-6 text-center text-sm text-muted-foreground">
-          <FileText className="size-10 opacity-40" />
-          <p>{t('filePreviewUnavailable')}</p>
-          <Button type="button" onClick={() => void downloadFile(preview.path)} variant="secondary" size="sm"><Download className="size-3.5" />{t('downloadFile')}</Button>
-        </div>
-      )}
-    </section>
-  ) : null;
+  const previewPanel = (
+    <FilePreviewDialog
+      open={previewOpen}
+      onOpenChange={setPreviewOpen}
+      name={selectedPath.split('/').pop() || selectedPath}
+      size={formatSize(selectedEntry?.size ?? null)}
+      load={loadPreview}
+      onDownload={() => downloadFile(selectedPath)}
+      error={fileError}
+      actions={<Button type="button" onClick={() => void deleteFile(selectedPath)} disabled={!running || loadingPath !== null || uploading} variant="ghost" size="icon" title={t('deleteFile')} aria-label={t('deleteFile')}><Trash2 className="size-4" /></Button>}
+    />
+  );
 
   if (terminalOnly) return terminalPanel;
 

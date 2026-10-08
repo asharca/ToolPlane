@@ -1,4 +1,21 @@
 {
+  "filePreview": {
+    "open": "预览 {name}",
+    "download": "下载",
+    "unavailable": "无法预览此文件。",
+    "loading": "正在加载预览…",
+    "close": "关闭",
+    "empty": "此文件为空。",
+    "unsupported": "暂不支持此格式的预览，请下载后在本地打开。",
+    "source": "源码",
+    "preview": "预览",
+    "wrap": "自动换行",
+    "zoomIn": "放大",
+    "zoomOut": "缩小",
+    "fit": "适应窗口",
+    "file": "文件",
+    "pdfFallback": "当前浏览器无法显示 PDF，请使用下载按钮在本地打开。"
+  },
   "adminOps": {
     "allRoles": "全部角色",
     "allStatuses": "全部状态",

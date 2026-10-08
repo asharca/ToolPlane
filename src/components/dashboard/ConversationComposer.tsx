@@ -1,12 +1,13 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { Download, X } from 'lucide-react';
+import { File as FileIcon, X } from 'lucide-react';
 import { Button } from '@/components/motion/button';
 import { Tooltip } from '@/components/motion/tooltip';
 import { AnimatedBadge } from '@/components/motion/animated-badge';
-import { FileTree, FileTreeFile } from '@/components/motion/file-tree';
+import { FilePreviewDialog } from '@/components/dashboard/FilePreviewDialog';
+import { previewType } from '@/lib/file-preview';
 import type { ContextUsageSnapshot } from '@/lib/context-usage';
 
 export function ConversationContextUsage({ busy = false, usage }: { busy?: boolean; usage: ContextUsageSnapshot | null }) {
@@ -20,32 +21,59 @@ export function ConversationContextUsage({ busy = false, usage }: { busy?: boole
   </Tooltip>;
 }
 
-/** Local file previews keep object URLs scoped to the actual attachment lifetime. */
+function allowedAttachmentUrl(url?: string): string | undefined {
+  if (!url) return undefined;
+  if (/^data:[\w.+-]+\/[\w.+-]+;base64,(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(url)) return url;
+  if (/^\/api\/v1\/attachments\/[\w-]+$/.test(url)) return url;
+  if (typeof window === 'undefined') return undefined;
+  try {
+    const parsed = new URL(url);
+    if (parsed.origin === window.location.origin && !parsed.username && !parsed.password
+      && /^\/api\/v1\/attachments\/[\w-]+$/.test(parsed.pathname) && !parsed.search && !parsed.hash) return parsed.href;
+  } catch { /* Invalid URLs are unavailable, never navigation targets. */ }
+  return undefined;
+}
+
+/** Local thumbnail URLs live only as long as the attachment; content loads on open. */
 export function ConversationFilePreview({ file, name, url, mimeType, progress, onRemove, removeLabel }: {
   file?: File; name: string; url?: string; mimeType?: string; progress?: number;
   onRemove?: () => void; removeLabel?: string;
 }) {
-  const [localUrl, setLocalUrl] = useState<string>();
-  const downloadRef = useRef<HTMLAnchorElement>(null);
+  const t = useTranslations('filePreview');
+  const agents = useTranslations('console.agents');
+  const [open, setOpen] = useState(false);
+  const [thumbnail, setThumbnail] = useState<{ file: File; url: string }>();
+  const type = previewType(name, file?.type || mimeType);
+  const image = type.kind === 'image';
+  const safeUrl = allowedAttachmentUrl(url);
+  const unavailable = t('unavailable');
+  const size = file ? (file.size < 1024 ? `${file.size} B` : file.size < 1024 * 1024 ? `${(file.size / 1024).toFixed(1)} KB` : `${(file.size / (1024 * 1024)).toFixed(1)} MB`) : undefined;
   useEffect(() => {
-    if (!file || !file.type.startsWith('image/')) return;
+    if (!file || !image) return;
     const objectUrl = URL.createObjectURL(file);
     // Object URL creation is an external resource synchronization.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setLocalUrl(objectUrl);
+    setThumbnail({ file, url: objectUrl });
     return () => URL.revokeObjectURL(objectUrl);
-  }, [file]);
-  const source = file ? localUrl : url;
-  const image = (file?.type ?? mimeType)?.startsWith('image/');
+  }, [file, image]);
+  const load = useCallback(async (signal: AbortSignal) => {
+    if (file) return file;
+    if (!safeUrl) throw new Error(unavailable);
+    const response = await fetch(safeUrl, { signal, redirect: 'error' });
+    if (!response.ok) throw new Error(unavailable);
+    return response.blob();
+  }, [file, safeUrl, unavailable]);
+  const source = file ? (thumbnail?.file === file ? thumbnail.url : undefined) : safeUrl;
   return <div className="flex max-w-full items-center gap-2">
-    {image ? <>
-      {source ? <img src={source} alt={name} className="max-h-32 max-w-48 object-contain" /> : null}
-      {url ? <a href={url} download={name} className="min-w-0 truncate text-sm underline underline-offset-4">{name}</a> : <span className="min-w-0 truncate text-sm">{name}</span>}
-    </> : <>
-      <FileTree ariaLabel={name} className="min-w-0 max-w-xs flex-1" onValueChange={() => downloadRef.current?.click()}><FileTreeFile value={name} name={name} /></FileTree>
-      {url ? <a ref={downloadRef} href={url} download={name} aria-label={name} className="shrink-0 rounded p-2 text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"><Download className="size-4" /></a> : null}
-    </>}
+    <button type="button" aria-label={t('open', { name })} onClick={() => setOpen(true)} className="flex min-w-0 max-w-xs items-center gap-3 rounded-xl border border-border bg-background px-3 py-2 text-left hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+      {image && source ? <img src={source} alt="" className="size-10 shrink-0 rounded-md object-cover" /> : <FileIcon aria-hidden="true" className="size-8 shrink-0 text-muted-foreground" />}
+      <span className="min-w-0">
+        <span className="block truncate text-sm font-medium">{name}</span>
+        <span className="block truncate text-xs text-muted-foreground">{type.mimeType || file?.type || mimeType || t('file')}{size ? ` · ${size}` : ''}</span>
+      </span>
+    </button>
     {progress !== undefined ? <span role="status" className="text-xs text-muted-foreground">{Math.round(progress * 100)}%</span> : null}
-    {onRemove ? <Button type="button" variant="ghost" size="icon" aria-label={removeLabel} onClick={onRemove}><X className="size-4" /></Button> : null}
+    {onRemove ? <Button type="button" variant="ghost" size="icon" aria-label={removeLabel || agents('removeAttachment', { name })} onClick={onRemove}><X className="size-4" /></Button> : null}
+    <FilePreviewDialog open={open} onOpenChange={setOpen} name={name} mimeType={file?.type || mimeType} size={size} load={load} error={!file && !safeUrl ? unavailable : undefined} />
   </div>;
 }

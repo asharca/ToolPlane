@@ -1,4 +1,21 @@
 {
+  "filePreview": {
+    "open": "Preview {name}",
+    "download": "Download",
+    "unavailable": "Unable to preview this file.",
+    "loading": "Loading preview…",
+    "close": "Close",
+    "empty": "This file is empty.",
+    "unsupported": "Preview is not available for this file type. Download it to open locally.",
+    "source": "Source",
+    "preview": "Preview",
+    "wrap": "Wrap lines",
+    "zoomIn": "Zoom in",
+    "zoomOut": "Zoom out",
+    "fit": "Fit to view",
+    "file": "File",
+    "pdfFallback": "Your browser cannot display this PDF. Use Download to open it locally."
+  },
   "adminOps": {
     "allRoles": "All roles",
     "allStatuses": "All statuses",

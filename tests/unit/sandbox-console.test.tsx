@@ -1,5 +1,6 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { Blob as NodeBlob } from 'node:buffer';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SandboxConsole } from '@/components/dashboard/sandboxes/SandboxConsole';
 
 vi.mock('@/components/dashboard/ConversationMessage', () => ({
@@ -14,6 +15,7 @@ function rpcResponse(value: unknown) {
   }), { headers: { 'content-type': 'application/json' } });
 }
 
+beforeEach(() => vi.stubGlobal('Blob', NodeBlob));
 afterEach(() => {
   vi.unstubAllGlobals();
 });
@@ -66,9 +68,10 @@ describe('SandboxConsole files', () => {
     expect(listedPaths).toEqual(['.', 'src']);
   });
 
-  it('loads the directory and previews Markdown and images', async () => {
+  it('previews Markdown and images in a dialog while preserving the tree and focus', async () => {
     const createObjectURL = vi.fn(() => 'blob:sandbox-preview');
-    vi.stubGlobal('URL', { createObjectURL, revokeObjectURL: vi.fn() });
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal('URL', { createObjectURL, revokeObjectURL });
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body)) as { params: { name: string } };
       if (body.params.name === 'list_dir') {
@@ -98,15 +101,72 @@ describe('SandboxConsole files', () => {
       />,
     );
 
-    fireEvent.click(await screen.findByRole('treeitem', { name: 'README.md' }));
-    expect(await screen.findByText('# Hello')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    const markdownFile = await screen.findByRole('treeitem', { name: 'README.md' });
+    const tree = screen.getByRole('tree');
+    const scrollContainer = tree.parentElement!;
+    scrollContainer.scrollTop = 48;
+    act(() => markdownFile.focus());
+    fireEvent.click(markdownFile);
+    const dialog = await screen.findByRole('dialog');
+    expect(await within(dialog).findByText('# Hello')).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole('button', { name: /close/i }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(screen.getByRole('tree')).toBe(tree);
+    expect(scrollContainer.scrollTop).toBe(48);
+    expect(markdownFile).toHaveAttribute('aria-selected', 'true');
+    await waitFor(() => expect(markdownFile).toHaveFocus());
     fireEvent.click(screen.getByRole('treeitem', { name: 'preview.png' }));
 
     const image = await screen.findByRole('img', { name: 'preview.png' });
     expect(image).toHaveAttribute('src', 'blob:sandbox-preview');
     expect(createObjectURL).toHaveBeenCalledOnce();
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: /close/i }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    await waitFor(() => expect(revokeObjectURL).toHaveBeenCalledWith('blob:sandbox-preview'));
+  });
+
+  it('aborts a pending read on close and retains the expanded directory for another preview', async () => {
+    let resolveRead!: (response: Response) => void;
+    let readSignal: AbortSignal | null | undefined;
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { params: { name: string; arguments: { path: string } } };
+      if (body.params.name === 'list_dir') {
+        return rpcResponse({ path: 'src', entries: [
+          { name: 'first.md', type: 'file', size: 7 },
+          { name: 'second.md', type: 'file', size: 7 },
+        ] });
+      }
+      if (body.params.arguments.path === 'src/first.md') {
+        readSignal = init?.signal;
+        return new Promise<Response>((resolve) => { resolveRead = resolve; });
+      }
+      return rpcResponse({ content: '# Current' });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<SandboxConsole compact filesOnly deploymentId="deployment-1" running initialPath="." initialEntries={[{ name: 'src', type: 'dir', size: null }]} />);
+
+    const directory = screen.getByRole('treeitem', { name: 'src' });
+    fireEvent.click(directory);
+    const first = await screen.findByRole('treeitem', { name: 'first.md' });
+    act(() => first.focus());
+    fireEvent.click(first);
+    const dialog = await screen.findByRole('dialog');
+    await waitFor(() => expect(readSignal).toBeInstanceOf(AbortSignal));
+    fireEvent.click(within(dialog).getByRole('button', { name: /close/i }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(readSignal?.aborted).toBe(true);
+    expect(directory).toHaveAttribute('aria-expanded', 'true');
+    expect(first).toHaveAttribute('aria-selected', 'true');
+    await waitFor(() => expect(first).toHaveFocus());
+    expect(screen.getByRole('button', { name: 'Upload files' })).toHaveAttribute('title', expect.stringContaining('/workspace/src'));
+
+    fireEvent.click(screen.getByRole('treeitem', { name: 'second.md' }));
+    expect(await screen.findByText('# Current')).toBeInTheDocument();
+    await act(async () => { resolveRead(rpcResponse({ content: '# Stale' })); });
+    expect(screen.queryByText('# Stale')).not.toBeInTheDocument();
+    expect(screen.getByText('# Current')).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it('uploads files into the selected directory and refreshes it', async () => {

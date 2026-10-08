@@ -1,8 +1,9 @@
 'use client';
 
-import { useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useMemo, useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import { FileTree, FileTreeFile, FileTreeFolder } from '@/components/motion/file-tree';
+import { FilePreviewDialog } from './FilePreviewDialog';
 
 type PathEntry = { path: string; value: string; disabled?: boolean; directory?: boolean };
 type Directory = { folders: Map<string, Directory>; files: PathEntry[] };
@@ -66,23 +67,24 @@ export function FilePathLinks({ files, ariaLabel, value }: {
   }} />;
 }
 
-/** Read-only skill artifacts; encoded files remain encoded, never interpreted as markup. */
+/** Read-only skill artifacts share the same safe preview as attachments. */
 export function BundledFiles({ files, ariaLabel }: {
   files: { path: string; content: string; encoding?: string; size?: string }[];
   ariaLabel: string;
 }) {
   const [selected, setSelected] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
   const file = files.find((entry) => entry.path === selected);
-  return <div className="grid min-w-0 gap-3 md:grid-cols-[minmax(0,16rem)_minmax(0,1fr)]">
+  const load = useCallback(async () => {
+    if (!file) throw new Error('File unavailable');
+    return new Blob([file.encoding === 'base64'
+      ? Uint8Array.from(atob(file.content), (character) => character.charCodeAt(0))
+      : file.content]);
+  }, [file]);
+  return <div className="min-w-0">
     <div className="max-h-96 min-w-0 overflow-auto p-2">
-      <FilePathTree files={files.map((entry) => ({ path: entry.path, value: entry.path }))} ariaLabel={ariaLabel} value={file?.path ?? null} onSelect={setSelected} />
+      <FilePathTree files={files.map((entry) => ({ path: entry.path, value: entry.path }))} ariaLabel={ariaLabel} value={file?.path ?? null} onSelect={(path) => { setSelected(path); setOpen(true); }} />
     </div>
-    {file ? <div className="min-w-0 overflow-hidden rounded-lg border border-border">
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-3 py-2 text-xs">
-        <code className="break-all">{file.path}</code>
-        <span className="text-muted-foreground">{file.size ?? `${new TextEncoder().encode(file.content).length} B`}{file.encoding ? ` · ${file.encoding}` : ''}</span>
-      </div>
-      <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-words bg-muted/30 p-3 font-mono text-xs leading-6">{file.content}</pre>
-    </div> : null}
+    <FilePreviewDialog open={open} onOpenChange={setOpen} name={file?.path ?? ''} size={file?.size} load={load} />
   </div>;
 }
