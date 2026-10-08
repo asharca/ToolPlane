@@ -3,6 +3,7 @@
 import { ArrowLeft, Bot, Brain, Building2, ClipboardCheck, LayoutDashboard, Library, MessageSquare, Plug, Settings, ScrollText, Tags, Users, type LucideIcon } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { usePathname } from 'next/navigation';
+import Link from 'next/link';
 import { Logo } from '@/components/layout/Logo';
 import { WorkspaceSidebar } from '@/components/workspace/workspace-sidebar';
 
@@ -60,9 +61,9 @@ export function AdminSidebar() {
     }))}
     activeId={activeHref}
     footer={<div className="flex flex-col gap-1">
-      <a href="/app" className="flex min-h-9 items-center gap-2 overflow-hidden rounded-lg px-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground [&_svg]:size-[18px]">
+      <Link href="/app" className="flex min-h-9 items-center gap-2 overflow-hidden rounded-lg px-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground [&_svg]:size-[18px]">
         <ArrowLeft aria-hidden="true" className="size-[18px] shrink-0" />
         <span className="truncate group-data-[state=collapsed]/sidebar:hidden">{t('adminBackToConsole')}</span>
-      </a>
+      </Link>
     </div>} />;
 }

@@ -111,8 +111,8 @@ jobs:
       - name: Push Prisma schema
         run: pnpm exec prisma db push
 
-      - name: Lint
-        run: pnpm lint
+      - name: Lint and typecheck
+        run: pnpm check
 
       - name: Test
         run: pnpm test

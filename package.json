@@ -7,6 +7,11 @@
   },
   "scripts": {
     "postinstall": "fumadocs-mdx",
+    "prepare": "node -e \"if(require('node:fs').existsSync('.git')) import('./scripts/install-git-hooks.mjs')\"",
+    "hooks:install": "node scripts/install-git-hooks.mjs",
+    "check:staged": "node scripts/check-staged.mjs",
+    "typecheck": "next typegen && tsc --noEmit",
+    "check": "pnpm lint && pnpm typecheck",
     "dev": "next dev",
     "build": "next build",
     "runtime:assemble": "node scripts/assemble-runtime.mjs",

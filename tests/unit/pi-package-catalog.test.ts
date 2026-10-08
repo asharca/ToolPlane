@@ -15,8 +15,8 @@ vi.mock('@/lib/db', () => ({ db: { ...mocks, $transaction: async (callback: (tx:
 vi.mock('@/lib/market/skills', () => ({ MarketError: class extends Error { constructor(readonly code: string, message: string) { super(message); } } }));
 vi.mock('@/lib/runtime/ownership-state', () => ({ assertRuntimeOwner: mocks.owner, runtimeCanOperate: mocks.canOperate }));
 vi.mock('@/lib/market/pi-package-network', async original => {
-  const module = await original<typeof PiNetwork>();
-  return { ...module, piSourceRequest: mocks.request };
+  const network = await original<typeof PiNetwork>();
+  return { ...network, piSourceRequest: mocks.request };
 });
 import { createPiPackageSource, updatePiPackageSource, listPiPackageSources, resolvePiPackageCaptureSource, listPiPackageSourceEntries,
   listOfficialPiPackages, verifyOfficialPiPackage, checkPiPackageUpdates, maintainPiPackageSources, publishPiPackageToRegistry } from '@/lib/market/pi-package-catalog';

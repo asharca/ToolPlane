@@ -7,6 +7,7 @@
 * add request-level A2A debugging across HTTP, MCP and native entries, with redacted 24-hour administrator-only bodies, committed task timelines, and workspace-scoped metadata views
 
 ### Bug Fixes
+* reject staged JS/TS syntax, JSON and lint errors before commit; install repository hooks automatically and run shared lint/type checks before push and in CI, excluding generated MDX files from lint
 * prevent long-running MCP and channel outages from Node 24.21 retaining nested timeout signals; initialize native weak signal following in the managed launcher before Next starts
 * authorize configured tools for authenticated inbound A2A roots without human approval, preserving per-call receipts, live permission checks and interactive chat/Work approval policies
 * switch workspace and account settings sections locally, keeping the modal and workbench mounted; reuse the sidebar across workspace, account, and agent settings

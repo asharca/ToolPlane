@@ -69,6 +69,12 @@ pnpm dev
 
 访问 `http://localhost:3000`。可选执行 `pnpm db:seed` 创建本地演示账户 `smoke@example.com` / `password123`；不要在生产数据库运行演示种子。
 
+`pnpm install` 自动安装仓库的 Git hooks；已有 checkout 可运行 `pnpm hooks:install`。安装器不覆盖其他 `core.hooksPath` 配置，无 `.git` 的镜像依赖层和发布归档跳过安装。
+
+- **pre-commit**：对暂存区中的 JS/TS 做语法和 ESLint 检查，对 JSON 做解析检查。读取 Git index，不会让未暂存的修复掩盖即将提交的错误；不自动改文件或暂存内容。
+- **pre-push**：要求推送当前 `HEAD` 且已跟踪文件无未提交变更，运行 `pnpm check`（全量 lint、Next 路由类型生成和 TypeScript 检查）。先执行 `pnpm db:generate` 准备 Prisma 类型；不连接数据库或运行迁移。
+- CI 复用 `pnpm check`，再运行完整测试和构建。hooks 是本地提前反馈，不替代受保护分支的 CI；现有 lint warning 暂不阻断，error 必须修复。
+
 ## 使用入口
 
 在工作区中部署 MCP、导入 Skill 并组成 Toolkit，然后选择同步到客户端或创建 Agent。外部 AI 客户端可从 **Agents → Connect AI** 获取 Agent Control MCP 配置。
@@ -81,6 +87,7 @@ pnpm dev
 |---|---|
 | `pnpm dev` | 启动开发服务 |
 | `pnpm lint` / `pnpm test` | 代码检查与测试 |
+| `pnpm check:staged` / `pnpm check` | 暂存区语法/lint / 全量 lint 与类型检查 |
 | `pnpm build` | 生产构建 |
 | `pnpm db:migrate` / `pnpm db:studio` | 开发数据库迁移与查看 |
 | `pnpm connector:dev` | 调试设备连接器 |
