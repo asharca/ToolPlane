@@ -132,7 +132,7 @@ export async function callSandboxTool(
     }),
   });
   const json = await res.json();
-  if (json.error) throw new Error(json.error.message ?? fallbackError);
+  if (json.error || !res.ok) throw new Error(typeof json.error === 'string' ? json.error : json.error?.message ?? fallbackError);
   const result = json.result as RpcResult | null;
   const text = textFromResult(result);
   if (result?.isError) throw new Error(text);

@@ -21,6 +21,17 @@ afterEach(() => {
 });
 
 describe('SandboxConsole files', () => {
+  it.each([
+    [503, { error: 'runtime_not_ready' }, 'runtime_not_ready'],
+    [502, { error: 'upstream unreachable' }, 'upstream unreachable'],
+    [200, { error: { code: -32602, message: 'Unknown tool: read_file' } }, 'Unknown tool: read_file'],
+  ])('shows the server failure when preview cannot read a file (%s)', async (status, body, message) => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json(body, { status })));
+    render(<SandboxConsole compact filesOnly deploymentId="deployment-1" running initialPath="." initialEntries={[{ name: 'README.md', type: 'file', size: 7 }]} />);
+    fireEvent.click(screen.getByRole('treeitem', { name: 'README.md' }));
+    expect(await within(screen.getByRole('dialog')).findByRole('alert')).toHaveTextContent(message);
+  });
+
   it('lazily expands and caches directory children', async () => {
     const listedPaths: string[] = [];
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
