@@ -45,20 +45,24 @@ describe('SandboxConsole files', () => {
       <SandboxConsole compact filesOnly deploymentId="deployment-1" running initialPath="." initialEntries={[]} />,
     );
 
-    const src = await screen.findByRole('button', { name: /src/ });
+    const src = await screen.findByRole('treeitem', { name: 'src' });
     expect(listedPaths).toEqual(['.']);
     expect(src).toHaveAttribute('aria-expanded', 'false');
-    expect(screen.queryByRole('button', { name: /index\.ts/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('treeitem', { name: 'index.ts' })).not.toBeInTheDocument();
 
-    fireEvent.click(src);
-    expect(await screen.findByRole('button', { name: /index\.ts/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /src/ })).toHaveAttribute('aria-expanded', 'true');
+    src.focus();
+    fireEvent.keyDown(src, { key: 'ArrowRight' });
+    expect(await screen.findByRole('treeitem', { name: 'index.ts' })).toBeInTheDocument();
+    expect(src).toHaveAttribute('aria-expanded', 'true');
     expect(listedPaths).toEqual(['.', 'src']);
-
-    fireEvent.click(screen.getByRole('button', { name: /src/ }));
-    expect(screen.queryByRole('button', { name: /index\.ts/ })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /src/ }));
-    expect(await screen.findByRole('button', { name: /index\.ts/ })).toBeInTheDocument();
+    fireEvent.keyDown(src, { key: 'ArrowRight' });
+    expect(screen.getByRole('treeitem', { name: 'index.ts' })).toHaveFocus();
+    fireEvent.keyDown(screen.getByRole('treeitem', { name: 'index.ts' }), { key: 'ArrowLeft' });
+    expect(src).toHaveFocus();
+    fireEvent.keyDown(src, { key: 'ArrowLeft' });
+    expect(screen.queryByRole('treeitem', { name: 'index.ts' })).not.toBeInTheDocument();
+    fireEvent.click(src);
+    expect(await screen.findByRole('treeitem', { name: 'index.ts' })).toBeInTheDocument();
     expect(listedPaths).toEqual(['.', 'src']);
   });
 
@@ -94,10 +98,10 @@ describe('SandboxConsole files', () => {
       />,
     );
 
-    fireEvent.click(await screen.findByRole('button', { name: /README\.md/ }));
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'README.md' }));
     expect(await screen.findByText('# Hello')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Close' }));
-    fireEvent.click(screen.getByRole('button', { name: /preview\.png/ }));
+    fireEvent.click(screen.getByRole('treeitem', { name: 'preview.png' }));
 
     const image = await screen.findByRole('img', { name: 'preview.png' });
     expect(image).toHaveAttribute('src', 'blob:sandbox-preview');
@@ -140,14 +144,14 @@ describe('SandboxConsole files', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: /src/ }));
+    fireEvent.click(screen.getByRole('treeitem', { name: 'src' }));
     await waitFor(() => expect(calls).toHaveLength(1));
     const file = new File(['hello'], 'notes.txt', { type: 'text/plain' });
     const uploadInput = document.querySelector('input[type="file"]');
     expect(uploadInput).toBeInstanceOf(HTMLInputElement);
     fireEvent.change(uploadInput as HTMLInputElement, { target: { files: [file] } });
 
-    expect(await screen.findByRole('button', { name: /notes\.txt/ })).toBeInTheDocument();
+    expect(await screen.findByRole('treeitem', { name: 'notes.txt' })).toBeInTheDocument();
     expect(calls.slice(0, 2)).toEqual([
       { name: 'list_dir', path: 'src' },
       { name: 'upload_file', path: 'src/notes.txt', body: file },

@@ -8,6 +8,7 @@ import { Input } from '@/components/motion/input';
 import { useId, useRef, useState, type ChangeEvent } from 'react';
 import { useTranslations } from 'next-intl';
 import { FileText, Plus, Trash2, Upload } from 'lucide-react';
+import { FilePathTree } from './FilePathTree';
 
 export type RuntimeFileDraft = {
   path: string;
@@ -67,11 +68,14 @@ export function RuntimeFileDraftsInput({
 }) {
   const t = useTranslations('console.mcp');
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const activeIndex = Math.min(selectedIndex, Math.max(0, value.length - 1));
   const inputRef = useRef<HTMLInputElement>(null);
   const id = useId();
 
   const addFile = () => {
     setUploadError(null);
+    setSelectedIndex(value.length);
     onChange([...value, { path: '', content: '' }]);
   };
 
@@ -83,6 +87,7 @@ export function RuntimeFileDraftsInput({
 
   const removeFile = (index: number) => {
     setUploadError(null);
+    setSelectedIndex((current) => current > index ? current - 1 : current);
     onChange(value.filter((_, currentIndex) => currentIndex !== index));
   };
 
@@ -96,6 +101,7 @@ export function RuntimeFileDraftsInput({
     try {
       const drafts = await Promise.all(files.map(readPlainTextFile));
       onChange(replaceOrAppendDrafts(value, drafts));
+      setSelectedIndex(0);
     } catch {
       setUploadError(t('invalidRuntimeTextUpload'));
     }
@@ -149,20 +155,23 @@ export function RuntimeFileDraftsInput({
           {t('noRuntimeFilesToCreate')}
         </p>
       ) : (
-        <div className="divide-y divide-border">
-          {value.map((file, index) => (
-            <div key={index} className="space-y-3 px-4 py-4">
+        <div className="grid min-w-0 gap-3 p-3 sm:grid-cols-[minmax(0,14rem)_minmax(0,1fr)]">
+          <div className="max-h-80 min-w-0 overflow-auto">
+            <FilePathTree files={value.map((file, index) => ({ path: file.path || `${t('addFile')} ${index + 1}`, value: String(index) }))} ariaLabel={t('runtimeFiles')} value={String(activeIndex)} onSelect={(index) => setSelectedIndex(Number(index))} disabled={disabled} />
+          </div>
+          {value.slice(activeIndex, activeIndex + 1).map((file) => (
+            <div key={activeIndex} className="min-w-0 space-y-3 p-2">
               <div className="flex flex-wrap items-end justify-between gap-3">
                 <label className="min-w-0 flex-1 space-y-1.5 text-xs font-medium text-muted-foreground">
                   {t('relativeFilePath')}
-                  <Input value={file.path} onChange={(value) => updateFile(index, { path: value })} disabled={disabled} placeholder="ssh-config.json" spellCheck={false} />
+                  <Input value={file.path} onChange={(value) => updateFile(activeIndex, { path: value })} disabled={disabled} placeholder="ssh-config.json" spellCheck={false} />
                 </label>
-                <Button type="button" disabled={disabled} onClick={() => removeFile(index)} variant="ghost" size="sm" className="inline-flex items-center"><Trash2 className="size-3.5" />
+                <Button type="button" disabled={disabled} onClick={() => removeFile(activeIndex)} variant="ghost" size="sm" className="inline-flex items-center"><Trash2 className="size-3.5" />
                 {t('remove')}</Button>
               </div>
               <label className="block space-y-1.5 text-xs font-medium text-muted-foreground">
                 {t('textContent')}
-                <textarea value={file.content} onChange={(event) => updateFile(index, { content: event.target.value })} disabled={disabled} spellCheck={false} className="min-h-36 w-full resize-y rounded-lg bg-muted/35 p-3 text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring min-h-44" />
+                <textarea value={file.content} onChange={(event) => updateFile(activeIndex, { content: event.target.value })} disabled={disabled} spellCheck={false} className="min-h-44 w-full resize-y rounded-lg bg-muted/35 p-3 text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring" />
               </label>
             </div>
           ))}

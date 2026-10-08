@@ -3,12 +3,13 @@ import { Input } from '@/components/motion/input';
 import { Button } from '@/components/motion/button';
 
 
-import { useActionState } from 'react';
+import { useActionState, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { AlertCircle, CheckCircle2, GitBranch, RotateCcw } from 'lucide-react';
 import { syncSkillRegistryAction, type SkillRegistrySyncActionState } from '@/lib/admin/market-actions';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
 import { AdminPanel } from '@/components/admin/AdminUI';
+import { FilePathTree } from '@/components/dashboard/FilePathTree';
 
 type Source = {
   owner: string;
@@ -22,6 +23,8 @@ export function SkillRegistrySync({ source }: { source: Source }) {
   const t = useTranslations('admin');
   const ops = useTranslations('adminOps');
   const [state, formAction, pending] = useActionState<SkillRegistrySyncActionState, FormData>(syncSkillRegistryAction, {});
+  const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const failure = state.failures?.find((entry) => entry.path === selectedPath) ?? state.failures?.[0];
 
   return (
     <AdminPanel title={t('syncTpSkills')} description={t('syncTpSkillsDescription')}>
@@ -79,7 +82,10 @@ export function SkillRegistrySync({ source }: { source: Source }) {
         {state.failures?.length ? <section className="space-y-3 border-t border-border pt-4">
           <div className="flex flex-wrap items-center justify-between gap-3"><h3 className="text-sm font-semibold">{ops('failedFiles')} ({state.failures.length})</h3><Button type="submit" name="intent" value="retry" disabled={pending} variant="secondary" size="md"><RotateCcw className="size-4" />{pending ? t('syncing') : ops('retryFailed')}</Button></div>
           <p className="break-all font-mono text-xs text-muted-foreground">{state.source?.owner}/{state.source?.repo} @ {state.source?.ref}</p>
-          <ul className="max-h-80 divide-y divide-border overflow-auto">{state.failures.map((failure) => <li key={failure.path} className="py-3"><code className="block break-all text-xs font-medium">{failure.path}</code><p className="mt-1 whitespace-pre-wrap break-words text-xs text-destructive">{failure.error}</p></li>)}</ul>
+          <div className="grid min-w-0 gap-3 sm:grid-cols-2">
+            <div className="max-h-80 min-w-0 overflow-auto"><FilePathTree files={state.failures.map((entry) => ({ path: entry.path, value: entry.path }))} ariaLabel={ops('failedFiles')} value={failure?.path ?? null} onSelect={setSelectedPath} disabled={pending} /></div>
+            {failure ? <div className="min-w-0 p-2"><code className="block break-all text-xs font-medium">{failure.path}</code><p className="mt-1 whitespace-pre-wrap break-words text-xs text-destructive">{failure.error}</p></div> : null}
+          </div>
         </section> : null}
       </form>
     </AdminPanel>

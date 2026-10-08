@@ -7,7 +7,7 @@ import { AnimatedBadge } from '@/components/motion/animated-badge';
 import { AISidebar } from '@/components/agents/ai-sidebar';
 import { AnimatedSidebarHeader, AnimatedSidebarContent } from '@/components/motion/animated-sidebar';
 import { Tabs, TabsList, TabsTrigger } from '@/components/motion/tabs';
-import { DashboardTable } from '@/components/dashboard/DashboardTable';
+import { FilePathTree } from '@/components/dashboard/FilePathTree';
 
 import { useTranslations } from 'next-intl';
 import { useRef, useState } from 'react';
@@ -62,6 +62,7 @@ export function WorkspaceKnowledge({
   const [selectedId, setSelectedId] = useState(initialBases[0]?.id ?? '');
   const [creatingBase, setCreatingBase] = useState(initialBases.length === 0);
   const [activeTab, setActiveTab] = useState<KnowledgeTab>('documents');
+  const [selectedDocumentId, setSelectedDocumentId] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [providerId, setProviderId] = useState(providers[0]?.id ?? '');
   const [model, setModel] = useState(providers[0]?.models[0] ?? 'text-embedding-3-small');
@@ -78,6 +79,7 @@ export function WorkspaceKnowledge({
   const [recallQuery, setRecallQuery] = useState('');
   const [recallResults, setRecallResults] = useState<Array<{ chunkId: string; filename: string; sourcePath: string; content: string; score: number }>>([]);
   const selected = bases.find((base) => base.id === selectedId) ?? null;
+  const selectedDocument = selected?.documents.find((document) => document.id === selectedDocumentId) ?? selected?.documents[0];
   const selectedProvider = providers.find((provider) => provider.id === providerId) ?? null;
 
   function selectBase(base: KnowledgeBase) {
@@ -264,11 +266,20 @@ export function WorkspaceKnowledge({
                 <div><Button type="button" variant="secondary" onClick={() => fileInputRef.current?.click()}><FileUp className="size-4" />{file?.name ?? t('chooseFile')}</Button><input ref={fileInputRef} type="file" accept=".txt,.md,.mdx,.csv,.json,text/plain,text/markdown,text/csv,application/json" onChange={(event) => setFile(event.target.files?.[0] ?? null)} className="sr-only" /></div>
                 <Button type="button" onClick={upload} disabled={busy || !file || !sandboxId}><FileUp className="size-4" />{busy ? t('importing') : t('import')}</Button>
               </div>
-              {selected.documents.length ? <DashboardTable minWidth="34rem" ariaLabel={t('documents')} headers={[{ label: t('document') }, { label: t('status'), width: '8rem' }, { label: t('actions'), align: 'right', width: '8rem' }]} rows={selected.documents.map((document) => ({ id: document.id, cells: [
-                <div key="document"><div className="flex items-center gap-2"><FileText className="size-4 text-muted-foreground" /><span>{document.filename}</span></div>{document.error ? <p className="mt-1 text-xs text-destructive">{document.error}</p> : null}</div>,
-                <AnimatedBadge key="status" status={document.status === 'indexed' ? 'success' : document.status === 'failed' ? 'danger' : document.status === 'indexing' ? 'loading' : 'warning'}>{statusLabels[document.status] ?? document.status}</AnimatedBadge>,
-                <div key="actions" className="flex justify-end gap-1"><Button type="button" variant="ghost" size="icon" disabled={busy} aria-label={t('reindexDocument')} onClick={() => void reindexDocument(document.id)}><RefreshCw className="size-4" /></Button><Button type="button" variant="ghost" size="icon" disabled={busy} aria-label={t('deleteDocument')} onClick={() => void deleteDocument(document.id)}><Trash2 className="size-4" /></Button></div>,
-              ] }))} /> : <div className="py-16 text-center"><FileText className="mx-auto size-6 text-muted-foreground" /><h2 className="mt-3 text-sm font-semibold">{t('noDocuments')}</h2><p className="mt-1 text-sm text-muted-foreground">{t('noDocumentsDescription')}</p></div>}
+              {selected.documents.length ? <div className="grid min-w-0 gap-4 md:grid-cols-[minmax(0,18rem)_minmax(0,1fr)]">
+                <div className="max-h-96 min-w-0 overflow-auto">
+                  <FilePathTree key={selected.id} files={selected.documents.map((document) => ({ path: document.filename, value: document.id }))} ariaLabel={t('documents')} value={selectedDocument?.id ?? null} onSelect={setSelectedDocumentId} disabled={busy} />
+                </div>
+                {selectedDocument ? <div className="min-w-0 space-y-3 p-2">
+                  <p className="break-all font-mono text-sm">{selectedDocument.filename}</p>
+                  <AnimatedBadge status={selectedDocument.status === 'indexed' ? 'success' : selectedDocument.status === 'failed' ? 'danger' : selectedDocument.status === 'indexing' ? 'loading' : 'warning'}>{statusLabels[selectedDocument.status] ?? selectedDocument.status}</AnimatedBadge>
+                  {selectedDocument.error ? <p className="text-xs text-destructive">{selectedDocument.error}</p> : null}
+                  <div className="flex flex-wrap gap-2">
+                    <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={() => void reindexDocument(selectedDocument.id)}><RefreshCw className="size-4" />{t('reindexDocument')}</Button>
+                    <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={() => void deleteDocument(selectedDocument.id)}><Trash2 className="size-4" />{t('deleteDocument')}</Button>
+                  </div>
+                </div> : null}
+              </div> : <div className="py-16 text-center"><FileText className="mx-auto size-6 text-muted-foreground" /><h2 className="mt-3 text-sm font-semibold">{t('noDocuments')}</h2><p className="mt-1 text-sm text-muted-foreground">{t('noDocumentsDescription')}</p></div>}
             </div> : null}
 
             {activeTab === 'recall' ? <div className="mx-auto w-full max-w-4xl p-5 sm:p-7"><div className="flex gap-2 pb-5"><Input onKeyDown={(event) => { if (event.key === 'Enter') void testRecall(); }} placeholder={t('recallPlaceholder')} value={String(recallQuery)} onChange={(value) => setRecallQuery(value)} className="min-w-0 flex-1" /><Button type="button" onClick={testRecall} disabled={busy || !recallQuery.trim()} variant={"primary"} size={"sm"}><Search className="size-4" />{t('search')}</Button></div>{recallResults.length ? <ol className="divide-y divide-border">{recallResults.map((result, index) => <li key={result.chunkId} className="py-5"><div className="flex items-center justify-between gap-3"><p className="min-w-0 truncate text-sm font-medium">{index + 1}. {result.filename}</p><span className="shrink-0 font-mono text-xs text-muted-foreground">{result.score.toFixed(3)}</span></div><p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-foreground/90">{result.content}</p><code className="mt-2 block truncate text-[11px] text-muted-foreground">{result.sourcePath}</code></li>)}</ol> : <div className="py-16 text-center"><Search className="mx-auto size-6 text-muted-foreground" /><h2 className="mt-3 text-sm font-semibold">{t('recallEmptyTitle')}</h2><p className="mt-1 text-sm text-muted-foreground">{t('recallEmptyDescription')}</p></div>}</div> : null}

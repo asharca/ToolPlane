@@ -5,12 +5,13 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/motion/tabs';
 import { useTheme } from 'next-themes';
 
 import { useTranslations } from 'next-intl';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import type { Terminal as XtermTerminal } from '@xterm/xterm';
 import type { FitAddon as XtermFitAddon } from '@xterm/addon-fit';
-import { ArrowLeft, ChevronRight, Download, FileText, Folder, FolderOpen, Loader2, RefreshCw, TerminalIcon, Trash2, Upload } from 'lucide-react';
+import { ArrowLeft, Download, FileText, Folder, Loader2, RefreshCw, TerminalIcon, Trash2, Upload } from 'lucide-react';
 import { AssistantMarkdown } from '@/components/dashboard/ConversationMessage';
 import { parseSandboxDirectoryText, type SandboxFileEntry } from '@/lib/sandboxes/file-list';
+import { FileTree, FileTreeFile, FileTreeFolder } from '@/components/motion/file-tree';
 
 function terminalTheme() {
   const styles = getComputedStyle(document.documentElement);
@@ -226,7 +227,7 @@ export function SandboxConsole({
   const [entriesByPath, setEntriesByPath] = useState<Record<string, SandboxFileEntry[]>>(() =>
     initialEntries.length ? { [rootPath]: sortedEntries(initialEntries) } : {},
   );
-  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set());
+  const [expandedPaths, setExpandedPaths] = useState<string[]>(() => [rootPath]);
   const [selectedDirectory, setSelectedDirectory] = useState(rootPath);
   const [loadingPath, setLoadingPath] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -257,7 +258,7 @@ export function SandboxConsole({
     async () => {
       setLoadingPath(rootPath);
       setEntriesByPath({});
-      setExpandedPaths(new Set());
+      setExpandedPaths([rootPath]);
       setSelectedDirectory(rootPath);
       setPreview(null);
       setSelectedPath('');
@@ -280,7 +281,7 @@ export function SandboxConsole({
       treeScopeRef.current = key;
       loadedDirectoryRef.current = '';
       setEntriesByPath({});
-      setExpandedPaths(new Set());
+      setExpandedPaths([rootPath]);
       setSelectedDirectory(rootPath);
       setPreview(null);
       setSelectedPath('');
@@ -543,94 +544,31 @@ export function SandboxConsole({
     }
   }
 
-  async function toggleDirectory(path: string) {
+  async function expandDirectories(paths: string[]) {
+    if (!running || loadingPath !== null || uploading) return;
+    setExpandedPaths(paths);
+    const path = paths.find((path) => !expandedPaths.includes(path) && !Object.prototype.hasOwnProperty.call(entriesByPath, path));
+    if (!path) return;
     setFileError('');
-    setSelectedDirectory(path);
-    if (expandedPaths.has(path)) {
-      setExpandedPaths((current) => {
-        const next = new Set(current);
-        next.delete(path);
-        return next;
-      });
-      return;
-    }
-
-    setExpandedPaths((current) => new Set(current).add(path));
-    if (Object.prototype.hasOwnProperty.call(entriesByPath, path)) return;
-
     setLoadingPath(path);
     try {
       const listing = await loadDirectory(path);
       setEntriesByPath((current) => ({ ...current, [path]: listing.entries }));
     } catch (error) {
-      setExpandedPaths((current) => {
-        const next = new Set(current);
-        next.delete(path);
-        return next;
-      });
+      setExpandedPaths((current) => current.filter((entry) => entry !== path));
       setFileError(String(error instanceof Error ? error.message : error));
     } finally {
       setLoadingPath(null);
     }
   }
 
-  function renderTreeEntries(directory: string, depth: number) {
+  function renderTreeEntries(directory: string): ReactNode {
     return (entriesByPath[directory] ?? []).map((entry) => {
-      const fullPath = joinPath(directory, entry.name);
-      const isFolder = entry.type === 'dir';
-      const expanded = isFolder && expandedPaths.has(fullPath);
-      const selected = selectedPath === fullPath;
-      const selectedFolder = isFolder && selectedDirectory === fullPath;
-      const loading = loadingPath === fullPath;
-      const children = entriesByPath[fullPath];
-
-      return (
-        <div
-          key={`${entry.type}:${fullPath}`}
-          role="treeitem"
-          aria-expanded={isFolder ? expanded : undefined}
-          aria-selected={selected || selectedFolder}
-        >
-          <div style={{ paddingLeft: `${depth * 12}px` }} className={`group flex min-h-7 items-center rounded-md transition-colors ${selected || selectedFolder ? 'bg-muted text-accent-foreground' : isFolder ? 'text-foreground hover:bg-muted/70' : 'text-muted-foreground hover:bg-muted/70 hover:text-foreground'}`}>
-            <Button type="button"
-            onClick={() => (isFolder ? void toggleDirectory(fullPath) : void openFile(fullPath))}
-            disabled={!running || loadingPath !== null}
-            aria-expanded={isFolder ? expanded : undefined}
-            title={entry.name}
-            variant="ghost" size="md" className="min-w-0 flex-1">{isFolder ? (
-              <ChevronRight className={`size-[11px] shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`} />
-            ) : (
-              <span aria-hidden className="size-[11px] shrink-0" />
-            )}
-            {loading ? (
-              <Loader2 className="size-4 shrink-0 animate-spin" />
-            ) : isFolder ? (
-              expanded ? <FolderOpen className="size-4 shrink-0" /> : <Folder className="size-4 shrink-0" />
-            ) : (
-              <FileText className="size-4 shrink-0" />
-            )}
-            <span className="min-w-0 flex-1 truncate">{entry.name}</span>
-            {!isFolder ? <span className="shrink-0 text-[10px] opacity-70">{formatSize(entry.size)}</span> : null}</Button>
-            {!isFolder ? (
-              <div className="flex shrink-0 items-center pr-1 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
-                <Button type="button" onClick={() => void downloadFile(fullPath)} disabled={!running || loadingPath !== null} variant="ghost" size="icon" title={t('downloadFile')} aria-label={t('downloadFile')}><Download className="size-3.5" /></Button>
-                <Button type="button" onClick={() => void deleteFile(fullPath)} disabled={!running || loadingPath !== null} variant="ghost" size="icon" title={t('deleteFile')} aria-label={t('deleteFile')}><Trash2 className="size-3.5" /></Button>
-              </div>
-            ) : null}
-          </div>
-          {expanded ? (
-            <div role="group">
-              {loading ? (
-                <div style={{ paddingLeft: `${(depth + 1) * 12 + 26}px` }} className="flex h-7 items-center text-muted-foreground"><Loader2 className="size-3.5 animate-spin" /></div>
-              ) : children?.length ? (
-                renderTreeEntries(fullPath, depth + 1)
-              ) : (
-                <p style={{ paddingLeft: `${(depth + 1) * 12 + 26}px` }} className="py-1.5 pr-2 text-xs text-muted-foreground">{t('noFilesInThisDirectory')}</p>
-              )}
-            </div>
-          ) : null}
-        </div>
-      );
+      const path = joinPath(directory, entry.name);
+      const disabled = !running || loadingPath !== null || uploading;
+      return entry.type === 'dir'
+        ? <FileTreeFolder key={path} value={path} name={entry.name} disabled={disabled} icon={loadingPath === path ? <Loader2 className="size-4 animate-spin" /> : undefined}>{renderTreeEntries(path)}</FileTreeFolder>
+        : <FileTreeFile key={path} value={path} name={entry.name} disabled={disabled} />;
     });
   }
 
@@ -667,6 +605,7 @@ export function SandboxConsole({
   const displayedRootPath = displayWorkspacePath(rootPath, workspaceRoot);
   const rootName = displayedRootPath.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || displayedRootPath;
   const rootEntries = entriesByPath[rootPath];
+  const selectedEntry = (entriesByPath[parentPath(selectedPath)] ?? []).find((entry) => joinPath(parentPath(selectedPath), entry.name) === selectedPath);
 
   const filesPanel = (
     <aside className={compact ? 'flex h-full min-h-0 flex-col overflow-hidden bg-card' : 'rounded-3xl border border-border bg-card order-2 flex min-h-96 flex-col overflow-hidden xl:order-1'}>
@@ -687,24 +626,30 @@ export function SandboxConsole({
           <Button type="button" onClick={() => void refreshTree()} disabled={!running || loadingPath !== null || uploading} variant="ghost" size="icon" title={t('refreshDirectory')} aria-label={t('refreshDirectory')}>{loadingPath === rootPath ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}</Button>
         </div>
       </div>
-      <div role="tree" aria-label={t('files')} className="min-h-0 flex-1 overflow-auto px-2 pb-2">
-        <div role="treeitem" aria-expanded="true" aria-selected={selectedDirectory === rootPath}>
-          <Button type="button" onClick={() => setSelectedDirectory(rootPath)} title={displayedRootPath} variant="ghost" size="md"><ChevronRight className="size-[11px] shrink-0 rotate-90" />
-          <FolderOpen className="size-4 shrink-0" />
-          <span className="min-w-0 flex-1 truncate">{rootName}</span></Button>
-          {fileError && rootEntries ? <p role="alert" className="text-sm text-destructive">{fileError}</p> : null}
-          <div role="group">
-            {rootEntries?.length ? renderTreeEntries(rootPath, 1) : (
-              <p className="px-5 py-5 text-sm text-muted-foreground">
-                {loadingPath === rootPath
-                  ? <Loader2 className="size-4 animate-spin" />
-                  : !running
-                    ? waitingForConnector ? t('waitingForConnectorSession') : t('startTheSandboxToBrowseFiles')
-                    : rootEntries ? t('noFilesInThisDirectory') : fileError || t('noFilesInThisDirectory')}
-              </p>
-            )}
+      <div className="min-h-0 flex-1 overflow-auto px-2 pb-2">
+        <FileTree ariaLabel={t('files')} value={selectedPath || selectedDirectory} expandedIds={expandedPaths} onExpandedChange={(paths) => void expandDirectories(paths)} onValueChange={(path) => {
+          const directory = path === rootPath || (entriesByPath[parentPath(path)] ?? []).some((entry) => joinPath(parentPath(path), entry.name) === path && entry.type === 'dir');
+          setSelectedDirectory(directory ? path : parentPath(path));
+          if (directory) {
+            setSelectedPath('');
+            setPreview(null);
+          } else void openFile(path);
+        }}>
+          <FileTreeFolder value={rootPath} name={rootName} disabled={!running || loadingPath !== null || uploading} icon={loadingPath === rootPath ? <Loader2 className="size-4 animate-spin" /> : undefined}>
+            {renderTreeEntries(rootPath)}
+          </FileTreeFolder>
+        </FileTree>
+        {fileError ? <p role="alert" className="px-3 py-2 text-sm text-destructive">{fileError}</p> : null}
+        {!running || rootEntries?.length === 0 || entriesByPath[selectedDirectory]?.length === 0 ? <p role="status" className="px-3 py-2 text-sm text-muted-foreground">
+          {!running ? waitingForConnector ? t('waitingForConnectorSession') : t('startTheSandboxToBrowseFiles') : t('noFilesInThisDirectory')}
+        </p> : null}
+        {selectedPath && !preview ? <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border p-2">
+          <span className="min-w-0 break-all text-xs text-muted-foreground">{displayWorkspacePath(selectedPath, workspaceRoot)} · {formatSize(selectedEntry?.size ?? null)}</span>
+          <div className="flex items-center gap-1">
+            <Button type="button" onClick={() => void downloadFile(selectedPath)} disabled={!running || loadingPath !== null || uploading} variant="ghost" size="icon" aria-label={t('downloadFile')}><Download className="size-3.5" /></Button>
+            <Button type="button" onClick={() => void deleteFile(selectedPath)} disabled={!running || loadingPath !== null || uploading} variant="ghost" size="icon" aria-label={t('deleteFile')}><Trash2 className="size-3.5" /></Button>
           </div>
-        </div>
+        </div> : null}
       </div>
     </aside>
   );
@@ -714,7 +659,10 @@ export function SandboxConsole({
       <div className={`flex items-center justify-between gap-3 px-4 py-3 ${compact ? '' : 'border-b border-border'}`}>
         <Button type="button" onClick={() => { setPreview(null); setSelectedPath(''); }} variant="ghost" size="icon" className="shrink-0" title={t('close')} aria-label={t('close')}><ArrowLeft className="size-4" /></Button>
         <div className="min-w-0 flex-1 truncate font-mono text-xs font-medium text-foreground">{displayWorkspacePath(preview.path, workspaceRoot)}</div>
+        <span className="shrink-0 text-xs text-muted-foreground">{formatSize(selectedEntry?.size ?? null)}</span>
         <Button type="button" onClick={() => void downloadFile(preview.path)} disabled={loadingPath !== null} variant="ghost" size="icon" className="shrink-0" title={t('downloadFile')} aria-label={t('downloadFile')}><Download className="size-4" /></Button>
+        <Button type="button" onClick={() => void deleteFile(preview.path)} disabled={!running || loadingPath !== null || uploading} variant="ghost" size="icon" title={t('deleteFile')} aria-label={t('deleteFile')}><Trash2 className="size-4" /></Button>
+        {fileError ? <p role="alert" className="text-sm text-destructive">{fileError}</p> : null}
       </div>
       {preview.kind === 'image' && preview.url ? (
         <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto bg-muted/20 p-4">

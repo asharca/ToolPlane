@@ -9,6 +9,7 @@ import { useRef, useState, useTransition, type ChangeEvent, type FormEvent } fro
 import { useTranslations } from 'next-intl';
 import { Eye, FileText, Loader2, Plus, RefreshCw, Trash2, Upload, X } from 'lucide-react';
 import { deleteDeploymentRuntimeFileAction, revealDeploymentRuntimeFileAction, upsertDeploymentRuntimeFileAction, type RuntimeFileMetadata, type RuntimeFilesActionState } from '@/lib/workspace/runtime-files-actions';
+import { FilePathTree } from './FilePathTree';
 
 type Draft = {
   /** A present id means the user explicitly revealed an existing file. */
@@ -93,6 +94,7 @@ export function RuntimeFilesEditor({
   const t = useTranslations('console.mcp');
   const [draft, setDraft] = useState<Draft | null>(null);
   const [savedFiles, setSavedFiles] = useState<RuntimeFileMetadata[]>([]);
+  const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
   const [removedFileIds, setRemovedFileIds] = useState<Set<string>>(() => new Set());
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [revealError, setRevealError] = useState<string | null>(null);
@@ -119,6 +121,7 @@ export function RuntimeFilesEditor({
     }),
     ...savedFiles.filter((file) => !removedFileIds.has(file.id)),
   ].sort((left, right) => left.path.localeCompare(right.path));
+  const selectedFile = files.find((file) => file.id === selectedFileId) ?? files[0];
 
   const clearMutationFeedback = () => {
     setMutationError(null);
@@ -309,26 +312,21 @@ export function RuntimeFilesEditor({
             {t('noRuntimeFiles')}
           </p>
         ) : (
-          files.map((file) => (
-            <div key={file.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
-              <div className="min-w-0">
-                <code className="block break-all font-mono text-xs text-foreground">{file.path}</code>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {formatBytes(file.size)}
-                  <span aria-hidden="true"> · </span>
-                  <time dateTime={file.updatedAt}>{t('runtimeFileUpdated', { value: formatUpdatedAt(file.updatedAt) })}</time>
-                </p>
-              </div>
-              <div className="flex shrink-0 items-center gap-1">
-                <Button type="button" onClick={() => revealFile(file)} disabled={isRevealing || isSaving || isDeleting} aria-busy={isRevealing} variant="ghost" size="sm" className="inline-flex items-center">{isRevealing ? <Loader2 className="size-3.5 animate-spin" /> : <Eye className="size-3.5" />}
-                {isRevealing ? t('revealing') : t('revealAndEdit')}</Button>
-                <Button type="button" onClick={() => removeFile(file)} disabled={isSaving || isRevealing || isDeleting} variant="ghost" size="sm" className="inline-flex items-center">{isDeleting && deletingFileId === file.id
-                  ? <Loader2 className="size-3.5 animate-spin" />
-                  : <Trash2 className="size-3.5" />}
-                {isDeleting && deletingFileId === file.id ? t('removing') : t('remove')}</Button>
-              </div>
+          <div className="grid min-w-0 gap-3 p-3 sm:grid-cols-[minmax(0,16rem)_minmax(0,1fr)]">
+            <div className="max-h-80 min-w-0 overflow-auto">
+              <FilePathTree files={files.map((file) => ({ path: file.path, value: file.id }))} ariaLabel={t('runtimeFiles')} value={selectedFile?.id ?? null} onSelect={setSelectedFileId} disabled={isRevealing || isSaving || isDeleting} />
             </div>
-          ))
+            {selectedFile ? <div className="min-w-0 space-y-3 p-2">
+              <code className="block break-all font-mono text-xs">{selectedFile.path}</code>
+              <p className="text-xs text-muted-foreground">
+                {formatBytes(selectedFile.size)} · <time dateTime={selectedFile.updatedAt}>{t('runtimeFileUpdated', { value: formatUpdatedAt(selectedFile.updatedAt) })}</time>
+              </p>
+              <div className="flex flex-wrap items-center gap-1">
+                <Button type="button" onClick={() => revealFile(selectedFile)} disabled={isRevealing || isSaving || isDeleting} aria-busy={isRevealing} variant="ghost" size="sm">{isRevealing ? <Loader2 className="size-3.5 animate-spin" /> : <Eye className="size-3.5" />}{isRevealing ? t('revealing') : t('revealAndEdit')}</Button>
+                <Button type="button" onClick={() => removeFile(selectedFile)} disabled={isSaving || isRevealing || isDeleting} variant="ghost" size="sm">{isDeleting && deletingFileId === selectedFile.id ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}{isDeleting && deletingFileId === selectedFile.id ? t('removing') : t('remove')}</Button>
+              </div>
+            </div> : null}
+          </div>
         )}
       </div>
 

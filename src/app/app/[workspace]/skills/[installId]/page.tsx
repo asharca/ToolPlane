@@ -19,6 +19,7 @@ import { deleteCustomSkillAction, updateSkillAttributesAction } from '@/lib/skil
 import { skillLabel } from '@/lib/workspace/skill-label';
 import { ConfirmSubmitButton } from '@/components/dashboard/ConfirmSubmitButton';
 import { SkillMarkdownViewer } from '@/components/dashboard/SkillMarkdownViewer';
+import { BundledFiles } from '@/components/dashboard/FilePathTree';
 import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
 
 export const dynamic = 'force-dynamic';
@@ -348,18 +349,7 @@ export default async function SkillInspectorPage({
 
         {extraFiles.length ? (
           <BouncyAccordion items={[{ id: 'files', title: t('bundleFiles'), description: <>
-            <div className="divide-y divide-border">
-              {extraFiles.map((file) => (
-                <BouncyAccordion key={file.path} items={[{ id: 'details', title: <><span className="min-w-0 break-all font-mono text-foreground">
-                      {file.path}
-                    </span>
-                    <span className="text-xs text-muted-foreground">
-                      {formatBytes(file.content)}
-                    </span></>, description: <><pre className="max-h-96 overflow-auto border-t border-border bg-muted/30 p-5 font-mono text-xs leading-6 text-foreground sm:p-6">
-                    {file.content}
-                  </pre></> }]} />
-              ))}
-            </div>
+            <BundledFiles files={extraFiles.map((file) => ({ ...file, size: formatBytes(file.content) }))} ariaLabel={t('bundleFiles')} />
           </> }]} />
         ) : (
           <section className="rounded-xl border border-border bg-muted px-5 py-4 text-sm text-muted-foreground sm:px-6">

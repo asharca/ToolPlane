@@ -1,11 +1,12 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { FileText, X } from 'lucide-react';
+import { Download, X } from 'lucide-react';
 import { Button } from '@/components/motion/button';
 import { Tooltip } from '@/components/motion/tooltip';
 import { AnimatedBadge } from '@/components/motion/animated-badge';
+import { FileTree, FileTreeFile } from '@/components/motion/file-tree';
 import type { ContextUsageSnapshot } from '@/lib/context-usage';
 
 export function ConversationContextUsage({ busy = false, usage }: { busy?: boolean; usage: ContextUsageSnapshot | null }) {
@@ -25,6 +26,7 @@ export function ConversationFilePreview({ file, name, url, mimeType, progress, o
   onRemove?: () => void; removeLabel?: string;
 }) {
   const [localUrl, setLocalUrl] = useState<string>();
+  const downloadRef = useRef<HTMLAnchorElement>(null);
   useEffect(() => {
     if (!file || !file.type.startsWith('image/')) return;
     const objectUrl = URL.createObjectURL(file);
@@ -36,8 +38,13 @@ export function ConversationFilePreview({ file, name, url, mimeType, progress, o
   const source = file ? localUrl : url;
   const image = (file?.type ?? mimeType)?.startsWith('image/');
   return <div className="flex max-w-full items-center gap-2">
-    {image && source ? <img src={source} alt={name} className="max-h-32 max-w-48 object-contain" /> : <FileText aria-hidden className="size-4 shrink-0 text-muted-foreground" />}
-    {url ? <a href={url} download={name} className="min-w-0 truncate text-sm underline underline-offset-4">{name}</a> : <span className="min-w-0 truncate text-sm">{name}</span>}
+    {image ? <>
+      {source ? <img src={source} alt={name} className="max-h-32 max-w-48 object-contain" /> : null}
+      {url ? <a href={url} download={name} className="min-w-0 truncate text-sm underline underline-offset-4">{name}</a> : <span className="min-w-0 truncate text-sm">{name}</span>}
+    </> : <>
+      <FileTree ariaLabel={name} className="min-w-0 max-w-xs flex-1" onValueChange={() => downloadRef.current?.click()}><FileTreeFile value={name} name={name} /></FileTree>
+      {url ? <a ref={downloadRef} href={url} download={name} aria-label={name} className="shrink-0 rounded p-2 text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"><Download className="size-4" /></a> : null}
+    </>}
     {progress !== undefined ? <span role="status" className="text-xs text-muted-foreground">{Math.round(progress * 100)}%</span> : null}
     {onRemove ? <Button type="button" variant="ghost" size="icon" aria-label={removeLabel} onClick={onRemove}><X className="size-4" /></Button> : null}
   </div>;

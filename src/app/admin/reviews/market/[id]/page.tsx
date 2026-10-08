@@ -13,6 +13,7 @@ import { ReleaseChanges } from '@/components/admin/ReleaseChanges';
 import { LogTimestamp } from '@/components/admin/LogUI';
 import { adminHref, adminReturnHref } from '@/lib/admin/navigation';
 import { MarketReleaseReviewActions } from '@/components/admin/MarketReleaseReviewActions';
+import { BundledFiles, FilePathLinks } from '@/components/dashboard/FilePathTree';
 import { listCategories } from '@/lib/admin/categories';
 import { requireAdmin } from '@/lib/auth/admin';
 import { db } from '@/lib/db';
@@ -112,7 +113,7 @@ export default async function AdminMarketReviewPage({ params, searchParams }: {
   const piReview = listing.kind === 'pi-package' ? readPiPackageReview(release.manifest, release.checksum, release.releaseNotes) : null;
   const piManifest = piReview?.manifest ?? null;
   const piScan = piReview?.scan ?? null;
-  const selectedFile = piManifest?.package.entries.find((entry) => entry.type === 'file' && entry.path === query.path);
+  const selectedFile = piManifest?.package.entries.find((entry) => entry.path === query.path);
   const selectedText = selectedFile?.type === 'file' ? previewText(selectedFile.content) : null;
 
   return (
@@ -196,19 +197,7 @@ export default async function AdminMarketReviewPage({ params, searchParams }: {
                             {t('marketReleaseBundledFiles', { count: skillManifest.skill.files.length })}
                           </h3>
                           {skillManifest.skill.files.length > 0 ? (
-                            <div className="mt-2 divide-y divide-border border-y border-border">
-                              {skillManifest.skill.files.map((file) => (
-                                <details key={file.path}>
-                                  <summary className="flex cursor-pointer items-center justify-between gap-3 py-3 font-mono text-xs text-foreground">
-                                    <span className="min-w-0 break-all">{file.path}</span>
-                                    <span className="shrink-0 text-muted-foreground">{file.encoding ?? 'utf8'}</span>
-                                  </summary>
-                                  <pre className="mb-3 max-h-[36rem] overflow-auto whitespace-pre-wrap break-words bg-muted/45 p-3 font-mono text-xs leading-6 text-foreground">
-                                    {file.content}
-                                  </pre>
-                                </details>
-                              ))}
-                            </div>
+                            <BundledFiles files={skillManifest.skill.files.map((file) => ({ ...file, encoding: file.encoding ?? 'utf8' }))} ariaLabel={t('marketReleaseBundledFiles', { count: skillManifest.skill.files.length })} />
                           ) : (
                             <p className="mt-2 text-sm text-muted-foreground">{t('marketReleaseNoBundledFiles')}</p>
                           )}
@@ -343,7 +332,7 @@ export default async function AdminMarketReviewPage({ params, searchParams }: {
                           <h3 className="text-sm font-semibold">{t('marketPiPackageResources')}</h3>
                           {Object.entries(piManifest.package.resources).map(([kind, paths]) => <div key={kind} className="mt-2 text-xs">
                             <h4 className="font-medium">{kind}</h4>
-                            <ul className="mt-1 space-y-1 break-all font-mono">{paths.map((path) => <li key={path}>{path}</li>)}</ul>
+                            <FilePathLinks files={paths.map((path) => ({ path, value: path, href: adminHref(`/admin/reviews/market/${id}`, { releaseId: release.id, returnTo: backHref, path }) }))} ariaLabel={kind} value={query.path ?? null} />
                           </div>)}
                         </section>
                         <section>
@@ -353,21 +342,15 @@ export default async function AdminMarketReviewPage({ params, searchParams }: {
                             bytes: piManifest.package.entries.reduce((total, entry) => total + (entry.type === 'file' ? decodedFileSize(entry.content) : 0), 0),
                           })}</p>
                           <div className="mt-2 max-h-[36rem] overflow-auto border-y border-border">
-                            <table className="w-full text-left font-mono text-xs">
-                              <thead><tr><th className="p-2">{t('marketPiPackagePath')}</th><th className="p-2">{t('marketPiPackageBytes')}</th><th className="p-2">SHA-256 / {t('marketPiPackageEntryType')}</th></tr></thead>
-                              <tbody>{piManifest.package.entries.map((entry) => <tr key={entry.path} className="border-t border-border/60 align-top">
-                                <td className="break-all p-2">{entry.type === 'file' ? <Link className="underline" href={adminHref(`/admin/reviews/market/${id}`, { releaseId: release.id, returnTo: backHref, path: entry.path })}>{entry.path}</Link> : entry.path}</td>
-                                <td className="whitespace-nowrap p-2">{entry.type === 'file' ? decodedFileSize(entry.content) : '—'}</td>
-                                <td className="break-all p-2">{entry.type === 'file' ? <>{entry.sha256}{entry.executable ? <span className="block">{t('marketPiPackageExecutable')}</span> : null}</> : entry.type === 'symlink' ? `symlink → ${entry.target}` : entry.type}</td>
-                              </tr>)}</tbody>
-                            </table>
+                            <FilePathLinks files={piManifest.package.entries.map((entry) => ({ path: entry.path, value: entry.path, directory: entry.type === 'directory', href: adminHref(`/admin/reviews/market/${id}`, { releaseId: release.id, returnTo: backHref, path: entry.path }) }))} ariaLabel={t('marketPiPackageInventory')} value={query.path ?? null} />
                           </div>
                         </section>
                         {selectedFile?.type === 'file' ? <section>
                           <h3 className="break-all font-mono text-sm font-semibold">{selectedFile.path}</h3>
                           <p className="mt-1 break-all font-mono text-xs">{decodedFileSize(selectedFile.content)} bytes · SHA-256 {selectedFile.sha256}</p>
+                          {selectedFile.executable ? <p className="text-xs text-muted-foreground">{t('marketPiPackageExecutable')}</p> : null}
                           {selectedText !== null ? <pre className="mt-2 max-h-[36rem] overflow-auto whitespace-pre-wrap break-words bg-muted/45 p-3 font-mono text-xs leading-6">{selectedText}</pre> : <p className="mt-2 text-sm text-muted-foreground">{t('marketPiPackageBinaryPreview')}</p>}
-                        </section> : query.path ? <p role="alert" className="text-sm text-destructive">{t('marketPiPackageFileMissing')}</p> : null}
+                        </section> : selectedFile ? <section className="break-all font-mono text-xs"><h3>{selectedFile.path}</h3><p>{selectedFile.type === 'symlink' ? `symlink → ${selectedFile.target}` : selectedFile.type}</p></section> : query.path ? <p role="alert" className="text-sm text-destructive">{t('marketPiPackageFileMissing')}</p> : null}
                       </div>
                     ) : (
                       <p role="alert" className="text-sm text-destructive">{t('errorInvalidMarketRelease')}</p>

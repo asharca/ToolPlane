@@ -9,6 +9,7 @@ import { useActionState, useState } from 'react';
 import { Plus, FileText, GitBranch, Upload } from 'lucide-react';
 import { createCustomSkillAction, importSkillFromGithubAction, uploadSkillFolderAction } from '@/lib/skills/actions';
 import { DEFAULT_SKILL_IMPORT_SKILLS, MAX_SKILL_FILE_BYTES, MAX_SKILL_IMPORT_BYTES, MAX_SKILL_IMPORT_FILES } from '@/lib/skills/limits';
+import { FilePathTree } from './FilePathTree';
 
 type Mode = 'menu' | 'create' | 'github' | 'upload';
 type FolderSelection = {
@@ -134,6 +135,9 @@ function UploadSkillForm({ slug, maxSkillImportSkills, onBack }: { slug: string;
                     <p className={`text-xs ${folder.error ? 'text-destructive dark:text-destructive' : 'text-muted-foreground'}`}>
                       {folder.error ?? `${folder.count} ${t('filesSelected')} · ${formatBytes(folder.bytes)}`}
                     </p>
+                    {folder.paths.length ? <div className="max-h-64 overflow-auto rounded-lg border border-border p-2">
+                      <FilePathTree files={folder.paths.map((path) => ({ path, value: path }))} ariaLabel={t('bundleFiles')} disabled={isPending} />
+                    </div> : null}
                     {displayedSkillRoots.length > 0 ? (
                       <div className="rounded-lg border border-border bg-muted/50 p-3">
                         <p className="text-xs font-medium text-foreground">
