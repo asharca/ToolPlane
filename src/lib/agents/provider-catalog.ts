@@ -44,21 +44,25 @@ export function matchingPiModelReferences(
   format: string,
   queries: string[],
   baseUrl?: string,
+  providerName?: string,
 ): PiModelReference[] {
   const names = [...new Set(queries.map((query) => query.trim().toLowerCase()).filter(Boolean))];
   if (!names.length) return [];
   const providers = builtinProviders().map((provider) => ({ provider, models: provider.getModels() }));
   const selectedProvider = piProviderId(format);
+  const namedProvider = providerName
+    ? providers.find(({ provider }) => provider.id.toLowerCase() === providerName.trim().toLowerCase())
+    : undefined;
   const host = hostname(baseUrl);
   const hostProviders = host ? providers.filter(({ provider, models }) => (
     hostname(provider.baseUrl) === host || models.some((model) => hostname(model.baseUrl) === host)
   )) : [];
   const scoped = selectedProvider !== null
     ? providers.filter(({ provider }) => provider.id === selectedProvider)
-    : hostProviders.length ? hostProviders : providers;
+    : namedProvider ? [namedProvider] : hostProviders.length ? hostProviders : providers;
   // A compatible proxy uses the protocol's native catalog as its reference,
   // not whichever reseller happens to appear first in Pi's provider list.
-  const fallbackProvider = selectedProvider === null && !hostProviders.length
+  const fallbackProvider = selectedProvider === null && !namedProvider && !hostProviders.length
     ? format === 'openai-responses' ? 'openai' : format
     : null;
 
@@ -69,8 +73,16 @@ export function matchingPiModelReferences(
     const matches = byId.length ? byId : scoped.flatMap(({ provider, models }) => models
       .filter((model) => model.name.toLowerCase() === name)
       .map((model) => ({ provider, model })));
+    const first = matches[0]?.model;
+    const sameMetadata = first && matches.every(({ model }) => (
+      model.contextWindow === first.contextWindow
+      && model.maxTokens === first.maxTokens
+      && model.reasoning === first.reasoning
+      && JSON.stringify(model.input) === JSON.stringify(first.input)
+      && JSON.stringify(model.cost) === JSON.stringify(first.cost)
+    ));
     const match = matches.find(({ provider }) => provider.id === fallbackProvider)
-      ?? (matches.length === 1 ? matches[0] : undefined);
+      ?? (matches.length === 1 || sameMetadata ? matches[0] : undefined);
     if (matches.length && !match) return [];
     if (!match) continue;
     const { provider, model } = match;

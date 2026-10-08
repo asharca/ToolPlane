@@ -16,6 +16,7 @@ function Composer({ sandboxId = 'sandbox-1', onSubmit = vi.fn(), runtimeKind }: 
   const [error, setError] = useState<string | null>(null);
   return <><WorkComposer key={sandboxId} agentId="agent-1" sandboxId={sandboxId} workSessionId="work-1" conversationId="conversation-1"
     commands={runtimeKind ? runtimeCommands(runtimeKind) : []}
+    runtimeKind={runtimeKind ?? ''}
     draft={draft} onDraftChange={setDraft} references={references} onReferencesChange={setReferences}
     attachments={attachments} onAttachmentsChange={setAttachments} disabled={false} supportsAttachments
     onSubmit={() => onSubmit(references)} onPendingChange={setPending} onError={setError}
@@ -46,6 +47,16 @@ describe('Work composer', () => {
     await user.clear(input());
     await user.click(screen.getByRole('button', { name: 'Open tools' }));
     expect(screen.queryByRole('option', { name: /\/compact/ })).not.toBeInTheDocument();
+  });
+
+  it('submits a case-sensitive SDK command before any live catalog is available', async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    render(<Composer runtimeKind="pi-sdk" onSubmit={onSubmit} />);
+    await user.type(input(), '/Review:1');
+    await user.keyboard('{Enter}');
+    expect(onSubmit).toHaveBeenCalledOnce();
+    expect(input()).toHaveValue('/Review:1');
   });
 
   it('filters tools from search and preserves keyboard selection, back navigation and draft', async () => {

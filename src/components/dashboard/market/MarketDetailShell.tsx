@@ -19,6 +19,7 @@ export function MarketDetailHeader({
   title,
   summary,
   publisher,
+  actions,
   facts,
   tags = [],
 }: {
@@ -30,6 +31,7 @@ export function MarketDetailHeader({
   title: string;
   summary?: string | null;
   publisher?: string | null;
+  actions?: ReactNode;
   facts: { label: string; value: ReactNode }[];
   tags?: DetailTag[];
 }) {
@@ -55,6 +57,7 @@ export function MarketDetailHeader({
           <h1 className="mt-2 text-2xl font-semibold text-foreground sm:text-3xl">{title}</h1>
           {publisher ? <p className="mt-1.5 text-xs text-muted-foreground">{publisher}</p> : null}
           {summary ? <p className="mt-3 max-w-3xl text-sm leading-6 text-muted-foreground">{summary}</p> : null}
+          {actions ? <div className="mt-4">{actions}</div> : null}
           <dl className="mt-4 flex flex-wrap gap-x-5 gap-y-2 text-xs text-muted-foreground">
             {facts.map((fact) => (
               <div key={fact.label} className="inline-flex items-center gap-1.5">

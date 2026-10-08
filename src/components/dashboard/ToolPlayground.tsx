@@ -120,6 +120,9 @@ export function ToolPlayground({
   }
 
   function inspectorError(error: string): string {
+    if (error === 'notAuthorized' || error === 'deploymentNotFound') return t('toolAccessDenied');
+    if (error === 'invalidToolCall') return t('invalidToolCall');
+    if (error === 'toolDiscoveryFailed') return t('toolDiscoveryFailed');
     if (error === 'sandboxRequired') return t('connectInspectorFirst');
     if (error === 'sandboxNotRunning') return t('startSandboxFirst');
     if (error === 'sandboxNetworkDisabled') return t('sandboxNetworkDisabled');
@@ -127,7 +130,7 @@ export function ToolPlayground({
     if (error === 'deploymentNotRunning') return t('requestFailedDeploymentRunning');
     if (error === 'credentialsRequired') return t('connectorCredentialsRequired');
     if (error === 'authenticationFailed') return t('connectorAuthenticationFailed');
-    return t('sandboxConnectionFailed');
+    return t(defaultRuntime ? 'toolCallFailed' : 'sandboxConnectionFailed');
   }
 
   function onSandboxChange(nextSandboxId: string) {
@@ -216,7 +219,7 @@ export function ToolPlayground({
             arguments: parsedArgs as Record<string, unknown>,
           });
       if (response.error) {
-        setLog({ request, response, durationMs: Math.round(performance.now() - startedAt) });
+        setLog({ request, response: null, durationMs: Math.round(performance.now() - startedAt) });
         setError(response.error === 'toolCallFailed'
           ? t('toolCallFailed')
           : inspectorError(response.error));

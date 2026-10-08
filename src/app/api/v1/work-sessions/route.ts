@@ -75,8 +75,8 @@ export const POST = withRequestLogging("/api/v1/work-sessions", async function P
     return Response.json({ error: 'Invalid workingDirectory' }, { status: 400 });
   }
   const agent = await getAgentForRequest(body.agentId, user.id);
-  const command = parseRuntimeCommand(body.task);
-  if (agent && command && !runtimeCommands(agent.runtimeKind).some((item) => item.name === command.name)) return Response.json({ error: 'unsupportedCommand' }, { status: 400 });
+  const command = agent ? parseRuntimeCommand(body.task, agent.runtimeKind) : null;
+  if (agent && agent.runtimeKind !== 'pi-sdk' && command && !runtimeCommands(agent.runtimeKind).some((item) => item.name === command.name)) return Response.json({ error: 'unsupportedCommand' }, { status: 400 });
   if (command && (body.task.length > 2000 || references.data.length || (Array.isArray(body.attachmentIds) && body.attachmentIds.length))) return Response.json({ error: 'Invalid command input.' }, { status: 400 });
   if (!agent) return Response.json({ error: 'Agent not found' }, { status: 404 });
   const hasHermesSelection = body.hermesProfile !== undefined

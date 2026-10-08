@@ -6,6 +6,7 @@ import { BouncyAccordion } from '@/components/motion/bouncy-accordion';
 import Link from 'next/link';
 import { ArrowRight, Braces, Wrench } from 'lucide-react';
 import type { McpToolDefinition } from '@/lib/process/mcp-tool-catalog';
+import { DashboardTable } from '@/components/dashboard/DashboardTable';
 
 type Labels = {
   title: string;
@@ -161,37 +162,18 @@ export function McpToolCatalog({
                   </div>
 
                   {Object.keys(properties).length ? (
-                    <div tabIndex={0} role="region" aria-label={labels.inputSchema} className="mt-3 max-w-full overflow-x-auto overscroll-x-contain rounded-md bg-background/70">
-                      <table className="w-full min-w-[36rem] table-fixed text-left text-xs [overflow-wrap:anywhere]">
-                        <thead className="text-muted-foreground">
-                          <tr>
-                            <th className="px-3 py-2 font-medium">{labels.parameter}</th>
-                            <th className="px-3 py-2 font-medium">{labels.type}</th>
-                            <th className="px-3 py-2 font-medium">{labels.required}</th>
-                            <th className="w-2/5 px-3 py-2 font-medium">{labels.descriptionColumn ?? labels.description}</th>
-                            <th className="px-3 py-2 font-medium">{labels.defaultValue}</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {Object.entries(properties).map(([name, value]) => {
-                            const property = object(value) ?? {};
-                            return (
-                              <tr key={name} className="align-top">
-                                <td className="px-3 py-2.5"><code className="font-mono text-foreground">{name}</code></td>
-                                <td className="px-3 py-2.5 font-mono text-muted-foreground">{schemaType(property)}</td>
-                                <td className="px-3 py-2.5 text-muted-foreground">{required.has(name) ? labels.required : '—'}</td>
-                                <td className="max-w-md px-3 py-2.5 leading-5 text-muted-foreground">
-                                  {typeof property.description === 'string' ? property.description : '—'}
-                                </td>
-                                <td className="px-3 py-2.5 font-mono text-muted-foreground">
-                                  {formattedValue(property.default) ?? '—'}
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
+                    <DashboardTable className="mt-3" minWidth="36rem" ariaLabel={labels.inputSchema} headers={[
+                      { label: labels.parameter }, { label: labels.type }, { label: labels.required },
+                      { label: labels.descriptionColumn ?? labels.description, width: '40%' }, { label: labels.defaultValue },
+                    ]} rows={Object.entries(properties).map(([name, value]) => {
+                      const property = object(value) ?? {};
+                      return { id: name, cells: [
+                        <code key="name" className="font-mono">{name}</code>, schemaType(property),
+                        required.has(name) ? labels.required : '—',
+                        <span key="description" title={typeof property.description === 'string' ? property.description : undefined}>{typeof property.description === 'string' ? property.description : '—'}</span>,
+                        <code key="default" title={formattedValue(property.default) ?? undefined}>{formattedValue(property.default) ?? '—'}</code>,
+                      ] };
+                    })} />
                   ) : (
                     <p className="mt-2 text-sm text-muted-foreground">{labels.noArguments}</p>
                   )}

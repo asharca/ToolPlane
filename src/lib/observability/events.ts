@@ -6,10 +6,24 @@ import { redactText, sanitizeLog } from './redaction';
 import { getLogSettings } from './settings';
 import type { PayloadPolicy } from './payload';
 import { version } from '../../../package.json';
+import { z } from 'zod';
+
+const logId = z.string().max(200).optional();
+export const a2aLogMetadataSchema = z.object({
+  direction: z.enum(['inbound', 'outbound', 'internal']),
+  transport: z.enum(['jsonrpc', 'mcp', 'entry']),
+  endpointId: logId, clientId: logId, remoteAgentId: logId,
+  taskId: logId, contextId: logId, rootTaskId: logId, parentTaskId: logId,
+  entryKind: z.enum(['chat', 'work', 'channel', 'control']).optional(),
+  taskState: z.string().regex(/^TASK_STATE_(?:SUBMITTED|WORKING|COMPLETED|FAILED|CANCELED|INPUT_REQUIRED|REJECTED|AUTH_REQUIRED)$/).optional(),
+  rpcErrorCode: z.number().int().safe().optional(),
+  streamEventCount: z.number().int().safe().nonnegative().optional(),
+});
+export type A2ALogMetadata = z.infer<typeof a2aLogMetadataSchema>;
 
 export type LogOutcome = 'success' | 'error' | 'timeout' | 'cancelled' | 'denied';
 export type LogEntry = Partial<Omit<LogContext, 'secrets'>> & {
-  domain: 'http' | 'mcp' | 'agent' | 'runtime' | 'channel' | 'plugin' | 'system';
+  domain: 'http' | 'mcp' | 'a2a' | 'agent' | 'runtime' | 'channel' | 'plugin' | 'system';
   eventName: string;
   message?: string;
   level?: 'debug' | 'info' | 'warn' | 'error';
@@ -25,6 +39,8 @@ export type LogEntry = Partial<Omit<LogContext, 'secrets'>> & {
   error?: unknown;
   attributes?: unknown;
   detail?: unknown;
+  a2a?: A2ALogMetadata;
+  detailTruncated?: boolean;
   payloadPolicy?: PayloadPolicy;
   secrets?: readonly string[];
 };
@@ -66,9 +82,9 @@ function agentTelemetry(value: unknown): Record<string, number | string> {
 async function persistEvent(entry: LogEntry): Promise<void> {
   if (!getLogContext()) return withLogContext({}, () => recordEvent(entry));
   const { secrets: contextSecrets, suppressPayload: contextSuppressPayload, ...context } = getLogContext()!;
-  const { error, attributes, detail, payloadPolicy = 'metadata-only', secrets: extraSecrets, suppressPayload, ...fields } = entry;
+  const { error, attributes, detail, a2a, detailTruncated, payloadPolicy = 'metadata-only', secrets: extraSecrets, suppressPayload, ...fields } = entry;
   const secrets = [...(contextSecrets ?? []), ...(extraSecrets ?? [])];
-  const sensitive = Boolean(contextSuppressPayload || suppressPayload || payloadPolicy === 'agent-content' || payloadPolicy === 'forbidden' || entry.domain === 'agent' || context.agentId || entry.agentId);
+  const sensitive = Boolean(contextSuppressPayload || suppressPayload || payloadPolicy === 'request-response' || payloadPolicy === 'agent-content' || payloadPolicy === 'forbidden' || entry.domain === 'agent' || context.agentId || entry.agentId);
   const occurredAt = entry.occurredAt ?? new Date();
   const outcome = fields.outcome ?? (error ? errorOutcome(error) : 'success');
   const errorType = sensitive ? (error ? 'Error' : undefined) : error instanceof Error ? error.name : error ? 'Error' : undefined;
@@ -80,7 +96,9 @@ async function persistEvent(entry: LogEntry): Promise<void> {
   }, secrets, 8192).data as Record<string, unknown>;
   if (!safe || typeof safe !== 'object') throw new Error('Log metadata exceeds limit');
   safe.message = redactText(String(safe.message ?? entry.eventName), secrets).slice(0, 1024);
-  const safeAttributes = sanitizeLog({ data: sensitive ? agentTelemetry(attributes) : attributes ?? {}, instance: process.pid, version }, secrets, 4096).data;
+  const validatedA2a = a2a ? Object.fromEntries(Object.entries(a2aLogMetadataSchema.parse(a2a)).filter(([, value]) => value !== undefined)) : undefined;
+  const attributeData = validatedA2a ? { ...agentTelemetry(attributes), a2a: validatedA2a } : sensitive ? agentTelemetry(attributes) : attributes ?? {};
+  const safeAttributes = sanitizeLog({ data: attributeData, instance: process.pid, version }, secrets, 4096).data;
   const fallback = { ...safe, occurredAt: occurredAt.toISOString(), attributes: safeAttributes, ...(error && !sensitive ? { error: sanitizeLog(error, secrets).data } : {}) };
   // All output is already sanitized. Never use console here (it can be captured).
   emit(JSON.stringify(fallback));
@@ -107,12 +125,12 @@ async function persistEvent(entry: LogEntry): Promise<void> {
       const capture = workspaceMcpPayload || (
         !(contextSuppressPayload || suppressPayload)
         && payloadPolicy !== 'forbidden' && payloadPolicy !== 'metadata-only'
-        && settings.captures.some((item) => new Date(item.expiresAt).getTime() > Date.now() && safe[item.field] === item.id
-          && (payloadPolicy !== 'agent-content' || item.includeAgentContent === true))
+        && (payloadPolicy === 'request-response' || settings.captures.some((item) => new Date(item.expiresAt).getTime() > Date.now() && safe[item.field] === item.id
+          && (payloadPolicy !== 'agent-content' || item.includeAgentContent === true)))
       );
       const payload = capture && typeof detail === 'function' ? await detail() : detail;
       const safeError = sensitive ? (error ? { name: errorType } : undefined) : error;
-      const details = sanitizeLog({ ...(safeError ? { error: safeError } : {}), ...(capture && detail !== undefined ? { payload } : {}) }, secrets);
+      const details = sanitizeLog({ ...(safeError ? { error: safeError } : {}), ...(capture && detail !== undefined ? { workspaceMcpPayload, payload } : {}) }, secrets, 32_768, payloadPolicy === 'request-response' ? 16 : 8);
       const hasDetail = Boolean(error) || (capture && detail !== undefined);
       await tx.logEvent.create({ data: {
         ...safe,
@@ -122,8 +140,8 @@ async function persistEvent(entry: LogEntry): Promise<void> {
         attributes: safeAttributes as Prisma.InputJsonValue,
         ...(hasDetail ? { detail: { create: {
           data: details.data as Prisma.InputJsonValue,
-          truncated: details.truncated,
-          expiresAt: new Date(Date.now() + Math.min(settings.detailDays, payloadPolicy === 'agent-content' ? 1 : settings.detailDays) * 86_400_000),
+          truncated: Boolean(detailTruncated || details.truncated),
+          expiresAt: new Date(Date.now() + Math.min(settings.detailDays, settings.eventDays ?? settings.detailDays, workspaceMcpPayload || payloadPolicy === 'request-response' || payloadPolicy === 'agent-content' ? 1 : settings.detailDays) * 86_400_000),
         } } } : {}),
       } });
     }, { maxWait: 500, timeout: 1500 });

@@ -37,6 +37,7 @@ type UpdateResult = {
 
 type LocalUpdateStatus = {
   runtimeId?: string;
+  runtimeReady?: boolean;
   currentVersion: string;
   artifactName: string;
   updateJob?: {
@@ -112,22 +113,22 @@ export async function waitForSystemUpdateReady(
       if (response.ok) {
         const data = (await response.json()) as LocalUpdateStatus;
         options.onProgress?.(data.updateJob);
-        const versionReady = expectedVersion
-          ? versionsMatch(data.currentVersion, expectedVersion)
-          : Boolean(options.previousRuntimeId);
-        const runtimeReady = options.previousRuntimeId
-          ? data.runtimeId !== options.previousRuntimeId
-          : true;
-        if (versionReady && runtimeReady) {
-          return { status: 'ready' };
-        }
         if (data.updateJob?.status === 'failed') {
           return {
             status: 'failed',
             message: data.updateJob.message ?? options.fallbackFailureMessage ?? 'System update failed.',
           };
         }
-        if (data.updateJob?.status === 'idle') {
+        const versionReady = expectedVersion
+          ? versionsMatch(data.currentVersion, expectedVersion)
+          : Boolean(options.previousRuntimeId);
+        const runtimeReplaced = options.previousRuntimeId
+          ? Boolean(data.runtimeId && data.runtimeId !== options.previousRuntimeId)
+          : true;
+        if (versionReady && runtimeReplaced) {
+          // A new HTTP process can still be recovering or blocked by ownership.
+          if (data.runtimeReady === true) return { status: 'ready' };
+        } else if (data.updateJob?.status === 'idle') {
           return {
             status: 'failed',
             message: options.requestNotStartedMessage ?? 'The update request did not start.',

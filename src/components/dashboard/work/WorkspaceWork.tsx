@@ -67,7 +67,6 @@ import { normalizeReasoningEffort, type ReasoningEffort } from '@/lib/agents/con
 import { displayMessagingUserText, type ParsedMessagingSession } from '@/lib/agents/messaging';
 import { activeConversationMessages, isConversationControl, messageCompaction } from '@/lib/agents/conversation-context';
 import { COMMAND_RESULT_PART, parseRuntimeCommand, sessionRuntimeCommands } from '@/lib/agents/runtime-commands';
-import type { executeRuntimeCommand } from '@/lib/agents/runtime-command-service';
 import {
   usePersistentBoolean,
   usePersistentBooleanRecord,
@@ -238,6 +237,7 @@ function agentSidebarIssueTone(agent: WorkAgent | undefined, hasRunningSession: 
 }
 
 function runtimeLabel(kind: string | null | undefined): string {
+  if (kind === 'pi-sdk') return 'Pi SDK';
   if (kind === 'claude-code') return 'Claude Code';
   if (kind === 'dsh') return 'DeepSeek Harness';
   if (kind === 'hermes') return 'Hermes';
@@ -703,7 +703,8 @@ export function WorkspaceWork({
   const controlWorkspaceRoot = controlSandbox?.kind === 'hermes' ? '/opt/data/workspace' : '/workspace';
   const composerScope = `${controlAgent?.id}:${controlSandbox?.id}:${selected?.id ?? conversation?.id ?? 'new'}`;
   const references = referenceSelection.scope === composerScope ? referenceSelection.items : [];
-  const commands = sessionRuntimeCommands(selected?.runtimeKind ?? controlAgent?.runtimeKind ?? '', selected?.messages ?? []);
+  const commandRuntimeKind = selected?.runtimeKind ?? controlAgent?.runtimeKind ?? '';
+  const commands = sessionRuntimeCommands(commandRuntimeKind, selected?.messages ?? []);
   const workspaceRpcApiBase = selected
     ? `/api/v1/work-sessions/${selected.id}/sandbox/rpc`
     : controlSandbox ? `/api/v1/mcp/${controlSandbox.deploymentId}/rpc` : undefined;
@@ -722,6 +723,7 @@ export function WorkspaceWork({
   const pendingApprovals = selected?.approvals.filter((approval) => approval.status === 'pending') ?? [];
   const selectedStatus = selected?.status;
   const visibleError = error ?? selected?.error;
+  const runtimeErrorCode = visibleError?.match(/\bPI_[A-Z_]+\b/)?.[0];
 
   useEffect(() => {
     if (selected || conversation || activeSandbox?.status !== 'provisioning') return;
@@ -1071,13 +1073,14 @@ export function WorkspaceWork({
     if (conversation || busy || running || composerPending) return;
     const input = draft.trim();
     if (!input) return;
-    const command = parseRuntimeCommand(input);
+    const command = parseRuntimeCommand(input, commandRuntimeKind);
     if (command && command.name !== 'new') {
-      if (!commands.some((item) => item.name === command.name)) { setError(commandsT('unsupportedCommand')); return; }
+      if (commandRuntimeKind !== 'pi-sdk' && !commands.some((item) => item.name === command.name)) { setError(commandsT('unsupportedCommand')); return; }
       if (attachments.length || references.length) { setError(commandsT('noAttachments')); return; }
       if (input.length > 2000) { setError(commandsT('invalidCommand')); return; }
       {
         if (!selected) {
+          if (commandRuntimeKind === 'pi-sdk' && canSend) return createWork();
           setError(commandsT('needsConversation')); return;
         }
         setBusy('command'); setError(null);
@@ -1085,7 +1088,7 @@ export function WorkspaceWork({
           const response = await fetch(`/api/v1/agents/${encodeURIComponent(selected.agentId)}/conversations/${encodeURIComponent(selected.conversationId)}/commands`, {
             method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ line: input }),
           });
-          const result = await response.json() as Awaited<ReturnType<typeof executeRuntimeCommand>> & { error?: string };
+          const result = await response.json() as { error?: string };
           if (!response.ok) throw new Error(result.error && commandsT.has(result.error) ? commandsT(result.error) : result.error || commandsT('failed'));
           setDraft('');
           await refreshSelected();
@@ -1204,7 +1207,7 @@ export function WorkspaceWork({
         && activeSandbox
         && (activeSandbox.running || agent?.runtimeKind === 'hermes'),
       );
-  const localCommand = Boolean(parseRuntimeCommand(draft));
+  const localCommand = Boolean(parseRuntimeCommand(draft, commandRuntimeKind));
 
   function togglePanel(panel: WorkPanel) {
     if (typeof window.matchMedia === 'function' && window.matchMedia('(min-width: 1280px)').matches) {
@@ -1398,7 +1401,7 @@ export function WorkspaceWork({
         </header>
 
         {conversation?.readOnly ? <div className="mx-auto w-full max-w-3xl px-4 py-2">{modelPicker}</div> : null}
-        {visibleError ? <p role="alert" className="shrink-0 border-b border-destructive/20 bg-destructive/5 px-4 py-2 text-xs text-destructive">{visibleError}</p> : null}
+        {visibleError ? <p role="alert" className="shrink-0 border-b border-destructive/20 bg-destructive/5 px-4 py-2 text-xs text-destructive">{runtimeErrorCode ? commandsT(commandsT.has(runtimeErrorCode) ? runtimeErrorCode : 'sdkExecutionFailed') : visibleError}</p> : null}
         {conversation && !conversation.readOnly && controlAgent ? (
           <AgentConversation
             key={conversation.id}
@@ -1456,7 +1459,7 @@ export function WorkspaceWork({
             )}
         </MessageScroller>}
 
-        {!conversation && <div className="mx-auto w-full max-w-3xl shrink-0 px-4">
+        {!conversation && <div className="mx-auto w-full max-w-3xl shrink-0 px-4 pb-2">
           <div>
             {pendingApprovals.length ? <div className="space-y-3">{pendingApprovals.map((approval) => <ToolApproval key={approval.id} tool={approval.toolName} title={t('approvalRequired')} status={busy ? 'approving' : 'pending'} parameters={[{ id: 'input', label: t('details'), value: <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words">{formatValue(approval.input)}</pre> }]} onApprove={() => { if (!busy) void decideApproval(approval.id, 'allow'); }} onDeny={() => { if (!busy) void decideApproval(approval.id, 'deny'); }} />)}</div> : (
               <WorkComposer key={composerScope}
@@ -1465,6 +1468,7 @@ export function WorkspaceWork({
                 workSessionId={selected?.id}
                 conversationId={selected?.conversationId}
                 commands={commands}
+                runtimeKind={commandRuntimeKind}
                 draft={draft}
                 onDraftChange={setDraft}
                 attachments={attachments}

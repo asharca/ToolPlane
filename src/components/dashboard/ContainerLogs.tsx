@@ -4,7 +4,11 @@ import { Button } from '@/components/motion/button';
 
 import { RefreshCw } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useTranslations } from 'next-intl';
+import { Input } from '@/components/motion/input';
+import { CopyButton } from './CopyButton';
+import { StatusBadge } from './StatusBadge';
 
 export type DeploymentRuntimeSnapshotView = {
   status: string;
@@ -98,6 +102,12 @@ export function ContainerLogs({
   truncatedLabel: string;
 }) {
   const router = useRouter();
+  const t = useTranslations('console.mcp');
+  const [query, setQuery] = useState('');
+  const [wrap, setWrap] = useState(true);
+  const [following, setFollowing] = useState(true);
+  const followRef = useRef(true);
+  const viewportRef = useRef<HTMLDivElement>(null);
   const [snapshot, setSnapshot] = useState<DeploymentRuntimeSnapshotView | null>(initialSnapshot);
   const [runtimeStatus, setRuntimeStatus] = useState(initialSnapshot?.status ?? initialStatus);
   const [logView, setLogView] = useState<RuntimeLogView>({
@@ -112,6 +122,24 @@ export function ContainerLogs({
   const inFlightRef = useRef(false);
   const hasLogs = Boolean(logView.text.trim());
   const currentStatus = runtimeStatus;
+  const visibleText = useMemo(() => {
+    if (!query) return logView.text;
+    const term = query.toLocaleLowerCase();
+    return logView.text.split('\n').filter((line) => line.toLocaleLowerCase().includes(term)).join('\n');
+  }, [logView.text, query]);
+
+  useLayoutEffect(() => {
+    const viewport = viewportRef.current;
+    if (viewport && followRef.current && !query) viewport.scrollTop = viewport.scrollHeight;
+  }, [visibleText, following, query]);
+
+  function changeQuery(value: string) {
+    setQuery(value);
+    if (value) {
+      followRef.current = false;
+      setFollowing(false);
+    }
+  }
 
   // The endpoint only exposes supervisor-captured stderr. Docker stdout is MCP
   // protocol traffic and must never be rendered in the dashboard.
@@ -203,7 +231,7 @@ export function ContainerLogs({
           <dl className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
             <div className="flex gap-1">
               <dt>{statusLabel}:</dt>
-              <dd className="font-medium text-foreground">{currentStatus}</dd>
+              <dd><StatusBadge status={currentStatus} /></dd>
             </div>
             <div className="flex gap-1">
               <dt>{phaseLabel}:</dt>
@@ -227,21 +255,24 @@ export function ContainerLogs({
         {refreshLabel}</Button>
       </div>
 
-      {hasLogs ? (
-        <pre
-          tabIndex={0}
-          aria-label={title}
-          className="max-h-[32rem] overflow-auto whitespace-pre-wrap [overflow-wrap:anywhere] rounded-lg border border-border bg-background p-4 font-mono text-xs leading-relaxed text-foreground dark:border-border"
-        >
-          {logView.text}
-        </pre>
-      ) : (
-        <div className="rounded-lg border border-dashed border-border px-4 py-10 text-center dark:border-border">
-          <p className="text-sm text-muted-foreground">
-            {snapshot ? emptyLabel : unavailableLabel}
-          </p>
-        </div>
-      )}
+      <div className="flex flex-wrap items-center gap-2">
+        <Input value={query} onChange={changeQuery} aria-label={t('searchRuntimeLogs')} placeholder={t('searchRuntimeLogs')} className="w-full sm:max-w-xs" />
+        <Button type="button" variant={wrap ? 'secondary' : 'ghost'} size="sm" aria-pressed={wrap} onClick={() => setWrap((value) => !value)}>{t('wrapLogs')}</Button>
+        <Button type="button" variant={following ? 'secondary' : 'ghost'} size="sm" aria-pressed={following} disabled={Boolean(query)} onClick={() => { followRef.current = !following; setFollowing(!following); }}>{t('followLatestLogs')}</Button>
+        {visibleText ? <CopyButton text={visibleText} label={t('copyVisibleLogs')} /> : null}
+      </div>
+      <div ref={viewportRef} role="region" aria-label={title} tabIndex={0}
+        onScroll={(event) => {
+          const viewport = event.currentTarget;
+          const atBottom = !query && viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <= 32;
+          followRef.current = atBottom;
+          setFollowing(atBottom);
+        }}
+        className="h-[28rem] max-h-[60dvh] min-h-48 overflow-auto rounded-lg border border-border bg-background p-4">
+        {visibleText ? <pre className={`font-mono text-xs leading-relaxed text-foreground ${wrap ? 'whitespace-pre-wrap [overflow-wrap:anywhere]' : 'whitespace-pre'}`}>{visibleText}</pre>
+          : <p className="text-sm text-muted-foreground">{hasLogs && query ? t('noMatchingRuntimeLogs') : emptyLabel}</p>}
+      </div>
+      {!snapshot ? <p className="text-xs text-muted-foreground">{unavailableLabel}</p> : null}
 
       {logView.truncated ? <p className="text-xs text-muted-foreground">{truncatedLabel}</p> : null}
       {syncError ? <p className="text-xs text-destructive dark:text-destructive">{syncErrorLabel}</p> : null}

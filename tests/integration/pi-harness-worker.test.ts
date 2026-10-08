@@ -96,6 +96,7 @@ afterEach(async () => {
 });
 afterAll(async () => {
   if (workspaceId) {
+    await db.logEvent.deleteMany({ where: { workspaceId } });
     await db.agentApiUsageBucket.deleteMany({ where: { key: outputBucket('workspace', workspaceId) } });
     await db.auditEvent.deleteMany({ where: { workspaceId } });
     await db.workspace.delete({ where: { id: workspaceId } });
@@ -142,9 +143,8 @@ describe('Pi worker recovery and terminal projection in PostgreSQL', () => {
       await checkNativeToolApproval(oldToken, { action: 'ready' });
       const approval = await checkNativeToolApproval(oldToken, input);
       oldApprovalId = approval.approvalId!;
-      await decideNativeToolApproval(actor, { rootTaskId: row.id, taskId: row.id, approvalId: oldApprovalId,
-        inputHash: approval.inputHash!, decision: 'approved' });
-      expect((await checkNativeToolApproval(oldToken, input)).status).toBe('allow');
+      expect(approval.status).toBe('allow');
+      expect((await checkNativeToolApproval(oldToken, input)).status).toBe('deny');
       throw new PiRuntimeInterruptedError();
     });
     const interrupted = await getTaskRow(piGrants[0], initial.id);
@@ -160,13 +160,10 @@ describe('Pi worker recovery and terminal projection in PostgreSQL', () => {
       await checkNativeToolApproval(fresh, { action: 'ready' });
       await expect(assertLocalRuntimeToken(fresh)).resolves.toBeDefined();
       const approval = await checkNativeToolApproval(fresh, input);
-      expect(approval.status).toBe('pending');
+      expect(approval.status).toBe('allow');
       expect(approval.approvalId).not.toBe(oldApprovalId);
       await expect(decideNativeToolApproval(actor, { rootTaskId: row.id, taskId: row.id, approvalId: oldApprovalId,
         inputHash: approval.inputHash!, decision: 'approved' })).rejects.toThrow();
-      await decideNativeToolApproval(actor, { rootTaskId: row.id, taskId: row.id, approvalId: approval.approvalId!,
-        inputHash: approval.inputHash!, decision: 'approved' });
-      expect((await checkNativeToolApproval(fresh, input)).status).toBe('allow');
       expect((await checkNativeToolApproval(fresh, input)).status).toBe('deny');
       return completed(row);
     });

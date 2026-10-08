@@ -4,6 +4,20 @@
 
 Start with the [project overview and quick start](../README.md), then choose a topic below.
 
+## Documentation website
+
+Open `/docs/en` on your deployment domain for the English documentation site, or `/docs/zh` for Chinese. `/docs` opens the Chinese site. Each language has its own landing page, navigation, sidebars, and search:
+
+- **Usage** (`/docs/en/guides`): setup, configuration, integrations, and daily operations.
+- **Developers** (`/docs/en/developers`): architecture, runtime internals, contributor and release documentation.
+- **API** (`/docs-api`): the standalone Scalar interactive reference backed by `/api/v1/openapi.json`, outside the documentation layout. English protocol and integration guides remain accessible from Developers at `/docs/en/api`.
+
+The site uses [Fumadocs](https://fumadocs.dev) for navigation, responsive layouts and full-text search, with the existing safe Streamdown renderer for Markdown, code and Mermaid. Fumadocs generates the static search index at `/docs/search`; its built-in search dialog searches locally, filtered by the current language and category. Relative Markdown links preserve their target language; non-document repository links open GitHub. `src/lib/docs-links.ts` contains the shared link resolver.
+
+The Markdown files remain the single source of truth: edit `docs/**/*.md`, the root `README.md` / `CHANGELOG.md`, or `infra/firecrawl/README.md`; do not maintain a second website copy. `source.config.ts` defines the Fumadocs MDX collection and assigns categories and language at build time: `.en.md` is English, `.zh-CN.md` is Chinese, and unsuffixed documents use Chinese when their first heading contains Chinese characters, otherwise English. Keep headings in the document's language. URLs use `/docs/{language}/{category}/{repository-relative-topic}`, without language filename suffixes; language pairs share a topic. Keep relative links and language pairs intact; update the category mapping when introducing a new topic. Agent instructions, plans, hidden files, environment files, and source code are not published as documentation. Everything in the published set is public: never put credentials or private operational data in it.
+
+The official Fumadocs MDX Next.js plugin compiles the allowlisted `.md` files as Markdown, not MDX, and includes their processed Markdown and search data in the application bundle. There is no request-time filesystem loader or separate content-copy pipeline. Docker and release archives use the same standalone bundle; raw documentation files are not needed beside `server.js`. Rebuild and redeploy after documentation changes.
+
 ## Architecture and runtimes
 
 | Document | Covers |

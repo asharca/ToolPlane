@@ -19,6 +19,8 @@ import {
 import { DEFAULT_SANDBOX_IMAGE, sandboxVolumeName } from '@/lib/sandboxes/runtime';
 import { readSandboxEnv, sandboxConfigWithEnv, type SandboxEnv } from '@/lib/sandboxes/env';
 import { parseAgentMarketResourceMap } from '@/lib/agents/market-setup';
+import { sandboxExecutionBusy } from './sandbox-execution-gate';
+import { TERMINAL } from '@/lib/a2a/model';
 
 const UNAVAILABLE_SANDBOX_STATUSES = [
   'copying',
@@ -62,6 +64,7 @@ export type CreateAgentOptions = {
   runtime: ImplementedAgentRuntimeKind;
   hermesImage?: string;
   allowSudo?: boolean;
+  piPackages?: Array<{ marketInstallId: string; releaseId: string }>;
 };
 
 export type AgentCloneOptions = {
@@ -228,6 +231,9 @@ export async function createAgent(
 ) {
   const cleanName = name.trim() || 'New agent';
   return db.$transaction(async (tx) => {
+    if (options.piPackages !== undefined) {
+      await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${workspaceId} FOR UPDATE`;
+    }
     await lockAgentSlugNamespace(tx, workspaceId);
     const slug = await uniqueAgentSlug(tx, workspaceId, slugify(cleanName));
     const isDedicated = isDedicatedSandboxRuntimeKind(options.runtime);
@@ -238,6 +244,7 @@ export async function createAgent(
     if (isDedicated && sandboxSlug) {
       await createDedicatedSandboxRecords(tx, workspaceId, agent, sandboxSlug);
     }
+    await validateAndWritePiPackages(tx, workspaceId, agent.id, options.runtime, options.piPackages);
     return agent;
   });
 }
@@ -740,6 +747,7 @@ export type AgentConfig = {
   providerIds?: string[];
   disabledBuiltinTools?: string[];
   maxSteps: number;
+  piPackages?: Array<{ marketInstallId: string; releaseId: string }>;
 };
 
 export type AgentToolSelection = {
@@ -755,6 +763,95 @@ export class AgentConfigurationError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'AgentConfigurationError';
+  }
+}
+
+async function validateAndWritePiPackages(
+  tx: Prisma.TransactionClient,
+  workspaceId: string,
+  agentId: string,
+  runtimeKind: string,
+  piPackages: Array<{ marketInstallId: string; releaseId: string }> | undefined,
+) {
+  if (piPackages === undefined) return; // undefined = no change
+  if (runtimeKind !== 'pi-sdk') throw new AgentConfigurationError('pi_packages_runtime_unsupported');
+  if (!Array.isArray(piPackages) || piPackages.some((pkg) => !pkg || typeof pkg !== 'object'
+    || Object.keys(pkg).some((key) => key !== 'marketInstallId' && key !== 'releaseId')
+    || typeof pkg.marketInstallId !== 'string' || !pkg.marketInstallId
+    || typeof pkg.releaseId !== 'string' || !pkg.releaseId)) {
+    throw new AgentConfigurationError('pi_packages_invalid');
+  }
+  await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${workspaceId} FOR UPDATE`;
+  if (piPackages.length > 16) throw new AgentConfigurationError('Too many Pi packages (max 16).');
+  const seenInstalls = new Set<string>();
+  for (const pkg of piPackages) {
+    if (seenInstalls.has(pkg.marketInstallId)) throw new AgentConfigurationError(`Duplicate marketInstallId: ${pkg.marketInstallId}`);
+    seenInstalls.add(pkg.marketInstallId);
+  }
+  // Validate each install/release belongs to workspace and is approved
+  for (const pkg of piPackages) {
+    const install = await tx.marketInstall.findFirst({
+      where: { id: pkg.marketInstallId, targetWorkspaceId: workspaceId },
+      select: {
+        id: true,
+        listingId: true,
+        status: true,
+        listing: { select: { kind: true, status: true } },
+        currentReleaseId: true,
+      },
+    });
+    if (!install) throw new AgentConfigurationError(`Unknown or inaccessible market install: ${pkg.marketInstallId}`);
+    if (install.listing.kind !== 'pi-package') throw new AgentConfigurationError(`Market install is not a pi-package: ${pkg.marketInstallId}`);
+    if (install.listing.status !== 'published') throw new AgentConfigurationError(`Listing is not published: ${pkg.marketInstallId}`);
+    if (install.status !== 'ready') throw new AgentConfigurationError(`Market install is not ready: ${pkg.marketInstallId}`);
+    const release = await tx.marketRelease.findFirst({
+      where: { id: pkg.releaseId, listingId: install.listingId },
+      select: { id: true, listingId: true, reviewStatus: true },
+    });
+    if (!release || release.reviewStatus !== 'approved') throw new AgentConfigurationError(`Release not approved: ${pkg.releaseId}`);
+    // First-time bind can only use currentReleaseId; existing bind may keep an approved older release
+    const existingBind = agentId ? await tx.agentPiPackage.findFirst({
+      where: { agentId, marketInstallId: pkg.marketInstallId },
+      select: { releaseId: true },
+    }) : null;
+    if (pkg.releaseId !== install.currentReleaseId && pkg.releaseId !== existingBind?.releaseId) {
+      throw new AgentConfigurationError('pi_package_release_not_current');
+    }
+  }
+  const existing = await tx.agentPiPackage.findMany({ where: { agentId } });
+  if (existing.length === piPackages.length && existing.every((bound) =>
+    piPackages.some((pkg) => pkg.marketInstallId === bound.marketInstallId && pkg.releaseId === bound.releaseId))) return;
+  const sandboxes = await tx.agentSandbox.findMany({ where: { agentId }, select: { sandboxId: true } });
+  if (sandboxes.some(({ sandboxId }) => sandboxExecutionBusy(sandboxId))) {
+    throw new AgentConfigurationError('pi_package_agent_busy');
+  }
+  // Check agent is not busy (no active A2A task, Work, or execution lease)
+  const busyTask = await tx.a2ATask.findFirst({
+    where: {
+      context: { agentId, workspaceId },
+      state: { notIn: TERMINAL },
+    },
+    select: { id: true },
+  });
+  if (busyTask) throw new AgentConfigurationError('pi_package_agent_busy');
+  const busyWork = await tx.workSession.findFirst({
+    where: {
+      agentId,
+      status: { in: ['queued', 'running', 'waiting_approval', 'cancelling'] },
+    },
+    select: { id: true },
+  });
+  if (busyWork) throw new AgentConfigurationError('pi_package_agent_busy');
+  // Write: replace all bindings atomically
+  await tx.agentPiPackage.deleteMany({ where: { agentId } });
+  if (piPackages.length > 0) {
+    await tx.agentPiPackage.createMany({
+      data: piPackages.map((pkg) => ({
+        agentId,
+        marketInstallId: pkg.marketInstallId,
+        releaseId: pkg.releaseId,
+      })),
+    });
   }
 }
 
@@ -819,9 +916,9 @@ async function lockProvider(
   tx: Prisma.TransactionClient,
   workspaceId: string,
   providerId: string,
-): Promise<{ id: string; format: string; baseUrl: string; models: string[] } | null> {
-  const providers = await tx.$queryRaw<Array<{ id: string; format: string; baseUrl: string; models: string[] }>>`
-    SELECT "id", "format", "baseUrl", "models"
+): Promise<{ id: string; name: string; format: string; baseUrl: string; models: string[] } | null> {
+  const providers = await tx.$queryRaw<Array<{ id: string; name: string; format: string; baseUrl: string; models: string[] }>>`
+    SELECT "id", "name", "format", "baseUrl", "models"
     FROM "ModelProvider"
     WHERE "id" = ${providerId} AND "workspaceId" = ${workspaceId}
     FOR UPDATE
@@ -864,6 +961,9 @@ export async function createConfiguredAgent(
 
   try {
     return await db.$transaction(async (tx) => {
+      if (options.piPackages !== undefined || cfg.piPackages !== undefined) {
+        await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${workspaceId} FOR UPDATE`;
+      }
       await lockAgentSlugNamespace(tx, workspaceId);
       const slug = await uniqueAgentSlug(tx, workspaceId, slugify(cleanName));
       const isDedicated = isDedicatedSandboxRuntimeKind(options.runtime);
@@ -988,6 +1088,7 @@ export async function createConfiguredAgent(
       await tx.agentSubAgent.createMany({
         data: subAgents.map(({ id }) => ({ parentId: agent.id, childId: id })),
       });
+      await validateAndWritePiPackages(tx, workspaceId, agent.id, options.runtime, options.piPackages ?? cfg.piPackages);
       return agent;
     }, { maxWait: 10_000, timeout: 30_000 });
   } catch (error) {
@@ -997,6 +1098,9 @@ export async function createConfiguredAgent(
 
 export async function updateAgent(workspaceId: string, agentId: string, cfg: AgentConfig) {
   await db.$transaction(async (tx) => {
+    if (cfg.piPackages !== undefined) {
+      await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${workspaceId} FOR UPDATE`;
+    }
     const agent = await tx.agent.findFirst({
       where: { id: agentId, workspaceId },
       select: {
@@ -1059,6 +1163,7 @@ export async function updateAgent(workspaceId: string, agentId: string, cfg: Age
         data: { hermesProvider: null, hermesModel: null },
       });
     }
+    await validateAndWritePiPackages(tx, workspaceId, agentId, agent.runtimeKind, cfg.piPackages);
   });
 }
 
@@ -1652,7 +1757,7 @@ function providerModelData(model: ProviderModelValues) {
 
 async function fillStoredProviderModels(
   tx: Prisma.TransactionClient,
-  provider: { id: string; format: string; baseUrl: string; models: string[] },
+  provider: { id: string; name: string; format: string; baseUrl: string; models: string[] },
 ) {
   const records = await tx.providerModel.findMany({
     where: { providerId: provider.id },
@@ -1668,7 +1773,7 @@ async function fillStoredProviderModels(
     await tx.providerModel.createMany({
       data: missing.map((modelId) => ({
         ...providerModelData(fillProviderModelMetadata(defaultProviderModel(modelId),
-          matchingPiModelReferences(provider.format, [modelId], provider.baseUrl)[0] ?? null)),
+          matchingPiModelReferences(provider.format, [modelId], provider.baseUrl, provider.name)[0] ?? null)),
         providerId: provider.id,
         source: 'remote',
       })),
@@ -1676,7 +1781,7 @@ async function fillStoredProviderModels(
   }
   for (const record of records) {
     const { source, ...model } = record as ProviderModelValues & { source: string };
-    const reference = matchingPiModelReferences(provider.format, [model.modelId, model.name], provider.baseUrl)[0] ?? null;
+    const reference = matchingPiModelReferences(provider.format, [model.modelId, model.name], provider.baseUrl, provider.name)[0] ?? null;
     const filled = fillProviderModelMetadata(source === 'remote' && reference ? {
       ...model,
       contextWindow: reference.contextWindow,
@@ -1763,7 +1868,7 @@ export async function addProviderModels(
     await tx.providerModel.createMany({
       data: models.map((model) => ({
         ...providerModelData(fillProviderModelMetadata(model,
-          matchingPiModelReferences(provider.format, [model.modelId, model.name], provider.baseUrl)[0] ?? null)),
+          matchingPiModelReferences(provider.format, [model.modelId, model.name], provider.baseUrl, provider.name)[0] ?? null)),
         providerId,
         source: 'manual',
       })),
@@ -1793,7 +1898,7 @@ export async function updateProviderModel(
     const metadata = fillProviderModelMetadata({
       ...model,
       cost: model.cost ?? stored?.cost as ProviderModelValues['cost'],
-    }, matchingPiModelReferences(provider.format, [model.modelId, model.name], provider.baseUrl)[0] ?? null);
+    }, matchingPiModelReferences(provider.format, [model.modelId, model.name], provider.baseUrl, provider.name)[0] ?? null);
     const { modelId, ...values } = providerModelData(metadata);
     await tx.providerModel.upsert({
       where: { providerId_modelId: { providerId, modelId } },

@@ -2,7 +2,7 @@ import 'server-only';
 import { Task, Role } from '@a2a-js/sdk';
 import type { A2ATask } from '@prisma/client';
 import { getAgentForRun } from '@/lib/agents/queries';
-import { resolveAgentTools } from '@/lib/agents/resolve';
+import { resolveAgentTools, resolveAgentPiPackages } from '@/lib/agents/resolve';
 import { resolveModelContext } from '@/lib/agents/model';
 import { normalizeReasoningEffort } from '@/lib/agents/constants';
 import type { RunSandboxAgentTurnOptions, SandboxAgentRuntimeKind } from '@/lib/agents/sandbox-runtime';
@@ -13,6 +13,7 @@ import { assertRuntimeOwner } from '@/lib/runtime/ownership-state';
 import { assertLiveGrant, isLocalGrant } from './principal';
 import type { TaskGrant } from './principal';
 import { localTarget } from './local-policy';
+import { assertWorkPiPackageSnapshot } from '@/lib/work/sessions';
 
 /** Mint new task-scoped credentials on every claim, never restore old tokens. */
 export async function localTaskOptions(row: A2ATask, signal: AbortSignal, instructions: string, cleanup = false): Promise<RunSandboxAgentTurnOptions> {
@@ -32,8 +33,10 @@ export async function localTaskOptions(row: A2ATask, signal: AbortSignal, instru
   const agent = await getAgentForRun(grant.agentId, grant.workspaceId);
   if (!agent?.provider || !agent.model || agent.publicRuntimeAllocation) throw new Error('Local target unavailable.');
   const resolved = resolveAgentTools(agent);
+  const piPackages = resolveAgentPiPackages(agent);
   const work = grant.entryPolicy?.kind === 'work' && !grant.ancestorTaskIds.length
     ? await db.workSession.findUniqueOrThrow({ where: { id: grant.entryPolicy.sourceId } }) : null;
+  if (work) assertWorkPiPackageSnapshot(agent.runtimeKind, work.runtimeSnapshot, piPackages);
   const saved = work?.runtimeSnapshot as { deploymentIds?: string[]; installedSkillIds?: string[]; systemPrompt?: string } | null;
   if (saved?.deploymentIds) resolved.deploymentIds = resolved.deploymentIds.filter((id) => saved.deploymentIds!.includes(id));
   if (saved?.installedSkillIds) resolved.skills = resolved.skills.filter((skill) => saved.installedSkillIds!.includes((skill as { id?: string }).id ?? ''));
@@ -56,6 +59,7 @@ export async function localTaskOptions(row: A2ATask, signal: AbortSignal, instru
     workingDirectory: work ? grant.entryPolicy?.workingDirectory : undefined,
     systemPrompt: `${saved?.systemPrompt ?? agent.systemPrompt ?? ''}${communicationEnabled ? `\n\n${instructions}` : ''}`,
     disabledBuiltinTools: agent.disabledBuiltinTools, skills: resolved.skills, runtimeSessionId: context.id,
+    ...(agent.runtimeKind === 'pi-sdk' ? { piPackages } : {}),
     messages: Task.fromJSON(row.snapshot).history.map((message) => ({ role: message.role === Role.ROLE_USER ? 'user' : 'assistant',
       parts: message.parts.flatMap((part) => part.content?.$case === 'text' ? [{ type: 'text', text: part.content.value }] : []) })),
     mcpServers: [...deploymentIds.map((deploymentId) => ({ deploymentId, url: runtimeMcpProxyUrl(deploymentId) })),

@@ -24,5 +24,5 @@ export async function lookupProviderModelReferencesAction(
     || queries.some((query) => typeof query !== 'string' || query.length > 200)) {
     return { matches: [], error: 'Invalid model query.' };
   }
-  return { matches: matchingPiModelReferences(provider.format, queries, provider.baseUrl) };
+  return { matches: matchingPiModelReferences(provider.format, queries, provider.baseUrl, provider.name) };
 }

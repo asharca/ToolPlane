@@ -2,12 +2,12 @@
 
 > [中文](A2A_CONSOLE.zh-CN.md)
 
-Use the existing Agent Work/chat interface for daily work with Pi. A2A remains an integration API for other Agents; settings no longer contain a persistent execution-records/approvals section or task playground. Existing task progress, history and root-tool approvals remain reachable via `/app/{workspace}/agents/{agentId}?settings=a2a&task={taskId}`. Opening a task link does not submit work or grant access. Authorized internal child tasks use parent-delegated tool permission, not an additional human approval.
+Use the existing Agent Work/chat interface for daily work with Pi. A2A remains an integration API for other Agents; settings no longer contain a persistent execution-records/approvals section or task playground. Existing task progress, history and interactive-entry root-tool approvals remain reachable via `/app/{workspace}/agents/{agentId}?settings=a2a&task={taskId}`. Opening a task link does not submit work or grant access. Authenticated inbound A2A roots and authorized internal children use their configured tools without human approval; ordinary chat/Work/Control/channel root policies are unchanged.
 
 For workspace users. Open **Agent settings → A2A integration**, or navigate to
 `/app/{workspace}/agents/{agentId}?settings=a2a`. The page uses the native A2A 1.0 core; never paste an account token into the browser.
 
-The **Let external services call this Agent** section contains an embedded setup guide, the account-token settings link (or Hermes service-key instructions), copyable Card/SendMessage/GetTask/SubscribeToTask/CancelTask examples, response handling, and troubleshooting. The guide remains readable when connection URLs are unavailable. Viewing or copying documentation never submits a task.
+Settings retain access controls, authorization, connection URLs and credential management, not an embedded tutorial or request examples. Open `/docs-api` on the deployment domain for Scalar's standalone reference, sourced from `/api/v1/openapi.json`: account A2A, published-service A2A, the MCP bridge and existing Agent APIs. Documentation is public and contains no account data or real credentials.
 
 ## Internal collaboration
 
@@ -61,27 +61,12 @@ retrying; the page never automatically retries writes. A failed list refresh doe
 hide a key successfully returned by the preceding transaction. This entry caps an
 Endpoint at 100 clients and a client at 50 key records, including revoked history.
 
-## Connection information
+## Connection information and API documentation
 
-Separate local and public RPC / Agent Card URLs are shown with curl examples for Card
-retrieval, SendMessage, GetTask, SubscribeToTask and CancelTask. URLs come from configured
-`NEXT_PUBLIC_APP_URL`, never untrusted Host / X-Forwarded-Host. Use HTTPS in production;
-HTTP is allowed on loopback.
+Settings show copyable account and published-service RPC / Agent Card URLs. URLs come from configured `NEXT_PUBLIC_APP_URL`, never untrusted Host / X-Forwarded-Host. Production requires HTTPS; loopback permits HTTP, with RFC1918 private IPv4 also permitted in development.
 
-Examples reference environment variables only: `TOOLPLANE_ACCOUNT_TOKEN` for server-side
-local integration and `TOOLPLANE_A2A_TOKEN` for published services. They are not interchangeable;
-the Card requires authentication too. Replace messageId for every new task. Retry the same
-request only with the exact original ID and content. Replace Task ID in query examples.
+Read parameters, authentication, JSON-RPC methods, SSE responses and generated request examples at `/docs-api`. Scalar is bundled with the application, with no runtime CDN, persisted credentials or hosted AI. A2A is server-to-server: run generated requests from your own backend; existing Origin, Bearer and workspace authorization checks remain unchanged.
 
-The in-platform guide shows copyable token `export` setup and `uuidgen`, followed by
-always-visible Card and SendMessage curl examples. Run them individually in macOS
-Terminal, a Linux terminal or Windows WSL Bash, on a computer that can reach the
-displayed URL—not in ToolPlane chat, browser developer tools or an Agent sandbox.
-Replace the token placeholder locally and keep subsequent commands in the same
-terminal. Shell history may retain the token; do not share history or screenshots.
-Fetching the Card starts no task; SendMessage runs the Agent and can consume resources.
-Production applications send these HTTP requests from their own backend. Internal
-Agent delegation only needs selected sub-agents, not these terminal commands.
 
 ## Browser versus protocol boundary
 
@@ -104,9 +89,7 @@ cookie or cross-origin browser support. The BFF does not fabricate an account to
 legacy Responses/collaboration workers. Native-task approvals remain separate from Work approval sessions;
 supported classic entry adapters now use [unified ingress](A2A_INGRESS_APPROVALS.md); channels require explicit operators and old records are not replayed.
 
-The public connection section also includes the [native MCP bridge](A2A_MCP_BRIDGE.md),
-using the same explicitly granted A2A service credential. Its connection object is an
-example, not a universal client configuration format.
+The MCP transport, connection URL and tools are also documented at `/docs-api`, using the same dedicated A2A service credential. See [native MCP bridge](A2A_MCP_BRIDGE.md) for internal protocol boundaries.
 
 Large file uploads, OAuth discovery, token streaming and arbitrary URL network probing are not provided. See [Public A2A](A2A_NATIVE.md) and
 [Internal collaboration](A2A_LOCAL_COLLABORATION.md) for the protocol contract.

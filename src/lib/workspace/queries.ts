@@ -3,7 +3,6 @@ import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
 import { normalizedSkillDescription } from '@/lib/skills/frontmatter';
 import { parseServerRecipe } from '@/lib/workspace/server-recipe';
-import { readMcpInspectorConnection } from '@/lib/workspace/inspector-connection';
 import {
   hasMcpToolCatalog,
   hasVerifiedMcpToolCatalog,
@@ -73,6 +72,8 @@ export async function getInstalledSkills(workspaceId: string) {
     where: { workspaceId },
     orderBy: { createdAt: 'desc' },
     include: {
+      marketInstall: { select: { id: true } },
+      toolkitLinks: { where: { toolkit: { marketInstall: { isNot: null } } }, select: { toolkitId: true }, take: 1 },
       skill: {
         select: { slug: true, name: true, iconUrl: true, description: true, content: true, files: true },
       },
@@ -292,6 +293,7 @@ export async function getBrowseServers(page: number, q = '', filters: McpBrowseF
   const marketWhere: Prisma.MarketListingWhereInput = {
     kind: 'mcp',
     status: 'published',
+    visibility: 'public',
     latestReleaseId: { not: null },
     latestRelease: { is: { reviewStatus: 'approved' } },
     sourceServer: { is: { verifiedAt: { not: null } } },
@@ -439,15 +441,7 @@ export async function getMarketServer(slug: string, workspaceId: string) {
           : null);
   const deployment = server.deployments[0];
   const mcpKind = recipe.source === 'remote' ? 'connector' as const : 'server' as const;
-  const connection = mcpKind === 'connector'
-    ? readMcpInspectorConnection(deployment?.installCfg)
-    : null;
-  const sandbox = connection ? await db.sandbox.findFirst({
-    where: { id: connection.sandboxId, workspaceId },
-    select: { id: true, deployment: { select: { id: true, status: true } } },
-  }) : null;
-  const toolCatalogKnown = mcpKind === 'server'
-    || Boolean(connection && sandbox && hasMcpToolCatalog(deployment?.installCfg));
+  const toolCatalogKnown = mcpKind === 'server' || hasMcpToolCatalog(deployment?.installCfg);
   return {
     id: server.id,
     slug: server.slug,
@@ -473,12 +467,6 @@ export async function getMarketServer(slug: string, workspaceId: string) {
       ? readMcpToolCatalog(mcpKind === 'server' ? server.installCfg : deployment?.installCfg)
       : [],
     toolCatalogKnown,
-    inspectorSandbox: connection && sandbox ? {
-      id: sandbox.id,
-      deploymentId: sandbox.deployment.id,
-      status: sandbox.deployment.status,
-      connectedAt: connection.connectedAt,
-    } : null,
     recipe: {
       source: recipe.source,
       ref: recipe.ref,
@@ -513,6 +501,7 @@ const PUBLIC_DIRECTORY_SKILL_WHERE = {
       is: {
         kind: 'skill',
         status: 'published',
+        visibility: 'public',
         latestReleaseId: { not: null },
         latestRelease: { is: { reviewStatus: 'approved' } },
       },
@@ -524,6 +513,7 @@ export async function getSkillBrowseCategories(includeMarket = false) {
   const marketWhere = {
     kind: 'skill',
     status: 'published',
+    visibility: 'public',
     latestReleaseId: { not: null },
     latestRelease: { is: { reviewStatus: 'approved' } },
   } satisfies Prisma.MarketListingWhereInput;
@@ -602,6 +592,7 @@ export async function getBrowseSkills(page: number, q: string, filters: SkillBro
   const marketBaseWhere: Prisma.MarketListingWhereInput = {
     kind: 'skill',
     status: 'published',
+    visibility: 'public',
     latestReleaseId: { not: null },
     latestRelease: { is: { reviewStatus: 'approved' } },
     ...(term ? {

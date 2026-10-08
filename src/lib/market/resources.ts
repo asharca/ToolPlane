@@ -3,9 +3,21 @@ import { writeAudit } from '@/lib/observability/audit';
 
 import { Prisma, type Deployment, type MarketInstall, type Toolkit } from '@prisma/client';
 import { z } from 'zod';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { createHash } from 'node:crypto';
+import { capturePiPackage } from '@/lib/market/pi-package-source';
+import { resolvePiPackageCaptureSource, verifyOfficialPiPackage } from '@/lib/market/pi-package-catalog';
+import { assemblePiPackage, validatePiPackageMcpBindings } from '@/lib/market/pi-package-assembly';
+import type { PiPackageAssemblyInput, PiPackageMcpBindings } from '@/lib/market/pi-package-assembly';
+import type { PiPackageCaptureOptions } from '@/lib/market/pi-package-source';
+import { sandboxExecutionBusy } from '@/lib/agents/sandbox-execution-gate';
+import { TERMINAL } from '@/lib/a2a/model';
+import { parsePiPackageReleaseManifest, scanPiPackageReleaseManifest, type PiPackageManifestV1 } from '@/lib/market/pi-package-manifest';
 import { db } from '@/lib/db';
 import { validateServerRecipe } from '@/lib/admin/recipe-validate';
 import { marketReleaseChecksum } from '@/lib/market/artifact';
+import { resourceListingSchema as listingSchema } from '@/lib/market/listing-schema';
 import {
   scanMarketArtifact,
   scanSkillReleaseManifest,
@@ -58,14 +70,6 @@ const sourceUrlSchema = z.string().max(2_000).refine((value) => {
     return false;
   }
 });
-const listingSchema = z.object({
-  slug: z.string().min(1).max(100),
-  name: z.string().min(1).max(240),
-  summary: z.string().max(4_000).nullable(),
-  iconUrl: z.string().max(2_000).nullable(),
-  tags: z.array(z.string().min(1).max(40)).max(20),
-  author: z.string().min(1).max(240),
-}).strict();
 const recipeSchema = z.object({
   source: z.enum(['npm', 'pypi', 'github', 'docker', 'remote']),
   ref: z.string().min(1).max(2_000),
@@ -138,7 +142,8 @@ const toolkitManifestSchema = z.object({
 
 export type McpMarketManifestV1 = z.infer<typeof mcpManifestSchema>;
 export type ToolkitMarketManifestV1 = z.infer<typeof toolkitManifestSchema>;
-export type ResourceMarketManifestV1 = McpMarketManifestV1 | ToolkitMarketManifestV1;
+export type PublicResourceMarketManifest = McpMarketManifestV1 | ToolkitMarketManifestV1;
+export type ResourceMarketManifestV1 = PublicResourceMarketManifest | PiPackageManifestV1;
 
 function scanToolkitMarketManifest(
   manifest: ToolkitMarketManifestV1,
@@ -159,7 +164,7 @@ function scanToolkitMarketManifest(
   return { ...artifactScan, status: findings.length ? 'blocked' : 'passed', findings };
 }
 
-type ListingInput = {
+export type ListingInput = {
   slug?: string;
   name?: string;
   summary?: string | null;
@@ -418,6 +423,10 @@ export function parseResourceMarketManifest(raw: unknown, checksum?: string): Re
     : null;
   if (kind === 'mcp') return parseMcpMarketManifest(raw, checksum);
   if (kind === 'toolkit') return parseToolkitMarketManifest(raw, checksum);
+  if (kind === 'pi-package') {
+    try { return parsePiPackageReleaseManifest(raw, checksum); }
+    catch { throw new MarketError('invalid_manifest', 'The Pi package snapshot is invalid.'); }
+  }
   throw new MarketError('invalid_manifest', 'This market release kind is not supported.');
 }
 
@@ -446,7 +455,8 @@ function withoutPublicMcpTools<
 /** Public discovery never exposes tools before a Connector is linked through a running sandbox. */
 export function projectPublicResourceMarketManifest(
   manifest: ResourceMarketManifestV1,
-): ResourceMarketManifestV1 {
+): PublicResourceMarketManifest | null {
+  if (manifest.kind === 'pi-package') return null;
   if (manifest.kind === 'mcp') {
     return {
       ...manifest,
@@ -773,6 +783,305 @@ export async function publishToolkitRelease(input: {
     throw error;
   }
 }
+type PiPackagePublishInput = {
+  workspaceId: string;
+  publishedById: string;
+  listingId?: string;
+  categoryIds: string[];
+  listing: ListingInput;
+  releaseNotes?: string | null;
+  visibility?: 'private' | 'public';
+};
+
+export async function publishPiPackageRelease(input: PiPackagePublishInput & { source: string; sourceId?: string }) {
+  return publishPiPackage(input);
+}
+
+export async function publishAssembledPiPackageRelease(input: PiPackagePublishInput & PiPackageAssemblyInput) {
+  return publishPiPackage(input);
+}
+
+async function publishPiPackage(input: PiPackagePublishInput & ({ source: string; sourceId?: string } | PiPackageAssemblyInput)) {
+  if (input.visibility !== undefined && input.visibility !== 'private' && input.visibility !== 'public') throw new MarketError('invalid_manifest', 'Invalid package visibility.');
+  if (input.releaseNotes != null && (typeof input.releaseNotes !== 'string' || input.releaseNotes.length > 10_000)) {
+    throw new MarketError('invalid_manifest', 'The release notes are invalid.');
+  }
+  const check = async (tx: Prisma.TransactionClient) => {
+    const workspace = await assertPublisherAccess(tx, input.workspaceId, input.publishedById);
+    const categoryIds = await validatedCategoryIds(tx, input.categoryIds);
+    const existing = input.listingId ? await tx.marketListing.findUnique({ where: { id: input.listingId } }) : null;
+    if (input.listingId && (!existing || existing.kind !== 'pi-package' || existing.publisherWorkspaceId !== workspace.id)) {
+      throw new MarketError('not_authorized', 'This package listing is not owned by the publishing workspace.');
+    }
+    if (existing && installConfig(existing.metadata).officialPiPackageName) throw new MarketError('listing_conflict', 'Official directory listings cannot be republished as custom packages.');
+    const candidate = listingSchema.safeParse({ slug: existing?.slug || input.listing.slug, name: input.listing.name,
+      summary: input.listing.summary ?? null, iconUrl: input.listing.iconUrl ?? null, tags: input.listing.tags ?? [], author: workspace.name });
+    if (!candidate.success || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(candidate.data.slug)) {
+      throw new MarketError('invalid_manifest', 'The package listing metadata is invalid.');
+    }
+    if (!existing && await tx.marketListing.findUnique({ where: { namespace_slug: { namespace: workspace.slug, slug: candidate.data.slug } } })) {
+      throw new MarketError('listing_conflict', 'This market slug is already in use.');
+    }
+    if (scanMarketArtifact(candidate.data, input.releaseNotes).status === 'blocked') {
+      throw new MarketError('invalid_manifest', 'The listing contains possible credentials.');
+    }
+    return { workspace, categoryIds, existing, candidate: candidate.data };
+  };
+  try {
+    await db.$transaction(async (tx) => {
+      await check(tx);
+      if (!('source' in input)) await assemblePiPackage(tx, input);
+    });
+    const options: PiPackageCaptureOptions = 'source' in input
+      ? await resolvePiPackageCaptureSource({ workspaceId: input.workspaceId, userId: input.publishedById, sourceId: input.sourceId, source: input.source }) : {};
+    const captured = 'source' in input ? await capturePiPackage(input.source, options) : null;
+    return await db.$transaction(async (tx) => {
+      const { workspace, categoryIds, existing, candidate } = await check(tx);
+      if (options.sourceId) {
+        const source = await tx.piPackageSource.findFirst({ where: { id: options.sourceId, workspaceId: input.workspaceId }, select: { updatedAt: true } });
+        if (!source || source.updatedAt.getTime() !== options.sourceUpdatedAt?.getTime()) throw new MarketError('listing_conflict', 'The package source changed during capture.');
+      }
+      const assembled = !('source' in input) ? await assemblePiPackage(tx, input) : null;
+      const snapshot = captured ?? assembled!.snapshot;
+      const manifest = parseResourceMarketManifest({ schemaVersion: 1, kind: 'pi-package', listing: candidate, package: snapshot });
+      if (manifest.kind !== 'pi-package') throw new MarketError('invalid_manifest', 'The package snapshot is invalid.');
+      const scanResult = scanPiPackageReleaseManifest(manifest, input.releaseNotes);
+      if (scanResult.status === 'blocked') throw new MarketError('invalid_manifest', 'The package contains possible credentials.');
+      const metadata = { author: candidate.author, name: snapshot.name, version: snapshot.version };
+      const listing = existing
+        ? await tx.marketListing.update({ where: { id: existing.id }, data: { publishedById: input.publishedById, ...(input.visibility ? { visibility: input.visibility } : {}) } })
+        : await tx.marketListing.create({ data: {
+          kind: 'pi-package', namespace: workspace.slug, slug: candidate.slug,
+          visibility: input.visibility ?? 'private',
+          publisherKind: 'workspace', publisherWorkspaceId: workspace.id, publishedById: input.publishedById,
+          name: candidate.name, summary: candidate.summary, iconUrl: candidate.iconUrl, tags: candidate.tags,
+          metadata, categories: { connect: categoryIds.map((id) => ({ id })) },
+        } });
+      const submitted = await submitRelease(tx, listing, manifest, metadata, scanResult, categoryIds, input.releaseNotes);
+      if (assembled) {
+        const oldMetadata = installConfig(existing?.metadata);
+        const previousBindings = installConfig(oldMetadata.piPackageBindingsByRelease);
+        await tx.marketListing.update({ where: { id: listing.id }, data: { metadata: {
+          ...metadata, piPackageBindingsByRelease: { ...previousBindings, [submitted.release.id]: assembled.bindings },
+        } as Prisma.InputJsonObject } });
+      }
+      if ('source' in input) {
+        const previous = await tx.piPackageTracking.findUnique({ where: { listingId: listing.id } });
+        const changed = previous?.requested !== input.source || previous?.sourceId !== (options.sourceId ?? null);
+        await tx.piPackageTracking.upsert({ where: { listingId: listing.id },
+          create: { workspaceId: input.workspaceId, listingId: listing.id, sourceId: options.sourceId ?? null, requested: input.source },
+          update: { sourceId: options.sourceId ?? null, requested: input.source, ...(changed ? { checkedAt: null, latestIdentity: null, latestVersion: null, errorCode: null, ignoredIdentity: null } : {}) },
+        });
+      } else {
+        await tx.piPackageTracking.deleteMany({ where: { listingId: listing.id } });
+      }
+      return submitted;
+    }, { isolationLevel: 'Serializable', maxWait: 10_000, timeout: 30_000 });
+  } catch (error) {
+    if (isPrismaError(error, ['P2002', 'P2034'])) throw new MarketError('listing_conflict', 'The listing changed while it was being published.');
+    throw error;
+  }
+}
+
+async function assertPiPackagePlatform(manifest: PiPackageManifestV1) {
+  if (manifest.package.runtime.platform === 'any') return;
+  let domain: string;
+  try {
+    const result = await promisify(execFile)('docker', ['info', '--format', '{{.OSType}}/{{.Architecture}}'], { timeout: 15_000, maxBuffer: 4096 });
+    domain = result.stdout.trim();
+  } catch {
+    throw new MarketError('package_platform_mismatch', 'The Docker runtime platform could not be verified.');
+  }
+  const [platform, architecture] = domain.split('/');
+  const arch = architecture === 'aarch64' ? 'arm64' : architecture === 'x86_64' ? 'x64' : architecture;
+  if (platform !== manifest.package.runtime.platform || arch !== manifest.package.runtime.arch) {
+    throw new MarketError('package_platform_mismatch', 'The package does not match the Docker runtime platform.');
+  }
+}
+
+export async function installOfficialPiPackage(input: {
+  workspaceId: string; userId: string; name: string; version: string;
+}) {
+  await assertInstallerAccess(db, input.workspaceId, input.userId);
+  const official = await verifyOfficialPiPackage(input.name, input.version);
+  const requested = `npm:${official.name}@${official.version}`;
+  const snapshot = await capturePiPackage(requested);
+  if (snapshot.source.kind !== 'npm' || snapshot.source.name !== official.name || snapshot.source.version !== official.version
+    || snapshot.source.requested !== requested || snapshot.source.integrity !== official.integrity
+    || (snapshot.source.registry !== undefined && snapshot.source.registry !== 'https://registry.npmjs.org/')
+    || snapshot.name !== official.name || snapshot.version !== official.version) {
+    throw new MarketError('official_package_unavailable', 'Captured package identity does not match the official directory selection.');
+  }
+  const slug = `pi-official-${createHash('sha256').update(official.name).digest('hex')}`;
+  const manifest = parsePiPackageReleaseManifest({ schemaVersion: 1, kind: 'pi-package', package: snapshot,
+    listing: { slug, name: official.name, summary: official.description || null, iconUrl: null, tags: [], author: 'Pi package directory' } });
+  const scanResult = scanPiPackageReleaseManifest(manifest);
+  if (scanResult.status === 'blocked') throw new MarketError('invalid_manifest', 'The package snapshot is unsafe.');
+  await assertPiPackagePlatform(manifest);
+  const checksum = marketReleaseChecksum(manifest);
+  // Revalidate membership after capture; registry changes cannot substitute different bytes.
+  if ((await verifyOfficialPiPackage(input.name, official.version)).integrity !== official.integrity) {
+    throw new MarketError('official_package_unavailable', 'The official package changed during capture.');
+  }
+  try {
+    return await db.$transaction(async (tx) => {
+      await assertInstallerAccess(tx, input.workspaceId, input.userId);
+      const workspace = await tx.workspace.findUniqueOrThrow({ where: { id: input.workspaceId }, select: { slug: true } });
+      let listing = await tx.marketListing.findUnique({ where: { namespace_slug: { namespace: workspace.slug, slug } } });
+      if (listing && (listing.kind !== 'pi-package' || listing.publisherWorkspaceId !== input.workspaceId
+        || installConfig(listing.metadata).officialPiPackageName !== official.name || listing.status !== 'published')) {
+        throw new MarketError('listing_conflict', 'The official package listing is unavailable.');
+      }
+      if (!listing) listing = await tx.marketListing.create({ data: {
+        kind: 'pi-package', namespace: workspace.slug, slug, name: official.name, summary: manifest.listing.summary,
+        visibility: 'private', publisherKind: 'workspace', publisherWorkspaceId: input.workspaceId, publishedById: input.userId,
+        metadata: { officialPiPackageName: official.name },
+      } });
+      let release = await tx.marketRelease.findFirst({ where: { listingId: listing.id, releaseSummary: { path: ['version'], equals: official.version } } });
+      if (release) {
+        const saved = parsePiPackageReleaseManifest(release.manifest, release.checksum);
+        if (release.reviewStatus !== 'approved' || installConfig(release.releaseSummary).reviewPolicy !== 'official-directory'
+          || marketReleaseChecksum(saved.package) !== marketReleaseChecksum(snapshot)) {
+          throw new MarketError('listing_conflict', 'The official package version changed or is unavailable.');
+        }
+      } else {
+        release = await tx.marketRelease.create({ data: {
+          listingId: listing.id, version: listing.latestVersion + 1, manifestVersion: 1, manifest: manifest as Prisma.InputJsonValue,
+          checksum, scanResult: scanResult as Prisma.InputJsonValue, categoryIds: [], reviewStatus: 'approved', publishedAt: new Date(),
+          releaseSummary: { name: official.name, version: official.version, reviewPolicy: 'official-directory' },
+        } });
+        await tx.marketListing.update({ where: { id: listing.id }, data: {
+          latestReleaseId: release.id, latestVersion: release.version, status: 'published', publishedAt: new Date(),
+        } });
+      }
+      const idempotencyKey = `official:${listing.id}`;
+      const existing = await tx.marketInstall.findUnique({ where: { targetWorkspaceId_idempotencyKey: { targetWorkspaceId: input.workspaceId, idempotencyKey } } });
+      if (existing && (existing.listingId !== listing.id || existing.status !== 'ready')) throw new MarketError('listing_conflict', 'The package installation is unavailable.');
+      // An explicit install selection is a manual workspace update, never an Agent binding update.
+      const install = existing ? await tx.marketInstall.update({ where: { id: existing.id }, data: {
+        currentReleaseId: release.id, requestedReleaseId: release.id, ignoredReleaseId: null, lastError: null,
+      } }) : await tx.marketInstall.create({ data: {
+        listingId: listing.id, currentReleaseId: release.id, requestedReleaseId: release.id,
+        targetWorkspaceId: input.workspaceId, installedById: input.userId, idempotencyKey,
+        status: 'ready', resourceMap: { kind: 'pi-package' }, requirements: {},
+      } });
+      return { install, release };
+    }, { isolationLevel: 'Serializable', maxWait: 10_000, timeout: 30_000 });
+  } catch (error) {
+    if (isPrismaError(error, ['P2002', 'P2034'])) throw new MarketError('listing_conflict', 'The package installation changed.');
+    throw error;
+  }
+}
+
+export async function installPiPackageRelease(input: {
+  releaseId: string; targetWorkspaceId: string; installedById: string; idempotencyKey: string;
+  mcpBindings?: PiPackageMcpBindings;
+}): Promise<{ install: MarketInstall; reused: boolean }> {
+  const idempotencyKey = validIdempotencyKey(input.idempotencyKey);
+  await db.$transaction(async (tx) => {
+    await assertInstallerAccess(tx, input.targetWorkspaceId, input.installedById);
+    await approvedRelease(tx, input.releaseId, 'pi-package', input.targetWorkspaceId);
+  });
+  const candidate = await db.marketRelease.findUnique({ where: { id: input.releaseId } });
+  if (!candidate) throw new MarketError('listing_unavailable', 'The package release is unavailable.');
+  const manifest = parseResourceMarketManifest(candidate.manifest, candidate.checksum);
+  if (manifest.kind !== 'pi-package') throw new MarketError('invalid_manifest', 'The release is not a Pi package.');
+  await assertPiPackagePlatform(manifest);
+  return db.$transaction(async (tx) => {
+    await assertInstallerAccess(tx, input.targetWorkspaceId, input.installedById);
+    const release = await approvedRelease(tx, input.releaseId, 'pi-package', input.targetWorkspaceId);
+    if (release.checksum !== candidate.checksum) throw new MarketError('listing_conflict', 'The package release changed.');
+    const checked = parseResourceMarketManifest(release.manifest, release.checksum);
+    if (checked.kind !== 'pi-package' || scanPiPackageReleaseManifest(checked, release.releaseNotes).status === 'blocked') {
+      throw new MarketError('invalid_manifest', 'The package snapshot is unsafe.');
+    }
+    const existing = await tx.marketInstall.findUnique({ where: { targetWorkspaceId_idempotencyKey: { targetWorkspaceId: input.targetWorkspaceId, idempotencyKey } } });
+    if (existing) {
+      if (existing.requestedReleaseId !== release.id || existing.listingId !== release.listingId || existing.status !== 'ready') {
+        throw new MarketError('idempotency_conflict', 'This idempotency key has already been used.');
+      }
+      return { install: existing, reused: true };
+    }
+    const defaults = installConfig(installConfig(release.listing.metadata).piPackageBindingsByRelease);
+    const bindings = input.mcpBindings ?? (release.listing.publisherWorkspaceId === input.targetWorkspaceId
+      ? defaults[release.id] as PiPackageMcpBindings | undefined : undefined) ?? {};
+    await validatePiPackageMcpBindings(tx, input.targetWorkspaceId, checked.package, bindings);
+    const install = await tx.marketInstall.create({ data: {
+      listingId: release.listingId, currentReleaseId: release.id, requestedReleaseId: release.id,
+      targetWorkspaceId: input.targetWorkspaceId, installedById: input.installedById, idempotencyKey,
+      status: 'ready', resourceMap: { kind: 'pi-package', mcpBindings: bindings }, requirements: {},
+    } });
+    return { install, reused: false };
+  }, { isolationLevel: 'Serializable', maxWait: 10_000, timeout: 30_000 });
+}
+
+async function updatePiPackageInstall(input: {
+  installId: string; targetWorkspaceId: string; actorId: string; targetReleaseId?: string; currentReleaseId?: string; force?: boolean;
+}) {
+  await db.$transaction(async (tx) => { await assertInstallerAccess(tx, input.targetWorkspaceId, input.actorId); });
+  const candidate = await db.marketInstall.findFirst({ where: { id: input.installId, targetWorkspaceId: input.targetWorkspaceId }, include: { listing: true } });
+  if (!candidate) throw new MarketError('install_not_found', 'The package installation was not found.');
+  const releaseId = input.targetReleaseId || candidate.listing.latestReleaseId;
+  const target = releaseId ? await db.marketRelease.findUnique({ where: { id: releaseId } }) : null;
+  if (!target) throw new MarketError('listing_unavailable', 'The package release is unavailable.');
+  const manifest = parseResourceMarketManifest(target.manifest, target.checksum);
+  if (manifest.kind !== 'pi-package') throw new MarketError('invalid_manifest', 'The release is not a Pi package.');
+  await assertPiPackagePlatform(manifest);
+  return db.$transaction(async (tx) => {
+    await assertInstallerAccess(tx, input.targetWorkspaceId, input.actorId);
+    const install = await tx.marketInstall.findFirst({ where: { id: input.installId, targetWorkspaceId: input.targetWorkspaceId } });
+    if (!install || install.status !== 'ready') throw new MarketError('install_not_found', 'The package installation is unavailable.');
+    const release = await approvedRelease(tx, target.id, 'pi-package', input.targetWorkspaceId);
+    if (release.checksum !== target.checksum) throw new MarketError('listing_conflict', 'The package release changed.');
+    if (release.listingId !== install.listingId) throw new MarketError('listing_unavailable', 'The release belongs to another listing.');
+    const checked = parseResourceMarketManifest(release.manifest, release.checksum);
+    if (checked.kind !== 'pi-package' || scanPiPackageReleaseManifest(checked, release.releaseNotes).status === 'blocked') {
+      throw new MarketError('invalid_manifest', 'The package snapshot is unsafe.');
+    }
+    if (install.currentReleaseId === release.id) return install;
+    if (install.currentReleaseId !== (input.currentReleaseId ?? candidate.currentReleaseId)) {
+      throw new MarketError('listing_conflict', 'The installed version changed. Refresh and try again.');
+    }
+    return tx.marketInstall.update({ where: { id: install.id }, data: {
+      currentReleaseId: release.id, requestedReleaseId: release.id, ignoredReleaseId: null, lastError: null, lastCheckedAt: new Date(),
+    } });
+  }, { isolationLevel: 'Serializable', maxWait: 10_000, timeout: 30_000 });
+}
+
+export async function updatePiPackageMcpBindings(input: { workspaceId: string; userId: string; marketInstallId: string; mcpBindings: PiPackageMcpBindings }) {
+  if (!input.mcpBindings || typeof input.mcpBindings !== 'object' || Array.isArray(input.mcpBindings)) throw new MarketError('pi_package_invalid_bindings', 'Invalid package MCP bindings.');
+  return db.$transaction(async (tx) => {
+    await assertInstallerAccess(tx, input.workspaceId, input.userId);
+    await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${input.workspaceId} FOR UPDATE`;
+    const install = await tx.marketInstall.findFirst({ where: { id: input.marketInstallId, targetWorkspaceId: input.workspaceId, status: 'ready' }, include: {
+      listing: true, currentRelease: true, agentPiPackages: { include: { release: true, agent: { select: { workspaceId: true } } } },
+    } });
+    if (!install || install.listing.kind !== 'pi-package' || install.listing.status !== 'published'
+      || install.listing.visibility !== 'public' && install.listing.publisherWorkspaceId !== input.workspaceId) throw new MarketError('install_not_found', 'The package installation is unavailable.');
+    const releases = [install.currentRelease, ...install.agentPiPackages.map((binding) => binding.release)];
+    const checked = new Set<string>();
+    for (const release of releases) {
+      if (checked.has(release.id)) continue;
+      checked.add(release.id);
+      if (release.listingId !== install.listingId || release.reviewStatus !== 'approved') throw new MarketError('listing_unavailable', 'A pinned release is unavailable.');
+      const manifest = parsePiPackageReleaseManifest(release.manifest, release.checksum);
+      if (scanPiPackageReleaseManifest(manifest, release.releaseNotes).status === 'blocked') throw new MarketError('invalid_manifest', 'The package snapshot is unsafe.');
+      if ((manifest.package.toolplane?.mcp ?? []).some((requirement) => !Object.hasOwn(input.mcpBindings, requirement.key))) throw new MarketError('pi_package_invalid_bindings', 'Bind every package MCP requirement.');
+      await validatePiPackageMcpBindings(tx, input.workspaceId, manifest.package, input.mcpBindings);
+    }
+    if (install.agentPiPackages.some((binding) => binding.agent.workspaceId !== input.workspaceId)) throw new MarketError('not_authorized', 'Package binding workspace mismatch.');
+    const agentIds = install.agentPiPackages.map((binding) => binding.agentId);
+    if (agentIds.length) {
+      const sandboxes = await tx.agentSandbox.findMany({ where: { agentId: { in: agentIds } }, select: { sandboxId: true } });
+      const busyTask = await tx.a2ATask.findFirst({ where: { context: { agentId: { in: agentIds }, workspaceId: input.workspaceId }, state: { notIn: TERMINAL } }, select: { id: true } });
+      const busyWork = await tx.workSession.findFirst({ where: { agentId: { in: agentIds }, status: { in: ['queued', 'running', 'waiting_approval', 'cancelling'] } }, select: { id: true } });
+      if (busyTask || busyWork || sandboxes.some(({ sandboxId }) => sandboxExecutionBusy(sandboxId))) throw new MarketError('pi_package_agent_busy', 'A package-bound Agent is running.');
+    }
+    return tx.marketInstall.update({ where: { id: install.id }, data: { resourceMap: { kind: 'pi-package', mcpBindings: input.mcpBindings } } });
+  }, { isolationLevel: 'Serializable', maxWait: 10_000, timeout: 30_000 });
+}
+
+
 
 async function uniqueServerSlug(tx: Prisma.TransactionClient, namespace: string, desired: string) {
   const base = slugify(`${namespace}-${desired}`, 'community-mcp');
@@ -818,7 +1127,7 @@ export async function approveResourceMarketRelease(input: ReviewInput) {
       },
     },
   });
-  if (reviewCandidate?.listing.kind !== 'mcp' && reviewCandidate?.listing.kind !== 'toolkit') {
+  if (!reviewCandidate || !['mcp', 'toolkit', 'pi-package'].includes(reviewCandidate.listing.kind)) {
     return approveMarketRelease(input);
   }
 
@@ -906,6 +1215,7 @@ export async function approveResourceMarketRelease(input: ReviewInput) {
             pendingReleaseId: true,
             publishedAt: true,
             publisherWorkspaceId: true,
+            metadata: true,
             sourceServerId: true,
             sourceDeploymentId: true,
             sourceToolkitId: true,
@@ -922,7 +1232,9 @@ export async function approveResourceMarketRelease(input: ReviewInput) {
     }
     const scanResult = manifest.kind === 'toolkit'
       ? scanToolkitMarketManifest(manifest, release.releaseNotes)
-      : scanMarketArtifact(manifest, release.releaseNotes);
+      : manifest.kind === 'pi-package'
+        ? scanPiPackageReleaseManifest(manifest, release.releaseNotes)
+        : scanMarketArtifact(manifest, release.releaseNotes);
     if (scanResult.status === 'blocked') {
       throw new MarketError('invalid_manifest', 'The release contains possible credentials.');
     }
@@ -993,6 +1305,8 @@ export async function approveResourceMarketRelease(input: ReviewInput) {
         requiredEnvironmentCount: manifest.mcp.recipe.env.length,
         toolCount: validatedMcp.tools.length,
       };
+    } else if (manifest.kind === 'pi-package') {
+      metadata = { ...installConfig(release.listing.metadata), author: manifest.listing.author, name: manifest.package.name, version: manifest.package.version } as Prisma.InputJsonObject;
     } else {
       if (!release.listing.sourceToolkitId) {
         throw new MarketError('source_not_found', 'The source toolkit was not found.');
@@ -1059,7 +1373,7 @@ export async function approveResourceMarketRelease(input: ReviewInput) {
   }, { isolationLevel: 'Serializable', maxWait: 10_000, timeout: 30_000 });
 }
 
-async function approvedRelease(tx: Prisma.TransactionClient, releaseId: string, kind: 'mcp' | 'toolkit') {
+async function approvedRelease(tx: Prisma.TransactionClient, releaseId: string, kind: 'mcp' | 'toolkit' | 'pi-package', workspaceId?: string) {
   const release = await tx.marketRelease.findUnique({
     where: { id: releaseId },
     include: {
@@ -1071,6 +1385,9 @@ async function approvedRelease(tx: Prisma.TransactionClient, releaseId: string, 
           slug: true,
           status: true,
           latestReleaseId: true,
+          visibility: true,
+          publisherWorkspaceId: true,
+          metadata: true,
           sourceServerId: true,
           categories: { select: { id: true } },
         },
@@ -1080,6 +1397,7 @@ async function approvedRelease(tx: Prisma.TransactionClient, releaseId: string, 
   if (
     !release || release.listing.kind !== kind || release.listing.status !== 'published'
     || release.reviewStatus !== 'approved' || release.listing.latestReleaseId !== release.id
+    || (release.listing.visibility !== 'public' && release.listing.publisherWorkspaceId !== workspaceId)
   ) {
     throw new MarketError('listing_unavailable', `This ${kind} release is not available for installation.`);
   }
@@ -1131,7 +1449,7 @@ export async function installMcpRelease(input: {
     try {
       return await db.$transaction(async (tx) => {
         await assertInstallerAccess(tx, input.targetWorkspaceId, input.installedById);
-        const release = await approvedRelease(tx, input.releaseId, 'mcp');
+        const release = await approvedRelease(tx, input.releaseId, 'mcp', input.targetWorkspaceId);
         const manifest = parseMcpMarketManifest(release.manifest, release.checksum);
         assertRemoteMcpRecipe(manifest.mcp.recipe);
         const reused = await reusedInstall(tx, { ...input, idempotencyKey }, 'deployment');
@@ -1242,7 +1560,7 @@ export async function installToolkitRelease(input: {
           }
           return { ...reused, resource: reused.resource as Toolkit };
         }
-        const release = await approvedRelease(tx, input.releaseId, 'toolkit');
+        const release = await approvedRelease(tx, input.releaseId, 'toolkit', input.targetWorkspaceId);
         const existing = await tx.marketInstall.findUnique({
           where: {
             targetWorkspaceId_listingId: {
@@ -1374,6 +1692,7 @@ export async function installMarketRelease(input: {
   targetWorkspaceId: string;
   installedById: string;
   idempotencyKey: string;
+  mcpBindings?: PiPackageMcpBindings;
 }) {
   const release = await db.marketRelease.findUnique({
     where: { id: input.releaseId },
@@ -1400,6 +1719,10 @@ export async function installMarketRelease(input: {
       resource: result.resource,
       reused: result.reused,
     };
+  }
+  if (release?.listing.kind === 'pi-package') {
+    const result = await installPiPackageRelease(input);
+    return { ...result, kind: 'pi-package' as const, resource: null };
   }
   throw new MarketError('listing_unavailable', 'This market release cannot be installed.');
 }
@@ -1793,5 +2116,6 @@ export async function updateMarketInstall(input: {
   if (install?.listing.kind === 'skill') return updateSkillMarketInstall(input);
   if (install?.listing.kind === 'mcp') return updateMcpInstall(input);
   if (install?.listing.kind === 'toolkit') return updateToolkitInstall(input);
+  if (install?.listing.kind === 'pi-package') return updatePiPackageInstall(input);
   throw new MarketError('install_not_found', 'The market installation was not found.');
 }

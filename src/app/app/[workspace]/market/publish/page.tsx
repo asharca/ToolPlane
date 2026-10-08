@@ -3,7 +3,7 @@ import { ButtonLink } from '@/components/motion/button';
 
 import { redirect } from 'next/navigation';
 import { getTranslations } from 'next-intl/server';
-import { ArrowUpRight, Bot, Brain, EyeOff, MessageSquare, Plug, Undo2, Upload, Wrench } from 'lucide-react';
+import { ArrowUpRight, Bot, Brain, MessageSquare, Plug, Upload, Wrench } from 'lucide-react';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { listAgents } from '@/lib/agents/queries';
 import { listChatAssistantsForWorkspace } from '@/lib/chat/service';
@@ -18,87 +18,17 @@ import {
 import { deploymentLabel } from '@/lib/workspace/deployment-label';
 import { skillLabel } from '@/lib/workspace/skill-label';
 import { DashboardEmptyState, DashboardPage } from '@/components/dashboard/DashboardUI';
-import { ConfirmSubmitButton } from '@/components/dashboard/ConfirmSubmitButton';
+import { PublisherControls } from '@/components/dashboard/market/PublisherControls';
+import type { ListingStatus } from '@/components/dashboard/market/PublisherControls';
 import {
   AssistantPublishForm,
   McpPublishForm,
   SkillPublishForm,
   ToolkitPublishForm,
 } from '@/components/dashboard/market/SkillPublishForm';
-import {
-  unpublishMarketListingAction,
-  withdrawMarketReleaseAction,
-} from '@/lib/market/actions';
 
 export const dynamic = 'force-dynamic';
 
-type ListingStatus = {
-  id?: string;
-  status: string;
-  latestVersion: number;
-  latestRelease: { version: number } | null;
-  pendingRelease: { version: number; reviewStatus: string } | null;
-};
-
-function PublisherControls({
-  listing,
-  workspace,
-  canPublish,
-  labels,
-}: {
-  listing: ListingStatus | undefined;
-  workspace: string;
-  canPublish: boolean;
-  labels: {
-    withdraw: string;
-    withdrawing: string;
-    withdrawConfirm: string;
-    unpublish: string;
-    unpublishing: string;
-    unpublishConfirm: string;
-    cancel: string;
-  };
-}) {
-  if (!listing?.id || !canPublish) return null;
-  return (
-    <div className="flex flex-wrap justify-end gap-2 sm:col-span-4">
-      {listing.pendingRelease?.reviewStatus === 'pending' ? (
-        <form action={withdrawMarketReleaseAction}>
-          <input type="hidden" name="workspace" value={workspace} />
-          <input type="hidden" name="listingId" value={listing.id} />
-          <ConfirmSubmitButton
-            triggerLabel={<><Undo2 className="size-3.5" />{labels.withdraw}</>}
-            prompt={labels.withdrawConfirm}
-            confirmLabel={labels.withdraw}
-            pendingLabel={labels.withdrawing}
-            cancelLabel={labels.cancel}
-            
-            
-            
-            promptClassName="max-w-72 text-xs text-muted-foreground"
-          />
-        </form>
-      ) : null}
-      {listing.status === 'published' && listing.latestRelease ? (
-        <form action={unpublishMarketListingAction}>
-          <input type="hidden" name="workspace" value={workspace} />
-          <input type="hidden" name="listingId" value={listing.id} />
-          <ConfirmSubmitButton
-            triggerLabel={<><EyeOff className="size-3.5" />{labels.unpublish}</>}
-            prompt={labels.unpublishConfirm}
-            confirmLabel={labels.unpublish}
-            pendingLabel={labels.unpublishing}
-            cancelLabel={labels.cancel}
-            
-            
-            
-            promptClassName="max-w-72 text-xs text-muted-foreground"
-          />
-        </form>
-      ) : null}
-    </div>
-  );
-}
 
 function publicationTone(listing: ListingStatus | undefined) {
   if (listing?.pendingRelease?.reviewStatus === 'pending') return 'bg-muted/35';
@@ -193,6 +123,7 @@ export default async function MarketPublishPage({
           <p className="mt-2 text-xs text-(--color-warning) dark:text-(--color-warning)">{t('publishRequiresManager')}</p>
         ) : null}
       </div>
+
 
       {total === 0 ? (
         <DashboardEmptyState
@@ -289,7 +220,7 @@ export default async function MarketPublishPage({
                 </div>
                 <span className="text-xs text-muted-foreground">{t('agents')}</span>
                 <span className="inline-flex items-center gap-2 text-xs text-muted-foreground"><span className={`size-1.5 rounded-full ${publicationTone(listing)}`} />{publicationLabel(listing)}</span>
-                <ButtonLink href={`${base}/agents/${agent.id}/publish`} variant="secondary" size="sm">{listing ? t('manageListing') : t('publishToMarket')} <ArrowUpRight className="size-3.5" /></ButtonLink>
+                {agent.runtimeKind === 'pi-sdk' ? <span className="text-xs text-muted-foreground">{t('piTemplateUnsupported')}</span> : <ButtonLink href={`${base}/agents/${agent.id}/publish`} variant="secondary" size="sm">{listing ? t('manageListing') : t('publishToMarket')} <ArrowUpRight className="size-3.5" /></ButtonLink>}
               </article>
             );
           })}

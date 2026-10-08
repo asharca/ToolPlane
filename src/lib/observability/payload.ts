@@ -1,4 +1,4 @@
-export type PayloadPolicy = 'metadata-only' | 'diagnostic' | 'agent-content' | 'forbidden';
+export type PayloadPolicy = 'metadata-only' | 'diagnostic' | 'agent-content' | 'request-response' | 'forbidden';
 export const MAX_DIAGNOSTIC_BYTES = 32 * 1024;
 
 export async function boundedResponseText(response: Response): Promise<string | null> {

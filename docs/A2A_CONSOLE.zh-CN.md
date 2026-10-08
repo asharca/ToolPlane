@@ -2,13 +2,12 @@
 
 > [English](A2A_CONSOLE.md)
 
-日常使用通过现有智能体 Work/聊天界面对接 Pi；A2A 作为供其他 Agent 调用的集成接口保留。设置页不再常驻“执行记录／待审批”或任务调试区；历史、任务进度和根任务审批仍可通过 `/app/{workspace}/agents/{agentId}?settings=a2a&task={taskId}` 查看。打开链接不会提交任务或授予权限。内部子任务由父智能体发起委派即授权使用已配置工具，不再逐项等待人工审批。
+日常使用通过现有智能体 Work/聊天界面对接 Pi；A2A 作为供其他 Agent 调用的集成接口保留。设置页不再常驻“执行记录／待审批”或任务调试区；历史、任务进度和交互入口根任务审批仍可通过 `/app/{workspace}/agents/{agentId}?settings=a2a&task={taskId}` 查看。打开链接不会提交任务或授予权限。已鉴权的入站 A2A 根任务与内部委派子任务直接使用已配置工具，无需人工审批；普通聊天、Work、Control 和渠道根任务策略不变。
 
 面向工作区使用者。打开 **Agent 设置 → A2A 接入**，也可进入
 `/app/{workspace}/agents/{agentId}?settings=a2a`。
 
-“让外部服务调用此 Agent”区域直接提供接入步骤、账户 Token 管理入口（或 Hermes 服务密钥说明）、可复制的 Card / SendMessage / GetTask / SubscribeToTask / CancelTask 示例、响应解析和常见错误排查。未配置有效连接地址时仍可阅读指南；阅读或复制示例不会自动提交任务。
-页面使用原生 A2A 1.0 核心，不需要在浏览器粘贴账户 Token。
+设置页只保留访问开关、授权、连接地址和凭据管理，不再内嵌教程或请求示例。接入时访问部署域名的 `/docs-api`：独立 Scalar 参考页从 `/api/v1/openapi.json` 加载 API 定义，统一展示账户 A2A、发布服务 A2A、MCP 桥接及现有 Agent API。文档无需登录，不包含账户数据或真实密钥。
 
 ## 内部协作
 
@@ -52,29 +51,12 @@
 列表刷新失败不会隐藏已经成功返回的密钥。每个 Endpoint 的此入口限制 100 个客户端，
 每客户端最多 50 条密钥记录；历史撤销记录也计入该上限。
 
-## 复制连接信息
+## 连接地址与 API 文档
 
-页面分别展示本地和对外的 RPC / Agent Card 地址，以及获取 Card、SendMessage、GetTask、
-SubscribeToTask、CancelTask 的 curl 示例。地址来自部署配置 `NEXT_PUBLIC_APP_URL`，
-不从不可信 Host / X-Forwarded-Host 生成。生产地址需要 HTTPS，回环地址允许 HTTP。
-仅当 `NODE_ENV=development` 时，额外允许 RFC1918 私有 IPv4 地址使用 HTTP：
-`10.0.0.0/8`、`172.16.0.0/12`、`192.168.0.0/16`；不放行公网 HTTP 或任意域名。
-例如在 `.env` 设置 `NEXT_PUBLIC_APP_URL="http://10.0.10.2:3002"`，
-运行 `pnpm dev --hostname 0.0.0.0 --port 3002`，浏览器也通过同一地址访问。
-此规则同时用于控制台、连接示例及本地/对外 Agent Card；登录、工作区权限和严格
-Origin 校验仍然生效。生产部署继续使用 HTTPS；内网 HTTP 不加密凭据，仅用于可信开发网络。
+设置页分别展示账户入口和发布服务的 RPC / Agent Card 地址，可直接复制。地址来自部署配置 `NEXT_PUBLIC_APP_URL`，不从不可信 Host / X-Forwarded-Host 生成。生产环境需要 HTTPS；回环地址允许 HTTP，开发环境还允许 RFC1918 私有 IPv4。
 
-示例只引用环境变量，不填充真实密钥。服务端本地集成使用 `TOOLPLANE_ACCOUNT_TOKEN`，
-对外集成使用 `TOOLPLANE_A2A_TOKEN`。两种 Token 不能混用；Card 也需要鉴权。
-每个新任务替换 messageId；只在重试同一请求时复用完全相同的 ID 和内容。查询时替换 Task ID。
+接口参数、鉴权、JSON-RPC 方法、SSE 响应和调用示例统一在 `/docs-api` 查看。Scalar 随应用打包，不依赖运行时 CDN，也不持久化凭据或启用托管 AI。A2A 是服务端到服务端接口，请复制生成的请求到自己的后端执行，不改变原有 Origin、Bearer 和工作区权限校验。
 
-平台内说明提供可复制的 Token `export` 设置命令和 `uuidgen`，并直接展开 Card 与
-SendMessage 的完整 curl 示例。请在能访问所示地址的电脑上，使用 Mac“终端”、Linux
-终端或 Windows WSL Bash 逐条执行，不是在 ToolPlane 聊天框、浏览器控制台或 Agent
-沙箱执行。在本机替换 Token 占位符，后续命令保持在同一终端窗口；命令历史可能保存
-Token，不要分享历史或截图。获取 Card 不启动任务；SendMessage 会运行 Agent 并可能
-消耗资源。正式接入由自己的后端程序发送相同 HTTP 请求。仅需内部 Agent 协作时，
-勾选允许的子 Agent 即可，不需要运行这些终端命令。
 
 ## 浏览器和协议的边界
 
@@ -95,8 +77,7 @@ GET /api/v1/workspaces/{slug}/agents/{agentId}/a2a/console/tasks?rootTaskId=...
 控制台不伪造账户 Token，也不绕回旧 Responses/协作 Worker。原生任务审批与 Work 审批记录独立；
 受支持经典入口通过[统一适配](A2A_INGRESS_APPROVALS.zh-CN.md)进入原生核心；渠道需要显式绑定真实操作人，旧记录不自动重放。
 
-对外连接区还提供[原生 MCP 适配](A2A_MCP_BRIDGE.zh-CN.md)，复用显式授予 A2A 权限的服务凭据。
-连接对象是示例，不是所有客户端都通用的配置文件。
+原生 MCP 适配的接入地址、协议和工具说明也在 `/docs-api`，使用同一专用 A2A 服务凭据。内部实现与协议边界见 [MCP 桥接](A2A_MCP_BRIDGE.zh-CN.md)。
 
 本页不包含大文件上传、OAuth 自动发现、逐 Token 流或任意网络连通性探测。
 完整协议说明见[公开 A2A](A2A_NATIVE.zh-CN.md)与[内部协作](A2A_LOCAL_COLLABORATION.zh-CN.md)。

@@ -17,6 +17,7 @@ import {
   MessageCircle,
   PackageCheck,
   Plug,
+  Puzzle,
   RotateCw,
   ShieldCheck,
   Wrench,
@@ -36,9 +37,6 @@ import {
   parseToolkitMarketManifest,
 } from '@/lib/market/resources';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
-import { listSandboxes } from '@/lib/sandboxes/queries';
-import { readMcpInspectorConnection } from '@/lib/workspace/inspector-connection';
-import { effectiveStatus } from '@/lib/process/supervisor';
 import {
   hasMcpToolCatalog,
   hasVerifiedMcpToolCatalog,
@@ -53,7 +51,7 @@ import { SkillMarkdownViewer } from '@/components/dashboard/SkillMarkdownViewer'
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
 import { McpToolCatalog } from '@/components/dashboard/McpToolCatalog';
 import { SafeStreamdown } from '@/components/dashboard/SafeStreamdown';
-import { ToolPlayground } from '@/components/dashboard/ToolPlayground';
+import { PiPackageDetails } from '@/components/dashboard/market/PiPackageDetails';
 
 export const dynamic = 'force-dynamic';
 
@@ -84,8 +82,12 @@ export default async function MarketItemPage({
   if (!user) redirect(`/app/login?next=${encodeURIComponent(currentPath)}`);
   const workspace = await getWorkspaceForUser(workspaceSlug, user.id);
   if (!workspace) redirect('/app');
-  const listing = await getMarketListing(namespace, listingSlug);
-  if (!listing?.latestRelease || !['skill', 'assistant', 'mcp', 'toolkit'].includes(listing.kind)) notFound();
+  const listing = await getMarketListing(namespace, listingSlug, { workspaceId: workspace.id, userId: user.id });
+  if (!listing?.latestRelease || !['skill', 'assistant', 'mcp', 'toolkit', 'pi-package'].includes(listing.kind)) notFound();
+  const piPackage = listing.kind === 'pi-package' ? listing.piPackage : null;
+  const reviewSummary = listing.latestRelease.releaseSummary;
+  const officialValidated = Boolean(reviewSummary && typeof reviewSummary === 'object' && !Array.isArray(reviewSummary) && reviewSummary.reviewPolicy === 'official-directory');
+  const sdkAgents = piPackage ? await db.agent.findMany({ where: { workspaceId: workspace.id, runtimeKind: 'pi-sdk' }, select: { id: true, name: true }, orderBy: { name: 'asc' } }) : [];
 
   const skillManifest = listing.kind === 'skill'
     ? parseSkillReleaseManifest(listing.latestRelease.manifest, listing.latestRelease.checksum)
@@ -129,7 +131,7 @@ export default async function MarketItemPage({
   const marketSection = listing.kind === 'assistant' ? 'assistants'
     : listing.kind === 'skill' ? 'skills'
       : listing.kind === 'mcp' ? 'mcp'
-        : 'toolkits';
+        : listing.kind === 'pi-package' ? 'pi-packages' : 'toolkits';
   const marketBase = `/app/${encodeURIComponent(workspaceSlug)}/market/${marketSection}`;
   const marketBackHref = `${marketBase}${connector ? '?type=connector' : ''}`;
   const publishedAt = listing.latestRelease.publishedAt ?? listing.publishedAt;
@@ -139,7 +141,7 @@ export default async function MarketItemPage({
   const resourceType = listing.kind === 'assistant' ? t('kindAssistant')
     : listing.kind === 'skill' ? t('kindSkill')
       : listing.kind === 'mcp' ? t(connector ? 'kindMcpConnector' : 'kindMcp')
-        : t('kindToolkit');
+        : listing.kind === 'pi-package' ? t('kindPiPackage') : t('kindToolkit');
   const installedMcpDeployment = mcpManifest ? installedDeployment : null;
   const catalogServer = mcpManifest && !connector ? (await db.marketListing.findUnique({
     where: { id: listing.id },
@@ -148,39 +150,14 @@ export default async function MarketItemPage({
     },
   }))?.sourceServer : null;
   const serverToolsVisible = hasVerifiedMcpToolCatalog(catalogServer);
-  const inspectorConnection = connector
-    ? readMcpInspectorConnection(installedMcpDeployment?.installCfg)
-    : null;
-  const inspectorSandbox = inspectorConnection ? await db.sandbox.findFirst({
-    where: { id: inspectorConnection.sandboxId, workspaceId: workspace.id },
-    select: { deployment: { select: { id: true, status: true } } },
-  }) : null;
-  const inspectorRunning = Boolean(
-    inspectorSandbox
-    && effectiveStatus(inspectorSandbox.deployment.id, inspectorSandbox.deployment.status) === 'running',
-  );
   const mcpTools = connector
-    ? inspectorRunning && installedMcpDeployment && hasMcpToolCatalog(installedMcpDeployment.installCfg)
-      ? readMcpToolCatalog(installedMcpDeployment.installCfg)
-      : []
+    ? readMcpToolCatalog(installedMcpDeployment?.installCfg)
     : serverToolsVisible ? readMcpToolCatalog(catalogServer?.installCfg) : [];
-  const toolsVisible = serverToolsVisible || inspectorRunning;
-  const inspectorSandboxes = connector && installedMcpDeployment
-    ? (await listSandboxes(workspace.id))
-      .filter((sandbox) => sandbox.kind === 'docker' || sandbox.kind === 'connector')
-      .map((sandbox) => ({
-        id: sandbox.id,
-        name: sandbox.name,
-        kind: sandbox.kind,
-        running: effectiveStatus(sandbox.deploymentId, sandbox.deployment.status) === 'running',
-        networkEnabled: sandbox.network !== 'none',
-      }))
-    : [];
+  const toolsVisible = serverToolsVisible || hasMcpToolCatalog(installedMcpDeployment?.installCfg);
 
-  const skillInstallPanel = skillManifest ? (
-    <>
-      <section className="rounded-lg bg-muted/35 p-5">
-        <div className="flex items-start gap-2.5">
+  const skillActions = skillManifest ? (
+      <section className="flex flex-wrap items-end gap-2 rounded-lg bg-muted/35 p-3">
+        <div className="flex w-full items-start gap-2.5">
           {install ? (
             <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-(--color-success)" />
           ) : (
@@ -198,17 +175,17 @@ export default async function MarketItemPage({
           </div>
         </div>
         {!install ? (
-          <form action={installMarketResourceAction} className="mt-5">
+          <form action={installMarketResourceAction}>
             <input type="hidden" name="workspace" value={workspaceSlug} />
             <input type="hidden" name="releaseId" value={listing.latestRelease.id} />
             <input type="hidden" name="idempotencyKey" value={randomUUID()} />
-            <SubmitButton flash={false} pendingLabel={t('installing')} variant="primary" size="md" className="w-full">
+            <SubmitButton flash={false} pendingLabel={t('installing')} variant="primary" size="md">
               {t('installToWorkspace')} <ArrowRight className="size-4" />
             </SubmitButton>
           </form>
         ) : updateAvailable ? (
-          <div className="mt-5 space-y-2">
-            <form action={updateMarketInstallAction}>
+          <div className="contents">
+            <form action={updateMarketInstallAction} className="flex min-w-0 flex-wrap items-center gap-2">
               <input type="hidden" name="workspace" value={workspaceSlug} />
               <input type="hidden" name="installId" value={install.id} />
               <input type="hidden" name="targetReleaseId" value={listing.latestRelease.id} />
@@ -216,7 +193,7 @@ export default async function MarketItemPage({
               {install.status === 'modified' ? (
                 <FormCheckbox required name="force" value="yes" label={t('overwriteLocalChangesConfirmation')} />
               ) : null}
-              <SubmitButton flash={false} pendingLabel={t('updating')} variant="primary" size="md" className="w-full">
+              <SubmitButton flash={false} pendingLabel={t('updating')} variant="primary" size="md">
                 <RotateCw className="size-4" /> {t('update')}
               </SubmitButton>
             </form>
@@ -225,17 +202,21 @@ export default async function MarketItemPage({
               <input type="hidden" name="installId" value={install.id} />
               <input type="hidden" name="targetReleaseId" value={listing.latestRelease.id} />
               <input type="hidden" name="currentReleaseId" value={install.currentReleaseId} />
-              <SubmitButton flash={false} pendingLabel={t('ignoringUpdate')} variant="secondary" size="md" className="w-full">
+              <SubmitButton flash={false} pendingLabel={t('ignoringUpdate')} variant="ghost" size="md">
                 {t('ignoreThisVersion')}
               </SubmitButton>
             </form>
           </div>
-        ) : installedSkill ? (
-          <ButtonLink href={`/app/${workspaceSlug}/skills/${installedSkill.id}`} variant="primary" size="md" className="mt-5 w-full">
+        ) : null}
+        {installedSkill ? (
+          <ButtonLink href={`/app/${workspaceSlug}/skills/${installedSkill.id}`} variant={updateAvailable ? 'secondary' : 'primary'} size="md">
             {t('manageSkill')} <ArrowRight className="size-4" />
           </ButtonLink>
         ) : null}
       </section>
+  ) : null;
+
+  const skillInstallPanel = skillManifest ? (
       <dl id="capabilities" className="scroll-mt-24 space-y-3 text-xs">
         <div className="flex items-center justify-between gap-4">
           <dt className="inline-flex items-center gap-1.5 text-muted-foreground"><GitBranch className="size-3.5" />{t('source')}</dt>
@@ -252,7 +233,6 @@ export default async function MarketItemPage({
           </dd>
         </div>
       </dl>
-    </>
   ) : null;
 
   const assistantPanel = assistantManifest ? (
@@ -293,12 +273,11 @@ export default async function MarketItemPage({
       }`
     : installedToolkit
       ? `/app/${encodeURIComponent(workspaceSlug)}/toolkits/${encodeURIComponent(installedToolkit.slug)}`
-      : null;
-  const resourceCanInstall = Boolean(connector || toolkitManifest);
-  const resourceInstallPanel = mcpManifest || toolkitManifest ? (
-    <>
-      {resourceCanInstall ? <section className="rounded-lg bg-muted/35 p-5">
-        <div className="flex items-start gap-2.5">
+      : piPackage && install ? `/app/${encodeURIComponent(workspaceSlug)}/market/installed#install-${encodeURIComponent(install.id)}` : null;
+  const resourceCanInstall = Boolean(connector || toolkitManifest || piPackage);
+  const resourceActions = resourceCanInstall ? (
+      <section className={connector ? 'flex flex-wrap items-end gap-2 rounded-lg bg-muted/35 p-3' : 'rounded-lg bg-muted/35 p-5'}>
+        <div className={`flex items-start gap-2.5 ${connector ? 'w-full' : ''}`}>
           {install ? (
             <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-(--color-success)" />
           ) : (
@@ -306,7 +285,7 @@ export default async function MarketItemPage({
           )}
           <div>
             <p className="text-sm font-semibold text-foreground">
-              {install ? t('alreadyAddedTitle') : t(connector ? 'readyToConnect' : 'readyToDeploy')}
+              {piPackage ? t(install ? 'piInstalledOnly' : 'piReadyToInstall') : install ? t('alreadyAddedTitle') : t(connector ? 'readyToConnect' : 'readyToDeploy')}
             </p>
             {install ? (
               <p className="mt-1 text-xs text-muted-foreground">
@@ -315,23 +294,26 @@ export default async function MarketItemPage({
             ) : null}
           </div>
         </div>
+        {piPackage ? <div className="mt-3 space-y-2 text-xs leading-5 text-muted-foreground"><p>{t('piExecutionWarning')}</p><p>{t('piHeadlessWarning')}</p></div> : null}
         {!install ? (
-          <form action={installMarketResourceAction} className="mt-5">
+          <form action={installMarketResourceAction} className={connector ? undefined : 'mt-5'}>
             <input type="hidden" name="workspace" value={workspaceSlug} />
             <input type="hidden" name="releaseId" value={listing.latestRelease.id} />
+            {piPackage ? <input type="hidden" name="kind" value="pi-package" /> : null}
             <input type="hidden" name="idempotencyKey" value={randomUUID()} />
-            <SubmitButton flash={false} pendingLabel={t(connector ? 'connecting' : 'installing')} variant="primary" size="md" className="w-full">
+            <SubmitButton flash={false} pendingLabel={t(connector ? 'connecting' : 'installing')} variant="primary" size="md" className={connector ? undefined : 'w-full'}>
               {t(connector ? 'connectToWorkspace' : 'installToWorkspace')} <ArrowRight className="size-4" />
             </SubmitButton>
           </form>
         ) : updateAvailable ? (
-          <div className="mt-5 space-y-2">
+          <div className={connector ? 'contents' : 'mt-5 space-y-2'}>
             <form action={updateMarketInstallAction}>
               <input type="hidden" name="workspace" value={workspaceSlug} />
               <input type="hidden" name="installId" value={install.id} />
+              {piPackage ? <input type="hidden" name="kind" value="pi-package" /> : null}
               <input type="hidden" name="targetReleaseId" value={listing.latestRelease.id} />
               <input type="hidden" name="currentReleaseId" value={install.currentReleaseId} />
-              <SubmitButton flash={false} pendingLabel={t('updating')} variant="primary" size="md" className="w-full">
+              <SubmitButton flash={false} pendingLabel={t('updating')} variant="primary" size="md" className={connector ? undefined : 'w-full'}>
                 <RotateCw className="size-4" /> {t('update')}
               </SubmitButton>
             </form>
@@ -340,18 +322,35 @@ export default async function MarketItemPage({
               <input type="hidden" name="installId" value={install.id} />
               <input type="hidden" name="targetReleaseId" value={listing.latestRelease.id} />
               <input type="hidden" name="currentReleaseId" value={install.currentReleaseId} />
-              <SubmitButton flash={false} pendingLabel={t('ignoringUpdate')} variant="secondary" size="md" className="w-full">
+              <SubmitButton flash={false} pendingLabel={t('ignoringUpdate')} variant={connector ? 'ghost' : 'secondary'} size="md" className={connector ? undefined : 'w-full'}>
                 {t('ignoreThisVersion')}
               </SubmitButton>
             </form>
+            {connector && installedResourceHref ? (
+              <ButtonLink href={installedResourceHref} variant="secondary" size="md">
+                {t('manage')} <ArrowRight className="size-4" />
+              </ButtonLink>
+            ) : null}
           </div>
         ) : installedResourceHref ? (
-          <ButtonLink href={installedResourceHref} variant="primary" size="md" className="mt-5 w-full">
+          <ButtonLink href={installedResourceHref} variant="primary" size="md" className={connector ? undefined : 'mt-5 w-full'}>
             {t('manage')} <ArrowRight className="size-4" />
           </ButtonLink>
         ) : null}
-      </section> : null}
-      <dl id="capabilities" className="scroll-mt-24 space-y-3 text-xs">
+        {piPackage && install ? (
+          <div className="mt-4 space-y-2">
+            <p className="text-xs leading-5 text-muted-foreground">{t('piBindingHelp')}</p>
+            <ButtonLink href={`/app/${encodeURIComponent(workspaceSlug)}/market/installed/${encodeURIComponent(install.id)}/clients`} variant="secondary" size="sm">{t('piCatalog.externalClients')}</ButtonLink>
+            <ButtonLink href={`/app/${encodeURIComponent(workspaceSlug)}/agents?create=1&runtime=pi-sdk`} variant="secondary" size="sm">{t('piCreateAgent')}</ButtonLink>
+            {sdkAgents.length === 0 ? <p className="text-xs text-muted-foreground">{t('piNoAgents')}</p> : sdkAgents.map((agent) => <ButtonLink key={agent.id} href={`/app/${encodeURIComponent(workspaceSlug)}/agents/${encodeURIComponent(agent.id)}?settings=piPackages`} variant="ghost" size="sm">{t('piConfigureAgent', { name: agent.name })}</ButtonLink>)}
+          </div>
+        ) : null}
+      </section>
+  ) : null;
+  const resourceInstallPanel = mcpManifest || toolkitManifest || piPackage ? (
+    <>
+      {!connector ? resourceActions : null}
+      <dl id={mcpManifest || piPackage ? undefined : 'capabilities'} className="scroll-mt-24 space-y-3 text-xs">
         {mcpManifest ? (
           <>
             <div className="flex items-center justify-between gap-4">
@@ -403,16 +402,17 @@ export default async function MarketItemPage({
         backLabel={listing.kind === 'assistant' ? t('backToAssistants')
           : listing.kind === 'skill' ? t('backToSkills')
             : listing.kind === 'mcp' ? t('backToMcp')
-              : t('toolkits')}
+              : piPackage ? t('piPackages') : t('toolkits')}
         iconUrl={listing.iconUrl}
         icon={listing.kind === 'assistant' ? <MessageCircle className="size-7" />
           : listing.kind === 'skill' ? <Brain className="size-7" />
             : listing.kind === 'mcp' ? <Box className="size-7" />
-              : <Wrench className="size-7" />}
+              : piPackage ? <Puzzle className="size-7" /> : <Wrench className="size-7" />}
         type={resourceType}
         title={listing.name}
         publisher={t('publishedBy', { name: namespace })}
         summary={listing.summary || skillManifest?.skill.description || mcpManifest?.mcp.description || t('noDescription')}
+        actions={skillActions ?? (connector ? resourceActions : null)}
         facts={[
           { label: t('version'), value: `v${listing.latestRelease.version}` },
           { label: t('usageCount'), value: listing.installCount },
@@ -450,11 +450,23 @@ export default async function MarketItemPage({
           { href: '#overview', label: t('overview') },
           { href: '#capabilities', label: t('capabilities') },
           ...(toolsVisible ? [{ href: '#tools', label: t('tools') }] : []),
-          ...(connector && installedMcpDeployment ? [{ href: '#inspector', label: t('inspector') }] : []),
         ]}
         aside={skillInstallPanel ?? assistantPanel ?? resourceInstallPanel}
       >
-        {skillManifest ? (
+        {piPackage ? (
+          <>
+            <section id="overview" className="scroll-mt-24 space-y-3">
+              <h2 className="font-semibold">{t(officialValidated ? 'piOfficialValidated' : 'piReviewApproved')}</h2>
+              <p className="text-sm leading-6 text-muted-foreground">{t(officialValidated ? 'piOfficialValidationMeaning' : 'piReviewMeaning')}</p>
+              <p className="text-sm text-muted-foreground">{t(listing.visibility === 'private' ? 'piCatalog.privateDetail' : 'piCatalog.publicDetail')}</p>
+              <ButtonLink href={`/api/v1/workspaces/${encodeURIComponent(workspaceSlug)}/market/pi-packages/${encodeURIComponent(listing.latestRelease.id)}/download`} variant="secondary" size="sm">{t('piCatalog.download')}</ButtonLink>
+              {listing.latestRelease.releaseNotes ? <p className="whitespace-pre-wrap text-sm text-muted-foreground">{listing.latestRelease.releaseNotes}</p> : null}
+            </section>
+            <section id="capabilities" className="scroll-mt-24">
+              <PiPackageDetails snapshot={piPackage} checksum={listing.latestRelease.checksum} />
+            </section>
+          </>
+        ) : skillManifest ? (
           <section id="overview" className="scroll-mt-24">
             <SkillMarkdownViewer markdown={skillManifest.skill.content} downloadHref={downloadHref} />
           </section>
@@ -527,9 +539,9 @@ export default async function MarketItemPage({
                 <McpToolCatalog
                   tools={mcpTools}
                   compact={Boolean(connector)}
-                  hrefForTool={(toolName) => (
-                    `/app/${encodeURIComponent(workspaceSlug)}/market/items/${encodeURIComponent(namespace)}/${encodeURIComponent(listingSlug)}/tools/${encodeURIComponent(toolName)}`
-                  )}
+                  hrefForTool={(toolName) => installedMcpDeployment
+                    ? `/app/${encodeURIComponent(workspaceSlug)}/mcp/${encodeURIComponent(installedMcpDeployment.id)}/tools/${encodeURIComponent(toolName)}`
+                    : `/app/${encodeURIComponent(workspaceSlug)}/market/items/${encodeURIComponent(namespace)}/${encodeURIComponent(listingSlug)}/tools/${encodeURIComponent(toolName)}`}
                   labels={{
                     title: mcpT('toolCatalog'),
                     description: mcpT('toolCatalogDescription'),
@@ -555,23 +567,10 @@ export default async function MarketItemPage({
                 </section>
               )}
             </div> : null}
-            {connector && installedMcpDeployment ? (
-              <section id="inspector" className="rounded-3xl border border-border bg-card scroll-mt-24 overflow-hidden">
-                <header className="border-b border-border px-5 py-4">
-                  <h2 className="text-sm font-semibold text-foreground">{t('inspector')}</h2>
-                  <p className="mt-1 text-xs leading-5 text-muted-foreground">{t('inspectorDescription')}</p>
-                </header>
-                <div className="px-5 py-5">
-                  <ToolPlayground
-                    workspace={workspaceSlug}
-                    deploymentId={installedMcpDeployment.id}
-                    tools={mcpTools}
-                    sandboxes={inspectorSandboxes}
-                    connectedSandboxId={inspectorConnection?.sandboxId}
-                    credentialsRequired={installedMcpDeployment.status === 'setup_required'}
-                  />
-                </div>
-              </section>
+            {installedMcpDeployment ? (
+              <ButtonLink href={`/app/${encodeURIComponent(workspaceSlug)}/mcp/${encodeURIComponent(installedMcpDeployment.id)}?tab=tools`} variant="secondary" size="md">
+                {mcpT('manualToolTesting')}
+              </ButtonLink>
             ) : null}
           </>
         ) : toolkitManifest ? (

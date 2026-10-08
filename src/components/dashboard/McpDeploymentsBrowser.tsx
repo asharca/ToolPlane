@@ -3,13 +3,12 @@ import { AnimatedBadge } from '@/components/motion/animated-badge';
 
 import { ButtonLink, Button } from '@/components/motion/button';
 import { Input } from '@/components/motion/input';
-import { Checkbox } from '@/components/motion/checkbox';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/motion/popover';
 import { FormSelect } from '@/components/ui/FormSelect';
 
 
 import Link from 'next/link';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { FileText, MoreHorizontal, Pause, Play, Plug, RotateCcw, Search, Trash2, X } from 'lucide-react';
 import { StatusBadge } from '@/components/dashboard/StatusBadge';
@@ -28,7 +27,8 @@ export type McpDeploymentListItem = {
   iconUrl: string | null;
 };
 
-type FilterStatus = 'all' | 'running' | 'provisioning' | 'error' | 'stopped';
+type FilterStatus = 'all' | 'running' | 'setup_required' | 'provisioning' | 'error' | 'stopped';
+const PAGE_SIZE = 20;
 
 function McpSourceBadge({ source }: { source: string }) {
   const t = useTranslations('console.mcp');
@@ -82,6 +82,9 @@ function McpDeploymentActions({
           </SubmitButton>
         </form>
       )}
+      <ButtonLink href={`${base}?tab=logs`} variant="ghost" size="sm">
+        <FileText className="size-3.5" />{t('logs')}
+      </ButtonLink>
       <Popover align="end" side={actionSide}>
         <PopoverTrigger>
           <Button type="button" variant="ghost" size="icon" aria-label={`${t('actions')}: ${deployment.name}`} title={t('actions')}
@@ -90,9 +93,6 @@ function McpDeploymentActions({
           </Button>
         </PopoverTrigger>
         <PopoverContent className="w-56 max-w-[calc(100vw-2rem)] space-y-1 p-2">
-          <ButtonLink href={`${base}?tab=logs`} variant="ghost" size="sm" className="w-full justify-start">
-            <FileText className="size-3.5" />{t('logs')}
-          </ButtonLink>
           {isRunning ? (
             <form action={restartDeploymentAction}>
               <input type="hidden" name="workspace" value={slug} />
@@ -116,12 +116,10 @@ function McpDeploymentActions({
 function McpBulkDeploymentActions({
   slug,
   deploymentIds,
-  onClear,
   className,
 }: {
   slug: string;
   deploymentIds: Set<string>;
-  onClear: () => void;
   className: string;
 }) {
   const [t, common] = [useTranslations('console.mcp'), useTranslations('common')];
@@ -130,15 +128,9 @@ function McpBulkDeploymentActions({
 
   return (
     <div
-      role="toolbar"
-      aria-label={selection('selectedResources', { count: selectedIds.length })}
+      aria-label={t('actions')}
       className={className}
     >
-      <span className="mr-0.5 text-xs font-medium tabular-nums text-accent-foreground" aria-live="polite">
-        {selection('selectedResources', { count: selectedIds.length })}
-      </span>
-      <Button type="button" onClick={onClear} aria-label={selection('clearSelection')} title={selection('clearSelection')} variant="ghost" size="icon" className="flex items-center justify-center"><X className="size-3.5" /></Button>
-      <span className="h-4 w-px bg-primary/20" aria-hidden="true" />
       <div className="flex flex-wrap items-center gap-1.5">
         <form action={startDeploymentsAction}>
           <input type="hidden" name="workspace" value={slug} />
@@ -212,13 +204,23 @@ export function McpDeploymentsBrowser({
   deployments: McpDeploymentListItem[];
 }) {
   const [t, common] = [useTranslations('console.mcp'), useTranslations('common')];
-  const selection = useTranslations('console.agents');
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState<FilterStatus>('all');
   const [selectedDeploymentIds, setSelectedDeploymentIds] = useState<Set<string>>(() => new Set());
+  const [page, setPage] = useState(1);
+  const tableAreaRef = useRef<HTMLDivElement>(null);
+  const [tableHeight, setTableHeight] = useState(0);
+  useEffect(() => {
+    const area = tableAreaRef.current;
+    if (!area) return;
+    const observer = new ResizeObserver(([entry]) => setTableHeight(Math.max(0, entry.contentRect.height - 2)));
+    observer.observe(area);
+    return () => observer.disconnect();
+  }, []);
   const counts = useMemo(() => ({
     all: deployments.length,
     running: deployments.filter((deployment) => deployment.status === 'running').length,
+    setup_required: deployments.filter((deployment) => deployment.status === 'setup_required').length,
     provisioning: deployments.filter((deployment) => deployment.status === 'provisioning').length,
     error: deployments.filter((deployment) => deployment.status === 'error').length,
     stopped: deployments.filter((deployment) => deployment.status === 'stopped').length,
@@ -234,52 +236,34 @@ export function McpDeploymentsBrowser({
         .some((value) => value.toLocaleLowerCase().includes(term));
     });
   }, [deployments, query, status]);
+  const totalPages = Math.max(1, Math.ceil(filteredDeployments.length / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+  const pageDeployments = filteredDeployments.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
   const availableDeploymentIds = useMemo(() => new Set(deployments.map((deployment) => deployment.id)), [deployments]);
   const activeSelectedDeploymentIds = useMemo(
     () => new Set([...selectedDeploymentIds].filter((id) => availableDeploymentIds.has(id))),
     [availableDeploymentIds, selectedDeploymentIds],
   );
-  const allFilteredSelected = filteredDeployments.length > 0
-    && filteredDeployments.every((deployment) => activeSelectedDeploymentIds.has(deployment.id));
-  const someFilteredSelected = filteredDeployments.some((deployment) => activeSelectedDeploymentIds.has(deployment.id));
-
-
-  function toggleDeployment(deploymentId: string, checked: boolean) {
-    setSelectedDeploymentIds((current) => {
-      const next = new Set([...current].filter((id) => availableDeploymentIds.has(id)));
-      if (checked) next.add(deploymentId);
-      else next.delete(deploymentId);
-      return next;
-    });
-  }
-
-  function toggleFilteredDeployments() {
-    setSelectedDeploymentIds((current) => {
-      const next = new Set([...current].filter((id) => availableDeploymentIds.has(id)));
-      if (allFilteredSelected) filteredDeployments.forEach((deployment) => next.delete(deployment.id));
-      else filteredDeployments.forEach((deployment) => next.add(deployment.id));
-      return next;
-    });
-  }
 
   const filters: Array<{ key: FilterStatus; label: string; count: number }> = [
     { key: 'all', label: common('all'), count: counts.all },
     { key: 'running', label: t('running'), count: counts.running },
+    { key: 'setup_required', label: t('setupRequiredFilter'), count: counts.setup_required },
     { key: 'provisioning', label: t('deploying'), count: counts.provisioning },
     { key: 'error', label: t('error'), count: counts.error },
     { key: 'stopped', label: t('stopped'), count: counts.stopped },
   ];
 
   return (
-    <section className="space-y-4" aria-label={t('allMcps')}>
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+    <section className="flex min-h-0 flex-1 flex-col gap-4" aria-label={t('allMcps')}>
+      <div className="flex shrink-0 flex-col gap-3 sm:flex-row sm:items-center">
         <div className="min-w-0 flex-1 sm:max-w-md">
-          <Input value={query} onChange={setQuery} placeholder={t('searchMcp')} leftIcon={<Search className="size-4" />} aria-label={t('searchMcp')} rightIcon={query ? <Button type="button" variant="ghost" size="icon" onClick={() => setQuery('')} aria-label={t('clearSearch')}><X className="size-4" /></Button> : undefined} />
+          <Input value={query} onChange={(value) => { setQuery(value); setPage(1); }} placeholder={t('searchMcp')} leftIcon={<Search className="size-4" />} aria-label={t('searchMcp')} rightIcon={query ? <Button type="button" variant="ghost" size="icon" onClick={() => { setQuery(''); setPage(1); }} aria-label={t('clearSearch')}><X className="size-4" /></Button> : undefined} />
         </div>
         <FormSelect
           label={t('status')}
           value={status}
-          onValueChange={(value) => setStatus(value as FilterStatus)}
+          onValueChange={(value) => { setStatus(value as FilterStatus); setPage(1); }}
           options={filters.map((filter) => ({ value: filter.key, label: `${filter.label} (${filter.count})` }))}
           className="w-full sm:w-44"
         />
@@ -288,82 +272,35 @@ export function McpDeploymentsBrowser({
         </p>
       </div>
 
+      <div ref={tableAreaRef} className="min-h-0 flex-1 overflow-auto">
       {filteredDeployments.length === 0 ? (
         <DashboardEmptyState
-          icon={Search}
-          title={t('noMcpFound')}
-          description={query || status !== 'all' ? t('searchMcp') : t('noServersDeployedYet')}
+          className="h-full"
+          icon={deployments.length === 0 ? Plug : Search}
+          title={deployments.length === 0 ? t('noServersDeployedYet') : t('noMcpFound')}
+          description={query || status !== 'all' ? t('searchMcp') : t('serversDeployedToYourOrg')}
           actions={query || status !== 'all' ? (
             <Button type="button" onClick={() => {
               setQuery('');
               setStatus('all');
+              setPage(1);
             }} variant="secondary" size="md">{common('all')}</Button>
           ) : undefined}
         />
       ) : (
-        <>
-          <div className="flex flex-wrap items-center justify-between gap-2 lg:hidden">
-            <div className="inline-flex h-9 cursor-pointer items-center gap-2 rounded-md border border-border bg-card px-3 text-xs font-medium text-foreground transition-colors hover:border-ring/50 hover:bg-muted">
-              <Checkbox checked={allFilteredSelected} onCheckedChange={toggleFilteredDeployments} aria-label={selection('selectMatches', { count: filteredDeployments.length })} indeterminate={someFilteredSelected && !allFilteredSelected} />
-              <span className="truncate">{selection('selectMatches', { count: filteredDeployments.length })}</span>
-            </div>
-            {activeSelectedDeploymentIds.size > 0 ? (
-              <McpBulkDeploymentActions
-                slug={slug}
-                deploymentIds={activeSelectedDeploymentIds}
-                onClear={() => setSelectedDeploymentIds(new Set())}
-                className="flex w-full flex-wrap items-center gap-1.5 rounded-md border border-primary/25 bg-muted px-2.5 py-1.5 sm:w-auto"
-              />
-            ) : null}
-          </div>
-
-          <div className="space-y-3 lg:hidden">
-            {filteredDeployments.map((deployment) => {
-              const href = `/app/${encodeURIComponent(slug)}/mcp/${deployment.id}`;
-              const isSelected = activeSelectedDeploymentIds.has(deployment.id);
-              return (
-                <article key={deployment.id} className={`rounded-xl border border-border bg-card p-4 transition-colors ${isSelected ? 'border-primary/30 bg-muted/30' : ''}`}>
-                  <div className="flex items-start justify-between gap-3">
-                    <Checkbox checked={isSelected} onCheckedChange={(value) => toggleDeployment(deployment.id, value)} aria-label={selection('selectResource', { name: deployment.name })} />
-                    <Link
-                      href={href}
-                      className="-m-1 min-w-0 flex-1 rounded-md p-1 transition-colors hover:bg-muted/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring"
-                    >
-                      <DeploymentIdentity deployment={deployment} />
-                    </Link>
-                    <StatusBadge status={deployment.status} />
-                  </div>
-                  <div className="mt-3 flex items-center justify-end">
-                    <McpDeploymentActions slug={slug} deployment={deployment} compact />
-                  </div>
-                </article>
-              );
-            })}
-          </div>
-
-          <div className="hidden space-y-3 lg:block">{activeSelectedDeploymentIds.size > 0 ? (
-                  <McpBulkDeploymentActions
-                    slug={slug}
-                    deploymentIds={activeSelectedDeploymentIds}
-                    onClear={() => setSelectedDeploymentIds(new Set())}
-                    className="flex flex-wrap items-center gap-1.5"
-                  />
-                ) : null}<DashboardTable minWidth="36rem" ariaLabel={t('allMcps')} headers={[
-                {
-                  label: (
-                    <Checkbox checked={allFilteredSelected} onCheckedChange={toggleFilteredDeployments} aria-label={selection('selectMatches', { count: filteredDeployments.length })} indeterminate={someFilteredSelected && !allFilteredSelected} />
-                  ),
-                  width: '3rem',
-                },
+        <DashboardTable minWidth="36rem" ariaLabel={t('allMcps')}
+          height={tableHeight || undefined}
+          selectedRowIds={[...activeSelectedDeploymentIds]}
+          onSelectionChange={(ids) => setSelectedDeploymentIds(new Set(ids))}
+          selectionActions={({ selectedRowIds }) => <McpBulkDeploymentActions slug={slug} deploymentIds={new Set(selectedRowIds)} className="flex flex-wrap items-center gap-1.5" />}
+          headers={[
                 { label: t('serverColumn') },
                 { label: t('status') },
                 { label: t('actions'), align: 'right' },
-              ]} rows={filteredDeployments.map((deployment) => {
+              ]} rows={pageDeployments.map((deployment) => {
               const href = `/app/${encodeURIComponent(slug)}/mcp/${deployment.id}`;
-              const isSelected = activeSelectedDeploymentIds.has(deployment.id);
               return (
-                {id: deployment.id, cells: [<><Checkbox checked={isSelected} onCheckedChange={(value) => toggleDeployment(deployment.id, value)} aria-label={selection('selectResource', { name: deployment.name })} /></>,
-<><Link
+                {id: deployment.id, cells: [<><Link
                       href={href}
                       className="block px-4 py-3 transition-colors hover:bg-muted/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
                     >
@@ -372,9 +309,16 @@ export function McpDeploymentsBrowser({
 <><StatusBadge status={deployment.status} /></>,
 <><McpDeploymentActions slug={slug} deployment={deployment} /></>]}
               );
-            })} /></div>
-        </>
+            })} />
       )}
+      </div>
+      <nav aria-label={common('pagination')} className="flex shrink-0 items-center justify-between gap-3 border-t border-border pt-3">
+        <p className="text-sm tabular-nums text-muted-foreground" aria-live="polite">{currentPage} / {totalPages}</p>
+        <div className="flex gap-2">
+          <Button type="button" variant="secondary" size="sm" disabled={currentPage === 1} onClick={() => setPage(currentPage - 1)}>{common('previous')}</Button>
+          <Button type="button" variant="secondary" size="sm" disabled={currentPage === totalPages} onClick={() => setPage(currentPage + 1)}>{common('next')}</Button>
+        </div>
+      </nav>
     </section>
   );
 }

@@ -26,6 +26,29 @@ RUN set -eux; \
       tar; \
     rm -rf /var/lib/apt/lists/*
 
+# ---- pi-package-capture: isolated package capture sandbox ----
+# Used to capture npm/git packages for the Pi extension market.
+# Runs as non-root node user; network=none at runtime; proxy via stdin/stdout.
+FROM python-runtime-base AS pi-package-capture
+ARG PNPM_VERSION
+ENV COREPACK_HOME=/opt/corepack COREPACK_DEFAULT_TO_LATEST=0
+WORKDIR /opt/pi-sdk
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends git; \
+    rm -rf /var/lib/apt/lists/*; \
+    corepack enable; \
+    corepack prepare pnpm@${PNPM_VERSION} --activate; \
+    chmod -R a+rX /opt/corepack
+# The actual SDK entry anchors its locked semver/undici dependency resolution.
+RUN node -e "require('node:fs').writeFileSync('package.json', JSON.stringify({name:'pi-sdk',private:true,pnpm:{overrides:{semver:'7.8.5',undici:'8.10.2'}}}))" \
+    && pnpm add --prod --ignore-scripts --save-exact --config.auto-install-peers=false @earendil-works/pi-coding-agent@0.87.1 \
+    && node --input-type=module -e "import {createRequire} from 'node:module'; import {realpathSync} from 'node:fs'; const r=createRequire(realpathSync('/opt/pi-sdk/node_modules/@earendil-works/pi-coding-agent/dist/index.js')); if(r('semver/package.json').version!=='7.8.5'||r('undici/package.json').version!=='8.10.2')process.exit(1)"
+COPY scripts/pi-package-capture.mjs scripts/pi-package-archive.py /app/scripts/
+WORKDIR /app
+USER node
+ENTRYPOINT ["node", "/app/scripts/pi-package-capture.mjs"]
+
 # ---- deps: full workspace install for the build stages ----
 FROM ${NODE_IMAGE} AS deps
 WORKDIR /app

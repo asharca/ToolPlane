@@ -1,7 +1,9 @@
 import type { NextConfig } from 'next';
 import createNextIntlPlugin from 'next-intl/plugin';
+import { createMDX } from 'fumadocs-mdx/next';
 
 const withNextIntl = createNextIntlPlugin('./src/i18n/request.ts');
+const withMDX = createMDX();
 
 let allowedDevOrigins: string[] = [];
 try {
@@ -72,7 +74,6 @@ const nextConfig: NextConfig = {
     '/*': [
       'src/**/*',
       'tests/**/*',
-      'docs/**/*',
       'e2e/**/*',
       'scraper/**/*',
       'infra/**/*',
@@ -81,7 +82,7 @@ const nextConfig: NextConfig = {
       'packages/**/*',
       'prisma/**/*',
       'public/**/*',
-      '*.md',
+      '**/*.md',
       '*.json',
       '*.mjs',
       '*.ts',
@@ -98,4 +99,4 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default withNextIntl(nextConfig);
+export default withMDX(withNextIntl(nextConfig));

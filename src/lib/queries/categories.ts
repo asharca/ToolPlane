@@ -5,6 +5,7 @@ import { normalizedSkillDescription } from '@/lib/skills/frontmatter';
 
 const visibleMarketListing = {
   status: 'published',
+  visibility: 'public',
   latestReleaseId: { not: null },
   latestRelease: { is: { reviewStatus: 'approved' } },
 } satisfies Prisma.MarketListingWhereInput;

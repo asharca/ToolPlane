@@ -1,7 +1,7 @@
 
 import { FormSelect } from '@/components/ui/FormSelect';
 
-import { Button } from '@/components/motion/button';
+import { Button, ButtonLink } from '@/components/motion/button';
 import { FormCheckbox } from '@/components/ui/FormCheckbox';
 import { Input } from '@/components/motion/input';
 import { getTranslations } from 'next-intl/server';
@@ -127,6 +127,7 @@ export default async function ToolkitDetailPage({
               />
               {toolkit.enabled ? t('enabled') : t('disabled')}
             </span>
+            <ButtonLink href={`/app/${encodeURIComponent(wsSlug)}/toolkits/pi-packages?${new URLSearchParams({ toolkit: toolkitSlug })}#compose`} variant="secondary" size="sm">{t('packageExistingToolkit')}</ButtonLink>
           </div>
           <code className="block w-full max-w-full overflow-x-auto whitespace-nowrap pb-1 font-mono text-xs text-muted-foreground">
             {installUrl}

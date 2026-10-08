@@ -187,6 +187,10 @@ exec env HOSTNAME="0.0.0.0" node "$APP_ROOT/node_modules/.toolplane-runtime/serv
     path.join(root, 'scripts', 'start-server.cjs'),
     path.join(embeddedRuntimeRoot, 'server.cjs'),
   );
+  await cp(
+    path.join(root, 'scripts', 'abort-signal.cjs'),
+    path.join(embeddedRuntimeRoot, 'abort-signal.cjs'),
+  );
   await mkdir(binRoot, { recursive: true });
   for (const [name, contents] of Object.entries(shims)) {
     const target = path.join(binRoot, name);

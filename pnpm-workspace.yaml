@@ -2,6 +2,10 @@ packages:
   - .
   - packages/*
 
+# 1.0.0 exposes a default-wrapper object that breaks the native MDX compiler.
+overrides:
+  style-to-js: 1.1.21
+
 allowBuilds:
   '@parcel/watcher': true
   '@prisma/engines': true

@@ -17,6 +17,7 @@ vi.mock('@/lib/process/supervisor', () => ({ livePort: mocks.livePort }));
 vi.mock('@/lib/observability/log', () => ({ logRequest: mocks.logRequest }));
 
 import { POST } from '@/app/api/v1/mcp/[deploymentId]/rpc/route';
+import { proxyMcpRpcRequest } from '@/lib/process/mcp-gateway';
 
 function request(method: string, params?: Record<string, unknown>) {
   return new Request('http://localhost/api/v1/mcp/dep1/rpc', {
@@ -75,6 +76,14 @@ describe('direct MCP gateway tool exposure', () => {
     await expect(response.json()).resolves.toMatchObject({
       error: { code: -32602, message: 'Unknown tool: write' },
     });
+    expect(mocks.fetch).not.toHaveBeenCalled();
+  });
+
+  it('denies non-tool capabilities on package grants before contacting the service', async () => {
+    const response = await proxyMcpRpcRequest(request('resources/read', { uri: 'private://credentials' }), {
+      id: 'dep1', workspaceId: 'ws1', mcpToolExposure: 'allowlist', mcpAllowedTools: ['read'], toolsOnly: true,
+    });
+    await expect(response.json()).resolves.toMatchObject({ error: { code: -32601 } });
     expect(mocks.fetch).not.toHaveBeenCalled();
   });
 

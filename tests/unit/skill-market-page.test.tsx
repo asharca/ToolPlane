@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 
 const mocks = vi.hoisted(() => ({
   getCurrentUser: vi.fn(),
@@ -64,7 +64,6 @@ describe('Skill market page', () => {
     const grid = screen.getByTestId('browse-grid');
     expect(grid).toHaveTextContent('Featured Alpha');
     expect(grid).toHaveTextContent('Other Beta');
-    expect(screen.queryByRole('table')).not.toBeInTheDocument();
   });
 
   it('keeps reviewed community skill releases visible after removing Discover', async () => {
@@ -115,5 +114,43 @@ describe('Skill market page', () => {
       '/app/acme/market/skills?q=writer',
     );
     expect(screen.queryByRole('link', { name: 'next' })).not.toBeInTheDocument();
+  });
+
+  it('keeps applied filters in GET submission after collapse without submitting the old page', async () => {
+    mocks.getCurrentUser.mockResolvedValue({ id: 'user-1' });
+    mocks.getWorkspaceForUser.mockResolvedValue({ id: 'workspace-1' });
+    mocks.getSkillBrowseCategories.mockResolvedValue([{ slug: 'writing', name: 'Writing', _count: { skills: 30 } }]);
+    mocks.getBrowseSkills.mockResolvedValue({ all: [skill('writer', 'Writer')], total: 30, availableTotal: 30, pageSize: 25 });
+    render(await SkillMarketPage({
+      params: Promise.resolve({ workspace: 'acme' }),
+      searchParams: Promise.resolve({ page: '2', q: 'writer', category: 'writing', source: 'github', installation: 'available', sort: 'name' }),
+    }));
+
+    const filters = screen.getByRole('button', { name: /appliedFilters/ });
+    expect(filters).toHaveAttribute('aria-expanded', 'true');
+    expect(filters).toHaveTextContent('github · available · sortName');
+    expect(screen.getByText('catalogFiltersHint')).toBeInTheDocument();
+    const form = screen.getByRole('button', { name: 'applyFilters' }).closest('form')!;
+    fireEvent.change(form.elements.namedItem('source') as HTMLSelectElement, { target: { value: 'other' } });
+    expect(filters).toHaveTextContent('github · available · sortName');
+    fireEvent.click(filters);
+    expect(filters).toHaveAttribute('aria-expanded', 'false');
+    expect(Object.fromEntries(new FormData(form))).toEqual({
+      q: 'writer', category: 'writing', source: 'other', installation: 'available', sort: 'name',
+    });
+    expect(screen.getByRole('link', { name: 'previous' })).toHaveAttribute('href',
+      '/app/acme/market/skills?q=writer&source=github&installation=available&category=writing&sort=name');
+  });
+
+  it('starts default filters collapsed while keeping their form values', async () => {
+    mocks.getCurrentUser.mockResolvedValue({ id: 'user-1' });
+    mocks.getWorkspaceForUser.mockResolvedValue({ id: 'workspace-1' });
+    mocks.getSkillBrowseCategories.mockResolvedValue([]);
+    mocks.getBrowseSkills.mockResolvedValue({ all: [], total: 0, pageSize: 25 });
+    render(await SkillMarketPage({ params: Promise.resolve({ workspace: 'acme' }), searchParams: Promise.resolve({}) }));
+    expect(screen.getByRole('button', { name: /appliedFilters/ })).toHaveAttribute('aria-expanded', 'false');
+    const form = screen.getByRole('button', { name: 'applyFilters' }).closest('form')!;
+    expect(Object.fromEntries(new FormData(form))).toEqual({ q: '', category: '', source: 'all', installation: 'all', sort: 'top' });
+    expect(screen.getByRole('link', { name: 'manageInstalled' })).toHaveAttribute('href', '/app/acme/skills');
   });
 });

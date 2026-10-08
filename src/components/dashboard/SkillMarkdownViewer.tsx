@@ -3,7 +3,7 @@ import { Button, ButtonLink } from '@/components/motion/button';
 
 
 import { useTranslations } from 'next-intl';
-import { useState } from 'react';
+import { useActionState, useState } from 'react';
 import { Code2, Download, Eye } from 'lucide-react';
 import { code } from '@streamdown/code';
 import { CopyButton } from './CopyButton';
@@ -16,7 +16,7 @@ export function SkillMarkdownViewer({
   editable,
 }: {
   markdown: string;
-  downloadHref: string;
+  downloadHref?: string;
   editable?: {
     workspace: string;
     installId: string;
@@ -25,8 +25,16 @@ export function SkillMarkdownViewer({
 }) {
   const t = useTranslations('console.skills');
   const [mode, setMode] = useState<'rendered' | 'source'>('rendered');
-  const [content, setContent] = useState(editable?.content ?? markdown);
-  const renderedMarkdown = markdown.replace(/^---\r?\n[\s\S]*?\r?\n---\s*/, '').trim() || markdown;
+  // Textareas normalize CRLF from multipart saves to LF; compare the same draft representation.
+  const [content, setContent] = useState(() => (editable?.content ?? markdown).replace(/\r\n?/g, '\n'));
+  const [savedContent, setSavedContent] = useState<string | null>(null);
+  const [state, formAction, isPending] = useActionState(async (previous: { error?: string; saved?: boolean }, formData: FormData) => {
+    const result = await updateSkillContentAction(previous, formData);
+    if (result.saved) setSavedContent(String(formData.get('content') ?? ''));
+    return result;
+  }, {});
+  const draft = editable ? content : markdown;
+  const renderedMarkdown = draft.replace(/^---\r?\n[\s\S]*?\r?\n---\s*/, '').trim() || draft;
 
   return (
     <section className="rounded-xl border border-border bg-card overflow-hidden">
@@ -38,18 +46,20 @@ export function SkillMarkdownViewer({
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <div className="inline-flex rounded-md border border-border bg-muted/30 p-0.5">
-            <Button type="button" onClick={() => setMode('rendered')} variant={mode === "rendered" ? "primary" : "ghost"} size="sm"><Eye className="size-3.5" />
+            <Button type="button" disabled={isPending} onClick={() => setMode('rendered')} variant={mode === 'rendered' ? 'primary' : 'ghost'} size="sm"><Eye className="size-3.5" />
             {t('rendered')}</Button>
-            <Button type="button" onClick={() => setMode('source')} variant={mode === "source" ? "primary" : "ghost"} size="sm"><Code2 className="size-3.5" />
-            {t('source')}</Button>
+            <Button type="button" disabled={isPending} onClick={() => setMode('source')} variant={mode === 'source' ? 'primary' : 'ghost'} size="sm"><Code2 className="size-3.5" />
+            {t(editable ? 'editSource' : 'sourceCode')}</Button>
           </div>
-          <CopyButton text={markdown} label={t('copy')} />
-          <ButtonLink href={downloadHref} variant="secondary" size="md">
+          <CopyButton text={draft} label={t('copy')} />
+          {downloadHref ? <ButtonLink href={downloadHref} variant="secondary" size="md">
             <Download className="size-4" />
-            {t('download')}
-          </ButtonLink>
+            {t('downloadSkillmd')}
+          </ButtonLink> : null}
         </div>
       </div>
+      {editable ? <p role="status" className="px-5 pt-3 text-xs text-muted-foreground">{t(isPending ? 'saving' : state.saved && savedContent === content ? 'saved' : 'unsaved')}</p> : null}
+      {state.error ? <p role="alert" className="px-5 pt-3 text-sm text-destructive">{state.error}</p> : null}
 
       {mode === 'rendered' ? (
         <div className="prose prose-sm max-w-none bg-card p-5 leading-7 dark:prose-invert sm:p-6">
@@ -64,11 +74,11 @@ export function SkillMarkdownViewer({
           </SafeStreamdown>
         </div>
       ) : editable ? (
-        <form action={updateSkillContentAction} className="space-y-3 bg-background p-5 sm:p-6">
+        <form action={formAction} className="space-y-3 bg-background p-5 sm:p-6">
           <input type="hidden" name="workspace" value={editable.workspace} />
           <input type="hidden" name="installId" value={editable.installId} />
-          <textarea name="content" value={content} onChange={(event) => setContent(event.target.value)} rows={24} className="min-h-36 w-full resize-y rounded-lg bg-muted/35 p-3 text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring min-h-[28rem]" />
-          <Button variant="primary" size="md" type="submit">{t('saveSource')}</Button>
+          <textarea name="content" aria-label={t('editSource')} disabled={isPending} value={content} onChange={(event) => setContent(event.target.value)} rows={24} className="w-full resize-y rounded-lg bg-muted/35 p-3 text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring min-h-[28rem]" />
+          <Button variant="primary" size="md" type="submit" disabled={isPending}>{t(isPending ? 'saving' : 'saveSource')}</Button>
         </form>
       ) : (
         <pre className="max-h-[34rem] overflow-auto bg-background p-5 font-mono text-xs leading-6 text-foreground sm:p-6">

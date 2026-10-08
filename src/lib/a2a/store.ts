@@ -7,12 +7,14 @@ import { RequestMalformedError, TaskNotFoundError, UnsupportedOperationError } f
 import { db } from '@/lib/db';
 import { runtimeEnv } from '@/lib/runtime-env';
 import { ACTIVE, A2A_LIMITS, assertCancelable, assertTransition, historyView, jsonEvent, jsonTask,
-  taskEvent, statusEvent, agentMessage, terminal, LOCAL_OUTPUT_MODES, acceptsOutput } from './model';
+  taskEvent, statusEvent, agentMessage, terminal, settled, LOCAL_OUTPUT_MODES, acceptsOutput } from './model';
 import { isLocalGrant, isRemoteGrant, isWorkspaceGrant, type TaskGrant } from './principal';
 import { assertRemoteGrant } from './remote-policy';
 import { assertLocalGrant, LOCAL_LIMITS } from './local-policy';
 import { validateSend } from './validation';
 import { refreshTaskStorage, assertNativeStorageCapacity, reserveNativeExecutionOutput } from './quotas';
+import { recordA2AEvent, a2aTaskOutcome, taskStateName } from '@/lib/observability/a2a-log';
+import { logHealth } from '@/lib/observability/events';
 
 type Tx = Prisma.TransactionClient;
 const json = (value: unknown) => JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
@@ -256,8 +258,8 @@ export async function projectPiHarnessProgress(taskId: string, leaseToken: strin
     await persist(tx, row, task, statusEvent(task));
   });
 }
-export async function finishTask(id: string, leaseToken: string, state: TaskState, detail?: string, artifact?: Artifact, nativeResult?: { nativeOperationId: string }) {
-  return db.$transaction(async (tx) => {
+export async function finishTask(id: string, leaseToken: string, state: TaskState, detail?: string, artifact?: Artifact, nativeResult?: { nativeOperationId: string }): Promise<void> {
+  const committed = await db.$transaction(async (tx) => {
     const row = await lockTask(tx, id);
     if (row.leaseToken !== leaseToken || row.state !== TaskState.TASK_STATE_WORKING) return;
     const native = isPiHarnessTask(row);
@@ -309,12 +311,14 @@ export async function finishTask(id: string, leaseToken: string, state: TaskStat
       current = await persist(tx, row, task, event);
     }
     transition(task, actual, detail);
-    await persist(tx, current, task, statusEvent(task), { leaseToken: null, pendingQuestion: null, phase: terminal(actual) ? 'done' : 'paused' });
+    const updated = await persist(tx, current, task, statusEvent(task), { leaseToken: null, pendingQuestion: null, phase: terminal(actual) ? 'done' : 'paused' });
     if (local && terminal(actual) && actual !== TaskState.TASK_STATE_COMPLETED) await cancelLocalDescendants(tx, row);
+    return updated;
   });
+  if (committed) await recordTaskSettled(committed);
 }
-export async function interruptTask(id: string, detail: string, expected?: { remoteMessageId: string | null; phase: string }) {
-  return db.$transaction(async (tx) => {
+export async function interruptTask(id: string, detail: string, expected?: { remoteMessageId: string | null; phase: string }): Promise<void> {
+  const committed = await db.$transaction(async (tx) => {
     const row = await lockTask(tx, id);
     if (terminal(row.state) || expected && (row.remoteMessageId !== expected.remoteMessageId || row.phase !== expected.phase)) return;
     if (isPiHarnessTask(row) && row.nativeOperationId) {
@@ -323,9 +327,26 @@ export async function interruptTask(id: string, detail: string, expected?: { rem
     const task = Task.fromJSON(row.snapshot);
     transition(task, row.cancelRequestedAt && !row.remoteDispatchedAt ? TaskState.TASK_STATE_CANCELED : TaskState.TASK_STATE_FAILED,
       row.remoteDispatchedAt ? `${detail} Remote completion or cancellation could not be confirmed; the remote service may still be running.` : detail);
-    await persist(tx, row, task, statusEvent(task), { leaseToken: null });
+    const updated = await persist(tx, row, task, statusEvent(task), { leaseToken: null });
     if (isLocalGrant(row.grant as unknown as TaskGrant)) await cancelLocalDescendants(tx, row);
+    return updated;
   });
+  if (committed) await recordTaskSettled(committed);
+}
+
+/** Call only with a row returned by a successfully committed task transition. */
+export async function recordTaskSettled(row: A2ATask): Promise<void> {
+  try {
+    if (!settled(row.state)) return;
+    const taskState = taskStateName(TaskState[row.state]);
+    await recordA2AEvent({ eventName: 'a2a.task.settled',
+      binding: { grant: row.grant as unknown as TaskGrant, taskId: row.id, contextId: row.contextId,
+        rootTaskId: row.rootTaskId ?? row.id, parentTaskId: row.parentTaskId ?? undefined },
+      metadata: { direction: 'internal', transport: 'entry', taskState },
+      outcome: a2aTaskOutcome(taskState), durationMs: row.statusAt.getTime() - row.createdAt.getTime(),
+      response: () => jsonTask(historyView(Task.fromJSON(row.snapshot), 0)), responseKind: 'json', responseComplete: true,
+    });
+  } catch { logHealth.failures += 1; }
 }
 function pageSignature(value: string) {
   const secret = runtimeEnv('AUTH_SECRET'); if (!secret) throw new Error('Missing cursor signing key');

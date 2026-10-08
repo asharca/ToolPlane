@@ -13,7 +13,7 @@ const dockerConfig = {
 };
 
 async function openDialog() {
-  await userEvent.click(screen.getByRole('button', { name: /add custom/i }));
+  await userEvent.click(screen.getByRole('button', { name: /add.*mcp/i }));
 }
 
 describe('DeployCustomMcpDialog', () => {

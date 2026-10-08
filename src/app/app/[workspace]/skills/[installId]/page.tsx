@@ -10,14 +10,14 @@ import { FormCheckbox } from '@/components/ui/FormCheckbox';
 import { getLocale, getTranslations } from 'next-intl/server';
 import type { ReactNode } from 'react';
 import { redirect, notFound } from 'next/navigation';
-import { CheckCircle2, Download, ExternalLink, FileArchive, FileCode2, GitBranch, Info, LinkIcon, Settings2, XCircle } from 'lucide-react';
+import { CheckCircle2, ExternalLink, FileArchive, FileCode2, GitBranch, Info, LinkIcon, Settings2, XCircle } from 'lucide-react';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
 import { db } from '@/lib/db';
 import { buildInstalledSkillMarkdown, installedSkillExtraFiles } from '@/lib/skills/artifact';
 import { deleteCustomSkillAction, updateSkillAttributesAction } from '@/lib/skills/actions';
 import { skillLabel } from '@/lib/workspace/skill-label';
-import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
+import { ConfirmSubmitButton } from '@/components/dashboard/ConfirmSubmitButton';
 import { SkillMarkdownViewer } from '@/components/dashboard/SkillMarkdownViewer';
 import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
 
@@ -155,7 +155,7 @@ function DetailItem({
 function BooleanPill({ value, label }: { value: boolean; label: string }) {
   const Icon = value ? CheckCircle2 : XCircle;
   return (
-    <AnimatedBadge  status="success" size="sm" showIcon={false}>
+    <AnimatedBadge status={value ? 'success' : 'neutral'} size="sm" showIcon={false}>
       <Icon className="size-3.5" />
       {label}
     </AnimatedBadge>
@@ -167,9 +167,10 @@ export default async function SkillInspectorPage({
 }: {
   params: Promise<{ workspace: string; installId: string }>;
 }) {
-  const [t, locale] = await Promise.all([
+  const [t, locale, common] = await Promise.all([
     getTranslations('console.skills'),
     getLocale(),
+    getTranslations('common'),
   ]);
   const { workspace: slug, installId } = await params;
   const user = await getCurrentUser();
@@ -181,6 +182,8 @@ export default async function SkillInspectorPage({
   const install = await db.installedSkill.findFirst({
     where: { id: installId, workspaceId: ws.id },
     include: {
+      marketInstall: { select: { id: true } },
+      toolkitLinks: { where: { toolkit: { marketInstall: { isNot: null } } }, select: { toolkitId: true }, take: 1 },
       skill: {
         select: { slug: true, name: true, description: true, author: true, githubSource: true, content: true, files: true },
       },
@@ -189,6 +192,7 @@ export default async function SkillInspectorPage({
   if (!install) notFound();
 
   const isCustom = !install.skillId;
+  const marketManaged = Boolean(install.marketInstall || install.toolkitLinks.length);
   const label = skillLabel(install);
   const markdown = buildInstalledSkillMarkdown(install);
   const markdownDescription = frontmatterValue(markdown, 'description');
@@ -216,8 +220,7 @@ export default async function SkillInspectorPage({
 
   return (
     <>
-      <DashboardHeader title={label.name} />
-      <div className="p-4 sm:p-6 w-full max-w-none space-y-5">
+      <div className="min-w-0 p-4 sm:p-6 w-full max-w-none space-y-5">
         <section className="rounded-xl border border-border bg-card overflow-hidden">
           <div className="border-b border-border px-5 py-4 sm:px-6">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -232,9 +235,9 @@ export default async function SkillInspectorPage({
                     </AnimatedBadge>
                   ) : null}
                 </div>
-                <h2 className="break-words text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
+                <h1 className="break-words text-xl font-semibold tracking-tight text-foreground">
                   {label.name}
-                </h2>
+                </h1>
                 <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
                   {markdownDescription || install.description || install.skill?.description || t('noDescriptionProvided')}
                 </p>
@@ -246,13 +249,18 @@ export default async function SkillInspectorPage({
                     {t('openGithub')}
                   </ButtonLink>
                 ) : null}
-                <ButtonLink href={downloadHref} variant="primary" size="md">
-                  <Download className="size-4" />
-                  {t('download')}
-                </ButtonLink>
               </div>
             </div>
           </div>
+        </section>
+
+        <SkillMarkdownViewer
+          markdown={markdown}
+          downloadHref={downloadHref}
+          editable={isCustom ? { workspace: slug, installId: install.id, content: markdown } : undefined}
+        />
+
+        <BouncyAccordion items={[{ id: 'properties', title: t('workspaceControls'), description: <>
 
           <div className="grid gap-3 p-5 sm:grid-cols-2 sm:p-6 xl:grid-cols-4">
             <DetailItem
@@ -297,9 +305,10 @@ export default async function SkillInspectorPage({
           </div>
 
           <div className="flex flex-wrap gap-2 border-t border-border px-5 py-4 sm:px-6">
-            <BooleanPill value={install.userInvocable} label={t('userInvocable')} />
-            <BooleanPill value={install.agentInvocable} label={t('agentInvocable')} />
+            <BooleanPill value={install.userInvocable} label={`${t('user')}: ${t(install.userInvocable ? 'invocationEnabled' : 'invocationDisabled')}`} />
+            <BooleanPill value={install.agentInvocable} label={`${t('agent')}: ${t(install.agentInvocable ? 'invocationEnabled' : 'invocationDisabled')}`} />
           </div>
+          {!isCustom && marketManaged ? <div className="px-5 pb-4"><ButtonLink href={`/app/${slug}/market/installed`} variant="secondary" size="sm">{t('manageMarketInstall')}</ButtonLink></div> : null}
 
           {isCustom ? (
             <div className="border-t border-border px-5 py-4 sm:px-6">
@@ -308,11 +317,11 @@ export default async function SkillInspectorPage({
                   {t('workspaceControls')}
                 </p>
                 <div className="flex flex-wrap gap-2">
-                  <form action={deleteCustomSkillAction}>
+                  {marketManaged ? <ButtonLink href={`/app/${slug}/market/installed`} variant="secondary" size="sm">{t('manageMarketInstall')}</ButtonLink> : <form action={deleteCustomSkillAction}>
                     <input type="hidden" name="workspace" value={slug} />
                     <input type="hidden" name="installId" value={install.id} />
-                    <Button variant="secondary" size="sm" type="submit">{t('delete')}</Button>
-                  </form>
+                    <ConfirmSubmitButton triggerLabel={t('delete')} confirmLabel={common('confirm')} cancelLabel={common('cancel')} prompt={`${t('delete')} ${label.name}?`} pendingLabel={`${t('delete')}…`} triggerVariant="secondary" triggerSize="sm" />
+                  </form>}
                 </div>
               </div>
 
@@ -335,27 +344,13 @@ export default async function SkillInspectorPage({
               </form>
             </div>
           ) : null}
-        </section>
-
-        <SkillMarkdownViewer
-          markdown={markdown}
-          downloadHref={downloadHref}
-          editable={isCustom ? { workspace: slug, installId: install.id, content: markdown } : undefined}
-        />
+        </> }]} />
 
         {extraFiles.length ? (
-          <section className="rounded-xl border border-border bg-card overflow-hidden">
-            <div className="border-b border-border px-5 py-4 sm:px-6">
-              <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-                {t('bundleFiles')}
-              </h2>
-              <p className="mt-1 text-sm text-muted-foreground">
-                {t('filesThatWillBeSyncedNextToSkillmd')}
-              </p>
-            </div>
+          <BouncyAccordion items={[{ id: 'files', title: t('bundleFiles'), description: <>
             <div className="divide-y divide-border">
               {extraFiles.map((file) => (
-                <BouncyAccordion items={[{ id: 'details', title: <><span className="min-w-0 break-all font-mono text-foreground">
+                <BouncyAccordion key={file.path} items={[{ id: 'details', title: <><span className="min-w-0 break-all font-mono text-foreground">
                       {file.path}
                     </span>
                     <span className="text-xs text-muted-foreground">
@@ -365,7 +360,7 @@ export default async function SkillInspectorPage({
                   </pre></> }]} />
               ))}
             </div>
-          </section>
+          </> }]} />
         ) : (
           <section className="rounded-xl border border-border bg-muted px-5 py-4 text-sm text-muted-foreground sm:px-6">
             {t('noBundledFilesThisSkillSyncsAsASingleSkillmdFile')}

@@ -9,7 +9,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { motion } from "motion/react";
-import { type PointerEvent as ReactPointerEvent, useEffect } from "react";
+import { type PointerEvent as ReactPointerEvent, type ReactNode, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { Checkbox } from "@/components/motion/checkbox";
 import { EASE_OUT, SPRING_PRESS } from "@/lib/ease";
@@ -22,7 +22,7 @@ import type {
   SortState,
   TableColumn,
 } from "./types";
-import { alignFlex, alignText, COLUMN_ACTIVE_SHADOW } from "./utils";
+import { alignFlex, alignText, CHECKBOX_PX, COLUMN_ACTIVE_SHADOW } from "./utils";
 
 export interface TableHeaderProps<T> {
   columns: TableColumn<T>[];
@@ -33,6 +33,7 @@ export interface TableHeaderProps<T> {
   allSelected: boolean;
   someSelected: boolean;
   onToggleAll: () => void;
+  selectionHeader?: ReactNode;
   sort: SortState | null;
   onToggleSort: (key: string) => void;
   resizable: boolean;
@@ -148,6 +149,7 @@ export function TableHeader<T>({
   allSelected,
   someSelected,
   onToggleAll,
+  selectionHeader,
   sort,
   onToggleSort,
   resizable,
@@ -171,7 +173,7 @@ export function TableHeader<T>({
   const activeIndex = columns.findIndex((c) => c.key === activeColumn);
   return (
     <>
-      {hasColumnMenu && activeColumn && activeIndex >= 0 ? (
+      {selectionHeader === undefined && hasColumnMenu && activeColumn && activeIndex >= 0 ? (
         <ColumnHandle
           column={columns[activeIndex]}
           index={activeIndex}
@@ -182,21 +184,25 @@ export function TableHeader<T>({
           onLeave={() => onColumnDeactivate?.()}
         />
       ) : null}
-      <thead>
+      <thead className="sticky top-0 z-10">
       <tr style={{ height: rowHeight }}>
         {selectable ? (
-          <th className="sticky top-0 z-10 border-border border-b bg-muted">
+          <th className="sticky top-0 z-10 border-border border-b bg-muted" style={{ width: CHECKBOX_PX, minWidth: CHECKBOX_PX }}>
             <div className="flex items-center justify-center">
               <Checkbox
                 checked={allSelected}
                 indeterminate={!allSelected && someSelected}
                 onCheckedChange={onToggleAll}
                 aria-label="Select all rows"
-                className="size-6"
               />
             </div>
           </th>
         ) : null}
+        {selectionHeader !== undefined ? (
+          <th colSpan={columns.length + 1} className="sticky top-0 z-10 border-border border-b bg-muted px-4 text-left font-medium">
+            {selectionHeader}
+          </th>
+        ) : <>
         {columns.map((column, index) => {
           const active = sort?.key === column.key;
           const isDragging = dragKey === column.key;
@@ -337,6 +343,7 @@ export function TableHeader<T>({
           aria-hidden
           className="sticky top-0 z-10 border-border border-b bg-muted"
         />
+        </>}
       </tr>
     </thead>
     </>

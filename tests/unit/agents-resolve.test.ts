@@ -1,5 +1,8 @@
+import { createHash } from 'node:crypto';
+import { marketReleaseChecksum } from '@/lib/market/artifact';
+import type { PiPackageManifestV1 } from '@/lib/market/pi-package-manifest';
 import { describe, it, expect } from 'vitest';
-import { resolveAgentTools } from '@/lib/agents/resolve';
+import { resolveAgentTools, resolveAgentPiPackages } from '@/lib/agents/resolve';
 
 const skill = (id: string) => ({
   installedSkill: {
@@ -119,5 +122,84 @@ describe('resolveAgentTools', () => {
       slug: 'hermes',
       description: null,
     }]);
+  });
+});
+
+function sdkAgent() {
+  const bytes = Buffer.from('export default function() {}\n');
+  const manifest: PiPackageManifestV1 = {
+    schemaVersion: 1,
+    kind: 'pi-package',
+    listing: { slug: 'resolver-fixture', name: 'Resolver fixture', summary: null, iconUrl: null, tags: [], author: 'Fixture' },
+    package: {
+      source: { kind: 'npm', requested: 'npm:resolver-fixture@1.0.0', name: 'resolver-fixture', version: '1.0.0', integrity: `sha512-${Buffer.alloc(64).toString('base64')}` },
+      name: 'resolver-fixture', version: '1.0.0',
+      runtime: { kind: 'pi-sdk', piVersion: '0.87.1', nodeMajor: 24, platform: 'linux', arch: 'arm64' },
+      root: 'package', resources: { extensions: ['package/index.js'], skills: [], prompts: [], themes: [] },
+      entries: [
+        { type: 'directory', path: 'package' },
+        { type: 'file', path: 'package/index.js', contentEncoding: 'base64', content: bytes.toString('base64'), executable: false, sha256: createHash('sha256').update(bytes).digest('hex') },
+      ],
+    },
+  };
+  return {
+    runtimeKind: 'pi-sdk', workspaceId: 'workspace-a',
+    piPackages: [{
+      marketInstallId: 'install-z', releaseId: 'release-v1',
+      marketInstall: { id: 'install-z', targetWorkspaceId: 'workspace-a', listingId: 'listing-a', status: 'ready', resourceMap: {} as unknown, listing: { id: 'listing-a', kind: 'pi-package', status: 'published' } },
+      release: { id: 'release-v1', listingId: 'listing-a', reviewStatus: 'approved', checksum: marketReleaseChecksum(manifest), manifest },
+    }],
+  };
+}
+
+describe('resolveAgentPiPackages', () => {
+  it('adds composed MCP bindings without granting unrequested tools or narrowing explicit servers', () => {
+    const agent = { ...sdkAgent(), servers: [] as { deploymentId: string }[], skills: [], toolkits: [] };
+    const binding = agent.piPackages[0];
+    binding.release.manifest.package.toolplane = { schemaVersion: 1, mcp: [{ key: 'docs', name: 'Docs', tools: ['search'] }] };
+    binding.release.checksum = marketReleaseChecksum(binding.release.manifest);
+    binding.marketInstall.resourceMap = { kind: 'pi-package', mcpBindings: { docs: { deploymentId: 'docs-server', tools: ['search', 'delete'] } } };
+    expect(resolveAgentTools(agent)).toMatchObject({ deploymentIds: ['docs-server'], mcpToolPolicy: { 'docs-server': ['search'] } });
+    agent.servers.push({ deploymentId: 'docs-server' });
+    expect(resolveAgentTools(agent)).not.toHaveProperty('mcpToolPolicy');
+    binding.marketInstall.resourceMap = { kind: 'pi-package', mcpBindings: { docs: { deploymentId: 'docs-server', tools: ['delete'] } } };
+    expect(() => resolveAgentTools(agent)).toThrow('PI_PACKAGE_MCP_BINDING_REQUIRED');
+  });
+  it('preserves pinned release identities while sorting the enabled set', () => {
+    const agent = sdkAgent();
+    const first = structuredClone(agent.piPackages[0]);
+    first.marketInstallId = first.marketInstall.id = 'install-a';
+    agent.piPackages.push(first);
+    expect(resolveAgentPiPackages(agent).map(({ marketInstallId, releaseId, checksum }) => ({ marketInstallId, releaseId, checksum }))).toEqual([
+      { marketInstallId: 'install-a', releaseId: 'release-v1', checksum: first.release.checksum },
+      { marketInstallId: 'install-z', releaseId: 'release-v1', checksum: first.release.checksum },
+    ]);
+  });
+  it.each(['workspace', 'install-status', 'listing-status', 'listing-kind', 'release-status', 'release-identity', 'release-listing', 'checksum', 'bytes', 'duplicate'] as const)('fails closed after %s becomes invalid', (field) => {
+    const agent = sdkAgent();
+    const binding = agent.piPackages[0];
+    switch (field) {
+      case 'workspace': binding.marketInstall.targetWorkspaceId = 'workspace-b'; break;
+      case 'install-status': binding.marketInstall.status = 'failed'; break;
+      case 'listing-status': binding.marketInstall.listing.status = 'unpublished'; break;
+      case 'listing-kind': binding.marketInstall.listing.kind = 'skill'; break;
+      case 'release-status': binding.release.reviewStatus = 'rejected'; break;
+      case 'release-identity': binding.release.id = 'release-v2'; break;
+      case 'release-listing': binding.release.listingId = 'other-listing'; break;
+      case 'checksum': binding.release.checksum = '0'.repeat(64); break;
+      case 'bytes': {
+        const file = binding.release.manifest.package.entries[1];
+        if (file.type !== 'file') throw new Error('Invalid fixture');
+        file.content = Buffer.from('changed executable bytes').toString('base64');
+        break;
+      }
+      case 'duplicate': agent.piPackages.push(structuredClone(binding)); break;
+    }
+    expect(() => resolveAgentPiPackages(agent)).toThrow('PI_PACKAGE_UNAVAILABLE');
+  });
+  it('rejects a missing SDK execution projection rather than silently loading no extensions', () => {
+    expect(() => resolveAgentPiPackages({ runtimeKind: 'pi-sdk', workspaceId: 'workspace-a' })).toThrow('PI_PACKAGE_UNAVAILABLE');
+    expect(resolveAgentPiPackages({ runtimeKind: 'pi-sdk', workspaceId: 'workspace-a', piPackages: [] })).toEqual([]);
+    expect(resolveAgentPiPackages({ runtimeKind: 'pi', workspaceId: 'workspace-a' })).toEqual([]);
   });
 });

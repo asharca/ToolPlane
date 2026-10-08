@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
-const mocks = vi.hoisted(() => ({ pending: false }));
+const mocks = vi.hoisted(() => ({ pending: false, installMarketResourceAction: vi.fn() }));
 
 vi.mock('react-dom', async (importOriginal) => {
   const actual = await importOriginal<typeof import('react-dom')>();
@@ -20,6 +20,7 @@ vi.mock('next-intl/server', () => ({
   getTranslations: async () => (key: string) => key,
 }));
 
+vi.mock('@/lib/market/actions', () => ({ installMarketResourceAction: mocks.installMarketResourceAction }));
 import { BrowseGrid } from '@/components/dashboard/BrowseGrid';
 
 describe('BrowseGrid', () => {
@@ -86,5 +87,29 @@ describe('BrowseGrid', () => {
 
     expect(screen.getByRole('button', { name: 'Installing…' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Installing…' })).toHaveAttribute('aria-busy', 'true');
+  });
+
+  it.each([false, true])('submits the correct installation protocol for community=%s', async (community) => {
+    mocks.pending = false;
+    mocks.installMarketResourceAction.mockReset();
+    const catalogAction = vi.fn();
+    render(await BrowseGrid({
+      items: [{
+        id: 'skill-id', slug: 'safe-skill', name: 'Safe Skill', description: null, iconUrl: null,
+        marketListing: community ? { namespace: 'publisher', slug: 'safe-skill', releaseId: 'release-1' } : null,
+      }],
+      installedIds: new Set<string>(), slug: 'acme', action: catalogAction, idField: 'skillId',
+      actionLabel: 'Install', pendingLabel: 'Installing…', installedLabel: 'Installed', detailKind: 'skills',
+    }));
+    fireEvent.submit(screen.getByRole('button', { name: 'Install' }).closest('form')!);
+    const expectedAction = community ? mocks.installMarketResourceAction : catalogAction;
+    await waitFor(() => expect(expectedAction).toHaveBeenCalledTimes(1));
+    expect(Object.fromEntries(expectedAction.mock.calls[0][0])).toEqual(community
+      ? { workspace: 'acme', releaseId: 'release-1' }
+      : { workspace: 'acme', skillId: 'skill-id' });
+    expect(community ? catalogAction : mocks.installMarketResourceAction).not.toHaveBeenCalled();
+    expect(screen.getByRole('link', { name: 'viewDetails' })).toHaveAttribute('href', community
+      ? '/app/acme/market/items/publisher/safe-skill'
+      : '/app/acme/market/skills/safe-skill');
   });
 });

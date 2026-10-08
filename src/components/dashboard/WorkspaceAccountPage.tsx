@@ -46,7 +46,7 @@ export async function WorkspaceAccountPage({ user, view = 'workspaces', intent =
               </nav>
             ) : null}
 
-            {view === 'account' ? <PersonalSettingsContent user={user} workspaceSlug={lastWorkspace?.slug} returnTo={WORKSPACE_MANAGER_HREF} /> : (
+            {view === 'account' ? <PersonalSettingsContent user={user} /> : (
               <>
                 <div><h1 className="text-2xl font-semibold">{intent ? t('chooseWorkspace') : t('title')}</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">{intent ? t('chooseHint') : t('sharedHint')}</p></div>
                 {['left', 'deleted', 'unavailable'].includes(notice) ? <p role="status" className="rounded-lg border border-border bg-background p-3 text-sm">{t(`notice.${notice}`)}</p> : null}

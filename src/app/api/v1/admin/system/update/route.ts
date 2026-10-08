@@ -25,8 +25,15 @@ export const GET = withRequestLogging("/api/v1/admin/system/update", async funct
   }
   const url = new URL(request.url);
   if (url.searchParams.get('local') === '1') {
-    return NextResponse.json(await getLocalSystemUpdateStatus(), {
-      headers: { 'Cache-Control': 'no-store, no-cache, must-revalidate' },
+    const local = await getLocalSystemUpdateStatus();
+    // Old clients only inspect version/process identity after an HTTP 200.
+    const awaitingRecovery = local.updateJob.status === 'idle' && !local.runtimeReady;
+    return NextResponse.json(local, {
+      status: awaitingRecovery ? 503 : 200,
+      headers: {
+        'Cache-Control': 'no-store, no-cache, must-revalidate',
+        ...(awaitingRecovery ? { 'Retry-After': '2' } : {}),
+      },
     });
   }
   return NextResponse.json(await getSystemUpdateStatus(), {

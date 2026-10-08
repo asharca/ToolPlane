@@ -1,4 +1,7 @@
-import { runNativeEntry, latestEntryText, nativeEntryResult } from '@/lib/a2a/ingress';
+import { runNativeEntry, latestEntryText, nativeEntryResult, nativeEntryRuntimeParts } from '@/lib/a2a/ingress';
+import type { NativeEntryRuntimePart } from '@/lib/a2a/ingress';
+import type { NormalizedMessagingSource } from '@/lib/agents/messaging';
+import type { AgentForRun } from '@/lib/agents/queries';
 import 'server-only';
 import { randomUUID } from 'node:crypto';
 import type { UIMessage } from 'ai';
@@ -30,9 +33,7 @@ import {
 import { activeConversationMessages } from './conversation-context';
 import { acquireConversationOperation, ConversationOperationError, operateConversation } from './conversation-operations';
 import { executeRuntimeCommand, RuntimeCommandError } from './runtime-command-service';
-import { RUNTIME_COMMANDS_PART, RUNTIME_USAGE_PART, sessionRuntimeCommands, type RuntimeCommand, type RuntimeUsage } from './runtime-commands';
-
-type LoadedMessageAgent = NonNullable<Awaited<ReturnType<typeof getAgentForRequest>>>;
+import { parseRuntimeCommand, sessionRuntimeCommands } from './runtime-commands';
 
 export type AgentMessageResult =
   | { status: number; body: { error: string } }
@@ -45,7 +46,7 @@ export type AgentMessageResult =
         message: string;
         rawMessage: string;
         sessionKey: string;
-        source: ReturnType<typeof normalizeAgentMessageEvent>['source'];
+        source: NormalizedMessagingSource;
         platform: string;
         externalUserId: string | null;
         channelId: string | null;
@@ -124,28 +125,30 @@ export async function runAgentChannelMessage(params: {
   if (isDedicatedSandboxRuntimeKind(agent.runtimeKind) && !channel.a2aActorId) return { status: 409, body: { error: 'Authorize a native channel operator in Agent A2A settings first.' } };
   const command = body.message.trim().match(/^\/([a-z][a-z0-9_:-]{0,99})(?:@\w+)?(?:\s+([\s\S]*))?$/i);
   if (command) {
-    const name = command[1].toLowerCase();
+    const name = agent.runtimeKind === 'pi-sdk' ? command[1] : command[1].toLowerCase();
     const prior = await db.conversation.findFirst({
       where: { agentId: agent.id, runtimeSessionKey: sessionKey }, orderBy: { createdAt: 'desc' },
       include: { messages: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] } },
     });
-    // Only Pi compaction is routed to the native lane; other legacy commands stay blocked.
+    // SDK commands use the same authorized native entry as channel messages.
     const commands = sessionRuntimeCommands(agent.runtimeKind, prior?.messages ?? []).filter((item) =>
-      !isDedicatedSandboxRuntimeKind(agent.runtimeKind) || (agent.runtimeKind === 'pi' && item.name === 'compact'));
+      !isDedicatedSandboxRuntimeKind(agent.runtimeKind) || agent.runtimeKind === 'pi-sdk' || (agent.runtimeKind === 'pi' && item.name === 'compact'));
     let conversationId = prior?.id ?? '';
     let message: string;
     if (name === 'help') {
       message = ['/new - Start a new conversation', ...commands.map((item) => `/${item.name}${item.description ? ` - ${item.description}` : ''}`), '/whoami - Show your chat and user IDs', '/help - Show commands'].join('\n');
     } else if (name === 'whoami') {
       message = `User ID: ${event.source.userId ?? '-'}\nChat ID: ${event.source.chatId ?? '-'}\nPlatform: ${channel.platform}`;
-    } else if (isDedicatedSandboxRuntimeKind(agent.runtimeKind) && name !== 'new' && !(agent.runtimeKind === 'pi' && name === 'compact')) {
+    } else if (isDedicatedSandboxRuntimeKind(agent.runtimeKind) && agent.runtimeKind !== 'pi-sdk' && name !== 'new' && !(agent.runtimeKind === 'pi' && name === 'compact')) {
       message = 'Legacy runtime commands are unavailable through native A2A ingress. Use Agent settings → A2A integration.';
     } else if (name === 'compact' && !prior) {
       message = 'No active conversation to compact.';
-    } else if (name !== 'new' && !commands.some((item) => item.name === name)) {
+    } else if (name !== 'new' && agent.runtimeKind !== 'pi-sdk' && !commands.some((item) => item.name === name)) {
       message = 'This command is not supported by the current runtime. Send /help to see available commands.';
-    } else if (body.message.length > 2000 || params.attachmentParts?.length) {
+    } else if (body.message.length > 2000 || body.attachments.length || params.attachmentParts?.length) {
       message = 'Commands accept at most 2,000 characters and no attachments.';
+    } else if (agent.runtimeKind === 'pi-sdk' && name !== 'new' && !event.source.messageId) {
+      message = 'A stable channel message ID is required for native task deduplication.';
     } else if (name !== 'new' && (name !== 'compact' || agent.runtimeKind !== 'hermes')) {
       try {
         if (!prior) {
@@ -158,7 +161,8 @@ export async function runAgentChannelMessage(params: {
           } finally { release(); }
         }
         const result = await executeRuntimeCommand({ workspaceId: params.workspaceId, agentId: agent.id, conversationId,
-          actorId: channel.a2aActorId ?? undefined, sandboxId: channel.sandboxId ?? undefined, line: `/${name}${command[2] ? ` ${command[2]}` : ''}`, signal: params.signal });
+          actorId: channel.a2aActorId ?? undefined, sandboxId: channel.sandboxId ?? undefined, line: `/${name}${command[2] ? ` ${command[2]}` : ''}`, signal: params.signal,
+          entry: { kind: 'channel', channelId: channel.id }, messageId: event.source.messageId });
         message = result.kind === 'output' ? result.text : 'Command completed.';
       } catch (error) {
         message = error instanceof RuntimeCommandError && error.message === 'busy' ? 'This conversation is busy. Please wait for the current operation to finish.'
@@ -212,7 +216,7 @@ export async function runAgentChannelMessage(params: {
 }
 
 async function runLoadedAgentMessage(params: {
-  agent: LoadedMessageAgent;
+  agent: AgentForRun;
   actorId?: string;
   onAccepted?: (message: string) => Promise<void>;
   rawBody: unknown;
@@ -295,15 +299,16 @@ async function runLoadedAgentMessage(params: {
     role: m.role as UIMessage['role'],
     parts: m.parts as UIMessage['parts'],
   }));
+  const sdkCommand = runtimeKind === 'pi-sdk' && parseRuntimeCommand(body.message, runtimeKind);
+  if (sdkCommand && body.message.length > 2000) return { status: 400, body: { error: 'Commands accept at most 2,000 characters.' } };
   const userMessage: UIMessage = {
     id: event.source.messageId ?? randomUUID(),
     role: 'user',
-    parts: [{ type: 'text', text: event.promptText }, ...(params.attachmentParts ?? [])],
+    parts: [{ type: 'text', text: sdkCommand ? body.message.trim() : event.promptText }, ...(params.attachmentParts ?? [])],
   };
 
   let text: string;
-  let commands: RuntimeCommand[] | undefined;
-  let usage: RuntimeUsage | undefined;
+  let runtimeParts: NativeEntryRuntimePart[] = [];
   if (isHermes) {
     try {
       text = await runHermesText({
@@ -335,6 +340,7 @@ async function runLoadedAgentMessage(params: {
         onAccepted: (_task, path) => params.onAccepted?.(`Native task accepted. Approvals and progress (authorized console operator only): ${path}`),
       });
       text = nativeEntryResult(result.task, result.path);
+      runtimeParts = nativeEntryRuntimeParts(result.task);
 
     } else {
       const tools = await buildAgentToolSet(resolved, {
@@ -360,10 +366,7 @@ async function runLoadedAgentMessage(params: {
   await appendConversationTurn(
     conversation.id,
     userMessage.parts as never,
-    [{ type: 'text', text },
-      ...(commands ? [{ type: RUNTIME_COMMANDS_PART, data: { runtimeKind, commands } }] : []),
-      ...(usage ? [{ type: RUNTIME_USAGE_PART, data: usage }] : []),
-    ] as never,
+    [{ type: 'text', text }, ...runtimeParts] as never,
   );
 
   return {

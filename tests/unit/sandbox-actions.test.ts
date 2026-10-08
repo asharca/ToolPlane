@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   sandboxCreate: vi.fn(),
   sandboxUpdate: vi.fn(),
   agentRuntimeFindFirst: vi.fn(),
+  agentRuntimeUpdateMany: vi.fn(),
   sandboxSnapshotFindFirst: vi.fn(),
   sandboxSnapshotCreate: vi.fn(),
   sandboxSnapshotUpdate: vi.fn(),
@@ -62,6 +63,7 @@ vi.mock('@/lib/db', () => ({
     },
     agentRuntime: {
       findFirst: mocks.agentRuntimeFindFirst,
+      updateMany: mocks.agentRuntimeUpdateMany,
     },
     sandboxSnapshot: {
       findFirst: mocks.sandboxSnapshotFindFirst,
@@ -115,6 +117,7 @@ vi.mock('@/lib/agents/hermes/runtime', () => ({
 vi.mock('@/lib/agents/mutations', () => ({ setHermesRuntimeEnv: mocks.setHermesRuntimeEnv }));
 
 import {
+  batchSandboxLifecycleAction,
   cloneSandboxAction,
   createSandboxAction,
   createSandboxSnapshotAction,
@@ -129,6 +132,8 @@ import {
   updateSandboxEnvAction,
   updateSandboxSudoAction,
 } from '@/lib/sandboxes/actions';
+import { closeWorkspaceOperations } from '@/lib/workspace/operation-gate';
+import { ownership } from '@/lib/runtime/ownership-state';
 
 function renameForm(name: string): FormData {
   const fd = new FormData();
@@ -449,6 +454,247 @@ describe('renameSandboxAction', () => {
     expect(mocks.stopProcess).not.toHaveBeenCalled();
     expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/mine/agents/agent-1');
     expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/mine/sandboxes');
+  });
+  describe('batchSandboxLifecycleAction', () => {
+    beforeEach(() => {
+      mocks.resolveSpawnSpec.mockReturnValue({ kind: 'sandbox' });
+    });
+
+    it('deduplicates selections and isolates redacted failures in sequential order', async () => {
+      mocks.sandboxFindFirst.mockImplementation(async ({ where }) => dockerSandbox({
+        id: where.id,
+        deploymentId: `dep-${where.id}`,
+      }));
+      let finishFirst!: () => void;
+      const firstStarted = new Promise<void>((resolve) => { finishFirst = resolve; });
+      mocks.startProcess.mockImplementationOnce(() => firstStarted)
+        .mockRejectedValueOnce(new Error('secret token=private-value'))
+        .mockResolvedValueOnce(undefined);
+
+      const pending = batchSandboxLifecycleAction('mine', 'start', ['sb1', 'sb1', 'sb2', 'sb3']);
+      await vi.waitFor(() => expect(mocks.startProcess).toHaveBeenCalledTimes(1));
+      expect(mocks.sandboxFindFirst).toHaveBeenCalledTimes(1);
+      finishFirst();
+
+      expect(await pending).toEqual([
+        { sandboxId: 'sb1', outcome: 'success', message: 'accepted' },
+        { sandboxId: 'sb2', outcome: 'error', message: 'operation_failed' },
+        { sandboxId: 'sb3', outcome: 'success', message: 'accepted' },
+      ]);
+      expect(mocks.startProcess.mock.calls.map(([id]) => id)).toEqual(['dep-sb1', 'dep-sb2', 'dep-sb3']);
+      expect(mocks.startProcess).toHaveBeenLastCalledWith('dep-sb3', expect.anything(), {
+        awaitReady: false,
+        workspaceId: 'ws1',
+      });
+    });
+
+    it.each([
+      ['start', 'running', 'already_running'],
+      ['start', 'provisioning', 'provisioning'],
+      ['stop', 'provisioning', 'provisioning'],
+      ['restart', 'provisioning', 'provisioning'],
+      ['stop', 'stopped', 'not_running'],
+      ['restart', 'stopped', 'not_running'],
+      ['restart', 'error', 'not_running'],
+      ['start', 'restore_failed', 'lifecycle_blocked'],
+      ['stop', 'upgrading', 'lifecycle_blocked'],
+    ] as const)('skips %s for current status %s', async (operation, status, message) => {
+      mocks.sandboxFindFirst.mockResolvedValue(dockerSandbox({
+        deployment: { id: 'dep1', status },
+      }));
+      mocks.effectiveStatus.mockReturnValue(status);
+
+      expect(await batchSandboxLifecycleAction('mine', operation, ['sb1'])).toEqual([
+        { sandboxId: 'sb1', outcome: 'skipped', message },
+      ]);
+      expect(mocks.startProcess).not.toHaveBeenCalled();
+      expect(mocks.stopProcess).not.toHaveBeenCalled();
+      expect(mocks.restartProcess).not.toHaveBeenCalled();
+    });
+
+    it('checks authorization and current lifecycle status after the existing sandbox queue drains', async () => {
+      mocks.sandboxFindFirst.mockResolvedValueOnce(dockerSandbox()).mockResolvedValue(dockerSandbox({
+        deployment: { id: 'dep1', status: 'restore_failed' },
+      }));
+      let release!: () => void;
+      mocks.startProcess.mockImplementationOnce(() => new Promise<void>((resolve) => { release = resolve; }));
+      const first = startSandboxAction(renameForm('Ignored'));
+      await vi.waitFor(() => expect(mocks.startProcess).toHaveBeenCalledTimes(1));
+      const batch = batchSandboxLifecycleAction('mine', 'start', ['sb1']);
+      await Promise.resolve();
+      expect(mocks.sandboxFindFirst).toHaveBeenCalledTimes(1);
+      release();
+      await first;
+
+      expect(await batch).toEqual([{ sandboxId: 'sb1', outcome: 'skipped', message: 'lifecycle_blocked' }]);
+      expect(mocks.startProcess).toHaveBeenCalledTimes(1);
+      expect(mocks.sandboxFindFirst).toHaveBeenLastCalledWith(expect.objectContaining({
+        where: { id: 'sb1', workspaceId: 'ws1' },
+      }));
+    });
+
+    it('never looks up or mutates sandboxes when workspace access is denied', async () => {
+      mocks.getWorkspaceForUser.mockResolvedValueOnce(null);
+
+      expect(await batchSandboxLifecycleAction('mine', 'stop', ['foreign-id'])).toEqual([
+        { sandboxId: 'foreign-id', outcome: 'error', message: 'workspace_unavailable' },
+      ]);
+      expect(mocks.sandboxFindFirst).not.toHaveBeenCalled();
+      expect(mocks.stopProcess).not.toHaveBeenCalled();
+      expect(mocks.runHermesRuntimeMaintenance).not.toHaveBeenCalled();
+    });
+
+    it('does not access foreign sandbox names or runtimes, while continuing authorized items', async () => {
+      mocks.sandboxFindFirst.mockImplementation(async ({ where }) => (
+        where.workspaceId === 'ws1' && where.id === 'sb1' ? dockerSandbox() : null
+      ));
+
+      expect(await batchSandboxLifecycleAction('mine', 'start', ['foreign-id', 'sb1'])).toEqual([
+        { sandboxId: 'foreign-id', outcome: 'error', message: 'sandbox_unavailable' },
+        { sandboxId: 'sb1', outcome: 'success', message: 'accepted' },
+      ]);
+      expect(mocks.sandboxFindFirst).toHaveBeenNthCalledWith(1, expect.objectContaining({
+        where: { id: 'foreign-id', workspaceId: 'ws1' },
+      }));
+      expect(mocks.startProcess).toHaveBeenCalledTimes(1);
+      expect(mocks.startProcess).toHaveBeenCalledWith('dep1', expect.anything(), expect.anything());
+      expect(mocks.agentRuntimeFindFirst).not.toHaveBeenCalled();
+      expect(mocks.deploymentUpdateMany).not.toHaveBeenCalled();
+    });
+
+    it.each([[''], ['bad/id'], ['bad id'], ['x'.repeat(201)], Array.from({ length: 101 }, (_, i) => `sb${i}`)])(
+      'rejects an invalid or oversized selection before lookup', async (...ids) => {
+        await expect(batchSandboxLifecycleAction('mine', 'start', ids)).rejects.toThrow('Invalid sandbox lifecycle selection');
+        expect(mocks.sandboxFindFirst).not.toHaveBeenCalled();
+        expect(mocks.startProcess).not.toHaveBeenCalled();
+      },
+    );
+    it('rejects invalid operation and non-string IDs without mutation', async () => {
+      await expect(batchSandboxLifecycleAction('mine', 'delete' as 'start', ['sb1'])).rejects.toThrow('Invalid sandbox lifecycle selection');
+      await expect(batchSandboxLifecycleAction('mine', 'start', [null as unknown as string])).rejects.toThrow('Invalid sandbox lifecycle selection');
+      await expect(batchSandboxLifecycleAction('mine', 'start', new Array<string>(1))).rejects.toThrow('Invalid sandbox lifecycle selection');
+      expect(mocks.sandboxFindFirst).not.toHaveBeenCalled();
+      expect(mocks.startProcess).not.toHaveBeenCalled();
+    });
+
+    it('redacts workspace authorization lookup failures', async () => {
+      mocks.getWorkspaceForUser.mockRejectedValueOnce(new Error('secret database credential'));
+      expect(await batchSandboxLifecycleAction('mine', 'start', ['sb1'])).toEqual([
+        { sandboxId: 'sb1', outcome: 'error', message: 'workspace_unavailable' },
+      ]);
+      expect(mocks.sandboxFindFirst).not.toHaveBeenCalled();
+    });
+
+    it('returns a per-item error when runtime ownership rejects queue admission', async () => {
+      const originalStatus = ownership.status;
+      vi.stubEnv('TOOLPLANE_TEST_RUNTIME_OWNER', '1');
+      ownership.status = 'lost';
+      try {
+        expect(await batchSandboxLifecycleAction('mine', 'start', ['sb1', 'sb2'])).toEqual([
+          { sandboxId: 'sb1', outcome: 'error', message: 'operation_failed' },
+          { sandboxId: 'sb2', outcome: 'error', message: 'operation_failed' },
+        ]);
+        expect(mocks.sandboxFindFirst).not.toHaveBeenCalled();
+        expect(mocks.startProcess).not.toHaveBeenCalled();
+      } finally {
+        ownership.status = originalStatus;
+        vi.unstubAllEnvs();
+      }
+    });
+
+
+    it('reports a closed workspace queue gate as skipped instead of success', async () => {
+      await closeWorkspaceOperations('closed-batch-workspace');
+      mocks.getWorkspaceForUser.mockResolvedValueOnce({ id: 'closed-batch-workspace' });
+
+      expect(await batchSandboxLifecycleAction('mine', 'start', ['sb1'])).toEqual([
+        { sandboxId: 'sb1', outcome: 'skipped', message: 'workspace_busy' },
+      ]);
+      expect(mocks.sandboxFindFirst).not.toHaveBeenCalled();
+      expect(mocks.startProcess).not.toHaveBeenCalled();
+    });
+
+    it.each(['stop', 'restart'] as const)('uses Hermes maintenance ownership for batch %s', async (operation) => {
+      mocks.sandboxFindFirst.mockResolvedValue(hermesSandbox());
+      mocks.effectiveStatus.mockReturnValue('running');
+      mocks.agentRuntimeFindFirst.mockResolvedValue({ agentId: 'agent-1' });
+      if (operation === 'stop') {
+        mocks.deploymentUpdateMany.mockResolvedValueOnce({ count: 1 });
+        mocks.agentRuntimeUpdateMany.mockResolvedValueOnce({ count: 1 });
+      }
+      const preventResume = vi.fn();
+      mocks.runHermesRuntimeMaintenance.mockImplementationOnce(async (...args: unknown[]) => {
+        const callback = args[4] as (control: {
+          wasActive: boolean; deploymentId: string; runtimeId: string; preventResume: () => void;
+        }) => Promise<boolean>;
+        return { status: 'completed', data: await callback({
+          wasActive: true, deploymentId: 'dep1', runtimeId: 'runtime-1', preventResume,
+        }) };
+      });
+
+      expect(await batchSandboxLifecycleAction('mine', operation, ['sb1'])).toEqual([
+        { sandboxId: 'sb1', outcome: 'success', message: 'accepted' },
+      ]);
+      expect(mocks.runHermesRuntimeMaintenance).toHaveBeenCalledWith(
+        'ws1', 'agent-1', 'sb1', { quiesce: true }, expect.any(Function),
+      );
+      expect(mocks.startProcess).not.toHaveBeenCalled();
+      expect(mocks.stopProcess).not.toHaveBeenCalled();
+      expect(mocks.restartProcess).not.toHaveBeenCalled();
+      if (operation === 'stop') {
+        expect(preventResume).toHaveBeenCalledOnce();
+        expect(mocks.agentRuntimeUpdateMany).toHaveBeenCalledWith({
+          where: { id: 'runtime-1', workspaceId: 'ws1', agentId: 'agent-1', sandboxId: 'sb1', kind: 'hermes' },
+          data: { status: 'stopped', lastError: null },
+        });
+      } else {
+        expect(preventResume).not.toHaveBeenCalled();
+        expect(mocks.agentRuntimeUpdateMany).not.toHaveBeenCalled();
+      }
+    });
+    it('routes single Hermes restart through the same maintenance lifecycle', async () => {
+      mocks.sandboxFindFirst.mockResolvedValue(hermesSandbox());
+      mocks.agentRuntimeFindFirst.mockResolvedValue({ agentId: 'agent-1' });
+      mocks.runHermesRuntimeMaintenance.mockResolvedValueOnce({ status: 'completed', data: true });
+
+      await restartSandboxAction(renameForm('Ignored'));
+
+      expect(mocks.runHermesRuntimeMaintenance).toHaveBeenCalledWith(
+        'ws1', 'agent-1', 'sb1', { quiesce: true }, expect.any(Function),
+      );
+      expect(mocks.restartProcess).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['The Hermes sandbox has a pending lifecycle operation.', 'skipped', 'runtime_busy'],
+      ['secret maintenance failure token=private', 'error', 'operation_failed'],
+    ] as const)('safely reports Hermes maintenance failure', async (error, outcome, message) => {
+      mocks.sandboxFindFirst.mockResolvedValue(hermesSandbox());
+      mocks.effectiveStatus.mockReturnValue('running');
+      mocks.agentRuntimeFindFirst.mockResolvedValue({ agentId: 'agent-1' });
+      mocks.runHermesRuntimeMaintenance.mockResolvedValueOnce({ status: 'error', error });
+
+      expect(await batchSandboxLifecycleAction('mine', 'restart', ['sb1'])).toEqual([
+        { sandboxId: 'sb1', outcome, message },
+      ]);
+      expect(mocks.deploymentUpdateMany).not.toHaveBeenCalled();
+      expect(mocks.agentRuntimeUpdateMany).not.toHaveBeenCalled();
+    });
+
+
+    it.each([
+      ['The Hermes sandbox has a pending lifecycle operation.', 'skipped', 'runtime_busy'],
+      ['secret runtime failure token=private', 'error', 'operation_failed'],
+    ] as const)('safely reports Hermes runtime errors', async (error, outcome, message) => {
+      mocks.sandboxFindFirst.mockResolvedValue(hermesSandbox());
+      mocks.agentRuntimeFindFirst.mockResolvedValue({ agentId: 'agent-1' });
+      mocks.ensureHermesRuntimeReady.mockResolvedValueOnce({ error });
+
+      expect(await batchSandboxLifecycleAction('mine', 'start', ['sb1'])).toEqual([
+        { sandboxId: 'sb1', outcome, message },
+      ]);
+      expect(mocks.startProcess).not.toHaveBeenCalled();
+    });
   });
 
   it('creates the connector without collecting connection settings or exposing a token', async () => {

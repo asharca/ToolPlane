@@ -8,7 +8,7 @@ import { getLocale, getTranslations } from 'next-intl/server';
 import { redirect, notFound } from 'next/navigation';
 import { headers } from 'next/headers';
 import Link from 'next/link';
-import { Activity, BarChart3, CheckCircle2, CircleAlert, CopyPlus, KeyRound, LoaderCircle, Pencil, Play, Plug, RefreshCw, Wrench } from 'lucide-react';
+import { Activity, CopyPlus, KeyRound, Pencil, Play, Plug, RefreshCw, Wrench } from 'lucide-react';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
 import { db } from '@/lib/db';
@@ -16,17 +16,13 @@ import { originFromHeaders } from '@/lib/http/origin';
 import { effectiveStatus, getDeploymentRuntimeLogChunk, getDeploymentRuntimeSnapshot } from '@/lib/process/supervisor';
 import { listMcpTools } from '@/lib/process/mcp-client';
 import { hasMcpToolCatalog, readMcpToolCatalog } from '@/lib/process/mcp-tool-catalog';
-import { readMcpInspectorConnection } from '@/lib/workspace/inspector-connection';
-import { listSandboxes } from '@/lib/sandboxes/queries';
 import { StatusBadge } from '@/components/dashboard/StatusBadge';
 import { CopyButton } from '@/components/dashboard/CopyButton';
-import { ReadyToConnectBanner } from '@/components/dashboard/ReadyToConnectBanner';
 import { ConnectDialog } from '@/components/dashboard/ConnectDialog';
 import { TabBar } from '@/components/dashboard/TabBar';
 import { ToolPlayground } from '@/components/dashboard/ToolPlayground';
 import { startDeploymentAction, stopDeploymentAction, restartDeploymentAction, rebuildDeploymentAction, removeDeploymentAction, renameDeploymentAction, cloneDeploymentAction } from '@/lib/workspace/actions';
 import { deploymentLabel } from '@/lib/workspace/deployment-label';
-import { usesDefaultRemoteRuntime } from '@/lib/workspace/deployment-provenance';
 import { VariablesEditor } from '@/components/dashboard/VariablesEditor';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
 import { ConfirmSubmitButton } from '@/components/dashboard/ConfirmSubmitButton';
@@ -111,12 +107,6 @@ export default async function DeploymentInspectorPage({
         select: { id: true, path: true, size: true, updatedAt: true },
         orderBy: { path: 'asc' },
       },
-      marketInstall: { select: { id: true } },
-      toolkitLinks: {
-        where: { toolkit: { marketInstall: { isNot: null } } },
-        select: { toolkitId: true },
-        take: 1,
-      },
     },
   });
   if (!dep) notFound();
@@ -124,14 +114,14 @@ export default async function DeploymentInspectorPage({
   const editableConfiguration = isEditableMcpSource(dep.source);
   const baseTabs = [
     { key: 'overview', label: t('overview') },
-    { key: 'variables', label: t('variables') },
     { key: 'tools', label: t('tools') },
-    { key: 'logs', label: t('logs') },
+    { key: 'logs', label: t('mcpCallLogs') },
+    { key: 'runtime', label: t('runtimeLogs') },
+    ...(editableConfiguration ? [{ key: 'configuration', label: t('configuration') }] : []),
+    { key: 'variables', label: t('variables') },
     { key: 'settings', label: t('settings') },
   ];
-  const tabs = editableConfiguration
-    ? [baseTabs[0], { key: 'configuration', label: t('configuration') }, ...baseTabs.slice(1)]
-    : baseTabs;
+  const tabs = baseTabs;
   const current = tabs.some((item) => item.key === tab) ? tab! : 'overview';
 
   const label = deploymentLabel(dep);
@@ -166,45 +156,24 @@ export default async function DeploymentInspectorPage({
   const status = effectiveStatus(deploymentId, dep.status);
   const running = status === 'running';
   const transitioning = transitioningStatuses.has(status);
-  const defaultRemoteRuntime = usesDefaultRemoteRuntime(dep);
-  const inspectorConnection = readMcpInspectorConnection(dep.installCfg);
-  const connectedInspectorSandbox = dep.source === 'remote' && !defaultRemoteRuntime && inspectorConnection
-    ? await db.sandbox.findFirst({
-        where: {
-          id: inspectorConnection.sandboxId,
-          workspaceId: ws.id,
-          kind: { in: ['docker', 'connector'] },
-          network: { not: 'none' },
-        },
-        select: { deploymentId: true, deployment: { select: { status: true } } },
-      })
-    : null;
-  const remoteInspectorConnected = Boolean(
-    connectedInspectorSandbox
-    && effectiveStatus(
-      connectedInspectorSandbox.deploymentId,
-      connectedInspectorSandbox.deployment.status,
-    ) === 'running',
-  );
-  const toolCatalogVisible = dep.source !== 'remote' || defaultRemoteRuntime || remoteInspectorConnected;
-  const readsLiveTools = dep.source !== 'remote' || defaultRemoteRuntime;
-  const liveTools = readsLiveTools && running && current === 'tools'
-    ? await listMcpTools(deploymentId)
+  let discoveryFailed = false;
+  const liveTools = running && current === 'tools'
+    ? await listMcpTools(deploymentId).catch(() => { discoveryFailed = true; return []; })
     : [];
-  const deploymentToolCatalogKnown = toolCatalogVisible && hasMcpToolCatalog(dep.installCfg);
+  const deploymentToolCatalogKnown = hasMcpToolCatalog(dep.installCfg);
   const serverToolCatalogKnown = dep.source !== 'remote' && hasMcpToolCatalog(dep.server?.installCfg);
   const savedTools = deploymentToolCatalogKnown
     ? readMcpToolCatalog(dep.installCfg)
     : serverToolCatalogKnown
       ? readMcpToolCatalog(dep.server?.installCfg)
       : [];
-  const refreshedConfig = readsLiveTools && running && current === 'tools' && liveTools.length === 0
+  const refreshedConfig = running && current === 'tools' && liveTools.length === 0
     ? await db.deployment.findFirst({
         where: { id: deploymentId, workspaceId: ws.id },
         select: { installCfg: true },
       })
     : null;
-  const tools = readsLiveTools && running && current === 'tools'
+  const tools = running && current === 'tools'
     ? liveTools.length
       ? liveTools
       : hasMcpToolCatalog(refreshedConfig?.installCfg)
@@ -212,24 +181,13 @@ export default async function DeploymentInspectorPage({
         : savedTools
     : savedTools;
   const logs = current === 'logs' ? await getDeploymentLogs(ws.id, deploymentId, 100, user.id) : [];
-  const runtimeSnapshot = current === 'logs'
+  const runtimeSnapshot = current === 'runtime'
     ? getDeploymentRuntimeSnapshot(deploymentId)
     : null;
-  const initialRuntimeLogs = current === 'logs'
+  const initialRuntimeLogs = current === 'runtime'
     ? getDeploymentRuntimeLogChunk(deploymentId, { limit: 64 * 1024 })
     : null;
-  const playgroundAvailable = dep.source === 'remote' || running;
-  const inspectorSandboxes = current === 'tools' && playgroundAvailable && !defaultRemoteRuntime
-    ? (await listSandboxes(ws.id))
-      .filter((sandbox) => sandbox.kind === 'docker' || sandbox.kind === 'connector')
-      .map((sandbox) => ({
-        id: sandbox.id,
-        name: sandbox.name,
-        kind: sandbox.kind,
-        running: effectiveStatus(sandbox.deploymentId, sandbox.deployment.status) === 'running',
-        networkEnabled: sandbox.network !== 'none',
-      }))
-    : [];
+  const playgroundAvailable = running;
 
   const endpoint = `${originFromHeaders(await headers())}/api/v1/mcp/${deploymentId}/rpc`;
   const base = `/app/${slug}/mcp/${deploymentId}`;
@@ -242,9 +200,7 @@ export default async function DeploymentInspectorPage({
       ? t(`source.${label.source}`)
       : label.source;
   const networkLabel = envCfg.network === 'none' ? t('networkNone') : t('networkIsolated');
-  const knownToolCount = dep.source === 'remote' && !defaultRemoteRuntime && !remoteInspectorConnected
-    ? undefined
-    : running && current === 'tools'
+  const knownToolCount = running && current === 'tools'
     ? tools.length
     : deploymentToolCatalogKnown || serverToolCatalogKnown
       ? savedTools.length
@@ -274,14 +230,14 @@ export default async function DeploymentInspectorPage({
       />
       <DashboardPage className="min-w-0 space-y-6 [overflow-wrap:anywhere]">
         <section className="rounded-xl border border-border bg-card overflow-hidden">
-          <div className="flex flex-wrap items-start justify-between gap-5 px-5 py-5 sm:px-6">
+          <div className="flex flex-wrap items-start justify-between gap-3 px-5 py-3">
             <div className="flex min-w-0 items-start gap-3">
               <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted text-primary">
                 <Plug className="size-5" />
               </span>
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
-                  <h1 className="truncate text-2xl font-semibold tracking-tight text-foreground">{label.name}</h1>
+                  <h1 className="break-words text-xl font-semibold tracking-tight text-foreground">{label.name}</h1>
                   <AnimatedBadge  status="neutral" size="sm" showIcon={false}>
                     {sourceLabel}
                   </AnimatedBadge>
@@ -297,7 +253,7 @@ export default async function DeploymentInspectorPage({
               {running ? <ConnectDialog endpoint={endpoint} name={label.name} label={t('connect')} variant="outline" /> : null}
               {transitioning ? (
                 <>
-                  <ButtonLink href={`${base}?tab=logs`} variant="secondary" size="sm">{t('viewRuntimeLogs')}</ButtonLink>
+                  <ButtonLink href={`${base}?tab=runtime`} variant="secondary" size="sm">{t('viewRuntimeLogs')}</ButtonLink>
                   {status !== 'deleting' ? (
                     <form action={stopDeploymentAction}>
                       <input type="hidden" name="workspace" value={slug} />
@@ -315,14 +271,6 @@ export default async function DeploymentInspectorPage({
                 </ButtonLink>
               ) : running ? (
                 <>
-                  <form action={restartDeploymentAction}>
-                    <input type="hidden" name="workspace" value={slug} />
-                    <input type="hidden" name="deploymentId" value={deploymentId} />
-                    <SubmitButton flash={false} pendingLabel={t('restarting')} variant="secondary" size="sm">
-                      <RefreshCw className="size-3.5" />
-                      {t('restart')}
-                    </SubmitButton>
-                  </form>
                   <form action={stopDeploymentAction}>
                     <input type="hidden" name="workspace" value={slug} />
                     <input type="hidden" name="deploymentId" value={deploymentId} />
@@ -341,52 +289,52 @@ export default async function DeploymentInspectorPage({
                   </SubmitButton>
                 </form>
               )}
+              {status === 'error' ? <ButtonLink href={`${base}?tab=runtime`} variant="primary" size="sm">{t('viewRuntimeLogs')}</ButtonLink> : null}
             </div>
-          </div>
-          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border bg-muted/20 px-5 py-3 sm:px-6">
-            <div className="min-w-0 max-w-full">
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{t('endpoint')}</p>
-              <div className="mt-1 flex min-w-0 items-center gap-2">
-                <code title={endpoint} className="min-w-0 max-w-[42rem] truncate font-mono text-xs text-foreground">{endpoint}</code>
-                <CopyButton text={endpoint} label={t('copyEndpointUrl')} />
-              </div>
-            </div>
-            <p className="text-xs text-muted-foreground">{t('configurationUpdatedAt', { value: fmtDate(dep.updatedAt, timeZone, locale) })}</p>
           </div>
         </section>
+        {!running ? (
+          <p role="status" className={`rounded-lg border border-border px-4 py-3 text-sm ${status === 'error' ? 'bg-destructive/10 text-destructive' : 'bg-muted text-muted-foreground'}`}>
+            {setupRequired ? t('variablesNeedAttention', { count: missingRequiredVariables.length })
+              : transitioning ? t('runtimeStartingDescription')
+              : status === 'error' ? t('runtimeErrorDescription') : t('stoppedNextStep')}
+            {setupRequired && missingRequiredVariables.length ? ` ${missingRequiredVariables.map((row) => row.key).join(' · ')}` : null}
+          </p>
+        ) : null}
 
         <div className="-mx-4 overflow-hidden px-4 sm:mx-0 sm:px-0">
           <TabBar tabs={tabs} current={current} basePath={base} />
         </div>
 
-        {provisioning ? (
-          <section className="rounded-lg border border-primary/25 bg-muted px-4 py-3">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="text-sm font-semibold text-foreground">{t('startingMcpRuntime')}</p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {t('toolplaneIsPullingDependenciesAndWaitingForTheServerToAnnounceItsPort')}
-                </p>
-              </div>
-              <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('autorefreshing')}</span>
-            </div>
-            <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-background/80">
-              <div className="h-full w-1/3 animate-pulse rounded-full bg-primary" />
-            </div>
-          </section>
-        ) : null}
 
         {current === 'overview' ? (
           <div className="space-y-5">
-            {running ? (
-              <ReadyToConnectBanner
-                noun="server"
-                endpoint={endpoint}
-                name={label.name}
-                status={status}
-              />
-            ) : null}
 
+              <DashboardPanel title={t('connectionDetails')}>
+                <dl className="divide-y divide-border text-sm">
+                  <div className="flex flex-wrap items-start justify-between gap-3 py-3 first:pt-0 last:pb-0">
+                    <dt className="text-muted-foreground">{t('endpoint')}</dt>
+                    <dd className="flex min-w-0 items-center gap-2">
+                      <code title={endpoint} className="min-w-0 max-w-[20rem] truncate font-mono text-xs text-foreground">{endpoint}</code>
+                      <CopyButton text={endpoint} />
+                    </dd>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 py-3 last:pb-0">
+                    <dt className="text-muted-foreground">{t('created')}</dt>
+                    <dd className="text-foreground">{fmtDate(dep.createdAt, timeZone, locale)}</dd>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 py-3 last:pb-0">
+                    <dt className="text-muted-foreground">{t('apiToken')}</dt>
+                    <dd>
+                      <Link href={`/app/${slug}/settings/tokens`} className="inline-flex items-center gap-1 text-sm font-medium text-foreground hover:underline">
+                        <KeyRound className="size-3.5" />
+                        {t('manageTokens')}
+                      </Link>
+                    </dd>
+                  </div>
+                </dl>
+                  <div className="py-3 text-muted-foreground">{t('configurationUpdatedAt', { value: fmtDate(dep.updatedAt, timeZone, locale) })}</div>
+              </DashboardPanel>
             <DashboardPanel
               title={t('aboutThisMcp')}
               description={dep.server?.description ?? undefined}
@@ -426,113 +374,7 @@ export default async function DeploymentInspectorPage({
               </dl>
             </DashboardPanel>
 
-            <DashboardPanel title={t('nextStep')} description={t('nextStepDescription')} bodyClassName="py-4">
-              {setupRequired ? (
-                <div className="flex flex-wrap items-center justify-between gap-4">
-                  <div className="flex min-w-0 items-start gap-3">
-                    <CircleAlert className="mt-0.5 size-5 shrink-0 text-(--color-warning) dark:text-(--color-warning)" />
-                    <div>
-                      <p className="text-sm font-medium text-foreground">{t('variablesNeedAttention', { count: missingRequiredVariables.length })}</p>
-                      {missingRequiredVariables.length ? (
-                        <p className="mt-1 text-xs text-muted-foreground">{missingRequiredVariables.map((row) => row.key).join(' · ')}</p>
-                      ) : null}
-                    </div>
-                  </div>
-                  <ButtonLink href={`${base}?tab=variables`} variant="primary" size="sm">
-                    <KeyRound className="size-4" />
-                    {t('configureVariables')}
-                  </ButtonLink>
-                </div>
-              ) : transitioning ? (
-                <div className="flex flex-wrap items-center justify-between gap-4">
-                  <div className="flex min-w-0 items-start gap-3">
-                    <LoaderCircle className="mt-0.5 size-5 shrink-0 animate-spin text-primary" />
-                    <div>
-                      <p className="text-sm font-medium text-foreground">{t('runtimeStartingDescription')}</p>
-                      <p className="mt-1 text-xs text-muted-foreground">{t('runtimeStartingHint')}</p>
-                    </div>
-                  </div>
-                  <ButtonLink href={`${base}?tab=logs`} variant="secondary" size="sm">{t('viewRuntimeLogs')}</ButtonLink>
-                </div>
-              ) : status === 'error' ? (
-                <div className="flex flex-wrap items-center justify-between gap-4">
-                  <div className="flex min-w-0 items-start gap-3">
-                    <CircleAlert className="mt-0.5 size-5 shrink-0 text-destructive dark:text-destructive" />
-                    <div>
-                      <p className="text-sm font-medium text-foreground">{t('runtimeErrorDescription')}</p>
-                      <p className="mt-1 text-xs text-muted-foreground">{t('runtimeErrorHint')}</p>
-                    </div>
-                  </div>
-                  <ButtonLink href={`${base}?tab=logs`} variant="secondary" size="sm">{t('viewRuntimeLogs')}</ButtonLink>
-                </div>
-              ) : running ? (
-                <div className="flex flex-wrap items-center justify-between gap-4">
-                  <div className="flex min-w-0 items-start gap-3">
-                    <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-(--color-success) dark:text-(--color-success)" />
-                    <div>
-                      <p className="text-sm font-medium text-foreground">{t('runningNextStep')}</p>
-                      <p className="mt-1 text-xs text-muted-foreground">{t('runningNextStepHint')}</p>
-                    </div>
-                  </div>
-                  <ConnectDialog endpoint={endpoint} name={label.name} label={t('connect')} variant="outline" />
-                </div>
-              ) : (
-                <div className="flex flex-wrap items-center justify-between gap-4">
-                  <div className="flex min-w-0 items-start gap-3">
-                    <Play className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
-                    <div>
-                      <p className="text-sm font-medium text-foreground">{t('stoppedNextStep')}</p>
-                      <p className="mt-1 text-xs text-muted-foreground">{t('stoppedNextStepHint')}</p>
-                    </div>
-                  </div>
-                  <form action={startDeploymentAction}>
-                    <input type="hidden" name="workspace" value={slug} />
-                    <input type="hidden" name="deploymentId" value={deploymentId} />
-                    <SubmitButton flash={false} pendingLabel={t('starting')} variant="secondary" size="sm">
-                      <Play className="size-3.5" />
-                      {t('start')}
-                    </SubmitButton>
-                  </form>
-                </div>
-              )}
-            </DashboardPanel>
 
-            <div className="grid gap-5 lg:grid-cols-2">
-              <DashboardPanel title={t('connectionDetails')}>
-                <dl className="divide-y divide-border text-sm">
-                  <div className="flex flex-wrap items-start justify-between gap-3 py-3 first:pt-0 last:pb-0">
-                    <dt className="text-muted-foreground">{t('endpoint')}</dt>
-                    <dd className="flex min-w-0 items-center gap-2">
-                      <code title={endpoint} className="min-w-0 max-w-[20rem] truncate font-mono text-xs text-foreground">{endpoint}</code>
-                      <CopyButton text={endpoint} />
-                    </dd>
-                  </div>
-                  <div className="flex items-center justify-between gap-3 py-3 last:pb-0">
-                    <dt className="text-muted-foreground">{t('created')}</dt>
-                    <dd className="text-foreground">{fmtDate(dep.createdAt, timeZone, locale)}</dd>
-                  </div>
-                  <div className="flex items-center justify-between gap-3 py-3 last:pb-0">
-                    <dt className="text-muted-foreground">{t('apiToken')}</dt>
-                    <dd>
-                      <Link href={`/app/${slug}/settings/tokens`} className="inline-flex items-center gap-1 text-sm font-medium text-foreground hover:underline">
-                        <KeyRound className="size-3.5" />
-                        {t('manageTokens')}
-                      </Link>
-                    </dd>
-                  </div>
-                </dl>
-              </DashboardPanel>
-
-              <DashboardPanel title={t('requestActivity')} description={t('requestActivityDescription')} bodyClassName="py-4">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div className="flex items-start gap-3">
-                    <BarChart3 className="mt-0.5 size-5 text-muted-foreground" />
-                    <p className="max-w-sm text-sm leading-6 text-muted-foreground">{t('viewToolCallsLatencyAndErrorsInObservability')}</p>
-                  </div>
-                  <ButtonLink href={`${base}?tab=logs`} variant="secondary" size="sm">{t('openObservability')}</ButtonLink>
-                </div>
-              </DashboardPanel>
-            </div>
           </div>
         ) : null}
 
@@ -568,6 +410,7 @@ export default async function DeploymentInspectorPage({
 
         {current === 'tools' ? (
           <div className="space-y-6">
+            {discoveryFailed ? <p role="alert" className="text-sm text-destructive">{t('toolDiscoveryFailed')}</p> : null}
             {tools.length ? (
               <McpToolCatalog
                 tools={tools}
@@ -615,16 +458,11 @@ export default async function DeploymentInspectorPage({
                 </header>
                 <div className="px-5 py-5">
                   <ToolPlayground
-                    key={defaultRemoteRuntime ? `managed:${tools.map((tool) => tool.name).join('|')}` : undefined}
+                    key={`runtime:${tools.map((tool) => tool.name).join('|')}`}
                     workspace={slug}
                     deploymentId={deploymentId}
-                    tools={defaultRemoteRuntime || inspectorConnection ? tools : []}
-                    sandboxes={inspectorSandboxes}
-                    connectedSandboxId={dep.source === 'remote'
-                      ? remoteInspectorConnected ? inspectorConnection?.sandboxId : undefined
-                      : inspectorConnection?.sandboxId}
-                    credentialsRequired={setupRequired}
-                    defaultRuntime={defaultRemoteRuntime}
+                    tools={tools}
+                    defaultRuntime
                   />
                 </div>
               </section>
@@ -703,6 +541,14 @@ export default async function DeploymentInspectorPage({
                   <Activity className="mt-0.5 size-4 text-muted-foreground" />
                   <p className="max-w-xl text-sm leading-6 text-muted-foreground">{t('rebuildDescription')}</p>
                 </div>
+                {running ? <form action={restartDeploymentAction}>
+                    <input type="hidden" name="workspace" value={slug} />
+                    <input type="hidden" name="deploymentId" value={deploymentId} />
+                    <SubmitButton flash={false} pendingLabel={t('restarting')} variant="secondary" size="sm">
+                      <RefreshCw className="size-3.5" />
+                      {t('restart')}
+                    </SubmitButton>
+                </form> : null}
                 <form action={rebuildDeploymentAction}>
                   <input type="hidden" name="workspace" value={slug} />
                   <input type="hidden" name="deploymentId" value={deploymentId} />
@@ -725,8 +571,7 @@ export default async function DeploymentInspectorPage({
           </div>
         ) : null}
 
-        {current === 'logs' ? (
-          <div className="space-y-6">
+        {current === 'runtime' ? (
             <section id="runtime-logs" className="rounded-xl border border-border bg-card scroll-mt-6 px-5 py-5">
               <ContainerLogs
                 key={`${deploymentId}:${runtimeSnapshot?.generation ?? status}`}
@@ -746,30 +591,23 @@ export default async function DeploymentInspectorPage({
                 truncatedLabel={t('runtimeLogTruncated')}
               />
             </section>
+        ) : null}
 
-            <section className="rounded-xl border border-border bg-card overflow-hidden">
-              <header className="border-b border-border px-5 py-4">
-                <h2 className="text-sm font-semibold text-foreground">{t('requestLogs')}</h2>
-                <p className="mt-1 text-xs leading-5 text-muted-foreground">{t('requestLogsDescription')}</p>
+        {current === 'logs' ? (
+            <section id="request-logs" className="min-w-0 space-y-4">
+              <header>
+                <h2 className="text-base font-semibold text-foreground">{t('mcpCallLogs')}</h2>
+                <p className="mt-1 text-sm text-muted-foreground">{t('requestLogsDescription')}</p>
               </header>
-              <div className="px-5 py-5">
-                {logs.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center text-center min-h-48">
-                    <p className="text-sm text-muted-foreground">
-                      {t('noRequestsLoggedYetRunAToolInTheToolsTabOrConnectAClientToSeeCallRecordsHere')}
-                    </p>
-                  </div>
-                ) : (
+              <div className="min-w-0">
                   <DeploymentLogs
                     logs={logs.map((log) => ({
                       ...log,
                       time: fmtTime(log.createdAt, timeZone, locale),
                     }))}
                   />
-                )}
               </div>
             </section>
-          </div>
         ) : null}
       </DashboardPage>
     </>

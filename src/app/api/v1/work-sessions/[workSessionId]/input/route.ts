@@ -44,7 +44,7 @@ export const POST = withRequestLogging("/api/v1/work-sessions/[workSessionId]/in
   const { workSessionId } = await params;
   const work = await getWorkSessionForUser(user.id, workSessionId);
   if (!work) return Response.json({ error: 'Not found' }, { status: 404 });
-  if (parseRuntimeCommand(body.input)) {
+  if (parseRuntimeCommand(body.input, work.runtimeKind)) {
     if (references.data.length || (Array.isArray(body.attachmentIds) && body.attachmentIds.length)) return Response.json({ error: 'noAttachments' }, { status: 400 });
     try { return Response.json(await executeRuntimeCommand({ workspaceId: work.workspaceId, agentId: work.agentId, conversationId: work.conversationId, line: body.input, signal: req.signal })); }
     catch (error) {

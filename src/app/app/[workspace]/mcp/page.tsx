@@ -3,15 +3,14 @@ import { ButtonLink } from '@/components/motion/button';
 
 import { redirect } from 'next/navigation';
 import { getLocale, getTranslations } from 'next-intl/server';
-import { Plug, Store } from 'lucide-react';
+import { Store } from 'lucide-react';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser, getDeployments } from '@/lib/workspace/queries';
 import { effectiveStatus } from '@/lib/process/supervisor';
-import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { DeployCustomMcpDialog } from '@/components/dashboard/DeployCustomMcpDialog';
 import { deploymentLabel } from '@/lib/workspace/deployment-label';
 import { ProvisioningRefresher } from '@/components/dashboard/ProvisioningRefresher';
-import { DashboardEmptyState, DashboardPage, DashboardToolbar } from '@/components/dashboard/DashboardUI';
+import { DashboardPage, DashboardToolbar } from '@/components/dashboard/DashboardUI';
 import { McpDeploymentsBrowser } from '@/components/dashboard/McpDeploymentsBrowser';
 import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
 
@@ -61,9 +60,9 @@ export default async function McpServersPage({
   return (
     <>
       <ProvisioningRefresher active={anyProvisioning} />
-      <DashboardHeader title={t('title')} />
-      <DashboardPage>
+      <DashboardPage className="flex min-h-0 flex-1 flex-col space-y-0 gap-6">
         <DashboardToolbar
+          className="shrink-0"
           actions={
             <>
               <ButtonLink href={marketHref} variant="secondary" size="md">
@@ -74,18 +73,11 @@ export default async function McpServersPage({
             </>
           }
         >
-          <p className="text-sm text-muted-foreground">{t('serversDeployedToYourOrg')}</p>
+          <h1 className="text-xl font-semibold">{t('title')}</h1>
+          <p className="text-sm text-muted-foreground">{t('deploymentCountSummary', { count: deploymentItems.length })}</p>
         </DashboardToolbar>
 
-        {deployments.length === 0 ? (
-          <DashboardEmptyState
-            icon={Plug}
-            title={t('noServersDeployedYet')}
-            description={t('serversDeployedToYourOrg')}
-          />
-        ) : (
-          <McpDeploymentsBrowser slug={slug} deployments={deploymentItems} />
-        )}
+        <McpDeploymentsBrowser slug={slug} deployments={deploymentItems} />
       </DashboardPage>
     </>
   );

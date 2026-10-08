@@ -1,11 +1,16 @@
 import 'server-only';
+import { randomUUID } from 'node:crypto';
+import { runNativeEntry, nativeEntryResult, nativeEntryRuntimeParts } from '@/lib/a2a/ingress';
+import type { EntryIdentity } from '@/lib/a2a/entry-policy';
+import type { TaskGrant } from '@/lib/a2a/principal';
+import type { RuntimeUsage } from './runtime-commands';
 import { TaskNotFoundError, UnsupportedOperationError } from '@a2a-js/sdk/errors';
 import { isDedicatedSandboxRuntimeKind } from './runtime-kind';
 import { db } from '@/lib/db';
 import { ACTIVE } from '@/lib/a2a/model';
 import { localOwnerKey, assertLocalActor } from '@/lib/a2a/local-policy';
 import { assertEntryPolicy } from '@/lib/a2a/entry-policy';
-import { isLocalGrant, type TaskGrant } from '@/lib/a2a/principal';
+import { isLocalGrant } from '@/lib/a2a/principal';
 import type { PiHarnessOperationResult } from './sandbox-runtime';
 import { appendWorkSessionInput } from '@/lib/work/sessions';
 import { getAgentForRun } from './queries';
@@ -14,7 +19,7 @@ import { runDedicatedSandboxTurn } from './sandbox-turn';
 import { appendConversationTurn } from './mutations';
 import { acquireConversationOperation, conversationOperationKey, operateConversation } from './conversation-operations';
 import { activeConversationMessages, CLEAR_CONTEXT_PART } from './conversation-context';
-import { COMMAND_RESULT_PART, RUNTIME_COMMANDS_PART, RUNTIME_USAGE_PART, parseRuntimeCommand, sessionRuntimeCommands, type RuntimeUsage } from './runtime-commands';
+import { COMMAND_RESULT_PART, RUNTIME_COMMANDS_PART, RUNTIME_USAGE_PART, parseRuntimeCommand, sessionRuntimeCommands } from './runtime-commands';
 
 export class RuntimeCommandError extends Error {
   constructor(message: string, readonly status = 400) { super(message); }
@@ -22,9 +27,8 @@ export class RuntimeCommandError extends Error {
 
 export async function executeRuntimeCommand(input: {
   workspaceId: string; agentId: string; conversationId: string; actorId?: string; line: string; sandboxId?: string; signal?: AbortSignal;
+  entry?: Pick<EntryIdentity, 'kind' | 'channelId'>; messageId?: string;
 }) {
-  const parsed = parseRuntimeCommand(input.line);
-  if (!parsed || input.line.length > 2000) throw new RuntimeCommandError('invalidCommand');
   const [agent, scope] = await Promise.all([
     getAgentForRun(input.agentId, input.workspaceId),
     db.conversation.findFirst({ where: { id: input.conversationId, agentId: input.agentId, agent: { workspaceId: input.workspaceId } },
@@ -33,7 +37,9 @@ export async function executeRuntimeCommand(input: {
   if (!agent || !scope || scope.publicApiConversation) throw new RuntimeCommandError('notFound', 404);
   const kind = scope.workSession?.runtimeKind ?? agent.runtimeKind;
   if (agent.runtimeKind !== kind) throw new RuntimeCommandError('runtimeChanged', 409);
-  if (!sessionRuntimeCommands(kind, scope.messages).some((command) => command.name === parsed.name)) throw new RuntimeCommandError('unsupportedCommand');
+  const parsed = parseRuntimeCommand(input.line, kind);
+  if (!parsed || input.line.length > 2000) throw new RuntimeCommandError('invalidCommand');
+  if (kind !== 'pi-sdk' && !sessionRuntimeCommands(kind, scope.messages).some((command) => command.name === parsed.name)) throw new RuntimeCommandError('unsupportedCommand');
   if (parsed.name === 'compact' && kind === 'hermes') return { kind: 'compact' as const, ...await operateConversation({ ...input, action: 'compact', instructions: parsed.args }) };
   const release = acquireConversationOperation(conversationOperationKey(scope), parsed.name);
   if (!release) throw new RuntimeCommandError('busy', 409);
@@ -54,7 +60,8 @@ export async function executeRuntimeCommand(input: {
     }
     if (!isDedicatedSandboxRuntimeKind(kind)) throw new RuntimeCommandError('unsupportedCommand');
     let nativeContextId: string | undefined;
-    if (kind === 'pi') {
+    let sdkEntry: EntryIdentity = { ...input.entry, kind: input.entry?.kind ?? 'chat', sourceId: conversation.id };
+    if (kind === 'pi' || kind === 'pi-sdk') {
       const bindings = await db.a2AEntryBinding.findMany({ where: { sourceId: conversation.id,
         context: { workspaceId: input.workspaceId, agentId: input.agentId } }, include: { lastTask: true } });
       if (bindings.length) {
@@ -78,11 +85,33 @@ export async function executeRuntimeCommand(input: {
           throw error;
         }
         if (await db.a2ATask.count({ where: { contextId: binding.contextId, state: { in: ACTIVE } } })) throw new RuntimeCommandError('busy', 409);
-        if (parsed.name !== 'compact' || binding.lastTask.executionBackend !== 'pi-harness') throw new RuntimeCommandError('unsupportedCommand');
-        nativeContextId = binding.contextId;
-      } else if (conversation.runtimeSessionKey?.startsWith('channel:')) {
+        if (kind === 'pi') {
+          if (parsed.name !== 'compact' || binding.lastTask.executionBackend !== 'pi-harness') throw new RuntimeCommandError('unsupportedCommand');
+          nativeContextId = binding.contextId;
+        } else {
+          if (input.entry && (input.entry.kind !== grant.entryPolicy.kind || input.entry.channelId !== grant.entryPolicy.channelId)) throw new RuntimeCommandError('notFound', 404);
+          sdkEntry = { kind: grant.entryPolicy.kind, sourceId: conversation.id, ...(grant.entryPolicy.channelId ? { channelId: grant.entryPolicy.channelId } : {}) };
+        }
+      } else if (kind === 'pi' && conversation.runtimeSessionKey?.startsWith('channel:')) {
         // A channel created by /new has no native session until its first task.
         throw new RuntimeCommandError('unsupportedCommand');
+      }
+    }
+    if (kind === 'pi-sdk') {
+      if (!input.actorId) throw new RuntimeCommandError('notFound', 404);
+      if (sdkEntry.kind === 'channel' && !input.messageId) throw new RuntimeCommandError('invalidCommand');
+      try {
+        const result = await runNativeEntry({ ...sdkEntry, workspaceId: input.workspaceId, agentId: input.agentId,
+          actorId: input.actorId, messageId: input.messageId ?? randomUUID(), text: input.line, signal: input.signal });
+        const text = nativeEntryResult(result.task, result.path);
+        input.signal?.throwIfAborted();
+        await appendConversationTurn(conversation.id, [{ type: 'text', text: input.line }], [
+          { type: 'text', text }, ...nativeEntryRuntimeParts(result.task),
+        ]);
+        return { kind: 'output' as const, text };
+      } catch (error) {
+        if (error instanceof TaskNotFoundError) throw new RuntimeCommandError('notFound', 404);
+        throw new RuntimeCommandError(error instanceof Error ? error.message : 'The runtime command failed.', 502);
       }
     }
     const sandboxId = input.sandboxId ?? agent.sandboxes[0]?.sandboxId;

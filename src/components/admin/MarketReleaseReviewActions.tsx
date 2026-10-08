@@ -17,11 +17,13 @@ export function MarketReleaseReviewActions({
   releaseId,
   categories,
   selectedCategoryIds,
+  approvalAllowed = true,
 }: {
   listingId: string;
   releaseId: string;
   categories: Array<{ id: string; name: string }>;
   selectedCategoryIds: string[];
+  approvalAllowed?: boolean;
 }) {
   const t = useTranslations('admin');
   const noteId = useId();
@@ -38,7 +40,7 @@ export function MarketReleaseReviewActions({
 
   return (
     <div className="space-y-3 lg:w-80">
-      <form action={approveAction} className="space-y-3">
+      {approvalAllowed ? <form action={approveAction} className="space-y-3">
         <input type="hidden" name="listingId" value={listingId} />
         <input type="hidden" name="releaseId" value={releaseId} />
         <fieldset>
@@ -65,7 +67,7 @@ export function MarketReleaseReviewActions({
           <CheckCircle2 className="size-4" />
           {t('agentApproveRelease')}
         </SubmitButton>
-      </form>
+      </form> : <p role="alert" className="text-sm text-destructive">{t('errorInvalidMarketRelease')}</p>}
 
       <form action={rejectAction} className="space-y-2">
         <input type="hidden" name="listingId" value={listingId} />

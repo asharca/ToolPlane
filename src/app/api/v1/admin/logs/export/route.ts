@@ -1,7 +1,8 @@
 import { resolveAccountRequestUser } from '@/lib/auth/request-user';
-import { auditWhere, authorizeLogs, logFilterSchema, logWhere, LogAccessError } from '@/lib/observability/queries';
+import { auditWhere, authorizeLogs, resolveLogFilters, logWhere, LogAccessError } from '@/lib/observability/queries';
 import { db } from '@/lib/db';
 import { writeAudit } from '@/lib/observability/audit';
+import { z } from 'zod';
 
 export const dynamic = 'force-dynamic';
 export async function GET(req: Request) {
@@ -12,11 +13,12 @@ export async function GET(req: Request) {
     throw error;
   }
   const query = Object.fromEntries(new URL(req.url).searchParams);
-  const parsed = logFilterSchema.safeParse(query);
-  if (!parsed.success) return Response.json({ error: 'Invalid filters' }, { status: 400 });
+  let filters;
+  try { filters = resolveLogFilters(query); } catch (error) {
+    if (error instanceof z.ZodError) return Response.json({ error: 'Invalid filters' }, { status: 400 });
+    throw error;
+  }
   const audit = query.tab === 'audit';
-  const filters = parsed.data;
-  if (!audit && !filters.domain && query.domain !== 'all') filters.domain = query.tab === 'agent' ? 'agent' : query.tab === 'runtime' ? 'runtime' : 'http';
   const rows = audit ? await db.auditEvent.findMany({ where: auditWhere(filters), orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 1000 })
     : await db.logEvent.findMany({ where: logWhere(filters), orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 1000 });
   await writeAudit(db, { actorId: user.id, action: 'logging.exported', targetType: audit ? 'auditEvent' : 'logEvent', targetId: 'export',

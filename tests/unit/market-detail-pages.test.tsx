@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
@@ -9,13 +9,15 @@ const mocks = vi.hoisted(() => ({
   marketListingFindUnique: vi.fn(),
   parseAssistantReleaseManifest: vi.fn(),
   parseMcpMarketManifest: vi.fn(),
+  parseSkillReleaseManifest: vi.fn(),
   sandboxFindFirst: vi.fn(),
   listSandboxes: vi.fn(),
+  redirect: vi.fn((url: string) => { throw new Error(`NEXT_REDIRECT:${url}`); }),
 }));
 
 vi.mock('next/navigation', () => ({
   notFound: vi.fn(() => { throw new Error('NEXT_NOT_FOUND'); }),
-  redirect: vi.fn(),
+  redirect: mocks.redirect,
 }));
 vi.mock('next-intl/server', () => ({
   getLocale: vi.fn().mockResolvedValue('en'),
@@ -28,7 +30,7 @@ vi.mock('@/lib/market/listings', () => ({ getMarketListing: mocks.getMarketListi
 vi.mock('@/lib/market/assistant-manifest', () => ({
   parseAssistantReleaseManifest: mocks.parseAssistantReleaseManifest,
 }));
-vi.mock('@/lib/market/skill-manifest', () => ({ parseSkillReleaseManifest: vi.fn() }));
+vi.mock('@/lib/market/skill-manifest', () => ({ parseSkillReleaseManifest: mocks.parseSkillReleaseManifest }));
 vi.mock('@/lib/market/resources', () => ({
   parseMcpMarketManifest: mocks.parseMcpMarketManifest,
   parseToolkitMarketManifest: vi.fn(),
@@ -49,10 +51,8 @@ vi.mock('@/lib/db', () => ({
 vi.mock('@/lib/process/supervisor', () => ({
   effectiveStatus: vi.fn((_id: string, status: string) => status),
 }));
-vi.mock('@/components/dashboard/ToolPlayground', () => ({
-  ToolPlayground: ({ deploymentId }: { deploymentId: string }) => (
-    <div data-testid="market-item-inspector">{deploymentId}</div>
-  ),
+vi.mock('@/components/dashboard/SkillMarkdownViewer', () => ({
+  SkillMarkdownViewer: ({ markdown }: { markdown: string }) => <div>{markdown}</div>,
 }));
 
 import MarketItemPage from '@/app/app/[workspace]/market/items/[namespace]/[listingSlug]/page';
@@ -215,7 +215,7 @@ describe('market detail pages', () => {
     expect(screen.getByText('@acme/catalog-search')).toBeInTheDocument();
     expect(screen.getByText('CATALOG_TOKEN')).toBeInTheDocument();
     expect(screen.getByText('Search products by keyword.')).toBeInTheDocument();
-    expect(screen.getByText('Search term')).toBeInTheDocument();
+    expect(await screen.findByText('Search term')).toBeInTheDocument();
     expect(screen.getByText('inputSchema')).toBeInTheDocument();
     expect(screen.getByText(/"required"/)).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'search_products' })).toHaveAttribute(
@@ -223,7 +223,7 @@ describe('market detail pages', () => {
       '/app/acme%20team/market/items/acme-labs/catalog-search/tools/search_products',
     );
     expect(screen.queryByRole('button', { name: /installToWorkspace/ })).not.toBeInTheDocument();
-    expect(screen.queryByTestId('market-item-inspector')).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'manualToolTesting' })).not.toBeInTheDocument();
   });
 
   it('does not fall back to an unverified tool snapshot for a server', async () => {
@@ -243,7 +243,7 @@ describe('market detail pages', () => {
     expect(screen.queryByRole('link', { name: 'search_products' })).not.toBeInTheDocument();
   });
 
-  it('shows connector tools and Inspector only for a running sandbox connection', async () => {
+  it('links installed connector tools to their own runtime without a sandbox connection', async () => {
     mocks.getMarketListing.mockResolvedValue(mcpListing);
     mocks.parseMcpMarketManifest.mockReturnValue(connectorManifest);
     mocks.marketInstall.mockResolvedValue({
@@ -259,12 +259,8 @@ describe('market detail pages', () => {
         status: 'running',
         installCfg: {
           toolCatalog: mcpManifest.mcp.toolCatalog,
-          mcpInspector: { sandboxId: 'sandbox-1', connectedAt: '2026-08-29T00:00:00.000Z' },
         },
       },
-    });
-    mocks.sandboxFindFirst.mockResolvedValue({
-      deployment: { id: 'sandbox-deployment-1', status: 'running' },
     });
 
     render(await MarketItemPage({
@@ -275,14 +271,16 @@ describe('market detail pages', () => {
       }),
     }));
 
-    expect(screen.getByTestId('market-item-inspector')).toHaveTextContent('deployment-1');
-    expect(screen.getByRole('link', { name: 'inspector' })).toHaveAttribute('href', '#inspector');
+    expect(screen.getByRole('link', { name: 'manualToolTesting' })).toHaveAttribute('href', '/app/acme%20team/mcp/deployment-1?tab=tools');
+    expect(screen.getByRole('link', { name: 'search_products' })).toHaveAttribute('href', '/app/acme%20team/mcp/deployment-1/tools/search_products');
+    expect(mocks.listSandboxes).not.toHaveBeenCalled();
+    expect(mocks.sandboxFindFirst).not.toHaveBeenCalled();
   });
 
   it.each([
     ['stopped', 'workspace-1'],
     ['running', 'another-workspace'],
-  ])('hides connector tools for a %s sandbox connection in %s', async (status, workspaceId) => {
+  ])('scopes saved connector tools and runtime links for %s deployment in %s', async (status, workspaceId) => {
     mocks.getMarketListing.mockResolvedValue(mcpListing);
     mocks.parseMcpMarketManifest.mockReturnValue(connectorManifest);
     mocks.marketInstall.mockResolvedValue({
@@ -315,14 +313,77 @@ describe('market detail pages', () => {
     }));
 
     if (workspaceId === 'workspace-1') {
-      expect(screen.getByTestId('market-item-inspector')).toHaveTextContent('deployment-1');
+      expect(screen.getByRole('link', { name: 'manualToolTesting' })).toHaveAttribute('href', '/app/acme%20team/mcp/deployment-1?tab=tools');
+      expect(screen.getByText('Search products by keyword.')).toBeInTheDocument();
     } else {
-      expect(screen.queryByTestId('market-item-inspector')).not.toBeInTheDocument();
+      expect(screen.queryByRole('link', { name: 'manualToolTesting' })).not.toBeInTheDocument();
+      expect(screen.queryByText('Search products by keyword.')).not.toBeInTheDocument();
     }
-    expect(screen.queryByText('Search products by keyword.')).not.toBeInTheDocument();
     if (workspaceId !== 'workspace-1') {
       expect(screen.queryByRole('link', { name: 'manage' })).not.toBeInTheDocument();
     }
+  });
+
+  it('routes an installed community connector tool directly to its workspace deployment', async () => {
+    mocks.getMarketListing.mockResolvedValue(mcpListing);
+    mocks.parseMcpMarketManifest.mockReturnValue(connectorManifest);
+    mocks.marketInstall.mockResolvedValue({ deployment: { id: 'deployment-1', workspaceId: 'workspace-1' } });
+    await expect(MarketItemToolPage({
+      params: Promise.resolve({ workspace: 'acme team', namespace: 'acme-labs', listingSlug: 'catalog-search', toolName: 'search_products' }),
+    })).rejects.toThrow('NEXT_REDIRECT:/app/acme%20team/mcp/deployment-1/tools/search_products');
+    expect(mocks.sandboxFindFirst).not.toHaveBeenCalled();
+  });
+
+  it('keeps connector management available alongside a newer release', async () => {
+    mocks.getMarketListing.mockResolvedValue(mcpListing);
+    mocks.parseMcpMarketManifest.mockReturnValue(connectorManifest);
+    mocks.marketInstall.mockResolvedValue({
+      id: 'install-1', currentReleaseId: 'release-old', currentRelease: { version: 1 },
+      status: 'installed', installedSkill: null, toolkit: null,
+      deployment: { id: 'deployment-1', workspaceId: 'workspace-1', status: 'setup_required', installCfg: {} },
+    });
+    render(await MarketItemPage({
+      params: Promise.resolve({ workspace: 'acme team', namespace: 'acme-labs', listingSlug: 'catalog-search' }),
+    }));
+    expect(screen.getByRole('button', { name: 'update' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'ignoreThisVersion' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'manage' })).toHaveAttribute(
+      'href', '/app/acme%20team/mcp/deployment-1?tab=variables',
+    );
+  });
+
+  it.each(['installed', 'modified'])('keeps Skill management and enforces overwrite only for %s content', async (status) => {
+    mocks.getMarketListing.mockResolvedValue({ ...mcpListing, kind: 'skill' });
+    mocks.parseSkillReleaseManifest.mockReturnValue({
+      skill: { content: '# Published skill', source: { type: 'custom' }, files: [] },
+    });
+    mocks.marketInstall.mockResolvedValue({
+      id: 'install-1', currentReleaseId: 'release-old', currentRelease: { version: 1 }, status,
+      installedSkill: { id: 'skill-1', workspaceId: 'workspace-1' }, deployment: null, toolkit: null,
+    });
+    render(await MarketItemPage({
+      params: Promise.resolve({ workspace: 'acme', namespace: 'acme-labs', listingSlug: 'catalog-search' }),
+    }));
+    expect(screen.getByRole('link', { name: 'manageSkill' })).toHaveAttribute('href', '/app/acme/skills/skill-1');
+    const form = screen.getByRole('button', { name: 'update' }).closest('form')!;
+    expect(Object.fromEntries(new FormData(form))).toEqual({
+      workspace: 'acme', installId: 'install-1', targetReleaseId: 'release-mcp', currentReleaseId: 'release-old',
+    });
+    if (status === 'modified') {
+      const confirmation = screen.getByRole('checkbox', { name: 'overwriteLocalChangesConfirmation' });
+      expect(confirmation).toBeRequired();
+      expect(form.checkValidity()).toBe(false);
+      fireEvent.click(confirmation);
+      expect(form.checkValidity()).toBe(true);
+      expect(new FormData(form).get('force')).toBe('yes');
+    } else {
+      expect(screen.queryByRole('checkbox', { name: 'overwriteLocalChangesConfirmation' })).not.toBeInTheDocument();
+      expect(form.checkValidity()).toBe(true);
+    }
+    const ignoreForm = screen.getByRole('button', { name: 'ignoreThisVersion' }).closest('form')!;
+    expect(Object.fromEntries(new FormData(ignoreForm))).toEqual({
+      workspace: 'acme', installId: 'install-1', targetReleaseId: 'release-mcp', currentReleaseId: 'release-old',
+    });
   });
 
   it('shows a verified server tool schema without an installation', async () => {
@@ -345,37 +406,17 @@ describe('market detail pages', () => {
       }),
     }));
 
-    expect(screen.getByText('Search term')).toBeInTheDocument();
+    expect(await screen.findByText('Search term')).toBeInTheDocument();
     expect(screen.getByText(/"required"/)).toBeInTheDocument();
-    expect(mocks.marketInstall).not.toHaveBeenCalled();
   });
 
-  it('shows a connected connector tool schema while its sandbox is running', async () => {
+  it('does not expose a foreign workspace connector through its marketplace tool link', async () => {
     mocks.getMarketListing.mockResolvedValue(mcpListing);
     mocks.parseMcpMarketManifest.mockReturnValue(connectorManifest);
-    mocks.marketInstall.mockResolvedValue({
-      deployment: {
-        workspaceId: 'workspace-1',
-        installCfg: {
-          toolCatalog: mcpManifest.mcp.toolCatalog,
-          mcpInspector: { sandboxId: 'sandbox-1', connectedAt: '2026-08-29T00:00:00.000Z' },
-        },
-      },
-    });
-    mocks.sandboxFindFirst.mockResolvedValue({
-      deployment: { id: 'sandbox-deployment-1', status: 'running' },
-    });
-
-    render(await MarketItemToolPage({
-      params: Promise.resolve({
-        workspace: 'acme team',
-        namespace: 'acme-labs',
-        listingSlug: 'catalog-search',
-        toolName: 'search_products',
-      }),
-    }));
-
-    expect(screen.getByText('Search term')).toBeInTheDocument();
-    expect(screen.getByText(/"required"/)).toBeInTheDocument();
+    mocks.marketInstall.mockResolvedValue({ deployment: { id: 'foreign', workspaceId: 'another-workspace' } });
+    await expect(MarketItemToolPage({
+      params: Promise.resolve({ workspace: 'acme team', namespace: 'acme-labs', listingSlug: 'catalog-search', toolName: 'search_products' }),
+    })).rejects.toThrow('NEXT_NOT_FOUND');
+    expect(mocks.redirect).not.toHaveBeenCalled();
   });
 });

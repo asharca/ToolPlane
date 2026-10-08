@@ -92,6 +92,22 @@ The CC compatibility gateway is not a promise to implement every Anthropic API. 
 
 [`native-runtime-session.mjs`](../scripts/native-runtime-session.mjs) uses Pi's `SessionManager` for the first history import. The CLI owns subsequent JSONL session writes; the complete platform history is not imported again after native compaction. `--offline` / `PI_OFFLINE` does not make the integration air-gapped: initial package installation and model/MCP proxy requests still require reachable network paths.
 
+### Independent Pi SDK host
+
+`pi-sdk` uses the official 0.87.1 AgentSession runtime through
+[`pi-sdk-session.mjs`](../scripts/pi-sdk-session.mjs), not the existing Pi Harness
+or legacy CLI protocol. Reviewed package snapshots include dependencies; startup
+does not install marketplace packages. Full byte/link verification precedes execution
+and reload; tampering returns `PI_PACKAGE_CHECKSUM_MISMATCH` without running the turn.
+
+SDK JSONL sessions are independent of Harness checkpoints. The private state file
+tracks the actual session selected by new/fork/switch operations. A lost persisted
+file, or a lost host before its first session file exists, returns
+`PI_SDK_SESSION_MISSING`; changing the package set requires a new session. Commands
+retain upstream case and collision suffixes. Terminal UI is not rendered in Web UI.
+Extensions can directly use Node, files and networking inside the Agent sandbox;
+tool approval is not arbitrary-code isolation.
+
 ## 6. Claude Code: stream-json, Skill plugin, and resume
 
 `runClaudeCode()` uses `buildClaudeRuntimeArgs()` for flags including `--bare --print --verbose --output-format stream-json`. Persistent sessions also use `--input-format stream-json`; non-session execution uses `--no-session-persistence`. The system prompt is supplied with `--append-system-prompt`, and selected Skills with an explicit `--plugin-dir`.

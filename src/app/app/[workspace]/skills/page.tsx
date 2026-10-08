@@ -8,7 +8,6 @@ import { getCurrentUser } from '@/lib/auth/current-user';
 import { getSkillImportSettings } from '@/lib/admin/settings';
 import { getWorkspaceForUser, getInstalledSkills } from '@/lib/workspace/queries';
 import { skillLabel } from '@/lib/workspace/skill-label';
-import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { AddSkillDialog } from '@/components/dashboard/AddSkillDialog';
 import { DashboardEmptyState, DashboardPage, DashboardToolbar } from '@/components/dashboard/DashboardUI';
 import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
@@ -24,9 +23,6 @@ function fmt(d: Date, timeZone: string, locale: string) {
   }, locale);
 }
 
-function fileCount(files: unknown): number {
-  return Array.isArray(files) ? files.length : 0;
-}
 
 export default async function SkillsPage({
   params,
@@ -56,15 +52,9 @@ export default async function SkillsPage({
       .filter(Boolean),
   );
   const importedSkills = skills.filter((skill) => importedIds.has(skill.id));
-  const steps = [
-    { n: '01', title: t('createOrImport'), body: t('createOrImportDescription') },
-    { n: '02', title: t('refineInPlace'), body: t('refineInPlaceDescription') },
-    { n: '03', title: t('syncEverywhere'), body: t('syncEverywhereDescription') },
-  ];
 
   return (
     <>
-      <DashboardHeader title={t('skills')} />
       <DashboardPage>
         <DashboardToolbar
           actions={
@@ -81,9 +71,8 @@ export default async function SkillsPage({
             </>
           }
         >
-          <p className="text-sm text-foreground dark:text-foreground">
-            {t('instructionsAndAssetsYourAgentLoadsOnDemandAuthorOrSyncFromGithub')}
-          </p>
+          <h1 className="text-xl font-semibold">{t('skills')}</h1>
+          <p className="text-sm text-muted-foreground">{t('installedCount', { count: skills.length })}</p>
         </DashboardToolbar>
 
         {importedSkills.length > 0 ? (
@@ -94,28 +83,22 @@ export default async function SkillsPage({
                   <CheckCircle2 className="size-4" />
                   {t('importedSkills', { count: importedSkills.length })}
                 </div>
-                <p className="mt-1 text-sm text-(--color-success) dark:text-(--color-success)">
-                  {t('importedSkillsDescription')}
-                </p>
               </div>
               <Link href={`/app/${slug}/skills`} className="text-xs font-medium text-(--color-success) underline-offset-4 hover:underline dark:text-(--color-success)">
                 {t('clear')}
               </Link>
             </div>
-            <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
               {importedSkills.map((skill) => {
                 const label = skillLabel(skill);
                 return (
                   <Link
                     key={skill.id}
                     href={`/app/${slug}/skills/${skill.id}`}
-                    className="min-w-0 rounded-md border border-border bg-card px-3 py-2 text-sm transition-colors hover:bg-muted"
+                    className="min-w-0 text-sm underline-offset-4 hover:underline"
                   >
                     <span className="block truncate font-medium text-foreground">
                       {label.name}
-                    </span>
-                    <span className="mt-0.5 block truncate text-xs text-muted-foreground">
-                      {skill.sourceRef || label.slug} · {fileCount(skill.files)} {t('bundledFiles')}
                     </span>
                   </Link>
                 );
@@ -125,34 +108,7 @@ export default async function SkillsPage({
         ) : null}
 
         {skills.length === 0 ? (
-          <DashboardEmptyState
-            title={t('createRefineSync')}
-            description={t('skillsAddFocusedCapabilitiesToYourAgent')}
-            actions={
-              <>
-                <AddSkillDialog slug={slug} maxSkillImportSkills={skillImportSettings.maxSkills} />
-                <ButtonLink href={`/app/${slug}/market/skills`} variant="secondary" size="md">
-                  {t('browseSkillMarket')}
-                </ButtonLink>
-              </>
-            }
-          >
-            <div className="mt-6 grid gap-6 sm:grid-cols-3">
-              {steps.map((step) => (
-                <div key={step.n}>
-                  <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                    {t('step')} {step.n}
-                  </p>
-                  <p className="mt-1.5 text-sm font-semibold text-foreground">
-                    {step.title}
-                  </p>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {step.body}
-                  </p>
-                </div>
-              ))}
-            </div>
-          </DashboardEmptyState>
+          <DashboardEmptyState description={t('emptyInstalledHint')} />
         ) : null}
 
         {skills.length > 0 ? (
@@ -161,6 +117,9 @@ export default async function SkillsPage({
             skills={skills.map((skill) => ({
               id: skill.id,
               name: skillLabel(skill).name,
+              slug: skillLabel(skill).slug,
+              description: skill.skill?.description ?? skill.description,
+              marketManaged: Boolean(skill.marketInstall || skill.toolkitLinks.length),
               iconUrl: skill.skill?.iconUrl ?? null,
               createdAt: fmt(skill.createdAt, timeZone, locale),
             }))}

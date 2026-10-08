@@ -2,10 +2,36 @@
 
 > **中文**：[OBSERVABILITY.zh-CN.md](./OBSERVABILITY.zh-CN.md)
 
-The administrator console at `/admin/logs` reads structured events, independently
-of workspace business records. Workspace observability remains restricted to the
-signed-in user's workspace. The deployment Logs tab can read sanitized MCP
-request/response details for that deployment; aggregate observability does not.
+The administrator console at `/admin/logs` reads structured events independently
+of workspace business records. Workspace observability is restricted to the
+signed-in user's workspace: retained deployment MCP request/response details
+remain visible where authorized; A2A bodies are administrator-only. Other Agent
+and non-deployment API payloads still require their existing explicit policy.
+
+## Health and error triage
+
+`/admin/logs` defaults to all event domains (including exports), with an A2A
+request view in addition to HTTP, execution, runtime and audit. The A2A view
+defaults to `a2a.request`; explicit event or task/context/root/parent filters
+include lifecycle and outbound rows. The collapsible health snapshot always
+uses the last 15 minutes across all workspaces, independent of list filters.
+Per-domain counts distinguish errors/timeouts (including error severity) from
+denials; nested spans are events, not unique requests. No data is shown as unknown,
+not healthy. “No errors observed” is not an availability guarantee or an active
+provider probe. Refresh reloads the snapshot; it is not a live subscription.
+
+MCP deployment anomalies reconcile persisted status with supervised processes:
+failed/error states and missing processes for active deployments need attention;
+intentionally stopped deployments do not. Writer failure/drop counters cover only
+the current worker since startup. This database-backed screen is not an external
+uptime monitor and cannot diagnose a completely unavailable application/database.
+
+Select a domain card, use the failure/timeout/denial shortcuts, then open an error
+group or event for diagnostic details and its trace. Error groups start expanded
+and show the latest occurrence. Health links pin the event window; the global
+health snapshot remains independent. Existing redaction, admin authorization,
+detail access audits and retention controls are unchanged.
+
 
 ## Storage
 
@@ -61,7 +87,25 @@ a database administrator.
 
 Defaults are 30 days for events, 7 days for details and 180 days for audit.
 Sanitized, bounded payloads for non-Agent MCP deployment requests are retained as
-details so workspace members can inspect them from the deployment Logs tab.
+details for the deployment MCP call logs tab and workspace request overview. The transport
+records the actual JSON-RPC request and upstream response envelopes, including
+upstream errors; a transport failure without a response does not invent one.
+Gateway rows reuse their matching workspace-scoped transport details without
+duplicating the call. Overview counts and pagination remain gateway-only;
+standalone discovery calls remain visible in deployment logs.
+
+Workspace-visible details must carry the permission marker set during safe MCP
+capture. Older unmarked details remain metadata-only for workspace readers because
+their original capture policy cannot be established; administrator diagnostic
+access is unchanged. Expired or unavailable bodies have no copy action.
+Authorized A2A protocol, communication-tool and native user-entry boundaries retain
+sanitized request/response details by default, without enabling diagnostic capture.
+New A2A and deployment MCP payloads expire within `min(detailDays, eventDays, 1)`
+days. A2A bodies are administrator-only; workspace members can inspect metadata.
+Denied or unauthenticated requests never collect bodies. Existing details are not
+extended or backfilled. Empty responses and responses not received are distinct.
+
+
 Administrators can enable a 15-minute diagnostic capture for an existing
 workspace, deployment or agent. Capture start, stop and retention changes are
 audited. Public Agent API payloads remain suppressed even when capture is on.
@@ -83,7 +127,10 @@ audit records, with no payload; the response declares `x-export-limit: 1000`.
 ## Admin Workflows
 
 - `/admin` prioritizes pending reviews, abnormal effective deployment states and
-  recent failures. Request metrics explicitly count MCP `gateway.request` events.
+  recent failures. MCP requests count only `gateway.request`; A2A inbound requests
+  count only `a2a.request` with `direction=inbound`. The request panel and recent
+  request list do not include nested HTTP, task lifecycle events or outbound polls.
+  No requests means unknown request latency, not a healthy service.
 - `/admin/reviews` merges market and agent releases into a 25-row queue, oldest
   pending first. Filters include resource type, review status and publisher/name.
   `/admin/market` remains catalog maintenance. Review details show immutable
@@ -91,6 +138,17 @@ audit records, with no payload; the response declares `x-export-limit: 1000`.
 - User and workspace details link to scoped events and audits. `actorId` means
   the operator; `targetType` and `targetId` filter the affected audit resource.
   Detail return links preserve list filters and accept only local admin URLs.
+- A2A events correlate by a server-generated request/trace ID for synchronous
+  calls and local task/root-task IDs across poll, restart and worker execution.
+  Task duration measures time from admission to the last committed status, not
+  HTTP latency. The detail page shows actual request/response and RPC errors,
+  a matching HTTP entry when present, and audited administrator-only bodies.
+  Expired, uncollected, and workspace-restricted details cannot be copied.
+- Workspace `/app/[workspace]/observability?tab=a2a` filters A2A request or
+  task-chain metadata within the authorized workspace. Task associations never
+  expand that scope; members cannot obtain A2A bodies through lists, details,
+  traces or exports. An administrator who also belongs to the workspace can
+  follow the explicit link to the audited administrator detail page.
 - Settings show the latest retained successful audit record and warn before
   leaving unsaved edits. No audit history means no recorded modifier, not
   necessarily that the setting has never changed. Failed saves preserve inputs;
@@ -122,10 +180,10 @@ pnpm lint
 
 ## Explicit Payload Policy
 
-Events declare `metadata-only` (default), `diagnostic`, `agent-content`, or `forbidden`. A diagnostic capture does not automatically enable Agent content. An administrator must explicitly select `includeAgentContent` for the named resource, with the existing time limit and access audit. Agent-content details retain for at most 24 hours (or less if configured); exports remain metadata-only.
+Events declare `metadata-only` (default), `diagnostic`, `agent-content`, `request-response`, or `forbidden`. Only explicit authorized request boundaries use `request-response`; the 15-minute capture controls additional internal diagnostics, not default A2A bodies. A diagnostic capture does not automatically enable Agent content. An administrator must explicitly select `includeAgentContent` for the named resource, with the existing time limit and access audit. Agent-content details retain for at most 24 hours (or less if configured); exports remain metadata-only.
 
 A lazy detail reader runs only after policy and capture checks. Response readers stop at 32 KiB or 200 ms and do not capture SSE. Sensitive Agent events keep only their generic event name/error category in metadata, omit arbitrary attributes and error text from stderr, and do not copy payloads merely to determine success. Parent `suppressPayload` is monotonic: children cannot turn it off. `forbidden` and public Endpoint suppression override every capture.
 
-Non-Agent `gateway.request` and `mcp.rpc` events scoped to both a workspace and deployment retain their sanitized payload by default for the deployment Logs tab. Agent contexts and public endpoints are excluded from this default.
+Non-Agent `gateway.request` and `mcp.rpc` events scoped to both a workspace and deployment retain their sanitized payload by default for deployment MCP call logs and workspace request logs. Agent contexts and public endpoints are excluded from this default.
 
 Content redaction does not anonymize arbitrary business text. Opt-in captures still require restricted administrator access and minimal retention.

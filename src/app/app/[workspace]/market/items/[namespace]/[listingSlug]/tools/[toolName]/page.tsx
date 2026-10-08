@@ -8,9 +8,7 @@ import { getCurrentUser } from '@/lib/auth/current-user';
 import { db } from '@/lib/db';
 import { getMarketListing } from '@/lib/market/listings';
 import { parseMcpMarketManifest } from '@/lib/market/resources';
-import { effectiveStatus } from '@/lib/process/supervisor';
 import { hasVerifiedMcpToolCatalog, readMcpToolCatalog } from '@/lib/process/mcp-tool-catalog';
-import { readMcpInspectorConnection } from '@/lib/workspace/inspector-connection';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
 import { DashboardPage } from '@/components/dashboard/DashboardUI';
 import { McpToolCatalog } from '@/components/dashboard/McpToolCatalog';
@@ -45,35 +43,28 @@ export default async function MarketItemToolPage({
     listing.latestRelease.checksum,
   ).mcp;
   const connector = manifest.recipe.source === 'remote';
-  let tools;
-  if (connector) {
-    const install = await db.marketInstall.findUnique({
-      where: {
-        targetWorkspaceId_listingId: {
-          targetWorkspaceId: workspace.id,
-          listingId: listing.id,
-        },
+  const install = await db.marketInstall.findUnique({
+    where: {
+      targetWorkspaceId_listingId: {
+        targetWorkspaceId: workspace.id,
+        listingId: listing.id,
       },
-      select: { deployment: { select: { workspaceId: true, installCfg: true } } },
-    });
-    const deployment = install?.deployment?.workspaceId === workspace.id ? install.deployment : null;
-    const connection = readMcpInspectorConnection(deployment?.installCfg);
-    const sandbox = connection ? await db.sandbox.findFirst({
-      where: { id: connection.sandboxId, workspaceId: workspace.id },
-      select: { deployment: { select: { id: true, status: true } } },
-    }) : null;
-    if (!sandbox || effectiveStatus(sandbox.deployment.id, sandbox.deployment.status) !== 'running') notFound();
-    tools = readMcpToolCatalog(deployment?.installCfg);
-  } else {
-    const server = (await db.marketListing.findUnique({
+    },
+    select: { deployment: { select: { id: true, workspaceId: true } } },
+  });
+  const deployment = install?.deployment?.workspaceId === workspace.id ? install.deployment : null;
+  if (deployment) {
+    redirect(`/app/${encodeURIComponent(workspaceSlug)}/mcp/${encodeURIComponent(deployment.id)}/tools/${encodeURIComponent(toolName)}`);
+  }
+  if (connector) notFound();
+  const server = (await db.marketListing.findUnique({
       where: { id: listing.id },
       select: {
         sourceServer: { select: { installCfg: true, verifiedAt: true, verifiedTools: true } },
       },
     }))?.sourceServer;
-    if (!server || !hasVerifiedMcpToolCatalog(server)) notFound();
-    tools = readMcpToolCatalog(server.installCfg);
-  }
+  if (!server || !hasVerifiedMcpToolCatalog(server)) notFound();
+  const tools = readMcpToolCatalog(server.installCfg);
   const tool = tools.find((candidate) => candidate.name === toolName);
   if (!tool) notFound();
 

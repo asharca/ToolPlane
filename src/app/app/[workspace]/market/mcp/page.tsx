@@ -70,9 +70,9 @@ function McpIcon({
 }) {
   return iconUrl ? (
     // eslint-disable-next-line @next/next/no-img-element
-    <img src={iconUrl} alt="" width={40} height={40} className="size-10 shrink-0 rounded-lg object-cover" />
+    <img src={iconUrl} alt="" width={32} height={32} className="size-8 shrink-0 rounded-lg object-cover" />
   ) : (
-    <span aria-hidden="true" className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted text-sm font-semibold text-muted-foreground">
+    <span aria-hidden="true" className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-sm font-semibold text-muted-foreground">
       {Array.from(name.trim())[0]?.toUpperCase() ?? 'M'}
     </span>
   );
@@ -95,7 +95,7 @@ function McpMarketplaceAction({
     return (
       <ButtonLink
         href={`/app/${encodeURIComponent(workspace)}/mcp/${encodeURIComponent(deploymentId)}`}
-        variant="primary" size="sm" className="w-full min-w-0"
+        variant="primary" size="sm" className="min-w-0"
       >
         <CheckCircle2 className="size-3.5" />
         {t('manageDeployment')}
@@ -104,7 +104,7 @@ function McpMarketplaceAction({
   }
 
   return (
-    <form action={server.marketListing ? installMarketResourceAction : deployServerAction} className="w-full min-w-0">
+    <form action={server.marketListing ? installMarketResourceAction : deployServerAction} className="min-w-0">
       <input type="hidden" name="workspace" value={workspace} />
       {server.marketListing ? (
         <input type="hidden" name="releaseId" value={server.marketListing.releaseId} />
@@ -114,7 +114,7 @@ function McpMarketplaceAction({
       <SubmitButton
         flash={false}
         pendingLabel={t(server.mcpKind === 'connector' ? 'connecting' : 'adding')}
-        variant="primary" size="sm" className="w-full min-w-0"
+        variant="primary" size="sm" className="min-w-0"
       >
         <ArrowRight className="size-3.5" />
         {t(server.mcpKind === 'connector' ? 'connectToWorkspace' : 'addToWorkspace')}
@@ -141,8 +141,8 @@ function McpMarketCard({
     : `/app/${encodeURIComponent(workspace)}/market/mcp/${encodeURIComponent(server.slug)}`;
 
   return (
-    <article className="rounded-3xl border border-border bg-card flex min-w-0 flex-col p-4">
-      <div className="flex min-w-0 items-start gap-3">
+    <article className="flex min-w-0 flex-col gap-3 rounded-xl border border-border bg-card p-3 sm:flex-row sm:items-center">
+      <div className="flex min-w-0 flex-1 items-start gap-3">
         <McpIcon iconUrl={server.iconUrl} name={server.name} />
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-1.5">
@@ -160,28 +160,25 @@ function McpMarketCard({
             ) : null}
           </div>
           <p className="mt-0.5 truncate text-xs text-muted-foreground">{server.author ?? t('unknownPublisher')}</p>
-        </div>
-      </div>
 
-      <p className="mt-3 line-clamp-2 min-h-10 text-sm leading-5 text-muted-foreground">
+      <p className="mt-1 line-clamp-2 text-sm leading-5 text-muted-foreground">
         {server.description ?? t('noDescription')}
       </p>
 
       {server.categories.length > 0 ? (
-        <div className="mt-3 flex flex-wrap gap-1.5">
+        <div className="mt-1 flex flex-wrap gap-1.5 text-xs text-muted-foreground">
           {server.categories.slice(0, 3).map((category) => (
-            <ButtonLink
+            <Link
               key={category.slug}
               href={marketHref(workspace, { category: category.slug, type: server.mcpKind })}
-              variant="ghost" size="sm"
             >
               {category.name}
-            </ButtonLink>
+            </Link>
           ))}
         </div>
       ) : null}
 
-      <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+      <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
         <span className="inline-flex items-center gap-1">
           <ShieldCheck className="size-3.5" aria-hidden="true" />
           {t('verifiedRecipe')}
@@ -197,8 +194,10 @@ function McpMarketCard({
           </span>
         ) : null}
       </div>
+        </div>
+      </div>
 
-      <div className={`mt-4 grid gap-2 border-t border-border pt-4 ${server.mcpKind === 'connector' ? 'grid-cols-2' : ''}`}>
+      <div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
         <ButtonLink href={detailHref} variant="secondary" size="sm" className="min-w-0">
           {t('viewDetails')}
           <ChevronRight className="size-3.5" />
@@ -264,7 +263,6 @@ export default async function McpMarketPage({
   const remainingServers = all.filter((server) => !featuredIds.has(server.id));
   const featuredServers = remainingServers.length > 0 ? pageFeatured : [];
   const allServers = featuredServers.length > 0 ? remainingServers : all;
-  const deployedCatalogCount = deploymentByServerId.size;
   const lastPage = Math.max(1, Math.ceil(total / pageSize));
   if (category && !categories.some((item) => item.slug === category)) {
     redirect(marketHref(slug, { q, sort, type }));
@@ -273,12 +271,12 @@ export default async function McpMarketPage({
   const hasFilters = Boolean(q || category || sort !== 'popular');
 
   return (
-    <DashboardPage className="space-y-6">
-      <div className="space-y-2">
-        <h2 className="text-2xl font-semibold text-foreground">{t('mcpTitle')}</h2>
-        <p className="max-w-3xl text-sm leading-6 text-muted-foreground">
-          {t(type === 'connector' ? 'mcpConnectorsDescription' : 'mcpServersDescription')}
-        </p>
+    <DashboardPage className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 className="text-xl font-semibold text-foreground">{t('mcpTitle')}</h2>
+        <ButtonLink href={`/app/${encodeURIComponent(slug)}/mcp`} variant="secondary" size="sm">
+          {t('manageInstalled')}
+        </ButtonLink>
       </div>
 
       <nav aria-label={t('mcpTypeNavigation')} className="flex flex-wrap gap-2">
@@ -289,12 +287,10 @@ export default async function McpMarketPage({
         ))}
       </nav>
 
-      <form className="flex w-full flex-col gap-2 sm:flex-row">
+      <form className="flex w-full flex-wrap items-end gap-2">
         <input type="hidden" name="category" value={category} />
         {type === 'connector' ? <input type="hidden" name="type" value="connector" /> : null}
-        <div className="relative min-w-0 flex-1">
-          
-          
+        <div className="relative min-w-48 flex-1">
           <Input label={t('searchMcp')} leftIcon={<Search />} name="q" defaultValue={q} placeholder={t('searchMcp')} className="w-full" />
         </div>
         <FormSelect name="sort" defaultValue={sort} label={t('sortResources')} options={[{ value: "popular", label: t('sortPopular') }, { value: "newest", label: t('sortNewest') }, { value: "name", label: t('sortName') }]} className="sm:w-40" />
@@ -323,19 +319,12 @@ export default async function McpMarketPage({
               {hasFilters ? (
                 <ButtonLink href={marketHref(slug, { type })} variant="ghost" size="sm">{t('clearFilters')}</ButtonLink>
               ) : null}
-              {deployedCatalogCount > 0 ? (
-                <ButtonLink href={`/app/${encodeURIComponent(slug)}/mcp`} variant="ghost" size="sm">
-                  <CheckCircle2 className="size-4 text-(--color-success) dark:text-(--color-success)" aria-hidden="true" />
-                  {t('workspaceDeploymentSummary', { count: deployedCatalogCount })}
-                  <ChevronRight className="size-3.5" aria-hidden="true" />
-                </ButtonLink>
-              ) : null}
             </div>
           </div>
 
           {featuredServers.length > 0 ? (
             <DashboardSection title={t('featuredMcp')}>
-              <div className="grid gap-3 md:grid-cols-2">
+              <div className="grid gap-2">
                 {featuredServers.map((server) => (
                   <McpMarketCard
                     key={server.id}
@@ -357,12 +346,12 @@ export default async function McpMarketPage({
             {allServers.length === 0 ? (
               <DashboardEmptyState
                 title={t('noMcpTitle')}
-                description={q ? t('noSearchResults', { query: q }) : t('noMcpDescription')}
+                description={hasFilters ? (q ? t('noSearchResults', { query: q }) : t('noMcpMatchFilters')) : t('noMcpDescription')}
                 actions={hasFilters ? <ButtonLink href={marketHref(slug, { type })} variant="secondary" size="md">{t('clearFilters')}</ButtonLink> : undefined}
               />
             ) : (
               <>
-                <div className="grid gap-3 md:grid-cols-2">
+                <div className="grid gap-2">
                   {allServers.map((server) => (
                     <McpMarketCard
                       key={server.id}

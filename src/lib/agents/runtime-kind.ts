@@ -1,9 +1,9 @@
-export const AGENT_RUNTIME_KINDS = ['pi', 'claude-code', 'dsh', 'hermes', 'hermes-rpc'] as const;
+export const AGENT_RUNTIME_KINDS = ['pi', 'pi-sdk', 'claude-code', 'dsh', 'hermes', 'hermes-rpc'] as const;
 
 export type AgentRuntimeKind = (typeof AGENT_RUNTIME_KINDS)[number];
 export type ImplementedAgentRuntimeKind = AgentRuntimeKind;
 export type SandboxHarnessRuntimeKind = Extract<AgentRuntimeKind, 'claude-code' | 'dsh'>;
-export type DedicatedSandboxRuntimeKind = Extract<AgentRuntimeKind, 'pi' | 'claude-code' | 'dsh' | 'hermes-rpc'>;
+export type DedicatedSandboxRuntimeKind = Extract<AgentRuntimeKind, 'pi' | 'pi-sdk' | 'claude-code' | 'dsh' | 'hermes-rpc'>;
 export type WorkRuntimeKind = DedicatedSandboxRuntimeKind | 'hermes';
 
 // Explicit public capability inventory. Entry-point subsets are intentional:
@@ -15,6 +15,7 @@ export const AGENT_RUNTIME_CAPABILITIES = {
   dsh: { sandbox: true, providerBinding: 'single', attachments: false, terminal: true, publicEndpoint: false },
   hermes: { sandbox: true, providerBinding: 'multiple', attachments: true, terminal: true, publicEndpoint: true },
   'hermes-rpc': { sandbox: true, providerBinding: 'single', attachments: false, terminal: true, publicEndpoint: false },
+  'pi-sdk': { sandbox: true, providerBinding: 'single', attachments: false, terminal: true, publicEndpoint: false },
 } as const satisfies Record<AgentRuntimeKind, {
   sandbox: boolean; providerBinding: 'single' | 'multiple'; attachments: boolean; terminal: boolean; publicEndpoint: boolean;
 }>;
@@ -35,6 +36,11 @@ export type AgentRuntimeBuiltinToolGroup = {
 
 const AGENT_RUNTIME_BUILTIN_TOOL_GROUPS: Record<AgentRuntimeKind, readonly AgentRuntimeBuiltinToolGroup[]> = {
   pi: [
+    { category: 'file', tools: ['read', 'edit', 'write'] },
+    { category: 'search', tools: ['grep', 'find', 'ls'] },
+    { category: 'shell', tools: ['bash'] },
+  ],
+  'pi-sdk': [
     { category: 'file', tools: ['read', 'edit', 'write'] },
     { category: 'search', tools: ['grep', 'find', 'ls'] },
     { category: 'shell', tools: ['bash'] },
@@ -131,6 +137,7 @@ export function agentRuntimeDisplayName(value: string): string {
   if (value === 'hermes') return 'Hermes';
   if (value === 'hermes-rpc') return 'Hermes RPC';
   if (value === 'pi') return 'Pi';
+  if (value === 'pi-sdk') return 'Pi SDK';
   return value;
 }
 

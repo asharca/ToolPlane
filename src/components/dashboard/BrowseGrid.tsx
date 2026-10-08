@@ -55,7 +55,7 @@ export async function BrowseGrid({
     getTranslations('console.market'),
   ]);
   return (
-    <div className="grid gap-3 md:grid-cols-2">
+    <div className="grid gap-2">
       {items.map((it) => {
         const detailHref = it.marketListing
           ? `/app/${encodeURIComponent(slug)}/market/items/${encodeURIComponent(it.marketListing.namespace)}/${encodeURIComponent(it.marketListing.slug)}`
@@ -63,22 +63,22 @@ export async function BrowseGrid({
         return (
         <article
           key={it.id}
-          className="rounded-xl border border-border bg-card flex min-w-0 flex-col p-4"
+          className="flex min-w-0 flex-col gap-3 rounded-xl border border-border bg-card p-3 sm:flex-row sm:items-center"
         >
-          <div className="flex min-w-0 items-start gap-3">
+          <div className="flex min-w-0 flex-1 items-start gap-3">
             {it.iconUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
                 src={it.iconUrl}
                 alt=""
-                width={40}
-                height={40}
-                className="size-10 shrink-0 rounded-lg object-cover"
+                width={32}
+                height={32}
+                className="size-8 shrink-0 rounded-lg object-cover"
               />
             ) : (
               <span
                 aria-hidden="true"
-                className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted text-sm font-semibold text-muted-foreground"
+                className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-sm font-semibold text-muted-foreground"
               >
                 {Array.from(it.name.trim())[0]?.toUpperCase() ?? 'S'}
               </span>
@@ -95,15 +95,13 @@ export async function BrowseGrid({
                   {it.author ?? market('unknownPublisher')}
                 </p>
               ) : null}
-            </div>
-          </div>
 
-          <p className="mt-3 line-clamp-2 min-h-10 flex-1 text-sm leading-5 text-muted-foreground">
+          <p className="mt-1 line-clamp-2 text-sm leading-5 text-muted-foreground">
             {it.description ?? market('noDescription')}
           </p>
 
           {it.githubSource || it.curated || it.categories?.length ? (
-            <div className="mt-3 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
+            <div className="mt-1 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
               <span className="rounded bg-muted px-2 py-1">
                 {it.githubSource ? market('github') : it.curated ? market('curated') : market('catalog')}
               </span>
@@ -118,8 +116,10 @@ export async function BrowseGrid({
               ))}
             </div>
           ) : null}
+            </div>
+          </div>
 
-          <div className="mt-4 grid grid-cols-2 gap-2 border-t border-border pt-4">
+          <div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
             <ButtonLink href={detailHref} variant="secondary" size="sm" className="min-w-0">
               {market('viewDetails')}
               <ChevronRight className="size-3.5" aria-hidden="true" />

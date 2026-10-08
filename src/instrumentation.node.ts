@@ -1,6 +1,7 @@
 import { startRuntimeOwner } from '@/lib/runtime/owner';
 import { runtimeCanOperate } from '@/lib/runtime/ownership-state';
 import { systemLog } from '@/lib/observability/system';
+import { maintainPiPackageSources } from '@/lib/market/pi-package-catalog';
 // Next.js startup hook. Runs once when the Node server boots to recover MCP
 // processes, channel runners, and sandbox data operations interrupted by a restart.
 export async function registerNode() {
@@ -18,11 +19,12 @@ async function registerNodeOwned() {
     __agentApiIdleMaintenanceTimer?: ReturnType<typeof setInterval>;
     __attachmentMaintenanceTimer?: ReturnType<typeof setInterval>;
     __logMaintenanceTimer?: ReturnType<typeof setInterval>;
+    __piPackageSourceMaintenanceTimer?: NodeJS.Timeout;
   };
   if (g.__mcpReconciled) return;
   g.__mcpReconciled = true;
   g.__toolplaneStopTimers = () => {
-    for (const timer of [g.__attachmentMaintenanceTimer, g.__logMaintenanceTimer, g.__agentApiMaintenanceTimer, g.__agentApiIdleMaintenanceTimer]) {
+    for (const timer of [g.__attachmentMaintenanceTimer, g.__logMaintenanceTimer, g.__agentApiMaintenanceTimer, g.__agentApiIdleMaintenanceTimer, g.__piPackageSourceMaintenanceTimer]) {
       if (timer) clearInterval(timer);
     }
   };
@@ -37,6 +39,18 @@ async function registerNodeOwned() {
     };
     g.__logMaintenanceTimer = setInterval(() => { void maintain(); }, 5 * 60_000);
     g.__logMaintenanceTimer.unref?.();
+  }
+  if (!g.__piPackageSourceMaintenanceTimer) {
+    let running = false;
+    const maintain = async () => {
+      if (running || !runtimeCanOperate()) return;
+      running = true;
+      try { await maintainPiPackageSources(); }
+      catch { systemLog('error', 'Pi package metadata maintenance failed'); }
+      finally { running = false; }
+    };
+    g.__piPackageSourceMaintenanceTimer = setInterval(() => { void maintain(); }, 5 * 60_000);
+    g.__piPackageSourceMaintenanceTimer.unref?.();
   }
   if (!g.__attachmentMaintenanceTimer) {
     let running = false;

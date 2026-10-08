@@ -5,7 +5,8 @@ import { Type } from '@earendil-works/pi-ai';
 import { AGENT_MAX_DEPTH, resolveMaxSteps } from './constants';
 import { agentTool, type AgentToolSet } from './agent-tool';
 import { runNativeAgent } from './native';
-import { resolveAgentTools, type LoadedAgentTools, type SkillForPrompt, type SubAgentRef } from './resolve';
+import { resolveAgentTools, resolveAgentPiPackages } from './resolve';
+import type { LoadedAgentPiPackages, LoadedAgentTools, SkillForPrompt, SubAgentRef } from './resolve';
 import { assembleSystemPrompt } from './system-prompt';
 import type { ProviderConfig } from './model';
 import { buildToolSet } from './tools';
@@ -19,6 +20,7 @@ import {
 } from './hermes/runtime';
 import { implementedAgentRuntimeKind, isDedicatedSandboxRuntimeKind } from './runtime-kind';
 import { runDedicatedSandboxTurn } from './sandbox-turn';
+import type { RunDedicatedSandboxTurnInput } from './sandbox-turn';
 
 export type AgentRunContext = {
   workspaceId: string;
@@ -35,6 +37,7 @@ export type RunAgent = LoadedAgentTools & {
   name: string;
   runtimeKind: string;
   disabledBuiltinTools?: string[];
+  piPackages?: LoadedAgentPiPackages['piPackages'];
   systemPrompt: string | null;
   model: string | null;
   maxSteps: number;
@@ -55,7 +58,7 @@ export type RunDeps = {
     tools: AgentToolSet;
     maxSteps: number;
   }) => Promise<string>;
-  runSandboxModel?: (args: Parameters<typeof runDedicatedSandboxTurn>[0]) => Promise<string>;
+  runSandboxModel?: (args: RunDedicatedSandboxTurnInput) => Promise<string>;
 };
 
 const defaultDeps: RunDeps = {
@@ -178,6 +181,7 @@ export async function runAgentTurn(
         systemPrompt: agent.systemPrompt,
         messages: [{ role: 'user', parts: [{ type: 'text', text: prompt }] }],
         skills: resolved.skills,
+        piPackages: resolveAgentPiPackages({ ...agent, workspaceId: ctx.workspaceId }),
         deploymentIds: resolved.deploymentIds,
       });
     } catch (error) {

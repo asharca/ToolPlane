@@ -46,7 +46,8 @@ vi.mock('@/lib/agents/mutations', () => ({
     runtimeSessionKey: 'agent:agent-1:console:conversation-1',
   })),
 }));
-vi.mock('@/lib/agents/resolve', () => ({
+vi.mock('@/lib/agents/resolve', async (importOriginal) => ({
+  ...await importOriginal<object>(),
   resolveAgentTools: mocks.resolveAgentTools,
 }));
 vi.mock('@/lib/agents/run', () => ({ buildAgentToolSet: vi.fn() }));

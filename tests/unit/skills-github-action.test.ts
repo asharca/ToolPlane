@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('next/cache', () => ({ revalidatePath: mocks.revalidatePath }));
 vi.mock('next/navigation', () => ({ redirect: mocks.redirect }));
+vi.mock('next-intl/server', () => ({ getTranslations: async () => (key: string) => key }));
 vi.mock('@/lib/auth/current-user', () => ({ getCurrentUser: mocks.getCurrentUser }));
 vi.mock('@/lib/workspace/queries', () => ({ getWorkspaceForUser: mocks.getWorkspaceForUser }));
 vi.mock('@/lib/admin/settings', () => ({ getSkillImportSettings: mocks.getSkillImportSettings }));
@@ -147,7 +148,7 @@ describe('importSkillFromGithubAction', () => {
       },
     ]);
 
-    await expect(uploadSkillFolderAction(uploadForm())).rejects.toThrow(
+    await expect(uploadSkillFolderAction({}, uploadForm())).rejects.toThrow(
       'REDIRECT:/app/acme/skills?imported=created-routeros-firewall',
     );
 

@@ -42,7 +42,7 @@ import { removeDeploymentConfigVolume } from '@/lib/process/deployment-config-vo
 import { runMcpDeploymentOperation } from '@/lib/workspace/mcp-operation';
 import { hasMcpToolCatalog, readMcpToolCatalog } from '@/lib/process/mcp-tool-catalog';
 import { mcpHeaderSecrets, redactMcpResult } from '@/lib/process/mcp-result-redaction';
-import { usesDefaultRemoteRuntime } from '@/lib/workspace/deployment-provenance';
+import { newRequestId, withLogContext } from '@/lib/observability/context';
 import { MAX_TOOLKIT_BATCH_ITEMS } from '@/lib/toolkits/limits';
 
 const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -529,7 +529,7 @@ export async function updateMcpToolExposureAction(
 
 export type McpConsoleToolResult = {
   result?: Record<string, unknown>;
-  error?: 'notAuthorized' | 'deploymentNotFound' | 'deploymentNotRunning' | 'sandboxRequired' | 'invalidToolCall' | 'toolCallFailed';
+  error?: 'notAuthorized' | 'deploymentNotFound' | 'deploymentNotRunning' | 'invalidToolCall' | 'toolDiscoveryFailed' | 'toolCallFailed';
 };
 
 export async function runMcpConsoleToolAction(input: {
@@ -549,7 +549,7 @@ export async function runMcpConsoleToolAction(input: {
   }
   let requestBody = '';
   try {
-    requestBody = JSON.stringify({ name: toolName, arguments: input.arguments });
+    requestBody = JSON.stringify({ method: 'tools/call', params: { name: toolName, arguments: input.arguments } });
   } catch {
     return { error: 'invalidToolCall' };
   }
@@ -559,44 +559,55 @@ export async function runMcpConsoleToolAction(input: {
   if (!ctx) return { error: 'notAuthorized' };
   const deployment = await deploymentInWorkspace(deploymentId, ctx.ws.id);
   if (!deployment) return { error: 'deploymentNotFound' };
-  if (deployment.source === 'remote' && !usesDefaultRemoteRuntime(deployment)) {
-    return { error: 'sandboxRequired' };
-  }
   const remoteSpec = deployment.source === 'remote' ? remoteMcpSpec(deployment) : null;
   if (deployment.source === 'remote' && !remoteSpec) return { error: 'toolCallFailed' };
   if (liveStatus(deployment.id) !== 'running') return { error: 'deploymentNotRunning' };
 
-  const availableTools = await listMcpTools(deployment.id);
-  if (!availableTools.some((tool) => tool.name === toolName)) {
-    return { error: 'invalidToolCall' };
-  }
-
-  const startedAt = Date.now();
-  let result: Record<string, unknown> | null = null;
-  try {
-    result = await mcpRpc(
-      deployment.id,
-      'tools/call',
-      { name: toolName, arguments: input.arguments },
-      remoteSpec ? remoteSpec.timeoutMs + 5_000 : 30_000,
-      { maxRequestBytes: 16_000, maxResponseBytes: 1_000_000 },
-    );
-  } catch {
-    result = null;
-  }
   const secretValues = remoteSpec ? mcpHeaderSecrets(remoteSpec.headers) : [];
-  const safeResult = result && (secretValues.length ? redactMcpResult(result, secretValues) : result);
-  await logRequest({
+  return withLogContext({
+    requestId: newRequestId(),
     workspaceId: ctx.ws.id,
     deploymentId: deployment.id,
-    method: 'POST',
-    path: `/mcp/${deployment.id}/rpc#tools/call:${toolName}`,
-    statusCode: safeResult ? 200 : 502,
-    durationMs: Date.now() - startedAt,
-    requestBody,
-    responseBody: JSON.stringify(safeResult ?? { error: 'unreachable' }).slice(0, 16_000),
+    actorId: ctx.user.id,
+    secrets: secretValues,
+  }, async (): Promise<McpConsoleToolResult> => {
+    let availableTools;
+    try {
+      availableTools = await listMcpTools(deployment.id);
+    } catch {
+      return { error: 'toolDiscoveryFailed' };
+    }
+    if (!availableTools.some((tool) => tool.name === toolName)) {
+      return { error: 'invalidToolCall' };
+    }
+
+    const startedAt = Date.now();
+    let result: Record<string, unknown> | null = null;
+    try {
+      result = await mcpRpc(
+        deployment.id,
+        'tools/call',
+        { name: toolName, arguments: input.arguments },
+        remoteSpec ? remoteSpec.timeoutMs + 5_000 : 30_000,
+        { maxRequestBytes: 16_000, maxResponseBytes: 1_000_000 },
+      );
+    } catch {
+      result = null;
+    }
+    const safeResult = result && (secretValues.length ? redactMcpResult(result, secretValues) : result);
+    const safeRequest = redactMcpResult(JSON.parse(requestBody), secretValues);
+    await logRequest({
+      workspaceId: ctx.ws.id,
+      deploymentId: deployment.id,
+      method: 'POST',
+      path: `/mcp/${deployment.id}/rpc#tools/call:${toolName}`,
+      statusCode: safeResult ? 200 : 502,
+      durationMs: Date.now() - startedAt,
+      requestBody: safeRequest ? JSON.stringify(safeRequest) : undefined,
+      responseBody: safeResult ? JSON.stringify(safeResult).slice(0, 16_000) : undefined,
+    });
+    return safeResult ? { result: safeResult } : { error: 'toolCallFailed' };
   });
-  return safeResult ? { result: safeResult } : { error: 'toolCallFailed' };
 }
 
 const MAX_DEPLOYMENT_NAME_LENGTH = 80;
@@ -1040,7 +1051,7 @@ export async function restartDeploymentAction(formData: FormData) {
   if (operation.value === 'setup_required') {
     return redirect(`/app/${slug}/mcp/${deploymentId}?tab=variables`);
   }
-  return redirect(`/app/${slug}/mcp/${deploymentId}?tab=logs#runtime-logs`);
+  return redirect(`/app/${slug}/mcp/${deploymentId}?tab=runtime#runtime-logs`);
 }
 
 // Rebuild = tear the process down and spawn it fresh, re-fetching the package /
@@ -1064,7 +1075,7 @@ export async function rebuildDeploymentAction(formData: FormData) {
   if (operation.value === 'setup_required') {
     return redirect(`/app/${slug}/mcp/${deploymentId}?tab=variables`);
   }
-  return redirect(`/app/${slug}/mcp/${deploymentId}?tab=logs#runtime-logs`);
+  return redirect(`/app/${slug}/mcp/${deploymentId}?tab=runtime#runtime-logs`);
 }
 
 export async function installSkillAction(formData: FormData) {

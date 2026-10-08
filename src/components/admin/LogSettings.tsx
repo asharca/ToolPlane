@@ -22,6 +22,7 @@ export function LogSettings({ settings }: { settings: SettingsValue }) {
       <ChevronDown className="ml-auto size-4 text-muted-foreground group-open:rotate-180" aria-hidden="true" />
     </summary>
     <fieldset disabled={pending} className="min-w-0 disabled:opacity-60">
+      <p className="pt-4 text-xs text-muted-foreground">{t('logsDefaultPayloadPolicy')}</p>
       <div className="grid gap-6 py-5 xl:grid-cols-2">
         <form action={action} className="min-w-0 space-y-4">
           <h3 className="text-sm font-medium">{t('logsRetention')}</h3>

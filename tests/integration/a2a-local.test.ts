@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { createHash, randomUUID } from 'node:crypto';
 import { beforeAll, beforeEach, afterAll, describe, expect, it, vi } from 'vitest';
-import { Message, SendMessageRequest, Task, TaskState } from '@a2a-js/sdk';
+import { AgentCard, Message, SendMessageRequest, Task, TaskState } from '@a2a-js/sdk';
 import { TaskNotFoundError } from '@a2a-js/sdk/errors';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
@@ -9,7 +9,8 @@ import { db } from '@/lib/db';
 import { checkNativeToolApproval, decideNativeToolApproval, listNativeToolApprovals, nativeApprovalHash } from '@/lib/a2a/tool-approvals';
 import { publishLocalArtifact } from '@/lib/a2a/local-artifacts';
 import { getConsoleTaskTree } from '@/lib/a2a/console-tasks';
-import { createLocalRootGrant, childGrant, assertLocalGrant, LOCAL_LIMITS, localOwnerKey } from '@/lib/a2a/local-policy';
+import { createLocalRootGrant, createLocalEntryGrant, childGrant, assertLocalGrant, LOCAL_LIMITS, localOwnerKey } from '@/lib/a2a/local-policy';
+import { createEntryPolicy } from '@/lib/a2a/entry-policy';
 import { type LocalA2AGrant } from '@/lib/a2a/principal';
 import { submitTask, claimTask, bindPiHarnessOperation, finishTask, getTask, getTaskRow, requestCancellation, eventsAfter } from '@/lib/a2a/store';
 import type { A2ATask } from '@prisma/client';
@@ -23,6 +24,7 @@ import { executeLocalMcpTool } from '@/lib/a2a/local-mcp-tools';
 import { withSandboxExecutionLease } from '@/lib/agents/sandbox-execution-gate';
 import { isAgentRuntimeGrantCurrent } from '@/lib/agents/runtime-grant';
 import { submitNativeEntry } from '@/lib/a2a/ingress';
+import { localAgentCard } from '@/lib/a2a/local-http';
 
 vi.mock('@/lib/db', async (original) => {
   if (process.env.TOOLPLANE_TEST_PGLITE !== '1') return original();
@@ -66,6 +68,7 @@ beforeAll(async () => {
   }
 });
 beforeEach(async () => {
+  await db.logEvent.deleteMany({ where: { workspaceId: ws } });
   await db.a2AContext.deleteMany({ where: { workspaceId: ws } });
   await db.agentSubAgent.deleteMany({ where: { parentId: { in: agents } } });
   await db.agentSubAgent.createMany({ data: [
@@ -81,12 +84,46 @@ beforeEach(async () => {
 });
 afterAll(async () => {
   stopA2AWorker();
-  if (ws) { await db.auditEvent.deleteMany({ where: { workspaceId: ws } }); await db.workspace.delete({ where: { id: ws } }); }
+  if (ws) { await db.logEvent.deleteMany({ where: { workspaceId: ws } }); await db.auditEvent.deleteMany({ where: { workspaceId: ws } }); await db.workspace.delete({ where: { id: ws } }); }
   await db.user.deleteMany({ where: { id: { in: [user, otherUser].filter(Boolean) } } });
   await db.$disconnect();
 });
 
 describe('local Agent authorization and legacy continuations', () => {
+  it('reflects persisted Agent descriptions and Agent-invocable Skills in the Card', async () => {
+    const previousOrigin = process.env.NEXT_PUBLIC_APP_URL;
+    const skillSlug = `a2a-card-${randomUUID()}`;
+    let skillId: string | undefined, installedSkillId: string | undefined;
+    process.env.NEXT_PUBLIC_APP_URL = 'https://toolplane.test';
+    try {
+      const skill = await db.skill.create({ data: { slug: skillSlug, name: 'Card review', description: 'Review code for security issues.' } });
+      skillId = skill.id;
+      const installedSkill = await db.installedSkill.create({ data: { workspaceId: ws, skillId: skill.id, agentInvocable: true } });
+      installedSkillId = installedSkill.id;
+      await db.agentSkill.create({ data: { agentId: agents[0], installedSkillId } });
+      await db.agent.update({ where: { id: agents[0] }, data: { systemPrompt: 'private-card-instructions' } });
+      const authority = await createLocalRootGrant(ws, agents[0], user);
+      await db.agent.update({ where: { id: agents[0] }, data: { description: '  Review code and identify security risks.  ' } });
+      const card = AgentCard.fromJSON(AgentCard.toJSON(await localAgentCard(authority)));
+      expect(card.description).toBe('Review code and identify security risks.');
+      expect(card.skills).toHaveLength(1);
+      expect(card.skills[0]).toMatchObject({ id: installedSkill.id, name: skill.name, description: skill.description, tags: [skill.slug] });
+      expect(card.version).toBe(authority.targetBinding);
+      expect(JSON.stringify(card)).not.toContain('private-card-instructions');
+      expect(JSON.stringify(card)).not.toContain('fixture-secret-never-serialized');
+      await assertLocalGrant(authority);
+      await expect(localAgentCard({ ...authority, workspaceId: randomUUID() })).rejects.toBeInstanceOf(TaskNotFoundError);
+      await db.agent.update({ where: { id: agents[0] }, data: { description: ' \t\n ' } });
+      expect((await localAgentCard(authority)).description.trim()).not.toBe('');
+      await assertLocalGrant(authority);
+    } finally {
+      if (installedSkillId) await db.installedSkill.delete({ where: { id: installedSkillId } });
+      if (skillId) await db.skill.delete({ where: { id: skillId } });
+      await db.agent.update({ where: { id: agents[0] }, data: { description: null } });
+      if (previousOrigin === undefined) delete process.env.NEXT_PUBLIC_APP_URL;
+      else process.env.NEXT_PUBLIC_APP_URL = previousOrigin;
+    }
+  });
   it('creates no public client, endpoint, AgentRun or private Conversation', async () => {
     const before = await db.agentRun.count(); const parent = await root(); await child(parent);
     expect(await db.agentApiClient.count({ where: { endpoint: { workspaceId: ws } } })).toBe(0);
@@ -214,9 +251,20 @@ describe('local Agent authorization and legacy continuations', () => {
     try {
       await client.connect(transport); const tools = await client.listTools(); expect(tools.tools).toHaveLength(9);
       expect(tools.tools.map((tool) => tool.name)).toEqual(expect.arrayContaining(['a2a_list_remote_agents', 'a2a_send_remote_message']));
-      const result = await client.callTool({ name: 'a2a_send_message', arguments: { agentId: agents[1], request: SendMessageRequest.toJSON(request()) } });
+      const args = { agentId: agents[1], request: SendMessageRequest.toJSON(request()) };
+      const result = await client.callTool({ name: 'a2a_send_message', arguments: args });
       expect(result.isError).toBe(false);
       expect(JSON.stringify(result)).toContain('TASK_STATE_SUBMITTED'); expect(JSON.stringify(result)).not.toContain('fixture-secret');
+      const event = await db.logEvent.findFirstOrThrow({ where: { workspaceId: ws, eventName: 'a2a.request', toolName: 'a2a_send_message' }, include: { detail: true } });
+      expect(event).toMatchObject({ actorId: user, agentId: agents[0], httpStatus: null, outcome: 'success',
+        attributes: { data: { a2a: { direction: 'internal', transport: 'mcp', taskId: parent.id, rootTaskId: parent.id } } } });
+      expect(event.detail?.data).toMatchObject({ workspaceMcpPayload: false, payload: { request: args, response: result, responseComplete: true } });
+      expect(JSON.stringify(event)).not.toContain(token);
+      const rejected = await client.callTool({ name: 'a2a_get_task', arguments: { taskId: randomUUID() } });
+      expect(rejected.isError).toBe(true);
+      const failure = await db.logEvent.findFirstOrThrow({ where: { workspaceId: ws, eventName: 'a2a.request', toolName: 'a2a_get_task' }, include: { detail: true } });
+      expect(failure).toMatchObject({ outcome: 'error', httpStatus: null, attributes: { data: { a2a: { taskId: parent.id } } } });
+      expect(failure.detail?.data).toMatchObject({ payload: { response: rejected } });
     } finally { await client.close(); }
   });
   it('blocks ordinary runtime tokens and cross-task MCP access', async () => {
@@ -417,6 +465,9 @@ describe('native task context persistence', () => {
 describe('native tool approval decisions', () => {
   const actor = () => ({ workspaceId: ws, actorId: user, agentId: agents[0], slug: 'local-test' });
   async function pending() {
+    const conversation = await db.conversation.create({ data: { agentId: agents[0], title: 'Interactive approval' } });
+    const entry = await createEntryPolicy(db, grant, { kind: 'chat', sourceId: conversation.id });
+    grant = await createLocalEntryGrant(db, ws, agents[0], user, entry);
     const row = await root();
     const token = { ...runtimeToken(row), a2aApprovalRequired: true as const };
     await checkNativeToolApproval(token, { action: 'ready' });
@@ -474,7 +525,7 @@ describe('native tool approval decisions', () => {
     await requestCancellation(grant, value.row.id);
     await expect(checkNativeToolApproval(value.token, value.input)).rejects.toThrow();
     const second = await pending();
-    await db.agent.update({ where: { id: agents[0] }, data: { a2aInternalEnabled: false } });
+    await db.agent.update({ where: { id: agents[0] }, data: { systemPrompt: 'Changed authority' } });
     await expect(checkNativeToolApproval(second.token, second.input)).rejects.toThrow();
   });
   it('supports parallel decisions without granting a sibling call or reopening the task', async () => {
@@ -493,6 +544,31 @@ describe('native tool approval decisions', () => {
     await finishTask(value.row.id, value.row.leaseToken!, TaskState.TASK_STATE_COMPLETED);
     expect((await getTask(grant, value.row.id)).status?.state).toBe(TaskState.TASK_STATE_FAILED);
     await expect(checkNativeToolApproval(value.token, value.input)).rejects.toThrow();
+  });
+  it('authorizes an inbound A2A root tool once without a human and completes with its result', async () => {
+    const row = await root();
+    const token = { ...runtimeToken(row), a2aApprovalRequired: true as const };
+    await checkNativeToolApproval(token, { action: 'ready' });
+    const input = { action: 'check' as const, callId: randomUUID(), toolName: 'search_12306_train_tickets', input: { date: '2026-09-29', origin: '贵阳', destination: '北京' } };
+    const results = await Promise.all([checkNativeToolApproval(token, input), checkNativeToolApproval(token, input)]);
+    expect(results.map((result) => result.status).sort()).toEqual(['allow', 'deny']);
+    expect(await db.a2AToolApproval.findUniqueOrThrow({ where: { id: results[0].approvalId! } }))
+      .toMatchObject({ status: 'consumed', decidedBy: null, taskId: row.id });
+    await expect(checkNativeToolApproval(token, { ...input, input: { ...input.input, destination: '上海' } })).rejects.toThrow();
+    await finishTask(row.id, row.leaseToken!, TaskState.TASK_STATE_COMPLETED, undefined, textArtifact('Train query result'));
+    expect((await getTask(grant, row.id)).status?.state).toBe(TaskState.TASK_STATE_COMPLETED);
+  });
+  it.each(['cancel', 'lease', 'configuration', 'workspace', 'expiry'] as const)('rejects inbound A2A tools after %s invalidation', async (reason) => {
+    const row = await root();
+    const token = { ...runtimeToken(row), a2aApprovalRequired: true as const };
+    await checkNativeToolApproval(token, { action: 'ready' });
+    if (reason === 'cancel') await requestCancellation(grant, row.id);
+    if (reason === 'lease') token.a2aLeaseToken = 'stale';
+    if (reason === 'configuration') await db.agent.update({ where: { id: agents[0] }, data: { a2aInternalEnabled: false } });
+    if (reason === 'workspace') token.workspaceId = randomUUID();
+    if (reason === 'expiry') await db.a2ATask.update({ where: { id: row.id }, data: { deadlineAt: new Date(0) } });
+    await expect(checkNativeToolApproval(token, { action: 'check', callId: randomUUID(), toolName: 'read', input: { path: 'notes.txt' } })).rejects.toBeInstanceOf(TaskNotFoundError);
+    expect(await db.a2AToolApproval.count({ where: { taskId: row.id } })).toBe(0);
   });
   it('authorizes a delegated tool once without a human decision and retains its owned receipt', async () => {
     const parent = await root(); const delegated = await child(parent); const row = (await claimTask(delegated.row.id))!;
@@ -549,15 +625,23 @@ describe('unified native ingress mappings', () => {
     return { nativeOperationId: await bindPiHarnessOperation(row.id, row.leaseToken!, randomUUID()) };
   }
   const actor = () => ({ workspaceId: ws, actorId: user, agentId: agents[0], slug: 'local-test' });
-  async function entry(kind: 'chat' | 'control' | 'work' = 'chat') {
+  async function entry(kind: 'chat' | 'control' | 'work' | 'channel' = 'chat') {
     const conversation = await db.conversation.create({ data: { agentId: agents[0], title: 'Existing conversation',
       messages: { create: [{ role: 'user', parts: [{ type: 'text', text: 'Historical message' }] },
         { role: 'assistant', parts: [{ type: 'tool-call', toolName: 'old-dangerous-operation' }] }] } } });
     let sourceId = conversation.id;
+    let channelId: string | undefined;
+    if (kind === 'channel') {
+      const channel = await db.agentChannelConnection.create({ data: { workspaceId: ws, agentId: agents[0],
+        sandboxId: sandboxes[0], a2aActorId: user, name: `Entry ${randomUUID()}`, platform: 'weixin', status: 'running',
+        inboundTokenHash: randomUUID(), inboundTokenSecret: {}, inboundTokenPrefix: 'fixture', credentials: { token: 'channel-private-fixture' } } });
+      channelId = channel.id;
+      await db.conversation.update({ where: { id: conversation.id }, data: { runtimeSessionKey: `channel:${channel.id}:fixture` } });
+    }
     if (kind === 'work') sourceId = (await db.workSession.create({ data: { workspaceId: ws, agentId: agents[0],
       sandboxId: sandboxes[0], conversationId: conversation.id, a2aActorId: user, runtimeKind: 'pi', status: 'running',
       runtimeSnapshot: { workingDirectory: '.', deploymentIds: [], installedSkillIds: [] } } })).id;
-    return { kind, sourceId, workspaceId: ws, agentId: agents[0], actorId: user, messageId: randomUUID(), text: 'New task only' };
+    return { kind, sourceId, channelId, workspaceId: ws, agentId: agents[0], actorId: user, messageId: randomUUID(), text: 'New task only' };
   }
   it.each(['chat', 'control', 'work'] as const)('lets ordinary %s delegate, approve and complete with both switches off', async (kind) => {
     const { submitNativeEntry } = await import('@/lib/a2a/ingress');
@@ -648,8 +732,8 @@ describe('unified native ingress mappings', () => {
       expect((await getTask(accepted.grant, accepted.row.id)).status?.state).toBe(TaskState.TASK_STATE_COMPLETED);
     } finally { stopA2AWorker(); }
   });
-  it.each(['chat', 'control', 'work'] as const)('maps %s to Task and Context without executing old history', async (kind) => {
-    const { submitNativeEntry } = await import('@/lib/a2a/ingress'); const input = await entry(kind);
+  it.each(['chat', 'control', 'work', 'channel'] as const)('maps %s to Task and Context without executing old history', async (kind) => {
+    const input = { ...await entry(kind), text: 'New task only password=fixture-entry-private' };
     const count = await db.conversation.count({ where: { agentId: agents[0] } });
     const accepted = await submitNativeEntry(input, vi.fn());
     expect(accepted.row.state).toBe(TaskState.TASK_STATE_SUBMITTED);
@@ -660,6 +744,15 @@ describe('unified native ingress mappings', () => {
     expect(await db.conversation.count({ where: { agentId: agents[0] } })).toBe(count);
     expect(await db.a2AEntryBinding.count({ where: { lastTaskId: accepted.row.id } })).toBe(1);
     expect(await db.a2AEntryReceipt.count({ where: { taskId: accepted.row.id } })).toBe(1);
+    const event = await db.logEvent.findFirstOrThrow({ where: { workspaceId: ws, eventName: 'a2a.request', rpcMethod: 'SendMessage' }, include: { detail: true } });
+    expect(event).toMatchObject({ actorId: user, agentId: agents[0], outcome: 'success', httpStatus: null,
+      attributes: { data: { a2a: { entryKind: kind, direction: 'inbound', transport: 'entry', taskId: accepted.row.id, taskState: 'TASK_STATE_SUBMITTED' } } } });
+    expect(event.detail?.data).toMatchObject({ payload: { request: { message: { role: 'ROLE_USER', parts: [{ text: 'New task only password="[REDACTED]"' }] } },
+      response: { task: { id: accepted.row.id, status: { state: 'TASK_STATE_SUBMITTED' } } } } });
+    expect(JSON.stringify(event)).not.toContain('fixture-entry-private');
+    expect(JSON.stringify(event)).not.toContain('channel-private-fixture');
+    expect(JSON.stringify(event.detail?.data)).not.toContain('Historical message');
+    expect(JSON.stringify(event.detail?.data)).not.toContain('old-dangerous-operation');
   });
   it('retries the initial message after acceptance without manufacturing different context identifiers', async () => {
     const { submitNativeEntry } = await import('@/lib/a2a/ingress'); const input = await entry();
@@ -668,6 +761,9 @@ describe('unified native ingress mappings', () => {
     await expect(submitNativeEntry({ ...input, text: 'changed' }, vi.fn())).rejects.toThrow();
     await expect(submitNativeEntry({ ...input, messageId: randomUUID() }, vi.fn())).rejects.toThrow();
     expect(await db.a2AEntryReceipt.count({ where: { taskId: first.row.id } })).toBe(1);
+    const events = await db.logEvent.findMany({ where: { workspaceId: ws, eventName: 'a2a.request', rpcMethod: 'SendMessage' }, include: { detail: true } });
+    expect(events).toHaveLength(2);
+    for (const event of events) expect(event.detail?.data).toMatchObject({ payload: { response: { task: { id: first.row.id } } } });
   });
   it('replays a pre-upgrade native entry without submitting a second task', async () => {
     const { submitNativeEntry } = await import('@/lib/a2a/ingress'); const input = await entry();

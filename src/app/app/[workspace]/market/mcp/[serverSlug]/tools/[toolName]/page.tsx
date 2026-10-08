@@ -6,7 +6,6 @@ import { getTranslations } from 'next-intl/server';
 import { Box, ChevronRight } from 'lucide-react';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getMarketServer, getWorkspaceForUser } from '@/lib/workspace/queries';
-import { effectiveStatus } from '@/lib/process/supervisor';
 import { DashboardPage } from '@/components/dashboard/DashboardUI';
 import { McpToolCatalog } from '@/components/dashboard/McpToolCatalog';
 import {
@@ -32,13 +31,11 @@ export default async function McpMarketToolPage({
   const workspace = await getWorkspaceForUser(slug, user.id);
   if (!workspace) redirect('/app');
   const server = await getMarketServer(serverSlug, workspace.id);
-  if (
-    !server
-    || (server.mcpKind === 'connector' && (
-      !server.inspectorSandbox
-      || effectiveStatus(server.inspectorSandbox.deploymentId, server.inspectorSandbox.status) !== 'running'
-    ))
-  ) notFound();
+  if (!server) notFound();
+  if (server.deploymentId) {
+    redirect(`/app/${encodeURIComponent(slug)}/mcp/${encodeURIComponent(server.deploymentId)}/tools/${encodeURIComponent(toolName)}`);
+  }
+  if (server.mcpKind === 'connector') notFound();
   const tools = server.tools;
   const tool = tools.find((candidate) => candidate.name === toolName);
   if (!tool) notFound();
@@ -69,7 +66,7 @@ export default async function McpMarketToolPage({
         backLabel={server.name}
         iconUrl={server.iconUrl}
         icon={<Box className="size-7" />}
-        type={t(server.mcpKind === 'connector' ? 'kindMcpConnector' : 'kindMcp')}
+        type={t('kindMcp')}
         title={tool.title ?? tool.annotations?.title ?? tool.name}
         publisher={server.name}
         summary={tool.description ?? mcpT('noDescription')}

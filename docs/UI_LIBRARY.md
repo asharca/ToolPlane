@@ -41,14 +41,92 @@ Pending operations may temporarily hide the native button and disable dismissal,
 Reserve header space for the inset control; panels embedded inside a modal omit
 their standalone close button.
 
-The MCP list uses a single search/status-filter row and keeps only the lifecycle
-action visible beside each server. Logs, restart, and confirmed removal live in
-the existing Popover, opening toward the roomier half of the viewport. Batch
-actions appear only after selection; creation links appear once above the list.
+The MCP list uses a single search/status-filter row, including needs-configuration
+resources. Lifecycle actions and a direct Logs link remain visible beside each
+server; restart and confirmed removal use the existing Popover. Batch actions
+appear only after selection; creation links appear once above the list.
+The MCP list fills the remaining workspace viewport with an independently scrolling
+table and a bottom pagination bar, including empty and single-page results. Pages
+contain 20 servers; changing search or status returns to page one, and removals
+clamp the current page to the remaining results.
 The creation modal is a single-column JSON form without a speculative endpoint
 preview. Examples, optional files, and network controls use BouncyAccordion;
 the collapsed network summary shows the selected mode and preserves FormData.
 Trust warnings, remote HTTP warnings, validation, and the fixed footer remain.
+The deployment inspector keeps status and lifecycle actions in a compact header.
+Overview shows connection details before README content; restart and rebuild live
+in Settings maintenance. Configuration, variable, and runtime-file save semantics
+and secret-reveal boundaries are unchanged.
+Every deployed MCP uses its own runtime for manual tool calls, including stdio,
+Docker, remote and marketplace-installed deployments. The tools tab and individual
+tool detail reuse the same direct invocation form; no additional sandbox connection
+is required. Installed marketplace resources link to that deployment. Undeployed
+marketplace recipes/schema and explicit sandbox Inspector flows remain separate.
+
+Installed skills use name/slug/description search and 20-item pages. Bulk removal
+only targets visible valid selections and is unavailable when any selected skill
+is market-managed; those resources link to market installation management.
+Skill details put SKILL.md before collapsed properties and read-only bundled files.
+Catalog content remains read-only; workspace, GitHub, and uploaded skills retain editing.
+Each add-skill source has a back action that discards that source's draft; pending
+submissions disable return and submit. Failed actions retain entered values and
+show localized errors. Preview and copy use the current editor draft; downloads
+use persisted SKILL.md. Saved feedback applies only to the successfully submitted
+content and clears when the draft changes. Editable drafts use the textarea's LF
+line endings so persisted multipart CRLF content also reports successful saves.
+Content and market-modified status save in the same transaction, with workspace
+ownership and catalog read-only guards.
+
+MCP and Skill marketplaces use compact resource rows with actions that wrap on
+narrow screens. Skill source/install/sort filters stay mounted in a collapsed
+accordion; its summary reflects applied GET parameters, and source/install filters
+remain catalog-only. Skill and Connector detail actions appear after the summary,
+before metadata and long content. Updated installations keep their management link
+and modified Skill updates still require explicit overwrite confirmation. Ordinary
+MCP Server listings remain documentation/schema-only, without installation actions.
+
+The admin console reuses the same `WorkspaceShell` composition as the workspace
+console (`AdminChrome`), so sidebar collapse, mobile drawer, content scrolling,
+and theming stay identical across both surfaces. Admin pages keep
+`AdminPage/Header/Panel` semantics inside that shell.
+
+Workspace observability defaults to request logs (`tab=audit` remains supported).
+One GET form owns keyword/server filtering; cursor links retain the time window,
+while apply and tab changes reset pagination. Failed/slow filters apply only to the
+loaded page. Request summaries explicitly describe loaded records, errors use danger
+badges, and expanded payloads support formatted copying only when data is available.
+
+The A2A tab is separate from deployment MCP request summaries and usage charts.
+It defaults to 24-hour request events, uses server-side workspace-scoped filters,
+and switches metric labels to event counts/elapsed time for task-chain queries.
+Its detail route shows metadata and the scoped trace, never body data; only an
+administrator with workspace access sees a link to the separately audited admin
+body view. Expired A2A bodies cannot be restored from task snapshots.
+
+Empty results retain refresh controls. Deployment request polling can be paused
+without pausing lifecycle refresh or manual refresh. Deployment logs are two peer
+navigation items: MCP call logs (`?tab=logs`) and runtime logs (`?tab=runtime`).
+Only the selected log view is loaded and mounted; runtime output no longer precedes
+call records. Restart/rebuild and runtime-error links open the runtime view directly.
+Runtime logs retain the existing stderr-only endpoint, cursor/generation protocol,
+polling cadence, and UTF-8-safe 512 KiB tail. Local controls filter retained lines,
+toggle wrapping, and copy visible text. Scrolling up pauses following, not polling;
+filtering disables following and clearing a filter requires explicitly resuming it.
+Sync failures retain collected output and show a notice outside the log viewport.
+
+All application tables use `DashboardTable` and the reference [Table Bulk Actions](https://beui.dev/components/motion/table).
+Selection replaces column controls with a localized count, clearing, and existing domain
+actions, preserving column widths, order, and sorting. The shared `selectionActions` API
+receives selected rows and ids in current sort order, excluding ids absent from the data;
+clearing also removes hidden ids. MCP, installed skills, and Pi runtime management retain
+their existing removal or update actions. Read-only tables offer selection and clearing
+without new mutation endpoints. Mobile bulk controls wrap within the visible viewport;
+tables scroll horizontally. Parameter schemas use the same renderer, retaining full JSON.
+The adapter passes the reference `rounded-2xl` to Table and clips its horizontal-scroll
+wrapper with the same radius. The selection column retains a 48px minimum width;
+header and row checkboxes use the same intrinsic size and share a centered axis.
+The scroll viewport and body isolate stacking contexts. The entire sticky header forms
+a higher layer, including bulk actions, so animated row badges cannot paint over it.
 
 Workspace pages do not render a breadcrumb bar or reserve its former row.
 Detail pages retain their content headings and actions; `DashboardHeader` only
@@ -57,6 +135,11 @@ supplies a screen-reader heading for pages without a visible level-one heading.
 `WorkspaceShell` owns the outer surface, corners, and tab-to-content join. The
 shared `ChatApp` adapter for Agents and Assistants must not add another outer
 border or rounded frame: its top border would separate the active tab from the surface.
+The sidebar workspace switcher's list hides native scrollbars, including on hover,
+while retaining scrolling when the list exceeds its maximum height. Workspace
+content containers and other popovers retain their existing scrollbar behavior.
+The workspace tab strip places its new-tab button immediately after the last tab;
+header controls remain right-aligned, and overflowing tabs scroll independently.
 
 Assistants follow the Agents sidebar layout: a compact add/list-options toolbar
 above the resource tree, with new-chat actions on assistant rows. The list-options
@@ -91,15 +174,22 @@ measures live reasoning time and supplies `duration`; the component does not run
 its own timer. Restored reasoning without recorded timing uses an untimed summary
 rather than claiming zero seconds. Only one pending-reply indicator is rendered,
 yielding to the activity stream as soon as reasoning starts.
+The shared reasoning viewport grows with its content up to 208px instead of reserving
+208px for short live activity, so streamed answers do not follow an empty block.
+Completed collapsed activity occupies no content height and can still be reopened.
 `MessageScroller` handles content growth and reader-aware following natively. Its
 `followOutput`/`onFollowChange` props preserve a reader's scroll-up position and
 resume following on explicit send or retry; no per-token manual scrolling is added.
-The shared model menu is capped at 320px wide and 384px tall, without a title row. Each model occupies
-one row with input/output prices formatted as `5$↓/10$↑` (per million tokens).
-Unavailable input/output rates are omitted individually; zero rates remain visible.
-Provider headers toggle drawers whose model lists scroll independently within
-a 160px maximum height. Long model names truncate; names and capabilities remain
-available on hover and to assistive technology.
+The shared model picker follows the Registry [Model Selector](https://asharca.github.io/ui/components/blocks/model-selector).
+Its `sm`, `md` (default), and `lg` panels are 320 × 360, 400 × 440, and 480 × 520,
+bounded by the viewport. Provider groups share one scrolling list with slim,
+theme-aware scrollbars. Search matches model names, providers, and capability labels;
+Arrow keys and Page Up/Down move the highlight while Enter selects and Escape dismisses.
+After 1.5 seconds of hover, a floating detail card shows the full model name,
+provider, capabilities, and known input/output prices. Rows retain compact rates
+formatted as `5$↓/10$↑` per million tokens; missing or invalid rates are omitted,
+and zero remains visible. Provider identity, uncached current models, pending-state
+selection guards, errors, and configuration actions remain in the domain adapter.
 Each assistant message uses one `StreamingResponse` surface for Markdown, tools,
 and attachments, with live streaming/error/completion status and the component's
 native copy, retry, and helpful/not-helpful buttons. Copy includes the full reply;
@@ -118,6 +208,9 @@ Agent Work conversations use the same `PromptInput`, `MessageGroup`, and
 transparent two-to-eight-row composer, and native copy/feedback actions. The
 existing Agent model selector sits beside the tools button; runtime-specific model
 selection, approvals, command handling, and message timing remain unchanged.
+Hermes thinking effort opens the Registry `RangeSlider` with six stepped
+intensity levels and a separate Default action; keyboard and drag input stay
+available in the composer.
 The Work tools menu and toolbar customization omit New task, including previously
 saved pins. The Agent sidebar retains its new-work action.
 The Agent conversation header's right side contains only Files and Terminal when
@@ -135,11 +228,10 @@ keyboard activation and Escape dismissal.
 The assistant editor uses left-aligned step navigation and rounded-xl fields,
 with a viewport-bounded dialog and a scrolling form body. The shared model picker
 uses a trigger-anchored Morph Popover (without a modal backdrop), choosing the side
-with more viewport space. Compact rows show capability badges and input/output base
-prices in $/M (USD per million tokens); missing prices show `—`, not zero. Opaque
-provider headings toggle their model groups and show model counts. Search temporarily expands matching
-groups, then restores their collapsed state when cleared. Header, search, and footer
-remain separate from the scrolling list; long model names wrap on narrow screens.
+with more viewport space. Existing editor and composer triggers remain unchanged;
+the search, model list, and optional error/configuration footer are separate regions.
+Provider groups are not collapsible. Truncated names remain accessible to assistive
+technology and are shown in full in the floating hover details.
 
 The Agent editor uses a full-size, viewport-bounded settings dialog. Desktop navigation
 is a flat list with one left-aligned item per row and no parent group headings;

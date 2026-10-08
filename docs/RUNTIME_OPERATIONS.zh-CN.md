@@ -14,6 +14,14 @@
 
 新操作运行时不要只回退应用程序。先停止所有者，再采用验证过的数据库/卷恢复或向前修复方案。生产备份和凭据不能进入测试产物。
 
+在线发布更新必须使用受管生产启动器。下载校验完成后，更新器先排空当前 runtime owner，**确认干净退出后才替换任何运行文件**，确保停机阶段的动态导入仍来自旧版本。缺少停机入口或排空失败时保留旧文件并报告失败；成功替换后发送 SIGTERM，由启动器完成退出，不直接调用 `process.exit()`。排空失败后的运行时保持阻断，须人工核对恢复，不能自动确认 dirty 标记。
+
+更新完成必须同时满足目标版本、替换后的进程标识和 `runtimeReady=true`。本地更新状态接口在新进程处于 idle、运行时尚未就绪时返回 HTTP 503 和 `Retry-After: 2`，防止旧版界面把版本号变化误报为成功；下载、应用及失败状态仍正常返回，保留进度与错误信息。恢复阻塞不能靠页面刷新或删除所有权标记绕过。
+
+Docker/Coolify 健康检查应使用 `/api/v1/readiness`，而不是 `/api/v1/health`，停机宽限须为 60 秒（手工重启使用 `docker restart --timeout 60`）。发布归档不会修改已有容器的健康检查和停止超时配置，应更新部署定义并在受控重部署时生效。原地更新后的容器不能直接按旧镜像重建，必须先保留当前运行版本。
+
+受管启动器在 Next 前加载 `abort-signal.cjs`，对原生 `AbortSignal.any()` 的结果短暂添加再移除 abort 监听器，启动弱引用源信号跟踪。Node 24.21 否则会在超时后保留嵌套组合信号，最终令 MCP/消息通道请求报 `Set maximum size exceeded`。发布组装时须将该文件与内嵌 `server.cjs` 放在同一目录。将来升级 Node 后，先运行 `pnpm vitest run tests/unit/abort-signal.test.ts` 验证，再移除兼容处理。已经耗尽信号集合的进程须受控重启；只重启 MCP bridge 无法清空主进程的信号集合。
+
 ## 单一运行时所有者
 
 `runtime/owner.ts` 用**独立长期连接**持有 PostgreSQL session advisory lock，不使用连接池中的短事务锁。数据库和 `TOOLPLANE_RUNTIME_DOMAIN`（默认 `default`）确定所有权域，同域两个进程不能同时恢复或操作运行时。操作同一 Docker 资源的所有应用必须使用相同数据库和 domain；改 domain 不是绕过所有权冲突的安全办法。
@@ -23,6 +31,92 @@
 `SystemSetting` 中的 dirty 标记仅在确认干净退出后移除。崩溃、数据库断连或不确定的 Docker 操作之后，即使 advisory lock 已释放，下个进程也拒绝自动接管。应检查日志、停止所有旧 owner，并确认 Docker helper、复制与删除操作已结束；之后才将 `TOOLPLANE_RUNTIME_RECOVERY_ACK` 设为恢复错误中打印的准确 UUID，用于**一次重启**，恢复后移除该变量。这是对外部操作已核对的确认，不是密码、强制解锁开关或自动高可用。无效标记需要排查，不能随意猜 UUID。
 
 生产启动器收到 SIGTERM/SIGINT 后停止接收 HTTP、停止维护任务/coordinator/broker，有界排空或中止已跟踪工作，最后释放独立连接锁。启动器外层退出上限为 50 秒，Compose 提供 60 秒。超时或不确定操作保留 dirty 标记。自定义进程管理器应给予同等宽限并调用受管停机流程。`pnpm dev` 不具备生产启动器的信号编排，异常停止后可能需要显式恢复。
+
+## 冻结的 Pi 扩展包
+
+`pi-package` 是不可变 Pi 资源与可选扩展代码的制品，支持独立 `pi-sdk` runtime
+和外部客户端，不迁移 Toolkit 或已有 Pi Harness 智能体。使用前应用
+`20261001000000_pi_sdk_packages` 和 `20261002000000_pi_package_ecosystem`，
+生成 Prisma client 并重启应用。
+
+管理员显式构建可信捕获镜像；发布请求不会隐式构建：
+
+```bash
+docker build --target pi-package-capture -t toolplane-pi-package-capture:0.87.1 .
+```
+
+捕获要求运行时 owner 已就绪，同一 owner 仅允许一次操作（`capture_busy`）。
+非 root 容器无外网、无宿主文件挂载；有界 TLS CONNECT broker 拒绝私网、混合
+DNS 和重定向后的私网地址。公开或明确配置凭据的 npm/Git 生产依赖一起冻结，不执行扩展 factory、
+生命周期脚本、Git hooks 或 pnpmfile。需要构建的包须提供可加载产物；超过
+16 MiB 的文件明确拒绝，不跳过。
+
+审核重新验证路径、链接、解码后的 secret scan、文件 hash 和整个 release checksum。
+安装只产生 ready `MarketInstall`，不执行代码。工作区升级同时更新两个 install
+版本指针，但 Agent 保留明确启用的 release；须在 task、Work 和 lease 结束后
+显式应用版本。有 Agent 绑定时不能卸载。公共详情只投影小摘要并保留原 checksum，
+不返回 base64 或依赖文件；SDK 资源解析遇到撤销或下架立即拒绝。
+批准意味着接受扩展在 Agent 沙箱内的任意 Node、文件和网络副作用，工具审批并非
+任意代码隔离边界。
+
+在创建 Agent 时选择 **Pi SDK**，再到**设置 → Pi 扩展**启用工作区已安装包。
+SDK 固定为 0.87.1，要求 Linux、Node 24；捕获包要求匹配的 Docker 架构。
+TP 组装包声明 `any/any` 可移植资源，但不放宽 SDK 与 Node 要求。普通 Pi 的
+Harness 会话与版本管理保持不变。可信运行时安装使用 `pnpm add --save-prod`，
+兼容 pnpm 10/12；执行 turn 时不安装市场包依赖。
+
+SDK 使用官方 JSONL，不提供 Harness 检查点恢复。包集合改变返回
+`PI_SDK_PACKAGE_SET_CHANGED`；持久会话文件缺失或未落盘宿主丢失返回
+`PI_SDK_SESSION_MISSING`。两者都要求新会话或新 Work，不重放历史，旧记录仍可读。
+文件或链接篡改返回 `PI_PACKAGE_CHECKSUM_MISMATCH`，扩展加载失败返回
+`PI_EXTENSION_LOAD_FAILED`。命令保留大小写及 `:1` 等冲突后缀，纯命令给出完成回执；
+终端交互 UI 不映射到 Web。Control MCP 创建、公共 endpoint 和模板发布不开放
+此 runtime，已有授权消息和工具入口仍可使用。
+
+### 插件源、组装与外部安装
+
+**市场 → Pi 扩展**默认展示可搜索、分页的完整 [Pi 官方目录](https://pi.dev/packages)。
+成员选择精确版本后免人工审核安装；服务端验证实时目录成员身份和公共 npm 的版本、integrity，
+再捕获并校验不可变制品。release 记录 `reviewPolicy: 'official-directory'`，不记录人工审核者；
+这不代表安全背书或 Web 兼容。安装不执行代码，不改变 Agent 固定版本。
+自建来源和组装包仍须人工审核。owner/admin 在**工具包 → Pi 包 → 工作区 Pi 来源**管理
+HTTPS 目录、npm registry 或 Git 来源；凭据加密保存且不回显，只发送到配置的 authority/path。
+目录凭据不传播到发现的包地址。支持公网 HTTPS 上的私有仓库；LAN、回环、link-local、
+混合 DNS 和重定向仍被阻止。捕获凭据通过可信 stdin 传入，不进入 argv 或 Docker 环境。
+
+自建目录响应 `GET <配置地址>?query=<搜索词>&page=<从1开始页码>`，返回
+`{schemaVersion:1,entries:[{name,source,description?,version?}],hasMore:boolean}`；
+最多 50 项、2 MiB，`source` 是支持的 npm/Git 来源。发现目录时不执行包代码。
+
+**工具包 → Pi 包 → 新建 Pi 包**冻结所选 Skill 文件，为明确选中的 MCP 工具生成真实 Pi 扩展。
+新包默认工作区私有，公开须明确选择。MCP 需求只含逻辑 key 和允许工具名，不带凭据或
+发布者 deployment ID。同工作区安装可使用私有默认绑定；其他工作区必须绑定自己的服务。
+有活跃 task、Work 或 lease 时禁止修改 Agent 使用的绑定。纯 Skill/Prompt/Theme 包
+不需要伪造空扩展。
+选择**打包现有工具包**可预填其 Skill 和当前开放的具体 MCP 工具，编辑后发布独立 Pi 包；
+不会修改原工具包或 Agent 绑定。来源导入、新版本发布、撤回和更新跟踪均在工具包界面；
+Pi 市场仅负责发现与安装，不提供发布表单。
+
+获批包可下载确定性的 npm 兼容 tarball。发布到配置的 npm registry 需要 owner/admin
+权限和明确确认，不能覆盖既有版本，也不自动进入官方目录。
+
+**已安装 → 客户端安装**为 Pi、Claude Code、Codex、OpenCode 或 Hermes 创建固定
+release 的独立登记。下载安装器与一次性私有配置，以 `chmod 600` 保护配置，再执行
+`node pi-package-install.mjs install --config <私有配置.json>`；更新与卸载分别使用
+`update`、`uninstall`。Pi 获取原生包资源，其他客户端只获取支持的 Skill/MCP 配置，
+不执行任意 Pi 扩展。当前安装为操作系统用户全局范围，不是项目级；MCP 经 TP 提供，
+需要连接该 TP 实例。
+
+每台设备使用独立 hash token；设备接口不接受个人或 Toolkit token。每次请求复核成员、
+release、deployment 权限和实时暴露工具。新增工具不自动扩权。更新遇到本地修改文件或
+托管目录链接越界时拒绝；卸载先取得自撤销确认，再删除未修改的托管文件。页面撤销不
+声称删除本地文件；活跃设备登记阻止卸载工作区安装。私有配置不得写入日志、提交或截图。
+
+runtime owner 每五分钟至多串行检查八个到期订阅，每个包至少间隔六小时，也支持手动
+检查。tag/range 和 Git 分支更新只提示；精确版本/commit 保持固定。检查不捕获、不安装、
+不发布、不改变 Agent/设备。同版本 integrity 变化视为异常。用户捕获并审核新 release 后，
+分别手动更新工作区和 Agent/设备，设备扩权须确认。TP 组装包从所选工作区资源显式重新
+发布，不在后台静默重建。
 
 ## Pi 版本管理
 

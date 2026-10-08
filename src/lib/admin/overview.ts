@@ -1,17 +1,21 @@
 import 'server-only';
 import { db } from '@/lib/db';
-import { aggregateLogs, logFilterSchema } from '@/lib/observability/queries';
+import { aggregateLogs, getA2aMetadata, logFilterSchema, logWhere } from '@/lib/observability/queries';
 import { effectiveStatuses } from '@/lib/process/supervisor';
 
 export async function getSystemOverview() {
-  const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const now = new Date(Date.now());
+  const since24h = new Date(now.getTime() - 24 * 60 * 60 * 1000);
   const since7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const mcpFilters = logFilterSchema.parse({ domain: 'mcp', eventName: 'gateway.request', since: since24h, until: now });
+  const a2aFilters = logFilterSchema.parse({ domain: 'a2a', eventName: 'a2a.request', direction: 'inbound', since: since24h, until: now });
 
   const [
     users, admins, suspended, newUsers7d,
     workspaces, memberships, agents, toolkits, installedSkills, providers,
     servers, skills, clients, agentListings, categories,
     deploymentRows, logs, recentUsers, pendingMarket, pendingAgents, recentFailures, unavailableWorkspaces,
+    a2aRequests, requestRows,
   ] = await Promise.all([
     db.user.count(),
     db.user.count({ where: { role: 'admin' } }),
@@ -29,7 +33,7 @@ export async function getSystemOverview() {
     db.agentListing.count(),
     db.category.count(),
     db.deployment.findMany({ select: { id: true, name: true, status: true, workspaceId: true, workspace: { select: { name: true } } } }),
-    aggregateLogs(logFilterSchema.parse({ domain: 'mcp', eventName: 'gateway.request', since: since24h })),
+    aggregateLogs(mcpFilters),
     db.user.findMany({
       orderBy: { createdAt: 'desc' },
       take: 8,
@@ -41,9 +45,26 @@ export async function getSystemOverview() {
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 8,
       select: { id: true, message: true, eventName: true, createdAt: true, domain: true, outcome: true, workspaceId: true } }),
     db.workspace.count({ where: { status: 'delete_failed' } }),
+    aggregateLogs(a2aFilters),
+    db.logEvent.findMany({
+      where: { OR: [logWhere(mcpFilters), logWhere(a2aFilters)] },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 8,
+      select: { id: true, createdAt: true, domain: true, rpcMethod: true, toolName: true, eventName: true,
+        actorId: true, outcome: true, durationMs: true, attributes: true },
+    }),
   ]);
 
   const { total, errors, avgMs, p95Ms } = logs;
+  const actors = await db.user.findMany({
+    where: { id: { in: requestRows.flatMap(row => row.actorId ? [row.actorId] : []) } },
+    select: { id: true, name: true },
+  });
+  const actorNames = new Map(actors.map(actor => [actor.id, actor.name]));
+  const recentRequests = requestRows.map(({ attributes, ...row }) => ({
+    ...row,
+    actorName: row.actorId ? actorNames.get(row.actorId) ?? null : null,
+    clientId: getA2aMetadata(attributes)?.clientId ?? null,
+  }));
 
   const deployments: Record<string, number> = {};
   const statuses = effectiveStatuses(deploymentRows);
@@ -61,6 +82,8 @@ export async function getSystemOverview() {
       servers, skills, clients, agentListings, categories, deployments,
     },
     requests: { total, errors, avgMs, p95Ms },
+    a2aRequests,
+    recentRequests,
     recentUsers,
     attention: { pendingReviews: pendingMarket + pendingAgents, abnormalCount: abnormalDeployments.length,
       abnormalDeployments: abnormalDeployments.slice(0, 8), recentFailures, unavailableWorkspaces },

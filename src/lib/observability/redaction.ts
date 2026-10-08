@@ -15,12 +15,12 @@ export function redactText(text: string, secrets: readonly string[] = []): strin
     .replace(/\b(?:sk-(?:proj-)?[A-Za-z0-9_-]+|sk-ant-[A-Za-z0-9_-]+|gh[pousr]_[A-Za-z0-9_]+|xox[baprs]-[A-Za-z0-9-]+)\b/g, OMITTED);
 }
 
-export function sanitizeLog(value: unknown, secrets: readonly string[] = [], maxBytes = 32_768) {
+export function sanitizeLog(value: unknown, secrets: readonly string[] = [], maxBytes = 32_768, maxDepth = 8) {
   let remaining = maxBytes;
   let truncated = false;
   const seen = new WeakSet<object>();
   const visit = (input: unknown, depth: number): unknown => {
-    if (remaining < 64 || depth > 8) { truncated = true; return '[TRUNCATED]'; }
+    if (remaining < 64 || depth > maxDepth) { truncated = true; return '[TRUNCATED]'; }
     remaining -= 32;
     if (input === null || input === undefined) return null;
     if (typeof input === 'string') {

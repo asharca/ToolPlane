@@ -244,7 +244,7 @@ export function WorkspaceTabBar({ tabs, activeTabId, onSelect, onClose, onReorde
     return items;
   };
   return <div data-slot="workspace-tab-strip" data-leading-active={tabs[0]?.id === currentId} className={cn("flex h-11 max-w-full min-w-0 shrink-0 items-end", className)}>
-    <motion.div layoutScroll ref={scroller} data-slot="workspace-tab-bar" className="min-w-0 flex-1 overflow-x-auto overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+    <motion.div layoutScroll ref={scroller} data-slot="workspace-tab-bar" className="min-w-0 overflow-x-auto overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
       {/* Each tab owns sibling action buttons; never put controls inside a tab button. */}
       <div role="tablist" aria-label="工作区标签" className="flex h-11 min-w-max items-end gap-1 pt-1">
         {tabs.map((tab, index) => {
@@ -257,8 +257,11 @@ export function WorkspaceTabBar({ tabs, activeTabId, onSelect, onClose, onReorde
         })}
       </div>
     </motion.div>
-    {(onNewTab || actions) && <div data-slot="workspace-tab-actions" className="flex h-11 shrink-0 items-center gap-1 pl-1">
-      {onNewTab && <Button variant="ghost" size="icon" aria-label="新建标签" onClick={onNewTab}><Plus className="size-4" /></Button>}{actions}
+    {onNewTab && <div className="flex h-11 shrink-0 items-center pl-1">
+      <Button variant="ghost" size="icon" aria-label="新建标签" onClick={onNewTab}><Plus className="size-4" /></Button>
+    </div>}
+    {actions && <div data-slot="workspace-tab-actions" className="ml-auto flex h-11 shrink-0 items-center gap-1 pl-1">
+      {actions}
     </div>}
   </div>;
 }

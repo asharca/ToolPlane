@@ -5,13 +5,14 @@ import { Input } from '@/components/motion/input';
 import { Button } from '@/components/motion/button';
 
 
-import type { ComponentType } from 'react';
+import type { ComponentType, ReactNode } from 'react';
 import { useEffect, useMemo, useState, useTransition } from 'react';
 import { Activity, Braces, ChevronDown, CircleAlert, Clock3, HeartPulse, List, RefreshCw, Search, Wrench, X } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { inspectMcpLog, type McpLogOperation } from '@/lib/observability/mcp-log-entry';
+import { LogPayload } from './LogPayload';
 
 export type McpRequestLogView = {
   id: string;
@@ -46,14 +47,6 @@ const operationIcons: Record<McpLogOperation, ComponentType<{ className?: string
   request: Braces,
 };
 
-function pretty(value: string | null): string {
-  if (!value) return '—';
-  try {
-    return JSON.stringify(JSON.parse(value), null, 2);
-  } catch {
-    return value;
-  }
-}
 
 function operationLabel(operation: McpLogOperation, t: Translate): string {
   switch (operation) {
@@ -67,47 +60,18 @@ function operationLabel(operation: McpLogOperation, t: Translate): string {
   }
 }
 
-function Metric({
-  label,
-  value,
-  tone = 'default',
-}: {
-  label: string;
-  value: string | number;
-  tone?: 'default' | 'danger' | 'warning';
-}) {
-  const toneClass = tone === 'danger'
-    ? 'text-destructive dark:text-destructive'
-    : tone === 'warning'
-      ? 'text-(--color-warning) dark:text-(--color-warning)'
-      : 'text-foreground';
-  return (
-    <div className="rounded-md border border-border bg-background px-3 py-2.5">
-      <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
-      <p className={`mt-0.5 text-lg font-semibold tabular-nums ${toneClass}`}>{value}</p>
-    </div>
-  );
-}
 
-function Payload({ label, value }: { label: string; value: string | null }) {
-  return (
-    <div className="min-w-0">
-      <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
-      <pre className="max-h-72 overflow-auto rounded-md border border-border bg-background p-3 font-mono text-[11px] leading-relaxed text-foreground">
-        {pretty(value)}
-      </pre>
-    </div>
-  );
-}
 
 export function McpRequestLogs({
   logs,
   showServer = false,
   refreshIntervalMs = 0,
+  searchControls,
 }: {
   logs: McpRequestLogView[];
   showServer?: boolean;
   refreshIntervalMs?: number;
+  searchControls?: ReactNode;
 }) {
   const t = useTranslations('console.observability') as Translate;
   const router = useRouter();
@@ -115,6 +79,7 @@ export function McpRequestLogs({
   const [filter, setFilter] = useState<Filter>('all');
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [isRefreshing, startRefresh] = useTransition();
+  const [autoRefresh, setAutoRefresh] = useState(true);
 
   const rows = useMemo(() => logs.map((log) => ({
     log,
@@ -125,7 +90,7 @@ export function McpRequestLogs({
   const average = rows.length
     ? Math.round(rows.reduce((total, row) => total + row.log.durationMs, 0) / rows.length)
     : 0;
-  const normalizedQuery = query.trim().toLowerCase();
+  const normalizedQuery = searchControls ? '' : query.trim().toLowerCase();
   const filtered = rows.filter(({ log, inspection }) => {
     if (filter === 'failed' && inspection.outcome !== 'error') return false;
     if (filter === 'slow' && log.durationMs < SLOW_REQUEST_MS) return false;
@@ -140,19 +105,19 @@ export function McpRequestLogs({
       inspection.errorSummary,
     ].filter(Boolean).join(' ').toLowerCase().includes(normalizedQuery);
   });
-  const filtersActive = filter !== 'all' || Boolean(query);
+  const filtersActive = filter !== 'all' || Boolean(normalizedQuery);
 
   function refresh() {
     startRefresh(() => router.refresh());
   }
 
   useEffect(() => {
-    if (!refreshIntervalMs) return;
+    if (refreshIntervalMs <= 0 || !autoRefresh) return;
     const timer = window.setInterval(() => {
       startRefresh(() => router.refresh());
     }, refreshIntervalMs);
     return () => window.clearInterval(timer);
-  }, [refreshIntervalMs, router, startRefresh]);
+  }, [refreshIntervalMs, autoRefresh, router, startRefresh]);
 
   function toggle(id: string) {
     setOpen((current) => {
@@ -170,42 +135,37 @@ export function McpRequestLogs({
 
   return (
     <section className="space-y-4" aria-label={t('requestLog')}>
-      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-        <Metric label={t('requests')} value={logs.length} />
-        <Metric label={t('failedRequests')} value={failed} tone={failed ? 'danger' : 'default'} />
-        <Metric label={t('avgLatency')} value={`${average}${t('ms')}`} />
-        <Metric
-          label={t('slowRequests', { threshold: SLOW_REQUEST_MS })}
-          value={slow}
-          tone={slow ? 'warning' : 'default'}
-        />
+      <div className="flex flex-wrap gap-x-5 gap-y-2 text-xs text-muted-foreground">
+        <span>{t('loadedRequests', { count: logs.length })}</span>
+        <span>{t('failedRequests')}: <strong className={failed ? 'text-destructive' : undefined}>{failed}</strong></span>
+        <span>{t('avgLatency')}: {average}{t('ms')}</span>
+        <span>{t('slowRequests', { threshold: SLOW_REQUEST_MS })}: {slow}</span>
       </div>
 
-      <div className="flex flex-col gap-3 rounded-lg border border-border bg-muted/20 p-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="relative w-full sm:max-w-sm">
-          
-          <Input value={query} onChange={(value) => setQuery(value)} placeholder={t('searchLogs')} aria-label={t('searchLogs')} leftIcon={<Search className="size-4" />} />
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-muted/20 p-3">
+        <div className={searchControls ? 'min-w-0' : 'w-full sm:max-w-sm'}>
+          {searchControls ?? <Input value={query} onChange={setQuery} placeholder={t('searchLogs')} aria-label={t('searchLogs')} leftIcon={<Search className="size-4" />} />}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <div className="flex rounded-md border border-border bg-background p-0.5" role="group" aria-label={t('filterLogs')}>
+          {searchControls ? <span className="text-xs text-muted-foreground">{t('currentPage')}</span> : null}
+          <div className="flex flex-wrap gap-1 rounded-md border border-border bg-background p-0.5" role="group" aria-label={t('filterLogs')}>
             {([
               ['all', t('allLogs'), logs.length],
               ['failed', t('failedRequests'), failed],
               ['slow', t('slowRequests', { threshold: SLOW_REQUEST_MS }), slow],
             ] as const).map(([value, label, count]) => (
-              <Button key={value} type="button" aria-pressed={filter === value} onClick={() => setFilter(value)} variant={filter === value ? "primary" : "ghost"} size="md">{label} <span className="tabular-nums">{count}</span></Button>
+              <Button key={value} type="button" aria-pressed={filter === value} onClick={() => setFilter(value)} variant={filter === value ? 'primary' : 'ghost'} size="sm">{label} <span className="tabular-nums">{count}</span></Button>
             ))}
           </div>
-          {refreshIntervalMs ? (
             <Button type="button" onClick={refresh} disabled={isRefreshing} variant="secondary" size="sm"><RefreshCw className={`size-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
             {t('refresh')}</Button>
-          ) : null}
+          {refreshIntervalMs > 0 ? <Button type="button" variant="ghost" size="sm" aria-pressed={autoRefresh} onClick={() => setAutoRefresh((value) => !value)}>{t(autoRefresh ? 'pauseAutoRefresh' : 'resumeAutoRefresh')}</Button> : null}
         </div>
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
         <span>{t('showingFilteredRequests', { shown: filtered.length, total: logs.length })}</span>
-        {refreshIntervalMs ? (
+        {refreshIntervalMs > 0 && autoRefresh ? (
           <span className="inline-flex items-center gap-1.5">
             <span className="size-1.5 rounded-full bg-(--color-success)" />
             {t('autoRefreshing')}
@@ -216,7 +176,7 @@ export function McpRequestLogs({
       {filtered.length === 0 ? (
         <div className="flex flex-col items-center justify-center text-center min-h-44">
           <Search className="mb-3 size-7 text-muted-foreground" />
-          <p className="text-sm font-medium text-foreground">{t('noMatchingRequests')}</p>
+          <p className="text-sm font-medium text-foreground">{t(logs.length ? 'noMatchingRequests' : 'noRequestsYet')}</p>
           {filtersActive ? (
             <Button type="button" onClick={clearFilters} variant="secondary" size="sm" className="mt-4"><X className="size-3.5" />
             {t('clearLogFilters')}</Button>
@@ -240,9 +200,9 @@ export function McpRequestLogs({
               ].filter(Boolean).join(' · ');
               return (
                 <article key={log.id} className={isError ? 'bg-destructive/[0.025]' : undefined}>
-                  <Button type="button" onClick={() => hasDetails && toggle(log.id)} aria-expanded={hasDetails ? expanded : undefined} aria-controls={hasDetails ? detailsId : undefined} aria-label={rowLabel} variant="ghost" size="md" className="group flex w-full items-start text-left"><span className={`mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md ${
+                  <Button type="button" onClick={() => hasDetails && toggle(log.id)} aria-expanded={hasDetails ? expanded : undefined} aria-controls={hasDetails ? detailsId : undefined} aria-label={rowLabel} variant="ghost" size="md" className="group flex h-auto w-full flex-wrap items-start justify-start whitespace-normal py-3 text-left"><span className={`mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md ${
                     isError
-                      ? 'bg-destructive text-destructive dark:text-destructive'
+                      ? 'bg-destructive/10 text-destructive'
                       : inspection.operation === 'toolCall'
                         ? 'bg-primary/10 text-primary'
                         : 'bg-muted text-muted-foreground'
@@ -260,8 +220,6 @@ export function McpRequestLogs({
                     </span>
                     <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
                       <span className="font-mono">{log.method}</span>
-                      <span aria-hidden="true">·</span>
-                      <span>{log.time}</span>
                       {inspection.rpcMethod && inspection.operation !== 'toolCall' ? (
                         <>
                           <span aria-hidden="true">·</span>
@@ -270,11 +228,11 @@ export function McpRequestLogs({
                       ) : null}
                     </span>
                   </span>
-                  <span className="flex shrink-0 items-center gap-2 pt-0.5">
-                    <AnimatedBadge  status="success" size="sm" showIcon={false}>
+                  <span className="flex flex-wrap items-center gap-2 pt-0.5">
+                    <AnimatedBadge status={isError ? 'danger' : 'success'} size="sm" showIcon={false}>
                       {isError ? t('error') : t('success')}
                     </AnimatedBadge>
-                    <span className={`hidden items-center gap-1 text-xs tabular-nums md:inline-flex ${
+                    <span className={`inline-flex items-center gap-1 text-xs tabular-nums ${
                       log.durationMs >= SLOW_REQUEST_MS
                         ? 'text-(--color-warning) dark:text-(--color-warning)'
                         : 'text-muted-foreground'
@@ -282,27 +240,13 @@ export function McpRequestLogs({
                       <Clock3 className="size-3.5" />
                       {log.durationMs}{t('ms')}
                     </span>
+                    <span className="text-xs text-muted-foreground">{log.time}</span>
                     {hasDetails ? (
                       <ChevronDown className={`size-4 text-muted-foreground transition-transform ${expanded ? 'rotate-180' : ''}`} />
                     ) : null}
                   </span></Button>
 
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-4 pb-3 pl-[3.75rem] text-xs text-muted-foreground">
-                    <span className={`inline-flex rounded-full px-2 py-0.5 font-semibold sm:hidden ${
-                      isError
-                        ? 'bg-destructive text-destructive dark:text-destructive'
-                        : 'bg-(--color-success) text-(--color-success) dark:text-(--color-success)'
-                    }`}>
-                      {isError ? t('error') : t('success')}
-                    </span>
-                    <span className={`inline-flex items-center gap-1 tabular-nums md:hidden ${
-                      log.durationMs >= SLOW_REQUEST_MS
-                        ? 'text-(--color-warning) dark:text-(--color-warning)'
-                        : 'text-muted-foreground'
-                    }`}>
-                      <Clock3 className="size-3.5" />
-                      {log.durationMs}{t('ms')}
-                    </span>
                     {log.statusCode > 0 ? <span>{t('httpStatus', { status: log.statusCode })}</span> : null}
                     {showServer && log.deploymentName ? (
                       <>
@@ -319,7 +263,7 @@ export function McpRequestLogs({
                   </div>
 
                   {isError && inspection.errorSummary ? (
-                    <p className="mx-4 mb-3 ml-[3.75rem] flex items-start gap-1.5 rounded-md border border-destructive bg-destructive/[0.06] px-2.5 py-2 text-xs leading-5 text-destructive dark:text-destructive">
+                    <p className="mx-4 mb-3 flex items-start gap-1.5 rounded-md bg-destructive/10 px-2.5 py-2 text-xs leading-5 text-destructive">
                       <CircleAlert className="mt-0.5 size-3.5 shrink-0" />
                       <span>{inspection.errorSummary}</span>
                     </p>
@@ -333,8 +277,8 @@ export function McpRequestLogs({
                         <span><span className="font-medium text-foreground">{t('duration')}:</span> {log.durationMs}{t('ms')}</span>
                       </div>
                       <div className="grid gap-4 lg:grid-cols-2">
-                        <Payload label={t('request')} value={log.requestBody} />
-                        <Payload label={t('response')} value={log.responseBody} />
+                        <LogPayload label={t('request')} value={log.requestBody} copyLabel={t('copyPayload', { label: t('request') })} unavailableText={t('payloadUnavailable')} />
+                        <LogPayload label={t('response')} value={log.responseBody} copyLabel={t('copyPayload', { label: t('response') })} unavailableText={t('payloadUnavailable')} />
                       </div>
                     </div>
                   ) : null}

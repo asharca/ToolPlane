@@ -7,9 +7,10 @@ import { assertLiveGrant } from './principal';
 import type { TaskGrant } from './principal';
 import { localTaskOptions } from './local-task-options';
 import type { TaskExecutor } from './executor';
+import type { RuntimeCommand, RuntimeCommandResult, RuntimeUsage } from '@/lib/agents/runtime-commands';
 
 export const LOCAL_COLLABORATION_INSTRUCTIONS = `You are executing a ToolPlane native A2A task.
-Every native tool call requires a human decision in the ToolPlane console. A tool denial is not an instruction to evade or rewrite the same operation.
+Native tool calls are authorized by the platform under the task's existing permissions. A tool denial is not an instruction to evade or rewrite the same operation.
 Platform collaboration uses a2a_list_agents, a2a_send_message and a2a_get_task. These are separate from native runtime subagents.
 Use standard A2A 1.0 messages with a unique messageId, ROLE_USER and text parts. Reuse an ID unchanged only to retry the same request.
 A returned Task is not necessarily complete. To join children call a2a_await_tasks and END this turn normally; the platform will resume you after the selected tasks settle.
@@ -23,8 +24,19 @@ export const executeLocalTask: TaskExecutor = async (row, signal) => {
   if (row.executionBackend !== 'legacy') throw new Error('Unknown A2A execution backend.');
   const grant = row.grant as unknown as TaskGrant;
   const options = await localTaskOptions(row, signal, LOCAL_COLLABORATION_INSTRUCTIONS);
-  const text = await runSandboxAgentTurn(options);
+  let commands: RuntimeCommand[] = [];
+  let usage: RuntimeUsage | undefined;
+  let commandResult: RuntimeCommandResult | undefined;
+  const text = await runSandboxAgentTurn({ ...options,
+    onCommands: (value) => { commands = value; },
+    onUsage: (value) => { usage = value; },
+    onCommandResult: (value) => { commandResult = value; },
+  });
   signal.throwIfAborted(); await assertLiveGrant(grant, 'send');
   if (text.length > A2A_LIMITS.outputCharacters) throw new Error('Task output limit exceeded.');
-  return { state: TaskState.TASK_STATE_COMPLETED, artifact: textArtifact(text) };
+  const artifact = textArtifact(text);
+  if (options.runtimeKind === 'pi-sdk') artifact.metadata = { toolplanePiSdk: {
+    commands, ...(usage ? { usage } : {}), ...(commandResult ? { commandResult } : {}),
+  } };
+  return { state: TaskState.TASK_STATE_COMPLETED, artifact };
 };

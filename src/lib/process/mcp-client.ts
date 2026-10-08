@@ -173,8 +173,10 @@ async function mcpRpcAtPort(
   assertRuntimeOwner();
   const start = performance.now();
   let httpStatus: number | undefined;
+  const request = { jsonrpc: '2.0', id: Date.now(), method, ...(params === undefined ? {} : { params }) };
+  let response: unknown;
   try {
-    const body = JSON.stringify({ jsonrpc: '2.0', id: Date.now(), method, params });
+    const body = JSON.stringify(request);
     if (options.maxRequestBytes && new TextEncoder().encode(body).byteLength > options.maxRequestBytes) {
       throw new McpPayloadTooLargeError();
     }
@@ -191,6 +193,7 @@ async function mcpRpcAtPort(
       result?: Record<string, unknown>;
       error?: { code?: number; message?: string };
     } | null;
+    response = json;
     if (!res.ok || json?.error) {
       const error = new Error(json?.error?.message ?? `MCP upstream HTTP ${res.status}`);
       Object.assign(error, { code: json?.error?.code ?? `HTTP_${res.status}` });
@@ -199,12 +202,12 @@ async function mcpRpcAtPort(
     await recordEvent({ domain: 'mcp', eventName: 'mcp.rpc', rpcMethod: method,
       toolName: typeof params?.name === 'string' ? params.name : undefined, httpStatus,
       outcome: json?.result?.isError === true ? 'error' : 'success',
-      durationMs: Math.round(performance.now() - start), detail: { request: params, response: json?.result } });
+      durationMs: Math.round(performance.now() - start), detail: { request, response } });
     return json?.result ?? null;
   } catch (error) {
     await recordEvent({ domain: 'mcp', eventName: 'mcp.rpc', rpcMethod: method,
       toolName: typeof params?.name === 'string' ? params.name : undefined, httpStatus,
-      error, durationMs: Math.round(performance.now() - start) });
+      error, durationMs: Math.round(performance.now() - start), detail: { request, response } });
     if (error instanceof McpPayloadTooLargeError) throw error;
     return null;
   }

@@ -201,6 +201,7 @@ export async function getBrowseToolkits(
   const marketWhere: Prisma.MarketListingWhereInput = {
     kind: 'toolkit',
     status: 'published',
+    visibility: 'public',
     latestReleaseId: { not: null },
     latestRelease: { is: { reviewStatus: 'approved' } },
     sourceToolkit: { is: { visibility: 'public', enabled: true } },

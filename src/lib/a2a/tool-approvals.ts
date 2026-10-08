@@ -63,6 +63,7 @@ export async function checkNativeToolApproval(token: AgentRuntimeTokenPayload, i
     if (row.approvalReadyLease !== row.leaseToken) throw new TaskNotFoundError();
     const delegated = !!grant.parentTaskId && row.parentTaskId === grant.parentTaskId
       && grant.ancestorTaskIds.at(-1) === grant.parentTaskId;
+    const automatic = delegated || !grant.entryPolicy;
     const inputHash = nativeApprovalHash(input.toolName, input.input);
     let approval = await tx.a2AToolApproval.findUnique({ where: { taskId_leaseToken_callId: {
       taskId: row.id, leaseToken: row.leaseToken!, callId: input.callId,
@@ -78,12 +79,12 @@ export async function checkNativeToolApproval(token: AgentRuntimeTokenPayload, i
     if (approval.expiresAt <= new Date() && ['pending', 'approved'].includes(approval.status)) {
       approval = await tx.a2AToolApproval.update({ where: { id: approval.id }, data: { status: 'expired' } });
     }
-    // An authorized internal delegation grants its configured tools, not new capabilities.
+    // A2A admission authorizes configured tools; interactive entry roots still require a human.
     // Keep per-call receipts and live checks: retries cannot reuse a consumed approval.
-    if (delegated && approval.status === 'pending') {
+    if (automatic && approval.status === 'pending') {
       approval = await tx.a2AToolApproval.update({ where: { id: approval.id }, data: { status: 'approved', decidedAt: new Date() } });
       await writeAudit(tx, { actorId: grant.actorId, workspaceId: grant.workspaceId,
-        action: 'agent.a2a.delegated_tool_authorized', targetType: 'A2ATask', targetId: row.id,
+        action: delegated ? 'agent.a2a.delegated_tool_authorized' : 'agent.a2a.tool_authorized', targetType: 'A2ATask', targetId: row.id,
         changes: { parentTaskId: grant.parentTaskId, approvalId: approval.id, toolName: input.toolName, inputHash } });
     }
     let status: 'pending' | 'allow' | 'deny' = 'deny';
@@ -91,7 +92,7 @@ export async function checkNativeToolApproval(token: AgentRuntimeTokenPayload, i
       await tx.a2AToolApproval.update({ where: { id: approval.id }, data: { status: 'consumed', consumedAt: new Date() } });
       status = 'allow';
     } else if (approval.status === 'pending') status = 'pending';
-    if (created && !delegated) await recordWaiting(tx, row);
+    if (created && !automatic) await recordWaiting(tx, row);
     else await refreshTaskStorage(tx, row.id);
     return { status, approvalId: approval.id, inputHash, expiresAt: approval.expiresAt.toISOString() };
   });

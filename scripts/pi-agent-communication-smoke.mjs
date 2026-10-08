@@ -28,13 +28,13 @@ let interrupted = false;
 process.once('SIGINT', () => { interrupted = true; });
 process.once('SIGTERM', () => { interrupted = true; });
 const required = ['BASE_URL', 'WORKSPACE_SLUG', 'AGENT_A_ID', 'AGENT_B_ID', 'PERSONAL_TOKEN'];
-const help = `Real Pi communication smoke (paid models, Docker, PostgreSQL and human approvals required).
+const help = `Real Pi communication smoke (paid models, Docker and PostgreSQL required).
 Set ${required.map(key => 'TOOLPLANE_SMOKE_' + key).join(', ')}.
 Set TOOLPLANE_SMOKE_ALLOW_PROCESS_KILL=1 to authorize the required crash scenario.
 Both Agents must be disposable: name or slug starts pi-smoke-disposable-.
 Use two distinct running Docker sandboxes; authorize only A -> B.
-Approve A's root delegation call and the separate cancellation/restart tools at the printed console URLs. B's delegated tool is authorized by its parent, without a human decision.
-DENY the separate denied-write scenario. No approvals are made by this script.
+Authenticated A2A roots and delegated children authorize their configured tools without a human decision.
+Interactive chat/Work approval decisions are covered separately, not by this A2A runner.
 The crash guard checks tracked wrapper ancestry, exact host/config paths, Agent,
 task/context/operation IDs and committed SQLite settlement + assistant.effect_pending.
 If that boundary is missed, the check fails without killing another process.
@@ -102,7 +102,7 @@ async function inspectNative(input) {
   input.operationId ??= identity.operationId;
   const children = new Set(), childResults = [];
   const dbPath = root + '/' + input.contextId + '.sqlite';
-  let result = null, phase = null, settled = false, denied = false;
+  let result = null, phase = null, settled = false;
   if (fs.existsSync(dbPath)) {
     const db = new DatabaseSync(dbPath, { readOnly: true });
     try {
@@ -119,7 +119,6 @@ async function inspectNative(input) {
         .filter(part => part.type === 'toolCall' && JSON.stringify(part.arguments).includes(input.fixture)).map(part => part.id));
       const results = messages.filter(message => message?.role === 'toolResult' && calls.has(message.toolCallId));
       settled = results.some(message => !message.isError && (message.content ?? []).some(part => part.text?.includes(input.marker)));
-      denied = results.some(message => message.isError && (message.content ?? []).some(part => /denied|denial|blocked|rejected|not approved/i.test(part.text ?? '')));
       const prefix = operationToolMemoPrefix(input.operationId);
       for (const row of db.prepare('SELECT key, value FROM scalar_values WHERE session_id = ? AND namespace = ?').all(input.contextId, prefix.namespace)) {
         if (!row.key.startsWith(prefix.key)) continue;
@@ -165,7 +164,7 @@ async function inspectNative(input) {
     killed = true;
   }
   console.log(JSON.stringify({ taskId: input.taskId, contextId: input.contextId, operationId: input.operationId,
-    live: processes.length, phase, result, settled, denied, count, killed, children: [...children], childResults }));
+    live: processes.length, phase, result, settled, count, killed, children: [...children], childResults }));
 }
 
 async function main() {
@@ -322,7 +321,6 @@ async function main() {
     assert(child && child.contextId === binding.contextId && state({ status: { state: child.state } }) === 'TASK_STATE_COMPLETED' && child.markerPresent, 'CHILD_OWNED_PROJECTION_MISSING');
     return task;
   }, 'NATIVE_RECOVERY_TIMEOUT');
-  await operatorConfirmation(root.task.id, 'APPROVED');
   report('PASS same task/context/operation recovered; child count remains one; parent contains actual child output', finished);
 
   const cancelFile = '/workspace/.toolplane/pi-smoke-' + stamp + '.cancel';
@@ -334,7 +332,6 @@ async function main() {
     if (probe.operationId) cancelNode = bind(cancelNode, probe);
     return probe.count > 0 && probe.live === 1;
   }, 'CANCEL_EXECUTION_NEVER_STARTED');
-  await operatorConfirmation(cancellation.task.id, 'APPROVED');
   await clients.get(env.AGENT_B_ID).cancelTask(CancelTaskRequest.fromJSON({ id: cancellation.task.id }));
   await until(async () => {
     const task = await clients.get(env.AGENT_B_ID).getTask(GetTaskRequest.fromJSON({ id: cancellation.task.id }));
@@ -349,27 +346,6 @@ async function main() {
   assert(state(await clients.get(env.AGENT_B_ID).getTask(GetTaskRequest.fromJSON({ id: cancellation.task.id }))) === 'TASK_STATE_CANCELED', 'CANCELED_STATE_NOT_PERSISTED');
   report('PASS SDK cancel confirmed by native aborted result, absent driver and stopped filesystem effect', cancelNode);
 
-  const denyFile = '/workspace/.toolplane/pi-smoke-' + stamp + '.denied';
-  const denyMarker = 'DENIED_' + stamp;
-  const denial = await submit(env.AGENT_B_ID, `Use bash exactly once to run ${JSON.stringify(`printf '%s\n' '${denyMarker}' >> '${denyFile}'; cat '${denyFile}'`)}. The operator will DENY this request. If denied, do not retry, do not use an alternative tool, and report the refusal in detail without further tools.`);
-  let deniedNode = { id: denial.task.id, contextId: denial.task.contextId, agentId: env.AGENT_B_ID };
-  await until(async () => {
-    const probe = await native(deniedNode, denyFile, denyMarker);
-    if (!probe.operationId) return false;
-    deniedNode = bind(deniedNode, probe);
-    return true;
-  }, 'DENIAL_BINDING_NOT_OBSERVED');
-  console.log(JSON.stringify({ assertion: 'OPERATOR_DENY_REQUIRED', taskId: denial.task.id, consoleTaskUrl: consoleUrl(env.AGENT_B_ID, denial.task.id) }));
-  await operatorConfirmation(denial.task.id, 'DENIED');
-  await until(async () => {
-    const task = await clients.get(env.AGENT_B_ID).getTask(GetTaskRequest.fromJSON({ id: denial.task.id }));
-    const probe = await native(deniedNode, denyFile, denyMarker);
-    assert(probe.count === 0, 'DENIED_WRITE_EXECUTED');
-    if (!terminal(task)) return false;
-    assert(probe.denied && probe.result === 'aborted', 'NATIVE_DENIAL_REFUSAL_NOT_OBSERVED');
-    return probe.live === 0;
-  }, 'OPERATOR_DENIAL_TIMEOUT');
-  report('PASS human denial settled natively; denied write count zero', deniedNode);
   const restartFile = '/workspace/.toolplane/pi-smoke-' + stamp + '.restart';
   const restartMarker = 'RESTART_' + stamp;
   const restart = await submit(env.AGENT_B_ID, `Run bash exactly once with command ${JSON.stringify(`printf '%s\n' '${restartMarker}' >> '${restartFile}'; cat '${restartFile}'`)}. Never repeat this counted side effect, including after interruption. After the tool returns, produce at least 4000 words about safe recovery without any further tools, then finish with ${restartMarker}. The operator will restart the platform during your response.`);
@@ -416,15 +392,12 @@ async function main() {
     return true;
   }, 'PLATFORM_RESTART_RECOVERY_TIMEOUT');
   await operatorConfirmation(restartNode.id, 'RESTARTED');
-  await operatorConfirmation(restartNode.id, 'APPROVED');
   const canceledAfterRestart = await native(cancelNode, cancelFile, cancelMarker);
   assert(canceledAfterRestart.result === 'aborted' && canceledAfterRestart.live === 0 && canceledAfterRestart.count === stopped.count
     && state(await clients.get(env.AGENT_B_ID).getTask(GetTaskRequest.fromJSON({ id: cancelNode.id }))) === 'TASK_STATE_CANCELED', 'CANCELED_TASK_REVIVED_AFTER_RESTART');
-  const deniedAfterRestart = await native(deniedNode, denyFile, denyMarker);
-  assert(deniedAfterRestart.result === 'aborted' && deniedAfterRestart.denied && deniedAfterRestart.live === 0 && deniedAfterRestart.count === 0, 'DENIED_TASK_REVIVED_AFTER_RESTART');
-  report('PASS operator-assisted platform restart recovered same task/context/operation with count one; cancellation and denial remain aborted', restartNode);
+  report('PASS operator-assisted platform restart recovered same task/context/operation with count one; cancellation remains aborted', restartNode);
   report('NOT_RUN remote HTTPS and other-account authorization scenarios; no claim of remote exactly-once');
-  report('PASS real-model SDK inbound, delegation, scoped process crash recovery, cancellation, approval denial and operator-assisted platform restart');
+  report('PASS real-model SDK inbound without human approval, delegation, scoped process crash recovery, cancellation and operator-assisted platform restart');
 }
 
 main().catch(async error => {

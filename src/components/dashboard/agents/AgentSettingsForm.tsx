@@ -1,12 +1,13 @@
 'use client';
 import { AnimatedBadge } from '@/components/motion/animated-badge';
-import { Button } from '@/components/motion/button/base';
+import { Button, ButtonLink } from '@/components/motion/button/base';
 import { Input } from '@/components/motion/input';
 import { FormSelect } from '@/components/ui/FormSelect';
 
 import { useLocale, useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
-import { useActionState, useEffect, useMemo, useRef, useState, type FocusEvent } from 'react';
+import { useActionState, useEffect, useMemo, useRef, useState } from 'react';
+import type { FocusEvent } from 'react';
 import {
   Blocks,
   Bot,
@@ -32,8 +33,8 @@ import {
   upgradeHermesRuntimeAction,
   updateAgentRuntimeEnvAction,
   updateAgentAction,
-  type ActionState,
 } from '@/lib/agents/actions';
+import type { ActionState } from '@/lib/agents/actions';
 import { AGENT_STEP_BOUNDS } from '@/lib/agents/constants';
 import {
   agentRuntimeBuiltinToolGroups,
@@ -43,15 +44,11 @@ import {
   isDedicatedSandboxRuntimeKind,
 } from '@/lib/agents/runtime-kind';
 import { formatInTimeZone } from '@/lib/timezone';
-import {
-  AgentResourceSelect,
-  type AgentResourceOption,
-} from '@/components/dashboard/agents/AgentResourceSelect';
+import { AgentResourceSelect } from '@/components/dashboard/agents/AgentResourceSelect';
+import type { AgentResourceOption } from '@/components/dashboard/agents/AgentResourceSelect';
 import { HermesImageSelector } from '@/components/dashboard/agents/HermesImageSelector';
-import {
-  ModelPicker,
-  type ModelProviderOption,
-} from '@/components/dashboard/models/ModelPicker';
+import { ModelPicker } from '@/components/dashboard/models/ModelPicker';
+import type { ModelProviderOption } from '@/components/dashboard/models/ModelPicker';
 import { useUserTimeZone } from '@/components/timezone/UserTimeZoneContext';
 
 import { AgentBuiltInTools } from '@/components/dashboard/agents/AgentBuiltInTools';
@@ -59,7 +56,18 @@ import { AgentSystemPromptEditor } from '@/components/dashboard/agents/AgentSyst
 
 type Provider = ModelProviderOption & { format: string };
 type SaveStatus = 'idle' | 'dirty';
-export type AgentSettingsSection = 'general' | 'instructions' | 'builtInTools' | 'mcp' | 'skills' | 'toolkits' | 'sandboxes' | 'subAgents' | 'advanced';
+export type AgentSettingsSection = 'general' | 'instructions' | 'builtInTools' | 'mcp' | 'skills' | 'toolkits' | 'piPackages' | 'sandboxes' | 'subAgents' | 'advanced';
+
+export type AgentPiPackageOption = {
+  marketInstallId: string;
+  name: string;
+  currentReleaseId: string | null;
+  currentVersion: number | null;
+  currentAvailable: boolean;
+  enabledReleaseId: string | null;
+  enabledVersion: number | null;
+  enabledAvailable: boolean;
+};
 
 function checkedIds(options: AgentResourceOption[]) {
   return new Set(options.filter((option) => option.checked).map((option) => option.id));
@@ -82,6 +90,7 @@ export function AgentSettingsForm({
   deployments,
   skills,
   toolkits,
+  piPackages = [],
   defaultSandboxId = null,
   runtimeSandboxId = null,
   runtimeEnvironment,
@@ -110,6 +119,7 @@ export function AgentSettingsForm({
   deployments: AgentResourceOption[];
   skills: AgentResourceOption[];
   toolkits: AgentResourceOption[];
+  piPackages?: AgentPiPackageOption[];
   defaultSandboxId?: string | null;
   runtimeSandboxId?: string | null;
   runtimeEnvironment?: string;
@@ -168,6 +178,9 @@ export function AgentSettingsForm({
   const [selectedDeploymentIds, setSelectedDeploymentIds] = useState(() => checkedIds(deployments));
   const [selectedSkillIds, setSelectedSkillIds] = useState(() => checkedIds(skills));
   const [selectedToolkitIds, setSelectedToolkitIds] = useState(() => checkedIds(toolkits));
+  const [selectedPiPackages, setSelectedPiPackages] = useState(() => piPackages.flatMap((pkg) => (
+    pkg.enabledReleaseId ? [{ marketInstallId: pkg.marketInstallId, releaseId: pkg.enabledReleaseId }] : []
+  )));
   const [selectedSandboxIds, setSelectedSandboxIds] = useState(() => {
     const selected = checkedIds(sandboxes);
     return singleSandboxRuntime
@@ -231,6 +244,7 @@ export function AgentSettingsForm({
         { id: 'mcp', label: t('mcp'), count: selectedDeploymentIds.size, icon: Server },
         { id: 'skills', label: t('skills'), count: selectedSkillIds.size, icon: PackageCheck },
         { id: 'toolkits', label: t('toolkits'), count: selectedToolkitIds.size, icon: Blocks },
+        { id: 'piPackages', label: t('piPackages'), count: selectedPiPackages.length, icon: PackageCheck },
         { id: 'sandboxes', label: t('sandboxes'), count: selectedSandboxIds.size, icon: Box },
         { id: 'subAgents', label: t('subAgents'), count: selectedSubAgentIds.size, icon: Users },
       ],
@@ -340,6 +354,7 @@ export function AgentSettingsForm({
     >
       <input type="hidden" name="workspace" value={slug} />
       <input type="hidden" name="agentId" value={agentId} />
+      {runtimeKind === 'pi-sdk' ? <input type="hidden" name="piPackages" value={JSON.stringify(selectedPiPackages)} /> : null}
 
       <div className={showNavigation
         ? 'overflow-hidden rounded-xl border border-border bg-background lg:grid lg:grid-cols-[11.5rem_minmax(0,1fr)]'
@@ -385,7 +400,9 @@ export function AgentSettingsForm({
           </header>
           {state.error ? (
             <p role="alert" className="text-sm text-destructive">
-              {state.error}
+              {state.error === 'PI_PACKAGE_MCP_BINDING_REQUIRED' ? t('piPackageMcpBindingRequired') : state.error.startsWith('pi_package')
+                ? t(`piPackageErrors.${['pi_package_agent_busy', 'pi_package_release_not_current', 'pi_packages_runtime_unsupported', 'pi_packages_invalid'].includes(state.error) ? state.error : 'unavailable'}`)
+                : state.error}
             </p>
           ) : null}
       <section hidden={activeSection !== 'general'} aria-label={t('basic')}>
@@ -415,6 +432,7 @@ export function AgentSettingsForm({
               ) : null}
             </div>
           </div>
+          {runtimeKind === 'pi-sdk' ? <p className="text-xs leading-5 text-muted-foreground">{t('piSdkRuntimeDescription')} {t('piSdkUnsupportedEntrypoints')}</p> : null}
         </div>
       </section>
 
@@ -641,6 +659,45 @@ export function AgentSettingsForm({
         />
       </section>
 
+      <section hidden={activeSection !== 'piPackages'} aria-label={t('piPackages')} className="space-y-4">
+        {runtimeKind !== 'pi-sdk' ? <>
+          <p className="text-sm text-muted-foreground">{t('piPackagesIncompatible')}</p>
+          <ButtonLink href={`/app/${encodeURIComponent(slug)}/agents?create=1&runtime=pi-sdk`} variant="secondary" size="sm">{t('createPiSdkAgent')}</ButtonLink>
+        </> : <>
+          <div className="space-y-2 rounded-lg border border-border p-3 text-xs leading-5 text-muted-foreground">
+            <p>{t('piPackageSecurity')}</p>
+            <p>{t('piPackageHeadless')}</p>
+            <p>{t('piPackagesNewSession')}</p>
+            <p>{t('piPackagesBusyHelp')}</p>
+            <p>{t('piPackageMcpBindingRequired')}</p>
+          </div>
+          {!piPackages.length ? <p className="text-sm text-muted-foreground">{t('piPackagesEmpty')}</p> : null}
+          {piPackages.map((pkg) => {
+            const selected = selectedPiPackages.find((entry) => entry.marketInstallId === pkg.marketInstallId);
+            const usingWorkspaceVersion = selected?.releaseId === pkg.currentReleaseId;
+            return <div key={pkg.marketInstallId} className="space-y-2 rounded-lg border border-border p-3">
+              <label className="flex items-start gap-3 text-sm font-medium">
+                <input type="checkbox" className="mt-1 size-4 accent-foreground" checked={Boolean(selected)} disabled={isPending || (!selected && (!pkg.currentAvailable || selectedPiPackages.length >= 16))} onChange={(event) => {
+                  setSelectedPiPackages((current) => event.target.checked && pkg.currentReleaseId
+                    ? [...current, { marketInstallId: pkg.marketInstallId, releaseId: pkg.currentReleaseId }]
+                    : current.filter((entry) => entry.marketInstallId !== pkg.marketInstallId));
+                }} />
+                {pkg.name}
+              </label>
+              <p className="text-xs text-muted-foreground">{t('piPackageWorkspaceVersion', { version: pkg.currentVersion ?? '—' })}</p>
+              <p className="text-xs text-muted-foreground">{selected ? t('piPackageEnabledVersion', { version: (usingWorkspaceVersion ? pkg.currentVersion : pkg.enabledVersion) ?? '—' }) : t('piPackageNotEnabled')}</p>
+              {(!pkg.currentAvailable || (selected && !usingWorkspaceVersion && !pkg.enabledAvailable)) ? <p role="status" className="text-xs text-destructive">{t('piPackageUnavailable')}</p> : null}
+              <ButtonLink href={`/app/${encodeURIComponent(slug)}/market/installed/${encodeURIComponent(pkg.marketInstallId)}/clients#workspace-bindings`} variant="ghost" size="sm">{t('piPackageMcpBindings')}</ButtonLink>
+              {selected && !usingWorkspaceVersion && pkg.currentAvailable && pkg.currentReleaseId ? <Button type="button" variant="secondary" size="sm" disabled={isPending} onClick={() => {
+                setSelectedPiPackages((current) => current.map((entry) => entry.marketInstallId === pkg.marketInstallId ? { ...entry, releaseId: pkg.currentReleaseId! } : entry));
+                scheduleAutoSave();
+              }}>{t('piPackageApplyWorkspaceVersion')}</Button> : null}
+            </div>;
+          })}
+          <ButtonLink href={`/app/${encodeURIComponent(slug)}/market/pi-packages`} variant="secondary" size="sm">{t('browsePiPackages')}</ButtonLink>
+        </>}
+      </section>
+
       <section hidden={activeSection !== 'sandboxes'} aria-label={t('sandboxes')}>
         <AgentResourceSelect
           icon={Box}
@@ -661,7 +718,7 @@ export function AgentSettingsForm({
             <FormSelect name="defaultSandboxId" value={selectedDefaultSandboxId} label={"Default Work sandbox"} options={[[...selectedSandboxIds].map((id) => ({ value: id, label: sandboxOptions.find((item) => item.id === id)?.label ?? id }))].flat().filter((option) => option != null)} onValueChange={(value) => { setSelectedDefaultSandboxId(value); scheduleAutoSave(); }} className="w-full" />
           </div>
         ) : null}
-        {!isHermes ? <p className="mt-3 text-xs leading-5 text-muted-foreground">{t('nativeHarnessSandboxHelp')}</p> : null}
+        {!isHermes ? <p className="mt-3 text-xs leading-5 text-muted-foreground">{t(runtimeKind === 'pi-sdk' ? 'piSdkRuntimeDescription' : 'nativeHarnessSandboxHelp')}</p> : null}
       </section>
 
       <section hidden={activeSection !== 'subAgents'} aria-label={t('subAgents')}>

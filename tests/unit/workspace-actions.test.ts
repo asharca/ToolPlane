@@ -95,6 +95,7 @@ vi.mock('@/lib/workspace/teardown', () => ({ killWorkspaceProcesses: vi.fn() }))
 vi.mock('next/cache', () => ({ revalidatePath: mocks.revalidatePath }));
 vi.mock('next/navigation', () => ({ redirect: mocks.redirect }));
 
+import { getLogContext, type LogContext } from '@/lib/observability/context';
 import {
   deployServerAction,
   deployCustomServerAction,
@@ -432,7 +433,7 @@ describe('removeDeploymentAction', () => {
       expect.objectContaining({ awaitReady: false, workspaceId: 'ws1', onReady: expect.any(Function) }),
     );
     expect(mocks.redirect).toHaveBeenCalledWith(
-      '/app/mine/mcp/dep1?tab=logs#runtime-logs',
+      '/app/mine/mcp/dep1?tab=runtime#runtime-logs',
     );
     expect(mocks.redirect).toHaveBeenCalledTimes(1);
   });
@@ -453,7 +454,7 @@ describe('removeDeploymentAction', () => {
       expect.objectContaining({ awaitReady: false, workspaceId: 'ws1', onReady: expect.any(Function) }),
     );
     expect(mocks.redirect).toHaveBeenCalledWith(
-      '/app/mine/mcp/dep1?tab=logs#runtime-logs',
+      '/app/mine/mcp/dep1?tab=runtime#runtime-logs',
     );
     expect(mocks.redirect).toHaveBeenCalledTimes(1);
   });
@@ -1946,24 +1947,20 @@ describe('runMcpConsoleToolAction', () => {
       workspaceId: 'ws1',
       deploymentId: 'dep1',
       path: '/mcp/dep1/rpc#tools/call:write',
+      requestBody: JSON.stringify({ method: 'tools/call', params: { name: 'write', arguments: { value: 'x' } } }),
     }));
   });
 
-  it('keeps marketplace remote MCPs behind an explicit inspector sandbox', async () => {
-    mocks.deploymentFindFirst.mockResolvedValue({
-      id: 'dep1',
-      source: 'remote',
-      marketInstall: null,
-      toolkitLinks: [{ toolkitId: 'market-toolkit-1' }],
-      installCfg: {},
-    });
-
+  it.each([
+    { marketInstall: { id: 'market-install-1' }, toolkitLinks: [] },
+    { marketInstall: null, toolkitLinks: [{ toolkitId: 'market-toolkit-1' }] },
+  ])('runs installed marketplace remote MCPs on their own runtime: %j', async (provenance) => {
+    mocks.deploymentFindFirst.mockResolvedValue({ id: 'dep1', source: 'remote', installCfg: {}, ...provenance });
     await expect(runMcpConsoleToolAction({
       workspace: 'mine', deploymentId: 'dep1', toolName: 'read', arguments: {},
-    })).resolves.toEqual({ error: 'sandboxRequired' });
-
-    expect(mocks.listMcpTools).not.toHaveBeenCalled();
-    expect(mocks.mcpRpc).not.toHaveBeenCalled();
+    })).resolves.toEqual({ result: { content: [{ type: 'text', text: 'ok' }] } });
+    expect(mocks.mcpRpc).toHaveBeenCalledWith('dep1', 'tools/call', { name: 'read', arguments: {} }, 65_000,
+      { maxRequestBytes: 16_000, maxResponseBytes: 1_000_000 });
   });
 
   it('redacts managed remote credentials from direct tool results and logs', async () => {
@@ -2037,5 +2034,34 @@ describe('runMcpConsoleToolAction', () => {
     })).resolves.toEqual({ error: 'invalidToolCall' });
 
     expect(mocks.mcpRpc).not.toHaveBeenCalled();
+    mocks.deploymentFindFirst.mockResolvedValueOnce(null);
+    await expect(runMcpConsoleToolAction({
+      workspace: 'mine', deploymentId: 'foreign', toolName: 'read', arguments: {},
+    })).resolves.toEqual({ error: 'deploymentNotFound' });
+    expect(mocks.deploymentFindFirst).toHaveBeenLastCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: 'foreign', workspaceId: 'ws1' }),
+    }));
+    expect(mocks.mcpRpc).not.toHaveBeenCalled();
+  });
+
+  it('returns a clean discovery error and never calls a tool after failed discovery', async () => {
+    mocks.deploymentFindFirst.mockResolvedValue({ id: 'dep1', source: 'docker' });
+    mocks.listMcpTools.mockRejectedValueOnce(new Error('private transport error'));
+    await expect(runMcpConsoleToolAction({ workspace: 'mine', deploymentId: 'dep1', toolName: 'read', arguments: {} }))
+      .resolves.toEqual({ error: 'toolDiscoveryFailed' });
+    expect(mocks.mcpRpc).not.toHaveBeenCalled();
+  });
+
+  it('correlates gateway and runtime logs without fabricating an unreachable upstream response', async () => {
+    mocks.deploymentFindFirst.mockResolvedValue({ id: 'dep1', source: 'docker' });
+    let rpcContext: LogContext | undefined;
+    mocks.mcpRpc.mockImplementationOnce(async () => { rpcContext = getLogContext(); return null; });
+    mocks.logRequest.mockImplementationOnce(async () => {
+      expect(getLogContext()).toMatchObject({ requestId: rpcContext?.requestId, workspaceId: 'ws1', deploymentId: 'dep1' });
+    });
+    await expect(runMcpConsoleToolAction({ workspace: 'mine', deploymentId: 'dep1', toolName: 'read', arguments: {} }))
+      .resolves.toEqual({ error: 'toolCallFailed' });
+    expect(rpcContext?.requestId).toEqual(expect.any(String));
+    expect(mocks.logRequest).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 502, responseBody: undefined }));
   });
 });

@@ -35,12 +35,12 @@ import { sshTargetIdFromConfig } from '@/lib/sandboxes/ssh-targets';
 import { SshSandboxCreate } from '@/components/dashboard/sandboxes/SshSandboxCreate';
 import { SandboxCreateForm } from '@/components/dashboard/sandboxes/SandboxCreateForm';
 import { SandboxConnectorStatus } from '@/components/dashboard/sandboxes/SandboxConnectorStatus';
+import { SandboxBatchTable } from '@/components/dashboard/sandboxes/SandboxBatchTable';
 import { HermesRuntimeDialogLauncher } from '@/components/dashboard/agents/HermesRuntimeDialog';
 import {
   DashboardEmptyState,
   DashboardPage,
   DashboardSection,
-  DashboardTable,
   DashboardToolbar,
 } from '@/components/dashboard/DashboardUI';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
@@ -305,7 +305,7 @@ export default async function SandboxesPage({
               description={t('createALinuxSandboxThenAttachItToAnAgentFromTheAgentSettingsPage')}
             />
           ) : (
-            <DashboardTable
+            <SandboxBatchTable key={scope} workspace={slug}
               minWidth="68rem"
               headers={[
                 { label: t('sandbox') },
@@ -325,7 +325,7 @@ export default async function SandboxesPage({
                   const lifecycleBlocked = LIFECYCLE_BLOCKED_STATUSES.has(status);
                   const imported = isImportedHermesArchive(runtime.sandbox.config);
                   return (
-                    { id: runtime.id, cells: [<div className="min-w-0">
+                    { id: runtime.sandbox.id, name: runtime.sandbox.name, batchEligible: !lifecycleBlocked && status !== 'provisioning', cells: [<div className="min-w-0">
                         <div className="flex items-center gap-2.5">
                           <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted/35 text-(--color-warning) dark:text-(--color-warning)">
                             <Container className="size-4" />
@@ -410,7 +410,7 @@ export default async function SandboxesPage({
                 const disabledLegacy = s.kind === 'host' || (s.kind === 'ssh' && !sshTargetIdFromConfig(s.config)) || (s.kind === 'connector' && !connector);
                 const agent = s.agentLinks[0]?.agent;
                 return (
-                  { id: s.id, cells: [<div className="min-w-0">
+                  { id: s.id, name: s.name, batchEligible: !disabledLegacy && !lifecycleBlocked && status !== 'provisioning', cells: [<div className="min-w-0">
                       <Link
                         href={`/app/${slug}/sandboxes/${s.id}`}
                         className="block px-4 py-3 transition-colors hover:bg-muted/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"

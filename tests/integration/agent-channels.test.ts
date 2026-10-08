@@ -8,7 +8,7 @@ import { textArtifact } from '@/lib/a2a/model';
 import { db } from '@/lib/db';
 import { GET, POST } from '@/app/api/v1/workspaces/[slug]/agent-channels/route';
 import { createAgentChannelConnection, decryptChannelCredentials } from '@/lib/agents/channel-connections';
-import { runAgentChannelMessage } from '@/lib/agents/message-service';
+import { runAgentChannelMessage, runWorkspaceAgentMessage } from '@/lib/agents/message-service';
 import { liveAgentChannelStatus, startAgentChannelRunner, stopAgentChannelRunner } from '@/lib/agents/channel-runtime';
 import { runDedicatedSandboxTurn } from '@/lib/agents/sandbox-turn';
 import { runNativeAgent } from '@/lib/agents/native';
@@ -73,6 +73,7 @@ afterEach(() => {
   vi.mocked(runDedicatedSandboxTurn).mockReset().mockResolvedValue('Channel reply');
 });
 afterAll(async () => {
+  await db.logEvent.deleteMany({ where: { workspaceId: { in: [workspace.id, other.id] } } });
   await db.workspace.deleteMany({ where: { id: { in: [workspace.id, other.id] } } });
   await db.user.delete({ where: { id: identity.user!.id } });
   await db.$disconnect();
@@ -97,8 +98,8 @@ async function enableNativeAgent(id: string, sandboxId?: string) {
 async function nativeBinding(conversationId: string) {
   return db.a2AEntryBinding.findFirstOrThrow({ where: { kind: 'channel', sourceId: conversationId }, include: { lastTask: true, context: true } });
 }
-async function piCommandChannel() {
-  const agent = await db.agent.create({ data: { workspaceId: workspace.id, slug: `pi-commands-${randomUUID()}`, name: 'Pi commands', runtimeKind: 'pi', providerId, model: 'test' } });
+async function piCommandChannel(runtimeKind: 'pi' | 'pi-sdk' = 'pi') {
+  const agent = await db.agent.create({ data: { workspaceId: workspace.id, slug: `pi-commands-${randomUUID()}`, name: 'Pi commands', runtimeKind, providerId, model: 'test' } });
   await enableNativeAgent(agent.id);
   const channel = (await createAgentChannelConnection({ workspaceId: workspace.id, agentId: agent.id, platform: 'weixin', name: 'Pi commands', credentials: {} })).connection!;
   await db.agentChannelConnection.update({ where: { id: channel.id }, data: { status: 'running', a2aActorId: identity.user!.id } });
@@ -108,6 +109,51 @@ async function piCommandChannel() {
 }
 
 describe('workspace channels', () => {
+  it('keeps SDK control-message slash input executable instead of wrapping it in messaging context', async () => {
+    const agent = await db.agent.create({ data: { workspaceId: workspace.id, slug: `sdk-control-${randomUUID()}`, name: 'SDK control', runtimeKind: 'pi-sdk', providerId, model: 'test' } });
+    await enableNativeAgent(agent.id);
+    const result = await runWorkspaceAgentMessage({ workspaceId: workspace.id, agentId: agent.id, userId: identity.user!.id,
+      rawBody: { message: '/Review:1 Keep Case', source: { platform: 'mcp', chatId: 'control-client', messageId: randomUUID() } } });
+    expect(result.status).toBe(200);
+    if (!('conversationId' in result.body)) throw new Error('Missing SDK control conversation');
+    const binding = await db.a2AEntryBinding.findFirstOrThrow({ where: { kind: 'control', sourceId: result.body.conversationId }, include: { lastTask: true } });
+    const task = Task.fromJSON(binding.lastTask.snapshot);
+    expect(task.history[0]?.parts[0]?.content).toEqual({ $case: 'text', value: '/Review:1 Keep Case' });
+  });
+
+  it('admits first SDK slash commands through channel policy and retains the native context until /new', async () => {
+    const { agent, channel, run } = await piCommandChannel('pi-sdk');
+    const first = await run('/Review:1 Keep Case');
+    expect(first.status).toBe(200);
+    if (!('conversationId' in first.body)) throw new Error('Missing SDK conversation');
+    const conversationId = first.body.conversationId;
+    const firstBinding = await nativeBinding(conversationId);
+    expect(firstBinding.lastTask.executionBackend).toBe('legacy');
+    const messages = await db.message.findMany({ where: { conversationId }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] });
+    expect(messages[0]).toMatchObject({ role: 'user', parts: [{ type: 'text', text: '/Review:1 Keep Case' }] });
+
+    await run('/AnotherCommand');
+    const secondBinding = await nativeBinding(conversationId);
+    expect(secondBinding.contextId).toBe(firstBinding.contextId);
+    expect(secondBinding.lastTaskId).not.toBe(firstBinding.lastTaskId);
+    await db.a2ATask.update({ where: { id: secondBinding.lastTaskId }, data: { state: TaskState.TASK_STATE_WORKING } });
+    expect((await run('/Review:1')).body).toMatchObject({ message: expect.stringContaining('busy') });
+    expect((await nativeBinding(conversationId)).lastTaskId).toBe(secondBinding.lastTaskId);
+    await db.a2ATask.update({ where: { id: secondBinding.lastTaskId }, data: { state: TaskState.TASK_STATE_COMPLETED } });
+
+    const reset = await run('/new');
+    if (!('conversationId' in reset.body)) throw new Error('Missing reset SDK conversation');
+    expect(reset.body.conversationId).not.toBe(conversationId);
+    expect(await db.a2AEntryBinding.count({ where: { sourceId: reset.body.conversationId } })).toBe(0);
+    await run('/Review:1');
+    expect((await nativeBinding(reset.body.conversationId)).contextId).not.toBe(firstBinding.contextId);
+
+    await db.agentChannelConnection.update({ where: { id: channel.id }, data: { a2aActorId: null } });
+    const taskCount = await db.a2ATask.count({ where: { context: { agentId: agent.id } } });
+    expect((await run('/Review:1')).status).toBe(409);
+    expect(await db.a2ATask.count({ where: { context: { agentId: agent.id } } })).toBe(taskCount);
+  });
+
   it('compacts a Pi channel in its existing native context and persists command and usage metadata', async () => {
     const { agent, run } = await piCommandChannel();
     const first = await run('Remember the agreed requirements.');

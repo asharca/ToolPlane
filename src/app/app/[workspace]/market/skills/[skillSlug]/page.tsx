@@ -20,6 +20,7 @@ import {
   MarketDetailShell,
 } from '@/components/dashboard/market/MarketDetailShell';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
+import { SkillMarkdownViewer } from '@/components/dashboard/SkillMarkdownViewer';
 
 export const dynamic = 'force-dynamic';
 
@@ -54,6 +55,36 @@ export default async function SkillMarketDetailPage({
         title={skill.name}
         publisher={t('publishedBy', { name: skill.author ?? t('unknownPublisher') })}
         summary={skill.description ?? t('noDescription')}
+        actions={(
+          <section className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-muted/35 p-3">
+            <div className="flex items-start gap-2.5">
+              {skill.installId ? (
+                <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-(--color-success)" />
+              ) : (
+                <ShieldCheck className="mt-0.5 size-5 shrink-0 text-foreground" />
+              )}
+              <div>
+                <h2 className="text-sm font-semibold text-foreground">
+                  {skill.installId ? t('alreadyAddedTitle') : t('readyToDeploy')}
+                </h2>
+                <p className="mt-1 text-sm leading-6 text-muted-foreground">{t('skillContentDescription')}</p>
+              </div>
+            </div>
+            {skill.installId ? (
+              <ButtonLink href={`/app/${encodeURIComponent(slug)}/skills/${encodeURIComponent(skill.installId)}`} variant="primary" size="md">
+                {t('manageSkill')} <ArrowRight className="size-4" />
+              </ButtonLink>
+            ) : (
+              <form action={installSkillAction}>
+                <input type="hidden" name="workspace" value={slug} />
+                <input type="hidden" name="skillId" value={skill.id} />
+                <SubmitButton pendingLabel={t('installing')} flash={false} variant="primary" size="md">
+                  {t('installToWorkspace')} <ArrowRight className="size-4" />
+                </SubmitButton>
+              </form>
+            )}
+          </section>
+        )}
         facts={[
           { label: t('popularity'), value: skill.score.toLocaleString(locale) },
           { label: t('bundledFilesLabel'), value: fileCount },
@@ -74,36 +105,7 @@ export default async function SkillMarketDetailPage({
           { href: '#overview', label: t('overview') },
           { href: '#capabilities', label: t('capabilities') },
         ]}
-        aside={(
-          <section className="rounded-lg bg-muted/35 p-5">
-            <div className="flex items-start gap-2.5">
-              {skill.installId ? (
-                <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-(--color-success)" />
-              ) : (
-                <ShieldCheck className="mt-0.5 size-5 shrink-0 text-foreground" />
-              )}
-              <div>
-                <h2 className="text-sm font-semibold text-foreground">
-                  {skill.installId ? t('alreadyAddedTitle') : t('readyToDeploy')}
-                </h2>
-                <p className="mt-1 text-sm leading-6 text-muted-foreground">{t('skillContentDescription')}</p>
-              </div>
-            </div>
-            {skill.installId ? (
-              <ButtonLink href={`/app/${encodeURIComponent(slug)}/skills/${encodeURIComponent(skill.installId)}`} variant="primary" size="md" className="mt-5 w-full">
-                {t('manageSkill')} <ArrowRight className="size-4" />
-              </ButtonLink>
-            ) : (
-              <form action={installSkillAction} className="mt-5">
-                <input type="hidden" name="workspace" value={slug} />
-                <input type="hidden" name="skillId" value={skill.id} />
-                <SubmitButton pendingLabel={t('installing')} flash={false} variant="primary" size="md" className="w-full">
-                  {t('installToWorkspace')} <ArrowRight className="size-4" />
-                </SubmitButton>
-              </form>
-            )}
-          </section>
-        )}
+        aside={null}
       >
         <section id="overview" className="scroll-mt-24">
           <div className="flex items-center gap-2.5">
@@ -112,7 +114,7 @@ export default async function SkillMarketDetailPage({
           </div>
           <p className="mt-2 text-sm leading-6 text-muted-foreground">{t('skillContentDescription')}</p>
           {skill.content ? (
-            <pre className="mt-4 max-h-[42rem] overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/35 p-5 font-mono text-xs leading-6 text-foreground">{skill.content}</pre>
+            <SkillMarkdownViewer markdown={skill.content} />
           ) : (
             <p className="mt-4 text-sm text-muted-foreground">{t('noSkillContent')}</p>
           )}

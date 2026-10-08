@@ -16,7 +16,7 @@ export function AccountMenu({ userLabel, workspaceSlug, returnTo, compact = fals
   const [open, setOpen] = useState(false);
   return <Popover open={open} onOpenChange={setOpen} side="top" align="start" className="w-full">
     <Tooltip content={`${t('account')}: ${userLabel}`} open={compact ? undefined : false} side="right" wrapperClassName="flex w-full">
-    <PopoverTrigger><button type="button" aria-label="账户菜单" className="flex h-9 w-full items-center gap-2 overflow-hidden rounded-lg px-1 py-1 text-left outline-none transition-colors hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring">
+    <PopoverTrigger><button type="button" aria-label="账户菜单" className="flex h-9 w-full items-center gap-2 overflow-hidden rounded-lg bg-secondary px-1 py-1 text-left outline-none transition-colors hover:bg-secondary/80 focus-visible:ring-2 focus-visible:ring-ring">
       <span className="grid size-7 shrink-0 place-items-center rounded-full bg-[#d5ff66] text-[11px] font-semibold text-[#172000]">{workspaceInitials(userLabel)}</span>
       {!compact && <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">{userLabel}</span>}
     </button></PopoverTrigger>

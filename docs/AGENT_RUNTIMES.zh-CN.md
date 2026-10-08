@@ -92,6 +92,19 @@ CC 的兼容网关不是“完整实现所有 Anthropic API”的承诺；兼容
 
 [`native-runtime-session.mjs`](../scripts/native-runtime-session.mjs) 为 Pi 使用 `SessionManager` 进行首次历史导入，随后由 CLI 维护 JSONL 会话。原生压缩后不重新导入完整平台历史。`--offline` / `PI_OFFLINE` 不意味着无需网络：首次包安装以及模型、MCP 代理请求仍需要可达的网络路径。
 
+### 独立 Pi SDK 宿主
+
+`pi-sdk` 通过 [`pi-sdk-session.mjs`](../scripts/pi-sdk-session.mjs) 使用官方
+0.87.1 AgentSession，不替换已有 Pi Harness 或旧 CLI 协议。审核快照包含运行依赖，
+启动不安装市场包。执行和 reload 前复核完整字节及链接；篡改返回
+`PI_PACKAGE_CHECKSUM_MISMATCH`，本轮不继续执行。
+
+SDK JSONL 会话独立于 Harness 检查点；私有状态文件跟踪 new/fork/switch 后的真实
+会话文件。已持久化文件丢失，或尚未落盘的活宿主丢失，返回
+`PI_SDK_SESSION_MISSING`；包集合变化要求新建会话。命令保留上游大小写和冲突后缀，
+终端 UI 不映射成 Web UI。扩展可在 Agent 沙箱内直接使用 Node、文件和网络，
+工具审批不等于任意代码隔离。
+
 ## 6. Claude Code：stream-json、Skill 插件与会话恢复
 
 `runClaudeCode()` 使用 `buildClaudeRuntimeArgs()` 生成 `--bare --print --verbose --output-format stream-json` 等参数；持久会话还启用 `--input-format stream-json`，无会话模式则使用 `--no-session-persistence`。系统提示词使用 `--append-system-prompt`，所选 Skill 使用显式 `--plugin-dir`。

@@ -23,7 +23,7 @@ export const PI_COLLABORATION_INSTRUCTIONS = `You are executing a durable ToolPl
 Use a2a_peers to discover authorized targets, a2a_call to delegate and wait, a2a_status to observe, and a2a_cancel to request cancellation.
 Targets are agent:<id> or remote:<id>. Only explicitly authorized targets are available.
 A2A cancellation is not confirmed until the task reports a terminal state. Never expose credentials or assume shared files.
-Native tool calls require a human decision. A denied operation must not be rewritten to evade approval.
+Native tool calls are authorized by the platform under the task's existing permissions. A denied operation must not be rewritten to evade authorization.
 An interrupted unsafe tool has an uncertain result; never claim it succeeded or repeat it blindly.`;
 
 const terminalStates: Record<PiHarnessOperationResult['status'], TaskState> = {

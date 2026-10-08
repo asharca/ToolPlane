@@ -5,7 +5,7 @@ import { useTranslations } from 'next-intl';
 import { Loader2, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/motion/button/base';
 import { Input } from '@/components/motion/input';
-import { FormCheckbox } from '@/components/ui/FormCheckbox';
+import { DashboardTable } from '@/components/dashboard/DashboardTable';
 import { checkPiRuntimesAction, updatePiRuntimesAction } from '@/lib/agents/actions';
 import type { PiRuntimeManagementState } from '@/lib/agents/actions';
 
@@ -71,15 +71,7 @@ export function PiRuntimeManagement({ slug }: { slug: string }) {
           {busy && operation === 'check' ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
           {t('piCheckUpdates')}
         </Button>
-        <Button type="button" size="sm" disabled={busy || !selectedAgents.length || current} onClick={() => run('latest')} aria-busy={pending && operation === 'update'}>
-          {pending && operation === 'update' ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
-          {pending && operation === 'update' ? t('piUpdating') : current ? t('piUpToDate') : t('piUpdateLatest')}
-        </Button>
       </div>
-      <form className="space-y-3 border-t border-border pt-5" onSubmit={(event) => { event.preventDefault(); if (!busy && selectedAgents.length && version.trim()) run(version.trim()); }}>
-        <Input label={t('piTargetVersion')} value={version} onChange={setVersion} maxLength={80} placeholder="0.80.3" disabled={busy} />
-        <Button type="submit" variant="secondary" size="sm" disabled={busy || !selectedAgents.length || !version.trim()}>{t('piInstallVersion')}</Button>
-      </form>
       <div aria-live="polite" className="space-y-2 text-xs leading-5">
         {state?.error ? <p role="alert" className="text-destructive">{state.error}</p> : null}
         {state?.warning ? <p className="text-muted-foreground">{state.warning}</p> : null}
@@ -89,35 +81,25 @@ export function PiRuntimeManagement({ slug }: { slug: string }) {
         })}</p> : null}
       </div>
       {agents.length ? (
-        <div className="space-y-3">
-          <div className="flex flex-wrap items-center gap-4 text-xs">
-            <FormCheckbox label={t('piSelectAll')} checked={selectedAgents.length === agents.length} disabled={busy}
-              onCheckedChange={(checked) => setSelectedIds(new Set(checked ? agents.map((agent) => agent.agentId) : []))} />
-            <span aria-live="polite" className="text-muted-foreground">{t('piSelectedCount', { count: selectedAgents.length })}</span>
-          </div>
-        <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-full text-left text-sm">
-            <caption className="sr-only">{t('agentManagement')}</caption>
-            <thead className="border-b border-border bg-muted/40 text-xs text-muted-foreground">
-              <tr><th scope="col" className="px-3 py-2">{t('piAgentName')}</th><th scope="col" className="px-3 py-2">{t('piCurrentVersion')}</th><th scope="col" className="px-3 py-2">{t('piAgentResult')}</th></tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {agents.map((agent) => <tr key={agent.agentId} className="align-top">
-                <th scope="row" className="max-w-48 break-words px-3 py-3 font-medium">
-                  <FormCheckbox label={agent.name} checked={selectedIds.has(agent.agentId)} disabled={busy}
-                    onCheckedChange={(checked) => setSelectedIds((previous) => {
-                      const next = new Set(previous);
-                      if (checked) next.add(agent.agentId); else next.delete(agent.agentId);
-                      return next;
-                    })} />
-                </th>
-                <td className="px-3 py-3"><code className="break-all">{agent.version ?? '—'}</code>{agent.version && !agent.installed ? <p className="mt-1 text-xs text-muted-foreground">{t('piNotInstalled')}</p> : null}</td>
-                <td className="px-3 py-3"><span className={agent.status === 'error' ? 'text-destructive' : ''}>{statusLabels[agent.status]}</span>{agent.error ? <p className="mt-1 text-xs leading-5 text-destructive">{agent.error}</p> : null}</td>
-              </tr>)}
-            </tbody>
-          </table>
-        </div>
-        </div>
+        <DashboardTable ariaLabel={t('agentManagement')} minWidth="36rem"
+          selectedRowIds={[...selectedIds]}
+          onSelectionChange={(ids) => { if (!busy) setSelectedIds(new Set(ids)); }}
+          selectionActions={() => <>
+            <Button type="button" size="sm" disabled={busy || current} onClick={() => run('latest')} aria-busy={pending && operation === 'update'}>
+              {pending && operation === 'update' ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
+              {pending && operation === 'update' ? t('piUpdating') : current ? t('piUpToDate') : t('piUpdateLatest')}
+            </Button>
+            <form className="flex flex-wrap items-center gap-2" onSubmit={(event) => { event.preventDefault(); if (!busy && selectedAgents.length && version.trim()) run(version.trim()); }}>
+              <Input aria-label={t('piTargetVersion')} value={version} onChange={setVersion} maxLength={80} placeholder="0.80.3" disabled={busy} />
+              <Button type="submit" variant="secondary" size="sm" disabled={busy || !version.trim()}>{t('piInstallVersion')}</Button>
+            </form>
+          </>}
+          headers={[{ label: t('piAgentName') }, { label: t('piCurrentVersion') }, { label: t('piAgentResult') }]}
+          rows={agents.map((agent) => ({ id: agent.agentId, cells: [
+            <span key="name" title={agent.name}>{agent.name}</span>,
+            <div key="version"><code>{agent.version ?? '—'}</code>{agent.version && !agent.installed ? <p className="mt-1 text-xs text-muted-foreground">{t('piNotInstalled')}</p> : null}</div>,
+            <div key="status"><span className={agent.status === 'error' ? 'text-destructive' : ''}>{statusLabels[agent.status]}</span>{agent.error ? <p title={agent.error} className="mt-1 text-xs text-destructive">{agent.error}</p> : null}</div>,
+          ] }))} />
       ) : state && !state.error ? <p className="text-sm text-muted-foreground">{t('piNoAgents')}</p> : null}
     </section>
   );

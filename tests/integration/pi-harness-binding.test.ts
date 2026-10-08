@@ -42,6 +42,7 @@ beforeEach(async () => {
   legacyGrant = await createLocalRootGrant(workspaceId, legacyId, userId);
 });
 afterAll(async () => {
+  if (workspaceId) await db.logEvent.deleteMany({ where: { workspaceId } });
   if (workspaceId) await db.workspace.delete({ where: { id: workspaceId } });
   if (userId) await db.user.delete({ where: { id: userId } });
   await db.$disconnect();

@@ -138,6 +138,24 @@ describe('durable scoped logging', () => {
     expect(await db.auditEvent.count({ where: { actorId: adminId, action: 'logging.exported' } })).toBe(1);
   });
 
+  it('exports all event domains by default and preserves explicit request tabs', async () => {
+    const eventName = `export-${stamp}`;
+    await db.logEvent.createMany({ data: ['http', 'system', 'agent'].map(domain => ({
+      domain, eventName, message: domain, workspaceId, traceId: stamp, spanId: domain,
+    })) });
+    const admin = await createApiToken(adminId, 'export domains');
+    const exportedDomains = async (tab: string) => {
+      const response = await exportLogs(new Request(`http://localhost/api/v1/admin/logs/export?workspaceId=${workspaceId}&eventName=${eventName}${tab}`, {
+        headers: { authorization: `Bearer ${admin.token}` },
+      }));
+      expect(response.status).toBe(200);
+      return (await response.text()).trim().split('\n').map(line => JSON.parse(line).domain).sort();
+    };
+    expect(await exportedDomains('')).toEqual(['agent', 'http', 'system']);
+    expect(await exportedDomains('&tab=all')).toEqual(['agent', 'http', 'system']);
+    expect(await exportedDomains('&tab=http')).toEqual(['http']);
+  });
+
   it('cleans expired records in bounded batches without cascading business deletion into audit history', async () => {
     const ancient = new Date('1970-01-01T00:00:00Z');
     const row = await db.logEvent.create({ data: { domain: 'system', eventName: 'test.retention', message: 'old', workspaceId,
