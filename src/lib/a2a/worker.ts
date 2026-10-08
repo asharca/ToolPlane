@@ -6,6 +6,7 @@ import { db } from '@/lib/db';
 import { assertRuntimeOwner, runtimeAbortSignal, runtimeCanOperate, trackRuntimeOperation } from '@/lib/runtime/ownership-state';
 import { beginWorkspaceOperation } from '@/lib/workspace/operation-gate';
 import { withLogContext } from '@/lib/observability/context';
+import { recordA2AEvent, taskStateName } from '@/lib/observability/a2a-log';
 import { systemLog } from '@/lib/observability/system';
 import { ACTIVE, A2A_LIMITS } from './model';
 import { claimTask, finishTask, interruptTask, releasePiHarnessClaim } from './store';
@@ -33,85 +34,102 @@ export function executeA2ATask(id: string, executor: TaskExecutor = executeTask)
   const active: ActiveExecution = { controller, native: false, running: false };
   state.active.set(id, active);
   const operation = async (unavailable?: Error) => {
-    let claimed: A2ATask | null = null;
-    let release: (() => void) | null = null;
-    let timeout: NodeJS.Timeout | undefined;
-    let watchdog: NodeJS.Timeout | undefined;
-    let checking = false;
+    let claimed: A2ATask | null;
     try {
       if (state.stopped || !runtimeCanOperate()) return;
       claimed = await claimTask(id); if (!claimed) return;
-      const row = claimed;
-      const grant = row.grant as unknown as TaskGrant;
-      if (active.native && (controller.signal.reason instanceof PiRuntimeInterruptedError || !runtimeCanOperate())) throw new PiRuntimeInterruptedError();
-      if (unavailable) throw unavailable;
-      release = beginWorkspaceOperation(grant.workspaceId);
-      if (!release) throw new Error('Workspace closing');
-      // A bound operation must reach its executor even after expiry or revocation,
-      // so owner-only native cancellation can stop it without authorizing new work.
-      if (!active.native || !row.nativeOperationId) {
-        await assertLiveGrant(grant, 'send');
-        if (row.deadlineAt <= new Date()) throw new Error('Deadline exceeded');
-      }
-      timeout = setTimeout(() => controller.abort(), Math.max(1, row.deadlineAt.getTime() - Date.now()));
-      const ownerSignal = runtimeAbortSignal();
-      const signal = ownerSignal ? AbortSignal.any([ownerSignal, controller.signal]) : controller.signal;
-      watchdog = setInterval(() => {
-        if (checking) return; checking = true;
-        void (async () => {
-          try {
-            const current = await db.a2ATask.findUnique({ where: { id } });
-            if (!current || current.leaseToken !== row.leaseToken) controller.abort(active.native ? new PiRuntimeInterruptedError('Pi task claim changed.') : undefined);
-            else if (current.cancelRequestedAt) controller.abort();
-            else await assertLiveGrant(grant, 'send');
-          } catch { controller.abort(); }
-          finally { checking = false; }
-        })();
-      }, 1000);
-      const result = await withLogContext({ workspaceId: grant.workspaceId, suppressPayload: true }, () => executor(row, signal));
-      if (result.deferred) {
-        if (!isRemoteGrant(grant)) throw new Error('Only remote observations can defer an execution');
-        return;
-      }
-      if (active.native) {
-        if (!result.nativeOperationId || ![TaskState.TASK_STATE_COMPLETED, TaskState.TASK_STATE_REJECTED,
-          TaskState.TASK_STATE_CANCELED, TaskState.TASK_STATE_FAILED].includes(result.state)) throw new Error('PI_PROTOCOL_ERROR: Invalid native terminal result.');
-      } else {
-        signal.throwIfAborted(); await assertLiveGrant(grant, 'send');
-        if (![TaskState.TASK_STATE_COMPLETED, TaskState.TASK_STATE_INPUT_REQUIRED,
-          TaskState.TASK_STATE_AUTH_REQUIRED, TaskState.TASK_STATE_REJECTED, TaskState.TASK_STATE_FAILED].includes(result.state)) throw new Error('Invalid executor state');
-      }
-      await finishTask(id, row.leaseToken!, result.state, result.message, result.artifact,
-        active.native ? { nativeOperationId: result.nativeOperationId! } : undefined);
     } catch (error) {
       if (active.native && (error instanceof PiRuntimeInterruptedError || controller.signal.reason instanceof PiRuntimeInterruptedError
-        || runtimeAbortSignal()?.aborted || !runtimeCanOperate())) {
-        if (claimed?.leaseToken) await releasePiHarnessClaim(id, claimed.leaseToken);
-        return;
-      }
-      if (active.native && claimed?.leaseToken) {
-        // Prepare may have bound an operation after the original claim was read.
-        const current = await db.a2ATask.findUnique({ where: { id }, select: { leaseToken: true, nativeOperationId: true } });
-        if (current?.leaseToken === claimed.leaseToken) await finishTask(id, claimed.leaseToken, TaskState.TASK_STATE_FAILED,
-          nativeFailure(error), undefined, current.nativeOperationId ? { nativeOperationId: current.nativeOperationId } : undefined);
-        return;
-      }
-      if (!claimed && error instanceof A2AQuotaError) {
+        || runtimeAbortSignal()?.aborted || !runtimeCanOperate())) return;
+      if (error instanceof A2AQuotaError) {
         const current = await db.a2ATask.findUnique({ where: { id }, select: { executionBackend: true, nativeOperationId: true } });
         if (current?.executionBackend === 'pi-harness' && current.nativeOperationId) throw error;
         await interruptTask(id, 'Execution was not started because the Agent resource quota was exhausted.'); return;
       }
-      // Remote dispatch remains send-once: only its existing observer may reconnect.
-      if (claimed && isRemoteGrant(claimed.grant as unknown as TaskGrant)) {
-        await interruptTask(id, 'The remote operation was interrupted without automatic replay.'); return;
-      }
-      if (claimed?.leaseToken) await finishTask(id, claimed.leaseToken, TaskState.TASK_STATE_FAILED,
-        'Task execution stopped or failed. No automatic replay was performed.');
-      else throw error;
-    } finally {
-      clearTimeout(timeout); clearInterval(watchdog);
-      release?.();
+      throw error;
     }
+    const row = claimed;
+    const grant = row.grant as unknown as TaskGrant;
+    return withLogContext({ workspaceId: grant.workspaceId, suppressPayload: true,
+      ...(isLocalGrant(grant) ? { actorId: grant.actorId, agentId: grant.agentId }
+        : isRemoteGrant(grant) ? { actorId: grant.actorId, agentId: grant.sourceAgentId } : {}),
+    }, async () => {
+      let release: (() => void) | null = null;
+      let timeout: NodeJS.Timeout | undefined;
+      let watchdog: NodeJS.Timeout | undefined;
+      let checking = false;
+      try {
+        await recordA2AEvent({ eventName: 'a2a.task.started',
+          binding: { grant, taskId: row.id, contextId: row.contextId, rootTaskId: row.rootTaskId ?? row.id,
+            parentTaskId: row.parentTaskId ?? undefined },
+          metadata: { direction: 'internal', transport: 'entry', taskState: taskStateName(TaskState[row.state]) },
+          outcome: 'success',
+        });
+        if (active.native && (controller.signal.reason instanceof PiRuntimeInterruptedError || !runtimeCanOperate())) throw new PiRuntimeInterruptedError();
+        if (unavailable) throw unavailable;
+        release = beginWorkspaceOperation(grant.workspaceId);
+        if (!release) throw new Error('Workspace closing');
+        // A bound operation must reach its executor even after expiry or revocation,
+        // so owner-only native cancellation can stop it without authorizing new work.
+        if (!active.native || !row.nativeOperationId) {
+          await assertLiveGrant(grant, 'send');
+          if (row.deadlineAt <= new Date()) throw new Error('Deadline exceeded');
+        }
+        timeout = setTimeout(() => controller.abort(), Math.max(1, row.deadlineAt.getTime() - Date.now()));
+        const ownerSignal = runtimeAbortSignal();
+        const signal = ownerSignal ? AbortSignal.any([ownerSignal, controller.signal]) : controller.signal;
+        watchdog = setInterval(() => {
+          if (checking) return; checking = true;
+          void (async () => {
+            try {
+              const current = await db.a2ATask.findUnique({ where: { id } });
+              if (!current || current.leaseToken !== row.leaseToken) controller.abort(active.native ? new PiRuntimeInterruptedError('Pi task claim changed.') : undefined);
+              else if (current.cancelRequestedAt) controller.abort();
+              else await assertLiveGrant(grant, 'send');
+            } catch { controller.abort(); }
+            finally { checking = false; }
+          })();
+        }, 1000);
+        const result = await executor(row, signal);
+        if (result.deferred) {
+          if (!isRemoteGrant(grant)) throw new Error('Only remote observations can defer an execution');
+          return;
+        }
+        if (active.native) {
+          if (!result.nativeOperationId || ![TaskState.TASK_STATE_COMPLETED, TaskState.TASK_STATE_REJECTED,
+            TaskState.TASK_STATE_CANCELED, TaskState.TASK_STATE_FAILED].includes(result.state)) throw new Error('PI_PROTOCOL_ERROR: Invalid native terminal result.');
+        } else {
+          signal.throwIfAborted(); await assertLiveGrant(grant, 'send');
+          if (![TaskState.TASK_STATE_COMPLETED, TaskState.TASK_STATE_INPUT_REQUIRED,
+            TaskState.TASK_STATE_AUTH_REQUIRED, TaskState.TASK_STATE_REJECTED, TaskState.TASK_STATE_FAILED].includes(result.state)) throw new Error('Invalid executor state');
+        }
+        await finishTask(id, row.leaseToken!, result.state, result.message, result.artifact,
+          active.native ? { nativeOperationId: result.nativeOperationId! } : undefined);
+      } catch (error) {
+        if (active.native && (error instanceof PiRuntimeInterruptedError || controller.signal.reason instanceof PiRuntimeInterruptedError
+          || runtimeAbortSignal()?.aborted || !runtimeCanOperate())) {
+          if (row.leaseToken) await releasePiHarnessClaim(id, row.leaseToken);
+          return;
+        }
+        if (active.native && row.leaseToken) {
+          // Prepare may have bound an operation after the original claim was read.
+          const current = await db.a2ATask.findUnique({ where: { id }, select: { leaseToken: true, nativeOperationId: true } });
+          if (current?.leaseToken === row.leaseToken) await finishTask(id, row.leaseToken, TaskState.TASK_STATE_FAILED,
+            nativeFailure(error), undefined, current.nativeOperationId ? { nativeOperationId: current.nativeOperationId } : undefined);
+          return;
+        }
+        // Remote dispatch remains send-once: only its existing observer may reconnect.
+        if (isRemoteGrant(grant)) {
+          await interruptTask(id, 'The remote operation was interrupted without automatic replay.'); return;
+        }
+        if (row.leaseToken) await finishTask(id, row.leaseToken, TaskState.TASK_STATE_FAILED,
+          'Task execution stopped or failed. No automatic replay was performed.');
+        else throw error;
+      } finally {
+        clearTimeout(timeout); clearInterval(watchdog);
+        release?.();
+      }
+    }, true);
   };
   return trackRuntimeOperation(async () => {
     const queued = await db.a2ATask.findUnique({ where: { id } });

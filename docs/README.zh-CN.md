@@ -4,6 +4,20 @@
 
 从[项目介绍与快速开始](../README.md)入门，按下面的主题继续阅读。
 
+## 文档网站
+
+访问部署域名的 `/docs/zh` 阅读中文站，或 `/docs/en` 阅读英文站，无需登录；`/docs` 默认进入中文站。两种语言分别拥有独立首页、导航、侧栏和搜索，中文站按以下分类组织：
+
+- **用户文档**（`/docs/zh/guides`）：安装、配置、集成与日常运维。
+- **开发者文档**（`/docs/zh/developers`）：架构、运行时实现、贡献与发布维护。
+- **API 文档**（`/docs-api`）：独立 Scalar 交互式参考，从 `/api/v1/openapi.json` 加载接口定义，不嵌入文档站。中文协议与接入说明仍可从开发者文档进入 `/docs/zh/api`。
+
+网站采用 [Fumadocs](https://fumadocs.dev) 提供导航、响应式布局和全文搜索，正文复用安全的 Streamdown 渲染 Markdown、代码和 Mermaid。Fumadocs 在 `/docs/search` 生成静态搜索索引，内置搜索框在浏览器本地搜索并按当前语言与分类过滤。相对 Markdown 链接保留目标文档的语言，其他仓库文件链接指向 GitHub；共享链接解析位于 `src/lib/docs-links.ts`。
+
+Markdown 原文件是唯一内容来源：直接修改 `docs/**/*.md`、仓库根目录的 `README.md` / `CHANGELOG.md` 或 `infra/firecrawl/README.md`，不要另建网站内容副本。`source.config.ts` 定义 Fumadocs MDX 内容集合，在构建时完成分类与语言识别：`.en.md` 为英文，`.zh-CN.md` 为中文，无语言后缀时，首个标题含汉字则为中文，否则为英文；标题应使用正文的语言。页面地址为 `/docs/{语言}/{分类}/{仓库相对主题路径}`，去掉文件名的语言后缀，同一主题的中英文共享主题路径。保留相对链接与中英文配对，新增主题时同步检查分类映射。Agent 指令、计划、隐藏文件、环境文件与源代码不作为文档发布。上述公开文档不要写入凭据或私有运维数据。
+
+官方 Fumadocs MDX Next.js 插件按 Markdown（不是 MDX）编译白名单内的 `.md` 文件，将处理后的 Markdown 和搜索数据编入应用产物；不在请求时读取文件系统，也没有额外的内容复制管线。Docker 镜像和发布压缩包使用同一 standalone 产物，`server.js` 旁无需保留 Markdown 原文件。修改文档后需重新构建部署。
+
 ## 架构与运行时
 
 | 文档 | 内容 |

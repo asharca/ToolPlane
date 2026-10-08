@@ -36,15 +36,11 @@ import {
   DashboardEmptyState,
   DashboardPage,
 } from '@/components/dashboard/DashboardUI';
-import {
-  AgentResourceSelect,
-  type AgentResourceOption,
-} from '@/components/dashboard/agents/AgentResourceSelect';
+import { AgentResourceSelect } from '@/components/dashboard/agents/AgentResourceSelect';
+import type { AgentResourceOption } from '@/components/dashboard/agents/AgentResourceSelect';
 import { HermesImageSelector } from '@/components/dashboard/agents/HermesImageSelector';
-import {
-  ModelPicker,
-  type ModelProviderOption,
-} from '@/components/dashboard/models/ModelPicker';
+import { ModelPicker } from '@/components/dashboard/models/ModelPicker';
+import type { ModelProviderOption } from '@/components/dashboard/models/ModelPicker';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
 import { CloneAgentButton } from '@/components/dashboard/agents/CloneAgentButton';
 import { DeleteAgentButton } from '@/components/dashboard/agents/DeleteAgentButton';
@@ -55,8 +51,8 @@ import {
   agentRuntimeDisplayName,
   agentRuntimeSupportsProviderFormat,
   isDedicatedSandboxRuntimeKind,
-  type AgentRuntimeKind,
 } from '@/lib/agents/runtime-kind';
+import type { AgentRuntimeKind } from '@/lib/agents/runtime-kind';
 import { AgentBuiltInTools } from '@/components/dashboard/agents/AgentBuiltInTools';
 import { AgentSystemPromptEditor } from '@/components/dashboard/agents/AgentSystemPromptEditor';
 
@@ -177,7 +173,7 @@ export function AgentsBrowser({
   const [agentName, setAgentName] = useState('');
   const [agentDescription, setAgentDescription] = useState('');
   const [systemPrompt, setSystemPrompt] = useState('');
-  const [runtime, setRuntime] = useState<AgentRuntimeKind>('pi');
+  const [runtime, setRuntime] = useState<AgentRuntimeKind>(createOnly && searchParams.get('runtime') === 'pi-sdk' ? 'pi-sdk' : 'pi');
   const [providerId, setProviderId] = useState(defaultNativeModel?.providerId ?? '');
   const [modelId, setModelId] = useState(defaultNativeModel?.model ?? '');
   const [selectedProviderIds, setSelectedProviderIds] = useState<Set<string>>(() => (
@@ -503,6 +499,11 @@ export function AgentsBrowser({
                       label: t('piRuntime'),
                       description: t('piRuntimeDescription'),
                       icon: Zap,
+                    }, {
+                      value: 'pi-sdk' as const,
+                      label: t('piSdkRuntime'),
+                      description: t('piSdkRuntimeDescription'),
+                      icon: PackageCheck,
                     }].map((option) => {
                       const Icon = option.icon;
                       const selected = runtime === option.value;
@@ -523,6 +524,12 @@ export function AgentsBrowser({
                     })}
                   </RadioGroup>
                 </fieldset>
+                {runtime === 'pi-sdk' ? <div className="space-y-2 rounded-lg border border-border p-3 text-xs leading-5 text-muted-foreground">
+                  <p>{t('piPackageSecurity')}</p>
+                  <p>{t('piPackageHeadless')}</p>
+                  <p>{t('piSdkCreateHelp')}</p>
+                  <p>{t('piSdkUnsupportedEntrypoints')}</p>
+                </div> : null}
 
                 {runtime === 'hermes' ? (
                   <HermesImageSelector id="create-hermes-version" images={hermesImages} />

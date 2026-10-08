@@ -14,6 +14,14 @@ This guide is for operators upgrading the single-owner ToolPlane deployment. It 
 
 Do not roll back only the application while newer operations are active. Stop the owner first and use a tested database/volume restore or compatible roll-forward plan. Keep all production backups and credentials out of test artifacts.
 
+Online release updates require the managed production launcher. After download and validation, the updater drains the current runtime owner **before replacing any runtime files**, so shutdown imports still resolve against the old release. Missing shutdown support or an unclean drain fails the update without replacing files. Successful replacement requests SIGTERM rather than calling `process.exit()`, and the launcher completes shutdown. A failed drain leaves runtime work blocked for operator recovery; it is never automatically acknowledged.
+
+Update completion requires the target version, a replacement process identity, and `runtimeReady=true`. The local update-status endpoint returns HTTP 503 with `Retry-After: 2` when the new process is idle but runtime recovery is not ready, preventing older clients from treating a version change as success. Download, apply and failure statuses remain available so progress and errors are not hidden. Refreshing the page or deleting ownership markers is not a recovery procedure.
+
+Docker/Coolify health checks must use `/api/v1/readiness`, not `/api/v1/health`, and allow a 60-second stop grace period (`docker restart --timeout 60` for manual restarts). The release archive does not change an existing container's health-check or stop-timeout configuration: update the deployment definition and apply it during a controlled redeploy. Do not recreate an in-place-updated container from its old image without first preserving the running release.
+
+The managed launcher loads `abort-signal.cjs` before Next. It briefly adds/removes an abort listener on each native `AbortSignal.any()` result to start weak source following: Node 24.21 otherwise retains nested timeout composites after expiry, eventually failing MCP/channel requests with `Set maximum size exceeded`. Keep this file beside the embedded `server.cjs` when assembling a release. Verify a future Node upgrade with `pnpm vitest run tests/unit/abort-signal.test.ts` before removing the workaround. An already exhausted process needs a controlled restart; restarting only an MCP bridge does not clear the app's signal registry.
+
 ## One runtime owner
 
 `runtime/owner.ts` holds a PostgreSQL session advisory lock on a **dedicated connection**, not a pooled transaction. The database and `TOOLPLANE_RUNTIME_DOMAIN` (default `default`) determine the ownership domain. Two processes using the same domain cannot both recover or operate its runtimes. All app processes touching the same Docker resources must use the same database and domain; changing the domain is not a safe workaround for an ownership conflict.
@@ -23,6 +31,115 @@ The owner progresses through acquiring → recovering → ready, then draining �
 A dirty `SystemSetting` marker remains until a confirmed clean shutdown. After a crash, DB disconnection or uncertain Docker operation, the next process refuses automatic takeover even when the advisory lock is free. Inspect logs, stop every previous owner and confirm Docker helpers/copy/delete operations have ended. Only then set `TOOLPLANE_RUNTIME_RECOVERY_ACK` to the exact UUID printed in the recovery error for **one restart**. Remove the variable after recovery. It acknowledges external reconciliation; it is not a password, a force-unlock switch or automatic high availability. Invalid markers require investigation rather than guessing another UUID.
 
 SIGTERM/SIGINT on the production launcher stops accepting HTTP traffic, stops maintenance/coordinators/brokers, drains or aborts tracked work, and releases the dedicated lock last. The launcher has a 50-second outer shutdown bound; Compose grants 60 seconds. An uncertain or timed-out operation retains the dirty marker. Custom process managers must allow the same grace period and call the managed shutdown path. `pnpm dev` does not provide the production launcher's signal orchestration and may require explicit recovery after an abrupt stop.
+
+## Frozen Pi extension packages
+
+`pi-package` releases are immutable Pi resources and optional executable extensions.
+They support the independent `pi-sdk` runtime and registered external clients, without
+migrating Toolkit or existing Pi Harness agents. Apply `20261001000000_pi_sdk_packages`
+and `20261002000000_pi_package_ecosystem`, generate Prisma, and restart before use.
+
+Build the trusted capture image explicitly; publication never builds it implicitly:
+
+```bash
+docker build --target pi-package-capture -t toolplane-pi-package-capture:0.87.1 .
+```
+
+Capture requires the ready runtime owner and allows one operation at a time
+(`capture_busy`). The non-root container has no external network or mounted host
+files. Its bounded TLS CONNECT broker rejects private, mixed-DNS and redirected
+private destinations. Public or explicitly credentialed npm/Git production dependencies are frozen without
+executing factories, lifecycle scripts, hooks or pnpmfile. Packages requiring a
+build must supply runnable artifacts; files over 16 MiB are rejected, not skipped.
+
+Approval revalidates paths, links, decoded secret scans, file hashes and the whole
+release checksum. Installation creates only a ready `MarketInstall`; it does not
+execute code. Workspace updates change both install release pointers, while each
+Agent retains its explicitly enabled release. Apply updates explicitly, after
+active tasks/Work/leases finish; bound installations cannot be uninstalled.
+Public details expose a small summary and the original checksum, never base64 or
+dependency files. SDK package resolution fails closed on revoked/downlisted releases.
+Approval accepts arbitrary Node/file/network side effects inside the Agent sandbox;
+tool approval is not an arbitrary-code isolation boundary.
+
+Create **Pi SDK** from the Agent runtime selector, then enable installed packages
+under **Settings → Pi extensions**. The SDK is pinned to 0.87.1 on Linux/Node 24;
+captured package architecture must match the Docker daemon. TP-assembled packages
+declare portable `any/any` resources; this does not waive the SDK version/Node requirement. Ordinary Pi agents retain their
+Harness sessions and existing version management. Control MCP creation, public
+Agent endpoints and Agent template publishing do not accept this runtime; existing
+authorized messages and tools do.
+The sandbox installer uses `pnpm add --save-prod` for trusted runtime packages
+(compatible with pnpm 10 and 12); reviewed extension dependencies are never installed at turn time.
+
+SDK sessions use official JSONL files, not Harness checkpoints. Changing the package
+set requires a new conversation or Work (`PI_SDK_PACKAGE_SET_CHANGED`). A missing
+persisted file or lost unpersisted host fails with `PI_SDK_SESSION_MISSING`; history
+is not replayed to fake recovery. Interrupted native tasks fail rather than replay.
+Modified snapshot bytes/links fail with `PI_PACKAGE_CHECKSUM_MISMATCH`, and selected
+extension load failures fail with `PI_EXTENSION_LOAD_FAILED`.
+
+Commands preserve SDK invocation case and collision suffixes such as `:1`. Chat and
+channel commands use the same native task authorization and fresh lease readiness
+as prompts; Work uses its coordinator. Headless extensions have no terminal UI;
+command-only results are explicit completion receipts, not model answers.
+### Catalogs, assembly, and client registrations
+
+**Market → Pi extensions** defaults to the complete, searchable and paginated
+[official Pi catalog](https://pi.dev/packages). Members can install a selected exact
+version without human review. The server verifies live directory membership and
+public npm version/integrity, then captures and validates the immutable artifact.
+The release records `reviewPolicy: 'official-directory'`, with no human reviewer;
+this is not a security endorsement or proof of Web compatibility. Installation
+does not execute code or change Agent pins. Custom sources and assembled packages
+retain human review. Workspace owners/admins manage HTTPS catalog, npm registry,
+or Git sources under **Toolkits → Pi packages → Workspace Pi sources**.
+Credentials are encrypted and write-only; only the configured authority/path receives them.
+Catalog credentials never propagate to discovered package origins. Private repositories on
+public HTTPS hosts are supported; LAN/loopback/link-local/mixed-DNS destinations and redirects
+remain blocked. Capture credentials enter the trusted container over stdin, not argv or Docker env.
+
+A custom catalog responds to `GET <configured-url>?query=<text>&page=<1-based>` with
+`{schemaVersion:1,entries:[{name,source,description?,version?}],hasMore:boolean}` (at most 50
+entries and 2 MiB). `source` is a supported npm/Git identifier; no package code runs during discovery.
+
+**Toolkits → Pi packages → New Pi package** freezes selected installed Skill files and generates a
+real Pi MCP extension for explicitly selected deployment tools. New packages are workspace-private
+unless the publisher explicitly chooses public. MCP requirements contain logical keys and allowed
+tool names, not credentials or publisher deployment IDs. Same-workspace installs receive private
+defaults; other workspaces must bind their own deployments. Agent binding edits are blocked while
+tasks, Work, or execution leases are active. Skill/Prompt/Theme-only packages need no dummy extension.
+Choose **Package existing Toolkit** to prefill its Skills and currently exposed
+MCP tools, then edit the selection and publish an independent Pi package. This
+does not modify the original Toolkit or its Agent bindings. Source imports,
+version publication, withdrawal and upstream tracking live on this authoring page;
+the Pi market contains discovery and installation, not publication forms.
+
+Approved artifact downloads are deterministic npm-compatible tarballs. Registry publication requires
+owner/admin authorization, a configured npm source, and explicit confirmation; it never overwrites an
+existing version. It does not automatically register a package in the official catalog.
+
+**Installed → Client installations** creates an exact-release registration for Pi, Claude Code,
+Codex, OpenCode, or Hermes. Download the installer and one-time private configuration, protect it
+with `chmod 600`, then run `node pi-package-install.mjs install --config <private-config.json>`.
+Use `update` or `uninstall` with the same config. Pi receives native package resources; other clients
+receive supported Skills and MCP configuration, not arbitrary Pi code. Installation is user-global,
+not project-scoped. MCP runs through ToolPlane, so connectivity to this instance is required.
+
+Each device has an independent hashed token; ordinary account/Toolkit tokens are not accepted by
+device endpoints. Membership, release status, deployment scope, and currently exposed tools are
+checked on requests. Added tools never expand grants automatically. Local updates refuse modified
+managed files and symlink escapes. Uninstall acknowledges self-revocation before deleting unchanged
+managed files; web revocation alone does not delete local files. Active device registrations block
+workspace uninstall. Never log, commit, or screenshot private configuration contents.
+
+The runtime-owner maintenance tick checks at most eight due tracked packages every five minutes;
+each package is checked no more often than every six hours. Manual checks are available. Tags/ranges
+and Git branches produce notices; exact versions/commits stay pinned. Checks never capture, install,
+publish, or change an Agent/device. Same-version integrity changes are suspicious, not ordinary updates.
+Capture and approve a new release, then update the workspace and individual Agent/device explicitly;
+expanded device privileges require confirmation. TP compositions are republished explicitly from
+selected workspace resources, not silently regenerated.
 
 ## Pi version management
 

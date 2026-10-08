@@ -6,6 +6,8 @@ const { replaceMock } = vi.hoisted(() => ({ replaceMock: vi.fn() }));
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ replace: replaceMock }),
+  usePathname: () => '/app/acme/settings',
+  useSelectedLayoutSegments: () => [],
   useSearchParams: () => new URLSearchParams('returnTo=%2Fapp%2Facme%2Fmcp%3F__dashboardTab%3Dtab-1'),
 }));
 

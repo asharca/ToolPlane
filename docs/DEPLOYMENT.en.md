@@ -58,6 +58,18 @@ Initial dependency downloads from npm, PyPI, or GitHub can be slow. Compose prov
 
 Recreate or redeploy the application after editing `.env`. Alternatively, save overrides under **Admin → Settings** for subsequent MCP starts or restarts. Administrator settings take precedence; resetting them restores the environment configuration.
 
+## Pi extension capture image
+
+Administrators must build the trusted capture image in the same Docker runtime domain ahead of publication; publication requests never build it implicitly:
+
+```bash
+docker build --target pi-package-capture -t toolplane-pi-package-capture:0.87.1 .
+```
+
+Capture pins Pi SDK 0.87.1, Node 24, and pnpm 10.14.0. The container has no external network, runs without root, and has a read-only root filesystem. Public npm/Git HTTPS downloads use the application's controlled egress, rejecting private or mixed DNS results while retaining TLS verification. Extension factories, lifecycle scripts, and pnpmfile are not executed. Capture is limited to 300 seconds and one operation per runtime domain; busy capture returns `capture_busy`, and an absent image returns `capture_image_missing`.
+
+Artifacts are limited to 20,000 entries, 16 MiB per file, 64 MiB total file bytes, and 96 MiB of JSON. Oversized artifacts and unsafe paths/links return `package_capture_failed`, without weakening validation or falling back to host networking. For example, the current production dependency closure of `pi-mcp-adapter@4.0.0` contains a file above the single-file limit and cannot be captured. Publishers must supply directly loadable artifacts without install-time build scripts. The image copies only trusted capture scripts, not project `.env`, database configuration, or user files.
+
 ## Updates and releases
 
 Back up Postgres and managed runtime volumes and review the [upgrade sequence](./RUNTIME_OPERATIONS.md#upgrade-sequence) before upgrading. Never overlap old and new application instances against the same runtime domain.

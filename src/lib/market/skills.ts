@@ -22,6 +22,12 @@ import {
   scanSkillReleaseManifest,
   type MarketSecretScan,
 } from '@/lib/market/secret-scan';
+import {
+  parsePiPackageReleaseManifest,
+  scanPiPackageReleaseManifest,
+  projectPiPackageSummary,
+} from '@/lib/market/pi-package-manifest';
+import type { PiPackageSummary } from '@/lib/market/pi-package-manifest';
 import { killProcess } from '@/lib/process/supervisor';
 import { removeDeploymentContainer } from '@/lib/process/deployment-runtime-container';
 import { removeDeploymentConfigVolume } from '@/lib/process/deployment-config-volume';
@@ -39,7 +45,38 @@ export type MarketErrorCode =
   | 'already_installed'
   | 'install_not_found'
   | 'in_use'
-  | 'local_changes';
+  | 'local_changes'
+  | 'capture_busy'
+  | 'capture_image_missing'
+  | 'package_capture_failed'
+  | 'package_platform_mismatch'
+  | 'pi_package_invalid_selection'
+  | 'pi_package_source_unavailable'
+  | 'pi_package_tools_unavailable'
+  | 'pi_package_invalid_bindings'
+  | 'pi_package_agent_busy'
+  | 'source_unavailable'
+  | 'official_package_unavailable'
+  | 'source_invalid'
+  | 'source_credentials_invalid'
+  | 'source_network_blocked'
+  | 'source_auth_failed'
+  | 'source_redirect_blocked'
+  | 'source_response_too_large'
+  | 'source_response_invalid'
+  | 'source_credentials_required'
+  | 'source_kind_mismatch'
+  | 'source_scope_mismatch'
+  | 'source_changed'
+  | 'source_ref_missing'
+  | 'source_not_trackable'
+  | 'tracking_not_found'
+  | 'tracking_conflict'
+  | 'registry_confirmation_required'
+  | 'registry_tag_invalid'
+  | 'registry_artifact_invalid'
+  | 'registry_version_conflict'
+  | 'pi_extensions_missing';
 
 export class MarketError extends Error {
   constructor(readonly code: MarketErrorCode, message: string) {
@@ -648,7 +685,7 @@ async function installSkillReleaseTransaction(
   const release = await tx.marketRelease.findUnique({
     where: { id: input.releaseId },
     include: {
-      listing: { select: { id: true, kind: true, namespace: true, slug: true, status: true, latestReleaseId: true } },
+      listing: { select: { id: true, kind: true, namespace: true, slug: true, status: true, latestReleaseId: true, visibility: true, publisherWorkspaceId: true } },
     },
   });
   if (!release) throw new MarketError('release_not_found', 'The market release was not found.');
@@ -657,6 +694,7 @@ async function installSkillReleaseTransaction(
     || release.listing.status !== 'published'
     || release.reviewStatus !== 'approved'
     || release.listing.latestReleaseId !== release.id
+    || (release.listing.visibility !== 'public' && release.listing.publisherWorkspaceId !== input.targetWorkspaceId)
   ) {
     throw new MarketError('listing_unavailable', 'This skill release is not available for installation.');
   }
@@ -869,10 +907,13 @@ async function removableMarketInstall(
   input: RemoveMarketInstallInput,
 ) {
   await assertInstallerAccess(tx, input.targetWorkspaceId, input.actorId);
+  await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${input.targetWorkspaceId} FOR UPDATE`;
   const install = await tx.marketInstall.findFirst({
     where: { id: input.installId, targetWorkspaceId: input.targetWorkspaceId },
     include: {
       listing: { select: { kind: true } },
+      _count: { select: { agentPiPackages: true } },
+      piPackageClientInstallations: { where: { status: 'active' }, select: { id: true, label: true } },
       deployment: {
         select: {
           id: true,
@@ -902,6 +943,10 @@ async function removableMarketInstall(
     },
   });
   if (!install) throw new MarketError('install_not_found', 'The market installation was not found.');
+  if (install._count.agentPiPackages > 0) {
+    throw new MarketError('in_use', 'Remove this Pi package from agents before uninstalling it.');
+  }
+  if (install.piPackageClientInstallations.length) throw new MarketError('in_use', `Revoke these Pi package client installations before uninstalling: ${install.piPackageClientInstallations.map((client) => client.label).join(', ')}`);
   if (
     install.installedSkill
     && (install.installedSkill._count.agentLinks > 0 || install.installedSkill._count.toolkitLinks > 0)
@@ -935,7 +980,7 @@ async function removableMarketInstall(
       ? install.deployment
       : install.listing.kind === 'toolkit'
         ? install.toolkit
-        : null;
+        : install.listing.kind === 'pi-package' ? install : null;
   if (!resource) throw new MarketError('install_not_found', 'The installed market resource was not found.');
   return install;
 }
@@ -953,6 +998,7 @@ async function removeMarketInstallDatabase(input: RemoveMarketInstallInput) {
     const toolkitSkillIds = ownedSkillIds.length
       ? ownedSkillIds
       : marketResourceIds(install.resourceMap, 'installedSkillIds');
+    await tx.piPackageClientInstallation.deleteMany({ where: { marketInstallId: install.id, workspaceId: input.targetWorkspaceId, status: { not: 'active' } } });
     await tx.marketInstall.delete({ where: { id: install.id } });
     if (install.listing.kind === 'skill' && install.installedSkill) {
       await tx.installedSkill.delete({ where: { id: install.installedSkill.id } });
@@ -1003,12 +1049,44 @@ export async function removeMarketInstall(input: RemoveMarketInstallInput) {
   return operation.value;
 }
 
+type InstalledPiPackageRelease = {
+  id: string;
+  version: number;
+  manifest: Prisma.JsonValue;
+  checksum: string;
+  releaseNotes: string | null;
+};
+
+function installedPiPackageSummary(release: InstalledPiPackageRelease): PiPackageSummary {
+  try {
+    const manifest = parsePiPackageReleaseManifest(release.manifest, release.checksum);
+    if (scanPiPackageReleaseManifest(manifest, release.releaseNotes).status === 'blocked') {
+      throw new MarketError('invalid_manifest', 'The Pi package release failed its security scan.');
+    }
+    return projectPiPackageSummary(manifest.package);
+  } catch {
+    throw new MarketError('invalid_manifest', 'The Pi package release is invalid or unavailable.');
+  }
+}
+
 export async function listWorkspaceMarketInstalls(workspaceId: string) {
   const installs = await db.marketInstall.findMany({
     where: { targetWorkspaceId: workspaceId },
     orderBy: { updatedAt: 'desc' },
     include: {
-      currentRelease: { select: { id: true, version: true } },
+      currentRelease: { select: { id: true, version: true, manifest: true, checksum: true, releaseNotes: true, reviewStatus: true, releaseSummary: true } },
+      agentPiPackages: {
+        where: { agent: { workspaceId }, marketInstall: { targetWorkspaceId: workspaceId } },
+        orderBy: { agentId: 'asc' },
+        select: {
+          agentId: true,
+          releaseId: true,
+          agent: { select: { id: true, name: true, runtimeKind: true } },
+          release: {
+            select: { id: true, version: true, manifest: true, checksum: true, releaseNotes: true, reviewStatus: true, listingId: true },
+          },
+        },
+      },
       ignoredRelease: { select: { id: true } },
       listing: {
         select: {
@@ -1019,6 +1097,8 @@ export async function listWorkspaceMarketInstalls(workspaceId: string) {
           name: true,
           iconUrl: true,
           status: true,
+          visibility: true,
+          publisherWorkspaceId: true,
           latestRelease: { select: { id: true, version: true, releaseNotes: true } },
         },
       },
@@ -1028,16 +1108,47 @@ export async function listWorkspaceMarketInstalls(workspaceId: string) {
       agent: { select: { id: true, runtimeKind: true } },
     },
   });
-  return installs.map((install) => ({
-    ...install,
-    updateAvailable: Boolean(
-      install.listing.status === 'published'
-      &&
-      install.listing.latestRelease
-      && install.listing.latestRelease.id !== install.currentReleaseId
-      && install.listing.latestRelease.id !== install.ignoredReleaseId,
-    ),
-  }));
+  const summaries = new Map<string, PiPackageSummary>();
+  const summarize = (release: InstalledPiPackageRelease): PiPackageSummary => {
+    const cached = summaries.get(release.id);
+    if (cached) return cached;
+    const summary = installedPiPackageSummary(release);
+    summaries.set(release.id, summary);
+    return summary;
+  };
+  return installs.map((install) => {
+    const piPackage = install.listing.kind === 'pi-package' ? summarize(install.currentRelease) : null;
+    return {
+      ...install,
+      piPackage,
+      currentRelease: install.listing.kind === 'pi-package'
+        ? { id: install.currentRelease.id, version: install.currentRelease.version, checksum: install.currentRelease.checksum, reviewStatus: install.currentRelease.reviewStatus, reviewPolicy: install.currentRelease.releaseSummary && typeof install.currentRelease.releaseSummary === 'object' && !Array.isArray(install.currentRelease.releaseSummary) && install.currentRelease.releaseSummary.reviewPolicy === 'official-directory' ? 'official-directory' : 'manual', piPackage }
+        : { id: install.currentRelease.id, version: install.currentRelease.version },
+      agentPiPackages: install.agentPiPackages.map((binding) => {
+        if (install.listing.kind !== 'pi-package' || binding.release.listingId !== install.listingId) {
+          throw new MarketError('invalid_manifest', 'The Pi package binding is invalid.');
+        }
+        return {
+          agentId: binding.agentId,
+          releaseId: binding.releaseId,
+          agent: binding.agent,
+          release: {
+            id: binding.release.id,
+            version: binding.release.version,
+            reviewStatus: binding.release.reviewStatus,
+            checksum: binding.release.checksum,
+            piPackage: summarize(binding.release),
+          },
+        };
+      }),
+      updateAvailable: Boolean(
+        install.listing.status === 'published'
+        && install.listing.latestRelease
+        && install.listing.latestRelease.id !== install.currentReleaseId
+        && install.listing.latestRelease.id !== install.ignoredReleaseId,
+      ),
+    };
+  });
 }
 
 export async function countWorkspaceMarketUpdates(workspaceId: string) {
@@ -1063,6 +1174,7 @@ export function listPublishedMarketSkills(q = '') {
     where: {
       kind: 'skill',
       status: 'published',
+      visibility: 'public',
       latestReleaseId: { not: null },
       latestRelease: { is: { reviewStatus: 'approved' } },
       ...(term ? {
@@ -1087,6 +1199,7 @@ export function listWorkspacePublishedResources(workspaceId: string) {
       categories: { select: { id: true } },
       latestRelease: { select: { id: true, version: true, publishedAt: true } },
       pendingRelease: { select: { id: true, version: true, reviewStatus: true, reviewNote: true } },
+      releases: { where: { listing: { kind: 'pi-package' } }, orderBy: { version: 'desc' }, take: 1, select: { version: true, reviewStatus: true, reviewNote: true } },
     },
   });
 }
@@ -1131,6 +1244,7 @@ export async function getAssistantMarketTemplate(releaseId: string) {
     where: {
       kind: 'assistant',
       status: 'published',
+      visibility: 'public',
       latestReleaseId: releaseId,
       latestRelease: { is: { reviewStatus: 'approved' } },
     },
@@ -1157,6 +1271,7 @@ export async function listAssistantMarketTemplates(input: { q?: string; limit?: 
     where: {
       kind: 'assistant',
       status: 'published',
+      visibility: 'public',
       latestReleaseId: { not: null },
       latestRelease: { is: { reviewStatus: 'approved' } },
       ...(term ? {

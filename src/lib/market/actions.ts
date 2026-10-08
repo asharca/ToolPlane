@@ -15,6 +15,8 @@ import {
 import {
   installMarketRelease,
   publishMcpRelease,
+  publishPiPackageRelease,
+  publishAssembledPiPackageRelease,
   publishToolkitRelease,
   updateMarketInstall,
 } from '@/lib/market/resources';
@@ -170,6 +172,77 @@ export async function publishToolkitReleaseAction(
   }
 }
 
+export async function publishPiPackageReleaseAction(
+  _previous: MarketActionState,
+  formData: FormData,
+): Promise<MarketActionState> {
+  const workspaceSlug = String(formData.get('workspace') ?? '');
+  const ctx = await actionContext(workspaceSlug);
+  if (!ctx) return { error: 'not_authorized' };
+  try {
+    const result = await publishPiPackageRelease({
+      workspaceId: ctx.workspace.id,
+      publishedById: ctx.user.id,
+      source: String(formData.get('source') ?? ''),
+      sourceId: String(formData.get('sourceId') ?? '') || undefined,
+      visibility: formData.get('visibility') === 'public' ? 'public' : 'private',
+      listingId: String(formData.get('listingId') ?? '') || undefined,
+      categoryIds: categoryIds(formData),
+      listing: {
+        slug: String(formData.get('slug') ?? ''),
+        name: String(formData.get('name') ?? ''),
+        summary: String(formData.get('summary') ?? ''),
+        tags: tags(formData.get('tags')),
+      },
+      releaseNotes: String(formData.get('releaseNotes') ?? ''),
+    });
+    revalidatePath(`/app/${workspaceSlug}/toolkits/pi-packages`);
+    return { ok: true, listingId: result.listing.id };
+  } catch (error) {
+    return { error: actionError(error) };
+  }
+}
+
+export async function publishAssembledPiPackageReleaseAction(
+  _previous: MarketActionState,
+  formData: FormData,
+): Promise<MarketActionState> {
+  const workspaceSlug = String(formData.get('workspace') ?? '');
+  const ctx = await actionContext(workspaceSlug);
+  if (!ctx) return { error: 'not_authorized' };
+  try {
+    const selectedTools = formData.getAll('mcpTools').map((value) => JSON.parse(String(value)) as unknown);
+    const mcps = new Map<string, string[]>();
+    for (const value of selectedTools) {
+      if (!Array.isArray(value) || value.length !== 2 || value.some((part) => typeof part !== 'string')) return { error: 'invalid_manifest' };
+      const [deploymentId, tool] = value as [string, string];
+      mcps.set(deploymentId, [...(mcps.get(deploymentId) ?? []), tool]);
+    }
+    const result = await publishAssembledPiPackageRelease({
+      workspaceId: ctx.workspace.id,
+      publishedById: ctx.user.id,
+      name: String(formData.get('packageName') ?? ''),
+      version: String(formData.get('packageVersion') ?? ''),
+      installedSkillIds: formData.getAll('installedSkillIds').map(String),
+      mcps: [...mcps].map(([deploymentId, tools]) => ({ deploymentId, tools })),
+      visibility: formData.get('visibility') === 'public' ? 'public' : 'private',
+      listingId: String(formData.get('listingId') ?? '') || undefined,
+      categoryIds: categoryIds(formData),
+      listing: {
+        slug: String(formData.get('slug') ?? ''),
+        name: String(formData.get('name') ?? ''),
+        summary: String(formData.get('summary') ?? ''),
+        tags: tags(formData.get('tags')),
+      },
+      releaseNotes: String(formData.get('releaseNotes') ?? ''),
+    });
+    revalidatePath(`/app/${workspaceSlug}/toolkits/pi-packages`);
+    return { ok: true, listingId: result.listing.id };
+  } catch (error) {
+    return { error: actionError(error) };
+  }
+}
+
 export async function installMarketResourceAction(formData: FormData) {
   const workspaceSlug = String(formData.get('workspace') ?? '');
   const releaseId = String(formData.get('releaseId') ?? '');
@@ -180,9 +253,15 @@ export async function installMarketResourceAction(formData: FormData) {
     targetWorkspaceId: ctx.workspace.id,
     installedById: ctx.user.id,
     idempotencyKey: String(formData.get('idempotencyKey') ?? '') || randomUUID(),
+  }).catch((error: unknown) => {
+    if (formData.get('kind') !== 'pi-package') throw error;
+    redirect(`/app/${encodeURIComponent(workspaceSlug)}/market/installed?error=${encodeURIComponent(actionError(error))}`);
   });
   revalidatePath(`/app/${workspaceSlug}/market`);
   revalidatePath(`/app/${workspaceSlug}/market/installed`);
+  if (result.kind === 'pi-package') {
+    redirect(`/app/${workspaceSlug}/market/installed#install-${result.install.id}`);
+  }
   if (result.kind === 'skill') {
     revalidatePath(`/app/${workspaceSlug}/skills`);
     redirect(`/app/${workspaceSlug}/skills/${result.resource.id}`);
@@ -216,6 +295,9 @@ export async function updateMarketInstallAction(formData: FormData) {
     targetReleaseId: String(formData.get('targetReleaseId') ?? '') || undefined,
     currentReleaseId: String(formData.get('currentReleaseId') ?? '') || undefined,
     force: formData.get('force') === 'yes',
+  }).catch((error: unknown) => {
+    if (formData.get('kind') !== 'pi-package') throw error;
+    redirect(`/app/${encodeURIComponent(workspaceSlug)}/market/installed?error=${encodeURIComponent(actionError(error))}`);
   });
   revalidatePath(`/app/${workspaceSlug}/market`, 'layout');
   revalidatePath(`/app/${workspaceSlug}/market/installed`);
@@ -270,6 +352,7 @@ export async function withdrawMarketReleaseAction(formData: FormData) {
   });
   revalidatePath(`/app/${workspaceSlug}/market`, 'layout');
   revalidatePath(`/app/${workspaceSlug}/market/publish`);
+  revalidatePath(`/app/${workspaceSlug}/toolkits/pi-packages`);
 }
 
 export async function unpublishMarketListingAction(formData: FormData) {
@@ -284,6 +367,7 @@ export async function unpublishMarketListingAction(formData: FormData) {
   });
   revalidatePath(`/app/${workspaceSlug}/market`, 'layout');
   revalidatePath(`/app/${workspaceSlug}/market/publish`);
+  revalidatePath(`/app/${workspaceSlug}/toolkits/pi-packages`);
 }
 
 export async function removeAssistantMarketCopyAction(formData: FormData) {

@@ -52,6 +52,17 @@ but cannot enable them. Writes recheck administrator authority in the transactio
 and record an audit. Cookies, Toolkit tokens, public credentials, runtime tokens and
 browser Origin requests cannot authenticate this entry.
 
+Following [A2A 1.0 AgentCard semantics](https://a2a-protocol.org/v1.0.0/specification/#441-agentcard),
+the Card's `description` uses the Agent's configured description, with surrounding
+whitespace removed. Missing or whitespace-only descriptions fall back to
+`Explicitly enabled workspace-local Agent.`
+`skills` lists the Agent-invocable installed Skills attached directly or through its
+Toolkits, deduplicated by installed Skill ID. Names and descriptions come from the
+installed Skill/catalog metadata; Agent-disabled Skills are omitted. An Agent with
+no attached Agent-invocable Skills returns an empty list. Private system prompts and
+Skill contents are never included. Description edits do not change the execution
+configuration fingerprint or invalidate existing task grants.
+
 ```bash
 curl "$TOOLPLANE_URL/api/v1/workspaces/$WORKSPACE/agents/$AGENT_ID/a2a/local" \
   -H "Authorization: Bearer $ACCOUNT_TOKEN" \

@@ -12,6 +12,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { A2ATask } from '@prisma/client';
 import type * as RemoteNetwork from '@/lib/a2a/remote-network';
+import type { A2ALogBinding } from '@/lib/observability/a2a-log';
 import type * as Worker from '@/lib/a2a/worker';
 import type { HttpFixture, RemotePeerFixture } from '../fixtures/pi-agent-communication';
 import { db } from '@/lib/db';
@@ -39,7 +40,7 @@ const routing = vi.hoisted(() => ({ peerBase: '' }));
 vi.mock('@/lib/a2a/remote-network', async (original) => ({
   ...await original<typeof RemoteNetwork>(),
   fetchRemoteJson: async () => fetch(`${routing.peerBase}/card`),
-  remoteRpcFetch: (url: string, token?: string) => async (input: RequestInfo | URL, init?: RequestInit) => {
+  remoteRpcFetch: (url: string, token: string | undefined, _binding: A2ALogBinding) => async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = new Request(input, init);
     expect(request.url).toBe(url);
     const headers = new Headers(request.headers);
@@ -215,6 +216,7 @@ afterAll(async () => {
   const servers = await Promise.allSettled([platform?.close(), peer?.close()]); vi.unstubAllEnvs();
   if (workspaceId) {
     await db.auditEvent.deleteMany({ where: { OR: [{ workspaceId: { in: [workspaceId, foreignWorkspaceId].filter(Boolean) } }, { actorId: { in: [actorId, otherActorId].filter(Boolean) } }] } });
+    await db.logEvent.deleteMany({ where: { workspaceId: { in: [workspaceId, foreignWorkspaceId].filter(Boolean) } } });
     await db.workspace.deleteMany({ where: { id: { in: [workspaceId, foreignWorkspaceId].filter(Boolean) } } });
   }
   await db.user.deleteMany({ where: { id: { in: [actorId, otherActorId].filter(Boolean) } } }); await db.$disconnect();

@@ -80,6 +80,9 @@ describe('MCP market type switch', () => {
       'href',
       '/app/acme%20team/market/mcp?q=docs&category=search&sort=name&page=2&type=connector',
     );
+    const form = screen.getByRole('button', { name: 'applyFilters' }).closest('form')!;
+    expect(Object.fromEntries(new FormData(form))).toEqual({ category: 'search', type: 'connector', q: 'docs', sort: 'name' });
+    expect(screen.getByRole('link', { name: 'manageInstalled' })).toHaveAttribute('href', '/app/acme%20team/mcp');
   });
 
   it('keeps server cards informational without an install action', async () => {
@@ -96,5 +99,28 @@ describe('MCP market type switch', () => {
 
     expect(screen.getByRole('link', { name: 'viewDetails' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /addToWorkspace/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /connectToWorkspace/ })).not.toBeInTheDocument();
+  });
+
+  it('preserves connector filters returning from page two', async () => {
+    render(await McpMarketPage({
+      params: Promise.resolve({ workspace: 'acme team' }),
+      searchParams: Promise.resolve({ type: 'connector', page: '2', q: 'docs', category: 'search', sort: 'name' }),
+    }));
+    expect(mocks.getBrowseServers).toHaveBeenCalledWith(2, 'docs', { category: 'search', sort: 'name', type: 'connector' });
+    expect(screen.getByRole('link', { name: 'previous' })).toHaveAttribute('href',
+      '/app/acme%20team/market/mcp?q=docs&category=search&sort=name&type=connector');
+    expect(new FormData(screen.getByRole('button', { name: 'applyFilters' }).closest('form')!).has('page')).toBe(false);
+  });
+
+  it('distinguishes a category with no matches from an empty market', async () => {
+    const result = await mocks.getBrowseServers();
+    mocks.getBrowseServers.mockResolvedValue({ ...result, all: [], total: 0 });
+    render(await McpMarketPage({
+      params: Promise.resolve({ workspace: 'acme team' }),
+      searchParams: Promise.resolve({ category: 'search' }),
+    }));
+    expect(screen.getByText('noMcpMatchFilters')).toBeInTheDocument();
+    expect(screen.queryByText('noMcpDescription')).not.toBeInTheDocument();
   });
 });

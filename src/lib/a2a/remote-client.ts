@@ -1,6 +1,7 @@
 import 'server-only';
 import { AgentCard, Message, Task, TaskState, type SendMessageResult } from '@a2a-js/sdk';
 import { ClientFactory, JsonRpcTransportFactory } from '@a2a-js/sdk/client';
+import type { A2ALogBinding } from '@/lib/observability/a2a-log';
 import { RemoteA2AError, fetchRemoteJson, remotePair, remoteUrl, remoteRpcFetch } from './remote-network';
 import { validateCardWire } from './remote-wire';
 import { A2A_LIMITS, acceptsOutput, textArtifact } from './model';
@@ -52,8 +53,8 @@ export async function discoverRemoteConnection(cardUrl: string, token?: string, 
   }
   return { ...pair, card: validateRemoteCard(raw, pair.rpcUrl, Boolean(token)) };
 }
-export function createRemoteClient(card: AgentCard, rpcUrl: string, token?: string) {
-  return new ClientFactory({ transports: [new JsonRpcTransportFactory({ fetchImpl: remoteRpcFetch(rpcUrl, token) })],
+export function createRemoteClient(card: AgentCard, rpcUrl: string, token: string | undefined, binding: A2ALogBinding) {
+  return new ClientFactory({ transports: [new JsonRpcTransportFactory({ fetchImpl: remoteRpcFetch(rpcUrl, token, binding) })],
     preferredTransports: ['JSONRPC'], clientConfig: { acceptedOutputModes: ['text/plain'] },
   }).createFromAgentCard(validateRemoteCard(AgentCard.toJSON(card), rpcUrl, Boolean(token)));
 }

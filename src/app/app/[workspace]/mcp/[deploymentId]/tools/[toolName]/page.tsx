@@ -8,10 +8,9 @@ import { listMcpTools } from '@/lib/process/mcp-client';
 import { hasMcpToolCatalog, readMcpToolCatalog } from '@/lib/process/mcp-tool-catalog';
 import { effectiveStatus } from '@/lib/process/supervisor';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
-import { usesDefaultRemoteRuntime } from '@/lib/workspace/deployment-provenance';
-import { readMcpInspectorConnection } from '@/lib/workspace/inspector-connection';
 import { DashboardPage } from '@/components/dashboard/DashboardUI';
 import { McpToolCatalog } from '@/components/dashboard/McpToolCatalog';
+import { ToolPlayground } from '@/components/dashboard/ToolPlayground';
 
 export const dynamic = 'force-dynamic';
 
@@ -45,51 +44,28 @@ export default async function DeploymentToolPage({
       status: true,
       serverId: true,
       server: { select: { name: true, slug: true, installCfg: true } },
-      marketInstall: { select: { id: true } },
-      toolkitLinks: {
-        where: { toolkit: { marketInstall: { isNot: null } } },
-        select: { toolkitId: true },
-        take: 1,
-      },
     },
   });
   if (!deployment) notFound();
 
   const base = `/app/${encodeURIComponent(slug)}/mcp/${encodeURIComponent(deployment.id)}`;
-  const inspectorConnection = readMcpInspectorConnection(deployment.installCfg);
-  const defaultRemoteRuntime = usesDefaultRemoteRuntime(deployment);
-  if (deployment.source === 'remote' && !defaultRemoteRuntime) {
-    if (!inspectorConnection) redirect(`${base}?tab=tools`);
-    const sandbox = await db.sandbox.findFirst({
-      where: {
-        id: inspectorConnection.sandboxId,
-        workspaceId: workspace.id,
-        kind: { in: ['docker', 'connector'] },
-        network: { not: 'none' },
-      },
-      select: { deploymentId: true, deployment: { select: { status: true } } },
-    });
-    if (!sandbox
-      || effectiveStatus(sandbox.deploymentId, sandbox.deployment.status) !== 'running') {
-      redirect(`${base}?tab=tools`);
-    }
-  }
 
-  const running = effectiveStatus(deployment.id, deployment.status) === 'running';
+  const status = effectiveStatus(deployment.id, deployment.status);
+  const running = status === 'running';
   const savedTools = hasMcpToolCatalog(deployment.installCfg)
     ? readMcpToolCatalog(deployment.installCfg)
-    : deployment.source === 'remote' && !defaultRemoteRuntime
-      ? []
-      : readMcpToolCatalog(deployment.server?.installCfg);
-  const readsLiveTools = deployment.source !== 'remote' || defaultRemoteRuntime;
-  const liveTools = readsLiveTools && running ? await listMcpTools(deployment.id) : [];
-  const refreshedConfig = readsLiveTools && running && liveTools.length === 0
+    : readMcpToolCatalog(deployment.server?.installCfg);
+  let discoveryFailed = false;
+  const liveTools = running
+    ? await listMcpTools(deployment.id).catch(() => { discoveryFailed = true; return []; })
+    : [];
+  const refreshedConfig = running && liveTools.length === 0
     ? await db.deployment.findFirst({
         where: { id: deployment.id, workspaceId: workspace.id },
         select: { installCfg: true },
       })
     : null;
-  const tools = readsLiveTools && running
+  const tools = running
     ? liveTools.length
       ? liveTools
       : hasMcpToolCatalog(refreshedConfig?.installCfg)
@@ -97,6 +73,9 @@ export default async function DeploymentToolPage({
         : savedTools
     : savedTools;
   const tool = tools.find((candidate) => candidate.name === toolName);
+  if (!tool && discoveryFailed) {
+    return <DashboardPage><Link href={`${base}?tab=tools`}>{t('tools')}</Link><p role="alert">{t('toolDiscoveryFailed')}</p></DashboardPage>;
+  }
   if (!tool) notFound();
 
   const labels = {
@@ -140,6 +119,14 @@ export default async function DeploymentToolPage({
         </header>
 
         <McpToolCatalog tools={[tool]} labels={labels} />
+
+        {discoveryFailed ? <p role="alert" className="text-sm text-destructive">{t('toolDiscoveryFailed')}</p> : null}
+        {running ? (
+          <section className="rounded-xl border border-border bg-card p-4 sm:p-5">
+            <h2 className="mb-4 text-sm font-semibold">{t('manualToolTesting')}</h2>
+            <ToolPlayground key={tool.name} workspace={slug} deploymentId={deployment.id} tools={[tool]} defaultRuntime />
+          </section>
+        ) : <p className="text-sm text-muted-foreground">{t('deploymentNotRunningTesting', { status })}</p>}
 
         {tools.length > 1 ? (
           <section className="rounded-xl border border-border bg-card p-4 sm:p-5">

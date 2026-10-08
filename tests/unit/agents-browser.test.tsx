@@ -170,7 +170,7 @@ describe('AgentsBrowser', () => {
     );
   });
 
-  it('offers only Pi for new agents and requires a configured model before advancing', async () => {
+  it('requires a configured model before advancing', async () => {
     const user = userEvent.setup();
     render(
       <AgentsBrowser
@@ -181,7 +181,6 @@ describe('AgentsBrowser', () => {
     );
 
     await openBlankCreate(user);
-    expect(screen.getByRole('radio', { name: /^Pi/ })).toBeChecked();
     expect(screen.queryByRole('radio', { name: /Claude Code|DeepSeek Harness|Hermes/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Create draft agent' })).not.toBeInTheDocument();
 
@@ -246,7 +245,7 @@ describe('AgentsBrowser', () => {
     );
 
     await openBlankCreate(user);
-    await user.click(screen.getByRole('radio', { name: /^Pi/ }));
+    await user.click(screen.getByRole('radio', { name: 'Pi' }));
     await user.type(screen.getByLabelText('Name'), 'Research agent');
     await user.click(screen.getByRole('button', { name: 'Next' }));
     await user.click(screen.getByRole('button', { name: 'Next' }));
@@ -260,7 +259,7 @@ describe('AgentsBrowser', () => {
 
     expect(screen.queryByLabelText('Name')).not.toBeInTheDocument();
     await openBlankCreate(user);
-    await user.click(screen.getByRole('radio', { name: /^Pi/ }));
+    await user.click(screen.getByRole('radio', { name: 'Pi' }));
     expect(screen.getByRole('button', { name: 'Model: gpt-4.1' })).toBeInTheDocument();
     expect(document.querySelector('input[name="providerId"]')).toHaveValue('provider-1');
     await user.type(screen.getByLabelText('Name'), 'Second agent');
@@ -283,7 +282,6 @@ describe('AgentsBrowser', () => {
     await openBlankCreate(user);
     const basicStep = screen.getByRole('button', { name: /Basic/ });
     expect(basicStep).toHaveAttribute('aria-current', 'step');
-    expect(screen.getByRole('radio', { name: /^Pi/ })).toBeChecked();
     await user.type(screen.getByLabelText('Name'), 'Research agent');
 
     await user.click(screen.getByRole('button', { name: 'Next' }));
@@ -338,7 +336,7 @@ describe('AgentsBrowser', () => {
     );
 
     await openBlankCreate(user);
-    await user.click(screen.getByRole('radio', { name: /^Pi/ }));
+    await user.click(screen.getByRole('radio', { name: 'Pi' }));
     await user.type(screen.getByLabelText('Name'), 'Harness');
     await advanceToCreate(user);
     await user.click(screen.getByRole('button', { name: 'Create agent' }));
@@ -361,7 +359,7 @@ describe('AgentsBrowser', () => {
     );
 
     await openBlankCreate(user);
-    await user.click(screen.getByRole('radio', { name: /^Pi/ }));
+    await user.click(screen.getByRole('radio', { name: 'Pi' }));
     await user.type(screen.getByLabelText('Name'), 'Researcher');
     await user.click(screen.getByRole('button', { name: 'Next' }));
     await user.type(screen.getByLabelText('System prompt'), 'Use sources carefully.');

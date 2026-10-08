@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Features
+* add selected-sandbox batch start, stop and restart with disruptive-action confirmation, workspace-scoped lifecycle guards and per-sandbox results, including Hermes runtimes
+* add request-level A2A debugging across HTTP, MCP and native entries, with redacted 24-hour administrator-only bodies, committed task timelines, and workspace-scoped metadata views
+
+### Bug Fixes
+* return sub-agent resource validation failures without aborting the parent tool call; build the Pi capture sandbox before CI tests and align behavioral coverage with current UI controls
+* reject staged JS/TS syntax, JSON and lint errors before commit; install repository hooks automatically and run shared lint/type checks before push and in CI, excluding generated MDX files from lint
+* prevent long-running MCP and channel outages from Node 24.21 retaining nested timeout signals; initialize native weak signal following in the managed launcher before Next starts
+* authorize configured tools for authenticated inbound A2A roots without human approval, preserving per-call receipts, live permission checks and interactive chat/Work approval policies
+* switch workspace and account settings sections locally, keeping the modal and workbench mounted; reuse the sidebar across workspace, account, and agent settings
+* drain runtime ownership before replacing release files and restart through the managed SIGTERM handler; reject unclean online upgrades without replacing files, and use runtime readiness for Compose health checks
+* require runtime readiness as well as the target version and a new process identity before reporting update completion; return retryable local status during blocked recovery so older clients also cannot report false success
+* restore thin, theme-matched scrollbars after the console theme migration while preserving intentionally hidden scrollbars
+
 ## [0.32.0](https://github.com/asharca/ToolPlane/compare/v0.31.2...v0.32.0) (2026-09-28)
 
 ### Features

@@ -1,14 +1,14 @@
 // @vitest-environment node
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({ user: vi.fn(), workspace: vi.fn(), member: vi.fn(), admin: vi.fn(), activeUser: vi.fn(),
-  update: vi.fn(), audit: vi.fn(), root: vi.fn(), target: vi.fn(), rpc: vi.fn(), slug: vi.fn() }));
+  update: vi.fn(), audit: vi.fn(), root: vi.fn(), target: vi.fn(), rpc: vi.fn(), slug: vi.fn(), agent: vi.fn() }));
 vi.mock('@/lib/auth/request-user', () => ({ resolveAgentControlRequestUser: mocks.user }));
 vi.mock('@/lib/workspace/queries', () => ({ getWorkspaceForUser: mocks.workspace }));
 vi.mock('@/lib/observability/audit', () => ({ writeAudit: mocks.audit }));
 vi.mock('@/lib/agents/queries', () => ({ ORDINARY_AGENT_FILTER: { publicRuntimeAllocation: { is: null }, NOT: { runtime: { is: { kind: 'public' } } } } }));
 vi.mock('@/lib/a2a/local-policy', () => ({ createLocalRootGrant: mocks.root, localTarget: mocks.target }));
 vi.mock('@/lib/a2a/http', () => ({ handleA2ARpc: mocks.rpc }));
-vi.mock('@/lib/db', () => ({ db: { membership: { count: mocks.member }, workspace: { findUniqueOrThrow: mocks.slug },
+vi.mock('@/lib/db', () => ({ db: { membership: { count: mocks.member }, workspace: { findUniqueOrThrow: mocks.slug }, agent: { findFirstOrThrow: mocks.agent },
   $transaction: async (fn: (tx: unknown) => unknown) => fn({ $queryRaw: vi.fn(),
     workspace: { count: mocks.admin }, user: { count: mocks.activeUser }, agent: { updateMany: mocks.update } }) } }));
 import { handleLocalA2A } from '@/lib/a2a/local-http';
@@ -21,6 +21,7 @@ beforeEach(() => {
   mocks.user.mockResolvedValue({ id: 'actor' }); mocks.workspace.mockResolvedValue({ id: 'ws', slug: 'acme', ownerId: 'actor', status: 'active' });
   mocks.member.mockResolvedValue(0); mocks.admin.mockResolvedValue(1); mocks.activeUser.mockResolvedValue(1); mocks.update.mockResolvedValue({ count: 1 });
   mocks.target.mockResolvedValue({ name: 'Reviewer', binding: 'configuration-hash' }); mocks.slug.mockResolvedValue({ slug: 'acme' });
+  mocks.agent.mockResolvedValue({ description: null, skills: [], toolkits: [] });
   mocks.root.mockResolvedValue({ kind: 'local', workspaceId: 'ws', actorId: 'actor', agentId: 'agent', ownerKey: 'owner' });
 });
 describe('native workspace A2A entry and opt-in', () => {
@@ -70,6 +71,36 @@ describe('native workspace A2A entry and opt-in', () => {
     expect(card.supportedInterfaces).toEqual([{ url: 'https://toolplane.test/api/v1/workspaces/acme/agents/agent/a2a/local', protocolBinding: 'JSONRPC', protocolVersion: '1.0' }]);
     expect(card.capabilities.streaming).toBe(true); expect(card.defaultInputModes).toEqual(['text/plain']);
     expect(JSON.stringify(card)).not.toContain('attacker.test');
+  });
+  it('describes the Agent purpose without exposing private runtime configuration', async () => {
+    mocks.agent.mockResolvedValue({ description: '  审查代码并报告安全风险。  ', skills: [], toolkits: [], systemPrompt: 'private instructions', apiKey: 'private key' });
+    const response = await handleLocalA2A(request('GET'), 'acme', 'agent');
+    expect(response.status).toBe(200);
+    const card = await response.json();
+    expect(card.skills).toEqual([]);
+    expect(card.description).toBe('审查代码并报告安全风险。');
+    expect(JSON.stringify(card)).not.toContain('private instructions');
+    expect(JSON.stringify(card)).not.toContain('private key');
+  });
+  it('declares deduplicated Agent-invocable Skills attached directly or through Toolkits', async () => {
+    const review = { id: 'installed-review', skillId: 'catalog-review', name: null, slug: null, description: 'stale installed copy', agentInvocable: true,
+      skill: { name: 'Code Review', slug: 'code-review', description: 'Find correctness and security issues.' } };
+    const custom = { id: 'installed-custom', skillId: null, name: 'Release notes', slug: 'release-notes', description: 'Prepare release notes.', agentInvocable: true, skill: null };
+    const disabled = { id: 'installed-disabled', skillId: null, name: 'Private', slug: 'private', description: 'Not agent invocable.', agentInvocable: false, skill: null };
+    mocks.agent.mockResolvedValue({ description: null, skills: [{ installedSkill: review }, { installedSkill: disabled }],
+      toolkits: [{ toolkit: { skills: [{ installedSkill: review }, { installedSkill: custom }] } }] });
+    const response = await handleLocalA2A(request('GET'), 'acme', 'agent');
+    const card = await response.json();
+    expect(card.skills).toEqual([
+      { id: 'installed-review', name: 'Code Review', description: 'Find correctness and security issues.', tags: ['code-review'] },
+      { id: 'installed-custom', name: 'Release notes', description: 'Prepare release notes.', tags: ['release-notes'] },
+    ]);
+  });
+  it.each([null, '', ' \t\n '])('provides a nonblank description when the Agent description is %j', async (description) => {
+    mocks.agent.mockResolvedValue({ description, skills: [], toolkits: [] });
+    const response = await handleLocalA2A(request('GET'), 'acme', 'agent');
+    expect(response.status).toBe(200);
+    expect((await response.json()).description.trim()).not.toBe('');
   });
   it('does not disclose an invalid deployment origin or underlying database errors', async () => {
     process.env.NEXT_PUBLIC_APP_URL = 'http://unsafe-deployment.test';

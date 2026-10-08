@@ -1,6 +1,7 @@
 'use strict';
 
 /* eslint-disable @typescript-eslint/no-require-imports -- this launcher must preload and patch CommonJS Node/Next modules before Next starts. */
+require('./abort-signal.cjs');
 
 const fs = require('node:fs');
 const http = require('node:http');

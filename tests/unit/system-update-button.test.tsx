@@ -68,6 +68,7 @@ describe('SystemUpdateButton restart polling', () => {
       .mockResolvedValueOnce(
         new Response(JSON.stringify({
           runtimeId: 'new-runtime',
+          runtimeReady: true,
           currentVersion: 'v1.0.1',
           artifactName: 'toolplane-runtime-linux-amd64.tar.gz',
           updateJob: { status: 'idle', targetVersion: null, message: null },
@@ -126,6 +127,7 @@ describe('SystemUpdateButton restart polling', () => {
       })))
       .mockResolvedValueOnce(new Response(JSON.stringify({
         runtimeId: 'next-runtime',
+        runtimeReady: true,
         currentVersion: 'v1.0.1',
         artifactName: 'toolplane-runtime-linux-amd64.tar.gz',
         updateJob: { status: 'idle', targetVersion: null, message: null },
@@ -164,6 +166,7 @@ describe('SystemUpdateButton restart polling', () => {
       })))
       .mockResolvedValueOnce(new Response(JSON.stringify({
         runtimeId: 'new-runtime',
+        runtimeReady: true,
         currentVersion: 'v1.0.1',
         artifactName: 'toolplane-runtime-linux-amd64.tar.gz',
         updateJob: { status: 'idle', targetVersion: null, message: null },
@@ -189,8 +192,9 @@ describe('SystemUpdateButton restart polling', () => {
 
   it('surfaces a background update failure without waiting for the restart timeout', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      runtimeId: 'same-runtime',
-      currentVersion: 'v1.0.0',
+      runtimeId: 'new-runtime',
+      runtimeReady: true,
+      currentVersion: 'v1.0.1',
       artifactName: 'toolplane-runtime-linux-amd64.tar.gz',
       updateJob: { status: 'failed', targetVersion: 'v1.0.1', message: 'Checksum mismatch' },
     })));
@@ -201,5 +205,54 @@ describe('SystemUpdateButton restart polling', () => {
       pollIntervalMs: 10,
       timeoutMs: 100,
     })).resolves.toEqual({ status: 'failed', message: 'Checksum mismatch' });
+  });
+
+  it('waits for runtime recovery after the new process and version appear', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    let runtimeReady = false;
+    const fetchImpl = vi.fn(async () => Response.json({
+      runtimeId: 'new-runtime',
+      currentVersion: 'v1.0.1',
+      runtimeReady,
+      updateJob: { status: 'idle', targetVersion: null, message: null },
+    }));
+    const result = waitForSystemUpdateReady('v1.0.1', {
+      fetchImpl, previousRuntimeId: 'old-runtime', pollIntervalMs: 10, timeoutMs: 100,
+    });
+    const settled = vi.fn();
+    void result.then(settled);
+    await vi.advanceTimersByTimeAsync(20);
+    expect(settled).not.toHaveBeenCalled();
+    runtimeReady = true;
+    await vi.advanceTimersByTimeAsync(10);
+    await expect(result).resolves.toEqual({ status: 'ready' });
+  });
+
+  it.each([false, undefined])('does not accept a replacement runtime without positive readiness: %s', async (runtimeReady) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const fetchImpl = vi.fn(async () => Response.json({
+      runtimeId: 'new-runtime',
+      currentVersion: 'v1.0.1',
+      runtimeReady,
+      updateJob: { status: 'idle', targetVersion: null, message: null },
+    }));
+    const result = waitForSystemUpdateReady('v1.0.1', {
+      fetchImpl, previousRuntimeId: 'old-runtime', pollIntervalMs: 10, timeoutMs: 25,
+    });
+    await vi.advanceTimersByTimeAsync(30);
+    await expect(result).resolves.toEqual({ status: 'timeout' });
+  });
+
+  it('does not accept an absent process identity as evidence of a restart', async () => {
+    const fetchImpl = vi.fn(async () => Response.json({
+      currentVersion: 'v1.0.1',
+      runtimeReady: true,
+      updateJob: { status: 'idle', targetVersion: null, message: null },
+    }));
+    await expect(waitForSystemUpdateReady('v1.0.1', {
+      fetchImpl, previousRuntimeId: 'old-runtime',
+    })).resolves.toMatchObject({ status: 'failed' });
   });
 });

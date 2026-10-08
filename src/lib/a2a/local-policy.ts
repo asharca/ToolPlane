@@ -6,6 +6,7 @@ import { TaskNotFoundError, UnsupportedOperationError } from '@a2a-js/sdk/errors
 import { db } from '@/lib/db';
 import { isDedicatedSandboxRuntimeKind } from '@/lib/agents/runtime-kind';
 import { ORDINARY_AGENT_FILTER } from '@/lib/agents/queries';
+import { readAgentPiPackageMcpPolicy } from '@/lib/agents/pi-package-mcp-access';
 import { A2A_SCOPES, isLocalGrant, type LocalA2AGrant, type TaskGrant } from './principal';
 
 export const LOCAL_LIMITS = { depth: 3, tasksPerRoot: 16, resumes: 16, activePerWorkspace: 16,
@@ -39,11 +40,17 @@ export async function localTarget(tx: Database, workspaceId: string, agentId: st
       skills: { orderBy: { installedSkillId: 'asc' }, select: { installedSkillId: true } },
     } } } },
     subAgents: { orderBy: { childId: 'asc' }, select: { childId: true } },
+    piPackages: { orderBy: { marketInstallId: 'asc' }, select: { marketInstallId: true, releaseId: true, release: { select: { checksum: true } } } },
   } });
   if (!agent || !isDedicatedSandboxRuntimeKind(agent.runtimeKind) || !agent.provider || !agent.model
     || agent.sandboxes.length !== 1 || agent.sandboxes[0].sandbox.workspaceId !== workspaceId
     || agent.sandboxes[0].sandbox.kind !== 'docker' || agent.sandboxes[0].sandbox.network === 'none') throw missing();
-  const deployments = [...new Set([...agent.servers, ...agent.toolkits.flatMap((t) => t.toolkit.servers)].map((r) => r.deploymentId))].sort();
+  const packagePolicy = agent.runtimeKind === 'pi-sdk' && agent.piPackages.length
+    ? await readAgentPiPackageMcpPolicy(tx, workspaceId, agentId) : {};
+  const deployments = [...new Set([
+    ...[...agent.servers, ...agent.toolkits.flatMap((t) => t.toolkit.servers)].map((r) => r.deploymentId),
+    ...Object.keys(packagePolicy),
+  ])].sort();
   const skills = [...new Set([...agent.skills, ...agent.toolkits.flatMap((t) => t.toolkit.skills)].map((r) => r.installedSkillId))].sort();
   // Database-side digests avoid materializing potentially large secret-bearing bundles.
   const dependencies = await tx.$queryRaw<Array<{ kind: string; id: string; hash: string }>>`
@@ -56,7 +63,13 @@ export async function localTarget(tx: Database, workspaceId: string, agentId: st
       WHERE s."workspaceId"=${workspaceId} AND s.id = ANY(${skills}::text[])
     ORDER BY kind, id`;
   if (dependencies.length !== deployments.length + skills.length) throw missing();
-  const binding = createHash('sha256').update(JSON.stringify({ agent, dependencies })).digest('hex');
+  // Preserve the exact pre-SDK serialization for persisted grants of every old runtime.
+  const { piPackages, ...legacyAgent } = agent;
+  const fingerprintAgent = agent.runtimeKind === 'pi-sdk' ? { ...legacyAgent, sdkVersion: '0.87.1',
+    ...(Object.keys(packagePolicy).length ? { packageMcpPolicy: Object.fromEntries(Object.entries(packagePolicy).sort(([a], [b]) => a.localeCompare(b))) } : {}),
+    piPackages: piPackages.map((binding) => ({ marketInstallId: binding.marketInstallId, releaseId: binding.releaseId,
+      checksum: binding.release.checksum })).sort((a, b) => a.marketInstallId < b.marketInstallId ? -1 : a.marketInstallId > b.marketInstallId ? 1 : 0) } : legacyAgent;
+  const binding = createHash('sha256').update(JSON.stringify({ agent: fingerprintAgent, dependencies })).digest('hex');
   return { id: agent.id, name: agent.name, binding, sandboxId: agent.sandboxes[0].sandboxId,
     providerId: agent.provider.id, targets: agent.subAgents.map((s) => s.childId) };
 }

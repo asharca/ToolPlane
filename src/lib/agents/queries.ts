@@ -1,4 +1,5 @@
 import 'server-only';
+import type { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
 import { effectiveStatuses } from '@/lib/process/supervisor';
 import { deploymentLabel } from '@/lib/workspace/deployment-label';
@@ -27,7 +28,29 @@ const INSTALLED_SKILL_INCLUDE = {
   },
 } as const;
 
+export const AGENT_PI_PACKAGES_INCLUDE = {
+  orderBy: { marketInstallId: 'asc' },
+  select: {
+    marketInstallId: true,
+    releaseId: true,
+    marketInstall: {
+      select: {
+        id: true,
+        targetWorkspaceId: true,
+        listingId: true,
+        status: true,
+        resourceMap: true,
+        listing: { select: { id: true, kind: true, status: true } },
+      },
+    },
+    release: {
+      select: { id: true, listingId: true, reviewStatus: true, checksum: true, manifest: true },
+    },
+  },
+} as const;
+
 const TOOL_INCLUDE = {
+  piPackages: AGENT_PI_PACKAGES_INCLUDE,
   modelProviders: {
     include: { provider: true },
     orderBy: { provider: { createdAt: 'asc' } },
@@ -110,6 +133,8 @@ const TOOL_INCLUDE = {
     },
   },
 } as const;
+
+export type AgentForRun = Prisma.AgentGetPayload<{ include: { provider: true } & typeof TOOL_INCLUDE }>;
 
 // The relation is the primary visibility boundary. The durable sandbox marker
 // keeps the Agent hidden (and fail-closed in the runtime MCP route) if an
@@ -263,6 +288,7 @@ export async function getAgentPageData(workspaceId: string, agentId: string) {
       servers: { select: { deploymentId: true } },
       skills: { select: { installedSkillId: true } },
       toolkits: { select: { toolkitId: true } },
+      piPackages: { select: { marketInstallId: true, releaseId: true, release: { select: { version: true, reviewStatus: true } } } },
       sandboxes: {
         select: {
           sandboxId: true,

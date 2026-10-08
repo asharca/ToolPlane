@@ -15,13 +15,10 @@ import {
 } from 'lucide-react';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getMarketServer, getWorkspaceForUser } from '@/lib/workspace/queries';
-import { listSandboxes } from '@/lib/sandboxes/queries';
-import { effectiveStatus } from '@/lib/process/supervisor';
 import { deployServerAction } from '@/lib/workspace/actions';
 import { DashboardPage } from '@/components/dashboard/DashboardUI';
 import { McpToolCatalog } from '@/components/dashboard/McpToolCatalog';
 import { SafeStreamdown } from '@/components/dashboard/SafeStreamdown';
-import { ToolPlayground } from '@/components/dashboard/ToolPlayground';
 import { MarketDetailHeader } from '@/components/dashboard/market/MarketDetailShell';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
 
@@ -65,22 +62,7 @@ export default async function McpMarketDetailPage({
   const marketBase = `/app/${encodeURIComponent(slug)}/market/mcp`;
   const marketHref = `${marketBase}${server.mcpKind === 'connector' ? '?type=connector' : ''}`;
   const network = server.recipe.network === 'none' ? t('networkNone') : t('networkIsolated');
-  const inspectorRunning = Boolean(
-    server.inspectorSandbox
-    && effectiveStatus(server.inspectorSandbox.deploymentId, server.inspectorSandbox.status) === 'running',
-  );
-  const tools = server.mcpKind === 'server' || inspectorRunning ? server.tools : [];
-  const inspectorSandboxes = server.mcpKind === 'connector' && server.deploymentId
-    ? (await listSandboxes(workspace.id))
-      .filter((sandbox) => sandbox.kind === 'docker' || sandbox.kind === 'connector')
-      .map((sandbox) => ({
-        id: sandbox.id,
-        name: sandbox.name,
-        kind: sandbox.kind,
-        running: effectiveStatus(sandbox.deploymentId, sandbox.deployment.status) === 'running',
-        networkEnabled: sandbox.network !== 'none',
-      }))
-    : [];
+  const tools = server.tools;
   const toolCount = tools.length;
   const sourceHref = externalUrl(
     server.sourceUrl ?? (server.recipe.source === 'github' ? server.recipe.ref : ''),
@@ -103,6 +85,54 @@ export default async function McpMarketDetailPage({
     noDescription: mcpT('noDescription'),
     noArguments: mcpT('noArguments'),
   };
+  const connectorActions = server.mcpKind === 'connector' ? (
+    <section className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-muted/35 p-3">
+            {deploymentHref ? (
+              <>
+                <div className="flex items-start gap-2.5">
+                  <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-(--color-success)" />
+                  <div>
+                    <h2 className="text-sm font-semibold text-foreground">{t('alreadyAddedTitle')}</h2>
+                    <p className="mt-1 text-sm leading-6 text-muted-foreground">{t('alreadyAddedDescription')}</p>
+                  </div>
+                </div>
+                <ButtonLink href={deploymentHref} variant="primary" size="md">
+                  {t('manageDeployment')} <ArrowRight className="size-4" />
+                </ButtonLink>
+              </>
+            ) : (
+              <>
+                <div className="flex items-start gap-2.5">
+                  <ShieldCheck className="mt-0.5 size-5 shrink-0 text-foreground" />
+                  <div>
+                    <h2 className="text-sm font-semibold text-foreground">
+                      {t(server.mcpKind === 'connector' ? 'readyToConnect' : 'readyToDeploy')}
+                    </h2>
+                    <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                      {requiredEnvironmentCount
+                        ? t(server.mcpKind === 'connector' ? 'connectorNeedsConfiguration' : 'deploymentNeedsConfiguration', { count: requiredEnvironmentCount })
+                        : t(server.mcpKind === 'connector' ? 'connectorNoConfiguration' : 'deploymentNoConfiguration')}
+                    </p>
+                  </div>
+                </div>
+                <form action={deployServerAction}>
+                  <input type="hidden" name="workspace" value={slug} />
+                  <input type="hidden" name="serverId" value={server.id} />
+                  <SubmitButton
+                    flash={false}
+                    pendingLabel={t(server.mcpKind === 'connector' ? 'connecting' : 'adding')}
+                    variant="primary" size="md"
+                  >
+                    {t(server.mcpKind === 'connector' ? 'connectToWorkspace' : 'addToWorkspace')} <ArrowRight className="size-4" />
+                  </SubmitButton>
+                </form>
+                <p className="w-full text-xs leading-5 text-muted-foreground">
+                  {t(server.mcpKind === 'connector' ? 'connectorRedirectHint' : 'deploymentRedirectHint')}
+                </p>
+              </>
+            )}
+    </section>
+  ) : null;
 
   return (
     <DashboardPage className="space-y-7">
@@ -115,6 +145,7 @@ export default async function McpMarketDetailPage({
         title={server.name}
         publisher={t('publishedBy', { name: server.author ?? t('unknownPublisher') })}
         summary={server.description ?? t('noDescription')}
+        actions={connectorActions}
         facts={[
           { label: t('popularity'), value: server.stars.toLocaleString(locale) },
           ...(toolCount ? [{ label: t('tools'), value: toolCount }] : []),
@@ -173,12 +204,14 @@ export default async function McpMarketDetailPage({
             )}
           </section>
 
-          {server.mcpKind === 'server' || inspectorRunning ? (
+          {server.mcpKind === 'server' || server.toolCatalogKnown ? (
             tools.length ? (
               <McpToolCatalog
                 tools={tools}
                 labels={toolCatalogLabels}
-                hrefForTool={(name) => `${marketBase}/${encodeURIComponent(server.slug)}/tools/${encodeURIComponent(name)}`}
+                hrefForTool={(name) => server.deploymentId
+                  ? `/app/${encodeURIComponent(slug)}/mcp/${encodeURIComponent(server.deploymentId)}/tools/${encodeURIComponent(name)}`
+                  : `${marketBase}/${encodeURIComponent(server.slug)}/tools/${encodeURIComponent(name)}`}
               />
             ) : (
               <section className="rounded-lg bg-muted/25 px-5 py-5">
@@ -195,73 +228,14 @@ export default async function McpMarketDetailPage({
             )
           ) : null}
 
-          {server.mcpKind === 'connector' && server.deploymentId ? (
-            <section className="rounded-3xl border border-border bg-card overflow-hidden">
-              <header className="border-b border-border px-5 py-4">
-                <h2 className="text-sm font-semibold text-foreground">{t('inspector')}</h2>
-                <p className="mt-1 text-xs leading-5 text-muted-foreground">{t('inspectorDescription')}</p>
-              </header>
-              <div className="px-5 py-5">
-                <ToolPlayground
-                  workspace={slug}
-                  deploymentId={server.deploymentId}
-                  tools={tools}
-                  sandboxes={inspectorSandboxes}
-                  connectedSandboxId={server.inspectorSandbox?.id}
-                  credentialsRequired={server.deploymentStatus === 'setup_required'}
-                />
-              </div>
-            </section>
+          {server.deploymentId ? (
+            <ButtonLink href={`/app/${encodeURIComponent(slug)}/mcp/${encodeURIComponent(server.deploymentId)}?tab=tools`} variant="secondary" size="md">
+              {mcpT('manualToolTesting')}
+            </ButtonLink>
           ) : null}
         </main>
 
         <aside className="space-y-5 xl:sticky xl:top-20 xl:self-start">
-          {server.mcpKind === 'connector' ? <section className="rounded-lg bg-muted/35 p-5">
-            {deploymentHref ? (
-              <>
-                <div className="flex items-start gap-2.5">
-                  <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-(--color-success)" />
-                  <div>
-                    <h2 className="text-sm font-semibold text-foreground">{t('alreadyAddedTitle')}</h2>
-                    <p className="mt-1 text-sm leading-6 text-muted-foreground">{t('alreadyAddedDescription')}</p>
-                  </div>
-                </div>
-                <ButtonLink href={deploymentHref} variant="primary" size="md" className="mt-5 w-full">
-                  {t('manageDeployment')} <ArrowRight className="size-4" />
-                </ButtonLink>
-              </>
-            ) : (
-              <>
-                <div className="flex items-start gap-2.5">
-                  <ShieldCheck className="mt-0.5 size-5 shrink-0 text-foreground" />
-                  <div>
-                    <h2 className="text-sm font-semibold text-foreground">
-                      {t(server.mcpKind === 'connector' ? 'readyToConnect' : 'readyToDeploy')}
-                    </h2>
-                    <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                      {requiredEnvironmentCount
-                        ? t(server.mcpKind === 'connector' ? 'connectorNeedsConfiguration' : 'deploymentNeedsConfiguration', { count: requiredEnvironmentCount })
-                        : t(server.mcpKind === 'connector' ? 'connectorNoConfiguration' : 'deploymentNoConfiguration')}
-                    </p>
-                  </div>
-                </div>
-                <form action={deployServerAction} className="mt-5">
-                  <input type="hidden" name="workspace" value={slug} />
-                  <input type="hidden" name="serverId" value={server.id} />
-                  <SubmitButton
-                    flash={false}
-                    pendingLabel={t(server.mcpKind === 'connector' ? 'connecting' : 'adding')}
-                    variant="primary" size="md" className="w-full"
-                  >
-                    {t(server.mcpKind === 'connector' ? 'connectToWorkspace' : 'addToWorkspace')} <ArrowRight className="size-4" />
-                  </SubmitButton>
-                </form>
-                <p className="mt-3 text-xs leading-5 text-muted-foreground">
-                  {t(server.mcpKind === 'connector' ? 'connectorRedirectHint' : 'deploymentRedirectHint')}
-                </p>
-              </>
-            )}
-          </section> : null}
 
           <section className="px-1 py-2">
             <div className="flex items-center gap-2.5">

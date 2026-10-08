@@ -1,4 +1,5 @@
 'use client';
+import { ModalSidebar } from '../ModalSidebar';
 import { Button } from '@/components/motion/button/base';
 
 import dynamic from 'next/dynamic';
@@ -6,10 +7,8 @@ import { useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import type { AgentResourceOption } from '@/components/dashboard/agents/AgentResourceSelect';
 import type { ModelProviderOption } from '@/components/dashboard/models/ModelPicker';
-import {
-  AgentSettingsForm,
-  type AgentSettingsSection,
-} from '@/components/dashboard/agents/AgentSettingsForm';
+import { AgentSettingsForm } from '@/components/dashboard/agents/AgentSettingsForm';
+import type { AgentPiPackageOption, AgentSettingsSection } from '@/components/dashboard/agents/AgentSettingsForm';
 import { AgentMarketSetupBanner } from '@/components/dashboard/agents/AgentMarketSetupBanner';
 import type { AgentChannelConnectionClientView } from '@/lib/agents/channel-connection-client';
 import type { AgentMarketSetupGuide } from '@/lib/agents/market-setup';
@@ -56,6 +55,7 @@ type SettingsData = {
   deployments: AgentResourceOption[];
   skills: AgentResourceOption[];
   toolkits: AgentResourceOption[];
+  piPackages?: AgentPiPackageOption[];
   defaultSandboxId?: string | null;
   runtimeSandboxId?: string | null;
   runtimeEnvironment?: string;
@@ -95,6 +95,7 @@ const AGENT_SETTINGS_SECTIONS: readonly AgentSettingsSection[] = [
   'mcp',
   'skills',
   'toolkits',
+  'piPackages',
   'sandboxes',
   'subAgents',
   'advanced',
@@ -180,6 +181,7 @@ export function AgentSettings({
     { id: 'mcp', label: t('mcp') },
     { id: 'skills', label: t('skills') },
     { id: 'toolkits', label: t('toolkits') },
+    { id: 'piPackages', label: t('piPackages') },
     { id: 'subAgents', label: t('subAgents') },
     { id: 'a2a', label: t('a2a.title') },
     { id: 'channels', label: t('channelSettingsTab') },
@@ -192,7 +194,7 @@ export function AgentSettings({
         {marketSetup ? <AgentMarketSetupBanner slug={slug} setup={marketSetup} /> : null}
 
         <div className="flex min-h-0 flex-1 flex-col sm:flex-row">
-          <aside className="shrink-0 border-b border-border/60 bg-muted/20 sm:flex sm:w-52 sm:min-h-0 sm:flex-col sm:border-b-0 sm:border-r">
+          <ModalSidebar className="sm:flex sm:w-52 sm:min-h-0 sm:flex-col sm:border-b-0 sm:border-r">
             <div className="p-3 sm:hidden">
               <select aria-label={t('configurationNavigation')} value={settingsTab} onChange={(event) => setSettingsTab(event.target.value as SettingsTab)} className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                 {navigationItems.map(({ id, label }) => <option key={id} value={id}>{label}</option>)}
@@ -206,7 +208,7 @@ export function AgentSettings({
                 </Button>;
               })}
             </nav>
-          </aside>
+          </ModalSidebar>
           <div className={cx(
             'min-h-0 min-w-0 flex-1',
             settingsTab === 'hermes' || settingsTab === 'terminal'
@@ -230,6 +232,7 @@ export function AgentSettings({
               deployments={settings.deployments}
               skills={settings.skills}
               toolkits={settings.toolkits}
+              piPackages={settings.piPackages}
               defaultSandboxId={settings.defaultSandboxId}
               runtimeSandboxId={settings.runtimeSandboxId}
               runtimeEnvironment={settings.runtimeEnvironment}

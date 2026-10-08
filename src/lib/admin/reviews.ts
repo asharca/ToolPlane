@@ -3,7 +3,7 @@ import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
 import { normalizeAdminPage } from './pagination';
 
-export const REVIEW_KINDS = ['agent', 'skill', 'mcp', 'toolkit', 'assistant'] as const;
+export const REVIEW_KINDS = ['agent', 'skill', 'mcp', 'toolkit', 'assistant', 'pi-package'] as const;
 export const REVIEW_STATUSES = ['pending', 'approved', 'rejected'] as const;
 
 type ReviewRow = {

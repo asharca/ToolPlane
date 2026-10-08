@@ -658,11 +658,14 @@ describe('AgentConversation', () => {
       reasoningAvailable: true,
     });
 
-    const effort = screen.getByRole('combobox', { name: 'Thinking effort' });
-    expect(effort).toHaveTextContent('Medium');
+    const effort = screen.getByRole('button', { name: 'Thinking effort: Medium' });
     await userEvent.click(effort);
-    await userEvent.click(screen.getByRole('option', { name: 'High' }));
-    expect(effort).toHaveTextContent('High');
+    const slider = screen.getByRole('slider', { name: 'Thinking effort' });
+    expect(slider).toHaveAttribute('aria-valuetext', 'Medium');
+    slider.focus();
+    await userEvent.keyboard('{ArrowRight}');
+    expect(slider).toHaveAttribute('aria-valuetext', 'High');
+    await userEvent.keyboard('{Escape}');
     await userEvent.type(screen.getByPlaceholderText('Message this agent'), 'Think carefully');
     await userEvent.click(screen.getByRole('button', { name: 'Send prompt' }));
 

@@ -102,6 +102,7 @@ describe('ToolPlayground', () => {
 
     render(<ToolPlayground workspace="acme" deploymentId="dep1" tools={tools} defaultRuntime />);
     expect(screen.queryByRole('button', { name: /connect inspector/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: /run tool/i }));
 
@@ -113,6 +114,30 @@ describe('ToolPlayground', () => {
     });
     expect(mocks.runMcpInspectorToolAction).not.toHaveBeenCalled();
     expect(await screen.findByText('HELLO')).toBeInTheDocument();
+  });
+
+  it('retains destructive-tool confirmation on the direct runtime', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true);
+    mocks.runMcpConsoleToolAction.mockResolvedValue({ result: { content: [{ type: 'text', text: 'deleted' }] } });
+    render(<ToolPlayground workspace="acme" deploymentId="dep1" tools={[{ name: 'delete', annotations: { destructiveHint: true } }]} defaultRuntime />);
+    await userEvent.click(screen.getByRole('button', { name: /run tool/i }));
+    expect(confirm).toHaveBeenCalled();
+    expect(mocks.runMcpConsoleToolAction).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('button', { name: /run tool/i }));
+    expect(await screen.findByText('deleted')).toBeInTheDocument();
+  });
+
+  it.each([
+    ['deploymentNotRunning', /check that the deployment is running/i],
+    ['invalidToolCall', /tool is no longer available/i],
+    ['toolDiscoveryFailed', /could not discover tools/i],
+    ['notAuthorized', /do not have access/i],
+  ])('shows a clean direct-runtime error for %s without a sandbox instruction', async (error, message) => {
+    mocks.runMcpConsoleToolAction.mockResolvedValue({ error });
+    render(<ToolPlayground workspace="acme" deploymentId="dep1" tools={tools} defaultRuntime />);
+    await userEvent.click(screen.getByRole('button', { name: /run tool/i }));
+    expect(await screen.findByText(message)).toBeInTheDocument();
+    expect(screen.queryByText(/sandbox connection failed/i)).not.toBeInTheDocument();
   });
 
   it('updates a managed runtime when tools arrive after provisioning', async () => {

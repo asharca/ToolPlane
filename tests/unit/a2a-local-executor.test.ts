@@ -7,7 +7,7 @@ vi.mock('@/lib/a2a/principal', () => ({ isLocalGrant: (g: { kind?: string }) => 
 vi.mock('@/lib/a2a/local-policy', () => ({ localTarget: mocks.target }));
 vi.mock('@/lib/db', () => ({ db: { a2AContext: { findFirst: mocks.context } } }));
 vi.mock('@/lib/agents/queries', () => ({ getAgentForRun: mocks.agent }));
-vi.mock('@/lib/agents/resolve', () => ({ resolveAgentTools: () => ({ deploymentIds: ['live-mcp', 'stopped-mcp'], skills: [{ name: 'test-skill' }] }) }));
+vi.mock('@/lib/agents/resolve', async (importOriginal) => ({ ...await importOriginal<object>(), resolveAgentTools: () => ({ deploymentIds: ['live-mcp', 'stopped-mcp'], skills: [{ name: 'test-skill' }] }) }));
 vi.mock('@/lib/process/supervisor', () => ({ liveStatus: (id: string) => id === 'live-mcp' ? 'running' : 'stopped' }));
 vi.mock('@/lib/agents/model', () => ({ resolveModelContext: () => ({ maxTokens: 128000, estimated: false }) }));
 vi.mock('@/lib/agents/sandbox-runtime', () => ({ runSandboxAgentTurn: mocks.run }));

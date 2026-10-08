@@ -194,7 +194,7 @@ describe('workspace MCP deployment detail', () => {
     expect(screen.getByText('Playground')).toBeInTheDocument();
   });
 
-  it('renders captured runtime output on the initial logs page', async () => {
+  it('renders captured output only on the dedicated runtime log page', async () => {
     mocks.getDeploymentRuntimeLogChunk.mockReturnValue({
       generation: 'generation-1',
       cursor: 0,
@@ -205,23 +205,34 @@ describe('workspace MCP deployment detail', () => {
 
     render(await DeploymentInspectorPage({
       params: Promise.resolve({ workspace: 'acme', deploymentId: 'deployment-1' }),
-      searchParams: Promise.resolve({ tab: 'logs' }),
+      searchParams: Promise.resolve({ tab: 'runtime' }),
     }));
 
     expect(screen.getByTestId('runtime-logs')).toHaveTextContent('startup failed');
+    expect(screen.queryByRole('heading', { name: 'mcpCallLogs' })).not.toBeInTheDocument();
     expect(mocks.getDeploymentRuntimeLogChunk).toHaveBeenCalledWith(
       'deployment-1',
       { limit: 64 * 1024 },
     );
   });
 
-  it('uses the managed runtime for a self-created remote MCP without an inspector', async () => {
+  it('opens MCP call logs without loading or showing runtime output', async () => {
+    render(await DeploymentInspectorPage({
+      params: Promise.resolve({ workspace: 'acme', deploymentId: 'deployment-1' }),
+      searchParams: Promise.resolve({ tab: 'logs' }),
+    }));
+    expect(screen.getByRole('heading', { name: 'mcpCallLogs' })).toBeInTheDocument();
+    expect(screen.queryByTestId('runtime-logs')).not.toBeInTheDocument();
+    expect(mocks.getDeploymentRuntimeLogChunk).not.toHaveBeenCalled();
+  });
+
+  it.each(['npm', 'docker', 'custom', 'remote'])('uses its own %s runtime without an inspector sandbox', async (source) => {
     mocks.deployment.mockResolvedValue({
       ...baseDeployment,
       name: 'Private remote MCP',
-      source: 'remote',
+      source,
       sourceRef: 'https://mcp.example.com/mcp',
-      marketInstall: null,
+      marketInstall: { id: 'market-install-1' },
       toolkitLinks: [],
       installCfg: { network: 'isolated', env: {}, toolCatalog: tools },
     });
@@ -248,7 +259,7 @@ describe('workspace MCP deployment detail', () => {
     }));
 
     expect(screen.getByRole('heading', { level: 1, name: 'search_products' })).toBeInTheDocument();
-    expect(screen.getByText('Search term')).toBeInTheDocument();
+    expect(await screen.findByText('Search term')).toBeInTheDocument();
     expect(screen.getByText('Input schema')).toBeInTheDocument();
     expect(screen.getByText(/"required"/)).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Tools' })).toHaveAttribute(
@@ -263,6 +274,7 @@ describe('workspace MCP deployment detail', () => {
       },
     }));
     expect(mocks.listMcpTools).toHaveBeenCalledWith('deployment-1');
+    expect(screen.getByTestId('playground')).toHaveAttribute('data-default-runtime', 'true');
   });
 
   it('opens a self-created remote tool deep link through its managed runtime', async () => {
@@ -340,7 +352,7 @@ describe('workspace MCP deployment detail', () => {
       }),
     }));
 
-    expect(screen.getByText('Search term')).toBeInTheDocument();
+    expect(await screen.findByText('Search term')).toBeInTheDocument();
     expect(mocks.listMcpTools).not.toHaveBeenCalled();
   });
 
@@ -380,30 +392,37 @@ describe('workspace MCP deployment detail', () => {
     expect(screen.getByText('Search the product catalog by keyword.')).toBeInTheDocument();
   });
 
-  it('redirects a remote tool deep link when its connected sandbox is unavailable', async () => {
+  it('opens market-installed remote tools without a connected sandbox', async () => {
     mocks.deployment.mockResolvedValue({
-      ...baseDeployment,
-      source: 'remote',
-      sourceRef: 'https://mcp.example.com/mcp',
-      status: 'stopped',
-      marketInstall: { id: 'market-install-1' },
-      toolkitLinks: [],
-      installCfg: {
-        toolCatalog: tools,
-        mcpInspector: { sandboxId: 'sandbox-1', connectedAt: '2026-08-29T00:00:00.000Z' },
-      },
+      ...baseDeployment, source: 'remote', marketInstall: { id: 'market-install-1' },
+      installCfg: { toolCatalog: tools },
     });
-
-    await DeploymentToolPage({
-      params: Promise.resolve({
-        workspace: 'acme', deploymentId: 'deployment-1', toolName: 'search_products',
-      }),
-    });
-
-    expect(mocks.redirect).toHaveBeenCalledWith('/app/acme/mcp/deployment-1?tab=tools');
-    expect(mocks.sandboxFindFirst).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({ id: 'sandbox-1', workspaceId: 'workspace-1' }),
+    render(await DeploymentToolPage({
+      params: Promise.resolve({ workspace: 'acme', deploymentId: 'deployment-1', toolName: 'search_products' }),
     }));
-    expect(mocks.listMcpTools).not.toHaveBeenCalled();
+    expect(screen.getByTestId('playground')).toHaveAttribute('data-default-runtime', 'true');
+    expect(mocks.sandboxFindFirst).not.toHaveBeenCalled();
+    expect(mocks.listMcpTools).toHaveBeenCalledWith('deployment-1');
+  });
+
+  it('shows discovery failures without leaking the underlying transport error', async () => {
+    mocks.listMcpTools.mockRejectedValueOnce(new Error('private transport error'));
+    render(await DeploymentInspectorPage({
+      params: Promise.resolve({ workspace: 'acme', deploymentId: 'deployment-1' }),
+      searchParams: Promise.resolve({ tab: 'tools' }),
+    }));
+    expect(screen.getByRole('alert')).toHaveTextContent('toolDiscoveryFailed');
+    expect(screen.queryByText('private transport error')).not.toBeInTheDocument();
+  });
+
+  it.each(['running', 'stopped'])('preserves restart availability in maintenance for %s', async (status) => {
+    mocks.status = status;
+    render(await DeploymentInspectorPage({
+      params: Promise.resolve({ workspace: 'acme', deploymentId: 'deployment-1' }),
+      searchParams: Promise.resolve({ tab: 'settings' }),
+    }));
+    if (status === 'running') expect(screen.getByRole('button', { name: 'restart' })).toBeInTheDocument();
+    else expect(screen.queryByRole('button', { name: 'restart' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'rebuild' })).toBeInTheDocument();
   });
 });

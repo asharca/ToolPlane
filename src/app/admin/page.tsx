@@ -1,3 +1,4 @@
+/* eslint-disable react/jsx-key -- DashboardTable consumes cell arrays as indexed values. */
 
 import { ButtonLink } from '@/components/motion/button';
 import { getLocale, getTranslations } from 'next-intl/server';
@@ -8,6 +9,7 @@ import { getSystemOverview } from '@/lib/admin/overview';
 import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
 import { AdminBadge, AdminMetric, AdminPage, AdminPageHeader, AdminPanel } from '@/components/admin/AdminUI';
 import { LogOutcomeBadge, LogTimestamp } from '@/components/admin/LogUI';
+import { DashboardTable } from '@/components/dashboard/DashboardTable';
 import { adminHref } from '@/lib/admin/navigation';
 
 export const dynamic = 'force-dynamic';
@@ -41,13 +43,12 @@ export default async function AdminOverviewPage() {
   const o = await getSystemOverview();
   const ops = await getTranslations('adminOps');
   const deployTotal = Object.values(o.counts.deployments).reduce((a, b) => a + b, 0);
-  const hasRequestData = o.requests.total > 0;
-  const errorRate = hasRequestData ? (o.requests.errors / o.requests.total) * 100 : null;
   const deploymentLabels: Record<string, string> = {
     running: t('deploymentStatusRunning'), provisioning: t('deploymentStatusProvisioning'),
     stopped: t('deploymentStatusStopped'), error: t('deploymentStatusError'),
   };
   const requestsHref = '/admin/logs?domain=mcp&eventName=gateway.request';
+  const a2aRequestsHref = '/admin/logs?tab=a2a&direction=inbound';
 
   return (
     <AdminPage>
@@ -101,48 +102,41 @@ export default async function AdminOverviewPage() {
       </div>
 
       <div className="grid gap-8 xl:grid-cols-[minmax(0,1.35fr)_minmax(22rem,.65fr)]">
-        <AdminPanel
-          title={ops('mcpHealth')}
-          actions={
-            <AdminBadge tone={!hasRequestData ? 'neutral' : o.requests.errors === 0 ? 'success' : 'danger'} dot>
-              {!hasRequestData
-                ? t('noRequestData')
-                : o.requests.errors === 0
-                ? t('noRequestErrors')
-                : t('requestErrorsRecorded', { count: o.requests.errors })}
-            </AdminBadge>
-          }
-          padded={false}
-        >
-          <dl className="grid sm:grid-cols-3">
+        <AdminPanel title={t('logsRequestTriage')} description={t('last24Hours')} padded={false}>
+          <div className="grid divide-y divide-border sm:grid-cols-2 sm:divide-x sm:divide-y-0">
             {[
-              {
-                label: t('errors24h'),
-                value: o.requests.errors.toLocaleString(),
-                note: errorRate === null ? t('noRequestData') : `${errorRate.toFixed(1)}%`,
-              },
-              {
-                label: t('p95Latency'),
-                value: hasRequestData ? `${o.requests.p95Ms.toLocaleString()} ms` : '—',
-                note: t('last24Hours'),
-              },
-              {
-                label: t('averageLatency'),
-                value: hasRequestData ? `${o.requests.avgMs.toLocaleString()} ms` : '—',
-                note: t('last24Hours'),
-              },
-            ].map((item, index) => (
-              <div
-                key={item.label}
-                className={`px-4 py-5 ${index > 0 ? 'border-t border-border sm:border-l sm:border-t-0' : ''}`}
-              >
-                <dt className="text-xs font-medium text-muted-foreground">{item.label}</dt>
-                <dd className={`mt-3 text-2xl font-semibold tabular-nums ${index === 0 && o.requests.errors ? 'text-destructive' : 'text-foreground'}`}>{item.value}</dd>
-                <dd className="mt-1 text-xs text-muted-foreground">{item.note}</dd>
+              { label: ops('mcpRequests'), stats: o.requests, href: requestsHref },
+              { label: t('logsA2aRequests'), stats: o.a2aRequests, href: a2aRequestsHref },
+            ].map(({ label, stats, href }) => (
+              <div key={href} className="min-w-0 px-5 py-4">
+                <h3 className="mb-3 text-sm font-semibold">{label}</h3>
+                <dl className="space-y-2 text-sm">
+                  <div className="flex justify-between gap-3"><dt className="text-muted-foreground">{t('requests24h')}</dt><dd className="font-semibold tabular-nums">{stats.total.toLocaleString()}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-muted-foreground">{t('errors24h')}</dt><dd className={`font-semibold tabular-nums ${stats.errors ? 'text-destructive' : ''}`}>{stats.errors.toLocaleString()}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-muted-foreground">{t('p95Latency')}</dt><dd className="tabular-nums">{stats.total ? `${stats.p95Ms.toLocaleString()} ms` : t('noRequestData')}</dd></div>
+                </dl>
+                <ButtonLink href={href} variant="ghost" size="md" className="mt-3">{t('overviewViewLogs')}<ArrowUpRight className="size-3.5" aria-hidden="true" /></ButtonLink>
               </div>
             ))}
-          </dl>
-          <ButtonLink href={requestsHref} variant="ghost" size="md" className="mt-2">{t('overviewViewLogs')}<ArrowUpRight className="size-3.5" aria-hidden="true" /></ButtonLink>
+          </div>
+          <div className="min-w-0 border-t border-border">
+            <h3 className="px-5 py-4 text-sm font-semibold">{t('logsRecentRequests')}</h3>
+            {o.recentRequests.length ? <DashboardTable
+              ariaLabel={t('logsRecentRequests')}
+              minWidth="42rem"
+              headers={[
+                { label: t('logsTime') }, { label: t('logsOperation') }, { label: t('logsUserClient') },
+                { label: t('logsResult') }, { label: t('logsDuration'), align: 'right' },
+              ]}
+              rows={o.recentRequests.map(event => ({ id: event.id, cells: [
+                <LogTimestamp date={event.createdAt} />,
+                <Link href={adminHref(`/admin/logs/${event.id}`, { returnTo: '/admin' })} className="block min-w-0 max-w-56 hover:underline"><span className="block text-xs text-muted-foreground">{event.domain === 'a2a' ? 'A2A' : 'MCP'}</span><span className="block truncate font-medium">{event.rpcMethod ?? event.toolName ?? event.eventName}</span></Link>,
+                <span className="block max-w-48 truncate">{event.actorId ? <><span className="block truncate">{event.actorName ?? event.actorId}</span>{event.actorName ? <code className="block truncate text-xs text-muted-foreground">{event.actorId}</code> : null}</> : event.clientId ? <><span className="block text-xs text-muted-foreground">{t('logsServiceClient')}</span><code className="block truncate">{event.clientId}</code></> : t('logsUnknownCaller')}</span>,
+                <LogOutcomeBadge outcome={event.outcome} />,
+                <span className="whitespace-nowrap tabular-nums">{event.durationMs === null ? '—' : `${event.durationMs.toLocaleString()} ms`}</span>,
+              ] }))}
+            /> : <p className="px-5 pb-6 text-sm text-muted-foreground">{t('noRequestData')}</p>}
+          </div>
         </AdminPanel>
 
         <AdminPanel title={t('resourceInventory')} description={t('currentTotals')} padded={false}>

@@ -231,8 +231,11 @@
         cursor: pointer;
     }
     html {
-        color-scheme: light dark;
+        color-scheme: light;
         overflow-x: clip;
+    }
+    html.dark {
+        color-scheme: dark;
     }
     body {
         background: var(--background);
@@ -245,6 +248,15 @@
     ::selection {
         background: color-mix(in oklch, var(--accent) 30%, transparent);
         color: var(--foreground);
+    }
+}
+
+@layer base {
+    @media (pointer: fine) {
+        * {
+            scrollbar-color: color-mix(in srgb, var(--muted-foreground) 28%, transparent) transparent;
+            scrollbar-width: thin;
+        }
     }
 }
 

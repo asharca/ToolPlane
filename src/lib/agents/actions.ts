@@ -1,6 +1,8 @@
 'use server';
 
 import type { ModelCost, ModelCostRates, ModelCostTier } from '@earendil-works/pi-ai';
+import { z } from 'zod';
+import type { AgentConfig } from '@/lib/agents/mutations';
 import { systemLog } from '@/lib/observability/system';
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
@@ -132,6 +134,22 @@ function agentMaxSteps(formData: FormData): number {
   return Number.isFinite(value)
     ? Math.min(AGENT_STEP_BOUNDS.max, Math.max(AGENT_STEP_BOUNDS.min, Math.trunc(value)))
     : AGENT_STEP_BOUNDS.default;
+}
+
+const piPackagesFormSchema = z.array(z.object({
+  marketInstallId: z.string().min(1).max(200),
+  releaseId: z.string().min(1).max(200),
+}).strict()).max(16).refine((packages) => new Set(packages.map((pkg) => pkg.marketInstallId)).size === packages.length);
+
+function piPackagesFromForm(formData: FormData): AgentConfig['piPackages'] {
+  if (!formData.has('piPackages')) return undefined;
+  const raw = formData.get('piPackages');
+  if (typeof raw !== 'string' || raw.length > 16_000) throw new AgentConfigurationError('pi_packages_invalid');
+  try {
+    return piPackagesFormSchema.parse(JSON.parse(raw));
+  } catch {
+    throw new AgentConfigurationError('pi_packages_invalid');
+  }
 }
 
 function cloneOptionsFromFormData(formData: FormData) {
@@ -522,8 +540,9 @@ export async function createAgentAction(formData: FormData) {
   const name = String(formData.get('name') ?? '').trim() || 'New agent';
   const ctx = await authorizedWorkspace(slug);
   if (!ctx) return;
-  if (formData.get('runtime') !== 'pi') throw new Error('Only the Pi runtime is available for new agents.');
-  const runtime = 'pi';
+  const rawRuntime = formData.get('runtime');
+  if (rawRuntime !== 'pi' && rawRuntime !== 'pi-sdk') throw new Error('Only Pi runtimes are available for new agents.');
+  const runtime = rawRuntime as 'pi' | 'pi-sdk';
   const providerIds = formData.getAll('providerId').map(String).filter(Boolean);
   const providerId = providerIds[0] ?? null;
   const model = String(formData.get('model') ?? '') || null;
@@ -542,6 +561,7 @@ export async function createAgentAction(formData: FormData) {
       model,
       disabledBuiltinTools: formData.getAll('disabledBuiltinTool').map(String),
       maxSteps: agentMaxSteps(formData),
+      piPackages: piPackagesFromForm(formData),
     },
     {
       deploymentIds: formData.getAll('deploymentId').map(String),
@@ -788,6 +808,7 @@ export async function updateAgentAction(
       model,
       disabledBuiltinTools: formData.getAll('disabledBuiltinTool').map(String),
       maxSteps,
+      piPackages: piPackagesFromForm(formData),
     });
     await setAgentTools(ctx.ws.id, agentId, {
       deploymentIds: formData.getAll('deploymentId').map(String),
@@ -798,7 +819,13 @@ export async function updateAgentAction(
       subAgentIds: formData.getAll('subAgentId').map(String),
     });
   } catch (error) {
-    if (error instanceof AgentConfigurationError) return { error: error.message };
+    if (error instanceof AgentConfigurationError) {
+      if (/^(Unknown or inaccessible market install:|Market install is not a pi-package:|Listing is not published:|Market install is not ready:|Release not approved:)/.test(error.message)) {
+        return { error: 'pi_package_unavailable' };
+      }
+      if (/^(Too many Pi packages|Duplicate marketInstallId:)/.test(error.message)) return { error: 'pi_packages_invalid' };
+      return { error: error.message };
+    }
     throw error;
   }
   const runtimeResult = await syncHermesRuntime(ctx.ws.id, agentId);

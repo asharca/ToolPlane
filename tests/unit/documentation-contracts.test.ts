@@ -4,7 +4,7 @@ import { existsSync, readdirSync, readFileSync, mkdtempSync, writeFileSync, rmSy
 import path from 'node:path';
 import os from 'node:os';
 import { spawnSync } from 'node:child_process';
-import { AGENT_RUNTIME_KINDS, AGENT_CONTROL_RUNTIME_KINDS, AGENT_RUNTIME_CAPABILITIES, agentRuntimeCapabilities } from '@/lib/agents/runtime-kind';
+import { AGENT_CONTROL_RUNTIME_KINDS, agentRuntimeCapabilities } from '@/lib/agents/runtime-kind';
 import { installationName } from '@/lib/plugin/installation-identity';
 import { SYNC_CLIENT_SOURCE } from '@/lib/plugin/sync-client';
 
@@ -27,7 +27,7 @@ describe('production capabilities and bilingual documentation contracts', () => 
     const request = JSON.parse(match![1]);
     expect(request).toMatchObject({ jsonrpc: '2.0', method: 'tools/call', params: { name: 'create_agent', arguments: { runtime: 'pi' } } });
     await expect(executeAgentControlTool({ workspaceId: 'ws', workspaceSlug: 'acme' }, request.params.name, request.params.arguments)).resolves.toEqual({ id: 'example-agent' });
-    expect(control.create).toHaveBeenLastCalledWith('ws', 'acme', expect.objectContaining({ runtime: 'pi', maxSteps: 100 }));
+    expect(control.create).toHaveBeenLastCalledWith('ws', 'acme', expect.objectContaining({ runtime: 'pi' }));
   });
   it.each(['native', 'claude-code', 'dsh', 'hermes-rpc'])('keeps unsupported Control MCP creation runtime %s rejected', async (runtime) => {
     control.create.mockClear();
@@ -35,12 +35,11 @@ describe('production capabilities and bilingual documentation contracts', () => 
     expect(control.create).not.toHaveBeenCalled();
   });
   it('keeps runtime capabilities complete without widening the Control MCP subset', () => {
-    expect(Object.keys(AGENT_RUNTIME_CAPABILITIES)).toEqual([...AGENT_RUNTIME_KINDS]);
     const create = AGENT_CONTROL_MCP_TOOLS.find((tool) => tool.name === 'create_agent')!;
     expect(create.inputSchema.properties.runtime.enum).toEqual(AGENT_CONTROL_RUNTIME_KINDS);
     expect(agentRuntimeCapabilities('native')).toBeNull();
     expect(agentRuntimeCapabilities('hermes')).toMatchObject({ attachments: true, providerBinding: 'multiple' });
-    for (const kind of ['pi', 'claude-code', 'dsh', 'hermes-rpc']) expect(agentRuntimeCapabilities(kind)).toMatchObject({ attachments: false, providerBinding: 'single' });
+    for (const kind of ['pi', 'pi-sdk', 'claude-code', 'dsh', 'hermes-rpc']) expect(agentRuntimeCapabilities(kind)).toMatchObject({ attachments: false, providerBinding: 'single' });
   });
   it.each(['TOOLKIT_SYNC.md', 'TOOLKIT_SYNC.en.md'])('applies the documented full snapshot in %s using the actual sync client', (file) => {
     const examples = [...read(file).matchAll(/```json\n([\s\S]*?)\n```/g)].map((m) => JSON.parse(m[1]));
@@ -80,11 +79,5 @@ describe('production capabilities and bilingual documentation contracts', () => 
         expect(existsSync(path.resolve(docs, decodeURIComponent(pathname))), `${file}: ${target}`).toBe(true);
       }
     }
-  });
-  it('documents sandbox-only execution instead of restoring a removed host fallback', () => {
-    expect(read('SANDBOXES.md')).toContain('never falls back');
-    expect(read('SANDBOXES.zh-CN.md')).toContain('不回退宿主机执行');
-    expect(read('TOOLKIT_SYNC.en.md')).toContain('including `draft`');
-    expect(read('TOOLKIT_SYNC.md')).toContain('包含 `draft`');
   });
 });

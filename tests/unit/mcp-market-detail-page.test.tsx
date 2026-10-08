@@ -7,9 +7,10 @@ const mocks = vi.hoisted(() => ({
   getMarketServer: vi.fn(),
   listSandboxes: vi.fn(),
   notFound: vi.fn(() => { throw new Error('NEXT_NOT_FOUND'); }),
+  redirect: vi.fn((url: string) => { throw new Error(`NEXT_REDIRECT:${url}`); }),
 }));
 
-vi.mock('next/navigation', () => ({ notFound: mocks.notFound, redirect: vi.fn() }));
+vi.mock('next/navigation', () => ({ notFound: mocks.notFound, redirect: mocks.redirect }));
 vi.mock('next-intl/server', () => ({
   getLocale: vi.fn().mockResolvedValue('en'),
   getTranslations: vi.fn().mockResolvedValue((key: string, values?: { count?: number }) => (
@@ -26,11 +27,6 @@ vi.mock('@/lib/workspace/actions', () => ({ deployServerAction: vi.fn() }));
 vi.mock('@/lib/process/supervisor', () => ({ effectiveStatus: vi.fn((_id: string, status: string) => status) }));
 vi.mock('@/components/dashboard/SafeStreamdown', () => ({
   SafeStreamdown: ({ children }: { children: string }) => <div>{children}</div>,
-}));
-vi.mock('@/components/dashboard/ToolPlayground', () => ({
-  ToolPlayground: ({ deploymentId }: { deploymentId: string }) => (
-    <div data-testid="market-inspector">{deploymentId}</div>
-  ),
 }));
 
 import McpMarketDetailPage from '@/app/app/[workspace]/market/mcp/[serverSlug]/page';
@@ -54,7 +50,6 @@ const server = {
   recipe: { source: 'npm', ref: '@toolplane/memory', requiredEnv: [], network: 'isolated' },
   deploymentId: null,
   deploymentStatus: null,
-  inspectorSandbox: null,
   toolCatalogKnown: true,
   tools: [{
     name: 'search_graph',
@@ -87,21 +82,18 @@ describe('MCP market details', () => {
     }));
 
     expect(screen.getByText(/Persist knowledge between conversations\./)).toBeInTheDocument();
-    expect(screen.queryByRole('navigation', { name: 'detailNavigation' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: 'configuration' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: 'capabilities' })).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: /github/i })).toHaveAttribute(
       'href',
       'https://github.com/acme/memory-mcp',
     );
     expect(screen.getByText('Search entities and relationships by query.')).toBeInTheDocument();
-    expect(screen.getByText('Text to search for')).toBeInTheDocument();
+    expect(await screen.findByText('Text to search for')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'search_graph' })).toHaveAttribute(
       'href',
       '/app/acme%20team/market/mcp/memory/tools/search_graph',
     );
     expect(screen.queryByRole('button', { name: /addToWorkspace/ })).not.toBeInTheDocument();
-    expect(screen.queryByTestId('market-inspector')).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'manualToolTesting' })).not.toBeInTheDocument();
   });
 
   it('opens a static server tool schema without a sandbox', async () => {
@@ -110,43 +102,21 @@ describe('MCP market details', () => {
     }));
 
     expect(screen.getByRole('heading', { level: 1, name: 'Search graph' })).toBeInTheDocument();
-    expect(screen.getByText('query')).toBeInTheDocument();
+    expect(await screen.findByText('query')).toBeInTheDocument();
     expect(screen.getByText(/"required": \[/)).toBeInTheDocument();
   });
 
-  it('opens one connected connector tool with its schema and sibling navigation', async () => {
+  it.each(['running', 'stopped'])('routes installed connector tool links to their own %s deployment', async (status) => {
     mocks.getMarketServer.mockResolvedValue({
-      ...server,
-      mcpKind: 'connector',
-      connector: { endpointHost: 'api.example.test', transport: 'streamable-http', authType: 'none' },
-      deploymentId: 'deployment-1',
-      deploymentStatus: 'running',
-      inspectorSandbox: {
-        id: 'sandbox-1',
-        deploymentId: 'sandbox-deployment-1',
-        status: 'running',
-        connectedAt: '2026-08-29T00:00:00.000Z',
-      },
+      ...server, mcpKind: 'connector', deploymentId: 'deployment-1', deploymentStatus: status,
     });
-    render(await McpMarketToolPage({
+    await expect(McpMarketToolPage({
       params: Promise.resolve({ workspace: 'acme team', serverSlug: 'memory', toolName: 'search_graph' }),
-    }));
-
-    expect(screen.getByRole('heading', { level: 1, name: 'Search graph' })).toBeInTheDocument();
-    expect(screen.getAllByText('Search entities and relationships by query.')).toHaveLength(2);
-    expect(screen.getByText('query')).toBeInTheDocument();
-    expect(screen.getByText(/"required": \[/)).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'create_entities' })).toHaveAttribute(
-      'href',
-      '/app/acme%20team/market/mcp/memory/tools/create_entities',
-    );
-    expect(screen.getByRole('link', { name: 'viewDetails' })).toHaveAttribute(
-      'href',
-      '/app/acme%20team/market/mcp/memory',
-    );
+    })).rejects.toThrow('NEXT_REDIRECT:/app/acme%20team/mcp/deployment-1/tools/search_graph');
+    expect(mocks.listSandboxes).not.toHaveBeenCalled();
   });
 
-  it('shows tools and Inspector only after a connector was inspected through a running sandbox', async () => {
+  it('links installed connector tools to their runtime without a sandbox', async () => {
     mocks.getMarketServer.mockResolvedValue({
       ...server,
       mcpKind: 'connector',
@@ -154,12 +124,6 @@ describe('MCP market details', () => {
       tools: [server.tools[0]],
       deploymentId: 'deployment-1',
       deploymentStatus: 'running',
-      inspectorSandbox: {
-        id: 'sandbox-1',
-        deploymentId: 'sandbox-deployment-1',
-        status: 'running',
-        connectedAt: '2026-08-29T00:00:00.000Z',
-      },
     });
 
     render(await McpMarketDetailPage({
@@ -167,41 +131,33 @@ describe('MCP market details', () => {
     }));
 
     expect(screen.getByText('Search entities and relationships by query.')).toBeInTheDocument();
-    expect(screen.getByTestId('market-inspector')).toHaveTextContent('deployment-1');
+    expect(screen.getByRole('link', { name: 'manualToolTesting' })).toHaveAttribute('href', '/app/acme%20team/mcp/deployment-1?tab=tools');
+    expect(mocks.listSandboxes).not.toHaveBeenCalled();
   });
 
-  it('hides connector schemas but keeps the connection controls when its sandbox is stopped', async () => {
+  it('keeps saved schemas and the runtime link when the deployment is stopped', async () => {
     mocks.getMarketServer.mockResolvedValue({
       ...server,
       mcpKind: 'connector',
       connector: { endpointHost: 'api.example.test', transport: 'streamable-http', authType: 'none' },
       deploymentId: 'deployment-1',
-      deploymentStatus: 'running',
-      inspectorSandbox: {
-        id: 'sandbox-1',
-        deploymentId: 'sandbox-deployment-1',
-        status: 'stopped',
-        connectedAt: '2026-08-29T00:00:00.000Z',
-      },
+      deploymentStatus: 'stopped',
     });
     render(await McpMarketDetailPage({
       params: Promise.resolve({ workspace: 'acme team', serverSlug: 'memory' }),
     }));
-    expect(screen.queryByText('Search entities and relationships by query.')).not.toBeInTheDocument();
-    expect(screen.getByTestId('market-inspector')).toHaveTextContent('deployment-1');
+    expect(screen.getByText('Search entities and relationships by query.')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'manualToolTesting' })).toHaveAttribute('href', '/app/acme%20team/mcp/deployment-1?tab=tools');
+    expect(screen.getByRole('link', { name: 'manageDeployment' })).toHaveAttribute(
+      'href', '/app/acme%20team/mcp/deployment-1',
+    );
   });
 
-  it('blocks a stopped connector tool deep link', async () => {
+  it('blocks an uninstalled connector tool deep link', async () => {
     mocks.getMarketServer.mockResolvedValue({
       ...server,
       mcpKind: 'connector',
       connector: { endpointHost: 'api.example.test', transport: 'streamable-http', authType: 'none' },
-      inspectorSandbox: {
-        id: 'sandbox-1',
-        deploymentId: 'sandbox-deployment-1',
-        status: 'stopped',
-        connectedAt: '2026-08-29T00:00:00.000Z',
-      },
     });
 
     await expect(McpMarketToolPage({
@@ -226,7 +182,8 @@ describe('MCP market details', () => {
         transport: 'streamable-http',
         authType: 'bearer',
       },
-      inspectorSandbox: null,
+      toolCatalogKnown: false,
+      tools: [],
     });
 
     render(await McpMarketDetailPage({

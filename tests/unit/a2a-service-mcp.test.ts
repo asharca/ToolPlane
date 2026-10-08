@@ -1,13 +1,16 @@
 // @vitest-environment node
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { Task, TaskState } from '@a2a-js/sdk';
 import { TaskNotFoundError } from '@a2a-js/sdk/errors';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-const mocks = vi.hoisted(() => ({ resolve: vi.fn(), live: vi.fn(), submit: vi.fn(), get: vi.fn(), list: vi.fn(), cancel: vi.fn(), endpoint: vi.fn(), wake: vi.fn() }));
-vi.mock('@/lib/db', () => ({ db: { agentEndpoint: { findFirstOrThrow: mocks.endpoint } } }));
-vi.mock('@/lib/a2a/principal', async (original) => ({ ...await original<typeof import('@/lib/a2a/principal')>(), resolveA2AGrant: mocks.resolve, assertLiveGrant: mocks.live }));
-vi.mock('@/lib/a2a/store', () => ({ submitTask: mocks.submit, getTask: mocks.get, listTasks: mocks.list, requestCancellation: mocks.cancel }));
+import type * as Principal from '@/lib/a2a/principal';
+const mocks = vi.hoisted(() => ({ resolve: vi.fn(), live: vi.fn(), submit: vi.fn(), get: vi.fn(), list: vi.fn(), cancel: vi.fn(), endpoint: vi.fn(), wake: vi.fn(), row: vi.fn(), create: vi.fn() }));
+vi.mock('@/lib/db', () => ({ db: { agentEndpoint: { findFirstOrThrow: mocks.endpoint },
+  $transaction: async (fn: (tx: unknown) => unknown) => fn({ logEvent: { create: mocks.create } }) } }));
+vi.mock('@/lib/observability/settings', () => ({ getLogSettings: async () => ({ eventDays: 30, detailDays: 7, captures: [] }) }));
+vi.mock('@/lib/a2a/principal', async (original) => ({ ...await original<typeof Principal>(), resolveA2AGrant: mocks.resolve, assertLiveGrant: mocks.live }));
+vi.mock('@/lib/a2a/store', () => ({ submitTask: mocks.submit, getTask: mocks.get, getTaskRow: mocks.row, listTasks: mocks.list, requestCancellation: mocks.cancel }));
 vi.mock('@/lib/a2a/worker', () => ({ wakeA2AWorker: mocks.wake }));
 vi.mock('@/lib/runtime/ownership-state', () => ({ assertRuntimeOwner: vi.fn() }));
 import { handleServiceMcp, executeServiceMcpTool } from '@/lib/a2a/service-mcp';
@@ -23,11 +26,15 @@ function req(method: string, params?: unknown, id: number | undefined = 1) {
 }
 beforeEach(() => {
   vi.clearAllMocks(); process.env.NEXT_PUBLIC_APP_URL = 'https://toolplane.test';
+  vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+  mocks.create.mockResolvedValue({});
+  mocks.row.mockResolvedValue({ id: task.id, contextId: task.contextId, rootTaskId: task.id, parentTaskId: null });
   mocks.resolve.mockResolvedValue({ grant, rateHeaders: new Headers() }); mocks.live.mockResolvedValue(undefined);
   mocks.endpoint.mockResolvedValue({ name: 'Published', publicId: 'agep_1', currentRevision: { version: 1 } });
   mocks.submit.mockResolvedValue({ id: task.id, snapshot: Task.toJSON(task) }); mocks.get.mockResolvedValue(task);
   mocks.list.mockResolvedValue({ tasks: [task], pageSize: 20, totalSize: 1, nextPageToken: '' }); mocks.cancel.mockResolvedValue({ ...task, status: { state: TaskState.TASK_STATE_WORKING } });
 });
+afterEach(() => vi.restoreAllMocks());
 describe('MCP facade delegates to the native A2A core', () => {
   it('uses the unmodified official MCP client and HTTP transport', async () => {
     const client = new Client({ name: 'interop', version: '1' });
@@ -66,6 +73,9 @@ describe('MCP facade delegates to the native A2A core', () => {
     const body = await response.json(); expect(body.result.tools.map((t: {name: string}) => t.name)).toEqual(['a2a_get_task', 'a2a_list_tasks']);
     const denied = await handleServiceMcp(req('tools/call', { name: 'a2a_send_message', arguments: { message } }), 'agep_1');
     expect((await denied.json()).result.isError).toBe(true); expect(mocks.submit).not.toHaveBeenCalled();
+    const event = mocks.create.mock.calls[0][0].data;
+    expect(event).toMatchObject({ domain: 'a2a', outcome: 'denied', rpcMethod: 'tools/call' });
+    expect(event.detail).toBeUndefined(); expect(event.httpStatus).toBeUndefined();
   });
   it('does not execute tool calls supplied as notifications', async () => {
     const request = new Request(req('tools/call'), { body: JSON.stringify({ jsonrpc: '2.0', method: 'tools/call', params: { name: 'a2a_send_message', arguments: { message } } }) });
@@ -79,6 +89,36 @@ describe('MCP facade delegates to the native A2A core', () => {
     mocks.get.mockRejectedValue(new Error('private provider key: never-leak'));
     const response = await handleServiceMcp(req('tools/call', { name: 'a2a_get_task', arguments: { id: 'foreign' } }), 'agep_1');
     const out = await response.json(); expect(out.result.isError).toBe(true); expect(JSON.stringify(out)).not.toContain('never-leak');
+  });
+  it('persists authorized redacted request/result without a capture window or fake HTTP status', async () => {
+    const response = await handleServiceMcp(req('tools/call', { name: 'a2a_send_message', arguments: {
+      message: { ...message, parts: [{ text: 'visible input password=fixture-private' }] },
+    } }), 'agep_1');
+    const body = await response.json(); expect(body.result.isError).toBe(false);
+    const event = mocks.create.mock.calls[0][0].data;
+    expect(event).toMatchObject({ domain: 'a2a', eventName: 'a2a.request', workspaceId: 'ws', outcome: 'success',
+      attributes: { data: { a2a: { direction: 'inbound', transport: 'mcp', clientId: 'client', taskId: task.id } } } });
+    expect(event.httpStatus).toBeUndefined();
+    expect(event.detail.create.data.payload.response).toEqual(body.result);
+    expect(JSON.stringify(event.detail.create.data.payload.request)).toContain('visible input');
+    expect(JSON.stringify(event)).not.toContain('fixture-private');
+    expect(JSON.stringify(event.attributes)).not.toContain('visible input');
+    expect(event.detail.create.expiresAt.getTime()).toBeLessThanOrEqual(Date.now() + 86400_000);
+  });
+  it('records missing-task business errors but never attributes an unverified input ID', async () => {
+    mocks.get.mockRejectedValue(new TaskNotFoundError());
+    const response = await handleServiceMcp(req('tools/call', { name: 'a2a_get_task', arguments: { id: 'foreign' } }), 'agep_1');
+    expect((await response.json()).result.isError).toBe(true);
+    const event = mocks.create.mock.calls[0][0].data;
+    expect(event).toMatchObject({ outcome: 'error', attributes: { data: { a2a: { rpcErrorCode: -32001 } } } });
+    expect(event.attributes.data.a2a.taskId).toBeUndefined();
+    expect(event.detail.create.data.payload.request).toEqual({ id: 'foreign' });
+  });
+  it('does not turn logging failure into failed accepted work', async () => {
+    mocks.create.mockRejectedValue(new Error('logging unavailable'));
+    const response = await handleServiceMcp(req('tools/call', { name: 'a2a_send_message', arguments: { message } }), 'agep_1');
+    expect((await response.json()).result.isError).toBe(false);
+    expect(mocks.submit).toHaveBeenCalledOnce();
   });
   it('returns authentication failures without cookie fallback', async () => {
     mocks.resolve.mockRejectedValue(new A2AHttpError(401, 'Invalid'));

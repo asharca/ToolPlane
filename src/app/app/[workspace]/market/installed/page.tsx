@@ -12,6 +12,7 @@ import {
   MessageSquare,
   PackageCheck,
   Plug,
+  Puzzle,
   RotateCw,
   Trash2,
   Wrench,
@@ -38,10 +39,13 @@ import { skillLabel } from '@/lib/workspace/skill-label';
 import { DashboardEmptyState, DashboardPage } from '@/components/dashboard/DashboardUI';
 import { ConfirmSubmitButton } from '@/components/dashboard/ConfirmSubmitButton';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
+import { PiPackageDetails } from '@/components/dashboard/market/PiPackageDetails';
+import type { PiPackageSummary } from '@/lib/market/pi-package-manifest';
+import { listPiPackageClientInstallations } from '@/lib/pi-packages/installations';
 
 export const dynamic = 'force-dynamic';
 
-type ResourceKind = 'mcp' | 'skill' | 'agent' | 'assistant' | 'toolkit';
+type ResourceKind = 'mcp' | 'skill' | 'agent' | 'assistant' | 'toolkit' | 'pi-package';
 
 type InstalledResource = {
   key: string;
@@ -52,6 +56,13 @@ type InstalledResource = {
   status: string;
   href: string;
   updatedAt: Date;
+  piPackage?: {
+    snapshot: PiPackageSummary;
+    checksum: string;
+    available: boolean;
+    automaticReview: boolean;
+    bindings: Array<{ agentId: string; name: string; version: number; releaseId: string; reviewStatus: string; checksum: string }>;
+  };
   market?: {
     installId: string;
     currentVersion: number;
@@ -100,13 +111,14 @@ export default async function InstalledMarketPage({
   const workspace = await getWorkspaceForUser(slug, user.id);
   if (!workspace) redirect('/app');
 
-  const [marketInstalls, copies, deployments, skills, toolkits, agents] = await Promise.all([
+  const [marketInstalls, copies, deployments, skills, toolkits, agents, clientInstallations] = await Promise.all([
     listWorkspaceMarketInstalls(workspace.id),
     listWorkspaceMarketCopies(workspace.id),
     getDeployments(workspace.id),
     getInstalledSkills(workspace.id),
     listToolkits(workspace.id),
     listAgents(workspace.id),
+    listPiPackageClientInstallations({ workspaceId: workspace.id, userId: user.id }),
   ]);
   const base = `/app/${encodeURIComponent(workspace.slug)}`;
   const tracked = {
@@ -121,7 +133,7 @@ export default async function InstalledMarketPage({
 
   const resources: InstalledResource[] = marketInstalls.map((install) => {
     const kind = install.listing.kind as ResourceKind;
-    const href = install.deploymentId
+    const href = kind === 'pi-package' ? `${base}/market/items/${encodeURIComponent(install.listing.namespace)}/${encodeURIComponent(install.listing.slug)}` : install.deploymentId
       ? `${base}/mcp/${encodeURIComponent(install.deploymentId)}`
       : install.installedSkillId
         ? `${base}/skills/${encodeURIComponent(install.installedSkillId)}`
@@ -141,6 +153,13 @@ export default async function InstalledMarketPage({
       status: install.status,
       href,
       updatedAt: install.updatedAt,
+      ...(install.piPackage ? { piPackage: {
+        snapshot: install.piPackage,
+        checksum: install.currentRelease.checksum ?? '',
+        available: install.listing.status === 'published' && install.currentRelease.reviewStatus === 'approved',
+        automaticReview: install.currentRelease.reviewPolicy === 'official-directory',
+        bindings: install.agentPiPackages.map((binding) => ({ agentId: binding.agentId, name: binding.agent.name, version: binding.release.version, releaseId: binding.releaseId, reviewStatus: binding.release.reviewStatus, checksum: binding.release.checksum })),
+      } } : {}),
       market: {
         installId: install.id,
         currentVersion: install.currentRelease.version,
@@ -240,9 +259,9 @@ export default async function InstalledMarketPage({
   resources.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
 
   const kindLabels: Record<ResourceKind, string> = {
-    mcp: t('mcp'), skill: t('skills'), agent: t('agents'), assistant: t('kindAssistant'), toolkit: t('toolkits'),
+    mcp: t('mcp'), skill: t('skills'), agent: t('agents'), assistant: t('kindAssistant'), toolkit: t('toolkits'), 'pi-package': t('kindPiPackage'),
   };
-  const kindIcons = { mcp: Plug, skill: Brain, agent: Bot, assistant: MessageSquare, toolkit: Wrench };
+  const kindIcons = { mcp: Plug, skill: Brain, agent: Bot, assistant: MessageSquare, toolkit: Wrench, 'pi-package': Puzzle };
   const sourceLabels: Record<string, string> = {
     market: t('sourceMarket'), catalog: t('sourceCatalog'), workspace: t('sourceWorkspace'),
     github: t('sourceGithub'), upload: t('sourceUpload'), custom: t('sourceCustom'),
@@ -257,6 +276,19 @@ export default async function InstalledMarketPage({
   };
   const updates = resources.filter((item) => item.market?.updateAvailable || item.copy?.updateAvailable).length;
   const error = Array.isArray(query.error) ? query.error[0] : query.error;
+  const sdkAgents = agents.filter((agent) => agent.runtimeKind === 'pi-sdk');
+  const errorLabels: Record<string, string> = {
+    in_use: t('uninstallInUse'),
+    package_platform_mismatch: t('piPlatformMismatch'),
+    invalid_manifest: t('piInvalidManifest'),
+    release_not_found: t('piUnavailable'),
+    listing_not_found: t('piUnavailable'),
+    listing_unavailable: t('piUnavailable'),
+    install_not_found: t('piUnavailable'),
+    release_not_approved: t('piUnavailable'),
+    listing_conflict: t('publishErrorConflict'),
+    not_authorized: t('publishErrorUnauthorized'),
+  };
 
   return (
     <DashboardPage className="space-y-6">
@@ -277,8 +309,11 @@ export default async function InstalledMarketPage({
 
       {error ? (
         <p role="alert" className="text-sm text-destructive">
-          {error === 'in_use' ? t('uninstallInUse') : t('uninstallFailed')}
+          {errorLabels[error] ?? t('uninstallFailed')}
         </p>
+      ) : null}
+      {!marketInstalls.some((install) => install.listing.kind === 'pi-package') ? (
+        <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground"><p>{t('piNoInstalls')}</p><ButtonLink href={`${base}/market/pi-packages`} variant="ghost" size="sm">{t('piPackages')}</ButtonLink></div>
       ) : null}
 
       {resources.length === 0 ? (
@@ -302,6 +337,7 @@ export default async function InstalledMarketPage({
             return (
               <article
                 key={item.key}
+                id={item.market ? `install-${item.market.installId}` : undefined}
                 className="grid gap-3 rounded-lg px-3 py-3 transition-colors hover:bg-muted/45 sm:grid-cols-[minmax(14rem,1.5fr)_8rem_9rem_minmax(10rem,1fr)_auto] sm:items-center"
               >
                 <div className="flex min-w-0 items-center gap-3">
@@ -314,7 +350,7 @@ export default async function InstalledMarketPage({
                     </Link>
                     {version ? (
                       <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                        {t('installedVersion', { version: version.currentVersion })}
+                        {t(item.piPackage ? 'piWorkspaceVersion' : 'installedVersion', { version: version.currentVersion })}
                         {latestIsNewer && version.latestVersion
                           ? ` · ${t('latestVersion', { version: version.latestVersion })}`
                           : ''}
@@ -325,7 +361,7 @@ export default async function InstalledMarketPage({
                 <span className="text-xs text-muted-foreground">{kindLabels[item.kind]}</span>
                 <span className="inline-flex items-center gap-2 text-xs text-muted-foreground">
                   <span className={`size-1.5 rounded-full ${statusTone(item.status)}`} />
-                  {statusLabels[item.status] ?? item.status.replaceAll('_', ' ')}
+                  {item.piPackage ? t(item.piPackage.available ? 'piInstalledOnly' : 'piUnavailable') : statusLabels[item.status] ?? item.status.replaceAll('_', ' ')}
                 </span>
                 <div className="min-w-0 text-xs text-muted-foreground">
                   <span className="block truncate">{sourceLabels[item.source] ?? item.source}</span>
@@ -341,6 +377,7 @@ export default async function InstalledMarketPage({
                     <form action={updateMarketInstallAction}>
                       <input type="hidden" name="workspace" value={workspace.slug} />
                       <input type="hidden" name="installId" value={item.market.installId} />
+                      {item.piPackage ? <input type="hidden" name="kind" value="pi-package" /> : null}
                       <input type="hidden" name="targetReleaseId" value={item.market.latestReleaseId ?? ''} />
                       <input type="hidden" name="currentReleaseId" value={item.market.currentReleaseId} />
                       <SubmitButton flash={false} pendingLabel={t('updating')} variant="primary" size="sm">
@@ -428,6 +465,40 @@ export default async function InstalledMarketPage({
                     </form>
                   ) : null}
                 </div>
+                {item.piPackage ? (
+                  <div className="space-y-3 text-xs text-muted-foreground sm:col-span-5">
+                    <p>{t('piBindingHelp')}</p>
+                    <p>{t(!item.piPackage.available ? 'piUnavailable' : item.piPackage.automaticReview ? 'piOfficialValidated' : 'piReviewApproved')}</p>
+                    <p>{t('piExecutionWarning')}</p>
+                    <p>{t('piHeadlessWarning')}</p>
+                    <details className="rounded-lg border border-border p-3"><summary className="cursor-pointer font-medium">{t('piSnapshotDetails')}</summary><div className="mt-3"><PiPackageDetails snapshot={item.piPackage.snapshot} checksum={item.piPackage.checksum} /></div></details>
+                    {item.market ? <div className="space-y-2">
+                      <ButtonLink href={`${base}/market/installed/${encodeURIComponent(item.market.installId)}/clients`} variant="secondary" size="sm">{t('piClients.manage')}</ButtonLink>
+                      <ButtonLink href={`${base}/market/installed/${encodeURIComponent(item.market.installId)}/clients#workspace-bindings`} variant="ghost" size="sm">{t('piClients.workspaceBindingsTitle')}</ButtonLink>
+                      {item.piPackage.available ? <ButtonLink href={`/api/v1/workspaces/${encodeURIComponent(workspace.slug)}/market/pi-packages/${encodeURIComponent(item.market.currentReleaseId)}/download`} variant="ghost" size="sm">{t('piArtifactDownload')}</ButtonLink> : null}
+                      <p>{t('piClients.pinnedHelp')}</p>
+                      {clientInstallations.filter((client) => client.marketInstallId === item.market?.installId).map((client) => <p key={client.id} className="break-all">{client.label} · {client.client} · {t(client.status === 'active' ? 'piClients.active' : 'piClients.revoked')} · {client.releaseId}</p>)}
+                    </div> : null}
+                    {item.piPackage.bindings.length ? (
+                      <div className="space-y-2">
+                        <h3 className="font-semibold text-foreground">{t('piAgentVersions')}</h3>
+                        {item.piPackage.bindings.map((binding) => (
+                          <div key={binding.agentId} className="space-y-1">
+                            <ButtonLink href={`${base}/agents/${encodeURIComponent(binding.agentId)}?settings=piPackages`} variant="ghost" size="sm">{binding.name} · {t('versionLabel', { version: binding.version })}</ButtonLink>
+                            <p>{t(binding.reviewStatus === 'approved' ? 'piReviewApproved' : 'piUnavailable')}{binding.releaseId !== item.market?.currentReleaseId ? ` · ${t('piOlderAgentVersion')}` : ''}</p>
+                            <p className="break-all font-mono">SHA-256 {binding.checksum}</p>
+                          </div>
+                        ))}
+                        <p>{t('piUnbindBeforeUninstall')}</p>
+                      </div>
+                    ) : <p>{t('piNotBound')}</p>}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <ButtonLink href={`${base}/agents?create=1&runtime=pi-sdk`} variant="secondary" size="sm">{t('piCreateAgent')}</ButtonLink>
+                      {sdkAgents.map((agent) => <ButtonLink key={agent.id} href={`${base}/agents/${encodeURIComponent(agent.id)}?settings=piPackages`} variant="ghost" size="sm">{t('piConfigureAgent', { name: agent.name })}</ButtonLink>)}
+                    </div>
+                    {sdkAgents.length === 0 ? <p>{t('piNoAgents')}</p> : null}
+                  </div>
+                ) : null}
                 {(item.market?.updateAvailable && item.market.releaseNotes) || (item.copy?.updateAvailable && item.copy.releaseNotes) ? (
                   <p className="text-xs leading-5 text-muted-foreground sm:col-start-2 sm:col-end-6">
                     {item.market?.releaseNotes ?? item.copy?.releaseNotes}

@@ -48,9 +48,17 @@ function payloadText(value: unknown): string | null {
   return JSON.stringify(value) ?? null;
 }
 
-function view(log: LogWithDetail) {
+function workspacePayload(log: LogWithDetail) {
+  const detail = jsonRecord(log.detail?.data);
+  return log.domain === 'mcp' && log.deploymentId && !log.agentId
+    && (log.eventName === 'gateway.request' || log.eventName === 'mcp.rpc')
+    && detail?.workspaceMcpPayload === true ? jsonRecord(detail.payload) : null;
+}
+
+function view(log: LogWithDetail, rpcLog?: LogWithDetail) {
   const { detail, ...event } = log;
-  const payload = jsonRecord(jsonRecord(detail?.data)?.payload);
+  const ownPayload = workspacePayload(log);
+  const payload = ownPayload && (rpcLog && workspacePayload(rpcLog) || ownPayload);
   return { ...event, method: log.method ?? 'MCP', path: log.path ?? '', statusCode: log.httpStatus ?? 0,
     durationMs: log.durationMs ?? 0, requestBody: payloadText(payload?.request), responseBody: payloadText(payload?.response),
     errorSummary: log.outcome !== 'success' ? log.message : null };
@@ -73,10 +81,11 @@ export async function getDeploymentLogs(workspaceId: string, deploymentId: strin
   const gatewayRequests = new Set(logs
     .filter((log) => log.eventName === 'gateway.request')
     .map(requestKey));
+  const rpcLogs = new Map(logs.filter((log) => log.eventName === 'mcp.rpc').map((log) => [requestKey(log), log]));
   return logs
     .filter((log) => log.eventName === 'gateway.request' || !gatewayRequests.has(requestKey(log)))
     .slice(0, boundedLimit)
-    .map(view);
+    .map((log) => view(log, rpcLogs.get(requestKey(log))));
 }
 
 export type HourBucket = { hour: string; total: number; errors: number };
@@ -93,7 +102,8 @@ export async function getObservability(workspaceId: string, timeZone: string, ho
   const where = logSqlWhere(filters);
   const [stats, logs, deploymentRows, buckets, usage] = await Promise.all([
     aggregateLogs(filters),
-    db.logEvent.findMany({ where: { AND: [logWhere(filters), cursorWhere(filters.cursor)] }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 51 }),
+    db.logEvent.findMany({ where: { AND: [logWhere(filters), cursorWhere(filters.cursor)] }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 51,
+      include: { detail: { where: { expiresAt: { gt: new Date() } }, select: { data: true } } } }),
     db.deployment.findMany({ where: { workspaceId }, orderBy: { createdAt: 'asc' }, select: { id: true, serverId: true, name: true, source: true, sourceRef: true, server: { select: { name: true } } } }),
     db.$queryRaw<Array<{ bucket: Date; total: number; errors: number }>>(Prisma.sql`
       SELECT date_trunc('hour', "createdAt") AS bucket, count(*)::int AS total,
@@ -105,6 +115,17 @@ export async function getObservability(workspaceId: string, timeZone: string, ho
       coalesce(round(avg("durationMs")), 0)::int AS "avgMs"
       FROM "LogEvent" WHERE ${where} GROUP BY "deploymentId"`),
   ]);
+  const page = logs.slice(0, 50);
+  const requests = page.filter((log) => workspacePayload(log)).map((log) => ({
+    traceId: log.traceId, deploymentId: log.deploymentId, rpcMethod: log.rpcMethod, toolName: log.toolName,
+  }));
+  // Keep gateway pagination/counts intact, but show the real upstream reply when paired.
+  const rpcRows = requests.length ? await db.logEvent.findMany({
+    where: { workspaceId, eventName: 'mcp.rpc', OR: requests },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 100,
+    include: { detail: { where: { expiresAt: { gt: new Date() } }, select: { data: true } } },
+  }) : [];
+  const rpcLogs = new Map(rpcRows.map((log) => [requestKey(log), log]));
   const names = new Map(deploymentRows.map((row) => [row.id, deploymentLabel(row).name]));
   const bucketMap = new Map(buckets.map((row) => [row.bucket.getTime(), row]));
   const series = Array.from({ length: hours }, (_, i) => {
@@ -118,7 +139,7 @@ export async function getObservability(workspaceId: string, timeZone: string, ho
   const api = usage.find((row) => row.id === null);
   if (api) deploymentUsage.push({ ...api, name: 'Workspace API' });
   return { ...stats, series, deploymentUsage,
-    recent: logs.slice(0, 50).map((row) => ({ ...view(row), deploymentName: row.deploymentId ? names.get(row.deploymentId) ?? 'Deleted deployment' : 'Workspace API' })),
+    recent: page.map((row) => ({ ...view(row, rpcLogs.get(requestKey(row))), deploymentName: row.deploymentId ? names.get(row.deploymentId) ?? 'Deleted deployment' : 'Workspace API' })),
     nextCursor: logs.length > 50 ? logCursor(logs[49]) : null, until: now.toISOString(),
     deployments: deploymentRows.map((row) => ({ id: row.id, name: names.get(row.id)! })),
     selectedDeployment: deploymentId ? names.get(deploymentId) ?? 'Unknown deployment' : null,

@@ -12,7 +12,7 @@ import { generateWorkSessionTitle } from '@/lib/agents/conversation-naming';
 import { activeConversationMessages, CLEAR_CONTEXT_PART, compactedConversationSeed } from '@/lib/agents/conversation-context';
 import { getAgentForRun } from '@/lib/agents/queries';
 import { ensureConversationRuntimeSession } from '@/lib/agents/mutations';
-import { resolveAgentTools } from '@/lib/agents/resolve';
+import { resolveAgentTools, resolveAgentPiPackages } from '@/lib/agents/resolve';
 import { buildAgentToolSet } from '@/lib/agents/run';
 import { agentTool, type AgentToolSet } from '@/lib/agents/agent-tool';
 import { toolKey } from '@/lib/agents/tools';
@@ -20,7 +20,8 @@ import { assembleSystemPrompt } from '@/lib/agents/system-prompt';
 import { runNativeAgent, uiMessagesToPi } from '@/lib/agents/native';
 import { isDedicatedSandboxRuntimeKind, isWorkRuntimeKind } from '@/lib/agents/runtime-kind';
 import type { SandboxRuntimeActivity } from '@/lib/agents/sandbox-runtime';
-import { COMMAND_RESULT_PART, RUNTIME_COMMANDS_PART, RUNTIME_USAGE_PART, parseRuntimeCommand, sessionRuntimeCommands, type RuntimeCommand, type RuntimeUsage } from '@/lib/agents/runtime-commands';
+import { COMMAND_RESULT_PART, RUNTIME_COMMANDS_PART, RUNTIME_USAGE_PART, parseRuntimeCommand, sessionRuntimeCommands } from '@/lib/agents/runtime-commands';
+import type { ParsedRuntimeCommand, RuntimeCommand, RuntimeCommandResult, RuntimeUsage } from '@/lib/agents/runtime-commands';
 import { runDedicatedSandboxTurn } from '@/lib/agents/sandbox-turn';
 import {
   runHermesWork,
@@ -34,7 +35,7 @@ import {
 import type { ContextUsageSnapshot } from '@/lib/context-usage';
 import { effectiveStatus } from '@/lib/process/supervisor';
 import { deploymentLabel } from '@/lib/workspace/deployment-label';
-import { normalizeWorkDirectory } from './sessions';
+import { assertWorkPiPackageSnapshot, normalizeWorkDirectory } from './sessions';
 import {
   finishWorkOutput,
   publishWorkActivity,
@@ -522,10 +523,12 @@ async function executeWork(workSessionId: string) {
   let contextUsage: ContextUsageSnapshot | undefined;
   let commands: RuntimeCommand[] | undefined;
   let usage: RuntimeUsage | undefined;
-  let executedCommand: ReturnType<typeof parseRuntimeCommand> = null;
+  let executedCommand: ParsedRuntimeCommand | null = null;
+  let commandResult: RuntimeCommandResult | undefined;
   const runtimeMetadata = (): Prisma.InputJsonValue[] => [
     ...(commands ? [{ type: RUNTIME_COMMANDS_PART, data: { runtimeKind: work.runtimeKind, commands } } as Prisma.InputJsonValue] : []),
     ...(usage ? [{ type: RUNTIME_USAGE_PART, data: usage } as Prisma.InputJsonValue] : []),
+    ...(commandResult ? [{ type: COMMAND_RESULT_PART, data: commandResult } as Prisma.InputJsonValue] : []),
   ];
   let approvalWaitMs = 0;
   let deploymentNames = new Map<string, string>();
@@ -703,6 +706,8 @@ async function executeWork(workSessionId: string) {
       throw new Error('The Agent runtime changed after this Work session was created. Start a new Work session.');
     }
     const saved = snapshot(work.runtimeSnapshot);
+    const piPackages = resolveAgentPiPackages(agent);
+    assertWorkPiPackageSnapshot(work.runtimeKind, work.runtimeSnapshot, piPackages);
     const provider = agent.provider;
     const model = agent.model;
     if (work.runtimeKind === 'hermes') {
@@ -880,9 +885,9 @@ async function executeWork(workSessionId: string) {
     } else if (isDedicatedSandboxRuntimeKind(work.runtimeKind)) {
       const last = runtimeMessages.at(-1);
       const commandText = last?.role === 'user' ? last.parts.filter((part) => part.type === 'text' && !('reference' in part)).map((part) => part.text ?? '').join('\n') : '';
-      const command = parseRuntimeCommand(commandText);
+      const command = parseRuntimeCommand(commandText, work.runtimeKind);
       executedCommand = command;
-      if (command && !sessionRuntimeCommands(work.runtimeKind, work.conversation.messages).some((item) => item.name === command.name)) throw new Error('This command is not available for the current runtime.');
+      if (command && work.runtimeKind !== 'pi-sdk' && !sessionRuntimeCommands(work.runtimeKind, work.conversation.messages).some((item) => item.name === command.name)) throw new Error('This command is not available for the current runtime.');
       const system = [
         saved.systemPrompt ?? agent.systemPrompt,
         workSystemPrompt(workingDirectory, true),
@@ -895,6 +900,7 @@ async function executeWork(workSessionId: string) {
         ...(command ? { command: commandText } : {}),
         runtimeSessionId: work.conversationId,
         skills: resolved.skills,
+        piPackages,
         deploymentIds: resolved.deploymentIds.filter((id) => !resolved.sandboxDeploymentIds.includes(id)),
         workingDirectory,
         signal: controller.signal,
@@ -906,6 +912,7 @@ async function executeWork(workSessionId: string) {
         onContextUsage: (usage) => { contextUsage = usage; },
         onCommands: (next) => { commands = next; },
         onUsage: (next) => { usage = next; },
+        onCommandResult: (next) => { commandResult = next; },
       });
     } else {
       if (!provider || !model) throw new Error('Work Agent has no configured model.');
@@ -994,7 +1001,7 @@ async function executeWork(workSessionId: string) {
       runtimeKind: work.runtimeKind,
     });
 
-    const controlCommand = executedCommand && (['compact', 'context', 'usage', 'clear'].includes(executedCommand.name) || (executedCommand.name === 'goal' && ['', 'pause', 'clear'].includes(executedCommand.args.toLowerCase()))) ? executedCommand.name : undefined;
+    const controlCommand = work.runtimeKind !== 'pi-sdk' && executedCommand && (['compact', 'context', 'usage', 'clear'].includes(executedCommand.name) || (executedCommand.name === 'goal' && ['', 'pause', 'clear'].includes(executedCommand.args.toLowerCase()))) ? executedCommand.name : undefined;
     await appendAssistantResult(work.conversationId, fallbackText, traceParts(), contextUsage, turnTiming(), runtimeMetadata(), controlCommand);
     tracePersisted = true;
     if (!executedCommand && !pendingTitles.has(work.id)) {

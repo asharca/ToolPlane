@@ -1,0 +1,11 @@
+@import 'tailwindcss';
+@import 'fumadocs-ui/css/neutral.css';
+@import 'fumadocs-ui/css/preset.css';
+
+.docs-site { --fd-banner-height: 7rem; }
+.docs-site #nd-docs-layout { --fd-docs-height: calc(100dvh - var(--fd-banner-height)); }
+@media (min-width: 640px) { .docs-site { --fd-banner-height: 4rem; } }
+
+.docs-content { overflow-wrap: anywhere; }
+.docs-content pre { max-width: 100%; overflow-x: auto; }
+.docs-content table { display: block; max-width: 100%; overflow-x: auto; }

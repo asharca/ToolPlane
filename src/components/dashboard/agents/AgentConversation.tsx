@@ -791,6 +791,7 @@ export function AgentConversation({
     }
   }, [apiPath, getServerResponse, serverManaged, stopLocalChat, work]);
   const chatBusy = chat.status === 'submitted' || chat.status === 'streaming';
+  const runtimeErrorCode = (submitError || chat.error?.message)?.match(/\bPI_[A-Z_]+\b/)?.[0];
   const busy = chatBusy || commandBusy;
   useEffect(() => {
     onBusyChange?.(busy);
@@ -851,9 +852,9 @@ export function AgentConversation({
       .filter((part): part is { type: string; text: string } => part.type === 'text' && typeof part.text === 'string')
       .map((part) => part.text)
       .join('');
-    const command = runtimeCommands.length ? parseRuntimeCommand(commandLine) : null;
+    const command = runtimeCommands.length ? parseRuntimeCommand(commandLine, runtimeKind ?? '') : null;
     if (command) {
-      if (!runtimeCommands.some((item) => item.name === command.name)) {
+      if (runtimeKind !== 'pi-sdk' && !runtimeCommands.some((item) => item.name === command.name)) {
         setSubmitError(commandsT('unsupportedCommand'));
         await restoreCreateMessageDraft(assistantRuntimeRef.current, message);
         return;
@@ -910,7 +911,7 @@ export function AgentConversation({
         ...(reasoningAvailable ? { reasoningEffort } : {}),
       },
     });
-  }, [agentId, branchBusy, commandBusy, commandsT, ensureConversation, includeConversationIdInBody, onConversationChanged, reasoningAvailable, reasoningEffort, runtimeCommands, sendChatMessage, t, webSearchAvailable, webSearchEnabled, workSessionId]);
+  }, [agentId, branchBusy, commandBusy, commandsT, ensureConversation, includeConversationIdInBody, onConversationChanged, reasoningAvailable, reasoningEffort, runtimeCommands, runtimeKind, sendChatMessage, t, webSearchAvailable, webSearchEnabled, workSessionId]);
   const regenerate = useCallback<typeof chat.regenerate>(async (options) => {
     if (!allowRegenerate || branchBusy) return;
     setSubmitError(null);
@@ -1079,8 +1080,8 @@ export function AgentConversation({
         </MessageGroup> : <div className="flex min-h-64 items-center justify-center text-center"><div className="max-w-md"><Bot className="mx-auto mb-4 size-8 text-muted-foreground" /><h3 className="text-lg font-medium">{t(workSessionId ? 'startWorkConversation' : 'startAConversation')}</h3>{workSessionId ? <p className="mt-2 text-sm text-muted-foreground">{t('startWorkConversationDescription')}</p> : null}</div></div>}
         {chat.status === 'submitted' && !thread.messages.some((message) => message.role === 'assistant' && message.status.type === 'running') ? <MessageTyping label={work('preparingReply')} /> : null}
       </MessageScroller>
-      <div className="mx-auto w-full max-w-3xl shrink-0 px-4">
-        {submitError || chat.error?.message ? <p role="alert" className="mb-2 text-sm text-destructive">{submitError || chat.error?.message}</p> : null}
+      <div className="mx-auto w-full max-w-3xl shrink-0 px-4 pb-2">
+        {submitError || chat.error?.message ? <p role="alert" className="mb-2 text-sm text-destructive">{runtimeErrorCode ? commandsT(commandsT.has(runtimeErrorCode) ? runtimeErrorCode : 'sdkExecutionFailed') : submitError || chat.error?.message}</p> : null}
         <div data-ui="chat.composer" className="relative" onDragOver={(event) => { if (attachmentsEnabled && !blocked && event.dataTransfer.types.includes('Files')) event.preventDefault(); }} onDrop={(event) => { if (!attachmentsEnabled || blocked || !event.dataTransfer.files.length) return; event.preventDefault(); for (const file of event.dataTransfer.files) void runAction(() => runtime.thread.composer.addAttachment(file)); }}>
           {composer.attachments.length ? <div className="mb-2 flex flex-wrap gap-3">{composer.attachments.map((attachment, index) => <ConversationFilePreview key={attachment.id} file={attachment.file} name={attachment.name} mimeType={attachment.contentType} progress={attachment.status.type === 'running' ? attachment.status.progress : undefined} removeLabel={t('removeAttachment', { name: attachment.name })} onRemove={() => void runAction(() => runtime.thread.composer.getAttachmentByIndex(index).remove())} />)}</div> : null}
           <PromptInput className="bg-transparent" value={composer.text} onValueChange={runtime.thread.composer.setText} onSubmit={() => runtime.thread.composer.send()} disabled={!ready || composerDisabled} loading={busy} onStop={chatBusy ? () => void stop() : undefined} aria-label={t('messageThisAgent')} placeholder={t('messageThisAgent')} minRows={2} maxRows={8} leadingAction={<div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">

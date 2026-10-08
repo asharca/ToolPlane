@@ -45,6 +45,13 @@ curl -X PUT "$TOOLPLANE_URL/api/v1/workspaces/$WORKSPACE/agents/$AGENT_ID/a2a/lo
 管理员身份并写审计。仅接受有效的账户级 Bearer；Cookie、Toolkit Token、公共服务密钥、
 运行凭据和带 Origin 的浏览器请求不能作为该入口的身份。
 
+遵循 [A2A 1.0 AgentCard 语义](https://a2a-protocol.org/v1.0.0/specification/#441-agentcard)，
+卡片的 `description` 返回 Agent 配置的简介，并去掉首尾空白；未填写或只有空白时，
+兜底为 `Explicitly enabled workspace-local Agent.`。`skills` 列出 Agent 直接关联或通过 Toolkit
+关联、且允许 Agent 调用的已安装 Skill，按已安装 Skill ID 去重；名称和说明来自已安装
+Skill/目录元数据，禁止 Agent 调用的 Skill 不返回。没有符合条件的 Skill 时返回空列表。
+卡片不包含私有系统提示词或 Skill 正文。修改简介不改变执行配置指纹，也不会使已有任务授权失效。
+
 ```bash
 curl "$TOOLPLANE_URL/api/v1/workspaces/$WORKSPACE/agents/$AGENT_ID/a2a/local" \
   -H "Authorization: Bearer $ACCOUNT_TOKEN" \

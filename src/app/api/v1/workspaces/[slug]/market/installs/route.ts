@@ -27,6 +27,10 @@ const installBody = z.object({
   maxSteps: z.number().int().min(AGENT_STEP_BOUNDS.min).max(AGENT_STEP_BOUNDS.max).optional(),
   deploymentIds: z.array(z.string().trim().min(1).max(240)).max(50)
     .transform((ids) => [...new Set(ids)]).optional(),
+  mcpBindings: z.record(z.string().regex(/^[a-z][a-z0-9-]{0,79}$/), z.object({
+    deploymentId: z.string().min(1).max(240),
+    tools: z.array(z.string().min(1).max(256)).max(256),
+  }).strict()).refine((bindings) => Object.keys(bindings).length <= 64).optional(),
 }).strict();
 
 async function context(req: Request, slug: string) {
@@ -108,6 +112,7 @@ export const GET = withRequestLogging("/api/v1/workspaces/[slug]/market/installs
         status: install.status,
         listing: install.listing,
         currentRelease: install.currentRelease,
+        ...(install.listing.kind === 'pi-package' ? { piPackage: install.piPackage, agentPiPackages: install.agentPiPackages } : {}),
         resourceId: install.deploymentId
           ?? install.installedSkillId
           ?? install.toolkitId
@@ -239,7 +244,7 @@ export const POST = withRequestLogging("/api/v1/workspaces/[slug]/market/install
       return installErrorResponse(error);
     }
   }
-  if (!['mcp', 'skill', 'toolkit'].includes(release.listing.kind)) {
+  if (!['mcp', 'skill', 'toolkit', 'pi-package'].includes(release.listing.kind)) {
     return Response.json({ error: 'Unsupported market release kind.', code: 'unsupported_kind' }, { status: 422 });
   }
   try {
@@ -248,11 +253,12 @@ export const POST = withRequestLogging("/api/v1/workspaces/[slug]/market/install
       idempotencyKey: parsed.data.idempotencyKey ?? randomUUID(),
       targetWorkspaceId: ctx.workspace.id,
       installedById: ctx.user.id,
+      mcpBindings: parsed.data.mcpBindings,
     });
     return Response.json({
       installId: result.install.id,
       kind: result.kind,
-      resourceId: result.resource.id,
+      resourceId: result.kind === 'pi-package' ? null : result.resource.id,
       ...(result.kind === 'skill' ? { installedSkillId: result.resource.id } : {}),
       ...(result.kind === 'mcp' ? { deploymentId: result.resource.id } : {}),
       ...(result.kind === 'toolkit' ? { toolkitId: result.resource.id } : {}),

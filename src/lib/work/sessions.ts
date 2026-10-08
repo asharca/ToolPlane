@@ -8,6 +8,9 @@ import {
 } from '@/lib/agents/mutations';
 import type { ReasoningEffort } from '@/lib/agents/constants';
 import { isWorkRuntimeKind } from '@/lib/agents/runtime-kind';
+import { AGENT_PI_PACKAGES_INCLUDE } from '@/lib/agents/queries';
+import { resolveAgentPiPackages } from '@/lib/agents/resolve';
+import type { ResolvedAgentPiPackage } from '@/lib/agents/resolve';
 import type { ComposerReference } from './composer-types';
 import {
   claimWorkAttachments,
@@ -82,6 +85,22 @@ export function workSessionWorkingDirectory(value: Prisma.JsonValue | null): str
   return normalizeWorkDirectory((value as { workingDirectory?: unknown }).workingDirectory) ?? '.';
 }
 
+export function assertWorkPiPackageSnapshot(
+  runtimeKind: string,
+  value: unknown,
+  piPackages: readonly ResolvedAgentPiPackage[],
+): void {
+  if (runtimeKind !== 'pi-sdk') return;
+  const saved = value && typeof value === 'object' && 'piPackages' in value ? value.piPackages : null;
+  if (!Array.isArray(saved) || saved.length !== piPackages.length || !saved.every((item, index) => {
+    const current = piPackages[index];
+    return item && typeof item === 'object'
+      && item.marketInstallId === current.marketInstallId
+      && item.releaseId === current.releaseId
+      && item.checksum === current.checksum && item.mcpBindingsChecksum === current.mcpBindingsChecksum;
+  })) throw new Error('PI_SDK_PACKAGE_SET_CHANGED');
+}
+
 export async function createWorkSession(input: CreateWorkSessionInput) {
   const task = input.task.trim();
   if (!task || task.length > 20_000) return null;
@@ -93,12 +112,14 @@ export async function createWorkSession(input: CreateWorkSessionInput) {
       where: { id: input.agentId, workspaceId: input.workspaceId },
       select: {
         id: true,
+        workspaceId: true,
         providerId: true,
         model: true,
         runtimeKind: true,
         systemPrompt: true,
         maxSteps: true,
         modelProviders: { take: 1, select: { providerId: true } },
+        piPackages: AGENT_PI_PACKAGES_INCLUDE,
         runtime: {
           select: {
             id: true,
@@ -161,6 +182,7 @@ export async function createWorkSession(input: CreateWorkSessionInput) {
       ) return null;
       sandboxId = link.sandboxId;
     }
+    const piPackages = resolveAgentPiPackages(agent);
 
     const conversation = await tx.conversation.create({
       data: {
@@ -214,6 +236,10 @@ export async function createWorkSession(input: CreateWorkSessionInput) {
           model: agent.model,
           systemPrompt: agent.systemPrompt,
           agentMaxSteps: agent.maxSteps,
+          ...(agent.runtimeKind === 'pi-sdk' ? {
+            piPackages: piPackages.map(({ marketInstallId, releaseId, checksum, mcpBindingsChecksum }) => ({ marketInstallId, releaseId, checksum,
+              ...(mcpBindingsChecksum ? { mcpBindingsChecksum } : {}) })),
+          } : {}),
           deploymentIds: [...new Set([
             ...agent.servers.map((item) => item.deploymentId),
             ...agent.toolkits.flatMap((item) => item.toolkit.servers.map((server) => server.deploymentId)),

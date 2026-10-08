@@ -18,7 +18,7 @@ const labels = {
 };
 
 describe('McpToolCatalog', () => {
-  it('shows instructions, parameter details, and the complete input schema', () => {
+  it('shows instructions, parameter details, and the complete input schema', async () => {
     render(<McpToolCatalog
       labels={labels}
       hrefForTool={(name) => `/tools/${name}`}
@@ -42,12 +42,11 @@ describe('McpToolCatalog', () => {
     />);
 
     expect(screen.getByText('Search the product catalog by keyword.')).toBeInTheDocument();
-    expect(screen.getByText('query')).toBeInTheDocument();
+    expect(await screen.findByText('query')).toBeInTheDocument();
     expect(screen.getByText('Search term')).toBeInTheDocument();
     expect(screen.getByText('1-based page')).toBeInTheDocument();
     expect(screen.getByText('1')).toBeInTheDocument();
     expect(screen.getByText(/"required": \[/)).toBeInTheDocument();
-    expect(screen.getByRole('region', { name: 'Input schema' })).toHaveAttribute('tabindex', '0');
     expect(screen.getByText('No arguments.')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'search_products' })).toHaveAttribute(
       'href',

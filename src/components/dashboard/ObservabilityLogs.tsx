@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { McpRequestLogs } from '@/components/dashboard/McpRequestLogs';
 
 export type ObservabilityLogView = {
@@ -14,6 +15,6 @@ export type ObservabilityLogView = {
   time: string;
 };
 
-export function ObservabilityLogs({ logs }: { logs: ObservabilityLogView[] }) {
-  return <McpRequestLogs logs={logs} showServer />;
+export function ObservabilityLogs({ logs, searchControls }: { logs: ObservabilityLogView[]; searchControls?: ReactNode }) {
+  return <McpRequestLogs logs={logs} showServer searchControls={searchControls} />;
 }

@@ -950,30 +950,139 @@ export async function renameSandboxAction(formData: FormData) {
   revalidatePath(`/app/${slug}/sandboxes/${sandbox.id}`);
 }
 
+type SandboxLifecycleOperation = 'start' | 'stop' | 'restart';
+export type SandboxLifecycleBatchResult = {
+  sandboxId: string;
+  outcome: 'success' | 'skipped' | 'error';
+  message: string;
+};
+
+function runSandboxLifecycle(
+  workspaceId: string,
+  slug: string,
+  sandboxId: string,
+  operation: SandboxLifecycleOperation,
+  batch = false,
+): Promise<SandboxLifecycleBatchResult | undefined> {
+  return enqueueSandboxOperation(workspaceId, sandboxId, async () => {
+    const result = (outcome: SandboxLifecycleBatchResult['outcome'], message: string): SandboxLifecycleBatchResult => (
+      { sandboxId, outcome, message }
+    );
+    const sandbox = await sandboxInWorkspace(sandboxId, workspaceId);
+    if (!sandbox) return result('error', 'sandbox_unavailable');
+    const status = effectiveStatus(sandbox.deploymentId, sandbox.deployment.status);
+    if (batch && status === 'provisioning') return result('skipped', 'provisioning');
+    if (sandboxLifecycleBlocked(sandbox) || (batch && DATA_OPERATION_BLOCKED_STATES.has(status))) {
+      return result('skipped', 'lifecycle_blocked');
+    }
+    if (batch) {
+      if (operation === 'start' && status === 'running') return result('skipped', 'already_running');
+      if (operation !== 'start' && status !== 'running') return result('skipped', 'not_running');
+    }
+    if (sandbox.kind === 'hermes') {
+      const agentId = await hermesAgentIdForSandbox(workspaceId, sandbox.id);
+      if (!agentId) return result('error', 'runtime_unavailable');
+      let error: string | undefined;
+      if (operation === 'start') {
+        error = (await ensureHermesRuntimeReady(workspaceId, agentId)).error;
+      } else if (!batch && operation === 'stop') {
+        await stopHermesRuntime(workspaceId, agentId);
+      } else {
+        // Maintenance owns the Hermes queue and write lease, and resumes an
+        // active runtime on restart. A stop explicitly retains the stopped state.
+        const maintained = await runHermesRuntimeMaintenance(
+          workspaceId,
+          agentId,
+          sandbox.id,
+          { quiesce: true },
+          async (control) => {
+            if (!control.wasActive) return false;
+            if (operation === 'stop') {
+              const deploymentUpdate = await db.deployment.updateMany({
+                where: { id: control.deploymentId, workspaceId, source: 'sandbox' },
+                data: { status: 'stopped' },
+              });
+              const runtimeUpdate = await db.agentRuntime.updateMany({
+                where: { id: control.runtimeId, workspaceId, agentId, sandboxId: sandbox.id, kind: 'hermes' },
+                data: { status: 'stopped', lastError: null },
+              });
+              if (deploymentUpdate.count !== 1 || runtimeUpdate.count !== 1) {
+                throw new Error('Hermes runtime changed during the operation.');
+              }
+              control.preventResume();
+            }
+            return true;
+          },
+        );
+        if (maintained.status === 'error') error = maintained.error;
+        if (maintained.status === 'completed' && !maintained.data) return result('skipped', 'not_running');
+      }
+      revalidatePath(`/app/${slug}/agents/${agentId}`);
+      if (error) {
+        const busy = error === 'The Hermes sandbox has a pending lifecycle operation.'
+          || error === 'The Hermes runtime is temporarily unavailable while a clone or image upgrade is in progress.';
+        return result(busy ? 'skipped' : 'error', busy ? 'runtime_busy' : 'operation_failed');
+      }
+      return result('success', 'accepted');
+    }
+    if (operation !== 'stop') {
+      if (sandbox.kind === 'host') return result('skipped', 'host_unmanaged');
+      if (sandbox.kind === 'ssh' && !sshTargetIdFromConfig(sandbox.config)) {
+        return result('skipped', 'ssh_unconfigured');
+      }
+      if (sandbox.kind === 'connector' && !connectorFromConfig(sandbox.config)) {
+        return result('skipped', 'connector_unconfigured');
+      }
+      const lifecycle = operation === 'start' ? startProcess : restartProcess;
+      await lifecycle(sandbox.deploymentId, resolveSpawnSpec(sandbox.deployment), {
+        awaitReady: false,
+        workspaceId,
+      });
+    } else {
+      await stopProcess(sandbox.deploymentId);
+      if (sandbox.kind === 'connector') disconnectConnector(sandbox.id, 'sandbox stopped');
+    }
+    return result('success', 'accepted');
+  });
+}
+
+export async function batchSandboxLifecycleAction(
+  workspace: string,
+  operation: SandboxLifecycleOperation,
+  sandboxIds: string[],
+): Promise<SandboxLifecycleBatchResult[]> {
+  if (typeof workspace !== 'string' || !workspace || workspace.length > 200
+    || !['start', 'stop', 'restart'].includes(operation)
+    || !Array.isArray(sandboxIds) || sandboxIds.length > 100) {
+    throw new Error('Invalid sandbox lifecycle selection (maximum 100 sandboxes).');
+  }
+  const ids = [...new Set(sandboxIds)];
+  if (ids.some((id) => typeof id !== 'string' || !/^[A-Za-z0-9_-]{1,200}$/.test(id))) {
+    throw new Error('Invalid sandbox lifecycle selection (maximum 100 sandboxes).');
+  }
+  const ctx = await authorizedWorkspace(workspace).catch(() => null);
+  if (!ctx) return ids.map((sandboxId) => ({ sandboxId, outcome: 'error', message: 'workspace_unavailable' }));
+  const results: SandboxLifecycleBatchResult[] = [];
+  for (const sandboxId of ids) {
+    try {
+      results.push(await runSandboxLifecycle(ctx.ws.id, workspace, sandboxId, operation, true)
+        ?? { sandboxId, outcome: 'skipped', message: 'workspace_busy' });
+    } catch {
+      results.push({ sandboxId, outcome: 'error', message: 'operation_failed' });
+    }
+    revalidatePath(`/app/${workspace}/sandboxes/${sandboxId}`);
+  }
+  revalidatePath(`/app/${workspace}/sandboxes`);
+  revalidatePath(`/app/${workspace}/work`);
+  return results;
+}
+
 export async function startSandboxAction(formData: FormData) {
   const slug = String(formData.get('workspace') ?? '');
   const sandboxId = String(formData.get('sandboxId') ?? '');
   const ctx = await authorizedWorkspace(slug);
   if (!ctx || !sandboxId) return;
-  await enqueueSandboxOperation(ctx.ws.id, sandboxId, async () => {
-    const sandbox = await sandboxInWorkspace(sandboxId, ctx.ws.id);
-    if (!sandbox) return;
-    if (sandboxLifecycleBlocked(sandbox)) return;
-    if (sandbox.kind === 'hermes') {
-      const agentId = await hermesAgentIdForSandbox(ctx.ws.id, sandbox.id);
-      if (!agentId) return;
-      await ensureHermesRuntimeReady(ctx.ws.id, agentId);
-      revalidatePath(`/app/${slug}/agents/${agentId}`);
-      return;
-    }
-    if (sandbox.kind === 'host') return;
-    if (sandbox.kind === 'ssh' && !sshTargetIdFromConfig(sandbox.config)) return;
-    if (sandbox.kind === 'connector' && !connectorFromConfig(sandbox.config)) return;
-    await startProcess(sandbox.deploymentId, resolveSpawnSpec(sandbox.deployment), {
-      awaitReady: false,
-      workspaceId: ctx.ws.id,
-    });
-  });
+  await runSandboxLifecycle(ctx.ws.id, slug, sandboxId, 'start');
   revalidatePath(`/app/${slug}/sandboxes`);
   revalidatePath(`/app/${slug}/sandboxes/${sandboxId}`);
   revalidatePath(`/app/${slug}/work`);
@@ -1032,20 +1141,7 @@ export async function stopSandboxAction(formData: FormData) {
   const sandboxId = String(formData.get('sandboxId') ?? '');
   const ctx = await authorizedWorkspace(slug);
   if (!ctx || !sandboxId) return;
-  await enqueueSandboxOperation(ctx.ws.id, sandboxId, async () => {
-    const sandbox = await sandboxInWorkspace(sandboxId, ctx.ws.id);
-    if (!sandbox) return;
-    if (sandboxLifecycleBlocked(sandbox)) return;
-    if (sandbox.kind === 'hermes') {
-      const agentId = await hermesAgentIdForSandbox(ctx.ws.id, sandbox.id);
-      if (!agentId) return;
-      await stopHermesRuntime(ctx.ws.id, agentId);
-      revalidatePath(`/app/${slug}/agents/${agentId}`);
-      return;
-    }
-    await stopProcess(sandbox.deploymentId);
-    if (sandbox.kind === 'connector') disconnectConnector(sandbox.id, 'sandbox stopped');
-  });
+  await runSandboxLifecycle(ctx.ws.id, slug, sandboxId, 'stop');
   revalidatePath(`/app/${slug}/sandboxes`);
   revalidatePath(`/app/${slug}/sandboxes/${sandboxId}`);
 }
@@ -1055,18 +1151,7 @@ export async function restartSandboxAction(formData: FormData) {
   const sandboxId = String(formData.get('sandboxId') ?? '');
   const ctx = await authorizedWorkspace(slug);
   if (!ctx || !sandboxId) return;
-  await enqueueSandboxOperation(ctx.ws.id, sandboxId, async () => {
-    const sandbox = await sandboxInWorkspace(sandboxId, ctx.ws.id);
-    if (!sandbox || sandbox.kind === 'hermes') return;
-    if (sandboxLifecycleBlocked(sandbox)) return;
-    if (sandbox.kind === 'host') return;
-    if (sandbox.kind === 'ssh' && !sshTargetIdFromConfig(sandbox.config)) return;
-    if (sandbox.kind === 'connector' && !connectorFromConfig(sandbox.config)) return;
-    await restartProcess(sandbox.deploymentId, resolveSpawnSpec(sandbox.deployment), {
-      awaitReady: false,
-      workspaceId: ctx.ws.id,
-    });
-  });
+  await runSandboxLifecycle(ctx.ws.id, slug, sandboxId, 'restart');
   revalidatePath(`/app/${slug}/sandboxes`);
   revalidatePath(`/app/${slug}/sandboxes/${sandboxId}`);
 }

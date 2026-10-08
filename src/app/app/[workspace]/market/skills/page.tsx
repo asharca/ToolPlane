@@ -2,6 +2,7 @@
 import { Button, ButtonLink } from '@/components/motion/button';
 import { Input } from '@/components/motion/input';
 import { FormSelect } from '@/components/ui/FormSelect';
+import { BouncyAccordion } from '@/components/motion/bouncy-accordion';
 
 import { redirect } from 'next/navigation';
 import { getTranslations } from 'next-intl/server';
@@ -120,28 +121,40 @@ export default async function SkillMarketPage({
   const hasFilters = Boolean(
     q || source !== 'all' || installation !== 'all' || category !== 'all' || sort !== 'top',
   );
+  const expandedFilters = source !== 'all' || installation !== 'all' || sort !== 'top';
   const sortedCategories = [...categories].sort((a, b) => (
     b._count.skills - a._count.skills || a.name.localeCompare(b.name)
   ));
 
   return (
-    <DashboardPage className="space-y-6">
-      <div className="space-y-2">
-        <h2 className="text-2xl font-semibold text-foreground">{t('skillsTitle')}</h2>
-        <p className="max-w-3xl text-sm leading-6 text-muted-foreground">{t('skillsDescription')}</p>
+    <DashboardPage className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 className="text-xl font-semibold text-foreground">{t('skillsTitle')}</h2>
+        <ButtonLink href={`/app/${encodeURIComponent(slug)}/skills`} variant="secondary" size="sm">
+          {t('manageInstalled')}
+        </ButtonLink>
       </div>
 
-      <form className="grid w-full grid-cols-1 items-center gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(12rem,1fr)_7.5rem_10rem_8.5rem_auto]">
+      <form className="space-y-2">
         <input type="hidden" name="category" value={category === 'all' ? '' : category} />
-        <div className="relative min-w-0 sm:col-span-2 xl:col-span-1">
-          
-          
-          <Input label={t('searchSkills')} leftIcon={<Search />} name="q" defaultValue={q} placeholder={t('searchSkills')} className="w-full" />
+        <div className="flex flex-wrap items-end gap-2">
+          <div className="min-w-48 flex-1">
+            <Input label={t('searchSkills')} leftIcon={<Search />} name="q" defaultValue={q} placeholder={t('searchSkills')} className="w-full" />
+          </div>
+          <Button variant="secondary" size="md" type="submit"><SlidersHorizontal className="size-4" />{t('applyFilters')}</Button>
         </div>
-        <FormSelect name="source" defaultValue={source} label={t('filterBySource')} options={[{ value: "all", label: t('allSources') }, { value: "github", label: t('github') }, { value: "other", label: t('otherSources') }]} />
-        <FormSelect name="installation" defaultValue={installation} label={t('filterByInstallation')} options={[{ value: "all", label: t('allInstallations') }, { value: "available", label: t('available') }, { value: "installed", label: t('installed') }]} />
-        <FormSelect name="sort" defaultValue={sort} label={t('sortSkills')} options={[{ value: "top", label: t('sortTop') }, { value: "newest", label: t('sortNewest') }, { value: "name", label: t('sortName') }]} />
-        <Button variant="secondary" size="md" type="submit"><SlidersHorizontal className="size-4" />{t('applyFilters')}</Button>
+        <BouncyAccordion defaultValue={expandedFilters ? 'filters' : null} items={[{
+          id: 'filters',
+          title: <span className="text-sm">{t('appliedFilters')}: {t(source === 'github' ? 'github' : source === 'other' ? 'otherSources' : 'allSources')} · {t(installation === 'installed' ? 'installed' : installation === 'available' ? 'available' : 'allInstallations')} · {t(sort === 'newest' ? 'sortNewest' : sort === 'name' ? 'sortName' : 'sortTop')}</span>,
+          description: <div className="space-y-2">
+            <div className="grid gap-2 sm:grid-cols-3">
+              <FormSelect name="source" defaultValue={source} label={t('filterBySource')} options={[{ value: "all", label: t('allSources') }, { value: "github", label: t('github') }, { value: "other", label: t('otherSources') }]} />
+              <FormSelect name="installation" defaultValue={installation} label={t('filterByInstallation')} options={[{ value: "all", label: t('allInstallations') }, { value: "available", label: t('available') }, { value: "installed", label: t('installed') }]} />
+              <FormSelect name="sort" defaultValue={sort} label={t('sortSkills')} options={[{ value: "top", label: t('sortTop') }, { value: "newest", label: t('sortNewest') }, { value: "name", label: t('sortName') }]} />
+            </div>
+            <p className="text-xs text-muted-foreground">{t('catalogFiltersHint')}</p>
+          </div>,
+        }]} />
       </form>
 
       <div className="grid min-w-0 gap-6 lg:grid-cols-[13.5rem_minmax(0,1fr)]">

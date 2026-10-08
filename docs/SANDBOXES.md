@@ -25,6 +25,50 @@ Agent
             `-- terminal session stream
 ```
 
+## Pi SDK package bindings
+
+`pi-sdk` is a separate runtime kind; existing `pi` Harness agents are not migrated.
+Creating a Pi SDK agent allocates its own default sandbox. Control MCP creation,
+public endpoints, and agent-template runtime allowlists remain unchanged.
+
+`MarketInstall.currentReleaseId` records the workspace package version;
+`AgentPiPackage.releaseId` records the version explicitly enabled for one agent.
+Workspace upgrades do not update agent bindings. First bindings must use the
+workspace's current approved release; existing bindings may retain their approved
+version. Binding mutations reject foreign installations/releases and active
+tasks, Work, or sandbox execution leases with `pi_package_agent_busy`.
+
+## Selected-sandbox lifecycle actions
+
+The sandbox list supports selecting ordinary sandboxes and managed Hermes runtime
+sandboxes together. Selection and **Select all eligible** apply only to rows in
+the current All, Agent, or User-created scope. Nothing is selected initially;
+changing scope clears selection. Each batch is limited to 100 sandboxes. If more
+than 100 eligible rows are visible, select individual rows or narrow the scope
+instead of selecting all. Provisioning, maintenance/recovery-blocked, and
+disabled legacy rows cannot be selected.
+
+**Start selected**, **Stop selected**, and **Restart selected** appear after
+selection. Stop and restart require confirmation because they can interrupt
+running tasks or sessions, including Hermes agent work. Selection and row mutation
+controls are disabled while the batch request and status refresh are pending;
+the existing individual actions remain available outside that interval.
+
+Each selected sandbox receives an independent accepted, skipped, or failed result.
+Start skips running sandboxes; stop and restart skip non-running sandboxes.
+Provisioning and lifecycle-blocked sandboxes are skipped if their status changes
+after selection. Busy managed Hermes runtimes are skipped without bypassing their
+maintenance gates. One failure does not prevent processing the remaining rows.
+Accepted means the lifecycle operation was accepted/completed, not that an
+asynchronous ordinary-sandbox start has finished provisioning. The result summary
+and named per-item messages remain visible after refreshing statuses; transport
+failures ask the user to inspect refreshed status rather than assuming no work ran.
+
+Batch requests use the same workspace authorization, per-sandbox operation queues,
+and runtime ownership as individual actions. Hermes lifecycle operations route to
+the owning agent runtime; batch operations do not replace it with an ordinary
+sandbox process. These actions do not clone, restore, delete, or erase sandbox data.
+
 ## Modes
 
 ### Docker Linux

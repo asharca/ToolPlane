@@ -3,12 +3,16 @@ import { createHash } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { SendMessageRequest, Task, TaskState } from '@a2a-js/sdk';
 import { RequestMalformedError, TaskNotFoundError, UnsupportedOperationError } from '@a2a-js/sdk/errors';
+import { z } from 'zod';
+import { COMMAND_RESULT_PART, RUNTIME_COMMANDS_PART, RUNTIME_USAGE_PART, RuntimeCommandSchema, RuntimeCommandsSchema } from '@/lib/agents/runtime-commands';
+import type { RuntimeCommand, RuntimeCommandResult, RuntimeUsage } from '@/lib/agents/runtime-commands';
 import { db } from '@/lib/db';
 import { assertRuntimeOwner } from '@/lib/runtime/ownership-state';
+import { recordA2AEvent, a2aTaskOutcome, taskStateName } from '@/lib/observability/a2a-log';
 import { createLocalEntryGrant, assertLocalGrant, localOwnerKey } from './local-policy';
 import { createEntryPolicy, type EntryIdentity } from './entry-policy';
 import { submitTaskInTransaction, getTaskRow, requestCancellation, taskScope } from './store';
-import { settled, terminal, A2A_LIMITS } from './model';
+import { settled, terminal, A2A_LIMITS, historyView, jsonTask } from './model';
 import { refreshTaskStorage } from './quotas';
 import { wakeA2AWorker } from './worker';
 
@@ -29,6 +33,7 @@ export function latestEntryText(message: EntryMessage | undefined): string {
   return text;
 }
 export async function submitNativeEntry(input: NativeEntryInput, wake: () => void = wakeA2AWorker) {
+  const started = performance.now();
   assertRuntimeOwner();
   if (!input.actorId || !input.sourceId || input.sourceId.length > 200 || !input.messageId || input.messageId.length > 240
     || !input.text.trim() || input.text.length > A2A_LIMITS.inputCharacters) throw new RequestMalformedError('Invalid native entry request.');
@@ -81,6 +86,19 @@ export async function submitNativeEntry(input: NativeEntryInput, wake: () => voi
     await refreshTaskStorage(tx, row.id);
     return { row, grant, replay: false };
   });
+  const { row, grant } = accepted;
+  await recordA2AEvent({ eventName: 'a2a.request',
+    binding: { grant, taskId: row.id, contextId: row.contextId,
+      rootTaskId: row.rootTaskId ?? row.id, parentTaskId: row.parentTaskId ?? undefined },
+    metadata: { direction: 'inbound', transport: 'entry', entryKind: input.kind, taskState: taskStateName(TaskState[row.state]) },
+    rpcMethod: 'SendMessage', outcome: a2aTaskOutcome(TaskState[row.state]), durationMs: performance.now() - started,
+    request: () => SendMessageRequest.toJSON(SendMessageRequest.fromJSON({ message: {
+      messageId: `entry-${hash([input.kind, input.sourceId, input.messageId])}`,
+      role: 'ROLE_USER', parts: [{ text: input.text }],
+    }, configuration: { returnImmediately: true } })),
+    response: () => ({ task: jsonTask(historyView(Task.fromJSON(row.snapshot), 0)) }),
+    responseKind: 'json', responseComplete: true,
+  });
   wake();
   return accepted;
 }
@@ -118,4 +136,33 @@ export function nativeEntryResult(task: Task, path: string) {
   if (task.status?.state === TaskState.TASK_STATE_INPUT_REQUIRED) return detail || `More input is required: ${path}`;
   // Never let an error/cancelled task look like a successful legacy response.
   throw new UnsupportedOperationError(`Native task did not complete (${task.status?.state ?? 'unknown'}). Inspect ${path}`);
+}
+
+export type NativeEntryRuntimePart =
+  | { type: typeof RUNTIME_COMMANDS_PART; data: { runtimeKind: 'pi-sdk'; commands: RuntimeCommand[] } }
+  | { type: typeof RUNTIME_USAGE_PART; data: RuntimeUsage }
+  | { type: typeof COMMAND_RESULT_PART; data: RuntimeCommandResult };
+const piSdkMetadataSchema = z.object({
+  commands: RuntimeCommandsSchema,
+  usage: z.object({ inputTokens: z.number().finite().nonnegative(), outputTokens: z.number().finite().nonnegative(),
+    cacheReadTokens: z.number().finite().nonnegative(), cacheWriteTokens: z.number().finite().nonnegative(),
+    costUsd: z.number().finite().nonnegative().optional() }).strict().optional(),
+  commandResult: z.object({ command: RuntimeCommandSchema.shape.name, text: z.string().max(A2A_LIMITS.outputCharacters),
+    status: z.enum(['completed', 'failed']) }).strict().optional(),
+}).strict();
+/** Project only the public runtime metadata, never SDK state or private paths. */
+export function nativeEntryRuntimeParts(task: Task): NativeEntryRuntimePart[] {
+  if (task.status?.state !== TaskState.TASK_STATE_COMPLETED) return [];
+  for (let index = task.artifacts.length - 1; index >= 0; index--) {
+    const artifact = task.artifacts[index];
+    if (!artifact.parts.some((part) => part.content?.$case === 'text')) continue;
+    const parsed = piSdkMetadataSchema.safeParse(artifact.metadata?.toolplanePiSdk);
+    if (!parsed.success) continue;
+    const { commands, usage, commandResult } = parsed.data;
+    const parts: NativeEntryRuntimePart[] = [{ type: RUNTIME_COMMANDS_PART, data: { runtimeKind: 'pi-sdk', commands } }];
+    if (usage) parts.push({ type: RUNTIME_USAGE_PART, data: usage });
+    if (commandResult) parts.push({ type: COMMAND_RESULT_PART, data: commandResult });
+    return parts;
+  }
+  return [];
 }

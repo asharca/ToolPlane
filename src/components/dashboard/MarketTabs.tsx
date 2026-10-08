@@ -3,7 +3,7 @@ import { ButtonLink } from '@/components/motion/button';
 
 import { usePathname } from 'next/navigation';
 import { useTranslations } from 'next-intl';
-import { Bot, Brain, MessageCircle, PackageCheck, Plug, Upload, Wrench } from 'lucide-react';
+import { Bot, Brain, MessageCircle, PackageCheck, Plug, Puzzle, Upload, Wrench } from 'lucide-react';
 
 const TABS = [
   { key: 'mcp', labelKey: 'mcp', icon: Plug },
@@ -11,6 +11,7 @@ const TABS = [
   { key: 'agents', labelKey: 'agents', icon: Bot },
   { key: 'assistants', labelKey: 'assistants', icon: MessageCircle },
   { key: 'toolkits', labelKey: 'toolkits', icon: Wrench },
+  { key: 'pi-packages', labelKey: 'piPackages', icon: Puzzle },
 ] as const;
 
 export function MarketTabs({ slug, updateCount = 0 }: { slug: string; updateCount?: number }) {
@@ -20,7 +21,7 @@ export function MarketTabs({ slug, updateCount = 0 }: { slug: string; updateCoun
 
   return (
     <div className="flex min-w-0 items-center justify-between gap-2">
-      <nav aria-label={t('navigation')} className="grid min-w-0 flex-1 grid-cols-5 sm:flex">
+      <nav aria-label={t('navigation')} className="flex min-w-0 flex-1 overflow-x-auto lg:grid lg:grid-cols-6">
         {TABS.map((tab) => {
           const href = `${base}/${tab.key}`;
           const active = pathname === href || pathname.startsWith(`${href}/`);
@@ -28,7 +29,7 @@ export function MarketTabs({ slug, updateCount = 0 }: { slug: string; updateCoun
           return (
             <ButtonLink key={tab.key} href={href} aria-current={active ? 'page' : undefined} title={t(tab.labelKey)} variant={active ? 'secondary' : 'ghost'} className="shrink-0 justify-start border-0">
               <Icon className="size-4 shrink-0" />
-              <span className="sr-only truncate sm:not-sr-only">{t(tab.labelKey)}</span>
+              <span className="truncate">{t(tab.labelKey)}</span>
             </ButtonLink>
           );
         })}

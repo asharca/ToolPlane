@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
+import { getTranslations } from 'next-intl/server';
 import { db } from '@/lib/db';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getSkillImportSettings } from '@/lib/admin/settings';
@@ -101,27 +102,35 @@ function uniqueSkillSlug(name: string, used: Set<string>): string {
   return candidate;
 }
 
-export async function createCustomSkillAction(formData: FormData) {
+export async function createCustomSkillAction(_previous: SkillActionState, formData: FormData): Promise<SkillActionState> {
+  const t = await getTranslations('console.skills');
   const slug = String(formData.get('workspace') ?? '');
   const ctx = await authedWs(slug);
-  if (!ctx) return;
+  if (!ctx) return { error: t('formAccessDenied') };
   let parsed;
   try {
     parsed = parseCreateSkill({ name: formData.get('name'), description: formData.get('description') ?? '' });
   } catch {
-    return;
+    return { error: t('invalidCreateInput') };
   }
-  const created = await db.installedSkill.create({
-    data: { workspaceId: ctx.ws.id, skillId: null, source: 'custom', name: parsed.name, slug: parsed.slug, description: parsed.description || null, content: STARTER, status: 'published' },
-  });
+  let created;
+  try {
+    created = await db.installedSkill.create({
+      data: { workspaceId: ctx.ws.id, skillId: null, source: 'custom', name: parsed.name, slug: parsed.slug, description: parsed.description || null, content: STARTER, status: 'published' },
+    });
+  } catch {
+    return { error: t('formSaveFailed') };
+  }
   redirect(`/app/${slug}/skills/${created.id}`);
 }
 
-export async function updateSkillContentAction(formData: FormData) {
+export async function updateSkillContentAction(_previous: SkillActionState, formData: FormData): Promise<SkillActionState> {
+  const t = await getTranslations('console.skills');
   const slug = String(formData.get('workspace') ?? '');
   const installId = String(formData.get('installId') ?? '');
   const ctx = await authedWs(slug);
-  if (!ctx || !(await ownCustomSkill(installId, ctx.ws.id))) return;
+  if (!ctx || !(await ownCustomSkill(installId, ctx.ws.id))) return { error: t('formAccessDenied') };
+  try {
   await db.$transaction([
     db.installedSkill.update({ where: { id: installId }, data: { content: String(formData.get('content') ?? ''), status: 'published' } }),
     db.marketInstall.updateMany({
@@ -134,7 +143,11 @@ export async function updateSkillContentAction(formData: FormData) {
       data: { status: 'modified' },
     }),
   ]);
+  } catch {
+    return { error: t('formSaveFailed') };
+  }
   revalidatePath(`/app/${slug}/skills/${installId}`);
+  return { saved: true };
 }
 
 export async function updateSkillAttributesAction(formData: FormData) {
@@ -192,12 +205,12 @@ export async function deleteCustomSkillAction(formData: FormData) {
   redirect(`/app/${slug}/skills`);
 }
 
-export type GithubSkillImportState = { error?: string };
+export type SkillActionState = { error?: string; saved?: boolean };
 
 export async function importSkillFromGithubAction(
-  _previous: GithubSkillImportState,
+  _previous: SkillActionState,
   formData: FormData,
-): Promise<GithubSkillImportState> {
+): Promise<SkillActionState> {
   const slug = String(formData.get('workspace') ?? '');
   const repo = String(formData.get('repo') ?? '').trim();
   const ctx = await authedWs(slug);
@@ -247,19 +260,22 @@ export async function importSkillFromGithubAction(
   redirect(`/app/${slug}/skills?imported=${encodeURIComponent(created.map((skill) => skill.id).join(','))}`);
 }
 
-export async function uploadSkillFolderAction(formData: FormData) {
+export async function uploadSkillFolderAction(_previous: SkillActionState, formData: FormData): Promise<SkillActionState> {
+  const t = await getTranslations('console.skills');
   const slug = String(formData.get('workspace') ?? '');
   const name = String(formData.get('name') ?? '').trim();
   const ctx = await authedWs(slug);
-  if (!ctx) return;
+  if (!ctx) return { error: t('formAccessDenied') };
   let bundles;
   try {
     const files = await readUploadedSkillFiles(formData);
     const { maxSkills } = await getSkillImportSettings();
     bundles = parseUploadedSkillBundles(files, name, maxSkills);
   } catch {
-    return;
+    return { error: t('invalidUpload') };
   }
+  let created;
+  try {
   const existing = await db.installedSkill.findMany({
     where: { workspaceId: ctx.ws.id },
     select: { slug: true, skill: { select: { slug: true } } },
@@ -270,7 +286,7 @@ export async function uploadSkillFolderAction(formData: FormData) {
       .filter((value): value is string => Boolean(value)),
   );
 
-  const created = await db.$transaction(
+  created = await db.$transaction(
     bundles.map((bundle) => {
       const nm = bundles.length === 1 && name ? name : bundle.name;
       return db.installedSkill.create({
@@ -289,6 +305,9 @@ export async function uploadSkillFolderAction(formData: FormData) {
       });
     }),
   );
+  } catch {
+    return { error: t('formSaveFailed') };
+  }
   revalidatePath(`/app/${slug}/skills`);
   redirect(`/app/${slug}/skills?imported=${encodeURIComponent(created.map((skill) => skill.id).join(','))}`);
 }

@@ -96,6 +96,7 @@ export default async function AgentDetailPage({
     apiEndpoint,
     managerMembership,
     requestHeaders,
+    piPackageInstalls,
   ] = await Promise.all([
     listAgentChannelConnections(ws.id, agentId),
     listProviders(ws.id),
@@ -112,6 +113,17 @@ export default async function AgentDetailPage({
         select: { role: true },
       }),
     headers(),
+    agent.runtimeKind === 'pi-sdk' ? db.marketInstall.findMany({
+      where: { targetWorkspaceId: ws.id, listing: { kind: 'pi-package' } },
+      orderBy: { createdAt: 'asc' },
+      select: {
+        id: true,
+        status: true,
+        currentReleaseId: true,
+        listing: { select: { name: true, status: true } },
+        currentRelease: { select: { version: true, reviewStatus: true } },
+      },
+    }) : Promise.resolve([]),
   ]);
 
   const selectedToolkits = new Set(agent.toolkits.map((toolkit) => toolkit.toolkitId));
@@ -155,6 +167,20 @@ export default async function AgentDetailPage({
           })),
           deployments,
           skills,
+          piPackages: piPackageInstalls.map((install) => {
+            const enabled = agent.piPackages.find((pkg) => pkg.marketInstallId === install.id);
+            const available = install.status === 'ready' && install.listing.status === 'published';
+            return {
+              marketInstallId: install.id,
+              name: install.listing.name,
+              currentReleaseId: install.currentReleaseId,
+              currentVersion: install.currentRelease?.version ?? null,
+              currentAvailable: available && install.currentRelease?.reviewStatus === 'approved',
+              enabledReleaseId: enabled?.releaseId ?? null,
+              enabledVersion: enabled?.release.version ?? null,
+              enabledAvailable: available && enabled?.release.reviewStatus === 'approved',
+            };
+          }),
           toolkits: toolkits.map((t) => ({
             id: t.id,
             label: t.name,
@@ -260,7 +286,7 @@ export default async function AgentDetailPage({
         ready={ready}
         agentName={agent.name}
         marketSetup={marketSetup}
-        initialSettingsTab={settings === 'a2a' ? 'a2a' : settings === 'subAgents' ? 'subAgents' : settings === 'channels' ? 'channels' : settings === 'api' && isHermes ? 'api' : settings === 'profiles' && isHermes ? 'profiles' : settings === 'hermes' ? 'hermes' : settings === 'terminal' ? 'terminal' : settings === 'agent' ? 'agent' : null}
+        initialSettingsTab={settings === 'piPackages' ? 'piPackages' : settings === 'a2a' ? 'a2a' : settings === 'subAgents' ? 'subAgents' : settings === 'channels' ? 'channels' : settings === 'api' && isHermes ? 'api' : settings === 'profiles' && isHermes ? 'profiles' : settings === 'hermes' ? 'hermes' : settings === 'terminal' ? 'terminal' : settings === 'agent' ? 'agent' : null}
       />
     </SettingsModal>
   );

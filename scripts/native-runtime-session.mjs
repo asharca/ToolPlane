@@ -60,16 +60,23 @@ async function serve() {
   let active;
   let init;
   let commands;
+  let sdkRequestId;
   let buffer = '';
   let stderr = '';
   let idle;
   let stopping = false;
-  let state = await readFile(input.statePath, 'utf8').then(JSON.parse).catch((error) => {
+  let state = input.kind === 'pi-sdk' ? undefined : await readFile(input.statePath, 'utf8').then(JSON.parse).catch((error) => {
     if (error.code !== 'ENOENT') throw error;
     return { id: randomUUID(), seeded: false };
   });
   const send = (event) => active?.write(JSON.stringify(event) + '\n');
-  const fail = (text) => send({ type: 'toolplane_command_result', isError: true, text });
+  const fail = (text) => {
+    if (input.kind !== 'pi-sdk') { send({ type: 'toolplane_command_result', isError: true, text }); return; }
+    if (!active || !sdkRequestId) return;
+    const code = /^PI_[A-Z0-9_]{1,80}$/.test(text) ? text : 'PI_SDK_RUNTIME_FAILED';
+    send({ type: 'toolplane_sdk_response', id: sdkRequestId, success: false, error: { code, message: code } });
+    sdkRequestId = undefined;
+  };
   const server = createServer((socket) => {
     let requestBuffer = '';
     socket.on('error', () => {});
@@ -82,17 +89,24 @@ async function serve() {
         const job = JSON.parse(requestBuffer.slice(0, newline));
         if (active) { socket.end(JSON.stringify({ type: 'toolplane_command_result', isError: true, text: 'This native session is busy.' }) + '\n'); return; }
         active = socket;
+        if (input.kind === 'pi-sdk') sdkRequestId = randomUUID();
         clearTimeout(idle);
-        if (job.signature !== input.signature || Date.now() - startedAt > 20 * 60_000) { send({ type: 'toolplane_session_restart' }); await stop(); return; }
+        if (job.signature !== input.signature || (input.kind !== 'pi-sdk' && Date.now() - startedAt > 20 * 60_000)) { send({ type: 'toolplane_session_restart' }); await stop(); return; }
         if (!child) await start(job);
         if (init) send(init);
         if (commands) send(commands);
-        const text = job.command || (state.seeded ? job.message : job.prompt);
-        if (input.kind === 'pi') {
-          const args = job.command?.match(/^\/compact(?:\s+([\s\S]*))?$/i);
-          child.stdin.write(JSON.stringify(args ? { id: 'turn', type: 'compact', customInstructions: args[1] } : { id: 'turn', type: 'prompt', message: text }) + '\n');
-        } else child.stdin.write(JSON.stringify({ type: 'user', message: { role: 'user', content: text }, parent_tool_use_id: null, session_id: state.id }) + '\n');
-      } catch (error) { fail(error.message); await stop(); }
+        if (input.kind === 'pi-sdk') {
+          const args = job.command?.match(/^\/compact(?:\s+([\s\S]*))?$/);
+          child.stdin.write(JSON.stringify({ id: sdkRequestId, type: args ? 'compact' : 'prompt',
+            ...(args ? { customInstructions: args[1] } : { message: job.command || job.message }), context: job.context }) + '\n');
+        } else {
+          const text = job.command || (state.seeded ? job.message : job.prompt);
+          if (input.kind === 'pi') {
+            const args = job.command?.match(/^\/compact(?:\s+([\s\S]*))?$/i);
+            child.stdin.write(JSON.stringify(args ? { id: 'turn', type: 'compact', customInstructions: args[1] } : { id: 'turn', type: 'prompt', message: text }) + '\n');
+          } else child.stdin.write(JSON.stringify({ type: 'user', message: { role: 'user', content: text }, parent_tool_use_id: null, session_id: state.id }) + '\n');
+        }
+      } catch (error) { fail(input.kind === 'pi-sdk' ? 'PI_SDK_RUNTIME_FAILED' : error.message); await stop(); }
     });
     socket.on('close', () => { if (active === socket) void stop(); });
   });
@@ -105,6 +119,46 @@ async function serve() {
 
   async function start(job) {
     const args = [...input.args];
+    if (input.kind === 'pi-sdk') {
+      child = spawn(input.binary, args, { stdio: ['pipe', 'pipe', 'pipe', 'pipe'], detached: true });
+      // Package console output is never protocol or public diagnostics.
+      const discard = (chunk) => { stderr = (stderr + chunk.toString()).slice(-8000); };
+      child.stdout.on('data', discard);
+      child.stderr.on('data', discard);
+      child.stdin.on('error', () => { if (!stopping) { fail('PI_SDK_RUNTIME_FAILED'); void stop(); } });
+      child.stdio[3].on('data', (chunk) => {
+        buffer += chunk;
+        if (stopping) return;
+        let index;
+        while ((index = buffer.indexOf('\n')) >= 0) {
+          const line = buffer.slice(0, index); buffer = buffer.slice(index + 1);
+          if (Buffer.byteLength(line) > 4 * 1024 * 1024) { fail('PI_SDK_PROTOCOL_INVALID'); void stop(); return; }
+          let event;
+          try { event = JSON.parse(line); } catch { fail('PI_SDK_PROTOCOL_INVALID'); void stop(); return; }
+          if (event.type === 'toolplane_sdk_response') {
+            if (!active || event.id !== sdkRequestId) continue;
+            // The host owns its JSONL pointer and atomic state; neither crosses the socket.
+            const result = event.result && {
+              text: event.result.text, commands: event.result.commands,
+              ...(event.result.usage ? { usage: event.result.usage } : {}),
+              ...(event.result.commandResult ? { commandResult: event.result.commandResult } : {}),
+            };
+            const code = /^PI_[A-Z0-9_]{1,80}$/.test(event.error?.code) ? event.error.code : 'PI_SDK_RUNTIME_FAILED';
+            send({ type: event.type, id: event.id, success: event.success === true,
+              ...(event.success === true ? { result } : { error: { code, message: code } }) });
+            const socket = active;
+            active = undefined;
+            sdkRequestId = undefined;
+            socket.end();
+            idle = setTimeout(stop, 120_000);
+          } else if (active) send(event);
+        }
+        if (Buffer.byteLength(buffer) > 4 * 1024 * 1024) { fail('PI_SDK_PROTOCOL_INVALID'); void stop(); }
+      });
+      child.once('error', () => { fail('PI_SDK_RUNTIME_FAILED'); void stop(); });
+      child.once('exit', () => { if (!stopping) fail('PI_SDK_RUNTIME_EXITED'); void stop(); });
+      return;
+    }
     if (input.kind === 'pi') {
       const sessionPath = input.statePath + '.jsonl';
       if (state.seeded && !existsSync(sessionPath) && job.history.length) throw new Error('Native session history is missing. Start a new conversation or restore the sandbox data.');
@@ -175,7 +229,17 @@ async function serve() {
     if (stopping) return;
     stopping = true;
     clearTimeout(idle);
-    if (child?.pid) { try { process.kill(-child.pid, 'SIGTERM'); } catch {} }
+    if (child?.pid) {
+      if (input.kind === 'pi-sdk') {
+        child.stdin.write(JSON.stringify({ id: randomUUID(), type: 'abort' }) + '\n');
+        try { process.kill(-child.pid, 'SIGTERM'); } catch {}
+        // Detached children must not outlive a disconnected/interrupted request.
+        const { promise, resolve } = Promise.withResolvers();
+        setTimeout(resolve, 250);
+        await promise;
+        try { process.kill(-child.pid, 'SIGKILL'); } catch {}
+      } else { try { process.kill(-child.pid, 'SIGTERM'); } catch {} }
+    }
     active?.end(); active = undefined;
     server.close();
     await unlink(socketPath).catch(() => {});
@@ -185,5 +249,5 @@ async function serve() {
   server.listen(socketPath, () => { void chmod(socketPath, 0o600); });
   process.on('SIGTERM', stop);
   // Runtime proxy tokens expire after 55 minutes; do not reuse a CLI beyond their lifetime.
-  setTimeout(() => { if (!active) void stop(); }, 45 * 60_000).unref();
+  if (input.kind !== 'pi-sdk') setTimeout(() => { if (!active) void stop(); }, 45 * 60_000).unref();
 }

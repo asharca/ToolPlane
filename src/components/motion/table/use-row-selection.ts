@@ -54,6 +54,7 @@ export function useRowSelection<T>({
     },
     [selected, commit],
   );
+  const clearSelection = useCallback(() => commit(new Set()), [commit]);
 
-  return { selected, allSelected, someSelected, toggleAll, toggleRow };
+  return { selected, allSelected, someSelected, toggleAll, toggleRow, clearSelection };
 }

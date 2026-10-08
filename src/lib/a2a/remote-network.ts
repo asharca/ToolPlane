@@ -4,11 +4,14 @@ import { request } from 'node:https';
 import { BlockList, isIP } from 'node:net';
 import { validateRemoteResponse } from './remote-wire';
 import { runtimeEnv } from '@/lib/runtime-env';
+import { TaskState } from '@a2a-js/sdk';
+import { recordA2AEvent, a2aTaskOutcome, type A2ALogBinding, type A2ALogMetadata } from '@/lib/observability/a2a-log';
+import type { LogOutcome } from '@/lib/observability/events';
 
 export const REMOTE_RESPONSE_BYTES = 524_288;
 export const REMOTE_REQUEST_BYTES = 262_144;
 export class RemoteA2AError extends Error {
-  constructor(message = 'The remote Agent request could not be verified or completed.') { super(message); }
+  constructor(message = 'The remote Agent request could not be verified or completed.', readonly httpStatus?: number) { super(message); }
 }
 const blocked = new BlockList();
 for (const [address, prefix] of [
@@ -48,7 +51,7 @@ async function addresses(host: string, signal: AbortSignal) {
   const pending = isIP(host) ? Promise.resolve([{ address: host, family: isIP(host) }]) : lookup(host, { all: true, verbatim: true });
   let abort: () => void = () => undefined;
   const aborted = new Promise<never>((_, reject) => {
-    abort = () => reject(new RemoteA2AError());
+    abort = () => { const error = new RemoteA2AError(); error.cause = signal.reason; reject(error); };
     if (signal.aborted) abort(); else signal.addEventListener('abort', abort, { once: true });
   });
   try {
@@ -66,7 +69,12 @@ async function fetchPinnedRemoteJson(urlValue: string, method: 'GET' | 'POST', b
   const host = url.hostname.replace(/^\[|\]$/g, '');
   const pinned = await addresses(host, abortSignal); abortSignal.throwIfAborted();
   return new Promise<Response>((resolve, reject) => {
-    const fail = () => reject(new RemoteA2AError());
+    let httpStatus: number | undefined;
+    const fail = () => {
+      const error = new RemoteA2AError(undefined, httpStatus);
+      if (abortSignal.aborted) error.cause = abortSignal.reason;
+      reject(error);
+    };
     const req = request(url, {
       method, agent: false, signal: abortSignal, maxHeaderSize: 16_384,
       // SNI and certificate validation remain tied to the original HTTPS hostname.
@@ -79,6 +87,7 @@ async function fetchPinnedRemoteJson(urlValue: string, method: 'GET' | 'POST', b
         ...(token ? { authorization: `Bearer ${token}` } : {}) },
     }, (res) => {
       const code = res.statusCode ?? 0;
+      if (code > 0) httpStatus = code;
       if (code < 200 || code >= 300 || code === 204 || code === 205 || !/^application\/json(?:\s*;|$)/i.test(String(res.headers['content-type'] ?? ''))
         || res.headers['content-encoding'] && res.headers['content-encoding'] !== 'identity'
         || res.headers['a2a-version'] && res.headers['a2a-version'] !== '1.0'
@@ -101,15 +110,54 @@ async function fetchPinnedRemoteJson(urlValue: string, method: 'GET' | 'POST', b
   });
 }
 /** No header passthrough, URL switching, proxy environment, redirect following or automatic replay. */
-export function remoteRpcFetch(rpcUrl: string, token: string | undefined): typeof fetch {
+export function remoteRpcFetch(rpcUrl: string, token: string | undefined, binding: A2ALogBinding): typeof fetch {
   return async (input, init) => {
     const req = new Request(input, init);
-    if (req.url !== remoteUrl(rpcUrl).href || req.method !== 'POST') throw new RemoteA2AError('Remote transport target changed.');
-    const body = await req.text();
-    const response = await fetchRemoteJson(rpcUrl, 'POST', body, token, req.signal);
-    try { validateRemoteResponse(JSON.parse(body), await response.clone().json()); }
-    catch { throw new RemoteA2AError('Remote output is not a valid supported A2A response.'); }
-    return response;
+    const approvedUrl = remoteUrl(rpcUrl).href;
+    if (req.url !== approvedUrl || req.method !== 'POST') throw new RemoteA2AError('Remote transport target changed.');
+    const started = performance.now();
+    let rpc: unknown, requestPayload: unknown, responsePayload: unknown;
+    let rpcMethod = 'unknown', httpStatus: number | undefined, rpcErrorCode: number | undefined;
+    let taskState: A2ALogMetadata['taskState'];
+    let outcome: LogOutcome = 'error';
+    let responseComplete = false;
+    try {
+      const body = await req.text();
+      requestPayload = { rawText: body };
+      try { rpc = JSON.parse(body); requestPayload = rpc; } catch { /* Preserve the existing transport validation order. */ }
+      const method = (rpc as { method?: unknown } | null)?.method;
+      if (typeof method === 'string' && ['SendMessage', 'GetTask', 'CancelTask'].includes(method)) rpcMethod = method;
+      const response = await fetchRemoteJson(rpcUrl, 'POST', body, token, req.signal);
+      httpStatus = response.status;
+      try {
+        const text = await response.clone().text();
+        responsePayload = { rawText: text };
+        responseComplete = true;
+        responsePayload = JSON.parse(text);
+        validateRemoteResponse(rpc, responsePayload);
+      } catch { throw new RemoteA2AError('Remote output is not a valid supported A2A response.', httpStatus); }
+      const envelope = responsePayload as { error?: { code: number }; result?: { task?: { status: { state: string | number } }; status?: { state: string | number } } };
+      rpcErrorCode = envelope.error?.code;
+      const state = (rpcMethod === 'SendMessage' ? envelope.result?.task : envelope.result)?.status?.state;
+      taskState = (typeof state === 'number' ? TaskState[state] : state) as A2ALogMetadata['taskState'];
+      outcome = envelope.error ? 'error' : a2aTaskOutcome(taskState);
+      return response;
+    } catch (error) {
+      if (error instanceof RemoteA2AError) httpStatus = error.httpStatus ?? httpStatus;
+      const reason = req.signal.aborted ? req.signal.reason : error instanceof Error ? error.cause ?? error : error;
+      outcome = httpStatus === 401 || httpStatus === 403 ? 'denied'
+        : reason instanceof Error && reason.name === 'TimeoutError' ? 'timeout'
+        : req.signal.aborted ? 'cancelled' : 'error';
+      throw error;
+    } finally {
+      await recordA2AEvent({ eventName: 'a2a.request', binding,
+        metadata: { direction: 'outbound', transport: 'jsonrpc', taskState, rpcErrorCode },
+        rpcMethod, method: 'POST', path: approvedUrl, httpStatus, outcome,
+        durationMs: performance.now() - started, request: requestPayload, response: responsePayload,
+        responseKind: responsePayload === undefined ? 'none' : 'json', responseComplete,
+        secrets: token ? [token] : undefined,
+      });
+    }
   };
 }
 

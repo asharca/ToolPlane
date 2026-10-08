@@ -199,7 +199,7 @@ export function DeployCustomMcpDialog({
       </CenterMorphModalTrigger>
 
       <CenterMorphModalContent ariaLabel={t('deployCustomMcp')} ariaDescribedBy="deploy-custom-mcp-description" closeButtonLabel={t('cancel')} className="flex max-h-[calc(100dvh-4rem)] w-full max-w-2xl flex-col">
-                <div className="flex shrink-0 items-start gap-4 border-b border-border pl-5 pr-16 py-5 sm:pl-6">
+                <div className="flex shrink-0 items-start gap-3 border-b border-border pl-5 pr-16 py-3 sm:pl-6">
                   <div className="flex min-w-0 items-start gap-3">
                     <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-sm">
                       <Plug className="size-4" />

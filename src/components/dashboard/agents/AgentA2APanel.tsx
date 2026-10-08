@@ -1,25 +1,23 @@
 'use client';
-import { BouncyAccordion } from '@/components/motion/bouncy-accordion';
 import { Button, ButtonLink } from '@/components/motion/button/base';
 import { Input } from '@/components/motion/input';
 
 import { AnimatedBadge } from '@/components/motion/animated-badge';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useLocale, useTranslations } from 'next-intl';
+import { useTranslations } from 'next-intl';
 
 import { ArrowUpRight, BookOpen, KeyRound, Network, RefreshCw, ShieldCheck } from 'lucide-react';
 import { AgentA2ARemotes } from './AgentA2ARemotes';
 import { AgentA2ATaskMonitor } from './AgentA2ATaskMonitor';
 import { CopyButton } from '@/components/dashboard/CopyButton';
-import { A2A_DOCS, a2aCurlExample, a2aMcpConnectionExample, type A2AConsoleView } from '@/lib/a2a/connection-info';
+import type { A2AConsoleView } from '@/lib/a2a/connection-info';
 import type { A2AConsoleAction } from '@/lib/a2a/console-service';
 
 const cardClass = 'space-y-4 rounded-xl border border-border bg-background p-4 sm:p-5';
 
 export function AgentA2APanel({ slug, agentId, runtimeKind, initialTaskId }: { slug: string; agentId: string; runtimeKind: string; initialTaskId?: string }) {
   const t = useTranslations('console.agents.a2a');
-  const locale = useLocale();
   const [view, setView] = useState<A2AConsoleView | null>(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -69,11 +67,9 @@ export function AgentA2APanel({ slug, agentId, runtimeKind, initialTaskId }: { s
       try { await load(); } catch { if (mounted.current) setError(t('refreshFailed')); }
     });
   }
-  const doc = (key: keyof typeof A2A_DOCS) => locale.startsWith('zh') ? A2A_DOCS[key] : A2A_DOCS[key].replace('.zh-CN.md', '.md');
   const connection = view?.connections;
   const rpcUrl = mode === 'local' ? connection?.localRpc : connection?.publicRpc;
   const cardUrl = mode === 'local' ? connection?.localCard : connection?.publicCard;
-  const tokenSetup = `export ${mode === 'local' ? 'TOOLPLANE_ACCOUNT_TOKEN' : 'TOOLPLANE_A2A_TOKEN'}='REPLACE_WITH_TOKEN'`;
   const locked = busy || !view?.canManage;
 
   return <div className="mx-auto max-w-4xl space-y-5 px-4 py-6 sm:px-6">
@@ -121,6 +117,7 @@ export function AgentA2APanel({ slug, agentId, runtimeKind, initialTaskId }: { s
           if (window.confirm(t(view.endpoint?.enabled ? 'disablePublicConfirm' : 'enablePublicConfirm'))) void mutate({ action: 'set-public', enabled: !view.endpoint?.enabled });
         }} variant={view.endpoint?.enabled ? 'secondary' : 'primary'}>{t(view.endpoint?.enabled ? 'disablePublic' : 'enablePublic')}</Button>
       </section> : null}
+      {runtimeKind === 'pi-sdk' ? <p className={`${cardClass} text-sm text-muted-foreground`}>{t('piSdkPublicUnsupported')}</p> : null}
       <section className={cardClass} aria-labelledby="a2a-connect-heading">
         <h3 id="a2a-connect-heading" className="font-semibold">{t('connectionTitle')}</h3>
         {!connection ? <div role="alert" className="space-y-2 text-sm text-muted-foreground">{t('invalidOrigin')}</div> : null}
@@ -129,54 +126,11 @@ export function AgentA2APanel({ slug, agentId, runtimeKind, initialTaskId }: { s
           <Button aria-pressed={mode === 'public'} onClick={() => setMode('public')} variant={mode === 'public' ? 'primary' : 'secondary'} size={"sm"}>{t('publicTitle')}</Button>
         </div> : null}
         <p className="text-sm text-muted-foreground">{t(mode === 'local' ? 'accountCredential' : 'serviceCredential')}</p>
-        <div className="space-y-3">
-          <h4 className="text-sm font-semibold">{t('inboundGuide.title')}</h4>
-          <p className="text-sm text-muted-foreground">{t('inboundGuide.whereToRun')}</p>
-          <p className="text-sm text-muted-foreground">{t('inboundGuide.internalOnly')}</p>
-          <ol className="list-decimal space-y-3 pl-5 text-sm text-muted-foreground">
-            <li>{t(mode === 'local' ? 'inboundGuide.enableLocal' : 'inboundGuide.enablePublic')}</li>
-            <li>{t(mode === 'local' ? 'inboundGuide.tokenLocal' : 'inboundGuide.tokenPublic')}
-              {mode === 'local' ? <a className="ml-1 underline underline-offset-4" href={`/app/${encodeURIComponent(slug)}/settings/account?section=tokens`} target="_blank" rel="noopener noreferrer">{t('inboundGuide.openTokens')}</a> : null}
-              <p className="mt-2">{t('inboundGuide.tokenSetup')}</p>
-              <div className="mt-2 flex justify-end"><CopyButton text={tokenSetup} label={t('copy')} /></div>
-              <pre className="mt-2 overflow-auto whitespace-pre-wrap break-words text-xs">{tokenSetup}</pre>
-            </li>
-            <li>{t('inboundGuide.send')}
-              <div className="mt-2 flex items-center justify-between gap-2 rounded-lg bg-muted/40 p-3"><code className="text-xs">uuidgen</code><CopyButton text="uuidgen" label={t('copy')} /></div>
-            </li>
-            <li>{t('inboundGuide.result')}</li>
-          </ol>
-          <p className="text-xs text-muted-foreground">{t(mode === 'local' ? 'inboundGuide.serverOnly' : 'inboundGuide.publicIdentity')}</p>
-        </div>
         {rpcUrl && cardUrl ? <>
           {[[t('rpcUrl'), rpcUrl], [t('cardUrl'), cardUrl]].map(([label, url]) => <div key={label} className="min-w-0 rounded-lg bg-muted/40 p-3">
             <div className="mb-1 flex items-center justify-between gap-2"><span className="text-xs font-medium">{label}</span><CopyButton text={url} label={t('copy')} /></div>
             <code className="block break-all text-xs">{url}</code></div>)}
-          {(['card', 'SendMessage', 'GetTask', 'SubscribeToTask', 'CancelTask'] as const).map((method) => {
-            const code = a2aCurlExample(method === 'card' ? cardUrl : rpcUrl, mode, method);
-            const title = method === 'card' ? t('getCard') : method;
-            const content = <>
-              <p className="mt-3 text-sm text-muted-foreground">{t(`inboundGuide.${method}`)}</p>
-              <div className="mt-3 flex justify-end"><CopyButton text={code} label={t('copy')} /></div><pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words text-xs">{code}</pre></>;
-            return method === 'card' || method === 'SendMessage'
-              ? <section key={`${mode}:${method}`} className="min-w-0 rounded-lg border border-border p-3" aria-label={title}><h4 className="text-sm font-semibold">{title}</h4>{content}</section>
-              : <BouncyAccordion key={`${mode}:${method}`} items={[{ id: 'details', title, description: content }]} />;
-          })}
-          {mode === 'public' && view.connections?.publicMcp ? <BouncyAccordion items={[{ id: 'details', title: <>{t('mcpConnection')}</>, description: <>
-            <p className="mt-3 text-xs text-muted-foreground">{t('mcpConnectionHint')}</p>
-            <div className="mt-3 flex justify-end"><CopyButton text={a2aMcpConnectionExample(view.connections.publicMcp)} label={t('copy')} /></div>
-            <pre className="mt-2 overflow-auto whitespace-pre-wrap break-words text-xs">{a2aMcpConnectionExample(view.connections.publicMcp)}</pre>
-          </> }]} /> : null}
-          <p className="text-xs text-muted-foreground">{t('exampleWarning')}</p>
         </> : <p className="text-sm text-muted-foreground">{t('connectionUnavailable')}</p>}
-        <BouncyAccordion items={[{ id: 'responses', title: t('inboundGuide.responsesTitle'), description: <div className="space-y-3 pt-3 text-sm text-muted-foreground">
-          <p>{t('inboundGuide.responses')}</p>
-          <p>{t('inboundGuide.waiting')}</p>
-          <p>{t('inboundGuide.continue')}</p>
-          <p>{t('inboundGuide.terminal')}</p>
-        </div> }, { id: 'troubleshooting', title: t('inboundGuide.errorsTitle'), description: <ul className="list-disc space-y-2 pl-5 pt-3 text-sm text-muted-foreground">
-          {(['origin', 'unauthorized', 'forbidden', 'notFound', 'protocol', 'execution'] as const).map((key) => <li key={key}>{t(`inboundGuide.${key}`)}</li>)}
-        </ul> }]} />
       </section>
       {runtimeKind === 'hermes' && view.canManage && view.endpoint ? <section className={cardClass} aria-labelledby="a2a-keys-heading">
         <h3 id="a2a-keys-heading" className="flex items-center gap-2 font-semibold"><KeyRound className="size-4" />{t('credentials')}</h3>
@@ -200,7 +154,7 @@ export function AgentA2APanel({ slug, agentId, runtimeKind, initialTaskId }: { s
     </>}
     <footer className={cardClass}>
       <h3 className="flex items-center gap-2 font-semibold"><BookOpen className="size-4" />{t('docs')}</h3>
-      <div className="flex flex-wrap gap-4 text-sm">{(['console', 'public', 'local'] as const).map((key) => <ButtonLink key={key} href={doc(key)} target="_blank" rel="noopener noreferrer" variant="ghost">{t(key === 'console' ? 'consoleDocs' : key === 'public' ? 'publicDocs' : 'localDocs')}<ArrowUpRight className="size-3" /></ButtonLink>)}</div>
+      <ButtonLink href="/docs-api" target="_blank" rel="noopener noreferrer" variant="secondary">{t('docs')}<ArrowUpRight className="size-3" /></ButtonLink>
       <p className="flex items-start gap-2 text-xs text-muted-foreground"><ShieldCheck className="size-4 shrink-0" />{t('boundaries')}</p>
     </footer>
   </div>;

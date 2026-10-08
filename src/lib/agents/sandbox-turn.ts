@@ -9,21 +9,20 @@ import {
   runtimeMcpProxyUrl,
   runtimeModelProxyBase,
 } from './runtime-access';
-import {
-  runSandboxAgentTurn,
-  compactPiHarnessSession,
-  type PiHarnessOperationResult,
-  type RunSandboxAgentTurnOptions,
-  type SandboxAgentRuntimeKind,
-  type SandboxRuntimeActivity,
-  type SandboxRuntimeMessage,
-  type SandboxRuntimeProvider,
+import { runSandboxAgentTurn, compactPiHarnessSession } from './sandbox-runtime';
+import type {
+  PiHarnessOperationResult,
+  RunSandboxAgentTurnOptions,
+  SandboxAgentRuntimeKind,
+  SandboxRuntimeActivity,
+  SandboxRuntimeMessage,
+  SandboxRuntimeProvider,
 } from './sandbox-runtime';
-import type { SkillForPrompt } from './resolve';
+import type { ResolvedAgentPiPackage, SkillForPrompt } from './resolve';
 import type { ContextUsageSnapshot } from '@/lib/context-usage';
 import { resolveModelContext, type ProviderConfig } from './model';
 import { liveStatus } from '@/lib/process/supervisor';
-import type { RuntimeCommand, RuntimeUsage } from './runtime-commands';
+import type { RuntimeCommand, RuntimeCommandResult, RuntimeUsage } from './runtime-commands';
 
 type SandboxTurnAgent = {
   id: string;
@@ -35,12 +34,13 @@ type SandboxTurnAgent = {
   maxSteps?: number;
 };
 
-export async function runDedicatedSandboxTurn(input: {
+export type RunDedicatedSandboxTurnInput = {
   agent: SandboxTurnAgent;
   sandboxId?: string | null;
   systemPrompt?: string | null;
   messages: readonly SandboxRuntimeMessage[];
   skills?: readonly SkillForPrompt[];
+  piPackages?: readonly ResolvedAgentPiPackage[];
   deploymentIds?: readonly string[];
   workingDirectory?: string | null;
   runtimeSessionId?: string;
@@ -52,13 +52,17 @@ export async function runDedicatedSandboxTurn(input: {
   onContextUsage?: (usage: ContextUsageSnapshot) => void | Promise<void>;
   onCommands?: (commands: RuntimeCommand[]) => void | Promise<void>;
   onUsage?: (usage: RuntimeUsage) => void | Promise<void>;
-}): Promise<string> {
+  onCommandResult?: (result: RuntimeCommandResult) => void | Promise<void>;
+};
+
+export async function runDedicatedSandboxTurn(input: RunDedicatedSandboxTurnInput): Promise<string> {
   return observe({ domain: 'agent', eventName: 'sandbox.run', workspaceId: input.agent.workspaceId, agentId: input.agent.id,
     model: input.agent.model ?? undefined, providerId: input.agent.provider?.id, secrets: [input.agent.provider?.apiKey ?? ''] }, async () => {
   const runtimeKind = input.agent.runtimeKind;
   if (!isDedicatedSandboxRuntimeKind(runtimeKind)) {
     throw new Error(`Unsupported sandbox runtime: ${runtimeKind}.`);
   }
+  if (runtimeKind === 'pi-sdk' && !input.piPackages) throw new Error('PI_PACKAGE_UNAVAILABLE');
   const provider = input.agent.provider;
   const modelId = input.agent.model;
   if (!provider?.id || !modelId) throw new Error('This Agent has no configured model.');
@@ -119,6 +123,7 @@ export async function runDedicatedSandboxTurn(input: {
     disabledBuiltinTools: input.agent.disabledBuiltinTools,
     messages: input.messages,
     skills: input.skills,
+    ...(runtimeKind === 'pi-sdk' ? { piPackages: input.piPackages } : {}),
     mcpServers: deploymentIds.map((deploymentId) => ({
       deploymentId,
       url: runtimeMcpProxyUrl(deploymentId),
@@ -137,6 +142,7 @@ export async function runDedicatedSandboxTurn(input: {
     onContextUsage: input.onContextUsage,
     onCommands: input.onCommands,
     onUsage: input.onUsage,
+    onCommandResult: input.onCommandResult,
   };
   if (input.nativeCompaction) {
     const result = await compactPiHarnessSession(options, input.nativeCompaction.contextId, input.nativeCompaction.customInstructions);

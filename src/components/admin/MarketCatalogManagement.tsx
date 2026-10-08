@@ -158,6 +158,7 @@ function CategoryChecklist({
 
 function ListingForm({ listing, categories }: { listing: ListingRow; categories: CategoryOption[] }) {
   const t = useTranslations('admin');
+  const marketT = useTranslations('console.market');
   const ops = useTranslations('adminOps');
   const [state, action] = useActionState<AdminActionState, FormData>(updateMarketListingAdminAction, {});
   const statusTone = listing.status === 'published' ? 'success' : listing.status === 'disabled' ? 'danger' : 'neutral';
@@ -166,7 +167,7 @@ function ListingForm({ listing, categories }: { listing: ListingRow; categories:
       <summary className="flex min-h-14 cursor-pointer list-none flex-wrap items-center gap-2 px-5 py-3 marker:hidden hover:bg-muted/45">
         <span className="min-w-48 flex-1 truncate text-sm font-semibold text-foreground">{listing.name}</span>
         <code className="max-w-72 truncate font-mono text-xs text-muted-foreground">/{listing.namespace}/{listing.slug}</code>
-        <AdminBadge tone="neutral">{listing.kind}</AdminBadge>
+        <AdminBadge tone="neutral">{listing.kind === 'pi-package' ? marketT('kindPiPackage') : listing.kind}</AdminBadge>
         <AdminBadge tone={statusTone}>{listing.status}</AdminBadge>
         <span className="text-xs tabular-nums text-muted-foreground">
           v{listing.latestVersion} · {listing.installCount} {t('installsColumn')}

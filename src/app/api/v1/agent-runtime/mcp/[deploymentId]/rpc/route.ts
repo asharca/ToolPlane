@@ -1,7 +1,7 @@
 import { withRequestLogging } from '@/lib/observability/http';
 import { NextResponse } from 'next/server';
 import { agentRuntimeTokenFromRequest, bindRuntimeLogContext } from '@/lib/agents/runtime-access';
-import { isAgentRuntimeGrantCurrent } from '@/lib/agents/runtime-grant';
+import { resolveAgentRuntimeGrant } from '@/lib/agents/runtime-grant';
 import { db } from '@/lib/db';
 import { proxyMcpRpcRequest } from '@/lib/process/mcp-gateway';
 
@@ -19,7 +19,8 @@ export const POST = withRequestLogging("/api/v1/agent-runtime/mcp/[deploymentId]
   if (!token.deploymentIds.includes(deploymentId)) {
     return NextResponse.json({ error: 'deployment is outside the runtime grant' }, { status: 403 });
   }
-  if (!await isAgentRuntimeGrantCurrent(token)) {
+  const grant = await resolveAgentRuntimeGrant(token);
+  if (!grant) {
     return NextResponse.json({ error: 'runtime grant is no longer valid' }, { status: 403 });
   }
 
@@ -33,6 +34,12 @@ export const POST = withRequestLogging("/api/v1/agent-runtime/mcp/[deploymentId]
     },
   });
   if (!deployment) return NextResponse.json({ error: 'deployment not found' }, { status: 404 });
+  const allowed = grant.mcpToolPolicy[deploymentId];
+  if (allowed) {
+    deployment.mcpAllowedTools = deployment.mcpToolExposure === 'allowlist'
+      ? deployment.mcpAllowedTools.filter((tool) => allowed.includes(tool)) : allowed;
+    deployment.mcpToolExposure = 'allowlist';
+  }
   bindRuntimeLogContext(token);
-  return proxyMcpRpcRequest(req, deployment);
+  return proxyMcpRpcRequest(req, { ...deployment, ...(allowed ? { toolsOnly: true } : {}) });
 });

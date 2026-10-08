@@ -13,6 +13,7 @@ import {
 export type McpGatewayDeployment = StoredMcpToolPolicy & {
   id: string;
   workspaceId: string;
+  toolsOnly?: boolean;
 };
 
 export async function proxyMcpRpcRequest(
@@ -53,6 +54,8 @@ export async function proxyMcpRpcRequest(
       id: null,
       error: { code: -32600, message: 'JSON-RPC batch requests are not supported.' },
     };
+  } else if (deployment.toolsOnly && !['initialize', 'notifications/initialized', 'ping', 'tools/list', 'tools/call'].includes(rpcMethod)) {
+    payload = { jsonrpc: '2.0', id: rpcId, error: { code: -32601, message: 'Method is outside the package grant.' } };
   } else if (rpcMethod === 'tools/call' && !isMcpToolExposedToAi(policy, toolName)) {
     payload = {
       jsonrpc: '2.0',
@@ -72,6 +75,10 @@ export async function proxyMcpRpcRequest(
       statusCode = upstream.status;
       const text = await upstream.text();
       payload = text ? JSON.parse(text) : {};
+      if (deployment.toolsOnly && rpcMethod === 'initialize' && payload && typeof payload === 'object'
+        && 'result' in payload && payload.result && typeof payload.result === 'object') {
+        payload = { ...payload, result: { ...payload.result, capabilities: { tools: {} } } };
+      }
       if (rpcMethod === 'tools/list' && payload && typeof payload === 'object') {
         const result = (payload as { result?: unknown }).result;
         if (result && typeof result === 'object') {

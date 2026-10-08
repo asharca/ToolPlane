@@ -7,12 +7,14 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { withLogContext } from '@/lib/observability/context';
+import { recordA2AEvent, a2aTaskOutcome, taskStateName, type A2ALogBinding } from '@/lib/observability/a2a-log';
 import { parseJson } from '@/lib/agents/public-api/body';
 import { AgentApiError } from '@/lib/agents/public-api/errors';
 import { resolveA2AGrant, assertLiveGrant, permits, A2AHttpError, type A2AGrant } from './principal';
 import { NativeA2AHandler, buildAgentCard } from './handler';
 import { Rpc, A2ASendSchema, A2AGetSchema, A2ACancelSchema, A2AListSchema, validateParams } from './validation';
 import { A2A_LIMITS, A2A_PROTOCOL_VERSION } from './model';
+import { getTaskRow } from './store';
 
 const catalog = [
   { name: 'a2a_send_message', operation: 'send', schema: A2ASendSchema,
@@ -78,13 +80,40 @@ export async function handleServiceMcp(req: Request, endpointId: string) {
         return { tools };
       });
       server.setRequestHandler(CallToolRequestSchema, async (request) => {
+        const started = performance.now();
+        const known = catalog.some(tool => tool.name === request.params.name);
+        const toolName = known ? request.params.name : 'unknown';
+        const args = request.params.arguments ?? {};
+        let binding: A2ALogBinding = { grant };
         try {
-          const result = await executeServiceMcpTool(grant, request.params.name, request.params.arguments ?? {});
-          return { content: [{ type: 'text', text: JSON.stringify(result) }], isError: false };
+          const result = await executeServiceMcpTool(grant, request.params.name, args);
+          const response = { content: [{ type: 'text' as const, text: JSON.stringify(result) }], isError: false };
+          const task = result && typeof result === 'object' && 'task' in result ? result.task : undefined;
+          const status = task && typeof task === 'object' && 'status' in task ? task.status : undefined;
+          const state = status && typeof status === 'object' && 'state' in status && typeof status.state === 'string' ? status.state : undefined;
+          const taskState = state ? taskStateName(state) : undefined;
+          if (task && typeof task === 'object' && 'id' in task && typeof task.id === 'string') {
+            const row = await getTaskRow(grant, task.id).catch(() => undefined);
+            if (row) binding = { grant, taskId: row.id, contextId: row.contextId,
+              rootTaskId: row.rootTaskId ?? row.id, parentTaskId: row.parentTaskId ?? undefined };
+          }
+          await recordA2AEvent({ eventName: 'a2a.request', binding,
+            metadata: { direction: 'inbound', transport: 'mcp', taskState },
+            rpcMethod: 'tools/call', toolName, outcome: a2aTaskOutcome(state),
+            durationMs: performance.now() - started, request: args, response,
+            responseKind: 'json', responseComplete: true, secrets: token ? [token] : undefined });
+          return response;
         } catch (error) {
           const rpc = toJsonRpcError(error);
-          return { content: [{ type: 'text', text: JSON.stringify({ code: rpc.code,
+          const response = { content: [{ type: 'text' as const, text: JSON.stringify({ code: rpc.code,
             message: error instanceof A2AHttpError ? 'A2A operation is not permitted.' : rpc.code === -32603 ? 'A2A operation failed.' : rpc.message }) }], isError: true };
+          const denied = error instanceof A2AHttpError && (error.status === 401 || error.status === 403);
+          await recordA2AEvent({ eventName: 'a2a.request', binding: known ? binding : undefined,
+            metadata: { direction: 'inbound', transport: 'mcp', rpcErrorCode: rpc.code },
+            rpcMethod: 'tools/call', toolName, outcome: denied ? 'denied' : 'error',
+            durationMs: performance.now() - started, ...(!denied && known ? { request: args, response } : {}),
+            responseKind: 'json', responseComplete: true, secrets: token ? [token] : undefined });
+          return response;
         }
       });
       const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });

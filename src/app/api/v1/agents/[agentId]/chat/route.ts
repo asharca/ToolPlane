@@ -1,4 +1,5 @@
-import { runNativeEntry, latestEntryText, nativeEntryResult } from '@/lib/a2a/ingress';
+import { runNativeEntry, latestEntryText, nativeEntryResult, nativeEntryRuntimeParts } from '@/lib/a2a/ingress';
+import type { UIMessage } from 'ai';
 import { withRequestLogging } from '@/lib/observability/http';
 import { workspaceAccessResponse } from '@/lib/workspace/access-stream';
 import { enrichLogContext } from '@/lib/observability/context';
@@ -330,7 +331,7 @@ export const POST = withRequestLogging("/api/v1/agents/[agentId]/chat", async fu
       ? agent.systemPrompt
       : assembleSystemPrompt(agent.systemPrompt, resolved.skills, Boolean(resolved.knowledgeBases?.length));
     let executionSucceeded = false;
-    const stream = createUIMessageStream<HermesUIMessage>({
+    const stream = createUIMessageStream<UIMessage>({
       originalMessages: messages,
       execute: async ({ writer }) => {
         if (sandboxRuntime) {
@@ -342,6 +343,7 @@ export const POST = withRequestLogging("/api/v1/agents/[agentId]/chat", async fu
             onAccepted: (_task, path) => uiStream.onTextDelta(`Native task accepted. Tool approvals and progress: ${path}\n\n`),
           });
           uiStream.onTextDelta(nativeEntryResult(result.task, result.path));
+          for (const part of nativeEntryRuntimeParts(result.task)) writer.write(part);
           uiStream.finish();
           executionSucceeded = true;
           return;

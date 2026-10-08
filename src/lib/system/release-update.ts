@@ -5,6 +5,7 @@ import { createReadStream } from 'node:fs';
 import { access, cp, mkdir, open, readFile, rename, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { runtimeIsReady } from '@/lib/runtime/ownership-state';
 
 const DEFAULT_UPDATE_REPO = 'asharca/ToolPlane';
 const DEFAULT_UPDATE_ARTIFACT = 'toolplane-runtime-linux-amd64.tar.gz';
@@ -60,6 +61,7 @@ export type SystemUpdateStatus = {
 
 export type LocalSystemUpdateStatus = {
   runtimeId: string;
+  runtimeReady: boolean;
   currentVersion: string;
   artifactName: string;
   updateJob: SystemUpdateJobStatus;
@@ -102,6 +104,7 @@ type ReplacementRecord = {
 type UpdateGlobals = typeof globalThis & {
   __toolplaneRuntimeId?: string;
   __toolplaneSystemUpdateJob?: SystemUpdateJobStatus;
+  __toolplaneShutdown?: () => Promise<boolean>;
 };
 
 const updateGlobals = globalThis as UpdateGlobals;
@@ -292,6 +295,7 @@ export async function getLocalSystemUpdateStatus(): Promise<LocalSystemUpdateSta
   return {
     runtimeId,
     currentVersion: await readCurrentVersion(),
+    runtimeReady: runtimeIsReady(),
     artifactName: updateArtifactName(),
     updateJob: { ...currentUpdateJob() },
   };
@@ -437,12 +441,20 @@ async function runSystemUpdateJob(
   startedAt: string,
 ): Promise<void> {
   try {
-    await downloadAndApplyRelease(root, artifact, checksumAsset, () => {
+    await downloadAndApplyRelease(root, artifact, checksumAsset, async () => {
+      const shutdown = updateGlobals.__toolplaneShutdown;
+      if (!shutdown || process.listenerCount('SIGTERM') === 0) {
+        throw new Error('Online updates require the managed production launcher. No runtime files were replaced.');
+      }
       setUpdateJob('applying', {
         targetVersion,
-        message: 'Release verified. Applying runtime files.',
+        message: 'Release verified. Draining runtime operations before replacing files.',
         startedAt,
       });
+      // Shutdown imports must still resolve against the running release.
+      if (!(await shutdown())) {
+        throw new Error('Runtime shutdown was not clean. No runtime files were replaced; inspect recovery before restarting.');
+      }
     });
     setUpdateJob('restarting', {
       targetVersion,
@@ -463,7 +475,7 @@ async function downloadAndApplyRelease(
   root: string,
   artifact: GitHubReleaseAsset,
   checksumAsset: GitHubReleaseAsset,
-  onVerified: () => void,
+  onVerified: () => Promise<void>,
 ): Promise<void> {
   const updateRoot = path.join(/* turbopackIgnore: true */ root, UPDATE_DIR);
   const stamp = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -484,7 +496,7 @@ async function downloadAndApplyRelease(
     const appRoot = path.join(/* turbopackIgnore: true */ stagingRoot, 'app');
     const payloadRoot = (await pathExists(appRoot)) ? appRoot : stagingRoot;
     await assertPayload(payloadRoot);
-    onVerified();
+    await onVerified();
     await replaceRuntimeEntries(root, payloadRoot, backupRoot);
     await rm(backupRoot, { recursive: true, force: true }).catch(() => undefined);
   } finally {
@@ -656,6 +668,6 @@ async function movePath(source: string, dest: string): Promise<void> {
 function scheduleRestart(): void {
   const delay = Math.max(250, Number(process.env.TOOLPLANE_RESTART_DELAY_MS) || 750);
   setTimeout(() => {
-    process.exit(0);
+    process.kill(process.pid, 'SIGTERM');
   }, delay).unref();
 }

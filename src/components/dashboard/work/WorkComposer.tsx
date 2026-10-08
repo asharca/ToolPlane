@@ -39,7 +39,7 @@ function readToolbar() {
 export function WorkComposer({
   agentId, sandboxId, workSessionId, conversationId, draft, onDraftChange, attachments, onAttachmentsChange,
   references, onReferencesChange, disabled, supportsAttachments, onSubmit, onError, onPendingChange,
-  waitingQuestion, toolbarStart, toolbarEnd, loading: running = false, onStop, commands = [],
+  waitingQuestion, toolbarStart, toolbarEnd, loading: running = false, onStop, commands = [], runtimeKind,
 }: {
   agentId?: string; sandboxId?: string; workSessionId?: string; conversationId?: string;
   draft: string; onDraftChange: (text: string) => void;
@@ -49,6 +49,7 @@ export function WorkComposer({
   onError: (text: string | null) => void; onPendingChange: (pending: boolean) => void;
   waitingQuestion?: string | null; toolbarStart: ReactNode; toolbarEnd: ReactNode;
   commands?: readonly RuntimeCommand[];
+  runtimeKind: string;
   loading?: boolean; onStop?: () => void;
 }) {
   const t = useTranslations('console.workComposer');
@@ -233,7 +234,7 @@ export function WorkComposer({
       }
       if (event.key === 'Enter' || event.key === 'Tab') {
         if (event.key === 'Tab' && event.currentTarget === searchRef.current) return;
-        if (!options.length && event.key === 'Enter' && event.currentTarget === inputRef.current && parseRuntimeCommand(draft)) { event.preventDefault(); setPanel(null); event.currentTarget.form?.requestSubmit(); return; }
+        if (!options.length && event.key === 'Enter' && event.currentTarget === inputRef.current && parseRuntimeCommand(draft, runtimeKind)) { event.preventDefault(); setPanel(null); event.currentTarget.form?.requestSubmit(); return; }
         event.preventDefault();
         if (options[activeIndex]) activateOption(options[activeIndex]);
         return;

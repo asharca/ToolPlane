@@ -44,6 +44,7 @@ model Server {
 }
 
 model User {
+  piPackageClientInstallations PiPackageClientInstallation[]
   nativeWorkSessions WorkSession[] @relation("NativeWorkActor")
   nativeChannelConnections AgentChannelConnection[] @relation("NativeChannelActor")
   toolkitInstallations ToolkitInstallation[]
@@ -171,6 +172,9 @@ model DailySnapshot {
 }
 
 model Workspace {
+  piPackageSources PiPackageSource[]
+  piPackageTracking PiPackageTracking[]
+  piPackageClientInstallations PiPackageClientInstallation[]
   remoteA2AAgents RemoteA2AAgent[]
   a2aContexts A2AContext[]
   agentUploadReservations AgentUploadReservation[]
@@ -562,6 +566,7 @@ model Agent {
   marketInstall           AgentInstall?            @relation("AgentInstallAgent")
   sourceMarketListing     MarketListing?           @relation("MarketListingSourceAgent")
   unifiedMarketInstall    MarketInstall?           @relation("MarketInstallAgent")
+  piPackages              AgentPiPackage[]
   modelProviders          AgentModelProvider[]
   publicEndpoints         AgentEndpoint[]          @relation("EndpointSourceAgent")
   publicRuntimeAllocation AgentEndpointRuntime?    @relation("EndpointRuntimeAgent")
@@ -692,6 +697,8 @@ model AgentInstall {
 // Shared marketplace metadata for MCP servers, skills, toolkits, agents, and assistants.
 // A listing may retain its public identity after its workspace source is removed.
 model MarketListing {
+  visibility             String          @default("public")
+  piPackageTracking      PiPackageTracking?
   id                     String          @id @default(cuid())
   kind                   String
   namespace              String
@@ -745,6 +752,7 @@ model MarketListing {
 // Append-only release artifact. The manifest is portable and must contain no
 // provider keys, environment values, credentials, conversations, or runtime state.
 model MarketRelease {
+  piPackageClientInstallations PiPackageClientInstallation[]
   id              String          @id @default(cuid())
   listingId       String
   listing         MarketListing   @relation("MarketListingReleases", fields: [listingId], references: [id], onDelete: Cascade)
@@ -768,6 +776,7 @@ model MarketRelease {
   ignoredBy       MarketInstall[] @relation("MarketInstallIgnoredRelease")
   requestedBy     MarketInstall[] @relation("MarketInstallRequestedRelease")
   chatAssistants  ChatAssistant[] @relation("ChatAssistantMarketTemplate")
+  agentPiPackages AgentPiPackage[]
   createdAt       DateTime        @default(now())
 
   @@unique([listingId, version])
@@ -779,6 +788,7 @@ model MarketRelease {
 // Tracks one installed listing per workspace. requirements and resourceMap may
 // contain names and target resource ids, but never credential values.
 model MarketInstall {
+  piPackageClientInstallations PiPackageClientInstallation[]
   id                 String          @id @default(cuid())
   listingId          String
   listing            MarketListing   @relation(fields: [listingId], references: [id], onDelete: Restrict)
@@ -809,6 +819,7 @@ model MarketInstall {
   lastError          String?
   createdAt          DateTime        @default(now())
   updatedAt          DateTime        @updatedAt
+  agentPiPackages         AgentPiPackage[]
 
   @@unique([targetWorkspaceId, listingId])
   @@unique([targetWorkspaceId, idempotencyKey])
@@ -816,6 +827,19 @@ model MarketInstall {
   @@index([currentReleaseId, createdAt])
   @@index([requestedReleaseId, createdAt])
   @@index([targetWorkspaceId, status, updatedAt])
+}
+model AgentPiPackage {
+  agentId         String
+  agent           Agent         @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  marketInstallId String
+  marketInstall   MarketInstall @relation(fields: [marketInstallId], references: [id], onDelete: Restrict)
+  releaseId       String
+  release         MarketRelease @relation(fields: [releaseId], references: [id], onDelete: Restrict)
+  createdAt       DateTime      @default(now())
+
+  @@id([agentId, marketInstallId])
+  @@index([marketInstallId])
+  @@index([releaseId])
 }
 
 model AgentRuntime {
@@ -1518,6 +1542,66 @@ model AgentUploadReservation {
   expiresAt DateTime
   @@index([workspaceId, status])
   @@index([status, expiresAt])
+}
+
+model PiPackageSource {
+  id             String @id @default(cuid())
+  workspaceId    String
+  workspace      Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name           String
+  kind           String
+  url            String
+  credentialsEnc String?
+  tracking       PiPackageTracking[]
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([workspaceId, kind])
+}
+
+model PiPackageTracking {
+  id              String @id @default(cuid())
+  workspaceId     String
+  workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  listingId       String @unique
+  listing         MarketListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  sourceId        String?
+  source          PiPackageSource? @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+  requested       String
+  checkedAt       DateTime?
+  latestIdentity  String?
+  latestVersion   String?
+  errorCode       String?
+  ignoredIdentity String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([workspaceId, checkedAt])
+  @@index([sourceId])
+}
+
+model PiPackageClientInstallation {
+  id              String @id @default(cuid())
+  workspaceId     String
+  workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  userId          String
+  user            User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  marketInstallId String
+  marketInstall   MarketInstall @relation(fields: [marketInstallId], references: [id], onDelete: Restrict)
+  releaseId       String
+  release         MarketRelease @relation(fields: [releaseId], references: [id], onDelete: Restrict)
+  client          String
+  label           String
+  status          String @default("active")
+  tokenHash       String @unique
+  bindings        Json
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  lastUsedAt      DateTime?
+
+  @@index([workspaceId, userId, status])
+  @@index([marketInstallId, status])
+  @@index([releaseId])
 }
 
 // A2A v1 native task ledger. No AgentRun / Conversation / legacy delegation IDs.

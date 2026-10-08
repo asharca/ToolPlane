@@ -104,6 +104,8 @@ export function ToolkitsBrowser({
               <Store className="size-4" />
               {t('browseMarket')}
             </ButtonLink>
+            <ButtonLink href={`/app/${encodeURIComponent(slug)}/toolkits/pi-packages`} variant="secondary" size="md">{t('piPackagesTitle')}</ButtonLink>
+            <ButtonLink href={`/app/${encodeURIComponent(slug)}/toolkits/pi-packages#compose`} variant="secondary" size="md">{t('newPiPackage')}</ButtonLink>
             <CreateToolkitToggle expanded={creating} onClick={toggleCreateForm} />
           </>
         }
@@ -187,9 +189,11 @@ export function ToolkitsBrowser({
                     </div></>,
 <>{toolkit.toolCount}</>,
 <>{toolkit.created}</>,
-<><ButtonLink href={`/app/${slug}/toolkits/${toolkit.slug}?tab=settings`} aria-label={`${toolkit.name}: ${t('settings')}`} title={t('settings')} variant="ghost" size="icon" className="ml-auto">
+<><div className="flex flex-wrap items-center justify-end gap-2">
+                    <ButtonLink href={`/app/${encodeURIComponent(slug)}/toolkits/pi-packages?${new URLSearchParams({ toolkit: toolkit.slug })}#compose`} variant="ghost" size="sm">{t('packageExistingToolkit')}</ButtonLink>
+                    <ButtonLink href={`/app/${slug}/toolkits/${toolkit.slug}?tab=settings`} aria-label={`${toolkit.name}: ${t('settings')}`} title={t('settings')} variant="ghost" size="icon">
                       <Settings className="size-4" />
-                    </ButtonLink></>]}
+                    </ButtonLink></div></>]}
               ))} />
           )}
         </div>

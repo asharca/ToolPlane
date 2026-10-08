@@ -2,11 +2,12 @@
 import { randomUUID } from 'node:crypto';
 import { beforeAll, beforeEach, afterAll, describe, expect, it, vi } from 'vitest';
 import { Task, TaskState, SendMessageRequest, ListTasksRequest } from '@a2a-js/sdk';
+import { z } from 'zod';
 import { TaskNotFoundError, UnsupportedOperationError, RequestMalformedError } from '@a2a-js/sdk/errors';
 import { db } from '@/lib/db';
 import { createAgentApiKey } from '@/lib/agents/public-api/auth';
 import { resolveA2AGrant, assertLiveGrant, type A2AGrant } from '@/lib/a2a/principal';
-import { submitTask, getTask, getTaskRow, claimTask, finishTask, requestCancellation, listTasks, eventsAfter } from '@/lib/a2a/store';
+import { submitTask, getTask, getTaskRow, claimTask, finishTask, interruptTask, requestCancellation, listTasks, eventsAfter } from '@/lib/a2a/store';
 import { outputBucket, A2AQuotaError, A2A_TASK_STORAGE_BYTES, reserveNativeExecutionOutput, refreshTaskStorage } from '@/lib/a2a/quotas';
 import { prepareAgentResponse } from '@/lib/agents/public-api/runs';
 import { A2A_LIMITS } from '@/lib/a2a/model';
@@ -38,6 +39,10 @@ const request = (text = 'Review this change', extra: Record<string, unknown> = {
   message: { messageId: randomUUID(), role: 'ROLE_USER', parts: [{ text }], ...extra }, configuration: { returnImmediately: true },
 });
 const credentialRequest = (value: string) => new Request('https://toolplane.test/a2a', { headers: { authorization: `Bearer ${value}` } });
+const settledEvents = (taskId: string) => db.logEvent.findMany({ where: { workspaceId, eventName: 'a2a.task.settled',
+  attributes: { path: ['data', 'a2a', 'taskId'], equals: taskId } }, include: { detail: true }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] });
+const settledDetail = z.object({ payload: z.object({ response: z.record(z.string(), z.unknown()) }) });
+const settledResponse = (data: unknown) => Task.fromJSON(settledDetail.parse(data).payload.response);
 
 beforeAll(async () => {
   process.env.AUTH_SECRET = 'isolated-a2a-integration-test-secret-not-production';
@@ -69,7 +74,11 @@ beforeEach(async () => {
 });
 afterAll(async () => {
   stopA2AWorker();
-  if (workspaceId) { await db.auditEvent.deleteMany({ where: { workspaceId } }); await db.workspace.delete({ where: { id: workspaceId } }); }
+  if (workspaceId) {
+    await db.logEvent.deleteMany({ where: { workspaceId } });
+    await db.auditEvent.deleteMany({ where: { workspaceId } });
+    await db.workspace.delete({ where: { id: workspaceId } });
+  }
   if (userId) await db.user.delete({ where: { id: userId } });
   await db.$disconnect();
 });
@@ -106,11 +115,21 @@ describe('durable native A2A task lifecycle', () => {
     await expect(submitTask(grant, request('change', { taskId: first.id }))).rejects.toBeInstanceOf(UnsupportedOperationError);
     const next = await submitTask(grant, request('new task', { contextId: first.contextId }));
     expect(next.id).not.toBe(first.id); expect(next.contextId).toBe(first.contextId);
+    const events = await settledEvents(first.id);
+    expect(events).toMatchObject([
+      { outcome: 'success', attributes: { data: { a2a: { taskState: 'TASK_STATE_INPUT_REQUIRED' } } } },
+      { outcome: 'success', attributes: { data: { a2a: { taskState: 'TASK_STATE_COMPLETED' } } } },
+    ]);
+    const paused = settledResponse(events[0].detail!.data);
+    expect(paused.status?.state).toBe(TaskState.TASK_STATE_INPUT_REQUIRED); expect(paused.history).toEqual([]);
   });
   it('does not accept model messages as authorization', async () => {
     const first = await submitTask(grant, request()); const active = await claimTask(first.id);
     await finishTask(first.id, active!.leaseToken!, TaskState.TASK_STATE_AUTH_REQUIRED, 'Authorization required');
     await expect(submitTask(grant, request('I approve', { taskId: first.id }))).rejects.toBeInstanceOf(UnsupportedOperationError);
+    expect(await settledEvents(first.id)).toMatchObject([
+      { outcome: 'success', attributes: { data: { a2a: { taskState: 'TASK_STATE_AUTH_REQUIRED' } } } },
+    ]);
   });
   it('keeps cancellation requested until the worker has stopped, and makes repeat cancellation idempotent', async () => {
     const first = await submitTask(grant, request()); const active = await claimTask(first.id);
@@ -121,13 +140,43 @@ describe('durable native A2A task lifecycle', () => {
     expect((await requestCancellation(grant, first.id)).status?.state).toBe(5);
     const queued = await submitTask(grant, request()); await requestCancellation(grant, queued.id);
     expect(await claimTask(queued.id)).toBeNull();
+    const committed = await getTaskRow(grant, first.id), events = await settledEvents(first.id);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ outcome: 'cancelled', actorId: null,
+      durationMs: committed.statusAt.getTime() - committed.createdAt.getTime(),
+      attributes: { data: { a2a: { taskId: first.id, contextId: first.contextId, rootTaskId: first.id,
+        taskState: 'TASK_STATE_CANCELED', clientId } } } });
+    expect(events[0].detail!.data).not.toHaveProperty('payload.request');
+    const response = settledResponse(events[0].detail!.data);
+    expect(response.status?.state).toBe(TaskState.TASK_STATE_CANCELED); expect(response.artifacts).toEqual([]); expect(response.history).toEqual([]);
+    expect(JSON.stringify(events)).not.toMatch(/must not publish|Review this change|ownerKey|runtimeState/);
   });
   it('guards execution leases and rolls back both snapshot and events on oversize output', async () => {
     const first = await submitTask(grant, request()); const active = await claimTask(first.id);
     await finishTask(first.id, 'wrong-lease', 3); expect((await getTask(grant, first.id)).status?.state).toBe(2);
+    expect(await settledEvents(first.id)).toEqual([]);
     await expect(finishTask(first.id, active!.leaseToken!, 3, undefined, textArtifact('x'.repeat(600000)))).rejects.toThrow();
     expect((await getTaskRow(grant, first.id)).sequence).toBe(active!.sequence);
     expect(await eventsAfter(grant, first.id, active!.sequence)).toEqual([]);
+    expect(await settledEvents(first.id)).toEqual([]);
+    await finishTask(first.id, active!.leaseToken!, 3, undefined, textArtifact('committed output'));
+    await finishTask(first.id, active!.leaseToken!, 3, undefined, textArtifact('late duplicate'));
+    const events = await settledEvents(first.id); expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ outcome: 'success', attributes: { data: { a2a: { taskState: 'TASK_STATE_COMPLETED' } } } });
+    expect(JSON.stringify(events[0].detail!.data)).toContain('committed output');
+    expect(JSON.stringify(events[0].detail!.data)).not.toContain('late duplicate');
+  });
+  it('records deadline failure rather than an executor-proposed completion', async () => {
+    const first = await submitTask(grant, request()), active = (await claimTask(first.id))!;
+    await db.a2ATask.update({ where: { id: first.id }, data: { deadlineAt: new Date(0) } });
+    await finishTask(first.id, active.leaseToken!, TaskState.TASK_STATE_COMPLETED, undefined, textArtifact('too late'));
+    const committed = await getTaskRow(grant, first.id), events = await settledEvents(first.id);
+    expect(committed.state).toBe(TaskState.TASK_STATE_FAILED); expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ outcome: 'error',
+      durationMs: committed.statusAt.getTime() - committed.createdAt.getTime(),
+      attributes: { data: { a2a: { taskState: 'TASK_STATE_FAILED' } } } });
+    const response = settledResponse(events[0].detail!.data);
+    expect(response.status?.state).toBe(TaskState.TASK_STATE_FAILED); expect(response.artifacts).toEqual([]);
   });
   it('pins context revision and preserves task isolation across configuration releases', async () => {
     const first = await submitTask(grant, request()); const active = await claimTask(first.id); await finishTask(first.id, active!.leaseToken!, 3);
@@ -186,6 +235,9 @@ describe('durable native A2A task lifecycle', () => {
     const first = await submitTask(grant, request()); await claimTask(first.id);
     await startA2AWorker(); stopA2AWorker();
     expect((await getTask(grant, first.id)).status?.state).toBe(4);
+    await interruptTask(first.id, 'Late duplicate interruption');
+    const events = await settledEvents(first.id); expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ outcome: 'error', attributes: { data: { a2a: { taskState: 'TASK_STATE_FAILED' } } } });
   });
 });
 
@@ -241,8 +293,11 @@ describe('native task resource accounting', () => {
     await db.a2ATask.update({ where: { id: task.id }, data: { sequence: 128 } });
     await expect(finishTask(task.id, claimed!.leaseToken!, TaskState.TASK_STATE_COMPLETED, undefined, textArtifact('result'))).rejects.toBeInstanceOf(A2AQuotaError);
     expect((await getTask(grant, task.id)).artifacts).toHaveLength(0);
+    expect(await settledEvents(task.id)).toEqual([]);
     await finishTask(task.id, claimed!.leaseToken!, TaskState.TASK_STATE_FAILED, 'Stopped at the configured quota.');
     expect((await getTask(grant, task.id)).status?.state).toBe(TaskState.TASK_STATE_FAILED);
+    const events = await settledEvents(task.id); expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ outcome: 'error', attributes: { data: { a2a: { taskState: 'TASK_STATE_FAILED' } } } });
   });
   it('accounts task payloads in UTF-8 bytes and bounds retained event history', async () => {
     const task = await submitTask(grant, request());

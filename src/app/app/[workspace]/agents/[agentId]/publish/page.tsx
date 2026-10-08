@@ -73,6 +73,11 @@ export default async function AgentPublishPage({
     db.category.findMany({ orderBy: { name: 'asc' }, select: { id: true, name: true } }),
   ]);
   if (!agent) notFound();
+  if (agent.runtimeKind === 'pi-sdk') return <DashboardPage className="mx-auto max-w-5xl space-y-5">
+    <ButtonLink href={`/app/${workspaceSlug}/agents/${agentId}`} variant="ghost"><ArrowLeft className="size-3.5" />{agent.name}</ButtonLink>
+    <h1 className="text-2xl font-semibold">{t('marketListing')}</h1>
+    <p role="status" className="text-sm text-muted-foreground">{t('piSdkTemplateUnsupported')}</p>
+  </DashboardPage>;
 
   const isOwner = workspace.ownerId === user.id;
   const currentListing = listing;

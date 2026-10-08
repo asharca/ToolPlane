@@ -77,6 +77,7 @@ export function Table<T>({
   selectedRowIds,
   defaultSelectedRowIds,
   onSelectionChange,
+  selectionActions,
   sort: sortProp,
   defaultSort = null,
   onSortChange,
@@ -139,13 +140,24 @@ export function Table<T>({
     onColumnResize,
   });
 
-  const { selected, allSelected, someSelected, toggleAll, toggleRow } =
+  const { selected, allSelected, someSelected, toggleAll, toggleRow, clearSelection } =
     useRowSelection({
       sortedRows,
       selectedRowIds,
       defaultSelectedRowIds,
       onSelectionChange,
     });
+  const selectedEntries = useMemo(
+    () => sortedRows.filter((entry) => selected.has(entry.id)),
+    [sortedRows, selected],
+  );
+  const selectionHeader = selectable && selectionActions && selectedEntries.length > 0
+    ? selectionActions({
+        selectedRows: selectedEntries.map((entry) => entry.row),
+        selectedRowIds: selectedEntries.map((entry) => entry.id),
+        clearSelection,
+      })
+    : undefined;
 
   const virtualizer = useVirtualizer({
     count: sortedRows.length,
@@ -262,7 +274,7 @@ export function Table<T>({
       <div
         ref={scrollRef}
         onScroll={handleScroll}
-        className="overflow-auto"
+        className="isolate overflow-auto"
         style={{ height }}
       >
         <table
@@ -294,6 +306,7 @@ export function Table<T>({
             allSelected={allSelected}
             someSelected={someSelected}
             onToggleAll={toggleAll}
+            selectionHeader={selectionHeader}
             sort={sort}
             onToggleSort={toggleSort}
             resizable={resizable}
@@ -314,7 +327,7 @@ export function Table<T>({
             onColumnDeactivate={hasColumnMenu ? deactivateColumn : undefined}
           />
 
-          <tbody>
+          <tbody className="relative isolate">
             {sortedRows.length === 0 ? (
               loading ? (
                 <SkeletonRows
@@ -364,7 +377,7 @@ export function Table<T>({
                       )}
                     >
                       {selectable ? (
-                        <td className="text-center">
+                        <td className="text-center" style={{ width: CHECKBOX_PX, minWidth: CHECKBOX_PX }}>
                           <div className="flex items-center justify-center">
                             <Checkbox
                               checked={isSelected}

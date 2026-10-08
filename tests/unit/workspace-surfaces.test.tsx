@@ -477,7 +477,7 @@ describe('Chat, Work, and Knowledge surfaces', () => {
     const deleteDialog = screen.getByRole('dialog', { name: 'Delete agent' });
     expect(deleteDialog).toHaveTextContent('Delete this agent, its sandboxes, and all its conversations?');
     expect(deleteDialog.querySelector('input[name="returnTo"]')).toHaveValue('/app/acme/work');
-    expect(screen.queryByRole('combobox', { name: /Thinking effort/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Thinking effort/ })).not.toBeInTheDocument();
     expect(screen.queryByText('Acceptance criteria')).not.toBeInTheDocument();
     expect(screen.queryByText('Run budget')).not.toBeInTheDocument();
     expect(screen.queryByRole('meter')).not.toBeInTheDocument();
@@ -578,11 +578,14 @@ describe('Chat, Work, and Knowledge surfaces', () => {
       selectedWorkSessionId={null}
     />);
 
-    const effort = screen.getByRole('combobox', { name: /Thinking effort/ });
-    expect(effort).toHaveTextContent('Default');
+    const effort = screen.getByRole('button', { name: /Thinking effort/ });
     await userEvent.click(effort);
-    await userEvent.click(screen.getByRole('option', { name: 'Extra high' }));
-    expect(effort).toHaveTextContent('Extra high');
+    const slider = screen.getByRole('slider', { name: 'Thinking effort' });
+    slider.focus();
+    await userEvent.keyboard('{End}{ArrowLeft}');
+    expect(slider).toHaveAttribute('aria-valuetext', 'Extra high');
+    await userEvent.keyboard('{Escape}');
+    expect(effort).toHaveAccessibleName('Thinking effort: Extra high');
   });
 
   it('sends a draft Hermes model with the first Work task', async () => {

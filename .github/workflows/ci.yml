@@ -111,8 +111,11 @@ jobs:
       - name: Push Prisma schema
         run: pnpm exec prisma db push
 
-      - name: Lint
-        run: pnpm lint
+      - name: Lint and typecheck
+        run: pnpm check
+
+      - name: Build Pi package capture sandbox
+        run: docker build --target pi-package-capture -t toolplane-pi-package-capture:0.87.1 .
 
       - name: Test
         run: pnpm test

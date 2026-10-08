@@ -47,11 +47,10 @@ describe('Agent A2A console panel', () => {
     expect(screen.getByRole('region', { name: 'Native tool approvals' })).toBeInTheDocument();
     expect(posts()).toHaveLength(0);
   });
-  it('only reads settings on mount and keeps credentials out of generated examples', async () => {
+  it('only reads settings on mount and links to public API documentation', async () => {
     await show(); expect(posts()).toHaveLength(0);
     expect(screen.getAllByText('https://tp.example/local', { selector: 'code' })).toHaveLength(2);
-    expect(screen.getAllByText(/TOOLPLANE_ACCOUNT_TOKEN/).length).toBeGreaterThan(0);
-    expect(screen.getByRole('link', { name: /External A2A guide/ })).toHaveAttribute('rel', 'noopener noreferrer');
+    expect(document.querySelector('pre')).not.toBeInTheDocument();
   });
   it('keeps internal selection and channel authorization without an execution playground', async () => {
     current.endpoint = null;
@@ -94,9 +93,6 @@ describe('Agent A2A console panel', () => {
     current.canManage = false; current.connections = null; await show();
     expect(screen.getByRole('button', { name: 'Disable external & channel access' })).toBeDisabled();
     expect(screen.queryByRole('button', { name: 'Create client & key' })).not.toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Open API tokens' })).toHaveAttribute('href', '/app/team/settings/account?section=tokens');
-    fireEvent.click(screen.getByRole('button', { name: 'Troubleshooting' }));
-    expect(screen.getByRole('button', { name: 'Troubleshooting' })).toHaveAttribute('aria-expanded', 'true');
     expect(posts()).toHaveLength(0);
   });
   it.each([false, true])('requires confirmation to change external access when enabled=%s', async (enabled) => {
@@ -119,27 +115,16 @@ describe('Agent A2A console panel', () => {
     expect(posts()).toHaveLength(1);
     expect(screen.getByRole('button', { name: 'Create client & key' })).toBeDisabled();
     expect(localStorage.length).toBe(0); expect(sessionStorage.length).toBe(0);
-    for (const pre of document.querySelectorAll('pre')) expect(pre.textContent).not.toContain('tp_agent_ONE_TIME_FIXTURE');
     fireEvent.click(screen.getByRole('button', { name: 'Saved — hide key' }));
     expect(screen.queryByText('tp_agent_ONE_TIME_FIXTURE')).not.toBeInTheDocument();
   });
-  it('switches credential documentation and copyable examples without submitting tasks', async () => {
+  it('switches connection URLs without submitting tasks or exposing credentials in docs', async () => {
     await show('hermes');
-    expect(screen.queryByRole('link', { name: 'Open API tokens' })).not.toBeInTheDocument();
-    expect(screen.getByText("export TOOLPLANE_A2A_TOKEN='REPLACE_WITH_TOKEN'", { selector: 'pre' })).toBeVisible();
-    expect(within(screen.getByRole('region', { name: 'Get Agent Card' })).getByText(/curl --fail-with-body/, { selector: 'pre' })).toBeVisible();
-    expect(screen.getByText(/"method": "SendMessage"/, { selector: 'pre' })).toBeVisible();
-    let code = screen.getByText(/"method": "SendMessage"/, { selector: 'pre' }).textContent!;
-    expect(code).toContain('$TOOLPLANE_A2A_TOKEN');
-    expect(code).not.toContain('$TOOLPLANE_ACCOUNT_TOKEN');
+    expect(screen.getByText('https://tp.example/a2a', { selector: 'code' })).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'External A2A & channel access' }));
-    expect(screen.getByRole('link', { name: 'Open API tokens' })).toHaveAttribute('target', '_blank');
-    expect(screen.getByText("export TOOLPLANE_ACCOUNT_TOKEN='REPLACE_WITH_TOKEN'", { selector: 'pre' })).toBeVisible();
-    expect(screen.queryByText("export TOOLPLANE_A2A_TOKEN='REPLACE_WITH_TOKEN'", { selector: 'pre' })).not.toBeInTheDocument();
-    code = screen.getByText(/"method": "SendMessage"/, { selector: 'pre' }).textContent!;
-    expect(code).toContain('$TOOLPLANE_ACCOUNT_TOKEN');
-    expect(code).not.toContain('$TOOLPLANE_A2A_TOKEN');
-    expect(JSON.parse(code.split("  -d '")[1].slice(0, -1))).toMatchObject({ method: 'SendMessage', params: { configuration: { returnImmediately: true } } });
+    expect(screen.queryByText('https://tp.example/a2a', { selector: 'code' })).not.toBeInTheDocument();
+    expect(screen.getAllByText('https://tp.example/local', { selector: 'code' })).toHaveLength(2);
+    expect(document.querySelector('pre')).not.toBeInTheDocument();
     expect(posts()).toHaveLength(0);
   });
 });

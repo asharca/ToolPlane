@@ -185,7 +185,6 @@ describe('authenticated workspace market queries', () => {
       deploymentStatus: 'stopped',
       toolCatalogKnown: true,
       tools: [{ name: 'search' }],
-      inspectorSandbox: null,
       sourceUrl: 'https://github.com/toolplane/valid-mcp',
       mcpKind: 'server',
       recipe: { source: 'npm', requiredEnv: ['API_KEY'] },
@@ -211,7 +210,6 @@ describe('authenticated workspace market queries', () => {
       recipe: { source: 'remote', requiredEnv: ['REMOTE_TOKEN'] },
       toolCatalogKnown: false,
       tools: [],
-      inspectorSandbox: null,
     });
   });
 

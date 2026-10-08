@@ -56,11 +56,13 @@ function displaySkillRoots(roots: string[]): string[] {
   return splitRoots.map((parts) => parts.slice(common).join('/') || parts.at(-1) || 'SKILL.md');
 }
 
-function GithubImportForm({ slug }: { slug: string }) {
+function GithubImportForm({ slug, onBack }: { slug: string; onBack: () => void }) {
   const t = useTranslations('console.skills');
   const [state, formAction, isPending] = useActionState(importSkillFromGithubAction, {});
   return (
-    <form action={formAction} className="space-y-3">
+    <form action={formAction} onReset={(event) => event.preventDefault()} className="space-y-3">
+      <Button type="button" variant="ghost" size="sm" disabled={isPending} onClick={onBack}>{t('backToSources')}</Button>
+      <h3 className="font-medium">{t('importFromGithub')}</h3>
       <input type="hidden" name="workspace" value={slug} />
       <Input label={t('importFromGithub')} name="repo" required placeholder="https://github.com/org/skills" />
       {state.error ? <p className="text-sm text-destructive dark:text-destructive" role="alert">{state.error}</p> : null}
@@ -69,21 +71,24 @@ function GithubImportForm({ slug }: { slug: string }) {
   );
 }
 
-export function AddSkillDialog({
-  slug,
-  maxSkillImportSkills = DEFAULT_SKILL_IMPORT_SKILLS,
-  defaultOpen = false,
-}: {
-  slug: string;
-  maxSkillImportSkills?: number;
-  defaultOpen?: boolean;
-}) {
+function CreateSkillForm({ slug, onBack }: { slug: string; onBack: () => void }) {
   const t = useTranslations('console.skills');
-  const [open, setOpen] = useState(defaultOpen);
-  const [mode, setMode] = useState<Mode>('menu');
-  const [folder, setFolder] = useState<FolderSelection>(emptySelection);
-  const close = () => { setOpen(false); setMode('menu'); setFolder(emptySelection); };
+  const [state, formAction, isPending] = useActionState(createCustomSkillAction, {});
+  return <form action={formAction} onReset={(event) => event.preventDefault()} className="space-y-3">
+    <Button type="button" variant="ghost" size="sm" disabled={isPending} onClick={onBack}>{t('backToSources')}</Button>
+    <h3 className="font-medium">{t('createNew')}</h3>
+    <input type="hidden" name="workspace" value={slug} />
+    <Input label={t('skillName')} name="name" required maxLength={80} placeholder={t('myAwesomeSkill')} />
+    <Input label={t('summarizeThisSkillsPurpose')} name="description" maxLength={280} placeholder={t('summarizeThisSkillsPurpose')} />
+    {state.error ? <p role="alert" className="text-sm text-destructive">{state.error}</p> : null}
+    <Button type="submit" disabled={isPending} variant="primary" className="w-full">{isPending ? t('saving') : t('createSkill')}</Button>
+  </form>;
+}
 
+function UploadSkillForm({ slug, maxSkillImportSkills, onBack }: { slug: string; maxSkillImportSkills: number; onBack: () => void }) {
+  const t = useTranslations('console.skills');
+  const [state, formAction, isPending] = useActionState(uploadSkillFolderAction, {});
+  const [folder, setFolder] = useState<FolderSelection>(emptySelection);
   function onPickFolder(e: React.ChangeEvent<HTMLInputElement>) {
     const list = Array.from(e.target.files ?? []);
     const paths = list.map((file) => (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name);
@@ -105,46 +110,13 @@ export function AddSkillDialog({
   }
 
   const displayedSkillRoots = displaySkillRoots(folder.skillRoots);
-
   return (
-    <CenterMorphModal open={open} onOpenChange={(nextOpen) => nextOpen ? setOpen(true) : close()}>
-      <CenterMorphModalTrigger>
-        <Button type="button" variant="primary" size="md"><Plus className="size-4" /> {t('addSkill')}</Button>
-      </CenterMorphModalTrigger>
-
-      
-        
-        <CenterMorphModalContent ariaLabel={t('addASkill')} closeButtonLabel={t('close')} className="w-full max-w-xl p-6">
-                <div className="mb-4 flex items-center pr-10">
-                  <h2 className="text-lg font-semibold text-foreground">{t('addASkill')}</h2>
-                </div>
-
-                {mode === 'menu' ? (
-                  <div className="space-y-2">
-                    <Button type="button" onClick={() => setMode('github')} variant="secondary" size="lg" className="w-full justify-start text-left"><GitBranch className="size-5 text-muted-foreground" /><span><span className="block text-sm font-medium">{t('importFromGithub')}</span><span className="block text-xs text-muted-foreground">{t('pullASkillmdFromARepo')}</span></span></Button>
-                    <Button type="button" onClick={() => setMode('upload')} variant="secondary" size="md" className="flex w-full items-center text-left"><Upload className="size-5 text-muted-foreground" /><span><span className="block text-sm font-medium">{t('uploadAFolder')}</span><span className="block text-xs text-muted-foreground">{t('dragInASkillFolder')}</span></span></Button>
-                    <Button type="button" onClick={() => setMode('create')} variant="secondary" size="md" className="flex w-full items-center text-left"><FileText className="size-5 text-muted-foreground" /><span><span className="block text-sm font-medium">{t('createNew')}</span><span className="block text-xs text-muted-foreground">{t('startFromABlankSkillmd')}</span></span></Button>
-                  </div>
-                ) : null}
-
-                {mode === 'create' ? (
-                  <form action={createCustomSkillAction} className="space-y-3">
-                    <input type="hidden" name="workspace" value={slug} />
-                    <Input label={t('skillName')} name="name" required placeholder={t('myAwesomeSkill')} />
-                    <Input label={t('summarizeThisSkillsPurpose')} name="description" placeholder={t('summarizeThisSkillsPurpose')} />
-                    <Button type="submit" variant="primary" size="md" className="w-full">{t('createSkill')}</Button>
-                  </form>
-                ) : null}
-
-                {mode === 'github' ? (
-                  <GithubImportForm slug={slug} />
-                ) : null}
-
-                {mode === 'upload' ? (
-                  <form action={uploadSkillFolderAction} encType="multipart/form-data" className="space-y-3">
+                  <form action={formAction} onReset={(event) => event.preventDefault()} className="space-y-3">
+                    <Button type="button" variant="ghost" size="sm" disabled={isPending} onClick={onBack}>{t('backToSources')}</Button>
+                    <h3 className="font-medium">{t('uploadAFolder')}</h3>
                     <input type="hidden" name="workspace" value={slug} />
                     <input type="hidden" name="filePaths" value={JSON.stringify(folder.paths)} />
-                    <Input name="name" disabled={folder.skillRoots.length > 1} placeholder={folder.skillRoots.length > 1 ? t('namesComeFromEachSkillFolder') : t('skillName')} />
+                    <Input name="name" label={t('skillName')} maxLength={80} disabled={folder.skillRoots.length > 1} placeholder={folder.skillRoots.length > 1 ? t('namesComeFromEachSkillFolder') : t('skillName')} />
                     <label className="flex min-h-24 cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border bg-muted/50 px-4 py-5 text-center transition-colors hover:bg-muted">
                       <Upload className="size-5 text-muted-foreground" />
                       <span className="text-sm font-medium text-foreground">{t('uploadAFolder')}</span>
@@ -153,6 +125,7 @@ export function AddSkillDialog({
                         {...directoryInputProps}
                         name="folderFiles"
                         type="file"
+                        disabled={isPending}
                         multiple
                         onChange={onPickFolder}
                         className="sr-only"
@@ -180,9 +153,55 @@ export function AddSkillDialog({
                         ) : null}
                       </div>
                     ) : null}
-                    <Button type="submit" disabled={folder.count === 0 || Boolean(folder.error)} variant="primary" size="md" className="w-full">{t('upload')}</Button>
+                    {state.error ? <p role="alert" className="text-sm text-destructive">{state.error}</p> : null}
+                    <Button type="submit" disabled={isPending || folder.count === 0 || Boolean(folder.error)} variant="primary" size="md" className="w-full">{isPending ? t('importing') : t('upload')}</Button>
                   </form>
+  );
+}
+
+export function AddSkillDialog({
+  slug,
+  maxSkillImportSkills = DEFAULT_SKILL_IMPORT_SKILLS,
+  defaultOpen = false,
+}: {
+  slug: string;
+  maxSkillImportSkills?: number;
+  defaultOpen?: boolean;
+}) {
+  const t = useTranslations('console.skills');
+  const [open, setOpen] = useState(defaultOpen);
+  const [mode, setMode] = useState<Mode>('menu');
+  const close = () => { setOpen(false); setMode('menu'); };
+
+
+  return (
+    <CenterMorphModal open={open} onOpenChange={(nextOpen) => nextOpen ? setOpen(true) : close()}>
+      <CenterMorphModalTrigger>
+        <Button type="button" variant="primary" size="md"><Plus className="size-4" /> {t('addSkill')}</Button>
+      </CenterMorphModalTrigger>
+
+      
+        
+        <CenterMorphModalContent ariaLabel={t('addASkill')} closeButtonLabel={t('close')} className="max-h-[calc(100dvh-2rem)] w-full max-w-xl overflow-y-auto p-6">
+                <div className="mb-4 flex items-center pr-10">
+                  <h2 className="text-lg font-semibold text-foreground">{t('addASkill')}</h2>
+                </div>
+
+                {mode === 'menu' ? (
+                  <div className="space-y-2">
+                    <Button type="button" onClick={() => setMode('github')} variant="secondary" size="lg" className="h-auto w-full justify-start whitespace-normal py-3 text-left"><GitBranch className="size-5 text-muted-foreground" /><span><span className="block text-sm font-medium">{t('importFromGithub')}</span><span className="block text-xs text-muted-foreground">{t('pullASkillmdFromARepo')}</span></span></Button>
+                    <Button type="button" onClick={() => setMode('upload')} variant="secondary" size="md" className="h-auto w-full justify-start whitespace-normal py-3 text-left"><Upload className="size-5 text-muted-foreground" /><span><span className="block text-sm font-medium">{t('uploadAFolder')}</span><span className="block text-xs text-muted-foreground">{t('dragInASkillFolder')}</span></span></Button>
+                    <Button type="button" onClick={() => setMode('create')} variant="secondary" size="md" className="h-auto w-full justify-start whitespace-normal py-3 text-left"><FileText className="size-5 text-muted-foreground" /><span><span className="block text-sm font-medium">{t('createNew')}</span><span className="block text-xs text-muted-foreground">{t('startFromABlankSkillmd')}</span></span></Button>
+                  </div>
                 ) : null}
+
+                {mode === 'create' ? <CreateSkillForm slug={slug} onBack={() => setMode('menu')} /> : null}
+
+                {mode === 'github' ? (
+                  <GithubImportForm slug={slug} onBack={() => setMode('menu')} />
+                ) : null}
+
+                {mode === 'upload' ? <UploadSkillForm slug={slug} maxSkillImportSkills={maxSkillImportSkills} onBack={() => setMode('menu')} /> : null}
         </CenterMorphModalContent>
       
     </CenterMorphModal>

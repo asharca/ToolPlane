@@ -1,11 +1,28 @@
 import 'server-only';
 import { Prisma } from '@prisma/client';
+import type { LogEvent, LogDetail } from '@prisma/client';
 import { z } from 'zod';
 import { db } from '@/lib/db';
+import { a2aLogMetadataSchema } from './events';
+import type { A2ALogMetadata } from './events';
+import { writeAudit } from './audit';
+
+export function getA2aMetadata(attributes: unknown): A2ALogMetadata | null {
+  if (!attributes || typeof attributes !== 'object' || !('data' in attributes)) return null;
+  const data = attributes.data;
+  if (!data || typeof data !== 'object' || !('a2a' in data)) return null;
+  const result = a2aLogMetadataSchema.safeParse(data.a2a);
+  return result.success ? result.data : null;
+}
+
+const a2aFilterKeys = ['direction', 'endpointId', 'clientId', 'taskId', 'contextId', 'rootTaskId', 'parentTaskId'] as const;
+const a2aSearchKeys = ['endpointId', 'clientId', 'remoteAgentId', 'taskId', 'contextId', 'rootTaskId', 'parentTaskId'] as const;
+const logColumnKeys = ['domain', 'level', 'outcome', 'workspaceId', 'actorId', 'deploymentId', 'agentId', 'channelId', 'runId', 'model', 'traceId', 'requestId', 'eventName', 'errorType', 'errorCode', 'rpcMethod'] as const;
+const logSearchKeys = ['message', 'eventName', 'errorCode', 'toolName', 'requestId', 'traceId', 'rpcMethod', 'path'] as const;
 
 export const logFilterSchema = z.object({
   q: z.string().max(200).optional(),
-  domain: z.preprocess((value) => value === 'all' ? undefined : value, z.enum(['http', 'mcp', 'agent', 'runtime', 'channel', 'plugin', 'system']).optional()),
+  domain: z.preprocess((value) => value === 'all' ? undefined : value, z.enum(['http', 'mcp', 'a2a', 'agent', 'runtime', 'channel', 'plugin', 'system']).optional()),
   level: z.enum(['debug', 'info', 'warn', 'error']).optional(),
   outcome: z.enum(['success', 'error', 'timeout', 'cancelled', 'denied']).optional(),
   workspaceId: z.string().max(200).optional(), actorId: z.string().max(200).optional(),
@@ -15,6 +32,10 @@ export const logFilterSchema = z.object({
   requestId: z.string().max(200).optional(), eventName: z.string().max(200).optional(),
   targetType: z.string().max(200).optional(), targetId: z.string().max(200).optional(),
   errorType: z.string().max(200).optional(), errorCode: z.string().max(200).optional(),
+  direction: z.enum(['inbound', 'outbound', 'internal']).optional(),
+  rpcMethod: z.string().max(200).optional(), endpointId: z.string().max(200).optional(), clientId: z.string().max(200).optional(),
+  taskId: z.string().max(200).optional(), contextId: z.string().max(200).optional(),
+  rootTaskId: z.string().max(200).optional(), parentTaskId: z.string().max(200).optional(),
   since: z.preprocess(utcInput, z.coerce.date()).default(() => new Date(Date.now() - 86_400_000)),
   until: z.preprocess(utcInput, z.coerce.date()).default(() => new Date()),
   cursor: z.string().max(1000).refine((value) => {
@@ -22,6 +43,15 @@ export const logFilterSchema = z.object({
   }, 'Invalid cursor').optional(),
 }).refine((v) => v.until >= v.since && v.until.getTime() - v.since.getTime() <= 31 * 86_400_000, 'Maximum window is 31 days');
 export type LogFilters = z.infer<typeof logFilterSchema>;
+
+export function resolveLogFilters(input: Record<string, unknown>): LogFilters {
+  const values = { ...input };
+  if (input.tab === 'a2a') {
+    values.domain = 'a2a';
+    if (!input.eventName && !['taskId', 'contextId', 'rootTaskId', 'parentTaskId'].some(key => input[key])) values.eventName = 'a2a.request';
+  } else if (input.domain === undefined && ['http', 'agent', 'runtime'].includes(String(input.tab))) values.domain = input.tab;
+  return logFilterSchema.parse(values);
+}
 function utcInput(value: unknown) {
   return typeof value === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d(?::\d\d(?:\.\d{1,3})?)?$/.test(value) ? `${value}Z` : value;
 }
@@ -39,13 +69,14 @@ export async function authorizeLogs(scope: LogScope) {
 }
 
 export function logWhere(filters: LogFilters): Prisma.LogEventWhereInput {
-  const { since, until, q, cursor: _cursor, targetType: _targetType, targetId: _targetId, ...values } = filters;
-  void _cursor;
-  void _targetType;
-  void _targetId;
-  return { ...values, createdAt: { gte: since, lte: until }, ...(q ? { OR:
-    ['message', 'eventName', 'errorCode', 'toolName', 'requestId', 'traceId'].map((key) => ({ [key]: { contains: q, mode: 'insensitive' } })),
-  } : {}) };
+  const values = Object.fromEntries(logColumnKeys.filter(key => filters[key] !== undefined).map(key => [key, filters[key]]));
+  const jsonFilters = a2aFilterKeys.filter(key => filters[key] !== undefined).map(key => ({ attributes: { path: ['data', 'a2a', key], equals: filters[key] } }));
+  return { ...values, createdAt: { gte: filters.since, lte: filters.until }, ...(jsonFilters.length ? { AND: jsonFilters } : {}),
+    ...(filters.q ? { OR: [
+      ...logSearchKeys.map(key => ({ [key]: { contains: filters.q, mode: 'insensitive' } })),
+      ...a2aSearchKeys.map(key => ({ attributes: { path: ['data', 'a2a', key], string_contains: filters.q, mode: 'insensitive' as const } })),
+    ] } : {}),
+  };
 }
 
 export function auditWhere(filters: LogFilters): Prisma.AuditEventWhereInput {
@@ -63,19 +94,40 @@ export function cursorWhere(cursor?: string): Prisma.LogEventWhereInput {
   return { OR: [{ createdAt: { lt: new Date(parsed.at) } }, { createdAt: new Date(parsed.at), id: { lt: parsed.id } }] };
 }
 
-export async function listLogEvents(scope: LogScope, input: Record<string, unknown>) {
-  await authorizeLogs(scope);
-  const filters = logFilterSchema.parse(input);
-  if ('workspaceId' in scope) filters.workspaceId = scope.workspaceId;
-  const rows = await db.logEvent.findMany({ where: { AND: [logWhere(filters), cursorWhere(filters.cursor)] },
-    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 51 });
-  return { rows: rows.slice(0, 50), nextCursor: rows.length > 50 ? logCursor(rows[49]) : null, until: filters.until.toISOString() };
+export type LogDetailState = 'available' | 'truncated' | 'expired' | 'unavailable' | 'restricted';
+function detailState(scope: LogScope, detail: { expiresAt: Date; truncated: boolean } | null): LogDetailState {
+  if (!detail) return 'unavailable';
+  if (detail.expiresAt.getTime() <= Date.now()) return 'expired';
+  if ('workspaceId' in scope) return 'restricted';
+  return detail.truncated ? 'truncated' : 'available';
 }
 
-export async function getLogEvent(scope: LogScope, id: string) {
+export async function listLogEvents(scope: LogScope, input: Record<string, unknown>) {
   await authorizeLogs(scope);
-  return db.logEvent.findFirst({ where: { id, ...('workspaceId' in scope ? { workspaceId: scope.workspaceId } : {}) },
-    include: { detail: 'adminId' in scope ? { where: { expiresAt: { gt: new Date() } } } : false } });
+  const filters = resolveLogFilters(input);
+  if ('workspaceId' in scope) filters.workspaceId = scope.workspaceId;
+  const rows = await db.logEvent.findMany({ where: { AND: [logWhere(filters), cursorWhere(filters.cursor)] },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 51, include: { detail: { select: { expiresAt: true, truncated: true } } } });
+  return { rows: rows.slice(0, 50).map(({ detail, ...row }) => ({ ...row, detailState: detailState(scope, detail) })),
+    nextCursor: rows.length > 50 ? logCursor(rows[49]) : null, until: filters.until.toISOString() };
+}
+
+export async function getLogEvent(scope: LogScope, id: string): Promise<(LogEvent & { detailState: LogDetailState; detail?: LogDetail | null }) | null> {
+  await authorizeLogs(scope);
+  const row = await db.logEvent.findFirst({ where: { id, ...('workspaceId' in scope ? { workspaceId: scope.workspaceId } : {}) },
+    include: { detail: { select: { expiresAt: true, truncated: true } } } });
+  if (!row) return null;
+  const { detail: summary, ...metadata } = row;
+  const state = detailState(scope, summary);
+  if (!('adminId' in scope)) return { ...metadata, detailState: state };
+  if (state !== 'available' && state !== 'truncated') return { ...metadata, detailState: state, detail: null };
+  const detail = await db.logDetail.findUnique({ where: { eventId: id } });
+  const beforeAudit = detailState(scope, detail);
+  if (!detail || beforeAudit === 'expired') return { ...metadata, detailState: beforeAudit, detail: null };
+  await writeAudit(db, { actorId: scope.adminId, workspaceId: row.workspaceId ?? undefined,
+    action: 'logging.detail.viewed', targetType: 'logEvent', targetId: id });
+  const afterAudit = detailState(scope, detail);
+  return { ...metadata, detailState: afterAudit, detail: afterAudit === 'expired' ? null : detail };
 }
 
 export async function getLogTrace(scope: LogScope, traceId: string) {
@@ -86,12 +138,19 @@ export async function getLogTrace(scope: LogScope, traceId: string) {
 
 export function logSqlWhere(filters: LogFilters) {
   const terms = [Prisma.sql`"createdAt" >= ${filters.since}`, Prisma.sql`"createdAt" <= ${filters.until}`];
-  for (const key of ['domain', 'level', 'outcome', 'workspaceId', 'actorId', 'deploymentId', 'agentId', 'channelId', 'runId', 'model', 'traceId', 'requestId', 'eventName', 'errorType', 'errorCode'] as const) {
-    if (filters[key]) terms.push(Prisma.sql`${Prisma.raw(`"${key}"`)} = ${filters[key]}`);
+  for (const key of logColumnKeys) {
+    if (filters[key] !== undefined) terms.push(Prisma.sql`${Prisma.raw(`"${key}"`)} = ${filters[key]}`);
+  }
+  for (const key of a2aFilterKeys) {
+    if (filters[key] !== undefined) terms.push(Prisma.sql`attributes->'data'->'a2a'->>${key} = ${filters[key]}`);
   }
   if (filters.q) {
     const pattern = `%${filters.q}%`;
-    terms.push(Prisma.sql`("message" ILIKE ${pattern} OR "eventName" ILIKE ${pattern} OR "errorCode" ILIKE ${pattern} OR "toolName" ILIKE ${pattern} OR "requestId" ILIKE ${pattern} OR "traceId" ILIKE ${pattern})`);
+    const search = [
+      ...logSearchKeys.map(key => Prisma.sql`${Prisma.raw(`"${key}"`)} ILIKE ${pattern}`),
+      ...a2aSearchKeys.map(key => Prisma.sql`attributes->'data'->'a2a'->>${key} ILIKE ${pattern}`),
+    ];
+    terms.push(Prisma.sql`(${Prisma.join(search, ' OR ')})`);
   }
   return Prisma.join(terms, ' AND ');
 }
@@ -109,7 +168,7 @@ export async function aggregateLogs(filters: LogFilters): Promise<LogStats> {
 
 export async function getErrorGroups(scope: LogScope, input: Record<string, unknown>) {
   await authorizeLogs(scope);
-  const filters = logFilterSchema.parse(input);
+  const filters = resolveLogFilters(input);
   if ('workspaceId' in scope) filters.workspaceId = scope.workspaceId;
   return db.$queryRaw<Array<{ errorType: string | null; errorCode: string | null; eventName: string; outcome: string; count: number; workspaces: number; first: Date; last: Date }>>(Prisma.sql`
     SELECT "errorType", "errorCode", "eventName", outcome, count(*)::int AS count,

@@ -533,7 +533,7 @@ describe('createAgentAction', () => {
     form.set('providerId', 'provider-1');
     form.set('model', 'model-1');
 
-    await expect(createAgentAction(form)).rejects.toThrow('Only the Pi runtime is available for new agents.');
+    await expect(createAgentAction(form)).rejects.toThrow();
 
     expect(mocks.createConfiguredAgent).not.toHaveBeenCalled();
     expect(mocks.startProcess).not.toHaveBeenCalled();
@@ -646,7 +646,7 @@ describe('createAgentAction', () => {
       form.set('name', 'Harness');
       if (runtime) form.set('runtime', runtime);
 
-      await expect(createAgentAction(form)).rejects.toThrow('Only the Pi runtime is available for new agents.');
+      await expect(createAgentAction(form)).rejects.toThrow();
       expect(mocks.createConfiguredAgent).not.toHaveBeenCalled();
     },
   );

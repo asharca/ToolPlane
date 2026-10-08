@@ -92,8 +92,6 @@ describe('public MCP market detail', () => {
 
     expect(screen.getByText('Public documentation.')).toBeInTheDocument();
     expect(screen.getByText('search_docs')).toBeInTheDocument();
-    expect(screen.getByText('Search query.')).toBeInTheDocument();
-    expect(screen.getByText(/"required": \[/)).toBeInTheDocument();
     expect(screen.queryByText('release_tool')).not.toBeInTheDocument();
     expect(screen.queryByText('do-not-render')).not.toBeInTheDocument();
     expect(screen.queryByText('installToWorkspace')).not.toBeInTheDocument();

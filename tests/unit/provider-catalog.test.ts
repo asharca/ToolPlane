@@ -14,6 +14,18 @@ vi.mock('@earendil-works/pi-ai/providers/all', () => ({
       id: 'reseller', name: 'Reseller',
       getModels: () => [{ id: 'shared', name: 'Shared model', baseUrl: 'https://reseller.test/v1', api: 'openai-completions', reasoning: true, input: ['text'], contextWindow: 64_000, maxTokens: 8192, cost: { input: 3, output: 20, cacheRead: 1, cacheWrite: 0 } }],
     },
+    {
+      id: 'minimax-cn', name: 'MiniMax CN', baseUrl: 'https://api.minimaxi.com/anthropic',
+      getModels: () => [
+        { id: 'minimax-model', name: 'MiniMax model', baseUrl: 'https://api.minimaxi.com/anthropic', api: 'anthropic-messages', reasoning: true, input: ['text'], contextWindow: 204_800, maxTokens: 131_072, cost: { input: 0.3, output: 1.2, cacheRead: 0.06, cacheWrite: 0.375 } },
+      ],
+    },
+    {
+      id: 'minimax', name: 'MiniMax', baseUrl: 'https://api.minimax.io/anthropic',
+      getModels: () => [
+        { id: 'minimax-model', name: 'MiniMax model', baseUrl: 'https://api.minimax.io/anthropic', api: 'anthropic-messages', reasoning: true, input: ['text'], contextWindow: 204_800, maxTokens: 131_072, cost: { input: 0.3, output: 1.2, cacheRead: 0.06, cacheWrite: 0.375 } },
+      ],
+    },
   ].reverse(),
 }));
 
@@ -43,6 +55,12 @@ describe('provider-scoped metadata source', () => {
       { providerId: 'openai', modelId: 'unique' },
     ]);
     expect(matchingPiModelReferences('openai', ['uni'], 'https://unknown.test/v1')).toEqual([]);
+  });
+
+  it('matches duplicate exact model IDs using the configured provider name', () => {
+    expect(matchingPiModelReferences('openai', ['minimax-model'], 'https://proxy.test/v1', 'minimax')).toMatchObject([
+      { providerId: 'minimax', modelId: 'minimax-model', contextWindow: 204_800, maxOutputTokens: 131_072, cost: { input: 0.3, output: 1.2 } },
+    ]);
   });
 
   it('leaves unmatched native-catalog ambiguity unresolved rather than choosing a reseller', () => {

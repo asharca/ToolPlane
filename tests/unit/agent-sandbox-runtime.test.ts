@@ -1,4 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { mkdtemp, writeFile, symlink, rm, realpath } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import {
   CLAUDE_RUNTIME_USER,
   SANDBOX_RUNTIME_PACKAGES,
@@ -7,8 +11,6 @@ import {
   buildSandboxSkillBundles,
   buildClaudeMcpConfig,
   buildDshPatch,
-  buildPiMcpConfig,
-  buildPiModelsConfig,
   buildSandboxTranscript,
   dshProviderProtocol,
   dshEventTapSource,
@@ -17,7 +19,6 @@ import {
   parseClaudeRuntimeMetadata,
   parseDshEventLine,
   parsePiStreamLine,
-  piMcpExtensionSource,
   resolveSandboxMcpToolOrigin,
   sandboxRuntimeCanReachProxy,
   sandboxRuntimeExecWrapper,
@@ -31,6 +32,24 @@ import { agentRuntimeSupportsProviderFormat } from '@/lib/agents/runtime-kind';
 import { parseRuntimeCommand, runtimeCommands, sessionRuntimeCommands, RUNTIME_COMMANDS_PART } from '@/lib/agents/runtime-commands';
 
 describe('sandbox Agent runtime helpers', () => {
+  it('rejects substituted snapshot metadata and metadata symlinks before loading executable bytes', async () => {
+    const verifierPath = join(process.cwd(), 'scripts/pi-sdk-package-files.mjs');
+    const directory = await realpath(await mkdtemp(join(tmpdir(), 'pi-sdk-files-')));
+    const manifestPath = join(directory, 'manifest.json');
+    const descriptor = { checksum: 'a'.repeat(64), root: join(directory, 'snapshot'), manifestPath };
+    const verify = () => spawnSync(process.execPath, [verifierPath], { input: JSON.stringify([descriptor]), encoding: 'utf8' });
+    try {
+      await writeFile(manifestPath, JSON.stringify({ schemaVersion: 1, kind: 'pi-package', package: {} }));
+      expect(verify().stderr).toContain('PI_PACKAGE_CHECKSUM_MISMATCH');
+      await rm(manifestPath);
+      const substituted = join(directory, 'substituted.json');
+      await writeFile(substituted, '{}');
+      await symlink(substituted, manifestPath);
+      expect(verify().stderr).toContain('PI_PACKAGE_CHECKSUM_MISMATCH');
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
   it('scopes Cherry command catalogs to the runtime and the latest valid session metadata', () => {
     expect(runtimeCommands('pi').map((item) => item.name)).toEqual(['compact']);
     expect(runtimeCommands('claude-code').map((item) => item.name)).toEqual(['clear', 'compact', 'context', 'usage']);
@@ -40,9 +59,21 @@ describe('sandbox Agent runtime helpers', () => {
     expect(sessionRuntimeCommands('dsh', history)).toEqual(runtimeCommands('dsh'));
     expect(runtimeCommands('pi', [{ name: 'goal' }])).toEqual(runtimeCommands('pi'));
     expect(sessionRuntimeCommands('claude-code', [...history, { parts: [{ type: RUNTIME_COMMANDS_PART, data: { runtimeKind: 'claude-code', commands: [] } }] }])).toEqual(runtimeCommands('claude-code'));
-    expect(parseRuntimeCommand(' /goal edit Preserve plan.md ')).toEqual({ name: 'goal', args: 'edit Preserve plan.md' });
-    expect(parseRuntimeCommand('/plugin:review src')).toEqual({ name: 'plugin:review', args: 'src' });
-    for (const text of ['/workspace/file', 'review /usage', 'https://example.test', '/file.md']) expect(parseRuntimeCommand(text)).toBeNull();
+    expect(parseRuntimeCommand(' /goal edit Preserve plan.md ', 'dsh')).toEqual({ name: 'goal', args: 'edit Preserve plan.md' });
+    expect(parseRuntimeCommand('/plugin:review src', 'claude-code')).toEqual({ name: 'plugin:review', args: 'src' });
+    for (const text of ['/workspace/file', 'review /usage', 'https://example.test', '/file.md']) expect(parseRuntimeCommand(text, 'pi')).toBeNull();
+  });
+
+  it('preserves SDK invocation names and conflict suffixes across saved catalogs without changing legacy case folding', () => {
+    const commands = [{ name: 'Review' }, { name: 'review' }, { name: 'Review:1' }, { name: 'skill:MySkill' }, { name: 'new' }];
+    const history = [{ parts: [{ type: RUNTIME_COMMANDS_PART, data: { runtimeKind: 'pi-sdk', commands } }] }];
+    expect(sessionRuntimeCommands('pi-sdk', history).map((item) => item.name)).toEqual(['compact', 'Review', 'review', 'Review:1', 'skill:MySkill']);
+    expect(sessionRuntimeCommands('pi', history)).toEqual([{ name: 'compact' }]);
+    expect(parseRuntimeCommand(' /Review:1 Keep Case ', 'pi-sdk')).toEqual({ name: 'Review:1', args: 'Keep Case' });
+    expect(parseRuntimeCommand('/Review:1 Keep Case', 'pi')).toEqual({ name: 'review:1', args: 'Keep Case' });
+    expect(parseRuntimeCommand('/FirstCommand', 'pi-sdk')).toEqual({ name: 'FirstCommand', args: '' });
+    expect(parseRuntimeCommand(`/${'a'.repeat(101)}`, 'pi-sdk')).toBeNull();
+    expect(parseRuntimeCommand('/package/path', 'pi-sdk')).toBeNull();
   });
 
   it('reads actual Claude commands and usage without inventing missing cost or malformed token counts', () => {
@@ -180,36 +211,6 @@ describe('sandbox Agent runtime helpers', () => {
     await expect(cancelled).rejects.toThrow('Sandbox runtime aborted.');
     finishInstall('/runtime/bin/dsh');
     await expect(waiting).resolves.toBe('/runtime/bin/dsh');
-  });
-
-  it('configures Pi with env-only model auth and a real dynamic MCP extension', async () => {
-    const models = buildPiModelsConfig({
-      provider: { id: 'provider-1', name: 'Gateway', format: 'openai' },
-      modelId: 'model-1',
-      modelProxyBase: 'http://host.docker.internal:3000/api/v1/agent-runtime/model/provider-1',
-    });
-    expect(models).toContain('"apiKey": "$TOOLPLANE_RUNTIME_TOKEN"');
-    expect(models).toContain('"api": "openai-completions"');
-    expect(models).not.toContain('runtime-secret');
-
-    const mcp = buildPiMcpConfig([
-      { deploymentId: 'dep-1', url: 'http://host.docker.internal:3000/api/v1/agent-runtime/mcp/dep-1/rpc' },
-    ]);
-    expect(mcp).toContain('dep-1/rpc');
-    expect(mcp).toContain('"deploymentId":"dep-1"');
-    expect(mcp).not.toContain('runtime-secret');
-    const extension = piMcpExtensionSource();
-    expect(extension).toContain("rpc(server, 'tools/list')");
-    expect(extension).toContain("rpc(server, 'tools/call'");
-    expect(extension).toContain('pi.registerTool');
-    expect(extension).toContain('process.env.TOOLPLANE_RUNTIME_TOKEN');
-    expect(extension).toContain("redirect: 'error'");
-    expect(extension).toContain('MAX_SCHEMA_BYTES = 64 * 1024');
-    expect(extension).toContain('MAX_REGISTERED_TOOLS = 256');
-    expect(extension).toContain("type: 'toolplane_mcp_origin'");
-    const moduleUrl = `data:text/javascript;base64,${Buffer.from(extension).toString('base64')}`;
-    const loaded = await import(/* @vite-ignore */ moduleUrl) as { default?: unknown };
-    expect(loaded.default).toBeTypeOf('function');
   });
 
   it('recovers MCP origin only from stable runtime aliases', () => {
