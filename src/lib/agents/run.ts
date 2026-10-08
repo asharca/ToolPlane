@@ -165,11 +165,11 @@ export async function runAgentTurn(
     return `Sub-agent "${agent.name}" has no model configured.`;
   }
 
-  const resolved = resolveAgentTools(agent);
-  if (isDedicatedSandboxRuntimeKind(runtimeKind)) {
-    if (!agent.provider.id) return `Sub-agent "${agent.name}" has an invalid model provider.`;
-    if (!deps.runSandboxModel) return `Sub-agent runtime "${runtimeKind}" is not configured in this runner.`;
-    try {
+  try {
+    const resolved = resolveAgentTools(agent);
+    if (isDedicatedSandboxRuntimeKind(runtimeKind)) {
+      if (!agent.provider.id) return `Sub-agent "${agent.name}" has an invalid model provider.`;
+      if (!deps.runSandboxModel) return `Sub-agent runtime "${runtimeKind}" is not configured in this runner.`;
       return await deps.runSandboxModel({
         agent: {
           ...agent,
@@ -184,19 +184,19 @@ export async function runAgentTurn(
         piPackages: resolveAgentPiPackages({ ...agent, workspaceId: ctx.workspaceId }),
         deploymentIds: resolved.deploymentIds,
       });
-    } catch (error) {
-      return `${agent.name} failed: ${error instanceof Error ? error.message : String(error)}`;
     }
-  }
-  const childCtx: AgentRunContext = {
-    workspaceId: ctx.workspaceId,
-    depth: ctx.depth + 1,
-    visited: new Set([...ctx.visited, agentId]),
-  };
-  const tools = await buildAgentToolSet(resolved, childCtx, deps);
-  const system = assembleSystemPrompt(agent.systemPrompt, resolved.skills, Boolean(resolved.knowledgeBases?.length));
-  const model = agent.provider;
+    const childCtx: AgentRunContext = {
+      workspaceId: ctx.workspaceId,
+      depth: ctx.depth + 1,
+      visited: new Set([...ctx.visited, agentId]),
+    };
+    const tools = await buildAgentToolSet(resolved, childCtx, deps);
+    const system = assembleSystemPrompt(agent.systemPrompt, resolved.skills, Boolean(resolved.knowledgeBases?.length));
+    const model = agent.provider;
 
-  return deps.runModel({ model, modelId: agent.model, system, prompt, tools, maxSteps: agent.maxSteps });
+    return await deps.runModel({ model, modelId: agent.model, system, prompt, tools, maxSteps: agent.maxSteps });
+  } catch (error) {
+    return `${agent.name} failed: ${error instanceof Error ? error.message : String(error)}`;
+  }
   });
 }

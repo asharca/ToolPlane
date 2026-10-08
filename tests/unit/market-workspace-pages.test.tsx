@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   listWorkspaceMarketInstalls: vi.fn(),
   listWorkspaceMarketCopies: vi.fn(),
   listWorkspacePublishedResources: vi.fn(),
+  listPiPackageClientInstallations: vi.fn(),
   categories: vi.fn(),
   membership: vi.fn(),
   agentListings: vi.fn(),
@@ -47,6 +48,9 @@ vi.mock('@/lib/market/skills', () => ({
 }));
 vi.mock('@/lib/market/copy-updates', () => ({
   listWorkspaceMarketCopies: mocks.listWorkspaceMarketCopies,
+}));
+vi.mock('@/lib/pi-packages/installations', () => ({
+  listPiPackageClientInstallations: mocks.listPiPackageClientInstallations,
 }));
 vi.mock('@/lib/market/actions', () => ({
   updateMarketInstallAction: mocks.update,
@@ -86,6 +90,7 @@ describe('workspace market management pages', () => {
     mocks.listWorkspaceMarketInstalls.mockResolvedValue([]);
     mocks.listWorkspaceMarketCopies.mockResolvedValue({ agents: [], assistants: [] });
     mocks.listWorkspacePublishedResources.mockResolvedValue([]);
+    mocks.listPiPackageClientInstallations.mockResolvedValue([]);
     mocks.categories.mockResolvedValue([]);
     mocks.agentListings.mockResolvedValue([]);
   });

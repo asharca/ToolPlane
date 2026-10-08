@@ -18,7 +18,8 @@ describe('TabBar', () => {
       />,
     );
 
-    expect(screen.getByRole('link', { name: 'Tools' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('tab', { name: 'Tools', selected: true })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('tab', { name: 'Tools' })).toHaveAttribute('href', '/app/acme/mcp/dep1?tab=tools');
   });
 
   it('preserves query filters while switching tabs', () => {
@@ -34,7 +35,7 @@ describe('TabBar', () => {
       />,
     );
 
-    expect(screen.getByRole('link', { name: 'Audit' })).toHaveAttribute(
+    expect(screen.getByRole('tab', { name: 'Audit', selected: false })).toHaveAttribute(
       'href',
       '/app/acme/observability?deploymentId=dep-123&tab=audit',
     );

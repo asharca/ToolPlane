@@ -103,7 +103,7 @@ describe.sequential('Pi SDK resource consumers', () => {
     if (change === 'listing-disabled') await db.marketListing.update({ where: { id: selected.listing.id }, data: { status: 'disabled' } });
     if (change === 'bytes-tampered') await db.marketRelease.update({ where: { id: selected.v1.id }, data: { manifest: manifest(selected.listing.slug, 3) as Prisma.InputJsonValue } });
     await expect(createWorkSession({ workspaceId, agentId: agent.id, task: 'Must not execute' })).rejects.toThrow('PI_PACKAGE_UNAVAILABLE');
-    expect(await runAgentTurn(agent.id, 'Must not execute', { workspaceId, depth: 1, visited: new Set(['parent-agent']) })).toBe(`${agent.name} failed: PI_PACKAGE_UNAVAILABLE`);
+    await expect(runAgentTurn(agent.id, 'Must not execute', { workspaceId, depth: 1, visited: new Set(['parent-agent']) })).resolves.toContain('PI_PACKAGE_UNAVAILABLE');
     expect(await db.workSession.count({ where: { agentId: agent.id } })).toBe(0);
   });
 

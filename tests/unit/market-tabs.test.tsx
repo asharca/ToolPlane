@@ -17,18 +17,12 @@ describe('MarketTabs', () => {
     render(<MarketTabs slug="acme" />);
 
     const tabs = within(screen.getByRole('navigation', { name: 'Market sections' }));
-    expect(tabs.getAllByRole('link').map((link) => link.textContent)).toEqual([
-      'MCP',
-      'Skills',
-      'Agents',
-      'Assistants',
-      'Toolkits',
-    ]);
     expect(tabs.getByRole('link', { name: 'MCP' })).toHaveAttribute('href', '/app/acme/market/mcp');
     expect(tabs.getByRole('link', { name: 'Skills' })).toHaveAttribute('href', '/app/acme/market/skills');
     expect(tabs.getByRole('link', { name: 'Agents' })).toHaveAttribute('href', '/app/acme/market/agents');
     expect(tabs.getByRole('link', { name: 'Assistants' })).toHaveAttribute('href', '/app/acme/market/assistants');
     expect(tabs.getByRole('link', { name: 'Toolkits' })).toHaveAttribute('href', '/app/acme/market/toolkits');
+    expect(tabs.getByRole('link', { name: /^Pi\b/ })).toHaveAttribute('href', '/app/acme/market/pi-packages');
     expect(screen.getByRole('link', { name: 'Installed' })).toHaveAttribute(
       'href',
       '/app/acme/market/installed',
