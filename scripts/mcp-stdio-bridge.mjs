@@ -4,27 +4,31 @@
 // incoming HTTP JSON-RPC request onto that connection (remapping ids so
 // concurrent callers cannot collide). Prints LISTENING <port> once ready,
 // mirroring scripts/mcp-server.mjs so the supervisor/gateway are unchanged.
-import http from 'node:http';
-import { spawn } from 'node:child_process';
-import { buildBridgeChildEnv } from './bridge-env.mjs';
+import http from "node:http";
+import { spawn } from "node:child_process";
+import { buildBridgeChildEnv } from "./bridge-env.mjs";
 
-const NAME = process.env.MCP_NAME || 'mcp';
+const NAME = process.env.MCP_NAME || "mcp";
 const COMMAND = process.env.MCP_COMMAND;
 let ARGS = [];
 try {
-  ARGS = JSON.parse(process.env.MCP_ARGS || '[]');
-  if (!Array.isArray(ARGS)) throw new Error('MCP_ARGS must be a JSON array');
+  ARGS = JSON.parse(process.env.MCP_ARGS || "[]");
+  if (!Array.isArray(ARGS)) throw new Error("MCP_ARGS must be a JSON array");
 } catch (error) {
-  process.stderr.write('mcp-stdio-bridge: invalid MCP_ARGS: ' + (error instanceof Error ? error.message : String(error)) + '\n');
+  process.stderr.write(
+    "mcp-stdio-bridge: invalid MCP_ARGS: " +
+      (error instanceof Error ? error.message : String(error)) +
+      "\n",
+  );
   process.exitCode = 1;
 }
-const PROTOCOL_VERSION = '2025-06-18';
+const PROTOCOL_VERSION = "2025-06-18";
 const CALL_TIMEOUT_MS = 70000;
 const DEFAULT_STARTUP_IDLE_TIMEOUT_MS = 90000;
 const DEFAULT_STARTUP_MAX_TIMEOUT_MS = 300000;
 const CONTAINER_POLL_MS = 1000;
 const DOCKER_INSPECT_TIMEOUT_MS = 5000;
-const CONTAINER_TERMINAL_STATES = new Set(['dead', 'exited', 'removing']);
+const CONTAINER_TERMINAL_STATES = new Set(["dead", "exited", "removing"]);
 
 function positiveTimeout(name, fallback) {
   const value = Number(process.env[name]);
@@ -32,21 +36,21 @@ function positiveTimeout(name, fallback) {
 }
 
 const STARTUP_IDLE_TIMEOUT_MS = positiveTimeout(
-  'MCP_STARTUP_IDLE_TIMEOUT_MS',
+  "MCP_STARTUP_IDLE_TIMEOUT_MS",
   DEFAULT_STARTUP_IDLE_TIMEOUT_MS,
 );
 const STARTUP_MAX_TIMEOUT_MS = positiveTimeout(
-  'MCP_STARTUP_MAX_TIMEOUT_MS',
+  "MCP_STARTUP_MAX_TIMEOUT_MS",
   DEFAULT_STARTUP_MAX_TIMEOUT_MS,
 );
-const CONTAINER_NAME = (process.env.MCP_CONTAINER_NAME || '').trim();
-const MCP_IMAGE = (process.env.MCP_IMAGE || '').trim();
-const RUNTIME_EVENT_TOKEN = (process.env.MCP_RUNTIME_EVENT_TOKEN || '').trim();
-const IS_DOCKER_BRIDGE = /(?:^|[\\/])docker(?:\.exe)?$/i.test(COMMAND || '');
+const CONTAINER_NAME = (process.env.MCP_CONTAINER_NAME || "").trim();
+const MCP_IMAGE = (process.env.MCP_IMAGE || "").trim();
+const RUNTIME_EVENT_TOKEN = (process.env.MCP_RUNTIME_EVENT_TOKEN || "").trim();
+const IS_DOCKER_BRIDGE = /(?:^|[\\/])docker(?:\.exe)?$/i.test(COMMAND || "");
 const IS_MANAGED_DOCKER_BRIDGE = IS_DOCKER_BRIDGE && Boolean(CONTAINER_NAME);
 
 if (!COMMAND) {
-  process.stderr.write('mcp-stdio-bridge: MCP_COMMAND is required\n');
+  process.stderr.write("mcp-stdio-bridge: MCP_COMMAND is required\n");
   process.exitCode = 1;
 }
 
@@ -56,17 +60,21 @@ let childEnv = {};
 try {
   childEnv = buildBridgeChildEnv(process.env, process.env.MCP_CHILD_ENV);
 } catch (error) {
-  process.stderr.write('mcp-stdio-bridge: ' + (error instanceof Error ? error.message : String(error)) + '\n');
+  process.stderr.write(
+    "mcp-stdio-bridge: " +
+      (error instanceof Error ? error.message : String(error)) +
+      "\n",
+  );
   process.exitCode = 1;
 }
 
 function runtimePhase(phase, details = {}) {
-  const event = { type: 'phase', phase };
+  const event = { type: "phase", phase };
   if (RUNTIME_EVENT_TOKEN) event.token = RUNTIME_EVENT_TOKEN;
   if (details.containerState) event.containerState = details.containerState;
   if (details.imageState) event.imageState = details.imageState;
   if (details.message) event.message = details.message;
-  process.stderr.write('[toolplane-runtime] ' + JSON.stringify(event) + '\n');
+  process.stderr.write(`[toolplane-runtime] ${JSON.stringify(event)}\n`);
 }
 
 function startupFailure(message, details = {}) {
@@ -80,7 +88,12 @@ function messageFor(error) {
 }
 
 function detailsFor(error) {
-  if (error && typeof error === 'object' && error.runtimeDetails && typeof error.runtimeDetails === 'object') {
+  if (
+    error &&
+    typeof error === "object" &&
+    error.runtimeDetails &&
+    typeof error.runtimeDetails === "object"
+  ) {
     return error.runtimeDetails;
   }
   return {};
@@ -98,7 +111,7 @@ function createStartupWatchdog(idleTimeoutMs, maxTimeoutMs) {
   let maxTimer = null;
   const failureListeners = new Set();
   let rejectAborted;
-  const aborted = new Promise((resolve, reject) => {
+  const aborted = new Promise((_resolve, reject) => {
     rejectAborted = reject;
   });
   // A timer may fire between awaits. Keep the rejection observed until the
@@ -127,14 +140,16 @@ function createStartupWatchdog(idleTimeoutMs, maxTimeoutMs) {
     if (done) return;
     if (idleTimer) clearTimeout(idleTimer);
     idleTimer = setTimeout(() => {
-      fail(startupFailure(
-        'startup idle timeout after ' + idleTimeoutMs + 'ms without progress',
-      ));
+      fail(
+        startupFailure(
+          `startup idle timeout after ${idleTimeoutMs}ms without progress`,
+        ),
+      );
     }, idleTimeoutMs);
   };
 
   maxTimer = setTimeout(() => {
-    fail(startupFailure('startup maximum timeout after ' + maxTimeoutMs + 'ms'));
+    fail(startupFailure(`startup maximum timeout after ${maxTimeoutMs}ms`));
   }, maxTimeoutMs);
   progress();
 
@@ -142,7 +157,7 @@ function createStartupWatchdog(idleTimeoutMs, maxTimeoutMs) {
     progress,
     fail,
     abort() {
-      fail(startupFailure('startup cancelled'));
+      fail(startupFailure("startup cancelled"));
     },
     complete() {
       if (done) return;
@@ -167,7 +182,7 @@ function createStartupWatchdog(idleTimeoutMs, maxTimeoutMs) {
 function runDockerCli(args) {
   return new Promise((resolve) => {
     let cli;
-    let stdout = '';
+    let stdout = "";
     let settled = false;
     let timer = null;
 
@@ -181,41 +196,52 @@ function runDockerCli(args) {
     try {
       cli = spawn(COMMAND, args, {
         env: childEnv,
-        stdio: ['ignore', 'pipe', 'pipe'],
+        stdio: ["ignore", "pipe", "pipe"],
       });
     } catch (error) {
       finish(null, messageFor(error));
       return;
     }
 
-    cli.stdout.on('data', (chunk) => {
+    cli.stdout.on("data", (chunk) => {
       stdout += chunk.toString();
     });
     // Docker diagnostic output is intentionally not copied into lifecycle
     // events. The actual MCP container stderr is captured from the run child.
-    cli.stderr.on('data', () => {});
-    cli.once('error', (error) => finish(null, messageFor(error)));
-    cli.once('close', (code) => finish(code));
+    cli.stderr.on("data", () => {});
+    cli.once("error", (error) => finish(null, messageFor(error)));
+    cli.once("close", (code) => finish(code));
     timer = setTimeout(() => {
       try {
-        cli.kill('SIGTERM');
+        cli.kill("SIGTERM");
       } catch {
         // The inspect command may already have exited.
       }
-      finish(null, 'docker inspect timed out');
+      finish(null, "docker inspect timed out");
     }, DOCKER_INSPECT_TIMEOUT_MS);
   });
 }
 
 async function imageStatus(image) {
-  const result = await runDockerCli(['image', 'inspect', '--format', '{{.Id}}', image]);
-  if (result.code === 0) return 'cached';
-  if (result.code === 1) return 'missing';
-  return 'unknown';
+  const result = await runDockerCli([
+    "image",
+    "inspect",
+    "--format",
+    "{{.Id}}",
+    image,
+  ]);
+  if (result.code === 0) return "cached";
+  if (result.code === 1) return "missing";
+  return "unknown";
 }
 
 async function containerStatus(name) {
-  const result = await runDockerCli(['inspect', '--format', '{{.State.Status}}', name]);
+  const result = await runDockerCli([
+    "inspect",
+    "--format",
+    "{{.State.Status}}",
+    name,
+  ]);
   if (result.code !== 0) return null;
   const state = result.stdout.trim().split(/\s+/)[0];
   return state || null;
@@ -224,7 +250,7 @@ async function containerStatus(name) {
 let child = null;
 let nextId = 1;
 const pending = new Map();
-let buffer = '';
+let buffer = "";
 let initResult = null;
 let bridgeReady = false;
 let shuttingDown = false;
@@ -244,18 +270,20 @@ function callChild(method, params, timeoutMs = CALL_TIMEOUT_MS) {
   const id = nextId++;
   return new Promise((resolve, reject) => {
     let timer = null;
-    if (typeof timeoutMs === 'number' && timeoutMs > 0) {
+    if (typeof timeoutMs === "number" && timeoutMs > 0) {
       timer = setTimeout(() => {
         pending.delete(id);
-        reject(new Error('timeout: ' + method));
+        reject(new Error(`timeout: ${method}`));
       }, timeoutMs);
     }
     pending.set(id, { resolve, reject, timer });
     try {
-      if (!child || !child.stdin || !child.stdin.writable) {
-        throw new Error('MCP child stdin is unavailable');
+      if (!child?.stdin?.writable) {
+        throw new Error("MCP child stdin is unavailable");
       }
-      child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n');
+      child.stdin.write(
+        `${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`,
+      );
     } catch (error) {
       pending.delete(id);
       if (timer) clearTimeout(timer);
@@ -265,52 +293,59 @@ function callChild(method, params, timeoutMs = CALL_TIMEOUT_MS) {
 }
 
 function notifyChild(method, params) {
-  if (!child || !child.stdin || !child.stdin.writable) {
-    throw new Error('MCP child stdin is unavailable');
+  if (!child?.stdin?.writable) {
+    throw new Error("MCP child stdin is unavailable");
   }
-  child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method, params }) + '\n');
+  child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method, params })}\n`);
 }
 
 async function handshake() {
   // Initialization is bounded by the startup watchdog, not CALL_TIMEOUT_MS.
   // Normal tool calls below retain their independent 70 second timeout.
-  const reply = await callChild('initialize', {
-    protocolVersion: PROTOCOL_VERSION,
-    capabilities: {},
-    clientInfo: { name: 'toolplane-bridge', version: '1.0.0' },
-  }, null);
+  const reply = await callChild(
+    "initialize",
+    {
+      protocolVersion: PROTOCOL_VERSION,
+      capabilities: {},
+      clientInfo: { name: "toolplane-bridge", version: "1.0.0" },
+    },
+    null,
+  );
   if (reply.error) {
-    throw startupFailure('initialize failed: ' + (reply.error.message || 'MCP returned an error'));
+    throw startupFailure(
+      `initialize failed: ${reply.error.message || "MCP returned an error"}`,
+    );
   }
   if (!reply.result) {
-    throw startupFailure('initialize failed: MCP returned no result');
+    throw startupFailure("initialize failed: MCP returned no result");
   }
   initResult = reply.result;
-  notifyChild('notifications/initialized', {});
+  notifyChild("notifications/initialized", {});
 }
 
 function childFailure(watchdog, error, details = {}) {
   if (childTerminationReported || shuttingDown) return;
   childTerminationReported = true;
   const message = messageFor(error);
-  process.stderr.write('mcp-stdio-bridge: ' + message + '\n');
+  process.stderr.write(`mcp-stdio-bridge: ${message}\n`);
 
   if (!bridgeReady) {
     watchdog.fail(startupFailure(message, details));
     return;
   }
 
-  runtimePhase('error', { ...details, message });
+  runtimePhase("error", { ...details, message });
   requestExit(1);
 }
 
 function attachChildListeners(watchdog) {
-  child.stdout.on('data', (chunk) => {
+  child.stdout.on("data", (chunk) => {
     // MCP stdout is exclusively JSON-RPC. Parse it, but never copy it into
     // process logs: it can contain tool arguments and tool results.
     buffer += chunk.toString();
-    let newline;
-    while ((newline = buffer.indexOf('\n')) !== -1) {
+    while (true) {
+      const newline = buffer.indexOf("\n");
+      if (newline === -1) break;
       const line = buffer.slice(0, newline).trim();
       buffer = buffer.slice(newline + 1);
       if (!line) continue;
@@ -329,31 +364,35 @@ function attachChildListeners(watchdog) {
     }
   });
 
-  child.stderr.on('data', (chunk) => {
+  child.stderr.on("data", (chunk) => {
     // Pull/install output is startup progress. Preserve it for the supervisor
     // to capture, but deliberately never mirror the MCP's stdout.
     watchdog.progress();
     process.stderr.write(chunk);
   });
 
-  child.stdin.on('error', (error) => {
+  child.stdin.on("error", (error) => {
     childFailure(watchdog, error, {
-      ...(IS_MANAGED_DOCKER_BRIDGE ? { containerState: 'exited' } : {}),
+      ...(IS_MANAGED_DOCKER_BRIDGE ? { containerState: "exited" } : {}),
     });
   });
-  child.once('error', (error) => {
-    childFailure(watchdog, startupFailure('spawn failed: ' + messageFor(error)), {
-      ...(IS_MANAGED_DOCKER_BRIDGE ? { containerState: 'exited' } : {}),
-    });
+  child.once("error", (error) => {
+    childFailure(
+      watchdog,
+      startupFailure(`spawn failed: ${messageFor(error)}`),
+      {
+        ...(IS_MANAGED_DOCKER_BRIDGE ? { containerState: "exited" } : {}),
+      },
+    );
   });
-  child.once('exit', (code, signal) => {
+  child.once("exit", (code, signal) => {
     if (childTerminationReported || shuttingDown) return;
     childTerminationReported = true;
-    const suffix = signal ? 'signal ' + signal : String(code);
-    const message = 'child exited (' + suffix + ')';
-    process.stderr.write('mcp-stdio-bridge: ' + message + '\n');
+    const suffix = signal ? `signal ${signal}` : String(code);
+    const message = `child exited (${suffix})`;
+    process.stderr.write(`mcp-stdio-bridge: ${message}\n`);
     const details = {
-      ...(IS_MANAGED_DOCKER_BRIDGE ? { containerState: 'exited' } : {}),
+      ...(IS_MANAGED_DOCKER_BRIDGE ? { containerState: "exited" } : {}),
       message,
     };
 
@@ -362,16 +401,19 @@ function attachChildListeners(watchdog) {
       return;
     }
 
-    runtimePhase(code === 0 ? 'stopped' : 'error', details);
+    runtimePhase(code === 0 ? "stopped" : "error", details);
     requestExit(code === 0 ? 0 : 1);
   });
 }
 
 function launchChild(watchdog) {
   try {
-    child = spawn(COMMAND, ARGS, { env: childEnv, stdio: ['pipe', 'pipe', 'pipe'] });
+    child = spawn(COMMAND, ARGS, {
+      env: childEnv,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
   } catch (error) {
-    throw startupFailure('spawn failed: ' + messageFor(error));
+    throw startupFailure(`spawn failed: ${messageFor(error)}`);
   }
   attachChildListeners(watchdog);
 }
@@ -404,15 +446,17 @@ function waitForContainerRunning(watchdog, imageState) {
         watchdog.progress();
 
         if (CONTAINER_TERMINAL_STATES.has(state)) {
-          finish(startupFailure('container exited before MCP initialization', {
-            containerState: state,
-            ...(imageState ? { imageState } : {}),
-          }));
+          finish(
+            startupFailure("container exited before MCP initialization", {
+              containerState: state,
+              ...(imageState ? { imageState } : {}),
+            }),
+          );
           return;
         }
 
-        if (state === 'running') {
-          runtimePhase('initializing', {
+        if (state === "running") {
+          runtimePhase("initializing", {
             containerState: state,
             ...(imageState ? { imageState } : {}),
           });
@@ -420,10 +464,13 @@ function waitForContainerRunning(watchdog, imageState) {
           return;
         }
 
-        runtimePhase(state === 'created' ? 'starting-container' : 'waiting-for-container', {
-          containerState: state,
-          ...(imageState ? { imageState } : {}),
-        });
+        runtimePhase(
+          state === "created" ? "starting-container" : "waiting-for-container",
+          {
+            containerState: state,
+            ...(imageState ? { imageState } : {}),
+          },
+        );
       }
 
       timer = setTimeout(poll, CONTAINER_POLL_MS);
@@ -435,28 +482,34 @@ function waitForContainerRunning(watchdog, imageState) {
 
 // --- HTTP surface (mirrors scripts/mcp-server.mjs) ---
 const server = http.createServer((req, res) => {
-  if (req.method === 'GET' && req.url === '/health') {
-    res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ status: 'ok', name: NAME }));
+  if (req.method === "GET" && req.url === "/health") {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ status: "ok", name: NAME }));
     return;
   }
-  if (req.method !== 'POST') {
+  if (req.method !== "POST") {
     res.writeHead(405);
     res.end();
     return;
   }
-  let body = '';
-  req.on('data', (chunk) => {
+  let body = "";
+  req.on("data", (chunk) => {
     body += chunk;
     if (body.length > 1_000_000) req.destroy();
   });
-  req.on('end', async () => {
+  req.on("end", async () => {
     let msg;
     try {
-      msg = JSON.parse(body || '{}');
+      msg = JSON.parse(body || "{}");
     } catch {
-      res.writeHead(400, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }));
+      res.writeHead(400, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: null,
+          error: { code: -32700, message: "Parse error" },
+        }),
+      );
       return;
     }
     // Notifications: nothing to forward, no response body.
@@ -466,19 +519,25 @@ const server = http.createServer((req, res) => {
       return;
     }
     // The child is already initialized; answer initialize from our stored result.
-    if (msg.method === 'initialize') {
-      res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: initResult }));
+    if (msg.method === "initialize") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: initResult }),
+      );
       return;
     }
     try {
       const reply = await callChild(msg.method, msg.params);
-      res.writeHead(200, { 'content-type': 'application/json' });
+      res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ ...reply, id: msg.id }));
     } catch (error) {
-      res.writeHead(200, { 'content-type': 'application/json' });
+      res.writeHead(200, { "content-type": "application/json" });
       res.end(
-        JSON.stringify({ jsonrpc: '2.0', id: msg.id, error: { code: -32000, message: messageFor(error) } }),
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: msg.id,
+          error: { code: -32000, message: messageFor(error) },
+        }),
       );
     }
   });
@@ -486,7 +545,7 @@ const server = http.createServer((req, res) => {
 
 function stopChild() {
   try {
-    child?.kill('SIGTERM');
+    child?.kill("SIGTERM");
   } catch {
     // The child may already have exited.
   }
@@ -503,7 +562,7 @@ function requestExit(code) {
   // its timers would let a resolved diagnostic await continue and launch a
   // child after SIGTERM.
   startupWatchdog?.abort();
-  rejectPending(new Error('MCP bridge is shutting down'));
+  rejectPending(new Error("MCP bridge is shutting down"));
   stopChild();
   // Setting exitCode lets Node flush stderr and close the child stdio pipes.
   // Calling process.exit() here loses exactly the final diagnostics needed to
@@ -513,45 +572,49 @@ function requestExit(code) {
 }
 
 const shutdown = () => requestExit(0);
-process.on('SIGTERM', shutdown);
-process.on('SIGINT', shutdown);
+process.on("SIGTERM", shutdown);
+process.on("SIGINT", shutdown);
 
 async function startBridge() {
-  startupWatchdog = createStartupWatchdog(STARTUP_IDLE_TIMEOUT_MS, STARTUP_MAX_TIMEOUT_MS);
+  startupWatchdog = createStartupWatchdog(
+    STARTUP_IDLE_TIMEOUT_MS,
+    STARTUP_MAX_TIMEOUT_MS,
+  );
   let imageState = null;
 
   try {
     if (IS_DOCKER_BRIDGE && MCP_IMAGE) {
-      runtimePhase('preparing-image', {
-        imageState: 'checking',
-        message: 'Checking Docker image availability.',
+      runtimePhase("preparing-image", {
+        imageState: "checking",
+        message: "Checking Docker image availability.",
       });
       startupWatchdog.progress();
       const availability = await startupWatchdog.race(imageStatus(MCP_IMAGE));
       if (shuttingDown) return;
-      if (availability === 'cached') {
-        imageState = 'cached';
-        runtimePhase('preparing-image', {
+      if (availability === "cached") {
+        imageState = "cached";
+        runtimePhase("preparing-image", {
           imageState,
-          message: 'Docker image is cached.',
+          message: "Docker image is cached.",
         });
-      } else if (availability === 'missing') {
-        imageState = 'pulling';
-        runtimePhase('pulling-image', {
+      } else if (availability === "missing") {
+        imageState = "pulling";
+        runtimePhase("pulling-image", {
           imageState,
-          message: 'Docker image will be pulled while starting the container.',
+          message: "Docker image will be pulled while starting the container.",
         });
       } else {
-        imageState = 'unknown';
-        runtimePhase('preparing-image', {
+        imageState = "unknown";
+        runtimePhase("preparing-image", {
           imageState,
-          message: 'Could not determine image cache state; starting the container.',
+          message:
+            "Could not determine image cache state; starting the container.",
         });
       }
       startupWatchdog.progress();
     }
 
-    runtimePhase('starting-container', {
+    runtimePhase("starting-container", {
       ...(imageState ? { imageState } : {}),
     });
     startupWatchdog.progress();
@@ -559,14 +622,16 @@ async function startBridge() {
     launchChild(startupWatchdog);
 
     if (IS_MANAGED_DOCKER_BRIDGE) {
-      runtimePhase('waiting-for-container', {
-        containerState: 'not-created',
+      runtimePhase("waiting-for-container", {
+        containerState: "not-created",
         ...(imageState ? { imageState } : {}),
       });
-      await startupWatchdog.race(waitForContainerRunning(startupWatchdog, imageState));
+      await startupWatchdog.race(
+        waitForContainerRunning(startupWatchdog, imageState),
+      );
       if (shuttingDown) return;
     } else {
-      runtimePhase('initializing', {
+      runtimePhase("initializing", {
         ...(imageState ? { imageState } : {}),
       });
       startupWatchdog.progress();
@@ -576,22 +641,24 @@ async function startBridge() {
     if (shuttingDown) return;
     bridgeReady = true;
     startupWatchdog.complete();
-    runtimePhase('ready', {
-      ...(IS_MANAGED_DOCKER_BRIDGE ? { containerState: 'running' } : {}),
+    runtimePhase("ready", {
+      ...(IS_MANAGED_DOCKER_BRIDGE ? { containerState: "running" } : {}),
       ...(imageState ? { imageState } : {}),
     });
 
-    server.listen(Number(process.env.MCP_PORT || 0), '127.0.0.1', () => {
+    server.listen(Number(process.env.MCP_PORT || 0), "127.0.0.1", () => {
       const addr = server.address();
-      const port = typeof addr === 'object' && addr ? addr.port : 0;
-      process.stdout.write('LISTENING ' + port + '\n');
+      const port = typeof addr === "object" && addr ? addr.port : 0;
+      process.stdout.write(`LISTENING ${port}\n`);
     });
   } catch (error) {
     if (shuttingDown) return;
     startupWatchdog.complete();
     const details = detailsFor(error);
-    runtimePhase('error', { ...details, message: messageFor(error) });
-    process.stderr.write('mcp-stdio-bridge: startup failed: ' + messageFor(error) + '\n');
+    runtimePhase("error", { ...details, message: messageFor(error) });
+    process.stderr.write(
+      `mcp-stdio-bridge: startup failed: ${messageFor(error)}\n`,
+    );
     requestExit(1);
   }
 }

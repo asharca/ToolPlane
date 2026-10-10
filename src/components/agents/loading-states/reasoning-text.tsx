@@ -44,11 +44,7 @@ type PhraseProps = {
   shimmerDuration: number;
 };
 
-function CascadePhrase({
-  phrase,
-  reduce,
-  shimmerDuration,
-}: PhraseProps) {
+function CascadePhrase({ phrase, reduce, shimmerDuration }: PhraseProps) {
   const text = `${phrase}…`;
 
   if (reduce) {
@@ -134,10 +130,7 @@ function SwapPhrase({ phrase, reduce, shimmerDuration }: PhraseProps) {
   );
 }
 
-function ScramblePhrase({
-  phrase,
-  shimmerDuration,
-}: PhraseProps) {
+function ScramblePhrase({ phrase, shimmerDuration }: PhraseProps) {
   const target = `${phrase}…`;
 
   return (
@@ -173,9 +166,12 @@ export function ReasoningText({
   useEffect(() => {
     if (safePhrases.length < 2) return;
 
-    const timer = window.setInterval(() => {
-      setIndex((current) => (current + 1) % safePhrases.length);
-    }, Math.max(600, interval));
+    const timer = window.setInterval(
+      () => {
+        setIndex((current) => (current + 1) % safePhrases.length);
+      },
+      Math.max(600, interval),
+    );
 
     return () => window.clearInterval(timer);
   }, [interval, safePhrases.length]);
@@ -192,7 +188,10 @@ export function ReasoningText({
           className,
         )}
       >
-        <span aria-hidden="true" className="inline-flex size-3 shrink-0 items-center justify-center">
+        <span
+          aria-hidden="true"
+          className="inline-flex size-3 shrink-0 items-center justify-center"
+        >
           {indicator ?? (
             <Loader
               variant="ascii-line"

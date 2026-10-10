@@ -1,15 +1,15 @@
-import 'server-only';
-import type { Prisma } from '@prisma/client';
-import { db } from '@/lib/db';
-import { effectiveStatuses } from '@/lib/process/supervisor';
-import { deploymentLabel } from '@/lib/workspace/deployment-label';
-import { skillLabel } from '@/lib/workspace/skill-label';
+import "server-only";
+import type { Prisma } from "@prisma/client";
+import { db } from "@/lib/db";
+import { effectiveStatuses } from "@/lib/process/supervisor";
+import { deploymentLabel } from "@/lib/workspace/deployment-label";
+import { skillLabel } from "@/lib/workspace/skill-label";
 import {
   parseAgentMarketSetupGuide,
   parseAgentMarketSetupResourceIds,
   type AgentMarketSetupGuide,
-} from '@/lib/agents/market-setup';
-import { AGENT_ENDPOINT_RUNTIME_MANAGED_BY } from '@/lib/agents/public-api/tool-policy';
+} from "@/lib/agents/market-setup";
+import { AGENT_ENDPOINT_RUNTIME_MANAGED_BY } from "@/lib/agents/public-api/tool-policy";
 
 export type AgentResourceOption = {
   id: string;
@@ -29,7 +29,7 @@ const INSTALLED_SKILL_INCLUDE = {
 } as const;
 
 export const AGENT_PI_PACKAGES_INCLUDE = {
-  orderBy: { marketInstallId: 'asc' },
+  orderBy: { marketInstallId: "asc" },
   select: {
     marketInstallId: true,
     releaseId: true,
@@ -44,7 +44,13 @@ export const AGENT_PI_PACKAGES_INCLUDE = {
       },
     },
     release: {
-      select: { id: true, listingId: true, reviewStatus: true, checksum: true, manifest: true },
+      select: {
+        id: true,
+        listingId: true,
+        reviewStatus: true,
+        checksum: true,
+        manifest: true,
+      },
     },
   },
 } as const;
@@ -53,7 +59,7 @@ const TOOL_INCLUDE = {
   piPackages: AGENT_PI_PACKAGES_INCLUDE,
   modelProviders: {
     include: { provider: true },
-    orderBy: { provider: { createdAt: 'asc' } },
+    orderBy: { provider: { createdAt: "asc" } },
   },
   servers: { select: { deploymentId: true } },
   skills: {
@@ -95,7 +101,16 @@ const TOOL_INCLUDE = {
     select: {
       sandboxId: true,
       isDefault: true,
-      sandbox: { select: { id: true, name: true, slug: true, kind: true, network: true, deploymentId: true } },
+      sandbox: {
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+          kind: true,
+          network: true,
+          deploymentId: true,
+        },
+      },
     },
   },
   knowledgeBases: {
@@ -134,7 +149,9 @@ const TOOL_INCLUDE = {
   },
 } as const;
 
-export type AgentForRun = Prisma.AgentGetPayload<{ include: { provider: true } & typeof TOOL_INCLUDE }>;
+export type AgentForRun = Prisma.AgentGetPayload<{
+  include: { provider: true } & typeof TOOL_INCLUDE;
+}>;
 
 // The relation is the primary visibility boundary. The durable sandbox marker
 // keeps the Agent hidden (and fail-closed in the runtime MCP route) if an
@@ -146,7 +163,7 @@ export const ORDINARY_AGENT_FILTER = {
       is: {
         sandbox: {
           config: {
-            path: ['managedBy'],
+            path: ["managedBy"],
             equals: AGENT_ENDPOINT_RUNTIME_MANAGED_BY,
           },
         },
@@ -158,8 +175,8 @@ export const ORDINARY_AGENT_FILTER = {
 export async function listProviders(workspaceId: string) {
   return db.modelProvider.findMany({
     where: { workspaceId },
-    include: { modelRecords: { orderBy: [{ group: 'asc' }, { name: 'asc' }] } },
-    orderBy: { createdAt: 'asc' },
+    include: { modelRecords: { orderBy: [{ group: "asc" }, { name: "asc" }] } },
+    orderBy: { createdAt: "asc" },
   });
 }
 
@@ -170,9 +187,9 @@ export async function listAgentDeploymentOptions(
   const deployments = await db.deployment.findMany({
     where: {
       workspaceId,
-      OR: [{ source: null }, { source: { not: 'sandbox' } }],
+      OR: [{ source: null }, { source: { not: "sandbox" } }],
     },
-    orderBy: { createdAt: 'desc' },
+    orderBy: { createdAt: "desc" },
     select: {
       id: true,
       status: true,
@@ -202,12 +219,12 @@ export async function listAgentDeploymentOptions(
       source: label.source,
       status: statuses.get(deployment.id) ?? deployment.status,
       keywords: [
-        deployment.server?.slug ?? '',
-        deployment.sourceRef ?? '',
-        deployment.source ?? '',
-        ...(deployment.server?.categories.map((category) => category.slug) ?? []),
-      ]
-        .filter((keyword) => keyword.length > 0),
+        deployment.server?.slug ?? "",
+        deployment.sourceRef ?? "",
+        deployment.source ?? "",
+        ...(deployment.server?.categories.map((category) => category.slug) ??
+          []),
+      ].filter((keyword) => keyword.length > 0),
       checked: selectedIds?.has(deployment.id) ?? false,
     };
   });
@@ -219,7 +236,7 @@ export async function listAgentSkillOptions(
 ): Promise<AgentResourceOption[]> {
   const skills = await db.installedSkill.findMany({
     where: { workspaceId },
-    orderBy: { createdAt: 'desc' },
+    orderBy: { createdAt: "desc" },
     select: {
       id: true,
       skillId: true,
@@ -245,10 +262,10 @@ export async function listAgentSkillOptions(
       status: skill.status,
       keywords: [
         label.slug,
-        skill.sourceRef ?? '',
-        skill.source ?? '',
-        skill.userInvocable ? 'user' : '',
-        skill.agentInvocable ? 'agent' : '',
+        skill.sourceRef ?? "",
+        skill.source ?? "",
+        skill.userInvocable ? "user" : "",
+        skill.agentInvocable ? "agent" : "",
       ].filter((keyword) => keyword.length > 0),
       checked: selectedIds?.has(skill.id) ?? false,
     };
@@ -279,7 +296,7 @@ export async function getAgentPageData(workspaceId: string, agentId: string) {
       maxSteps: true,
       provider: { select: { name: true } },
       modelProviders: {
-        orderBy: { provider: { createdAt: 'asc' } },
+        orderBy: { provider: { createdAt: "asc" } },
         select: {
           providerId: true,
           provider: { select: { name: true, models: true } },
@@ -288,12 +305,20 @@ export async function getAgentPageData(workspaceId: string, agentId: string) {
       servers: { select: { deploymentId: true } },
       skills: { select: { installedSkillId: true } },
       toolkits: { select: { toolkitId: true } },
-      piPackages: { select: { marketInstallId: true, releaseId: true, release: { select: { version: true, reviewStatus: true } } } },
+      piPackages: {
+        select: {
+          marketInstallId: true,
+          releaseId: true,
+          release: { select: { version: true, reviewStatus: true } },
+        },
+      },
       sandboxes: {
         select: {
           sandboxId: true,
           isDefault: true,
-          sandbox: { select: { id: true, kind: true, network: true, config: true } },
+          sandbox: {
+            select: { id: true, kind: true, network: true, config: true },
+          },
         },
       },
       subAgents: { select: { childId: true } },
@@ -366,11 +391,11 @@ export async function resolveAgentMarketSetupGuide(
 export async function listAgents(workspaceId: string) {
   return db.agent.findMany({
     where: { workspaceId, ...ORDINARY_AGENT_FILTER },
-    orderBy: [{ pinned: 'desc' }, { createdAt: 'desc' }],
+    orderBy: [{ pinned: "desc" }, { createdAt: "desc" }],
     include: {
       provider: { select: { name: true } },
       modelProviders: {
-        orderBy: { provider: { createdAt: 'asc' } },
+        orderBy: { provider: { createdAt: "asc" } },
         select: {
           providerId: true,
           provider: { select: { name: true, models: true } },
@@ -448,24 +473,37 @@ export async function getAgentForRequest(agentId: string, userId: string) {
     where: {
       id: agentId,
       ...ORDINARY_AGENT_FILTER,
-      workspace: { status: 'active', OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
+      workspace: {
+        status: "active",
+        OR: [{ ownerId: userId }, { members: { some: { userId } } }],
+      },
     },
     include: { provider: true, ...TOOL_INCLUDE },
   });
   if (agent) {
-    const { enrichLogContext } = await import('@/lib/observability/context');
-    enrichLogContext({ workspaceId: agent.workspaceId, agentId, actorId: userId });
+    const { enrichLogContext } = await import("@/lib/observability/context");
+    enrichLogContext({
+      workspaceId: agent.workspaceId,
+      agentId,
+      actorId: userId,
+    });
   }
   return agent;
 }
 
-export async function getHermesTerminalForRequest(agentId: string, userId: string) {
+export async function getHermesTerminalForRequest(
+  agentId: string,
+  userId: string,
+) {
   return db.agent.findFirst({
     where: {
       id: agentId,
       ...ORDINARY_AGENT_FILTER,
-      workspace: { status: 'active', OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
-      runtime: { is: { kind: 'hermes' } },
+      workspace: {
+        status: "active",
+        OR: [{ ownerId: userId }, { members: { some: { userId } } }],
+      },
+      runtime: { is: { kind: "hermes" } },
     },
     select: {
       id: true,
@@ -488,7 +526,7 @@ export async function getAgentForRun(agentId: string, workspaceId: string) {
     where: {
       id: agentId,
       workspaceId,
-      workspace: { status: 'active' },
+      workspace: { status: "active" },
       ...ORDINARY_AGENT_FILTER,
     },
     include: { provider: true, ...TOOL_INCLUDE },
@@ -507,23 +545,30 @@ export async function getAgentEndpointRuntimeForExecution(
     where: {
       id: agentId,
       workspaceId,
-      workspace: { status: 'active' },
+      workspace: { status: "active" },
       publicRuntimeAllocation: {
-        is: { id: allocationId, status: 'ready' },
+        is: { id: allocationId, status: "ready" },
       },
     },
     include: { provider: true, ...TOOL_INCLUDE },
   });
 }
 
-export async function listConversations(workspaceId: string, agentIds: string[]) {
+export async function listConversations(
+  workspaceId: string,
+  agentIds: string[],
+) {
   return db.conversation.findMany({
-    where: { agentId: { in: agentIds }, agent: { workspaceId }, workSession: null },
-    orderBy: { createdAt: 'desc' },
+    where: {
+      agentId: { in: agentIds },
+      agent: { workspaceId },
+      workSession: null,
+    },
+    orderBy: { createdAt: "desc" },
     include: {
       publicApiConversation: { select: { id: true } },
       messages: {
-        orderBy: { createdAt: 'desc' },
+        orderBy: { createdAt: "desc" },
         take: 1,
         select: { createdAt: true },
       },
@@ -531,11 +576,14 @@ export async function listConversations(workspaceId: string, agentIds: string[])
   });
 }
 
-export async function getConversation(conversationId: string, workspaceId: string) {
+export async function getConversation(
+  conversationId: string,
+  workspaceId: string,
+) {
   return db.conversation.findFirst({
     where: { id: conversationId, agent: { workspaceId } },
     include: {
-      messages: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] },
+      messages: { orderBy: [{ createdAt: "asc" }, { id: "asc" }] },
       publicApiConversation: { select: { id: true } },
       workSession: { select: { id: true } },
     },

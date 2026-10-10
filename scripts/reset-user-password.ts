@@ -1,12 +1,12 @@
-import 'dotenv/config';
-import { randomBytes } from 'node:crypto';
-import { db } from '@/lib/db';
-import { hashPassword } from '@/lib/auth/password';
+import "dotenv/config";
+import { randomBytes } from "node:crypto";
+import { db } from "@/lib/db";
+import { hashPassword } from "@/lib/auth/password";
 
 async function main(): Promise<void> {
   const email = process.argv[2]?.trim().toLowerCase();
   if (!email || process.argv.length > 3) {
-    throw new Error('Usage: pnpm account:reset-password -- user@example.com');
+    throw new Error("Usage: pnpm account:reset-password -- user@example.com");
   }
 
   const user = await db.user.findUnique({
@@ -15,7 +15,7 @@ async function main(): Promise<void> {
   });
   if (!user) throw new Error(`No ToolPlane account exists for ${email}`);
 
-  const password = randomBytes(18).toString('base64url');
+  const password = randomBytes(18).toString("base64url");
   const passwordHash = await hashPassword(password);
   await db.$transaction(async (tx) => {
     await tx.user.update({
@@ -27,7 +27,7 @@ async function main(): Promise<void> {
 
   console.log(`Password reset for ${user.email}`);
   console.log(`Temporary password (shown once): ${password}`);
-  console.log('Ask the user to sign in and change it immediately.');
+  console.log("Ask the user to sign in and change it immediately.");
 }
 
 main()

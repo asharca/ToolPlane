@@ -1,32 +1,32 @@
-import 'server-only';
+import "server-only";
 
-import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
-import { decodeJwt, SignJWT, jwtVerify } from 'jose';
-import { db } from '@/lib/db';
-import { writeAudit } from '@/lib/observability/audit';
-import { runtimeEnv } from '@/lib/runtime-env';
-import { normalizedOrigin } from './cors';
+import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
+import { decodeJwt, SignJWT, jwtVerify } from "jose";
+import { db } from "@/lib/db";
+import { writeAudit } from "@/lib/observability/audit";
+import { runtimeEnv } from "@/lib/runtime-env";
+import { normalizedOrigin } from "./cors";
 import {
   takeAgentApiAuthAttemptLimit,
   takeAgentApiAuthFailureLimit,
-} from './rate-limit';
+} from "./rate-limit";
 
-export const AGENT_API_KEY_PREFIX = 'tp_agent_';
-export const AGENT_CLIENT_TOKEN_PREFIX = 'tp_client_';
+export const AGENT_API_KEY_PREFIX = "tp_agent_";
+export const AGENT_CLIENT_TOKEN_PREFIX = "tp_client_";
 export const AGENT_CLIENT_TOKEN_MAX_AGE_SECONDS = 15 * 60;
 export const AGENT_CLIENT_TOKEN_DEFAULT_AGE_SECONDS = 15 * 60;
 export const AGENT_API_MAX_TIMEOUT_SECONDS = 840;
 
-const CLIENT_TOKEN_ISSUER = 'toolplane-agent-api';
+const CLIENT_TOKEN_ISSUER = "toolplane-agent-api";
 const AGENT_API_KEY_BYTES = 32;
 
-export type AgentApiCredentialType = 'api_key' | 'client_token';
+export type AgentApiCredentialType = "api_key" | "client_token";
 export type AgentApiScope =
-  | 'responses:create'
-  | 'responses:read'
-  | 'conversations:read'
-  | 'conversations:delete'
-  | 'client_tokens:create'
+  | "responses:create"
+  | "responses:read"
+  | "conversations:read"
+  | "conversations:delete"
+  | "client_tokens:create"
   | (string & {});
 
 export type AgentApiLimits = {
@@ -120,25 +120,33 @@ const safeKeySelect = {
 } as const;
 
 function signingKey(): Uint8Array {
-  const secret = runtimeEnv('AUTH_SECRET');
-  if (!secret) throw new Error('AUTH_SECRET environment variable is not set');
+  const secret = runtimeEnv("AUTH_SECRET");
+  if (!secret) throw new Error("AUTH_SECRET environment variable is not set");
   return new TextEncoder().encode(secret);
 }
 
 function normalizedScopes(scopes: readonly AgentApiScope[]): AgentApiScope[] {
-  return [...new Set(scopes.flatMap((scope) => {
-    const value = String(scope).trim();
-    return value && value.length <= 100 && /^[a-z0-9_*:-]+$/i.test(value)
-      ? [value as AgentApiScope]
-      : [];
-  }))];
+  return [
+    ...new Set(
+      scopes.flatMap((scope) => {
+        const value = String(scope).trim();
+        return value && value.length <= 100 && /^[a-z0-9_*:-]+$/i.test(value)
+          ? [value as AgentApiScope]
+          : [];
+      }),
+    ),
+  ];
 }
 
-function requiredScopes(requirement?: AgentApiScopeRequirement): AgentApiScope[] | null {
+function requiredScopes(
+  requirement?: AgentApiScopeRequirement,
+): AgentApiScope[] | null {
   if (!requirement) return [];
-  const raw = typeof requirement === 'string' ? [requirement] : [...requirement];
+  const raw =
+    typeof requirement === "string" ? [requirement] : [...requirement];
   const normalized = normalizedScopes(raw);
-  return normalized.length === new Set(raw.map((scope) => String(scope).trim())).size
+  return normalized.length ===
+    new Set(raw.map((scope) => String(scope).trim())).size
     ? normalized
     : null;
 }
@@ -149,16 +157,18 @@ export function hasAgentApiScope(
 ): boolean {
   const available = new Set(scopes);
   const required = requiredScopes(requirement);
-  return required !== null
-    && required.every((scope) => available.has(scope) || available.has('*'));
+  return (
+    required?.every((scope) => available.has(scope) || available.has("*")) ??
+    false
+  );
 }
 
 export function generateAgentApiKey(): string {
-  return `${AGENT_API_KEY_PREFIX}${randomBytes(AGENT_API_KEY_BYTES).toString('base64url')}`;
+  return `${AGENT_API_KEY_PREFIX}${randomBytes(AGENT_API_KEY_BYTES).toString("base64url")}`;
 }
 
 export function hashAgentApiKey(token: string): string {
-  return createHash('sha256').update(token).digest('hex');
+  return createHash("sha256").update(token).digest("hex");
 }
 
 export function agentApiKeyPrefix(token: string): string {
@@ -169,7 +179,9 @@ export function isAgentApiKey(token: string): boolean {
   return new RegExp(`^${AGENT_API_KEY_PREFIX}[A-Za-z0-9_-]{43}$`).test(token);
 }
 
-export function bearerToken(authorization: string | null | undefined): string | null {
+export function bearerToken(
+  authorization: string | null | undefined,
+): string | null {
   if (!authorization) return null;
   const match = /^Bearer ([^\s,]+)$/i.exec(authorization.trim());
   return match?.[1] ?? null;
@@ -180,23 +192,29 @@ export function bearerToken(authorization: string | null | undefined): string | 
  * Including both endpoint and API client prevents the same subject from being
  * linkable across published Agents or sharing a runtime across integrations.
  */
-export function hashAgentApiSubject(endpointId: string, clientId: string, subject: string): string {
+export function hashAgentApiSubject(
+  endpointId: string,
+  clientId: string,
+  subject: string,
+): string {
   const value = subject.trim();
   if (!endpointId || !clientId || !value || value.length > 200) {
-    throw new Error('Agent API subject is invalid');
+    throw new Error("Agent API subject is invalid");
   }
-  return createHmac('sha256', signingKey())
-    .update('toolplane:agent-api:subject\0')
+  return createHmac("sha256", signingKey())
+    .update("toolplane:agent-api:subject\0")
     .update(endpointId)
-    .update('\0')
+    .update("\0")
     .update(clientId)
-    .update('\0')
+    .update("\0")
     .update(value)
-    .digest('base64url');
+    .digest("base64url");
 }
 
 function positiveMinimum(...values: number[]): number {
-  const valid = values.filter((value) => Number.isSafeInteger(value) && value > 0);
+  const valid = values.filter(
+    (value) => Number.isSafeInteger(value) && value > 0,
+  );
   return valid.length ? Math.min(...valid) : 1;
 }
 
@@ -214,9 +232,18 @@ function limitsFor(client: {
 }): AgentApiLimits {
   return {
     rpm: positiveMinimum(client.rpmLimit, client.endpoint.rpmLimit),
-    dailyRequests: positiveMinimum(client.dailyRequestLimit, client.endpoint.dailyRequestLimit),
-    maxConcurrent: positiveMinimum(client.maxConcurrent, client.endpoint.maxConcurrent),
-    timeoutSeconds: positiveMinimum(client.endpoint.timeoutSeconds, AGENT_API_MAX_TIMEOUT_SECONDS),
+    dailyRequests: positiveMinimum(
+      client.dailyRequestLimit,
+      client.endpoint.dailyRequestLimit,
+    ),
+    maxConcurrent: positiveMinimum(
+      client.maxConcurrent,
+      client.endpoint.maxConcurrent,
+    ),
+    timeoutSeconds: positiveMinimum(
+      client.endpoint.timeoutSeconds,
+      AGENT_API_MAX_TIMEOUT_SECONDS,
+    ),
     retentionDays: Math.max(0, client.endpoint.retentionDays),
   };
 }
@@ -225,7 +252,7 @@ function rateBucketsFor(client: {
   rpmLimit: number;
   dailyRequestLimit: number;
   endpoint: { rpmLimit: number; dailyRequestLimit: number };
-}): AgentApiPrincipal['rateBuckets'] {
+}): AgentApiPrincipal["rateBuckets"] {
   return {
     endpointRpm: client.endpoint.rpmLimit,
     clientRpm: client.rpmLimit,
@@ -241,8 +268,10 @@ function validEndpointOwner(client: {
     workspace: { owner: { status: string } };
   };
 }): boolean {
-  return client.endpoint.workspace.owner.status === 'active'
-    && client.endpoint.sourceAgent.workspaceId === client.endpoint.workspaceId;
+  return (
+    client.endpoint.workspace.owner.status === "active" &&
+    client.endpoint.sourceAgent.workspaceId === client.endpoint.workspaceId
+  );
 }
 
 export async function createAgentApiKey(
@@ -250,15 +279,16 @@ export async function createAgentApiKey(
 ): Promise<{ token: string; record: AgentApiKeyView }> {
   const name = input.name.trim();
   const now = new Date();
-  if (!name || name.length > 100) throw new Error('Agent API key name is invalid');
+  if (!name || name.length > 100)
+    throw new Error("Agent API key name is invalid");
   if (input.expiresAt && input.expiresAt.getTime() <= now.getTime()) {
-    throw new Error('Agent API key expiry must be in the future');
+    throw new Error("Agent API key expiry must be in the future");
   }
 
   const client = await db.agentApiClient.findFirst({
     where: {
       id: input.clientId,
-      status: 'active',
+      status: "active",
       endpoint: {
         publicId: input.endpointPublicId,
         workspaceId: input.workspaceId,
@@ -269,28 +299,40 @@ export async function createAgentApiKey(
       id: true,
     },
   });
-  if (!client) throw new Error('Agent API client not found');
+  if (!client) throw new Error("Agent API client not found");
 
   const token = generateAgentApiKey();
   const record = await db.$transaction(async (tx) => {
     const key = await tx.agentApiKey.create({
-    data: {
-      clientId: client.id,
-      name,
-      prefix: agentApiKeyPrefix(token),
-      tokenHash: hashAgentApiKey(token),
-      expiresAt: input.expiresAt ?? null,
-    },
-    select: safeKeySelect,
+      data: {
+        clientId: client.id,
+        name,
+        prefix: agentApiKeyPrefix(token),
+        tokenHash: hashAgentApiKey(token),
+        expiresAt: input.expiresAt ?? null,
+      },
+      select: safeKeySelect,
     });
-    await writeAudit(tx, { actorId: input.actorId ?? 'system', workspaceId: input.workspaceId, action: 'agentApiKey.created', targetType: 'agentApiKey', targetId: key.id,
-      changes: { clientId: client.id, name, expiresAt: input.expiresAt ?? null } });
+    await writeAudit(tx, {
+      actorId: input.actorId ?? "system",
+      workspaceId: input.workspaceId,
+      action: "agentApiKey.created",
+      targetType: "agentApiKey",
+      targetId: key.id,
+      changes: {
+        clientId: client.id,
+        name,
+        expiresAt: input.expiresAt ?? null,
+      },
+    });
     return key;
   });
   return { token, record };
 }
 
-export function listAgentApiKeys(input: ListAgentApiKeysInput): Promise<AgentApiKeyView[]> {
+export function listAgentApiKeys(
+  input: ListAgentApiKeysInput,
+): Promise<AgentApiKeyView[]> {
   return db.agentApiKey.findMany({
     where: {
       clientId: input.clientId,
@@ -303,29 +345,37 @@ export function listAgentApiKeys(input: ListAgentApiKeysInput): Promise<AgentApi
       },
     },
     select: safeKeySelect,
-    orderBy: { createdAt: 'desc' },
+    orderBy: { createdAt: "desc" },
   });
 }
 
-export async function revokeAgentApiKey(input: RevokeAgentApiKeyInput): Promise<boolean> {
+export async function revokeAgentApiKey(
+  input: RevokeAgentApiKeyInput,
+): Promise<boolean> {
   return db.$transaction(async (tx) => {
     const result = await tx.agentApiKey.updateMany({
-    where: {
-      id: input.keyId,
-      revokedAt: null,
-      client: {
-        endpoint: {
-          publicId: input.endpointPublicId,
-          workspaceId: input.workspaceId,
-          sourceAgentId: input.sourceAgentId,
-          workspace: { owner: { status: 'active' } },
+      where: {
+        id: input.keyId,
+        revokedAt: null,
+        client: {
+          endpoint: {
+            publicId: input.endpointPublicId,
+            workspaceId: input.workspaceId,
+            sourceAgentId: input.sourceAgentId,
+            workspace: { owner: { status: "active" } },
+          },
         },
       },
-    },
-    data: { revokedAt: input.now ?? new Date() },
+      data: { revokedAt: input.now ?? new Date() },
     });
-    if (result.count === 1) await writeAudit(tx, { actorId: input.actorId ?? 'system', workspaceId: input.workspaceId,
-      action: 'agentApiKey.revoked', targetType: 'agentApiKey', targetId: input.keyId });
+    if (result.count === 1)
+      await writeAudit(tx, {
+        actorId: input.actorId ?? "system",
+        workspaceId: input.workspaceId,
+        action: "agentApiKey.revoked",
+        targetType: "agentApiKey",
+        targetId: input.keyId,
+      });
     return result.count === 1;
   });
 }
@@ -343,12 +393,12 @@ async function apiKeyPrincipal(
       revokedAt: null,
       OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
       client: {
-        status: 'active',
+        status: "active",
         endpoint: {
           publicId: endpointPublicId,
-          status: 'active',
+          status: "active",
           currentRevisionId: { not: null },
-          workspace: { owner: { status: 'active' } },
+          workspace: { owner: { status: "active" } },
         },
       },
     },
@@ -382,7 +432,11 @@ async function apiKeyPrincipal(
       },
     },
   });
-  if (!key || !key.client.endpoint.currentRevisionId || !validEndpointOwner(key.client)) return null;
+  if (
+    !key?.client.endpoint.currentRevisionId ||
+    !validEndpointOwner(key.client)
+  )
+    return null;
   const scopes = normalizedScopes(key.client.scopes);
   if (!hasAgentApiScope(scopes, requirement)) return null;
 
@@ -392,11 +446,11 @@ async function apiKeyPrincipal(
       revokedAt: null,
       OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
       client: {
-        status: 'active',
+        status: "active",
         endpoint: {
           publicId: endpointPublicId,
-          status: 'active',
-          workspace: { owner: { status: 'active' } },
+          status: "active",
+          workspace: { owner: { status: "active" } },
         },
       },
     },
@@ -404,7 +458,7 @@ async function apiKeyPrincipal(
   });
   if (touched.count !== 1) return null;
   return {
-    credentialType: 'api_key',
+    credentialType: "api_key",
     endpointId: key.client.endpoint.id,
     endpointPublicId: key.client.endpoint.publicId,
     workspaceId: key.client.endpoint.workspaceId,
@@ -432,9 +486,9 @@ export async function verifyAgentApiKey(
 }
 
 function clientTokenOrigin(input: string | null | undefined): string | null {
-  if (input == null || input === '') return null;
+  if (input == null || input === "") return null;
   const origin = normalizedOrigin(input);
-  if (!origin) throw new Error('Agent client token origin is invalid');
+  if (!origin) throw new Error("Agent client token origin is invalid");
   return origin;
 }
 
@@ -442,25 +496,32 @@ export async function mintAgentClientToken(
   input: MintAgentClientTokenInput,
 ): Promise<{ token: string; expiresAt: Date }> {
   const now = input.now ?? new Date();
-  const expiresInSeconds = input.expiresInSeconds ?? AGENT_CLIENT_TOKEN_DEFAULT_AGE_SECONDS;
-  if (!Number.isSafeInteger(expiresInSeconds) || expiresInSeconds < 1
-    || expiresInSeconds > AGENT_CLIENT_TOKEN_MAX_AGE_SECONDS) {
-    throw new Error(`Agent client tokens may live for at most ${AGENT_CLIENT_TOKEN_MAX_AGE_SECONDS} seconds`);
+  const expiresInSeconds =
+    input.expiresInSeconds ?? AGENT_CLIENT_TOKEN_DEFAULT_AGE_SECONDS;
+  if (
+    !Number.isSafeInteger(expiresInSeconds) ||
+    expiresInSeconds < 1 ||
+    expiresInSeconds > AGENT_CLIENT_TOKEN_MAX_AGE_SECONDS
+  ) {
+    throw new Error(
+      `Agent client tokens may live for at most ${AGENT_CLIENT_TOKEN_MAX_AGE_SECONDS} seconds`,
+    );
   }
   const scopes = normalizedScopes(input.scopes);
-  if (!scopes.length) throw new Error('Agent client token must have at least one scope');
+  if (!scopes.length)
+    throw new Error("Agent client token must have at least one scope");
   const origin = clientTokenOrigin(input.origin);
 
   const client = await db.agentApiClient.findFirst({
     where: {
       id: input.clientId,
       endpointId: input.endpointId,
-      status: 'active',
+      status: "active",
       endpoint: {
         publicId: input.endpointPublicId,
-        status: 'active',
+        status: "active",
         currentRevisionId: { not: null },
-        workspace: { owner: { status: 'active' } },
+        workspace: { owner: { status: "active" } },
       },
     },
     select: {
@@ -478,18 +539,35 @@ export async function mintAgentClientToken(
       },
     },
   });
-  if (!client || !validEndpointOwner(client) || !hasAgentApiScope(client.scopes, scopes)) {
-    throw new Error('Agent API client is unavailable or cannot grant the requested scopes');
+  if (
+    !client ||
+    !validEndpointOwner(client) ||
+    !hasAgentApiScope(client.scopes, scopes)
+  ) {
+    throw new Error(
+      "Agent API client is unavailable or cannot grant the requested scopes",
+    );
   }
-  if (origin && !client.endpoint.allowedOrigins.some((allowed) => normalizedOrigin(allowed) === origin)) {
-    throw new Error('Agent client token origin is not allowed by this endpoint');
+  if (
+    origin &&
+    !client.endpoint.allowedOrigins.some(
+      (allowed) => normalizedOrigin(allowed) === origin,
+    )
+  ) {
+    throw new Error(
+      "Agent client token origin is not allowed by this endpoint",
+    );
   }
 
-  const subjectHash = hashAgentApiSubject(client.endpoint.id, client.id, input.subject);
+  const subjectHash = hashAgentApiSubject(
+    client.endpoint.id,
+    client.id,
+    input.subject,
+  );
   const issuedAt = Math.floor(now.getTime() / 1000);
   const expiresAt = new Date((issuedAt + expiresInSeconds) * 1000);
   const signed = await new SignJWT({
-    token_use: 'agent_client',
+    token_use: "agent_client",
     endpoint_id: client.endpoint.id,
     endpoint_public_id: client.endpoint.publicId,
     client_id: client.id,
@@ -497,7 +575,7 @@ export async function mintAgentClientToken(
     origin,
     scopes,
   })
-    .setProtectedHeader({ alg: 'HS256', typ: 'JWT' })
+    .setProtectedHeader({ alg: "HS256", typ: "JWT" })
     .setIssuer(CLIENT_TOKEN_ISSUER)
     .setAudience(client.endpoint.publicId)
     .setSubject(subjectHash)
@@ -516,40 +594,62 @@ async function clientTokenPrincipal(
   now: Date,
 ): Promise<AgentApiPrincipal | null> {
   if (!token.startsWith(AGENT_CLIENT_TOKEN_PREFIX)) return null;
-  let payload: Awaited<ReturnType<typeof jwtVerify>>['payload'];
+  let payload: Awaited<ReturnType<typeof jwtVerify>>["payload"];
   try {
-    ({ payload } = await jwtVerify(token.slice(AGENT_CLIENT_TOKEN_PREFIX.length), signingKey(), {
-      algorithms: ['HS256'],
-      issuer: CLIENT_TOKEN_ISSUER,
-      audience: endpointPublicId,
-      currentDate: now,
-      clockTolerance: 5,
-    }));
+    ({ payload } = await jwtVerify(
+      token.slice(AGENT_CLIENT_TOKEN_PREFIX.length),
+      signingKey(),
+      {
+        algorithms: ["HS256"],
+        issuer: CLIENT_TOKEN_ISSUER,
+        audience: endpointPublicId,
+        currentDate: now,
+        clockTolerance: 5,
+      },
+    ));
   } catch {
     return null;
   }
 
-  const endpointId = typeof payload.endpoint_id === 'string' ? payload.endpoint_id : null;
-  const tokenEndpointPublicId = typeof payload.endpoint_public_id === 'string'
-    ? payload.endpoint_public_id
-    : null;
-  const clientId = typeof payload.client_id === 'string' ? payload.client_id : null;
-  const subjectHash = typeof payload.subject_hash === 'string' ? payload.subject_hash : null;
-  const claimOrigin = typeof payload.origin === 'string' ? normalizedOrigin(payload.origin) : null;
+  const endpointId =
+    typeof payload.endpoint_id === "string" ? payload.endpoint_id : null;
+  const tokenEndpointPublicId =
+    typeof payload.endpoint_public_id === "string"
+      ? payload.endpoint_public_id
+      : null;
+  const clientId =
+    typeof payload.client_id === "string" ? payload.client_id : null;
+  const subjectHash =
+    typeof payload.subject_hash === "string" ? payload.subject_hash : null;
+  const claimOrigin =
+    typeof payload.origin === "string"
+      ? normalizedOrigin(payload.origin)
+      : null;
   const scopes = Array.isArray(payload.scopes)
-    ? normalizedScopes(payload.scopes.filter((scope): scope is AgentApiScope => typeof scope === 'string'))
+    ? normalizedScopes(
+        payload.scopes.filter(
+          (scope): scope is AgentApiScope => typeof scope === "string",
+        ),
+      )
     : [];
-  const issuedAt = typeof payload.iat === 'number' ? payload.iat : null;
-  const expiresAt = typeof payload.exp === 'number' ? payload.exp : null;
+  const issuedAt = typeof payload.iat === "number" ? payload.iat : null;
+  const expiresAt = typeof payload.exp === "number" ? payload.exp : null;
   if (
-    payload.token_use !== 'agent_client'
-    || !endpointId || tokenEndpointPublicId !== endpointPublicId || !clientId || !subjectHash
-    || payload.sub !== subjectHash || !scopes.length
-    || issuedAt === null || expiresAt === null || expiresAt <= issuedAt
-    || expiresAt - issuedAt > AGENT_CLIENT_TOKEN_MAX_AGE_SECONDS
-    || issuedAt > Math.floor(now.getTime() / 1000) + 5
-    || (payload.origin !== null && claimOrigin === null)
-  ) return null;
+    payload.token_use !== "agent_client" ||
+    !endpointId ||
+    tokenEndpointPublicId !== endpointPublicId ||
+    !clientId ||
+    !subjectHash ||
+    payload.sub !== subjectHash ||
+    !scopes.length ||
+    issuedAt === null ||
+    expiresAt === null ||
+    expiresAt <= issuedAt ||
+    expiresAt - issuedAt > AGENT_CLIENT_TOKEN_MAX_AGE_SECONDS ||
+    issuedAt > Math.floor(now.getTime() / 1000) + 5 ||
+    (payload.origin !== null && claimOrigin === null)
+  )
+    return null;
 
   let normalizedRequestOrigin: string | null;
   try {
@@ -563,12 +663,12 @@ async function clientTokenPrincipal(
     where: {
       id: clientId,
       endpointId,
-      status: 'active',
+      status: "active",
       endpoint: {
         publicId: endpointPublicId,
-        status: 'active',
+        status: "active",
         currentRevisionId: { not: null },
-        workspace: { owner: { status: 'active' } },
+        workspace: { owner: { status: "active" } },
       },
     },
     select: {
@@ -596,14 +696,23 @@ async function clientTokenPrincipal(
       },
     },
   });
-  if (!client || !client.endpoint.currentRevisionId || !validEndpointOwner(client)) return null;
-  if (!hasAgentApiScope(client.scopes, scopes) || !hasAgentApiScope(scopes, requirement)) return null;
-  if (claimOrigin && !client.endpoint.allowedOrigins.some(
-    (allowed) => normalizedOrigin(allowed) === claimOrigin,
-  )) return null;
+  if (!client?.endpoint.currentRevisionId || !validEndpointOwner(client))
+    return null;
+  if (
+    !hasAgentApiScope(client.scopes, scopes) ||
+    !hasAgentApiScope(scopes, requirement)
+  )
+    return null;
+  if (
+    claimOrigin &&
+    !client.endpoint.allowedOrigins.some(
+      (allowed) => normalizedOrigin(allowed) === claimOrigin,
+    )
+  )
+    return null;
 
   return {
-    credentialType: 'client_token',
+    credentialType: "client_token",
     endpointId: client.endpoint.id,
     endpointPublicId: client.endpoint.publicId,
     workspaceId: client.endpoint.workspaceId,
@@ -628,25 +737,37 @@ export async function verifyAgentClientToken(
 ): Promise<AgentApiPrincipal | null> {
   const token = bearerToken(authorization);
   if (!token?.startsWith(AGENT_CLIENT_TOKEN_PREFIX)) return null;
-  return clientTokenPrincipal(token, endpointPublicId, requirement, origin, now);
+  return clientTokenPrincipal(
+    token,
+    endpointPublicId,
+    requirement,
+    origin,
+    now,
+  );
 }
 
 /** Resolve only an Authorization Bearer credential. Cookies are never read. */
 export async function resolveAgentApiPrincipal(
-  request: Pick<Request, 'headers'>,
+  request: Pick<Request, "headers">,
   endpointPublicId: string,
   requirement?: AgentApiScopeRequirement,
 ): Promise<AgentApiPrincipal | null> {
   await takeAgentApiAuthAttemptLimit(request);
-  const authorization = request.headers.get('authorization');
+  const authorization = request.headers.get("authorization");
   const token = bearerToken(authorization);
   if (!token) {
     await takeAgentApiAuthFailureLimit(request);
     return null;
   }
-  const origin = request.headers.get('origin');
+  const origin = request.headers.get("origin");
   if (token.startsWith(AGENT_CLIENT_TOKEN_PREFIX)) {
-    const principal = await clientTokenPrincipal(token, endpointPublicId, requirement, origin, new Date());
+    const principal = await clientTokenPrincipal(
+      token,
+      endpointPublicId,
+      requirement,
+      origin,
+      new Date(),
+    );
     if (!principal) await takeAgentApiAuthFailureLimit(request);
     return principal;
   }
@@ -656,7 +777,12 @@ export async function resolveAgentApiPrincipal(
     await takeAgentApiAuthFailureLimit(request);
     return null;
   }
-  const principal = await apiKeyPrincipal(token, endpointPublicId, requirement, new Date());
+  const principal = await apiKeyPrincipal(
+    token,
+    endpointPublicId,
+    requirement,
+    new Date(),
+  );
   if (!principal) await takeAgentApiAuthFailureLimit(request);
   return principal;
 }
@@ -669,16 +795,16 @@ export async function resolveAgentApiPrincipal(
  * audience, expiry, origin, client state, and scopes.
  */
 export async function resolveAgentApiPrincipalForAnyEndpoint(
-  request: Pick<Request, 'headers'>,
+  request: Pick<Request, "headers">,
   requirement?: AgentApiScopeRequirement,
 ): Promise<AgentApiPrincipal | null> {
   await takeAgentApiAuthAttemptLimit(request);
-  const token = bearerToken(request.headers.get('authorization'));
+  const token = bearerToken(request.headers.get("authorization"));
   if (!token) {
     await takeAgentApiAuthFailureLimit(request);
     return null;
   }
-  const origin = request.headers.get('origin');
+  const origin = request.headers.get("origin");
   if (token.startsWith(AGENT_API_KEY_PREFIX)) {
     if (origin || !isAgentApiKey(token)) {
       await takeAgentApiAuthFailureLimit(request);
@@ -686,10 +812,17 @@ export async function resolveAgentApiPrincipalForAnyEndpoint(
     }
     const key = await db.agentApiKey.findUnique({
       where: { tokenHash: hashAgentApiKey(token) },
-      select: { client: { select: { endpoint: { select: { publicId: true } } } } },
+      select: {
+        client: { select: { endpoint: { select: { publicId: true } } } },
+      },
     });
     const principal = key
-      ? await apiKeyPrincipal(token, key.client.endpoint.publicId, requirement, new Date())
+      ? await apiKeyPrincipal(
+          token,
+          key.client.endpoint.publicId,
+          requirement,
+          new Date(),
+        )
       : null;
     if (!principal) await takeAgentApiAuthFailureLimit(request);
     return principal;
@@ -701,13 +834,22 @@ export async function resolveAgentApiPrincipalForAnyEndpoint(
   let publicId: string | null = null;
   try {
     const payload = decodeJwt(token.slice(AGENT_CLIENT_TOKEN_PREFIX.length));
-    publicId = typeof payload.endpoint_public_id === 'string' ? payload.endpoint_public_id : null;
+    publicId =
+      typeof payload.endpoint_public_id === "string"
+        ? payload.endpoint_public_id
+        : null;
   } catch {
     await takeAgentApiAuthFailureLimit(request);
     return null;
   }
   const principal = publicId
-    ? await clientTokenPrincipal(token, publicId, requirement, origin, new Date())
+    ? await clientTokenPrincipal(
+        token,
+        publicId,
+        requirement,
+        origin,
+        new Date(),
+      )
     : null;
   if (!principal) await takeAgentApiAuthFailureLimit(request);
   return principal;

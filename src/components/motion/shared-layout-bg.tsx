@@ -63,9 +63,9 @@ export const SharedLayoutBg = forwardRef<HTMLElement, SharedLayoutBgProps>(
     },
     forwardedRef,
   ) {
-  const [activeId, setActiveId] = useState<string | null>(null);
-  const uid = useId();
-  const reduce = useReducedMotion();
+    const [activeId, setActiveId] = useState<string | null>(null);
+    const uid = useId();
+    const reduce = useReducedMotion();
 
     const renderedChildren = Children.toArray(children)
       .filter(isValidElement)

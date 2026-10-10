@@ -1,12 +1,13 @@
-import type { Metadata } from 'next';
-import { notFound } from 'next/navigation';
-import { Star } from 'lucide-react';
-import { getLocale, getTranslations } from 'next-intl/server';
-import { getMarketingContent } from '@/lib/marketing/content';
-import { SITE } from '@/lib/site';
-import { getPublicClient } from '../../_lib/catalog';
-import { siteMetadata } from '../../_lib/metadata';
-import { ButtonLink } from '@/components/motion/button';
+import type { Metadata } from "next";
+import Image from "next/image";
+import { notFound } from "next/navigation";
+import { Star } from "lucide-react";
+import { getLocale, getTranslations } from "next-intl/server";
+import { getMarketingContent } from "@/lib/marketing/content";
+import { SITE } from "@/lib/site";
+import { getPublicClient } from "../../_lib/catalog";
+import { siteMetadata } from "../../_lib/metadata";
+import { ButtonLink } from "@/components/motion/button";
 
 export async function generateMetadata({
   params,
@@ -38,26 +39,38 @@ export default async function Page({
 }) {
   const [{ slug }, t, locale] = await Promise.all([
     params,
-    getTranslations('client'),
+    getTranslations("client"),
     getLocale(),
   ]);
   const client = await getPublicClient(slug);
   if (!client) notFound();
   const description =
-    client.description ?? getMarketingContent(locale).capabilities.clients.description;
+    client.description ??
+    getMarketingContent(locale).capabilities.clients.description;
 
   return (
     <article className="mx-auto max-w-3xl px-4 py-12">
       <div className="flex items-center gap-3">
         {client.iconUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={client.iconUrl} alt="" width={40} height={40} className="size-10 rounded-full object-cover" />
+          <Image
+            unoptimized
+            loading="eager"
+            src={client.iconUrl}
+            alt=""
+            width={40}
+            height={40}
+            className="size-10 rounded-full object-cover"
+          />
         ) : (
           <span aria-hidden="true" className="size-10 rounded-full bg-muted" />
         )}
         <div>
-          <h1 className="text-3xl font-bold tracking-tight text-foreground">{client.name}</h1>
-          {client.author ? <p className="text-sm text-muted-foreground">{client.author}</p> : null}
+          <h1 className="text-3xl font-bold tracking-tight text-foreground">
+            {client.name}
+          </h1>
+          {client.author ? (
+            <p className="text-sm text-muted-foreground">{client.author}</p>
+          ) : null}
         </div>
       </div>
 
@@ -65,12 +78,19 @@ export default async function Page({
         <Star className="size-4" aria-hidden="true" />
         {client.stars.toLocaleString()}
       </div>
-      <p className="mt-6 text-base leading-relaxed text-foreground">{description}</p>
+      <p className="mt-6 text-base leading-relaxed text-foreground">
+        {description}
+      </p>
 
       {client.categories.length > 0 ? (
         <div className="mt-6 flex flex-wrap gap-2">
           {client.categories.map((category) => (
-            <ButtonLink key={category.id} href={`/categories/${category.slug}`} variant="secondary" size="sm">
+            <ButtonLink
+              key={category.id}
+              href={`/categories/${category.slug}`}
+              variant="secondary"
+              size="sm"
+            >
               {category.name}
             </ButtonLink>
           ))}
@@ -79,7 +99,7 @@ export default async function Page({
 
       <section className="mt-10 rounded-lg border border-border bg-card p-5">
         <ButtonLink href="/server" variant="secondary">
-          {t('browseMcpServers')}
+          {t("browseMcpServers")}
         </ButtonLink>
       </section>
     </article>

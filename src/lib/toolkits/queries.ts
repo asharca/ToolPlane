@@ -1,12 +1,12 @@
-import 'server-only';
-import type { Prisma } from '@prisma/client';
-import { db } from '@/lib/db';
-import { parseToolkitMarketManifest } from '@/lib/market/resources';
+import "server-only";
+import type { Prisma } from "@prisma/client";
+import { db } from "@/lib/db";
+import { parseToolkitMarketManifest } from "@/lib/market/resources";
 
 export async function listToolkits(workspaceId: string) {
   const toolkits = await db.toolkit.findMany({
     where: { workspaceId },
-    orderBy: { createdAt: 'asc' },
+    orderBy: { createdAt: "asc" },
     include: {
       _count: { select: { servers: true, skills: true } },
     },
@@ -71,7 +71,7 @@ export async function getToolkitBySlug(workspaceId: string, slug: string) {
 // workspace so the bundle is not empty for existing accounts.
 export async function getOrCreateDefaultToolkit(workspaceId: string) {
   const existing = await db.toolkit.findFirst({
-    where: { workspaceId, slug: 'me' },
+    where: { workspaceId, slug: "me" },
   });
   if (existing) return existing;
 
@@ -79,32 +79,38 @@ export async function getOrCreateDefaultToolkit(workspaceId: string) {
     db.deployment.findMany({
       where: {
         workspaceId,
-        OR: [{ source: null }, { source: { notIn: ['sandbox'] } }],
+        OR: [{ source: null }, { source: { notIn: ["sandbox"] } }],
       },
       select: { id: true },
     }),
-    db.installedSkill.findMany({ where: { workspaceId }, select: { id: true } }),
+    db.installedSkill.findMany({
+      where: { workspaceId },
+      select: { id: true },
+    }),
   ]);
 
   return db.toolkit.create({
     data: {
       workspaceId,
-      name: 'My Toolkit',
-      slug: 'me',
+      name: "My Toolkit",
+      slug: "me",
       servers: { create: deployments.map((d) => ({ deploymentId: d.id })) },
       skills: { create: skills.map((s) => ({ installedSkillId: s.id })) },
     },
   });
 }
 
-export async function getToolkitMcpCandidates(workspaceId: string, toolkitId: string) {
+export async function getToolkitMcpCandidates(
+  workspaceId: string,
+  toolkitId: string,
+) {
   return db.deployment.findMany({
     where: {
       workspaceId,
-      OR: [{ source: null }, { source: { notIn: ['sandbox'] } }],
+      OR: [{ source: null }, { source: { notIn: ["sandbox"] } }],
       toolkitLinks: { none: { toolkitId } },
     },
-    orderBy: { createdAt: 'desc' },
+    orderBy: { createdAt: "desc" },
     select: {
       id: true,
       status: true,
@@ -117,13 +123,16 @@ export async function getToolkitMcpCandidates(workspaceId: string, toolkitId: st
   });
 }
 
-export async function getToolkitSkillCandidates(workspaceId: string, toolkitId: string) {
+export async function getToolkitSkillCandidates(
+  workspaceId: string,
+  toolkitId: string,
+) {
   return db.installedSkill.findMany({
     where: {
       workspaceId,
       toolkitLinks: { none: { toolkitId } },
     },
-    orderBy: { createdAt: 'desc' },
+    orderBy: { createdAt: "desc" },
     select: {
       id: true,
       skillId: true,
@@ -160,101 +169,143 @@ export type PublicToolkitBrowseItem = {
 
 export type ToolkitBrowseFilters = {
   category?: string;
-  sort?: 'newest' | 'name';
+  sort?: "newest" | "name";
 };
 
-type ToolkitBrowseCandidate = PublicToolkitBrowseItem & { marketReleaseId?: string };
+type ToolkitBrowseCandidate = PublicToolkitBrowseItem & {
+  marketReleaseId?: string;
+};
 
-function marketCount(value: Prisma.JsonValue, key: 'mcpCount' | 'skillCount'): number {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return 0;
+function marketCount(
+  value: Prisma.JsonValue,
+  key: "mcpCount" | "skillCount",
+): number {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return 0;
   const count = (value as Record<string, Prisma.JsonValue>)[key];
-  return typeof count === 'number' && Number.isSafeInteger(count) && count >= 0 ? count : 0;
+  return typeof count === "number" && Number.isSafeInteger(count) && count >= 0
+    ? count
+    : 0;
 }
 
 export async function getBrowseToolkits(
   workspaceId: string,
   page: number,
-  q = '',
+  q = "",
   filters: ToolkitBrowseFilters = {},
 ) {
   const safePage = Number.isSafeInteger(page) && page > 0 ? page : 1;
   const term = q.trim().slice(0, 160);
-  const category = filters.category?.trim().toLocaleLowerCase().slice(0, 120) ?? '';
+  const category =
+    filters.category?.trim().toLocaleLowerCase().slice(0, 120) ?? "";
   const legacyWhere: Prisma.ToolkitWhereInput = {
-    visibility: 'public',
+    visibility: "public",
     enabled: true,
     workspaceId: { not: workspaceId },
     sourceMarketListing: { is: null },
     AND: [
       ...(term
-        ? [{
-          OR: [
-            { name: { contains: term, mode: 'insensitive' as const } },
-            { slug: { contains: term, mode: 'insensitive' as const } },
-            { workspace: { name: { contains: term, mode: 'insensitive' as const } } },
-            { workspace: { slug: { contains: term, mode: 'insensitive' as const } } },
-          ],
-        }]
+        ? [
+            {
+              OR: [
+                { name: { contains: term, mode: "insensitive" as const } },
+                { slug: { contains: term, mode: "insensitive" as const } },
+                {
+                  workspace: {
+                    name: { contains: term, mode: "insensitive" as const },
+                  },
+                },
+                {
+                  workspace: {
+                    slug: { contains: term, mode: "insensitive" as const },
+                  },
+                },
+              ],
+            },
+          ]
         : []),
     ],
   };
   const marketWhere: Prisma.MarketListingWhereInput = {
-    kind: 'toolkit',
-    status: 'published',
-    visibility: 'public',
+    kind: "toolkit",
+    status: "published",
+    visibility: "public",
     latestReleaseId: { not: null },
-    latestRelease: { is: { reviewStatus: 'approved' } },
-    sourceToolkit: { is: { visibility: 'public', enabled: true } },
+    latestRelease: { is: { reviewStatus: "approved" } },
+    sourceToolkit: { is: { visibility: "public", enabled: true } },
     AND: [
-      { OR: [{ publisherWorkspaceId: null }, { publisherWorkspaceId: { not: workspaceId } }] },
-      ...(term ? [{
+      {
         OR: [
-          { name: { contains: term, mode: 'insensitive' as const } },
-          { slug: { contains: term, mode: 'insensitive' as const } },
-          { namespace: { contains: term, mode: 'insensitive' as const } },
-          { sourceToolkit: { is: { name: { contains: term, mode: 'insensitive' as const } } } },
-          { sourceToolkit: { is: { slug: { contains: term, mode: 'insensitive' as const } } } },
+          { publisherWorkspaceId: null },
+          { publisherWorkspaceId: { not: workspaceId } },
         ],
-      }] : []),
+      },
+      ...(term
+        ? [
+            {
+              OR: [
+                { name: { contains: term, mode: "insensitive" as const } },
+                { slug: { contains: term, mode: "insensitive" as const } },
+                { namespace: { contains: term, mode: "insensitive" as const } },
+                {
+                  sourceToolkit: {
+                    is: {
+                      name: { contains: term, mode: "insensitive" as const },
+                    },
+                  },
+                },
+                {
+                  sourceToolkit: {
+                    is: {
+                      slug: { contains: term, mode: "insensitive" as const },
+                    },
+                  },
+                },
+              ],
+            },
+          ]
+        : []),
     ],
   };
   const [rows, marketRows] = await Promise.all([
     db.toolkit.findMany({
       where: legacyWhere,
       select: {
-      id: true,
-      name: true,
-      slug: true,
-      createdAt: true,
-      categories: { select: { slug: true, name: true }, orderBy: { name: 'asc' } },
-      workspace: { select: { name: true, slug: true } },
-      _count: { select: { servers: true, skills: true } },
-      servers: {
-        orderBy: { deploymentId: 'asc' },
-        take: 4,
-        select: {
-          deployment: {
-            select: {
-              serverId: true,
-              name: true,
-              sourceRef: true,
-              server: { select: { name: true } },
+        id: true,
+        name: true,
+        slug: true,
+        createdAt: true,
+        categories: {
+          select: { slug: true, name: true },
+          orderBy: { name: "asc" },
+        },
+        workspace: { select: { name: true, slug: true } },
+        _count: { select: { servers: true, skills: true } },
+        servers: {
+          orderBy: { deploymentId: "asc" },
+          take: 4,
+          select: {
+            deployment: {
+              select: {
+                serverId: true,
+                name: true,
+                sourceRef: true,
+                server: { select: { name: true } },
+              },
             },
           },
         },
-      },
-      skills: {
-        orderBy: { installedSkillId: 'asc' },
-        take: 4,
-        select: {
-          installedSkill: {
-            select: {
-              name: true,
-              skill: { select: { name: true } },
+        skills: {
+          orderBy: { installedSkillId: "asc" },
+          take: 4,
+          select: {
+            installedSkill: {
+              select: {
+                name: true,
+                skill: { select: { name: true } },
+              },
             },
           },
         },
-      },
       },
     }),
     db.marketListing.findMany({
@@ -267,7 +318,10 @@ export async function getBrowseToolkits(
         metadata: true,
         publishedAt: true,
         createdAt: true,
-        categories: { select: { slug: true, name: true }, orderBy: { name: 'asc' } },
+        categories: {
+          select: { slug: true, name: true },
+          orderBy: { name: "asc" },
+        },
         sourceToolkit: { select: { id: true, slug: true } },
         publisherWorkspace: { select: { name: true, slug: true } },
         latestRelease: {
@@ -277,23 +331,29 @@ export async function getBrowseToolkits(
     }),
   ]);
 
-  const customServerCounts = rows.length > 0
-    ? await db.toolkitServer.groupBy({
-        by: ['toolkitId'],
-        where: {
-          toolkitId: { in: rows.map((toolkit) => toolkit.id) },
-          deployment: { serverId: null },
-        },
-        _count: { _all: true },
-      })
-    : [];
+  const customServerCounts =
+    rows.length > 0
+      ? await db.toolkitServer.groupBy({
+          by: ["toolkitId"],
+          where: {
+            toolkitId: { in: rows.map((toolkit) => toolkit.id) },
+            deployment: { serverId: null },
+          },
+          _count: { _all: true },
+        })
+      : [];
   const customServerCountByToolkit = new Map(
     customServerCounts.map((row) => [row.toolkitId, row._count._all]),
   );
 
   const legacyItems: PublicToolkitBrowseItem[] = rows.map((t) => {
     const serverNames = t.servers
-      .map((s) => s.deployment.server?.name ?? s.deployment.name ?? s.deployment.sourceRef)
+      .map(
+        (s) =>
+          s.deployment.server?.name ??
+          s.deployment.name ??
+          s.deployment.sourceRef,
+      )
       .filter((name): name is string => Boolean(name));
     const skillNames = t.skills
       .map((s) => s.installedSkill.skill?.name ?? s.installedSkill.name)
@@ -315,38 +375,53 @@ export async function getBrowseToolkits(
       createdAt: t.createdAt,
     };
   });
-  const marketItems = marketRows.flatMap((listing): ToolkitBrowseCandidate[] => {
-    if (!listing.latestRelease || !listing.sourceToolkit) return [];
-    const serverCount = marketCount(listing.metadata, 'mcpCount');
-    const skillCount = marketCount(listing.metadata, 'skillCount');
-    return [{
-        id: listing.sourceToolkit.id,
-        name: listing.name,
-        slug: listing.sourceToolkit.slug,
-        workspaceName: listing.publisherWorkspace?.name ?? listing.namespace,
-        workspaceSlug: listing.publisherWorkspace?.slug ?? listing.namespace,
-        serverCount,
-        skillCount,
-        customServerCount: 0,
-        toolCount: serverCount + skillCount,
-        serverNames: [],
-        skillNames: [],
-        categories: listing.categories,
-        marketListing: {
-          namespace: listing.namespace,
-          slug: listing.slug,
-          releaseId: listing.latestRelease.id,
+  const marketItems = marketRows.flatMap(
+    (listing): ToolkitBrowseCandidate[] => {
+      if (!listing.latestRelease || !listing.sourceToolkit) return [];
+      const serverCount = marketCount(listing.metadata, "mcpCount");
+      const skillCount = marketCount(listing.metadata, "skillCount");
+      return [
+        {
+          id: listing.sourceToolkit.id,
+          name: listing.name,
+          slug: listing.sourceToolkit.slug,
+          workspaceName: listing.publisherWorkspace?.name ?? listing.namespace,
+          workspaceSlug: listing.publisherWorkspace?.slug ?? listing.namespace,
+          serverCount,
+          skillCount,
+          customServerCount: 0,
+          toolCount: serverCount + skillCount,
+          serverNames: [],
+          skillNames: [],
+          categories: listing.categories,
+          marketListing: {
+            namespace: listing.namespace,
+            slug: listing.slug,
+            releaseId: listing.latestRelease.id,
+          },
+          marketReleaseId: listing.latestRelease.id,
+          createdAt:
+            listing.latestRelease.publishedAt ??
+            listing.publishedAt ??
+            listing.createdAt,
         },
-        marketReleaseId: listing.latestRelease.id,
-        createdAt: listing.latestRelease.publishedAt ?? listing.publishedAt ?? listing.createdAt,
-      }];
-  });
-  const allCandidates: ToolkitBrowseCandidate[] = [...legacyItems, ...marketItems];
+      ];
+    },
+  );
+  const allCandidates: ToolkitBrowseCandidate[] = [
+    ...legacyItems,
+    ...marketItems,
+  ];
   const available: ToolkitBrowseCandidate[] = allCandidates
-    .sort((a, b) => filters.sort === 'name'
-      ? a.name.localeCompare(b.name)
-      : b.createdAt.getTime() - a.createdAt.getTime())
-    .filter((item) => !category || item.categories.some(({ slug }) => slug === category));
+    .sort((a, b) =>
+      filters.sort === "name"
+        ? a.name.localeCompare(b.name)
+        : b.createdAt.getTime() - a.createdAt.getTime(),
+    )
+    .filter(
+      (item) =>
+        !category || item.categories.some(({ slug }) => slug === category),
+    );
   const categoryCounts = new Map<string, { name: string; count: number }>();
   for (const item of allCandidates) {
     for (const itemCategory of item.categories) {
@@ -362,32 +437,47 @@ export async function getBrowseToolkits(
     .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
   const skip = (safePage - 1) * TOOLKIT_MARKET_PAGE_SIZE;
   const pageItems = available.slice(skip, skip + TOOLKIT_MARKET_PAGE_SIZE);
-  const releaseIds = pageItems.flatMap(({ marketReleaseId }) => marketReleaseId ? [marketReleaseId] : []);
+  const releaseIds = pageItems.flatMap(({ marketReleaseId }) =>
+    marketReleaseId ? [marketReleaseId] : [],
+  );
   const releases = releaseIds.length
     ? await db.marketRelease.findMany({
-        where: { id: { in: releaseIds }, reviewStatus: 'approved' },
+        where: { id: { in: releaseIds }, reviewStatus: "approved" },
         select: { id: true, manifest: true, checksum: true },
       })
     : [];
-  const manifests = new Map(releases.flatMap((release) => {
-    try {
-      return [[release.id, parseToolkitMarketManifest(release.manifest, release.checksum)] as const];
-    } catch {
-      return [];
-    }
-  }));
+  const manifests = new Map(
+    releases.flatMap((release) => {
+      try {
+        return [
+          [
+            release.id,
+            parseToolkitMarketManifest(release.manifest, release.checksum),
+          ] as const,
+        ];
+      } catch {
+        return [];
+      }
+    }),
+  );
   return {
     items: pageItems.flatMap(({ marketReleaseId, ...item }) => {
       if (!marketReleaseId) return [item];
       const manifest = manifests.get(marketReleaseId);
-      return manifest ? [{
-        ...item,
-        serverCount: manifest.mcps.length,
-        skillCount: manifest.skills.length,
-        toolCount: manifest.mcps.length + manifest.skills.length,
-        serverNames: manifest.mcps.slice(0, 4).map(({ name }) => name),
-        skillNames: manifest.skills.slice(0, 4).map(({ snapshot }) => snapshot.name),
-      }] : [];
+      return manifest
+        ? [
+            {
+              ...item,
+              serverCount: manifest.mcps.length,
+              skillCount: manifest.skills.length,
+              toolCount: manifest.mcps.length + manifest.skills.length,
+              serverNames: manifest.mcps.slice(0, 4).map(({ name }) => name),
+              skillNames: manifest.skills
+                .slice(0, 4)
+                .map(({ snapshot }) => snapshot.name),
+            },
+          ]
+        : [];
     }),
     total: available.length,
     availableTotal: legacyItems.length + marketItems.length,

@@ -1,14 +1,14 @@
-import 'server-only';
-import { NextResponse } from 'next/server';
-import { livePort } from '@/lib/process/supervisor';
-import { mcpResponseOutcome } from '@/lib/observability/mcp-log-entry';
-import { logRequest } from '@/lib/observability/log';
+import "server-only";
+import { NextResponse } from "next/server";
+import { livePort } from "@/lib/process/supervisor";
+import { mcpResponseOutcome } from "@/lib/observability/mcp-log-entry";
+import { logRequest } from "@/lib/observability/log";
 import {
   filterMcpToolsForAi,
   isMcpToolExposedToAi,
   mcpToolPolicyFromStored,
   type StoredMcpToolPolicy,
-} from '@/lib/workspace/mcp-tool-exposure';
+} from "@/lib/workspace/mcp-tool-exposure";
 
 export type McpGatewayDeployment = StoredMcpToolPolicy & {
   id: string;
@@ -23,19 +23,20 @@ export async function proxyMcpRpcRequest(
   const start = Date.now();
   const { id: deploymentId } = deployment;
   const body = await req.text();
-  let rpcMethod = '';
-  let toolName = '';
+  let rpcMethod = "";
+  let toolName = "";
   let rpcId: unknown = null;
   let isBatch = false;
   try {
-    const parsed = JSON.parse(body || '{}');
+    const parsed = JSON.parse(body || "{}");
     isBatch = Array.isArray(parsed);
     if (isBatch) {
-      rpcMethod = 'batch';
+      rpcMethod = "batch";
     } else {
       rpcId = parsed?.id ?? null;
-      rpcMethod = String(parsed?.method ?? '');
-      if (rpcMethod === 'tools/call') toolName = String(parsed?.params?.name ?? '');
+      rpcMethod = String(parsed?.method ?? "");
+      if (rpcMethod === "tools/call")
+        toolName = String(parsed?.params?.name ?? "");
     }
   } catch {
     // The live MCP process owns JSON-RPC parse errors.
@@ -43,22 +44,41 @@ export async function proxyMcpRpcRequest(
 
   const port = livePort(deploymentId);
   let statusCode = 200;
-  let payload: unknown = { error: 'deployment not running' };
+  let payload: unknown = { error: "deployment not running" };
   let upstreamError: unknown;
   const policy = mcpToolPolicyFromStored(deployment);
 
   if (isBatch) {
     statusCode = 400;
     payload = {
-      jsonrpc: '2.0',
+      jsonrpc: "2.0",
       id: null,
-      error: { code: -32600, message: 'JSON-RPC batch requests are not supported.' },
+      error: {
+        code: -32600,
+        message: "JSON-RPC batch requests are not supported.",
+      },
     };
-  } else if (deployment.toolsOnly && !['initialize', 'notifications/initialized', 'ping', 'tools/list', 'tools/call'].includes(rpcMethod)) {
-    payload = { jsonrpc: '2.0', id: rpcId, error: { code: -32601, message: 'Method is outside the package grant.' } };
-  } else if (rpcMethod === 'tools/call' && !isMcpToolExposedToAi(policy, toolName)) {
+  } else if (
+    deployment.toolsOnly &&
+    ![
+      "initialize",
+      "notifications/initialized",
+      "ping",
+      "tools/list",
+      "tools/call",
+    ].includes(rpcMethod)
+  ) {
     payload = {
-      jsonrpc: '2.0',
+      jsonrpc: "2.0",
+      id: rpcId,
+      error: { code: -32601, message: "Method is outside the package grant." },
+    };
+  } else if (
+    rpcMethod === "tools/call" &&
+    !isMcpToolExposedToAi(policy, toolName)
+  ) {
+    payload = {
+      jsonrpc: "2.0",
       id: rpcId,
       error: { code: -32602, message: `Unknown tool: ${toolName}` },
     };
@@ -67,21 +87,35 @@ export async function proxyMcpRpcRequest(
   } else {
     try {
       const upstream = await fetch(`http://127.0.0.1:${port}/`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: body || '{}',
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: body || "{}",
         signal: AbortSignal.timeout(30000),
       });
       statusCode = upstream.status;
       const text = await upstream.text();
       payload = text ? JSON.parse(text) : {};
-      if (deployment.toolsOnly && rpcMethod === 'initialize' && payload && typeof payload === 'object'
-        && 'result' in payload && payload.result && typeof payload.result === 'object') {
-        payload = { ...payload, result: { ...payload.result, capabilities: { tools: {} } } };
+      if (
+        deployment.toolsOnly &&
+        rpcMethod === "initialize" &&
+        payload &&
+        typeof payload === "object" &&
+        "result" in payload &&
+        payload.result &&
+        typeof payload.result === "object"
+      ) {
+        payload = {
+          ...payload,
+          result: { ...payload.result, capabilities: { tools: {} } },
+        };
       }
-      if (rpcMethod === 'tools/list' && payload && typeof payload === 'object') {
+      if (
+        rpcMethod === "tools/list" &&
+        payload &&
+        typeof payload === "object"
+      ) {
         const result = (payload as { result?: unknown }).result;
-        if (result && typeof result === 'object') {
+        if (result && typeof result === "object") {
           const tools = (result as { tools?: unknown }).tools;
           if (Array.isArray(tools)) {
             payload = {
@@ -89,11 +123,12 @@ export async function proxyMcpRpcRequest(
               result: {
                 ...result,
                 tools: filterMcpToolsForAi(
-                  tools.filter((tool): tool is { name: string } => (
-                    Boolean(tool)
-                    && typeof tool === 'object'
-                    && typeof (tool as { name?: unknown }).name === 'string'
-                  )),
+                  tools.filter(
+                    (tool): tool is { name: string } =>
+                      Boolean(tool) &&
+                      typeof tool === "object" &&
+                      typeof (tool as { name?: unknown }).name === "string",
+                  ),
                   policy,
                 ),
               },
@@ -104,15 +139,15 @@ export async function proxyMcpRpcRequest(
     } catch (error) {
       upstreamError = error;
       statusCode = 502;
-      payload = { error: 'upstream unreachable' };
+      payload = { error: "upstream unreachable" };
     }
   }
 
   await logRequest({
     workspaceId: deployment.workspaceId,
     deploymentId,
-    method: 'POST',
-    path: `/mcp/${deploymentId}/rpc${rpcMethod ? `#${rpcMethod}${toolName ? `:${toolName}` : ''}` : ''}`,
+    method: "POST",
+    path: `/mcp/${deploymentId}/rpc${rpcMethod ? `#${rpcMethod}${toolName ? `:${toolName}` : ""}` : ""}`,
     statusCode,
     durationMs: Date.now() - start,
     error: upstreamError,

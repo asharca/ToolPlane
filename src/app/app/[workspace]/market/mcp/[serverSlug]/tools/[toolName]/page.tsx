@@ -1,62 +1,65 @@
+import { ButtonLink } from "@/components/motion/button";
 
-import { ButtonLink } from '@/components/motion/button';
-
-import { notFound, redirect } from 'next/navigation';
-import { getTranslations } from 'next-intl/server';
-import { Box, ChevronRight } from 'lucide-react';
-import { getCurrentUser } from '@/lib/auth/current-user';
-import { getMarketServer, getWorkspaceForUser } from '@/lib/workspace/queries';
-import { DashboardPage } from '@/components/dashboard/DashboardUI';
-import { McpToolCatalog } from '@/components/dashboard/McpToolCatalog';
+import { notFound, redirect } from "next/navigation";
+import { getTranslations } from "next-intl/server";
+import { Box, ChevronRight } from "lucide-react";
+import { getCurrentUser } from "@/lib/auth/current-user";
+import { getMarketServer, getWorkspaceForUser } from "@/lib/workspace/queries";
+import { DashboardPage } from "@/components/dashboard/DashboardUI";
+import { McpToolCatalog } from "@/components/dashboard/McpToolCatalog";
 import {
   MarketDetailHeader,
   MarketDetailShell,
-} from '@/components/dashboard/market/MarketDetailShell';
+} from "@/components/dashboard/market/MarketDetailShell";
 
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
 export default async function McpMarketToolPage({
   params,
 }: {
   params: Promise<{ workspace: string; serverSlug: string; toolName: string }>;
 }) {
-  const [{ workspace: slug, serverSlug, toolName }, t, mcpT] = await Promise.all([
-    params,
-    getTranslations('console.market'),
-    getTranslations('console.mcp'),
-  ]);
+  const [{ workspace: slug, serverSlug, toolName }, t, mcpT] =
+    await Promise.all([
+      params,
+      getTranslations("console.market"),
+      getTranslations("console.mcp"),
+    ]);
   const user = await getCurrentUser();
   const requestedPath = `/app/${slug}/market/mcp/${serverSlug}/tools/${toolName}`;
   if (!user) redirect(`/app/login?next=${encodeURIComponent(requestedPath)}`);
   const workspace = await getWorkspaceForUser(slug, user.id);
-  if (!workspace) redirect('/app');
+  if (!workspace) redirect("/app");
   const server = await getMarketServer(serverSlug, workspace.id);
   if (!server) notFound();
   if (server.deploymentId) {
-    redirect(`/app/${encodeURIComponent(slug)}/mcp/${encodeURIComponent(server.deploymentId)}/tools/${encodeURIComponent(toolName)}`);
+    redirect(
+      `/app/${encodeURIComponent(slug)}/mcp/${encodeURIComponent(server.deploymentId)}/tools/${encodeURIComponent(toolName)}`,
+    );
   }
-  if (server.mcpKind === 'connector') notFound();
+  if (server.mcpKind === "connector") notFound();
   const tools = server.tools;
   const tool = tools.find((candidate) => candidate.name === toolName);
   if (!tool) notFound();
 
   const serverHref = `/app/${encodeURIComponent(slug)}/market/mcp/${encodeURIComponent(server.slug)}`;
   const marketBase = `/app/${encodeURIComponent(slug)}/market/mcp`;
-  const network = server.recipe.network === 'none' ? t('networkNone') : t('networkIsolated');
+  const network =
+    server.recipe.network === "none" ? t("networkNone") : t("networkIsolated");
   const labels = {
-    title: mcpT('toolCatalog'),
-    description: mcpT('toolCatalogDescription'),
-    count: mcpT('toolsCount', { count: 1 }),
-    instructions: mcpT('instructions'),
-    inputSchema: mcpT('inputSchema'),
-    schemaJson: mcpT('schemaJson'),
-    parameter: mcpT('parameter'),
-    type: mcpT('type'),
-    descriptionColumn: mcpT('descriptionColumn'),
-    required: mcpT('required'),
-    defaultValue: mcpT('defaultValue'),
-    noDescription: mcpT('noDescription'),
-    noArguments: mcpT('noArguments'),
+    title: mcpT("toolCatalog"),
+    description: mcpT("toolCatalogDescription"),
+    count: mcpT("toolsCount", { count: 1 }),
+    instructions: mcpT("instructions"),
+    inputSchema: mcpT("inputSchema"),
+    schemaJson: mcpT("schemaJson"),
+    parameter: mcpT("parameter"),
+    type: mcpT("type"),
+    descriptionColumn: mcpT("descriptionColumn"),
+    required: mcpT("required"),
+    defaultValue: mcpT("defaultValue"),
+    noDescription: mcpT("noDescription"),
+    noArguments: mcpT("noArguments"),
   };
 
   return (
@@ -66,52 +69,75 @@ export default async function McpMarketToolPage({
         backLabel={server.name}
         iconUrl={server.iconUrl}
         icon={<Box className="size-7" />}
-        type={t('kindMcp')}
+        type={t("kindMcp")}
         title={tool.title ?? tool.annotations?.title ?? tool.name}
         publisher={server.name}
-        summary={tool.description ?? mcpT('noDescription')}
+        summary={tool.description ?? mcpT("noDescription")}
         facts={[
-          { label: t('source'), value: server.recipe.source },
+          { label: t("source"), value: server.recipe.source },
           ...(server.connector
             ? [
-                { label: t('connectorEndpoint'), value: server.connector.endpointHost },
                 {
-                  label: t('connectorTransport'),
-                  value: t(server.connector.transport === 'sse' ? 'transportSse' : 'transportStreamableHttp'),
+                  label: t("connectorEndpoint"),
+                  value: server.connector.endpointHost,
+                },
+                {
+                  label: t("connectorTransport"),
+                  value: t(
+                    server.connector.transport === "sse"
+                      ? "transportSse"
+                      : "transportStreamableHttp",
+                  ),
                 },
               ]
-            : [{ label: t('network'), value: network }]),
-          { label: t('tools'), value: tools.length || server.verifiedTools || 0 },
+            : [{ label: t("network"), value: network }]),
+          {
+            label: t("tools"),
+            value: tools.length || server.verifiedTools || 0,
+          },
         ]}
         tags={server.categories.map((category) => ({
           label: category.name,
-          href: `${marketBase}?${server.mcpKind === 'connector' ? 'type=connector&' : ''}category=${encodeURIComponent(category.slug)}`,
+          href: `${marketBase}?${server.mcpKind === "connector" ? "type=connector&" : ""}category=${encodeURIComponent(category.slug)}`,
         }))}
       />
 
       <MarketDetailShell
-        navigationLabel={t('detailNavigation')}
-        tabs={[{ href: '#tool', label: tool.name }]}
-        aside={(
+        navigationLabel={t("detailNavigation")}
+        tabs={[{ href: "#tool", label: tool.name }]}
+        aside={
           <section className="rounded-lg bg-muted/30 p-5">
-            <h2 className="text-sm font-semibold text-foreground">{t('tools')}</h2>
+            <h2 className="text-sm font-semibold text-foreground">
+              {t("tools")}
+            </h2>
             <div className="mt-3 space-y-1">
-              {tools.filter((candidate) => candidate.name !== tool.name).slice(0, 12).map((candidate) => (
-                <ButtonLink
-                  key={candidate.name}
-                  href={`${serverHref}/tools/${encodeURIComponent(candidate.name)}`}
-                  variant="ghost" size="sm"
-                >
-                  <code className="min-w-0 flex-1 truncate font-mono">{candidate.name}</code>
-                  <ChevronRight className="size-3.5 shrink-0" />
-                </ButtonLink>
-              ))}
+              {tools
+                .filter((candidate) => candidate.name !== tool.name)
+                .slice(0, 12)
+                .map((candidate) => (
+                  <ButtonLink
+                    key={candidate.name}
+                    href={`${serverHref}/tools/${encodeURIComponent(candidate.name)}`}
+                    variant="ghost"
+                    size="sm"
+                  >
+                    <code className="min-w-0 flex-1 truncate font-mono">
+                      {candidate.name}
+                    </code>
+                    <ChevronRight className="size-3.5 shrink-0" />
+                  </ButtonLink>
+                ))}
             </div>
-            <ButtonLink href={serverHref} variant="secondary" size="sm" className="mt-4 w-full">
-              {t('viewDetails')}
+            <ButtonLink
+              href={serverHref}
+              variant="secondary"
+              size="sm"
+              className="mt-4 w-full"
+            >
+              {t("viewDetails")}
             </ButtonLink>
           </section>
-        )}
+        }
       >
         <div id="tool" className="scroll-mt-24">
           <McpToolCatalog tools={[tool]} labels={labels} />

@@ -155,6 +155,10 @@ wrapper with the same radius. The selection column retains a 48px minimum width;
 header and row checkboxes use the same intrinsic size and share a centered axis.
 The scroll viewport and body isolate stacking contexts. The entire sticky header forms
 a higher layer, including bulk actions, so animated row badges cannot paint over it.
+Ordinary dashboard tables use their intrinsic content height, capped at 640px;
+do not estimate the viewport from row count, because collapsed borders and taller
+cells can overflow that estimate even for one row. Explicit heights (such as the
+MCP list's remaining-viewport layout) remain fixed; narrow tables still scroll horizontally.
 
 Workspace pages do not render a breadcrumb bar or reserve its former row.
 Detail pages retain their content headings and actions; `DashboardHeader` only

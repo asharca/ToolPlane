@@ -1,4 +1,4 @@
-import 'server-only';
+import "server-only";
 
 type ActiveRun = {
   controller: AbortController;
@@ -10,10 +10,14 @@ declare global {
 }
 
 function activeRuns(): Map<string, ActiveRun> {
-  return globalThis.__toolplaneAgentApiRuns ??= new Map();
+  globalThis.__toolplaneAgentApiRuns ??= new Map();
+  return globalThis.__toolplaneAgentApiRuns;
 }
 
-export function registerAgentApiRun(runId: string, controller: AbortController): () => void {
+export function registerAgentApiRun(
+  runId: string,
+  controller: AbortController,
+): () => void {
   activeRuns().set(runId, { controller, startedAt: Date.now() });
   return () => {
     const active = activeRuns().get(runId);
@@ -24,7 +28,9 @@ export function registerAgentApiRun(runId: string, controller: AbortController):
 export function abortAgentApiRun(runId: string): boolean {
   const active = activeRuns().get(runId);
   if (!active) return false;
-  active.controller.abort(new DOMException('The response was cancelled.', 'AbortError'));
+  active.controller.abort(
+    new DOMException("The response was cancelled.", "AbortError"),
+  );
   return true;
 }
 

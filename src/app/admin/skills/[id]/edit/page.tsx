@@ -1,54 +1,106 @@
+import { ButtonLink } from "@/components/motion/button";
+import { getTranslations } from "next-intl/server";
+import { History } from "lucide-react";
+import { adminHref, adminReturnHref } from "@/lib/admin/navigation";
+import { notFound } from "next/navigation";
+import { requireAdmin } from "@/lib/auth/admin";
+import { getDirectorySkill } from "@/lib/admin/market";
+import { listCategories } from "@/lib/admin/categories";
+import {
+  updateSkillAction,
+  deleteSkillAction,
+} from "@/lib/admin/market-actions";
+import { SkillForm } from "@/components/admin/SkillForm";
+import { ConfirmDialog } from "@/components/admin/ConfirmDialog";
+import {
+  AdminBadge,
+  AdminPage,
+  AdminPageHeader,
+  AdminPanel,
+} from "@/components/admin/AdminUI";
 
-import { ButtonLink } from '@/components/motion/button';
-import { getTranslations } from 'next-intl/server';
-import { History } from 'lucide-react';
-import { adminHref, adminReturnHref } from '@/lib/admin/navigation';
-import { notFound } from 'next/navigation';
-import { requireAdmin } from '@/lib/auth/admin';
-import { getDirectorySkill } from '@/lib/admin/market';
-import { listCategories } from '@/lib/admin/categories';
-import { updateSkillAction, deleteSkillAction } from '@/lib/admin/market-actions';
-import { SkillForm } from '@/components/admin/SkillForm';
-import { ConfirmDialog } from '@/components/admin/ConfirmDialog';
-import { AdminBadge, AdminPage, AdminPageHeader, AdminPanel } from '@/components/admin/AdminUI';
+export const dynamic = "force-dynamic";
 
-export const dynamic = 'force-dynamic';
-
-export default async function EditSkillPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ returnTo?: string }> }) {
-  const t = await getTranslations('admin');
+export default async function EditSkillPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ returnTo?: string }>;
+}) {
+  const t = await getTranslations("admin");
   await requireAdmin();
   const { id } = await params;
-  const [skill, categories] = await Promise.all([getDirectorySkill(id), listCategories()]);
+  const [skill, categories] = await Promise.all([
+    getDirectorySkill(id),
+    listCategories(),
+  ]);
   if (!skill) notFound();
-  const ops = await getTranslations('adminOps');
-  const backHref = adminReturnHref((await searchParams).returnTo, '/admin/skills');
+  const ops = await getTranslations("adminOps");
+  const backHref = adminReturnHref(
+    (await searchParams).returnTo,
+    "/admin/skills",
+  );
 
   return (
     <AdminPage className="max-w-4xl">
       <AdminPageHeader
-        title={`${t('edit')} ${skill.name}`}
+        title={`${t("edit")} ${skill.name}`}
         meta={<AdminBadge tone="neutral">/{skill.slug}</AdminBadge>}
         backHref={backHref}
-        backLabel={t('skillsMarket')}
-        actions={<ButtonLink href={adminHref('/admin/logs', { tab: 'audit', targetType: 'skill', targetId: id, returnTo: adminHref(`/admin/skills/${id}/edit`, { returnTo: backHref }) })} variant="secondary" size="md"><History className="size-4" />{ops('audit')}</ButtonLink>}
+        backLabel={t("skillsMarket")}
+        actions={
+          <ButtonLink
+            href={adminHref("/admin/logs", {
+              tab: "audit",
+              targetType: "skill",
+              targetId: id,
+              returnTo: adminHref(`/admin/skills/${id}/edit`, {
+                returnTo: backHref,
+              }),
+            })}
+            variant="secondary"
+            size="md"
+          >
+            <History className="size-4" />
+            {ops("audit")}
+          </ButtonLink>
+        }
       />
-      <section className="border-t border-border pt-6" aria-label={`${t('edit')} ${skill.name}`}>
+      <section
+        className="border-t border-border pt-6"
+        aria-label={`${t("edit")} ${skill.name}`}
+      >
         <SkillForm
           action={updateSkillAction}
           initial={{
-            id: skill.id, slug: skill.slug, name: skill.name, author: skill.author, description: skill.description,
-            iconUrl: skill.iconUrl, githubSource: skill.githubSource, score: skill.score, categoryIds: skill.categories.map((c) => c.id),
+            id: skill.id,
+            slug: skill.slug,
+            name: skill.name,
+            author: skill.author,
+            description: skill.description,
+            iconUrl: skill.iconUrl,
+            githubSource: skill.githubSource,
+            score: skill.score,
+            categoryIds: skill.categories.map((c) => c.id),
           }}
           categories={categories}
-          submitLabel={t('saveChanges')}
+          submitLabel={t("saveChanges")}
         />
       </section>
       <AdminPanel
-        title={t('dangerZone')}
-        description={`${t('refusedWhileAnyWorkspaceHasThisSkillInstalled')}${skill._count.installs} ${t('now')}`}
+        title={t("dangerZone")}
+        description={`${t("refusedWhileAnyWorkspaceHasThisSkillInstalled")}${skill._count.installs} ${t("now")}`}
         tone="danger"
       >
-        <ConfirmDialog label={t('deleteSkill')} prompt={t('deleteThisDirectoryEntry')} action={deleteSkillAction} hidden={{ id: skill.id }} pendingLabel={t('deleting')} tone="danger" />
+        <ConfirmDialog
+          label={t("deleteSkill")}
+          prompt={t("deleteThisDirectoryEntry")}
+          action={deleteSkillAction}
+          hidden={{ id: skill.id }}
+          pendingLabel={t("deleting")}
+          tone="danger"
+        />
       </AdminPanel>
     </AdminPage>
   );

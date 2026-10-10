@@ -1,11 +1,7 @@
 "use client";
 // asharca.github.io/ui/components/motion/bouncy-accordion
 
-import {
-  motion,
-  useReducedMotion,
-  type Transition,
-} from "motion/react";
+import { motion, useReducedMotion, type Transition } from "motion/react";
 import { ChevronDown } from "lucide-react";
 import {
   useCallback,
@@ -79,7 +75,6 @@ const CHEVRON_TRANSITION: Transition = {
   duration: 0.42,
   bounce: 0.28,
 };
-
 
 function useControllableAccordionValue({
   value,

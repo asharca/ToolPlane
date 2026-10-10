@@ -1,19 +1,23 @@
-'use client';
+"use client";
 
-import { AnimatedBadge } from '@/components/motion/animated-badge';
+import { AnimatedBadge } from "@/components/motion/animated-badge";
 
-import { FormCheckbox } from '@/components/ui/FormCheckbox';
+import { FormCheckbox } from "@/components/ui/FormCheckbox";
 
-import { Button } from '@/components/motion/button';
-import { Input } from '@/components/motion/input';
-import { FormSelect } from '@/components/ui/FormSelect';
-import { CenterMorphModal, CenterMorphModalContent, CenterMorphModalTrigger } from '@/components/motion/center-morph-modal';
-import { RadioGroup, RadioGroupItem } from '@/components/motion/radio';
+import { Button } from "@/components/motion/button";
+import { Input } from "@/components/motion/input";
+import { FormSelect } from "@/components/ui/FormSelect";
+import {
+  CenterMorphModal,
+  CenterMorphModalContent,
+  CenterMorphModalTrigger,
+} from "@/components/motion/center-morph-modal";
+import { RadioGroup, RadioGroupItem } from "@/components/motion/radio";
 
-import { useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { useRouter } from 'next/navigation';
-import { useTranslations } from 'next-intl';
-import { useFormStatus } from 'react-dom';
+import { useId, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useRouter } from "next/navigation";
+import { useTranslations } from "next-intl";
+import { useFormStatus } from "react-dom";
 import {
   Cable,
   Check,
@@ -25,29 +29,33 @@ import {
   Sparkles,
   Upload,
   type LucideIcon,
-} from 'lucide-react';
-import { createSandboxAction } from '@/lib/sandboxes/actions';
-import { SubmitButton } from '@/components/dashboard/SubmitButton';
-import { HermesImageSelector } from '@/components/dashboard/agents/HermesImageSelector';
+} from "lucide-react";
+import { createSandboxAction } from "@/lib/sandboxes/actions";
+import { SubmitButton } from "@/components/dashboard/SubmitButton";
+import { HermesImageSelector } from "@/components/dashboard/agents/HermesImageSelector";
 import {
   DEFAULT_SANDBOX_IMAGE,
   SANDBOX_IMAGE_OPTIONS,
   type SandboxImageOption,
-} from '@/lib/sandboxes/images';
-import { DEFAULT_HERMES_ARCHIVE_MAX_UPLOAD_MIB } from '@/lib/agents/hermes/archive-limits';
+} from "@/lib/sandboxes/images";
+import { DEFAULT_HERMES_ARCHIVE_MAX_UPLOAD_MIB } from "@/lib/agents/hermes/archive-limits";
 
-type Mode = 'docker' | 'connector' | 'hermes-import';
+type Mode = "docker" | "connector" | "hermes-import";
 
 type HermesImportState = {
   pending: boolean;
-  phase?: 'uploading' | 'importing';
+  phase?: "uploading" | "importing";
   uploadedBytes?: number;
   totalBytes?: number;
   error?: string;
 };
 
-const recommendedImages = SANDBOX_IMAGE_OPTIONS.filter((option) => option.category === 'recommended');
-const generalImages = SANDBOX_IMAGE_OPTIONS.filter((option) => option.category === 'general');
+const recommendedImages = SANDBOX_IMAGE_OPTIONS.filter(
+  (option) => option.category === "recommended",
+);
+const generalImages = SANDBOX_IMAGE_OPTIONS.filter(
+  (option) => option.category === "general",
+);
 
 function hermesArchiveLimitLabel(maxUploadMiB: number): string {
   return maxUploadMiB >= 1024 && maxUploadMiB % 1024 === 0
@@ -56,14 +64,17 @@ function hermesArchiveLimitLabel(maxUploadMiB: number): string {
 }
 
 function newHermesImportId(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+  if (
+    typeof crypto !== "undefined" &&
+    typeof crypto.randomUUID === "function"
+  ) {
     return crypto.randomUUID();
   }
   return `import-${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
 }
 
 function cx(...classes: Array<string | false | null | undefined>) {
-  return classes.filter(Boolean).join(' ');
+  return classes.filter(Boolean).join(" ");
 }
 
 function Field({
@@ -71,17 +82,29 @@ function Field({
   children,
   className,
   hint,
+  htmlFor,
 }: {
   label: string;
   children: ReactNode;
   className?: string;
   hint?: string;
+  htmlFor: string;
 }) {
   return (
-    <label className={cx('space-y-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground', className)}>
+    <label
+      htmlFor={htmlFor}
+      className={cx(
+        "space-y-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground",
+        className,
+      )}
+    >
       {label}
       {children}
-      {hint ? <span className="block text-[11px] font-normal normal-case leading-4 tracking-normal text-muted-foreground">{hint}</span> : null}
+      {hint ? (
+        <span className="block text-[11px] font-normal normal-case leading-4 tracking-normal text-muted-foreground">
+          {hint}
+        </span>
+      ) : null}
     </label>
   );
 }
@@ -101,7 +124,13 @@ function ModeButton({
 }) {
   return (
     <div className="space-y-2">
-      <Button type="button" aria-pressed={active} onClick={onClick} variant={active ? 'primary' : 'secondary'} className="w-full">
+      <Button
+        type="button"
+        aria-pressed={active}
+        onClick={onClick}
+        variant={active ? "primary" : "secondary"}
+        className="w-full"
+      >
         <Icon className="size-4" />
         {title}
       </Button>
@@ -120,25 +149,49 @@ function ImageCard({
   onSelect: (image: string) => void;
 }) {
   return (
-    <div onClick={(event) => { if (!(event.target as HTMLElement).closest('button, label')) onSelect(option.image); }} className="flex items-start gap-3 rounded-lg border border-border p-3">
-      <RadioGroupItem value={option.image} label={option.name} />
+    <div className="relative flex items-start gap-3 rounded-lg border border-border p-3">
+      <button
+        type="button"
+        tabIndex={-1}
+        aria-label={option.name}
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={() => onSelect(option.image)}
+        className="absolute inset-0 rounded-lg"
+      />
+      <RadioGroupItem
+        value={option.image}
+        label={option.name}
+        className="relative z-10"
+      />
       <span
         className={cx(
-          'mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md border',
-          selected ? 'border-primary/30 bg-background text-primary' : 'border-border bg-muted text-muted-foreground',
+          "pointer-events-none relative mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md border",
+          selected
+            ? "border-primary/30 bg-background text-primary"
+            : "border-border bg-muted text-muted-foreground",
         )}
       >
-        {selected ? <Check className="size-3.5" /> : <Server className="size-3.5" />}
+        {selected ? (
+          <Check className="size-3.5" />
+        ) : (
+          <Server className="size-3.5" />
+        )}
       </span>
-      <span className="min-w-0 flex-1">
+      <span className="pointer-events-none relative min-w-0 flex-1">
         <span className="flex flex-wrap items-center gap-2">
           <AnimatedBadge status="neutral" size="sm">
             {option.badge}
           </AnimatedBadge>
         </span>
-        <span className="mt-1 block text-xs leading-5 text-muted-foreground">{option.summary}</span>
-        <span className="mt-1 block truncate font-mono text-[11px] text-muted-foreground/80">{option.image}</span>
-        <span className="mt-2 block text-[11px] font-medium text-foreground">{option.bestFor}</span>
+        <span className="mt-1 block text-xs leading-5 text-muted-foreground">
+          {option.summary}
+        </span>
+        <span className="mt-1 block truncate font-mono text-[11px] text-muted-foreground/80">
+          {option.image}
+        </span>
+        <span className="mt-2 block text-[11px] font-medium text-foreground">
+          {option.bestFor}
+        </span>
       </span>
     </div>
   );
@@ -157,7 +210,7 @@ function ImageGroup({
   selectedImage: string;
   onSelect: (image: string) => void;
 }) {
-  const t = useTranslations('console.sandboxes');
+  const t = useTranslations("console.sandboxes");
   return (
     <section className="space-y-2">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -165,7 +218,9 @@ function ImageGroup({
           <h3 className="text-sm font-semibold text-foreground">{title}</h3>
           <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
         </div>
-        <span className="text-[11px] text-muted-foreground">{options.length} {t('images')}</span>
+        <span className="text-[11px] text-muted-foreground">
+          {options.length} {t("images")}
+        </span>
       </div>
       <div className="grid gap-2 xl:grid-cols-2">
         {options.map((option) => (
@@ -188,60 +243,101 @@ function CreateSandboxFooter({
   mode: Mode;
   hermesImport: HermesImportState;
 }) {
-  const t = useTranslations('console.sandboxes');
+  const t = useTranslations("console.sandboxes");
   const { pending: actionPending } = useFormStatus();
-  const isDocker = mode === 'docker';
-  const isHermesImport = mode === 'hermes-import';
+  const isDocker = mode === "docker";
+  const isHermesImport = mode === "hermes-import";
   const pending = isHermesImport ? hermesImport.pending : actionPending;
-  const uploading = isHermesImport && hermesImport.phase === 'uploading';
-  const percent = uploading && hermesImport.totalBytes
-    ? Math.min(100, Math.round((hermesImport.uploadedBytes ?? 0) / hermesImport.totalBytes * 100))
-    : null;
+  const uploading = isHermesImport && hermesImport.phase === "uploading";
+  const percent =
+    uploading && hermesImport.totalBytes
+      ? Math.min(
+          100,
+          Math.round(
+            ((hermesImport.uploadedBytes ?? 0) / hermesImport.totalBytes) * 100,
+          ),
+        )
+      : null;
 
   const pendingTitle = isHermesImport
-    ? uploading ? t('uploadingHermesArchive') : t('importingHermesArchive')
-    : isDocker ? t('creatingSandboxRuntime') : t('creatingConnectorSandbox');
+    ? uploading
+      ? t("uploadingHermesArchive")
+      : t("importingHermesArchive")
+    : isDocker
+      ? t("creatingSandboxRuntime")
+      : t("creatingConnectorSandbox");
   const pendingDescription = isHermesImport
-    ? uploading ? t('uploadingHermesArchiveDescription') : t('importingHermesArchiveDescription')
-    : isDocker ? t('creatingSandboxRuntimeDescription') : t('creatingConnectorSandboxDescription');
+    ? uploading
+      ? t("uploadingHermesArchiveDescription")
+      : t("importingHermesArchiveDescription")
+    : isDocker
+      ? t("creatingSandboxRuntimeDescription")
+      : t("creatingConnectorSandboxDescription");
   const pendingLabel = isHermesImport
     ? pendingTitle
-    : isDocker ? t('creatingContainer') : t('creatingConnector');
+    : isDocker
+      ? t("creatingContainer")
+      : t("creatingConnector");
   const submitLabel = isHermesImport
-    ? t('importAndCreateHermesSandbox')
-    : isDocker ? t('createContainer') : t('createConnector');
+    ? t("importAndCreateHermesSandbox")
+    : isDocker
+      ? t("createContainer")
+      : t("createConnector");
 
   return (
     <div className="sticky bottom-0 -mx-5 mt-5 border-t border-border bg-card/95 px-5 py-4 backdrop-blur">
       {pending ? (
-        <div className="mb-3 rounded-md border border-primary/25 bg-muted px-3 py-3" aria-live="polite">
+        <div
+          className="mb-3 rounded-md border border-primary/25 bg-muted px-3 py-3"
+          aria-live="polite"
+        >
           <div className="flex items-center gap-2 text-sm font-medium text-foreground">
             <Loader2 className="size-4 animate-spin" />
-            {pendingTitle}{percent !== null ? ` ${percent}%` : ''}
+            {pendingTitle}
+            {percent !== null ? ` ${percent}%` : ""}
           </div>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
             {pendingDescription}
           </p>
           <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-background/80">
             <div
-              className={cx('h-full rounded-full bg-primary', percent === null && 'w-1/3 animate-pulse')}
-              style={percent === null ? undefined : { width: `${Math.max(2, percent)}%` }}
+              className={cx(
+                "h-full rounded-full bg-primary",
+                percent === null && "w-1/3 animate-pulse",
+              )}
+              style={
+                percent === null
+                  ? undefined
+                  : { width: `${Math.max(2, percent)}%` }
+              }
             />
           </div>
         </div>
       ) : null}
       <div className="flex justify-end">
         {isHermesImport ? (
-          <Button type="submit"
-          disabled={pending}
-          aria-busy={pending}
-          variant="primary" size="sm" className="w-full sm:w-auto">{pending ? <Loader2 className="size-3.5 animate-spin" /> : <Upload className="size-4" />}
-          {pending ? pendingLabel : submitLabel}</Button>
+          <Button
+            type="submit"
+            disabled={pending}
+            aria-busy={pending}
+            variant="primary"
+            size="sm"
+            className="w-full sm:w-auto"
+          >
+            {pending ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <Upload className="size-4" />
+            )}
+            {pending ? pendingLabel : submitLabel}
+          </Button>
         ) : (
           <SubmitButton
             flash={false}
             pendingLabel={pendingLabel}
-            variant="primary" size="sm" className="w-full sm:w-auto"
+            variant="primary"
+            size="sm"
+            className="w-full sm:w-auto"
           >
             <Plus className="size-4" />
             {submitLabel}
@@ -261,17 +357,20 @@ export function SandboxCreateForm({
   hermesArchiveMaxUploadMiB?: number;
   hermesImages?: string[];
 }) {
-  const [mode, setMode] = useState<Mode>('docker');
+  const [mode, setMode] = useState<Mode>("docker");
   const [selectedImage, setSelectedImage] = useState(DEFAULT_SANDBOX_IMAGE);
-  const [customImage, setCustomImage] = useState('');
+  const [customImage, setCustomImage] = useState("");
   const [open, setOpen] = useState(false);
-  const [importState, setImportState] = useState<HermesImportState>({ pending: false });
+  const [importState, setImportState] = useState<HermesImportState>({
+    pending: false,
+  });
   const hermesImportId = useRef<string | null>(null);
   const router = useRouter();
-  const t = useTranslations('console.sandboxes');
-  const isDocker = mode === 'docker';
-  const isHermesImport = mode === 'hermes-import';
-  const customSelected = selectedImage === 'custom';
+  const t = useTranslations("console.sandboxes");
+  const fieldId = useId();
+  const isDocker = mode === "docker";
+  const isHermesImport = mode === "hermes-import";
+  const customSelected = selectedImage === "custom";
 
   const submitHermesArchive = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -279,344 +378,467 @@ export function SandboxCreateForm({
 
     const form = event.currentTarget;
     const formData = new FormData(form);
-    const archiveInput = form.elements.namedItem('hermesArchive');
-    const archive = archiveInput instanceof HTMLInputElement ? archiveInput.files?.[0] : undefined;
+    const archiveInput = form.elements.namedItem("hermesArchive");
+    const archive =
+      archiveInput instanceof HTMLInputElement
+        ? archiveInput.files?.[0]
+        : undefined;
     if (!archive || archive.size <= 0) {
-      setImportState({ pending: false, error: t('chooseNonEmptyHermesArchive') });
+      setImportState({
+        pending: false,
+        error: t("chooseNonEmptyHermesArchive"),
+      });
       return;
     }
-    const trustInput = form.elements.namedItem('trustArchive');
+    const trustInput = form.elements.namedItem("trustArchive");
     if (!(trustInput instanceof HTMLInputElement) || !trustInput.checked) {
-      setImportState({ pending: false, error: t('confirmTrustHermesArchive') });
+      setImportState({ pending: false, error: t("confirmTrustHermesArchive") });
       return;
     }
-    const hermesImage = String(formData.get('hermesImage') ?? '').trim();
+    const hermesImage = String(formData.get("hermesImage") ?? "").trim();
 
     const maxBytes = hermesArchiveMaxUploadMiB * 1024 * 1024;
     if (archive.size > maxBytes) {
       setImportState({
         pending: false,
-        error: t('hermesArchiveTooLarge', { max: hermesArchiveMaxUploadMiB }),
+        error: t("hermesArchiveTooLarge", { max: hermesArchiveMaxUploadMiB }),
       });
       return;
     }
-    const importId = hermesImportId.current ??= newHermesImportId();
+    hermesImportId.current ??= newHermesImportId();
+    const importId = hermesImportId.current;
 
     setImportState({
       pending: true,
-      phase: 'uploading',
+      phase: "uploading",
       uploadedBytes: 0,
       totalBytes: archive.size,
     });
 
     try {
-      const imported = await new Promise<{ agentId: string }>((resolve, reject) => {
-        const request = new XMLHttpRequest();
-        request.open(
-          'POST',
-          `/api/v1/workspaces/${encodeURIComponent(workspace)}/sandboxes/hermes-import`,
-        );
-        request.withCredentials = true;
-        request.setRequestHeader('content-type', 'application/zip');
-        request.setRequestHeader('x-toolplane-hermes-archive-trusted', '1');
-        request.setRequestHeader('x-toolplane-hermes-archive-name', encodeURIComponent(archive.name));
-        request.setRequestHeader('x-toolplane-hermes-import-id', importId);
-        request.setRequestHeader(
-          'x-toolplane-hermes-import-name',
-          encodeURIComponent(String(formData.get('name') ?? '').trim()),
-        );
-        // The endpoint deliberately receives a raw ZIP body, so keep the
-        // selected image in a separately encoded header. The server validates
-        // it before using it as a Docker image reference.
-        if (hermesImage) {
-          request.setRequestHeader('x-toolplane-hermes-image', encodeURIComponent(hermesImage));
-        }
-        const allowSudoInput = form.elements.namedItem('allowSudo');
-        if (allowSudoInput instanceof HTMLInputElement && allowSudoInput.checked) {
-          request.setRequestHeader('x-toolplane-hermes-allow-sudo', '1');
-        }
-        request.upload.addEventListener('progress', (progress) => {
-          setImportState({
-            pending: true,
-            phase: 'uploading',
-            uploadedBytes: progress.loaded,
-            totalBytes: progress.lengthComputable ? progress.total : archive.size,
-          });
-        });
-        request.upload.addEventListener('load', () => {
-          setImportState({
-            pending: true,
-            phase: 'importing',
-            uploadedBytes: archive.size,
-            totalBytes: archive.size,
-          });
-        });
-        request.addEventListener('load', () => {
-          let result: { agentId?: unknown; error?: unknown } = {};
-          try {
-            result = JSON.parse(request.responseText || '{}') as typeof result;
-          } catch {
-            // The generic status error below is safer than exposing an HTML proxy response.
+      const imported = await new Promise<{ agentId: string }>(
+        (resolve, reject) => {
+          const request = new XMLHttpRequest();
+          request.open(
+            "POST",
+            `/api/v1/workspaces/${encodeURIComponent(workspace)}/sandboxes/hermes-import`,
+          );
+          request.withCredentials = true;
+          request.setRequestHeader("content-type", "application/zip");
+          request.setRequestHeader("x-toolplane-hermes-archive-trusted", "1");
+          request.setRequestHeader(
+            "x-toolplane-hermes-archive-name",
+            encodeURIComponent(archive.name),
+          );
+          request.setRequestHeader("x-toolplane-hermes-import-id", importId);
+          request.setRequestHeader(
+            "x-toolplane-hermes-import-name",
+            encodeURIComponent(String(formData.get("name") ?? "").trim()),
+          );
+          // The endpoint deliberately receives a raw ZIP body, so keep the
+          // selected image in a separately encoded header. The server validates
+          // it before using it as a Docker image reference.
+          if (hermesImage) {
+            request.setRequestHeader(
+              "x-toolplane-hermes-image",
+              encodeURIComponent(hermesImage),
+            );
           }
+          const allowSudoInput = form.elements.namedItem("allowSudo");
           if (
-            request.status >= 200
-            && request.status < 300
-            && typeof result.agentId === 'string'
+            allowSudoInput instanceof HTMLInputElement &&
+            allowSudoInput.checked
           ) {
-            resolve({ agentId: result.agentId });
-            return;
+            request.setRequestHeader("x-toolplane-hermes-allow-sudo", "1");
           }
-          reject(new Error(
-            typeof result.error === 'string' ? result.error : t('hermesArchiveImportFailed'),
-          ));
-        });
-        request.addEventListener('error', () => {
-          reject(new Error(t('hermesArchiveUploadInterrupted')));
-        });
-        request.addEventListener('abort', () => {
-          reject(new Error(t('hermesArchiveUploadCancelled')));
-        });
-        request.send(archive);
-      });
-      router.push(`/app/${encodeURIComponent(workspace)}/agents/${imported.agentId}?settings=agent&imported=hermes`);
+          request.upload.addEventListener("progress", (progress) => {
+            setImportState({
+              pending: true,
+              phase: "uploading",
+              uploadedBytes: progress.loaded,
+              totalBytes: progress.lengthComputable
+                ? progress.total
+                : archive.size,
+            });
+          });
+          request.upload.addEventListener("load", () => {
+            setImportState({
+              pending: true,
+              phase: "importing",
+              uploadedBytes: archive.size,
+              totalBytes: archive.size,
+            });
+          });
+          request.addEventListener("load", () => {
+            let result: { agentId?: unknown; error?: unknown } = {};
+            try {
+              result = JSON.parse(
+                request.responseText || "{}",
+              ) as typeof result;
+            } catch {
+              // The generic status error below is safer than exposing an HTML proxy response.
+            }
+            if (
+              request.status >= 200 &&
+              request.status < 300 &&
+              typeof result.agentId === "string"
+            ) {
+              resolve({ agentId: result.agentId });
+              return;
+            }
+            reject(
+              new Error(
+                typeof result.error === "string"
+                  ? result.error
+                  : t("hermesArchiveImportFailed"),
+              ),
+            );
+          });
+          request.addEventListener("error", () => {
+            reject(new Error(t("hermesArchiveUploadInterrupted")));
+          });
+          request.addEventListener("abort", () => {
+            reject(new Error(t("hermesArchiveUploadCancelled")));
+          });
+          request.send(archive);
+        },
+      );
+      router.push(
+        `/app/${encodeURIComponent(workspace)}/agents/${imported.agentId}?settings=agent&imported=hermes`,
+      );
       router.refresh();
     } catch (error) {
       setImportState({
         pending: false,
-        error: error instanceof Error ? error.message : t('hermesArchiveImportFailed'),
+        error:
+          error instanceof Error
+            ? error.message
+            : t("hermesArchiveImportFailed"),
       });
     }
   };
 
   return (
-    <CenterMorphModal open={open} onOpenChange={(next) => { if (!importState.pending) setOpen(next); }}>
+    <CenterMorphModal
+      open={open}
+      onOpenChange={(next) => {
+        if (!importState.pending) setOpen(next);
+      }}
+    >
       <CenterMorphModalTrigger>
-        <Button type="button" variant="primary"><Plus className="size-4" />
-      {t('newSandbox')}</Button>
+        <Button type="button" variant="primary">
+          <Plus className="size-4" />
+          {t("newSandbox")}
+        </Button>
       </CenterMorphModalTrigger>
-      <CenterMorphModalContent ariaLabel={t('newSandbox')} dismissible={!importState.pending} showCloseButton={!importState.pending} closeButtonLabel={t('close')} className="max-w-6xl">
-            <div className="flex items-start gap-4 border-b border-border pl-5 pr-16 py-4">
-              <div>
-                <h2 className="text-base font-semibold text-foreground">{t('newSandbox')}</h2>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {t('chooseASandboxSource')}
-                </p>
-              </div>
-            </div>
+      <CenterMorphModalContent
+        ariaLabel={t("newSandbox")}
+        dismissible={!importState.pending}
+        showCloseButton={!importState.pending}
+        closeButtonLabel={t("close")}
+        className="max-w-6xl"
+      >
+        <div className="flex items-start gap-4 border-b border-border pl-5 pr-16 py-4">
+          <div>
+            <h2 className="text-base font-semibold text-foreground">
+              {t("newSandbox")}
+            </h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {t("chooseASandboxSource")}
+            </p>
+          </div>
+        </div>
 
-            <form
-              action={isHermesImport ? undefined : createSandboxAction}
-              onSubmit={isHermesImport ? submitHermesArchive : undefined}
-              className="min-h-0 overflow-y-auto p-5"
-            >
-              <input type="hidden" name="workspace" value={workspace} />
-              <input type="hidden" name="kind" value={mode} />
-              <input type="hidden" name="imageChoice" value={selectedImage} />
+        <form
+          action={isHermesImport ? undefined : createSandboxAction}
+          onSubmit={isHermesImport ? submitHermesArchive : undefined}
+          className="min-h-0 overflow-y-auto p-5"
+        >
+          <input type="hidden" name="workspace" value={workspace} />
+          <input type="hidden" name="kind" value={mode} />
+          <input type="hidden" name="imageChoice" value={selectedImage} />
 
-              <div className="grid gap-5 xl:grid-cols-[19rem_minmax(0,1fr)]">
-                <div className="space-y-4">
-                  <div className="space-y-2">
-                    <ModeButton
-                      active={isDocker}
-                      icon={Container}
-                      title={t('dockerContainer')}
-                      description={t('managedLinuxWorkspaceWithPersistentFilesAndPackageInstalls')}
-                      onClick={() => {
-                        if (!importState.pending) setMode('docker');
-                      }}
-                    />
-                    <ModeButton
-                      active={mode === 'connector'}
-                      icon={Cable}
-                      title={t('userConnector')}
-                      description={t('aUserRunsOneNpxCommandAndConnectsALocalMachineOverWebsocket')}
-                      onClick={() => {
-                        if (!importState.pending) setMode('connector');
-                      }}
-                    />
-                    <ModeButton
-                      active={isHermesImport}
-                      icon={Upload}
-                      title={t('importHermesArchive')}
-                      description={t('importHermesArchiveModeDescription')}
-                      onClick={() => {
-                        if (!importState.pending) setMode('hermes-import');
-                      }}
-                    />
-                  </div>
-
-                  <div className="rounded-md border border-border bg-muted/20 px-3 py-3">
-                    <Input
-                      label={t('name')}
-                      name="name"
-                      placeholder={isHermesImport ? t('importedHermes') : isDocker ? t('researchContainer') : t('myLaptop')}
-                    />
-
-                    {isDocker ? (
-                      <Field label={t('network')} className="mt-3" hint={t('isolatedKeepsItOffTheAppdatabaseNetworkWhileAllowingInternetEgress')}>
-                        <div className="relative">
-                          <FormSelect name="network" defaultValue="isolated" label={t('network')} options={[{ value: "isolated", label: t('isolated') }, { value: "none", label: t('none') }]} className="w-full" />
-                        </div>
-                      </Field>
-                    ) : null}
-
-                    {isHermesImport ? (
-                      <>
-                        <div className="mt-3">
-                          <HermesImageSelector id="hermes-import-version" images={hermesImages} />
-                        </div>
-                        <Field
-                          label={t('hermesArchive')}
-                          className="mt-3"
-                          hint={t('hermesArchiveHint', { max: hermesArchiveLimitLabel(hermesArchiveMaxUploadMiB) })}
-                        >
-                          <input
-                            name="hermesArchive"
-                            type="file"
-                            accept=".zip,application/zip"
-                            required={isHermesImport}
-                            aria-label={t('hermesArchive')}
-                            onChange={() => {
-                              hermesImportId.current = null;
-                            }}
-                            className="rounded-xl border border-border bg-background px-3 py-2 text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring h-9 w-full cursor-pointer px-2 text-xs file:mr-3 file:border-0 file:bg-transparent file:text-xs file:font-medium"
-                          />
-                        </Field>
-                        <FormCheckbox name="trustArchive" required label={t('trustHermesArchive')} />
-                        <div className="mt-3"><FormCheckbox name="allowSudo" label={t('allowSudo')} /><p className="mt-1 text-xs text-muted-foreground">{t('allowSudoHint')}</p></div>
-                        {importState.error ? (
-                          <p className="text-sm text-destructive" role="alert">{importState.error}</p>
-                        ) : null}
-                      </>
-                    ) : (
-                      <>
-                        <Field label={t('environment')} className="mt-3" hint={t('environmentVariablesHint')}>
-                          <textarea
-                            name="env"
-                            rows={5}
-                            spellCheck={false}
-                            placeholder={t('envPlaceholder')}
-                            className="rounded-xl border border-border bg-background px-3 py-2 text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring min-h-28 w-full resize-y font-mono text-xs leading-5"
-                          />
-                        </Field>
-
-                        <div className="mt-4 rounded-md border border-border bg-background px-3 py-2">
-                          <div className="flex items-center gap-2 text-xs font-medium text-foreground">
-                            <Sparkles className="size-3.5 text-muted-foreground" />
-                            {t('recommendedChoices')}
-                          </div>
-                          <ul className="mt-2 space-y-1 text-xs leading-5 text-muted-foreground">
-                            <li>{t('frontendJavascriptNodeOrTypescriptNode')}</li>
-                            <li>{t('lightweightDebianBaseThenInstallOnlyWhatYouNeed')}</li>
-                            <li>{t('everythingUniversalLargerButBroad')}</li>
-                          </ul>
-                        </div>
-                      </>
-                    )}
-                  </div>
-                </div>
-
-                {isHermesImport ? (
-                  <div className="space-y-4">
-                    <div className="rounded-md border border-(--color-warning) bg-muted/35 px-4 py-4">
-                      <div className="flex items-start gap-3">
-                        <span className="flex size-8 shrink-0 items-center justify-center rounded-md border border-(--color-warning) bg-background text-(--color-warning) dark:text-(--color-warning)">
-                          <ShieldCheck className="size-4" />
-                        </span>
-                        <div>
-                          <h2 className="text-sm font-semibold text-foreground">{t('importHermesArchive')}</h2>
-                          <p className="mt-1 text-xs leading-5 text-muted-foreground">{t('importHermesArchiveDetails')}</p>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="rounded-md border border-border bg-background px-4 py-3">
-                      <h3 className="text-sm font-semibold text-foreground">{t('whatGetsImported')}</h3>
-                      <ul className="mt-2 space-y-1 text-xs leading-5 text-muted-foreground">
-                        <li>{t('hermesArchiveConfig')}</li>
-                        <li>{t('hermesArchiveData')}</li>
-                        <li>{t('hermesArchiveManagedPaths')}</li>
-                      </ul>
-                    </div>
-                  </div>
-                ) : isDocker ? (
-                  <RadioGroup value={selectedImage} onValueChange={setSelectedImage}>
-                  <div className="space-y-5">
-            <div className="rounded-md border border-border bg-muted/15 px-4 py-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <h2 className="text-sm font-semibold text-foreground">{t('chooseADevContainerImage')}</h2>
-                  <p className="mt-0.5 text-xs text-muted-foreground">
-                    {t('officialImagesFromMcrmicrosoftcomdevcontainersYouCanInstallMorePackagesAfterTheSandboxStarts')}
-                  </p>
-                </div>
-                <AnimatedBadge status="neutral" size="sm">
-                  {customSelected ? customImage || t('customImage') : selectedImage}
-                </AnimatedBadge>
-              </div>
-            </div>
-
-            <ImageGroup
-              title={t('mostUsedLanguageStacks')}
-              description={t('recommendedFirstChoicesForAgentWorkspaces')}
-              options={recommendedImages}
-              selectedImage={selectedImage}
-              onSelect={setSelectedImage}
-            />
-
-            <ImageGroup
-              title={t('generalPurposeImages')}
-              description={t('useTheseWhenYouWantASmallerBaseOrAWiderToolset')}
-              options={generalImages}
-              selectedImage={selectedImage}
-              onSelect={setSelectedImage}
-            />
-
-            <div className="rounded-lg border border-border p-3">
-                <span className="flex items-center gap-2">
-                  <RadioGroupItem value="custom" label={t('customImage1')} />
-              </span>
-              <span className="mt-1 block text-xs text-muted-foreground">
-                {t('useAnotherDockerImageWhenTheOfficialPresetsDoNotFit')}
-              </span>
-              <div className="relative mt-3">
-                
-                <Input leftIcon={<Server />}
-                  name="customImage"
-                  value={customImage}
-                  onChange={(value) => {
-                    setCustomImage(value);
-                    setSelectedImage('custom');
+          <div className="grid gap-5 xl:grid-cols-[19rem_minmax(0,1fr)]">
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <ModeButton
+                  active={isDocker}
+                  icon={Container}
+                  title={t("dockerContainer")}
+                  description={t(
+                    "managedLinuxWorkspaceWithPersistentFilesAndPackageInstalls",
+                  )}
+                  onClick={() => {
+                    if (!importState.pending) setMode("docker");
                   }}
-                  placeholder={t('ghcrioorgimagetag')}
-                  className="w-full"
+                />
+                <ModeButton
+                  active={mode === "connector"}
+                  icon={Cable}
+                  title={t("userConnector")}
+                  description={t(
+                    "aUserRunsOneNpxCommandAndConnectsALocalMachineOverWebsocket",
+                  )}
+                  onClick={() => {
+                    if (!importState.pending) setMode("connector");
+                  }}
+                />
+                <ModeButton
+                  active={isHermesImport}
+                  icon={Upload}
+                  title={t("importHermesArchive")}
+                  description={t("importHermesArchiveModeDescription")}
+                  onClick={() => {
+                    if (!importState.pending) setMode("hermes-import");
+                  }}
                 />
               </div>
-            </div>
 
-                  </div>
-                  </RadioGroup>
+              <div className="rounded-md border border-border bg-muted/20 px-3 py-3">
+                <Input
+                  label={t("name")}
+                  name="name"
+                  placeholder={
+                    isHermesImport
+                      ? t("importedHermes")
+                      : isDocker
+                        ? t("researchContainer")
+                        : t("myLaptop")
+                  }
+                />
+
+                {isDocker ? (
+                  <Field
+                    label={t("network")}
+                    htmlFor={`${fieldId}-network`}
+                    className="mt-3"
+                    hint={t(
+                      "isolatedKeepsItOffTheAppdatabaseNetworkWhileAllowingInternetEgress",
+                    )}
+                  >
+                    <div className="relative">
+                      <FormSelect
+                        id={`${fieldId}-network`}
+                        name="network"
+                        defaultValue="isolated"
+                        label={t("network")}
+                        options={[
+                          { value: "isolated", label: t("isolated") },
+                          { value: "none", label: t("none") },
+                        ]}
+                        className="w-full"
+                      />
+                    </div>
+                  </Field>
+                ) : null}
+
+                {isHermesImport ? (
+                  <>
+                    <div className="mt-3">
+                      <HermesImageSelector
+                        id="hermes-import-version"
+                        images={hermesImages}
+                      />
+                    </div>
+                    <Field
+                      label={t("hermesArchive")}
+                      htmlFor={`${fieldId}-archive`}
+                      className="mt-3"
+                      hint={t("hermesArchiveHint", {
+                        max: hermesArchiveLimitLabel(hermesArchiveMaxUploadMiB),
+                      })}
+                    >
+                      <input
+                        id={`${fieldId}-archive`}
+                        name="hermesArchive"
+                        type="file"
+                        accept=".zip,application/zip"
+                        required={isHermesImport}
+                        aria-label={t("hermesArchive")}
+                        onChange={() => {
+                          hermesImportId.current = null;
+                        }}
+                        className="rounded-xl border border-border bg-background px-3 py-2 text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring h-9 w-full cursor-pointer px-2 text-xs file:mr-3 file:border-0 file:bg-transparent file:text-xs file:font-medium"
+                      />
+                    </Field>
+                    <FormCheckbox
+                      name="trustArchive"
+                      required
+                      label={t("trustHermesArchive")}
+                    />
+                    <div className="mt-3">
+                      <FormCheckbox name="allowSudo" label={t("allowSudo")} />
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {t("allowSudoHint")}
+                      </p>
+                    </div>
+                    {importState.error ? (
+                      <p className="text-sm text-destructive" role="alert">
+                        {importState.error}
+                      </p>
+                    ) : null}
+                  </>
                 ) : (
-                  <div className="space-y-4">
-            <div className="rounded-md border border-border bg-muted/15 px-4 py-3">
-              <h2 className="text-sm font-semibold text-foreground">{t('connectAUserMachine')}</h2>
-              <p className="mt-0.5 text-xs text-muted-foreground">
-                {t('toolplaneGeneratesAOnetimeTokenTheUserRunsOneCommandAndTheConnectorCallsBackToThisServer')}
-              </p>
-            </div>
+                  <>
+                    <Field
+                      label={t("environment")}
+                      htmlFor={`${fieldId}-environment`}
+                      className="mt-3"
+                      hint={t("environmentVariablesHint")}
+                    >
+                      <textarea
+                        id={`${fieldId}-environment`}
+                        name="env"
+                        rows={5}
+                        spellCheck={false}
+                        placeholder={t("envPlaceholder")}
+                        className="rounded-xl border border-border bg-background px-3 py-2 text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring min-h-28 w-full resize-y font-mono text-xs leading-5"
+                      />
+                    </Field>
 
-            <div className="rounded-md border border-border bg-background px-4 py-3">
-              <ol className="space-y-2 text-xs text-muted-foreground">
-                <li>{t('1CreateTheConnectorSandbox')}</li>
-                <li>{t('2CopyTheGeneratedNpxCommandFromTheDetailPage')}</li>
-                <li>{t('3RunItOnTheUserMachineThatShouldBecomeTheSandbox')}</li>
-              </ol>
-            </div>
-
-                  </div>
+                    <div className="mt-4 rounded-md border border-border bg-background px-3 py-2">
+                      <div className="flex items-center gap-2 text-xs font-medium text-foreground">
+                        <Sparkles className="size-3.5 text-muted-foreground" />
+                        {t("recommendedChoices")}
+                      </div>
+                      <ul className="mt-2 space-y-1 text-xs leading-5 text-muted-foreground">
+                        <li>{t("frontendJavascriptNodeOrTypescriptNode")}</li>
+                        <li>
+                          {t("lightweightDebianBaseThenInstallOnlyWhatYouNeed")}
+                        </li>
+                        <li>{t("everythingUniversalLargerButBroad")}</li>
+                      </ul>
+                    </div>
+                  </>
                 )}
               </div>
-              <CreateSandboxFooter mode={mode} hermesImport={importState} />
-            </form>
+            </div>
+
+            {isHermesImport ? (
+              <div className="space-y-4">
+                <div className="rounded-md border border-(--color-warning) bg-muted/35 px-4 py-4">
+                  <div className="flex items-start gap-3">
+                    <span className="flex size-8 shrink-0 items-center justify-center rounded-md border border-(--color-warning) bg-background text-(--color-warning) dark:text-(--color-warning)">
+                      <ShieldCheck className="size-4" />
+                    </span>
+                    <div>
+                      <h2 className="text-sm font-semibold text-foreground">
+                        {t("importHermesArchive")}
+                      </h2>
+                      <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                        {t("importHermesArchiveDetails")}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+                <div className="rounded-md border border-border bg-background px-4 py-3">
+                  <h3 className="text-sm font-semibold text-foreground">
+                    {t("whatGetsImported")}
+                  </h3>
+                  <ul className="mt-2 space-y-1 text-xs leading-5 text-muted-foreground">
+                    <li>{t("hermesArchiveConfig")}</li>
+                    <li>{t("hermesArchiveData")}</li>
+                    <li>{t("hermesArchiveManagedPaths")}</li>
+                  </ul>
+                </div>
+              </div>
+            ) : isDocker ? (
+              <RadioGroup
+                value={selectedImage}
+                onValueChange={setSelectedImage}
+              >
+                <div className="space-y-5">
+                  <div className="rounded-md border border-border bg-muted/15 px-4 py-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <h2 className="text-sm font-semibold text-foreground">
+                          {t("chooseADevContainerImage")}
+                        </h2>
+                        <p className="mt-0.5 text-xs text-muted-foreground">
+                          {t(
+                            "officialImagesFromMcrmicrosoftcomdevcontainersYouCanInstallMorePackagesAfterTheSandboxStarts",
+                          )}
+                        </p>
+                      </div>
+                      <AnimatedBadge status="neutral" size="sm">
+                        {customSelected
+                          ? customImage || t("customImage")
+                          : selectedImage}
+                      </AnimatedBadge>
+                    </div>
+                  </div>
+
+                  <ImageGroup
+                    title={t("mostUsedLanguageStacks")}
+                    description={t("recommendedFirstChoicesForAgentWorkspaces")}
+                    options={recommendedImages}
+                    selectedImage={selectedImage}
+                    onSelect={setSelectedImage}
+                  />
+
+                  <ImageGroup
+                    title={t("generalPurposeImages")}
+                    description={t(
+                      "useTheseWhenYouWantASmallerBaseOrAWiderToolset",
+                    )}
+                    options={generalImages}
+                    selectedImage={selectedImage}
+                    onSelect={setSelectedImage}
+                  />
+
+                  <div className="rounded-lg border border-border p-3">
+                    <span className="flex items-center gap-2">
+                      <RadioGroupItem
+                        value="custom"
+                        label={t("customImage1")}
+                      />
+                    </span>
+                    <span className="mt-1 block text-xs text-muted-foreground">
+                      {t("useAnotherDockerImageWhenTheOfficialPresetsDoNotFit")}
+                    </span>
+                    <div className="relative mt-3">
+                      <Input
+                        leftIcon={<Server />}
+                        name="customImage"
+                        value={customImage}
+                        onChange={(value) => {
+                          setCustomImage(value);
+                          setSelectedImage("custom");
+                        }}
+                        placeholder={t("ghcrioorgimagetag")}
+                        className="w-full"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </RadioGroup>
+            ) : (
+              <div className="space-y-4">
+                <div className="rounded-md border border-border bg-muted/15 px-4 py-3">
+                  <h2 className="text-sm font-semibold text-foreground">
+                    {t("connectAUserMachine")}
+                  </h2>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    {t(
+                      "toolplaneGeneratesAOnetimeTokenTheUserRunsOneCommandAndTheConnectorCallsBackToThisServer",
+                    )}
+                  </p>
+                </div>
+
+                <div className="rounded-md border border-border bg-background px-4 py-3">
+                  <ol className="space-y-2 text-xs text-muted-foreground">
+                    <li>{t("1CreateTheConnectorSandbox")}</li>
+                    <li>{t("2CopyTheGeneratedNpxCommandFromTheDetailPage")}</li>
+                    <li>
+                      {t("3RunItOnTheUserMachineThatShouldBecomeTheSandbox")}
+                    </li>
+                  </ol>
+                </div>
+              </div>
+            )}
+          </div>
+          <CreateSandboxFooter mode={mode} hermesImport={importState} />
+        </form>
       </CenterMorphModalContent>
     </CenterMorphModal>
   );

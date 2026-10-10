@@ -1,21 +1,29 @@
-import { getLocale, getTranslations } from 'next-intl/server';
-import { redirect } from 'next/navigation';
-import { getCurrentUser } from '@/lib/auth/current-user';
-import { db } from '@/lib/db';
-import { getWorkspaceForUser } from '@/lib/workspace/queries';
-import { listToolkits, getOrCreateDefaultToolkit } from '@/lib/toolkits/queries';
-import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
-import { ToolkitsBrowser } from '@/components/dashboard/ToolkitsBrowser';
-import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
+import { getLocale, getTranslations } from "next-intl/server";
+import { redirect } from "next/navigation";
+import { getCurrentUser } from "@/lib/auth/current-user";
+import { db } from "@/lib/db";
+import { getWorkspaceForUser } from "@/lib/workspace/queries";
+import {
+  listToolkits,
+  getOrCreateDefaultToolkit,
+} from "@/lib/toolkits/queries";
+import { DashboardHeader } from "@/components/dashboard/DashboardHeader";
+import { ToolkitsBrowser } from "@/components/dashboard/ToolkitsBrowser";
+import { formatInTimeZone, resolveUserTimeZone } from "@/lib/timezone";
 
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
 function fmt(d: Date, timeZone: string, locale: string) {
-  return formatInTimeZone(d, timeZone, {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  }, locale);
+  return formatInTimeZone(
+    d,
+    timeZone,
+    {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    },
+    locale,
+  );
 }
 
 export default async function ToolkitsPage({
@@ -26,33 +34,40 @@ export default async function ToolkitsPage({
   searchParams: Promise<{ create?: string }>;
 }) {
   const [t, locale] = await Promise.all([
-    getTranslations('console.toolkits'),
+    getTranslations("console.toolkits"),
     getLocale(),
   ]);
-  const [{ workspace: slug }, query] = await Promise.all([params, searchParams]);
+  const [{ workspace: slug }, query] = await Promise.all([
+    params,
+    searchParams,
+  ]);
   const user = await getCurrentUser();
-  if (!user) redirect('/app/login');
+  if (!user) redirect("/app/login");
   const timeZone = resolveUserTimeZone(user);
   const ws = await getWorkspaceForUser(slug, user.id);
-  if (!ws) redirect('/app');
-  const managerMembership = ws.ownerId === user.id
-    ? null
-    : await db.membership.findUnique({
-      where: { workspaceId_userId: { workspaceId: ws.id, userId: user.id } },
-      select: { role: true },
-    });
-  const canManagePublishing = ws.ownerId === user.id || managerMembership?.role === 'admin';
+  if (!ws) redirect("/app");
+  const managerMembership =
+    ws.ownerId === user.id
+      ? null
+      : await db.membership.findUnique({
+          where: {
+            workspaceId_userId: { workspaceId: ws.id, userId: user.id },
+          },
+          select: { role: true },
+        });
+  const canManagePublishing =
+    ws.ownerId === user.id || managerMembership?.role === "admin";
 
   await getOrCreateDefaultToolkit(ws.id);
   const toolkits = await listToolkits(ws.id);
 
   return (
     <>
-      <DashboardHeader title={t('toolkits')} />
+      <DashboardHeader title={t("toolkits")} />
       <ToolkitsBrowser
         slug={slug}
         canManagePublishing={canManagePublishing}
-        startCreating={query.create === '1'}
+        startCreating={query.create === "1"}
         toolkits={toolkits.map((t) => ({
           id: t.id,
           name: t.name,

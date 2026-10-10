@@ -1,21 +1,21 @@
-import { db } from '@/lib/db';
-import { listPublicAgentDirectory } from '@/lib/queries/public-agents';
-import { normalizedSkillDescription } from '@/lib/skills/frontmatter';
+import { db } from "@/lib/db";
+import { listPublicAgentDirectory } from "@/lib/queries/public-agents";
+import { normalizedSkillDescription } from "@/lib/skills/frontmatter";
 
 export async function searchPublicDirectory(query: string) {
   const q = query.trim().slice(0, 160);
   if (!q) return { servers: [], clients: [], skills: [], agents: [] };
   const where = {
     OR: [
-      { name: { contains: q, mode: 'insensitive' as const } },
-      { description: { contains: q, mode: 'insensitive' as const } },
+      { name: { contains: q, mode: "insensitive" as const } },
+      { description: { contains: q, mode: "insensitive" as const } },
     ],
   };
   const [servers, clients, skills, agents] = await Promise.all([
     db.server.findMany({
       where,
       take: 50,
-      orderBy: { stars: 'desc' },
+      orderBy: { stars: "desc" },
       select: {
         slug: true,
         name: true,
@@ -29,7 +29,7 @@ export async function searchPublicDirectory(query: string) {
     db.client.findMany({
       where,
       take: 50,
-      orderBy: { stars: 'desc' },
+      orderBy: { stars: "desc" },
       select: {
         slug: true,
         name: true,
@@ -43,7 +43,7 @@ export async function searchPublicDirectory(query: string) {
     db.skill.findMany({
       where,
       take: 50,
-      orderBy: { score: 'desc' },
+      orderBy: { score: "desc" },
       select: {
         slug: true,
         name: true,

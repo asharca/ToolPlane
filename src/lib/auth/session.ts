@@ -1,21 +1,24 @@
-import 'server-only';
-import { cookies } from 'next/headers';
-import { SignJWT, jwtVerify } from 'jose';
-import { db } from '@/lib/db';
-import { secureSessionCookie } from './session-cookie';
+import "server-only";
+import { cookies } from "next/headers";
+import { SignJWT, jwtVerify } from "jose";
+import { db } from "@/lib/db";
+import { secureSessionCookie } from "./session-cookie";
 
-const COOKIE_NAME = 'mcp_session';
+const COOKIE_NAME = "mcp_session";
 const MAX_AGE_SECONDS = 60 * 60 * 24 * 30; // 30 days
 
 function secretKey(): Uint8Array {
   const secret = process.env.AUTH_SECRET;
-  if (!secret) throw new Error('AUTH_SECRET environment variable is not set');
+  if (!secret) throw new Error("AUTH_SECRET environment variable is not set");
   return new TextEncoder().encode(secret);
 }
 
-export async function createSession(userId: string, sessionVersion: number): Promise<void> {
+export async function createSession(
+  userId: string,
+  sessionVersion: number,
+): Promise<void> {
   const token = await new SignJWT({ sub: userId, sv: sessionVersion })
-    .setProtectedHeader({ alg: 'HS256' })
+    .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime(`${MAX_AGE_SECONDS}s`)
     .sign(secretKey());
@@ -24,8 +27,8 @@ export async function createSession(userId: string, sessionVersion: number): Pro
   store.set(COOKIE_NAME, token, {
     httpOnly: true,
     secure: secureSessionCookie(),
-    sameSite: 'lax',
-    path: '/',
+    sameSite: "lax",
+    path: "/",
     maxAge: MAX_AGE_SECONDS,
   });
 }
@@ -36,13 +39,14 @@ export async function getSessionUserId(): Promise<string | null> {
   if (!token) return null;
   try {
     const { payload } = await jwtVerify(token, secretKey());
-    if (typeof payload.sub !== 'string') return null;
-    const tokenVersion = typeof payload.sv === 'number' ? payload.sv : 0;
+    if (typeof payload.sub !== "string") return null;
+    const tokenVersion = typeof payload.sv === "number" ? payload.sv : 0;
     const user = await db.user.findUnique({
       where: { id: payload.sub },
       select: { sessionVersion: true, status: true },
     });
-    if (!user || user.status !== 'active' || user.sessionVersion !== tokenVersion) return null;
+    if (user?.status !== "active" || user.sessionVersion !== tokenVersion)
+      return null;
     return payload.sub;
   } catch {
     return null;

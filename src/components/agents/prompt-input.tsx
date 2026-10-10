@@ -43,10 +43,11 @@ export interface PromptAction {
   disabled?: boolean;
 }
 
-export interface PromptInputProps extends Omit<
-  TextareaHTMLAttributes<HTMLTextAreaElement>,
-  "value" | "defaultValue" | "onChange" | "onSubmit" | "children"
-> {
+export interface PromptInputProps
+  extends Omit<
+    TextareaHTMLAttributes<HTMLTextAreaElement>,
+    "value" | "defaultValue" | "onChange" | "onSubmit" | "children"
+  > {
   value?: string;
   defaultValue?: string;
   onValueChange?: (value: string) => void;
@@ -308,7 +309,9 @@ export function PromptInput({
           <AnimatePresence initial={false} mode="popLayout">
             <motion.span
               key={loading ? "stop" : "send"}
-              initial={reduce ? { opacity: 1 } : { opacity: 0, y: 3, scale: 0.8 }}
+              initial={
+                reduce ? { opacity: 1 } : { opacity: 0, y: 3, scale: 0.8 }
+              }
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={reduce ? { opacity: 0 } : { opacity: 0, y: -3, scale: 0.8 }}
               transition={reduce ? { duration: 0 } : SPRING_SWAP}

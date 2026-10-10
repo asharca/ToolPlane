@@ -1,14 +1,28 @@
-import { installationName, type InstallationIdentity } from './installation-identity';
-import { resolveInstallClient } from './clients';
+import {
+  installationName,
+  type InstallationIdentity,
+} from "./installation-identity";
+import { resolveInstallClient } from "./clients";
 
 // Fetching or previewing the link does not rotate anyone's credentials. Only
 // running this bootstrap registers/rotates the current local installation.
-export function buildInstallBootstrap(opts: InstallationIdentity & { linkId: string; client: string; uninstall?: boolean }): string {
+export function buildInstallBootstrap(
+  opts: InstallationIdentity & {
+    linkId: string;
+    client: string;
+    uninstall?: boolean;
+  },
+): string {
   const client = resolveInstallClient(opts.client);
   const name = installationName(opts);
-  const config = Buffer.from(JSON.stringify({
-    endpoint: `${opts.base}/install/${encodeURIComponent(opts.linkId)}`, client, name, uninstall: opts.uninstall === true,
-  })).toString('base64');
+  const config = Buffer.from(
+    JSON.stringify({
+      endpoint: `${opts.base}/install/${encodeURIComponent(opts.linkId)}`,
+      client,
+      name,
+      uninstall: opts.uninstall === true,
+    }),
+  ).toString("base64");
   return String.raw`#!/usr/bin/env bash
 set -eo pipefail
 umask 077

@@ -1,7 +1,7 @@
-import { getTranslations } from 'next-intl/server';
-import { Search } from 'lucide-react';
-import { ButtonLink } from '@/components/motion/button';
-import { Input } from '@/components/motion/input';
+import { getTranslations } from "next-intl/server";
+import { Search } from "lucide-react";
+import { ButtonLink } from "@/components/motion/button";
+import { Input } from "@/components/motion/input";
 
 type Category = { slug: string; name: string };
 
@@ -17,7 +17,13 @@ function CategoryChip({
   active?: boolean;
 }) {
   return (
-    <ButtonLink href={href} variant={active ? 'primary' : 'secondary'} size="sm" className="snap-start shrink-0" aria-current={active ? 'page' : undefined}>
+    <ButtonLink
+      href={href}
+      variant={active ? "primary" : "secondary"}
+      size="sm"
+      className="snap-start shrink-0"
+      aria-current={active ? "page" : undefined}
+    >
       {label}
     </ButtonLink>
   );
@@ -30,11 +36,11 @@ export async function ListingHero({
   subtitle,
   placeholder,
   categories,
-  searchAction = '/search',
+  searchAction = "/search",
   defaultSearchValue,
   activeCategory,
   categoryHref = (slug) =>
-    slug ? `/categories/${encodeURIComponent(slug)}` : '/categories',
+    slug ? `/categories/${encodeURIComponent(slug)}` : "/categories",
   hiddenFields,
 }: {
   lead: string;
@@ -48,12 +54,12 @@ export async function ListingHero({
   categoryHref?: (slug: string | null) => string;
   hiddenFields?: Record<string, HiddenFieldValue | null | undefined>;
 }) {
-  const t = await getTranslations('common');
+  const t = await getTranslations("common");
   return (
     <section className="relative mt-1 overflow-hidden rounded-[14px] border border-border/80 bg-card px-5 py-10 sm:mt-2 sm:px-8 sm:py-12">
       <div className="relative text-center">
         <h1 className="mx-auto max-w-4xl text-balance text-4xl font-semibold tracking-[-0.04em] sm:text-6xl">
-          <span className="text-foreground">{lead}</span>{' '}
+          <span className="text-foreground">{lead}</span>{" "}
           <span className="text-muted-foreground">{tail}</span>
         </h1>
         <p className="mx-auto mt-4 max-w-2xl text-sm leading-6 text-muted-foreground sm:text-base">
@@ -70,18 +76,23 @@ export async function ListingHero({
           />
           {Object.entries(hiddenFields ?? {}).map(([name, value]) =>
             value === null || value === undefined ? null : (
-              <input key={name} type="hidden" name={name} value={String(value)} />
+              <input
+                key={name}
+                type="hidden"
+                name={name}
+                value={String(value)}
+              />
             ),
           )}
         </form>
         {categories.length > 0 ? (
           <nav
-            aria-label={t('browseCategories')}
+            aria-label={t("browseCategories")}
             className="mx-auto mt-4 flex max-w-3xl snap-x gap-2 overflow-x-auto pb-1 sm:flex-wrap sm:justify-center sm:overflow-visible"
           >
             <CategoryChip
               href={categoryHref(null)}
-              label={t('all')}
+              label={t("all")}
               active={!activeCategory}
             />
             {categories.slice(0, 8).map((c) => (

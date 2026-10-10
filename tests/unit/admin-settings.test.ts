@@ -1,13 +1,13 @@
 // @vitest-environment node
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_HERMES_ARCHIVE_MAX_UPLOAD_MIB,
   MAX_HERMES_ARCHIVE_MAX_UPLOAD_MIB,
-} from '@/lib/agents/hermes/archive-limits';
+} from "@/lib/agents/hermes/archive-limits";
 import {
   DEFAULT_SKILL_IMPORT_SKILLS,
   MAX_SKILL_IMPORT_SKILLS,
-} from '@/lib/skills/limits';
+} from "@/lib/skills/limits";
 
 const mocks = vi.hoisted(() => ({
   findUnique: vi.fn(),
@@ -16,7 +16,7 @@ const mocks = vi.hoisted(() => ({
   auditCreate: vi.fn(),
 }));
 
-vi.mock('@/lib/db', () => {
+vi.mock("@/lib/db", () => {
   const tx = {
     systemSetting: {
       findUnique: mocks.findUnique,
@@ -25,7 +25,12 @@ vi.mock('@/lib/db', () => {
     },
     auditEvent: { create: mocks.auditCreate },
   };
-  return { db: { ...tx, $transaction: (run: (client: typeof tx) => unknown) => run(tx) } };
+  return {
+    db: {
+      ...tx,
+      $transaction: (run: (client: typeof tx) => unknown) => run(tx),
+    },
+  };
 });
 
 import {
@@ -43,9 +48,9 @@ import {
   updateMcpStartupTimeoutSettings,
   updateRemoteMcpPrivateHostsSettings,
   updateSkillImportSettings,
-} from '@/lib/admin/settings';
+} from "@/lib/admin/settings";
 
-describe('system settings storage', () => {
+describe("system settings storage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.findUnique.mockResolvedValue(null);
@@ -55,7 +60,7 @@ describe('system settings storage', () => {
     vi.unstubAllEnvs();
   });
 
-  it('uses the safe archive default until the generic setting row exists', async () => {
+  it("uses the safe archive default until the generic setting row exists", async () => {
     mocks.findUnique.mockResolvedValue(null);
 
     await expect(getHermesArchiveSettings()).resolves.toEqual({
@@ -67,10 +72,12 @@ describe('system settings storage', () => {
     });
   });
 
-  it('writes a key/value setting and never expands a stale value past the hard cap', async () => {
+  it("writes a key/value setting and never expands a stale value past the hard cap", async () => {
     mocks.upsert.mockResolvedValue(undefined);
 
-    await expect(updateHermesArchiveSettings(MAX_HERMES_ARCHIVE_MAX_UPLOAD_MIB + 1)).resolves.toEqual({
+    await expect(
+      updateHermesArchiveSettings(MAX_HERMES_ARCHIVE_MAX_UPLOAD_MIB + 1),
+    ).resolves.toEqual({
       hermesArchiveMaxUploadMiB: MAX_HERMES_ARCHIVE_MAX_UPLOAD_MIB,
     });
     expect(mocks.upsert).toHaveBeenCalledWith({
@@ -81,56 +88,67 @@ describe('system settings storage', () => {
       },
       update: { value: String(MAX_HERMES_ARCHIVE_MAX_UPLOAD_MIB) },
     });
-    expect(mocks.auditCreate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: 'setting.changed', actorId: 'system' }) }));
+    expect(mocks.auditCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          action: "setting.changed",
+          actorId: "system",
+        }),
+      }),
+    );
   });
 
-  it('falls back to the safe default while the shared settings table is unavailable', async () => {
-    mocks.findUnique.mockRejectedValue(new Error('relation does not exist'));
+  it("falls back to the safe default while the shared settings table is unavailable", async () => {
+    mocks.findUnique.mockRejectedValue(new Error("relation does not exist"));
 
     await expect(getHermesArchiveSettings()).resolves.toEqual({
       hermesArchiveMaxUploadMiB: DEFAULT_HERMES_ARCHIVE_MAX_UPLOAD_MIB,
     });
   });
 
-  it('uses the default skill import limit until a valid administrator override exists', async () => {
+  it("uses the default skill import limit until a valid administrator override exists", async () => {
     mocks.findUnique.mockResolvedValue(null);
     await expect(getSkillImportSettings()).resolves.toEqual({
       maxSkills: DEFAULT_SKILL_IMPORT_SKILLS,
     });
 
-    mocks.findUnique.mockResolvedValue({ value: '80' });
+    mocks.findUnique.mockResolvedValue({ value: "80" });
     await expect(getSkillImportSettings()).resolves.toEqual({ maxSkills: 80 });
 
-    mocks.findUnique.mockResolvedValue({ value: String(MAX_SKILL_IMPORT_SKILLS + 1) });
+    mocks.findUnique.mockResolvedValue({
+      value: String(MAX_SKILL_IMPORT_SKILLS + 1),
+    });
     await expect(getSkillImportSettings()).resolves.toEqual({
       maxSkills: DEFAULT_SKILL_IMPORT_SKILLS,
     });
   });
 
-  it('writes a bounded skill import limit', async () => {
+  it("writes a bounded skill import limit", async () => {
     mocks.upsert.mockResolvedValue(undefined);
 
-    await expect(updateSkillImportSettings(80)).resolves.toEqual({ maxSkills: 80 });
+    await expect(updateSkillImportSettings(80)).resolves.toEqual({
+      maxSkills: 80,
+    });
     expect(mocks.upsert).toHaveBeenCalledWith({
       where: { key: SKILL_IMPORT_MAX_SKILLS_SETTING_KEY },
-      create: { key: SKILL_IMPORT_MAX_SKILLS_SETTING_KEY, value: '80' },
-      update: { value: '80' },
+      create: { key: SKILL_IMPORT_MAX_SKILLS_SETTING_KEY, value: "80" },
+      update: { value: "80" },
     });
 
-    await expect(updateSkillImportSettings(MAX_SKILL_IMPORT_SKILLS + 1)).rejects.toThrow(
-      'Invalid skill import maximum.',
-    );
+    await expect(
+      updateSkillImportSettings(MAX_SKILL_IMPORT_SKILLS + 1),
+    ).rejects.toThrow("Invalid skill import maximum.");
   });
 
-  it('uses the Compose environment values until an administrator saves an MCP timeout override', async () => {
-    vi.stubEnv('TOOLPLANE_MCP_STARTUP_IDLE_TIMEOUT_MS', '300000');
-    vi.stubEnv('TOOLPLANE_MCP_STARTUP_MAX_TIMEOUT_MS', '900000');
+  it("uses the Compose environment values until an administrator saves an MCP timeout override", async () => {
+    vi.stubEnv("TOOLPLANE_MCP_STARTUP_IDLE_TIMEOUT_MS", "300000");
+    vi.stubEnv("TOOLPLANE_MCP_STARTUP_MAX_TIMEOUT_MS", "900000");
     mocks.findUnique.mockResolvedValue(null);
 
     await expect(resolveMcpStartupTimeoutSettings()).resolves.toEqual({
       idleTimeoutMs: 300_000,
       maxTimeoutMs: 900_000,
-      source: 'environment',
+      source: "environment",
     });
 
     mocks.findUnique.mockResolvedValue({
@@ -139,40 +157,50 @@ describe('system settings storage', () => {
     await expect(resolveMcpStartupTimeoutSettings()).resolves.toEqual({
       idleTimeoutMs: 120_000,
       maxTimeoutMs: 600_000,
-      source: 'database',
+      source: "database",
     });
   });
 
-  it('rejects malformed persisted MCP timeouts and falls back to the compatible environment alias', async () => {
-    vi.stubEnv('TOOLPLANE_MCP_STARTUP_IDLE_TIMEOUT_MS', '');
-    vi.stubEnv('TOOLPLANE_MCP_STARTUP_MAX_TIMEOUT_MS', '');
-    vi.stubEnv('MCP_STARTUP_IDLE_TIMEOUT_MS', '180000');
-    vi.stubEnv('MCP_STARTUP_MAX_TIMEOUT_MS', '540000');
-    mocks.findUnique.mockResolvedValue({ value: '{not-json' });
+  it("rejects malformed persisted MCP timeouts and falls back to the compatible environment alias", async () => {
+    vi.stubEnv("TOOLPLANE_MCP_STARTUP_IDLE_TIMEOUT_MS", "");
+    vi.stubEnv("TOOLPLANE_MCP_STARTUP_MAX_TIMEOUT_MS", "");
+    vi.stubEnv("MCP_STARTUP_IDLE_TIMEOUT_MS", "180000");
+    vi.stubEnv("MCP_STARTUP_MAX_TIMEOUT_MS", "540000");
+    mocks.findUnique.mockResolvedValue({ value: "{not-json" });
 
     await expect(resolveMcpStartupTimeoutSettings()).resolves.toEqual({
       idleTimeoutMs: 180_000,
       maxTimeoutMs: 540_000,
-      source: 'environment',
+      source: "environment",
     });
   });
 
-  it('writes and resets the paired MCP timeout override atomically', async () => {
+  it("writes and resets the paired MCP timeout override atomically", async () => {
     mocks.upsert.mockResolvedValue(undefined);
     mocks.deleteMany.mockResolvedValue({ count: 1 });
 
-    await expect(updateMcpStartupTimeoutSettings(300_000, 900_000)).resolves.toEqual({
+    await expect(
+      updateMcpStartupTimeoutSettings(300_000, 900_000),
+    ).resolves.toEqual({
       idleTimeoutMs: 300_000,
       maxTimeoutMs: 900_000,
-      source: 'database',
+      source: "database",
     });
     expect(mocks.upsert).toHaveBeenCalledWith({
       where: { key: MCP_STARTUP_TIMEOUTS_SETTING_KEY },
       create: {
         key: MCP_STARTUP_TIMEOUTS_SETTING_KEY,
-        value: JSON.stringify({ idleTimeoutMs: 300_000, maxTimeoutMs: 900_000 }),
+        value: JSON.stringify({
+          idleTimeoutMs: 300_000,
+          maxTimeoutMs: 900_000,
+        }),
       },
-      update: { value: JSON.stringify({ idleTimeoutMs: 300_000, maxTimeoutMs: 900_000 }) },
+      update: {
+        value: JSON.stringify({
+          idleTimeoutMs: 300_000,
+          maxTimeoutMs: 900_000,
+        }),
+      },
     });
 
     await resetMcpStartupTimeoutSettings();
@@ -181,67 +209,74 @@ describe('system settings storage', () => {
     });
   });
 
-  it('refuses an unsafe MCP timeout pair before writing a setting row', async () => {
-    await expect(updateMcpStartupTimeoutSettings(900_000, 300_000)).rejects.toThrow(
-      'Invalid MCP startup timeouts.',
-    );
+  it("refuses an unsafe MCP timeout pair before writing a setting row", async () => {
+    await expect(
+      updateMcpStartupTimeoutSettings(900_000, 300_000),
+    ).rejects.toThrow("Invalid MCP startup timeouts.");
 
     expect(mocks.upsert).not.toHaveBeenCalled();
   });
 
-  it('uses a normalized administrator Remote MCP allowlist ahead of the environment fallback', async () => {
-    vi.stubEnv('TOOLPLANE_REMOTE_MCP_PRIVATE_HOSTS', '*.rhzy.ai,10.0.10.42');
+  it("uses a normalized administrator Remote MCP allowlist ahead of the environment fallback", async () => {
+    vi.stubEnv("TOOLPLANE_REMOTE_MCP_PRIVATE_HOSTS", "*.rhzy.ai,10.0.10.42");
     mocks.findUnique.mockResolvedValue(null);
 
     await expect(resolveRemoteMcpPrivateHostsSettings()).resolves.toEqual({
-      value: '*.rhzy.ai,10.0.10.42',
-      source: 'environment',
+      value: "*.rhzy.ai,10.0.10.42",
+      source: "environment",
     });
 
-    mocks.findUnique.mockResolvedValue({ value: 'MCP.RHZY.AI.\n*.RHZY.AI,10.0.10.42' });
+    mocks.findUnique.mockResolvedValue({
+      value: "MCP.RHZY.AI.\n*.RHZY.AI,10.0.10.42",
+    });
     await expect(resolveRemoteMcpPrivateHostsSettings()).resolves.toEqual({
-      value: 'mcp.rhzy.ai,*.rhzy.ai,10.0.10.42',
-      source: 'database',
+      value: "mcp.rhzy.ai,*.rhzy.ai,10.0.10.42",
+      source: "database",
     });
   });
 
-  it('fails closed for an invalid stored Remote MCP allowlist', async () => {
-    vi.stubEnv('TOOLPLANE_REMOTE_MCP_PRIVATE_HOSTS', '*.rhzy.ai');
-    mocks.findUnique.mockResolvedValue({ value: '127.0.0.1' });
+  it("fails closed for an invalid stored Remote MCP allowlist", async () => {
+    vi.stubEnv("TOOLPLANE_REMOTE_MCP_PRIVATE_HOSTS", "*.rhzy.ai");
+    mocks.findUnique.mockResolvedValue({ value: "127.0.0.1" });
 
     await expect(resolveRemoteMcpPrivateHostsSettings()).resolves.toEqual({
-      value: '',
-      source: 'database',
+      value: "",
+      source: "database",
     });
   });
 
-  it('fails closed when the stored Remote MCP allowlist cannot be read', async () => {
-    vi.stubEnv('TOOLPLANE_REMOTE_MCP_PRIVATE_HOSTS', '*.rhzy.ai');
-    mocks.findUnique.mockRejectedValue(new Error('database unavailable'));
+  it("fails closed when the stored Remote MCP allowlist cannot be read", async () => {
+    vi.stubEnv("TOOLPLANE_REMOTE_MCP_PRIVATE_HOSTS", "*.rhzy.ai");
+    mocks.findUnique.mockRejectedValue(new Error("database unavailable"));
 
     await expect(resolveRemoteMcpPrivateHostsSettings()).resolves.toEqual({
-      value: '',
-      source: 'default',
+      value: "",
+      source: "default",
     });
   });
 
-  it('writes, normalizes, and resets the Remote MCP private host allowlist', async () => {
+  it("writes, normalizes, and resets the Remote MCP private host allowlist", async () => {
     mocks.upsert.mockResolvedValue(undefined);
     mocks.deleteMany.mockResolvedValue({ count: 1 });
 
-    await expect(updateRemoteMcpPrivateHostsSettings('*.RHZY.AI\n10.0.10.42')).resolves.toEqual({
-      value: '*.rhzy.ai,10.0.10.42',
-      source: 'database',
+    await expect(
+      updateRemoteMcpPrivateHostsSettings("*.RHZY.AI\n10.0.10.42"),
+    ).resolves.toEqual({
+      value: "*.rhzy.ai,10.0.10.42",
+      source: "database",
     });
     expect(mocks.upsert).toHaveBeenCalledWith({
       where: { key: REMOTE_MCP_PRIVATE_HOSTS_SETTING_KEY },
-      create: { key: REMOTE_MCP_PRIVATE_HOSTS_SETTING_KEY, value: '*.rhzy.ai,10.0.10.42' },
-      update: { value: '*.rhzy.ai,10.0.10.42' },
+      create: {
+        key: REMOTE_MCP_PRIVATE_HOSTS_SETTING_KEY,
+        value: "*.rhzy.ai,10.0.10.42",
+      },
+      update: { value: "*.rhzy.ai,10.0.10.42" },
     });
 
-    await expect(updateRemoteMcpPrivateHostsSettings('127.0.0.1')).rejects.toThrow(
-      'Invalid Remote MCP private host allowlist.',
-    );
+    await expect(
+      updateRemoteMcpPrivateHostsSettings("127.0.0.1"),
+    ).rejects.toThrow("Invalid Remote MCP private host allowlist.");
     await resetRemoteMcpPrivateHostsSettings();
     expect(mocks.deleteMany).toHaveBeenCalledWith({
       where: { key: REMOTE_MCP_PRIVATE_HOSTS_SETTING_KEY },

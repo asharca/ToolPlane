@@ -34,9 +34,12 @@ export function parseBooleanRecordCookie(value?: string) {
   if (!value) return {};
   try {
     const parsed: unknown = JSON.parse(decodeURIComponent(value));
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+      return {};
     return Object.fromEntries(
-      Object.entries(parsed).filter((entry): entry is [string, boolean] => typeof entry[1] === 'boolean'),
+      Object.entries(parsed).filter(
+        (entry): entry is [string, boolean] => typeof entry[1] === "boolean",
+      ),
     );
   } catch {
     return {};

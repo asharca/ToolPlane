@@ -1,12 +1,12 @@
+import { AnimatedBadge } from "@/components/motion/animated-badge";
 
-import { AnimatedBadge } from '@/components/motion/animated-badge';
-
-import { ButtonLink } from '@/components/motion/button';
-import { getTranslations } from 'next-intl/server';
-import Link from 'next/link';
-import { CheckCircle2, ChevronRight } from 'lucide-react';
-import { SubmitButton } from '@/components/dashboard/SubmitButton';
-import { installMarketResourceAction } from '@/lib/market/actions';
+import { ButtonLink } from "@/components/motion/button";
+import { getTranslations } from "next-intl/server";
+import Image from "next/image";
+import Link from "next/link";
+import { CheckCircle2, ChevronRight } from "lucide-react";
+import { SubmitButton } from "@/components/dashboard/SubmitButton";
+import { installMarketResourceAction } from "@/lib/market/actions";
 
 type BrowseItem = {
   id: string;
@@ -48,11 +48,11 @@ export async function BrowseGrid({
   actionLabel: string;
   pendingLabel: string;
   installedLabel: string;
-  detailKind: 'mcp' | 'skills';
+  detailKind: "mcp" | "skills";
 }) {
   const [common, market] = await Promise.all([
-    getTranslations('console.common'),
-    getTranslations('console.market'),
+    getTranslations("console.common"),
+    getTranslations("console.market"),
   ]);
   return (
     <div className="grid gap-2">
@@ -61,93 +61,119 @@ export async function BrowseGrid({
           ? `/app/${encodeURIComponent(slug)}/market/items/${encodeURIComponent(it.marketListing.namespace)}/${encodeURIComponent(it.marketListing.slug)}`
           : `/app/${encodeURIComponent(slug)}/market/${detailKind}/${encodeURIComponent(it.slug)}`;
         return (
-        <article
-          key={it.id}
-          className="flex min-w-0 flex-col gap-3 rounded-xl border border-border bg-card p-3 sm:flex-row sm:items-center"
-        >
-          <div className="flex min-w-0 flex-1 items-start gap-3">
-            {it.iconUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={it.iconUrl}
-                alt=""
-                width={32}
-                height={32}
-                className="size-8 shrink-0 rounded-lg object-cover"
-              />
-            ) : (
-              <span
-                aria-hidden="true"
-                className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-sm font-semibold text-muted-foreground"
-              >
-                {Array.from(it.name.trim())[0]?.toUpperCase() ?? 'S'}
-              </span>
-            )}
-            <div className="min-w-0 flex-1">
-              <Link
-                href={detailHref}
-                className="line-clamp-1 font-semibold text-foreground hover:underline"
-              >
-                {it.name}
-              </Link>
-              {it.author !== undefined ? (
-                <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                  {it.author ?? market('unknownPublisher')}
-                </p>
-              ) : null}
-
-          <p className="mt-1 line-clamp-2 text-sm leading-5 text-muted-foreground">
-            {it.description ?? market('noDescription')}
-          </p>
-
-          {it.githubSource || it.curated || it.categories?.length ? (
-            <div className="mt-1 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
-              <span className="rounded bg-muted px-2 py-1">
-                {it.githubSource ? market('github') : it.curated ? market('curated') : market('catalog')}
-              </span>
-              {it.categories?.slice(0, 2).map((category) => (
-                <Link
-                  key={category.slug}
-                  href={`/app/${encodeURIComponent(slug)}/market/${detailKind}?category=${encodeURIComponent(category.slug)}`}
-                  className="rounded bg-muted px-2 py-1 hover:text-foreground"
+          <article
+            key={it.id}
+            className="flex min-w-0 flex-col gap-3 rounded-xl border border-border bg-card p-3 sm:flex-row sm:items-center"
+          >
+            <div className="flex min-w-0 flex-1 items-start gap-3">
+              {it.iconUrl ? (
+                <Image
+                  unoptimized
+                  loading="eager"
+                  decoding="auto"
+                  src={it.iconUrl}
+                  alt=""
+                  width={32}
+                  height={32}
+                  className="size-8 shrink-0 rounded-lg object-cover"
+                />
+              ) : (
+                <span
+                  aria-hidden="true"
+                  className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-sm font-semibold text-muted-foreground"
                 >
-                  {category.name}
+                  {Array.from(it.name.trim())[0]?.toUpperCase() ?? "S"}
+                </span>
+              )}
+              <div className="min-w-0 flex-1">
+                <Link
+                  href={detailHref}
+                  className="line-clamp-1 font-semibold text-foreground hover:underline"
+                >
+                  {it.name}
                 </Link>
-              ))}
-            </div>
-          ) : null}
-            </div>
-          </div>
+                {it.author !== undefined ? (
+                  <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                    {it.author ?? market("unknownPublisher")}
+                  </p>
+                ) : null}
 
-          <div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
-            <ButtonLink href={detailHref} variant="secondary" size="sm" className="min-w-0">
-              {market('viewDetails')}
-              <ChevronRight className="size-3.5" aria-hidden="true" />
-            </ButtonLink>
-            {installedIds.has(it.id) ? (
-              <AnimatedBadge  status="success" size="sm" showIcon={false}>
-                <CheckCircle2 className="size-3.5" aria-hidden="true" />
-                {installedLabel}
-              </AnimatedBadge>
-            ) : it.deployable === false ? (
-              <AnimatedBadge  status="neutral" size="sm" showIcon={false}>
-                {common('demoOnly')}
-              </AnimatedBadge>
-            ) : (
-              <form action={it.marketListing ? installMarketResourceAction : action} className="min-w-0">
-                <input type="hidden" name="workspace" value={slug} />
-                {it.marketListing ? (
-                  <input type="hidden" name="releaseId" value={it.marketListing.releaseId} />
-                ) : (
-                  <input type="hidden" name={idField} value={it.id} />
-                )}
-                <SubmitButton flash={false} pendingLabel={pendingLabel} variant="primary" size="sm" className="w-full min-w-0">
-                  {actionLabel}
-                </SubmitButton>
-              </form>
-            )}
-          </div>
-        </article>
+                <p className="mt-1 line-clamp-2 text-sm leading-5 text-muted-foreground">
+                  {it.description ?? market("noDescription")}
+                </p>
+
+                {it.githubSource || it.curated || it.categories?.length ? (
+                  <div className="mt-1 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
+                    <span className="rounded bg-muted px-2 py-1">
+                      {it.githubSource
+                        ? market("github")
+                        : it.curated
+                          ? market("curated")
+                          : market("catalog")}
+                    </span>
+                    {it.categories?.slice(0, 2).map((category) => (
+                      <Link
+                        key={category.slug}
+                        href={`/app/${encodeURIComponent(slug)}/market/${detailKind}?category=${encodeURIComponent(category.slug)}`}
+                        className="rounded bg-muted px-2 py-1 hover:text-foreground"
+                      >
+                        {category.name}
+                      </Link>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
+              <ButtonLink
+                href={detailHref}
+                variant="secondary"
+                size="sm"
+                className="min-w-0"
+              >
+                {market("viewDetails")}
+                <ChevronRight className="size-3.5" aria-hidden="true" />
+              </ButtonLink>
+              {installedIds.has(it.id) ? (
+                <AnimatedBadge status="success" size="sm" showIcon={false}>
+                  <CheckCircle2 className="size-3.5" aria-hidden="true" />
+                  {installedLabel}
+                </AnimatedBadge>
+              ) : it.deployable === false ? (
+                <AnimatedBadge status="neutral" size="sm" showIcon={false}>
+                  {common("demoOnly")}
+                </AnimatedBadge>
+              ) : (
+                <form
+                  action={
+                    it.marketListing ? installMarketResourceAction : action
+                  }
+                  className="min-w-0"
+                >
+                  <input type="hidden" name="workspace" value={slug} />
+                  {it.marketListing ? (
+                    <input
+                      type="hidden"
+                      name="releaseId"
+                      value={it.marketListing.releaseId}
+                    />
+                  ) : (
+                    <input type="hidden" name={idField} value={it.id} />
+                  )}
+                  <SubmitButton
+                    flash={false}
+                    pendingLabel={pendingLabel}
+                    variant="primary"
+                    size="sm"
+                    className="w-full min-w-0"
+                  >
+                    {actionLabel}
+                  </SubmitButton>
+                </form>
+              )}
+            </div>
+          </article>
         );
       })}
     </div>

@@ -1,5 +1,6 @@
-import Link from 'next/link';
-import { getTranslations } from 'next-intl/server';
+import Image from "next/image";
+import Link from "next/link";
+import { getTranslations } from "next-intl/server";
 
 export interface RankedItem {
   slug: string;
@@ -21,7 +22,7 @@ export async function RankedList({
   items: RankedItem[];
   statLabel?: string;
 }) {
-  const t = await getTranslations('common');
+  const t = await getTranslations("common");
   return (
     <div className="mx-auto max-w-3xl px-4 py-10">
       <h1 className="mb-1 text-2xl font-bold tracking-tight text-foreground">
@@ -33,7 +34,7 @@ export async function RankedList({
         <div className="mb-6" />
       )}
       {items.length === 0 ? (
-        <p className="text-sm text-muted-foreground">{t('noEntriesYet')}</p>
+        <p className="text-sm text-muted-foreground">{t("noEntriesYet")}</p>
       ) : (
         <ol className="divide-y divide-border rounded-lg border border-border">
           {items.map((item, i) => (
@@ -46,8 +47,8 @@ export async function RankedList({
                   {i + 1}
                 </span>
                 {item.iconUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
+                  <Image
+                    unoptimized
                     src={item.iconUrl}
                     alt=""
                     width={32}
@@ -68,7 +69,7 @@ export async function RankedList({
                 <span className="shrink-0 text-sm tabular-nums text-muted-foreground">
                   <span aria-hidden="true">{item.stat.toLocaleString()}</span>
                   <span className="sr-only">
-                    {statLabel ?? t('score')}: {item.stat.toLocaleString()}
+                    {statLabel ?? t("score")}: {item.stat.toLocaleString()}
                   </span>
                 </span>
               </Link>

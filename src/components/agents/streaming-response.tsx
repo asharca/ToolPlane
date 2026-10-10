@@ -76,7 +76,9 @@ function ResponseAction({
       type="button"
       aria-label={label}
       title={label}
-      aria-pressed={label === "Helpful" || label === "Not helpful" ? active : undefined}
+      aria-pressed={
+        label === "Helpful" || label === "Not helpful" ? active : undefined
+      }
       onClick={onClick}
       whileTap={reduce ? undefined : { scale: 0.9 }}
       transition={SPRING_PRESS}
@@ -126,7 +128,9 @@ export function StreamingResponse({
   const canCopy = Boolean(copyText || onCopy);
   const hasSources = sources.length > 0;
   const shouldShowActions =
-    showActions && !streaming && (canCopy || onRetry || complete || hasSources || Boolean(actions));
+    showActions &&
+    !streaming &&
+    (canCopy || onRetry || complete || hasSources || Boolean(actions));
   const sourcesContentId = `${baseId}-sources`;
   const resolvedSourcePrefix =
     sourceIdPrefix ?? `response-source-${baseId.replace(/:/g, "")}`;
@@ -232,7 +236,8 @@ export function StreamingResponse({
                 >
                   <CitationStack citations={sources} />
                   <span className="tabular-nums">
-                    {sources.length} {sources.length === 1 ? "source" : "sources"}
+                    {sources.length}{" "}
+                    {sources.length === 1 ? "source" : "sources"}
                   </span>
                   <motion.span
                     aria-hidden="true"
@@ -248,10 +253,7 @@ export function StreamingResponse({
             </div>
 
             {hasSources ? (
-              <AgentDisclosure
-                id={sourcesContentId}
-                open={currentSourcesOpen}
-              >
+              <AgentDisclosure id={sourcesContentId} open={currentSourcesOpen}>
                 <CitationList
                   citations={sources}
                   idPrefix={resolvedSourcePrefix}

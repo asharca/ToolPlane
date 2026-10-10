@@ -1,6 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render } from '@testing-library/react';
-import { redirect } from 'next/navigation';
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { render } from "@testing-library/react";
+import { redirect } from "next/navigation";
 
 const mocks = vi.hoisted(() => ({
   getCurrentUser: vi.fn(),
@@ -19,52 +19,56 @@ const mocks = vi.hoisted(() => ({
   cookies: vi.fn(),
 }));
 
-vi.mock('next/navigation', () => ({ redirect: vi.fn() }));
-vi.mock('next/headers', () => ({ cookies: mocks.cookies }));
-vi.mock('next-intl/server', () => ({
-  getLocale: vi.fn().mockResolvedValue('en'),
+vi.mock("next/navigation", () => ({ redirect: vi.fn() }));
+vi.mock("next/headers", () => ({ cookies: mocks.cookies }));
+vi.mock("next-intl/server", () => ({
+  getLocale: vi.fn().mockResolvedValue("en"),
   getTranslations: vi.fn().mockResolvedValue((key: string) => key),
 }));
-vi.mock('@/lib/auth/current-user', () => ({ getCurrentUser: mocks.getCurrentUser }));
-vi.mock('@/lib/workspace/queries', () => ({ getWorkspaceForUser: mocks.getWorkspaceForUser }));
-vi.mock('@/lib/agents/queries', () => ({
+vi.mock("@/lib/auth/current-user", () => ({
+  getCurrentUser: mocks.getCurrentUser,
+}));
+vi.mock("@/lib/workspace/queries", () => ({
+  getWorkspaceForUser: mocks.getWorkspaceForUser,
+}));
+vi.mock("@/lib/agents/queries", () => ({
   listProviders: mocks.listProviders,
   listAgentDeploymentOptions: mocks.listDeployments,
   listAgents: mocks.listAgents,
   listConversations: mocks.listConversations,
   getConversation: mocks.getConversation,
 }));
-vi.mock('@/lib/chat/service', () => ({
+vi.mock("@/lib/chat/service", () => ({
   listChatAssistantsForWorkspace: mocks.listAssistants,
   getChatThreadForWorkspace: mocks.getThread,
   listRunningChatThreadIds: vi.fn().mockResolvedValue([]),
 }));
-vi.mock('@/lib/market/skills', () => ({
+vi.mock("@/lib/market/skills", () => ({
   getAssistantMarketTemplate: mocks.getAssistantMarketTemplate,
   listAssistantMarketTemplates: mocks.listAssistantMarketTemplates,
 }));
-vi.mock('@/lib/timezone', () => ({
-  resolveUserTimeZone: () => 'UTC',
+vi.mock("@/lib/timezone", () => ({
+  resolveUserTimeZone: () => "UTC",
   formatInTimeZone: (value: Date) => value.toISOString(),
 }));
-vi.mock('@/components/dashboard/DashboardHeader', () => ({
+vi.mock("@/components/dashboard/DashboardHeader", () => ({
   DashboardHeader: () => <div>Header</div>,
 }));
-vi.mock('@/components/dashboard/chat/WorkspaceAssistantChat', () => ({
+vi.mock("@/components/dashboard/chat/WorkspaceAssistantChat", () => ({
   WorkspaceAssistantChat: (props: unknown) => {
     mocks.surface(props);
     return <div>Chat surface</div>;
   },
 }));
 
-import WorkspaceChatPage from '@/app/app/[workspace]/chat/page';
-import WorkspaceAgentChatPage from '@/app/app/[workspace]/work/chat/page';
+import WorkspaceChatPage from "@/app/app/[workspace]/chat/page";
+import WorkspaceAgentChatPage from "@/app/app/[workspace]/work/chat/page";
 
-describe('Workspace chat page', () => {
+describe("Workspace chat page", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.getCurrentUser.mockResolvedValue({ id: 'user-1' });
-    mocks.getWorkspaceForUser.mockResolvedValue({ id: 'workspace-1' });
+    mocks.getCurrentUser.mockResolvedValue({ id: "user-1" });
+    mocks.getWorkspaceForUser.mockResolvedValue({ id: "workspace-1" });
     mocks.listProviders.mockResolvedValue([]);
     mocks.listDeployments.mockResolvedValue([]);
     mocks.listAgents.mockResolvedValue([]);
@@ -72,226 +76,305 @@ describe('Workspace chat page', () => {
     mocks.getConversation.mockResolvedValue(null);
     mocks.getAssistantMarketTemplate.mockResolvedValue(null);
     mocks.listAssistantMarketTemplates.mockResolvedValue([]);
-    mocks.cookies.mockResolvedValue({ get: vi.fn().mockReturnValue(undefined) });
-    mocks.listAssistants.mockResolvedValue([{
-      id: 'assistant-1',
-      name: 'Helper',
-      pinned: true,
-      systemPrompt: null,
-      modelProviderId: null,
-      model: null,
-      maxSteps: 8,
-      modelProvider: null,
-      mcpGrants: [],
-      threads: [{
-        id: 'thread-recent',
-        title: 'Recent',
-        createdAt: new Date('2026-08-25T00:00:00.000Z'),
-        messages: [],
-      }],
-    }]);
+    mocks.cookies.mockResolvedValue({
+      get: vi.fn().mockReturnValue(undefined),
+    });
+    mocks.listAssistants.mockResolvedValue([
+      {
+        id: "assistant-1",
+        name: "Helper",
+        pinned: true,
+        systemPrompt: null,
+        modelProviderId: null,
+        model: null,
+        maxSteps: 8,
+        modelProvider: null,
+        mcpGrants: [],
+        threads: [
+          {
+            id: "thread-recent",
+            title: "Recent",
+            createdAt: new Date("2026-08-25T00:00:00.000Z"),
+            messages: [],
+          },
+        ],
+      },
+    ]);
     mocks.getThread.mockResolvedValue({
-      id: 'thread-old',
-      assistantId: 'assistant-1',
-      title: 'Older direct link',
-      createdAt: new Date('2026-01-01T00:00:00.000Z'),
-      messages: [{
-        id: 'message-old',
-        role: 'assistant',
-        parts: [{ type: 'text', text: 'Loaded directly' }],
-        createdAt: new Date('2026-01-01T00:01:00.000Z'),
-      }],
+      id: "thread-old",
+      assistantId: "assistant-1",
+      title: "Older direct link",
+      createdAt: new Date("2026-01-01T00:00:00.000Z"),
+      messages: [
+        {
+          id: "message-old",
+          role: "assistant",
+          parts: [{ type: "text", text: "Loaded directly" }],
+          createdAt: new Date("2026-01-01T00:01:00.000Z"),
+        },
+      ],
     });
   });
 
-  it('loads an unlisted thread through the workspace and assistant boundary', async () => {
-    render(await WorkspaceChatPage({
-      params: Promise.resolve({ workspace: 'acme' }),
-      searchParams: Promise.resolve({ assistant: 'assistant-1', thread: 'thread-old' }),
-    }));
+  it("loads an unlisted thread through the workspace and assistant boundary", async () => {
+    render(
+      await WorkspaceChatPage({
+        params: Promise.resolve({ workspace: "acme" }),
+        searchParams: Promise.resolve({
+          assistant: "assistant-1",
+          thread: "thread-old",
+        }),
+      }),
+    );
 
     expect(mocks.getThread).toHaveBeenCalledWith(
-      'workspace-1',
-      'assistant-1',
-      'thread-old',
+      "workspace-1",
+      "assistant-1",
+      "thread-old",
     );
-    expect(mocks.surface).toHaveBeenCalledWith(expect.objectContaining({
-      selectedAssistantId: 'assistant-1',
-      selectedThreadId: 'thread-old',
-      initialMessages: [expect.objectContaining({ id: 'message-old' })],
-      assistants: [expect.objectContaining({
-        pinned: true,
-        threads: [
-          expect.objectContaining({ id: 'thread-old' }),
-          expect.objectContaining({ id: 'thread-recent' }),
+    expect(mocks.surface).toHaveBeenCalledWith(
+      expect.objectContaining({
+        selectedAssistantId: "assistant-1",
+        selectedThreadId: "thread-old",
+        initialMessages: [expect.objectContaining({ id: "message-old" })],
+        assistants: [
+          expect.objectContaining({
+            pinned: true,
+            threads: [
+              expect.objectContaining({ id: "thread-old" }),
+              expect.objectContaining({ id: "thread-recent" }),
+            ],
+          }),
         ],
-      })],
-    }));
+      }),
+    );
   });
 
-  it('enables reasoning for the selected assistant model capability', async () => {
-    mocks.listProviders.mockResolvedValue([{
-      id: 'provider-1',
-      name: 'OpenAI',
-      format: 'openai',
-      baseUrl: '',
-      apiKey: '',
-      models: ['gpt-5'],
-      modelRecords: [{ modelId: 'gpt-5', capabilities: ['reasoning'] }],
-    }]);
-    mocks.listAssistants.mockResolvedValue([{
-      id: 'assistant-1',
-      name: 'Helper',
-      pinned: false,
-      systemPrompt: null,
-      modelProviderId: 'provider-1',
-      model: 'gpt-5',
-      maxSteps: 8,
-      modelProvider: { name: 'OpenAI' },
-      mcpGrants: [],
-      threads: [],
-    }]);
-
-    render(await WorkspaceChatPage({
-      params: Promise.resolve({ workspace: 'acme' }),
-      searchParams: Promise.resolve({ assistant: 'assistant-1' }),
-    }));
-
-    expect(mocks.surface).toHaveBeenCalledWith(expect.objectContaining({ reasoningAvailable: true }));
-  });
-
-  it('seeds the assistant sidebar from its workspace cookie', async () => {
-    mocks.cookies.mockResolvedValue({ get: vi.fn().mockReturnValue({ value: 'false' }) });
-
-    render(await WorkspaceChatPage({
-      params: Promise.resolve({ workspace: 'acme' }),
-      searchParams: Promise.resolve({ assistant: 'assistant-1' }),
-    }));
-
-    expect(mocks.surface).toHaveBeenCalledWith(expect.objectContaining({ initialSidebarOpen: false }));
-  });
-
-  it('seeds assistant disclosures from its workspace cookie', async () => {
-    mocks.cookies.mockResolvedValue({
-      get: vi.fn((name: string) => name === 'toolplane_assistant_chat_expanded_workspace-1'
-        ? { value: '%7B%22assistant-1%22%3Afalse%7D' }
-        : undefined),
-    });
-
-    render(await WorkspaceChatPage({
-      params: Promise.resolve({ workspace: 'acme' }),
-      searchParams: Promise.resolve({ assistant: 'assistant-1' }),
-    }));
-
-    expect(mocks.surface).toHaveBeenCalledWith(expect.objectContaining({
-      initialExpandedAssistants: { 'assistant-1': false },
-    }));
-  });
-
-  it('seeds assistant groups from its workspace cookie', async () => {
-    mocks.cookies.mockResolvedValue({
-      get: vi.fn((name: string) => name === 'toolplane_assistant_chat_group_preferences_workspace-1'
-        ? { value: '%7B%22groups%22%3A%5B%7B%22id%22%3A%22group-1%22%2C%22name%22%3A%22Research%22%7D%5D%2C%22assignments%22%3A%7B%22assistant-1%22%3A%22group-1%22%7D%2C%22collapsed%22%3A%7B%22group-1%22%3Atrue%7D%7D' }
-        : undefined),
-    });
-
-    render(await WorkspaceChatPage({
-      params: Promise.resolve({ workspace: 'acme' }),
-      searchParams: Promise.resolve({ assistant: 'assistant-1' }),
-    }));
-
-    expect(mocks.surface).toHaveBeenCalledWith(expect.objectContaining({
-      initialGroupPreferences: {
-        groups: [{ id: 'group-1', name: 'Research' }],
-        assignments: { 'assistant-1': 'group-1' },
-        collapsed: { 'group-1': true },
+  it("enables reasoning for the selected assistant model capability", async () => {
+    mocks.listProviders.mockResolvedValue([
+      {
+        id: "provider-1",
+        name: "OpenAI",
+        format: "openai",
+        baseUrl: "",
+        apiKey: "",
+        models: ["gpt-5"],
+        modelRecords: [{ modelId: "gpt-5", capabilities: ["reasoning"] }],
       },
-    }));
+    ]);
+    mocks.listAssistants.mockResolvedValue([
+      {
+        id: "assistant-1",
+        name: "Helper",
+        pinned: false,
+        systemPrompt: null,
+        modelProviderId: "provider-1",
+        model: "gpt-5",
+        maxSteps: 8,
+        modelProvider: { name: "OpenAI" },
+        mcpGrants: [],
+        threads: [],
+      },
+    ]);
+
+    render(
+      await WorkspaceChatPage({
+        params: Promise.resolve({ workspace: "acme" }),
+        searchParams: Promise.resolve({ assistant: "assistant-1" }),
+      }),
+    );
+
+    expect(mocks.surface).toHaveBeenCalledWith(
+      expect.objectContaining({ reasoningAvailable: true }),
+    );
   });
 
-  it('opens the assistant creator from a direct market handoff', async () => {
-    render(await WorkspaceChatPage({
-      params: Promise.resolve({ workspace: 'acme' }),
-      searchParams: Promise.resolve({ newAssistant: '1' }),
-    }));
+  it("seeds the assistant sidebar from its workspace cookie", async () => {
+    mocks.cookies.mockResolvedValue({
+      get: vi.fn().mockReturnValue({ value: "false" }),
+    });
 
-    expect(mocks.surface).toHaveBeenCalledWith(expect.objectContaining({
-      startCreating: true,
-      marketTemplates: [],
-    }));
-    expect(mocks.listAssistantMarketTemplates).toHaveBeenCalledWith({ limit: 12 });
+    render(
+      await WorkspaceChatPage({
+        params: Promise.resolve({ workspace: "acme" }),
+        searchParams: Promise.resolve({ assistant: "assistant-1" }),
+      }),
+    );
+
+    expect(mocks.surface).toHaveBeenCalledWith(
+      expect.objectContaining({ initialSidebarOpen: false }),
+    );
   });
 
-  it('resolves a market assistant template and matches portable resources', async () => {
-    mocks.listProviders.mockResolvedValue([{
-      id: 'provider-1', name: 'Anthropic', format: 'anthropic', models: ['claude-sonnet'],
-    }]);
+  it("seeds assistant disclosures from its workspace cookie", async () => {
+    mocks.cookies.mockResolvedValue({
+      get: vi.fn((name: string) =>
+        name === "toolplane_assistant_chat_expanded_workspace-1"
+          ? { value: "%7B%22assistant-1%22%3Afalse%7D" }
+          : undefined,
+      ),
+    });
+
+    render(
+      await WorkspaceChatPage({
+        params: Promise.resolve({ workspace: "acme" }),
+        searchParams: Promise.resolve({ assistant: "assistant-1" }),
+      }),
+    );
+
+    expect(mocks.surface).toHaveBeenCalledWith(
+      expect.objectContaining({
+        initialExpandedAssistants: { "assistant-1": false },
+      }),
+    );
+  });
+
+  it("seeds assistant groups from its workspace cookie", async () => {
+    mocks.cookies.mockResolvedValue({
+      get: vi.fn((name: string) =>
+        name === "toolplane_assistant_chat_group_preferences_workspace-1"
+          ? {
+              value:
+                "%7B%22groups%22%3A%5B%7B%22id%22%3A%22group-1%22%2C%22name%22%3A%22Research%22%7D%5D%2C%22assignments%22%3A%7B%22assistant-1%22%3A%22group-1%22%7D%2C%22collapsed%22%3A%7B%22group-1%22%3Atrue%7D%7D",
+            }
+          : undefined,
+      ),
+    });
+
+    render(
+      await WorkspaceChatPage({
+        params: Promise.resolve({ workspace: "acme" }),
+        searchParams: Promise.resolve({ assistant: "assistant-1" }),
+      }),
+    );
+
+    expect(mocks.surface).toHaveBeenCalledWith(
+      expect.objectContaining({
+        initialGroupPreferences: {
+          groups: [{ id: "group-1", name: "Research" }],
+          assignments: { "assistant-1": "group-1" },
+          collapsed: { "group-1": true },
+        },
+      }),
+    );
+  });
+
+  it("opens the assistant creator from a direct market handoff", async () => {
+    render(
+      await WorkspaceChatPage({
+        params: Promise.resolve({ workspace: "acme" }),
+        searchParams: Promise.resolve({ newAssistant: "1" }),
+      }),
+    );
+
+    expect(mocks.surface).toHaveBeenCalledWith(
+      expect.objectContaining({
+        startCreating: true,
+        marketTemplates: [],
+      }),
+    );
+    expect(mocks.listAssistantMarketTemplates).toHaveBeenCalledWith({
+      limit: 12,
+    });
+  });
+
+  it("resolves a market assistant template and matches portable resources", async () => {
+    mocks.listProviders.mockResolvedValue([
+      {
+        id: "provider-1",
+        name: "Anthropic",
+        format: "anthropic",
+        models: ["claude-sonnet"],
+      },
+    ]);
     mocks.listDeployments.mockResolvedValue([
       {
-        id: 'deployment-1',
-        label: 'Catalog search',
-        catalogSlug: 'web-search',
-        status: 'running',
-        keywords: ['search'],
+        id: "deployment-1",
+        label: "Catalog search",
+        catalogSlug: "web-search",
+        status: "running",
+        keywords: ["search"],
       },
       {
-        id: 'deployment-decoy',
-        label: 'Web Search',
-        catalogSlug: 'different-server',
-        status: 'running',
-        keywords: ['web-search'],
+        id: "deployment-decoy",
+        label: "Web Search",
+        catalogSlug: "different-server",
+        status: "running",
+        keywords: ["web-search"],
       },
     ]);
     mocks.getAssistantMarketTemplate.mockResolvedValue({
-      releaseId: 'release-1',
-      listing: { summary: 'Research assistant', tags: ['research'] },
+      releaseId: "release-1",
+      listing: { summary: "Research assistant", tags: ["research"] },
       manifest: {
         assistant: {
-          name: 'Researcher',
-          systemPrompt: 'Use primary sources.',
+          name: "Researcher",
+          systemPrompt: "Use primary sources.",
           maxSteps: 10,
-          modelRequirement: { providerFormat: 'anthropic', model: 'claude-sonnet' },
-          mcpRequirements: [{ catalogSlug: 'web-search', name: 'Web Search' }],
+          modelRequirement: {
+            providerFormat: "anthropic",
+            model: "claude-sonnet",
+          },
+          mcpRequirements: [{ catalogSlug: "web-search", name: "Web Search" }],
         },
       },
     });
 
-    render(await WorkspaceChatPage({
-      params: Promise.resolve({ workspace: 'acme' }),
-      searchParams: Promise.resolve({ newAssistant: '1', template: 'release-1' }),
-    }));
-
-    expect(mocks.getAssistantMarketTemplate).toHaveBeenCalledWith('release-1');
-    expect(mocks.surface).toHaveBeenCalledWith(expect.objectContaining({
-      marketTemplate: expect.objectContaining({
-        releaseId: 'release-1',
-        providerFormat: 'anthropic',
-        model: 'claude-sonnet',
-        deploymentIds: ['deployment-1'],
+    render(
+      await WorkspaceChatPage({
+        params: Promise.resolve({ workspace: "acme" }),
+        searchParams: Promise.resolve({
+          newAssistant: "1",
+          template: "release-1",
+        }),
       }),
-      marketTemplates: [expect.objectContaining({
-        releaseId: 'release-1',
-        tags: ['research'],
-      })],
-    }));
+    );
+
+    expect(mocks.getAssistantMarketTemplate).toHaveBeenCalledWith("release-1");
+    expect(mocks.surface).toHaveBeenCalledWith(
+      expect.objectContaining({
+        marketTemplate: expect.objectContaining({
+          releaseId: "release-1",
+          providerFormat: "anthropic",
+          model: "claude-sonnet",
+          deploymentIds: ["deployment-1"],
+        }),
+        marketTemplates: [
+          expect.objectContaining({
+            releaseId: "release-1",
+            tags: ["research"],
+          }),
+        ],
+      }),
+    );
   });
 
-  it('redirects legacy Agent links out of the assistant route without loading assistant data', async () => {
+  it("redirects legacy Agent links out of the assistant route without loading assistant data", async () => {
     await WorkspaceChatPage({
-      params: Promise.resolve({ workspace: 'acme' }),
-      searchParams: Promise.resolve({ agent: 'agent-hermes', c: 'conversation-1' }),
+      params: Promise.resolve({ workspace: "acme" }),
+      searchParams: Promise.resolve({
+        agent: "agent-hermes",
+        c: "conversation-1",
+      }),
     });
-    expect(redirect).toHaveBeenCalledWith('/app/acme/work?agent=agent-hermes&c=conversation-1');
+    expect(redirect).toHaveBeenCalledWith(
+      "/app/acme/work?agent=agent-hermes&c=conversation-1",
+    );
     expect(mocks.listAssistants).not.toHaveBeenCalled();
     expect(mocks.surface).not.toHaveBeenCalled();
   });
 
-  it('redirects the retired Agent chat page to the main Work surface', async () => {
+  it("redirects the retired Agent chat page to the main Work surface", async () => {
     await WorkspaceAgentChatPage({
-      params: Promise.resolve({ workspace: 'acme' }),
-      searchParams: Promise.resolve({ agent: 'agent-hermes', c: 'conversation-1' }),
+      params: Promise.resolve({ workspace: "acme" }),
+      searchParams: Promise.resolve({
+        agent: "agent-hermes",
+        c: "conversation-1",
+      }),
     });
-    expect(redirect).toHaveBeenCalledWith('/app/acme/work?agent=agent-hermes&c=conversation-1');
+    expect(redirect).toHaveBeenCalledWith(
+      "/app/acme/work?agent=agent-hermes&c=conversation-1",
+    );
     expect(mocks.listAssistants).not.toHaveBeenCalled();
     expect(mocks.agentSurface).not.toHaveBeenCalled();
   });

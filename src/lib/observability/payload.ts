@@ -1,16 +1,28 @@
-export type PayloadPolicy = 'metadata-only' | 'diagnostic' | 'agent-content' | 'request-response' | 'forbidden';
+export type PayloadPolicy =
+  | "metadata-only"
+  | "diagnostic"
+  | "agent-content"
+  | "request-response"
+  | "forbidden";
 export const MAX_DIAGNOSTIC_BYTES = 32 * 1024;
 
-export async function boundedResponseText(response: Response): Promise<string | null> {
-  if (!response.body || response.headers.get('content-type')?.includes('text/event-stream')) return null;
+export async function boundedResponseText(
+  response: Response,
+): Promise<string | null> {
+  if (
+    !response.body ||
+    response.headers.get("content-type")?.includes("text/event-stream")
+  )
+    return null;
   const copy = response.clone();
-  const reader = copy.body!.getReader();
+  if (!copy.body) return null;
+  const reader = copy.body.getReader();
   const decoder = new TextDecoder();
-  let text = '';
+  let text = "";
   let bytes = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error('Diagnostic read timeout')), 200);
+    timer = setTimeout(() => reject(new Error("Diagnostic read timeout")), 200);
   });
   try {
     for (;;) {
@@ -20,8 +32,9 @@ export async function boundedResponseText(response: Response): Promise<string | 
       if (bytes > MAX_DIAGNOSTIC_BYTES) return null;
       text += decoder.decode(chunk.value, { stream: true });
     }
-  } catch { return null; }
-  finally {
+  } catch {
+    return null;
+  } finally {
     if (timer) clearTimeout(timer);
     // Do not await tee cancellation: the actual response may not be consumed yet.
     void reader.cancel().catch(() => undefined);

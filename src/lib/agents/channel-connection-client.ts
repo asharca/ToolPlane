@@ -1,20 +1,20 @@
-import type { AgentChannelConnectionView } from '@/lib/agents/channel-connections';
+import type { AgentChannelConnectionView } from "@/lib/agents/channel-connections";
 
 export type AgentChannelConnectionClientView = Pick<
   AgentChannelConnectionView,
-  | 'id'
-  | 'agentId'
-  | 'sandboxId'
-  | 'platform'
-  | 'platformLabel'
-  | 'name'
-  | 'status'
-  | 'connectionMode'
-  | 'credentialNames'
-  | 'credentialValues'
-  | 'missingStartCredentialNames'
-  | 'pairing'
-  | 'lastError'
+  | "id"
+  | "agentId"
+  | "sandboxId"
+  | "platform"
+  | "platformLabel"
+  | "name"
+  | "status"
+  | "connectionMode"
+  | "credentialNames"
+  | "credentialValues"
+  | "missingStartCredentialNames"
+  | "pairing"
+  | "lastError"
 >;
 
 export function toAgentChannelConnectionClientView(

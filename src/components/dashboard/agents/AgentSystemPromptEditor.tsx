@@ -1,11 +1,11 @@
-'use client';
-import { Button } from '@/components/motion/button/base';
+"use client";
+import { Button } from "@/components/motion/button/base";
 
-import { useState } from 'react';
-import { Eye, Loader2, Pencil, RotateCcw, Sparkles } from 'lucide-react';
-import { useTranslations } from 'next-intl';
-import { AssistantMarkdown } from '@/components/dashboard/ConversationMessage';
-import { estimatePromptTokens } from '@/lib/prompt-tokens';
+import { useState } from "react";
+import { Eye, Loader2, Pencil, RotateCcw, Sparkles } from "lucide-react";
+import { useTranslations } from "next-intl";
+import { AssistantMarkdown } from "@/components/dashboard/ConversationMessage";
+import { estimatePromptTokens } from "@/lib/prompt-tokens";
 
 export function AgentSystemPromptEditor({
   workspaceId,
@@ -15,7 +15,7 @@ export function AgentSystemPromptEditor({
   model,
   value,
   onChange,
-  fieldName = 'systemPrompt',
+  fieldName = "systemPrompt",
 }: {
   workspaceId: string;
   name: string;
@@ -26,21 +26,26 @@ export function AgentSystemPromptEditor({
   onChange: (value: string) => void;
   fieldName?: string;
 }) {
-  const t = useTranslations('console.agents');
+  const t = useTranslations("console.agents");
   const [preview, setPreview] = useState(Boolean(value.trim()));
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [restore, setRestore] = useState<{ previous: string; generated: string } | null>(null);
-  const canGenerate = Boolean(workspaceId && name.trim() && providerId && model);
+  const [restore, setRestore] = useState<{
+    previous: string;
+    generated: string;
+  } | null>(null);
+  const canGenerate = Boolean(
+    workspaceId && name.trim() && providerId && model,
+  );
 
   async function generatePrompt() {
     if (!canGenerate || generating) return;
     setGenerating(true);
     setError(null);
     try {
-      const response = await fetch('/api/v1/chat/assistants/generate-prompt', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
+      const response = await fetch("/api/v1/chat/assistants/generate-prompt", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
         body: JSON.stringify({
           workspaceId,
           name: name.trim(),
@@ -50,14 +55,20 @@ export function AgentSystemPromptEditor({
           model,
         }),
       });
-      const body = await response.json().catch(() => ({})) as { prompt?: string; error?: string };
-      if (!response.ok || !body.prompt?.trim()) throw new Error(body.error || t('promptGenerationError'));
+      const body = (await response.json().catch(() => ({}))) as {
+        prompt?: string;
+        error?: string;
+      };
+      if (!response.ok || !body.prompt?.trim())
+        throw new Error(body.error || t("promptGenerationError"));
       const generated = body.prompt.trim();
       setRestore({ previous: value, generated });
       onChange(generated);
       setPreview(false);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : t('promptGenerationError'));
+      setError(
+        cause instanceof Error ? cause.message : t("promptGenerationError"),
+      );
     } finally {
       setGenerating(false);
     }
@@ -67,20 +78,45 @@ export function AgentSystemPromptEditor({
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <span className="block text-xs font-semibold text-foreground">{t('systemPrompt')}</span>
+          <span className="block text-xs font-semibold text-foreground">
+            {t("systemPrompt")}
+          </span>
           <span className="mt-0.5 block text-xs text-muted-foreground">
-            {t('estimatedTokens', { count: estimatePromptTokens(value) })}
+            {t("estimatedTokens", { count: estimatePromptTokens(value) })}
           </span>
         </div>
         <div className="flex items-center gap-1.5">
           {value.trim() ? (
-            <Button type="button" aria-label={preview ? t('editSystemPrompt') : t('previewSystemPrompt')} title={preview ? t('editSystemPrompt') : t('previewSystemPrompt')} onClick={() => setPreview((current) => !current)} variant={"ghost"} size={"icon"}>
-              {preview ? <Pencil className="size-4" /> : <Eye className="size-4" />}
+            <Button
+              type="button"
+              aria-label={
+                preview ? t("editSystemPrompt") : t("previewSystemPrompt")
+              }
+              title={preview ? t("editSystemPrompt") : t("previewSystemPrompt")}
+              onClick={() => setPreview((current) => !current)}
+              variant={"ghost"}
+              size={"icon"}
+            >
+              {preview ? (
+                <Pencil className="size-4" />
+              ) : (
+                <Eye className="size-4" />
+              )}
             </Button>
           ) : null}
-          <Button type="button" disabled={!canGenerate || generating} onClick={generatePrompt} variant={"secondary"} size={"sm"}>
-            {generating ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}
-            {value.trim() ? t('improvePrompt') : t('generatePrompt')}
+          <Button
+            type="button"
+            disabled={!canGenerate || generating}
+            onClick={generatePrompt}
+            variant={"secondary"}
+            size={"sm"}
+          >
+            {generating ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <Sparkles className="size-3.5" />
+            )}
+            {value.trim() ? t("improvePrompt") : t("generatePrompt")}
           </Button>
         </div>
       </div>
@@ -88,9 +124,12 @@ export function AgentSystemPromptEditor({
       {preview ? (
         <>
           <input type="hidden" name={fieldName} value={value} />
-          <div role="region" aria-label={t('previewSystemPrompt')} className="min-h-52 rounded-md border border-border bg-muted/20 px-4 py-3">
+          <section
+            aria-label={t("previewSystemPrompt")}
+            className="min-h-52 rounded-md border border-border bg-muted/20 px-4 py-3"
+          >
             <AssistantMarkdown text={value} />
-          </div>
+          </section>
         </>
       ) : (
         <textarea
@@ -99,23 +138,32 @@ export function AgentSystemPromptEditor({
           onChange={(event) => onChange(event.target.value)}
           rows={10}
           maxLength={100_000}
-          placeholder={t('youAreAHelpfulAssistant')}
+          placeholder={t("youAreAHelpfulAssistant")}
           className="min-h-36 w-full resize-y rounded-lg bg-muted/35 p-3 text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          aria-label={t('systemPrompt')}
+          aria-label={t("systemPrompt")}
         />
       )}
 
       {restore ? (
-        <Button type="button" onClick={() => {
+        <Button
+          type="button"
+          onClick={() => {
             onChange(restore.previous);
             setRestore(null);
             setPreview(false);
-          }} variant={"ghost"} size={"sm"}>
+          }}
+          variant={"ghost"}
+          size={"sm"}
+        >
           <RotateCcw className="size-3.5" />
-          {t('restorePreviousPrompt')}
+          {t("restorePreviousPrompt")}
         </Button>
       ) : null}
-      {error ? <p role="alert" className="text-xs text-destructive text-destructive">{error}</p> : null}
+      {error ? (
+        <p role="alert" className="text-xs text-destructive text-destructive">
+          {error}
+        </p>
+      ) : null}
     </div>
   );
 }

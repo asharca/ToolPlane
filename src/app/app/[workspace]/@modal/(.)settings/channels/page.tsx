@@ -1,1 +1,1 @@
-export { default } from '../../../settings/channels/page';
+export { default } from "../../../settings/channels/page";

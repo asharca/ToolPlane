@@ -1,7 +1,8 @@
-import Link from 'next/link';
-import { ArrowUpRight, Gauge, Star, type LucideIcon } from 'lucide-react';
-import type { ReactNode } from 'react';
-import { AnimatedBadge } from '@/components/motion/animated-badge';
+import Image from "next/image";
+import Link from "next/link";
+import { ArrowUpRight, Gauge, Star, type LucideIcon } from "lucide-react";
+import type { ReactNode } from "react";
+import { AnimatedBadge } from "@/components/motion/animated-badge";
 
 export interface EntityCardProps {
   href: string;
@@ -15,7 +16,7 @@ export interface EntityCardProps {
 }
 
 export function formatCount(n: number): string {
-  if (n >= 1000) return `${(n / 1000).toFixed(1).replace(/\.0$/, '')}k`;
+  if (n >= 1000) return `${(n / 1000).toFixed(1).replace(/\.0$/, "")}k`;
   return String(n);
 }
 
@@ -30,7 +31,10 @@ function MetricStat({
 }) {
   return (
     <span className="flex items-center text-xs font-medium text-muted-foreground">
-      <Icon aria-hidden="true" className="mr-1 size-3 text-muted-foreground/80" />
+      <Icon
+        aria-hidden="true"
+        className="mr-1 size-3 text-muted-foreground/80"
+      />
       <span aria-hidden="true">{formatCount(value)}</span>
       <span className="sr-only">
         {label}: {value.toLocaleString()}
@@ -41,7 +45,7 @@ function MetricStat({
 
 export function StarStat({
   value,
-  label = 'Stars',
+  label = "Stars",
 }: {
   value: number;
   label?: string;
@@ -51,7 +55,7 @@ export function StarStat({
 
 export function ScoreStat({
   value,
-  label = 'Score',
+  label = "Score",
 }: {
   value: number;
   label?: string;
@@ -73,17 +77,19 @@ export function EntityCard({
     <Link href={href} className="group block h-full">
       <div className="relative flex h-full flex-col overflow-hidden rounded-2xl border border-border bg-card">
         <div className="flex h-full flex-col p-4">
-          {typeof rank === 'number' ? (
+          {typeof rank === "number" ? (
             <div className="mb-2.5">
-              <AnimatedBadge status="info" size="sm" showIcon={false}>#{rank}</AnimatedBadge>
+              <AnimatedBadge status="info" size="sm" showIcon={false}>
+                #{rank}
+              </AnimatedBadge>
             </div>
           ) : null}
 
           <div className="flex items-center justify-between gap-2">
             <div className="flex min-w-0 items-center gap-2.5">
               {iconUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
+                <Image
+                  unoptimized
                   src={iconUrl}
                   alt=""
                   width={32}
@@ -103,7 +109,9 @@ export function EntityCard({
                   {name}
                 </h3>
                 {author ? (
-                  <p className="truncate text-[11px] leading-4 text-muted-foreground">{author}</p>
+                  <p className="truncate text-[11px] leading-4 text-muted-foreground">
+                    {author}
+                  </p>
                 ) : null}
               </div>
             </div>
@@ -124,7 +132,9 @@ export function EntityCard({
             <div className="mt-4 flex items-center justify-between gap-2 border-t border-border/70 pt-3">
               <div className="flex min-w-0 items-center gap-2">
                 {category ? (
-                  <AnimatedBadge size="sm" showIcon={false}>{category}</AnimatedBadge>
+                  <AnimatedBadge size="sm" showIcon={false}>
+                    {category}
+                  </AnimatedBadge>
                 ) : null}
               </div>
               {stat ? <div className="shrink-0">{stat}</div> : null}

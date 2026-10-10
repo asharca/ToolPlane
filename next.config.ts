@@ -1,19 +1,22 @@
-import type { NextConfig } from 'next';
-import createNextIntlPlugin from 'next-intl/plugin';
-import { createMDX } from 'fumadocs-mdx/next';
+import type { NextConfig } from "next";
+import createNextIntlPlugin from "next-intl/plugin";
+import { createMDX } from "fumadocs-mdx/next";
 
-const withNextIntl = createNextIntlPlugin('./src/i18n/request.ts');
+const withNextIntl = createNextIntlPlugin("./src/i18n/request.ts");
 const withMDX = createMDX();
 
 let allowedDevOrigins: string[] = [];
 try {
-  allowedDevOrigins = [new URL(process.env.NEXT_PUBLIC_APP_URL ?? '').hostname];
+  allowedDevOrigins = [new URL(process.env.NEXT_PUBLIC_APP_URL ?? "").hostname];
 } catch {
   allowedDevOrigins = [];
 }
 
-function securityHeaders(environment = process.env.NODE_ENV, allowSameOriginFrames = false) {
-  const isProduction = environment === 'production';
+function securityHeaders(
+  environment = process.env.NODE_ENV,
+  allowSameOriginFrames = false,
+) {
+  const isProduction = environment === "production";
   const scriptPolicy = isProduction
     ? "script-src 'self' 'unsafe-inline'"
     : "script-src 'self' 'unsafe-inline' 'unsafe-eval'";
@@ -33,68 +36,68 @@ function securityHeaders(environment = process.env.NODE_ENV, allowSameOriginFram
     "frame-src 'self' blob: https:",
     "worker-src 'self' blob:",
     "manifest-src 'self'",
-  ].join('; ');
+  ].join("; ");
 
   return [
     {
-      key: 'Content-Security-Policy',
+      key: "Content-Security-Policy",
       value: contentSecurityPolicy,
     },
-    { key: 'X-Content-Type-Options', value: 'nosniff' },
-    { key: 'X-Frame-Options', value: allowSameOriginFrames ? 'SAMEORIGIN' : 'DENY' },
-    { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+    { key: "X-Content-Type-Options", value: "nosniff" },
     {
-      key: 'Permissions-Policy',
-      value: 'camera=(), geolocation=(), microphone=(), payment=(), usb=()',
+      key: "X-Frame-Options",
+      value: allowSameOriginFrames ? "SAMEORIGIN" : "DENY",
+    },
+    { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+    {
+      key: "Permissions-Policy",
+      value: "camera=(), geolocation=(), microphone=(), payment=(), usb=()",
     },
   ];
 }
 
 const nextConfig: NextConfig = {
   allowedDevOrigins,
-  output: 'standalone',
+  output: "standalone",
   poweredByHeader: false,
-  serverExternalPackages: ['@earendil-works/pi-ai', '@larksuiteoapi/node-sdk'],
+  serverExternalPackages: ["@earendil-works/pi-ai", "@larksuiteoapi/node-sdk"],
   async headers() {
     return [
-      { source: '/:path*', headers: securityHeaders() },
+      { source: "/:path*", headers: securityHeaders() },
       {
-        source: '/app/:workspace/:path+',
+        source: "/app/:workspace/:path+",
         headers: securityHeaders(process.env.NODE_ENV, true),
       },
     ];
   },
   outputFileTracingIncludes: {
-    '/*': [
-      'node_modules/node-pty/**/*',
-      'node_modules/ws/**/*',
-    ],
+    "/*": ["node_modules/node-pty/**/*", "node_modules/ws/**/*"],
   },
   outputFileTracingExcludes: {
-    '/*': [
-      'src/**/*',
-      'tests/**/*',
-      'e2e/**/*',
-      'scraper/**/*',
-      'infra/**/*',
-      'runtime/**/*',
-      'scripts/**/*',
-      'packages/**/*',
-      'prisma/**/*',
-      'public/**/*',
-      '**/*.md',
-      '*.json',
-      '*.mjs',
-      '*.ts',
-      '*.yml',
-      'Dockerfile',
-      'pnpm-lock.yaml',
+    "/*": [
+      "src/**/*",
+      "tests/**/*",
+      "e2e/**/*",
+      "scraper/**/*",
+      "infra/**/*",
+      "runtime/**/*",
+      "scripts/**/*",
+      "packages/**/*",
+      "prisma/**/*",
+      "public/**/*",
+      "**/*.md",
+      "*.json",
+      "*.mjs",
+      "*.ts",
+      "*.yml",
+      "Dockerfile",
+      "pnpm-lock.yaml",
     ],
   },
   experimental: {
     turbopackFileSystemCacheForDev: false,
     serverActions: {
-      bodySizeLimit: '64mb',
+      bodySizeLimit: "64mb",
     },
   },
 };

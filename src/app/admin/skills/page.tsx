@@ -1,9 +1,8 @@
-
-import { ButtonLink } from '@/components/motion/button';
-import { GitBranch, Plus, Wrench } from 'lucide-react';
-import { getTranslations } from 'next-intl/server';
-import Link from 'next/link';
-import { redirect } from 'next/navigation';
+import { ButtonLink } from "@/components/motion/button";
+import { GitBranch, Plus, Wrench } from "lucide-react";
+import { getTranslations } from "next-intl/server";
+import Link from "next/link";
+import { redirect } from "next/navigation";
 import {
   AdminBadge,
   AdminEmptyState,
@@ -13,16 +12,16 @@ import {
   AdminPagination,
   AdminSearchForm,
   AdminTableLink,
-} from '@/components/admin/AdminUI';
-import { SkillRegistrySync } from '@/components/admin/SkillRegistrySync';
-import { DashboardTable } from '@/components/dashboard/DashboardUI';
-import { listDirectorySkills } from '@/lib/admin/market';
-import { normalizeAdminPage } from '@/lib/admin/pagination';
-import { adminHref } from '@/lib/admin/navigation';
-import { requireAdmin } from '@/lib/auth/admin';
-import { defaultTpSkillsSource } from '@/lib/skills/registry';
+} from "@/components/admin/AdminUI";
+import { SkillRegistrySync } from "@/components/admin/SkillRegistrySync";
+import { DashboardTable } from "@/components/dashboard/DashboardUI";
+import { listDirectorySkills } from "@/lib/admin/market";
+import { normalizeAdminPage } from "@/lib/admin/pagination";
+import { adminHref } from "@/lib/admin/navigation";
+import { requireAdmin } from "@/lib/auth/admin";
+import { defaultTpSkillsSource } from "@/lib/skills/registry";
 
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
 export default async function AdminSkillsPage({
   searchParams,
@@ -30,12 +29,12 @@ export default async function AdminSkillsPage({
   searchParams: Promise<{ q?: string; page?: string }>;
 }) {
   const [t, params] = await Promise.all([
-    getTranslations('admin'),
+    getTranslations("admin"),
     searchParams,
     requireAdmin(),
   ]);
-  const { page = '1' } = params;
-  const rawQuery = params.q ?? '';
+  const { page = "1" } = params;
+  const rawQuery = params.q ?? "";
   const q = rawQuery.trim();
   const rawPage = Number(page);
   const requestedPage = normalizeAdminPage(rawPage);
@@ -49,7 +48,7 @@ export default async function AdminSkillsPage({
 
   const hrefForPage = (targetPage: number) => {
     const query = new URLSearchParams({ page: String(targetPage) });
-    if (q) query.set('q', q);
+    if (q) query.set("q", q);
     return `/admin/skills?${query.toString()}`;
   };
   const lastPage = Math.max(1, Math.ceil(total / pageSize));
@@ -60,18 +59,22 @@ export default async function AdminSkillsPage({
   return (
     <AdminPage>
       <AdminPageHeader
-        title={t('directorySkills')}
-        description={t('skillsDescription')}
-        meta={t('skillCount', { count: total.toLocaleString() })}
+        title={t("directorySkills")}
+        description={t("skillsDescription")}
+        meta={t("skillCount", { count: total.toLocaleString() })}
         actions={
           <>
-            <ButtonLink href="/admin/skills/import" variant="secondary" size="md">
+            <ButtonLink
+              href="/admin/skills/import"
+              variant="secondary"
+              size="md"
+            >
               <GitBranch className="size-4" aria-hidden="true" />
-              {t('importFromGithub')}
+              {t("importFromGithub")}
             </ButtonLink>
             <ButtonLink href="/admin/skills/new" variant="primary" size="md">
               <Plus className="size-4" aria-hidden="true" />
-              {t('addSkill')}
+              {t("addSkill")}
             </ButtonLink>
           </>
         }
@@ -81,44 +84,57 @@ export default async function AdminSkillsPage({
 
       <AdminSearchForm
         defaultValue={q}
-        placeholder={t('searchNameOrSlug')}
-        label={t('searchNameOrSlug')}
-        searchLabel={t('search')}
-        clearLabel={t('clear')}
+        placeholder={t("searchNameOrSlug")}
+        label={t("searchNameOrSlug")}
+        searchLabel={t("search")}
+        clearLabel={t("clear")}
         clearHref="/admin/skills"
       />
 
       {items.length === 0 ? (
         <AdminEmptyState
           icon={Wrench}
-          title={t('noSkills')}
-          description={q ? t('noSkillsDescription') : t('emptySkillsDescription')}
-          actions={q ? null : (
-            <ButtonLink href="/admin/skills/new" variant="primary" size="md">
-              <Plus className="size-4" aria-hidden="true" />
-              {t('addSkill')}
-            </ButtonLink>
-          )}
+          title={t("noSkills")}
+          description={
+            q ? t("noSkillsDescription") : t("emptySkillsDescription")
+          }
+          actions={
+            q ? null : (
+              <ButtonLink href="/admin/skills/new" variant="primary" size="md">
+                <Plus className="size-4" aria-hidden="true" />
+                {t("addSkill")}
+              </ButtonLink>
+            )
+          }
         />
       ) : (
-        <DashboardTable ariaLabel={t('skillsTableLabel')}
-minWidth="64rem"
-headers={[
-            { label: t('skillColumn'), width: "35%" },
-            { label: t('scoreColumn'), align: 'right' },
-            { label: t('installsColumn'), align: 'right' },
-            { label: t('bundleColumn'), align: 'right' },
-            { label: t('statusColumn') },
-            { label: <span className="sr-only">{t('edit')}</span> },
+        <DashboardTable
+          ariaLabel={t("skillsTableLabel")}
+          minWidth="64rem"
+          headers={[
+            { label: t("skillColumn"), width: "35%" },
+            { label: t("scoreColumn"), align: "right" },
+            { label: t("installsColumn"), align: "right" },
+            { label: t("bundleColumn"), align: "right" },
+            { label: t("statusColumn") },
+            { label: <span className="sr-only">{t("edit")}</span> },
           ]}
-rows={items.map((skill) => {
-            const bundleSize = Array.isArray(skill.files) ? skill.files.length + 1 : 1;
+          rows={items.map((skill) => {
+            const bundleSize = Array.isArray(skill.files)
+              ? skill.files.length + 1
+              : 1;
 
-            return (
-              ({ id: skill.id, cells: [<> <AdminEntity
+            return {
+              id: skill.id,
+              cells: [
+                <>
+                  {" "}
+                  <AdminEntity
                     title={
                       <Link
-                        href={adminHref(`/admin/skills/${skill.id}/edit`, { returnTo: hrefForPage(currentPage) })}
+                        href={adminHref(`/admin/skills/${skill.id}/edit`, {
+                          returnTo: hrefForPage(currentPage),
+                        })}
                         className="hover:underline"
                       >
                         {skill.name}
@@ -126,31 +142,46 @@ rows={items.map((skill) => {
                     }
                     description={`/${skill.slug}`}
                     initials={skill.name}
-                  /> </>,
-skill.score,
-skill._count.installs,
-bundleSize,
-skill.curated ? (
-                    <AdminBadge tone="info">{t('curated')}</AdminBadge>
-                  ) : (
-                    <span className="text-sm text-muted-foreground">{t('none')}</span>
-                  ),
-<> <AdminTableLink
-                    href={adminHref(`/admin/skills/${skill.id}/edit`, { returnTo: hrefForPage(currentPage) })}
-                    label={`${t('edit')}: ${skill.name}`}
-                  /> </>] })
-            );
-          })} />
+                  />{" "}
+                </>,
+                skill.score,
+                skill._count.installs,
+                bundleSize,
+                skill.curated ? (
+                  <AdminBadge key="curation" tone="info">
+                    {t("curated")}
+                  </AdminBadge>
+                ) : (
+                  <span
+                    key="curation"
+                    className="text-sm text-muted-foreground"
+                  >
+                    {t("none")}
+                  </span>
+                ),
+                <>
+                  {" "}
+                  <AdminTableLink
+                    href={adminHref(`/admin/skills/${skill.id}/edit`, {
+                      returnTo: hrefForPage(currentPage),
+                    })}
+                    label={`${t("edit")}: ${skill.name}`}
+                  />{" "}
+                </>,
+              ],
+            };
+          })}
+        />
       )}
 
       <AdminPagination
         page={currentPage}
         total={total}
         pageSize={pageSize}
-        itemLabel={t('directorySkills')}
-        pageLabel={t('page')}
-        previousLabel={t('prev')}
-        nextLabel={t('next')}
+        itemLabel={t("directorySkills")}
+        pageLabel={t("page")}
+        previousLabel={t("prev")}
+        nextLabel={t("next")}
         hrefForPage={hrefForPage}
       />
     </AdminPage>

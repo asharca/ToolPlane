@@ -1,7 +1,11 @@
 /** Pinned runtime hooks; these run BEFORE execution, never from tool activity logs. */
-export function nativeApprovalAdapter(runtime: 'pi' | 'dsh', helperPath: string) {
+export function nativeApprovalAdapter(
+  runtime: "pi" | "dsh",
+  helperPath: string,
+) {
   const imports = `import { approvalReady, approveNativeTool, freezeArguments } from ${JSON.stringify(helperPath)};\n`;
-  if (runtime === 'pi') return `${imports}
+  if (runtime === "pi")
+    return `${imports}
 export default async function (pi) {
   pi.on('tool_call', async (event) => {
     try {
@@ -32,9 +36,35 @@ export async function apply(ctx) {
 export function claudeApprovalSettings(helperPath: string) {
   // Path is platform-generated, not a model/tool argument. Explicit shell fallback denies even
   // if node cannot load the script; dontAsk remains the fallback if Claude cancels a timed-out hook.
-  if (!/^\/[a-zA-Z0-9_./-]+\.mjs$/.test(helperPath)) throw new Error('Invalid approval helper path.');
-  return JSON.stringify({ disableAllHooks: false, permissions: { defaultMode: 'dontAsk', allow: [] }, hooks: {
-    SessionStart: [{ hooks: [{ type: 'command', command: `node '${helperPath}' --ready || exit 2`, timeout: 20 }] }],
-    PreToolUse: [{ matcher: '.*', hooks: [{ type: 'command', command: `node '${helperPath}' --claude || exit 2`, timeout: 600 }] }],
-  } });
+  if (!/^\/[a-zA-Z0-9_./-]+\.mjs$/.test(helperPath))
+    throw new Error("Invalid approval helper path.");
+  return JSON.stringify({
+    disableAllHooks: false,
+    permissions: { defaultMode: "dontAsk", allow: [] },
+    hooks: {
+      SessionStart: [
+        {
+          hooks: [
+            {
+              type: "command",
+              command: `node '${helperPath}' --ready || exit 2`,
+              timeout: 20,
+            },
+          ],
+        },
+      ],
+      PreToolUse: [
+        {
+          matcher: ".*",
+          hooks: [
+            {
+              type: "command",
+              command: `node '${helperPath}' --claude || exit 2`,
+              timeout: 600,
+            },
+          ],
+        },
+      ],
+    },
+  });
 }

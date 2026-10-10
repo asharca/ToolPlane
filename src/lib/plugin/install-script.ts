@@ -1,15 +1,18 @@
-import { buildSyncScript } from './sync-script';
-import { buildSkillInvocationScript } from './skill-invocation-script';
+import { buildSyncScript } from "./sync-script";
+import { buildSkillInvocationScript } from "./skill-invocation-script";
 import {
   installClientLabel,
   resolveInstallClient,
   type InstallClient,
-} from './clients';
-import { SITE } from '@/lib/site';
-import { installationName, type InstallationIdentity } from './installation-identity';
+} from "./clients";
+import { SITE } from "@/lib/site";
+import {
+  installationName,
+  type InstallationIdentity,
+} from "./installation-identity";
 
 export type { InstallClient };
-export { INSTALL_CLIENTS, installClientLabel } from './clients';
+export { INSTALL_CLIENTS, installClientLabel } from "./clients";
 
 export function resolveClient(raw: string | null | undefined): InstallClient {
   return resolveInstallClient(raw);
@@ -24,24 +27,28 @@ export type InstallScriptOptions = InstallationIdentity & {
 };
 
 function b64(content: string): string {
-  return Buffer.from(content, 'utf8').toString('base64');
+  return Buffer.from(content, "utf8").toString("base64");
 }
 
 function mcpJson(pluginName: string, mcpUrl: string, token: string): string {
-  return (
-    JSON.stringify(
-      {
-        mcpServers: {
-          [pluginName]: { url: mcpUrl, headers: { Authorization: `Bearer ${token}` } },
+  return `${JSON.stringify(
+    {
+      mcpServers: {
+        [pluginName]: {
+          url: mcpUrl,
+          headers: { Authorization: `Bearer ${token}` },
         },
       },
-      null,
-      2,
-    ) + '\n'
-  );
+    },
+    null,
+    2,
+  )}\n`;
 }
 
-function buildHermesHookSyncScript(pluginName: string, toolkitSlug: string): string {
+function buildHermesHookSyncScript(
+  pluginName: string,
+  toolkitSlug: string,
+): string {
   return String.raw`#!/usr/bin/env bash
 # ${SITE.compactName} Hermes hook sync — stdout must stay JSON for shell hooks.
 set -eo pipefail
@@ -96,10 +103,10 @@ printf '{}\n'
 
 export function buildToolkitInstallScript(opts: InstallScriptOptions): string {
   const client = resolveClient(opts.client);
-  if (client === 'codex') return buildCodexInstallScript(opts);
-  if (client === 'hermes') return buildHermesInstallScript(opts);
-  if (client === 'opencode') return buildOpenCodeInstallScript(opts);
-  return buildPluginInstallScript({ ...opts, client: 'claude-code' });
+  if (client === "codex") return buildCodexInstallScript(opts);
+  if (client === "hermes") return buildHermesInstallScript(opts);
+  if (client === "opencode") return buildOpenCodeInstallScript(opts);
+  return buildPluginInstallScript({ ...opts, client: "claude-code" });
 }
 
 // Emits a `curl … | bash` install script that scaffolds the toolkit as one
@@ -110,33 +117,31 @@ export function buildToolkitInstallScript(opts: InstallScriptOptions): string {
 // base64-embedded so their contents never have to be shell-escaped.
 export function buildPluginInstallScript(opts: InstallScriptOptions): string {
   const { base, workspaceSlug, toolkitSlug, token } = opts;
-  const client = 'claude-code';
+  const client = "claude-code";
   const pluginName = installationName(opts);
   const mcpUrl = `${base}/api/v1/workspaces/${workspaceSlug}/toolkits/${toolkitSlug}/mcp`;
 
-  const marketplaceJson =
-    JSON.stringify(
-      {
-        name: pluginName,
-        owner: { name: SITE.compactName, url: base },
-        plugins: [{ name: pluginName, source: './' }],
-      },
-      null,
-      2,
-    ) + '\n';
+  const marketplaceJson = `${JSON.stringify(
+    {
+      name: pluginName,
+      owner: { name: SITE.compactName, url: base },
+      plugins: [{ name: pluginName, source: "./" }],
+    },
+    null,
+    2,
+  )}\n`;
 
-  const pluginJson =
-    JSON.stringify(
-      {
-        name: pluginName,
-        version: '0.1.6',
-        description: `Auto-syncs the "${toolkitSlug}" toolkit's MCP tools and skills into Claude Code.`,
-        skills: './skills/',
-        mcpServers: './.mcp.json',
-      },
-      null,
-      2,
-    ) + '\n';
+  const pluginJson = `${JSON.stringify(
+    {
+      name: pluginName,
+      version: "0.1.6",
+      description: `Auto-syncs the "${toolkitSlug}" toolkit's MCP tools and skills into Claude Code.`,
+      skills: "./skills/",
+      mcpServers: "./.mcp.json",
+    },
+    null,
+    2,
+  )}\n`;
 
   const mcpConfigJson = mcpJson(pluginName, mcpUrl, token);
 
@@ -144,40 +149,47 @@ export function buildPluginInstallScript(opts: InstallScriptOptions): string {
   // report each skill invocation. Claude Code's matcher filters exclusively, so
   // the telemetry hook only fires for the Skill tool, not every tool call.
   const skillHook = {
-    matcher: 'Skill',
+    matcher: "Skill",
     hooks: [
       {
-        type: 'command',
-        command: 'bash "${CLAUDE_PLUGIN_ROOT}/shared/skill-invocation.sh"',
+        type: "command",
+        command: `bash "\${CLAUDE_PLUGIN_ROOT}/shared/skill-invocation.sh"`,
         timeout: 10,
       },
     ],
   };
-  const hooksJson =
-    JSON.stringify(
-      {
-        hooks: {
-          SessionStart: [
-            {
-              matcher: 'startup|resume|clear|compact',
-              hooks: [
-                {
-                  type: 'command',
-                  command: 'bash "${CLAUDE_PLUGIN_ROOT}/shared/sync.sh"',
-                  timeout: 30,
-                },
-              ],
-            },
-          ],
-          PostToolUse: [skillHook],
-          PostToolUseFailure: [skillHook],
-        },
+  const hooksJson = `${JSON.stringify(
+    {
+      hooks: {
+        SessionStart: [
+          {
+            matcher: "startup|resume|clear|compact",
+            hooks: [
+              {
+                type: "command",
+                command: `bash "\${CLAUDE_PLUGIN_ROOT}/shared/sync.sh"`,
+                timeout: 30,
+              },
+            ],
+          },
+        ],
+        PostToolUse: [skillHook],
+        PostToolUseFailure: [skillHook],
       },
-      null,
-      2,
-    ) + '\n';
+    },
+    null,
+    2,
+  )}\n`;
 
-  const syncSh = buildSyncScript({ apiBase: base, workspaceSlug, toolkitSlug, client, installation: pluginName, workspaceId: opts.workspaceId, toolkitId: opts.toolkitId });
+  const syncSh = buildSyncScript({
+    apiBase: base,
+    workspaceSlug,
+    toolkitSlug,
+    client,
+    installation: pluginName,
+    workspaceId: opts.workspaceId,
+    toolkitId: opts.toolkitId,
+  });
   const skillInvocationSh = buildSkillInvocationScript({
     apiBase: base,
     workspaceSlug,
@@ -240,7 +252,7 @@ main "$@"
 
 export function buildCodexInstallScript(opts: InstallScriptOptions): string {
   const { base, workspaceSlug, toolkitSlug, token } = opts;
-  const client = 'codex';
+  const client = "codex";
   const pluginName = installationName(opts);
   const mcpUrl = `${base}/api/v1/workspaces/${workspaceSlug}/toolkits/${toolkitSlug}/mcp`;
   const mcpConfigJson = mcpJson(pluginName, mcpUrl, token);
@@ -252,7 +264,7 @@ export function buildCodexInstallScript(opts: InstallScriptOptions): string {
     installation: pluginName,
     workspaceId: opts.workspaceId,
     toolkitId: opts.toolkitId,
-    defaultSkillsDir: '$HOME/.agents/skills',
+    defaultSkillsDir: "$HOME/.agents/skills",
     defaultSkillDirPrefix: `${pluginName}-`,
   });
 
@@ -269,7 +281,7 @@ main() {
   CONFIG_PATH="$CODEX_HOME_DIR/config.toml"
   HOOKS_PATH="$CODEX_HOME_DIR/hooks.json"
 
-  echo "${SITE.compactName} install — toolkit ${toolkitSlug} (client: ${installClientLabel('codex')})"
+  echo "${SITE.compactName} install — toolkit ${toolkitSlug} (client: ${installClientLabel("codex")})"
   echo ""
 
   command -v node >/dev/null 2>&1 || { echo "  ✗ node not found on PATH" >&2; exit 1; }
@@ -382,11 +394,19 @@ main "$@"
 
 export function buildOpenCodeInstallScript(opts: InstallScriptOptions): string {
   const { base, workspaceSlug, toolkitSlug, token } = opts;
-  const client = 'opencode';
+  const client = "opencode";
   const pluginName = installationName(opts);
   const mcpUrl = `${base}/api/v1/workspaces/${workspaceSlug}/toolkits/${toolkitSlug}/mcp`;
   const mcpConfigJson = mcpJson(pluginName, mcpUrl, token);
-  const syncSh = buildSyncScript({ apiBase: base, workspaceSlug, toolkitSlug, client, installation: pluginName, workspaceId: opts.workspaceId, toolkitId: opts.toolkitId });
+  const syncSh = buildSyncScript({
+    apiBase: base,
+    workspaceSlug,
+    toolkitSlug,
+    client,
+    installation: pluginName,
+    workspaceId: opts.workspaceId,
+    toolkitId: opts.toolkitId,
+  });
 
   return String.raw`#!/usr/bin/env bash
 umask 077
@@ -404,7 +424,7 @@ main() {
   BUNDLE_DIR="$CONFIG_DIR/toolplane/${pluginName}"
   SKILLS_DIR="$BUNDLE_DIR/skills"
 
-  echo "${SITE.compactName} install — toolkit ${toolkitSlug} (client: ${installClientLabel('opencode')})"
+  echo "${SITE.compactName} install — toolkit ${toolkitSlug} (client: ${installClientLabel("opencode")})"
   echo ""
 
   command -v node >/dev/null 2>&1 || { echo "  ✗ node not found on PATH" >&2; exit 1; }
@@ -476,7 +496,7 @@ main "$@"
 
 export function buildHermesInstallScript(opts: InstallScriptOptions): string {
   const { base, workspaceSlug, toolkitSlug, token } = opts;
-  const client = 'hermes';
+  const client = "hermes";
   const pluginName = installationName(opts);
   const mcpUrl = `${base}/api/v1/workspaces/${workspaceSlug}/toolkits/${toolkitSlug}/mcp`;
   const mcpConfigJson = mcpJson(pluginName, mcpUrl, token);
@@ -510,7 +530,7 @@ main() {
   BUNDLES_DIR="$HERMES_HOME_DIR/skill-bundles"
   BUNDLE_FILE="$BUNDLES_DIR/${pluginName}.yaml"
 
-  echo "${SITE.compactName} install — toolkit ${toolkitSlug} (client: ${installClientLabel('hermes')})"
+  echo "${SITE.compactName} install — toolkit ${toolkitSlug} (client: ${installClientLabel("hermes")})"
   echo ""
 
   command -v node >/dev/null 2>&1 || { echo "  ✗ node not found on PATH" >&2; exit 1; }
@@ -658,7 +678,9 @@ main "$@"
 // `curl … | bash` uninstaller: unregister the plugin from Claude Code and remove
 // its directory (which also removes the synced skills). The toolkit's API key is
 // revoked explicitly for this installation before the cleanup script is issued.
-export function buildPluginUninstallScript(opts: InstallationIdentity & { client?: string }): string {
+export function buildPluginUninstallScript(
+  opts: InstallationIdentity & { client?: string },
+): string {
   const pluginName = installationName(opts);
   const client = resolveClient(opts.client);
   return String.raw`#!/usr/bin/env bash

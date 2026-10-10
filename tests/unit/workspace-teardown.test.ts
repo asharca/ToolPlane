@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   deploymentFindMany: vi.fn(),
@@ -18,7 +18,7 @@ const mocks = vi.hoisted(() => ({
   closeWorkspaceOperations: vi.fn(),
 }));
 
-vi.mock('@/lib/db', () => ({
+vi.mock("@/lib/db", () => ({
   db: {
     workSession: { findMany: mocks.workSessionFindMany },
     deployment: {
@@ -28,35 +28,37 @@ vi.mock('@/lib/db', () => ({
     sandbox: { findMany: mocks.sandboxFindMany },
   },
 }));
-vi.mock('@/lib/process/supervisor', () => ({
+vi.mock("@/lib/process/supervisor", () => ({
   killMany: mocks.killMany,
   preventWorkspaceStarts: mocks.preventWorkspaceStarts,
 }));
-vi.mock('@/lib/work/sessions', () => ({ cancelWorkSession: mocks.cancelWorkSession }));
-vi.mock('@/lib/work/run-control', () => ({ abortWorkRun: mocks.abortWorkRun }));
-vi.mock('@/lib/sandboxes/runtime', () => ({
+vi.mock("@/lib/work/sessions", () => ({
+  cancelWorkSession: mocks.cancelWorkSession,
+}));
+vi.mock("@/lib/work/run-control", () => ({ abortWorkRun: mocks.abortWorkRun }));
+vi.mock("@/lib/sandboxes/runtime", () => ({
   removeDockerSandboxRuntimeStrict: mocks.removeDockerSandboxRuntimeStrict,
   removeDockerVolumeStrict: mocks.removeDockerVolumeStrict,
 }));
-vi.mock('@/lib/process/deployment-config-volume', () => ({
+vi.mock("@/lib/process/deployment-config-volume", () => ({
   removeDeploymentConfigVolume: mocks.removeDeploymentConfigVolume,
 }));
-vi.mock('@/lib/process/deployment-runtime-container', () => ({
+vi.mock("@/lib/process/deployment-runtime-container", () => ({
   removeDeploymentContainer: mocks.removeDeploymentContainer,
 }));
-vi.mock('@/lib/attachments/storage', () => ({
+vi.mock("@/lib/attachments/storage", () => ({
   removeWorkspaceAttachmentVolume: mocks.removeWorkspaceAttachmentVolume,
 }));
-vi.mock('@/lib/sandboxes/connector-broker', () => ({
+vi.mock("@/lib/sandboxes/connector-broker", () => ({
   disconnectConnector: mocks.disconnectConnector,
 }));
-vi.mock('@/lib/workspace/operation-gate', () => ({
+vi.mock("@/lib/workspace/operation-gate", () => ({
   closeWorkspaceOperations: mocks.closeWorkspaceOperations,
 }));
 
-import { killWorkspaceProcesses } from '@/lib/workspace/teardown';
+import { killWorkspaceProcesses } from "@/lib/workspace/teardown";
 
-describe('workspace process teardown', () => {
+describe("workspace process teardown", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.workSessionFindMany.mockResolvedValue([]);
@@ -70,69 +72,72 @@ describe('workspace process teardown', () => {
     mocks.closeWorkspaceOperations.mockResolvedValue(undefined);
   });
 
-  it('disconnects connectors and strictly removes snapshots before the Docker runtime', async () => {
-    mocks.workSessionFindMany.mockResolvedValue([{ id: 'work-1' }]);
+  it("disconnects connectors and strictly removes snapshots before the Docker runtime", async () => {
+    mocks.workSessionFindMany.mockResolvedValue([{ id: "work-1" }]);
     // The first deployment query takes the workspace-wide process snapshot;
     // the second finds bridge deployments whose config volumes must be removed.
     mocks.deploymentFindMany
-      .mockResolvedValueOnce([{ id: 'dep-connector' }, { id: 'dep-docker' }])
+      .mockResolvedValueOnce([{ id: "dep-connector" }, { id: "dep-docker" }])
       .mockResolvedValueOnce([]);
     mocks.sandboxFindMany.mockResolvedValue([
       {
-        id: 'sb-connector',
-        kind: 'connector',
-        deploymentId: 'dep-connector',
+        id: "sb-connector",
+        kind: "connector",
+        deploymentId: "dep-connector",
         deployment: { installCfg: {} },
         snapshots: [],
       },
       {
-        id: 'sb-docker',
-        kind: 'docker',
-        deploymentId: 'dep-docker',
-        deployment: { installCfg: { volumeName: 'vol-docker' } },
-        snapshots: [{ volumeName: 'vol-snapshot-1' }, { volumeName: 'vol-snapshot-2' }],
+        id: "sb-docker",
+        kind: "docker",
+        deploymentId: "dep-docker",
+        deployment: { installCfg: { volumeName: "vol-docker" } },
+        snapshots: [
+          { volumeName: "vol-snapshot-1" },
+          { volumeName: "vol-snapshot-2" },
+        ],
       },
     ]);
 
-    await killWorkspaceProcesses('ws1');
-    expect(mocks.cancelWorkSession).toHaveBeenCalledWith('ws1', 'work-1');
-    expect(mocks.abortWorkRun).toHaveBeenCalledWith('work-1');
+    await killWorkspaceProcesses("ws1");
+    expect(mocks.cancelWorkSession).toHaveBeenCalledWith("ws1", "work-1");
+    expect(mocks.abortWorkRun).toHaveBeenCalledWith("work-1");
 
-    expect(mocks.preventWorkspaceStarts).toHaveBeenCalledWith('ws1');
-    expect(mocks.preventWorkspaceStarts.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(mocks.preventWorkspaceStarts).toHaveBeenCalledWith("ws1");
+    expect(
+      mocks.preventWorkspaceStarts.mock.invocationCallOrder[0],
+    ).toBeLessThan(mocks.closeWorkspaceOperations.mock.invocationCallOrder[0]);
+    expect(mocks.closeWorkspaceOperations).toHaveBeenCalledWith("ws1");
+    expect(
       mocks.closeWorkspaceOperations.mock.invocationCallOrder[0],
+    ).toBeLessThan(mocks.deploymentFindMany.mock.invocationCallOrder[0]);
+    expect(mocks.disconnectConnector).toHaveBeenCalledWith(
+      "sb-connector",
+      "workspace deleted",
     );
-    expect(mocks.closeWorkspaceOperations).toHaveBeenCalledWith('ws1');
-    expect(mocks.closeWorkspaceOperations.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.deploymentFindMany.mock.invocationCallOrder[0],
-    );
-    expect(mocks.disconnectConnector).toHaveBeenCalledWith('sb-connector', 'workspace deleted');
     expect(mocks.killMany.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.deploymentUpdateMany.mock.invocationCallOrder[0],
     );
     expect(mocks.deploymentUpdateMany).toHaveBeenCalledWith({
       where: {
-        workspaceId: 'ws1',
-        OR: [
-          { source: null },
-          { source: { not: 'sandbox' } },
-        ],
+        workspaceId: "ws1",
+        OR: [{ source: null }, { source: { not: "sandbox" } }],
       },
-      data: { status: 'stopped' },
+      data: { status: "stopped" },
     });
     expect(mocks.deploymentUpdateMany).toHaveBeenCalledWith({
-      where: { workspaceId: 'ws1', source: 'sandbox' },
-      data: { status: 'deleting' },
+      where: { workspaceId: "ws1", source: "sandbox" },
+      data: { status: "deleting" },
     });
     expect(mocks.deploymentUpdateMany.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.disconnectConnector.mock.invocationCallOrder[0],
     );
     expect(mocks.killMany).toHaveBeenCalledWith(
-      ['dep-connector', 'dep-docker'],
-      { finalStatus: 'deleting' },
+      ["dep-connector", "dep-docker"],
+      { finalStatus: "deleting" },
     );
     expect(mocks.sandboxFindMany).toHaveBeenCalledWith({
-      where: { workspaceId: 'ws1' },
+      where: { workspaceId: "ws1" },
       include: {
         deployment: { select: { installCfg: true } },
         snapshots: { select: { volumeName: true } },
@@ -140,82 +145,90 @@ describe('workspace process teardown', () => {
     });
     expect(mocks.deploymentFindMany).toHaveBeenNthCalledWith(2, {
       where: {
-        workspaceId: 'ws1',
-        AND: [
-          { source: { not: null } },
-          { source: { not: 'sandbox' } },
-        ],
+        workspaceId: "ws1",
+        AND: [{ source: { not: null } }, { source: { not: "sandbox" } }],
       },
       select: { id: true },
     });
     expect(mocks.removeDeploymentConfigVolume).not.toHaveBeenCalled();
     expect(mocks.removeDockerVolumeStrict.mock.calls).toEqual([
-      ['vol-snapshot-1'],
-      ['vol-snapshot-2'],
+      ["vol-snapshot-1"],
+      ["vol-snapshot-2"],
     ]);
-    expect(mocks.removeDockerSandboxRuntimeStrict).toHaveBeenCalledWith('sb-docker', 'vol-docker');
-    expect(mocks.removeWorkspaceAttachmentVolume).toHaveBeenCalledWith('ws1');
+    expect(mocks.removeDockerSandboxRuntimeStrict).toHaveBeenCalledWith(
+      "sb-docker",
+      "vol-docker",
+    );
+    expect(mocks.removeWorkspaceAttachmentVolume).toHaveBeenCalledWith("ws1");
     expect(mocks.removeDockerSandboxRuntimeStrict).not.toHaveBeenCalledWith(
-      'sb-connector',
+      "sb-connector",
       expect.anything(),
     );
     expect(mocks.disconnectConnector.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.removeDockerVolumeStrict.mock.invocationCallOrder[0],
     );
-    expect(mocks.removeDockerVolumeStrict.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(
+      mocks.removeDockerVolumeStrict.mock.invocationCallOrder[0],
+    ).toBeLessThan(mocks.removeDockerVolumeStrict.mock.invocationCallOrder[1]);
+    expect(
       mocks.removeDockerVolumeStrict.mock.invocationCallOrder[1],
-    );
-    expect(mocks.removeDockerVolumeStrict.mock.invocationCallOrder[1]).toBeLessThan(
+    ).toBeLessThan(
       mocks.removeDockerSandboxRuntimeStrict.mock.invocationCallOrder[0],
     );
   });
 
-  it('propagates strict snapshot cleanup failures before removing the main runtime', async () => {
-    const cleanupError = new Error('snapshot volume is still in use');
+  it("propagates strict snapshot cleanup failures before removing the main runtime", async () => {
+    const cleanupError = new Error("snapshot volume is still in use");
     mocks.deploymentFindMany
-      .mockResolvedValueOnce([{ id: 'dep-docker' }])
+      .mockResolvedValueOnce([{ id: "dep-docker" }])
       .mockResolvedValueOnce([]);
     mocks.sandboxFindMany.mockResolvedValue([
       {
-        id: 'sb-docker',
-        kind: 'docker',
-        deploymentId: 'dep-docker',
-        deployment: { installCfg: { volumeName: 'vol-docker' } },
-        snapshots: [{ volumeName: 'vol-snapshot' }],
+        id: "sb-docker",
+        kind: "docker",
+        deploymentId: "dep-docker",
+        deployment: { installCfg: { volumeName: "vol-docker" } },
+        snapshots: [{ volumeName: "vol-snapshot" }],
       },
     ]);
     mocks.removeDockerVolumeStrict.mockRejectedValueOnce(cleanupError);
 
-    await expect(killWorkspaceProcesses('ws1')).rejects.toBe(cleanupError);
+    await expect(killWorkspaceProcesses("ws1")).rejects.toBe(cleanupError);
 
-    expect(mocks.removeDockerVolumeStrict).toHaveBeenCalledWith('vol-snapshot');
+    expect(mocks.removeDockerVolumeStrict).toHaveBeenCalledWith("vol-snapshot");
     expect(mocks.removeDockerSandboxRuntimeStrict).not.toHaveBeenCalled();
   });
 
-  it('keeps regular deployments stopped while sandboxes remain deleting', async () => {
+  it("keeps regular deployments stopped while sandboxes remain deleting", async () => {
     mocks.deploymentFindMany
-      .mockResolvedValueOnce([{ id: 'dep-regular' }, { id: 'dep-sandbox' }])
-      .mockResolvedValueOnce([{ id: 'dep-regular' }]);
-    mocks.sandboxFindMany.mockResolvedValue([{
-      id: 'sb-docker',
-      kind: 'docker',
-      deploymentId: 'dep-sandbox',
-      deployment: { installCfg: { volumeName: 'vol-docker' } },
-      snapshots: [],
-    }]);
+      .mockResolvedValueOnce([{ id: "dep-regular" }, { id: "dep-sandbox" }])
+      .mockResolvedValueOnce([{ id: "dep-regular" }]);
+    mocks.sandboxFindMany.mockResolvedValue([
+      {
+        id: "sb-docker",
+        kind: "docker",
+        deploymentId: "dep-sandbox",
+        deployment: { installCfg: { volumeName: "vol-docker" } },
+        snapshots: [],
+      },
+    ]);
 
-    await killWorkspaceProcesses('ws1');
+    await killWorkspaceProcesses("ws1");
 
     expect(mocks.killMany.mock.calls).toEqual([
-      [['dep-regular']],
-      [['dep-sandbox'], { finalStatus: 'deleting' }],
+      [["dep-regular"]],
+      [["dep-sandbox"], { finalStatus: "deleting" }],
     ]);
-    expect(mocks.removeDeploymentConfigVolume).toHaveBeenCalledWith('dep-regular');
-    expect(mocks.removeDeploymentContainer).toHaveBeenCalledWith('dep-regular');
+    expect(mocks.removeDeploymentConfigVolume).toHaveBeenCalledWith(
+      "dep-regular",
+    );
+    expect(mocks.removeDeploymentContainer).toHaveBeenCalledWith("dep-regular");
     expect(mocks.killMany.mock.invocationCallOrder[1]).toBeLessThan(
       mocks.removeDeploymentContainer.mock.invocationCallOrder[0],
     );
-    expect(mocks.removeDeploymentContainer.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(
+      mocks.removeDeploymentContainer.mock.invocationCallOrder[0],
+    ).toBeLessThan(
       mocks.removeDeploymentConfigVolume.mock.invocationCallOrder[0],
     );
   });

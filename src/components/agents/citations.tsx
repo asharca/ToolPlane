@@ -2,12 +2,7 @@
 
 import { BookOpenText, ChevronDown, ExternalLink, Globe2 } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import {
-  type ReactNode,
-  useCallback,
-  useId,
-  useState,
-} from "react";
+import { type ReactNode, useCallback, useId, useState } from "react";
 import { AgentDisclosure } from "@/components/agents/agent-disclosure";
 import { EASE_OUT, SPRING_LAYOUT, SPRING_SWAP } from "@/lib/ease";
 import { useFavicon } from "@/lib/hooks/use-favicon";
@@ -115,10 +110,7 @@ export function CitationStack({
   className,
 }: CitationStackProps) {
   return (
-    <span
-      aria-hidden="true"
-      className={cn("flex -space-x-1.5", className)}
-    >
+    <span aria-hidden="true" className={cn("flex -space-x-1.5", className)}>
       {citations.slice(0, limit).map((citation) => (
         <CitationFavicon
           key={citation.id}
@@ -237,8 +229,7 @@ export function Citations({
   const reduce = useReducedMotion() ?? false;
   const baseId = useId();
   const contentId = `${baseId}-content`;
-  const resolvedPrefix =
-    idPrefix ?? `citation-${baseId.replace(/:/g, "")}`;
+  const resolvedPrefix = idPrefix ?? `citation-${baseId.replace(/:/g, "")}`;
   const [internalOpen, setInternalOpen] = useState(defaultOpen);
   const currentOpen = open ?? internalOpen;
   const setOpen = useCallback(
@@ -273,10 +264,7 @@ export function Citations({
         </motion.span>
       </button>
 
-      <AgentDisclosure
-        id={contentId}
-        open={currentOpen}
-      >
+      <AgentDisclosure id={contentId} open={currentOpen}>
         <CitationList
           citations={citations}
           idPrefix={resolvedPrefix}

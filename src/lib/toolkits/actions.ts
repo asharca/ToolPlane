@@ -1,18 +1,18 @@
-'use server';
+"use server";
 
-import { redirect } from 'next/navigation';
-import { revalidatePath } from 'next/cache';
-import type { Prisma } from '@prisma/client';
-import { db } from '@/lib/db';
-import { getCurrentUser } from '@/lib/auth/current-user';
-import { getWorkspaceForUser } from '@/lib/workspace/queries';
+import { redirect } from "next/navigation";
+import { revalidatePath } from "next/cache";
+import type { Prisma } from "@prisma/client";
+import { db } from "@/lib/db";
+import { getCurrentUser } from "@/lib/auth/current-user";
+import { getWorkspaceForUser } from "@/lib/workspace/queries";
 import {
   missingRequiredEnvironment,
   parseServerRecipe,
   recipeToDeploymentData,
-} from '@/lib/workspace/server-recipe';
-import { MAX_TOOLKIT_BATCH_ITEMS } from '@/lib/toolkits/limits';
-import { revokeToolkitInstallTokens } from '@/lib/toolkits/install-link';
+} from "@/lib/workspace/server-recipe";
+import { MAX_TOOLKIT_BATCH_ITEMS } from "@/lib/toolkits/limits";
+import { revokeToolkitInstallTokens } from "@/lib/toolkits/install-link";
 
 async function authorizedWorkspace(slug: string) {
   const user = await getCurrentUser();
@@ -35,7 +35,7 @@ async function publishingWorkspace(slug: string) {
     },
     select: { role: true },
   });
-  return membership?.role === 'admin' ? ctx : null;
+  return membership?.role === "admin" ? ctx : null;
 }
 
 async function toolkitInWorkspace(toolkitSlug: string, workspaceId: string) {
@@ -46,7 +46,7 @@ const MAX_TOOLKIT_NAME_LENGTH = 60;
 const MAX_TOOLKIT_CREATE_ATTEMPTS = 10;
 
 function toolkitName(value: FormDataEntryValue | null): string | null {
-  if (typeof value !== 'string') return null;
+  if (typeof value !== "string") return null;
   const name = value.trim();
   return name && name.length <= MAX_TOOLKIT_NAME_LENGTH ? name : null;
 }
@@ -54,19 +54,22 @@ function toolkitName(value: FormDataEntryValue | null): string | null {
 function slugify(input: string): string {
   const base = input
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-  return base || 'toolkit';
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return base || "toolkit";
 }
 
-async function availableToolkitSlug(workspaceId: string, name: string): Promise<string> {
+async function availableToolkitSlug(
+  workspaceId: string,
+  name: string,
+): Promise<string> {
   const base = slugify(name);
   let suffix = 0;
 
   while (true) {
     const candidate = suffix === 0 ? base : `${base}-${suffix}`;
     if (
-      candidate !== 'me' &&
+      candidate !== "me" &&
       !(await db.toolkit.findFirst({
         where: { workspaceId, slug: candidate },
         select: { id: true },
@@ -79,16 +82,16 @@ async function availableToolkitSlug(workspaceId: string, name: string): Promise<
 }
 
 function withCloneSuffix(name: string, copyNumber: number): string {
-  const suffix = copyNumber === 1 ? '' : ` ${copyNumber}`;
+  const suffix = copyNumber === 1 ? "" : ` ${copyNumber}`;
   return `${name.slice(0, MAX_TOOLKIT_NAME_LENGTH - suffix.length).trimEnd()}${suffix}`;
 }
 
 function isUniqueConstraintError(error: unknown): boolean {
   return (
-    typeof error === 'object' &&
+    typeof error === "object" &&
     error !== null &&
-    'code' in error &&
-    error.code === 'P2002'
+    "code" in error &&
+    error.code === "P2002"
   );
 }
 
@@ -109,14 +112,17 @@ async function createToolkitWithAvailableSlug<T>(
     }
   }
 
-  throw lastConflict ?? new Error('Unable to allocate a unique toolkit slug.');
+  throw lastConflict ?? new Error("Unable to allocate a unique toolkit slug.");
 }
 
-async function availableCloneIdentity(workspaceId: string, requestedName: string) {
+async function availableCloneIdentity(
+  workspaceId: string,
+  requestedName: string,
+) {
   for (let copyNumber = 1; ; copyNumber += 1) {
     const name = withCloneSuffix(requestedName, copyNumber);
     const slug = slugify(name);
-    if (slug === 'me') continue;
+    if (slug === "me") continue;
 
     const conflict = await db.toolkit.findFirst({
       where: {
@@ -130,39 +136,42 @@ async function availableCloneIdentity(workspaceId: string, requestedName: string
 }
 
 export async function createToolkitAction(formData: FormData) {
-  const slug = String(formData.get('workspace') ?? '');
-  const name = toolkitName(formData.get('name')) ?? 'New toolkit';
+  const slug = String(formData.get("workspace") ?? "");
+  const name = toolkitName(formData.get("name")) ?? "New toolkit";
   const ctx = await authorizedWorkspace(slug);
   if (!ctx) return;
 
-  const toolkit = await createToolkitWithAvailableSlug(ctx.ws.id, name, (toolkitSlug) =>
-    db.toolkit.create({
-      data: { workspaceId: ctx.ws.id, name, slug: toolkitSlug },
-      select: { slug: true },
-    }),
+  const toolkit = await createToolkitWithAvailableSlug(
+    ctx.ws.id,
+    name,
+    (toolkitSlug) =>
+      db.toolkit.create({
+        data: { workspaceId: ctx.ws.id, name, slug: toolkitSlug },
+        select: { slug: true },
+      }),
   );
   revalidatePath(`/app/${slug}/toolkits`);
   redirect(`/app/${slug}/toolkits/${toolkit.slug}`);
 }
 
 export async function clonePublicToolkitAction(formData: FormData) {
-  const workspaceSlug = String(formData.get('workspace') ?? '');
-  const sourceToolkitId = String(formData.get('toolkitId') ?? '');
+  const workspaceSlug = String(formData.get("workspace") ?? "");
+  const sourceToolkitId = String(formData.get("toolkitId") ?? "");
   const ctx = await authorizedWorkspace(workspaceSlug);
   if (!ctx || !sourceToolkitId) return;
 
   const source = await db.toolkit.findFirst({
     where: {
       id: sourceToolkitId,
-      visibility: 'public',
+      visibility: "public",
       enabled: true,
       OR: [
         { sourceMarketListing: { is: null } },
         {
           sourceMarketListing: {
             is: {
-              status: 'published',
-              latestRelease: { is: { reviewStatus: 'approved' } },
+              status: "published",
+              latestRelease: { is: { reviewStatus: "approved" } },
             },
           },
         },
@@ -174,7 +183,12 @@ export async function clonePublicToolkitAction(formData: FormData) {
           deployment: {
             include: {
               server: {
-                select: { id: true, name: true, installCfg: true, verifiedAt: true },
+                select: {
+                  id: true,
+                  name: true,
+                  installCfg: true,
+                  verifiedAt: true,
+                },
               },
             },
           },
@@ -194,111 +208,115 @@ export async function clonePublicToolkitAction(formData: FormData) {
     return redirect(`/app/${workspaceSlug}/toolkits/${source.slug}`);
   }
 
-  const cloned = await createToolkitWithAvailableSlug(ctx.ws.id, source.name, (nextSlug) =>
-    db.$transaction(async (tx) => {
-      const target = await tx.toolkit.create({
-        data: {
-          workspaceId: ctx.ws.id,
-          name: source.name,
-          slug: nextSlug,
-          visibility: 'private',
-          enabled: true,
-        },
-      });
-
-      for (const link of source.servers) {
-        const deployment = link.deployment;
-        if (!deployment.serverId || !deployment.server?.verifiedAt) continue;
-
-        const recipe = parseServerRecipe(deployment.server.installCfg);
-        if (!recipe) continue;
-        const data = recipeToDeploymentData(recipe);
-        const requiresSetup = missingRequiredEnvironment(recipe, data.installCfg).length > 0;
-        const targetDeployment = await tx.deployment.upsert({
-          where: {
-            workspaceId_serverId: {
-              workspaceId: ctx.ws.id,
-              serverId: deployment.serverId,
-            },
-          },
-          update: {},
-          create: {
+  const cloned = await createToolkitWithAvailableSlug(
+    ctx.ws.id,
+    source.name,
+    (nextSlug) =>
+      db.$transaction(async (tx) => {
+        const target = await tx.toolkit.create({
+          data: {
             workspaceId: ctx.ws.id,
-            serverId: deployment.serverId,
-            status: requiresSetup ? 'setup_required' : 'stopped',
-            source: data.source,
-            sourceRef: data.sourceRef,
-            installCfg: data.installCfg as Prisma.InputJsonValue,
+            name: source.name,
+            slug: nextSlug,
+            visibility: "private",
+            enabled: true,
           },
         });
 
-        await tx.toolkitServer.upsert({
-          where: {
-            toolkitId_deploymentId: {
+        for (const link of source.servers) {
+          const deployment = link.deployment;
+          if (!deployment.serverId || !deployment.server?.verifiedAt) continue;
+
+          const recipe = parseServerRecipe(deployment.server.installCfg);
+          if (!recipe) continue;
+          const data = recipeToDeploymentData(recipe);
+          const requiresSetup =
+            missingRequiredEnvironment(recipe, data.installCfg).length > 0;
+          const targetDeployment = await tx.deployment.upsert({
+            where: {
+              workspaceId_serverId: {
+                workspaceId: ctx.ws.id,
+                serverId: deployment.serverId,
+              },
+            },
+            update: {},
+            create: {
+              workspaceId: ctx.ws.id,
+              serverId: deployment.serverId,
+              status: requiresSetup ? "setup_required" : "stopped",
+              source: data.source,
+              sourceRef: data.sourceRef,
+              installCfg: data.installCfg as Prisma.InputJsonValue,
+            },
+          });
+
+          await tx.toolkitServer.upsert({
+            where: {
+              toolkitId_deploymentId: {
+                toolkitId: target.id,
+                deploymentId: targetDeployment.id,
+              },
+            },
+            update: {},
+            create: {
               toolkitId: target.id,
               deploymentId: targetDeployment.id,
             },
-          },
-          update: {},
-          create: {
-            toolkitId: target.id,
-            deploymentId: targetDeployment.id,
-          },
-        });
-      }
+          });
+        }
 
-      for (const link of source.skills) {
-        const installed = link.installedSkill;
-        const targetSkill = installed.skillId
-          ? await tx.installedSkill.upsert({
-              where: {
-                workspaceId_skillId: {
+        for (const link of source.skills) {
+          const installed = link.installedSkill;
+          const targetSkill = installed.skillId
+            ? await tx.installedSkill.upsert({
+                where: {
+                  workspaceId_skillId: {
+                    workspaceId: ctx.ws.id,
+                    skillId: installed.skillId,
+                  },
+                },
+                update: {},
+                create: {
                   workspaceId: ctx.ws.id,
                   skillId: installed.skillId,
                 },
-              },
-              update: {},
-              create: {
-                workspaceId: ctx.ws.id,
-                skillId: installed.skillId,
-              },
-            })
-          : await tx.installedSkill.create({
-              data: {
-                workspaceId: ctx.ws.id,
-                name: installed.name,
-                slug: installed.slug,
-                description: installed.description,
-                content: installed.content,
-                source: installed.source,
-                sourceRef: installed.sourceRef,
-                status: installed.status,
-                userInvocable: installed.userInvocable,
-                agentInvocable: installed.agentInvocable,
-                effort: installed.effort,
-                ...(installed.files === null
-                  ? {}
-                  : { files: installed.files as Prisma.InputJsonValue }),
-              },
-            });
+              })
+            : await tx.installedSkill.create({
+                data: {
+                  workspaceId: ctx.ws.id,
+                  name: installed.name,
+                  slug: installed.slug,
+                  description: installed.description,
+                  content: installed.content,
+                  source: installed.source,
+                  sourceRef: installed.sourceRef,
+                  status: installed.status,
+                  userInvocable: installed.userInvocable,
+                  agentInvocable: installed.agentInvocable,
+                  effort: installed.effort,
+                  ...(installed.files === null
+                    ? {}
+                    : { files: installed.files as Prisma.InputJsonValue }),
+                },
+              });
 
-        await tx.toolkitSkill.upsert({
-          where: {
-            toolkitId_installedSkillId: {
+          await tx.toolkitSkill.upsert({
+            where: {
+              toolkitId_installedSkillId: {
+                toolkitId: target.id,
+                installedSkillId: targetSkill.id,
+              },
+            },
+            update: {},
+            create: {
               toolkitId: target.id,
               installedSkillId: targetSkill.id,
             },
-          },
-          update: {},
-          create: {
-            toolkitId: target.id,
-            installedSkillId: targetSkill.id,
-          },
-        });
-      }
+          });
+        }
 
-      return target;
-    }),
+        return target;
+      }),
   );
 
   revalidatePath(`/app/${workspaceSlug}/toolkits`);
@@ -307,9 +325,9 @@ export async function clonePublicToolkitAction(formData: FormData) {
 }
 
 export async function renameToolkitAction(formData: FormData) {
-  const workspaceSlug = String(formData.get('workspace') ?? '');
-  const toolkitSlug = String(formData.get('toolkitSlug') ?? '');
-  const name = toolkitName(formData.get('name'));
+  const workspaceSlug = String(formData.get("workspace") ?? "");
+  const toolkitSlug = String(formData.get("toolkitSlug") ?? "");
+  const name = toolkitName(formData.get("name"));
   if (!workspaceSlug || !toolkitSlug || !name) return;
 
   const ctx = await authorizedWorkspace(workspaceSlug);
@@ -319,21 +337,25 @@ export async function renameToolkitAction(formData: FormData) {
 
   await db.$transaction([
     db.toolkit.update({ where: { id: toolkit.id }, data: { name } }),
-    db.marketInstall.updateMany({ where: { toolkitId: toolkit.id }, data: { status: 'modified' } }),
+    db.marketInstall.updateMany({
+      where: { toolkitId: toolkit.id },
+      data: { status: "modified" },
+    }),
   ]);
   revalidatePath(`/app/${workspaceSlug}/toolkits`);
   revalidatePath(`/app/${workspaceSlug}/toolkits/${toolkitSlug}`);
 }
 
 export async function updateToolkitAvailabilityAction(formData: FormData) {
-  const workspaceSlug = String(formData.get('workspace') ?? '');
-  const toolkitSlug = String(formData.get('toolkitSlug') ?? '');
-  const visibility = formData.get('visibility');
+  const workspaceSlug = String(formData.get("workspace") ?? "");
+  const toolkitSlug = String(formData.get("toolkitSlug") ?? "");
+  const visibility = formData.get("visibility");
   if (
-    !workspaceSlug
-    || !toolkitSlug
-    || (visibility !== 'public' && visibility !== 'private')
-  ) return;
+    !workspaceSlug ||
+    !toolkitSlug ||
+    (visibility !== "public" && visibility !== "private")
+  )
+    return;
 
   const ctx = await publishingWorkspace(workspaceSlug);
   if (!ctx) return;
@@ -342,7 +364,7 @@ export async function updateToolkitAvailabilityAction(formData: FormData) {
 
   await db.toolkit.update({
     where: { id: toolkit.id },
-    data: { visibility, enabled: formData.get('enabled') === 'on' },
+    data: { visibility, enabled: formData.get("enabled") === "on" },
   });
   revalidatePath(`/app/${workspaceSlug}/toolkits`);
   revalidatePath(`/app/${workspaceSlug}/toolkits/${toolkitSlug}`);
@@ -351,8 +373,8 @@ export async function updateToolkitAvailabilityAction(formData: FormData) {
 }
 
 export async function cloneToolkitAction(formData: FormData) {
-  const workspaceSlug = String(formData.get('workspace') ?? '');
-  const toolkitSlug = String(formData.get('toolkitSlug') ?? '');
+  const workspaceSlug = String(formData.get("workspace") ?? "");
+  const toolkitSlug = String(formData.get("toolkitSlug") ?? "");
   if (!workspaceSlug || !toolkitSlug) return;
 
   const ctx = await authorizedWorkspace(workspaceSlug);
@@ -377,15 +399,20 @@ export async function cloneToolkitAction(formData: FormData) {
   });
   if (!source) return;
   if (
-    source.servers.some(({ deployment }) => deployment.workspaceId !== ctx.ws.id) ||
-    source.skills.some(({ installedSkill }) => installedSkill.workspaceId !== ctx.ws.id)
+    source.servers.some(
+      ({ deployment }) => deployment.workspaceId !== ctx.ws.id,
+    ) ||
+    source.skills.some(
+      ({ installedSkill }) => installedSkill.workspaceId !== ctx.ws.id,
+    )
   ) {
     return;
   }
 
   const defaultName = `${source.name.slice(0, MAX_TOOLKIT_NAME_LENGTH - 5).trimEnd()} Copy`;
-  const nameEntry = formData.get('name');
-  const requestedName = nameEntry === null ? defaultName : toolkitName(nameEntry);
+  const nameEntry = formData.get("name");
+  const requestedName =
+    nameEntry === null ? defaultName : toolkitName(nameEntry);
   if (!requestedName) return;
   let cloned: { slug: string } | null = null;
   for (let attempt = 0; attempt < MAX_TOOLKIT_CREATE_ATTEMPTS; attempt += 1) {
@@ -396,20 +423,27 @@ export async function cloneToolkitAction(formData: FormData) {
           workspaceId: ctx.ws.id,
           name: identity.name,
           slug: identity.slug,
-          visibility: 'private',
+          visibility: "private",
           enabled: true,
           servers: {
-            create: source.servers.map(({ deploymentId }) => ({ deploymentId })),
+            create: source.servers.map(({ deploymentId }) => ({
+              deploymentId,
+            })),
           },
           skills: {
-            create: source.skills.map(({ installedSkillId }) => ({ installedSkillId })),
+            create: source.skills.map(({ installedSkillId }) => ({
+              installedSkillId,
+            })),
           },
         },
         select: { slug: true },
       });
       break;
     } catch (error) {
-      if (!isUniqueConstraintError(error) || attempt === MAX_TOOLKIT_CREATE_ATTEMPTS - 1) {
+      if (
+        !isUniqueConstraintError(error) ||
+        attempt === MAX_TOOLKIT_CREATE_ATTEMPTS - 1
+      ) {
         throw error;
       }
     }
@@ -421,14 +455,20 @@ export async function cloneToolkitAction(formData: FormData) {
 }
 
 export async function deleteToolkitAction(formData: FormData) {
-  const slug = String(formData.get('workspace') ?? '');
-  const toolkitSlug = String(formData.get('toolkitSlug') ?? '');
+  const slug = String(formData.get("workspace") ?? "");
+  const toolkitSlug = String(formData.get("toolkitSlug") ?? "");
   const ctx = await authorizedWorkspace(slug);
   if (!ctx) return;
-  if (toolkitSlug === 'me') return; // default toolkit is not deletable
+  if (toolkitSlug === "me") return; // default toolkit is not deletable
   const tk = await toolkitInWorkspace(toolkitSlug, ctx.ws.id);
   if (!tk) return;
-  if (await db.marketInstall.findUnique({ where: { toolkitId: tk.id }, select: { id: true } })) return;
+  if (
+    await db.marketInstall.findUnique({
+      where: { toolkitId: tk.id },
+      select: { id: true },
+    })
+  )
+    return;
 
   await revokeToolkitInstallTokens(tk.id);
   await db.toolkit.delete({ where: { id: tk.id } });
@@ -440,31 +480,37 @@ export type ToolkitBatchActionState = { error?: string; added?: number };
 
 const MAX_RESOURCE_ID_LENGTH = 128;
 
-function parseBatchResourceIds(formData: FormData): { ids: string[] } | { error: string } {
-  const raw = formData.getAll('resourceId');
-  if (raw.length === 0) return { error: 'Select at least one item.' };
+function parseBatchResourceIds(
+  formData: FormData,
+): { ids: string[] } | { error: string } {
+  const raw = formData.getAll("resourceId");
+  if (raw.length === 0) return { error: "Select at least one item." };
   if (raw.length > MAX_TOOLKIT_BATCH_ITEMS) {
-    return { error: `Select no more than ${MAX_TOOLKIT_BATCH_ITEMS} items at once.` };
+    return {
+      error: `Select no more than ${MAX_TOOLKIT_BATCH_ITEMS} items at once.`,
+    };
   }
 
   const ids: string[] = [];
   for (const value of raw) {
-    if (typeof value !== 'string') return { error: 'Invalid resource selection.' };
+    if (typeof value !== "string")
+      return { error: "Invalid resource selection." };
     const id = value.trim();
-    if (!id || id.length > MAX_RESOURCE_ID_LENGTH) return { error: 'Invalid resource selection.' };
+    if (!id || id.length > MAX_RESOURCE_ID_LENGTH)
+      return { error: "Invalid resource selection." };
     ids.push(id);
   }
   return { ids: [...new Set(ids)] };
 }
 
 async function addToolkitResources(
-  kind: 'mcp' | 'skill',
+  kind: "mcp" | "skill",
   workspaceSlug: string,
   toolkitSlug: string,
   ids: string[],
 ): Promise<ToolkitBatchActionState> {
   const ctx = await authorizedWorkspace(workspaceSlug);
-  if (!ctx) return { error: 'Workspace not found or access denied.' };
+  if (!ctx) return { error: "Workspace not found or access denied." };
 
   try {
     const result = await db.$transaction(async (tx) => {
@@ -472,24 +518,31 @@ async function addToolkitResources(
         where: { slug: toolkitSlug, workspaceId: ctx.ws.id },
         select: { id: true },
       });
-      if (!toolkit) return { error: 'Toolkit not found.' };
+      if (!toolkit) return { error: "Toolkit not found." };
 
-      if (kind === 'mcp') {
+      if (kind === "mcp") {
         const owned = await tx.deployment.findMany({
           where: {
             workspaceId: ctx.ws.id,
             id: { in: ids },
-            OR: [{ source: null }, { source: { notIn: ['sandbox'] } }],
+            OR: [{ source: null }, { source: { notIn: ["sandbox"] } }],
           },
           select: { id: true },
         });
-        if (owned.length !== ids.length) return { error: 'One or more selected MCPs are unavailable.' };
+        if (owned.length !== ids.length)
+          return { error: "One or more selected MCPs are unavailable." };
         const created = await tx.toolkitServer.createMany({
-          data: owned.map(({ id }) => ({ toolkitId: toolkit.id, deploymentId: id })),
+          data: owned.map(({ id }) => ({
+            toolkitId: toolkit.id,
+            deploymentId: id,
+          })),
           skipDuplicates: true,
         });
         if (created.count) {
-          await tx.marketInstall.updateMany({ where: { toolkitId: toolkit.id }, data: { status: 'modified' } });
+          await tx.marketInstall.updateMany({
+            where: { toolkitId: toolkit.id },
+            data: { status: "modified" },
+          });
         }
         return { added: created.count };
       }
@@ -498,23 +551,30 @@ async function addToolkitResources(
         where: { workspaceId: ctx.ws.id, id: { in: ids } },
         select: { id: true },
       });
-      if (owned.length !== ids.length) return { error: 'One or more selected skills are unavailable.' };
+      if (owned.length !== ids.length)
+        return { error: "One or more selected skills are unavailable." };
       const created = await tx.toolkitSkill.createMany({
-        data: owned.map(({ id }) => ({ toolkitId: toolkit.id, installedSkillId: id })),
+        data: owned.map(({ id }) => ({
+          toolkitId: toolkit.id,
+          installedSkillId: id,
+        })),
         skipDuplicates: true,
       });
       if (created.count) {
-        await tx.marketInstall.updateMany({ where: { toolkitId: toolkit.id }, data: { status: 'modified' } });
+        await tx.marketInstall.updateMany({
+          where: { toolkitId: toolkit.id },
+          data: { status: "modified" },
+        });
       }
       return { added: created.count };
     });
 
-    if (!('error' in result)) {
+    if (!("error" in result)) {
       revalidatePath(`/app/${workspaceSlug}/toolkits/${toolkitSlug}`);
     }
     return result;
   } catch {
-    return { error: 'Failed to add selected items.' };
+    return { error: "Failed to add selected items." };
   }
 }
 
@@ -523,11 +583,11 @@ export async function addServersToToolkitAction(
   formData: FormData,
 ): Promise<ToolkitBatchActionState> {
   const parsed = parseBatchResourceIds(formData);
-  if ('error' in parsed) return parsed;
+  if ("error" in parsed) return parsed;
   return addToolkitResources(
-    'mcp',
-    String(formData.get('workspace') ?? ''),
-    String(formData.get('toolkitSlug') ?? ''),
+    "mcp",
+    String(formData.get("workspace") ?? ""),
+    String(formData.get("toolkitSlug") ?? ""),
     parsed.ids,
   );
 }
@@ -537,19 +597,19 @@ export async function addSkillsToToolkitAction(
   formData: FormData,
 ): Promise<ToolkitBatchActionState> {
   const parsed = parseBatchResourceIds(formData);
-  if ('error' in parsed) return parsed;
+  if ("error" in parsed) return parsed;
   return addToolkitResources(
-    'skill',
-    String(formData.get('workspace') ?? ''),
-    String(formData.get('toolkitSlug') ?? ''),
+    "skill",
+    String(formData.get("workspace") ?? ""),
+    String(formData.get("toolkitSlug") ?? ""),
     parsed.ids,
   );
 }
 
 export async function removeServerFromToolkitAction(formData: FormData) {
-  const slug = String(formData.get('workspace') ?? '');
-  const toolkitSlug = String(formData.get('toolkitSlug') ?? '');
-  const deploymentId = String(formData.get('deploymentId') ?? '');
+  const slug = String(formData.get("workspace") ?? "");
+  const toolkitSlug = String(formData.get("toolkitSlug") ?? "");
+  const deploymentId = String(formData.get("deploymentId") ?? "");
   const ctx = await authorizedWorkspace(slug);
   if (!ctx) return;
   const tk = await toolkitInWorkspace(toolkitSlug, ctx.ws.id);
@@ -560,16 +620,19 @@ export async function removeServerFromToolkitAction(formData: FormData) {
       where: { toolkitId: tk.id, deploymentId },
     });
     if (removed.count) {
-      await tx.marketInstall.updateMany({ where: { toolkitId: tk.id }, data: { status: 'modified' } });
+      await tx.marketInstall.updateMany({
+        where: { toolkitId: tk.id },
+        data: { status: "modified" },
+      });
     }
   });
   revalidatePath(`/app/${slug}/toolkits/${toolkitSlug}`);
 }
 
 export async function removeSkillFromToolkitAction(formData: FormData) {
-  const slug = String(formData.get('workspace') ?? '');
-  const toolkitSlug = String(formData.get('toolkitSlug') ?? '');
-  const installedSkillId = String(formData.get('installedSkillId') ?? '');
+  const slug = String(formData.get("workspace") ?? "");
+  const toolkitSlug = String(formData.get("toolkitSlug") ?? "");
+  const installedSkillId = String(formData.get("installedSkillId") ?? "");
   const ctx = await authorizedWorkspace(slug);
   if (!ctx) return;
   const tk = await toolkitInWorkspace(toolkitSlug, ctx.ws.id);
@@ -580,7 +643,10 @@ export async function removeSkillFromToolkitAction(formData: FormData) {
       where: { toolkitId: tk.id, installedSkillId },
     });
     if (removed.count) {
-      await tx.marketInstall.updateMany({ where: { toolkitId: tk.id }, data: { status: 'modified' } });
+      await tx.marketInstall.updateMany({
+        where: { toolkitId: tk.id },
+        data: { status: "modified" },
+      });
     }
   });
   revalidatePath(`/app/${slug}/toolkits/${toolkitSlug}`);

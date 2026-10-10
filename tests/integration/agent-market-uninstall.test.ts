@@ -1,22 +1,22 @@
 // @vitest-environment node
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { Prisma } from '@prisma/client';
-import { db } from '@/lib/db';
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { Prisma } from "@prisma/client";
+import { db } from "@/lib/db";
 import {
   AGENT_MARKET_MANIFEST_VERSION,
   agentReleaseChecksum,
   materializeAgentRelease,
   summarizeAgentReleaseManifest,
   type AgentReleaseManifestV1,
-} from '@/lib/agents/market';
-import { deleteManagedAgent } from '@/lib/agents/deletion';
+} from "@/lib/agents/market";
+import { deleteManagedAgent } from "@/lib/agents/deletion";
 
 const stamp = `${process.pid}-${Date.now()}`;
-let userId = '';
-let workspaceId = '';
-let listingId = '';
-let releaseId = '';
-let categoryId = '';
+let userId = "";
+let workspaceId = "";
+let listingId = "";
+let releaseId = "";
+let categoryId = "";
 
 function agent(key: string, resources: string) {
   return {
@@ -26,11 +26,11 @@ function agent(key: string, resources: string) {
     systemPrompt: null,
     maxSteps: 8,
     modelRequirement: null,
-    runtime: { kind: 'pi' as const },
+    runtime: { kind: "pi" as const },
     deploymentKeys: [`deployment_${resources}`],
     skillKeys: [`skill_${resources}`],
     toolkitKeys: [`toolkit_${resources}`],
-    subAgentKeys: key === 'root' ? ['child'] : [],
+    subAgentKeys: key === "root" ? ["child"] : [],
   };
 }
 
@@ -39,11 +39,11 @@ function deployment(key: string) {
     key: `deployment_${key}`,
     name: `Deployment ${key}`,
     catalogSlug: `deployment-${key}`,
-    source: 'npm' as const,
+    source: "npm" as const,
     sourceRef: `package-${key}`,
     requiredEnv: [],
     publicEnv: {},
-    mcpToolExposure: 'all' as const,
+    mcpToolExposure: "all" as const,
     mcpAllowedTools: [],
   };
 }
@@ -51,7 +51,7 @@ function deployment(key: string) {
 function skill(key: string) {
   return {
     key: `skill_${key}`,
-    origin: 'custom' as const,
+    origin: "custom" as const,
     name: `Skill ${key}`,
     slug: `skill-${key}`,
     description: null,
@@ -59,7 +59,7 @@ function skill(key: string) {
     files: [],
     userInvocable: true,
     agentInvocable: true,
-    effort: 'default',
+    effort: "default",
   };
 }
 
@@ -74,18 +74,25 @@ function toolkit(key: string) {
   };
 }
 
-describe.sequential('agent market uninstall', () => {
+describe.sequential("agent market uninstall", () => {
   beforeAll(async () => {
     const user = await db.user.create({
-      data: { email: `agent-uninstall-${stamp}@test.dev`, passwordHash: 'x' },
+      data: { email: `agent-uninstall-${stamp}@test.dev`, passwordHash: "x" },
     });
     userId = user.id;
     const [workspace, category] = await Promise.all([
       db.workspace.create({
-        data: { slug: `agent-uninstall-${stamp}`, name: 'Agent uninstall', ownerId: user.id },
+        data: {
+          slug: `agent-uninstall-${stamp}`,
+          name: "Agent uninstall",
+          ownerId: user.id,
+        },
       }),
       db.category.create({
-        data: { slug: `agent-uninstall-${stamp}`, name: `Agent uninstall ${stamp}` },
+        data: {
+          slug: `agent-uninstall-${stamp}`,
+          name: `Agent uninstall ${stamp}`,
+        },
       }),
     ]);
     workspaceId = workspace.id;
@@ -93,19 +100,19 @@ describe.sequential('agent market uninstall', () => {
 
     const manifest: AgentReleaseManifestV1 = {
       schemaVersion: AGENT_MARKET_MANIFEST_VERSION,
-      rootAgentKey: 'root',
-      agents: [agent('root', 'private'), agent('child', 'shared')],
-      deployments: [deployment('private'), deployment('shared')],
-      skills: [skill('private'), skill('shared')],
-      toolkits: [toolkit('private'), toolkit('shared')],
+      rootAgentKey: "root",
+      agents: [agent("root", "private"), agent("child", "shared")],
+      deployments: [deployment("private"), deployment("shared")],
+      skills: [skill("private"), skill("shared")],
+      toolkits: [toolkit("private"), toolkit("shared")],
     };
     const listing = await db.agentListing.create({
       data: {
-        publisherKind: 'platform',
+        publisherKind: "platform",
         slug: `agent-uninstall-${stamp}`,
         directorySlug: `agent-uninstall-${stamp}`,
-        name: 'Agent uninstall fixture',
-        status: 'published',
+        name: "Agent uninstall fixture",
+        status: "published",
         curated: true,
         installCount: 0,
         publishedAt: new Date(),
@@ -119,11 +126,13 @@ describe.sequential('agent market uninstall', () => {
         version: 1,
         manifestVersion: AGENT_MARKET_MANIFEST_VERSION,
         manifest: manifest as Prisma.InputJsonValue,
-        releaseSummary: summarizeAgentReleaseManifest(manifest) as Prisma.InputJsonValue,
+        releaseSummary: summarizeAgentReleaseManifest(
+          manifest,
+        ) as Prisma.InputJsonValue,
         checksum: agentReleaseChecksum(manifest),
         name: listing.name,
         categoryIds: [category.id],
-        reviewStatus: 'approved',
+        reviewStatus: "approved",
         reviewedAt: new Date(),
       },
     });
@@ -135,14 +144,16 @@ describe.sequential('agent market uninstall', () => {
   });
 
   afterAll(async () => {
-    if (workspaceId) await db.workspace.deleteMany({ where: { id: workspaceId } });
-    if (listingId) await db.agentListing.deleteMany({ where: { id: listingId } });
+    if (workspaceId)
+      await db.workspace.deleteMany({ where: { id: workspaceId } });
+    if (listingId)
+      await db.agentListing.deleteMany({ where: { id: listingId } });
     if (categoryId) await db.category.deleteMany({ where: { id: categoryId } });
     if (userId) await db.user.deleteMany({ where: { id: userId } });
     await db.$disconnect();
   });
 
-  it('removes only install-owned resources and keeps resources reused outside the install graph', async () => {
+  it("removes only install-owned resources and keeps resources reused outside the install graph", async () => {
     const installed = await materializeAgentRelease({
       releaseId,
       targetWorkspaceId: workspaceId,
@@ -154,29 +165,47 @@ describe.sequential('agent market uninstall', () => {
     const external = await db.agent.create({
       data: {
         workspaceId,
-        name: 'External consumer',
+        name: "External consumer",
         slug: `external-${stamp}`,
-        runtimeKind: 'pi',
+        runtimeKind: "pi",
         subAgents: { create: { childId } },
       },
     });
     const outsider = await db.user.create({
-      data: { email: `agent-uninstall-outsider-${stamp}@test.dev`, passwordHash: 'x' },
+      data: {
+        email: `agent-uninstall-outsider-${stamp}@test.dev`,
+        passwordHash: "x",
+      },
     });
 
-    await expect(deleteManagedAgent({ workspaceId, agentId: rootId, actorId: outsider.id }))
-      .resolves.toBe(false);
-    await expect(db.agentInstall.findUnique({ where: { id: installed.install.id } }))
-      .resolves.toMatchObject({ id: installed.install.id });
+    await expect(
+      deleteManagedAgent({
+        workspaceId,
+        agentId: rootId,
+        actorId: outsider.id,
+      }),
+    ).resolves.toBe(false);
+    await expect(
+      db.agentInstall.findUnique({ where: { id: installed.install.id } }),
+    ).resolves.toMatchObject({ id: installed.install.id });
     await db.user.delete({ where: { id: outsider.id } });
 
-    await expect(deleteManagedAgent({ workspaceId, agentId: rootId, actorId: userId }))
-      .resolves.toBe(true);
+    await expect(
+      deleteManagedAgent({ workspaceId, agentId: rootId, actorId: userId }),
+    ).resolves.toBe(true);
 
-    await expect(db.agentInstall.findUnique({ where: { id: installed.install.id } })).resolves.toBeNull();
-    await expect(db.agent.findUnique({ where: { id: rootId } })).resolves.toBeNull();
-    await expect(db.agent.findUnique({ where: { id: childId } })).resolves.toMatchObject({ id: childId });
-    await expect(db.agent.findUnique({ where: { id: external.id } })).resolves.toMatchObject({ id: external.id });
+    await expect(
+      db.agentInstall.findUnique({ where: { id: installed.install.id } }),
+    ).resolves.toBeNull();
+    await expect(
+      db.agent.findUnique({ where: { id: rootId } }),
+    ).resolves.toBeNull();
+    await expect(
+      db.agent.findUnique({ where: { id: childId } }),
+    ).resolves.toMatchObject({ id: childId });
+    await expect(
+      db.agent.findUnique({ where: { id: external.id } }),
+    ).resolves.toMatchObject({ id: external.id });
 
     for (const id of [
       installed.resourceMap.deployments.deployment_private,
@@ -193,19 +222,32 @@ describe.sequential('agent market uninstall', () => {
       ]);
       expect(deployment ?? skillRow ?? toolkitRow ?? sandbox).toBeNull();
     }
-    await expect(db.deployment.findUnique({
-      where: { id: installed.resourceMap.deployments.deployment_shared },
-    })).resolves.toMatchObject({ id: installed.resourceMap.deployments.deployment_shared });
-    await expect(db.installedSkill.findUnique({
-      where: { id: installed.resourceMap.skills.skill_shared },
-    })).resolves.toMatchObject({ id: installed.resourceMap.skills.skill_shared });
-    await expect(db.toolkit.findUnique({
-      where: { id: installed.resourceMap.toolkits.toolkit_shared },
-    })).resolves.toMatchObject({ id: installed.resourceMap.toolkits.toolkit_shared });
-    await expect(db.sandbox.findUnique({
-      where: { id: installed.resourceMap.sandboxes.child },
-    })).resolves.toMatchObject({ id: installed.resourceMap.sandboxes.child });
-    await expect(db.agentListing.findUniqueOrThrow({ where: { id: listingId } }))
-      .resolves.toMatchObject({ installCount: 0 });
+    await expect(
+      db.deployment.findUnique({
+        where: { id: installed.resourceMap.deployments.deployment_shared },
+      }),
+    ).resolves.toMatchObject({
+      id: installed.resourceMap.deployments.deployment_shared,
+    });
+    await expect(
+      db.installedSkill.findUnique({
+        where: { id: installed.resourceMap.skills.skill_shared },
+      }),
+    ).resolves.toMatchObject({ id: installed.resourceMap.skills.skill_shared });
+    await expect(
+      db.toolkit.findUnique({
+        where: { id: installed.resourceMap.toolkits.toolkit_shared },
+      }),
+    ).resolves.toMatchObject({
+      id: installed.resourceMap.toolkits.toolkit_shared,
+    });
+    await expect(
+      db.sandbox.findUnique({
+        where: { id: installed.resourceMap.sandboxes.child },
+      }),
+    ).resolves.toMatchObject({ id: installed.resourceMap.sandboxes.child });
+    await expect(
+      db.agentListing.findUniqueOrThrow({ where: { id: listingId } }),
+    ).resolves.toMatchObject({ installCount: 0 });
   });
 });

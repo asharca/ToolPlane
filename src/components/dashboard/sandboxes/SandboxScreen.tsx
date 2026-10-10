@@ -1,16 +1,23 @@
-'use client';
+"use client";
 
-import { Checkbox } from '@/components/motion/checkbox';
+import { Checkbox } from "@/components/motion/checkbox";
 
-import { Button } from '@/components/motion/button';
-import { Input } from '@/components/motion/input';
-import { FormSelect } from '@/components/ui/FormSelect';
+import { Button } from "@/components/motion/button";
+import { Input } from "@/components/motion/input";
+import { FormSelect } from "@/components/ui/FormSelect";
 
-import { type FormEvent, type KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
-import { useTranslations } from 'next-intl';
-import { Keyboard, Loader2, Monitor, RefreshCw } from 'lucide-react';
+import {
+  type FormEvent,
+  type KeyboardEvent,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { useTranslations } from "next-intl";
+import { Keyboard, Loader2, Monitor, RefreshCw } from "lucide-react";
 
-const VIRTUAL_KEYBOARD_PAD = '_'.repeat(99);
+const VIRTUAL_KEYBOARD_PAD = "_".repeat(99);
 const SPECIAL_KEYSYMS: Record<string, number> = {
   Backspace: 0xff08,
   Tab: 0xff09,
@@ -24,8 +31,8 @@ const SPECIAL_KEYSYMS: Record<string, number> = {
 };
 
 function characterKeysym(character: string): number {
-  if (character === '\n' || character === '\r') return SPECIAL_KEYSYMS.Enter;
-  if (character === '\t') return SPECIAL_KEYSYMS.Tab;
+  if (character === "\n" || character === "\r") return SPECIAL_KEYSYMS.Enter;
+  if (character === "\t") return SPECIAL_KEYSYMS.Tab;
   const codepoint = character.codePointAt(0) ?? 0;
   return codepoint <= 0xff ? codepoint : 0x01000000 | codepoint;
 }
@@ -33,7 +40,7 @@ function characterKeysym(character: string): number {
 export type SandboxDisplay = {
   id: string;
   label: string;
-  transport: 'snapshot' | 'rfb';
+  transport: "snapshot" | "rfb";
   control: boolean;
   width?: number | null;
   height?: number | null;
@@ -54,74 +61,98 @@ export function SandboxScreen({
   displays: SandboxDisplay[];
   running: boolean;
 }) {
-  const t = useTranslations('console.sandboxes');
-  const errorT = useTranslations('errors');
-  const [displayId, setDisplayId] = useState(displays[0]?.id ?? '');
+  const t = useTranslations("console.sandboxes");
+  const errorT = useTranslations("errors");
+  const [displayId, setDisplayId] = useState(displays[0]?.id ?? "");
   const [visible, setVisible] = useState(true);
   const [frame, setFrame] = useState(0);
-  const [frameStatus, setFrameStatus] = useState<'loading' | 'ready' | 'error'>('loading');
-  const [rfbStatus, setRfbStatus] = useState<'idle' | 'connecting' | 'connected' | 'credentials' | 'error'>('idle');
+  const [frameStatus, setFrameStatus] = useState<"loading" | "ready" | "error">(
+    "loading",
+  );
+  const [rfbStatus, setRfbStatus] = useState<
+    "idle" | "connecting" | "connected" | "credentials" | "error"
+  >("idle");
   const [rfbAttempt, setRfbAttempt] = useState(0);
   const [viewOnly, setViewOnly] = useState(true);
-  const [password, setPassword] = useState('');
+  const [password, setPassword] = useState("");
   const [virtualKeyboardOpen, setVirtualKeyboardOpen] = useState(false);
   const rfbTarget = useRef<HTMLDivElement>(null);
-  const rfbClient = useRef<import('@novnc/novnc').default | null>(null);
+  const rfbClient = useRef<import("@novnc/novnc").default | null>(null);
   const viewOnlyRef = useRef(viewOnly);
   const virtualKeyboard = useRef<HTMLTextAreaElement>(null);
   const virtualKeyboardValue = useRef(VIRTUAL_KEYBOARD_PAD);
-  const display = displays.find((candidate) => candidate.id === displayId) ?? displays[0];
+  const display =
+    displays.find((candidate) => candidate.id === displayId) ?? displays[0];
   const apiBase = useMemo(
-    () => `/api/v1/workspaces/${encodeURIComponent(workspace)}/sandboxes/${encodeURIComponent(sandboxId)}/screen`,
+    () =>
+      `/api/v1/workspaces/${encodeURIComponent(workspace)}/sandboxes/${encodeURIComponent(sandboxId)}/screen`,
     [sandboxId, workspace],
   );
 
   useEffect(() => {
-    const update = () => setVisible(document.visibilityState !== 'hidden');
+    const update = () => setVisible(document.visibilityState !== "hidden");
     update();
-    document.addEventListener('visibilitychange', update);
-    return () => document.removeEventListener('visibilitychange', update);
+    document.addEventListener("visibilitychange", update);
+    return () => document.removeEventListener("visibilitychange", update);
   }, []);
 
   useEffect(() => {
-    if (!display || display.transport === 'rfb' || !running || !visible) return;
-    if (frameStatus === 'loading') return;
+    if (!display || display.transport === "rfb" || !running || !visible) return;
+    if (frameStatus === "loading") return;
     const timer = window.setTimeout(() => {
-      setFrameStatus('loading');
+      setFrameStatus("loading");
       setFrame(Date.now());
     }, 1000);
     return () => window.clearTimeout(timer);
   }, [display, frameStatus, running, visible]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: The reconnect action must dispose and recreate the noVNC session even when its endpoint is unchanged.
   useEffect(() => {
-    if (!display || display.transport !== 'rfb' || !running || !visible) return;
+    if (display?.transport !== "rfb" || !running || !visible) return;
     const controller = new AbortController();
     let active = true;
-    const statusTimer = window.setTimeout(() => active && setRfbStatus('connecting'), 0);
+    const statusTimer = window.setTimeout(
+      () => active && setRfbStatus("connecting"),
+      0,
+    );
     void (async () => {
       try {
         const response = await fetch(`${apiBase}/sessions`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
+          method: "POST",
+          headers: { "content-type": "application/json" },
           body: JSON.stringify({ displayId: display.id }),
           signal: controller.signal,
         });
         if (!response.ok) throw new Error(String(response.status));
-        const session = await response.json() as RfbSession;
-        if (!session.viewerUrl || !rfbTarget.current) throw new Error('missing viewer URL');
-        const { default: RFB } = await import('@novnc/novnc');
+        const session = (await response.json()) as RfbSession;
+        if (!session.viewerUrl || !rfbTarget.current)
+          throw new Error("missing viewer URL");
+        const { default: RFB } = await import("@novnc/novnc");
         if (!active || !rfbTarget.current) return;
         const client = new RFB(rfbTarget.current, session.viewerUrl);
         client.scaleViewport = true;
         client.viewOnly = viewOnlyRef.current;
         if (!client.viewOnly) client.focus();
-        client.addEventListener('connect', () => active && setRfbStatus('connected'));
-        client.addEventListener('disconnect', () => active && setRfbStatus('error'));
-        client.addEventListener('credentialsrequired', () => active && setRfbStatus('credentials'));
-        client.addEventListener('securityfailure', () => active && setRfbStatus('error'));
+        client.addEventListener(
+          "connect",
+          () => active && setRfbStatus("connected"),
+        );
+        client.addEventListener(
+          "disconnect",
+          () => active && setRfbStatus("error"),
+        );
+        client.addEventListener(
+          "credentialsrequired",
+          () => active && setRfbStatus("credentials"),
+        );
+        client.addEventListener(
+          "securityfailure",
+          () => active && setRfbStatus("error"),
+        );
         rfbClient.current = client;
       } catch (error) {
-        if (active && (error as { name?: string }).name !== 'AbortError') setRfbStatus('error');
+        if (active && (error as { name?: string }).name !== "AbortError")
+          setRfbStatus("error");
       }
     })();
     return () => {
@@ -144,20 +175,32 @@ export function SandboxScreen({
   const resetVirtualKeyboard = () => {
     if (!virtualKeyboard.current) return;
     virtualKeyboard.current.value = VIRTUAL_KEYBOARD_PAD;
-    virtualKeyboard.current.setSelectionRange(VIRTUAL_KEYBOARD_PAD.length, VIRTUAL_KEYBOARD_PAD.length);
+    virtualKeyboard.current.setSelectionRange(
+      VIRTUAL_KEYBOARD_PAD.length,
+      VIRTUAL_KEYBOARD_PAD.length,
+    );
     virtualKeyboardValue.current = VIRTUAL_KEYBOARD_PAD;
   };
 
-  const handleVirtualKeyboardInput = (event: FormEvent<HTMLTextAreaElement>) => {
+  const handleVirtualKeyboardInput = (
+    event: FormEvent<HTMLTextAreaElement>,
+  ) => {
     const input = event.currentTarget;
     const next = input.value;
     const previous = virtualKeyboardValue.current;
-    const nextLength = Math.max(input.selectionStart ?? next.length, next.length);
+    const nextLength = Math.max(
+      input.selectionStart ?? next.length,
+      next.length,
+    );
     let common = 0;
-    while (common < Math.min(previous.length, nextLength) && previous[common] === next[common]) common += 1;
+    while (
+      common < Math.min(previous.length, nextLength) &&
+      previous[common] === next[common]
+    )
+      common += 1;
     const backspaces = [...previous.slice(common)].length;
     for (let index = 0; index < backspaces; index += 1) {
-      rfbClient.current?.sendKey(SPECIAL_KEYSYMS.Backspace, 'Backspace');
+      rfbClient.current?.sendKey(SPECIAL_KEYSYMS.Backspace, "Backspace");
     }
     for (const character of next.slice(common, nextLength)) {
       rfbClient.current?.sendKey(characterKeysym(character));
@@ -169,7 +212,10 @@ export function SandboxScreen({
     }
   };
 
-  const handleVirtualKeyboardKey = (event: KeyboardEvent<HTMLTextAreaElement>, down: boolean) => {
+  const handleVirtualKeyboardKey = (
+    event: KeyboardEvent<HTMLTextAreaElement>,
+    down: boolean,
+  ) => {
     const keysym = SPECIAL_KEYSYMS[event.key];
     if (!keysym) return;
     event.preventDefault();
@@ -177,7 +223,7 @@ export function SandboxScreen({
   };
 
   if (!display) return null;
-  const snapshot = display.transport !== 'rfb';
+  const snapshot = display.transport !== "rfb";
   const frameUrl = `${apiBase}/frame?displayId=${encodeURIComponent(display.id)}&frame=${frame}`;
 
   return (
@@ -187,44 +233,73 @@ export function SandboxScreen({
           <Monitor className="size-4 shrink-0 text-muted-foreground" />
           <span className="truncate">{display.label}</span>
           {display.width && display.height ? (
-            <span className="font-mono text-xs font-normal text-muted-foreground">{display.width}×{display.height}</span>
+            <span className="font-mono text-xs font-normal text-muted-foreground">
+              {display.width}×{display.height}
+            </span>
           ) : null}
         </div>
         <div className="flex items-center gap-2">
           {displays.length > 1 ? (
-            <FormSelect value={display.id} onValueChange={(value) => {
+            <FormSelect
+              value={display.id}
+              onValueChange={(value) => {
                 setDisplayId(value);
-                setFrameStatus('loading');
-                setRfbStatus('idle');
+                setFrameStatus("loading");
+                setRfbStatus("idle");
                 setViewOnly(true);
-                setPassword('');
-              }} label={t('selectDisplay')} options={[...displays.map((candidate) => ({ value: candidate.id, label: candidate.label }))]} />
+                setPassword("");
+              }}
+              label={t("selectDisplay")}
+              options={[
+                ...displays.map((candidate) => ({
+                  value: candidate.id,
+                  label: candidate.label,
+                })),
+              ]}
+            />
           ) : null}
           {snapshot ? (
-            <Button type="button"
-            onClick={() => { setFrameStatus('loading'); setFrame(Date.now()); }}
-            disabled={!running || !visible}
-            variant="ghost" size="icon"
-            title={t('refreshScreen')}
-            aria-label={t('refreshScreen')}><RefreshCw className="size-3.5" /></Button>
+            <Button
+              type="button"
+              onClick={() => {
+                setFrameStatus("loading");
+                setFrame(Date.now());
+              }}
+              disabled={!running || !visible}
+              variant="ghost"
+              size="icon"
+              title={t("refreshScreen")}
+              aria-label={t("refreshScreen")}
+            >
+              <RefreshCw className="size-3.5" />
+            </Button>
           ) : display.control ? (
             <div className="flex items-center gap-2">
-              {rfbStatus === 'connected' && !viewOnly ? (
-                <Button type="button"
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => {
-                  if (virtualKeyboardOpen) virtualKeyboard.current?.blur();
-                  else {
-                    resetVirtualKeyboard();
-                    virtualKeyboard.current?.focus();
-                  }
-                }}
-                aria-label={t('virtualKeyboard')}
-                aria-pressed={virtualKeyboardOpen}
-                title={t('virtualKeyboard')}
-                variant="ghost" size="icon"><Keyboard className="size-4" /></Button>
+              {rfbStatus === "connected" && !viewOnly ? (
+                <Button
+                  type="button"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => {
+                    if (virtualKeyboardOpen) virtualKeyboard.current?.blur();
+                    else {
+                      resetVirtualKeyboard();
+                      virtualKeyboard.current?.focus();
+                    }
+                  }}
+                  aria-label={t("virtualKeyboard")}
+                  aria-pressed={virtualKeyboardOpen}
+                  title={t("virtualKeyboard")}
+                  variant="ghost"
+                  size="icon"
+                >
+                  <Keyboard className="size-4" />
+                </Button>
               ) : null}
-              <Checkbox checked={!viewOnly} onCheckedChange={(checked) => setViewOnly(!checked)} label={t('controlScreen')} />
+              <Checkbox
+                checked={!viewOnly}
+                onCheckedChange={(checked) => setViewOnly(!checked)}
+                label={t("controlScreen")}
+              />
             </div>
           ) : null}
         </div>
@@ -232,29 +307,41 @@ export function SandboxScreen({
 
       <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-auto bg-background p-2">
         {!running ? (
-          <p className="text-sm text-muted-foreground">{t('startTheSandboxToViewScreen')}</p>
+          <p className="text-sm text-muted-foreground">
+            {t("startTheSandboxToViewScreen")}
+          </p>
         ) : !visible ? (
-          <p className="text-sm text-muted-foreground">{t('screenPaused')}</p>
+          <p className="text-sm text-muted-foreground">{t("screenPaused")}</p>
         ) : snapshot ? (
           <>
-            {/* eslint-disable-next-line @next/next/no-img-element -- connector frames are live, authenticated snapshots. */}
+            {/* biome-ignore lint/performance/noImgElement: Authenticated live snapshots have unknown dimensions and require native per-frame load/error events. */}
             <img
               src={frameUrl}
-              alt={t('screenImageAlt', { display: display.label })}
-              onLoad={() => setFrameStatus('ready')}
-              onError={() => setFrameStatus('error')}
+              alt={t("screenImageAlt", { display: display.label })}
+              onLoad={() => setFrameStatus("ready")}
+              onError={() => setFrameStatus("error")}
               className="max-h-full max-w-full object-contain"
             />
-            {frameStatus === 'loading' ? <Loader2 aria-label={t('loadingScreen')} className="absolute size-6 animate-spin text-muted-foreground" /> : null}
-            {frameStatus === 'error' ? <p role="alert" className="text-sm text-destructive">{t('screenUnavailable')}</p> : null}
+            {frameStatus === "loading" ? (
+              <Loader2
+                aria-label={t("loadingScreen")}
+                className="absolute size-6 animate-spin text-muted-foreground"
+              />
+            ) : null}
+            {frameStatus === "error" ? (
+              <p role="alert" className="text-sm text-destructive">
+                {t("screenUnavailable")}
+              </p>
+            ) : null}
           </>
         ) : (
           <>
             <div
               ref={rfbTarget}
               data-testid="rfb-target"
+              role="application"
               tabIndex={display.control && !viewOnly ? 0 : -1}
-              aria-label={t('screenImageAlt', { display: display.label })}
+              aria-label={t("screenImageAlt", { display: display.label })}
               onMouseDownCapture={(event) => {
                 if (virtualKeyboardOpen) event.preventDefault();
               }}
@@ -266,7 +353,7 @@ export function SandboxScreen({
             <textarea
               ref={virtualKeyboard}
               defaultValue={VIRTUAL_KEYBOARD_PAD}
-              aria-label={t('virtualKeyboardInput')}
+              aria-label={t("virtualKeyboardInput")}
               autoCapitalize="off"
               autoComplete="off"
               autoCorrect="off"
@@ -286,43 +373,52 @@ export function SandboxScreen({
               }}
               className="absolute -left-10 -z-10 h-px w-px resize-none border-0 bg-border text-foreground"
             />
-            {rfbStatus === 'idle' || rfbStatus === 'connecting' ? (
-              <Loader2 aria-label={t('loadingScreen')} className="absolute size-6 animate-spin text-muted-foreground" />
+            {rfbStatus === "idle" || rfbStatus === "connecting" ? (
+              <Loader2
+                aria-label={t("loadingScreen")}
+                className="absolute size-6 animate-spin text-muted-foreground"
+              />
             ) : null}
-            {rfbStatus === 'credentials' ? (
+            {rfbStatus === "credentials" ? (
               <form
                 className="absolute flex max-w-sm items-end gap-2 rounded-md border border-border bg-background p-3"
                 onSubmit={(event) => {
                   event.preventDefault();
                   rfbClient.current?.sendCredentials({ password });
-                  setPassword('');
-                  setRfbStatus('connecting');
+                  setPassword("");
+                  setRfbStatus("connecting");
                 }}
               >
                 <div className="grid gap-1 text-xs text-muted-foreground">
-                  
-                  <Input label={t('vncPassword')}
+                  <Input
+                    label={t("vncPassword")}
                     type="password"
                     value={password}
                     onChange={(value) => setPassword(value)}
                     autoComplete="new-password"
-                    
                   />
                 </div>
-                <Button type="submit" variant="ghost" size="sm">{t('connectScreen')}</Button>
+                <Button type="submit" variant="ghost" size="sm">
+                  {t("connectScreen")}
+                </Button>
               </form>
             ) : null}
-            {rfbStatus === 'error' ? (
+            {rfbStatus === "error" ? (
               <div className="absolute flex items-center gap-3 rounded-md bg-background px-3 py-2 text-sm text-muted-foreground">
-                <p role="alert">{t('screenUnavailable')}</p>
-                <Button type="button"
-                onClick={() => {
-                  setPassword('');
-                  setRfbStatus('connecting');
-                  setRfbAttempt((attempt) => attempt + 1);
-                }}
-                variant="ghost" size="sm"><RefreshCw className="size-3.5" />
-                {errorT('tryAgain')}</Button>
+                <p role="alert">{t("screenUnavailable")}</p>
+                <Button
+                  type="button"
+                  onClick={() => {
+                    setPassword("");
+                    setRfbStatus("connecting");
+                    setRfbAttempt((attempt) => attempt + 1);
+                  }}
+                  variant="ghost"
+                  size="sm"
+                >
+                  <RefreshCw className="size-3.5" />
+                  {errorT("tryAgain")}
+                </Button>
               </div>
             ) : null}
           </>

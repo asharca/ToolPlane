@@ -1,4 +1,4 @@
-import { resolveMaxSteps } from '../constants';
+import { resolveMaxSteps } from "../constants";
 
 export type HermesProviderProjection = {
   id: string;
@@ -22,37 +22,37 @@ export type HermesConfigProjection = {
 
 export type HermesEnvProjection = Record<string, string>;
 
-const TOOLPLANE_PROVIDER_PREFIX = 'toolplane-';
+const TOOLPLANE_PROVIDER_PREFIX = "toolplane-";
 const PUBLIC_RUNTIME_DISABLED_TOOLSETS = [
-  'browser',
-  'clarify',
-  'code_execution',
-  'cronjob',
-  'debugging',
-  'delegation',
-  'discord',
-  'discord_admin',
-  'feishu_doc',
-  'feishu_drive',
-  'file',
-  'homeassistant',
-  'image_gen',
-  'kanban',
-  'memory',
-  'messaging',
-  'moa',
-  'rl',
-  'safe',
-  'search',
-  'session_search',
-  'spotify',
-  'terminal',
-  'todo',
-  'tts',
-  'video',
-  'vision',
-  'web',
-  'yuanbao',
+  "browser",
+  "clarify",
+  "code_execution",
+  "cronjob",
+  "debugging",
+  "delegation",
+  "discord",
+  "discord_admin",
+  "feishu_doc",
+  "feishu_drive",
+  "file",
+  "homeassistant",
+  "image_gen",
+  "kanban",
+  "memory",
+  "messaging",
+  "moa",
+  "rl",
+  "safe",
+  "search",
+  "session_search",
+  "spotify",
+  "terminal",
+  "todo",
+  "tts",
+  "video",
+  "vision",
+  "web",
+  "yuanbao",
 ] as const;
 
 function yamlString(value: string): string {
@@ -60,126 +60,144 @@ function yamlString(value: string): string {
 }
 
 function normalizedBaseUrl(provider: HermesProviderProjection): string {
-  let value = provider.baseUrl.trim().replace(/\/$/, '');
+  let value = provider.baseUrl.trim().replace(/\/$/, "");
   try {
     const url = new URL(value);
-    if (url.hostname === 'localhost' || url.hostname === '127.0.0.1') {
-      url.hostname = 'host.docker.internal';
-      value = url.toString().replace(/\/$/, '');
+    if (url.hostname === "localhost" || url.hostname === "127.0.0.1") {
+      url.hostname = "host.docker.internal";
+      value = url.toString().replace(/\/$/, "");
     }
   } catch {
     // Provider validation owns malformed URLs; preserve the configured value here.
   }
-  return provider.format === 'anthropic' ? value.replace(/\/v1$/, '') : value;
+  return provider.format === "anthropic" ? value.replace(/\/v1$/, "") : value;
 }
 
 function hermesApiMode(format: string): string {
-  if (format === 'anthropic') return 'anthropic_messages';
-  if (format === 'openai-responses') return 'codex_responses';
-  return 'chat_completions';
+  if (format === "anthropic") return "anthropic_messages";
+  if (format === "openai-responses") return "codex_responses";
+  return "chat_completions";
 }
 
 export function hermesProviderName(providerId: string): string {
-  const suffix = providerId.toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '');
-  return `${TOOLPLANE_PROVIDER_PREFIX}${suffix || 'provider'}`;
+  const suffix = providerId
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return `${TOOLPLANE_PROVIDER_PREFIX}${suffix || "provider"}`;
 }
 
 export function renderHermesConfig(input: HermesConfigProjection): string {
   const maxTurns = resolveMaxSteps(input.maxSteps);
   const providers = input.providers.map((provider) => ({
     ...provider,
-    models: [...new Set(provider.models.map((model) => model.trim()).filter(Boolean))],
+    models: [
+      ...new Set(provider.models.map((model) => model.trim()).filter(Boolean)),
+    ],
     key: hermesProviderName(provider.id),
   }));
-  const bootstrapProvider = providers.find((provider) => provider.models.length > 0);
+  const bootstrapProvider = providers.find(
+    (provider) => provider.models.length > 0,
+  );
   const model = bootstrapProvider
     ? [
-        'model:',
+        "model:",
         `  provider: ${yamlString(`custom:${bootstrapProvider.key}`)}`,
         `  default: ${yamlString(bootstrapProvider.models[0])}`,
       ]
     : [];
-  const providerInventory = providers.length === 0
-    ? ['providers: {}']
-    : [
-        'providers:',
-        ...providers.flatMap((provider) => [
-          `  ${yamlString(provider.key)}:`,
-          `    name: ${yamlString(provider.name)}`,
-          `    api: ${yamlString(normalizedBaseUrl(provider))}`,
-          `    api_key: ${yamlString(provider.apiKey)}`,
-          `    transport: ${hermesApiMode(provider.format)}`,
-          `    discover_models: ${provider.models.length === 0 ? 'true' : 'false'}`,
-          ...(provider.models.length > 0
-            ? [
-                `    default_model: ${yamlString(provider.models[0])}`,
-                '    models:',
-                ...provider.models.map((providerModel) => `      ${yamlString(providerModel)}: {}`),
-              ]
-            : ['    models: {}']),
-        ]),
-      ];
+  const providerInventory =
+    providers.length === 0
+      ? ["providers: {}"]
+      : [
+          "providers:",
+          ...providers.flatMap((provider) => [
+            `  ${yamlString(provider.key)}:`,
+            `    name: ${yamlString(provider.name)}`,
+            `    api: ${yamlString(normalizedBaseUrl(provider))}`,
+            `    api_key: ${yamlString(provider.apiKey)}`,
+            `    transport: ${hermesApiMode(provider.format)}`,
+            `    discover_models: ${provider.models.length === 0 ? "true" : "false"}`,
+            ...(provider.models.length > 0
+              ? [
+                  `    default_model: ${yamlString(provider.models[0])}`,
+                  "    models:",
+                  ...provider.models.map(
+                    (providerModel) => `      ${yamlString(providerModel)}: {}`,
+                  ),
+                ]
+              : ["    models: {}"]),
+          ]),
+        ];
 
   return [
     ...model,
     ...providerInventory,
-    'agent:',
+    "agent:",
     `  max_turns: ${maxTurns}`,
     ...(input.systemPrompt?.trim()
       ? [`  system_prompt: ${yamlString(input.systemPrompt.trim())}`]
       : []),
     ...(input.publicRuntime
       ? [
-          '  disabled_toolsets:',
-          ...PUBLIC_RUNTIME_DISABLED_TOOLSETS.map((toolset) => `    - ${yamlString(toolset)}`),
-          'tools:',
-          '  api_server:',
-          '    enabled:',
+          "  disabled_toolsets:",
+          ...PUBLIC_RUNTIME_DISABLED_TOOLSETS.map(
+            (toolset) => `    - ${yamlString(toolset)}`,
+          ),
+          "tools:",
+          "  api_server:",
+          "    enabled:",
           '      - "mcp-toolplane"',
-          'delegation:',
-          '  orchestrator_enabled: false',
-          '  max_concurrent_children: 1',
-          '  max_spawn_depth: 1',
+          "delegation:",
+          "  orchestrator_enabled: false",
+          "  max_concurrent_children: 1",
+          "  max_spawn_depth: 1",
         ]
       : []),
-    'approvals:',
-    '  mode: smart',
-    'tool_loop_guardrails:',
-    '  hard_stop_enabled: true',
-    '  hard_stop_after:',
-    '    exact_failure: 5',
-    '    idempotent_no_progress: 5',
-    'platforms:',
-    '  api_server:',
-    '    enabled: true',
-    'mcp_servers:',
-    '  toolplane:',
+    "approvals:",
+    "  mode: smart",
+    "tool_loop_guardrails:",
+    "  hard_stop_enabled: true",
+    "  hard_stop_after:",
+    "    exact_failure: 5",
+    "    idempotent_no_progress: 5",
+    "platforms:",
+    "  api_server:",
+    "    enabled: true",
+    "mcp_servers:",
+    "  toolplane:",
     `    url: ${yamlString(input.mcpUrl)}`,
-    '    headers:',
+    "    headers:",
     `      Authorization: ${yamlString(`Bearer ${input.mcpToken}`)}`,
-    '',
-  ].join('\n');
+    "",
+  ].join("\n");
 }
 
 export function renderHermesEnvPayload(env: HermesEnvProjection): string {
-  return JSON.stringify(Object.fromEntries(
-    Object.entries(env).sort(([left], [right]) => left.localeCompare(right)),
-  ));
+  return JSON.stringify(
+    Object.fromEntries(
+      Object.entries(env).sort(([left], [right]) => left.localeCompare(right)),
+    ),
+  );
 }
 
-export function renderHermesMcpBindingFingerprint(deploymentIds: string[]): string {
+export function renderHermesMcpBindingFingerprint(
+  deploymentIds: string[],
+): string {
   return JSON.stringify([...new Set(deploymentIds)].sort());
 }
 
 export function renderHermesSkillBundle(skillNames: string[]): string {
   return [
-    'name: toolplane-agent',
+    "name: toolplane-agent",
     'description: "Skills selected for this ToolPlane agent"',
-    'skills:',
-    ...skillNames.sort().map((name) => `  - ${yamlString(`toolplane-agent/${name}`)}`),
-    'instruction: |',
-    '  Use the skills selected for this ToolPlane agent when they match the task.',
+    "skills:",
+    ...skillNames
+      .sort()
+      .map((name) => `  - ${yamlString(`toolplane-agent/${name}`)}`),
+    "instruction: |",
+    "  Use the skills selected for this ToolPlane agent when they match the task.",
     '  ToolPlane MCP tools are available through the "toolplane" MCP server.',
-    '',
-  ].join('\n');
+    "",
+  ].join("\n");
 }

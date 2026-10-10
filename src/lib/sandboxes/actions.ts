@@ -1,13 +1,13 @@
-'use server';
+"use server";
 
-import { randomUUID } from 'node:crypto';
-import { redirect } from 'next/navigation';
-import { revalidatePath } from 'next/cache';
-import { headers } from 'next/headers';
-import type { Prisma } from '@prisma/client';
-import { db } from '@/lib/db';
-import { getCurrentUser } from '@/lib/auth/current-user';
-import { getWorkspaceForUser } from '@/lib/workspace/queries';
+import { randomUUID } from "node:crypto";
+import { redirect } from "next/navigation";
+import { revalidatePath } from "next/cache";
+import { headers } from "next/headers";
+import type { Prisma } from "@prisma/client";
+import { db } from "@/lib/db";
+import { getCurrentUser } from "@/lib/auth/current-user";
+import { getWorkspaceForUser } from "@/lib/workspace/queries";
 import {
   allowProcessRestart,
   effectiveStatus,
@@ -15,8 +15,8 @@ import {
   stopProcess,
   restartProcess,
   killProcess,
-} from '@/lib/process/supervisor';
-import { resolveSpawnSpec } from '@/lib/process/spawn-spec';
+} from "@/lib/process/supervisor";
+import { resolveSpawnSpec } from "@/lib/process/spawn-spec";
 import {
   copyDockerVolume,
   DockerVolumeCopyCleanupError,
@@ -27,33 +27,33 @@ import {
   sandboxSnapshotVolumeName,
   sandboxVolumeName,
   stopDockerSandboxContainer,
-} from './runtime';
+} from "./runtime";
 import {
   parseSandboxEnvText,
   readSandboxAllowSudo,
   readSandboxEnv,
   sandboxConfigWithAllowSudo,
   sandboxConfigWithEnv,
-} from './env';
-import { resolveSandboxImage } from './images';
-import { sshTargetIdFromConfig } from './ssh-targets';
+} from "./env";
+import { resolveSandboxImage } from "./images";
+import { sshTargetIdFromConfig } from "./ssh-targets";
 import {
   connectorFromConfig,
   connectorServerUrlFromHeaders,
   connectorSourceRef,
   createConnectorConfig,
   type SandboxConnectorConfig,
-} from './connector';
-import { disconnectConnector } from './connector-broker';
-import { setConnectorSetupTokenCookie } from './connector-setup-token';
-import { beginWorkspaceOperation } from '@/lib/workspace/operation-gate';
+} from "./connector";
+import { disconnectConnector } from "./connector-broker";
+import { setConnectorSetupTokenCookie } from "./connector-setup-token";
+import { beginWorkspaceOperation } from "@/lib/workspace/operation-gate";
 import {
   ensureHermesRuntimeReady,
   runHermesRuntimeMaintenance,
   stopHermesRuntime,
   syncHermesRuntime,
-} from '@/lib/agents/hermes/runtime';
-import { setHermesRuntimeEnv } from '@/lib/agents/mutations';
+} from "@/lib/agents/hermes/runtime";
+import { setHermesRuntimeEnv } from "@/lib/agents/mutations";
 
 async function authorizedWorkspace(slug: string) {
   const user = await getCurrentUser();
@@ -64,18 +64,27 @@ async function authorizedWorkspace(slug: string) {
 }
 
 function slugify(input: string): string {
-  const base = input.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-  return base || 'sandbox';
+  const base = input
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return base || "sandbox";
 }
 
 function cleanName(input: FormDataEntryValue | null): string {
-  return String(input ?? '').trim().slice(0, 80);
+  return String(input ?? "")
+    .trim()
+    .slice(0, 80);
 }
 
 async function uniqueSlug(workspaceId: string, name: string): Promise<string> {
   const base = slugify(name);
   let slug = base;
-  for (let i = 1; await db.sandbox.findFirst({ where: { workspaceId, slug } }); i += 1) {
+  for (
+    let i = 1;
+    await db.sandbox.findFirst({ where: { workspaceId, slug } });
+    i += 1
+  ) {
     slug = `${base}-${i}`;
   }
   return slug;
@@ -92,7 +101,9 @@ async function sandboxInWorkspace(sandboxId: string, workspaceId: string) {
   });
 }
 
-type AuthorizedSandbox = NonNullable<Awaited<ReturnType<typeof sandboxInWorkspace>>>;
+type AuthorizedSandbox = NonNullable<
+  Awaited<ReturnType<typeof sandboxInWorkspace>>
+>;
 
 type QuiescedOperationControl = {
   preventResume: () => void;
@@ -112,25 +123,34 @@ function scheduleRestoreHelperCleanup(
   workspaceId: string,
   attempt = 1,
 ): void {
-  if (!error.helperName) return;
-  const retry = setTimeout(async () => {
-    try {
-      await removeDockerVolumeCopyHelper(error.helperName!);
-      await db.deployment.updateMany({
-        where: {
-          id: deploymentId,
-          workspaceId,
-          source: 'sandbox',
-          status: { in: ['restoring', 'restore_cleanup_required'] },
-        },
-        data: { status: 'restore_failed' },
-      });
-    } catch {
-      if (attempt < 6) {
-        scheduleRestoreHelperCleanup(error, deploymentId, workspaceId, attempt + 1);
+  const helperName = error.helperName;
+  if (!helperName) return;
+  const retry = setTimeout(
+    async () => {
+      try {
+        await removeDockerVolumeCopyHelper(helperName);
+        await db.deployment.updateMany({
+          where: {
+            id: deploymentId,
+            workspaceId,
+            source: "sandbox",
+            status: { in: ["restoring", "restore_cleanup_required"] },
+          },
+          data: { status: "restore_failed" },
+        });
+      } catch {
+        if (attempt < 6) {
+          scheduleRestoreHelperCleanup(
+            error,
+            deploymentId,
+            workspaceId,
+            attempt + 1,
+          );
+        }
       }
-    }
-  }, Math.min(30_000, 1_000 * (2 ** (attempt - 1))));
+    },
+    Math.min(30_000, 1_000 * 2 ** (attempt - 1)),
+  );
   retry.unref?.();
 }
 
@@ -141,10 +161,14 @@ function enqueueSandboxOperation<T>(
 ): Promise<T | undefined> {
   const releaseWorkspaceOperation = beginWorkspaceOperation(workspaceId);
   if (!releaseWorkspaceOperation) return Promise.resolve(undefined);
-  const queues = sandboxOperationGlobal.__sandboxOperationQueues ??= new Map();
+  sandboxOperationGlobal.__sandboxOperationQueues ??= new Map();
+  const queues = sandboxOperationGlobal.__sandboxOperationQueues;
   const previous = queues.get(sandboxId) ?? Promise.resolve();
   const result = previous.catch(() => undefined).then(operation);
-  const tail = result.then(() => undefined, () => undefined);
+  const tail = result.then(
+    () => undefined,
+    () => undefined,
+  );
   queues.set(sandboxId, tail);
   return result.finally(() => {
     if (queues.get(sandboxId) === tail) queues.delete(sandboxId);
@@ -158,23 +182,23 @@ function sandboxDataVolume(sandbox: AuthorizedSandbox): string {
 }
 
 const DATA_OPERATION_BLOCKED_STATES = new Set([
-  'provisioning',
-  'copying',
-  'copy_failed',
-  'restoring',
-  'restore_failed',
-  'restore_cleanup_required',
-  'upgrading',
-  'deleting',
+  "provisioning",
+  "copying",
+  "copy_failed",
+  "restoring",
+  "restore_failed",
+  "restore_cleanup_required",
+  "upgrading",
+  "deleting",
 ]);
 const RESTORE_BLOCKED_STATES = new Set([
-  'provisioning',
-  'copying',
-  'copy_failed',
-  'restoring',
-  'restore_cleanup_required',
-  'upgrading',
-  'deleting',
+  "provisioning",
+  "copying",
+  "copy_failed",
+  "restoring",
+  "restore_cleanup_required",
+  "upgrading",
+  "deleting",
 ]);
 
 function sandboxDataOperationBlocked(sandbox: AuthorizedSandbox): boolean {
@@ -185,15 +209,14 @@ function sandboxDataOperationBlocked(sandbox: AuthorizedSandbox): boolean {
 
 function sandboxLifecycleBlocked(sandbox: AuthorizedSandbox): boolean {
   return [
-    'copying',
-    'copy_failed',
-    'restoring',
-    'restore_failed',
-    'restore_cleanup_required',
-    'upgrading',
-    'deleting',
-  ]
-    .includes(sandbox.deployment.status);
+    "copying",
+    "copy_failed",
+    "restoring",
+    "restore_failed",
+    "restore_cleanup_required",
+    "upgrading",
+    "deleting",
+  ].includes(sandbox.deployment.status);
 }
 
 async function quiesceDockerSandbox<T>(
@@ -201,34 +224,50 @@ async function quiesceDockerSandbox<T>(
   operation: (control: QuiescedOperationControl) => Promise<T>,
   options: { quiescedStatus?: string } = {},
 ): Promise<T> {
-  const status = effectiveStatus(sandbox.deploymentId, sandbox.deployment.status);
+  const status = effectiveStatus(
+    sandbox.deploymentId,
+    sandbox.deployment.status,
+  );
   if (RESTORE_BLOCKED_STATES.has(status)) {
-    throw new Error('Wait for the sandbox data operation to finish.');
+    throw new Error("Wait for the sandbox data operation to finish.");
   }
-  const shouldResume = status === 'running';
+  const shouldResume = status === "running";
   let resumeAllowed = true;
 
   if (options.quiescedStatus) {
-    await killProcess(sandbox.deploymentId, { finalStatus: options.quiescedStatus });
+    await killProcess(sandbox.deploymentId, {
+      finalStatus: options.quiescedStatus,
+    });
   } else {
     await killProcess(sandbox.deploymentId);
   }
   try {
     await stopDockerSandboxContainer(sandbox.id);
-    return await operation({ preventResume: () => { resumeAllowed = false; } });
+    return await operation({
+      preventResume: () => {
+        resumeAllowed = false;
+      },
+    });
   } finally {
     if (shouldResume && resumeAllowed) {
-      await startProcess(sandbox.deploymentId, resolveSpawnSpec(sandbox.deployment), {
-        awaitReady: false,
-        workspaceId: sandbox.workspaceId,
-      });
+      await startProcess(
+        sandbox.deploymentId,
+        resolveSpawnSpec(sandbox.deployment),
+        {
+          awaitReady: false,
+          workspaceId: sandbox.workspaceId,
+        },
+      );
     }
   }
 }
 
-async function hermesAgentIdForSandbox(workspaceId: string, sandboxId: string): Promise<string | null> {
+async function hermesAgentIdForSandbox(
+  workspaceId: string,
+  sandboxId: string,
+): Promise<string | null> {
   const runtime = await db.agentRuntime.findFirst({
-    where: { workspaceId, sandboxId, kind: 'hermes' },
+    where: { workspaceId, sandboxId, kind: "hermes" },
     select: { agentId: true },
   });
   return runtime?.agentId ?? null;
@@ -238,24 +277,30 @@ async function quiesceSandboxVolume<T>(
   sandbox: AuthorizedSandbox,
   workspaceId: string,
   options: {
-    operationStatus: 'copying' | 'restoring';
+    operationStatus: "copying" | "restoring";
     reprojectAfter?: boolean;
     allowRestoreFailed?: boolean;
     quiescedStatus?: string;
   },
   operation: (control: QuiescedVolumeOperationControl) => Promise<T>,
 ): Promise<T> {
-  if (sandbox.kind === 'docker') {
+  if (sandbox.kind === "docker") {
     return quiesceDockerSandbox(
       sandbox,
-      (control) => operation({ ...control, volumeName: sandboxDataVolume(sandbox) }),
-      options.quiescedStatus ? { quiescedStatus: options.quiescedStatus } : undefined,
+      (control) =>
+        operation({ ...control, volumeName: sandboxDataVolume(sandbox) }),
+      options.quiescedStatus
+        ? { quiescedStatus: options.quiescedStatus }
+        : undefined,
     );
   }
-  if (sandbox.kind !== 'hermes') throw new Error('Sandbox volume snapshots require a Docker-backed sandbox.');
+  if (sandbox.kind !== "hermes")
+    throw new Error(
+      "Sandbox volume snapshots require a Docker-backed sandbox.",
+    );
 
   const agentId = await hermesAgentIdForSandbox(workspaceId, sandbox.id);
-  if (!agentId) throw new Error('Hermes runtime not found.');
+  if (!agentId) throw new Error("Hermes runtime not found.");
   const result = await runHermesRuntimeMaintenance(
     workspaceId,
     agentId,
@@ -266,12 +311,13 @@ async function quiesceSandboxVolume<T>(
       reprojectAfter: options.reprojectAfter,
       allowRestoreFailed: options.allowRestoreFailed,
     },
-    (control) => operation({
-      preventResume: control.preventResume,
-      volumeName: control.volumeName,
-    }),
+    (control) =>
+      operation({
+        preventResume: control.preventResume,
+        volumeName: control.volumeName,
+      }),
   );
-  if (result.status === 'error') throw new Error(result.error);
+  if (result.status === "error") throw new Error(result.error);
   return result.data;
 }
 
@@ -282,7 +328,7 @@ async function runHermesSnapshotMaintenance<T>(
   operation: () => Promise<T>,
 ): Promise<T> {
   const agentId = await hermesAgentIdForSandbox(workspaceId, sandbox.id);
-  if (!agentId) throw new Error('Hermes runtime not found.');
+  if (!agentId) throw new Error("Hermes runtime not found.");
   const result = await runHermesRuntimeMaintenance(
     workspaceId,
     agentId,
@@ -290,7 +336,7 @@ async function runHermesSnapshotMaintenance<T>(
     { quiesce: false, allowRestoreFailed: options.allowRestoreFailed },
     async () => operation(),
   );
-  if (result.status === 'error') throw new Error(result.error);
+  if (result.status === "error") throw new Error(result.error);
   return result.data;
 }
 
@@ -310,7 +356,9 @@ function installCfgForSandbox(sandbox: {
     network: sandbox.network,
     volumeName: sandboxVolumeName(sandbox.id),
     connector: connector ?? undefined,
-    ...(sandbox.kind === 'ssh' ? { sshTargetId: sshTargetIdFromConfig(sandbox.config) ?? '' } : {}),
+    ...(sandbox.kind === "ssh"
+      ? { sshTargetId: sshTargetIdFromConfig(sandbox.config) ?? "" }
+      : {}),
     env,
     allowSudo: readSandboxAllowSudo(sandbox.config),
   };
@@ -338,9 +386,9 @@ async function createCloneRecord({
         workspaceId,
         serverId: null,
         name: `Sandbox: ${name}`,
-        source: 'sandbox',
+        source: "sandbox",
         sourceRef: source.image,
-        status: 'copying',
+        status: "copying",
       },
     });
     const sandbox = await tx.sandbox.create({
@@ -350,10 +398,12 @@ async function createCloneRecord({
         deploymentId: deployment.id,
         name,
         slug,
-        kind: 'docker',
+        kind: "docker",
         image: source.image,
         network: source.network,
-        ...(source.config === null ? {} : { config: source.config as Prisma.InputJsonValue }),
+        ...(source.config === null
+          ? {}
+          : { config: source.config as Prisma.InputJsonValue }),
       },
     });
     const updatedDeployment = await tx.deployment.update({
@@ -365,7 +415,7 @@ async function createCloneRecord({
 }
 
 export async function createSandboxAction(formData: FormData) {
-  const slug = String(formData.get('workspace') ?? '');
+  const slug = String(formData.get("workspace") ?? "");
   if (!slug) return;
   const ctx = await authorizedWorkspace(slug);
   if (!ctx) return;
@@ -373,33 +423,48 @@ export async function createSandboxAction(formData: FormData) {
   if (!releaseWorkspaceOperation) return;
 
   try {
-    const kind = String(formData.get('kind') ?? 'docker') === 'connector' ? 'connector' : 'docker';
-    const name = String(formData.get('name') ?? '').trim()
-      || (kind === 'connector' ? 'Connected computer' : 'Linux sandbox');
+    const kind =
+      String(formData.get("kind") ?? "docker") === "connector"
+        ? "connector"
+        : "docker";
+    const name =
+      String(formData.get("name") ?? "").trim() ||
+      (kind === "connector" ? "Connected computer" : "Linux sandbox");
     const sandboxSlug = await uniqueSlug(ctx.ws.id, name);
-    const network = String(formData.get('network') ?? 'isolated') === 'none' ? 'none' : 'isolated';
-    const env = parseSandboxEnvText(formData.get('env'));
-    const image = kind === 'docker'
-      ? resolveSandboxImage(
-          formData.get('imageChoice'),
-          formData.get('customImage') ?? formData.get('image'),
-        )
-      : null;
-    const connectorBundle = kind === 'connector'
-      ? createConnectorConfig({ serverUrl: connectorServerUrlFromHeaders(await headers()) })
-      : undefined;
-    const connectorConfig: SandboxConnectorConfig | undefined = connectorBundle?.config;
+    const network =
+      String(formData.get("network") ?? "isolated") === "none"
+        ? "none"
+        : "isolated";
+    const env = parseSandboxEnvText(formData.get("env"));
+    const image =
+      kind === "docker"
+        ? resolveSandboxImage(
+            formData.get("imageChoice"),
+            formData.get("customImage") ?? formData.get("image"),
+          )
+        : null;
+    const connectorBundle =
+      kind === "connector"
+        ? createConnectorConfig({
+            serverUrl: connectorServerUrlFromHeaders(await headers()),
+          })
+        : undefined;
+    const connectorConfig: SandboxConnectorConfig | undefined =
+      connectorBundle?.config;
 
     const dep = await db.deployment.create({
       data: {
         workspaceId: ctx.ws.id,
         serverId: null,
         name: `Sandbox: ${name}`,
-        source: 'sandbox',
-        sourceRef: kind === 'docker'
-          ? image
-          : connectorConfig ? connectorSourceRef(connectorConfig) : 'connector://missing',
-        status: 'provisioning',
+        source: "sandbox",
+        sourceRef:
+          kind === "docker"
+            ? image
+            : connectorConfig
+              ? connectorSourceRef(connectorConfig)
+              : "connector://missing",
+        status: "provisioning",
       },
     });
     const sandbox = await db.sandbox.create({
@@ -436,71 +501,91 @@ export async function createSandboxAction(formData: FormData) {
 }
 
 export async function cloneSandboxAction(formData: FormData) {
-  const slug = String(formData.get('workspace') ?? '');
-  const sandboxId = String(formData.get('sandboxId') ?? '');
+  const slug = String(formData.get("workspace") ?? "");
+  const sandboxId = String(formData.get("sandboxId") ?? "");
   const ctx = await authorizedWorkspace(slug);
   if (!ctx || !sandboxId) return;
 
-  const requestedName = cleanName(formData.get('name'));
-  const defaultName = cleanName(formData.get('defaultName'));
+  const requestedName = cleanName(formData.get("name"));
+  const defaultName = cleanName(formData.get("defaultName"));
   const targetSandboxId = randomUUID();
   const targetDeploymentId = randomUUID();
-  const created = await enqueueSandboxOperation(ctx.ws.id, targetSandboxId, () => (
-    enqueueSandboxOperation(ctx.ws.id, sandboxId, async () => {
-      const source = await sandboxInWorkspace(sandboxId, ctx.ws.id);
-      if (!source || source.kind !== 'docker' || sandboxDataOperationBlocked(source)) return null;
-      const name = requestedName || defaultName || `${source.name} copy`;
-      const cloneSlug = await uniqueSlug(ctx.ws.id, name);
-      let completedClone: Awaited<ReturnType<typeof createCloneRecord>> | null = null;
+  const created = await enqueueSandboxOperation(
+    ctx.ws.id,
+    targetSandboxId,
+    () =>
+      enqueueSandboxOperation(ctx.ws.id, sandboxId, async () => {
+        const source = await sandboxInWorkspace(sandboxId, ctx.ws.id);
+        if (source?.kind !== "docker" || sandboxDataOperationBlocked(source))
+          return null;
+        const name = requestedName || defaultName || `${source.name} copy`;
+        const cloneSlug = await uniqueSlug(ctx.ws.id, name);
+        let completedClone: Awaited<
+          ReturnType<typeof createCloneRecord>
+        > | null = null;
 
-      try {
-        return await quiesceDockerSandbox(source, async () => {
-          const clone = await createCloneRecord({
-            source,
-            workspaceId: ctx.ws.id,
-            deploymentId: targetDeploymentId,
-            sandboxId: targetSandboxId,
-            name,
-            slug: cloneSlug,
-          });
-          try {
-            await copyDockerVolume(sandboxDataVolume(source), sandboxVolumeName(clone.sandbox.id));
-            const runnableDeployment = await db.deployment.update({
-              where: { id: clone.deployment.id },
-              data: { status: 'provisioning' },
-            });
-            const completed = { ...clone, deployment: runnableDeployment };
-            await startProcess(completed.deployment.id, resolveSpawnSpec(completed.deployment), {
-              awaitReady: false,
+        try {
+          return await quiesceDockerSandbox(source, async () => {
+            const clone = await createCloneRecord({
+              source,
               workspaceId: ctx.ws.id,
+              deploymentId: targetDeploymentId,
+              sandboxId: targetSandboxId,
+              name,
+              slug: cloneSlug,
             });
-            completedClone = completed;
-            return completed;
-          } catch (error) {
-            await killProcess(clone.deployment.id, {
-              preventRestart: true,
-              finalStatus: 'copy_failed',
-            }).catch(() => undefined);
             try {
-              await removeDockerSandboxRuntimeStrict(clone.sandbox.id, sandboxVolumeName(clone.sandbox.id));
-              await db.deployment.deleteMany({
-                where: { id: clone.deployment.id, workspaceId: ctx.ws.id, source: 'sandbox' },
+              await copyDockerVolume(
+                sandboxDataVolume(source),
+                sandboxVolumeName(clone.sandbox.id),
+              );
+              const runnableDeployment = await db.deployment.update({
+                where: { id: clone.deployment.id },
+                data: { status: "provisioning" },
               });
-            } catch {
-              await db.deployment.updateMany({
-                where: { id: clone.deployment.id, workspaceId: ctx.ws.id },
-                data: { status: 'copy_failed' },
-              });
+              const completed = { ...clone, deployment: runnableDeployment };
+              await startProcess(
+                completed.deployment.id,
+                resolveSpawnSpec(completed.deployment),
+                {
+                  awaitReady: false,
+                  workspaceId: ctx.ws.id,
+                },
+              );
+              completedClone = completed;
+              return completed;
+            } catch (error) {
+              await killProcess(clone.deployment.id, {
+                preventRestart: true,
+                finalStatus: "copy_failed",
+              }).catch(() => undefined);
+              try {
+                await removeDockerSandboxRuntimeStrict(
+                  clone.sandbox.id,
+                  sandboxVolumeName(clone.sandbox.id),
+                );
+                await db.deployment.deleteMany({
+                  where: {
+                    id: clone.deployment.id,
+                    workspaceId: ctx.ws.id,
+                    source: "sandbox",
+                  },
+                });
+              } catch {
+                await db.deployment.updateMany({
+                  where: { id: clone.deployment.id, workspaceId: ctx.ws.id },
+                  data: { status: "copy_failed" },
+                });
+              }
+              throw error;
             }
-            throw error;
-          }
-        });
-      } catch (error) {
-        if (completedClone) return completedClone;
-        throw error;
-      }
-    })
-  ));
+          });
+        } catch (error) {
+          if (completedClone) return completedClone;
+          throw error;
+        }
+      }),
+  );
   if (!created) return;
 
   revalidatePath(`/app/${slug}/sandboxes`);
@@ -509,49 +594,62 @@ export async function cloneSandboxAction(formData: FormData) {
 }
 
 export async function createSandboxSnapshotAction(formData: FormData) {
-  const slug = String(formData.get('workspace') ?? '');
-  const sandboxId = String(formData.get('sandboxId') ?? '');
+  const slug = String(formData.get("workspace") ?? "");
+  const sandboxId = String(formData.get("sandboxId") ?? "");
   const ctx = await authorizedWorkspace(slug);
   if (!ctx || !sandboxId) return;
 
-  const name = cleanName(formData.get('name')) || cleanName(formData.get('defaultName')) || 'Snapshot';
-  const snapshot = await enqueueSandboxOperation(ctx.ws.id, sandboxId, async () => {
-    const sandbox = await sandboxInWorkspace(sandboxId, ctx.ws.id);
-    if (
-      !sandbox
-      || (sandbox.kind !== 'docker' && sandbox.kind !== 'hermes')
-      || sandboxDataOperationBlocked(sandbox)
-    ) return null;
-    const snapshotId = randomUUID();
-    const created = await db.sandboxSnapshot.create({
-      data: {
-        id: snapshotId,
-        sandboxId: sandbox.id,
-        name,
-        volumeName: sandboxSnapshotVolumeName(snapshotId),
-        status: 'creating',
-      },
-    });
+  const name =
+    cleanName(formData.get("name")) ||
+    cleanName(formData.get("defaultName")) ||
+    "Snapshot";
+  const snapshot = await enqueueSandboxOperation(
+    ctx.ws.id,
+    sandboxId,
+    async () => {
+      const sandbox = await sandboxInWorkspace(sandboxId, ctx.ws.id);
+      if (
+        !sandbox ||
+        (sandbox.kind !== "docker" && sandbox.kind !== "hermes") ||
+        sandboxDataOperationBlocked(sandbox)
+      )
+        return null;
+      const snapshotId = randomUUID();
+      const created = await db.sandboxSnapshot.create({
+        data: {
+          id: snapshotId,
+          sandboxId: sandbox.id,
+          name,
+          volumeName: sandboxSnapshotVolumeName(snapshotId),
+          status: "creating",
+        },
+      });
 
-    try {
-      await quiesceSandboxVolume(sandbox, ctx.ws.id, {
-        operationStatus: 'copying',
-      }, async (control) => {
-        await copyDockerVolume(control.volumeName, created.volumeName);
-      });
-      await db.sandboxSnapshot.update({
-        where: { id: created.id },
-        data: { status: 'ready', error: null },
-      });
-      return created;
-    } catch (error) {
-      await db.sandboxSnapshot.updateMany({
-        where: { id: created.id, sandboxId: sandbox.id },
-        data: { status: 'error', error: 'Snapshot creation failed.' },
-      });
-      throw error;
-    }
-  });
+      try {
+        await quiesceSandboxVolume(
+          sandbox,
+          ctx.ws.id,
+          {
+            operationStatus: "copying",
+          },
+          async (control) => {
+            await copyDockerVolume(control.volumeName, created.volumeName);
+          },
+        );
+        await db.sandboxSnapshot.update({
+          where: { id: created.id },
+          data: { status: "ready", error: null },
+        });
+        return created;
+      } catch (error) {
+        await db.sandboxSnapshot.updateMany({
+          where: { id: created.id, sandboxId: sandbox.id },
+          data: { status: "error", error: "Snapshot creation failed." },
+        });
+        throw error;
+      }
+    },
+  );
   if (!snapshot) return;
 
   revalidatePath(`/app/${slug}/sandboxes`);
@@ -559,217 +657,265 @@ export async function createSandboxSnapshotAction(formData: FormData) {
 }
 
 export async function restoreSandboxSnapshotAction(formData: FormData) {
-  const slug = String(formData.get('workspace') ?? '');
-  const sandboxId = String(formData.get('sandboxId') ?? '');
-  const snapshotId = String(formData.get('snapshotId') ?? '');
-  const requestedRecoveryName = cleanName(formData.get('recoveryName'));
+  const slug = String(formData.get("workspace") ?? "");
+  const sandboxId = String(formData.get("sandboxId") ?? "");
+  const snapshotId = String(formData.get("snapshotId") ?? "");
+  const requestedRecoveryName = cleanName(formData.get("recoveryName"));
   const ctx = await authorizedWorkspace(slug);
   if (!ctx || !sandboxId || !snapshotId) return;
 
-  const restored = await enqueueSandboxOperation(ctx.ws.id, sandboxId, async () => {
-    const sandbox = await sandboxInWorkspace(sandboxId, ctx.ws.id);
-    if (!sandbox || (sandbox.kind !== 'docker' && sandbox.kind !== 'hermes')) return false;
-    const initialStatus = effectiveStatus(sandbox.deploymentId, sandbox.deployment.status);
-    if (RESTORE_BLOCKED_STATES.has(initialStatus)) return false;
-    const restoringPreviousFailure = initialStatus === 'restore_failed';
-    const snapshot = await db.sandboxSnapshot.findFirst({
-      where: { id: snapshotId, sandboxId: sandbox.id, status: 'ready' },
-    });
-    if (!snapshot) return false;
+  const restored = await enqueueSandboxOperation(
+    ctx.ws.id,
+    sandboxId,
+    async () => {
+      const sandbox = await sandboxInWorkspace(sandboxId, ctx.ws.id);
+      if (!sandbox || (sandbox.kind !== "docker" && sandbox.kind !== "hermes"))
+        return false;
+      const initialStatus = effectiveStatus(
+        sandbox.deploymentId,
+        sandbox.deployment.status,
+      );
+      if (RESTORE_BLOCKED_STATES.has(initialStatus)) return false;
+      const restoringPreviousFailure = initialStatus === "restore_failed";
+      const snapshot = await db.sandboxSnapshot.findFirst({
+        where: { id: snapshotId, sandboxId: sandbox.id, status: "ready" },
+      });
+      if (!snapshot) return false;
 
-    const ownedSandboxId = sandbox.id;
-    const rollbackSnapshotId = `restore-${randomUUID()}`;
-    const rollbackVolume = sandboxSnapshotVolumeName(rollbackSnapshotId);
-    const rollbackName = requestedRecoveryName
-      || `Restore recovery: ${snapshot.name || 'Snapshot'}`.slice(0, 80);
-    let rollbackReady = false;
-    let preserveRollback = false;
-    let unsafeCopyCleanup: DockerVolumeCopyCleanupError | null = null;
-    let operationError: unknown;
+      const ownedSandboxId = sandbox.id;
+      const rollbackSnapshotId = `restore-${randomUUID()}`;
+      const rollbackVolume = sandboxSnapshotVolumeName(rollbackSnapshotId);
+      const rollbackName =
+        requestedRecoveryName ||
+        `Restore recovery: ${snapshot.name || "Snapshot"}`.slice(0, 80);
+      let rollbackReady = false;
+      let preserveRollback = false;
+      let unsafeCopyCleanup: DockerVolumeCopyCleanupError | null = null;
+      let operationError: unknown;
 
-    await db.sandboxSnapshot.create({
-      data: {
-        id: rollbackSnapshotId,
-        sandboxId: ownedSandboxId,
-        name: rollbackName,
-        volumeName: rollbackVolume,
-        status: 'creating',
-      },
-    });
-
-    async function markRollback(status: 'ready' | 'error' | 'deleting', error: string | null) {
-      await db.sandboxSnapshot.updateMany({
-        where: { id: rollbackSnapshotId, sandboxId: ownedSandboxId },
+      await db.sandboxSnapshot.create({
         data: {
-          status,
-          error,
+          id: rollbackSnapshotId,
+          sandboxId: ownedSandboxId,
+          name: rollbackName,
+          volumeName: rollbackVolume,
+          status: "creating",
         },
       });
-    }
 
-    try {
-      await quiesceSandboxVolume(sandbox, ctx.ws.id, {
-        operationStatus: 'restoring',
-        reprojectAfter: sandbox.kind === 'hermes',
-        allowRestoreFailed: restoringPreviousFailure,
-        quiescedStatus: restoringPreviousFailure ? 'restore_failed' : undefined,
-      }, async (control) => {
-        const currentVolume = control.volumeName;
-        await copyDockerVolume(currentVolume, rollbackVolume);
-        rollbackReady = true;
-        await markRollback('ready', null);
-        await db.deployment.updateMany({
-          where: { id: sandbox.deploymentId, workspaceId: ctx.ws.id, source: 'sandbox' },
-          data: { status: 'restoring' },
+      async function markRollback(
+        status: "ready" | "error" | "deleting",
+        error: string | null,
+      ) {
+        await db.sandboxSnapshot.updateMany({
+          where: { id: rollbackSnapshotId, sandboxId: ownedSandboxId },
+          data: {
+            status,
+            error,
+          },
         });
-        try {
-          await copyDockerVolume(snapshot.volumeName, currentVolume, { replace: true });
-        } catch (restoreError) {
-          if (restoreError instanceof DockerVolumeCopyCleanupError) {
-            preserveRollback = true;
-            unsafeCopyCleanup = restoreError;
-            control.preventResume();
-            throw restoreError;
-          }
-          try {
-            await copyDockerVolume(rollbackVolume, currentVolume, { replace: true });
-          } catch (rollbackError) {
-            preserveRollback = true;
-            if (rollbackError instanceof DockerVolumeCopyCleanupError) {
-              unsafeCopyCleanup = rollbackError;
-            }
-            control.preventResume();
-            throw new AggregateError(
-              [restoreError, rollbackError],
-              'Snapshot restore and automatic rollback both failed.',
-            );
-          }
-          if (sandbox.kind !== 'hermes') {
+      }
+
+      try {
+        await quiesceSandboxVolume(
+          sandbox,
+          ctx.ws.id,
+          {
+            operationStatus: "restoring",
+            reprojectAfter: sandbox.kind === "hermes",
+            allowRestoreFailed: restoringPreviousFailure,
+            quiescedStatus: restoringPreviousFailure
+              ? "restore_failed"
+              : undefined,
+          },
+          async (control) => {
+            const currentVolume = control.volumeName;
+            await copyDockerVolume(currentVolume, rollbackVolume);
+            rollbackReady = true;
+            await markRollback("ready", null);
+            await db.deployment.updateMany({
+              where: {
+                id: sandbox.deploymentId,
+                workspaceId: ctx.ws.id,
+                source: "sandbox",
+              },
+              data: { status: "restoring" },
+            });
             try {
-              await db.deployment.updateMany({
-                where: { id: sandbox.deploymentId, workspaceId: ctx.ws.id, source: 'sandbox' },
-                data: { status: restoringPreviousFailure ? 'restore_failed' : 'stopped' },
+              await copyDockerVolume(snapshot.volumeName, currentVolume, {
+                replace: true,
               });
-            } catch (statusError) {
-              preserveRollback = true;
-              control.preventResume();
-              throw new AggregateError(
-                [restoreError, statusError],
-                'Snapshot rollback succeeded but its safe deployment state could not be persisted.',
+            } catch (restoreError) {
+              if (restoreError instanceof DockerVolumeCopyCleanupError) {
+                preserveRollback = true;
+                unsafeCopyCleanup = restoreError;
+                control.preventResume();
+                throw restoreError;
+              }
+              try {
+                await copyDockerVolume(rollbackVolume, currentVolume, {
+                  replace: true,
+                });
+              } catch (rollbackError) {
+                preserveRollback = true;
+                if (rollbackError instanceof DockerVolumeCopyCleanupError) {
+                  unsafeCopyCleanup = rollbackError;
+                }
+                control.preventResume();
+                throw new AggregateError(
+                  [restoreError, rollbackError],
+                  "Snapshot restore and automatic rollback both failed.",
+                );
+              }
+              if (sandbox.kind !== "hermes") {
+                try {
+                  await db.deployment.updateMany({
+                    where: {
+                      id: sandbox.deploymentId,
+                      workspaceId: ctx.ws.id,
+                      source: "sandbox",
+                    },
+                    data: {
+                      status: restoringPreviousFailure
+                        ? "restore_failed"
+                        : "stopped",
+                    },
+                  });
+                } catch (statusError) {
+                  preserveRollback = true;
+                  control.preventResume();
+                  throw new AggregateError(
+                    [restoreError, statusError],
+                    "Snapshot rollback succeeded but its safe deployment state could not be persisted.",
+                  );
+                }
+              }
+              throw restoreError;
+            }
+            if (sandbox.kind !== "hermes") {
+              try {
+                await db.deployment.updateMany({
+                  where: {
+                    id: sandbox.deploymentId,
+                    workspaceId: ctx.ws.id,
+                    source: "sandbox",
+                  },
+                  data: { status: "stopped" },
+                });
+              } catch (statusError) {
+                preserveRollback = true;
+                control.preventResume();
+                throw statusError;
+              }
+            }
+          },
+        );
+        await db.sandboxSnapshot.update({
+          where: { id: snapshot.id },
+          data: { error: null },
+        });
+      } catch (error) {
+        operationError = error;
+      }
+
+      if (preserveRollback) {
+        try {
+          await db.deployment.updateMany({
+            where: {
+              id: sandbox.deploymentId,
+              workspaceId: ctx.ws.id,
+              source: "sandbox",
+            },
+            data: {
+              status: unsafeCopyCleanup
+                ? "restore_cleanup_required"
+                : "restore_failed",
+            },
+          });
+        } catch (statusError) {
+          operationError = new AggregateError(
+            [operationError, statusError],
+            "Snapshot restore failed and its recovery-required state could not be persisted.",
+          );
+        }
+      }
+      if (unsafeCopyCleanup) {
+        scheduleRestoreHelperCleanup(
+          unsafeCopyCleanup,
+          sandbox.deploymentId,
+          ctx.ws.id,
+        );
+      }
+
+      let cleanupError: unknown;
+      if (!(preserveRollback && rollbackReady)) {
+        try {
+          await markRollback("deleting", null);
+          await removeDockerVolumeStrict(rollbackVolume);
+          try {
+            await db.sandboxSnapshot.deleteMany({
+              where: { id: rollbackSnapshotId, sandboxId: ownedSandboxId },
+            });
+          } catch (deleteError) {
+            cleanupError = deleteError;
+            try {
+              await markRollback("error", "Restore backup cleanup failed.");
+            } catch (persistError) {
+              cleanupError = new AggregateError(
+                [deleteError, persistError],
+                "Restore backup record could not be removed or marked for retry.",
               );
             }
           }
-          throw restoreError;
-        }
-        if (sandbox.kind !== 'hermes') {
+        } catch (removeError) {
+          cleanupError = removeError;
           try {
-            await db.deployment.updateMany({
-              where: { id: sandbox.deploymentId, workspaceId: ctx.ws.id, source: 'sandbox' },
-              data: { status: 'stopped' },
-            });
-          } catch (statusError) {
-            preserveRollback = true;
-            control.preventResume();
-            throw statusError;
-          }
-        }
-      });
-      await db.sandboxSnapshot.update({
-        where: { id: snapshot.id },
-        data: { error: null },
-      });
-    } catch (error) {
-      operationError = error;
-    }
-
-    if (preserveRollback) {
-      try {
-        await db.deployment.updateMany({
-          where: { id: sandbox.deploymentId, workspaceId: ctx.ws.id, source: 'sandbox' },
-          data: { status: unsafeCopyCleanup ? 'restore_cleanup_required' : 'restore_failed' },
-        });
-      } catch (statusError) {
-        operationError = new AggregateError(
-          [operationError, statusError],
-          'Snapshot restore failed and its recovery-required state could not be persisted.',
-        );
-      }
-    }
-    if (unsafeCopyCleanup) {
-      scheduleRestoreHelperCleanup(
-        unsafeCopyCleanup,
-        sandbox.deploymentId,
-        ctx.ws.id,
-      );
-    }
-
-    let cleanupError: unknown;
-    if (!(preserveRollback && rollbackReady)) {
-      try {
-        await markRollback('deleting', null);
-        await removeDockerVolumeStrict(rollbackVolume);
-        try {
-          await db.sandboxSnapshot.deleteMany({
-            where: { id: rollbackSnapshotId, sandboxId: ownedSandboxId },
-          });
-        } catch (deleteError) {
-          cleanupError = deleteError;
-          try {
-            await markRollback('error', 'Restore backup cleanup failed.');
+            await markRollback(
+              rollbackReady ? "ready" : "error",
+              rollbackReady ? null : "Restore backup cleanup failed.",
+            );
           } catch (persistError) {
             cleanupError = new AggregateError(
-              [deleteError, persistError],
-              'Restore backup record could not be removed or marked for retry.',
+              [removeError, persistError],
+              "Restore backup cleanup and recovery tracking both failed.",
             );
           }
         }
-      } catch (removeError) {
-        cleanupError = removeError;
-        try {
-          await markRollback(
-            rollbackReady ? 'ready' : 'error',
-            rollbackReady ? null : 'Restore backup cleanup failed.',
-          );
-        } catch (persistError) {
-          cleanupError = new AggregateError(
-            [removeError, persistError],
-            'Restore backup cleanup and recovery tracking both failed.',
+      }
+
+      if (preserveRollback || cleanupError) {
+        revalidatePath(`/app/${slug}/sandboxes`);
+        revalidatePath(`/app/${slug}/sandboxes/${sandbox.id}`);
+      }
+      if (operationError) {
+        if (cleanupError) {
+          throw new AggregateError(
+            [operationError, cleanupError],
+            "Snapshot restore failed and its recovery backup could not be tracked.",
           );
         }
+        throw operationError;
       }
-    }
-
-    if (preserveRollback || cleanupError) {
-      revalidatePath(`/app/${slug}/sandboxes`);
-      revalidatePath(`/app/${slug}/sandboxes/${sandbox.id}`);
-    }
-    if (operationError) {
-      if (cleanupError) {
-        throw new AggregateError(
-          [operationError, cleanupError],
-          'Snapshot restore failed and its recovery backup could not be tracked.',
-        );
-      }
-      throw operationError;
-    }
-    if (cleanupError) throw cleanupError;
-    return true;
-  });
+      if (cleanupError) throw cleanupError;
+      return true;
+    },
+  );
   if (!restored) return;
 
   revalidatePath(`/app/${slug}/sandboxes/${sandboxId}`);
 }
 
 export async function deleteSandboxSnapshotAction(formData: FormData) {
-  const slug = String(formData.get('workspace') ?? '');
-  const sandboxId = String(formData.get('sandboxId') ?? '');
-  const snapshotId = String(formData.get('snapshotId') ?? '');
+  const slug = String(formData.get("workspace") ?? "");
+  const sandboxId = String(formData.get("sandboxId") ?? "");
+  const snapshotId = String(formData.get("snapshotId") ?? "");
   const ctx = await authorizedWorkspace(slug);
   if (!ctx || !sandboxId || !snapshotId) return;
 
   await enqueueSandboxOperation(ctx.ws.id, sandboxId, async () => {
     const sandbox = await sandboxInWorkspace(sandboxId, ctx.ws.id);
-    if (!sandbox || (sandbox.kind !== 'docker' && sandbox.kind !== 'hermes')) return;
+    if (!sandbox || (sandbox.kind !== "docker" && sandbox.kind !== "hermes"))
+      return;
     const snapshot = await db.sandboxSnapshot.findFirst({
       where: { id: snapshotId, sandboxId: sandbox.id },
     });
@@ -777,7 +923,7 @@ export async function deleteSandboxSnapshotAction(formData: FormData) {
     const removeSnapshot = async () => {
       await db.sandboxSnapshot.update({
         where: { id: snapshot.id },
-        data: { status: 'deleting', error: null },
+        data: { status: "deleting", error: null },
       });
       try {
         await removeDockerVolumeStrict(snapshot.volumeName);
@@ -787,15 +933,22 @@ export async function deleteSandboxSnapshotAction(formData: FormData) {
       } catch (error) {
         await db.sandboxSnapshot.updateMany({
           where: { id: snapshot.id, sandboxId: sandbox.id },
-          data: { status: 'error', error: 'Snapshot deletion failed.' },
+          data: { status: "error", error: "Snapshot deletion failed." },
         });
         throw error;
       }
     };
-    if (sandbox.kind === 'hermes') {
-      await runHermesSnapshotMaintenance(sandbox, ctx.ws.id, {
-        allowRestoreFailed: effectiveStatus(sandbox.deploymentId, sandbox.deployment.status) === 'restore_failed',
-      }, removeSnapshot);
+    if (sandbox.kind === "hermes") {
+      await runHermesSnapshotMaintenance(
+        sandbox,
+        ctx.ws.id,
+        {
+          allowRestoreFailed:
+            effectiveStatus(sandbox.deploymentId, sandbox.deployment.status) ===
+            "restore_failed",
+        },
+        removeSnapshot,
+      );
     } else {
       await removeSnapshot();
     }
@@ -804,10 +957,14 @@ export async function deleteSandboxSnapshotAction(formData: FormData) {
   revalidatePath(`/app/${slug}/sandboxes/${sandboxId}`);
 }
 
-function installCfgWithAllowSudo(config: Prisma.JsonValue | null, allowSudo: boolean): Prisma.InputJsonValue {
-  const base = config && typeof config === 'object' && !Array.isArray(config)
-    ? { ...(config as Record<string, unknown>) }
-    : {};
+function installCfgWithAllowSudo(
+  config: Prisma.JsonValue | null,
+  allowSudo: boolean,
+): Prisma.InputJsonValue {
+  const base =
+    config && typeof config === "object" && !Array.isArray(config)
+      ? { ...(config as Record<string, unknown>) }
+      : {};
   if (allowSudo) {
     base.allowSudo = true;
   } else {
@@ -817,15 +974,15 @@ function installCfgWithAllowSudo(config: Prisma.JsonValue | null, allowSudo: boo
 }
 
 export async function updateSandboxSudoAction(formData: FormData) {
-  const slug = String(formData.get('workspace') ?? '');
-  const sandboxId = String(formData.get('sandboxId') ?? '');
-  const allowSudo = formData.get('allowSudo') === 'on';
+  const slug = String(formData.get("workspace") ?? "");
+  const sandboxId = String(formData.get("sandboxId") ?? "");
+  const allowSudo = formData.get("allowSudo") === "on";
   const ctx = await authorizedWorkspace(slug);
   if (!ctx || !sandboxId) return;
 
   await enqueueSandboxOperation(ctx.ws.id, sandboxId, async () => {
     const sandbox = await sandboxInWorkspace(sandboxId, ctx.ws.id);
-    if (!sandbox || sandbox.kind !== 'hermes') return;
+    if (sandbox?.kind !== "hermes") return;
     if (sandboxLifecycleBlocked(sandbox)) return;
     if (readSandboxAllowSudo(sandbox.config) === allowSudo) return;
 
@@ -835,11 +992,18 @@ export async function updateSandboxSudoAction(formData: FormData) {
     await db.$transaction([
       db.sandbox.update({
         where: { id: sandbox.id },
-        data: { config: sandboxConfigWithAllowSudo(sandbox.config, allowSudo) ?? {} },
+        data: {
+          config: sandboxConfigWithAllowSudo(sandbox.config, allowSudo) ?? {},
+        },
       }),
       db.deployment.update({
         where: { id: sandbox.deploymentId },
-        data: { installCfg: installCfgWithAllowSudo(sandbox.deployment.installCfg, allowSudo) },
+        data: {
+          installCfg: installCfgWithAllowSudo(
+            sandbox.deployment.installCfg,
+            allowSudo,
+          ),
+        },
       }),
     ]);
 
@@ -847,7 +1011,8 @@ export async function updateSandboxSudoAction(formData: FormData) {
     // forced sync recreates the container (volume data is preserved) and applies
     // the new privilege mode.
     const synced = await syncHermesRuntime(ctx.ws.id, agentId, { force: true });
-    if (synced.error) throw new Error(`Saved, but Hermes sync failed: ${synced.error}`);
+    if (synced.error)
+      throw new Error(`Saved, but Hermes sync failed: ${synced.error}`);
     revalidatePath(`/app/${slug}/agents/${agentId}`);
     revalidatePath(`/app/${slug}/sandboxes`);
     revalidatePath(`/app/${slug}/sandboxes/${sandbox.id}`);
@@ -855,8 +1020,8 @@ export async function updateSandboxSudoAction(formData: FormData) {
 }
 
 export async function updateSandboxEnvAction(formData: FormData) {
-  const slug = String(formData.get('workspace') ?? '');
-  const sandboxId = String(formData.get('sandboxId') ?? '');
+  const slug = String(formData.get("workspace") ?? "");
+  const sandboxId = String(formData.get("sandboxId") ?? "");
   const ctx = await authorizedWorkspace(slug);
   if (!ctx || !sandboxId) return;
 
@@ -865,18 +1030,21 @@ export async function updateSandboxEnvAction(formData: FormData) {
     if (!sandbox) return;
     if (sandboxLifecycleBlocked(sandbox)) return;
 
-    const env = parseSandboxEnvText(formData.get('env'));
-    if (sandbox.kind === 'hermes') {
+    const env = parseSandboxEnvText(formData.get("env"));
+    if (sandbox.kind === "hermes") {
       // Hermes has two environment projections: the runtime's .env file and
       // the container launch spec. Rebuilding a generic Sandbox installCfg
       // would drop runtimeId/runtimeModelName and turn it into Docker, so use
       // the agent-owned mutation and force its projection/restart instead.
       const agentId = await hermesAgentIdForSandbox(ctx.ws.id, sandbox.id);
       if (!agentId) return;
-      if (!await setHermesRuntimeEnv(ctx.ws.id, agentId, env)) return;
-      const synced = await syncHermesRuntime(ctx.ws.id, agentId, { force: true });
+      if (!(await setHermesRuntimeEnv(ctx.ws.id, agentId, env))) return;
+      const synced = await syncHermesRuntime(ctx.ws.id, agentId, {
+        force: true,
+      });
       revalidatePath(`/app/${slug}/agents/${agentId}`);
-      if (synced.error) throw new Error(`Saved, but Hermes sync failed: ${synced.error}`);
+      if (synced.error)
+        throw new Error(`Saved, but Hermes sync failed: ${synced.error}`);
       revalidatePath(`/app/${slug}/sandboxes`);
       revalidatePath(`/app/${slug}/sandboxes/${sandbox.id}`);
       return;
@@ -887,8 +1055,11 @@ export async function updateSandboxEnvAction(formData: FormData) {
       ...sandbox,
       config: (config ?? null) as Prisma.JsonValue | null,
     });
-    const status = effectiveStatus(sandbox.deploymentId, sandbox.deployment.status);
-    const wasActive = status === 'running' || status === 'provisioning';
+    const status = effectiveStatus(
+      sandbox.deploymentId,
+      sandbox.deployment.status,
+    );
+    const wasActive = status === "running" || status === "provisioning";
 
     const [, updatedDeployment] = await db.$transaction([
       db.sandbox.update({
@@ -901,20 +1072,32 @@ export async function updateSandboxEnvAction(formData: FormData) {
       }),
     ]);
 
-    if (sandbox.kind === 'docker') {
+    if (sandbox.kind === "docker") {
       await killProcess(sandbox.deploymentId);
       await removeDockerSandboxContainer(sandbox.id);
       if (wasActive) {
-        await startProcess(sandbox.deploymentId, resolveSpawnSpec(updatedDeployment), {
+        await startProcess(
+          sandbox.deploymentId,
+          resolveSpawnSpec(updatedDeployment),
+          {
+            awaitReady: false,
+            workspaceId: ctx.ws.id,
+          },
+        );
+      }
+    } else if (
+      ((sandbox.kind === "connector" && connectorFromConfig(config)) ||
+        sandbox.kind === "ssh") &&
+      wasActive
+    ) {
+      await restartProcess(
+        sandbox.deploymentId,
+        resolveSpawnSpec(updatedDeployment),
+        {
           awaitReady: false,
           workspaceId: ctx.ws.id,
-        });
-      }
-    } else if (((sandbox.kind === 'connector' && connectorFromConfig(config)) || sandbox.kind === 'ssh') && wasActive) {
-      await restartProcess(sandbox.deploymentId, resolveSpawnSpec(updatedDeployment), {
-        awaitReady: false,
-        workspaceId: ctx.ws.id,
-      });
+        },
+      );
     }
 
     revalidatePath(`/app/${slug}/sandboxes`);
@@ -923,9 +1106,9 @@ export async function updateSandboxEnvAction(formData: FormData) {
 }
 
 export async function renameSandboxAction(formData: FormData) {
-  const slug = String(formData.get('workspace') ?? '');
-  const sandboxId = String(formData.get('sandboxId') ?? '');
-  const name = cleanName(formData.get('name'));
+  const slug = String(formData.get("workspace") ?? "");
+  const sandboxId = String(formData.get("sandboxId") ?? "");
+  const name = cleanName(formData.get("name"));
   const ctx = await authorizedWorkspace(slug);
   if (!ctx || !sandboxId || !name) return;
 
@@ -950,10 +1133,10 @@ export async function renameSandboxAction(formData: FormData) {
   revalidatePath(`/app/${slug}/sandboxes/${sandbox.id}`);
 }
 
-type SandboxLifecycleOperation = 'start' | 'stop' | 'restart';
+type SandboxLifecycleOperation = "start" | "stop" | "restart";
 export type SandboxLifecycleBatchResult = {
   sandboxId: string;
-  outcome: 'success' | 'skipped' | 'error';
+  outcome: "success" | "skipped" | "error";
   message: string;
 };
 
@@ -965,27 +1148,37 @@ function runSandboxLifecycle(
   batch = false,
 ): Promise<SandboxLifecycleBatchResult | undefined> {
   return enqueueSandboxOperation(workspaceId, sandboxId, async () => {
-    const result = (outcome: SandboxLifecycleBatchResult['outcome'], message: string): SandboxLifecycleBatchResult => (
-      { sandboxId, outcome, message }
-    );
+    const result = (
+      outcome: SandboxLifecycleBatchResult["outcome"],
+      message: string,
+    ): SandboxLifecycleBatchResult => ({ sandboxId, outcome, message });
     const sandbox = await sandboxInWorkspace(sandboxId, workspaceId);
-    if (!sandbox) return result('error', 'sandbox_unavailable');
-    const status = effectiveStatus(sandbox.deploymentId, sandbox.deployment.status);
-    if (batch && status === 'provisioning') return result('skipped', 'provisioning');
-    if (sandboxLifecycleBlocked(sandbox) || (batch && DATA_OPERATION_BLOCKED_STATES.has(status))) {
-      return result('skipped', 'lifecycle_blocked');
+    if (!sandbox) return result("error", "sandbox_unavailable");
+    const status = effectiveStatus(
+      sandbox.deploymentId,
+      sandbox.deployment.status,
+    );
+    if (batch && status === "provisioning")
+      return result("skipped", "provisioning");
+    if (
+      sandboxLifecycleBlocked(sandbox) ||
+      (batch && DATA_OPERATION_BLOCKED_STATES.has(status))
+    ) {
+      return result("skipped", "lifecycle_blocked");
     }
     if (batch) {
-      if (operation === 'start' && status === 'running') return result('skipped', 'already_running');
-      if (operation !== 'start' && status !== 'running') return result('skipped', 'not_running');
+      if (operation === "start" && status === "running")
+        return result("skipped", "already_running");
+      if (operation !== "start" && status !== "running")
+        return result("skipped", "not_running");
     }
-    if (sandbox.kind === 'hermes') {
+    if (sandbox.kind === "hermes") {
       const agentId = await hermesAgentIdForSandbox(workspaceId, sandbox.id);
-      if (!agentId) return result('error', 'runtime_unavailable');
+      if (!agentId) return result("error", "runtime_unavailable");
       let error: string | undefined;
-      if (operation === 'start') {
+      if (operation === "start") {
         error = (await ensureHermesRuntimeReady(workspaceId, agentId)).error;
-      } else if (!batch && operation === 'stop') {
+      } else if (!batch && operation === "stop") {
         await stopHermesRuntime(workspaceId, agentId);
       } else {
         // Maintenance owns the Hermes queue and write lease, and resumes an
@@ -997,52 +1190,76 @@ function runSandboxLifecycle(
           { quiesce: true },
           async (control) => {
             if (!control.wasActive) return false;
-            if (operation === 'stop') {
+            if (operation === "stop") {
               const deploymentUpdate = await db.deployment.updateMany({
-                where: { id: control.deploymentId, workspaceId, source: 'sandbox' },
-                data: { status: 'stopped' },
+                where: {
+                  id: control.deploymentId,
+                  workspaceId,
+                  source: "sandbox",
+                },
+                data: { status: "stopped" },
               });
               const runtimeUpdate = await db.agentRuntime.updateMany({
-                where: { id: control.runtimeId, workspaceId, agentId, sandboxId: sandbox.id, kind: 'hermes' },
-                data: { status: 'stopped', lastError: null },
+                where: {
+                  id: control.runtimeId,
+                  workspaceId,
+                  agentId,
+                  sandboxId: sandbox.id,
+                  kind: "hermes",
+                },
+                data: { status: "stopped", lastError: null },
               });
               if (deploymentUpdate.count !== 1 || runtimeUpdate.count !== 1) {
-                throw new Error('Hermes runtime changed during the operation.');
+                throw new Error("Hermes runtime changed during the operation.");
               }
               control.preventResume();
             }
             return true;
           },
         );
-        if (maintained.status === 'error') error = maintained.error;
-        if (maintained.status === 'completed' && !maintained.data) return result('skipped', 'not_running');
+        if (maintained.status === "error") error = maintained.error;
+        if (maintained.status === "completed" && !maintained.data)
+          return result("skipped", "not_running");
       }
       revalidatePath(`/app/${slug}/agents/${agentId}`);
       if (error) {
-        const busy = error === 'The Hermes sandbox has a pending lifecycle operation.'
-          || error === 'The Hermes runtime is temporarily unavailable while a clone or image upgrade is in progress.';
-        return result(busy ? 'skipped' : 'error', busy ? 'runtime_busy' : 'operation_failed');
+        const busy =
+          error === "The Hermes sandbox has a pending lifecycle operation." ||
+          error ===
+            "The Hermes runtime is temporarily unavailable while a clone or image upgrade is in progress.";
+        return result(
+          busy ? "skipped" : "error",
+          busy ? "runtime_busy" : "operation_failed",
+        );
       }
-      return result('success', 'accepted');
+      return result("success", "accepted");
     }
-    if (operation !== 'stop') {
-      if (sandbox.kind === 'host') return result('skipped', 'host_unmanaged');
-      if (sandbox.kind === 'ssh' && !sshTargetIdFromConfig(sandbox.config)) {
-        return result('skipped', 'ssh_unconfigured');
+    if (operation !== "stop") {
+      if (sandbox.kind === "host") return result("skipped", "host_unmanaged");
+      if (sandbox.kind === "ssh" && !sshTargetIdFromConfig(sandbox.config)) {
+        return result("skipped", "ssh_unconfigured");
       }
-      if (sandbox.kind === 'connector' && !connectorFromConfig(sandbox.config)) {
-        return result('skipped', 'connector_unconfigured');
+      if (
+        sandbox.kind === "connector" &&
+        !connectorFromConfig(sandbox.config)
+      ) {
+        return result("skipped", "connector_unconfigured");
       }
-      const lifecycle = operation === 'start' ? startProcess : restartProcess;
-      await lifecycle(sandbox.deploymentId, resolveSpawnSpec(sandbox.deployment), {
-        awaitReady: false,
-        workspaceId,
-      });
+      const lifecycle = operation === "start" ? startProcess : restartProcess;
+      await lifecycle(
+        sandbox.deploymentId,
+        resolveSpawnSpec(sandbox.deployment),
+        {
+          awaitReady: false,
+          workspaceId,
+        },
+      );
     } else {
       await stopProcess(sandbox.deploymentId);
-      if (sandbox.kind === 'connector') disconnectConnector(sandbox.id, 'sandbox stopped');
+      if (sandbox.kind === "connector")
+        disconnectConnector(sandbox.id, "sandbox stopped");
     }
-    return result('success', 'accepted');
+    return result("success", "accepted");
   });
 }
 
@@ -1051,24 +1268,53 @@ export async function batchSandboxLifecycleAction(
   operation: SandboxLifecycleOperation,
   sandboxIds: string[],
 ): Promise<SandboxLifecycleBatchResult[]> {
-  if (typeof workspace !== 'string' || !workspace || workspace.length > 200
-    || !['start', 'stop', 'restart'].includes(operation)
-    || !Array.isArray(sandboxIds) || sandboxIds.length > 100) {
-    throw new Error('Invalid sandbox lifecycle selection (maximum 100 sandboxes).');
+  if (
+    typeof workspace !== "string" ||
+    !workspace ||
+    workspace.length > 200 ||
+    !["start", "stop", "restart"].includes(operation) ||
+    !Array.isArray(sandboxIds) ||
+    sandboxIds.length > 100
+  ) {
+    throw new Error(
+      "Invalid sandbox lifecycle selection (maximum 100 sandboxes).",
+    );
   }
   const ids = [...new Set(sandboxIds)];
-  if (ids.some((id) => typeof id !== 'string' || !/^[A-Za-z0-9_-]{1,200}$/.test(id))) {
-    throw new Error('Invalid sandbox lifecycle selection (maximum 100 sandboxes).');
+  if (
+    ids.some(
+      (id) => typeof id !== "string" || !/^[A-Za-z0-9_-]{1,200}$/.test(id),
+    )
+  ) {
+    throw new Error(
+      "Invalid sandbox lifecycle selection (maximum 100 sandboxes).",
+    );
   }
   const ctx = await authorizedWorkspace(workspace).catch(() => null);
-  if (!ctx) return ids.map((sandboxId) => ({ sandboxId, outcome: 'error', message: 'workspace_unavailable' }));
+  if (!ctx)
+    return ids.map((sandboxId) => ({
+      sandboxId,
+      outcome: "error",
+      message: "workspace_unavailable",
+    }));
   const results: SandboxLifecycleBatchResult[] = [];
   for (const sandboxId of ids) {
     try {
-      results.push(await runSandboxLifecycle(ctx.ws.id, workspace, sandboxId, operation, true)
-        ?? { sandboxId, outcome: 'skipped', message: 'workspace_busy' });
+      results.push(
+        (await runSandboxLifecycle(
+          ctx.ws.id,
+          workspace,
+          sandboxId,
+          operation,
+          true,
+        )) ?? { sandboxId, outcome: "skipped", message: "workspace_busy" },
+      );
     } catch {
-      results.push({ sandboxId, outcome: 'error', message: 'operation_failed' });
+      results.push({
+        sandboxId,
+        outcome: "error",
+        message: "operation_failed",
+      });
     }
     revalidatePath(`/app/${workspace}/sandboxes/${sandboxId}`);
   }
@@ -1078,58 +1324,78 @@ export async function batchSandboxLifecycleAction(
 }
 
 export async function startSandboxAction(formData: FormData) {
-  const slug = String(formData.get('workspace') ?? '');
-  const sandboxId = String(formData.get('sandboxId') ?? '');
+  const slug = String(formData.get("workspace") ?? "");
+  const sandboxId = String(formData.get("sandboxId") ?? "");
   const ctx = await authorizedWorkspace(slug);
   if (!ctx || !sandboxId) return;
-  await runSandboxLifecycle(ctx.ws.id, slug, sandboxId, 'start');
+  await runSandboxLifecycle(ctx.ws.id, slug, sandboxId, "start");
   revalidatePath(`/app/${slug}/sandboxes`);
   revalidatePath(`/app/${slug}/sandboxes/${sandboxId}`);
   revalidatePath(`/app/${slug}/work`);
 }
 
 export async function generateConnectorCommandAction(formData: FormData) {
-  const slug = String(formData.get('workspace') ?? '');
-  const sandboxId = String(formData.get('sandboxId') ?? '');
+  const slug = String(formData.get("workspace") ?? "");
+  const sandboxId = String(formData.get("sandboxId") ?? "");
   const ctx = await authorizedWorkspace(slug);
   if (!ctx || !sandboxId) return;
 
   const sandbox = await sandboxInWorkspace(sandboxId, ctx.ws.id);
-  if (!sandbox || sandbox.kind !== 'connector') return;
+  if (sandbox?.kind !== "connector") return;
   if (sandboxLifecycleBlocked(sandbox)) return;
   const connector = connectorFromConfig(sandbox.config);
   if (!connector) return;
 
   const bundle = createConnectorConfig({
     serverUrl: connectorServerUrlFromHeaders(await headers()),
-    remoteRoot: String(formData.get('connectorRemoteRoot') ?? connector.remoteRoot).trim(),
+    remoteRoot: String(
+      formData.get("connectorRemoteRoot") ?? connector.remoteRoot,
+    ).trim(),
     packageName: connector.packageName,
   });
   const nextConnector = bundle.config;
   const currentConfig = (sandbox.config ?? {}) as Record<string, unknown>;
-  const currentInstallCfg = (sandbox.deployment.installCfg ?? {}) as Record<string, unknown>;
+  const currentInstallCfg = (sandbox.deployment.installCfg ?? {}) as Record<
+    string,
+    unknown
+  >;
 
   const [, updatedDeployment] = await db.$transaction([
     db.sandbox.update({
       where: { id: sandbox.id },
-      data: { config: { ...currentConfig, connector: nextConnector } as Prisma.InputJsonValue },
+      data: {
+        config: {
+          ...currentConfig,
+          connector: nextConnector,
+        } as Prisma.InputJsonValue,
+      },
     }),
     db.deployment.update({
       where: { id: sandbox.deploymentId },
       data: {
         sourceRef: connectorSourceRef(nextConnector),
-        installCfg: { ...currentInstallCfg, connector: nextConnector } as Prisma.InputJsonValue,
+        installCfg: {
+          ...currentInstallCfg,
+          connector: nextConnector,
+        } as Prisma.InputJsonValue,
       },
     }),
   ]);
 
-  disconnectConnector(sandbox.id, 'connector token rotated');
-  const status = effectiveStatus(sandbox.deploymentId, sandbox.deployment.status);
-  if (status !== 'running' && status !== 'provisioning') {
-    await startProcess(sandbox.deploymentId, resolveSpawnSpec(updatedDeployment), {
-      awaitReady: false,
-      workspaceId: ctx.ws.id,
-    });
+  disconnectConnector(sandbox.id, "connector token rotated");
+  const status = effectiveStatus(
+    sandbox.deploymentId,
+    sandbox.deployment.status,
+  );
+  if (status !== "running" && status !== "provisioning") {
+    await startProcess(
+      sandbox.deploymentId,
+      resolveSpawnSpec(updatedDeployment),
+      {
+        awaitReady: false,
+        workspaceId: ctx.ws.id,
+      },
+    );
   }
   await setConnectorSetupTokenCookie(slug, sandbox.id, bundle.token);
   revalidatePath(`/app/${slug}/sandboxes`);
@@ -1137,62 +1403,80 @@ export async function generateConnectorCommandAction(formData: FormData) {
 }
 
 export async function stopSandboxAction(formData: FormData) {
-  const slug = String(formData.get('workspace') ?? '');
-  const sandboxId = String(formData.get('sandboxId') ?? '');
+  const slug = String(formData.get("workspace") ?? "");
+  const sandboxId = String(formData.get("sandboxId") ?? "");
   const ctx = await authorizedWorkspace(slug);
   if (!ctx || !sandboxId) return;
-  await runSandboxLifecycle(ctx.ws.id, slug, sandboxId, 'stop');
+  await runSandboxLifecycle(ctx.ws.id, slug, sandboxId, "stop");
   revalidatePath(`/app/${slug}/sandboxes`);
   revalidatePath(`/app/${slug}/sandboxes/${sandboxId}`);
 }
 
 export async function restartSandboxAction(formData: FormData) {
-  const slug = String(formData.get('workspace') ?? '');
-  const sandboxId = String(formData.get('sandboxId') ?? '');
+  const slug = String(formData.get("workspace") ?? "");
+  const sandboxId = String(formData.get("sandboxId") ?? "");
   const ctx = await authorizedWorkspace(slug);
   if (!ctx || !sandboxId) return;
-  await runSandboxLifecycle(ctx.ws.id, slug, sandboxId, 'restart');
+  await runSandboxLifecycle(ctx.ws.id, slug, sandboxId, "restart");
   revalidatePath(`/app/${slug}/sandboxes`);
   revalidatePath(`/app/${slug}/sandboxes/${sandboxId}`);
 }
 
 export async function deleteSandboxAction(formData: FormData) {
-  const slug = String(formData.get('workspace') ?? '');
-  const sandboxId = String(formData.get('sandboxId') ?? '');
+  const slug = String(formData.get("workspace") ?? "");
+  const sandboxId = String(formData.get("sandboxId") ?? "");
   const ctx = await authorizedWorkspace(slug);
   if (!ctx || !sandboxId) return;
   let deleted: boolean;
   try {
-    deleted = Boolean(await enqueueSandboxOperation(ctx.ws.id, sandboxId, async () => {
-      const sandbox = await sandboxInWorkspace(sandboxId, ctx.ws.id);
-      if (!sandbox || sandbox.kind === 'hermes' || sandbox.agentLinks.length > 0) return false;
+    deleted = Boolean(
+      await enqueueSandboxOperation(ctx.ws.id, sandboxId, async () => {
+        const sandbox = await sandboxInWorkspace(sandboxId, ctx.ws.id);
+        if (
+          !sandbox ||
+          sandbox.kind === "hermes" ||
+          sandbox.agentLinks.length > 0
+        )
+          return false;
 
-      if (sandbox.kind === 'connector') {
-        await stopProcess(sandbox.deploymentId);
-        disconnectConnector(sandbox.id, 'sandbox deleted');
-      }
-      await killProcess(sandbox.deploymentId, {
-        preventRestart: true,
-        finalStatus: 'deleting',
-      });
-      await db.deployment.updateMany({
-        where: { id: sandbox.deploymentId, workspaceId: ctx.ws.id, source: 'sandbox' },
-        data: { status: 'deleting' },
-      });
-      if (sandbox.kind === 'docker') {
-        for (const snapshot of sandbox.snapshots) {
-          await removeDockerVolumeStrict(snapshot.volumeName);
+        if (sandbox.kind === "connector") {
+          await stopProcess(sandbox.deploymentId);
+          disconnectConnector(sandbox.id, "sandbox deleted");
         }
-        await removeDockerSandboxRuntimeStrict(sandbox.id, sandboxDataVolume(sandbox));
-      }
-      await db.deployment.deleteMany({
-        where: { id: sandbox.deploymentId, workspaceId: ctx.ws.id, source: 'sandbox' },
-      });
-      return true;
-    }));
+        await killProcess(sandbox.deploymentId, {
+          preventRestart: true,
+          finalStatus: "deleting",
+        });
+        await db.deployment.updateMany({
+          where: {
+            id: sandbox.deploymentId,
+            workspaceId: ctx.ws.id,
+            source: "sandbox",
+          },
+          data: { status: "deleting" },
+        });
+        if (sandbox.kind === "docker") {
+          for (const snapshot of sandbox.snapshots) {
+            await removeDockerVolumeStrict(snapshot.volumeName);
+          }
+          await removeDockerSandboxRuntimeStrict(
+            sandbox.id,
+            sandboxDataVolume(sandbox),
+          );
+        }
+        await db.deployment.deleteMany({
+          where: {
+            id: sandbox.deploymentId,
+            workspaceId: ctx.ws.id,
+            source: "sandbox",
+          },
+        });
+        return true;
+      }),
+    );
   } catch (error) {
     const retained = await sandboxInWorkspace(sandboxId, ctx.ws.id);
-    if (retained && retained.deployment.status !== 'deleting') {
+    if (retained && retained.deployment.status !== "deleting") {
       allowProcessRestart(retained.deploymentId);
     }
     throw error;

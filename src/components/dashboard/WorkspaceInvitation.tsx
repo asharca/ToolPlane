@@ -1,43 +1,103 @@
-'use client';
-import { ButtonLink, Button } from '@/components/motion/button';
+"use client";
+import { ButtonLink, Button } from "@/components/motion/button";
 
+import { useEffect, useState } from "react";
 
-import { useEffect, useState } from 'react';
-
-import { useTranslations } from 'next-intl';
-import { previewWorkspaceInvitationAction, switchInvitationAccountAction } from '@/lib/workspace/management-actions';
-import { AcceptWorkspaceInvitationForm } from './WorkspaceForms';
+import { useTranslations } from "next-intl";
+import {
+  previewWorkspaceInvitationAction,
+  switchInvitationAccountAction,
+} from "@/lib/workspace/management-actions";
+import { AcceptWorkspaceInvitationForm } from "./WorkspaceForms";
 
 type Preview = Awaited<ReturnType<typeof previewWorkspaceInvitationAction>>;
 
 export function WorkspaceInvitation({ signedIn }: { signedIn: boolean }) {
-  const t = useTranslations('console.workspaces');
-  const auth = useTranslations('auth');
-  const [state, setState] = useState<{ token: string; preview: Preview } | null>(null);
+  const t = useTranslations("console.workspaces");
+  const auth = useTranslations("auth");
+  const [state, setState] = useState<{
+    token: string;
+    preview: Preview;
+  } | null>(null);
   useEffect(() => {
     let active = true;
-    const key = 'toolplane:workspace-invitation';
-    const fragment = new URLSearchParams(window.location.hash.slice(1)).get('invite');
-    let token = fragment ?? '';
+    const key = "toolplane:workspace-invitation";
+    const fragment = new URLSearchParams(window.location.hash.slice(1)).get(
+      "invite",
+    );
+    let token = fragment ?? "";
     try {
-      if (fragment && /^[a-f0-9]{64}$/.test(fragment)) sessionStorage.setItem(key, fragment);
-      else token = sessionStorage.getItem(key) ?? '';
-    } catch { /* The original invitation can be reopened after login. */ }
-    if (fragment) history.replaceState(history.state, '', `${location.pathname}${location.search}`);
+      if (fragment && /^[a-f0-9]{64}$/.test(fragment))
+        sessionStorage.setItem(key, fragment);
+      else token = sessionStorage.getItem(key) ?? "";
+    } catch {
+      /* The original invitation can be reopened after login. */
+    }
+    if (fragment)
+      history.replaceState(
+        history.state,
+        "",
+        `${location.pathname}${location.search}`,
+      );
     const load = async () => {
-      const preview = signedIn ? await previewWorkspaceInvitationAction(token).catch(() => null) : null;
+      const preview = signedIn
+        ? await previewWorkspaceInvitationAction(token).catch(() => null)
+        : null;
       if (active) setState({ token, preview });
     };
     void load();
-    return () => { active = false; };
+    return () => {
+      active = false;
+    };
   }, [signedIn]);
-  const next = encodeURIComponent('/app?view=invitation');
+  const next = encodeURIComponent("/app?view=invitation");
   return (
     <div className="space-y-4">
-      {!state ? <p role="status">{t('loadingInvitation')}</p> : !signedIn ? <><p className="text-sm text-muted-foreground">{t('signInToJoin')}</p><div className="flex flex-wrap gap-2"><ButtonLink href={`/app/login?next=${next}`} variant="primary" size="md">{auth('signIn')}</ButtonLink><ButtonLink href={`/app/signup?next=${next}`} variant="secondary" size="md">{auth('signUpLink')}</ButtonLink></div></> : !state.preview ? <p role="alert">{t('errors.invalidInvitation')}</p> : !state.preview.canJoin ? (
-        <form action={switchInvitationAccountAction} className="space-y-4"><p>{t('invitationAccount', { email: state.preview.email })}</p><Button type="submit" variant="primary" size="md">{t('switchAccount')}</Button></form>
-      ) : <><h2 className="break-words text-lg font-medium">{state.preview.name}</h2><p className="text-sm text-muted-foreground">{t('invitationAccount', { email: state.preview.email })}</p><AcceptWorkspaceInvitationForm token={state.token} /></>}
-      <ButtonLink href="/app?view=workspaces" variant="ghost" size="md">{t('backToList')}</ButtonLink>
+      {!state ? (
+        <p role="status">{t("loadingInvitation")}</p>
+      ) : !signedIn ? (
+        <>
+          <p className="text-sm text-muted-foreground">{t("signInToJoin")}</p>
+          <div className="flex flex-wrap gap-2">
+            <ButtonLink
+              href={`/app/login?next=${next}`}
+              variant="primary"
+              size="md"
+            >
+              {auth("signIn")}
+            </ButtonLink>
+            <ButtonLink
+              href={`/app/signup?next=${next}`}
+              variant="secondary"
+              size="md"
+            >
+              {auth("signUpLink")}
+            </ButtonLink>
+          </div>
+        </>
+      ) : !state.preview ? (
+        <p role="alert">{t("errors.invalidInvitation")}</p>
+      ) : !state.preview.canJoin ? (
+        <form action={switchInvitationAccountAction} className="space-y-4">
+          <p>{t("invitationAccount", { email: state.preview.email })}</p>
+          <Button type="submit" variant="primary" size="md">
+            {t("switchAccount")}
+          </Button>
+        </form>
+      ) : (
+        <>
+          <h2 className="break-words text-lg font-medium">
+            {state.preview.name}
+          </h2>
+          <p className="text-sm text-muted-foreground">
+            {t("invitationAccount", { email: state.preview.email })}
+          </p>
+          <AcceptWorkspaceInvitationForm token={state.token} />
+        </>
+      )}
+      <ButtonLink href="/app?view=workspaces" variant="ghost" size="md">
+        {t("backToList")}
+      </ButtonLink>
     </div>
   );
 }

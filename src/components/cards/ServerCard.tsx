@@ -1,9 +1,9 @@
-import type { Server } from '@prisma/client';
-import { EntityCard, StarStat } from './EntityCard';
+import type { Server } from "@prisma/client";
+import { EntityCard, StarStat } from "./EntityCard";
 
 type ServerCardData = Pick<
   Server,
-  'slug' | 'name' | 'description' | 'author' | 'iconUrl' | 'stars'
+  "slug" | "name" | "description" | "author" | "iconUrl" | "stars"
 > & { categories?: { name: string }[] };
 
 export function ServerCard({

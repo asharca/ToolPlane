@@ -1,22 +1,21 @@
-'use client';
-import { FormSelect } from '@/components/ui/FormSelect';
+"use client";
+import { FormSelect } from "@/components/ui/FormSelect";
 
-import { ButtonLink } from '@/components/motion/button';
-import { FormCheckbox } from '@/components/ui/FormCheckbox';
+import { ButtonLink } from "@/components/motion/button";
+import { FormCheckbox } from "@/components/ui/FormCheckbox";
 
-
-import { useActionState } from 'react';
-import { ClipboardCheck, History, Save } from 'lucide-react';
-import { adminHref } from '@/lib/admin/navigation';
-import { useTranslations } from 'next-intl';
-import { AdminBadge, AdminPanel } from '@/components/admin/AdminUI';
-import { SubmitButton } from '@/components/dashboard/SubmitButton';
+import { useActionState } from "react";
+import { ClipboardCheck, History, Save } from "lucide-react";
+import { adminHref } from "@/lib/admin/navigation";
+import { useTranslations } from "next-intl";
+import { AdminBadge, AdminPanel } from "@/components/admin/AdminUI";
+import { SubmitButton } from "@/components/dashboard/SubmitButton";
 
 import {
   updateMarketListingAdminAction,
   updatePublicToolkitAdminAction,
-} from '@/lib/admin/market-catalog-actions';
-import type { AdminActionState } from '@/lib/admin/user-actions';
+} from "@/lib/admin/market-catalog-actions";
+import type { AdminActionState } from "@/lib/admin/user-actions";
 
 type CategoryOption = { id: string; slug: string; name: string };
 
@@ -55,33 +54,46 @@ function CatalogPagination({
   q,
   otherPageParam,
   otherPage,
-  baseHref = '/admin/market',
+  baseHref = "/admin/market",
 }: {
   page: number;
   total: number;
   pageSize: number;
-  pageParam: 'listingPage' | 'toolkitPage';
+  pageParam: "listingPage" | "toolkitPage";
   q: string;
-  otherPageParam: 'listingPage' | 'toolkitPage';
+  otherPageParam: "listingPage" | "toolkitPage";
   otherPage: number;
   baseHref?: string;
 }) {
-  const t = useTranslations('admin');
+  const t = useTranslations("admin");
   const lastPage = Math.max(1, Math.ceil(total / pageSize));
   if (lastPage <= 1) return null;
   const href = (nextPage: number) => {
     const query = new URLSearchParams();
-    if (q) query.set('q', q);
+    if (q) query.set("q", q);
     if (nextPage > 1) query.set(pageParam, String(nextPage));
     if (otherPage > 1) query.set(otherPageParam, String(otherPage));
-    return `${baseHref}${query.size ? `?${query.toString()}` : ''}`;
+    return `${baseHref}${query.size ? `?${query.toString()}` : ""}`;
   };
   return (
-    <nav aria-label={t('page')} className="flex items-center justify-between gap-3 border-t border-border px-5 py-3 text-xs text-muted-foreground">
-      <span>{t('page')} {page} / {lastPage} · {total} {t('items')}</span>
+    <nav
+      aria-label={t("page")}
+      className="flex items-center justify-between gap-3 border-t border-border px-5 py-3 text-xs text-muted-foreground"
+    >
+      <span>
+        {t("page")} {page} / {lastPage} · {total} {t("items")}
+      </span>
       <div className="flex gap-2">
-        {page > 1 ? <ButtonLink href={href(page - 1)} variant="ghost" size="sm">{t('prev')}</ButtonLink> : null}
-        {page < lastPage ? <ButtonLink href={href(page + 1)} variant="ghost" size="sm">{t('next')}</ButtonLink> : null}
+        {page > 1 ? (
+          <ButtonLink href={href(page - 1)} variant="ghost" size="sm">
+            {t("prev")}
+          </ButtonLink>
+        ) : null}
+        {page < lastPage ? (
+          <ButtonLink href={href(page + 1)} variant="ghost" size="sm">
+            {t("next")}
+          </ButtonLink>
+        ) : null}
       </div>
     </nav>
   );
@@ -94,7 +106,7 @@ export function MarketListingManagement({
   pageSize,
   total,
   q,
-  baseHref = '/admin/market',
+  baseHref = "/admin/market",
   otherPage = 1,
 }: {
   categories: CategoryOption[];
@@ -106,17 +118,27 @@ export function MarketListingManagement({
   baseHref?: string;
   otherPage?: number;
 }) {
-  const t = useTranslations('admin');
+  const t = useTranslations("admin");
   return (
     <AdminPanel
-      title={t('marketCatalogListings')}
-      description={t('marketCatalogListingsDescription')}
+      title={t("marketCatalogListings")}
+      description={t("marketCatalogListingsDescription")}
       actions={<AdminBadge tone="neutral">{total}</AdminBadge>}
       padded={false}
     >
-      {listings.length ? listings.map((listing) => (
-        <ListingForm key={listing.id} listing={listing} categories={categories} />
-      )) : <p className="px-5 py-10 text-center text-sm text-muted-foreground">{t('marketCatalogNoListings')}</p>}
+      {listings.length ? (
+        listings.map((listing) => (
+          <ListingForm
+            key={listing.id}
+            listing={listing}
+            categories={categories}
+          />
+        ))
+      ) : (
+        <p className="px-5 py-10 text-center text-sm text-muted-foreground">
+          {t("marketCatalogNoListings")}
+        </p>
+      )}
       <CatalogPagination
         page={page}
         total={total}
@@ -138,17 +160,27 @@ function CategoryChecklist({
   categories: CategoryOption[];
   selectedIds: string[];
 }) {
-  const t = useTranslations('admin');
+  const t = useTranslations("admin");
   const selected = new Set(selectedIds);
-  if (categories.length === 0) return <p className="text-sm text-muted-foreground">{t('none')}</p>;
+  if (categories.length === 0)
+    return <p className="text-sm text-muted-foreground">{t("none")}</p>;
   return (
     <fieldset>
-      <legend className="text-xs font-semibold text-muted-foreground">{t('categories')}</legend>
+      <legend className="text-xs font-semibold text-muted-foreground">
+        {t("categories")}
+      </legend>
       <div className="mt-2 grid gap-1 sm:grid-cols-2 xl:grid-cols-3">
         {categories.map((category) => (
-          <div key={category.id} className="flex min-h-9 items-center gap-2 rounded px-2 text-sm text-foreground hover:bg-muted/60">
-            <FormCheckbox name="categoryIds" value={category.id} defaultChecked={selected.has(category.id)} label={category.name} />
-            
+          <div
+            key={category.id}
+            className="flex min-h-9 items-center gap-2 rounded px-2 text-sm text-foreground hover:bg-muted/60"
+          >
+            <FormCheckbox
+              name="categoryIds"
+              value={category.id}
+              defaultChecked={selected.has(category.id)}
+              label={category.name}
+            />
           </div>
         ))}
       </div>
@@ -156,113 +188,223 @@ function CategoryChecklist({
   );
 }
 
-function ListingForm({ listing, categories }: { listing: ListingRow; categories: CategoryOption[] }) {
-  const t = useTranslations('admin');
-  const marketT = useTranslations('console.market');
-  const ops = useTranslations('adminOps');
-  const [state, action] = useActionState<AdminActionState, FormData>(updateMarketListingAdminAction, {});
-  const statusTone = listing.status === 'published' ? 'success' : listing.status === 'disabled' ? 'danger' : 'neutral';
+function ListingForm({
+  listing,
+  categories,
+}: {
+  listing: ListingRow;
+  categories: CategoryOption[];
+}) {
+  const t = useTranslations("admin");
+  const marketT = useTranslations("console.market");
+  const ops = useTranslations("adminOps");
+  const [state, action] = useActionState<AdminActionState, FormData>(
+    updateMarketListingAdminAction,
+    {},
+  );
+  const statusTone =
+    listing.status === "published"
+      ? "success"
+      : listing.status === "disabled"
+        ? "danger"
+        : "neutral";
   return (
     <details className="group border-b border-border last:border-b-0">
       <summary className="flex min-h-14 cursor-pointer list-none flex-wrap items-center gap-2 px-5 py-3 marker:hidden hover:bg-muted/45">
-        <span className="min-w-48 flex-1 truncate text-sm font-semibold text-foreground">{listing.name}</span>
-        <code className="max-w-72 truncate font-mono text-xs text-muted-foreground">/{listing.namespace}/{listing.slug}</code>
-        <AdminBadge tone="neutral">{listing.kind === 'pi-package' ? marketT('kindPiPackage') : listing.kind}</AdminBadge>
+        <span className="min-w-48 flex-1 truncate text-sm font-semibold text-foreground">
+          {listing.name}
+        </span>
+        <code className="max-w-72 truncate font-mono text-xs text-muted-foreground">
+          /{listing.namespace}/{listing.slug}
+        </code>
+        <AdminBadge tone="neutral">
+          {listing.kind === "pi-package"
+            ? marketT("kindPiPackage")
+            : listing.kind}
+        </AdminBadge>
         <AdminBadge tone={statusTone}>{listing.status}</AdminBadge>
         <span className="text-xs tabular-nums text-muted-foreground">
-          v{listing.latestVersion} · {listing.installCount} {t('installsColumn')}
+          v{listing.latestVersion} · {listing.installCount}{" "}
+          {t("installsColumn")}
         </span>
       </summary>
-      <form action={action} className="space-y-5 border-t border-border bg-muted/20 px-5 py-5">
+      <form
+        action={action}
+        className="space-y-5 border-t border-border bg-muted/20 px-5 py-5"
+      >
         <input type="hidden" name="listingId" value={listing.id} />
         <div className="grid gap-4 sm:grid-cols-3">
           <div className="space-y-1.5 text-sm font-medium text-foreground">
-            <span>{t('statusColumn')}</span>
-            <FormSelect name="status" defaultValue={listing.status} label={t('statusColumn')} options={[{ value: "draft", label: t('agentListingStatusDraft') }, { value: "published", label: t('agentListingStatusPublished') }, { value: "disabled", label: t('agentListingStatusDisabled') }]} />
+            <span>{t("statusColumn")}</span>
+            <FormSelect
+              name="status"
+              defaultValue={listing.status}
+              label={t("statusColumn")}
+              options={[
+                { value: "draft", label: t("agentListingStatusDraft") },
+                { value: "published", label: t("agentListingStatusPublished") },
+                { value: "disabled", label: t("agentListingStatusDisabled") },
+              ]}
+            />
           </div>
           <div className="flex min-h-10 items-center gap-2 self-end rounded px-2 text-sm font-medium text-foreground hover:bg-muted/60">
-            <FormCheckbox name="curated" defaultChecked={listing.curated} label={t('curated')} />
-            
+            <FormCheckbox
+              name="curated"
+              defaultChecked={listing.curated}
+              label={t("curated")}
+            />
           </div>
           <div className="flex min-h-10 items-center gap-2 self-end rounded px-2 text-sm font-medium text-foreground hover:bg-muted/60">
-            <FormCheckbox name="isFeatured" defaultChecked={listing.isFeatured} label={t('featured')} />
-            
+            <FormCheckbox
+              name="isFeatured"
+              defaultChecked={listing.isFeatured}
+              label={t("featured")}
+            />
           </div>
         </div>
-        <CategoryChecklist categories={categories} selectedIds={listing.categories.map(({ id }) => id)} />
+        <CategoryChecklist
+          categories={categories}
+          selectedIds={listing.categories.map(({ id }) => id)}
+        />
         <div className="flex flex-wrap items-center gap-3">
           <SubmitButton
             error={state.error}
-            pendingLabel={t('saving')}
-            savedLabel={t('saved')}
-            variant="primary" size="md"
+            pendingLabel={t("saving")}
+            savedLabel={t("saved")}
+            variant="primary"
+            size="md"
           >
             <Save className="size-4" />
-            {t('saveChanges')}
+            {t("saveChanges")}
           </SubmitButton>
-          {listing.kind === 'assistant' && listing.publisherKind === 'platform' ? (
-            <ButtonLink href={`/admin/assistants/${encodeURIComponent(listing.id)}/edit`} variant="secondary" size="md">
-              {t('edit')}
+          {listing.kind === "assistant" &&
+          listing.publisherKind === "platform" ? (
+            <ButtonLink
+              href={`/admin/assistants/${encodeURIComponent(listing.id)}/edit`}
+              variant="secondary"
+              size="md"
+            >
+              {t("edit")}
             </ButtonLink>
           ) : null}
           {listing.pendingRelease ? (
-            <ButtonLink href={adminHref(`/admin/reviews/market/${listing.id}`, { returnTo: '/admin/market' })} variant="secondary" size="md">
+            <ButtonLink
+              href={adminHref(`/admin/reviews/market/${listing.id}`, {
+                returnTo: "/admin/market",
+              })}
+              variant="secondary"
+              size="md"
+            >
               <ClipboardCheck className="size-4" />
-              {t('marketCatalogPendingRelease', { version: listing.pendingRelease.version })}
+              {t("marketCatalogPendingRelease", {
+                version: listing.pendingRelease.version,
+              })}
             </ButtonLink>
           ) : null}
           {listing.latestRelease ? (
             <span className="text-xs text-muted-foreground">
-              {t('marketCatalogLatestReleaseStatus', { status: listing.latestRelease.reviewStatus })}
+              {t("marketCatalogLatestReleaseStatus", {
+                status: listing.latestRelease.reviewStatus,
+              })}
             </span>
           ) : null}
-          <ButtonLink href={adminHref('/admin/logs', { tab: 'audit', targetType: 'marketListing', targetId: listing.id, returnTo: '/admin/market' })} variant="ghost" size="md"><History className="size-4" />{ops('audit')}</ButtonLink>
-          {state.error ? <p role="alert" className="text-sm text-destructive">{state.error}</p> : null}
+          <ButtonLink
+            href={adminHref("/admin/logs", {
+              tab: "audit",
+              targetType: "marketListing",
+              targetId: listing.id,
+              returnTo: "/admin/market",
+            })}
+            variant="ghost"
+            size="md"
+          >
+            <History className="size-4" />
+            {ops("audit")}
+          </ButtonLink>
+          {state.error ? (
+            <p role="alert" className="text-sm text-destructive">
+              {state.error}
+            </p>
+          ) : null}
         </div>
       </form>
     </details>
   );
 }
 
-function ToolkitForm({ toolkit, categories }: { toolkit: ToolkitRow; categories: CategoryOption[] }) {
-  const t = useTranslations('admin');
-  const [state, action] = useActionState<AdminActionState, FormData>(updatePublicToolkitAdminAction, {});
+function ToolkitForm({
+  toolkit,
+  categories,
+}: {
+  toolkit: ToolkitRow;
+  categories: CategoryOption[];
+}) {
+  const t = useTranslations("admin");
+  const [state, action] = useActionState<AdminActionState, FormData>(
+    updatePublicToolkitAdminAction,
+    {},
+  );
   return (
     <details className="group border-b border-border last:border-b-0">
       <summary className="flex min-h-14 cursor-pointer list-none flex-wrap items-center gap-2 px-5 py-3 marker:hidden hover:bg-muted/45">
-        <span className="min-w-48 flex-1 truncate text-sm font-semibold text-foreground">{toolkit.name}</span>
-        <code className="max-w-72 truncate font-mono text-xs text-muted-foreground">/{toolkit.workspace.slug}/{toolkit.slug}</code>
-        <AdminBadge tone={toolkit.enabled ? 'success' : 'danger'}>
-          {toolkit.enabled ? t('active') : t('agentListingStatusDisabled')}
+        <span className="min-w-48 flex-1 truncate text-sm font-semibold text-foreground">
+          {toolkit.name}
+        </span>
+        <code className="max-w-72 truncate font-mono text-xs text-muted-foreground">
+          /{toolkit.workspace.slug}/{toolkit.slug}
+        </code>
+        <AdminBadge tone={toolkit.enabled ? "success" : "danger"}>
+          {toolkit.enabled ? t("active") : t("agentListingStatusDisabled")}
         </AdminBadge>
         <span className="text-xs text-muted-foreground">
-          {t('marketToolkitResourceCounts', { servers: toolkit._count.servers, skills: toolkit._count.skills })}
+          {t("marketToolkitResourceCounts", {
+            servers: toolkit._count.servers,
+            skills: toolkit._count.skills,
+          })}
         </span>
       </summary>
-      <form action={action} className="space-y-5 border-t border-border bg-muted/20 px-5 py-5">
+      <form
+        action={action}
+        className="space-y-5 border-t border-border bg-muted/20 px-5 py-5"
+      >
         <input type="hidden" name="toolkitId" value={toolkit.id} />
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <p className="text-sm font-medium text-foreground">{toolkit.workspace.name}</p>
-            <p className="text-xs text-muted-foreground">{t('marketToolkitLegacyNotice')}</p>
+            <p className="text-sm font-medium text-foreground">
+              {toolkit.workspace.name}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {t("marketToolkitLegacyNotice")}
+            </p>
           </div>
           <div className="flex min-h-10 items-center gap-2 rounded px-2 text-sm font-medium text-foreground hover:bg-muted/60">
-            <FormCheckbox name="enabled" defaultChecked={toolkit.enabled} label={t('enabled')} />
-            
+            <FormCheckbox
+              name="enabled"
+              defaultChecked={toolkit.enabled}
+              label={t("enabled")}
+            />
           </div>
         </div>
-        <CategoryChecklist categories={categories} selectedIds={toolkit.categories.map(({ id }) => id)} />
+        <CategoryChecklist
+          categories={categories}
+          selectedIds={toolkit.categories.map(({ id }) => id)}
+        />
         <div className="flex flex-wrap items-center gap-3">
           <SubmitButton
             error={state.error}
-            pendingLabel={t('saving')}
-            savedLabel={t('saved')}
-            variant="primary" size="md"
+            pendingLabel={t("saving")}
+            savedLabel={t("saved")}
+            variant="primary"
+            size="md"
           >
             <Save className="size-4" />
-            {t('saveChanges')}
+            {t("saveChanges")}
           </SubmitButton>
-          {state.error ? <p role="alert" className="text-sm text-destructive">{state.error}</p> : null}
+          {state.error ? (
+            <p role="alert" className="text-sm text-destructive">
+              {state.error}
+            </p>
+          ) : null}
         </div>
       </form>
     </details>
@@ -292,7 +434,7 @@ export function MarketCatalogManagement({
   toolkitTotal: number;
   q: string;
 }) {
-  const t = useTranslations('admin');
+  const t = useTranslations("admin");
   return (
     <div className="space-y-6">
       <MarketListingManagement
@@ -306,14 +448,24 @@ export function MarketCatalogManagement({
       />
 
       <AdminPanel
-        title={t('marketCatalogPublicToolkits')}
-        description={t('marketCatalogPublicToolkitsDescription')}
+        title={t("marketCatalogPublicToolkits")}
+        description={t("marketCatalogPublicToolkitsDescription")}
         actions={<AdminBadge tone="neutral">{toolkitTotal}</AdminBadge>}
         padded={false}
       >
-        {toolkits.length ? toolkits.map((toolkit) => (
-          <ToolkitForm key={toolkit.id} toolkit={toolkit} categories={categories} />
-        )) : <p className="px-5 py-10 text-center text-sm text-muted-foreground">{t('marketCatalogNoPublicToolkits')}</p>}
+        {toolkits.length ? (
+          toolkits.map((toolkit) => (
+            <ToolkitForm
+              key={toolkit.id}
+              toolkit={toolkit}
+              categories={categories}
+            />
+          ))
+        ) : (
+          <p className="px-5 py-10 text-center text-sm text-muted-foreground">
+            {t("marketCatalogNoPublicToolkits")}
+          </p>
+        )}
         <CatalogPagination
           page={toolkitPage}
           total={toolkitTotal}

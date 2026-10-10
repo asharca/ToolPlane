@@ -57,12 +57,11 @@ export function ChatApp({
     <AnimatedSidebarProvider
       {...props}
       style={{ ...style, "--sidebar-width": sidebarWidth }}
-      className={cn(
-        "min-h-0 w-full overflow-hidden bg-background",
-        className,
-      )}
+      className={cn("min-h-0 w-full overflow-hidden bg-background", className)}
     >
-      {props.open === undefined ? <ShellFit minWidth={collapseSidebarBelow} /> : null}
+      {props.open === undefined ? (
+        <ShellFit minWidth={collapseSidebarBelow} />
+      ) : null}
       {children}
     </AnimatedSidebarProvider>
   );
@@ -73,7 +72,10 @@ export function ChatAppSidebarTrigger({
   closeLabel,
   className,
   ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & { openLabel: string; closeLabel: string }) {
+}: ButtonHTMLAttributes<HTMLButtonElement> & {
+  openLabel: string;
+  closeLabel: string;
+}) {
   const { isMobile, open, openMobile } = useAnimatedSidebar();
   const label = (isMobile ? openMobile : open) ? closeLabel : openLabel;
 
@@ -82,7 +84,10 @@ export function ChatAppSidebarTrigger({
       {...props}
       aria-label={label}
       title={label}
-      className={cn("size-8 rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground", className)}
+      className={cn(
+        "size-8 rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground",
+        className,
+      )}
     />
   );
 }

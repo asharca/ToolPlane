@@ -1,8 +1,8 @@
-'use client';
+"use client";
 
-import { ThemeProvider as NextThemesProvider } from 'next-themes';
-import { usePathname } from 'next/navigation';
-import type { ComponentProps } from 'react';
+import { ThemeProvider as NextThemesProvider } from "next-themes";
+import { usePathname } from "next/navigation";
+import type { ComponentProps } from "react";
 
 export function ThemeProvider({
   children,
@@ -16,11 +16,14 @@ export function ThemeProvider({
       enableSystem
       enableColorScheme={false}
       {...props}
-      forcedTheme={pathname === '/' ? 'dark' : props.forcedTheme}
+      forcedTheme={pathname === "/" ? "dark" : props.forcedTheme}
       scriptProps={{
         ...props.scriptProps,
         // The bootstrap runs during SSR; client mounts apply the theme through effects.
-        type: typeof window === 'undefined' ? 'text/javascript' : 'application/json',
+        type:
+          typeof window === "undefined"
+            ? "text/javascript"
+            : "application/json",
       }}
     >
       {children}

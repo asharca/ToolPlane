@@ -1,4 +1,10 @@
-@layer scalar-base, scalar-theme, scalar-config, theme, base, components, utilities;
+@layer scalar-base,
+  scalar-theme,
+  scalar-config,
+  theme,
+  base,
+  components,
+  utilities;
 @import "./beui.css";
 @import "@xterm/xterm/css/xterm.css";
 

@@ -1,15 +1,26 @@
-import 'server-only';
-import type { Prisma } from '@prisma/client';
-import { resolvePiPackageMcpPolicy } from './pi-package-mcp';
-import type { PiPackageMcpToolPolicy } from './pi-package-mcp';
+import "server-only";
+import type { Prisma } from "@prisma/client";
+import { resolvePiPackageMcpPolicy } from "./pi-package-mcp";
+import type { PiPackageMcpToolPolicy } from "./pi-package-mcp";
 
 /** Project only requirements, never the potentially 96 MiB executable manifest. */
-export async function readAgentPiPackageMcpPolicy(tx: Prisma.TransactionClient, workspaceId: string, agentId: string): Promise<PiPackageMcpToolPolicy> {
-  const rows = await tx.$queryRaw<Array<{
-    workspaceId: string; listingId: string; releaseListingId: string;
-    installStatus: string; listingStatus: string; reviewStatus: string;
-    requirements: unknown; resourceMap: unknown;
-  }>>`
+export async function readAgentPiPackageMcpPolicy(
+  tx: Prisma.TransactionClient,
+  workspaceId: string,
+  agentId: string,
+): Promise<PiPackageMcpToolPolicy> {
+  const rows = await tx.$queryRaw<
+    Array<{
+      workspaceId: string;
+      listingId: string;
+      releaseListingId: string;
+      installStatus: string;
+      listingStatus: string;
+      reviewStatus: string;
+      requirements: unknown;
+      resourceMap: unknown;
+    }>
+  >`
     SELECT i."targetWorkspaceId" AS "workspaceId", i."listingId", r."listingId" AS "releaseListingId",
       i.status AS "installStatus", l.status AS "listingStatus", r."reviewStatus",
       r.manifest #> '{package,toolplane,mcp}' AS requirements, i."resourceMap"
@@ -21,17 +32,30 @@ export async function readAgentPiPackageMcpPolicy(tx: Prisma.TransactionClient, 
     ORDER BY p."marketInstallId"`;
   const result: PiPackageMcpToolPolicy = {};
   for (const row of rows) {
-    if (row.workspaceId !== workspaceId || row.listingId !== row.releaseListingId
-      || row.installStatus !== 'ready' || row.listingStatus !== 'published' || row.reviewStatus !== 'approved') {
-      throw new Error('PI_PACKAGE_UNAVAILABLE');
+    if (
+      row.workspaceId !== workspaceId ||
+      row.listingId !== row.releaseListingId ||
+      row.installStatus !== "ready" ||
+      row.listingStatus !== "published" ||
+      row.reviewStatus !== "approved"
+    ) {
+      throw new Error("PI_PACKAGE_UNAVAILABLE");
     }
-    for (const [deploymentId, tools] of Object.entries(resolvePiPackageMcpPolicy(row.requirements, row.resourceMap))) {
-      result[deploymentId] = [...new Set([...(result[deploymentId] ?? []), ...tools])].sort();
+    for (const [deploymentId, tools] of Object.entries(
+      resolvePiPackageMcpPolicy(row.requirements, row.resourceMap),
+    )) {
+      result[deploymentId] = [
+        ...new Set([...(result[deploymentId] ?? []), ...tools]),
+      ].sort();
     }
   }
   const ids = Object.keys(result);
-  if (ids.length && await tx.deployment.count({ where: { id: { in: ids }, workspaceId } }) !== ids.length) {
-    throw new Error('PI_PACKAGE_MCP_BINDING_REQUIRED');
+  if (
+    ids.length &&
+    (await tx.deployment.count({ where: { id: { in: ids }, workspaceId } })) !==
+      ids.length
+  ) {
+    throw new Error("PI_PACKAGE_MCP_BINDING_REQUIRED");
   }
   return result;
 }

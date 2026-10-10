@@ -6,7 +6,12 @@ import { useEffect, useId, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 
 // Heavy, deliberate thumb — high mass keeps the travel weighty without wobble.
-const THUMB_SPRING = { type: "spring", stiffness: 800, damping: 80, mass: 4 } as const;
+const THUMB_SPRING = {
+  type: "spring",
+  stiffness: 800,
+  damping: 80,
+  mass: 4,
+} as const;
 
 export interface SwitchProps {
   checked: boolean;
@@ -68,7 +73,9 @@ export function Switch({
             "group peer inline-flex h-7 w-12 shrink-0 cursor-pointer items-center px-1 rounded-full outline-none transition-colors duration-200",
             "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
             "disabled:cursor-not-allowed disabled:opacity-60",
-            checked ? "justify-end bg-primary" : "justify-start bg-muted-foreground/60",
+            checked
+              ? "justify-end bg-primary"
+              : "justify-start bg-muted-foreground/60",
           )}
         >
           <motion.div
@@ -79,15 +86,15 @@ export function Switch({
           >
             {/* Stretch toward the destination while active. */}
             <div
-              className={cn(
-                "size-5",
-                squish && (checked ? "ml-1" : "mr-1"),
-              )}
+              className={cn("size-5", squish && (checked ? "ml-1" : "mr-1"))}
             />
           </motion.div>
         </motion.button>
         {label ? (
-          <label htmlFor={id} className="cursor-pointer text-sm text-foreground">
+          <label
+            htmlFor={id}
+            className="cursor-pointer text-sm text-foreground"
+          >
             {label}
           </label>
         ) : null}

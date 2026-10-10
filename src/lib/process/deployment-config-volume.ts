@@ -1,11 +1,15 @@
-import 'server-only';
-import { trackRuntimeOperation, runtimeAbortSignal, markRuntimeUncertain } from '@/lib/runtime/ownership-state';
-import { spawn } from 'node:child_process';
-import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import os from 'node:os';
-import path from 'node:path';
-import { db } from '@/lib/db';
-import { decryptSecretText } from '@/lib/security/secrets';
+import "server-only";
+import {
+  trackRuntimeOperation,
+  runtimeAbortSignal,
+  markRuntimeUncertain,
+} from "@/lib/runtime/ownership-state";
+import { spawn } from "node:child_process";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { db } from "@/lib/db";
+import { decryptSecretText } from "@/lib/security/secrets";
 import {
   MAX_RUNTIME_TEXT_FILE_BYTES,
   MAX_RUNTIME_TEXT_FILES,
@@ -13,7 +17,7 @@ import {
   RUNTIME_FILE_MOUNT_PATH,
   isPlainText,
   safeRuntimeFilePath,
-} from '@/lib/workspace/runtime-files';
+} from "@/lib/workspace/runtime-files";
 
 /**
  * The only path at which deployment-provided files are exposed to an MCP
@@ -21,10 +25,11 @@ import {
  */
 export const DEPLOYMENT_CONFIG_MOUNT_PATH = RUNTIME_FILE_MOUNT_PATH;
 
-const CONFIG_VOLUME_PREFIX = 'toolplane_mcp_config_';
-const CONFIG_HELPER_IMAGE = process.env.MCP_CONFIG_VOLUME_HELPER_IMAGE?.trim()
-  || process.env.SANDBOX_VOLUME_HELPER_IMAGE?.trim()
-  || 'alpine:3.20';
+const CONFIG_VOLUME_PREFIX = "toolplane_mcp_config_";
+const CONFIG_HELPER_IMAGE =
+  process.env.MCP_CONFIG_VOLUME_HELPER_IMAGE?.trim() ||
+  process.env.SANDBOX_VOLUME_HELPER_IMAGE?.trim() ||
+  "alpine:3.20";
 const CONFIG_HELPER_TIMEOUT_MS = 2 * 60_000;
 /**
  * A helper normally exists for seconds. Leave a generous window across a
@@ -35,8 +40,12 @@ const MAX_DOCKER_ERROR_BYTES = 64 * 1024;
 const MAX_REDACTION_VALUE_BYTES = 16 * 1024;
 const MAX_REDACTION_VALUES = 512;
 const DOCKER_VOLUME_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]+$/;
-const CONFIG_MATERIALIZER_LABEL = 'toolplane.mcp-config-materializer=true';
-const STOPPED_CONFIG_MATERIALIZER_STATES = new Set(['created', 'exited', 'dead']);
+const CONFIG_MATERIALIZER_LABEL = "toolplane.mcp-config-materializer=true";
+const STOPPED_CONFIG_MATERIALIZER_STATES = new Set([
+  "created",
+  "exited",
+  "dead",
+]);
 
 type DeploymentConfigFileRow = {
   id: string;
@@ -58,7 +67,7 @@ type DeploymentConfigFileDelegate = {
       encryptedContent: true;
       size: true;
     };
-    orderBy: Array<{ path: 'asc' } | { id: 'asc' }>;
+    orderBy: Array<{ path: "asc" } | { id: "asc" }>;
   }): Promise<DeploymentConfigFileRow[]>;
 };
 
@@ -77,25 +86,36 @@ type MaterializedConfigFile = {
 };
 
 function dockerEnv(): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { NODE_ENV: process.env.NODE_ENV ?? 'production' };
+  const env: NodeJS.ProcessEnv = {
+    NODE_ENV: process.env.NODE_ENV ?? "production",
+  };
   for (const key of [
-    'PATH',
-    'HOME',
-    'DOCKER_HOST',
-    'DOCKER_CONTEXT',
-    'DOCKER_CERT_PATH',
-    'DOCKER_TLS_VERIFY',
-    'LANG',
-    'LC_ALL',
+    "PATH",
+    "HOME",
+    "DOCKER_HOST",
+    "DOCKER_CONTEXT",
+    "DOCKER_CERT_PATH",
+    "DOCKER_TLS_VERIFY",
+    "LANG",
+    "LC_ALL",
   ]) {
     if (process.env[key]) env[key] = process.env[key];
   }
   return env;
 }
 
-function runDocker(args: string[], timeoutMs = CONFIG_HELPER_TIMEOUT_MS, input?: Buffer): Promise<string> {
-  const cleanup = ['stop', 'rm', 'inspect'].includes(args[0]) || (args[0] === 'volume' && ['rm', 'inspect'].includes(args[1]));
-  return trackRuntimeOperation(() => runDockerOwned(args, timeoutMs, input), cleanup);
+function runDocker(
+  args: string[],
+  timeoutMs = CONFIG_HELPER_TIMEOUT_MS,
+  input?: Buffer,
+): Promise<string> {
+  const cleanup =
+    ["stop", "rm", "inspect"].includes(args[0]) ||
+    (args[0] === "volume" && ["rm", "inspect"].includes(args[1]));
+  return trackRuntimeOperation(
+    () => runDockerOwned(args, timeoutMs, input),
+    cleanup,
+  );
 }
 function runDockerOwned(
   args: string[],
@@ -103,12 +123,16 @@ function runDockerOwned(
   input?: Buffer,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn('docker', args, {
-      env: dockerEnv(), ...(runtimeAbortSignal() ? { signal: runtimeAbortSignal() } : {}),
-      stdio: input === undefined ? ['ignore', 'pipe', 'pipe'] : ['pipe', 'pipe', 'pipe'],
+    const child = spawn("docker", args, {
+      env: dockerEnv(),
+      ...(runtimeAbortSignal() ? { signal: runtimeAbortSignal() } : {}),
+      stdio:
+        input === undefined
+          ? ["ignore", "pipe", "pipe"]
+          : ["pipe", "pipe", "pipe"],
     });
-    let stdout = '';
-    let stderr = '';
+    let stdout = "";
+    let stderr = "";
     let settled = false;
     const finish = (error?: Error) => {
       if (settled) return;
@@ -119,25 +143,35 @@ function runDockerOwned(
     };
     const timer = setTimeout(() => {
       markRuntimeUncertain();
-      child.kill('SIGKILL');
+      child.kill("SIGKILL");
       finish(new Error(`Docker command timed out after ${timeoutMs}ms.`));
     }, timeoutMs);
 
-    child.stderr?.on('data', (chunk: Buffer) => {
+    child.stderr?.on("data", (chunk: Buffer) => {
       if (stderr.length < MAX_DOCKER_ERROR_BYTES) {
-        stderr += chunk.toString().slice(0, MAX_DOCKER_ERROR_BYTES - stderr.length);
+        stderr += chunk
+          .toString()
+          .slice(0, MAX_DOCKER_ERROR_BYTES - stderr.length);
       }
     });
-    child.stdout?.on('data', (chunk: Buffer) => {
+    child.stdout?.on("data", (chunk: Buffer) => {
       if (stdout.length < MAX_DOCKER_ERROR_BYTES) {
-        stdout += chunk.toString().slice(0, MAX_DOCKER_ERROR_BYTES - stdout.length);
+        stdout += chunk
+          .toString()
+          .slice(0, MAX_DOCKER_ERROR_BYTES - stdout.length);
       }
     });
-    child.stdin?.once('error', (error) => finish(error));
-    child.once('error', (error) => finish(error));
-    child.once('exit', (code, signal) => {
+    child.stdin?.once("error", (error) => finish(error));
+    child.once("error", (error) => finish(error));
+    child.once("exit", (code, signal) => {
       if (code === 0) finish();
-      else finish(new Error(stderr.trim() || `Docker command failed (${signal ?? code ?? 'unknown'}).`));
+      else
+        finish(
+          new Error(
+            stderr.trim() ||
+              `Docker command failed (${signal ?? code ?? "unknown"}).`,
+          ),
+        );
     });
     if (input !== undefined) child.stdin?.end(input);
   });
@@ -150,12 +184,12 @@ function runDockerOwned(
  */
 function createStagedConfigArchive(stagingDirectory: string): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    const child = spawn('tar', ['-C', stagingDirectory, '-cf', '-', '.'], {
+    const child = spawn("tar", ["-C", stagingDirectory, "-cf", "-", "."], {
       env: dockerEnv(),
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ["ignore", "pipe", "pipe"],
     });
     const chunks: Buffer[] = [];
-    let stderr = '';
+    let stderr = "";
     let settled = false;
     const finish = (error?: Error) => {
       if (settled) return;
@@ -165,25 +199,42 @@ function createStagedConfigArchive(stagingDirectory: string): Promise<Buffer> {
       else resolve(Buffer.concat(chunks));
     };
     const timer = setTimeout(() => {
-      child.kill('SIGKILL');
-      finish(new Error(`Configuration archive command timed out after ${CONFIG_HELPER_TIMEOUT_MS}ms.`));
+      child.kill("SIGKILL");
+      finish(
+        new Error(
+          `Configuration archive command timed out after ${CONFIG_HELPER_TIMEOUT_MS}ms.`,
+        ),
+      );
     }, CONFIG_HELPER_TIMEOUT_MS);
 
-    child.stdout?.on('data', (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
-    child.stderr?.on('data', (chunk: Buffer) => {
+    child.stdout?.on("data", (chunk: Buffer) =>
+      chunks.push(Buffer.from(chunk)),
+    );
+    child.stderr?.on("data", (chunk: Buffer) => {
       if (stderr.length < MAX_DOCKER_ERROR_BYTES) {
-        stderr += chunk.toString().slice(0, MAX_DOCKER_ERROR_BYTES - stderr.length);
+        stderr += chunk
+          .toString()
+          .slice(0, MAX_DOCKER_ERROR_BYTES - stderr.length);
       }
     });
-    child.once('error', (error) => finish(error));
-    child.once('close', (code, signal) => {
+    child.once("error", (error) => finish(error));
+    child.once("close", (code, signal) => {
       if (code === 0) finish();
-      else finish(new Error(stderr.trim() || `Configuration archive command failed (${signal ?? code ?? 'unknown'}).`));
+      else
+        finish(
+          new Error(
+            stderr.trim() ||
+              `Configuration archive command failed (${signal ?? code ?? "unknown"}).`,
+          ),
+        );
     });
   });
 }
 
-async function runDockerIdempotent(args: string[], missingPattern: RegExp): Promise<void> {
+async function runDockerIdempotent(
+  args: string[],
+  missingPattern: RegExp,
+): Promise<void> {
   try {
     await runDocker(args);
   } catch (error) {
@@ -193,8 +244,8 @@ async function runDockerIdempotent(args: string[], missingPattern: RegExp): Prom
 }
 
 function safeDeploymentIdentifier(value: string): string {
-  const normalized = value.trim().replace(/[^A-Za-z0-9_.-]/g, '_');
-  if (!normalized) throw new Error('Deployment id is required.');
+  const normalized = value.trim().replace(/[^A-Za-z0-9_.-]/g, "_");
+  if (!normalized) throw new Error("Deployment id is required.");
   // Docker object names have a 255-byte ceiling. Deployment ids are normally
   // cuid values, but retaining a bounded fallback keeps this helper safe when
   // it is called with an externally supplied id.
@@ -226,7 +277,8 @@ function isPathInside(root: string, target: string): boolean {
 }
 
 function assertDockerVolumeName(value: string): void {
-  if (!DOCKER_VOLUME_NAME.test(value)) throw new Error('Invalid Docker volume name.');
+  if (!DOCKER_VOLUME_NAME.test(value))
+    throw new Error("Invalid Docker volume name.");
 }
 
 /**
@@ -237,9 +289,9 @@ function assertDockerVolumeName(value: string): void {
 export function deploymentConfigVolumeHelperArgs(volumeName: string): string[] {
   assertDockerVolumeName(volumeName);
   const materializeScript = [
-    'set -eu',
-    'mkdir -p /tmp/toolplane-config',
-    'tar -xof - -C /tmp/toolplane-config',
+    "set -eu",
+    "mkdir -p /tmp/toolplane-config",
+    "tar -xof - -C /tmp/toolplane-config",
     `mkdir -p ${DEPLOYMENT_CONFIG_MOUNT_PATH}`,
     `rm -rf ${DEPLOYMENT_CONFIG_MOUNT_PATH}/* ${DEPLOYMENT_CONFIG_MOUNT_PATH}/.[!.]* ${DEPLOYMENT_CONFIG_MOUNT_PATH}/..?*`,
     `cp -R /tmp/toolplane-config/. ${DEPLOYMENT_CONFIG_MOUNT_PATH}/`,
@@ -247,52 +299,69 @@ export function deploymentConfigVolumeHelperArgs(volumeName: string): string[] {
     // be readable by a custom MCP image that declares a non-root USER.
     `find ${DEPLOYMENT_CONFIG_MOUNT_PATH} -type d -exec chmod 755 {} +`,
     `find ${DEPLOYMENT_CONFIG_MOUNT_PATH} -type f -exec chmod 444 {} +`,
-  ].join('; ');
+  ].join("; ");
 
   return [
-    'run',
-    '--rm',
-    '-i',
-    '--label', 'toolplane.mcp-config-materializer=true',
-    '--network', 'none',
-    '--read-only',
-    '--tmpfs', '/tmp:rw,noexec,nosuid,nodev,size=64m',
-    '--cap-drop', 'ALL',
-    '--security-opt', 'no-new-privileges',
-    '--mount', `type=volume,src=${volumeName},dst=${DEPLOYMENT_CONFIG_MOUNT_PATH}`,
+    "run",
+    "--rm",
+    "-i",
+    "--label",
+    "toolplane.mcp-config-materializer=true",
+    "--network",
+    "none",
+    "--read-only",
+    "--tmpfs",
+    "/tmp:rw,noexec,nosuid,nodev,size=64m",
+    "--cap-drop",
+    "ALL",
+    "--security-opt",
+    "no-new-privileges",
+    "--mount",
+    `type=volume,src=${volumeName},dst=${DEPLOYMENT_CONFIG_MOUNT_PATH}`,
     CONFIG_HELPER_IMAGE,
-    'sh', '-c', materializeScript,
+    "sh",
+    "-c",
+    materializeScript,
   ];
 }
 
 function deploymentConfigFileDelegate(): DeploymentConfigFileDelegate {
-  const delegate = (db as unknown as { deploymentConfigFile?: DeploymentConfigFileDelegate })
-    .deploymentConfigFile;
-  if (!delegate || typeof delegate.findMany !== 'function') {
-    throw new Error('DeploymentConfigFile Prisma model is unavailable. Run prisma generate after migrating.');
+  const delegate = (
+    db as unknown as { deploymentConfigFile?: DeploymentConfigFileDelegate }
+  ).deploymentConfigFile;
+  if (!delegate || typeof delegate.findMany !== "function") {
+    throw new Error(
+      "DeploymentConfigFile Prisma model is unavailable. Run prisma generate after migrating.",
+    );
   }
   return delegate;
 }
 
 function redactionValue(values: Set<string>, raw: string): void {
-  if (!raw || Buffer.byteLength(raw, 'utf8') > MAX_REDACTION_VALUE_BYTES) return;
+  if (!raw || Buffer.byteLength(raw, "utf8") > MAX_REDACTION_VALUE_BYTES)
+    return;
   if (raw.length < 3 || values.size >= MAX_REDACTION_VALUES) return;
   values.add(raw);
 }
 
 function isSensitiveKey(raw: string): boolean {
-  return /(?:api[_-]?key|token|secret|pass(?:word|wd)?|credential|authorization|cookie|private[_-]?key|access[_-]?key|client[_-]?secret)/i.test(raw);
+  return /(?:api[_-]?key|token|secret|pass(?:word|wd)?|credential|authorization|cookie|private[_-]?key|access[_-]?key|client[_-]?secret)/i.test(
+    raw,
+  );
 }
 
 function unquoteConfigValue(raw: string): string {
-  const value = raw.trim().replace(/[,}\]]+\s*$/, '');
-  if (value.length >= 2 && ((value.startsWith('"') && value.endsWith('"'))
-    || (value.startsWith("'") && value.endsWith("'")))) {
+  const value = raw.trim().replace(/[,}\]]+\s*$/, "");
+  if (
+    value.length >= 2 &&
+    ((value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'")))
+  ) {
     const quoted = value[0] === '"' ? value : null;
     if (quoted) {
       try {
         const parsed: unknown = JSON.parse(value);
-        if (typeof parsed === 'string') return parsed;
+        if (typeof parsed === "string") return parsed;
       } catch {
         // Fall through to the literal content below.
       }
@@ -307,7 +376,9 @@ function unquoteConfigValue(raw: string): string {
  * The whole file and its lines catch direct echoes (including PEM files), and
  * the key/value pass catches an MCP which only prints a password or token.
  */
-export function deploymentConfigRedactionValues(contents: readonly string[]): string[] {
+export function deploymentConfigRedactionValues(
+  contents: readonly string[],
+): string[] {
   const values = new Set<string>();
   const allLines: string[] = [];
   const sensitiveLines: string[] = [];
@@ -323,7 +394,9 @@ export function deploymentConfigRedactionValues(contents: readonly string[]): st
         sensitiveLines.push(trimmed);
         redactionValue(values, unquoteConfigValue(keyValue[2]));
       }
-      for (const match of line.matchAll(/(?:[A-Za-z][A-Za-z0-9+.-]*:\/\/)?[^:/@\s]+:([^@/\s]+)@/g)) {
+      for (const match of line.matchAll(
+        /(?:[A-Za-z][A-Za-z0-9+.-]*:\/\/)?[^:/@\s]+:([^@/\s]+)@/g,
+      )) {
         redactionValue(values, match[1]);
       }
     }
@@ -335,53 +408,84 @@ export function deploymentConfigRedactionValues(contents: readonly string[]): st
   return [...values].sort((left, right) => right.length - left.length);
 }
 
-function materializeRows(rows: DeploymentConfigFileRow[]): MaterializedConfigFile[] {
+function materializeRows(
+  rows: DeploymentConfigFileRow[],
+): MaterializedConfigFile[] {
   const files: MaterializedConfigFile[] = [];
   const seen = new Set<string>();
   let totalSize = 0;
   if (rows.length > MAX_RUNTIME_TEXT_FILES) {
-    throw new Error(`Deployment configuration exceeds ${MAX_RUNTIME_TEXT_FILES} files.`);
+    throw new Error(
+      `Deployment configuration exceeds ${MAX_RUNTIME_TEXT_FILES} files.`,
+    );
   }
   for (const row of rows) {
     const safePath = safeDeploymentConfigFilePath(row.path);
-    if (!safePath) throw new Error('Deployment configuration contains an unsafe file path.');
+    if (!safePath)
+      throw new Error("Deployment configuration contains an unsafe file path.");
     // Docker containers on Linux distinguish case but user machines often do
     // not. Rejecting portable collisions keeps edits deterministic.
-    const pathKey = safePath.normalize('NFC').toLocaleLowerCase('en-US');
-    if (seen.has(pathKey)) throw new Error(`Deployment configuration contains duplicate file path: ${safePath}`);
+    const pathKey = safePath.normalize("NFC").toLocaleLowerCase("en-US");
+    if (seen.has(pathKey))
+      throw new Error(
+        `Deployment configuration contains duplicate file path: ${safePath}`,
+      );
     seen.add(pathKey);
 
     const content = decryptSecretText(row.encryptedContent);
     if (!isDeploymentConfigText(content)) {
-      throw new Error(`Deployment configuration file is not valid text: ${safePath}`);
+      throw new Error(
+        `Deployment configuration file is not valid text: ${safePath}`,
+      );
     }
-    const actualSize = Buffer.byteLength(content, 'utf8');
-    if (!Number.isSafeInteger(row.size) || row.size < 0 || actualSize !== row.size) {
-      throw new Error(`Deployment configuration file size does not match its content: ${safePath}`);
+    const actualSize = Buffer.byteLength(content, "utf8");
+    if (
+      !Number.isSafeInteger(row.size) ||
+      row.size < 0 ||
+      actualSize !== row.size
+    ) {
+      throw new Error(
+        `Deployment configuration file size does not match its content: ${safePath}`,
+      );
     }
     if (actualSize > MAX_RUNTIME_TEXT_FILE_BYTES) {
-      throw new Error(`Deployment configuration file exceeds ${MAX_RUNTIME_TEXT_FILE_BYTES} bytes: ${safePath}`);
+      throw new Error(
+        `Deployment configuration file exceeds ${MAX_RUNTIME_TEXT_FILE_BYTES} bytes: ${safePath}`,
+      );
     }
     totalSize += actualSize;
     if (totalSize > MAX_RUNTIME_TEXT_FILES_BYTES) {
-      throw new Error(`Deployment configuration exceeds ${MAX_RUNTIME_TEXT_FILES_BYTES} bytes in total.`);
+      throw new Error(
+        `Deployment configuration exceeds ${MAX_RUNTIME_TEXT_FILES_BYTES} bytes in total.`,
+      );
     }
     files.push({ path: safePath, content });
   }
   return files;
 }
 
-async function writeStagedConfigFiles(files: MaterializedConfigFile[]): Promise<string> {
-  const root = await mkdtemp(path.join(/* turbopackIgnore: true */ os.tmpdir(), 'toolplane-mcp-config-'));
+async function writeStagedConfigFiles(
+  files: MaterializedConfigFile[],
+): Promise<string> {
+  const root = await mkdtemp(
+    path.join(/* turbopackIgnore: true */ os.tmpdir(), "toolplane-mcp-config-"),
+  );
   await chmod(root, 0o700);
   try {
     for (const file of files) {
       const target = path.resolve(root, file.path);
-      if (!isPathInside(root, target)) throw new Error('Deployment configuration path escaped its staging directory.');
+      if (!isPathInside(root, target))
+        throw new Error(
+          "Deployment configuration path escaped its staging directory.",
+        );
       const directory = path.dirname(target);
       await mkdir(directory, { recursive: true, mode: 0o700 });
       await chmod(directory, 0o700);
-      await writeFile(target, file.content, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+      await writeFile(target, file.content, {
+        encoding: "utf8",
+        mode: 0o600,
+        flag: "wx",
+      });
       await chmod(target, 0o600);
     }
     return root;
@@ -404,7 +508,7 @@ export async function materializeDeploymentConfigVolume(
   const rows = await deploymentConfigFileDelegate().findMany({
     where: { deploymentId },
     select: { id: true, path: true, encryptedContent: true, size: true },
-    orderBy: [{ path: 'asc' }, { id: 'asc' }],
+    orderBy: [{ path: "asc" }, { id: "asc" }],
   });
   if (rows.length === 0) {
     // A deleted final file must not leave a stale secret volume behind.
@@ -415,27 +519,41 @@ export async function materializeDeploymentConfigVolume(
   // Validate/decrypt everything before creating Docker resources. A malformed
   // ciphertext therefore never causes a partial runtime projection.
   const files = materializeRows(rows);
-  const redactionValues = deploymentConfigRedactionValues(files.map((file) => file.content));
+  const redactionValues = deploymentConfigRedactionValues(
+    files.map((file) => file.content),
+  );
   const stagingDirectory = await writeStagedConfigFiles(files);
   let operationError: unknown;
+  let operationFailed = false;
   try {
     const archive = await createStagedConfigArchive(stagingDirectory);
-    await runDocker(['volume', 'create', volumeName]);
-    await runDocker(deploymentConfigVolumeHelperArgs(volumeName), CONFIG_HELPER_TIMEOUT_MS, archive);
+    await runDocker(["volume", "create", volumeName]);
+    await runDocker(
+      deploymentConfigVolumeHelperArgs(volumeName),
+      CONFIG_HELPER_TIMEOUT_MS,
+      archive,
+    );
   } catch (error) {
     operationError = error;
-    throw error;
-  } finally {
-    const cleanupErrors: unknown[] = [];
-    try {
-      await rm(stagingDirectory, { recursive: true, force: true, maxRetries: 2 });
-    } catch (error) {
-      cleanupErrors.push(error);
-    }
-    if (cleanupErrors.length > 0 && !operationError) {
-      throw new AggregateError(cleanupErrors, 'Deployment configuration materializer cleanup failed.');
-    }
+    operationFailed = true;
   }
+  const cleanupErrors: unknown[] = [];
+  try {
+    await rm(stagingDirectory, {
+      recursive: true,
+      force: true,
+      maxRetries: 2,
+    });
+  } catch (error) {
+    cleanupErrors.push(error);
+  }
+  if (cleanupErrors.length > 0 && !operationError) {
+    throw new AggregateError(
+      cleanupErrors,
+      "Deployment configuration materializer cleanup failed.",
+    );
+  }
+  if (operationFailed) throw operationError;
 
   return { hasFiles: true, redactionValues };
 }
@@ -446,20 +564,29 @@ type DockerHelperInspection = {
 };
 
 function parseDockerHelperInspection(output: string): DockerHelperInspection {
-  const [created, status, ...extra] = output.trim().split('\t');
-  const createdAt = Date.parse(created ?? '');
+  const [created, status, ...extra] = output.trim().split("\t");
+  const createdAt = Date.parse(created ?? "");
   if (!Number.isFinite(createdAt) || !status || extra.length > 0) {
-    throw new Error('Docker returned an invalid deployment configuration helper inspection.');
+    throw new Error(
+      "Docker returned an invalid deployment configuration helper inspection.",
+    );
   }
   return { createdAt, status };
 }
 
 function isMissingDockerContainer(error: unknown): boolean {
-  return error instanceof Error && /no such (object|container)/i.test(error.message);
+  return (
+    error instanceof Error && /no such (object|container)/i.test(error.message)
+  );
 }
 
 function isRunningDockerContainer(error: unknown): boolean {
-  return error instanceof Error && /(?:is|container) running|cannot remove a running container/i.test(error.message);
+  return (
+    error instanceof Error &&
+    /(?:is|container) running|cannot remove a running container/i.test(
+      error.message,
+    )
+  );
 }
 
 /**
@@ -468,15 +595,18 @@ function isRunningDockerContainer(error: unknown): boolean {
  * inspection is left alone rather than being killed by a recovery sweep.
  */
 export async function removeStaleDeploymentConfigMaterializerHelpers(
-  createdBefore = new Date(Date.now() - DEPLOYMENT_CONFIG_MATERIALIZER_STALE_AFTER_MS),
+  createdBefore = new Date(
+    Date.now() - DEPLOYMENT_CONFIG_MATERIALIZER_STALE_AFTER_MS,
+  ),
 ): Promise<number> {
   const cutoff = createdBefore.getTime();
-  if (!Number.isFinite(cutoff)) throw new Error('Invalid deployment configuration helper cutoff.');
+  if (!Number.isFinite(cutoff))
+    throw new Error("Invalid deployment configuration helper cutoff.");
 
   const output = await runDocker([
-    'ps',
-    '-aq',
-    '--filter',
+    "ps",
+    "-aq",
+    "--filter",
     `label=${CONFIG_MATERIALIZER_LABEL}`,
   ]);
   const containerIds = output.split(/\s+/).filter(Boolean);
@@ -484,25 +614,31 @@ export async function removeStaleDeploymentConfigMaterializerHelpers(
   for (const containerId of containerIds) {
     let inspection: DockerHelperInspection;
     try {
-      inspection = parseDockerHelperInspection(await runDocker([
-        'inspect',
-        '--format',
-        '{{.Created}}\t{{.State.Status}}',
-        containerId,
-      ]));
+      inspection = parseDockerHelperInspection(
+        await runDocker([
+          "inspect",
+          "--format",
+          "{{.Created}}\t{{.State.Status}}",
+          containerId,
+        ]),
+      );
     } catch (error) {
       if (isMissingDockerContainer(error)) continue;
       throw error;
     }
-    if (inspection.createdAt >= cutoff || !STOPPED_CONFIG_MATERIALIZER_STATES.has(inspection.status)) {
+    if (
+      inspection.createdAt >= cutoff ||
+      !STOPPED_CONFIG_MATERIALIZER_STATES.has(inspection.status)
+    ) {
       continue;
     }
     try {
-      await runDocker(['rm', containerId]);
+      await runDocker(["rm", containerId]);
       removed += 1;
     } catch (error) {
       // A concurrently-started helper is never an excuse to use `rm -f`.
-      if (isMissingDockerContainer(error) || isRunningDockerContainer(error)) continue;
+      if (isMissingDockerContainer(error) || isRunningDockerContainer(error))
+        continue;
       throw error;
     }
   }
@@ -510,7 +646,12 @@ export async function removeStaleDeploymentConfigMaterializerHelpers(
 }
 
 /** Remove a deployment's configuration volume, ignoring an already-removed volume. */
-export async function removeDeploymentConfigVolume(deploymentId: string): Promise<void> {
+export async function removeDeploymentConfigVolume(
+  deploymentId: string,
+): Promise<void> {
   const volumeName = configVolumeName(deploymentId);
-  await runDockerIdempotent(['volume', 'rm', '-f', volumeName], /no such volume/i);
+  await runDockerIdempotent(
+    ["volume", "rm", "-f", volumeName],
+    /no such volume/i,
+  );
 }

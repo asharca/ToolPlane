@@ -1,6 +1,7 @@
 // @vitest-environment node
-import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { db } from '@/lib/db';
+import { assertDefined } from "../assert-defined";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { db } from "@/lib/db";
 
 const mocks = vi.hoisted(() => ({
   getCurrentUser: vi.fn(),
@@ -8,11 +9,13 @@ const mocks = vi.hoisted(() => ({
   redirect: vi.fn(),
 }));
 
-vi.mock('@/lib/auth/current-user', () => ({ getCurrentUser: mocks.getCurrentUser }));
-vi.mock('next/cache', () => ({ revalidatePath: mocks.revalidatePath }));
-vi.mock('next/navigation', () => ({ redirect: mocks.redirect }));
+vi.mock("@/lib/auth/current-user", () => ({
+  getCurrentUser: mocks.getCurrentUser,
+}));
+vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidatePath }));
+vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));
 
-import { clonePublicToolkitAction } from '@/lib/toolkits/actions';
+import { clonePublicToolkitAction } from "@/lib/toolkits/actions";
 
 const stamp = Date.now();
 const sourceEmail = `tk-market-source-${stamp}@test.dev`;
@@ -25,46 +28,55 @@ const skillSlug = `tk-market-skill-${stamp}`;
 
 function formData(toolkitId: string): FormData {
   const fd = new FormData();
-  fd.set('workspace', targetSlug);
-  fd.set('toolkitId', toolkitId);
+  fd.set("workspace", targetSlug);
+  fd.set("toolkitId", toolkitId);
   return fd;
 }
 
-describe('toolkit market import', () => {
+describe("toolkit market import", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
   afterAll(async () => {
-    await db.workspace.deleteMany({ where: { slug: { in: [sourceSlug, targetSlug] } } });
-    await db.user.deleteMany({ where: { email: { in: [sourceEmail, targetEmail] } } });
+    await db.workspace.deleteMany({
+      where: { slug: { in: [sourceSlug, targetSlug] } },
+    });
+    await db.user.deleteMany({
+      where: { email: { in: [sourceEmail, targetEmail] } },
+    });
     await db.skill.deleteMany({ where: { slug: skillSlug } });
-    await db.server.deleteMany({ where: { slug: { in: [serverSlug, automaticServerSlug] } } });
+    await db.server.deleteMany({
+      where: { slug: { in: [serverSlug, automaticServerSlug] } },
+    });
     await db.$disconnect();
   });
 
-  it('clones public toolkits without leaking source deployment env values', async () => {
+  it("clones public toolkits without leaking source deployment env values", async () => {
     const [sourceUser, targetUser] = await Promise.all([
-      db.user.create({ data: { email: sourceEmail, passwordHash: 'x' } }),
-      db.user.create({ data: { email: targetEmail, passwordHash: 'x' } }),
+      db.user.create({ data: { email: sourceEmail, passwordHash: "x" } }),
+      db.user.create({ data: { email: targetEmail, passwordHash: "x" } }),
     ]);
-    mocks.getCurrentUser.mockResolvedValue({ id: targetUser.id, email: targetUser.email });
+    mocks.getCurrentUser.mockResolvedValue({
+      id: targetUser.id,
+      email: targetUser.email,
+    });
 
     const [sourceWs, targetWs] = await Promise.all([
       db.workspace.create({
         data: {
           slug: sourceSlug,
-          name: 'Source',
+          name: "Source",
           ownerId: sourceUser.id,
-          members: { create: { userId: sourceUser.id, role: 'owner' } },
+          members: { create: { userId: sourceUser.id, role: "owner" } },
         },
       }),
       db.workspace.create({
         data: {
           slug: targetSlug,
-          name: 'Target',
+          name: "Target",
           ownerId: targetUser.id,
-          members: { create: { userId: targetUser.id, role: 'owner' } },
+          members: { create: { userId: targetUser.id, role: "owner" } },
         },
       }),
     ]);
@@ -72,98 +84,99 @@ describe('toolkit market import', () => {
     const server = await db.server.create({
       data: {
         slug: serverSlug,
-        name: 'Market MCP',
+        name: "Market MCP",
         curated: true,
         verifiedAt: new Date(),
         installCfg: {
-          source: 'npm',
-          ref: '@modelcontextprotocol/server-memory',
-          env: ['SECRET_KEY'],
-          envValues: { PUBLIC_MODE: '1' },
+          source: "npm",
+          ref: "@modelcontextprotocol/server-memory",
+          env: ["SECRET_KEY"],
+          envValues: { PUBLIC_MODE: "1" },
         },
       },
     });
     const automaticServer = await db.server.create({
       data: {
         slug: automaticServerSlug,
-        name: 'Automatic MCP',
+        name: "Automatic MCP",
         curated: true,
         verifiedAt: new Date(),
         installCfg: {
-          source: 'npm',
-          ref: '@modelcontextprotocol/server-filesystem',
-          env: ['BUILTIN_MODE'],
-          envValues: { BUILTIN_MODE: 'safe-default' },
+          source: "npm",
+          ref: "@modelcontextprotocol/server-filesystem",
+          env: ["BUILTIN_MODE"],
+          envValues: { BUILTIN_MODE: "safe-default" },
         },
       },
     });
     const skill = await db.skill.create({
       data: {
         slug: skillSlug,
-        name: 'Market Skill',
+        name: "Market Skill",
         curated: true,
-        content: '---\nname: market-skill\n---\n# Market Skill',
+        content: "---\nname: market-skill\n---\n# Market Skill",
       },
     });
 
-    const [catalogDep, automaticDep, customDep, catalogSkill, customSkill] = await Promise.all([
-      db.deployment.create({
-        data: {
-          workspaceId: sourceWs.id,
-          serverId: server.id,
-          status: 'running',
-          source: 'npm',
-          sourceRef: '@modelcontextprotocol/server-memory',
-          installCfg: {
-            env: {
-              SECRET_KEY: 'source-secret',
-              PUBLIC_MODE: 'source-overridden',
+    const [catalogDep, automaticDep, customDep, catalogSkill, customSkill] =
+      await Promise.all([
+        db.deployment.create({
+          data: {
+            workspaceId: sourceWs.id,
+            serverId: server.id,
+            status: "running",
+            source: "npm",
+            sourceRef: "@modelcontextprotocol/server-memory",
+            installCfg: {
+              env: {
+                SECRET_KEY: "source-secret",
+                PUBLIC_MODE: "source-overridden",
+              },
             },
           },
-        },
-      }),
-      db.deployment.create({
-        data: {
-          workspaceId: sourceWs.id,
-          serverId: automaticServer.id,
-          status: 'running',
-          source: 'npm',
-          sourceRef: '@modelcontextprotocol/server-filesystem',
-          installCfg: { env: {} },
-        },
-      }),
-      db.deployment.create({
-        data: {
-          workspaceId: sourceWs.id,
-          serverId: null,
-          name: 'Private MCP',
-          status: 'running',
-          source: 'npm',
-          sourceRef: 'private-mcp',
-          installCfg: { env: { PRIVATE_TOKEN: 'do-not-copy' } },
-        },
-      }),
-      db.installedSkill.create({
-        data: { workspaceId: sourceWs.id, skillId: skill.id },
-      }),
-      db.installedSkill.create({
-        data: {
-          workspaceId: sourceWs.id,
-          name: 'Custom Skill',
-          slug: 'custom-skill',
-          description: 'Copied custom skill',
-          content: '# Custom Skill',
-          files: [{ path: 'reference.md', content: 'reference' }],
-        },
-      }),
-    ]);
+        }),
+        db.deployment.create({
+          data: {
+            workspaceId: sourceWs.id,
+            serverId: automaticServer.id,
+            status: "running",
+            source: "npm",
+            sourceRef: "@modelcontextprotocol/server-filesystem",
+            installCfg: { env: {} },
+          },
+        }),
+        db.deployment.create({
+          data: {
+            workspaceId: sourceWs.id,
+            serverId: null,
+            name: "Private MCP",
+            status: "running",
+            source: "npm",
+            sourceRef: "private-mcp",
+            installCfg: { env: { PRIVATE_TOKEN: "do-not-copy" } },
+          },
+        }),
+        db.installedSkill.create({
+          data: { workspaceId: sourceWs.id, skillId: skill.id },
+        }),
+        db.installedSkill.create({
+          data: {
+            workspaceId: sourceWs.id,
+            name: "Custom Skill",
+            slug: "custom-skill",
+            description: "Copied custom skill",
+            content: "# Custom Skill",
+            files: [{ path: "reference.md", content: "reference" }],
+          },
+        }),
+      ]);
 
     const sourceToolkit = await db.toolkit.create({
       data: {
         workspaceId: sourceWs.id,
-        name: 'Research Kit',
-        slug: 'research-kit',
-        visibility: 'public',
+        name: "Research Kit",
+        slug: "research-kit",
+        visibility: "public",
         servers: {
           create: [
             { deploymentId: catalogDep.id },
@@ -185,13 +198,17 @@ describe('toolkit market import', () => {
       clonePublicToolkitAction(formData(sourceToolkit.id)),
     ]);
 
-    expect(mocks.redirect).toHaveBeenCalledWith(`/app/${targetSlug}/toolkits/research-kit`);
-    expect(mocks.redirect).toHaveBeenCalledWith(`/app/${targetSlug}/toolkits/research-kit-1`);
+    expect(mocks.redirect).toHaveBeenCalledWith(
+      `/app/${targetSlug}/toolkits/research-kit`,
+    );
+    expect(mocks.redirect).toHaveBeenCalledWith(
+      `/app/${targetSlug}/toolkits/research-kit-1`,
+    );
     await expect(
       db.toolkit.count({ where: { workspaceId: targetWs.id } }),
     ).resolves.toBe(2);
     const targetToolkit = await db.toolkit.findFirst({
-      where: { workspaceId: targetWs.id, slug: 'research-kit' },
+      where: { workspaceId: targetWs.id, slug: "research-kit" },
       include: {
         servers: { include: { deployment: true } },
         skills: { include: { installedSkill: true } },
@@ -199,31 +216,41 @@ describe('toolkit market import', () => {
     });
 
     expect(targetToolkit).not.toBeNull();
-    expect(targetToolkit?.visibility).toBe('private');
+    expect(targetToolkit?.visibility).toBe("private");
     expect(targetToolkit?.servers).toHaveLength(2);
-    const targetDeployment = targetToolkit!.servers.find(
-      ({ deployment }) => deployment.serverId === server.id,
-    )!.deployment;
+    const targetDeployment = assertDefined(
+      assertDefined(targetToolkit).servers.find(
+        ({ deployment }) => deployment.serverId === server.id,
+      ),
+    ).deployment;
     expect(targetDeployment.serverId).toBe(server.id);
-    expect(targetDeployment.status).toBe('setup_required');
+    expect(targetDeployment.status).toBe("setup_required");
     expect(targetDeployment.installCfg).toMatchObject({
       env: {
-        SECRET_KEY: '',
-        PUBLIC_MODE: '1',
+        SECRET_KEY: "",
+        PUBLIC_MODE: "1",
       },
-      requiredEnv: ['SECRET_KEY'],
+      requiredEnv: ["SECRET_KEY"],
     });
-    const automaticDeployment = targetToolkit!.servers.find(
-      ({ deployment }) => deployment.serverId === automaticServer.id,
-    )!.deployment;
-    expect(automaticDeployment.status).toBe('stopped');
+    const automaticDeployment = assertDefined(
+      assertDefined(targetToolkit).servers.find(
+        ({ deployment }) => deployment.serverId === automaticServer.id,
+      ),
+    ).deployment;
+    expect(automaticDeployment.status).toBe("stopped");
     expect(automaticDeployment.installCfg).toMatchObject({
-      env: { BUILTIN_MODE: 'safe-default' },
-      requiredEnv: ['BUILTIN_MODE'],
+      env: { BUILTIN_MODE: "safe-default" },
+      requiredEnv: ["BUILTIN_MODE"],
     });
 
     expect(targetToolkit?.skills).toHaveLength(2);
-    expect(targetToolkit?.skills.some((s) => s.installedSkill.skillId === skill.id)).toBe(true);
-    expect(targetToolkit?.skills.some((s) => s.installedSkill.content === '# Custom Skill')).toBe(true);
+    expect(
+      targetToolkit?.skills.some((s) => s.installedSkill.skillId === skill.id),
+    ).toBe(true);
+    expect(
+      targetToolkit?.skills.some(
+        (s) => s.installedSkill.content === "# Custom Skill",
+      ),
+    ).toBe(true);
   });
 });

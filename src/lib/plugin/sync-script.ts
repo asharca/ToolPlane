@@ -1,5 +1,5 @@
-import { SYNC_CLIENT_SOURCE } from './sync-client';
-import { installationName } from './installation-identity';
+import { SYNC_CLIENT_SOURCE } from "./sync-client";
+import { installationName } from "./installation-identity";
 
 type SyncScriptOptions = {
   apiBase: string;
@@ -14,9 +14,12 @@ type SyncScriptOptions = {
 };
 
 export function buildSyncScript(opts: SyncScriptOptions): string {
-  const installation = opts.installation ?? installationName({ ...opts, base: opts.apiBase });
-  const config = Buffer.from(JSON.stringify({ ...opts, installation })).toString('base64');
-  return String.raw`#!/usr/bin/env bash
+  const installation =
+    opts.installation ?? installationName({ ...opts, base: opts.apiBase });
+  const config = Buffer.from(
+    JSON.stringify({ ...opts, installation }),
+  ).toString("base64");
+  return `#!/usr/bin/env bash
 # ToolPlane sync: a failed refresh keeps the last successfully committed version.
 set -eo pipefail
 umask 077
@@ -30,9 +33,9 @@ command -v node >/dev/null 2>&1 || { echo 'ToolPlane sync: Node is required' >&2
 command -v curl >/dev/null 2>&1 || { echo 'ToolPlane sync: curl is required' >&2; exit 1; }
 TOKEN=$(MCP_CONFIG_PATH="$MCP_CONFIG" node -e 'const fs=require("fs"); const cfg=JSON.parse(fs.readFileSync(process.env.MCP_CONFIG_PATH,"utf8")); const servers=Object.values(cfg.mcpServers||{}); if(servers.length!==1)process.exit(1); const h=servers[0].headers||servers[0].http_headers||{}; const token=String(h.Authorization||"").replace(/^Bearer /i,"").trim(); if(!token)process.exit(1); process.stdout.write(token);')
 SKILLS_DIR="$TOOLPLANE_SKILLS_DIR"
-if [ -z "$SKILLS_DIR" ]; then SKILLS_DIR="${opts.defaultSkillsDir ?? '$PLUGIN_ROOT/skills'}"; fi
+if [ -z "$SKILLS_DIR" ]; then SKILLS_DIR="${opts.defaultSkillsDir ?? "$PLUGIN_ROOT/skills"}"; fi
 SKILL_DIR_PREFIX="$TOOLPLANE_SKILL_DIR_PREFIX"
-if [ -z "$SKILL_DIR_PREFIX" ]; then SKILL_DIR_PREFIX="${opts.defaultSkillDirPrefix ?? ''}"; fi
+if [ -z "$SKILL_DIR_PREFIX" ]; then SKILL_DIR_PREFIX="${opts.defaultSkillDirPrefix ?? ""}"; fi
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 printf '%s' '${config}' | base64 -d > "$TMP/config.json"

@@ -1,18 +1,23 @@
-import 'server-only';
-import { randomUUID } from 'node:crypto';
-import { db } from '@/lib/db';
-import { cleanupHermesRuntime, stopHermesRuntime } from '@/lib/agents/hermes/runtime';
-import { deleteAgent } from '@/lib/agents/mutations';
-import { abortAgentApiRun } from '@/lib/agents/public-api/run-control';
-import { deleteAgentConversationForPrincipal } from '@/lib/agents/public-api/conversations';
-import { pruneAgentApiUsageBuckets } from '@/lib/agents/public-api/rate-limit';
-import type { AgentApiPrincipal } from '@/lib/agents/public-api/auth';
+import "server-only";
+import { randomUUID } from "node:crypto";
+import { db } from "@/lib/db";
+import {
+  cleanupHermesRuntime,
+  stopHermesRuntime,
+} from "@/lib/agents/hermes/runtime";
+import { deleteAgent } from "@/lib/agents/mutations";
+import { abortAgentApiRun } from "@/lib/agents/public-api/run-control";
+import { deleteAgentConversationForPrincipal } from "@/lib/agents/public-api/conversations";
+import { pruneAgentApiUsageBuckets } from "@/lib/agents/public-api/rate-limit";
+import type { AgentApiPrincipal } from "@/lib/agents/public-api/auth";
 
 const STALE_RUNTIME_OPERATION_MS = 15 * 60_000;
 const STALE_RUNTIME_PROVISIONING_MS = 30 * 60_000;
 const PUBLIC_RUNTIME_OPERATION_LEASE_MS = 10 * 60_000;
 
-export async function cleanupAgentEndpointRuntimeIfUnused(allocationId: string): Promise<boolean> {
+export async function cleanupAgentEndpointRuntimeIfUnused(
+  allocationId: string,
+): Promise<boolean> {
   const operationId = randomUUID();
   const operationNow = new Date();
   const allocation = await db.$transaction(async (tx) => {
@@ -24,32 +29,35 @@ export async function cleanupAgentEndpointRuntimeIfUnused(allocationId: string):
         conversations: { select: { deletingAt: true, conversationId: true } },
       },
     });
-    const staleOperationBefore = new Date(operationNow.getTime() - STALE_RUNTIME_OPERATION_MS);
+    const staleOperationBefore = new Date(
+      operationNow.getTime() - STALE_RUNTIME_OPERATION_MS,
+    );
     const staleProvisioningBefore = new Date(
       operationNow.getTime() - STALE_RUNTIME_PROVISIONING_MS,
     );
     if (
-      !current
-      || current.conversations.some((conversation) => !conversation.deletingAt)
-      || (current.status === 'provisioning' && current.updatedAt >= staleProvisioningBefore)
-      || (
-        current.operationId
-        && current.operationExpiresAt
-        && current.operationExpiresAt > operationNow
-      )
-      || (
-        ['stopping', 'deleting'].includes(current.status)
-        && current.updatedAt >= staleOperationBefore
-      )
-    ) return null;
+      !current ||
+      current.conversations.some((conversation) => !conversation.deletingAt) ||
+      (current.status === "provisioning" &&
+        current.updatedAt >= staleProvisioningBefore) ||
+      (current.operationId &&
+        current.operationExpiresAt &&
+        current.operationExpiresAt > operationNow) ||
+      (["stopping", "deleting"].includes(current.status) &&
+        current.updatedAt >= staleOperationBefore)
+    )
+      return null;
     const activeRuns = await tx.agentRun.count({
       where: {
         runtimeAllocationId: current.id,
-        status: { in: ['provisioning', 'running'] },
+        status: { in: ["provisioning", "running"] },
       },
     });
     if (activeRuns > 0) return null;
-    if (await tx.a2AContext.count({ where: { runtimeAllocationId: current.id } })) return null;
+    if (
+      await tx.a2AContext.count({ where: { runtimeAllocationId: current.id } })
+    )
+      return null;
     const claimed = await tx.agentEndpointRuntime.updateMany({
       where: {
         id: current.id,
@@ -59,9 +67,11 @@ export async function cleanupAgentEndpointRuntimeIfUnused(allocationId: string):
         a2aContexts: { none: {} },
       },
       data: {
-        status: 'deleting',
+        status: "deleting",
         operationId,
-        operationExpiresAt: new Date(operationNow.getTime() + PUBLIC_RUNTIME_OPERATION_LEASE_MS),
+        operationExpiresAt: new Date(
+          operationNow.getTime() + PUBLIC_RUNTIME_OPERATION_LEASE_MS,
+        ),
         lastError: null,
       },
     });
@@ -76,11 +86,20 @@ export async function cleanupAgentEndpointRuntimeIfUnused(allocationId: string):
         allocation.runtimeAgentId,
         { timeoutMs: 60_000 },
       );
-      if (!cleaned) throw new Error('Hermes runtime cleanup was not admitted.');
-      await deleteAgent(allocation.endpoint.workspaceId, allocation.runtimeAgentId);
+      if (!cleaned) throw new Error("Hermes runtime cleanup was not admitted.");
+      await deleteAgent(
+        allocation.endpoint.workspaceId,
+        allocation.runtimeAgentId,
+      );
     } else if (allocation.conversations.length) {
       await db.conversation.deleteMany({
-        where: { id: { in: allocation.conversations.map((conversation) => conversation.conversationId) } },
+        where: {
+          id: {
+            in: allocation.conversations.map(
+              (conversation) => conversation.conversationId,
+            ),
+          },
+        },
       });
     }
     const deleted = await db.agentEndpointRuntime.deleteMany({
@@ -93,16 +112,20 @@ export async function cleanupAgentEndpointRuntimeIfUnused(allocationId: string):
     });
     return deleted.count === 1;
   } catch (error) {
-    const detail = (error instanceof Error ? error.message : String(error)).slice(0, 1_000);
-    await db.agentEndpointRuntime.updateMany({
-      where: { id: allocation.id, status: 'deleting', operationId },
-      data: {
-        status: 'failed',
-        operationId: null,
-        operationExpiresAt: null,
-        lastError: detail || 'Runtime cleanup failed.',
-      },
-    }).catch(() => undefined);
+    const detail = (
+      error instanceof Error ? error.message : String(error)
+    ).slice(0, 1_000);
+    await db.agentEndpointRuntime
+      .updateMany({
+        where: { id: allocation.id, status: "deleting", operationId },
+        data: {
+          status: "failed",
+          operationId: null,
+          operationExpiresAt: null,
+          lastError: detail || "Runtime cleanup failed.",
+        },
+      })
+      .catch(() => undefined);
     return false;
   }
 }
@@ -120,35 +143,46 @@ export async function stopAgentEndpointRuntimeIfIdle(
       include: { endpoint: { select: { workspaceId: true } } },
     });
     if (
-      !current
-      || !current.runtimeAgentId
-      || !current.lastUsedAt
-      || (
-        current.operationId
-        && current.operationExpiresAt
-        && current.operationExpiresAt > operationNow
-      )
-      || (
-        current.status === 'ready'
-          ? current.lastUsedAt >= idleBefore
-          : current.status !== 'stopping'
-            || current.updatedAt >= new Date(Date.now() - STALE_RUNTIME_OPERATION_MS)
-      )
-    ) return null;
+      !current?.runtimeAgentId ||
+      !current.lastUsedAt ||
+      (current.operationId &&
+        current.operationExpiresAt &&
+        current.operationExpiresAt > operationNow) ||
+      (current.status === "ready"
+        ? current.lastUsedAt >= idleBefore
+        : current.status !== "stopping" ||
+          current.updatedAt >=
+            new Date(Date.now() - STALE_RUNTIME_OPERATION_MS))
+    )
+      return null;
     const activeRuns = await tx.agentRun.count({
       where: {
         runtimeAllocationId: current.id,
-        status: { in: ['provisioning', 'running'] },
+        status: { in: ["provisioning", "running"] },
       },
     });
     if (activeRuns > 0) return null;
-    if (await tx.a2ATask.count({ where: { context: { runtimeAllocationId: current.id }, state: { in: [1, 2] } } })) return null;
+    if (
+      await tx.a2ATask.count({
+        where: {
+          context: { runtimeAllocationId: current.id },
+          state: { in: [1, 2] },
+        },
+      })
+    )
+      return null;
     const claimed = await tx.agentEndpointRuntime.updateMany({
-      where: { id: current.id, status: current.status, updatedAt: current.updatedAt },
+      where: {
+        id: current.id,
+        status: current.status,
+        updatedAt: current.updatedAt,
+      },
       data: {
-        status: 'stopping',
+        status: "stopping",
         operationId,
-        operationExpiresAt: new Date(operationNow.getTime() + PUBLIC_RUNTIME_OPERATION_LEASE_MS),
+        operationExpiresAt: new Date(
+          operationNow.getTime() + PUBLIC_RUNTIME_OPERATION_LEASE_MS,
+        ),
       },
     });
     return claimed.count === 1 ? current : null;
@@ -156,21 +190,25 @@ export async function stopAgentEndpointRuntimeIfIdle(
   if (!allocation?.runtimeAgentId) return false;
 
   try {
-    await stopHermesRuntime(allocation.endpoint.workspaceId, allocation.runtimeAgentId);
+    await stopHermesRuntime(
+      allocation.endpoint.workspaceId,
+      allocation.runtimeAgentId,
+    );
     const stopped = await db.agentRuntime.findFirst({
       where: {
         workspaceId: allocation.endpoint.workspaceId,
         agentId: allocation.runtimeAgentId,
-        kind: 'hermes',
-        status: 'stopped',
+        kind: "hermes",
+        status: "stopped",
       },
       select: { id: true },
     });
-    if (!stopped) throw new Error('Hermes runtime did not enter the stopped state.');
+    if (!stopped)
+      throw new Error("Hermes runtime did not enter the stopped state.");
     await db.agentEndpointRuntime.updateMany({
-      where: { id: allocation.id, status: 'stopping', operationId },
+      where: { id: allocation.id, status: "stopping", operationId },
       data: {
-        status: 'ready',
+        status: "ready",
         operationId: null,
         operationExpiresAt: null,
         lastError: null,
@@ -178,15 +216,20 @@ export async function stopAgentEndpointRuntimeIfIdle(
     });
     return true;
   } catch (error) {
-    await db.agentEndpointRuntime.updateMany({
-      where: { id: allocation.id, status: 'stopping', operationId },
-      data: {
-        status: 'failed',
-        operationId: null,
-        operationExpiresAt: null,
-        lastError: (error instanceof Error ? error.message : String(error)).slice(0, 1_000),
-      },
-    }).catch(() => undefined);
+    await db.agentEndpointRuntime
+      .updateMany({
+        where: { id: allocation.id, status: "stopping", operationId },
+        data: {
+          status: "failed",
+          operationId: null,
+          operationExpiresAt: null,
+          lastError: (error instanceof Error
+            ? error.message
+            : String(error)
+          ).slice(0, 1_000),
+        },
+      })
+      .catch(() => undefined);
     return false;
   }
 }
@@ -203,20 +246,31 @@ export async function cleanupAgentEndpointRuntimesForSource(
   if (!endpoint) return true;
   await db.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT "id" FROM "AgentEndpoint" WHERE "id" = ${endpoint.id} FOR UPDATE`;
-    await tx.agentEndpoint.update({ where: { id: endpoint.id }, data: { status: 'disabled' } });
+    await tx.agentEndpoint.update({
+      where: { id: endpoint.id },
+      data: { status: "disabled" },
+    });
   });
   // Disabling stops A2A authorization. Do not destroy a runtime until its worker
   // has actually stopped; an administrator may retry cleanup after draining.
-  if (await db.a2ATask.count({ where: { context: { endpointId: endpoint.id }, state: { in: [1, 2] } } })) return false;
+  if (
+    await db.a2ATask.count({
+      where: { context: { endpointId: endpoint.id }, state: { in: [1, 2] } },
+    })
+  )
+    return false;
   const activeRuns = await db.agentRun.findMany({
-    where: { endpointId: endpoint.id, status: { in: ['provisioning', 'running'] } },
+    where: {
+      endpointId: endpoint.id,
+      status: { in: ["provisioning", "running"] },
+    },
     select: { id: true, publicId: true },
   });
   await db.agentRun.updateMany({
     where: { id: { in: activeRuns.map((run) => run.id) } },
     data: {
-      status: 'cancelled',
-      errorCode: 'cancelled',
+      status: "cancelled",
+      errorCode: "cancelled",
       cancelRequestedAt: new Date(),
       completedAt: new Date(),
     },
@@ -226,7 +280,7 @@ export async function cleanupAgentEndpointRuntimesForSource(
   for (let pass = 0; pass < 5; pass += 1) {
     const runtimeIds = await db.agentEndpointRuntime.findMany({
       where: { endpointId: endpoint.id },
-      orderBy: { createdAt: 'asc' },
+      orderBy: { createdAt: "asc" },
       select: { id: true },
     });
     if (!runtimeIds.length) return true;
@@ -249,18 +303,19 @@ export async function cleanupAgentEndpointRuntimesForSource(
         });
         if (!current) return null;
         if (
-          current.operationId
-          && current.operationExpiresAt
-          && current.operationExpiresAt > operationNow
-        ) return { busy: true as const };
+          current.operationId &&
+          current.operationExpiresAt &&
+          current.operationExpiresAt > operationNow
+        )
+          return { busy: true as const };
         await tx.agentRun.updateMany({
           where: {
             runtimeAllocationId: current.id,
-            status: { in: ['provisioning', 'running'] },
+            status: { in: ["provisioning", "running"] },
           },
           data: {
-            status: 'cancelled',
-            errorCode: 'cancelled',
+            status: "cancelled",
+            errorCode: "cancelled",
             cancelRequestedAt: operationNow,
             completedAt: operationNow,
           },
@@ -272,9 +327,11 @@ export async function cleanupAgentEndpointRuntimesForSource(
             updatedAt: current.updatedAt,
           },
           data: {
-            status: 'deleting',
+            status: "deleting",
             operationId,
-            operationExpiresAt: new Date(operationNow.getTime() + PUBLIC_RUNTIME_OPERATION_LEASE_MS),
+            operationExpiresAt: new Date(
+              operationNow.getTime() + PUBLIC_RUNTIME_OPERATION_LEASE_MS,
+            ),
           },
         });
         return claimed.count === 1
@@ -285,16 +342,21 @@ export async function cleanupAgentEndpointRuntimesForSource(
       if (runtime.busy) return false;
       try {
         if (runtime.runtimeAgentId) {
-          if (!await cleanupHermesRuntime(
-            workspaceId,
-            runtime.runtimeAgentId,
-            { timeoutMs: 60_000 },
-          )) throw new Error('Hermes runtime cleanup was not admitted.');
+          if (
+            !(await cleanupHermesRuntime(workspaceId, runtime.runtimeAgentId, {
+              timeoutMs: 60_000,
+            }))
+          )
+            throw new Error("Hermes runtime cleanup was not admitted.");
           await deleteAgent(workspaceId, runtime.runtimeAgentId);
         } else if (runtime.conversations.length) {
           await db.conversation.deleteMany({
             where: {
-              id: { in: runtime.conversations.map((conversation) => conversation.conversationId) },
+              id: {
+                in: runtime.conversations.map(
+                  (conversation) => conversation.conversationId,
+                ),
+              },
             },
           });
         }
@@ -303,20 +365,29 @@ export async function cleanupAgentEndpointRuntimesForSource(
         });
         if (deleted.count !== 1) return false;
       } catch (error) {
-        await db.agentEndpointRuntime.updateMany({
-          where: { id: runtime.id, status: 'deleting', operationId },
-          data: {
-            status: 'failed',
-            operationId: null,
-            operationExpiresAt: null,
-            lastError: (error instanceof Error ? error.message : String(error)).slice(0, 1_000),
-          },
-        }).catch(() => undefined);
+        await db.agentEndpointRuntime
+          .updateMany({
+            where: { id: runtime.id, status: "deleting", operationId },
+            data: {
+              status: "failed",
+              operationId: null,
+              operationExpiresAt: null,
+              lastError: (error instanceof Error
+                ? error.message
+                : String(error)
+              ).slice(0, 1_000),
+            },
+          })
+          .catch(() => undefined);
         return false;
       }
     }
   }
-  return await db.agentEndpointRuntime.count({ where: { endpointId: endpoint.id } }) === 0;
+  return (
+    (await db.agentEndpointRuntime.count({
+      where: { endpointId: endpoint.id },
+    })) === 0
+  );
 }
 
 function maintenancePrincipal(row: {
@@ -335,12 +406,12 @@ function maintenancePrincipal(row: {
   clientId: string;
 }): AgentApiPrincipal {
   return {
-    credentialType: 'api_key',
+    credentialType: "api_key",
     endpointId: row.endpoint.id,
     endpointPublicId: row.endpoint.publicId,
     workspaceId: row.endpoint.workspaceId,
     sourceAgentId: row.endpoint.sourceAgentId,
-    revisionId: row.endpoint.currentRevisionId ?? '',
+    revisionId: row.endpoint.currentRevisionId ?? "",
     clientId: row.clientId,
     keyId: null,
     subjectHash: null,
@@ -411,8 +482,9 @@ export async function runAgentApiMaintenance(now = new Date()): Promise<{
   runtimes: number;
   usageBuckets: number;
 }> {
-  const release = await acquireMaintenanceLease('retention', now, 30 * 60_000);
-  if (!release) return { conversations: 0, runs: 0, runtimes: 0, usageBuckets: 0 };
+  const release = await acquireMaintenanceLease("retention", now, 30 * 60_000);
+  if (!release)
+    return { conversations: 0, runs: 0, runtimes: 0, usageBuckets: 0 };
   try {
     const deadline = Date.now() + 4 * 60_000;
     const staleRuns: Array<{ id: string; publicId: string }> = [];
@@ -458,7 +530,7 @@ export async function runAgentApiMaintenance(now = new Date()): Promise<{
       ORDER BY pc."updatedAt" ASC
       LIMIT 50
     `;
-    const candidates = await db.agentPublicConversation.findMany({
+    const candidates = (await db.agentPublicConversation.findMany({
       where: { id: { in: conversationIds.map((row) => row.id) } },
       select: {
         id: true,
@@ -480,21 +552,26 @@ export async function runAgentApiMaintenance(now = new Date()): Promise<{
           },
         },
       },
-    }) as ConversationCandidate[];
+    })) as ConversationCandidate[];
     let conversations = 0;
     const touchedAllocations = new Set<string>();
     for (const conversation of candidates) {
       if (Date.now() >= deadline) break;
       try {
-        if (await deleteAgentConversationForPrincipal(
-          maintenancePrincipal(conversation),
-          conversation.publicId,
-        )) conversations += 1;
+        if (
+          await deleteAgentConversationForPrincipal(
+            maintenancePrincipal(conversation),
+            conversation.publicId,
+          )
+        )
+          conversations += 1;
       } catch {
-        await db.agentPublicConversation.updateMany({
-          where: { id: conversation.id },
-          data: { updatedAt: new Date() },
-        }).catch(() => undefined);
+        await db.agentPublicConversation
+          .updateMany({
+            where: { id: conversation.id },
+            data: { updatedAt: new Date() },
+          })
+          .catch(() => undefined);
       }
       touchedAllocations.add(conversation.runtimeAllocationId);
     }
@@ -509,29 +586,43 @@ export async function runAgentApiMaintenance(now = new Date()): Promise<{
       LIMIT 500
     `;
     const deletedRuns = terminalRunIds.length
-      ? await db.agentRun.deleteMany({ where: { id: { in: terminalRunIds.map((run) => run.id) } } })
+      ? await db.agentRun.deleteMany({
+          where: { id: { in: terminalRunIds.map((run) => run.id) } },
+        })
       : { count: 0 };
 
-    const staleOperationBefore = new Date(now.getTime() - STALE_RUNTIME_OPERATION_MS);
-    const staleProvisioningBefore = new Date(now.getTime() - STALE_RUNTIME_PROVISIONING_MS);
+    const staleOperationBefore = new Date(
+      now.getTime() - STALE_RUNTIME_OPERATION_MS,
+    );
+    const staleProvisioningBefore = new Date(
+      now.getTime() - STALE_RUNTIME_PROVISIONING_MS,
+    );
     const emptyAllocations = await db.agentEndpointRuntime.findMany({
       where: {
         conversations: { none: { deletingAt: null } },
         OR: [
-          { status: { in: ['ready', 'failed'] } },
-          { status: 'provisioning', updatedAt: { lt: staleProvisioningBefore } },
-          { status: { in: ['stopping', 'deleting'] }, updatedAt: { lt: staleOperationBefore } },
+          { status: { in: ["ready", "failed"] } },
+          {
+            status: "provisioning",
+            updatedAt: { lt: staleProvisioningBefore },
+          },
+          {
+            status: { in: ["stopping", "deleting"] },
+            updatedAt: { lt: staleOperationBefore },
+          },
         ],
       },
-      orderBy: { updatedAt: 'asc' },
+      orderBy: { updatedAt: "asc" },
       take: 50,
       select: { id: true },
     });
-    for (const allocation of emptyAllocations) touchedAllocations.add(allocation.id);
+    for (const allocation of emptyAllocations)
+      touchedAllocations.add(allocation.id);
     let runtimes = 0;
     for (const allocationId of [...touchedAllocations].slice(0, 50)) {
       if (Date.now() >= deadline) break;
-      if (await cleanupAgentEndpointRuntimeIfUnused(allocationId)) runtimes += 1;
+      if (await cleanupAgentEndpointRuntimeIfUnused(allocationId))
+        runtimes += 1;
     }
 
     const usageBuckets = await pruneAgentApiUsageBuckets(now);
@@ -547,29 +638,38 @@ export async function runAgentApiMaintenance(now = new Date()): Promise<{
 }
 
 /** Stop idle containers while preserving their volumes for lazy session resume. */
-export async function runAgentApiIdleRuntimeMaintenance(now = new Date()): Promise<number> {
-  const release = await acquireMaintenanceLease('idle-runtimes', now, 5 * 60_000);
+export async function runAgentApiIdleRuntimeMaintenance(
+  now = new Date(),
+): Promise<number> {
+  const release = await acquireMaintenanceLease(
+    "idle-runtimes",
+    now,
+    5 * 60_000,
+  );
   if (!release) return 0;
   try {
     const deadline = Date.now() + 2 * 60_000;
     const idleBefore = new Date(now.getTime() - 15 * 60_000);
-    const staleOperationBefore = new Date(now.getTime() - STALE_RUNTIME_OPERATION_MS);
+    const staleOperationBefore = new Date(
+      now.getTime() - STALE_RUNTIME_OPERATION_MS,
+    );
     const allocations = await db.agentEndpointRuntime.findMany({
       where: {
         runtimeAgentId: { not: null },
         OR: [
-          { status: 'ready', lastUsedAt: { lt: idleBefore } },
-          { status: 'stopping', updatedAt: { lt: staleOperationBefore } },
+          { status: "ready", lastUsedAt: { lt: idleBefore } },
+          { status: "stopping", updatedAt: { lt: staleOperationBefore } },
         ],
       },
-      orderBy: { lastUsedAt: 'asc' },
+      orderBy: { lastUsedAt: "asc" },
       take: 25,
       select: { id: true },
     });
     let stopped = 0;
     for (const allocation of allocations) {
       if (Date.now() >= deadline) break;
-      if (await stopAgentEndpointRuntimeIfIdle(allocation.id, idleBefore)) stopped += 1;
+      if (await stopAgentEndpointRuntimeIfIdle(allocation.id, idleBefore))
+        stopped += 1;
     }
     return stopped;
   } finally {

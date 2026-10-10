@@ -1,30 +1,29 @@
+import { Button, ButtonLink } from "@/components/motion/button";
+import { Input } from "@/components/motion/input";
+import { FormSelect } from "@/components/ui/FormSelect";
+import { BouncyAccordion } from "@/components/motion/bouncy-accordion";
 
-import { Button, ButtonLink } from '@/components/motion/button';
-import { Input } from '@/components/motion/input';
-import { FormSelect } from '@/components/ui/FormSelect';
-import { BouncyAccordion } from '@/components/motion/bouncy-accordion';
-
-import { redirect } from 'next/navigation';
-import { getTranslations } from 'next-intl/server';
-import { Search, SlidersHorizontal } from 'lucide-react';
-import { getCurrentUser } from '@/lib/auth/current-user';
+import { redirect } from "next/navigation";
+import { getTranslations } from "next-intl/server";
+import { Search, SlidersHorizontal } from "lucide-react";
+import { getCurrentUser } from "@/lib/auth/current-user";
 import {
   getBrowseSkills,
   getSkillBrowseCategories,
   getWorkspaceForUser,
   type SkillBrowseFilters,
-} from '@/lib/workspace/queries';
-import { BrowseGrid } from '@/components/dashboard/BrowseGrid';
-import { installSkillAction } from '@/lib/workspace/actions';
+} from "@/lib/workspace/queries";
+import { BrowseGrid } from "@/components/dashboard/BrowseGrid";
+import { installSkillAction } from "@/lib/workspace/actions";
 import {
   DashboardEmptyState,
   DashboardPage,
   DashboardPagination,
   DashboardSection,
-} from '@/components/dashboard/DashboardUI';
-import { MarketCategorySidebar } from '@/components/dashboard/market/MarketCategorySidebar';
+} from "@/components/dashboard/DashboardUI";
+import { MarketCategorySidebar } from "@/components/dashboard/market/MarketCategorySidebar";
 
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
 type SearchParams = {
   page?: string | string[];
@@ -36,7 +35,7 @@ type SearchParams = {
 };
 
 function firstParam(value: string | string[] | undefined): string {
-  return Array.isArray(value) ? value[0] ?? '' : value ?? '';
+  return Array.isArray(value) ? (value[0] ?? "") : (value ?? "");
 }
 
 function skillMarketHref(
@@ -44,19 +43,21 @@ function skillMarketHref(
   input: {
     q?: string;
     page?: number;
-    source?: SkillBrowseFilters['source'];
-    installation?: SkillBrowseFilters['installation'];
+    source?: SkillBrowseFilters["source"];
+    installation?: SkillBrowseFilters["installation"];
     category?: string;
-    sort?: SkillBrowseFilters['sort'];
+    sort?: SkillBrowseFilters["sort"];
   },
 ) {
   const query = new URLSearchParams();
-  if (input.q) query.set('q', input.q);
-  if (input.source && input.source !== 'all') query.set('source', input.source);
-  if (input.installation && input.installation !== 'all') query.set('installation', input.installation);
-  if (input.category && input.category !== 'all') query.set('category', input.category);
-  if (input.sort && input.sort !== 'top') query.set('sort', input.sort);
-  if (input.page && input.page > 1) query.set('page', String(input.page));
+  if (input.q) query.set("q", input.q);
+  if (input.source && input.source !== "all") query.set("source", input.source);
+  if (input.installation && input.installation !== "all")
+    query.set("installation", input.installation);
+  if (input.category && input.category !== "all")
+    query.set("category", input.category);
+  if (input.sort && input.sort !== "top") query.set("sort", input.sort);
+  if (input.page && input.page > 1) query.set("page", String(input.page));
   const suffix = query.toString();
   const base = `/app/${encodeURIComponent(workspace)}/market/skills`;
   return suffix ? `${base}?${suffix}` : base;
@@ -72,36 +73,46 @@ export default async function SkillMarketPage({
   const [{ workspace: slug }, query, t, common] = await Promise.all([
     params,
     searchParams,
-    getTranslations('console.market'),
-    getTranslations('common'),
+    getTranslations("console.market"),
+    getTranslations("common"),
   ]);
   const user = await getCurrentUser();
   if (!user) {
-    redirect(`/app/login?next=${encodeURIComponent(`/app/${slug}/market/skills`)}`);
+    redirect(
+      `/app/login?next=${encodeURIComponent(`/app/${slug}/market/skills`)}`,
+    );
   }
   const workspace = await getWorkspaceForUser(slug, user.id);
-  if (!workspace) redirect('/app');
+  if (!workspace) redirect("/app");
 
   const rawPage = Number(firstParam(query.page));
   const page = Number.isSafeInteger(rawPage) && rawPage > 0 ? rawPage : 1;
   const q = firstParam(query.q).trim();
-  const source: SkillBrowseFilters['source'] = ['github', 'other'].includes(firstParam(query.source))
-    ? firstParam(query.source) as SkillBrowseFilters['source']
-    : 'all';
-  const installation: SkillBrowseFilters['installation'] = ['available', 'installed'].includes(firstParam(query.installation))
-    ? firstParam(query.installation) as SkillBrowseFilters['installation']
-    : 'all';
-  const requestedCategory = firstParam(query.category) || 'all';
-  const sort: SkillBrowseFilters['sort'] = ['newest', 'name'].includes(firstParam(query.sort))
-    ? firstParam(query.sort) as SkillBrowseFilters['sort']
-    : 'top';
+  const source: SkillBrowseFilters["source"] = ["github", "other"].includes(
+    firstParam(query.source),
+  )
+    ? (firstParam(query.source) as SkillBrowseFilters["source"])
+    : "all";
+  const installation: SkillBrowseFilters["installation"] = [
+    "available",
+    "installed",
+  ].includes(firstParam(query.installation))
+    ? (firstParam(query.installation) as SkillBrowseFilters["installation"])
+    : "all";
+  const requestedCategory = firstParam(query.category) || "all";
+  const sort: SkillBrowseFilters["sort"] = ["newest", "name"].includes(
+    firstParam(query.sort),
+  )
+    ? (firstParam(query.sort) as SkillBrowseFilters["sort"])
+    : "top";
 
-  const includeMarket = source === 'all' && installation === 'all';
+  const includeMarket = source === "all" && installation === "all";
   const categories = await getSkillBrowseCategories(includeMarket);
-  const category = requestedCategory === 'all'
-    || categories.some((item) => item.slug === requestedCategory)
-    ? requestedCategory
-    : 'all';
+  const category =
+    requestedCategory === "all" ||
+    categories.some((item) => item.slug === requestedCategory)
+      ? requestedCategory
+      : "all";
   const browse = await getBrowseSkills(page, q, {
     workspaceId: workspace.id,
     source,
@@ -116,60 +127,160 @@ export default async function SkillMarketPage({
   );
   const lastPage = Math.max(1, Math.ceil(total / pageSize));
   if (page > lastPage) {
-    redirect(skillMarketHref(slug, { q, source, installation, category, sort, page: lastPage }));
+    redirect(
+      skillMarketHref(slug, {
+        q,
+        source,
+        installation,
+        category,
+        sort,
+        page: lastPage,
+      }),
+    );
   }
   const hasFilters = Boolean(
-    q || source !== 'all' || installation !== 'all' || category !== 'all' || sort !== 'top',
+    q ||
+      source !== "all" ||
+      installation !== "all" ||
+      category !== "all" ||
+      sort !== "top",
   );
-  const expandedFilters = source !== 'all' || installation !== 'all' || sort !== 'top';
-  const sortedCategories = [...categories].sort((a, b) => (
-    b._count.skills - a._count.skills || a.name.localeCompare(b.name)
-  ));
+  const expandedFilters =
+    source !== "all" || installation !== "all" || sort !== "top";
+  const sortedCategories = [...categories].sort(
+    (a, b) => b._count.skills - a._count.skills || a.name.localeCompare(b.name),
+  );
 
   return (
     <DashboardPage className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-xl font-semibold text-foreground">{t('skillsTitle')}</h2>
-        <ButtonLink href={`/app/${encodeURIComponent(slug)}/skills`} variant="secondary" size="sm">
-          {t('manageInstalled')}
+        <h2 className="text-xl font-semibold text-foreground">
+          {t("skillsTitle")}
+        </h2>
+        <ButtonLink
+          href={`/app/${encodeURIComponent(slug)}/skills`}
+          variant="secondary"
+          size="sm"
+        >
+          {t("manageInstalled")}
         </ButtonLink>
       </div>
 
       <form className="space-y-2">
-        <input type="hidden" name="category" value={category === 'all' ? '' : category} />
+        <input
+          type="hidden"
+          name="category"
+          value={category === "all" ? "" : category}
+        />
         <div className="flex flex-wrap items-end gap-2">
           <div className="min-w-48 flex-1">
-            <Input label={t('searchSkills')} leftIcon={<Search />} name="q" defaultValue={q} placeholder={t('searchSkills')} className="w-full" />
+            <Input
+              label={t("searchSkills")}
+              leftIcon={<Search />}
+              name="q"
+              defaultValue={q}
+              placeholder={t("searchSkills")}
+              className="w-full"
+            />
           </div>
-          <Button variant="secondary" size="md" type="submit"><SlidersHorizontal className="size-4" />{t('applyFilters')}</Button>
+          <Button variant="secondary" size="md" type="submit">
+            <SlidersHorizontal className="size-4" />
+            {t("applyFilters")}
+          </Button>
         </div>
-        <BouncyAccordion defaultValue={expandedFilters ? 'filters' : null} items={[{
-          id: 'filters',
-          title: <span className="text-sm">{t('appliedFilters')}: {t(source === 'github' ? 'github' : source === 'other' ? 'otherSources' : 'allSources')} · {t(installation === 'installed' ? 'installed' : installation === 'available' ? 'available' : 'allInstallations')} · {t(sort === 'newest' ? 'sortNewest' : sort === 'name' ? 'sortName' : 'sortTop')}</span>,
-          description: <div className="space-y-2">
-            <div className="grid gap-2 sm:grid-cols-3">
-              <FormSelect name="source" defaultValue={source} label={t('filterBySource')} options={[{ value: "all", label: t('allSources') }, { value: "github", label: t('github') }, { value: "other", label: t('otherSources') }]} />
-              <FormSelect name="installation" defaultValue={installation} label={t('filterByInstallation')} options={[{ value: "all", label: t('allInstallations') }, { value: "available", label: t('available') }, { value: "installed", label: t('installed') }]} />
-              <FormSelect name="sort" defaultValue={sort} label={t('sortSkills')} options={[{ value: "top", label: t('sortTop') }, { value: "newest", label: t('sortNewest') }, { value: "name", label: t('sortName') }]} />
-            </div>
-            <p className="text-xs text-muted-foreground">{t('catalogFiltersHint')}</p>
-          </div>,
-        }]} />
+        <BouncyAccordion
+          defaultValue={expandedFilters ? "filters" : null}
+          items={[
+            {
+              id: "filters",
+              title: (
+                <span className="text-sm">
+                  {t("appliedFilters")}:{" "}
+                  {t(
+                    source === "github"
+                      ? "github"
+                      : source === "other"
+                        ? "otherSources"
+                        : "allSources",
+                  )}{" "}
+                  ·{" "}
+                  {t(
+                    installation === "installed"
+                      ? "installed"
+                      : installation === "available"
+                        ? "available"
+                        : "allInstallations",
+                  )}{" "}
+                  ·{" "}
+                  {t(
+                    sort === "newest"
+                      ? "sortNewest"
+                      : sort === "name"
+                        ? "sortName"
+                        : "sortTop",
+                  )}
+                </span>
+              ),
+              description: (
+                <div className="space-y-2">
+                  <div className="grid gap-2 sm:grid-cols-3">
+                    <FormSelect
+                      name="source"
+                      defaultValue={source}
+                      label={t("filterBySource")}
+                      options={[
+                        { value: "all", label: t("allSources") },
+                        { value: "github", label: t("github") },
+                        { value: "other", label: t("otherSources") },
+                      ]}
+                    />
+                    <FormSelect
+                      name="installation"
+                      defaultValue={installation}
+                      label={t("filterByInstallation")}
+                      options={[
+                        { value: "all", label: t("allInstallations") },
+                        { value: "available", label: t("available") },
+                        { value: "installed", label: t("installed") },
+                      ]}
+                    />
+                    <FormSelect
+                      name="sort"
+                      defaultValue={sort}
+                      label={t("sortSkills")}
+                      options={[
+                        { value: "top", label: t("sortTop") },
+                        { value: "newest", label: t("sortNewest") },
+                        { value: "name", label: t("sortName") },
+                      ]}
+                    />
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {t("catalogFiltersHint")}
+                  </p>
+                </div>
+              ),
+            },
+          ]}
+        />
       </form>
 
       <div className="grid min-w-0 gap-6 lg:grid-cols-[13.5rem_minmax(0,1fr)]">
         <MarketCategorySidebar
-          label={t('filterByCategory')}
-          allLabel={t('allCategories')}
+          label={t("filterByCategory")}
+          allLabel={t("allCategories")}
           allHref={skillMarketHref(slug, { q, source, installation, sort })}
           allCount={availableTotal}
-          allActive={category === 'all'}
+          allActive={category === "all"}
           categories={sortedCategories.map((item) => ({
             name: item.name,
             count: item._count.skills,
             active: item.slug === category,
             href: skillMarketHref(slug, {
-              q, source, installation, sort,
+              q,
+              source,
+              installation,
+              sort,
               category: item.slug === category ? undefined : item.slug,
             }),
           }))}
@@ -177,41 +288,80 @@ export default async function SkillMarketPage({
 
         <div className="min-w-0 space-y-5">
           <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
-            <p className="text-muted-foreground">{t('skillResultSummary', { count: total })}</p>
+            <p className="text-muted-foreground">
+              {t("skillResultSummary", { count: total })}
+            </p>
             {hasFilters ? (
-              <ButtonLink href={skillMarketHref(slug, {})} variant="ghost" size="sm">{t('clearFilters')}</ButtonLink>
+              <ButtonLink
+                href={skillMarketHref(slug, {})}
+                variant="ghost"
+                size="sm"
+              >
+                {t("clearFilters")}
+              </ButtonLink>
             ) : null}
           </div>
 
-          <DashboardSection title={hasFilters ? t('filteredSkills') : t('allSkills')} count={total}>
-              {all.length === 0 ? (
-                <DashboardEmptyState
-                  title={t('noSkillsTitle')}
-                  description={hasFilters ? t('noSkillsMatchFilters') : t('noSkillsDescription')}
-                  actions={hasFilters ? <ButtonLink href={skillMarketHref(slug, {})} variant="secondary" size="md">{t('clearFilters')}</ButtonLink> : undefined}
-                />
-              ) : (
-                <BrowseGrid
-                    items={all}
-                    installedIds={installedIds}
-                    slug={slug}
-                    action={installSkillAction}
-                    idField="skillId"
-                    actionLabel={t('install')}
-                    pendingLabel={t('installing')}
-                    installedLabel={t('installed')}
-                    detailKind="skills"
-                />
-              )}
+          <DashboardSection
+            title={hasFilters ? t("filteredSkills") : t("allSkills")}
+            count={total}
+          >
+            {all.length === 0 ? (
+              <DashboardEmptyState
+                title={t("noSkillsTitle")}
+                description={
+                  hasFilters
+                    ? t("noSkillsMatchFilters")
+                    : t("noSkillsDescription")
+                }
+                actions={
+                  hasFilters ? (
+                    <ButtonLink
+                      href={skillMarketHref(slug, {})}
+                      variant="secondary"
+                      size="md"
+                    >
+                      {t("clearFilters")}
+                    </ButtonLink>
+                  ) : undefined
+                }
+              />
+            ) : (
+              <BrowseGrid
+                items={all}
+                installedIds={installedIds}
+                slug={slug}
+                action={installSkillAction}
+                idField="skillId"
+                actionLabel={t("install")}
+                pendingLabel={t("installing")}
+                installedLabel={t("installed")}
+                detailKind="skills"
+              />
+            )}
           </DashboardSection>
 
           <DashboardPagination
             page={page}
             lastPage={lastPage}
-            summary={t('paginationSummary', { page, lastPage, total, label: t('skillResources') })}
-            previousLabel={common('previous')}
-            nextLabel={common('next')}
-            hrefForPage={(nextPage) => skillMarketHref(slug, { q, source, installation, category, sort, page: nextPage })}
+            summary={t("paginationSummary", {
+              page,
+              lastPage,
+              total,
+              label: t("skillResources"),
+            })}
+            previousLabel={common("previous")}
+            nextLabel={common("next")}
+            hrefForPage={(nextPage) =>
+              skillMarketHref(slug, {
+                q,
+                source,
+                installation,
+                category,
+                sort,
+                page: nextPage,
+              })
+            }
           />
         </div>
       </div>

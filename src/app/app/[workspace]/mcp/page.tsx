@@ -1,27 +1,34 @@
+import { ButtonLink } from "@/components/motion/button";
 
-import { ButtonLink } from '@/components/motion/button';
+import { redirect } from "next/navigation";
+import { getLocale, getTranslations } from "next-intl/server";
+import { Store } from "lucide-react";
+import { getCurrentUser } from "@/lib/auth/current-user";
+import { getWorkspaceForUser, getDeployments } from "@/lib/workspace/queries";
+import { effectiveStatus } from "@/lib/process/supervisor";
+import { DeployCustomMcpDialog } from "@/components/dashboard/DeployCustomMcpDialog";
+import { deploymentLabel } from "@/lib/workspace/deployment-label";
+import { ProvisioningRefresher } from "@/components/dashboard/ProvisioningRefresher";
+import {
+  DashboardPage,
+  DashboardToolbar,
+} from "@/components/dashboard/DashboardUI";
+import { McpDeploymentsBrowser } from "@/components/dashboard/McpDeploymentsBrowser";
+import { formatInTimeZone, resolveUserTimeZone } from "@/lib/timezone";
 
-import { redirect } from 'next/navigation';
-import { getLocale, getTranslations } from 'next-intl/server';
-import { Store } from 'lucide-react';
-import { getCurrentUser } from '@/lib/auth/current-user';
-import { getWorkspaceForUser, getDeployments } from '@/lib/workspace/queries';
-import { effectiveStatus } from '@/lib/process/supervisor';
-import { DeployCustomMcpDialog } from '@/components/dashboard/DeployCustomMcpDialog';
-import { deploymentLabel } from '@/lib/workspace/deployment-label';
-import { ProvisioningRefresher } from '@/components/dashboard/ProvisioningRefresher';
-import { DashboardPage, DashboardToolbar } from '@/components/dashboard/DashboardUI';
-import { McpDeploymentsBrowser } from '@/components/dashboard/McpDeploymentsBrowser';
-import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
-
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
 function formatDate(d: Date, timeZone: string, locale: string): string {
-  return formatInTimeZone(d, timeZone, {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  }, locale);
+  return formatInTimeZone(
+    d,
+    timeZone,
+    {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    },
+    locale,
+  );
 }
 
 export default async function McpServersPage({
@@ -31,16 +38,19 @@ export default async function McpServersPage({
   params: Promise<{ workspace: string }>;
   searchParams: Promise<{ create?: string }>;
 }) {
-  const [{ workspace: slug }, query] = await Promise.all([params, searchParams]);
+  const [{ workspace: slug }, query] = await Promise.all([
+    params,
+    searchParams,
+  ]);
   const [t, locale] = await Promise.all([
-    getTranslations('console.mcp'),
+    getTranslations("console.mcp"),
     getLocale(),
   ]);
   const user = await getCurrentUser();
-  if (!user) redirect('/app/login');
+  if (!user) redirect("/app/login");
   const timeZone = resolveUserTimeZone(user);
   const ws = await getWorkspaceForUser(slug, user.id);
-  if (!ws) redirect('/app');
+  if (!ws) redirect("/app");
   const deployments = await getDeployments(ws.id);
   const deploymentItems = deployments.map((deployment) => {
     const label = deploymentLabel(deployment);
@@ -54,7 +64,9 @@ export default async function McpServersPage({
       iconUrl: deployment.server?.iconUrl ?? null,
     };
   });
-  const anyProvisioning = deploymentItems.some((deployment) => deployment.status === 'provisioning');
+  const anyProvisioning = deploymentItems.some(
+    (deployment) => deployment.status === "provisioning",
+  );
   const marketHref = `/app/${encodeURIComponent(slug)}/market/mcp`;
 
   return (
@@ -67,14 +79,19 @@ export default async function McpServersPage({
             <>
               <ButtonLink href={marketHref} variant="secondary" size="md">
                 <Store className="size-4" />
-                {t('browseToolplane')}
+                {t("browseToolplane")}
               </ButtonLink>
-              <DeployCustomMcpDialog slug={slug} defaultOpen={query.create === '1'} />
+              <DeployCustomMcpDialog
+                slug={slug}
+                defaultOpen={query.create === "1"}
+              />
             </>
           }
         >
-          <h1 className="text-xl font-semibold">{t('title')}</h1>
-          <p className="text-sm text-muted-foreground">{t('deploymentCountSummary', { count: deploymentItems.length })}</p>
+          <h1 className="text-xl font-semibold">{t("title")}</h1>
+          <p className="text-sm text-muted-foreground">
+            {t("deploymentCountSummary", { count: deploymentItems.length })}
+          </p>
         </DashboardToolbar>
 
         <McpDeploymentsBrowser slug={slug} deployments={deploymentItems} />

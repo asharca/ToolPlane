@@ -1,19 +1,19 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
-import { HermesRuntimeDialogLauncher } from '@/components/dashboard/agents/HermesRuntimeDialog';
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { HermesRuntimeDialogLauncher } from "@/components/dashboard/agents/HermesRuntimeDialog";
 
 const sandboxConsoleMocks = vi.hoisted(() => ({ render: vi.fn() }));
 const managementMocks = vi.hoisted(() => ({ render: vi.fn() }));
 
-vi.mock('@/components/dashboard/sandboxes/SandboxConsole', () => ({
+vi.mock("@/components/dashboard/sandboxes/SandboxConsole", () => ({
   SandboxConsole: (props: Record<string, unknown>) => {
     sandboxConsoleMocks.render(props);
     return <div>Hermes shell test surface</div>;
   },
 }));
 
-vi.mock('@/components/dashboard/agents/HermesRuntimeManagement', () => ({
+vi.mock("@/components/dashboard/agents/HermesRuntimeManagement", () => ({
   HermesRuntimeManagement: (props: Record<string, unknown>) => {
     managementMocks.render(props);
     return <div>Hermes management test surface</div>;
@@ -21,104 +21,145 @@ vi.mock('@/components/dashboard/agents/HermesRuntimeManagement', () => ({
 }));
 
 const runtime = {
-  name: 'Research Hermes',
-  agentId: 'agent-1',
-  deploymentId: 'deployment-1',
-  dashboardUrl: '/api/v1/agent-runtimes/runtime-1/dashboard/capability/',
+  name: "Research Hermes",
+  agentId: "agent-1",
+  deploymentId: "deployment-1",
+  dashboardUrl: "/api/v1/agent-runtimes/runtime-1/dashboard/capability/",
 };
 
 const managedRuntime = {
   ...runtime,
   management: {
-    workspace: 'acme',
-    sandboxId: 'sandbox-1',
-    sandboxName: 'Research Hermes',
-    environment: 'EXISTING=value',
+    workspace: "acme",
+    sandboxId: "sandbox-1",
+    sandboxName: "Research Hermes",
+    environment: "EXISTING=value",
     allowSudo: false,
-    status: 'stopped',
+    status: "stopped",
     snapshots: [],
   },
 };
 
-describe('HermesRuntimeDialogLauncher', () => {
+describe("HermesRuntimeDialogLauncher", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    document.body.style.overflow = '';
+    document.body.style.overflow = "";
   });
 
-  it('opens a standalone Web dialog without navigation links', async () => {
+  it("opens a standalone Web dialog without navigation links", async () => {
     render(<HermesRuntimeDialogLauncher runtime={runtime} />);
 
-    expect(screen.queryByRole('link', { name: 'Open Hermes' })).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Open Hermes' }));
+    expect(
+      screen.queryByRole("link", { name: "Open Hermes" }),
+    ).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Open Hermes" }));
 
-    const dialog = screen.getByRole('dialog', { name: 'Hermes runtime' });
+    const dialog = screen.getByRole("dialog", { name: "Hermes runtime" });
     expect(dialog).toBeInTheDocument();
-    expect(screen.getByText('Research Hermes')).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: 'Web' })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByTitle('Hermes runtime dashboard')).toHaveAttribute('src', runtime.dashboardUrl);
-    expect(document.body.style.overflow).toBe('hidden');
+    expect(screen.getByText("Research Hermes")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Web" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByTitle("Hermes runtime dashboard")).toHaveAttribute(
+      "src",
+      runtime.dashboardUrl,
+    );
+    expect(document.body.style.overflow).toBe("hidden");
   });
 
-  it('switches between Web and terminal in one stable dialog', async () => {
+  it("switches between Web and terminal in one stable dialog", async () => {
     render(<HermesRuntimeDialogLauncher runtime={runtime} />);
-    await userEvent.click(screen.getByRole('button', { name: 'Open Hermes' }));
+    await userEvent.click(screen.getByRole("button", { name: "Open Hermes" }));
 
-    await userEvent.click(screen.getByRole('tab', { name: 'Terminal' }));
+    await userEvent.click(screen.getByRole("tab", { name: "Terminal" }));
 
-    expect(screen.getByText('Hermes shell test surface')).toBeInTheDocument();
-    expect(sandboxConsoleMocks.render).toHaveBeenLastCalledWith(expect.objectContaining({
-      deploymentId: 'deployment-1',
-      terminalApiBase: '/api/v1/agents/agent-1/terminal',
-      terminalOnly: true,
-    }));
+    expect(screen.getByText("Hermes shell test surface")).toBeInTheDocument();
+    expect(sandboxConsoleMocks.render).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        deploymentId: "deployment-1",
+        terminalApiBase: "/api/v1/agents/agent-1/terminal",
+        terminalOnly: true,
+      }),
+    );
 
-    await userEvent.click(screen.getByRole('tab', { name: 'Web' }));
-    expect(screen.getByTitle('Hermes runtime dashboard')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("tab", { name: "Web" }));
+    expect(screen.getByTitle("Hermes runtime dashboard")).toBeInTheDocument();
   });
 
-  it('can open the terminal directly and closes with Escape or the backdrop', async () => {
+  it("can open the terminal directly and closes with Escape or the backdrop", async () => {
     render(<HermesRuntimeDialogLauncher runtime={runtime} />);
-    const terminalTrigger = screen.getByRole('button', { name: 'Open terminal' });
+    const terminalTrigger = screen.getByRole("button", {
+      name: "Open terminal",
+    });
     await userEvent.click(terminalTrigger);
 
-    expect(screen.getByRole('tab', { name: 'Terminal' })).toHaveAttribute('aria-selected', 'true');
-    await userEvent.keyboard('{Escape}');
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Hermes runtime' })).not.toBeInTheDocument());
+    expect(screen.getByRole("tab", { name: "Terminal" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "Hermes runtime" }),
+      ).not.toBeInTheDocument(),
+    );
     await waitFor(() => expect(terminalTrigger).toHaveFocus());
 
-    await userEvent.click(screen.getByRole('button', { name: 'Open Hermes' }));
-    const dialog = screen.getByRole('dialog', { name: 'Hermes runtime' });
+    await userEvent.click(screen.getByRole("button", { name: "Open Hermes" }));
+    const dialog = screen.getByRole("dialog", { name: "Hermes runtime" });
     await userEvent.click(dialog);
     expect(dialog).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Dismiss modal' }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Hermes runtime' })).not.toBeInTheDocument());
+    await userEvent.click(
+      screen.getByRole("button", { name: "Dismiss modal" }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "Hermes runtime" }),
+      ).not.toBeInTheDocument(),
+    );
   });
 
-  it('accepts an Escape close request from the embedded Hermes dashboard', async () => {
+  it("accepts an Escape close request from the embedded Hermes dashboard", async () => {
     render(<HermesRuntimeDialogLauncher runtime={runtime} />);
-    await userEvent.click(screen.getByRole('button', { name: 'Open Hermes' }));
+    await userEvent.click(screen.getByRole("button", { name: "Open Hermes" }));
 
-    const iframe = screen.getByTitle('Hermes runtime dashboard') as HTMLIFrameElement;
-    fireEvent(window, new MessageEvent('message', {
-      data: 'toolplane:close-agent-settings',
-      source: iframe.contentWindow,
-    }));
+    const iframe = screen.getByTitle(
+      "Hermes runtime dashboard",
+    ) as HTMLIFrameElement;
+    fireEvent(
+      window,
+      new MessageEvent("message", {
+        data: "toolplane:close-agent-settings",
+        source: iframe.contentWindow,
+      }),
+    );
 
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Hermes runtime' })).not.toBeInTheDocument());
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "Hermes runtime" }),
+      ).not.toBeInTheDocument(),
+    );
   });
 
-  it('opens the managed runtime settings from its dedicated trigger and tab', async () => {
+  it("opens the managed runtime settings from its dedicated trigger and tab", async () => {
     render(<HermesRuntimeDialogLauncher runtime={managedRuntime} />);
 
-    await userEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
 
-    expect(screen.getByRole('tab', { name: 'Settings' })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByText('Hermes management test surface')).toBeInTheDocument();
-    expect(managementMocks.render).toHaveBeenLastCalledWith(expect.objectContaining({
-      workspace: 'acme',
-      sandboxId: 'sandbox-1',
-      environment: 'EXISTING=value',
-    }));
+    expect(screen.getByRole("tab", { name: "Settings" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(
+      screen.getByText("Hermes management test surface"),
+    ).toBeInTheDocument();
+    expect(managementMocks.render).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        workspace: "acme",
+        sandboxId: "sandbox-1",
+        environment: "EXISTING=value",
+      }),
+    );
   });
 });

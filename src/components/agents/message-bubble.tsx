@@ -1,11 +1,7 @@
 "use client";
 
 import { ChevronDown } from "lucide-react";
-import {
-  type HTMLMotionProps,
-  motion,
-  useReducedMotion,
-} from "motion/react";
+import { type HTMLMotionProps, motion, useReducedMotion } from "motion/react";
 import {
   cloneElement,
   type ComponentPropsWithRef,
@@ -18,11 +14,7 @@ import {
   useId,
   useState,
 } from "react";
-import {
-  EASE_OUT,
-  SPRING_LAYOUT,
-  SPRING_SWAP,
-} from "@/lib/ease";
+import { EASE_OUT, SPRING_LAYOUT, SPRING_SWAP } from "@/lib/ease";
 import { cn } from "@/lib/utils";
 import { MessageSideContext } from "@/components/agents/message-context";
 
@@ -132,8 +124,7 @@ export function MessageBubble({
         initial={initial ?? false}
         animate={animate}
         exit={
-          exit ??
-          (reduce ? { opacity: 0 } : { opacity: 0, y: -3, scale: 0.99 })
+          exit ?? (reduce ? { opacity: 0 } : { opacity: 0, y: -3, scale: 0.99 })
         }
         transition={transition ?? (reduce ? { duration: 0.12 } : SPRING_LAYOUT)}
         className={cn(
@@ -187,15 +178,17 @@ export function MessageBubbleContent({
   ...props
 }: MessageBubbleContentProps) {
   const reduce = useReducedMotion() ?? false;
-  const { align = "start", animateIn, variant } =
-    useContext(MessageBubbleContext);
+  const {
+    align = "start",
+    animateIn,
+    variant,
+  } = useContext(MessageBubbleContext);
   const [layoutVersion, setLayoutVersion] = useState(0);
   const notifyLayout = useCallback(
     () => setLayoutVersion((version) => version + 1),
     [],
   );
-  const interactive =
-    render?.type === "button" || render?.type === "a";
+  const interactive = render?.type === "button" || render?.type === "a";
   const classes = cn(bubbleContentClass(variant, interactive), className);
   const composedChildren = (
     <>
@@ -228,11 +221,7 @@ export function MessageBubbleContent({
       <MessageBubbleLayoutContext.Provider value={notifyLayout}>
         <motion.div
           initial={
-            animateIn
-              ? reduce
-                ? { opacity: 0 }
-                : { opacity: 0 }
-              : false
+            animateIn ? (reduce ? { opacity: 0 } : { opacity: 0 }) : false
           }
           animate={{ opacity: 1 }}
           transition={

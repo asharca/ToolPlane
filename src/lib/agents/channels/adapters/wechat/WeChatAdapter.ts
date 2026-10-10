@@ -1,23 +1,34 @@
-import { ChannelAdapter, type ChannelAdapterConfig } from '../../ChannelAdapter';
-import { FILE_EXTENSION_MIME_MAP, splitMessage } from '../../utils';
-import type { FileAttachment, ImageAttachment } from '../../media';
-import { WeixinBot } from './WeChatProtocol';
+import {
+  ChannelAdapter,
+  type ChannelAdapterConfig,
+} from "../../ChannelAdapter";
+import { FILE_EXTENSION_MIME_MAP, splitMessage } from "../../utils";
+import type { FileAttachment, ImageAttachment } from "../../media";
+import { WeixinBot } from "./WeChatProtocol";
 
 // Cherry's iLink transport, with credentials supplied by ToolPlane's encrypted DB.
 export class WeChatAdapter extends ChannelAdapter {
   private bot: WeixinBot | null = null;
-  constructor(private readonly options: ChannelAdapterConfig<'wechat'>) { super(options); }
+  constructor(private readonly options: ChannelAdapterConfig<"wechat">) {
+    super(options);
+  }
 
   protected async performConnect(signal: AbortSignal) {
     const config = this.options.channelConfig;
-    if (!config.token || !config.accountId) throw new Error('Scan the WeChat login QR code first.');
+    if (!config.token || !config.accountId)
+      throw new Error("Scan the WeChat login QR code first.");
     const bot = new WeixinBot({
-      credentials: { token: config.token, accountId: config.accountId, userId: '', baseUrl: config.baseUrl || 'https://ilinkai.weixin.qq.com' },
+      credentials: {
+        token: config.token,
+        accountId: config.accountId,
+        userId: "",
+        baseUrl: config.baseUrl || "https://ilinkai.weixin.qq.com",
+      },
       onConnected: () => this.markConnected(),
       onError: (error) => {
         const message = error instanceof Error ? error.message : String(error);
         this.markDisconnected(message);
-        this.log.error('WeChat polling failed', { error: message });
+        this.log.error("WeChat polling failed", { error: message });
       },
       log: this.log,
     });
@@ -35,18 +46,42 @@ export class WeChatAdapter extends ChannelAdapter {
       const files = [];
       for (const item of message._fileItems ?? []) {
         const file = await bot.downloadFile(item);
-        if (file) files.push({ filename: file.filename, data: file.data.toString('base64'), size: file.data.length,
-          media_type: file.mediaType === 'application/octet-stream'
-            ? FILE_EXTENSION_MIME_MAP[file.filename.split('.').at(-1)?.toLowerCase() ?? ''] || file.mediaType : file.mediaType });
+        if (file)
+          files.push({
+            filename: file.filename,
+            data: file.data.toString("base64"),
+            size: file.data.length,
+            media_type:
+              file.mediaType === "application/octet-stream"
+                ? FILE_EXTENSION_MIME_MAP[
+                    file.filename.split(".").at(-1)?.toLowerCase() ?? ""
+                  ] || file.mediaType
+                : file.mediaType,
+          });
       }
-      if (signal.aborted || (!message.text.trim() && !images.length && !files.length)) return;
-      this.emit('message', { chatId: message.userId, userId: message.userId, userName: message.userId,
-        messageId: message.messageId, text: message.text, images, files });
+      if (
+        signal.aborted ||
+        (!message.text.trim() && !images.length && !files.length)
+      )
+        return;
+      this.emit("message", {
+        chatId: message.userId,
+        userId: message.userId,
+        userName: message.userId,
+        messageId: message.messageId,
+        text: message.text,
+        images,
+        files,
+      });
     });
     void bot.run().catch((error: unknown) => {
-      if (!signal.aborted) this.emit('fatal', error instanceof Error ? error.message : 'WeChat connection failed.');
+      if (!signal.aborted)
+        this.emit(
+          "fatal",
+          error instanceof Error ? error.message : "WeChat connection failed.",
+        );
     });
-    this.log.info('WeChat iLink polling started.');
+    this.log.info("WeChat iLink polling started.");
   }
   protected async performDisconnect() {
     await this.bot?.stop();
@@ -54,14 +89,24 @@ export class WeChatAdapter extends ChannelAdapter {
   }
   async sendMessage(chatId: string, text: string) {
     const bot = this.bot;
-    if (!bot) throw new Error('WeChat is not connected.');
+    if (!bot) throw new Error("WeChat is not connected.");
     try {
-      for (const chunk of splitMessage(text, 2000)) await bot.send(chatId, chunk);
-    } finally { await bot.stopTyping(chatId).catch(() => {}); }
+      for (const chunk of splitMessage(text, 2000))
+        await bot.send(chatId, chunk);
+    } finally {
+      await bot.stopTyping(chatId).catch(() => {});
+    }
   }
-  async sendTypingIndicator(chatId: string) { await this.bot?.sendTyping(chatId); }
+  async sendTypingIndicator(chatId: string) {
+    await this.bot?.sendTyping(chatId);
+  }
   override async sendFile(chatId: string, file: FileAttachment) {
-    if (!this.bot) throw new Error('WeChat is not connected.');
-    await this.bot.sendFile(chatId, file.filename, Buffer.from(file.data, 'base64'), file.media_type);
+    if (!this.bot) throw new Error("WeChat is not connected.");
+    await this.bot.sendFile(
+      chatId,
+      file.filename,
+      Buffer.from(file.data, "base64"),
+      file.media_type,
+    );
   }
 }

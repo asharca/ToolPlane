@@ -183,7 +183,11 @@ function getFocusableElements(root: HTMLElement | null) {
   if (!root) return [];
   return Array.from(
     root.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
-  ).filter((element) => element.tabIndex >= 0 && !element.closest('[hidden], [inert], [aria-hidden="true"]'));
+  ).filter(
+    (element) =>
+      element.tabIndex >= 0 &&
+      !element.closest('[hidden], [inert], [aria-hidden="true"]'),
+  );
 }
 
 export function CenterMorphModalContent({
@@ -200,7 +204,9 @@ export function CenterMorphModalContent({
   const context = useCenterMorphModalContext("CenterMorphModalContent");
   const reduce = useReducedMotion() ?? false;
   const [mounted, setMounted] = useState(false);
-  const [backgroundScrollLocked, setBackgroundScrollLocked] = useState(context.open);
+  const [backgroundScrollLocked, setBackgroundScrollLocked] = useState(
+    context.open,
+  );
   const panelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => setMounted(true), []);
@@ -209,7 +215,9 @@ export function CenterMorphModalContent({
     if (!backgroundScrollLocked) return;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-    return () => { document.body.style.overflow = previousOverflow; };
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
   }, [backgroundScrollLocked]);
 
   useEffect(() => {
@@ -218,7 +226,9 @@ export function CenterMorphModalContent({
     const [firstFocusable] = getFocusableElements(panelRef.current);
     (firstFocusable ?? panelRef.current)?.focus({ preventScroll: true });
     return () => {
-      document.getElementById(context.triggerId)?.focus({ preventScroll: true });
+      document
+        .getElementById(context.triggerId)
+        ?.focus({ preventScroll: true });
     };
   }, [mounted, context.open, context.triggerId]);
 
@@ -254,12 +264,14 @@ export function CenterMorphModalContent({
   if (!mounted) return null;
 
   return createPortal(
-    <AnimatePresence onExitComplete={() => {
-      if (!context.open) {
-        setBackgroundScrollLocked(false);
-        onExitComplete?.();
-      }
-    }}>
+    <AnimatePresence
+      onExitComplete={() => {
+        if (!context.open) {
+          setBackgroundScrollLocked(false);
+          onExitComplete?.();
+        }
+      }}
+    >
       {context.open ? (
         <PresenceGate>
           {({ isPresent, gate }) => (
@@ -303,8 +315,14 @@ export function CenterMorphModalContent({
                     tabIndex={-1}
                     initial={
                       reduce
-                        ? { "--modal-opacity": 0, "--modal-clip": CENTER_OPEN_CLIP }
-                        : { "--modal-opacity": 1, "--modal-clip": CENTER_FOLDED_CLIP }
+                        ? {
+                            "--modal-opacity": 0,
+                            "--modal-clip": CENTER_OPEN_CLIP,
+                          }
+                        : {
+                            "--modal-opacity": 1,
+                            "--modal-clip": CENTER_FOLDED_CLIP,
+                          }
                     }
                     animate={{
                       "--modal-opacity": 1,

@@ -1,5 +1,8 @@
-import 'server-only';
-import { assertRuntimeOwner, beginRuntimeOperation } from '@/lib/runtime/ownership-state';
+import "server-only";
+import {
+  assertRuntimeOwner,
+  beginRuntimeOperation,
+} from "@/lib/runtime/ownership-state";
 
 type WorkspaceOperationState = {
   active: number;
@@ -13,10 +16,13 @@ const gateGlobal = globalThis as typeof globalThis & {
 };
 
 function states(): Map<string, WorkspaceOperationState> {
-  return gateGlobal.__workspaceOperationStates ??= new Map();
+  gateGlobal.__workspaceOperationStates ??= new Map();
+  return gateGlobal.__workspaceOperationStates;
 }
 
-export function beginWorkspaceOperation(workspaceId: string): (() => void) | null {
+export function beginWorkspaceOperation(
+  workspaceId: string,
+): (() => void) | null {
   assertRuntimeOwner();
   const entries = states();
   let state = entries.get(workspaceId);
@@ -27,22 +33,28 @@ export function beginWorkspaceOperation(workspaceId: string): (() => void) | nul
   }
   const releaseRuntime = beginRuntimeOperation();
   state.active += 1;
+  const operationState = state;
 
   let released = false;
   return () => {
     if (released) return;
     released = true;
     releaseRuntime();
-    state!.active -= 1;
-    if (state!.active !== 0) return;
-    state!.resolveDrained?.();
-    if (!state!.closing && entries.get(workspaceId) === state) {
+    operationState.active -= 1;
+    if (operationState.active !== 0) return;
+    operationState.resolveDrained?.();
+    if (
+      !operationState.closing &&
+      entries.get(workspaceId) === operationState
+    ) {
       entries.delete(workspaceId);
     }
   };
 }
 
-export async function closeWorkspaceOperations(workspaceId: string): Promise<void> {
+export async function closeWorkspaceOperations(
+  workspaceId: string,
+): Promise<void> {
   const entries = states();
   let state = entries.get(workspaceId);
   if (!state) {
@@ -52,9 +64,10 @@ export async function closeWorkspaceOperations(workspaceId: string): Promise<voi
     state.closing = true;
   }
   if (state.active === 0) return;
+  const closingState = state;
   if (!state.drained) {
     state.drained = new Promise<void>((resolve) => {
-      state!.resolveDrained = resolve;
+      closingState.resolveDrained = resolve;
     });
   }
   await state.drained;

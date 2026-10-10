@@ -1,17 +1,30 @@
-import 'server-only';
-import { randomUUID } from 'node:crypto';
-import { resolveSpawnSpec, type SpawnSpec } from '@/lib/process/spawn-spec';
-import { startProcess, killProcess, livePort, liveStatus } from '@/lib/process/supervisor';
-import { McpPayloadTooLargeError, mcpRpc } from '@/lib/process/mcp-client';
+import "server-only";
+import { randomUUID } from "node:crypto";
+import { resolveSpawnSpec, type SpawnSpec } from "@/lib/process/spawn-spec";
+import {
+  startProcess,
+  killProcess,
+  livePort,
+  liveStatus,
+} from "@/lib/process/supervisor";
+import { McpPayloadTooLargeError, mcpRpc } from "@/lib/process/mcp-client";
 import {
   parseMcpToolCatalogResult,
   redactMcpToolCatalogResult,
   type McpToolDefinition,
-} from '@/lib/process/mcp-tool-catalog';
-import { recipeToDeploymentData, type ServerRecipe } from '@/lib/workspace/server-recipe';
+} from "@/lib/process/mcp-tool-catalog";
+import {
+  recipeToDeploymentData,
+  type ServerRecipe,
+} from "@/lib/workspace/server-recipe";
 
 export type ValidateResult =
-  | { ok: true; toolCount: number; tools: string[]; toolCatalog: McpToolDefinition[] }
+  | {
+      ok: true;
+      toolCount: number;
+      tools: string[];
+      toolCatalog: McpToolDefinition[];
+    }
   | { ok: false; error: string };
 
 // The probe spins up a throwaway sandbox container, so first-run cold start
@@ -33,22 +46,25 @@ export async function validateServerRecipe(
   envOverride: Record<string, string> = {},
 ): Promise<ValidateResult> {
   const env: Record<string, string> = { ...(recipe.envValues ?? {}) };
-  for (const k of recipe.env) if (!(k in env)) env[k] = '';
+  for (const k of recipe.env) if (!(k in env)) env[k] = "";
   for (const [k, v] of Object.entries(envOverride)) env[k] = v;
 
   let spec: SpawnSpec;
   try {
     const data = recipeToDeploymentData(recipe);
     data.installCfg.env = env;
-    spec = resolveSpawnSpec({
-      serverId: null,
-      name: recipe.ref,
-      source: data.source,
-      sourceRef: data.sourceRef,
-      installCfg: data.installCfg,
-    }, true);
+    spec = resolveSpawnSpec(
+      {
+        serverId: null,
+        name: recipe.ref,
+        source: data.source,
+        sourceRef: data.sourceRef,
+        installCfg: data.installCfg,
+      },
+      true,
+    );
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : 'Bad recipe.' };
+    return { ok: false, error: e instanceof Error ? e.message : "Bad recipe." };
   }
 
   const id = `validate:${randomUUID()}`;
@@ -59,18 +75,22 @@ export async function validateServerRecipe(
     let port = livePort(id);
     while (!port && Date.now() < deadline) {
       const st = liveStatus(id);
-      if (st === 'error' || st === 'stopped') {
+      if (st === "error" || st === "stopped") {
         return {
           ok: false,
           error:
-            'The process exited before it was ready. The package/image or command may be wrong, or the server needs an env value at boot. (First run also pulls the image — try again.)',
+            "The process exited before it was ready. The package/image or command may be wrong, or the server needs an env value at boot. (First run also pulls the image — try again.)",
         };
       }
       await sleep(POLL_INTERVAL_MS);
       port = livePort(id);
     }
     if (!port) {
-      return { ok: false, error: 'Timed out starting. First run can take ~1 minute while the image is pulled — try again.' };
+      return {
+        ok: false,
+        error:
+          "Timed out starting. First run can take ~1 minute while the image is pulled — try again.",
+      };
     }
 
     let toolCatalog: McpToolDefinition[] = [];
@@ -81,45 +101,77 @@ export async function validateServerRecipe(
     for (let page = 0; page < 10; page += 1) {
       const remainingMs = toolsDeadline - Date.now();
       if (remainingMs <= 0) {
-        return { ok: false, error: 'Timed out while reading the paginated tool catalog.' };
+        return {
+          ok: false,
+          error: "Timed out while reading the paginated tool catalog.",
+        };
       }
       let result: Record<string, unknown> | null;
       let responseBytes = 0;
       try {
         result = await mcpRpc(
           id,
-          'tools/list',
+          "tools/list",
           cursor ? { cursor } : undefined,
           Math.min(TOOLS_TIMEOUT_MS, remainingMs),
           {
             maxResponseBytes: remainingResponseBytes,
-            onResponseBytes: (bytes) => { responseBytes = bytes; },
+            onResponseBytes: (bytes) => {
+              responseBytes = bytes;
+            },
           },
         );
       } catch (error) {
         if (error instanceof McpPayloadTooLargeError) {
-          return { ok: false, error: 'The MCP tool catalog response is too large.' };
+          return {
+            ok: false,
+            error: "The MCP tool catalog response is too large.",
+          };
         }
         throw error;
       }
       if (!result) {
-        if (!page) return { ok: false, error: 'Server started but did not answer tools/list as an MCP server.' };
-        return { ok: false, error: 'Server stopped responding while its paginated tool catalog was being read.' };
+        if (!page)
+          return {
+            ok: false,
+            error:
+              "Server started but did not answer tools/list as an MCP server.",
+          };
+        return {
+          ok: false,
+          error:
+            "Server stopped responding while its paginated tool catalog was being read.",
+        };
       }
       remainingResponseBytes -= responseBytes;
-      if (!Array.isArray(result.tools) || result.tools.length > 1_000 - toolCatalog.length) {
-        return { ok: false, error: 'Server returned an invalid or incomplete MCP tool catalog.' };
+      if (
+        !Array.isArray(result.tools) ||
+        result.tools.length > 1_000 - toolCatalog.length
+      ) {
+        return {
+          ok: false,
+          error: "Server returned an invalid or incomplete MCP tool catalog.",
+        };
       }
-      const pageCatalog = redactMcpToolCatalogResult(result.tools, Object.values(env));
+      const pageCatalog = redactMcpToolCatalogResult(
+        result.tools,
+        Object.values(env),
+      );
       if (!pageCatalog.ok) {
-        return { ok: false, error: 'Server returned an invalid or unsafe MCP tool catalog.' };
+        return {
+          ok: false,
+          error: "Server returned an invalid or unsafe MCP tool catalog.",
+        };
       }
       const combined = parseMcpToolCatalogResult([
         ...toolCatalog,
         ...pageCatalog.tools,
       ]);
       if (!combined.ok) {
-        return { ok: false, error: 'Server returned a duplicate or oversized MCP tool catalog.' };
+        return {
+          ok: false,
+          error: "Server returned a duplicate or oversized MCP tool catalog.",
+        };
       }
       toolCatalog = combined.tools;
 
@@ -133,20 +185,26 @@ export async function validateServerRecipe(
       }
       const nextCursor = result.nextCursor;
       if (
-        typeof nextCursor !== 'string'
-        || !nextCursor
-        || nextCursor.length > 4_000
-        || seenCursors.has(nextCursor)
-        || page === 9
-        || toolCatalog.length >= 1_000
-        || remainingResponseBytes <= 0
+        typeof nextCursor !== "string" ||
+        !nextCursor ||
+        nextCursor.length > 4_000 ||
+        seenCursors.has(nextCursor) ||
+        page === 9 ||
+        toolCatalog.length >= 1_000 ||
+        remainingResponseBytes <= 0
       ) {
-        return { ok: false, error: 'Server returned an incomplete paginated MCP tool catalog.' };
+        return {
+          ok: false,
+          error: "Server returned an incomplete paginated MCP tool catalog.",
+        };
       }
       seenCursors.add(nextCursor);
       cursor = nextCursor;
     }
-    return { ok: false, error: 'Server returned an incomplete paginated MCP tool catalog.' };
+    return {
+      ok: false,
+      error: "Server returned an incomplete paginated MCP tool catalog.",
+    };
   } finally {
     await killProcess(id, { preventRestart: true });
   }

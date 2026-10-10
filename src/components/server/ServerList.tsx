@@ -1,20 +1,20 @@
-import { getTranslations } from 'next-intl/server';
-import { notFound } from 'next/navigation';
+import { getTranslations } from "next-intl/server";
+import { notFound } from "next/navigation";
 import {
   listPublicCategories,
   getPublicServerCount,
   listPublicServers,
-} from '@/app/(site)/_lib/catalog';
-import { ServerCard } from '@/components/cards/ServerCard';
-import { ListingHero } from '@/components/ListingHero';
-import { Pagination } from '@/components/Pagination';
+} from "@/app/(site)/_lib/catalog";
+import { ServerCard } from "@/components/cards/ServerCard";
+import { ListingHero } from "@/components/ListingHero";
+import { Pagination } from "@/components/Pagination";
 
 const PAGE_SIZE = 30;
 
 export async function ServerList({ page }: { page: number }) {
   const [t, common, total, categories] = await Promise.all([
-    getTranslations('server'),
-    getTranslations('common'),
+    getTranslations("server"),
+    getTranslations("common"),
     getPublicServerCount(),
     listPublicCategories(),
   ]);
@@ -25,22 +25,24 @@ export async function ServerList({ page }: { page: number }) {
   return (
     <div className="mx-auto max-w-screen-xl px-4">
       <ListingHero
-        lead={t('browseAll')}
-        tail={t('mcpServers')}
-        subtitle={t('browseEveryModelContextProtocolServerInTheDirectory')}
-        placeholder={t('searchPlaceholder')}
+        lead={t("browseAll")}
+        tail={t("mcpServers")}
+        subtitle={t("browseEveryModelContextProtocolServerInTheDirectory")}
+        placeholder={t("searchPlaceholder")}
         categories={categories.map((c) => ({ slug: c.slug, name: c.name }))}
       />
 
       <div className="pb-14">
         {items.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            {t('noServersYet')}
-          </p>
+          <p className="text-sm text-muted-foreground">{t("noServersYet")}</p>
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {items.map((server) => (
-              <ServerCard key={server.slug} server={server} statLabel={common('stars')} />
+              <ServerCard
+                key={server.slug}
+                server={server}
+                statLabel={common("stars")}
+              />
             ))}
           </div>
         )}

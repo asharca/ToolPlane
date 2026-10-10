@@ -1,7 +1,12 @@
-'use client';
-import { CenterMorphModal, CenterMorphModalContent, CenterMorphModalClose } from '@/components/motion/center-morph-modal';
-import { Input } from '@/components/motion/input';
-import { Button } from '@/components/motion/button';
+"use client";
+import {
+  CenterMorphModal,
+  CenterMorphModalContent,
+  CenterMorphModalClose,
+} from "@/components/motion/center-morph-modal";
+import { Input } from "@/components/motion/input";
+import { Button } from "@/components/motion/button";
+import { useId } from "react";
 
 export function SidebarGroupDialog({
   initialName,
@@ -24,32 +29,55 @@ export function SidebarGroupDialog({
   onClose: () => void;
   onSubmit: (name: string) => void;
 }) {
+  const nameId = useId();
   return (
-    <CenterMorphModal open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
-      
-        
-        <CenterMorphModalContent ariaLabel={title} closeButtonLabel={cancelLabel} className="w-full max-w-xl p-6">
-          <form
-            key={`${open}:${initialName}`}
-            onSubmit={(event) => {
-              event.preventDefault();
-              const name = new FormData(event.currentTarget).get('name');
-              if (typeof name === 'string' && name.trim()) onSubmit(name.trim());
-            }}
-            className="space-y-4"
-          >
-            <h2 className="pr-10">{title}</h2>
-            <label className="block text-sm font-medium">
-              {nameLabel}
-              <Input autoFocus aria-label={nameLabel} defaultValue={initialName} maxLength={80} name="name" placeholder={placeholder} required className="mt-1 w-full" />
-            </label>
-            <div className="flex justify-end gap-2">
-              <CenterMorphModalClose><Button type="button" variant="secondary" size="sm">{cancelLabel}</Button></CenterMorphModalClose>
-              <Button type="submit" variant="primary" size="sm">{submitLabel}</Button>
-            </div>
-          </form>
-        </CenterMorphModalContent>
-      
+    <CenterMorphModal
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) onClose();
+      }}
+    >
+      <CenterMorphModalContent
+        ariaLabel={title}
+        closeButtonLabel={cancelLabel}
+        className="w-full max-w-xl p-6"
+      >
+        <form
+          key={`${open}:${initialName}`}
+          onSubmit={(event) => {
+            event.preventDefault();
+            const name = new FormData(event.currentTarget).get("name");
+            if (typeof name === "string" && name.trim()) onSubmit(name.trim());
+          }}
+          className="space-y-4"
+        >
+          <h2 className="pr-10">{title}</h2>
+          <label htmlFor={nameId} className="block text-sm font-medium">
+            {nameLabel}
+            <Input
+              id={nameId}
+              autoFocus
+              aria-label={nameLabel}
+              defaultValue={initialName}
+              maxLength={80}
+              name="name"
+              placeholder={placeholder}
+              required
+              className="mt-1 w-full"
+            />
+          </label>
+          <div className="flex justify-end gap-2">
+            <CenterMorphModalClose>
+              <Button type="button" variant="secondary" size="sm">
+                {cancelLabel}
+              </Button>
+            </CenterMorphModalClose>
+            <Button type="submit" variant="primary" size="sm">
+              {submitLabel}
+            </Button>
+          </div>
+        </form>
+      </CenterMorphModalContent>
     </CenterMorphModal>
   );
 }

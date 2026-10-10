@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   removeStaleDockerVolumeCopyHelpers: vi.fn(),
@@ -7,12 +7,13 @@ const mocks = vi.hoisted(() => ({
   sandboxSnapshotUpdateMany: vi.fn(),
 }));
 
-vi.mock('@/lib/sandboxes/runtime', () => ({
+vi.mock("@/lib/sandboxes/runtime", () => ({
   removeStaleDockerVolumeCopyHelpers: mocks.removeStaleDockerVolumeCopyHelpers,
-  removeStaleHermesArchiveImportHelpers: mocks.removeStaleHermesArchiveImportHelpers,
+  removeStaleHermesArchiveImportHelpers:
+    mocks.removeStaleHermesArchiveImportHelpers,
 }));
 
-vi.mock('@/lib/db', () => ({
+vi.mock("@/lib/db", () => ({
   db: {
     deployment: {
       updateMany: mocks.deploymentUpdateMany,
@@ -23,15 +24,15 @@ vi.mock('@/lib/db', () => ({
   },
 }));
 
-import { reconcileSandboxVolumeCopies } from '@/lib/sandboxes/reconcile';
+import { reconcileSandboxVolumeCopies } from "@/lib/sandboxes/reconcile";
 
-describe('reconcileSandboxVolumeCopies', () => {
+describe("reconcileSandboxVolumeCopies", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it('removes stale copy helpers before marking interrupted clones', async () => {
-    const interruptedBefore = new Date('2026-07-14T03:00:00.000Z');
+  it("removes stale copy helpers before marking interrupted clones", async () => {
+    const interruptedBefore = new Date("2026-07-14T03:00:00.000Z");
     mocks.removeStaleDockerVolumeCopyHelpers.mockResolvedValue(2);
     mocks.removeStaleHermesArchiveImportHelpers.mockResolvedValue(1);
     mocks.deploymentUpdateMany
@@ -40,7 +41,9 @@ describe('reconcileSandboxVolumeCopies', () => {
       .mockResolvedValueOnce({ count: 2 });
     mocks.sandboxSnapshotUpdateMany.mockResolvedValue({ count: 2 });
 
-    await expect(reconcileSandboxVolumeCopies({ helpersCreatedBefore: interruptedBefore })).resolves.toEqual({
+    await expect(
+      reconcileSandboxVolumeCopies({ helpersCreatedBefore: interruptedBefore }),
+    ).resolves.toEqual({
       helpersRemoved: 2,
       hermesArchiveHelpersRemoved: 1,
       copiesInterrupted: 3,
@@ -51,46 +54,52 @@ describe('reconcileSandboxVolumeCopies', () => {
 
     expect(mocks.deploymentUpdateMany).toHaveBeenCalledWith({
       where: {
-        source: 'sandbox',
-        status: 'copying',
+        source: "sandbox",
+        status: "copying",
         updatedAt: { lte: interruptedBefore },
       },
-      data: { status: 'copy_failed' },
+      data: { status: "copy_failed" },
     });
     expect(mocks.deploymentUpdateMany).toHaveBeenCalledWith({
       where: {
-        source: 'sandbox',
-        status: { in: ['restoring', 'restore_cleanup_required'] },
+        source: "sandbox",
+        status: { in: ["restoring", "restore_cleanup_required"] },
         updatedAt: { lte: interruptedBefore },
       },
-      data: { status: 'restore_failed' },
+      data: { status: "restore_failed" },
     });
     expect(mocks.deploymentUpdateMany).toHaveBeenCalledWith({
       where: {
-        source: 'sandbox',
-        status: 'upgrading',
+        source: "sandbox",
+        status: "upgrading",
         updatedAt: { lte: interruptedBefore },
       },
-      data: { status: 'error' },
+      data: { status: "error" },
     });
     expect(mocks.sandboxSnapshotUpdateMany).toHaveBeenCalledWith({
-      where: { status: 'creating', updatedAt: { lte: interruptedBefore } },
-      data: { status: 'error', error: 'Snapshot creation was interrupted.' },
+      where: { status: "creating", updatedAt: { lte: interruptedBefore } },
+      data: { status: "error", error: "Snapshot creation was interrupted." },
     });
-    expect(mocks.removeStaleDockerVolumeCopyHelpers.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.deploymentUpdateMany.mock.invocationCallOrder[0],
+    expect(
+      mocks.removeStaleDockerVolumeCopyHelpers.mock.invocationCallOrder[0],
+    ).toBeLessThan(mocks.deploymentUpdateMany.mock.invocationCallOrder[0]);
+    expect(mocks.removeStaleDockerVolumeCopyHelpers).toHaveBeenCalledWith(
+      interruptedBefore,
     );
-    expect(mocks.removeStaleDockerVolumeCopyHelpers).toHaveBeenCalledWith(interruptedBefore);
     expect(mocks.removeStaleHermesArchiveImportHelpers).toHaveBeenCalledWith(
       interruptedBefore,
       4 * 60 * 60 * 1000,
     );
   });
 
-  it('does not mark copies when helper cleanup cannot be confirmed', async () => {
-    mocks.removeStaleDockerVolumeCopyHelpers.mockRejectedValue(new Error('docker unavailable'));
+  it("does not mark copies when helper cleanup cannot be confirmed", async () => {
+    mocks.removeStaleDockerVolumeCopyHelpers.mockRejectedValue(
+      new Error("docker unavailable"),
+    );
 
-    await expect(reconcileSandboxVolumeCopies()).rejects.toThrow('docker unavailable');
+    await expect(reconcileSandboxVolumeCopies()).rejects.toThrow(
+      "docker unavailable",
+    );
 
     expect(mocks.deploymentUpdateMany).not.toHaveBeenCalled();
     expect(mocks.sandboxSnapshotUpdateMany).not.toHaveBeenCalled();

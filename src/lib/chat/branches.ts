@@ -13,9 +13,13 @@ export type ChatBranchNavigation = {
   nextMessageId: string;
 };
 
-export function chatMessagePath<T extends ChatBranchMessage>(messages: T[], activeMessageId: string | null): T[] {
+export function chatMessagePath<T extends ChatBranchMessage>(
+  messages: T[],
+  activeMessageId: string | null,
+): T[] {
   const byId = new Map(messages.map((message) => [message.id, message]));
-  let current = (activeMessageId && byId.get(activeMessageId)) ?? messages.at(-1);
+  let current =
+    (activeMessageId && byId.get(activeMessageId)) ?? messages.at(-1);
   const seen = new Set<string>();
   const path: T[] = [];
 
@@ -27,11 +31,14 @@ export function chatMessagePath<T extends ChatBranchMessage>(messages: T[], acti
   return path;
 }
 
-export function chatBranchNavigation<T extends ChatBranchMessage>(messages: T[], path: T[]) {
+export function chatBranchNavigation<T extends ChatBranchMessage>(
+  messages: T[],
+  path: T[],
+) {
   const groups = new Map<string, T[]>();
   for (const message of messages) {
     if (!message.siblingGroupId) continue;
-    const key = `${message.parentId ?? 'root'}:${message.siblingGroupId}`;
+    const key = `${message.parentId ?? "root"}:${message.siblingGroupId}`;
     const group = groups.get(key) ?? [];
     group.push(message);
     groups.set(key, group);
@@ -39,20 +46,28 @@ export function chatBranchNavigation<T extends ChatBranchMessage>(messages: T[],
 
   return path.flatMap<ChatBranchNavigation>((message) => {
     if (!message.siblingGroupId) return [];
-    const group = groups.get(`${message.parentId ?? 'root'}:${message.siblingGroupId}`) ?? [];
+    const group =
+      groups.get(`${message.parentId ?? "root"}:${message.siblingGroupId}`) ??
+      [];
     if (group.length < 2) return [];
     const position = group.findIndex((item) => item.id === message.id);
-    return [{
-      messageId: message.id,
-      position: position + 1,
-      total: group.length,
-      previousMessageId: group[(position - 1 + group.length) % group.length].id,
-      nextMessageId: group[(position + 1) % group.length].id,
-    }];
+    return [
+      {
+        messageId: message.id,
+        position: position + 1,
+        total: group.length,
+        previousMessageId:
+          group[(position - 1 + group.length) % group.length].id,
+        nextMessageId: group[(position + 1) % group.length].id,
+      },
+    ];
   });
 }
 
-export function latestChatBranchLeaf<T extends ChatBranchMessage>(messages: T[], throughMessageId: string) {
+export function latestChatBranchLeaf<T extends ChatBranchMessage>(
+  messages: T[],
+  throughMessageId: string,
+) {
   const byId = new Map(messages.map((message) => [message.id, message]));
   if (!byId.has(throughMessageId)) return null;
   const order = new Map(messages.map((message, index) => [message.id, index]));
@@ -69,7 +84,8 @@ export function latestChatBranchLeaf<T extends ChatBranchMessage>(messages: T[],
   let latestLeafOrder = order.get(throughMessageId) ?? -1;
   const stack = [throughMessageId];
   while (stack.length) {
-    const id = stack.pop()!;
+    const id = stack.pop();
+    if (id === undefined) break;
     const descendants = children.get(id) ?? [];
     if (!descendants.length && (order.get(id) ?? -1) >= latestLeafOrder) {
       latestLeafId = id;

@@ -1,8 +1,22 @@
 // @vitest-environment node
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { db } from '@/lib/db';
-import { createApiToken, verifyApiToken, verifyApiTokenContext } from '@/lib/auth/tokens';
-import { issueInstallToken } from '@/lib/toolkits/install-link';
+import { assertDefined } from "../assert-defined";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
+import { db } from "@/lib/db";
+import {
+  createApiToken,
+  verifyApiToken,
+  verifyApiTokenContext,
+} from "@/lib/auth/tokens";
+import { issueInstallToken } from "@/lib/toolkits/install-link";
 
 const mocks = vi.hoisted(() => ({
   getCurrentUser: vi.fn(),
@@ -10,9 +24,11 @@ const mocks = vi.hoisted(() => ({
   redirect: vi.fn(),
 }));
 
-vi.mock('@/lib/auth/current-user', () => ({ getCurrentUser: mocks.getCurrentUser }));
-vi.mock('next/cache', () => ({ revalidatePath: mocks.revalidatePath }));
-vi.mock('next/navigation', () => ({ redirect: mocks.redirect }));
+vi.mock("@/lib/auth/current-user", () => ({
+  getCurrentUser: mocks.getCurrentUser,
+}));
+vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidatePath }));
+vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));
 
 import {
   cloneToolkitAction,
@@ -20,7 +36,7 @@ import {
   deleteToolkitAction,
   renameToolkitAction,
   updateToolkitAvailabilityAction,
-} from '@/lib/toolkits/actions';
+} from "@/lib/toolkits/actions";
 
 const stamp = Date.now();
 const ownerEmail = `toolkit-management-owner-${stamp}@test.dev`;
@@ -29,47 +45,51 @@ const collaboratorEmail = `toolkit-management-collaborator-${stamp}@test.dev`;
 const ownerSlug = `toolkit-management-owner-${stamp}`;
 const foreignSlug = `toolkit-management-foreign-${stamp}`;
 
-let ownerId = '';
-let collaboratorId = '';
-let ownerWorkspaceId = '';
-let foreignWorkspaceId = '';
-let deploymentId = '';
-let installedSkillId = '';
-let agentId = '';
+let ownerId = "";
+let collaboratorId = "";
+let ownerWorkspaceId = "";
+let foreignWorkspaceId = "";
+let deploymentId = "";
+let installedSkillId = "";
+let agentId = "";
 
-function actionForm(workspace: string, toolkitSlug: string, name?: string): FormData {
+function actionForm(
+  workspace: string,
+  toolkitSlug: string,
+  name?: string,
+): FormData {
   const form = new FormData();
-  form.set('workspace', workspace);
-  form.set('toolkitSlug', toolkitSlug);
-  if (name !== undefined) form.set('name', name);
+  form.set("workspace", workspace);
+  form.set("toolkitSlug", toolkitSlug);
+  if (name !== undefined) form.set("name", name);
   return form;
 }
 
 function createForm(workspace: string, name: string): FormData {
   const form = new FormData();
-  form.set('workspace', workspace);
-  form.set('name', name);
+  form.set("workspace", workspace);
+  form.set("name", name);
   return form;
 }
 
 function availabilityForm(
   workspace: string,
   toolkitSlug: string,
-  visibility: 'public' | 'private',
+  visibility: "public" | "private",
   enabled: boolean,
 ): FormData {
   const form = actionForm(workspace, toolkitSlug);
-  form.set('visibility', visibility);
-  if (enabled) form.set('enabled', 'on');
+  form.set("visibility", visibility);
+  if (enabled) form.set("enabled", "on");
   return form;
 }
 
-describe('toolkit management actions', () => {
+describe("toolkit management actions", () => {
   beforeAll(async () => {
     const [owner, foreign, collaborator] = await Promise.all([
-      db.user.create({ data: { email: ownerEmail, passwordHash: 'x' } }),
-      db.user.create({ data: { email: foreignEmail, passwordHash: 'x' } }),
-      db.user.create({ data: { email: collaboratorEmail, passwordHash: 'x' } }),
+      db.user.create({ data: { email: ownerEmail, passwordHash: "x" } }),
+      db.user.create({ data: { email: foreignEmail, passwordHash: "x" } }),
+      db.user.create({ data: { email: collaboratorEmail, passwordHash: "x" } }),
     ]);
     ownerId = owner.id;
     collaboratorId = collaborator.id;
@@ -78,12 +98,12 @@ describe('toolkit management actions', () => {
       db.workspace.create({
         data: {
           slug: ownerSlug,
-          name: 'Toolkit Management Owner',
+          name: "Toolkit Management Owner",
           ownerId: owner.id,
           members: {
             create: [
-              { userId: owner.id, role: 'owner' },
-              { userId: collaborator.id, role: 'member' },
+              { userId: owner.id, role: "owner" },
+              { userId: collaborator.id, role: "member" },
             ],
           },
         },
@@ -91,9 +111,9 @@ describe('toolkit management actions', () => {
       db.workspace.create({
         data: {
           slug: foreignSlug,
-          name: 'Toolkit Management Foreign',
+          name: "Toolkit Management Foreign",
           ownerId: foreign.id,
-          members: { create: { userId: foreign.id, role: 'owner' } },
+          members: { create: { userId: foreign.id, role: "owner" } },
         },
       }),
     ]);
@@ -104,26 +124,26 @@ describe('toolkit management actions', () => {
       db.deployment.create({
         data: {
           workspaceId: ownerWorkspace.id,
-          name: 'Shared MCP',
-          source: 'npm',
-          sourceRef: '@example/shared-mcp',
-          status: 'stopped',
+          name: "Shared MCP",
+          source: "npm",
+          sourceRef: "@example/shared-mcp",
+          status: "stopped",
         },
       }),
       db.installedSkill.create({
         data: {
           workspaceId: ownerWorkspace.id,
-          name: 'Shared Skill',
-          slug: 'shared-skill',
-          source: 'custom',
+          name: "Shared Skill",
+          slug: "shared-skill",
+          source: "custom",
         },
       }),
       db.agent.create({
         data: {
           workspaceId: ownerWorkspace.id,
-          name: 'Toolkit Consumer',
-          slug: 'toolkit-consumer',
-          runtimeKind: 'pi',
+          name: "Toolkit Consumer",
+          slug: "toolkit-consumer",
+          runtimeKind: "pi",
         },
       }),
     ]);
@@ -144,42 +164,58 @@ describe('toolkit management actions', () => {
   });
 
   afterAll(async () => {
-    await db.workspace.deleteMany({ where: { id: { in: [ownerWorkspaceId, foreignWorkspaceId] } } });
+    await db.workspace.deleteMany({
+      where: { id: { in: [ownerWorkspaceId, foreignWorkspaceId] } },
+    });
     await db.user.deleteMany({
       where: { email: { in: [ownerEmail, foreignEmail, collaboratorEmail] } },
     });
     await db.$disconnect();
   });
 
-  it('renames a toolkit after trimming the name and keeps its slug stable', async () => {
+  it("renames a toolkit after trimming the name and keeps its slug stable", async () => {
     const toolkit = await db.toolkit.create({
-      data: { workspaceId: ownerWorkspaceId, name: 'Original Name', slug: 'stable-slug' },
+      data: {
+        workspaceId: ownerWorkspaceId,
+        name: "Original Name",
+        slug: "stable-slug",
+      },
     });
 
-    await renameToolkitAction(actionForm(ownerSlug, toolkit.slug, '  Renamed Toolkit  '));
+    await renameToolkitAction(
+      actionForm(ownerSlug, toolkit.slug, "  Renamed Toolkit  "),
+    );
 
-    await expect(db.toolkit.findUnique({ where: { id: toolkit.id } })).resolves.toMatchObject({
-      name: 'Renamed Toolkit',
-      slug: 'stable-slug',
+    await expect(
+      db.toolkit.findUnique({ where: { id: toolkit.id } }),
+    ).resolves.toMatchObject({
+      name: "Renamed Toolkit",
+      slug: "stable-slug",
     });
-    expect(mocks.revalidatePath).toHaveBeenCalledWith(`/app/${ownerSlug}/toolkits`);
+    expect(mocks.revalidatePath).toHaveBeenCalledWith(
+      `/app/${ownerSlug}/toolkits`,
+    );
     expect(mocks.revalidatePath).toHaveBeenCalledWith(
       `/app/${ownerSlug}/toolkits/${toolkit.slug}`,
     );
   });
 
-  it('marks an installed market toolkit modified and blocks ordinary deletion', async () => {
+  it("marks an installed market toolkit modified and blocks ordinary deletion", async () => {
     const toolkit = await db.toolkit.create({
-      data: { workspaceId: ownerWorkspaceId, name: 'Market Toolkit', slug: 'market-toolkit' },
+      data: {
+        workspaceId: ownerWorkspaceId,
+        name: "Market Toolkit",
+        slug: "market-toolkit",
+      },
     });
     const listing = await db.marketListing.create({
       data: {
-        kind: 'toolkit',
+        kind: "toolkit",
         namespace: ownerSlug,
         slug: `market-toolkit-${stamp}`,
-        name: 'Market Toolkit',
+        name: "Market Toolkit",
         metadata: {},
-        status: 'published',
+        status: "published",
       },
     });
     const release = await db.marketRelease.create({
@@ -188,8 +224,8 @@ describe('toolkit management actions', () => {
         version: 1,
         manifest: {},
         releaseSummary: {},
-        checksum: 'test',
-        reviewStatus: 'approved',
+        checksum: "test",
+        reviewStatus: "approved",
       },
     });
     await db.marketListing.update({
@@ -205,86 +241,112 @@ describe('toolkit management actions', () => {
         installedById: ownerId,
         toolkitId: toolkit.id,
         idempotencyKey: `market-toolkit-${stamp}`,
-        status: 'ready',
+        status: "ready",
       },
     });
 
-    await renameToolkitAction(actionForm(ownerSlug, toolkit.slug, 'Locally Changed'));
-    await expect(db.marketInstall.findUnique({ where: { id: install.id } })).resolves.toMatchObject({
-      status: 'modified',
+    await renameToolkitAction(
+      actionForm(ownerSlug, toolkit.slug, "Locally Changed"),
+    );
+    await expect(
+      db.marketInstall.findUnique({ where: { id: install.id } }),
+    ).resolves.toMatchObject({
+      status: "modified",
     });
     await deleteToolkitAction(actionForm(ownerSlug, toolkit.slug));
-    await expect(db.toolkit.findUnique({ where: { id: toolkit.id } })).resolves.not.toBeNull();
+    await expect(
+      db.toolkit.findUnique({ where: { id: toolkit.id } }),
+    ).resolves.not.toBeNull();
 
     await db.marketInstall.delete({ where: { id: install.id } });
     await db.marketListing.delete({ where: { id: listing.id } });
   });
 
-  it('updates marketplace availability for a workspace owner or administrator only', async () => {
+  it("updates marketplace availability for a workspace owner or administrator only", async () => {
     const toolkit = await db.toolkit.create({
       data: {
         workspaceId: ownerWorkspaceId,
-        name: 'Publishable Toolkit',
-        slug: 'publishable-toolkit',
-        visibility: 'private',
+        name: "Publishable Toolkit",
+        slug: "publishable-toolkit",
+        visibility: "private",
         enabled: false,
       },
     });
 
     await updateToolkitAvailabilityAction(
-      availabilityForm(ownerSlug, toolkit.slug, 'public', true),
+      availabilityForm(ownerSlug, toolkit.slug, "public", true),
     );
 
-    await expect(db.toolkit.findUnique({ where: { id: toolkit.id } })).resolves.toMatchObject({
-      visibility: 'public',
+    await expect(
+      db.toolkit.findUnique({ where: { id: toolkit.id } }),
+    ).resolves.toMatchObject({
+      visibility: "public",
       enabled: true,
     });
-    expect(mocks.revalidatePath).toHaveBeenCalledWith(`/app/${ownerSlug}/toolkits`);
+    expect(mocks.revalidatePath).toHaveBeenCalledWith(
+      `/app/${ownerSlug}/toolkits`,
+    );
     expect(mocks.revalidatePath).toHaveBeenCalledWith(
       `/app/${ownerSlug}/toolkits/${toolkit.slug}`,
     );
-    expect(mocks.revalidatePath).toHaveBeenCalledWith(`/app/${ownerSlug}/market/toolkits`);
-    expect(mocks.revalidatePath).toHaveBeenCalledWith(`/app/${ownerSlug}/agents`);
+    expect(mocks.revalidatePath).toHaveBeenCalledWith(
+      `/app/${ownerSlug}/market/toolkits`,
+    );
+    expect(mocks.revalidatePath).toHaveBeenCalledWith(
+      `/app/${ownerSlug}/agents`,
+    );
 
     mocks.revalidatePath.mockClear();
-    mocks.getCurrentUser.mockResolvedValue({ id: collaboratorId, email: collaboratorEmail });
+    mocks.getCurrentUser.mockResolvedValue({
+      id: collaboratorId,
+      email: collaboratorEmail,
+    });
     await updateToolkitAvailabilityAction(
-      availabilityForm(ownerSlug, toolkit.slug, 'private', false),
+      availabilityForm(ownerSlug, toolkit.slug, "private", false),
     );
-    await expect(db.toolkit.findUnique({ where: { id: toolkit.id } })).resolves.toMatchObject({
-      visibility: 'public',
+    await expect(
+      db.toolkit.findUnique({ where: { id: toolkit.id } }),
+    ).resolves.toMatchObject({
+      visibility: "public",
       enabled: true,
     });
     expect(mocks.revalidatePath).not.toHaveBeenCalled();
 
     await db.membership.update({
-      where: { workspaceId_userId: { workspaceId: ownerWorkspaceId, userId: collaboratorId } },
-      data: { role: 'admin' },
+      where: {
+        workspaceId_userId: {
+          workspaceId: ownerWorkspaceId,
+          userId: collaboratorId,
+        },
+      },
+      data: { role: "admin" },
     });
     await updateToolkitAvailabilityAction(
-      availabilityForm(ownerSlug, toolkit.slug, 'private', false),
+      availabilityForm(ownerSlug, toolkit.slug, "private", false),
     );
-    await expect(db.toolkit.findUnique({ where: { id: toolkit.id } })).resolves.toMatchObject({
-      visibility: 'private',
+    await expect(
+      db.toolkit.findUnique({ where: { id: toolkit.id } }),
+    ).resolves.toMatchObject({
+      visibility: "private",
       enabled: false,
     });
   });
 
-  it('allocates distinct slugs when toolkits with the same name are created concurrently', async () => {
+  it("allocates distinct slugs when toolkits with the same name are created concurrently", async () => {
     await Promise.all([
-      createToolkitAction(createForm(ownerSlug, 'Concurrent Create')),
-      createToolkitAction(createForm(ownerSlug, 'Concurrent Create')),
+      createToolkitAction(createForm(ownerSlug, "Concurrent Create")),
+      createToolkitAction(createForm(ownerSlug, "Concurrent Create")),
     ]);
 
     await expect(
       db.toolkit.findMany({
         where: { workspaceId: ownerWorkspaceId },
-        orderBy: { slug: 'asc' },
+        orderBy: { slug: "asc" },
         select: { name: true, slug: true },
       }),
     ).resolves.toEqual([
-      { name: 'Concurrent Create', slug: 'concurrent-create' },
-      { name: 'Concurrent Create', slug: 'concurrent-create-1' },
+      { name: "Concurrent Create", slug: "concurrent-create" },
+      { name: "Concurrent Create", slug: "concurrent-create-1" },
     ]);
     expect(mocks.redirect).toHaveBeenCalledWith(
       `/app/${ownerSlug}/toolkits/concurrent-create`,
@@ -294,19 +356,22 @@ describe('toolkit management actions', () => {
     );
   });
 
-  it('clones the toolkit resource links without cloning its consumers or resources', async () => {
+  it("clones the toolkit resource links without cloning its consumers or resources", async () => {
     const source = await db.toolkit.create({
       data: {
         workspaceId: ownerWorkspaceId,
-        name: 'Source Toolkit',
-        slug: 'source-toolkit',
-        visibility: 'public',
+        name: "Source Toolkit",
+        slug: "source-toolkit",
+        visibility: "public",
         enabled: false,
         servers: { create: { deploymentId } },
         skills: { create: { installedSkillId } },
         agentLinks: { create: { agentId } },
         installLinks: {
-          create: { id: `toolkit-management-install-${stamp}`, userId: ownerId },
+          create: {
+            id: `toolkit-management-install-${stamp}`,
+            userId: ownerId,
+          },
         },
       },
     });
@@ -315,10 +380,12 @@ describe('toolkit management actions', () => {
       db.installedSkill.count({ where: { workspaceId: ownerWorkspaceId } }),
     ]);
 
-    await cloneToolkitAction(actionForm(ownerSlug, source.slug, '  Working Copy  '));
+    await cloneToolkitAction(
+      actionForm(ownerSlug, source.slug, "  Working Copy  "),
+    );
 
     const clone = await db.toolkit.findFirst({
-      where: { workspaceId: ownerWorkspaceId, slug: 'working-copy' },
+      where: { workspaceId: ownerWorkspaceId, slug: "working-copy" },
       include: {
         servers: true,
         skills: true,
@@ -327,12 +394,16 @@ describe('toolkit management actions', () => {
       },
     });
     expect(clone).toMatchObject({
-      name: 'Working Copy',
-      visibility: 'private',
+      name: "Working Copy",
+      visibility: "private",
       enabled: true,
     });
-    expect(clone?.servers.map((link) => link.deploymentId)).toEqual([deploymentId]);
-    expect(clone?.skills.map((link) => link.installedSkillId)).toEqual([installedSkillId]);
+    expect(clone?.servers.map((link) => link.deploymentId)).toEqual([
+      deploymentId,
+    ]);
+    expect(clone?.skills.map((link) => link.installedSkillId)).toEqual([
+      installedSkillId,
+    ]);
     expect(clone?.agentLinks).toHaveLength(0);
     expect(clone?.installLinks).toHaveLength(0);
     await expect(
@@ -341,69 +412,86 @@ describe('toolkit management actions', () => {
     await expect(
       db.installedSkill.count({ where: { workspaceId: ownerWorkspaceId } }),
     ).resolves.toBe(installedSkillCount);
-    await expect(db.toolkit.findUnique({ where: { id: source.id } })).resolves.not.toBeNull();
+    await expect(
+      db.toolkit.findUnique({ where: { id: source.id } }),
+    ).resolves.not.toBeNull();
   });
 
-  it('adds a numeric suffix when the cloned toolkit slug already exists', async () => {
+  it("adds a numeric suffix when the cloned toolkit slug already exists", async () => {
     const source = await db.toolkit.create({
-      data: { workspaceId: ownerWorkspaceId, name: 'Research', slug: 'research' },
+      data: {
+        workspaceId: ownerWorkspaceId,
+        name: "Research",
+        slug: "research",
+      },
     });
     await db.toolkit.create({
-      data: { workspaceId: ownerWorkspaceId, name: 'Existing Copy', slug: 'research-copy' },
+      data: {
+        workspaceId: ownerWorkspaceId,
+        name: "Existing Copy",
+        slug: "research-copy",
+      },
     });
 
     await cloneToolkitAction(actionForm(ownerSlug, source.slug));
 
     await expect(
       db.toolkit.findFirst({
-        where: { workspaceId: ownerWorkspaceId, slug: 'research-copy-2' },
+        where: { workspaceId: ownerWorkspaceId, slug: "research-copy-2" },
       }),
     ).resolves.toMatchObject({
-      name: 'Research Copy 2',
-      visibility: 'private',
+      name: "Research Copy 2",
+      visibility: "private",
       enabled: true,
     });
   });
 
-  it.skipIf(process.env.TOOLPLANE_TEST_PGLITE === '1')('allocates distinct names and slugs for concurrent clones', async () => {
-    const source = await db.toolkit.create({
-      data: { workspaceId: ownerWorkspaceId, name: 'Concurrent', slug: 'concurrent' },
-    });
+  it.skipIf(process.env.TOOLPLANE_TEST_PGLITE === "1")(
+    "allocates distinct names and slugs for concurrent clones",
+    async () => {
+      const source = await db.toolkit.create({
+        data: {
+          workspaceId: ownerWorkspaceId,
+          name: "Concurrent",
+          slug: "concurrent",
+        },
+      });
 
-    await Promise.all([
-      cloneToolkitAction(actionForm(ownerSlug, source.slug)),
-      cloneToolkitAction(actionForm(ownerSlug, source.slug)),
-    ]);
+      await Promise.all([
+        cloneToolkitAction(actionForm(ownerSlug, source.slug)),
+        cloneToolkitAction(actionForm(ownerSlug, source.slug)),
+      ]);
 
-    const clones = await db.toolkit.findMany({
-      where: {
-        workspaceId: ownerWorkspaceId,
-        slug: { in: ['concurrent-copy', 'concurrent-copy-2'] },
-      },
-      orderBy: { slug: 'asc' },
-      select: { name: true, slug: true },
-    });
-    expect(clones).toEqual([
-      { name: 'Concurrent Copy', slug: 'concurrent-copy' },
-      { name: 'Concurrent Copy 2', slug: 'concurrent-copy-2' },
-    ]);
-  });
+      const clones = await db.toolkit.findMany({
+        where: {
+          workspaceId: ownerWorkspaceId,
+          slug: { in: ["concurrent-copy", "concurrent-copy-2"] },
+        },
+        orderBy: { slug: "asc" },
+        select: { name: true, slug: true },
+      });
+      expect(clones).toEqual([
+        { name: "Concurrent Copy", slug: "concurrent-copy" },
+        { name: "Concurrent Copy 2", slug: "concurrent-copy-2" },
+      ]);
+    },
+  );
 
-  it('rejects cloning a toolkit with a cross-workspace resource link', async () => {
+  it("rejects cloning a toolkit with a cross-workspace resource link", async () => {
     const foreignDeployment = await db.deployment.create({
       data: {
         workspaceId: foreignWorkspaceId,
-        name: 'Foreign MCP',
-        source: 'npm',
-        sourceRef: '@example/foreign-mcp',
-        status: 'stopped',
+        name: "Foreign MCP",
+        source: "npm",
+        sourceRef: "@example/foreign-mcp",
+        status: "stopped",
       },
     });
     const source = await db.toolkit.create({
       data: {
         workspaceId: ownerWorkspaceId,
-        name: 'Contaminated Toolkit',
-        slug: 'contaminated-toolkit',
+        name: "Contaminated Toolkit",
+        slug: "contaminated-toolkit",
         servers: { create: { deploymentId: foreignDeployment.id } },
       },
     });
@@ -417,13 +505,13 @@ describe('toolkit management actions', () => {
     expect(mocks.revalidatePath).not.toHaveBeenCalled();
   });
 
-  it('deletes a toolkit and its links while preserving linked resources and telemetry', async () => {
+  it("deletes a toolkit and its links while preserving linked resources and telemetry", async () => {
     const installLinkId = `toolkit-management-delete-${stamp}`;
     const toolkit = await db.toolkit.create({
       data: {
         workspaceId: ownerWorkspaceId,
-        name: 'Disposable Toolkit',
-        slug: 'disposable-toolkit',
+        name: "Disposable Toolkit",
+        slug: "disposable-toolkit",
         servers: { create: { deploymentId } },
         skills: { create: { installedSkillId } },
         agentLinks: { create: { agentId } },
@@ -437,71 +525,97 @@ describe('toolkit management actions', () => {
         data: {
           workspaceId: ownerWorkspaceId,
           toolkitId: toolkit.id,
-          skillSlug: 'shared-skill',
-          source: 'toolkit',
-          outcome: 'success',
+          skillSlug: "shared-skill",
+          source: "toolkit",
+          outcome: "success",
         },
       }),
       db.syncEvent.create({
         data: {
           workspaceId: ownerWorkspaceId,
           toolkitId: toolkit.id,
-          outcome: 'applied',
+          outcome: "applied",
         },
       }),
     ]);
-    const issued = await issueInstallToken(installLinkId, 'claude-code');
+    const issued = await issueInstallToken(installLinkId, "claude-code");
     expect(issued).not.toBeNull();
-    await expect(verifyApiTokenContext(`Bearer ${issued!.token}`)).resolves.toMatchObject({
+    await expect(
+      verifyApiTokenContext(`Bearer ${assertDefined(issued).token}`),
+    ).resolves.toMatchObject({
       user: { id: ownerId },
     });
     const legacy = await createApiToken(
       ownerId,
       `MCPmarket plugin - ${toolkit.slug} (Claude Code)`,
     );
-    await expect(verifyApiToken(`Bearer ${legacy.token}`)).resolves.toMatchObject({
+    await expect(
+      verifyApiToken(`Bearer ${legacy.token}`),
+    ).resolves.toMatchObject({
       id: ownerId,
     });
 
     await deleteToolkitAction(actionForm(ownerSlug, toolkit.slug));
 
-    await expect(db.toolkit.findUnique({ where: { id: toolkit.id } })).resolves.toBeNull();
-    await expect(db.toolkitServer.count({ where: { toolkitId: toolkit.id } })).resolves.toBe(0);
-    await expect(db.toolkitSkill.count({ where: { toolkitId: toolkit.id } })).resolves.toBe(0);
-    await expect(db.agentToolkit.count({ where: { toolkitId: toolkit.id } })).resolves.toBe(0);
-    await expect(db.toolkitInstallLink.count({ where: { toolkitId: toolkit.id } })).resolves.toBe(0);
-    await expect(db.deployment.findUnique({ where: { id: deploymentId } })).resolves.not.toBeNull();
+    await expect(
+      db.toolkit.findUnique({ where: { id: toolkit.id } }),
+    ).resolves.toBeNull();
+    await expect(
+      db.toolkitServer.count({ where: { toolkitId: toolkit.id } }),
+    ).resolves.toBe(0);
+    await expect(
+      db.toolkitSkill.count({ where: { toolkitId: toolkit.id } }),
+    ).resolves.toBe(0);
+    await expect(
+      db.agentToolkit.count({ where: { toolkitId: toolkit.id } }),
+    ).resolves.toBe(0);
+    await expect(
+      db.toolkitInstallLink.count({ where: { toolkitId: toolkit.id } }),
+    ).resolves.toBe(0);
+    await expect(
+      db.deployment.findUnique({ where: { id: deploymentId } }),
+    ).resolves.not.toBeNull();
     await expect(
       db.installedSkill.findUnique({ where: { id: installedSkillId } }),
     ).resolves.not.toBeNull();
-    await expect(db.agent.findUnique({ where: { id: agentId } })).resolves.not.toBeNull();
-    await expect(db.skillInvocation.findUnique({ where: { id: invocation.id } })).resolves.toMatchObject({
+    await expect(
+      db.agent.findUnique({ where: { id: agentId } }),
+    ).resolves.not.toBeNull();
+    await expect(
+      db.skillInvocation.findUnique({ where: { id: invocation.id } }),
+    ).resolves.toMatchObject({
       toolkitId: null,
     });
-    await expect(db.syncEvent.findUnique({ where: { id: syncEvent.id } })).resolves.toMatchObject({
+    await expect(
+      db.syncEvent.findUnique({ where: { id: syncEvent.id } }),
+    ).resolves.toMatchObject({
       toolkitId: null,
     });
-    await expect(verifyApiTokenContext(`Bearer ${issued!.token}`)).resolves.toBeNull();
+    await expect(
+      verifyApiTokenContext(`Bearer ${assertDefined(issued).token}`),
+    ).resolves.toBeNull();
     await expect(verifyApiToken(`Bearer ${legacy.token}`)).resolves.toBeNull();
   });
 
-  it('does not delete the default toolkit', async () => {
+  it("does not delete the default toolkit", async () => {
     const toolkit = await db.toolkit.create({
-      data: { workspaceId: ownerWorkspaceId, name: 'My Toolkit', slug: 'me' },
+      data: { workspaceId: ownerWorkspaceId, name: "My Toolkit", slug: "me" },
     });
 
     await deleteToolkitAction(actionForm(ownerSlug, toolkit.slug));
 
-    await expect(db.toolkit.findUnique({ where: { id: toolkit.id } })).resolves.not.toBeNull();
+    await expect(
+      db.toolkit.findUnique({ where: { id: toolkit.id } }),
+    ).resolves.not.toBeNull();
     expect(mocks.redirect).not.toHaveBeenCalled();
   });
 
-  it('allows cloning the default toolkit without replacing it', async () => {
+  it("allows cloning the default toolkit without replacing it", async () => {
     const toolkit = await db.toolkit.create({
       data: {
         workspaceId: ownerWorkspaceId,
-        name: 'My Toolkit',
-        slug: 'me',
+        name: "My Toolkit",
+        slug: "me",
         servers: { create: { deploymentId } },
         skills: { create: { installedSkillId } },
       },
@@ -509,56 +623,88 @@ describe('toolkit management actions', () => {
 
     await cloneToolkitAction(actionForm(ownerSlug, toolkit.slug));
 
-    await expect(db.toolkit.findUnique({ where: { id: toolkit.id } })).resolves.not.toBeNull();
+    await expect(
+      db.toolkit.findUnique({ where: { id: toolkit.id } }),
+    ).resolves.not.toBeNull();
     const clone = await db.toolkit.findFirst({
-      where: { workspaceId: ownerWorkspaceId, slug: 'my-toolkit-copy' },
+      where: { workspaceId: ownerWorkspaceId, slug: "my-toolkit-copy" },
       include: { servers: true, skills: true },
     });
     expect(clone).toMatchObject({
-      name: 'My Toolkit Copy',
-      visibility: 'private',
+      name: "My Toolkit Copy",
+      visibility: "private",
       enabled: true,
     });
-    expect(clone?.servers.map((link) => link.deploymentId)).toEqual([deploymentId]);
-    expect(clone?.skills.map((link) => link.installedSkillId)).toEqual([installedSkillId]);
+    expect(clone?.servers.map((link) => link.deploymentId)).toEqual([
+      deploymentId,
+    ]);
+    expect(clone?.skills.map((link) => link.installedSkillId)).toEqual([
+      installedSkillId,
+    ]);
   });
 
-  it('does not mutate toolkits when the user is not signed in', async () => {
+  it("does not mutate toolkits when the user is not signed in", async () => {
     const toolkit = await db.toolkit.create({
-      data: { workspaceId: ownerWorkspaceId, name: 'Protected Toolkit', slug: 'protected-toolkit' },
+      data: {
+        workspaceId: ownerWorkspaceId,
+        name: "Protected Toolkit",
+        slug: "protected-toolkit",
+      },
     });
     mocks.getCurrentUser.mockResolvedValue(null);
 
-    await renameToolkitAction(actionForm(ownerSlug, toolkit.slug, 'Compromised'));
-    await cloneToolkitAction(actionForm(ownerSlug, toolkit.slug, 'Unauthorized Copy'));
+    await renameToolkitAction(
+      actionForm(ownerSlug, toolkit.slug, "Compromised"),
+    );
+    await cloneToolkitAction(
+      actionForm(ownerSlug, toolkit.slug, "Unauthorized Copy"),
+    );
     await deleteToolkitAction(actionForm(ownerSlug, toolkit.slug));
 
-    await expect(db.toolkit.findUnique({ where: { id: toolkit.id } })).resolves.toMatchObject({
-      name: 'Protected Toolkit',
-      slug: 'protected-toolkit',
+    await expect(
+      db.toolkit.findUnique({ where: { id: toolkit.id } }),
+    ).resolves.toMatchObject({
+      name: "Protected Toolkit",
+      slug: "protected-toolkit",
     });
-    await expect(db.toolkit.count({ where: { workspaceId: ownerWorkspaceId } })).resolves.toBe(1);
+    await expect(
+      db.toolkit.count({ where: { workspaceId: ownerWorkspaceId } }),
+    ).resolves.toBe(1);
     expect(mocks.revalidatePath).not.toHaveBeenCalled();
     expect(mocks.redirect).not.toHaveBeenCalled();
   });
 
-  it('does not rename, clone, or delete a toolkit outside the authorized workspace', async () => {
+  it("does not rename, clone, or delete a toolkit outside the authorized workspace", async () => {
     const foreignToolkit = await db.toolkit.create({
-      data: { workspaceId: foreignWorkspaceId, name: 'Foreign Toolkit', slug: 'foreign-toolkit' },
+      data: {
+        workspaceId: foreignWorkspaceId,
+        name: "Foreign Toolkit",
+        slug: "foreign-toolkit",
+      },
     });
 
     for (const workspace of [ownerSlug, foreignSlug]) {
-      await renameToolkitAction(actionForm(workspace, foreignToolkit.slug, 'Compromised'));
-      await cloneToolkitAction(actionForm(workspace, foreignToolkit.slug, 'Foreign Copy'));
+      await renameToolkitAction(
+        actionForm(workspace, foreignToolkit.slug, "Compromised"),
+      );
+      await cloneToolkitAction(
+        actionForm(workspace, foreignToolkit.slug, "Foreign Copy"),
+      );
       await deleteToolkitAction(actionForm(workspace, foreignToolkit.slug));
     }
 
-    await expect(db.toolkit.findUnique({ where: { id: foreignToolkit.id } })).resolves.toMatchObject({
-      name: 'Foreign Toolkit',
-      slug: 'foreign-toolkit',
+    await expect(
+      db.toolkit.findUnique({ where: { id: foreignToolkit.id } }),
+    ).resolves.toMatchObject({
+      name: "Foreign Toolkit",
+      slug: "foreign-toolkit",
     });
-    await expect(db.toolkit.count({ where: { workspaceId: ownerWorkspaceId } })).resolves.toBe(0);
-    await expect(db.toolkit.count({ where: { workspaceId: foreignWorkspaceId } })).resolves.toBe(1);
+    await expect(
+      db.toolkit.count({ where: { workspaceId: ownerWorkspaceId } }),
+    ).resolves.toBe(0);
+    await expect(
+      db.toolkit.count({ where: { workspaceId: foreignWorkspaceId } }),
+    ).resolves.toBe(1);
     expect(mocks.revalidatePath).not.toHaveBeenCalled();
     expect(mocks.redirect).not.toHaveBeenCalled();
   });

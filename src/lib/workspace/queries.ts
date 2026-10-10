@@ -1,13 +1,13 @@
-import 'server-only';
-import { Prisma } from '@prisma/client';
-import { db } from '@/lib/db';
-import { normalizedSkillDescription } from '@/lib/skills/frontmatter';
-import { parseServerRecipe } from '@/lib/workspace/server-recipe';
+import "server-only";
+import { Prisma } from "@prisma/client";
+import { db } from "@/lib/db";
+import { normalizedSkillDescription } from "@/lib/skills/frontmatter";
+import { parseServerRecipe } from "@/lib/workspace/server-recipe";
 import {
   hasMcpToolCatalog,
   hasVerifiedMcpToolCatalog,
   readMcpToolCatalog,
-} from '@/lib/process/mcp-tool-catalog';
+} from "@/lib/process/mcp-tool-catalog";
 
 export async function getDefaultWorkspace(userId: string, lastSlug?: string) {
   if (lastSlug) {
@@ -15,8 +15,11 @@ export async function getDefaultWorkspace(userId: string, lastSlug?: string) {
     if (last) return last;
   }
   return db.workspace.findFirst({
-    where: { status: 'active', OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
-    orderBy: { createdAt: 'asc' },
+    where: {
+      status: "active",
+      OR: [{ ownerId: userId }, { members: { some: { userId } } }],
+    },
+    orderBy: { createdAt: "asc" },
   });
 }
 
@@ -24,12 +27,12 @@ export async function getWorkspaceForUser(slug: string, userId: string) {
   const workspace = await db.workspace.findFirst({
     where: {
       slug,
-      status: 'active',
+      status: "active",
       OR: [{ ownerId: userId }, { members: { some: { userId } } }],
     },
   });
   if (workspace) {
-    const { enrichLogContext } = await import('@/lib/observability/context');
+    const { enrichLogContext } = await import("@/lib/observability/context");
     enrichLogContext({ workspaceId: workspace.id, actorId: userId });
   }
   return workspace;
@@ -38,11 +41,26 @@ export async function getWorkspaceForUser(slug: string, userId: string) {
 export async function listWorkspacesForUser(userId: string) {
   const workspaces = await db.workspace.findMany({
     where: { OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
-    orderBy: { createdAt: 'asc' },
-    select: { id: true, slug: true, name: true, ownerId: true, status: true, _count: { select: { members: true } } },
+    orderBy: { createdAt: "asc" },
+    select: {
+      id: true,
+      slug: true,
+      name: true,
+      ownerId: true,
+      status: true,
+      members: { where: { userId }, select: { role: true } },
+      _count: { select: { members: true } },
+    },
   });
-  return workspaces.map(({ ownerId, _count, ...workspace }) => ({
-    ...workspace, role: ownerId === userId ? 'owner' as const : 'member' as const, memberCount: _count.members,
+  return workspaces.map(({ ownerId, members, _count, ...workspace }) => ({
+    ...workspace,
+    role:
+      ownerId === userId
+        ? ("owner" as const)
+        : members[0]?.role === "admin"
+          ? ("admin" as const)
+          : ("member" as const),
+    memberCount: _count.members,
   }));
 }
 
@@ -50,9 +68,9 @@ export async function getDeployments(workspaceId: string) {
   return db.deployment.findMany({
     where: {
       workspaceId,
-      OR: [{ source: null }, { source: { not: 'sandbox' } }],
+      OR: [{ source: null }, { source: { not: "sandbox" } }],
     },
-    orderBy: { createdAt: 'desc' },
+    orderBy: { createdAt: "desc" },
     include: {
       server: { select: { slug: true, name: true, iconUrl: true } },
     },
@@ -62,7 +80,7 @@ export async function getDeployments(workspaceId: string) {
 export async function getWorkspaceMembers(workspaceId: string) {
   return db.membership.findMany({
     where: { workspaceId },
-    orderBy: { createdAt: 'asc' },
+    orderBy: { createdAt: "asc" },
     include: { user: { select: { email: true, name: true } } },
   });
 }
@@ -70,12 +88,23 @@ export async function getWorkspaceMembers(workspaceId: string) {
 export async function getInstalledSkills(workspaceId: string) {
   return db.installedSkill.findMany({
     where: { workspaceId },
-    orderBy: { createdAt: 'desc' },
+    orderBy: { createdAt: "desc" },
     include: {
       marketInstall: { select: { id: true } },
-      toolkitLinks: { where: { toolkit: { marketInstall: { isNot: null } } }, select: { toolkitId: true }, take: 1 },
+      toolkitLinks: {
+        where: { toolkit: { marketInstall: { isNot: null } } },
+        select: { toolkitId: true },
+        take: 1,
+      },
       skill: {
-        select: { slug: true, name: true, iconUrl: true, description: true, content: true, files: true },
+        select: {
+          slug: true,
+          name: true,
+          iconUrl: true,
+          description: true,
+          content: true,
+          files: true,
+        },
       },
     },
   });
@@ -118,7 +147,9 @@ const MARKET_MCP_SELECT = {
   createdAt: true,
   categories: { select: { name: true, slug: true } },
   sourceServer: { select: { id: true } },
-  latestRelease: { select: { id: true, reviewStatus: true, publishedAt: true } },
+  latestRelease: {
+    select: { id: true, reviewStatus: true, publishedAt: true },
+  },
 } as const;
 const SKILL_BROWSE_SELECT = {
   id: true,
@@ -136,7 +167,9 @@ const SKILL_BROWSE_SELECT = {
 } as const;
 
 type RawBrowse = Prisma.ServerGetPayload<{ select: typeof BROWSE_SELECT }>;
-type RawMarketMcp = Prisma.MarketListingGetPayload<{ select: typeof MARKET_MCP_SELECT }>;
+type RawMarketMcp = Prisma.MarketListingGetPayload<{
+  select: typeof MARKET_MCP_SELECT;
+}>;
 export type BrowseServer = {
   id: string;
   slug: string;
@@ -149,14 +182,14 @@ export type BrowseServer = {
   isFeatured: boolean;
   createdAt: Date;
   categories: { name: string; slug: string }[];
-  mcpKind: 'server' | 'connector';
+  mcpKind: "server" | "connector";
   marketListing: { namespace: string; slug: string; releaseId: string } | null;
   deployable: true;
 };
 export type McpBrowseFilters = {
   category?: string;
-  sort?: 'popular' | 'newest' | 'name';
-  type?: 'server' | 'connector';
+  sort?: "popular" | "newest" | "name";
+  type?: "server" | "connector";
 };
 export type BrowseSkill = {
   id: string;
@@ -182,48 +215,59 @@ export type BrowseSkill = {
 
 export type SkillBrowseFilters = {
   workspaceId: string;
-  source: 'all' | 'github' | 'other';
-  installation: 'all' | 'available' | 'installed';
+  source: "all" | "github" | "other";
+  installation: "all" | "available" | "installed";
   category: string;
-  sort: 'top' | 'newest' | 'name';
+  sort: "top" | "newest" | "name";
 };
 
 // The authenticated market is an operational catalog, not the public showcase:
 // never return demo rows that cannot actually be deployed.
-function toBrowse(rows: RawBrowse[], recipes: Map<string, Prisma.JsonValue | null>): BrowseServer[] {
+function toBrowse(
+  rows: RawBrowse[],
+  recipes: Map<string, Prisma.JsonValue | null>,
+): BrowseServer[] {
   return rows.flatMap((server) => {
     const recipe = parseServerRecipe(recipes.get(server.id));
     return recipe
-      ? [{
-          id: server.id,
-          slug: server.slug,
-          name: server.name,
-          author: server.author,
-          description: server.description,
-          iconUrl: server.iconUrl,
-          stars: server.stars,
-          isOfficial: server.isOfficial,
-          isFeatured: server.isFeatured,
-          createdAt: server.createdAt,
-          categories: server.categories,
-          mcpKind: recipe.source === 'remote' ? 'connector' as const : 'server' as const,
-          marketListing: server.marketListing?.status === 'published'
-            && server.marketListing.latestRelease?.reviewStatus === 'approved'
-            ? {
-                namespace: server.marketListing.namespace,
-                slug: server.marketListing.slug,
-                releaseId: server.marketListing.latestRelease.id,
-              }
-            : null,
-          deployable: true as const,
-        }]
+      ? [
+          {
+            id: server.id,
+            slug: server.slug,
+            name: server.name,
+            author: server.author,
+            description: server.description,
+            iconUrl: server.iconUrl,
+            stars: server.stars,
+            isOfficial: server.isOfficial,
+            isFeatured: server.isFeatured,
+            createdAt: server.createdAt,
+            categories: server.categories,
+            mcpKind:
+              recipe.source === "remote"
+                ? ("connector" as const)
+                : ("server" as const),
+            marketListing:
+              server.marketListing?.status === "published" &&
+              server.marketListing.latestRelease?.reviewStatus === "approved"
+                ? {
+                    namespace: server.marketListing.namespace,
+                    slug: server.marketListing.slug,
+                    releaseId: server.marketListing.latestRelease.id,
+                  }
+                : null,
+            deployable: true as const,
+          },
+        ]
       : [];
   });
 }
 
-function marketMetadata(value: Prisma.JsonValue): Record<string, Prisma.JsonValue> {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? value as Record<string, Prisma.JsonValue>
+function marketMetadata(
+  value: Prisma.JsonValue,
+): Record<string, Prisma.JsonValue> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, Prisma.JsonValue>)
     : {};
 }
 
@@ -232,97 +276,159 @@ function toMarketBrowse(
   recipes: Map<string, Prisma.JsonValue | null>,
 ): BrowseServer[] {
   return rows.flatMap((listing) => {
-    if (!listing.sourceServer || !listing.latestRelease || listing.latestRelease.reviewStatus !== 'approved') return [];
+    if (
+      !listing.sourceServer ||
+      !listing.latestRelease ||
+      listing.latestRelease.reviewStatus !== "approved"
+    )
+      return [];
     const recipe = parseServerRecipe(recipes.get(listing.sourceServer.id));
     if (!recipe) return [];
     const metadata = marketMetadata(listing.metadata);
-    return [{
-      id: listing.sourceServer.id,
-      slug: listing.slug,
-      name: listing.name,
-      author: typeof metadata.author === 'string' ? metadata.author : listing.namespace,
-      description: listing.summary,
-      iconUrl: listing.iconUrl,
-      stars: listing.installCount,
-      isOfficial: listing.curated,
-      isFeatured: listing.isFeatured,
-      createdAt: listing.latestRelease.publishedAt ?? listing.publishedAt ?? listing.createdAt,
-      categories: listing.categories,
-      mcpKind: recipe.source === 'remote' ? 'connector' : 'server',
-      marketListing: {
-        namespace: listing.namespace,
+    return [
+      {
+        id: listing.sourceServer.id,
         slug: listing.slug,
-        releaseId: listing.latestRelease.id,
+        name: listing.name,
+        author:
+          typeof metadata.author === "string"
+            ? metadata.author
+            : listing.namespace,
+        description: listing.summary,
+        iconUrl: listing.iconUrl,
+        stars: listing.installCount,
+        isOfficial: listing.curated,
+        isFeatured: listing.isFeatured,
+        createdAt:
+          listing.latestRelease.publishedAt ??
+          listing.publishedAt ??
+          listing.createdAt,
+        categories: listing.categories,
+        mcpKind: recipe.source === "remote" ? "connector" : "server",
+        marketListing: {
+          namespace: listing.namespace,
+          slug: listing.slug,
+          releaseId: listing.latestRelease.id,
+        },
+        deployable: true as const,
       },
-      deployable: true as const,
-    }];
+    ];
   });
 }
 
-function sortBrowseServers(rows: BrowseServer[], sort: 'popular' | 'newest' | 'name') {
-  return rows.sort((a, b) => sort === 'newest'
-    ? b.createdAt.getTime() - a.createdAt.getTime() || a.name.localeCompare(b.name)
-    : sort === 'name'
-      ? a.name.localeCompare(b.name)
-      : b.stars - a.stars || a.name.localeCompare(b.name));
+function sortBrowseServers(
+  rows: BrowseServer[],
+  sort: "popular" | "newest" | "name",
+) {
+  return rows.sort((a, b) =>
+    sort === "newest"
+      ? b.createdAt.getTime() - a.createdAt.getTime() ||
+        a.name.localeCompare(b.name)
+      : sort === "name"
+        ? a.name.localeCompare(b.name)
+        : b.stars - a.stars || a.name.localeCompare(b.name),
+  );
 }
 
-export async function getBrowseServers(page: number, q = '', filters: McpBrowseFilters = {}) {
+export async function getBrowseServers(
+  page: number,
+  q = "",
+  filters: McpBrowseFilters = {},
+) {
   const term = q.trim();
   const skip = (Math.max(1, page) - 1) * BROWSE_PAGE_SIZE;
-  const category = filters.category?.trim() ?? '';
-  const type = filters.type === 'connector' || filters.type === 'server' ? filters.type : undefined;
-  const sort = filters.sort === 'newest' || filters.sort === 'name' ? filters.sort : 'popular';
+  const category = filters.category?.trim() ?? "";
+  const type =
+    filters.type === "connector" || filters.type === "server"
+      ? filters.type
+      : undefined;
+  const sort =
+    filters.sort === "newest" || filters.sort === "name"
+      ? filters.sort
+      : "popular";
   const where: Prisma.ServerWhereInput = {
     verifiedAt: { not: null },
     marketListing: { is: null },
     AND: [
       ...(term
-        ? [{
-          OR: [
-            { name: { contains: term, mode: 'insensitive' as const } },
-          { description: { contains: term, mode: 'insensitive' as const } },
-          { author: { contains: term, mode: 'insensitive' as const } },
-          { slug: { contains: term, mode: 'insensitive' as const } },
-          { categories: { some: { name: { contains: term, mode: 'insensitive' as const } } } },
-          ],
-        }]
+        ? [
+            {
+              OR: [
+                { name: { contains: term, mode: "insensitive" as const } },
+                {
+                  description: { contains: term, mode: "insensitive" as const },
+                },
+                { author: { contains: term, mode: "insensitive" as const } },
+                { slug: { contains: term, mode: "insensitive" as const } },
+                {
+                  categories: {
+                    some: {
+                      name: { contains: term, mode: "insensitive" as const },
+                    },
+                  },
+                },
+              ],
+            },
+          ]
         : []),
     ],
   };
   const marketWhere: Prisma.MarketListingWhereInput = {
-    kind: 'mcp',
-    status: 'published',
-    visibility: 'public',
+    kind: "mcp",
+    status: "published",
+    visibility: "public",
     latestReleaseId: { not: null },
-    latestRelease: { is: { reviewStatus: 'approved' } },
+    latestRelease: { is: { reviewStatus: "approved" } },
     sourceServer: { is: { verifiedAt: { not: null } } },
-    ...(term ? {
-      OR: [
-        { name: { contains: term, mode: 'insensitive' } },
-        { summary: { contains: term, mode: 'insensitive' } },
-        { namespace: { contains: term, mode: 'insensitive' } },
-        { slug: { contains: term, mode: 'insensitive' } },
-        { categories: { some: { name: { contains: term, mode: 'insensitive' } } } },
-        { sourceServer: { is: { name: { contains: term, mode: 'insensitive' } } } },
-        { sourceServer: { is: { slug: { contains: term, mode: 'insensitive' } } } },
-      ],
-    } : {}),
+    ...(term
+      ? {
+          OR: [
+            { name: { contains: term, mode: "insensitive" } },
+            { summary: { contains: term, mode: "insensitive" } },
+            { namespace: { contains: term, mode: "insensitive" } },
+            { slug: { contains: term, mode: "insensitive" } },
+            {
+              categories: {
+                some: { name: { contains: term, mode: "insensitive" } },
+              },
+            },
+            {
+              sourceServer: {
+                is: { name: { contains: term, mode: "insensitive" } },
+              },
+            },
+            {
+              sourceServer: {
+                is: { slug: { contains: term, mode: "insensitive" } },
+              },
+            },
+          ],
+        }
+      : {}),
   };
 
   // Recipe validity is stronger than a JSON-not-null database predicate, so
   // validate before paginating to keep totals and pages accurate.
   const [rows, marketRows] = await Promise.all([
     db.server.findMany({ where, select: BROWSE_SELECT }),
-    db.marketListing.findMany({ where: marketWhere, select: MARKET_MCP_SELECT }),
+    db.marketListing.findMany({
+      where: marketWhere,
+      select: MARKET_MCP_SELECT,
+    }),
   ]);
   // Project out the potentially multi-megabyte tool snapshot before validating recipes.
-  const serverIds = [...new Set([
-    ...rows.map(({ id }) => id),
-    ...marketRows.flatMap(({ sourceServer }) => sourceServer ? [sourceServer.id] : []),
-  ])];
+  const serverIds = [
+    ...new Set([
+      ...rows.map(({ id }) => id),
+      ...marketRows.flatMap(({ sourceServer }) =>
+        sourceServer ? [sourceServer.id] : [],
+      ),
+    ]),
+  ];
   const recipeRows = serverIds.length
-    ? await db.$queryRaw<Array<{ id: string; installCfg: Prisma.JsonValue | null }>>(Prisma.sql`
+    ? await db.$queryRaw<
+        Array<{ id: string; installCfg: Prisma.JsonValue | null }>
+      >(Prisma.sql`
         SELECT "id", "installCfg" - 'toolCatalog' AS "installCfg"
         FROM "Server"
         WHERE "id" IN (${Prisma.join(serverIds)})
@@ -347,30 +453,44 @@ export async function getBrowseServers(page: number, q = '', filters: McpBrowseF
     : [];
   const recipes = new Map(recipeRows.map((row) => [row.id, row.installCfg]));
   const catalogServerIds = new Set(recipeRows.map(({ id }) => id));
-  const valid = sortBrowseServers([
-    ...toBrowse(rows, recipes),
-    ...toMarketBrowse(
-      marketRows.filter(({ sourceServer }) => sourceServer && catalogServerIds.has(sourceServer.id)),
-      recipes,
-    ),
-  ], sort);
-  const typed = type ? valid.filter((server) => server.mcpKind === type) : valid;
+  const valid = sortBrowseServers(
+    [
+      ...toBrowse(rows, recipes),
+      ...toMarketBrowse(
+        marketRows.filter(
+          ({ sourceServer }) =>
+            sourceServer && catalogServerIds.has(sourceServer.id),
+        ),
+        recipes,
+      ),
+    ],
+    sort,
+  );
+  const typed = type
+    ? valid.filter((server) => server.mcpKind === type)
+    : valid;
   const categoryCounts = new Map<string, { name: string; count: number }>();
   for (const server of typed) {
     for (const item of server.categories) {
       const current = categoryCounts.get(item.slug);
-      categoryCounts.set(item.slug, { name: item.name, count: (current?.count ?? 0) + 1 });
+      categoryCounts.set(item.slug, {
+        name: item.name,
+        count: (current?.count ?? 0) + 1,
+      });
     }
   }
   const categories = [...categoryCounts.entries()]
     .map(([slug, item]) => ({ slug, ...item }))
     .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
   const filtered = category
-    ? typed.filter((server) => server.categories.some((item) => item.slug === category))
+    ? typed.filter((server) =>
+        server.categories.some((item) => item.slug === category),
+      )
     : typed;
-  const featured = term || category || sort !== 'popular'
-    ? []
-    : filtered.filter((server) => server.isFeatured).slice(0, 12);
+  const featured =
+    term || category || sort !== "popular"
+      ? []
+      : filtered.filter((server) => server.isFeatured).slice(0, 12);
   return {
     featured,
     all: filtered.slice(skip, skip + BROWSE_PAGE_SIZE),
@@ -413,9 +533,9 @@ export async function getMarketServer(slug: string, workspaceId: string) {
   if (!hasVerifiedMcpToolCatalog(server)) return null;
   const recipe = parseServerRecipe(server.installCfg);
   if (!recipe) return null;
-  const readmeUrls = server.readme?.match(/https?:\/\/[^\s<>()\[\]"']+/g)
-    ?.flatMap((value) => {
-      const cleaned = value.replace(/[.,;!?]+$/, '');
+  const readmeUrls =
+    server.readme?.match(/https?:\/\/[^\s<>()[\]"']+/g)?.flatMap((value) => {
+      const cleaned = value.replace(/[.,;!?]+$/, "");
       try {
         const url = new URL(cleaned);
         return !url.username && !url.password ? [cleaned] : [];
@@ -423,25 +543,28 @@ export async function getMarketServer(slug: string, workspaceId: string) {
         return [];
       }
     }) ?? [];
-  const sourceUrl = recipe.sourceUrl
-    ?? readmeUrls.find((value) => {
+  const sourceUrl =
+    recipe.sourceUrl ??
+    readmeUrls.find((value) => {
       try {
-        return new URL(value).hostname.toLowerCase() === 'github.com';
+        return new URL(value).hostname.toLowerCase() === "github.com";
       } catch {
         return false;
       }
-    })
-    ?? readmeUrls[0]
-    ?? (recipe.source === 'github'
+    }) ??
+    readmeUrls[0] ??
+    (recipe.source === "github"
       ? recipe.ref
-      : recipe.source === 'npm'
-        ? `https://www.npmjs.com/package/${recipe.ref.split('/').map(encodeURIComponent).join('/')}`
-        : recipe.source === 'pypi'
+      : recipe.source === "npm"
+        ? `https://www.npmjs.com/package/${recipe.ref.split("/").map(encodeURIComponent).join("/")}`
+        : recipe.source === "pypi"
           ? `https://pypi.org/project/${encodeURIComponent(recipe.ref)}/`
           : null);
   const deployment = server.deployments[0];
-  const mcpKind = recipe.source === 'remote' ? 'connector' as const : 'server' as const;
-  const toolCatalogKnown = mcpKind === 'server' || hasMcpToolCatalog(deployment?.installCfg);
+  const mcpKind =
+    recipe.source === "remote" ? ("connector" as const) : ("server" as const);
+  const toolCatalogKnown =
+    mcpKind === "server" || hasMcpToolCatalog(deployment?.installCfg);
   return {
     id: server.id,
     slug: server.slug,
@@ -455,23 +578,26 @@ export async function getMarketServer(slug: string, workspaceId: string) {
     verifiedTools: server.verifiedTools,
     sourceUrl,
     mcpKind,
-    connector: recipe.source === 'remote'
-      ? {
-          endpointHost: new URL(recipe.ref).hostname,
-          transport: recipe.transport ?? 'streamable-http',
-          authType: recipe.authType ?? 'none',
-        }
-      : null,
+    connector:
+      recipe.source === "remote"
+        ? {
+            endpointHost: new URL(recipe.ref).hostname,
+            transport: recipe.transport ?? "streamable-http",
+            authType: recipe.authType ?? "none",
+          }
+        : null,
     categories: server.categories,
     tools: toolCatalogKnown
-      ? readMcpToolCatalog(mcpKind === 'server' ? server.installCfg : deployment?.installCfg)
+      ? readMcpToolCatalog(
+          mcpKind === "server" ? server.installCfg : deployment?.installCfg,
+        )
       : [],
     toolCatalogKnown,
     recipe: {
       source: recipe.source,
       ref: recipe.ref,
       requiredEnv: recipe.env,
-      network: recipe.network ?? 'isolated',
+      network: recipe.network ?? "isolated",
       transport: recipe.transport,
       authType: recipe.authType,
     },
@@ -480,7 +606,7 @@ export async function getMarketServer(slug: string, workspaceId: string) {
   };
 }
 
-type RawBrowseSkill = Omit<BrowseSkill, 'installed' | 'marketListing'> & {
+type RawBrowseSkill = Omit<BrowseSkill, "installed" | "marketListing"> & {
   content: string | null;
   installs: { id: string }[];
 };
@@ -499,11 +625,11 @@ const PUBLIC_DIRECTORY_SKILL_WHERE = {
   NOT: {
     marketListing: {
       is: {
-        kind: 'skill',
-        status: 'published',
-        visibility: 'public',
+        kind: "skill",
+        status: "published",
+        visibility: "public",
         latestReleaseId: { not: null },
-        latestRelease: { is: { reviewStatus: 'approved' } },
+        latestRelease: { is: { reviewStatus: "approved" } },
       },
     },
   },
@@ -511,17 +637,22 @@ const PUBLIC_DIRECTORY_SKILL_WHERE = {
 
 export async function getSkillBrowseCategories(includeMarket = false) {
   const marketWhere = {
-    kind: 'skill',
-    status: 'published',
-    visibility: 'public',
+    kind: "skill",
+    status: "published",
+    visibility: "public",
     latestReleaseId: { not: null },
-    latestRelease: { is: { reviewStatus: 'approved' } },
+    latestRelease: { is: { reviewStatus: "approved" } },
   } satisfies Prisma.MarketListingWhereInput;
   const rows = await db.category.findMany({
     where: includeMarket
-      ? { OR: [{ skills: { some: PUBLIC_DIRECTORY_SKILL_WHERE } }, { marketListings: { some: marketWhere } }] }
+      ? {
+          OR: [
+            { skills: { some: PUBLIC_DIRECTORY_SKILL_WHERE } },
+            { marketListings: { some: marketWhere } },
+          ],
+        }
       : { skills: { some: PUBLIC_DIRECTORY_SKILL_WHERE } },
-    orderBy: { name: 'asc' },
+    orderBy: { name: "asc" },
     select: {
       name: true,
       slug: true,
@@ -535,44 +666,59 @@ export async function getSkillBrowseCategories(includeMarket = false) {
   });
   return rows.map(({ _count, ...row }) => ({
     ...row,
-    _count: { skills: _count.skills + (includeMarket ? _count.marketListings : 0) },
+    _count: {
+      skills: _count.skills + (includeMarket ? _count.marketListings : 0),
+    },
   }));
 }
 
-export async function getBrowseSkills(page: number, q: string, filters: SkillBrowseFilters) {
+export async function getBrowseSkills(
+  page: number,
+  q: string,
+  filters: SkillBrowseFilters,
+) {
   const term = q.trim();
   const skip = (Math.max(1, page) - 1) * BROWSE_PAGE_SIZE;
   const whereParts: Prisma.SkillWhereInput[] = [PUBLIC_DIRECTORY_SKILL_WHERE];
   if (term) {
     whereParts.push({
       OR: [
-        { name: { contains: term, mode: 'insensitive' as const } },
-        { description: { contains: term, mode: 'insensitive' as const } },
-        { author: { contains: term, mode: 'insensitive' as const } },
-        { slug: { contains: term, mode: 'insensitive' as const } },
+        { name: { contains: term, mode: "insensitive" as const } },
+        { description: { contains: term, mode: "insensitive" as const } },
+        { author: { contains: term, mode: "insensitive" as const } },
+        { slug: { contains: term, mode: "insensitive" as const } },
       ],
     });
   }
-  if (filters.source === 'github') whereParts.push({ githubSource: { not: null } });
-  if (filters.source === 'other') whereParts.push({ githubSource: null });
-  if (filters.installation === 'installed') {
-    whereParts.push({ installs: { some: { workspaceId: filters.workspaceId } } });
+  if (filters.source === "github")
+    whereParts.push({ githubSource: { not: null } });
+  if (filters.source === "other") whereParts.push({ githubSource: null });
+  if (filters.installation === "installed") {
+    whereParts.push({
+      installs: { some: { workspaceId: filters.workspaceId } },
+    });
   }
-  if (filters.installation === 'available') {
-    whereParts.push({ installs: { none: { workspaceId: filters.workspaceId } } });
+  if (filters.installation === "available") {
+    whereParts.push({
+      installs: { none: { workspaceId: filters.workspaceId } },
+    });
   }
   const availableWhere: Prisma.SkillWhereInput = { AND: [...whereParts] };
-  if (filters.category === 'uncategorized') whereParts.push({ categories: { none: {} } });
-  else if (filters.category !== 'all') {
+  if (filters.category === "uncategorized")
+    whereParts.push({ categories: { none: {} } });
+  else if (filters.category !== "all") {
     whereParts.push({ categories: { some: { slug: filters.category } } });
   }
 
-  const where: Prisma.SkillWhereInput = whereParts.length ? { AND: whereParts } : {};
-  const orderBy: Prisma.SkillOrderByWithRelationInput[] = filters.sort === 'newest'
-    ? [{ createdAt: 'desc' }]
-    : filters.sort === 'name'
-      ? [{ name: 'asc' }]
-      : [{ score: 'desc' }, { name: 'asc' }];
+  const where: Prisma.SkillWhereInput = whereParts.length
+    ? { AND: whereParts }
+    : {};
+  const orderBy: Prisma.SkillOrderByWithRelationInput[] =
+    filters.sort === "newest"
+      ? [{ createdAt: "desc" }]
+      : filters.sort === "name"
+        ? [{ name: "asc" }]
+        : [{ score: "desc" }, { name: "asc" }];
   const select = {
     ...SKILL_BROWSE_SELECT,
     installs: {
@@ -583,43 +729,54 @@ export async function getBrowseSkills(page: number, q: string, filters: SkillBro
   } as const;
   const isFiltered = Boolean(
     term ||
-      filters.source !== 'all' ||
-      filters.installation !== 'all' ||
-      filters.category !== 'all' ||
-      filters.sort !== 'top',
+      filters.source !== "all" ||
+      filters.installation !== "all" ||
+      filters.category !== "all" ||
+      filters.sort !== "top",
   );
-  const includeMarket = filters.source === 'all' && filters.installation === 'all';
+  const includeMarket =
+    filters.source === "all" && filters.installation === "all";
   const marketBaseWhere: Prisma.MarketListingWhereInput = {
-    kind: 'skill',
-    status: 'published',
-    visibility: 'public',
+    kind: "skill",
+    status: "published",
+    visibility: "public",
     latestReleaseId: { not: null },
-    latestRelease: { is: { reviewStatus: 'approved' } },
-    ...(term ? {
-      OR: [
-        { name: { contains: term, mode: 'insensitive' } },
-        { summary: { contains: term, mode: 'insensitive' } },
-        { namespace: { contains: term, mode: 'insensitive' } },
-        { slug: { contains: term, mode: 'insensitive' } },
-      ],
-    } : {}),
+    latestRelease: { is: { reviewStatus: "approved" } },
+    ...(term
+      ? {
+          OR: [
+            { name: { contains: term, mode: "insensitive" } },
+            { summary: { contains: term, mode: "insensitive" } },
+            { namespace: { contains: term, mode: "insensitive" } },
+            { slug: { contains: term, mode: "insensitive" } },
+          ],
+        }
+      : {}),
   };
   const marketWhere: Prisma.MarketListingWhereInput = {
     ...marketBaseWhere,
-    ...(filters.category === 'uncategorized'
+    ...(filters.category === "uncategorized"
       ? { categories: { none: {} } }
-      : filters.category !== 'all'
+      : filters.category !== "all"
         ? { categories: { some: { slug: filters.category } } }
         : {}),
   };
   const candidateCount = skip + BROWSE_PAGE_SIZE;
 
-  const [featuredRows, catalogTotal, catalogAvailableTotal, allRows, marketTotal, marketAvailableTotal, marketRows] = await Promise.all([
+  const [
+    featuredRows,
+    catalogTotal,
+    catalogAvailableTotal,
+    allRows,
+    marketTotal,
+    marketAvailableTotal,
+    marketRows,
+  ] = await Promise.all([
     isFiltered
       ? Promise.resolve([] as RawBrowseSkill[])
       : db.skill.findMany({
           where: PUBLIC_DIRECTORY_SKILL_WHERE,
-          orderBy: { score: 'desc' },
+          orderBy: { score: "desc" },
           take: 12,
           select,
         }),
@@ -631,16 +788,21 @@ export async function getBrowseSkills(page: number, q: string, filters: SkillBro
       take: candidateCount,
       select,
     }),
-    includeMarket ? db.marketListing.count({ where: marketWhere }) : Promise.resolve(0),
-    includeMarket ? db.marketListing.count({ where: marketBaseWhere }) : Promise.resolve(0),
+    includeMarket
+      ? db.marketListing.count({ where: marketWhere })
+      : Promise.resolve(0),
+    includeMarket
+      ? db.marketListing.count({ where: marketBaseWhere })
+      : Promise.resolve(0),
     includeMarket
       ? db.marketListing.findMany({
           where: marketWhere,
-          orderBy: filters.sort === 'newest'
-            ? [{ publishedAt: 'desc' }, { name: 'asc' }]
-            : filters.sort === 'name'
-              ? [{ name: 'asc' }]
-              : [{ installCount: 'desc' }, { name: 'asc' }],
+          orderBy:
+            filters.sort === "newest"
+              ? [{ publishedAt: "desc" }, { name: "asc" }]
+              : filters.sort === "name"
+                ? [{ name: "asc" }]
+                : [{ installCount: "desc" }, { name: "asc" }],
           take: candidateCount,
           select: {
             id: true,
@@ -664,33 +826,41 @@ export async function getBrowseSkills(page: number, q: string, filters: SkillBro
         })
       : Promise.resolve([]),
   ]);
-  const marketSkills: BrowseSkill[] = marketRows.flatMap((listing) => listing.latestRelease ? [{
-    id: listing.id,
-    slug: listing.slug,
-    name: listing.name,
-    author: listing.namespace,
-    description: listing.summary,
-    iconUrl: listing.iconUrl,
-    githubSource: null,
-    curated: listing.curated,
-    score: listing.installCount,
-    createdAt: listing.publishedAt ?? listing.createdAt,
-    categories: listing.categories,
-    installed: listing.installs.length > 0,
-    marketListing: {
-      namespace: listing.namespace,
-      slug: listing.slug,
-      releaseId: listing.latestRelease.id,
-      version: listing.latestRelease.version,
-      installCount: listing.installCount,
-    },
-  }] : []);
-  const combined = [...toBrowseSkills(allRows), ...marketSkills]
-    .sort((a, b) => filters.sort === 'newest'
-      ? b.createdAt.getTime() - a.createdAt.getTime() || a.name.localeCompare(b.name)
-      : filters.sort === 'name'
+  const marketSkills: BrowseSkill[] = marketRows.flatMap((listing) =>
+    listing.latestRelease
+      ? [
+          {
+            id: listing.id,
+            slug: listing.slug,
+            name: listing.name,
+            author: listing.namespace,
+            description: listing.summary,
+            iconUrl: listing.iconUrl,
+            githubSource: null,
+            curated: listing.curated,
+            score: listing.installCount,
+            createdAt: listing.publishedAt ?? listing.createdAt,
+            categories: listing.categories,
+            installed: listing.installs.length > 0,
+            marketListing: {
+              namespace: listing.namespace,
+              slug: listing.slug,
+              releaseId: listing.latestRelease.id,
+              version: listing.latestRelease.version,
+              installCount: listing.installCount,
+            },
+          },
+        ]
+      : [],
+  );
+  const combined = [...toBrowseSkills(allRows), ...marketSkills].sort((a, b) =>
+    filters.sort === "newest"
+      ? b.createdAt.getTime() - a.createdAt.getTime() ||
+        a.name.localeCompare(b.name)
+      : filters.sort === "name"
         ? a.name.localeCompare(b.name)
-        : b.score - a.score || a.name.localeCompare(b.name));
+        : b.score - a.score || a.name.localeCompare(b.name),
+  );
 
   return {
     featured: toBrowseSkills(featuredRows),
@@ -727,7 +897,10 @@ export async function getMarketSkill(slug: string, workspaceId: string) {
   const { installs, ...marketSkill } = skill;
   return {
     ...marketSkill,
-    description: normalizedSkillDescription(marketSkill.description, marketSkill.content),
+    description: normalizedSkillDescription(
+      marketSkill.description,
+      marketSkill.content,
+    ),
     installId: installs[0]?.id ?? null,
   };
 }

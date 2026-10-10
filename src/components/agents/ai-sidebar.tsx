@@ -34,11 +34,7 @@ import { EASE_OUT, SPRING_LAYOUT } from "@/lib/ease";
 import { useTouchCapable } from "@/lib/hooks/use-touch-capable";
 import { cn } from "@/lib/utils";
 
-export type SidebarResourceKind =
-  | "folder"
-  | "project"
-  | "file"
-  | "bookmark";
+export type SidebarResourceKind = "folder" | "project" | "file" | "bookmark";
 
 export interface SidebarResource {
   id: string;
@@ -192,7 +188,8 @@ function insertResource(
     if (item.id === targetId) {
       if (position === "before") next.push(resource, item);
       else if (position === "after") next.push(item, resource);
-      else next.push({ ...item, children: [...(item.children ?? []), resource] });
+      else
+        next.push({ ...item, children: [...(item.children ?? []), resource] });
       continue;
     }
 
@@ -254,12 +251,18 @@ function defaultIcon(item: SidebarResource, expanded: boolean) {
         ? FolderOpen
         : Folder
       : item.kind === "bookmark"
-          ? Bookmark
-          : FileText;
+        ? Bookmark
+        : FileText;
   return <Icon className="size-4" />;
 }
 
-function MarqueeLabel({ active, children }: { active: boolean; children: string }) {
+function MarqueeLabel({
+  active,
+  children,
+}: {
+  active: boolean;
+  children: string;
+}) {
   const reduce = useReducedMotion() ?? false;
   const viewportRef = useRef<HTMLSpanElement>(null);
   const labelRef = useRef<HTMLSpanElement>(null);
@@ -270,7 +273,9 @@ function MarqueeLabel({ active, children }: { active: boolean; children: string 
       const viewport = viewportRef.current;
       const label = labelRef.current;
       if (!viewport || !label) return;
-      setDistance(label.scrollWidth > viewport.clientWidth ? label.scrollWidth + 24 : 0);
+      setDistance(
+        label.scrollWidth > viewport.clientWidth ? label.scrollWidth + 24 : 0,
+      );
     };
     measure();
     const observer = new ResizeObserver(measure);
@@ -389,7 +394,8 @@ function ResourceRow({
   const [draft, setDraft] = useState(row.item.label);
   const acceptsChildren = canContain(row.item);
   const isDragging = draggingId === row.item.id;
-  const dropPosition = dropTarget?.id === row.item.id ? dropTarget.position : null;
+  const dropPosition =
+    dropTarget?.id === row.item.id ? dropTarget.position : null;
 
   useEffect(() => {
     if (!renaming) return;
@@ -510,7 +516,10 @@ function ResourceRow({
       )}
       style={{ paddingLeft: `${12 + row.depth * 16}px` }}
     >
-      <span aria-hidden="true" className="grid size-5 shrink-0 place-items-center">
+      <span
+        aria-hidden="true"
+        className="grid size-5 shrink-0 place-items-center"
+      >
         {renderIcon?.(row.item) ?? defaultIcon(row.item, expanded)}
       </span>
 
@@ -540,10 +549,13 @@ function ResourceRow({
           className="mx-1 h-7 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
       ) : (
-        <MarqueeLabel active={hovered || menuOpen}>{row.item.label}</MarqueeLabel>
+        <MarqueeLabel active={hovered || menuOpen}>
+          {row.item.label}
+        </MarqueeLabel>
       )}
 
       {!renaming && !row.item.disabled ? (
+        // biome-ignore lint/a11y/noStaticElementInteractions lint/a11y/useKeyWithClickEvents: This wrapper only stops portal event bubbling; child controls own keyboard interactions.
         <div
           className="flex shrink-0 items-center gap-0.5"
           // Portal events follow the React tree, so menu actions must not reach the row.
@@ -551,10 +563,7 @@ function ResourceRow({
           onDoubleClick={(event) => event.stopPropagation()}
         >
           {renderActions?.(row.item)}
-          <MorphPopover
-            open={menuOpen}
-            onOpenChange={onMenuOpenChange}
-          >
+          <MorphPopover open={menuOpen} onOpenChange={onMenuOpenChange}>
             <MorphPopoverTrigger>
               <button
                 type="button"
@@ -746,7 +755,11 @@ export function AISidebar({
       }
       // Only offer the reparent when it lands somewhere new — the row above a
       // folder's first child is the folder it already lives in.
-      if (previous && canContain(previous.item) && previous.item.id !== parentId) {
+      if (
+        previous &&
+        canContain(previous.item) &&
+        previous.item.id !== parentId
+      ) {
         commands.into = {
           label: previous.item.label,
           run: () => {
@@ -819,23 +832,44 @@ export function AISidebar({
 
       if (moveModifier && event.key === "ArrowUp" && previous) {
         event.preventDefault();
-        void performMove({ itemId: row.item.id, targetId: previous.item.id, position: "before" });
+        void performMove({
+          itemId: row.item.id,
+          targetId: previous.item.id,
+          position: "before",
+        });
         return;
       }
       if (moveModifier && event.key === "ArrowDown" && next) {
         event.preventDefault();
-        void performMove({ itemId: row.item.id, targetId: next.item.id, position: "after" });
+        void performMove({
+          itemId: row.item.id,
+          targetId: next.item.id,
+          position: "after",
+        });
         return;
       }
-      if (moveModifier && event.key === "ArrowRight" && previous && canContain(previous.item)) {
+      if (
+        moveModifier &&
+        event.key === "ArrowRight" &&
+        previous &&
+        canContain(previous.item)
+      ) {
         event.preventDefault();
         setExpandedIds((current) => new Set(current).add(previous.item.id));
-        void performMove({ itemId: row.item.id, targetId: previous.item.id, position: "inside" });
+        void performMove({
+          itemId: row.item.id,
+          targetId: previous.item.id,
+          position: "inside",
+        });
         return;
       }
       if (moveModifier && event.key === "ArrowLeft" && row.parentId) {
         event.preventDefault();
-        void performMove({ itemId: row.item.id, targetId: row.parentId, position: "after" });
+        void performMove({
+          itemId: row.item.id,
+          targetId: row.parentId,
+          position: "after",
+        });
         return;
       }
 
@@ -854,7 +888,10 @@ export function AISidebar({
       } else if (event.key === "F2") {
         event.preventDefault();
         setRenamingId(row.item.id);
-      } else if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
+      } else if (
+        event.key === "ContextMenu" ||
+        (event.shiftKey && event.key === "F10")
+      ) {
         event.preventDefault();
         setMenuOpenId(row.item.id);
       }
@@ -865,124 +902,128 @@ export function AISidebar({
   return (
     <>
       <div
-      role="tree"
-      aria-label={ariaLabel}
-      aria-multiselectable="false"
-      onDragOver={(event) => {
-        if (!draggingId || event.target !== event.currentTarget) return;
-        event.preventDefault();
-        setDropTarget({ id: null, position: "after" });
-      }}
-      onDrop={(event) => {
-        event.preventDefault();
-        if (draggingId && dropTarget) {
-          void performMove({
-            itemId: draggingId,
-            targetId: dropTarget.id,
-            position: dropTarget.position,
-          });
-        }
-      }}
-      className={cn(
-        "relative flex min-w-0 flex-col gap-0.5 [overflow-anchor:none] group-data-[state=collapsed]/sidebar:hidden",
-        draggingId && "select-none pb-9",
-        className,
-      )}
-    >
-      <AnimatePresence initial={false}>
-        {flat.map((row) => (
-          <ResourceRow
-            key={row.item.id}
-            row={row}
-            active={selectedId === row.item.id}
-            expanded={expandedIds.has(row.item.id)}
-            focused={focusedRow === row.item.id}
-            draggingId={draggingId}
-            dropTarget={dropTarget}
-            menuOpen={menuOpenId === row.item.id}
-            moves={moveCommands(row)}
-            renaming={renamingId === row.item.id}
-            onFocus={() => setFocusedId(row.item.id)}
-            onSelect={() => select(row.item.id)}
-            renderActions={renderActions}
-            onToggle={() => toggle(row.item.id)}
-            onKeyDown={(event) => handleKeyDown(event, row)}
-            onRenameStart={() => setRenamingId(row.item.id)}
-            onRenameCancel={() => setRenamingId(null)}
-            onRenameCommit={(label) => {
-              const trimmed = label.trim();
-              setRenamingId(null);
-              if (!trimmed || trimmed === row.item.label) return;
-              const before = renderedItems;
-              updateItems(renameResource(before, row.item.id, trimmed));
-              void Promise.resolve(onRename?.(row.item, trimmed)).catch(() => {
-                updateItems(before);
-                setAnnouncement(`Rename failed. ${row.item.label} was restored.`);
-              });
-            }}
-            onMenuOpenChange={(open) => {
-              setMenuOpenId(open ? row.item.id : null);
-              if (!open) focusRow(row.item.id);
-            }}
-            onDragStart={(event, id) => {
-              setDraggingId(id);
-              event.dataTransfer.effectAllowed = "move";
-              event.dataTransfer.setData("text/plain", id);
-            }}
-            onDragEnd={() => {
-              setDraggingId(null);
-              setDropTarget(null);
-            }}
-            onDragOver={(event, targetRow) => {
-              if (!draggingId || draggingId === targetRow.item.id) return;
-              const source = findResource(renderedItems, draggingId);
-              if (source && containsResource(source, targetRow.item.id)) return;
-              event.preventDefault();
-              event.stopPropagation();
-              const rect = event.currentTarget.getBoundingClientRect();
-              const ratio = (event.clientY - rect.top) / rect.height;
-              const position =
-                !targetRow.item.disabled &&
-                canContain(targetRow.item) &&
-                ratio >= 0.25 &&
-                ratio <= 0.75
-                  ? "inside"
-                  : ratio < 0.5
-                    ? "before"
-                    : "after";
-              setDropTarget({ id: targetRow.item.id, position });
-            }}
-            onDrop={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              if (draggingId && dropTarget) {
-                void performMove({
-                  itemId: draggingId,
-                  targetId: dropTarget.id,
-                  position: dropTarget.position,
-                });
-              }
-            }}
-            renderIcon={renderIcon}
-            renderMenu={renderMenu}
-            setRef={(node) => {
-              if (node) rowRefs.current.set(row.item.id, node);
-              else rowRefs.current.delete(row.item.id);
-            }}
-          />
-        ))}
-      </AnimatePresence>
+        role="tree"
+        aria-label={ariaLabel}
+        aria-multiselectable="false"
+        onDragOver={(event) => {
+          if (!draggingId || event.target !== event.currentTarget) return;
+          event.preventDefault();
+          setDropTarget({ id: null, position: "after" });
+        }}
+        onDrop={(event) => {
+          event.preventDefault();
+          if (draggingId && dropTarget) {
+            void performMove({
+              itemId: draggingId,
+              targetId: dropTarget.id,
+              position: dropTarget.position,
+            });
+          }
+        }}
+        className={cn(
+          "relative flex min-w-0 flex-col gap-0.5 [overflow-anchor:none] group-data-[state=collapsed]/sidebar:hidden",
+          draggingId && "select-none pb-9",
+          className,
+        )}
+      >
+        <AnimatePresence initial={false}>
+          {flat.map((row) => (
+            <ResourceRow
+              key={row.item.id}
+              row={row}
+              active={selectedId === row.item.id}
+              expanded={expandedIds.has(row.item.id)}
+              focused={focusedRow === row.item.id}
+              draggingId={draggingId}
+              dropTarget={dropTarget}
+              menuOpen={menuOpenId === row.item.id}
+              moves={moveCommands(row)}
+              renaming={renamingId === row.item.id}
+              onFocus={() => setFocusedId(row.item.id)}
+              onSelect={() => select(row.item.id)}
+              renderActions={renderActions}
+              onToggle={() => toggle(row.item.id)}
+              onKeyDown={(event) => handleKeyDown(event, row)}
+              onRenameStart={() => setRenamingId(row.item.id)}
+              onRenameCancel={() => setRenamingId(null)}
+              onRenameCommit={(label) => {
+                const trimmed = label.trim();
+                setRenamingId(null);
+                if (!trimmed || trimmed === row.item.label) return;
+                const before = renderedItems;
+                updateItems(renameResource(before, row.item.id, trimmed));
+                void Promise.resolve(onRename?.(row.item, trimmed)).catch(
+                  () => {
+                    updateItems(before);
+                    setAnnouncement(
+                      `Rename failed. ${row.item.label} was restored.`,
+                    );
+                  },
+                );
+              }}
+              onMenuOpenChange={(open) => {
+                setMenuOpenId(open ? row.item.id : null);
+                if (!open) focusRow(row.item.id);
+              }}
+              onDragStart={(event, id) => {
+                setDraggingId(id);
+                event.dataTransfer.effectAllowed = "move";
+                event.dataTransfer.setData("text/plain", id);
+              }}
+              onDragEnd={() => {
+                setDraggingId(null);
+                setDropTarget(null);
+              }}
+              onDragOver={(event, targetRow) => {
+                if (!draggingId || draggingId === targetRow.item.id) return;
+                const source = findResource(renderedItems, draggingId);
+                if (source && containsResource(source, targetRow.item.id))
+                  return;
+                event.preventDefault();
+                event.stopPropagation();
+                const rect = event.currentTarget.getBoundingClientRect();
+                const ratio = (event.clientY - rect.top) / rect.height;
+                const position =
+                  !targetRow.item.disabled &&
+                  canContain(targetRow.item) &&
+                  ratio >= 0.25 &&
+                  ratio <= 0.75
+                    ? "inside"
+                    : ratio < 0.5
+                      ? "before"
+                      : "after";
+                setDropTarget({ id: targetRow.item.id, position });
+              }}
+              onDrop={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                if (draggingId && dropTarget) {
+                  void performMove({
+                    itemId: draggingId,
+                    targetId: dropTarget.id,
+                    position: dropTarget.position,
+                  });
+                }
+              }}
+              renderIcon={renderIcon}
+              renderMenu={renderMenu}
+              setRef={(node) => {
+                if (node) rowRefs.current.set(row.item.id, node);
+                else rowRefs.current.delete(row.item.id);
+              }}
+            />
+          ))}
+        </AnimatePresence>
 
-      {draggingId ? (
-        <div
-          aria-hidden="true"
-          data-active={dropTarget?.id === null || undefined}
-          className="absolute inset-x-1 bottom-0 flex h-8 items-center justify-center rounded-lg border border-dashed border-border text-[10px] text-muted-foreground data-[active=true]:border-primary/50 data-[active=true]:bg-muted data-[active=true]:text-foreground"
-        >
-          Move to top level
-        </div>
-      ) : null}
-
+        {draggingId ? (
+          <div
+            aria-hidden="true"
+            data-active={dropTarget?.id === null || undefined}
+            className="absolute inset-x-1 bottom-0 flex h-8 items-center justify-center rounded-lg border border-dashed border-border text-[10px] text-muted-foreground data-[active=true]:border-primary/50 data-[active=true]:bg-muted data-[active=true]:text-foreground"
+          >
+            Move to top level
+          </div>
+        ) : null}
       </div>
       <span className="sr-only" aria-live="polite">
         {announcement}

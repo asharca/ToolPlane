@@ -1,46 +1,49 @@
-'use server';
+"use server";
 
-import type { Prisma } from '@prisma/client';
-import { db } from '@/lib/db';
-import { getCurrentUser } from '@/lib/auth/current-user';
-import { getWorkspaceForUser } from '@/lib/workspace/queries';
-import { effectiveStatus } from '@/lib/process/supervisor';
-import { resolveSpawnSpec, type SpawnSpec } from '@/lib/process/spawn-spec';
-import { resolveRemoteMcpPrivateHostsSettings } from '@/lib/admin/settings';
+import type { Prisma } from "@prisma/client";
+import { db } from "@/lib/db";
+import { getCurrentUser } from "@/lib/auth/current-user";
+import { getWorkspaceForUser } from "@/lib/workspace/queries";
+import { effectiveStatus } from "@/lib/process/supervisor";
+import { resolveSpawnSpec, type SpawnSpec } from "@/lib/process/spawn-spec";
+import { resolveRemoteMcpPrivateHostsSettings } from "@/lib/admin/settings";
 import {
   listMcpToolsViaSandbox,
   mcpRpcViaSandbox,
   SandboxMcpAuthenticationError,
-} from '@/lib/process/sandbox-mcp-client';
-import { listMcpTools, mcpRpc } from '@/lib/process/mcp-client';
-import { logRequest } from '@/lib/observability/log';
+} from "@/lib/process/sandbox-mcp-client";
+import { listMcpTools, mcpRpc } from "@/lib/process/mcp-client";
+import { logRequest } from "@/lib/observability/log";
 import {
   redactMcpToolCatalogResult,
   type McpToolDefinition,
-} from '@/lib/process/mcp-tool-catalog';
-import { mcpHeaderSecrets, redactMcpResult } from '@/lib/process/mcp-result-redaction';
+} from "@/lib/process/mcp-tool-catalog";
+import {
+  mcpHeaderSecrets,
+  redactMcpResult,
+} from "@/lib/process/mcp-result-redaction";
 import {
   readMcpInspectorConnection,
   withMcpInspectorConnection,
-} from '@/lib/workspace/inspector-connection';
-import { missingDeploymentRequiredEnvironment } from '@/lib/workspace/server-recipe';
+} from "@/lib/workspace/inspector-connection";
+import { missingDeploymentRequiredEnvironment } from "@/lib/workspace/server-recipe";
 
-type RemoteSpec = Extract<SpawnSpec, { kind: 'remote' }>;
+type RemoteSpec = Extract<SpawnSpec, { kind: "remote" }>;
 
 export type McpInspectorError =
-  | 'notAuthorized'
-  | 'deploymentNotFound'
-  | 'deploymentNotRunning'
-  | 'sandboxRequired'
-  | 'sandboxNotFound'
-  | 'sandboxNetworkDisabled'
-  | 'sandboxNotRunning'
-  | 'unsupportedTransport'
-  | 'credentialsRequired'
-  | 'authenticationFailed'
-  | 'connectorFailed'
-  | 'invalidToolCall'
-  | 'toolCallFailed';
+  | "notAuthorized"
+  | "deploymentNotFound"
+  | "deploymentNotRunning"
+  | "sandboxRequired"
+  | "sandboxNotFound"
+  | "sandboxNetworkDisabled"
+  | "sandboxNotRunning"
+  | "unsupportedTransport"
+  | "credentialsRequired"
+  | "authenticationFailed"
+  | "connectorFailed"
+  | "invalidToolCall"
+  | "toolCallFailed";
 
 type InspectorContext = {
   workspaceId: string;
@@ -58,18 +61,19 @@ async function inspectorContext(input: {
   deploymentId: string;
   sandboxId: string;
 }): Promise<{ context?: InspectorContext; error?: McpInspectorError }> {
-  if (!input.sandboxId) return { error: 'sandboxRequired' };
-  if (!input.workspace || !input.deploymentId) return { error: 'deploymentNotFound' };
+  if (!input.sandboxId) return { error: "sandboxRequired" };
+  if (!input.workspace || !input.deploymentId)
+    return { error: "deploymentNotFound" };
   const user = await getCurrentUser();
-  if (!user) return { error: 'notAuthorized' };
+  if (!user) return { error: "notAuthorized" };
   const workspace = await getWorkspaceForUser(input.workspace, user.id);
-  if (!workspace) return { error: 'notAuthorized' };
+  if (!workspace) return { error: "notAuthorized" };
   const [deployment, sandbox] = await Promise.all([
     db.deployment.findFirst({
       where: {
         id: input.deploymentId,
         workspaceId: workspace.id,
-        OR: [{ source: null }, { source: { not: 'sandbox' } }],
+        OR: [{ source: null }, { source: { not: "sandbox" } }],
       },
       select: {
         id: true,
@@ -86,7 +90,7 @@ async function inspectorContext(input: {
       where: {
         id: input.sandboxId,
         workspaceId: workspace.id,
-        kind: { in: ['docker', 'connector'] },
+        kind: { in: ["docker", "connector"] },
       },
       select: {
         deploymentId: true,
@@ -95,33 +99,45 @@ async function inspectorContext(input: {
       },
     }),
   ]);
-  if (!deployment) return { error: 'deploymentNotFound' };
-  if (deployment.source === 'remote' && missingDeploymentRequiredEnvironment(
-    deployment.installCfg,
-    deployment.server?.installCfg,
-  ).length) return { error: 'credentialsRequired' };
-  if (!sandbox) return { error: 'sandboxNotFound' };
-  if (sandbox.network === 'none') return { error: 'sandboxNetworkDisabled' };
-  if (effectiveStatus(sandbox.deploymentId, sandbox.deployment.status) !== 'running') {
-    return { error: 'sandboxNotRunning' };
+  if (!deployment) return { error: "deploymentNotFound" };
+  if (
+    deployment.source === "remote" &&
+    missingDeploymentRequiredEnvironment(
+      deployment.installCfg,
+      deployment.server?.installCfg,
+    ).length
+  )
+    return { error: "credentialsRequired" };
+  if (!sandbox) return { error: "sandboxNotFound" };
+  if (sandbox.network === "none") return { error: "sandboxNetworkDisabled" };
+  if (
+    effectiveStatus(sandbox.deploymentId, sandbox.deployment.status) !==
+    "running"
+  ) {
+    return { error: "sandboxNotRunning" };
   }
   let remote: RemoteSpec | undefined;
   let remotePrivateHosts: string | undefined;
-  if (deployment.source === 'remote') {
-    const config = deployment.installCfg && typeof deployment.installCfg === 'object'
-      && !Array.isArray(deployment.installCfg)
-      ? deployment.installCfg as Record<string, unknown>
-      : {};
-    if (config.transport !== undefined
-      && config.transport !== 'streamable-http'
-      && config.transport !== 'sse') return { error: 'unsupportedTransport' };
+  if (deployment.source === "remote") {
+    const config =
+      deployment.installCfg &&
+      typeof deployment.installCfg === "object" &&
+      !Array.isArray(deployment.installCfg)
+        ? (deployment.installCfg as Record<string, unknown>)
+        : {};
+    if (
+      config.transport !== undefined &&
+      config.transport !== "streamable-http" &&
+      config.transport !== "sse"
+    )
+      return { error: "unsupportedTransport" };
     try {
       const spec = resolveSpawnSpec(deployment);
-      if (spec.kind !== 'remote') return { error: 'unsupportedTransport' };
+      if (spec.kind !== "remote") return { error: "unsupportedTransport" };
       remote = spec;
       remotePrivateHosts = (await resolveRemoteMcpPrivateHostsSettings()).value;
     } catch {
-      return { error: 'connectorFailed' };
+      return { error: "connectorFailed" };
     }
   }
   const connection = readMcpInspectorConnection(deployment.installCfg);
@@ -143,12 +159,23 @@ function headerSecrets(remote?: RemoteSpec): string[] {
   return remote ? mcpHeaderSecrets(remote.headers) : [];
 }
 
-function inspectorFailure(error: unknown, fallback: McpInspectorError): McpInspectorError {
-  return error instanceof SandboxMcpAuthenticationError ? 'authenticationFailed' : fallback;
+function inspectorFailure(
+  error: unknown,
+  fallback: McpInspectorError,
+): McpInspectorError {
+  return error instanceof SandboxMcpAuthenticationError
+    ? "authenticationFailed"
+    : fallback;
 }
 
-async function persistConnection(context: InspectorContext, value: unknown): Promise<McpToolDefinition[] | null> {
-  const catalog = redactMcpToolCatalogResult(value, headerSecrets(context.remote));
+async function persistConnection(
+  context: InspectorContext,
+  value: unknown,
+): Promise<McpToolDefinition[] | null> {
+  const catalog = redactMcpToolCatalogResult(
+    value,
+    headerSecrets(context.remote),
+  );
   if (!catalog.ok) return null;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const current = await db.deployment.findFirst({
@@ -157,7 +184,11 @@ async function persistConnection(context: InspectorContext, value: unknown): Pro
     });
     if (!current) return null;
     const updated = await db.deployment.updateMany({
-      where: { id: context.deploymentId, workspaceId: context.workspaceId, updatedAt: current.updatedAt },
+      where: {
+        id: context.deploymentId,
+        workspaceId: context.workspaceId,
+        updatedAt: current.updatedAt,
+      },
       data: {
         installCfg: withMcpInspectorConnection(
           current.installCfg,
@@ -171,7 +202,9 @@ async function persistConnection(context: InspectorContext, value: unknown): Pro
   return null;
 }
 
-async function inspectorTools(context: InspectorContext): Promise<McpToolDefinition[] | null> {
+async function inspectorTools(
+  context: InspectorContext,
+): Promise<McpToolDefinition[] | null> {
   if (context.remote) {
     return listMcpToolsViaSandbox(
       context.sandboxDeploymentId,
@@ -179,7 +212,11 @@ async function inspectorTools(context: InspectorContext): Promise<McpToolDefinit
       context.remotePrivateHosts,
     );
   }
-  if (effectiveStatus(context.deploymentId, context.deploymentStatus) !== 'running') return null;
+  if (
+    effectiveStatus(context.deploymentId, context.deploymentStatus) !==
+    "running"
+  )
+    return null;
   return listMcpTools(context.deploymentId);
 }
 
@@ -189,20 +226,25 @@ export async function connectMcpInspectorAction(input: {
   sandboxId: string;
 }): Promise<{ tools?: McpToolDefinition[]; error?: McpInspectorError }> {
   const resolved = await inspectorContext(input);
-  if (!resolved.context) return { error: resolved.error ?? 'connectorFailed' };
-  if (!resolved.context.remote
-    && effectiveStatus(resolved.context.deploymentId, resolved.context.deploymentStatus) !== 'running') {
-    return { error: 'deploymentNotRunning' };
+  if (!resolved.context) return { error: resolved.error ?? "connectorFailed" };
+  if (
+    !resolved.context.remote &&
+    effectiveStatus(
+      resolved.context.deploymentId,
+      resolved.context.deploymentStatus,
+    ) !== "running"
+  ) {
+    return { error: "deploymentNotRunning" };
   }
   let discovered: McpToolDefinition[] | null;
   try {
     discovered = await inspectorTools(resolved.context);
   } catch (error) {
-    return { error: inspectorFailure(error, 'connectorFailed') };
+    return { error: inspectorFailure(error, "connectorFailed") };
   }
-  if (!discovered) return { error: 'connectorFailed' };
+  if (!discovered) return { error: "connectorFailed" };
   const tools = await persistConnection(resolved.context, discovered);
-  return tools ? { tools } : { error: 'connectorFailed' };
+  return tools ? { tools } : { error: "connectorFailed" };
 }
 
 export async function runMcpInspectorToolAction(input: {
@@ -212,33 +254,49 @@ export async function runMcpInspectorToolAction(input: {
   toolName: string;
   arguments: Record<string, unknown>;
 }): Promise<{ result?: Record<string, unknown>; error?: McpInspectorError }> {
-  if (!input.toolName || input.toolName.length > 256 || !input.arguments
-    || typeof input.arguments !== 'object' || Array.isArray(input.arguments)) {
-    return { error: 'invalidToolCall' };
+  if (
+    !input.toolName ||
+    input.toolName.length > 256 ||
+    !input.arguments ||
+    typeof input.arguments !== "object" ||
+    Array.isArray(input.arguments)
+  ) {
+    return { error: "invalidToolCall" };
   }
   let requestBody: string;
   try {
-    requestBody = JSON.stringify({ name: input.toolName, arguments: input.arguments });
+    requestBody = JSON.stringify({
+      name: input.toolName,
+      arguments: input.arguments,
+    });
   } catch {
-    return { error: 'invalidToolCall' };
+    return { error: "invalidToolCall" };
   }
-  if (new TextEncoder().encode(requestBody).byteLength > 16_000) return { error: 'invalidToolCall' };
+  if (new TextEncoder().encode(requestBody).byteLength > 16_000)
+    return { error: "invalidToolCall" };
 
   const resolved = await inspectorContext(input);
-  if (!resolved.context) return { error: resolved.error ?? 'connectorFailed' };
-  if (resolved.context.connectedSandboxId !== input.sandboxId) return { error: 'sandboxRequired' };
-  if (!resolved.context.remote
-    && effectiveStatus(resolved.context.deploymentId, resolved.context.deploymentStatus) !== 'running') {
-    return { error: 'deploymentNotRunning' };
+  if (!resolved.context) return { error: resolved.error ?? "connectorFailed" };
+  if (resolved.context.connectedSandboxId !== input.sandboxId)
+    return { error: "sandboxRequired" };
+  if (
+    !resolved.context.remote &&
+    effectiveStatus(
+      resolved.context.deploymentId,
+      resolved.context.deploymentStatus,
+    ) !== "running"
+  ) {
+    return { error: "deploymentNotRunning" };
   }
   let tools: McpToolDefinition[] | null;
   try {
     tools = await inspectorTools(resolved.context);
   } catch (error) {
-    return { error: inspectorFailure(error, 'connectorFailed') };
+    return { error: inspectorFailure(error, "connectorFailed") };
   }
-  if (!tools) return { error: 'connectorFailed' };
-  if (!tools.some((tool) => tool.name === input.toolName)) return { error: 'invalidToolCall' };
+  if (!tools) return { error: "connectorFailed" };
+  if (!tools.some((tool) => tool.name === input.toolName))
+    return { error: "invalidToolCall" };
 
   const startedAt = Date.now();
   let result: Record<string, unknown> | null;
@@ -247,30 +305,34 @@ export async function runMcpInspectorToolAction(input: {
       ? mcpRpcViaSandbox(
           resolved.context.sandboxDeploymentId,
           resolved.context.remote,
-          'tools/call',
+          "tools/call",
           { name: input.toolName, arguments: input.arguments },
           resolved.context.remotePrivateHosts,
         )
       : mcpRpc(
           resolved.context.deploymentId,
-          'tools/call',
+          "tools/call",
           { name: input.toolName, arguments: input.arguments },
           30_000,
           { maxRequestBytes: 16_000, maxResponseBytes: 1_000_000 },
         ));
   } catch (error) {
-    return { error: inspectorFailure(error, 'toolCallFailed') };
+    return { error: inspectorFailure(error, "toolCallFailed") };
   }
-  const safeResult = result && redactMcpResult(result, headerSecrets(resolved.context.remote));
+  const safeResult =
+    result && redactMcpResult(result, headerSecrets(resolved.context.remote));
   await logRequest({
     workspaceId: resolved.context.workspaceId,
     deploymentId: resolved.context.deploymentId,
-    method: 'POST',
+    method: "POST",
     path: `/mcp/${resolved.context.deploymentId}/inspector/${input.sandboxId}#tools/call:${input.toolName}`,
     statusCode: safeResult ? 200 : 502,
     durationMs: Date.now() - startedAt,
     requestBody,
-    responseBody: JSON.stringify(safeResult ?? { error: 'unreachable' }).slice(0, 16_000),
+    responseBody: JSON.stringify(safeResult ?? { error: "unreachable" }).slice(
+      0,
+      16_000,
+    ),
   });
-  return safeResult ? { result: safeResult } : { error: 'toolCallFailed' };
+  return safeResult ? { result: safeResult } : { error: "toolCallFailed" };
 }

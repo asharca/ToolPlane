@@ -20,19 +20,24 @@ export const HERMES_ARCHIVE_IMPORT_MAX_DURATION_SECONDS = 50_400;
 // administrator raises the compressed-upload limit, so the default 48 MiB
 // setting does not suddenly allow a multi-gigabyte expansion.
 export const HERMES_ARCHIVE_BASE_MAX_UNPACKED_BYTES = 256 * 1024 * 1024;
-export const HERMES_ARCHIVE_ABSOLUTE_MAX_UNPACKED_BYTES = 10 * 1024 * 1024 * 1024;
+export const HERMES_ARCHIVE_ABSOLUTE_MAX_UNPACKED_BYTES =
+  10 * 1024 * 1024 * 1024;
 
-export function isValidHermesArchiveMaxUploadMiB(value: unknown): value is number {
-  return typeof value === 'number'
-    && Number.isInteger(value)
-    && value >= MIN_HERMES_ARCHIVE_MAX_UPLOAD_MIB
-    && value <= MAX_HERMES_ARCHIVE_MAX_UPLOAD_MIB;
+export function isValidHermesArchiveMaxUploadMiB(
+  value: unknown,
+): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= MIN_HERMES_ARCHIVE_MAX_UPLOAD_MIB &&
+    value <= MAX_HERMES_ARCHIVE_MAX_UPLOAD_MIB
+  );
 }
 
 // Settings are persisted in the database, so clamp a legacy or manually
 // edited value before it becomes an allocation or upload limit.
 export function normalizeHermesArchiveMaxUploadMiB(value: unknown): number {
-  if (typeof value !== 'number' || !Number.isFinite(value)) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
     return DEFAULT_HERMES_ARCHIVE_MAX_UPLOAD_MIB;
   }
   return Math.min(
@@ -42,13 +47,18 @@ export function normalizeHermesArchiveMaxUploadMiB(value: unknown): number {
 }
 
 export function hermesArchiveMaxUploadBytes(maxUploadMiB: unknown): number {
-  return normalizeHermesArchiveMaxUploadMiB(maxUploadMiB)
-    * HERMES_ARCHIVE_BYTES_PER_MIB;
+  return (
+    normalizeHermesArchiveMaxUploadMiB(maxUploadMiB) *
+    HERMES_ARCHIVE_BYTES_PER_MIB
+  );
 }
 
 export function hermesArchiveMaxUnpackedBytes(maxUploadMiB: unknown): number {
   return Math.min(
     HERMES_ARCHIVE_ABSOLUTE_MAX_UNPACKED_BYTES,
-    Math.max(HERMES_ARCHIVE_BASE_MAX_UNPACKED_BYTES, hermesArchiveMaxUploadBytes(maxUploadMiB)),
+    Math.max(
+      HERMES_ARCHIVE_BASE_MAX_UNPACKED_BYTES,
+      hermesArchiveMaxUploadBytes(maxUploadMiB),
+    ),
   );
 }

@@ -88,7 +88,9 @@ export function Tooltip({
     },
     [controlledOpen, onOpenChange],
   );
-  const [coords, setCoords] = useState<{ top: number; left: number } | null>(null);
+  const [coords, setCoords] = useState<{ top: number; left: number } | null>(
+    null,
+  );
   const generatedId = useId();
   const id = providedId ?? generatedId;
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -117,9 +119,19 @@ export function Tooltip({
     const height = surfaceRef.current?.offsetHeight ?? 0;
     const dx = side === "left" ? width : side === "right" ? 0 : width / 2;
     const dy = side === "top" ? height : side === "bottom" ? 0 : height / 2;
-    next.left = Math.max(GAP + dx, Math.min(next.left, window.innerWidth - GAP - width + dx));
-    next.top = Math.max(GAP + dy, Math.min(next.top, window.innerHeight - GAP - height + dy));
-    setCoords(previous => previous?.top === next.top && previous.left === next.left ? previous : next);
+    next.left = Math.max(
+      GAP + dx,
+      Math.min(next.left, window.innerWidth - GAP - width + dx),
+    );
+    next.top = Math.max(
+      GAP + dy,
+      Math.min(next.top, window.innerHeight - GAP - height + dy),
+    );
+    setCoords((previous) =>
+      previous?.top === next.top && previous.left === next.left
+        ? previous
+        : next,
+    );
   }, [side, anchorRef, anchorPoint]);
 
   const positioned = coords !== null;
@@ -258,7 +270,11 @@ export function Tooltip({
                     ref={surfaceRef}
                     id={id}
                     side={side}
-                    style={{ transformOrigin: transformOrigin[side], maxWidth: "calc(100vw - 16px)", whiteSpace: "normal" }}
+                    style={{
+                      transformOrigin: transformOrigin[side],
+                      maxWidth: "calc(100vw - 16px)",
+                      whiteSpace: "normal",
+                    }}
                     className={className}
                   >
                     {content}

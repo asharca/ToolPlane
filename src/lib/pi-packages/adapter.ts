@@ -1,6 +1,6 @@
 // Generated source is reviewed with the package. Credentials remain in a private device file.
 export function piPackageMcpAdapterSource(): string {
-  return String.raw`import { readFile, readdir, realpath, stat } from 'node:fs/promises';
+  return `import { readFile, readdir, realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';

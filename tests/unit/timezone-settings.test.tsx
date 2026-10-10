@@ -1,7 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
-import { AUTO_TIME_ZONE_VALUE } from '@/lib/timezone';
+import { assertDefined } from "../assert-defined";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { AUTO_TIME_ZONE_VALUE } from "@/lib/timezone";
 
 const mocks = vi.hoisted(() => ({
   updateTimeZonePreference: vi.fn(),
@@ -9,69 +10,79 @@ const mocks = vi.hoisted(() => ({
   refresh: vi.fn(),
 }));
 
-vi.mock('next/navigation', () => ({
+vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: mocks.refresh }),
 }));
 
-vi.mock('@/lib/auth/timezone-actions', () => ({
+vi.mock("@/lib/auth/timezone-actions", () => ({
   updateTimeZonePreference: mocks.updateTimeZonePreference,
 }));
 
-vi.mock('@/components/timezone/UserTimeZoneContext', () => ({
+vi.mock("@/components/timezone/UserTimeZoneContext", () => ({
   useUserTimeZone: mocks.useUserTimeZone,
 }));
 
-vi.mock('@/components/dashboard/SubmitButton', () => ({
+vi.mock("@/components/dashboard/SubmitButton", () => ({
   SubmitButton: ({ children }: { children: React.ReactNode }) => (
     <button type="submit">{children}</button>
   ),
 }));
 
-import { TimeZoneSettings } from '@/components/timezone/TimeZoneSettings';
+import { TimeZoneSettings } from "@/components/timezone/TimeZoneSettings";
 
-describe('TimeZoneSettings', () => {
+describe("TimeZoneSettings", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.useUserTimeZone.mockReturnValue({
-      detectedTimeZone: 'Asia/Taipei',
-      timeZone: 'Asia/Taipei',
+      detectedTimeZone: "Asia/Taipei",
+      timeZone: "Asia/Taipei",
     });
     mocks.updateTimeZonePreference.mockResolvedValue({ savedAt: 123 });
   });
 
-
-  it('shows a persisted manual timezone as the selected option', () => {
+  it("shows a persisted manual timezone as the selected option", () => {
     render(<TimeZoneSettings timeZoneOverride="America/New_York" />);
 
-    expect(screen.getByRole('combobox', { name: 'Your timezone' }))
-      .toHaveTextContent('America/New_York');
+    expect(
+      screen.getByRole("combobox", { name: "Your timezone" }),
+    ).toHaveTextContent("America/New_York");
   });
 
-  it('submits automatic mode with the current browser detection', async () => {
+  it("submits automatic mode with the current browser detection", async () => {
     render(<TimeZoneSettings timeZoneOverride="America/New_York" />);
 
-    const select = screen.getByRole('combobox', { name: 'Your timezone' });
+    const select = screen.getByRole("combobox", { name: "Your timezone" });
     await userEvent.click(select);
-    await userEvent.click(screen.getByRole('option', { name: 'Automatic (Asia/Taipei)' }));
-    fireEvent.submit(select.closest('form')!);
+    await userEvent.click(
+      screen.getByRole("option", { name: "Automatic (Asia/Taipei)" }),
+    );
+    fireEvent.submit(assertDefined(select.closest("form")));
 
-    await waitFor(() => expect(mocks.updateTimeZonePreference).toHaveBeenCalledTimes(1));
-    const formData = mocks.updateTimeZonePreference.mock.calls[0][1] as FormData;
-    expect(formData.get('timeZone')).toBe(AUTO_TIME_ZONE_VALUE);
-    expect(formData.get('detectedTimeZone')).toBe('Asia/Taipei');
+    await waitFor(() =>
+      expect(mocks.updateTimeZonePreference).toHaveBeenCalledTimes(1),
+    );
+    const formData = mocks.updateTimeZonePreference.mock
+      .calls[0][1] as FormData;
+    expect(formData.get("timeZone")).toBe(AUTO_TIME_ZONE_VALUE);
+    expect(formData.get("detectedTimeZone")).toBe("Asia/Taipei");
     await waitFor(() => expect(mocks.refresh).toHaveBeenCalledTimes(1));
   });
 
-  it('lets the user choose and submit a custom timezone', async () => {
+  it("lets the user choose and submit a custom timezone", async () => {
     render(<TimeZoneSettings timeZoneOverride={null} />);
 
-    const select = screen.getByRole('combobox', { name: 'Your timezone' });
+    const select = screen.getByRole("combobox", { name: "Your timezone" });
     await userEvent.click(select);
-    await userEvent.click(screen.getByRole('option', { name: 'America/New_York' }));
-    fireEvent.submit(select.closest('form')!);
+    await userEvent.click(
+      screen.getByRole("option", { name: "America/New_York" }),
+    );
+    fireEvent.submit(assertDefined(select.closest("form")));
 
-    await waitFor(() => expect(mocks.updateTimeZonePreference).toHaveBeenCalledTimes(1));
-    const formData = mocks.updateTimeZonePreference.mock.calls[0][1] as FormData;
-    expect(formData.get('timeZone')).toBe('America/New_York');
+    await waitFor(() =>
+      expect(mocks.updateTimeZonePreference).toHaveBeenCalledTimes(1),
+    );
+    const formData = mocks.updateTimeZonePreference.mock
+      .calls[0][1] as FormData;
+    expect(formData.get("timeZone")).toBe("America/New_York");
   });
 });

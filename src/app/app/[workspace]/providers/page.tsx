@@ -1,16 +1,16 @@
-import type { ModelCost } from '@earendil-works/pi-ai';
-import { redirect } from 'next/navigation';
-import { getLocale, getTranslations } from 'next-intl/server';
-import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
-import { ProvidersPanel } from '@/components/dashboard/agents/ProvidersPanel';
-import { getCurrentUser } from '@/lib/auth/current-user';
-import { listProviders } from '@/lib/agents/queries';
-import { piProviderPresets } from '@/lib/agents/provider-catalog';
-import { backfillProviderModels } from '@/lib/agents/mutations';
-import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
-import { getWorkspaceForUser } from '@/lib/workspace/queries';
+import type { ModelCost } from "@earendil-works/pi-ai";
+import { redirect } from "next/navigation";
+import { getLocale, getTranslations } from "next-intl/server";
+import { DashboardHeader } from "@/components/dashboard/DashboardHeader";
+import { ProvidersPanel } from "@/components/dashboard/agents/ProvidersPanel";
+import { getCurrentUser } from "@/lib/auth/current-user";
+import { listProviders } from "@/lib/agents/queries";
+import { piProviderPresets } from "@/lib/agents/provider-catalog";
+import { backfillProviderModels } from "@/lib/agents/mutations";
+import { formatInTimeZone, resolveUserTimeZone } from "@/lib/timezone";
+import { getWorkspaceForUser } from "@/lib/workspace/queries";
 
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
 export default async function ProvidersPage({
   params,
@@ -19,17 +19,24 @@ export default async function ProvidersPage({
 }) {
   const { workspace: slug } = await params;
   const [t, locale] = await Promise.all([
-    getTranslations('console.agents'),
+    getTranslations("console.agents"),
     getLocale(),
   ]);
   const user = await getCurrentUser();
-  if (!user) redirect('/app/login');
+  if (!user) redirect("/app/login");
 
   const ws = await getWorkspaceForUser(slug, user.id);
-  if (!ws) redirect('/app');
+  if (!ws) redirect("/app");
   if (ws.ownerId !== user.id) {
-    const management = await getTranslations('console.workspaces');
-    return <><DashboardHeader title={t('modelProviders')} /><p className="p-6 text-sm text-muted-foreground">{management('ownerOnly')}</p></>;
+    const management = await getTranslations("console.workspaces");
+    return (
+      <>
+        <DashboardHeader title={t("modelProviders")} />
+        <p className="p-6 text-sm text-muted-foreground">
+          {management("ownerOnly")}
+        </p>
+      </>
+    );
   }
 
   const timeZone = resolveUserTimeZone(user);
@@ -39,7 +46,7 @@ export default async function ProvidersPage({
 
   return (
     <>
-      <DashboardHeader title={t('modelProviders')} />
+      <DashboardHeader title={t("modelProviders")} />
       <ProvidersPanel
         slug={slug}
         piProviderPresets={presets}
@@ -67,7 +74,7 @@ export default async function ProvidersPage({
             ? formatInTimeZone(
                 provider.modelsFetchedAt,
                 timeZone,
-                { dateStyle: 'medium', timeStyle: 'short' },
+                { dateStyle: "medium", timeStyle: "short" },
                 locale,
               )
             : null,

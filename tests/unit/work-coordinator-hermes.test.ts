@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   systemLog: vi.fn(),
@@ -21,8 +21,8 @@ const mocks = vi.hoisted(() => ({
   generateWorkSessionTitle: vi.fn(),
 }));
 
-vi.mock('@/lib/observability/system', () => ({ systemLog: mocks.systemLog }));
-vi.mock('@/lib/db', () => ({
+vi.mock("@/lib/observability/system", () => ({ systemLog: mocks.systemLog }));
+vi.mock("@/lib/db", () => ({
   db: {
     workSession: {
       findFirst: mocks.workFindFirst,
@@ -36,101 +36,137 @@ vi.mock('@/lib/db', () => ({
     workApproval: { findUnique: vi.fn() },
   },
 }));
-vi.mock('@/lib/agents/queries', () => ({ getAgentForRun: mocks.getAgentForRun }));
-vi.mock('@/lib/agents/conversation-naming', () => ({
+vi.mock("@/lib/agents/queries", () => ({
+  getAgentForRun: mocks.getAgentForRun,
+}));
+vi.mock("@/lib/agents/conversation-naming", () => ({
   generateWorkSessionTitle: mocks.generateWorkSessionTitle,
 }));
-vi.mock('@/lib/agents/mutations', () => ({
+vi.mock("@/lib/agents/mutations", () => ({
   ensureConversationRuntimeSession: vi.fn(async () => ({
-    runtimeSessionId: 'conversation-1',
-    runtimeSessionKey: 'agent:agent-1:console:conversation-1',
+    runtimeSessionId: "conversation-1",
+    runtimeSessionKey: "agent:agent-1:console:conversation-1",
   })),
 }));
-vi.mock('@/lib/agents/resolve', async (importOriginal) => ({
-  ...await importOriginal<object>(),
+vi.mock("@/lib/agents/resolve", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
   resolveAgentTools: mocks.resolveAgentTools,
 }));
-vi.mock('@/lib/agents/run', () => ({ buildAgentToolSet: vi.fn() }));
-vi.mock('@/lib/agents/native', () => ({
+vi.mock("@/lib/agents/run", () => ({ buildAgentToolSet: vi.fn() }));
+vi.mock("@/lib/agents/native", () => ({
   runNativeAgent: vi.fn(),
-  uiMessagesToPi: (messages: Array<{ role: string; parts: Array<{ type: string; text?: string }> }>) =>
+  uiMessagesToPi: (
+    messages: Array<{
+      role: string;
+      parts: Array<{ type: string; text?: string }>;
+    }>,
+  ) =>
     messages.map((message) => ({
       role: message.role,
-      content: message.parts.filter((part) => part.type === 'text').map((part) => part.text).join('\n'),
+      content: message.parts
+        .filter((part) => part.type === "text")
+        .map((part) => part.text)
+        .join("\n"),
     })),
 }));
-vi.mock('@/lib/agents/sandbox-turn', () => ({ runDedicatedSandboxTurn: mocks.runDedicatedSandboxTurn }));
-vi.mock('@/lib/agents/hermes/work', () => ({
+vi.mock("@/lib/agents/sandbox-turn", () => ({
+  runDedicatedSandboxTurn: mocks.runDedicatedSandboxTurn,
+}));
+vi.mock("@/lib/agents/hermes/work", () => ({
   runHermesWork: mocks.runHermesWork,
   stopHermesWorkRun: vi.fn(),
 }));
-vi.mock('@/lib/agents/hermes/runtime', () => ({
+vi.mock("@/lib/agents/hermes/runtime", () => ({
   acquireHermesRuntimeWriteLease: () => ({ release: mocks.releaseLease }),
-  HERMES_RUNTIME_COPY_IN_PROGRESS_ERROR: 'Hermes maintenance in progress.',
+  HERMES_RUNTIME_COPY_IN_PROGRESS_ERROR: "Hermes maintenance in progress.",
 }));
-vi.mock('@/lib/process/supervisor', () => ({ effectiveStatus: mocks.effectiveStatus, liveStatus: vi.fn() }));
+vi.mock("@/lib/process/supervisor", () => ({
+  effectiveStatus: mocks.effectiveStatus,
+  liveStatus: vi.fn(),
+}));
 
-vi.mock('@/lib/a2a/ingress', async (importOriginal) => ({ ...(await importOriginal<object>()), runNativeEntry: mocks.runNativeEntry }));
+vi.mock("@/lib/a2a/ingress", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  runNativeEntry: mocks.runNativeEntry,
+}));
 
-
-describe('Work coordinator', () => {
+describe("Work coordinator", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     vi.resetModules();
     mocks.queued = true;
     delete (globalThis as { __workCoordinator?: unknown }).__workCoordinator;
-    delete (globalThis as { __workRunControllers?: unknown }).__workRunControllers;
-    delete (globalThis as { __workOutputChannels?: unknown }).__workOutputChannels;
-    mocks.workFindFirst.mockImplementation(async () => mocks.queued ? {
-      id: 'work-1', startedAt: null,
-    } : null);
+    delete (globalThis as { __workRunControllers?: unknown })
+      .__workRunControllers;
+    delete (globalThis as { __workOutputChannels?: unknown })
+      .__workOutputChannels;
+    mocks.workFindFirst.mockImplementation(async () =>
+      mocks.queued
+        ? {
+            id: "work-1",
+            startedAt: null,
+          }
+        : null,
+    );
     mocks.workFindUnique.mockResolvedValue({
-      id: 'work-1',
-      workspaceId: 'workspace-1',
-      agentId: 'agent-1',
-      sandboxId: 'sandbox-hermes',
-      conversationId: 'conversation-1',
-      task: 'Inspect the repository',
-      runtimeKind: 'hermes',
-      runtimeSnapshot: { runtimeId: 'runtime-1', sandboxId: 'sandbox-hermes', workingDirectory: '.' },
-      status: 'running',
+      id: "work-1",
+      workspaceId: "workspace-1",
+      agentId: "agent-1",
+      sandboxId: "sandbox-hermes",
+      conversationId: "conversation-1",
+      task: "Inspect the repository",
+      runtimeKind: "hermes",
+      runtimeSnapshot: {
+        runtimeId: "runtime-1",
+        sandboxId: "sandbox-hermes",
+        workingDirectory: ".",
+      },
+      status: "running",
       sandbox: {
-        id: 'sandbox-hermes',
-        deploymentId: 'deployment-hermes',
-        deployment: { status: 'stopped' },
+        id: "sandbox-hermes",
+        deploymentId: "deployment-hermes",
+        deployment: { status: "stopped" },
       },
       conversation: {
-        hermesProfile: 'research',
-        hermesProvider: 'openrouter',
-        hermesModel: 'model-a',
-        reasoningEffort: 'high',
-        messages: [{
-          id: 'message-user',
-          role: 'user',
-          parts: [{ type: 'text', text: 'Inspect the repository' }],
-        }],
+        hermesProfile: "research",
+        hermesProvider: "openrouter",
+        hermesModel: "model-a",
+        reasoningEffort: "high",
+        messages: [
+          {
+            id: "message-user",
+            role: "user",
+            parts: [{ type: "text", text: "Inspect the repository" }],
+          },
+        ],
       },
     });
     mocks.workFindMany.mockResolvedValue([]);
     mocks.workCount.mockResolvedValue(1);
     mocks.deploymentFindMany.mockResolvedValue([]);
-    mocks.resolveAgentTools.mockReturnValue({ deploymentIds: [], sandboxDeploymentIds: [], skills: [], subAgents: [] });
-    mocks.effectiveStatus.mockReturnValue('running');
+    mocks.resolveAgentTools.mockReturnValue({
+      deploymentIds: [],
+      sandboxDeploymentIds: [],
+      skills: [],
+      subAgents: [],
+    });
+    mocks.effectiveStatus.mockReturnValue("running");
     mocks.workUpdateMany.mockImplementation(async ({ where, data }) => {
-      if (where.status === 'queued' && data.status === 'running') mocks.queued = false;
+      if (where.status === "queued" && data.status === "running")
+        mocks.queued = false;
       return { count: 1 };
     });
-    mocks.messageCreate.mockResolvedValue({ id: 'message-assistant' });
-    mocks.generateWorkSessionTitle.mockResolvedValue('Repository inspection');
+    mocks.messageCreate.mockResolvedValue({ id: "message-assistant" });
+    mocks.generateWorkSessionTitle.mockResolvedValue("Repository inspection");
     mocks.getAgentForRun.mockResolvedValue({
-      id: 'agent-1',
-      slug: 'hermes-worker',
-      workspaceId: 'workspace-1',
-      runtimeKind: 'hermes',
-      runtime: { id: 'runtime-1', kind: 'hermes', sandboxId: 'sandbox-hermes' },
+      id: "agent-1",
+      slug: "hermes-worker",
+      workspaceId: "workspace-1",
+      runtimeKind: "hermes",
+      runtime: { id: "runtime-1", kind: "hermes", sandboxId: "sandbox-hermes" },
       provider: null,
       model: null,
-      modelProviders: [{ providerId: 'provider-1' }],
+      modelProviders: [{ providerId: "provider-1" }],
       systemPrompt: null,
       maxSteps: 12,
       servers: [],
@@ -139,177 +175,333 @@ describe('Work coordinator', () => {
       sandboxes: [],
     });
     mocks.runHermesWork.mockImplementation(async (options) => {
-      await options.onRunStarted?.('run-1');
-      await options.onReasoningAvailable?.({ runId: 'run-1', timestamp: 1, text: 'Inspecting files' });
-      await options.onToolStarted?.({ runId: 'run-1', timestamp: 2, tool: 'terminal', preview: 'pnpm test' });
-      await options.onMessageDelta?.({ runId: 'run-1', timestamp: 3, delta: 'Done' });
-      await options.onToolCompleted?.({ runId: 'run-1', timestamp: 4, tool: 'terminal', duration: 1.2, error: false });
-      return { runId: 'run-1', status: 'completed', text: 'Done' };
+      await options.onRunStarted?.("run-1");
+      await options.onReasoningAvailable?.({
+        runId: "run-1",
+        timestamp: 1,
+        text: "Inspecting files",
+      });
+      await options.onToolStarted?.({
+        runId: "run-1",
+        timestamp: 2,
+        tool: "terminal",
+        preview: "pnpm test",
+      });
+      await options.onMessageDelta?.({
+        runId: "run-1",
+        timestamp: 3,
+        delta: "Done",
+      });
+      await options.onToolCompleted?.({
+        runId: "run-1",
+        timestamp: 4,
+        tool: "terminal",
+        duration: 1.2,
+        error: false,
+      });
+      return { runId: "run-1", status: "completed", text: "Done" };
     });
   });
 
-  it('streams Hermes activity and persists the completed Work turn', async () => {
-    const { kickWorkCoordinator } = await import('@/lib/work/coordinator');
-    const { subscribeWorkOutput } = await import('@/lib/work/run-control');
+  it("streams Hermes activity and persists the completed Work turn", async () => {
+    const { kickWorkCoordinator } = await import("@/lib/work/coordinator");
+    const { subscribeWorkOutput } = await import("@/lib/work/run-control");
     kickWorkCoordinator();
 
     await vi.waitFor(() => expect(mocks.messageCreate).toHaveBeenCalled());
-    const { snapshot, unsubscribe } = subscribeWorkOutput('work-1', () => undefined);
-    expect(snapshot).toMatchObject({ text: 'Done', done: true });
-    expect(snapshot.activities).toEqual(expect.arrayContaining([
-      expect.objectContaining({ type: 'reasoning', text: 'Inspecting files\n', status: 'completed' }),
-      expect.objectContaining({ type: 'tool', toolName: 'terminal', status: 'completed', durationMs: 1200 }),
-      expect.objectContaining({ type: 'runtime', runtimeKind: 'hermes', status: 'completed' }),
-    ]));
-    expect(snapshot.activities.find((activity) => activity.toolName === 'terminal')?.durationMs).toBe(1200);
+    const { snapshot, unsubscribe } = subscribeWorkOutput(
+      "work-1",
+      () => undefined,
+    );
+    expect(snapshot).toMatchObject({ text: "Done", done: true });
+    expect(snapshot.activities).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "reasoning",
+          text: "Inspecting files\n",
+          status: "completed",
+        }),
+        expect.objectContaining({
+          type: "tool",
+          toolName: "terminal",
+          status: "completed",
+          durationMs: 1200,
+        }),
+        expect.objectContaining({
+          type: "runtime",
+          runtimeKind: "hermes",
+          status: "completed",
+        }),
+      ]),
+    );
+    expect(
+      snapshot.activities.find((activity) => activity.toolName === "terminal")
+        ?.durationMs,
+    ).toBe(1200);
     unsubscribe();
-    expect(mocks.runHermesWork).toHaveBeenCalledWith(expect.objectContaining({
-      task: 'Inspect the repository',
-      workingDirectory: '.',
-      sessionId: 'conversation-1',
-      profile: 'research',
-      provider: 'openrouter',
-      model: 'model-a',
-      reasoningEffort: 'high',
-    }));
+    expect(mocks.runHermesWork).toHaveBeenCalledWith(
+      expect.objectContaining({
+        task: "Inspect the repository",
+        workingDirectory: ".",
+        sessionId: "conversation-1",
+        profile: "research",
+        provider: "openrouter",
+        model: "model-a",
+        reasoningEffort: "high",
+      }),
+    );
     expect(mocks.messageCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({
-        conversationId: 'conversation-1',
-        role: 'assistant',
+        conversationId: "conversation-1",
+        role: "assistant",
         textCharacters: 4,
         parts: expect.arrayContaining([
-          expect.objectContaining({ type: 'reasoning', text: 'Inspecting files\n' }),
-          expect.objectContaining({ type: 'work-tool', toolName: 'terminal', status: 'completed', durationMs: 1200 }),
-          { type: 'text', text: 'Done', state: 'done' },
           expect.objectContaining({
-            type: 'data-work-timing',
-            data: expect.objectContaining({ runtimeKind: 'hermes', modelName: 'model-a', startedAt: expect.any(Number), completedAt: expect.any(Number), durationMs: expect.any(Number) }),
+            type: "reasoning",
+            text: "Inspecting files\n",
+          }),
+          expect.objectContaining({
+            type: "work-tool",
+            toolName: "terminal",
+            status: "completed",
+            durationMs: 1200,
+          }),
+          { type: "text", text: "Done", state: "done" },
+          expect.objectContaining({
+            type: "data-work-timing",
+            data: expect.objectContaining({
+              runtimeKind: "hermes",
+              modelName: "model-a",
+              startedAt: expect.any(Number),
+              completedAt: expect.any(Number),
+              durationMs: expect.any(Number),
+            }),
           }),
         ]),
       }),
     });
     expect(mocks.generateWorkSessionTitle).toHaveBeenCalledWith(
-      'workspace-1',
-      'agent-1',
-      'conversation-1',
+      "workspace-1",
+      "agent-1",
+      "conversation-1",
     );
     expect(mocks.releaseLease).toHaveBeenCalledOnce();
-    expect(mocks.workUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: { id: 'work-1', status: 'running' },
-      data: expect.objectContaining({ status: 'idle' }),
-    }));
+    expect(mocks.workUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "work-1", status: "running" },
+        data: expect.objectContaining({ status: "idle" }),
+      }),
+    );
   });
 
-  it('keeps live activity order when the runtime fails', async () => {
+  it("keeps live activity order when the runtime fails", async () => {
     mocks.runHermesWork.mockImplementation(async (options) => {
-      await options.onReasoningAvailable?.({ runId: 'run-1', timestamp: 1, text: 'Inspecting files' });
-      await options.onToolStarted?.({ runId: 'run-1', timestamp: 2, tool: 'terminal', preview: 'pnpm test' });
-      await options.onToolCompleted?.({ runId: 'run-1', timestamp: 3, tool: 'terminal', duration: 1.2, error: false });
-      return { runId: 'run-1', status: 'failed', text: '', error: 'Runtime stopped' };
+      await options.onReasoningAvailable?.({
+        runId: "run-1",
+        timestamp: 1,
+        text: "Inspecting files",
+      });
+      await options.onToolStarted?.({
+        runId: "run-1",
+        timestamp: 2,
+        tool: "terminal",
+        preview: "pnpm test",
+      });
+      await options.onToolCompleted?.({
+        runId: "run-1",
+        timestamp: 3,
+        tool: "terminal",
+        duration: 1.2,
+        error: false,
+      });
+      return {
+        runId: "run-1",
+        status: "failed",
+        text: "",
+        error: "Runtime stopped",
+      };
     });
 
-    const { kickWorkCoordinator } = await import('@/lib/work/coordinator');
-    const { subscribeWorkOutput } = await import('@/lib/work/run-control');
+    const { kickWorkCoordinator } = await import("@/lib/work/coordinator");
+    const { subscribeWorkOutput } = await import("@/lib/work/run-control");
     kickWorkCoordinator();
 
     await vi.waitFor(() => expect(mocks.messageCreate).toHaveBeenCalled());
-    const { snapshot, unsubscribe } = subscribeWorkOutput('work-1', () => undefined);
-    expect(snapshot.activities.map(({ id, type, status }) => ({ id, type, status }))).toEqual([
-      { id: 'runtime', type: 'runtime', status: 'running' },
-      { id: 'reasoning:1', type: 'reasoning', status: 'completed' },
-      { id: 'tool:hermes:run-1:tool:1', type: 'tool', status: 'completed' },
-      { id: 'runtime:final', type: 'runtime', status: 'failed' },
+    const { snapshot, unsubscribe } = subscribeWorkOutput(
+      "work-1",
+      () => undefined,
+    );
+    expect(
+      snapshot.activities.map(({ id, type, status }) => ({ id, type, status })),
+    ).toEqual([
+      { id: "runtime", type: "runtime", status: "running" },
+      { id: "reasoning:1", type: "reasoning", status: "completed" },
+      { id: "tool:hermes:run-1:tool:1", type: "tool", status: "completed" },
+      { id: "runtime:final", type: "runtime", status: "failed" },
     ]);
     unsubscribe();
   });
 
-  it.each(['hermes', 'dsh'])('finishes %s Work and releases its slot before the title is generated', async (runtimeKind) => {
-    if (runtimeKind === 'dsh') {
-      const work = await mocks.workFindUnique();
-      const agent = await mocks.getAgentForRun();
-      mocks.workFindUnique.mockResolvedValue({ ...work, runtimeKind, a2aActorId: 'user-1' });
-      mocks.getAgentForRun.mockResolvedValue({ ...agent, runtimeKind, provider: { id: 'provider-1' }, model: 'model-a' });
-      mocks.runDedicatedSandboxTurn.mockResolvedValue('Done');
-    }
-    let resolveTitle!: (value: string) => void;
-    mocks.generateWorkSessionTitle.mockReturnValueOnce(new Promise<string>((resolve) => { resolveTitle = resolve; }));
-    const { kickWorkCoordinator, isWorkSessionTitlePending } = await import('@/lib/work/coordinator');
-    const { subscribeWorkOutput, isWorkRunActive } = await import('@/lib/work/run-control');
+  it.each(["hermes", "dsh"])(
+    "finishes %s Work and releases its slot before the title is generated",
+    async (runtimeKind) => {
+      if (runtimeKind === "dsh") {
+        const work = await mocks.workFindUnique();
+        const agent = await mocks.getAgentForRun();
+        mocks.workFindUnique.mockResolvedValue({
+          ...work,
+          runtimeKind,
+          a2aActorId: "user-1",
+        });
+        mocks.getAgentForRun.mockResolvedValue({
+          ...agent,
+          runtimeKind,
+          provider: { id: "provider-1" },
+          model: "model-a",
+        });
+        mocks.runDedicatedSandboxTurn.mockResolvedValue("Done");
+      }
+      let resolveTitle!: (value: string) => void;
+      mocks.generateWorkSessionTitle.mockReturnValueOnce(
+        new Promise<string>((resolve) => {
+          resolveTitle = resolve;
+        }),
+      );
+      const { kickWorkCoordinator, isWorkSessionTitlePending } = await import(
+        "@/lib/work/coordinator"
+      );
+      const { subscribeWorkOutput, isWorkRunActive } = await import(
+        "@/lib/work/run-control"
+      );
+      kickWorkCoordinator();
+
+      try {
+        await vi.waitFor(() =>
+          expect(mocks.generateWorkSessionTitle).toHaveBeenCalled(),
+        );
+        const { snapshot, unsubscribe } = subscribeWorkOutput(
+          "work-1",
+          () => undefined,
+        );
+        unsubscribe();
+        expect(snapshot.done).toBe(true);
+        expect(isWorkSessionTitlePending("work-1")).toBe(true);
+        expect(isWorkRunActive("work-1")).toBe(false);
+        expect(mocks.workUpdateMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: { id: "work-1", status: "running" },
+            data: expect.objectContaining({ status: "idle" }),
+          }),
+        );
+        expect(
+          (globalThis as { __workCoordinator?: { active: Set<string> } })
+            .__workCoordinator?.active.size,
+        ).toBe(0);
+        expect(mocks.messageCreate).toHaveBeenCalledTimes(1);
+      } finally {
+        resolveTitle("Repository inspection");
+      }
+      await vi.waitFor(() =>
+        expect(isWorkSessionTitlePending("work-1")).toBe(false),
+      );
+    },
+  );
+
+  it("finishes Work when automatic title generation fails", async () => {
+    mocks.generateWorkSessionTitle.mockRejectedValueOnce(
+      new Error("Naming unavailable"),
+    );
+
+    const { kickWorkCoordinator } = await import("@/lib/work/coordinator");
+    const { subscribeWorkOutput } = await import("@/lib/work/run-control");
     kickWorkCoordinator();
 
-    try {
-      await vi.waitFor(() => expect(mocks.generateWorkSessionTitle).toHaveBeenCalled());
-      const { snapshot, unsubscribe } = subscribeWorkOutput('work-1', () => undefined);
-      unsubscribe();
-      expect(snapshot.done).toBe(true);
-      expect(isWorkSessionTitlePending('work-1')).toBe(true);
-      expect(isWorkRunActive('work-1')).toBe(false);
-      expect(mocks.workUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
-        where: { id: 'work-1', status: 'running' },
-        data: expect.objectContaining({ status: 'idle' }),
-      }));
-      expect((globalThis as { __workCoordinator?: { active: Set<string> } }).__workCoordinator?.active.size).toBe(0);
-      expect(mocks.messageCreate).toHaveBeenCalledTimes(1);
-    } finally {
-      resolveTitle('Repository inspection');
-    }
-    await vi.waitFor(() => expect(isWorkSessionTitlePending('work-1')).toBe(false));
-  });
-
-  it('finishes Work when automatic title generation fails', async () => {
-    mocks.generateWorkSessionTitle.mockRejectedValueOnce(new Error('Naming unavailable'));
-
-    const { kickWorkCoordinator } = await import('@/lib/work/coordinator');
-    const { subscribeWorkOutput } = await import('@/lib/work/run-control');
-    kickWorkCoordinator();
-
-    await vi.waitFor(() => expect(mocks.workUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: { id: 'work-1', status: 'running' },
-      data: expect.objectContaining({ status: 'idle' }),
-    })));
-    const { snapshot, unsubscribe } = subscribeWorkOutput('work-1', () => undefined);
+    await vi.waitFor(() =>
+      expect(mocks.workUpdateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "work-1", status: "running" },
+          data: expect.objectContaining({ status: "idle" }),
+        }),
+      ),
+    );
+    const { snapshot, unsubscribe } = subscribeWorkOutput(
+      "work-1",
+      () => undefined,
+    );
     expect(snapshot.done).toBe(true);
     unsubscribe();
     expect(mocks.systemLog).toHaveBeenCalledWith(
-      'warn',
-      '[work] work-1 title generation failed',
+      "warn",
+      "[work] work-1 title generation failed",
       expect.any(Error),
     );
   });
 
-  it('labels Hermes MCP tools with the workspace deployment and original name', async () => {
+  it("labels Hermes MCP tools with the workspace deployment and original name", async () => {
     mocks.resolveAgentTools.mockReturnValue({
-      deploymentIds: ['dep', 'dep-mcp'], sandboxDeploymentIds: [], skills: [], subAgents: [],
+      deploymentIds: ["dep", "dep-mcp"],
+      sandboxDeploymentIds: [],
+      skills: [],
+      subAgents: [],
     });
-    mocks.deploymentFindMany.mockResolvedValue([{
-      id: 'dep', serverId: null, server: null, name: 'Wrong prefix MCP', source: 'custom', sourceRef: null,
-    }, {
-      id: 'dep-mcp', serverId: null, server: null, name: 'Filesystem MCP', source: 'custom', sourceRef: null,
-    }]);
+    mocks.deploymentFindMany.mockResolvedValue([
+      {
+        id: "dep",
+        serverId: null,
+        server: null,
+        name: "Wrong prefix MCP",
+        source: "custom",
+        sourceRef: null,
+      },
+      {
+        id: "dep-mcp",
+        serverId: null,
+        server: null,
+        name: "Filesystem MCP",
+        source: "custom",
+        sourceRef: null,
+      },
+    ]);
     mocks.runHermesWork.mockImplementation(async (options) => {
-      await options.onToolStarted?.({ runId: 'run-1', timestamp: 1, tool: 'dep-mcp__read/file', preview: 'README.md' });
-      await options.onToolCompleted?.({ runId: 'run-1', timestamp: 2, tool: 'dep-mcp__read/file', duration: 0.2, error: false });
-      return { runId: 'run-1', status: 'completed', text: 'Done' };
+      await options.onToolStarted?.({
+        runId: "run-1",
+        timestamp: 1,
+        tool: "dep-mcp__read/file",
+        preview: "README.md",
+      });
+      await options.onToolCompleted?.({
+        runId: "run-1",
+        timestamp: 2,
+        tool: "dep-mcp__read/file",
+        duration: 0.2,
+        error: false,
+      });
+      return { runId: "run-1", status: "completed", text: "Done" };
     });
 
-    const { kickWorkCoordinator } = await import('@/lib/work/coordinator');
-    const { subscribeWorkOutput } = await import('@/lib/work/run-control');
+    const { kickWorkCoordinator } = await import("@/lib/work/coordinator");
+    const { subscribeWorkOutput } = await import("@/lib/work/run-control");
     kickWorkCoordinator();
 
     await vi.waitFor(() => expect(mocks.messageCreate).toHaveBeenCalled());
-    const { snapshot, unsubscribe } = subscribeWorkOutput('work-1', () => undefined);
-    expect(snapshot.activities).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        type: 'tool',
-        toolName: 'dep-mcp__read/file',
-        deploymentName: 'Filesystem MCP',
-        originalToolName: 'read/file',
-        durationMs: 200,
-      }),
-    ]));
+    const { snapshot, unsubscribe } = subscribeWorkOutput(
+      "work-1",
+      () => undefined,
+    );
+    expect(snapshot.activities).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "tool",
+          toolName: "dep-mcp__read/file",
+          deploymentName: "Filesystem MCP",
+          originalToolName: "read/file",
+          durationMs: 200,
+        }),
+      ]),
+    );
     unsubscribe();
     expect(mocks.deploymentFindMany).toHaveBeenCalledWith({
-      where: { workspaceId: 'workspace-1', id: { in: ['dep', 'dep-mcp'] } },
+      where: { workspaceId: "workspace-1", id: { in: ["dep", "dep-mcp"] } },
       select: {
         id: true,
         serverId: true,
@@ -323,62 +515,139 @@ describe('Work coordinator', () => {
       data: expect.objectContaining({
         parts: expect.arrayContaining([
           expect.objectContaining({
-            type: 'work-tool',
-            toolName: 'dep-mcp__read/file',
-            deploymentName: 'Filesystem MCP',
-            originalToolName: 'read/file',
+            type: "work-tool",
+            toolName: "dep-mcp__read/file",
+            deploymentName: "Filesystem MCP",
+            originalToolName: "read/file",
           }),
         ]),
       }),
     });
   });
 
-  it.each(['pi', 'claude-code', 'dsh', 'hermes-rpc'])('streams %s through the legacy sandbox runner with text deltas', async (runtimeKind) => {
-    mocks.workFindUnique.mockResolvedValue({
-      id: 'work-1', workspaceId: 'workspace-1', agentId: 'agent-1', a2aActorId: 'user-1', sandboxId: 'sandbox-1', conversationId: 'conversation-1',
-      task: 'Original task', runtimeKind, runtimeSnapshot: { workingDirectory: 'src', systemPrompt: 'Saved instructions' }, status: 'running',
-      sandbox: { id: 'sandbox-1', deploymentId: 'deployment-1', deployment: { status: 'running' } },
-      conversation: { messages: [
-        { id: 'old', role: 'user', parts: [{ type: 'text', text: 'Old tool history' }] },
-        { id: 'new-message', role: 'user', parts: [{ type: 'text', text: 'Inspect the repository' }] },
-      ] },
-    });
-    mocks.getAgentForRun.mockResolvedValue({ id: 'agent-1', runtimeKind, provider: { name: 'P', format: 'openai' }, model: 'test' });
-    mocks.resolveAgentTools.mockReturnValue({ deploymentIds: [], sandboxDeploymentIds: [], skills: [], subAgents: [] });
-    mocks.runDedicatedSandboxTurn.mockImplementation(async (options) => {
-      options.onTextDelta('partial ');
-      options.onTextDelta('answer');
-      return 'partial answer';
-    });
-    const { kickWorkCoordinator } = await import('@/lib/work/coordinator');
-    const { subscribeWorkOutput } = await import('@/lib/work/run-control');
-    kickWorkCoordinator();
-    await vi.waitFor(() => expect(mocks.messageCreate).toHaveBeenCalledTimes(1));
-    expect(mocks.runDedicatedSandboxTurn).toHaveBeenCalledWith(expect.objectContaining({
-      sandboxId: 'sandbox-1', runtimeSessionId: 'conversation-1', workingDirectory: 'src',
-    }));
-    expect(mocks.runNativeEntry).not.toHaveBeenCalled();
-    expect(mocks.runHermesWork).not.toHaveBeenCalled();
-    const { snapshot, unsubscribe } = subscribeWorkOutput('work-1', () => undefined);
-    expect(snapshot.done).toBe(true);
-    expect(snapshot.text).toContain('partial answer');
-    unsubscribe();
-    expect(mocks.messageCreate).toHaveBeenCalledWith({ data: expect.objectContaining({ role: 'assistant', parts: expect.arrayContaining([
-      { type: 'text', text: 'partial answer', state: 'done' },
-    ]) }) });
-  });
+  it.each(["pi", "claude-code", "dsh", "hermes-rpc"])(
+    "streams %s through the legacy sandbox runner with text deltas",
+    async (runtimeKind) => {
+      mocks.workFindUnique.mockResolvedValue({
+        id: "work-1",
+        workspaceId: "workspace-1",
+        agentId: "agent-1",
+        a2aActorId: "user-1",
+        sandboxId: "sandbox-1",
+        conversationId: "conversation-1",
+        task: "Original task",
+        runtimeKind,
+        runtimeSnapshot: {
+          workingDirectory: "src",
+          systemPrompt: "Saved instructions",
+        },
+        status: "running",
+        sandbox: {
+          id: "sandbox-1",
+          deploymentId: "deployment-1",
+          deployment: { status: "running" },
+        },
+        conversation: {
+          messages: [
+            {
+              id: "old",
+              role: "user",
+              parts: [{ type: "text", text: "Old tool history" }],
+            },
+            {
+              id: "new-message",
+              role: "user",
+              parts: [{ type: "text", text: "Inspect the repository" }],
+            },
+          ],
+        },
+      });
+      mocks.getAgentForRun.mockResolvedValue({
+        id: "agent-1",
+        runtimeKind,
+        provider: { name: "P", format: "openai" },
+        model: "test",
+      });
+      mocks.resolveAgentTools.mockReturnValue({
+        deploymentIds: [],
+        sandboxDeploymentIds: [],
+        skills: [],
+        subAgents: [],
+      });
+      mocks.runDedicatedSandboxTurn.mockImplementation(async (options) => {
+        options.onTextDelta("partial ");
+        options.onTextDelta("answer");
+        return "partial answer";
+      });
+      const { kickWorkCoordinator } = await import("@/lib/work/coordinator");
+      const { subscribeWorkOutput } = await import("@/lib/work/run-control");
+      kickWorkCoordinator();
+      await vi.waitFor(() =>
+        expect(mocks.messageCreate).toHaveBeenCalledTimes(1),
+      );
+      expect(mocks.runDedicatedSandboxTurn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sandboxId: "sandbox-1",
+          runtimeSessionId: "conversation-1",
+          workingDirectory: "src",
+        }),
+      );
+      expect(mocks.runNativeEntry).not.toHaveBeenCalled();
+      expect(mocks.runHermesWork).not.toHaveBeenCalled();
+      const { snapshot, unsubscribe } = subscribeWorkOutput(
+        "work-1",
+        () => undefined,
+      );
+      expect(snapshot.done).toBe(true);
+      expect(snapshot.text).toContain("partial answer");
+      unsubscribe();
+      expect(mocks.messageCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          role: "assistant",
+          parts: expect.arrayContaining([
+            { type: "text", text: "partial answer", state: "done" },
+          ]),
+        }),
+      });
+    },
+  );
 
-  it('executes available CLI commands through the sandbox runner', async () => {
+  it("executes available CLI commands through the sandbox runner", async () => {
     const base = await mocks.workFindUnique();
-    mocks.workFindUnique.mockResolvedValue({ ...base, runtimeKind: 'pi', a2aActorId: 'user-1', conversation: {
-      messages: [{ id: 'cmd', role: 'user', parts: [{ type: 'text', text: '/compact' }] }],
-    } });
-    mocks.getAgentForRun.mockResolvedValue({ id: 'agent-1', runtimeKind: 'pi', provider: { format: 'openai' }, model: 'test' });
-    mocks.resolveAgentTools.mockReturnValue({ deploymentIds: [], sandboxDeploymentIds: [], skills: [], subAgents: [] });
-    mocks.runDedicatedSandboxTurn.mockResolvedValue('compacted');
-    const { kickWorkCoordinator } = await import('@/lib/work/coordinator');
+    mocks.workFindUnique.mockResolvedValue({
+      ...base,
+      runtimeKind: "pi",
+      a2aActorId: "user-1",
+      conversation: {
+        messages: [
+          {
+            id: "cmd",
+            role: "user",
+            parts: [{ type: "text", text: "/compact" }],
+          },
+        ],
+      },
+    });
+    mocks.getAgentForRun.mockResolvedValue({
+      id: "agent-1",
+      runtimeKind: "pi",
+      provider: { format: "openai" },
+      model: "test",
+    });
+    mocks.resolveAgentTools.mockReturnValue({
+      deploymentIds: [],
+      sandboxDeploymentIds: [],
+      skills: [],
+      subAgents: [],
+    });
+    mocks.runDedicatedSandboxTurn.mockResolvedValue("compacted");
+    const { kickWorkCoordinator } = await import("@/lib/work/coordinator");
     kickWorkCoordinator();
-    await vi.waitFor(() => expect(mocks.messageCreate).toHaveBeenCalledTimes(1));
-    expect(mocks.runDedicatedSandboxTurn).toHaveBeenCalledWith(expect.objectContaining({ command: '/compact' }));
+    await vi.waitFor(() =>
+      expect(mocks.messageCreate).toHaveBeenCalledTimes(1),
+    );
+    expect(mocks.runDedicatedSandboxTurn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: "/compact" }),
+    );
   });
 });

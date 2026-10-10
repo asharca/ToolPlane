@@ -1,4 +1,4 @@
-import Link from 'next/link';
+import Link from "next/link";
 import {
   ArrowLeft,
   ArrowRight,
@@ -7,12 +7,12 @@ import {
   Network,
   PackageCheck,
   ServerCog,
-} from 'lucide-react';
+} from "lucide-react";
 import type {
   MarketingCapability,
   MarketingContent,
-} from '@/lib/marketing/content';
-import { ButtonLink } from '@/components/motion/button';
+} from "@/lib/marketing/content";
+import { ButtonLink } from "@/components/motion/button";
 
 const ICONS = {
   mcp: ServerCog,
@@ -61,7 +61,9 @@ export function CapabilityPage({
                 {common.openConsole}
                 <ArrowRight className="size-4" />
               </ButtonLink>
-              <span className="text-xs text-muted-foreground">{common.consoleNote}</span>
+              <span className="text-xs text-muted-foreground">
+                {common.consoleNote}
+              </span>
             </div>
           </div>
         </div>
@@ -70,9 +72,12 @@ export function CapabilityPage({
       <section className="mx-auto max-w-7xl px-6 py-16 lg:px-8 lg:py-24">
         <div className="grid gap-5 md:grid-cols-3">
           {page.highlights.map((highlight, index) => (
-            <article key={highlight.title} className="rounded-xl border border-border bg-card p-7">
+            <article
+              key={highlight.title}
+              className="rounded-xl border border-border bg-card p-7"
+            >
               <span className="font-mono text-xs font-semibold text-primary">
-                {String(index + 1).padStart(2, '0')}
+                {String(index + 1).padStart(2, "0")}
               </span>
               <h2 className="mt-6 text-lg font-semibold">{highlight.title}</h2>
               <p className="mt-2 text-sm leading-6 text-muted-foreground">
@@ -94,7 +99,10 @@ export function CapabilityPage({
             </h2>
             <ol className="mt-8 space-y-5">
               {page.flow.map((step, index) => (
-                <li key={step} className="flex items-center gap-4 text-sm font-medium">
+                <li
+                  key={step}
+                  className="flex items-center gap-4 text-sm font-medium"
+                >
                   <span className="flex size-8 shrink-0 items-center justify-center rounded-full border border-border bg-card font-mono text-xs text-muted-foreground">
                     {index + 1}
                   </span>
@@ -105,7 +113,9 @@ export function CapabilityPage({
           </div>
           <aside className="rounded-xl border border-border bg-card p-7 sm:p-9">
             <CheckCircle2 className="size-6 text-primary" />
-            <h2 className="mt-6 text-xl font-semibold">{page.principleTitle}</h2>
+            <h2 className="mt-6 text-xl font-semibold">
+              {page.principleTitle}
+            </h2>
             <p className="mt-3 text-sm leading-7 text-muted-foreground">
               {page.principle}
             </p>

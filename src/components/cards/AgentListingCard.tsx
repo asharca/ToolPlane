@@ -1,6 +1,6 @@
-import { Copy } from 'lucide-react';
-import { SITE } from '@/lib/site';
-import { EntityCard, formatCount } from './EntityCard';
+import { Copy } from "lucide-react";
+import { SITE } from "@/lib/site";
+import { EntityCard, formatCount } from "./EntityCard";
 
 export type AgentListingCardData = {
   id: string;
@@ -38,7 +38,9 @@ export function AgentListingCard({
         <span className="flex items-center font-mono text-xs text-muted-foreground">
           <Copy aria-hidden="true" className="mr-1 size-3" />
           <span aria-hidden="true">{formatCount(agent.installCount)}</span>
-          <span className="sr-only">{installLabel}: {agent.installCount.toLocaleString()}</span>
+          <span className="sr-only">
+            {installLabel}: {agent.installCount.toLocaleString()}
+          </span>
         </span>
       }
     />

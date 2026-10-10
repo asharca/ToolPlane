@@ -1,6 +1,6 @@
-import { handleSandboxMcp } from '@/lib/sandboxes/mcp-http';
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+import { handleSandboxMcp } from "@/lib/sandboxes/mcp-http";
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 export const maxDuration = 200;
 type Context = { params: Promise<{ sandboxId: string }> };
 async function handle(req: Request, context: Context) {

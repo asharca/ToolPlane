@@ -55,10 +55,7 @@ export function CodeBlock({
   const [copied, setCopied] = useState(false);
   const streaming = status === "streaming";
   const tokens = useAgentCodeTokens(code, language);
-  const highlighted = useMemo(
-    () => new Set(highlightLines),
-    [highlightLines],
-  );
+  const highlighted = useMemo(() => new Set(highlightLines), [highlightLines]);
   let offset = 0;
   const lines = code.split("\n").map((content) => {
     const line = { content, offset };
@@ -189,7 +186,9 @@ export function CodeBlock({
                     className={cn(
                       "pr-4",
                       showLineNumbers ? "pl-1" : "pl-4",
-                      wrap ? "whitespace-pre-wrap break-words" : "whitespace-pre",
+                      wrap
+                        ? "whitespace-pre-wrap break-words"
+                        : "whitespace-pre",
                     )}
                   />
                 </span>

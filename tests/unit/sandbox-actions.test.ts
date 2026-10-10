@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   getCurrentUser: vi.fn(),
@@ -51,9 +51,13 @@ const mocks = vi.hoisted(() => ({
   headers: vi.fn(),
 }));
 
-vi.mock('@/lib/auth/current-user', () => ({ getCurrentUser: mocks.getCurrentUser }));
-vi.mock('@/lib/workspace/queries', () => ({ getWorkspaceForUser: mocks.getWorkspaceForUser }));
-vi.mock('@/lib/db', () => ({
+vi.mock("@/lib/auth/current-user", () => ({
+  getCurrentUser: mocks.getCurrentUser,
+}));
+vi.mock("@/lib/workspace/queries", () => ({
+  getWorkspaceForUser: mocks.getWorkspaceForUser,
+}));
+vi.mock("@/lib/db", () => ({
   db: {
     $transaction: mocks.transaction,
     sandbox: {
@@ -80,7 +84,7 @@ vi.mock('@/lib/db', () => ({
     },
   },
 }));
-vi.mock('@/lib/process/supervisor', () => ({
+vi.mock("@/lib/process/supervisor", () => ({
   allowProcessRestart: mocks.allowProcessRestart,
   effectiveStatus: mocks.effectiveStatus,
   startProcess: mocks.startProcess,
@@ -88,9 +92,11 @@ vi.mock('@/lib/process/supervisor', () => ({
   restartProcess: mocks.restartProcess,
   killProcess: mocks.killProcess,
 }));
-vi.mock('@/lib/process/spawn-spec', () => ({ resolveSpawnSpec: mocks.resolveSpawnSpec }));
-vi.mock('@/lib/sandboxes/runtime', () => ({
-  DEFAULT_SANDBOX_IMAGE: 'node:24-bookworm-slim',
+vi.mock("@/lib/process/spawn-spec", () => ({
+  resolveSpawnSpec: mocks.resolveSpawnSpec,
+}));
+vi.mock("@/lib/sandboxes/runtime", () => ({
+  DEFAULT_SANDBOX_IMAGE: "node:24-bookworm-slim",
   copyDockerVolume: mocks.copyDockerVolume,
   DockerVolumeCopyCleanupError: mocks.DockerVolumeCopyCleanupError,
   removeDockerSandboxContainer: mocks.removeDockerSandboxContainer,
@@ -101,20 +107,24 @@ vi.mock('@/lib/sandboxes/runtime', () => ({
   sandboxVolumeName: (id: string) => `toolplane-sandbox-${id}`,
   stopDockerSandboxContainer: mocks.stopDockerSandboxContainer,
 }));
-vi.mock('next/cache', () => ({ revalidatePath: mocks.revalidatePath }));
-vi.mock('next/navigation', () => ({ redirect: mocks.redirect }));
-vi.mock('next/headers', () => ({ headers: mocks.headers }));
-vi.mock('@/lib/sandboxes/connector-broker', () => ({ disconnectConnector: mocks.disconnectConnector }));
-vi.mock('@/lib/sandboxes/connector-setup-token', () => ({
+vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidatePath }));
+vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));
+vi.mock("next/headers", () => ({ headers: mocks.headers }));
+vi.mock("@/lib/sandboxes/connector-broker", () => ({
+  disconnectConnector: mocks.disconnectConnector,
+}));
+vi.mock("@/lib/sandboxes/connector-setup-token", () => ({
   setConnectorSetupTokenCookie: mocks.setConnectorSetupTokenCookie,
 }));
-vi.mock('@/lib/agents/hermes/runtime', () => ({
+vi.mock("@/lib/agents/hermes/runtime", () => ({
   ensureHermesRuntimeReady: mocks.ensureHermesRuntimeReady,
   runHermesRuntimeMaintenance: mocks.runHermesRuntimeMaintenance,
   stopHermesRuntime: mocks.stopHermesRuntime,
   syncHermesRuntime: mocks.syncHermesRuntime,
 }));
-vi.mock('@/lib/agents/mutations', () => ({ setHermesRuntimeEnv: mocks.setHermesRuntimeEnv }));
+vi.mock("@/lib/agents/mutations", () => ({
+  setHermesRuntimeEnv: mocks.setHermesRuntimeEnv,
+}));
 
 import {
   batchSandboxLifecycleAction,
@@ -131,46 +141,46 @@ import {
   stopSandboxAction,
   updateSandboxEnvAction,
   updateSandboxSudoAction,
-} from '@/lib/sandboxes/actions';
-import { closeWorkspaceOperations } from '@/lib/workspace/operation-gate';
-import { ownership } from '@/lib/runtime/ownership-state';
+} from "@/lib/sandboxes/actions";
+import { closeWorkspaceOperations } from "@/lib/workspace/operation-gate";
+import { ownership } from "@/lib/runtime/ownership-state";
 
 function renameForm(name: string): FormData {
   const fd = new FormData();
-  fd.set('workspace', 'mine');
-  fd.set('sandboxId', 'sb1');
-  fd.set('name', name);
+  fd.set("workspace", "mine");
+  fd.set("sandboxId", "sb1");
+  fd.set("name", name);
   return fd;
 }
 
 function envForm(env: string): FormData {
-  const fd = renameForm('Ignored');
-  fd.set('env', env);
+  const fd = renameForm("Ignored");
+  fd.set("env", env);
   return fd;
 }
 
-function snapshotForm(snapshotId = 'snap1'): FormData {
-  const fd = renameForm('Ignored');
-  fd.set('snapshotId', snapshotId);
+function snapshotForm(snapshotId = "snap1"): FormData {
+  const fd = renameForm("Ignored");
+  fd.set("snapshotId", snapshotId);
   return fd;
 }
 
 function dockerSandbox(overrides: Record<string, unknown> = {}) {
   return {
-    id: 'sb1',
-    workspaceId: 'ws1',
-    deploymentId: 'dep1',
-    name: 'Source lab',
-    kind: 'docker',
-    image: 'node:24-bookworm-slim',
-    network: 'isolated',
-    config: { env: { A: '1' } },
+    id: "sb1",
+    workspaceId: "ws1",
+    deploymentId: "dep1",
+    name: "Source lab",
+    kind: "docker",
+    image: "node:24-bookworm-slim",
+    network: "isolated",
+    config: { env: { A: "1" } },
     snapshots: [],
     agentLinks: [],
     deployment: {
-      id: 'dep1',
-      status: 'stopped',
-      installCfg: { volumeName: 'source-volume' },
+      id: "dep1",
+      status: "stopped",
+      installCfg: { volumeName: "source-volume" },
     },
     ...overrides,
   };
@@ -178,55 +188,62 @@ function dockerSandbox(overrides: Record<string, unknown> = {}) {
 
 function hermesSandbox(overrides: Record<string, unknown> = {}) {
   return dockerSandbox({
-    kind: 'hermes',
-    image: 'nousresearch/hermes-agent:test',
+    kind: "hermes",
+    image: "nousresearch/hermes-agent:test",
     ...overrides,
   });
 }
 
 function completeHermesMaintenance() {
-  mocks.runHermesRuntimeMaintenance.mockImplementation(async (...args: unknown[]) => {
-    const operation = args[4] as (context: {
-      agentId: string;
-      runtimeId: string;
-      sandboxId: string;
-      deploymentId: string;
-      volumeName: string;
-      wasActive: boolean;
-      preventResume: () => void;
-    }) => Promise<unknown>;
-    return {
-      status: 'completed',
-      data: await operation({
-        agentId: 'agent-1',
-        runtimeId: 'runtime-1',
-        sandboxId: 'sb1',
-        deploymentId: 'dep1',
-        volumeName: 'source-volume',
-        wasActive: false,
-        preventResume: vi.fn(),
-      }),
-    };
-  });
+  mocks.runHermesRuntimeMaintenance.mockImplementation(
+    async (...args: unknown[]) => {
+      const operation = args[4] as (context: {
+        agentId: string;
+        runtimeId: string;
+        sandboxId: string;
+        deploymentId: string;
+        volumeName: string;
+        wasActive: boolean;
+        preventResume: () => void;
+      }) => Promise<unknown>;
+      return {
+        status: "completed",
+        data: await operation({
+          agentId: "agent-1",
+          runtimeId: "runtime-1",
+          sandboxId: "sb1",
+          deploymentId: "dep1",
+          volumeName: "source-volume",
+          wasActive: false,
+          preventResume: vi.fn(),
+        }),
+      };
+    },
+  );
 }
 
-describe('renameSandboxAction', () => {
+describe("renameSandboxAction", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.getCurrentUser.mockResolvedValue({ id: 'user1' });
-    mocks.getWorkspaceForUser.mockResolvedValue({ id: 'ws1', ownerId: 'user1' });
+    mocks.getCurrentUser.mockResolvedValue({ id: "user1" });
+    mocks.getWorkspaceForUser.mockResolvedValue({
+      id: "ws1",
+      ownerId: "user1",
+    });
     mocks.transaction.mockImplementation(async (ops: unknown[]) => ops);
-    mocks.effectiveStatus.mockReturnValue('stopped');
+    mocks.effectiveStatus.mockReturnValue("stopped");
     mocks.killProcess.mockResolvedValue(undefined);
     mocks.removeDockerVolumeCopyHelper.mockResolvedValue(undefined);
     mocks.setHermesRuntimeEnv.mockResolvedValue(true);
     mocks.ensureHermesRuntimeReady.mockResolvedValue({ port: 8642 });
     mocks.stopHermesRuntime.mockResolvedValue(undefined);
-    mocks.syncHermesRuntime.mockResolvedValue({ status: 'provisioning' });
-    mocks.headers.mockResolvedValue(new Headers({
-      'x-forwarded-host': 'connect.example.com',
-      'x-forwarded-proto': 'https',
-    }));
+    mocks.syncHermesRuntime.mockResolvedValue({ status: "provisioning" });
+    mocks.headers.mockResolvedValue(
+      new Headers({
+        "x-forwarded-host": "connect.example.com",
+        "x-forwarded-proto": "https",
+      }),
+    );
   });
 
   afterEach(() => {
@@ -234,57 +251,119 @@ describe('renameSandboxAction', () => {
   });
 
   it.each([
-    { name: 'clone', action: cloneSandboxAction, form: () => renameForm('Copy') },
-    { name: 'create snapshot', action: createSandboxSnapshotAction, form: () => renameForm('Checkpoint') },
-    { name: 'restore snapshot', action: restoreSandboxSnapshotAction, form: () => snapshotForm() },
-    { name: 'delete snapshot', action: deleteSandboxSnapshotAction, form: () => snapshotForm() },
-  ])('scopes $name source lookup to the authorized workspace', async ({ action, form }) => {
-    mocks.sandboxFindFirst.mockResolvedValue(null);
+    {
+      name: "clone",
+      action: cloneSandboxAction,
+      form: () => renameForm("Copy"),
+    },
+    {
+      name: "create snapshot",
+      action: createSandboxSnapshotAction,
+      form: () => renameForm("Checkpoint"),
+    },
+    {
+      name: "restore snapshot",
+      action: restoreSandboxSnapshotAction,
+      form: () => snapshotForm(),
+    },
+    {
+      name: "delete snapshot",
+      action: deleteSandboxSnapshotAction,
+      form: () => snapshotForm(),
+    },
+  ])(
+    "scopes $name source lookup to the authorized workspace",
+    async ({ action, form }) => {
+      mocks.sandboxFindFirst.mockResolvedValue(null);
 
-    await action(form());
+      await action(form());
 
-    expect(mocks.sandboxFindFirst).toHaveBeenCalledWith({
-      where: { id: 'sb1', workspaceId: 'ws1' },
-      include: {
-        deployment: true,
-        snapshots: true,
-        agentLinks: { select: { agentId: true } },
-      },
-    });
-    expect(mocks.transaction).not.toHaveBeenCalled();
-    expect(mocks.sandboxSnapshotFindFirst).not.toHaveBeenCalled();
-    expect(mocks.sandboxSnapshotCreate).not.toHaveBeenCalled();
-    expect(mocks.copyDockerVolume).not.toHaveBeenCalled();
-    expect(mocks.removeDockerVolumeStrict).not.toHaveBeenCalled();
-  });
+      expect(mocks.sandboxFindFirst).toHaveBeenCalledWith({
+        where: { id: "sb1", workspaceId: "ws1" },
+        include: {
+          deployment: true,
+          snapshots: true,
+          agentLinks: { select: { agentId: true } },
+        },
+      });
+      expect(mocks.transaction).not.toHaveBeenCalled();
+      expect(mocks.sandboxSnapshotFindFirst).not.toHaveBeenCalled();
+      expect(mocks.sandboxSnapshotCreate).not.toHaveBeenCalled();
+      expect(mocks.copyDockerVolume).not.toHaveBeenCalled();
+      expect(mocks.removeDockerVolumeStrict).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
-    { name: 'clone', action: cloneSandboxAction, form: () => renameForm('Copy') },
-    { name: 'create snapshot', action: createSandboxSnapshotAction, form: () => renameForm('Checkpoint') },
-    { name: 'restore snapshot', action: restoreSandboxSnapshotAction, form: () => snapshotForm() },
-  ])('does not $name while sandbox data is in an interrupted copy state', async ({ action, form }) => {
-    mocks.sandboxFindFirst.mockResolvedValue(dockerSandbox({
-      deployment: { id: 'dep1', status: 'copy_failed', installCfg: { volumeName: 'source-volume' } },
-    }));
-    mocks.effectiveStatus.mockReturnValue('copy_failed');
+    {
+      name: "clone",
+      action: cloneSandboxAction,
+      form: () => renameForm("Copy"),
+    },
+    {
+      name: "create snapshot",
+      action: createSandboxSnapshotAction,
+      form: () => renameForm("Checkpoint"),
+    },
+    {
+      name: "restore snapshot",
+      action: restoreSandboxSnapshotAction,
+      form: () => snapshotForm(),
+    },
+  ])(
+    "does not $name while sandbox data is in an interrupted copy state",
+    async ({ action, form }) => {
+      mocks.sandboxFindFirst.mockResolvedValue(
+        dockerSandbox({
+          deployment: {
+            id: "dep1",
+            status: "copy_failed",
+            installCfg: { volumeName: "source-volume" },
+          },
+        }),
+      );
+      mocks.effectiveStatus.mockReturnValue("copy_failed");
 
-    await action(form());
+      await action(form());
 
-    expect(mocks.sandboxSnapshotFindFirst).not.toHaveBeenCalled();
-    expect(mocks.sandboxSnapshotCreate).not.toHaveBeenCalled();
-    expect(mocks.copyDockerVolume).not.toHaveBeenCalled();
-    expect(mocks.startProcess).not.toHaveBeenCalled();
-  });
+      expect(mocks.sandboxSnapshotFindFirst).not.toHaveBeenCalled();
+      expect(mocks.sandboxSnapshotCreate).not.toHaveBeenCalled();
+      expect(mocks.copyDockerVolume).not.toHaveBeenCalled();
+      expect(mocks.startProcess).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
-    { name: 'start', action: startSandboxAction, form: () => renameForm('Ignored') },
-    { name: 'stop', action: stopSandboxAction, form: () => renameForm('Ignored') },
-    { name: 'restart', action: restartSandboxAction, form: () => renameForm('Ignored') },
-    { name: 'update environment', action: updateSandboxEnvAction, form: () => envForm('A=1') },
-  ])('does not $name an interrupted clone', async ({ action, form }) => {
-    mocks.sandboxFindFirst.mockResolvedValue(dockerSandbox({
-      deployment: { id: 'dep1', status: 'copy_failed', installCfg: { volumeName: 'source-volume' } },
-    }));
+    {
+      name: "start",
+      action: startSandboxAction,
+      form: () => renameForm("Ignored"),
+    },
+    {
+      name: "stop",
+      action: stopSandboxAction,
+      form: () => renameForm("Ignored"),
+    },
+    {
+      name: "restart",
+      action: restartSandboxAction,
+      form: () => renameForm("Ignored"),
+    },
+    {
+      name: "update environment",
+      action: updateSandboxEnvAction,
+      form: () => envForm("A=1"),
+    },
+  ])("does not $name an interrupted clone", async ({ action, form }) => {
+    mocks.sandboxFindFirst.mockResolvedValue(
+      dockerSandbox({
+        deployment: {
+          id: "dep1",
+          status: "copy_failed",
+          installCfg: { volumeName: "source-volume" },
+        },
+      }),
+    );
 
     await action(form());
 
@@ -295,36 +374,58 @@ describe('renameSandboxAction', () => {
     expect(mocks.deploymentUpdate).not.toHaveBeenCalled();
   });
 
-  it.each(['copy_failed', 'restore_failed', 'deleting'])(
-    'does not manually start a sandbox in %s state',
+  it.each(["copy_failed", "restore_failed", "deleting"])(
+    "does not manually start a sandbox in %s state",
     async (status) => {
-      mocks.sandboxFindFirst.mockResolvedValue(dockerSandbox({
-        deployment: { id: 'dep1', status, installCfg: { volumeName: 'source-volume' } },
-      }));
+      mocks.sandboxFindFirst.mockResolvedValue(
+        dockerSandbox({
+          deployment: {
+            id: "dep1",
+            status,
+            installCfg: { volumeName: "source-volume" },
+          },
+        }),
+      );
 
-      await startSandboxAction(renameForm('Ignored'));
+      await startSandboxAction(renameForm("Ignored"));
 
       expect(mocks.startProcess).not.toHaveBeenCalled();
     },
   );
 
   it.each([
-    { name: 'clone', action: cloneSandboxAction, form: () => renameForm('Copy') },
-    { name: 'create snapshot', action: createSandboxSnapshotAction, form: () => renameForm('Checkpoint') },
-    { name: 'restore snapshot', action: restoreSandboxSnapshotAction, form: () => snapshotForm() },
-    { name: 'delete snapshot', action: deleteSandboxSnapshotAction, form: () => snapshotForm() },
-  ])('rejects $name for connector sandboxes', async ({ action, form }) => {
+    {
+      name: "clone",
+      action: cloneSandboxAction,
+      form: () => renameForm("Copy"),
+    },
+    {
+      name: "create snapshot",
+      action: createSandboxSnapshotAction,
+      form: () => renameForm("Checkpoint"),
+    },
+    {
+      name: "restore snapshot",
+      action: restoreSandboxSnapshotAction,
+      form: () => snapshotForm(),
+    },
+    {
+      name: "delete snapshot",
+      action: deleteSandboxSnapshotAction,
+      form: () => snapshotForm(),
+    },
+  ])("rejects $name for connector sandboxes", async ({ action, form }) => {
     mocks.sandboxFindFirst.mockResolvedValue({
-      id: 'sb1',
-      workspaceId: 'ws1',
-      deploymentId: 'dep1',
-      name: 'Laptop',
-      kind: 'connector',
+      id: "sb1",
+      workspaceId: "ws1",
+      deploymentId: "dep1",
+      name: "Laptop",
+      kind: "connector",
       image: null,
-      network: 'isolated',
+      network: "isolated",
       config: {},
       snapshots: [],
-      deployment: { id: 'dep1', status: 'stopped', installCfg: {} },
+      deployment: { id: "dep1", status: "stopped", installCfg: {} },
     });
 
     await action(form());
@@ -338,261 +439,370 @@ describe('renameSandboxAction', () => {
 
   it.each([
     {
-      name: 'restore',
+      name: "restore",
       action: restoreSandboxSnapshotAction,
-      expectedWhere: { id: 'snap1', sandboxId: 'sb1', status: 'ready' },
+      expectedWhere: { id: "snap1", sandboxId: "sb1", status: "ready" },
     },
     {
-      name: 'delete',
+      name: "delete",
       action: deleteSandboxSnapshotAction,
-      expectedWhere: { id: 'snap1', sandboxId: 'sb1' },
+      expectedWhere: { id: "snap1", sandboxId: "sb1" },
     },
-  ])('does not $name a snapshot owned by another sandbox', async ({ action, expectedWhere }) => {
-    mocks.sandboxFindFirst.mockResolvedValue(dockerSandbox());
-    mocks.sandboxSnapshotFindFirst.mockResolvedValue(null);
+  ])(
+    "does not $name a snapshot owned by another sandbox",
+    async ({ action, expectedWhere }) => {
+      mocks.sandboxFindFirst.mockResolvedValue(dockerSandbox());
+      mocks.sandboxSnapshotFindFirst.mockResolvedValue(null);
 
-    await action(snapshotForm());
+      await action(snapshotForm());
 
-    expect(mocks.sandboxSnapshotFindFirst).toHaveBeenCalledWith({ where: expectedWhere });
-    expect(mocks.sandboxSnapshotUpdate).not.toHaveBeenCalled();
-    expect(mocks.copyDockerVolume).not.toHaveBeenCalled();
-    expect(mocks.removeDockerVolumeStrict).not.toHaveBeenCalled();
-  });
+      expect(mocks.sandboxSnapshotFindFirst).toHaveBeenCalledWith({
+        where: expectedWhere,
+      });
+      expect(mocks.sandboxSnapshotUpdate).not.toHaveBeenCalled();
+      expect(mocks.copyDockerVolume).not.toHaveBeenCalled();
+      expect(mocks.removeDockerVolumeStrict).not.toHaveBeenCalled();
+    },
+  );
 
-  it('does not rename a sandbox outside the workspace', async () => {
+  it("does not rename a sandbox outside the workspace", async () => {
     mocks.sandboxFindFirst.mockResolvedValue(null);
 
-    await renameSandboxAction(renameForm('New lab'));
+    await renameSandboxAction(renameForm("New lab"));
 
     expect(mocks.sandboxFindFirst).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: 'sb1', workspaceId: 'ws1' } }),
+      expect.objectContaining({ where: { id: "sb1", workspaceId: "ws1" } }),
     );
     expect(mocks.sandboxUpdate).not.toHaveBeenCalled();
     expect(mocks.deploymentUpdate).not.toHaveBeenCalled();
   });
 
-  it('renames the sandbox and its backing deployment', async () => {
+  it("renames the sandbox and its backing deployment", async () => {
     mocks.sandboxFindFirst.mockResolvedValue({
-      id: 'sb1',
-      deploymentId: 'dep1',
-      deployment: { id: 'dep1', status: 'stopped' },
+      id: "sb1",
+      deploymentId: "dep1",
+      deployment: { id: "dep1", status: "stopped" },
     });
 
-    await renameSandboxAction(renameForm('  Renamed lab  '));
+    await renameSandboxAction(renameForm("  Renamed lab  "));
 
     expect(mocks.sandboxUpdate).toHaveBeenCalledWith({
-      where: { id: 'sb1' },
-      data: { name: 'Renamed lab' },
+      where: { id: "sb1" },
+      data: { name: "Renamed lab" },
     });
     expect(mocks.deploymentUpdate).toHaveBeenCalledWith({
-      where: { id: 'dep1' },
-      data: { name: 'Sandbox: Renamed lab' },
+      where: { id: "dep1" },
+      data: { name: "Sandbox: Renamed lab" },
     });
-    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/mine/sandboxes');
-    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/mine/sandboxes/sb1');
-  });
-
-  it('renames an agent-managed Hermes container without renaming its agent', async () => {
-    mocks.sandboxFindFirst.mockResolvedValue(hermesSandbox({
-      deployment: { id: 'dep1', status: 'stopped' },
-    }));
-
-    await renameSandboxAction(renameForm('  Research runtime  '));
-
-    expect(mocks.sandboxUpdate).toHaveBeenCalledWith({
-      where: { id: 'sb1' },
-      data: { name: 'Research runtime' },
-    });
-    expect(mocks.deploymentUpdate).toHaveBeenCalledWith({
-      where: { id: 'dep1' },
-      data: { name: 'Sandbox: Research runtime' },
-    });
-  });
-
-  it('starts sandboxes in provisioning mode without waiting for ready', async () => {
-    mocks.sandboxFindFirst.mockResolvedValue({
-      id: 'sb1',
-      workspaceId: 'ws1',
-      deploymentId: 'dep1',
-      kind: 'docker',
-      deployment: { id: 'dep1' },
-    });
-    mocks.resolveSpawnSpec.mockReturnValue({ kind: 'sandbox' });
-
-    await startSandboxAction(renameForm('Ignored'));
-
-    expect(mocks.resolveSpawnSpec).toHaveBeenCalledWith({ id: 'dep1' });
-    expect(mocks.startProcess).toHaveBeenCalledWith(
-      'dep1',
-      { kind: 'sandbox' },
-      { awaitReady: false, workspaceId: 'ws1' },
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/app/mine/sandboxes");
+    expect(mocks.revalidatePath).toHaveBeenCalledWith(
+      "/app/mine/sandboxes/sb1",
     );
-    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/mine/sandboxes');
-    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/mine/sandboxes/sb1');
-    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/mine/work');
   });
 
-  it('starts an agent-managed Hermes sandbox through its runtime', async () => {
+  it("renames an agent-managed Hermes container without renaming its agent", async () => {
+    mocks.sandboxFindFirst.mockResolvedValue(
+      hermesSandbox({
+        deployment: { id: "dep1", status: "stopped" },
+      }),
+    );
+
+    await renameSandboxAction(renameForm("  Research runtime  "));
+
+    expect(mocks.sandboxUpdate).toHaveBeenCalledWith({
+      where: { id: "sb1" },
+      data: { name: "Research runtime" },
+    });
+    expect(mocks.deploymentUpdate).toHaveBeenCalledWith({
+      where: { id: "dep1" },
+      data: { name: "Sandbox: Research runtime" },
+    });
+  });
+
+  it("starts sandboxes in provisioning mode without waiting for ready", async () => {
+    mocks.sandboxFindFirst.mockResolvedValue({
+      id: "sb1",
+      workspaceId: "ws1",
+      deploymentId: "dep1",
+      kind: "docker",
+      deployment: { id: "dep1" },
+    });
+    mocks.resolveSpawnSpec.mockReturnValue({ kind: "sandbox" });
+
+    await startSandboxAction(renameForm("Ignored"));
+
+    expect(mocks.resolveSpawnSpec).toHaveBeenCalledWith({ id: "dep1" });
+    expect(mocks.startProcess).toHaveBeenCalledWith(
+      "dep1",
+      { kind: "sandbox" },
+      { awaitReady: false, workspaceId: "ws1" },
+    );
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/app/mine/sandboxes");
+    expect(mocks.revalidatePath).toHaveBeenCalledWith(
+      "/app/mine/sandboxes/sb1",
+    );
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/app/mine/work");
+  });
+
+  it("starts an agent-managed Hermes sandbox through its runtime", async () => {
     mocks.sandboxFindFirst.mockResolvedValue(hermesSandbox());
-    mocks.agentRuntimeFindFirst.mockResolvedValue({ agentId: 'agent-1' });
+    mocks.agentRuntimeFindFirst.mockResolvedValue({ agentId: "agent-1" });
 
-    await startSandboxAction(renameForm('Ignored'));
+    await startSandboxAction(renameForm("Ignored"));
 
-    expect(mocks.ensureHermesRuntimeReady).toHaveBeenCalledWith('ws1', 'agent-1');
+    expect(mocks.ensureHermesRuntimeReady).toHaveBeenCalledWith(
+      "ws1",
+      "agent-1",
+    );
     expect(mocks.startProcess).not.toHaveBeenCalled();
-    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/mine/agents/agent-1');
-    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/mine/work');
+    expect(mocks.revalidatePath).toHaveBeenCalledWith(
+      "/app/mine/agents/agent-1",
+    );
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/app/mine/work");
   });
 
-  it('stops an agent-managed Hermes sandbox through its runtime', async () => {
+  it("stops an agent-managed Hermes sandbox through its runtime", async () => {
     mocks.sandboxFindFirst.mockResolvedValue(hermesSandbox());
-    mocks.agentRuntimeFindFirst.mockResolvedValue({ agentId: 'agent-1' });
+    mocks.agentRuntimeFindFirst.mockResolvedValue({ agentId: "agent-1" });
 
-    await stopSandboxAction(renameForm('Ignored'));
+    await stopSandboxAction(renameForm("Ignored"));
 
-    expect(mocks.stopHermesRuntime).toHaveBeenCalledWith('ws1', 'agent-1');
+    expect(mocks.stopHermesRuntime).toHaveBeenCalledWith("ws1", "agent-1");
     expect(mocks.stopProcess).not.toHaveBeenCalled();
-    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/mine/agents/agent-1');
-    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/mine/sandboxes');
+    expect(mocks.revalidatePath).toHaveBeenCalledWith(
+      "/app/mine/agents/agent-1",
+    );
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/app/mine/sandboxes");
   });
-  describe('batchSandboxLifecycleAction', () => {
+  describe("batchSandboxLifecycleAction", () => {
     beforeEach(() => {
-      mocks.resolveSpawnSpec.mockReturnValue({ kind: 'sandbox' });
+      mocks.resolveSpawnSpec.mockReturnValue({ kind: "sandbox" });
     });
 
-    it('deduplicates selections and isolates redacted failures in sequential order', async () => {
-      mocks.sandboxFindFirst.mockImplementation(async ({ where }) => dockerSandbox({
-        id: where.id,
-        deploymentId: `dep-${where.id}`,
-      }));
+    it("deduplicates selections and isolates redacted failures in sequential order", async () => {
+      mocks.sandboxFindFirst.mockImplementation(async ({ where }) =>
+        dockerSandbox({
+          id: where.id,
+          deploymentId: `dep-${where.id}`,
+        }),
+      );
       let finishFirst!: () => void;
-      const firstStarted = new Promise<void>((resolve) => { finishFirst = resolve; });
-      mocks.startProcess.mockImplementationOnce(() => firstStarted)
-        .mockRejectedValueOnce(new Error('secret token=private-value'))
+      const firstStarted = new Promise<void>((resolve) => {
+        finishFirst = resolve;
+      });
+      mocks.startProcess
+        .mockImplementationOnce(() => firstStarted)
+        .mockRejectedValueOnce(new Error("secret token=private-value"))
         .mockResolvedValueOnce(undefined);
 
-      const pending = batchSandboxLifecycleAction('mine', 'start', ['sb1', 'sb1', 'sb2', 'sb3']);
-      await vi.waitFor(() => expect(mocks.startProcess).toHaveBeenCalledTimes(1));
+      const pending = batchSandboxLifecycleAction("mine", "start", [
+        "sb1",
+        "sb1",
+        "sb2",
+        "sb3",
+      ]);
+      await vi.waitFor(() =>
+        expect(mocks.startProcess).toHaveBeenCalledTimes(1),
+      );
       expect(mocks.sandboxFindFirst).toHaveBeenCalledTimes(1);
       finishFirst();
 
       expect(await pending).toEqual([
-        { sandboxId: 'sb1', outcome: 'success', message: 'accepted' },
-        { sandboxId: 'sb2', outcome: 'error', message: 'operation_failed' },
-        { sandboxId: 'sb3', outcome: 'success', message: 'accepted' },
+        { sandboxId: "sb1", outcome: "success", message: "accepted" },
+        { sandboxId: "sb2", outcome: "error", message: "operation_failed" },
+        { sandboxId: "sb3", outcome: "success", message: "accepted" },
       ]);
-      expect(mocks.startProcess.mock.calls.map(([id]) => id)).toEqual(['dep-sb1', 'dep-sb2', 'dep-sb3']);
-      expect(mocks.startProcess).toHaveBeenLastCalledWith('dep-sb3', expect.anything(), {
-        awaitReady: false,
-        workspaceId: 'ws1',
-      });
+      expect(mocks.startProcess.mock.calls.map(([id]) => id)).toEqual([
+        "dep-sb1",
+        "dep-sb2",
+        "dep-sb3",
+      ]);
+      expect(mocks.startProcess).toHaveBeenLastCalledWith(
+        "dep-sb3",
+        expect.anything(),
+        {
+          awaitReady: false,
+          workspaceId: "ws1",
+        },
+      );
     });
 
     it.each([
-      ['start', 'running', 'already_running'],
-      ['start', 'provisioning', 'provisioning'],
-      ['stop', 'provisioning', 'provisioning'],
-      ['restart', 'provisioning', 'provisioning'],
-      ['stop', 'stopped', 'not_running'],
-      ['restart', 'stopped', 'not_running'],
-      ['restart', 'error', 'not_running'],
-      ['start', 'restore_failed', 'lifecycle_blocked'],
-      ['stop', 'upgrading', 'lifecycle_blocked'],
-    ] as const)('skips %s for current status %s', async (operation, status, message) => {
-      mocks.sandboxFindFirst.mockResolvedValue(dockerSandbox({
-        deployment: { id: 'dep1', status },
-      }));
-      mocks.effectiveStatus.mockReturnValue(status);
+      ["start", "running", "already_running"],
+      ["start", "provisioning", "provisioning"],
+      ["stop", "provisioning", "provisioning"],
+      ["restart", "provisioning", "provisioning"],
+      ["stop", "stopped", "not_running"],
+      ["restart", "stopped", "not_running"],
+      ["restart", "error", "not_running"],
+      ["start", "restore_failed", "lifecycle_blocked"],
+      ["stop", "upgrading", "lifecycle_blocked"],
+    ] as const)(
+      "skips %s for current status %s",
+      async (operation, status, message) => {
+        mocks.sandboxFindFirst.mockResolvedValue(
+          dockerSandbox({
+            deployment: { id: "dep1", status },
+          }),
+        );
+        mocks.effectiveStatus.mockReturnValue(status);
 
-      expect(await batchSandboxLifecycleAction('mine', operation, ['sb1'])).toEqual([
-        { sandboxId: 'sb1', outcome: 'skipped', message },
-      ]);
-      expect(mocks.startProcess).not.toHaveBeenCalled();
-      expect(mocks.stopProcess).not.toHaveBeenCalled();
-      expect(mocks.restartProcess).not.toHaveBeenCalled();
-    });
+        expect(
+          await batchSandboxLifecycleAction("mine", operation, ["sb1"]),
+        ).toEqual([{ sandboxId: "sb1", outcome: "skipped", message }]);
+        expect(mocks.startProcess).not.toHaveBeenCalled();
+        expect(mocks.stopProcess).not.toHaveBeenCalled();
+        expect(mocks.restartProcess).not.toHaveBeenCalled();
+      },
+    );
 
-    it('checks authorization and current lifecycle status after the existing sandbox queue drains', async () => {
-      mocks.sandboxFindFirst.mockResolvedValueOnce(dockerSandbox()).mockResolvedValue(dockerSandbox({
-        deployment: { id: 'dep1', status: 'restore_failed' },
-      }));
+    it("checks authorization and current lifecycle status after the existing sandbox queue drains", async () => {
+      mocks.sandboxFindFirst
+        .mockResolvedValueOnce(dockerSandbox())
+        .mockResolvedValue(
+          dockerSandbox({
+            deployment: { id: "dep1", status: "restore_failed" },
+          }),
+        );
       let release!: () => void;
-      mocks.startProcess.mockImplementationOnce(() => new Promise<void>((resolve) => { release = resolve; }));
-      const first = startSandboxAction(renameForm('Ignored'));
-      await vi.waitFor(() => expect(mocks.startProcess).toHaveBeenCalledTimes(1));
-      const batch = batchSandboxLifecycleAction('mine', 'start', ['sb1']);
+      mocks.startProcess.mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            release = resolve;
+          }),
+      );
+      const first = startSandboxAction(renameForm("Ignored"));
+      await vi.waitFor(() =>
+        expect(mocks.startProcess).toHaveBeenCalledTimes(1),
+      );
+      const batch = batchSandboxLifecycleAction("mine", "start", ["sb1"]);
       await Promise.resolve();
       expect(mocks.sandboxFindFirst).toHaveBeenCalledTimes(1);
       release();
       await first;
 
-      expect(await batch).toEqual([{ sandboxId: 'sb1', outcome: 'skipped', message: 'lifecycle_blocked' }]);
+      expect(await batch).toEqual([
+        { sandboxId: "sb1", outcome: "skipped", message: "lifecycle_blocked" },
+      ]);
       expect(mocks.startProcess).toHaveBeenCalledTimes(1);
-      expect(mocks.sandboxFindFirst).toHaveBeenLastCalledWith(expect.objectContaining({
-        where: { id: 'sb1', workspaceId: 'ws1' },
-      }));
+      expect(mocks.sandboxFindFirst).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          where: { id: "sb1", workspaceId: "ws1" },
+        }),
+      );
     });
 
-    it('never looks up or mutates sandboxes when workspace access is denied', async () => {
+    it("never looks up or mutates sandboxes when workspace access is denied", async () => {
       mocks.getWorkspaceForUser.mockResolvedValueOnce(null);
 
-      expect(await batchSandboxLifecycleAction('mine', 'stop', ['foreign-id'])).toEqual([
-        { sandboxId: 'foreign-id', outcome: 'error', message: 'workspace_unavailable' },
+      expect(
+        await batchSandboxLifecycleAction("mine", "stop", ["foreign-id"]),
+      ).toEqual([
+        {
+          sandboxId: "foreign-id",
+          outcome: "error",
+          message: "workspace_unavailable",
+        },
       ]);
       expect(mocks.sandboxFindFirst).not.toHaveBeenCalled();
       expect(mocks.stopProcess).not.toHaveBeenCalled();
       expect(mocks.runHermesRuntimeMaintenance).not.toHaveBeenCalled();
     });
 
-    it('does not access foreign sandbox names or runtimes, while continuing authorized items', async () => {
-      mocks.sandboxFindFirst.mockImplementation(async ({ where }) => (
-        where.workspaceId === 'ws1' && where.id === 'sb1' ? dockerSandbox() : null
-      ));
+    it("does not access foreign sandbox names or runtimes, while continuing authorized items", async () => {
+      mocks.sandboxFindFirst.mockImplementation(async ({ where }) =>
+        where.workspaceId === "ws1" && where.id === "sb1"
+          ? dockerSandbox()
+          : null,
+      );
 
-      expect(await batchSandboxLifecycleAction('mine', 'start', ['foreign-id', 'sb1'])).toEqual([
-        { sandboxId: 'foreign-id', outcome: 'error', message: 'sandbox_unavailable' },
-        { sandboxId: 'sb1', outcome: 'success', message: 'accepted' },
+      expect(
+        await batchSandboxLifecycleAction("mine", "start", [
+          "foreign-id",
+          "sb1",
+        ]),
+      ).toEqual([
+        {
+          sandboxId: "foreign-id",
+          outcome: "error",
+          message: "sandbox_unavailable",
+        },
+        { sandboxId: "sb1", outcome: "success", message: "accepted" },
       ]);
-      expect(mocks.sandboxFindFirst).toHaveBeenNthCalledWith(1, expect.objectContaining({
-        where: { id: 'foreign-id', workspaceId: 'ws1' },
-      }));
+      expect(mocks.sandboxFindFirst).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({
+          where: { id: "foreign-id", workspaceId: "ws1" },
+        }),
+      );
       expect(mocks.startProcess).toHaveBeenCalledTimes(1);
-      expect(mocks.startProcess).toHaveBeenCalledWith('dep1', expect.anything(), expect.anything());
+      expect(mocks.startProcess).toHaveBeenCalledWith(
+        "dep1",
+        expect.anything(),
+        expect.anything(),
+      );
       expect(mocks.agentRuntimeFindFirst).not.toHaveBeenCalled();
       expect(mocks.deploymentUpdateMany).not.toHaveBeenCalled();
     });
 
-    it.each([[''], ['bad/id'], ['bad id'], ['x'.repeat(201)], Array.from({ length: 101 }, (_, i) => `sb${i}`)])(
-      'rejects an invalid or oversized selection before lookup', async (...ids) => {
-        await expect(batchSandboxLifecycleAction('mine', 'start', ids)).rejects.toThrow('Invalid sandbox lifecycle selection');
+    it.each([
+      [""],
+      ["bad/id"],
+      ["bad id"],
+      ["x".repeat(201)],
+      Array.from({ length: 101 }, (_, i) => `sb${i}`),
+    ])(
+      "rejects an invalid or oversized selection before lookup",
+      async (...ids) => {
+        await expect(
+          batchSandboxLifecycleAction("mine", "start", ids),
+        ).rejects.toThrow("Invalid sandbox lifecycle selection");
         expect(mocks.sandboxFindFirst).not.toHaveBeenCalled();
         expect(mocks.startProcess).not.toHaveBeenCalled();
       },
     );
-    it('rejects invalid operation and non-string IDs without mutation', async () => {
-      await expect(batchSandboxLifecycleAction('mine', 'delete' as 'start', ['sb1'])).rejects.toThrow('Invalid sandbox lifecycle selection');
-      await expect(batchSandboxLifecycleAction('mine', 'start', [null as unknown as string])).rejects.toThrow('Invalid sandbox lifecycle selection');
-      await expect(batchSandboxLifecycleAction('mine', 'start', new Array<string>(1))).rejects.toThrow('Invalid sandbox lifecycle selection');
+    it("rejects invalid operation and non-string IDs without mutation", async () => {
+      await expect(
+        batchSandboxLifecycleAction("mine", "delete" as "start", ["sb1"]),
+      ).rejects.toThrow("Invalid sandbox lifecycle selection");
+      await expect(
+        batchSandboxLifecycleAction("mine", "start", [
+          null as unknown as string,
+        ]),
+      ).rejects.toThrow("Invalid sandbox lifecycle selection");
+      await expect(
+        batchSandboxLifecycleAction("mine", "start", new Array<string>(1)),
+      ).rejects.toThrow("Invalid sandbox lifecycle selection");
       expect(mocks.sandboxFindFirst).not.toHaveBeenCalled();
       expect(mocks.startProcess).not.toHaveBeenCalled();
     });
 
-    it('redacts workspace authorization lookup failures', async () => {
-      mocks.getWorkspaceForUser.mockRejectedValueOnce(new Error('secret database credential'));
-      expect(await batchSandboxLifecycleAction('mine', 'start', ['sb1'])).toEqual([
-        { sandboxId: 'sb1', outcome: 'error', message: 'workspace_unavailable' },
+    it("redacts workspace authorization lookup failures", async () => {
+      mocks.getWorkspaceForUser.mockRejectedValueOnce(
+        new Error("secret database credential"),
+      );
+      expect(
+        await batchSandboxLifecycleAction("mine", "start", ["sb1"]),
+      ).toEqual([
+        {
+          sandboxId: "sb1",
+          outcome: "error",
+          message: "workspace_unavailable",
+        },
       ]);
       expect(mocks.sandboxFindFirst).not.toHaveBeenCalled();
     });
 
-    it('returns a per-item error when runtime ownership rejects queue admission', async () => {
+    it("returns a per-item error when runtime ownership rejects queue admission", async () => {
       const originalStatus = ownership.status;
-      vi.stubEnv('TOOLPLANE_TEST_RUNTIME_OWNER', '1');
-      ownership.status = 'lost';
+      vi.stubEnv("TOOLPLANE_TEST_RUNTIME_OWNER", "1");
+      ownership.status = "lost";
       try {
-        expect(await batchSandboxLifecycleAction('mine', 'start', ['sb1', 'sb2'])).toEqual([
-          { sandboxId: 'sb1', outcome: 'error', message: 'operation_failed' },
-          { sandboxId: 'sb2', outcome: 'error', message: 'operation_failed' },
+        expect(
+          await batchSandboxLifecycleAction("mine", "start", ["sb1", "sb2"]),
+        ).toEqual([
+          { sandboxId: "sb1", outcome: "error", message: "operation_failed" },
+          { sandboxId: "sb2", outcome: "error", message: "operation_failed" },
         ]);
         expect(mocks.sandboxFindFirst).not.toHaveBeenCalled();
         expect(mocks.startProcess).not.toHaveBeenCalled();
@@ -602,895 +812,1086 @@ describe('renameSandboxAction', () => {
       }
     });
 
+    it("reports a closed workspace queue gate as skipped instead of success", async () => {
+      await closeWorkspaceOperations("closed-batch-workspace");
+      mocks.getWorkspaceForUser.mockResolvedValueOnce({
+        id: "closed-batch-workspace",
+      });
 
-    it('reports a closed workspace queue gate as skipped instead of success', async () => {
-      await closeWorkspaceOperations('closed-batch-workspace');
-      mocks.getWorkspaceForUser.mockResolvedValueOnce({ id: 'closed-batch-workspace' });
-
-      expect(await batchSandboxLifecycleAction('mine', 'start', ['sb1'])).toEqual([
-        { sandboxId: 'sb1', outcome: 'skipped', message: 'workspace_busy' },
+      expect(
+        await batchSandboxLifecycleAction("mine", "start", ["sb1"]),
+      ).toEqual([
+        { sandboxId: "sb1", outcome: "skipped", message: "workspace_busy" },
       ]);
       expect(mocks.sandboxFindFirst).not.toHaveBeenCalled();
       expect(mocks.startProcess).not.toHaveBeenCalled();
     });
 
-    it.each(['stop', 'restart'] as const)('uses Hermes maintenance ownership for batch %s', async (operation) => {
+    it.each(["stop", "restart"] as const)(
+      "uses Hermes maintenance ownership for batch %s",
+      async (operation) => {
+        mocks.sandboxFindFirst.mockResolvedValue(hermesSandbox());
+        mocks.effectiveStatus.mockReturnValue("running");
+        mocks.agentRuntimeFindFirst.mockResolvedValue({ agentId: "agent-1" });
+        if (operation === "stop") {
+          mocks.deploymentUpdateMany.mockResolvedValueOnce({ count: 1 });
+          mocks.agentRuntimeUpdateMany.mockResolvedValueOnce({ count: 1 });
+        }
+        const preventResume = vi.fn();
+        mocks.runHermesRuntimeMaintenance.mockImplementationOnce(
+          async (...args: unknown[]) => {
+            const callback = args[4] as (control: {
+              wasActive: boolean;
+              deploymentId: string;
+              runtimeId: string;
+              preventResume: () => void;
+            }) => Promise<boolean>;
+            return {
+              status: "completed",
+              data: await callback({
+                wasActive: true,
+                deploymentId: "dep1",
+                runtimeId: "runtime-1",
+                preventResume,
+              }),
+            };
+          },
+        );
+
+        expect(
+          await batchSandboxLifecycleAction("mine", operation, ["sb1"]),
+        ).toEqual([
+          { sandboxId: "sb1", outcome: "success", message: "accepted" },
+        ]);
+        expect(mocks.runHermesRuntimeMaintenance).toHaveBeenCalledWith(
+          "ws1",
+          "agent-1",
+          "sb1",
+          { quiesce: true },
+          expect.any(Function),
+        );
+        expect(mocks.startProcess).not.toHaveBeenCalled();
+        expect(mocks.stopProcess).not.toHaveBeenCalled();
+        expect(mocks.restartProcess).not.toHaveBeenCalled();
+        if (operation === "stop") {
+          expect(preventResume).toHaveBeenCalledOnce();
+          expect(mocks.agentRuntimeUpdateMany).toHaveBeenCalledWith({
+            where: {
+              id: "runtime-1",
+              workspaceId: "ws1",
+              agentId: "agent-1",
+              sandboxId: "sb1",
+              kind: "hermes",
+            },
+            data: { status: "stopped", lastError: null },
+          });
+        } else {
+          expect(preventResume).not.toHaveBeenCalled();
+          expect(mocks.agentRuntimeUpdateMany).not.toHaveBeenCalled();
+        }
+      },
+    );
+    it("routes single Hermes restart through the same maintenance lifecycle", async () => {
       mocks.sandboxFindFirst.mockResolvedValue(hermesSandbox());
-      mocks.effectiveStatus.mockReturnValue('running');
-      mocks.agentRuntimeFindFirst.mockResolvedValue({ agentId: 'agent-1' });
-      if (operation === 'stop') {
-        mocks.deploymentUpdateMany.mockResolvedValueOnce({ count: 1 });
-        mocks.agentRuntimeUpdateMany.mockResolvedValueOnce({ count: 1 });
-      }
-      const preventResume = vi.fn();
-      mocks.runHermesRuntimeMaintenance.mockImplementationOnce(async (...args: unknown[]) => {
-        const callback = args[4] as (control: {
-          wasActive: boolean; deploymentId: string; runtimeId: string; preventResume: () => void;
-        }) => Promise<boolean>;
-        return { status: 'completed', data: await callback({
-          wasActive: true, deploymentId: 'dep1', runtimeId: 'runtime-1', preventResume,
-        }) };
+      mocks.agentRuntimeFindFirst.mockResolvedValue({ agentId: "agent-1" });
+      mocks.runHermesRuntimeMaintenance.mockResolvedValueOnce({
+        status: "completed",
+        data: true,
       });
 
-      expect(await batchSandboxLifecycleAction('mine', operation, ['sb1'])).toEqual([
-        { sandboxId: 'sb1', outcome: 'success', message: 'accepted' },
-      ]);
+      await restartSandboxAction(renameForm("Ignored"));
+
       expect(mocks.runHermesRuntimeMaintenance).toHaveBeenCalledWith(
-        'ws1', 'agent-1', 'sb1', { quiesce: true }, expect.any(Function),
+        "ws1",
+        "agent-1",
+        "sb1",
+        { quiesce: true },
+        expect.any(Function),
       );
-      expect(mocks.startProcess).not.toHaveBeenCalled();
-      expect(mocks.stopProcess).not.toHaveBeenCalled();
       expect(mocks.restartProcess).not.toHaveBeenCalled();
-      if (operation === 'stop') {
-        expect(preventResume).toHaveBeenCalledOnce();
-        expect(mocks.agentRuntimeUpdateMany).toHaveBeenCalledWith({
-          where: { id: 'runtime-1', workspaceId: 'ws1', agentId: 'agent-1', sandboxId: 'sb1', kind: 'hermes' },
-          data: { status: 'stopped', lastError: null },
+    });
+
+    it.each([
+      [
+        "The Hermes sandbox has a pending lifecycle operation.",
+        "skipped",
+        "runtime_busy",
+      ],
+      ["secret maintenance failure token=private", "error", "operation_failed"],
+    ] as const)(
+      "safely reports Hermes maintenance failure",
+      async (error, outcome, message) => {
+        mocks.sandboxFindFirst.mockResolvedValue(hermesSandbox());
+        mocks.effectiveStatus.mockReturnValue("running");
+        mocks.agentRuntimeFindFirst.mockResolvedValue({ agentId: "agent-1" });
+        mocks.runHermesRuntimeMaintenance.mockResolvedValueOnce({
+          status: "error",
+          error,
         });
-      } else {
-        expect(preventResume).not.toHaveBeenCalled();
+
+        expect(
+          await batchSandboxLifecycleAction("mine", "restart", ["sb1"]),
+        ).toEqual([{ sandboxId: "sb1", outcome, message }]);
+        expect(mocks.deploymentUpdateMany).not.toHaveBeenCalled();
         expect(mocks.agentRuntimeUpdateMany).not.toHaveBeenCalled();
-      }
-    });
-    it('routes single Hermes restart through the same maintenance lifecycle', async () => {
-      mocks.sandboxFindFirst.mockResolvedValue(hermesSandbox());
-      mocks.agentRuntimeFindFirst.mockResolvedValue({ agentId: 'agent-1' });
-      mocks.runHermesRuntimeMaintenance.mockResolvedValueOnce({ status: 'completed', data: true });
-
-      await restartSandboxAction(renameForm('Ignored'));
-
-      expect(mocks.runHermesRuntimeMaintenance).toHaveBeenCalledWith(
-        'ws1', 'agent-1', 'sb1', { quiesce: true }, expect.any(Function),
-      );
-      expect(mocks.restartProcess).not.toHaveBeenCalled();
-    });
+      },
+    );
 
     it.each([
-      ['The Hermes sandbox has a pending lifecycle operation.', 'skipped', 'runtime_busy'],
-      ['secret maintenance failure token=private', 'error', 'operation_failed'],
-    ] as const)('safely reports Hermes maintenance failure', async (error, outcome, message) => {
-      mocks.sandboxFindFirst.mockResolvedValue(hermesSandbox());
-      mocks.effectiveStatus.mockReturnValue('running');
-      mocks.agentRuntimeFindFirst.mockResolvedValue({ agentId: 'agent-1' });
-      mocks.runHermesRuntimeMaintenance.mockResolvedValueOnce({ status: 'error', error });
+      [
+        "The Hermes sandbox has a pending lifecycle operation.",
+        "skipped",
+        "runtime_busy",
+      ],
+      ["secret runtime failure token=private", "error", "operation_failed"],
+    ] as const)(
+      "safely reports Hermes runtime errors",
+      async (error, outcome, message) => {
+        mocks.sandboxFindFirst.mockResolvedValue(hermesSandbox());
+        mocks.agentRuntimeFindFirst.mockResolvedValue({ agentId: "agent-1" });
+        mocks.ensureHermesRuntimeReady.mockResolvedValueOnce({ error });
 
-      expect(await batchSandboxLifecycleAction('mine', 'restart', ['sb1'])).toEqual([
-        { sandboxId: 'sb1', outcome, message },
-      ]);
-      expect(mocks.deploymentUpdateMany).not.toHaveBeenCalled();
-      expect(mocks.agentRuntimeUpdateMany).not.toHaveBeenCalled();
-    });
-
-
-    it.each([
-      ['The Hermes sandbox has a pending lifecycle operation.', 'skipped', 'runtime_busy'],
-      ['secret runtime failure token=private', 'error', 'operation_failed'],
-    ] as const)('safely reports Hermes runtime errors', async (error, outcome, message) => {
-      mocks.sandboxFindFirst.mockResolvedValue(hermesSandbox());
-      mocks.agentRuntimeFindFirst.mockResolvedValue({ agentId: 'agent-1' });
-      mocks.ensureHermesRuntimeReady.mockResolvedValueOnce({ error });
-
-      expect(await batchSandboxLifecycleAction('mine', 'start', ['sb1'])).toEqual([
-        { sandboxId: 'sb1', outcome, message },
-      ]);
-      expect(mocks.startProcess).not.toHaveBeenCalled();
-    });
+        expect(
+          await batchSandboxLifecycleAction("mine", "start", ["sb1"]),
+        ).toEqual([{ sandboxId: "sb1", outcome, message }]);
+        expect(mocks.startProcess).not.toHaveBeenCalled();
+      },
+    );
   });
 
-  it('creates the connector without collecting connection settings or exposing a token', async () => {
+  it("creates the connector without collecting connection settings or exposing a token", async () => {
     mocks.sandboxFindFirst.mockResolvedValue(null);
-    mocks.deploymentCreate.mockResolvedValue({ id: 'dep1' });
+    mocks.deploymentCreate.mockResolvedValue({ id: "dep1" });
     mocks.sandboxCreate.mockImplementation(async ({ data }) => ({
       ...data,
-      id: 'sb1',
-      deploymentId: 'dep1',
+      id: "sb1",
+      deploymentId: "dep1",
     }));
-    const updatedDeployment = { id: 'dep1', source: 'sandbox', installCfg: {} };
+    const updatedDeployment = { id: "dep1", source: "sandbox", installCfg: {} };
     mocks.deploymentUpdate.mockResolvedValue(updatedDeployment);
-    mocks.resolveSpawnSpec.mockReturnValue({ kind: 'sandbox', sandboxKind: 'connector' });
+    mocks.resolveSpawnSpec.mockReturnValue({
+      kind: "sandbox",
+      sandboxKind: "connector",
+    });
     const form = new FormData();
-    form.set('workspace', 'mine');
-    form.set('kind', 'connector');
-    form.set('name', 'Windows workstation');
+    form.set("workspace", "mine");
+    form.set("kind", "connector");
+    form.set("name", "Windows workstation");
 
     await createSandboxAction(form);
 
     expect(mocks.deploymentCreate).toHaveBeenCalledWith({
-      data: expect.objectContaining({ source: 'sandbox', status: 'provisioning' }),
+      data: expect.objectContaining({
+        source: "sandbox",
+        status: "provisioning",
+      }),
     });
     expect(mocks.startProcess).toHaveBeenCalledWith(
-      'dep1',
-      { kind: 'sandbox', sandboxKind: 'connector' },
-      { awaitReady: false, workspaceId: 'ws1' },
+      "dep1",
+      { kind: "sandbox", sandboxKind: "connector" },
+      { awaitReady: false, workspaceId: "ws1" },
     );
     expect(mocks.setConnectorSetupTokenCookie).not.toHaveBeenCalled();
-    expect(mocks.redirect).toHaveBeenCalledWith('/app/mine/sandboxes/sb1');
+    expect(mocks.redirect).toHaveBeenCalledWith("/app/mine/sandboxes/sb1");
   });
 
-  it('clones a Docker sandbox volume while quiesced and starts the clone', async () => {
+  it("clones a Docker sandbox volume while quiesced and starts the clone", async () => {
     const source = dockerSandbox({
       deployment: {
-        id: 'dep1',
-        status: 'running',
-        installCfg: { volumeName: 'source-volume' },
+        id: "dep1",
+        status: "running",
+        installCfg: { volumeName: "source-volume" },
       },
     });
-    mocks.sandboxFindFirst.mockResolvedValueOnce(source).mockResolvedValueOnce(null);
-    mocks.deploymentCreate.mockResolvedValue({ id: 'dep2' });
-    mocks.sandboxCreate.mockImplementation(async ({ data }) => ({ ...data, id: 'sb2' }));
-    mocks.deploymentUpdate.mockResolvedValue({
-      id: 'dep2',
-      status: 'stopped',
-      installCfg: { volumeName: 'toolplane-sandbox-sb2' },
-    });
-    mocks.transaction.mockImplementation(async (callback) => callback({
-      deployment: {
-        create: mocks.deploymentCreate,
-        update: mocks.deploymentUpdate,
-      },
-      sandbox: { create: mocks.sandboxCreate },
+    mocks.sandboxFindFirst
+      .mockResolvedValueOnce(source)
+      .mockResolvedValueOnce(null);
+    mocks.deploymentCreate.mockResolvedValue({ id: "dep2" });
+    mocks.sandboxCreate.mockImplementation(async ({ data }) => ({
+      ...data,
+      id: "sb2",
     }));
-    mocks.effectiveStatus.mockReturnValue('running');
-    mocks.resolveSpawnSpec.mockImplementation((deployment) => ({ deploymentId: deployment.id }));
+    mocks.deploymentUpdate.mockResolvedValue({
+      id: "dep2",
+      status: "stopped",
+      installCfg: { volumeName: "toolplane-sandbox-sb2" },
+    });
+    mocks.transaction.mockImplementation(async (callback) =>
+      callback({
+        deployment: {
+          create: mocks.deploymentCreate,
+          update: mocks.deploymentUpdate,
+        },
+        sandbox: { create: mocks.sandboxCreate },
+      }),
+    );
+    mocks.effectiveStatus.mockReturnValue("running");
+    mocks.resolveSpawnSpec.mockImplementation((deployment) => ({
+      deploymentId: deployment.id,
+    }));
 
-    await cloneSandboxAction(renameForm('  Copied lab  '));
+    await cloneSandboxAction(renameForm("  Copied lab  "));
 
     expect(mocks.sandboxFindFirst).toHaveBeenNthCalledWith(2, {
-      where: { workspaceId: 'ws1', slug: 'copied-lab' },
+      where: { workspaceId: "ws1", slug: "copied-lab" },
     });
     expect(mocks.deploymentCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({
-        workspaceId: 'ws1',
-        name: 'Sandbox: Copied lab',
-        source: 'sandbox',
-        sourceRef: 'node:24-bookworm-slim',
-        status: 'copying',
+        workspaceId: "ws1",
+        name: "Sandbox: Copied lab",
+        source: "sandbox",
+        sourceRef: "node:24-bookworm-slim",
+        status: "copying",
       }),
     });
     expect(mocks.sandboxCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({
-        workspaceId: 'ws1',
-        deploymentId: 'dep2',
-        name: 'Copied lab',
-        slug: 'copied-lab',
-        kind: 'docker',
-        config: { env: { A: '1' } },
+        workspaceId: "ws1",
+        deploymentId: "dep2",
+        name: "Copied lab",
+        slug: "copied-lab",
+        kind: "docker",
+        config: { env: { A: "1" } },
       }),
     });
-    expect(mocks.killProcess).toHaveBeenCalledWith('dep1');
-    expect(mocks.stopDockerSandboxContainer).toHaveBeenCalledWith('sb1');
+    expect(mocks.killProcess).toHaveBeenCalledWith("dep1");
+    expect(mocks.stopDockerSandboxContainer).toHaveBeenCalledWith("sb1");
     expect(mocks.copyDockerVolume).toHaveBeenCalledWith(
-      'source-volume',
-      'toolplane-sandbox-sb2',
+      "source-volume",
+      "toolplane-sandbox-sb2",
     );
     expect(mocks.deploymentUpdate).toHaveBeenCalledWith({
-      where: { id: 'dep2' },
-      data: { status: 'provisioning' },
+      where: { id: "dep2" },
+      data: { status: "provisioning" },
     });
     expect(mocks.startProcess).toHaveBeenNthCalledWith(
       1,
-      'dep2',
-      { deploymentId: 'dep2' },
-      { awaitReady: false, workspaceId: 'ws1' },
+      "dep2",
+      { deploymentId: "dep2" },
+      { awaitReady: false, workspaceId: "ws1" },
     );
     expect(mocks.startProcess).toHaveBeenNthCalledWith(
       2,
-      'dep1',
-      { deploymentId: 'dep1' },
-      { awaitReady: false, workspaceId: 'ws1' },
+      "dep1",
+      { deploymentId: "dep1" },
+      { awaitReady: false, workspaceId: "ws1" },
     );
-    expect(mocks.redirect).toHaveBeenCalledWith('/app/mine/sandboxes/sb2');
+    expect(mocks.redirect).toHaveBeenCalledWith("/app/mine/sandboxes/sb2");
   });
 
-  it('keeps the completed clone when only the source sandbox fails to resume', async () => {
+  it("keeps the completed clone when only the source sandbox fails to resume", async () => {
     const source = dockerSandbox({
       deployment: {
-        id: 'dep1',
-        status: 'running',
-        installCfg: { volumeName: 'source-volume' },
+        id: "dep1",
+        status: "running",
+        installCfg: { volumeName: "source-volume" },
       },
     });
-    mocks.sandboxFindFirst.mockResolvedValueOnce(source).mockResolvedValueOnce(null);
-    mocks.deploymentCreate.mockResolvedValue({ id: 'dep2' });
-    mocks.sandboxCreate.mockImplementation(async ({ data }) => ({ ...data, id: 'sb2' }));
-    mocks.deploymentUpdate.mockResolvedValue({ id: 'dep2', status: 'provisioning', installCfg: {} });
-    mocks.transaction.mockImplementation(async (callback) => callback({
-      deployment: { create: mocks.deploymentCreate, update: mocks.deploymentUpdate },
-      sandbox: { create: mocks.sandboxCreate },
+    mocks.sandboxFindFirst
+      .mockResolvedValueOnce(source)
+      .mockResolvedValueOnce(null);
+    mocks.deploymentCreate.mockResolvedValue({ id: "dep2" });
+    mocks.sandboxCreate.mockImplementation(async ({ data }) => ({
+      ...data,
+      id: "sb2",
     }));
-    mocks.effectiveStatus.mockReturnValue('running');
-    mocks.resolveSpawnSpec.mockImplementation((deployment) => ({ deploymentId: deployment.id }));
+    mocks.deploymentUpdate.mockResolvedValue({
+      id: "dep2",
+      status: "provisioning",
+      installCfg: {},
+    });
+    mocks.transaction.mockImplementation(async (callback) =>
+      callback({
+        deployment: {
+          create: mocks.deploymentCreate,
+          update: mocks.deploymentUpdate,
+        },
+        sandbox: { create: mocks.sandboxCreate },
+      }),
+    );
+    mocks.effectiveStatus.mockReturnValue("running");
+    mocks.resolveSpawnSpec.mockImplementation((deployment) => ({
+      deploymentId: deployment.id,
+    }));
     mocks.startProcess
       .mockResolvedValueOnce(undefined)
-      .mockRejectedValueOnce(new Error('source resume failed'));
+      .mockRejectedValueOnce(new Error("source resume failed"));
 
-    await cloneSandboxAction(renameForm('Copied lab'));
+    await cloneSandboxAction(renameForm("Copied lab"));
 
     expect(mocks.startProcess).toHaveBeenCalledTimes(2);
     expect(mocks.removeDockerSandboxRuntimeStrict).not.toHaveBeenCalled();
     expect(mocks.deploymentDeleteMany).not.toHaveBeenCalled();
-    expect(mocks.redirect).toHaveBeenCalledWith('/app/mine/sandboxes/sb2');
+    expect(mocks.redirect).toHaveBeenCalledWith("/app/mine/sandboxes/sb2");
   });
 
-  it('keeps an incompletely cleaned clone in a non-runnable copy-failed state', async () => {
+  it("keeps an incompletely cleaned clone in a non-runnable copy-failed state", async () => {
     const source = dockerSandbox({
       deployment: {
-        id: 'dep1',
-        status: 'running',
-        installCfg: { volumeName: 'source-volume' },
+        id: "dep1",
+        status: "running",
+        installCfg: { volumeName: "source-volume" },
       },
     });
-    mocks.sandboxFindFirst.mockResolvedValueOnce(source).mockResolvedValueOnce(null);
-    mocks.deploymentCreate.mockResolvedValue({ id: 'dep2' });
-    mocks.sandboxCreate.mockImplementation(async ({ data }) => ({ ...data, id: 'sb2' }));
-    mocks.deploymentUpdate.mockResolvedValue({ id: 'dep2', status: 'copying', installCfg: {} });
-    mocks.transaction.mockImplementation(async (callback) => callback({
-      deployment: { create: mocks.deploymentCreate, update: mocks.deploymentUpdate },
-      sandbox: { create: mocks.sandboxCreate },
+    mocks.sandboxFindFirst
+      .mockResolvedValueOnce(source)
+      .mockResolvedValueOnce(null);
+    mocks.deploymentCreate.mockResolvedValue({ id: "dep2" });
+    mocks.sandboxCreate.mockImplementation(async ({ data }) => ({
+      ...data,
+      id: "sb2",
     }));
-    mocks.effectiveStatus.mockReturnValue('running');
-    mocks.resolveSpawnSpec.mockReturnValue({ kind: 'sandbox' });
-    const copyError = new Error('copy failed');
+    mocks.deploymentUpdate.mockResolvedValue({
+      id: "dep2",
+      status: "copying",
+      installCfg: {},
+    });
+    mocks.transaction.mockImplementation(async (callback) =>
+      callback({
+        deployment: {
+          create: mocks.deploymentCreate,
+          update: mocks.deploymentUpdate,
+        },
+        sandbox: { create: mocks.sandboxCreate },
+      }),
+    );
+    mocks.effectiveStatus.mockReturnValue("running");
+    mocks.resolveSpawnSpec.mockReturnValue({ kind: "sandbox" });
+    const copyError = new Error("copy failed");
     mocks.copyDockerVolume.mockRejectedValueOnce(copyError);
-    mocks.removeDockerSandboxRuntimeStrict.mockRejectedValueOnce(new Error('volume still busy'));
+    mocks.removeDockerSandboxRuntimeStrict.mockRejectedValueOnce(
+      new Error("volume still busy"),
+    );
 
-    await expect(cloneSandboxAction(renameForm('Copied lab'))).rejects.toBe(copyError);
+    await expect(cloneSandboxAction(renameForm("Copied lab"))).rejects.toBe(
+      copyError,
+    );
 
     expect(mocks.deploymentUpdateMany).toHaveBeenCalledWith({
-      where: { id: 'dep2', workspaceId: 'ws1' },
-      data: { status: 'copy_failed' },
+      where: { id: "dep2", workspaceId: "ws1" },
+      data: { status: "copy_failed" },
     });
-    expect(mocks.killProcess).toHaveBeenCalledWith('dep2', {
+    expect(mocks.killProcess).toHaveBeenCalledWith("dep2", {
       preventRestart: true,
-      finalStatus: 'copy_failed',
+      finalStatus: "copy_failed",
     });
     expect(mocks.startProcess).toHaveBeenCalledWith(
-      'dep1',
-      { kind: 'sandbox' },
-      { awaitReady: false, workspaceId: 'ws1' },
+      "dep1",
+      { kind: "sandbox" },
+      { awaitReady: false, workspaceId: "ws1" },
     );
   });
 
-  it('creates a snapshot from a quiesced Docker volume and marks it ready', async () => {
-    mocks.sandboxFindFirst.mockResolvedValue(dockerSandbox({
-      deployment: {
-        id: 'dep1',
-        status: 'running',
-        installCfg: { volumeName: 'source-volume' },
-      },
-    }));
+  it("creates a snapshot from a quiesced Docker volume and marks it ready", async () => {
+    mocks.sandboxFindFirst.mockResolvedValue(
+      dockerSandbox({
+        deployment: {
+          id: "dep1",
+          status: "running",
+          installCfg: { volumeName: "source-volume" },
+        },
+      }),
+    );
     mocks.sandboxSnapshotCreate.mockImplementation(async ({ data }) => data);
-    mocks.effectiveStatus.mockReturnValue('running');
-    mocks.resolveSpawnSpec.mockReturnValue({ kind: 'sandbox' });
-    const form = renameForm('  Before upgrade  ');
+    mocks.effectiveStatus.mockReturnValue("running");
+    mocks.resolveSpawnSpec.mockReturnValue({ kind: "sandbox" });
+    const form = renameForm("  Before upgrade  ");
 
     await createSandboxSnapshotAction(form);
 
     const snapshotData = mocks.sandboxSnapshotCreate.mock.calls[0][0].data;
     expect(snapshotData).toEqual({
       id: expect.any(String),
-      sandboxId: 'sb1',
-      name: 'Before upgrade',
+      sandboxId: "sb1",
+      name: "Before upgrade",
       volumeName: expect.stringMatching(/^toolplane-snapshot-/),
-      status: 'creating',
+      status: "creating",
     });
-    expect(mocks.killProcess).toHaveBeenCalledWith('dep1');
-    expect(mocks.stopDockerSandboxContainer).toHaveBeenCalledWith('sb1');
-    expect(mocks.copyDockerVolume).toHaveBeenCalledWith('source-volume', snapshotData.volumeName);
+    expect(mocks.killProcess).toHaveBeenCalledWith("dep1");
+    expect(mocks.stopDockerSandboxContainer).toHaveBeenCalledWith("sb1");
+    expect(mocks.copyDockerVolume).toHaveBeenCalledWith(
+      "source-volume",
+      snapshotData.volumeName,
+    );
     expect(mocks.sandboxSnapshotUpdate).toHaveBeenCalledWith({
       where: { id: snapshotData.id },
-      data: { status: 'ready', error: null },
+      data: { status: "ready", error: null },
     });
     expect(mocks.startProcess).toHaveBeenCalledWith(
-      'dep1',
-      { kind: 'sandbox' },
-      { awaitReady: false, workspaceId: 'ws1' },
+      "dep1",
+      { kind: "sandbox" },
+      { awaitReady: false, workspaceId: "ws1" },
     );
   });
 
-  it('creates a Hermes snapshot through agent runtime maintenance', async () => {
+  it("creates a Hermes snapshot through agent runtime maintenance", async () => {
     mocks.sandboxFindFirst.mockResolvedValue(hermesSandbox());
-    mocks.agentRuntimeFindFirst.mockResolvedValue({ agentId: 'agent-1' });
+    mocks.agentRuntimeFindFirst.mockResolvedValue({ agentId: "agent-1" });
     mocks.sandboxSnapshotCreate.mockImplementation(async ({ data }) => data);
     completeHermesMaintenance();
 
-    await createSandboxSnapshotAction(renameForm('Hermes checkpoint'));
+    await createSandboxSnapshotAction(renameForm("Hermes checkpoint"));
 
     const snapshotData = mocks.sandboxSnapshotCreate.mock.calls[0][0].data;
     expect(mocks.runHermesRuntimeMaintenance).toHaveBeenCalledWith(
-      'ws1',
-      'agent-1',
-      'sb1',
-      expect.objectContaining({ quiesce: true, operationStatus: 'copying' }),
+      "ws1",
+      "agent-1",
+      "sb1",
+      expect.objectContaining({ quiesce: true, operationStatus: "copying" }),
       expect.any(Function),
     );
-    expect(mocks.copyDockerVolume).toHaveBeenCalledWith('source-volume', snapshotData.volumeName);
+    expect(mocks.copyDockerVolume).toHaveBeenCalledWith(
+      "source-volume",
+      snapshotData.volumeName,
+    );
     expect(mocks.sandboxSnapshotUpdate).toHaveBeenCalledWith({
       where: { id: snapshotData.id },
-      data: { status: 'ready', error: null },
+      data: { status: "ready", error: null },
     });
     expect(mocks.killProcess).not.toHaveBeenCalled();
     expect(mocks.stopDockerSandboxContainer).not.toHaveBeenCalled();
   });
 
-  it('restores a ready snapshot and removes the rollback volume', async () => {
+  it("restores a ready snapshot and removes the rollback volume", async () => {
     mocks.sandboxFindFirst.mockResolvedValue(dockerSandbox());
     mocks.sandboxSnapshotFindFirst.mockResolvedValue({
-      id: 'snap1',
-      sandboxId: 'sb1',
-      volumeName: 'snapshot-volume',
-      status: 'ready',
+      id: "snap1",
+      sandboxId: "sb1",
+      volumeName: "snapshot-volume",
+      status: "ready",
     });
 
     await restoreSandboxSnapshotAction(snapshotForm());
 
     expect(mocks.sandboxSnapshotFindFirst).toHaveBeenCalledWith({
-      where: { id: 'snap1', sandboxId: 'sb1', status: 'ready' },
+      where: { id: "snap1", sandboxId: "sb1", status: "ready" },
     });
     const rollbackVolume = mocks.copyDockerVolume.mock.calls[0][1];
     expect(rollbackVolume).toMatch(/^toolplane-snapshot-restore-/);
-    expect(mocks.copyDockerVolume).toHaveBeenNthCalledWith(1, 'source-volume', rollbackVolume);
+    expect(mocks.copyDockerVolume).toHaveBeenNthCalledWith(
+      1,
+      "source-volume",
+      rollbackVolume,
+    );
     expect(mocks.copyDockerVolume).toHaveBeenNthCalledWith(
       2,
-      'snapshot-volume',
-      'source-volume',
+      "snapshot-volume",
+      "source-volume",
       { replace: true },
     );
     expect(mocks.sandboxSnapshotCreate).toHaveBeenCalledWith({
       data: {
         id: expect.stringMatching(/^restore-/),
-        sandboxId: 'sb1',
-        name: 'Restore recovery: Snapshot',
+        sandboxId: "sb1",
+        name: "Restore recovery: Snapshot",
         volumeName: rollbackVolume,
-        status: 'creating',
+        status: "creating",
       },
     });
     expect(mocks.sandboxSnapshotUpdateMany).toHaveBeenCalledWith({
       where: {
         id: expect.stringMatching(/^restore-/),
-        sandboxId: 'sb1',
+        sandboxId: "sb1",
       },
-      data: { status: 'ready', error: null },
+      data: { status: "ready", error: null },
     });
-    expect(mocks.sandboxSnapshotUpdateMany.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.copyDockerVolume.mock.invocationCallOrder[1],
-    );
+    expect(
+      mocks.sandboxSnapshotUpdateMany.mock.invocationCallOrder[0],
+    ).toBeLessThan(mocks.copyDockerVolume.mock.invocationCallOrder[1]);
     expect(mocks.deploymentUpdateMany).toHaveBeenNthCalledWith(1, {
-      where: { id: 'dep1', workspaceId: 'ws1', source: 'sandbox' },
-      data: { status: 'restoring' },
+      where: { id: "dep1", workspaceId: "ws1", source: "sandbox" },
+      data: { status: "restoring" },
     });
     expect(mocks.deploymentUpdateMany).toHaveBeenNthCalledWith(2, {
-      where: { id: 'dep1', workspaceId: 'ws1', source: 'sandbox' },
-      data: { status: 'stopped' },
+      where: { id: "dep1", workspaceId: "ws1", source: "sandbox" },
+      data: { status: "stopped" },
     });
     expect(mocks.sandboxSnapshotUpdateMany).toHaveBeenCalledWith({
       where: {
         id: expect.stringMatching(/^restore-/),
-        sandboxId: 'sb1',
+        sandboxId: "sb1",
       },
-      data: { status: 'deleting', error: null },
+      data: { status: "deleting", error: null },
     });
     expect(mocks.removeDockerVolumeStrict).toHaveBeenCalledWith(rollbackVolume);
     expect(mocks.sandboxSnapshotDeleteMany).toHaveBeenCalledWith({
       where: {
         id: expect.stringMatching(/^restore-/),
-        sandboxId: 'sb1',
+        sandboxId: "sb1",
       },
     });
     expect(mocks.sandboxSnapshotUpdate).toHaveBeenCalledWith({
-      where: { id: 'snap1' },
+      where: { id: "snap1" },
       data: { error: null },
     });
   });
 
-  it('restores a Hermes snapshot through maintenance and leaves reprojection to the runtime', async () => {
+  it("restores a Hermes snapshot through maintenance and leaves reprojection to the runtime", async () => {
     mocks.sandboxFindFirst.mockResolvedValue(hermesSandbox());
-    mocks.agentRuntimeFindFirst.mockResolvedValue({ agentId: 'agent-1' });
+    mocks.agentRuntimeFindFirst.mockResolvedValue({ agentId: "agent-1" });
     mocks.sandboxSnapshotFindFirst.mockResolvedValue({
-      id: 'snap1',
-      sandboxId: 'sb1',
-      name: 'Hermes checkpoint',
-      volumeName: 'snapshot-volume',
-      status: 'ready',
+      id: "snap1",
+      sandboxId: "sb1",
+      name: "Hermes checkpoint",
+      volumeName: "snapshot-volume",
+      status: "ready",
     });
     completeHermesMaintenance();
 
     await restoreSandboxSnapshotAction(snapshotForm());
 
     expect(mocks.runHermesRuntimeMaintenance).toHaveBeenCalledWith(
-      'ws1',
-      'agent-1',
-      'sb1',
+      "ws1",
+      "agent-1",
+      "sb1",
       expect.objectContaining({
         quiesce: true,
-        operationStatus: 'restoring',
+        operationStatus: "restoring",
         reprojectAfter: true,
       }),
       expect.any(Function),
     );
     expect(mocks.copyDockerVolume).toHaveBeenNthCalledWith(
       2,
-      'snapshot-volume',
-      'source-volume',
+      "snapshot-volume",
+      "source-volume",
       { replace: true },
     );
     expect(mocks.deploymentUpdateMany).toHaveBeenCalledWith({
-      where: { id: 'dep1', workspaceId: 'ws1', source: 'sandbox' },
-      data: { status: 'restoring' },
+      where: { id: "dep1", workspaceId: "ws1", source: "sandbox" },
+      data: { status: "restoring" },
     });
     expect(mocks.deploymentUpdateMany).not.toHaveBeenCalledWith(
-      expect.objectContaining({ data: { status: 'stopped' } }),
+      expect.objectContaining({ data: { status: "stopped" } }),
     );
   });
 
-  it('rolls the Docker volume back when snapshot restoration fails', async () => {
+  it("rolls the Docker volume back when snapshot restoration fails", async () => {
     mocks.sandboxFindFirst.mockResolvedValue(dockerSandbox());
     mocks.sandboxSnapshotFindFirst.mockResolvedValue({
-      id: 'snap1',
-      sandboxId: 'sb1',
-      volumeName: 'snapshot-volume',
-      status: 'ready',
+      id: "snap1",
+      sandboxId: "sb1",
+      volumeName: "snapshot-volume",
+      status: "ready",
     });
-    const restoreError = new Error('restore failed');
+    const restoreError = new Error("restore failed");
     mocks.copyDockerVolume
       .mockResolvedValueOnce(undefined)
       .mockRejectedValueOnce(restoreError)
       .mockResolvedValueOnce(undefined);
 
-    await expect(restoreSandboxSnapshotAction(snapshotForm())).rejects.toBe(restoreError);
+    await expect(restoreSandboxSnapshotAction(snapshotForm())).rejects.toBe(
+      restoreError,
+    );
 
     const rollbackVolume = mocks.copyDockerVolume.mock.calls[0][1];
     expect(mocks.copyDockerVolume).toHaveBeenNthCalledWith(
       3,
       rollbackVolume,
-      'source-volume',
+      "source-volume",
       { replace: true },
     );
     expect(mocks.removeDockerVolumeStrict).toHaveBeenCalledWith(rollbackVolume);
     expect(mocks.sandboxSnapshotUpdate).not.toHaveBeenCalled();
   });
 
-  it('allows a recovery snapshot to repair a restore-failed sandbox without auto-starting it', async () => {
-    mocks.sandboxFindFirst.mockResolvedValue(dockerSandbox({
-      deployment: {
-        id: 'dep1',
-        status: 'restore_failed',
-        installCfg: { volumeName: 'source-volume' },
-      },
-    }));
-    mocks.effectiveStatus.mockReturnValue('restore_failed');
+  it("allows a recovery snapshot to repair a restore-failed sandbox without auto-starting it", async () => {
+    mocks.sandboxFindFirst.mockResolvedValue(
+      dockerSandbox({
+        deployment: {
+          id: "dep1",
+          status: "restore_failed",
+          installCfg: { volumeName: "source-volume" },
+        },
+      }),
+    );
+    mocks.effectiveStatus.mockReturnValue("restore_failed");
     mocks.sandboxSnapshotFindFirst.mockResolvedValue({
-      id: 'snap1',
-      sandboxId: 'sb1',
-      name: 'Recovery',
-      volumeName: 'snapshot-volume',
-      status: 'ready',
+      id: "snap1",
+      sandboxId: "sb1",
+      name: "Recovery",
+      volumeName: "snapshot-volume",
+      status: "ready",
     });
 
     await restoreSandboxSnapshotAction(snapshotForm());
 
     expect(mocks.copyDockerVolume).toHaveBeenNthCalledWith(
       2,
-      'snapshot-volume',
-      'source-volume',
+      "snapshot-volume",
+      "source-volume",
       { replace: true },
     );
     expect(mocks.deploymentUpdateMany).toHaveBeenCalledWith({
-      where: { id: 'dep1', workspaceId: 'ws1', source: 'sandbox' },
-      data: { status: 'stopped' },
+      where: { id: "dep1", workspaceId: "ws1", source: "sandbox" },
+      data: { status: "stopped" },
     });
     expect(mocks.startProcess).not.toHaveBeenCalled();
   });
 
-  it('keeps restore-failed durable when the retry backup copy is interrupted', async () => {
-    mocks.sandboxFindFirst.mockResolvedValue(dockerSandbox({
-      deployment: {
-        id: 'dep1',
-        status: 'restore_failed',
-        installCfg: { volumeName: 'source-volume' },
-      },
-    }));
-    mocks.effectiveStatus.mockReturnValue('restore_failed');
+  it("keeps restore-failed durable when the retry backup copy is interrupted", async () => {
+    mocks.sandboxFindFirst.mockResolvedValue(
+      dockerSandbox({
+        deployment: {
+          id: "dep1",
+          status: "restore_failed",
+          installCfg: { volumeName: "source-volume" },
+        },
+      }),
+    );
+    mocks.effectiveStatus.mockReturnValue("restore_failed");
     mocks.sandboxSnapshotFindFirst.mockResolvedValue({
-      id: 'snap1',
-      sandboxId: 'sb1',
-      name: 'Recovery',
-      volumeName: 'snapshot-volume',
-      status: 'ready',
+      id: "snap1",
+      sandboxId: "sb1",
+      name: "Recovery",
+      volumeName: "snapshot-volume",
+      status: "ready",
     });
-    const backupError = new Error('backup interrupted');
+    const backupError = new Error("backup interrupted");
     mocks.copyDockerVolume.mockRejectedValueOnce(backupError);
 
-    await expect(restoreSandboxSnapshotAction(snapshotForm())).rejects.toBe(backupError);
+    await expect(restoreSandboxSnapshotAction(snapshotForm())).rejects.toBe(
+      backupError,
+    );
 
-    expect(mocks.killProcess).toHaveBeenCalledWith('dep1', { finalStatus: 'restore_failed' });
+    expect(mocks.killProcess).toHaveBeenCalledWith("dep1", {
+      finalStatus: "restore_failed",
+    });
     expect(mocks.deploymentUpdateMany).not.toHaveBeenCalledWith(
-      expect.objectContaining({ data: { status: 'restoring' } }),
+      expect.objectContaining({ data: { status: "restoring" } }),
     );
     expect(mocks.startProcess).not.toHaveBeenCalled();
   });
 
-  it('keeps a recovery snapshot and leaves the sandbox stopped when restore and rollback both fail', async () => {
-    mocks.sandboxFindFirst.mockResolvedValue(dockerSandbox({
-      deployment: {
-        id: 'dep1',
-        status: 'running',
-        installCfg: { volumeName: 'source-volume' },
-      },
-    }));
+  it("keeps a recovery snapshot and leaves the sandbox stopped when restore and rollback both fail", async () => {
+    mocks.sandboxFindFirst.mockResolvedValue(
+      dockerSandbox({
+        deployment: {
+          id: "dep1",
+          status: "running",
+          installCfg: { volumeName: "source-volume" },
+        },
+      }),
+    );
     mocks.sandboxSnapshotFindFirst.mockResolvedValue({
-      id: 'snap1',
-      sandboxId: 'sb1',
-      name: 'Before upgrade',
-      volumeName: 'snapshot-volume',
-      status: 'ready',
+      id: "snap1",
+      sandboxId: "sb1",
+      name: "Before upgrade",
+      volumeName: "snapshot-volume",
+      status: "ready",
     });
     mocks.sandboxSnapshotCreate.mockImplementation(async ({ data }) => data);
-    mocks.effectiveStatus.mockReturnValue('running');
-    const restoreError = new Error('restore failed');
-    const rollbackError = new Error('rollback failed');
+    mocks.effectiveStatus.mockReturnValue("running");
+    const restoreError = new Error("restore failed");
+    const rollbackError = new Error("rollback failed");
     mocks.copyDockerVolume
       .mockResolvedValueOnce(undefined)
       .mockRejectedValueOnce(restoreError)
       .mockRejectedValueOnce(rollbackError);
 
     await expect(restoreSandboxSnapshotAction(snapshotForm())).rejects.toThrow(
-      'Snapshot restore and automatic rollback both failed.',
+      "Snapshot restore and automatic rollback both failed.",
     );
 
     const rollbackVolume = mocks.copyDockerVolume.mock.calls[0][1];
     expect(mocks.removeDockerVolumeStrict).not.toHaveBeenCalled();
     expect(mocks.startProcess).not.toHaveBeenCalled();
     expect(mocks.deploymentUpdateMany).toHaveBeenCalledWith({
-      where: { id: 'dep1', workspaceId: 'ws1', source: 'sandbox' },
-      data: { status: 'restore_failed' },
+      where: { id: "dep1", workspaceId: "ws1", source: "sandbox" },
+      data: { status: "restore_failed" },
     });
     expect(mocks.sandboxSnapshotCreate).toHaveBeenCalledWith({
       data: {
         id: expect.stringMatching(/^restore-/),
-        sandboxId: 'sb1',
-        name: 'Restore recovery: Before upgrade',
+        sandboxId: "sb1",
+        name: "Restore recovery: Before upgrade",
         volumeName: rollbackVolume,
-        status: 'creating',
+        status: "creating",
       },
     });
     expect(mocks.sandboxSnapshotUpdateMany).toHaveBeenCalledWith({
       where: {
         id: expect.stringMatching(/^restore-/),
-        sandboxId: 'sb1',
+        sandboxId: "sb1",
       },
-      data: { status: 'ready', error: null },
+      data: { status: "ready", error: null },
     });
-    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/mine/sandboxes/sb1');
+    expect(mocks.revalidatePath).toHaveBeenCalledWith(
+      "/app/mine/sandboxes/sb1",
+    );
   });
 
-  it('does not start rollback or resume when a restore helper cannot be removed', async () => {
-    mocks.sandboxFindFirst.mockResolvedValue(dockerSandbox({
-      deployment: {
-        id: 'dep1',
-        status: 'running',
-        installCfg: { volumeName: 'source-volume' },
-      },
-    }));
+  it("does not start rollback or resume when a restore helper cannot be removed", async () => {
+    mocks.sandboxFindFirst.mockResolvedValue(
+      dockerSandbox({
+        deployment: {
+          id: "dep1",
+          status: "running",
+          installCfg: { volumeName: "source-volume" },
+        },
+      }),
+    );
     mocks.sandboxSnapshotFindFirst.mockResolvedValue({
-      id: 'snap1',
-      sandboxId: 'sb1',
-      name: 'Before upgrade',
-      volumeName: 'snapshot-volume',
-      status: 'ready',
+      id: "snap1",
+      sandboxId: "sb1",
+      name: "Before upgrade",
+      volumeName: "snapshot-volume",
+      status: "ready",
     });
     mocks.sandboxSnapshotCreate.mockImplementation(async ({ data }) => data);
-    mocks.effectiveStatus.mockReturnValue('running');
+    mocks.effectiveStatus.mockReturnValue("running");
     vi.useFakeTimers();
     const unsafeError = new mocks.DockerVolumeCopyCleanupError(
-      [new Error('copy timeout'), new Error('cleanup timeout')],
-      'helper cleanup failed',
-      'toolplane-volume-copy-restore',
+      [new Error("copy timeout"), new Error("cleanup timeout")],
+      "helper cleanup failed",
+      "toolplane-volume-copy-restore",
     );
     mocks.copyDockerVolume
       .mockResolvedValueOnce(undefined)
       .mockRejectedValueOnce(unsafeError);
 
-    await expect(restoreSandboxSnapshotAction(snapshotForm())).rejects.toBe(unsafeError);
+    await expect(restoreSandboxSnapshotAction(snapshotForm())).rejects.toBe(
+      unsafeError,
+    );
 
     expect(mocks.copyDockerVolume).toHaveBeenCalledTimes(2);
     expect(mocks.startProcess).not.toHaveBeenCalled();
     expect(mocks.removeDockerVolumeStrict).not.toHaveBeenCalled();
     expect(mocks.deploymentUpdateMany).toHaveBeenCalledWith({
-      where: { id: 'dep1', workspaceId: 'ws1', source: 'sandbox' },
-      data: { status: 'restore_cleanup_required' },
+      where: { id: "dep1", workspaceId: "ws1", source: "sandbox" },
+      data: { status: "restore_cleanup_required" },
     });
     expect(mocks.sandboxSnapshotCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({
-        sandboxId: 'sb1',
-        name: 'Restore recovery: Before upgrade',
-        status: 'creating',
+        sandboxId: "sb1",
+        name: "Restore recovery: Before upgrade",
+        status: "creating",
       }),
     });
     expect(mocks.sandboxSnapshotUpdateMany).toHaveBeenCalledWith({
       where: {
         id: expect.stringMatching(/^restore-/),
-        sandboxId: 'sb1',
+        sandboxId: "sb1",
       },
-      data: { status: 'ready', error: null },
+      data: { status: "ready", error: null },
     });
     await vi.advanceTimersByTimeAsync(1_000);
     expect(mocks.removeDockerVolumeCopyHelper).toHaveBeenCalledWith(
-      'toolplane-volume-copy-restore',
+      "toolplane-volume-copy-restore",
     );
     expect(mocks.deploymentUpdateMany).toHaveBeenCalledWith({
       where: {
-        id: 'dep1',
-        workspaceId: 'ws1',
-        source: 'sandbox',
-        status: { in: ['restoring', 'restore_cleanup_required'] },
+        id: "dep1",
+        workspaceId: "ws1",
+        source: "sandbox",
+        status: { in: ["restoring", "restore_cleanup_required"] },
       },
-      data: { status: 'restore_failed' },
+      data: { status: "restore_failed" },
     });
   });
 
-  it('deletes the snapshot volume before deleting its database record', async () => {
+  it("deletes the snapshot volume before deleting its database record", async () => {
     mocks.sandboxFindFirst.mockResolvedValue(dockerSandbox());
     mocks.sandboxSnapshotFindFirst.mockResolvedValue({
-      id: 'snap1',
-      sandboxId: 'sb1',
-      volumeName: 'snapshot-volume',
-      status: 'ready',
+      id: "snap1",
+      sandboxId: "sb1",
+      volumeName: "snapshot-volume",
+      status: "ready",
     });
 
     await deleteSandboxSnapshotAction(snapshotForm());
 
     expect(mocks.sandboxSnapshotUpdate).toHaveBeenCalledWith({
-      where: { id: 'snap1' },
-      data: { status: 'deleting', error: null },
+      where: { id: "snap1" },
+      data: { status: "deleting", error: null },
     });
-    expect(mocks.removeDockerVolumeStrict).toHaveBeenCalledWith('snapshot-volume');
-    expect(mocks.sandboxSnapshotDeleteMany).toHaveBeenCalledWith({
-      where: { id: 'snap1', sandboxId: 'sb1' },
-    });
-    expect(mocks.removeDockerVolumeStrict.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.sandboxSnapshotDeleteMany.mock.invocationCallOrder[0],
+    expect(mocks.removeDockerVolumeStrict).toHaveBeenCalledWith(
+      "snapshot-volume",
     );
+    expect(mocks.sandboxSnapshotDeleteMany).toHaveBeenCalledWith({
+      where: { id: "snap1", sandboxId: "sb1" },
+    });
+    expect(
+      mocks.removeDockerVolumeStrict.mock.invocationCallOrder[0],
+    ).toBeLessThan(mocks.sandboxSnapshotDeleteMany.mock.invocationCallOrder[0]);
   });
 
-  it('deletes a Hermes snapshot through the maintenance queue without quiescing it', async () => {
+  it("deletes a Hermes snapshot through the maintenance queue without quiescing it", async () => {
     mocks.sandboxFindFirst.mockResolvedValue(hermesSandbox());
-    mocks.agentRuntimeFindFirst.mockResolvedValue({ agentId: 'agent-1' });
+    mocks.agentRuntimeFindFirst.mockResolvedValue({ agentId: "agent-1" });
     mocks.sandboxSnapshotFindFirst.mockResolvedValue({
-      id: 'snap1',
-      sandboxId: 'sb1',
-      volumeName: 'snapshot-volume',
-      status: 'ready',
+      id: "snap1",
+      sandboxId: "sb1",
+      volumeName: "snapshot-volume",
+      status: "ready",
     });
     completeHermesMaintenance();
 
     await deleteSandboxSnapshotAction(snapshotForm());
 
     expect(mocks.runHermesRuntimeMaintenance).toHaveBeenCalledWith(
-      'ws1',
-      'agent-1',
-      'sb1',
+      "ws1",
+      "agent-1",
+      "sb1",
       expect.objectContaining({ quiesce: false }),
       expect.any(Function),
     );
-    expect(mocks.removeDockerVolumeStrict).toHaveBeenCalledWith('snapshot-volume');
+    expect(mocks.removeDockerVolumeStrict).toHaveBeenCalledWith(
+      "snapshot-volume",
+    );
     expect(mocks.sandboxSnapshotDeleteMany).toHaveBeenCalledWith({
-      where: { id: 'snap1', sandboxId: 'sb1' },
+      where: { id: "snap1", sandboxId: "sb1" },
     });
   });
 
-  it('marks snapshot deletion as retryable when the database delete fails', async () => {
+  it("marks snapshot deletion as retryable when the database delete fails", async () => {
     mocks.sandboxFindFirst.mockResolvedValue(dockerSandbox());
     mocks.sandboxSnapshotFindFirst.mockResolvedValue({
-      id: 'snap1',
-      sandboxId: 'sb1',
-      volumeName: 'snapshot-volume',
-      status: 'deleting',
+      id: "snap1",
+      sandboxId: "sb1",
+      volumeName: "snapshot-volume",
+      status: "deleting",
     });
-    const deleteError = new Error('database unavailable');
+    const deleteError = new Error("database unavailable");
     mocks.sandboxSnapshotDeleteMany.mockRejectedValue(deleteError);
 
-    await expect(deleteSandboxSnapshotAction(snapshotForm())).rejects.toBe(deleteError);
+    await expect(deleteSandboxSnapshotAction(snapshotForm())).rejects.toBe(
+      deleteError,
+    );
 
-    expect(mocks.removeDockerVolumeStrict).toHaveBeenCalledWith('snapshot-volume');
+    expect(mocks.removeDockerVolumeStrict).toHaveBeenCalledWith(
+      "snapshot-volume",
+    );
     expect(mocks.sandboxSnapshotUpdateMany).toHaveBeenCalledWith({
-      where: { id: 'snap1', sandboxId: 'sb1' },
-      data: { status: 'error', error: 'Snapshot deletion failed.' },
+      where: { id: "snap1", sandboxId: "sb1" },
+      data: { status: "error", error: "Snapshot deletion failed." },
     });
   });
 
-  it('rotates a connector token, revokes the active session, and redirects without a token URL', async () => {
-    const updatedDeployment = { id: 'dep1', source: 'sandbox', installCfg: {} };
+  it("rotates a connector token, revokes the active session, and redirects without a token URL", async () => {
+    const updatedDeployment = { id: "dep1", source: "sandbox", installCfg: {} };
     mocks.deploymentUpdate.mockReturnValue(updatedDeployment);
-    mocks.resolveSpawnSpec.mockReturnValue({ kind: 'sandbox', sandboxKind: 'connector' });
+    mocks.resolveSpawnSpec.mockReturnValue({
+      kind: "sandbox",
+      sandboxKind: "connector",
+    });
     mocks.sandboxFindFirst.mockResolvedValue({
-      id: 'sb1',
-      workspaceId: 'ws1',
-      deploymentId: 'dep1',
-      kind: 'connector',
+      id: "sb1",
+      workspaceId: "ws1",
+      deploymentId: "dep1",
+      kind: "connector",
       config: {
         connector: {
-          provider: 'websocket',
-          serverUrl: 'https://app.example.com',
-          remoteRoot: 'C:\\Users\\Ada\\ToolPlane',
-          tokenHash: 'old-hash',
-          tokenPrefix: 'mcpcon_old',
-          packageName: '/api/v1/connectors/package.tgz',
-          createdAt: '2026-07-01T00:00:00.000Z',
+          provider: "websocket",
+          serverUrl: "https://app.example.com",
+          remoteRoot: "C:\\Users\\Ada\\ToolPlane",
+          tokenHash: "old-hash",
+          tokenPrefix: "mcpcon_old",
+          packageName: "/api/v1/connectors/package.tgz",
+          createdAt: "2026-07-01T00:00:00.000Z",
         },
       },
-      deployment: { id: 'dep1', installCfg: {} },
+      deployment: { id: "dep1", installCfg: {} },
     });
 
-    const form = renameForm('Ignored');
-    form.set('connectorServerUrl', 'https://attacker.example.com');
-    form.set('connectorRemoteRoot', 'C:\\Users\\Ada Lovelace\\ToolPlane Sandbox');
+    const form = renameForm("Ignored");
+    form.set("connectorServerUrl", "https://attacker.example.com");
+    form.set(
+      "connectorRemoteRoot",
+      "C:\\Users\\Ada Lovelace\\ToolPlane Sandbox",
+    );
 
     await generateConnectorCommandAction(form);
 
-    expect(mocks.disconnectConnector).toHaveBeenCalledWith('sb1', 'connector token rotated');
+    expect(mocks.disconnectConnector).toHaveBeenCalledWith(
+      "sb1",
+      "connector token rotated",
+    );
     expect(mocks.sandboxUpdate).toHaveBeenCalledWith({
-      where: { id: 'sb1' },
+      where: { id: "sb1" },
       data: {
         config: expect.objectContaining({
           connector: expect.objectContaining({
-            serverUrl: 'https://connect.example.com',
-            remoteRoot: 'C:\\Users\\Ada Lovelace\\ToolPlane Sandbox',
+            serverUrl: "https://connect.example.com",
+            remoteRoot: "C:\\Users\\Ada Lovelace\\ToolPlane Sandbox",
           }),
         }),
       },
     });
     expect(mocks.startProcess).toHaveBeenCalledWith(
-      'dep1',
-      { kind: 'sandbox', sandboxKind: 'connector' },
-      { awaitReady: false, workspaceId: 'ws1' },
+      "dep1",
+      { kind: "sandbox", sandboxKind: "connector" },
+      { awaitReady: false, workspaceId: "ws1" },
     );
     expect(mocks.setConnectorSetupTokenCookie).toHaveBeenCalledWith(
-      'mine',
-      'sb1',
+      "mine",
+      "sb1",
       expect.stringMatching(/^mcpcon_/),
     );
-    expect(mocks.redirect).toHaveBeenCalledWith('/app/mine/sandboxes/sb1');
-    expect(mocks.redirect.mock.calls.flat().join(' ')).not.toContain('token=');
+    expect(mocks.redirect).toHaveBeenCalledWith("/app/mine/sandboxes/sb1");
+    expect(mocks.redirect.mock.calls.flat().join(" ")).not.toContain("token=");
   });
 
-  it('persists a connector stop before disconnecting authenticated sessions', async () => {
+  it("persists a connector stop before disconnecting authenticated sessions", async () => {
     mocks.sandboxFindFirst.mockResolvedValue({
-      id: 'sb1',
-      workspaceId: 'ws1',
-      deploymentId: 'dep1',
-      kind: 'connector',
-      deployment: { id: 'dep1', status: 'running' },
+      id: "sb1",
+      workspaceId: "ws1",
+      deploymentId: "dep1",
+      kind: "connector",
+      deployment: { id: "dep1", status: "running" },
     });
 
-    await stopSandboxAction(renameForm('Ignored'));
+    await stopSandboxAction(renameForm("Ignored"));
 
-    expect(mocks.stopProcess).toHaveBeenCalledWith('dep1');
-    expect(mocks.disconnectConnector).toHaveBeenCalledWith('sb1', 'sandbox stopped');
+    expect(mocks.stopProcess).toHaveBeenCalledWith("dep1");
+    expect(mocks.disconnectConnector).toHaveBeenCalledWith(
+      "sb1",
+      "sandbox stopped",
+    );
     expect(mocks.stopProcess.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.disconnectConnector.mock.invocationCallOrder[0],
     );
   });
 
-  it('updates docker sandbox env and recreates a running container without removing the volume', async () => {
-    const updatedDeployment = { id: 'dep1', installCfg: { env: { A: '1' } } };
+  it("updates docker sandbox env and recreates a running container without removing the volume", async () => {
+    const updatedDeployment = { id: "dep1", installCfg: { env: { A: "1" } } };
     mocks.sandboxFindFirst.mockResolvedValue({
-      id: 'sb1',
-      workspaceId: 'ws1',
-      deploymentId: 'dep1',
-      kind: 'docker',
-      image: 'node:24-bookworm-slim',
-      network: 'isolated',
+      id: "sb1",
+      workspaceId: "ws1",
+      deploymentId: "dep1",
+      kind: "docker",
+      image: "node:24-bookworm-slim",
+      network: "isolated",
       config: null,
-      deployment: { id: 'dep1', status: 'running' },
+      deployment: { id: "dep1", status: "running" },
     });
     mocks.deploymentUpdate.mockResolvedValue(updatedDeployment);
-    mocks.transaction.mockImplementation(async (ops: unknown[]) => Promise.all(ops));
-    mocks.effectiveStatus.mockReturnValue('running');
-    mocks.resolveSpawnSpec.mockReturnValue({ kind: 'sandbox', env: { A: '1' } });
+    mocks.transaction.mockImplementation(async (ops: unknown[]) =>
+      Promise.all(ops),
+    );
+    mocks.effectiveStatus.mockReturnValue("running");
+    mocks.resolveSpawnSpec.mockReturnValue({
+      kind: "sandbox",
+      env: { A: "1" },
+    });
 
-    await updateSandboxEnvAction(envForm('A=1'));
+    await updateSandboxEnvAction(envForm("A=1"));
 
     expect(mocks.sandboxUpdate).toHaveBeenCalledWith({
-      where: { id: 'sb1' },
-      data: { config: { env: { A: '1' } } },
+      where: { id: "sb1" },
+      data: { config: { env: { A: "1" } } },
     });
     expect(mocks.deploymentUpdate).toHaveBeenCalledWith({
-      where: { id: 'dep1' },
+      where: { id: "dep1" },
       data: {
         installCfg: expect.objectContaining({
-          env: { A: '1' },
-          volumeName: 'toolplane-sandbox-sb1',
+          env: { A: "1" },
+          volumeName: "toolplane-sandbox-sb1",
         }),
       },
     });
-    expect(mocks.killProcess).toHaveBeenCalledWith('dep1');
-    expect(mocks.removeDockerSandboxContainer).toHaveBeenCalledWith('sb1');
+    expect(mocks.killProcess).toHaveBeenCalledWith("dep1");
+    expect(mocks.removeDockerSandboxContainer).toHaveBeenCalledWith("sb1");
     expect(mocks.startProcess).toHaveBeenCalledWith(
-      'dep1',
-      { kind: 'sandbox', env: { A: '1' } },
-      { awaitReady: false, workspaceId: 'ws1' },
+      "dep1",
+      { kind: "sandbox", env: { A: "1" } },
+      { awaitReady: false, workspaceId: "ws1" },
     );
   });
 
-  it('updates a Hermes environment through the managed runtime projection', async () => {
-    mocks.sandboxFindFirst.mockResolvedValue(hermesSandbox({
-      config: { managedBy: 'agent-runtime', env: { EXISTING: 'value' } },
-      deployment: { id: 'dep1', status: 'running', installCfg: { runtimeId: 'runtime-1' } },
-    }));
-    mocks.agentRuntimeFindFirst.mockResolvedValue({ id: 'runtime-1', agentId: 'agent-1' });
-
-    await updateSandboxEnvAction(envForm('API_KEY=secret'));
-
-    expect(mocks.agentRuntimeFindFirst).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({
-        workspaceId: 'ws1',
-        sandboxId: 'sb1',
-        kind: 'hermes',
+  it("updates a Hermes environment through the managed runtime projection", async () => {
+    mocks.sandboxFindFirst.mockResolvedValue(
+      hermesSandbox({
+        config: { managedBy: "agent-runtime", env: { EXISTING: "value" } },
+        deployment: {
+          id: "dep1",
+          status: "running",
+          installCfg: { runtimeId: "runtime-1" },
+        },
       }),
-    }));
-    expect(mocks.setHermesRuntimeEnv).toHaveBeenCalledWith('ws1', 'agent-1', { API_KEY: 'secret' });
-    expect(mocks.syncHermesRuntime).toHaveBeenCalledWith('ws1', 'agent-1', { force: true });
+    );
+    mocks.agentRuntimeFindFirst.mockResolvedValue({
+      id: "runtime-1",
+      agentId: "agent-1",
+    });
+
+    await updateSandboxEnvAction(envForm("API_KEY=secret"));
+
+    expect(mocks.agentRuntimeFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          workspaceId: "ws1",
+          sandboxId: "sb1",
+          kind: "hermes",
+        }),
+      }),
+    );
+    expect(mocks.setHermesRuntimeEnv).toHaveBeenCalledWith("ws1", "agent-1", {
+      API_KEY: "secret",
+    });
+    expect(mocks.syncHermesRuntime).toHaveBeenCalledWith("ws1", "agent-1", {
+      force: true,
+    });
     expect(mocks.sandboxUpdate).not.toHaveBeenCalled();
     expect(mocks.deploymentUpdate).not.toHaveBeenCalled();
     expect(mocks.removeDockerSandboxContainer).not.toHaveBeenCalled();
   });
 
-  it('enables the Hermes sudo opt-in on config, installCfg, and forces a runtime resync', async () => {
-    const sudoForm = renameForm('Ignored');
-    sudoForm.set('allowSudo', 'on');
-    mocks.sandboxFindFirst.mockResolvedValue(hermesSandbox({
-      config: { managedBy: 'agent-runtime' },
-      deployment: { id: 'dep1', status: 'running', installCfg: { runtimeId: 'runtime-1' } },
-    }));
-    mocks.agentRuntimeFindFirst.mockResolvedValue({ id: 'runtime-1', agentId: 'agent-1' });
+  it("enables the Hermes sudo opt-in on config, installCfg, and forces a runtime resync", async () => {
+    const sudoForm = renameForm("Ignored");
+    sudoForm.set("allowSudo", "on");
+    mocks.sandboxFindFirst.mockResolvedValue(
+      hermesSandbox({
+        config: { managedBy: "agent-runtime" },
+        deployment: {
+          id: "dep1",
+          status: "running",
+          installCfg: { runtimeId: "runtime-1" },
+        },
+      }),
+    );
+    mocks.agentRuntimeFindFirst.mockResolvedValue({
+      id: "runtime-1",
+      agentId: "agent-1",
+    });
 
     await updateSandboxSudoAction(sudoForm);
 
     expect(mocks.sandboxUpdate).toHaveBeenCalledWith({
-      where: { id: 'sb1' },
-      data: { config: { managedBy: 'agent-runtime', allowSudo: true } },
+      where: { id: "sb1" },
+      data: { config: { managedBy: "agent-runtime", allowSudo: true } },
     });
     expect(mocks.deploymentUpdate).toHaveBeenCalledWith({
-      where: { id: 'dep1' },
+      where: { id: "dep1" },
       data: {
-        installCfg: expect.objectContaining({ runtimeId: 'runtime-1', allowSudo: true }),
+        installCfg: expect.objectContaining({
+          runtimeId: "runtime-1",
+          allowSudo: true,
+        }),
       },
     });
-    expect(mocks.syncHermesRuntime).toHaveBeenCalledWith('ws1', 'agent-1', { force: true });
+    expect(mocks.syncHermesRuntime).toHaveBeenCalledWith("ws1", "agent-1", {
+      force: true,
+    });
     expect(mocks.killProcess).not.toHaveBeenCalled();
     expect(mocks.removeDockerSandboxContainer).not.toHaveBeenCalled();
   });
 
-  it('skips the Hermes sudo opt-in change when the setting is unchanged', async () => {
+  it("skips the Hermes sudo opt-in change when the setting is unchanged", async () => {
     const sudoForm = new FormData();
-    sudoForm.set('workspace', 'mine');
-    sudoForm.set('sandboxId', 'sb1');
-    sudoForm.set('allowSudo', 'on');
-    mocks.sandboxFindFirst.mockResolvedValue(hermesSandbox({
-      config: { managedBy: 'agent-runtime', allowSudo: true },
-      deployment: { id: 'dep1', status: 'running', installCfg: { runtimeId: 'runtime-1', allowSudo: true } },
-    }));
+    sudoForm.set("workspace", "mine");
+    sudoForm.set("sandboxId", "sb1");
+    sudoForm.set("allowSudo", "on");
+    mocks.sandboxFindFirst.mockResolvedValue(
+      hermesSandbox({
+        config: { managedBy: "agent-runtime", allowSudo: true },
+        deployment: {
+          id: "dep1",
+          status: "running",
+          installCfg: { runtimeId: "runtime-1", allowSudo: true },
+        },
+      }),
+    );
 
     await updateSandboxSudoAction(sudoForm);
 
@@ -1499,35 +1900,53 @@ describe('renameSandboxAction', () => {
     expect(mocks.syncHermesRuntime).not.toHaveBeenCalled();
   });
 
-  it('disables the Hermes sudo opt-in and drops the key from both records', async () => {
+  it("disables the Hermes sudo opt-in and drops the key from both records", async () => {
     const sudoForm = new FormData();
-    sudoForm.set('workspace', 'mine');
-    sudoForm.set('sandboxId', 'sb1');
-    mocks.sandboxFindFirst.mockResolvedValue(hermesSandbox({
-      config: { managedBy: 'agent-runtime', allowSudo: true },
-      deployment: { id: 'dep1', status: 'running', installCfg: { runtimeId: 'runtime-1', allowSudo: true } },
-    }));
-    mocks.agentRuntimeFindFirst.mockResolvedValue({ id: 'runtime-1', agentId: 'agent-1' });
+    sudoForm.set("workspace", "mine");
+    sudoForm.set("sandboxId", "sb1");
+    mocks.sandboxFindFirst.mockResolvedValue(
+      hermesSandbox({
+        config: { managedBy: "agent-runtime", allowSudo: true },
+        deployment: {
+          id: "dep1",
+          status: "running",
+          installCfg: { runtimeId: "runtime-1", allowSudo: true },
+        },
+      }),
+    );
+    mocks.agentRuntimeFindFirst.mockResolvedValue({
+      id: "runtime-1",
+      agentId: "agent-1",
+    });
 
     await updateSandboxSudoAction(sudoForm);
 
     expect(mocks.sandboxUpdate).toHaveBeenCalledWith({
-      where: { id: 'sb1' },
-      data: { config: { managedBy: 'agent-runtime' } },
+      where: { id: "sb1" },
+      data: { config: { managedBy: "agent-runtime" } },
     });
     expect(mocks.deploymentUpdate).toHaveBeenCalledWith({
-      where: { id: 'dep1' },
+      where: { id: "dep1" },
       data: {
-        installCfg: expect.objectContaining({ runtimeId: 'runtime-1' }),
+        installCfg: expect.objectContaining({ runtimeId: "runtime-1" }),
       },
     });
-    expect((mocks.deploymentUpdate.mock.calls[0][0].data.installCfg as Record<string, unknown>).allowSudo).toBeUndefined();
-    expect(mocks.syncHermesRuntime).toHaveBeenCalledWith('ws1', 'agent-1', { force: true });
+    expect(
+      (
+        mocks.deploymentUpdate.mock.calls[0][0].data.installCfg as Record<
+          string,
+          unknown
+        >
+      ).allowSudo,
+    ).toBeUndefined();
+    expect(mocks.syncHermesRuntime).toHaveBeenCalledWith("ws1", "agent-1", {
+      force: true,
+    });
   });
 
-  it('ignores the sudo opt-in for non-Hermes sandboxes', async () => {
-    const sudoForm = renameForm('Ignored');
-    sudoForm.set('allowSudo', 'on');
+  it("ignores the sudo opt-in for non-Hermes sandboxes", async () => {
+    const sudoForm = renameForm("Ignored");
+    sudoForm.set("allowSudo", "on");
 
     await updateSandboxSudoAction(sudoForm);
 
@@ -1535,125 +1954,149 @@ describe('renameSandboxAction', () => {
     expect(mocks.syncHermesRuntime).not.toHaveBeenCalled();
   });
 
-  it('deletes every Docker snapshot volume before removing the sandbox runtime', async () => {
-    mocks.sandboxFindFirst.mockResolvedValue(dockerSandbox({
-      snapshots: [
-        { id: 'snap1', volumeName: 'snapshot-volume-1' },
-        { id: 'snap2', volumeName: 'snapshot-volume-2' },
-      ],
-    }));
+  it("deletes every Docker snapshot volume before removing the sandbox runtime", async () => {
+    mocks.sandboxFindFirst.mockResolvedValue(
+      dockerSandbox({
+        snapshots: [
+          { id: "snap1", volumeName: "snapshot-volume-1" },
+          { id: "snap2", volumeName: "snapshot-volume-2" },
+        ],
+      }),
+    );
 
-    await deleteSandboxAction(renameForm('Ignored'));
+    await deleteSandboxAction(renameForm("Ignored"));
 
-    expect(mocks.killProcess).toHaveBeenCalledWith('dep1', {
+    expect(mocks.killProcess).toHaveBeenCalledWith("dep1", {
       preventRestart: true,
-      finalStatus: 'deleting',
+      finalStatus: "deleting",
     });
     expect(mocks.deploymentUpdateMany).toHaveBeenCalledWith({
-      where: { id: 'dep1', workspaceId: 'ws1', source: 'sandbox' },
-      data: { status: 'deleting' },
+      where: { id: "dep1", workspaceId: "ws1", source: "sandbox" },
+      data: { status: "deleting" },
     });
-    expect(mocks.removeDockerVolumeStrict).toHaveBeenNthCalledWith(1, 'snapshot-volume-1');
-    expect(mocks.removeDockerVolumeStrict).toHaveBeenNthCalledWith(2, 'snapshot-volume-2');
-    expect(mocks.removeDockerSandboxRuntimeStrict).toHaveBeenCalledWith('sb1', 'source-volume');
-    expect(mocks.removeDockerVolumeStrict.mock.invocationCallOrder[1]).toBeLessThan(
+    expect(mocks.removeDockerVolumeStrict).toHaveBeenNthCalledWith(
+      1,
+      "snapshot-volume-1",
+    );
+    expect(mocks.removeDockerVolumeStrict).toHaveBeenNthCalledWith(
+      2,
+      "snapshot-volume-2",
+    );
+    expect(mocks.removeDockerSandboxRuntimeStrict).toHaveBeenCalledWith(
+      "sb1",
+      "source-volume",
+    );
+    expect(
+      mocks.removeDockerVolumeStrict.mock.invocationCallOrder[1],
+    ).toBeLessThan(
       mocks.removeDockerSandboxRuntimeStrict.mock.invocationCallOrder[0],
     );
     expect(mocks.deploymentUpdateMany.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.removeDockerVolumeStrict.mock.invocationCallOrder[0],
     );
     expect(mocks.deploymentDeleteMany).toHaveBeenCalledWith({
-      where: { id: 'dep1', workspaceId: 'ws1', source: 'sandbox' },
+      where: { id: "dep1", workspaceId: "ws1", source: "sandbox" },
     });
   });
 
-  it('does not delete a sandbox attached to an agent', async () => {
-    mocks.sandboxFindFirst.mockResolvedValue(dockerSandbox({
-      agentLinks: [{ agentId: 'agent-1' }],
-    }));
+  it("does not delete a sandbox attached to an agent", async () => {
+    mocks.sandboxFindFirst.mockResolvedValue(
+      dockerSandbox({
+        agentLinks: [{ agentId: "agent-1" }],
+      }),
+    );
 
-    await deleteSandboxAction(renameForm('Ignored'));
+    await deleteSandboxAction(renameForm("Ignored"));
 
     expect(mocks.killProcess).not.toHaveBeenCalled();
     expect(mocks.removeDockerSandboxRuntimeStrict).not.toHaveBeenCalled();
     expect(mocks.deploymentDeleteMany).not.toHaveBeenCalled();
   });
 
-  it('keeps process restart blocked when strict Docker deletion fails', async () => {
+  it("keeps process restart blocked when strict Docker deletion fails", async () => {
     const sandbox = dockerSandbox({
-      snapshots: [{ id: 'snap1', volumeName: 'snapshot-volume-1' }],
+      snapshots: [{ id: "snap1", volumeName: "snapshot-volume-1" }],
     });
     mocks.sandboxFindFirst
       .mockResolvedValueOnce(sandbox)
       .mockResolvedValueOnce({
         ...sandbox,
-        deployment: { ...sandbox.deployment, status: 'deleting' },
+        deployment: { ...sandbox.deployment, status: "deleting" },
       });
-    const cleanupError = new Error('volume is busy');
+    const cleanupError = new Error("volume is busy");
     mocks.removeDockerVolumeStrict.mockRejectedValueOnce(cleanupError);
 
-    await expect(deleteSandboxAction(renameForm('Ignored'))).rejects.toBe(cleanupError);
+    await expect(deleteSandboxAction(renameForm("Ignored"))).rejects.toBe(
+      cleanupError,
+    );
 
     expect(mocks.allowProcessRestart).not.toHaveBeenCalled();
     expect(mocks.deploymentDeleteMany).not.toHaveBeenCalled();
     expect(mocks.redirect).not.toHaveBeenCalled();
   });
 
-  it('retains the deleting state when database deletion fails after Docker cleanup', async () => {
+  it("retains the deleting state when database deletion fails after Docker cleanup", async () => {
     const sandbox = dockerSandbox();
     mocks.sandboxFindFirst
       .mockResolvedValueOnce(sandbox)
       .mockResolvedValueOnce({
         ...sandbox,
-        deployment: { ...sandbox.deployment, status: 'deleting' },
+        deployment: { ...sandbox.deployment, status: "deleting" },
       });
-    const deleteError = new Error('database unavailable');
+    const deleteError = new Error("database unavailable");
     mocks.deploymentDeleteMany.mockRejectedValueOnce(deleteError);
 
-    await expect(deleteSandboxAction(renameForm('Ignored'))).rejects.toBe(deleteError);
+    await expect(deleteSandboxAction(renameForm("Ignored"))).rejects.toBe(
+      deleteError,
+    );
 
-    expect(mocks.removeDockerSandboxRuntimeStrict).toHaveBeenCalledWith('sb1', 'source-volume');
+    expect(mocks.removeDockerSandboxRuntimeStrict).toHaveBeenCalledWith(
+      "sb1",
+      "source-volume",
+    );
     expect(mocks.deploymentUpdateMany).toHaveBeenCalledWith({
-      where: { id: 'dep1', workspaceId: 'ws1', source: 'sandbox' },
-      data: { status: 'deleting' },
+      where: { id: "dep1", workspaceId: "ws1", source: "sandbox" },
+      data: { status: "deleting" },
     });
     expect(mocks.allowProcessRestart).not.toHaveBeenCalled();
   });
 
-  it('allows restart when deletion is aborted before any external cleanup begins', async () => {
+  it("allows restart when deletion is aborted before any external cleanup begins", async () => {
     const sandbox = dockerSandbox();
     mocks.sandboxFindFirst.mockResolvedValue(sandbox);
-    const stateError = new Error('database unavailable');
+    const stateError = new Error("database unavailable");
     mocks.deploymentUpdateMany.mockRejectedValueOnce(stateError);
 
-    await expect(deleteSandboxAction(renameForm('Ignored'))).rejects.toBe(stateError);
+    await expect(deleteSandboxAction(renameForm("Ignored"))).rejects.toBe(
+      stateError,
+    );
 
     expect(mocks.removeDockerSandboxRuntimeStrict).not.toHaveBeenCalled();
     expect(mocks.deploymentDeleteMany).not.toHaveBeenCalled();
-    expect(mocks.allowProcessRestart).toHaveBeenCalledWith('dep1');
+    expect(mocks.allowProcessRestart).toHaveBeenCalledWith("dep1");
   });
 
-  it('redirects to the sandbox list after deleting from a detail page', async () => {
+  it("redirects to the sandbox list after deleting from a detail page", async () => {
     mocks.sandboxFindFirst.mockResolvedValue({
-      id: 'sb1',
-      workspaceId: 'ws1',
-      deploymentId: 'dep1',
-      kind: 'connector',
+      id: "sb1",
+      workspaceId: "ws1",
+      deploymentId: "dep1",
+      kind: "connector",
       agentLinks: [],
-      deployment: { id: 'dep1', installCfg: {} },
+      deployment: { id: "dep1", installCfg: {} },
     });
 
-    await deleteSandboxAction(renameForm('Ignored'));
+    await deleteSandboxAction(renameForm("Ignored"));
 
-    expect(mocks.stopProcess).toHaveBeenCalledWith('dep1');
-    expect(mocks.killProcess).toHaveBeenCalledWith('dep1', {
+    expect(mocks.stopProcess).toHaveBeenCalledWith("dep1");
+    expect(mocks.killProcess).toHaveBeenCalledWith("dep1", {
       preventRestart: true,
-      finalStatus: 'deleting',
+      finalStatus: "deleting",
     });
     expect(mocks.deploymentDeleteMany).toHaveBeenCalledWith({
-      where: { id: 'dep1', workspaceId: 'ws1', source: 'sandbox' },
+      where: { id: "dep1", workspaceId: "ws1", source: "sandbox" },
     });
-    expect(mocks.redirect).toHaveBeenCalledWith('/app/mine/sandboxes');
+    expect(mocks.redirect).toHaveBeenCalledWith("/app/mine/sandboxes");
     expect(mocks.deploymentDeleteMany.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.redirect.mock.invocationCallOrder[0],
     );

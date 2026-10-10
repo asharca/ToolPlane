@@ -1,12 +1,15 @@
-import 'server-only';
-import { db } from '@/lib/db';
+import "server-only";
+import { db } from "@/lib/db";
 
 /**
  * Control-plane view for the Agent settings page. The workspace and source
  * Agent are part of the predicate so a guessed endpoint id can never cross a
  * workspace boundary.
  */
-export async function getAgentEndpointForManagement(workspaceId: string, agentId: string) {
+export async function getAgentEndpointForManagement(
+  workspaceId: string,
+  agentId: string,
+) {
   return db.agentEndpoint.findFirst({
     where: { workspaceId, sourceAgentId: agentId },
     select: {
@@ -32,13 +35,13 @@ export async function getAgentEndpointForManagement(workspaceId: string, agentId
         },
       },
       clients: {
-        orderBy: { createdAt: 'asc' },
+        orderBy: { createdAt: "asc" },
         select: {
           id: true,
           name: true,
           createdAt: true,
           keys: {
-            orderBy: { createdAt: 'desc' },
+            orderBy: { createdAt: "desc" },
             select: {
               id: true,
               name: true,
@@ -55,7 +58,9 @@ export async function getAgentEndpointForManagement(workspaceId: string, agentId
   });
 }
 
-export async function getPublicEndpointCorsOrigins(publicId: string): Promise<string[]> {
+export async function getPublicEndpointCorsOrigins(
+  publicId: string,
+): Promise<string[]> {
   const endpoint = await db.agentEndpoint.findUnique({
     where: { publicId },
     select: { allowedOrigins: true },

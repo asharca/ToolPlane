@@ -1,4 +1,3 @@
-
 "use client";
 // asharca.github.io/ui/components/motion/popover
 
@@ -315,11 +314,7 @@ export function Popover({
     const animation = animate(
       progress,
       open ? 1 : 0,
-      reduce
-        ? { duration: 0 }
-        : open
-          ? GOO_OPEN_SPRING
-          : GOO_CLOSE_SPRING,
+      reduce ? { duration: 0 } : open ? GOO_OPEN_SPRING : GOO_CLOSE_SPRING,
     );
     return () => animation.stop();
   }, [open, progress, reduce]);
@@ -466,9 +461,8 @@ export function PopoverTrigger({ children }: PopoverTriggerProps) {
       ? {
           onFocus: compose("onFocus", ctx.openHover),
           onBlur: compose("onBlur", ctx.scheduleClose),
-          onPointerDown: observe<React.PointerEvent>(
-            "onPointerDown",
-            (event) => tap.start(event, ctx.open),
+          onPointerDown: observe<React.PointerEvent>("onPointerDown", (event) =>
+            tap.start(event, ctx.open),
           ),
           onPointerCancel: observe("onPointerCancel", tap.drop),
           onKeyDown: observe("onKeyDown", tap.drop),
@@ -532,11 +526,7 @@ export function PopoverContent({ children, className }: PopoverContentProps) {
   const clipRef = useRef<HTMLDivElement>(null);
   const geoRef = useRef<Geo | null>(null);
   const supportsShapeRef = useRef(false);
-  const layout = usePopoverPortalPosition(
-    triggerRef,
-    measureRef,
-    portalReady,
-  );
+  const layout = usePopoverPortalPosition(triggerRef, measureRef, portalReady);
 
   useEffect(() => setPortalReady(true), []);
 
@@ -568,10 +558,7 @@ export function PopoverContent({ children, className }: PopoverContentProps) {
     supportsShapeRef.current =
       typeof CSS !== "undefined" &&
       typeof CSS.supports === "function" &&
-      CSS.supports(
-        "clip-path",
-        "shape(from 0px 0px, line to 1px 1px, close)",
-      );
+      CSS.supports("clip-path", "shape(from 0px 0px, line to 1px 1px, close)");
     geoRef.current = geo;
     render(geo, progress.get());
   }, [geo, progress, render]);

@@ -1,1 +1,1 @@
-export { default } from '../../../settings/account/page';
+export { default } from "../../../settings/account/page";

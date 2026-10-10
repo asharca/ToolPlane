@@ -2,11 +2,7 @@
 // asharca.github.io/ui/components/motion/context-menu
 
 import { Check } from "lucide-react";
-import {
-  AnimatePresence,
-  motion,
-  useReducedMotion,
-} from "motion/react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import {
   cloneElement,
   createContext,
@@ -153,7 +149,11 @@ export function ContextMenu({
 
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target as Node;
-      if (triggerRef.current?.contains(target) || contentRef.current?.contains(target)) return;
+      if (
+        triggerRef.current?.contains(target) ||
+        contentRef.current?.contains(target)
+      )
+        return;
       setOpen(false);
     };
     const onWindowChange = () => setOpen(false);
@@ -291,7 +291,10 @@ export function ContextMenuTrigger({
     event.preventDefault();
     const rect = event.currentTarget.getBoundingClientRect();
     context.openAt(
-      { x: rect.left + Math.min(24, rect.width / 2), y: rect.top + rect.height / 2 },
+      {
+        x: rect.left + Math.min(24, rect.width / 2),
+        y: rect.top + rect.height / 2,
+      },
       "keyboard",
     );
   };
@@ -432,7 +435,8 @@ export function ContextMenuContent({
     const items = getEnabledItems(context.contentRef.current);
     if (items.length === 0) return;
     const current = items.indexOf(document.activeElement as HTMLElement);
-    const next = current < 0 ? 0 : (current + direction + items.length) % items.length;
+    const next =
+      current < 0 ? 0 : (current + direction + items.length) % items.length;
     items[next]?.focus();
   };
 
@@ -588,7 +592,8 @@ function ContextMenuItemBase({
       tabIndex={-1}
       onFocus={() => context.setActiveId(id)}
       onPointerMove={(event) => {
-        if (!disabled && event.pointerType !== "touch") event.currentTarget.focus();
+        if (!disabled && event.pointerType !== "touch")
+          event.currentTarget.focus();
       }}
       onClick={() => {
         if (disabled) return;
@@ -655,7 +660,11 @@ export function ContextMenuCheckboxItem({
               exit={{ opacity: 0, scale: context.reduce ? 1 : 0.75 }}
               transition={context.reduce ? { duration: 0.08 } : SPRING_PANEL}
             >
-              <Check aria-hidden="true" className="h-3.5 w-3.5" strokeWidth={2.4} />
+              <Check
+                aria-hidden="true"
+                className="h-3.5 w-3.5"
+                strokeWidth={2.4}
+              />
             </motion.span>
           ) : null}
         </AnimatePresence>
@@ -762,12 +771,8 @@ export interface ContextMenuSeparatorProps {
   className?: string;
 }
 
-export function ContextMenuSeparator({
-  className,
-}: ContextMenuSeparatorProps) {
-  return (
-    <hr className={cn("-mx-1 my-1 h-px border-0 bg-border", className)} />
-  );
+export function ContextMenuSeparator({ className }: ContextMenuSeparatorProps) {
+  return <hr className={cn("-mx-1 my-1 h-px border-0 bg-border", className)} />;
 }
 
 export interface ContextMenuShortcutProps {

@@ -3,26 +3,30 @@
 export const AGENT_STEP_BOUNDS = { min: 1, max: 1000, default: 100 } as const;
 
 export const REASONING_EFFORTS = [
-  'default',
-  'minimal',
-  'low',
-  'medium',
-  'high',
-  'xhigh',
-  'max',
+  "default",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
 ] as const;
 
 export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
 
-export function normalizeReasoningEffort(value: unknown): ReasoningEffort | null {
-  return typeof value === 'string' && (REASONING_EFFORTS as readonly string[]).includes(value)
-    ? value as ReasoningEffort
+export function normalizeReasoningEffort(
+  value: unknown,
+): ReasoningEffort | null {
+  return typeof value === "string" &&
+    (REASONING_EFFORTS as readonly string[]).includes(value)
+    ? (value as ReasoningEffort)
     : null;
 }
 
 export function resolveMaxSteps(maxSteps: number): number {
   const steps = Math.trunc(maxSteps);
-  if (!Number.isFinite(steps) || steps < AGENT_STEP_BOUNDS.min) return AGENT_STEP_BOUNDS.default;
+  if (!Number.isFinite(steps) || steps < AGENT_STEP_BOUNDS.min)
+    return AGENT_STEP_BOUNDS.default;
   return Math.min(AGENT_STEP_BOUNDS.max, steps);
 }
 

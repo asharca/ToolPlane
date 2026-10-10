@@ -1,4 +1,4 @@
-import 'server-only';
+import "server-only";
 import {
   createModels,
   createProvider,
@@ -7,12 +7,12 @@ import {
   type MutableModels,
   type Provider,
   type ProviderStreams,
-} from '@earendil-works/pi-ai';
-import { anthropicMessagesApi } from '@earendil-works/pi-ai/api/anthropic-messages.lazy';
-import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy';
-import { openAIResponsesApi } from '@earendil-works/pi-ai/api/openai-responses.lazy';
-import { builtinProviders } from '@earendil-works/pi-ai/providers/all';
-import { piProviderId } from './provider-catalog';
+} from "@earendil-works/pi-ai";
+import { anthropicMessagesApi } from "@earendil-works/pi-ai/api/anthropic-messages.lazy";
+import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
+import { openAIResponsesApi } from "@earendil-works/pi-ai/api/openai-responses.lazy";
+import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
+import { piProviderId } from "./provider-catalog";
 
 export type ProviderConfig = {
   id?: string;
@@ -28,32 +28,44 @@ export type ModelParameters = {
   maxOutputTokens?: number;
   customParameters?: Array<{
     name: string;
-    type: 'string' | 'number' | 'boolean' | 'json';
+    type: "string" | "number" | "boolean" | "json";
     value: string | number | boolean;
   }>;
 };
 
 export type PiModel = Model<Api>;
 export type PiModelRuntime = { models: MutableModels; model: PiModel };
-export type ModelContext = { maxTokens: number; modelName: string; estimated: boolean };
+export type ModelContext = {
+  maxTokens: number;
+  modelName: string;
+  estimated: boolean;
+};
 
 function providerId(provider: ProviderConfig): string {
-  return provider.id ?? `toolplane-${provider.name.toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'provider'}`;
+  return (
+    provider.id ??
+    `toolplane-${provider.name.toLowerCase().replace(/[^a-z0-9]+/g, "-") || "provider"}`
+  );
 }
 
-function configuredBaseUrl(provider: ProviderConfig, fallback?: string): string | undefined {
-  return provider.baseUrl.trim().replace(/\/+$/, '') || fallback;
+function configuredBaseUrl(
+  provider: ProviderConfig,
+  fallback?: string,
+): string | undefined {
+  return provider.baseUrl.trim().replace(/\/+$/, "") || fallback;
 }
 
-function modelApi(format: string): 'anthropic-messages' | 'openai-completions' | 'openai-responses' {
-  if (format === 'anthropic') return 'anthropic-messages';
-  if (format === 'openai-responses') return 'openai-responses';
-  return 'openai-completions';
+function modelApi(
+  format: string,
+): "anthropic-messages" | "openai-completions" | "openai-responses" {
+  if (format === "anthropic") return "anthropic-messages";
+  if (format === "openai-responses") return "openai-responses";
+  return "openai-completions";
 }
 
 function providerApi(format: string): ProviderStreams {
-  if (format === 'anthropic') return anthropicMessagesApi();
-  if (format === 'openai-responses') return openAIResponsesApi();
+  if (format === "anthropic") return anthropicMessagesApi();
+  if (format === "openai-responses") return openAIResponsesApi();
   return openAICompletionsApi();
 }
 
@@ -61,7 +73,8 @@ function workspaceApiKeyAuth(provider: ProviderConfig) {
   return {
     apiKey: {
       name: provider.name,
-      resolve: async () => provider.apiKey ? { auth: { apiKey: provider.apiKey } } : undefined,
+      resolve: async () =>
+        provider.apiKey ? { auth: { apiKey: provider.apiKey } } : undefined,
     },
   };
 }
@@ -69,7 +82,9 @@ function workspaceApiKeyAuth(provider: ProviderConfig) {
 function builtinProvider(provider: ProviderConfig): Provider<Api> | null {
   const builtinId = piProviderId(provider.format);
   if (!builtinId) return null;
-  const source = builtinProviders().find((candidate) => candidate.id === builtinId);
+  const source = builtinProviders().find(
+    (candidate) => candidate.id === builtinId,
+  );
   if (!source) return null;
 
   const id = providerId(provider);
@@ -84,6 +99,8 @@ function builtinProvider(provider: ProviderConfig): Provider<Api> | null {
     provider: id,
     ...(baseUrl ? { baseUrl } : {}),
   })) as PiModel[];
+  const fetchDeferred = source.fetchDeferred;
+  const cancelDeferred = source.cancelDeferred;
 
   return {
     ...source,
@@ -92,25 +109,42 @@ function builtinProvider(provider: ProviderConfig): Provider<Api> | null {
     ...(baseUrl ? { baseUrl } : {}),
     auth: provider.apiKey ? workspaceApiKeyAuth(provider) : source.auth,
     getModels: () => models,
-    stream: (model, context, options) => source.stream(rebase(model), context, options),
-    streamSimple: (model, context, options) => source.streamSimple(rebase(model), context, options),
-    ...(source.fetchDeferred ? {
-      fetchDeferred: (model, handle, options) => source.fetchDeferred!(rebase(model), handle, options),
-    } : {}),
-    ...(source.cancelDeferred ? {
-      cancelDeferred: (model, handle, options) => source.cancelDeferred!(rebase(model), handle, options),
-    } : {}),
+    stream: (model, context, options) =>
+      source.stream(rebase(model), context, options),
+    streamSimple: (model, context, options) =>
+      source.streamSimple(rebase(model), context, options),
+    ...(fetchDeferred
+      ? {
+          fetchDeferred: (model, handle, options) =>
+            fetchDeferred.call(source, rebase(model), handle, options),
+        }
+      : {}),
+    ...(cancelDeferred
+      ? {
+          cancelDeferred: (model, handle, options) =>
+            cancelDeferred.call(source, rebase(model), handle, options),
+        }
+      : {}),
   } as Provider<Api>;
 }
 
 export function providerModelIds(provider: ProviderConfig): string[] | null {
-  return builtinProvider(provider)?.getModels().map((model) => model.id) ?? null;
+  return (
+    builtinProvider(provider)
+      ?.getModels()
+      .map((model) => model.id) ?? null
+  );
 }
 
-export function createPiModel(provider: ProviderConfig, modelId: string): PiModel {
+export function createPiModel(
+  provider: ProviderConfig,
+  modelId: string,
+): PiModel {
   const builtin = builtinProvider(provider);
   if (builtin) {
-    const template = builtin.getModels().find((model) => model.id === modelId) ?? builtin.getModels()[0];
+    const template =
+      builtin.getModels().find((model) => model.id === modelId) ??
+      builtin.getModels()[0];
     if (template) return { ...template, id: modelId, name: modelId };
   }
   return {
@@ -118,23 +152,30 @@ export function createPiModel(provider: ProviderConfig, modelId: string): PiMode
     name: modelId,
     api: modelApi(provider.format),
     provider: providerId(provider),
-    baseUrl: configuredBaseUrl(provider) ?? '',
+    baseUrl: configuredBaseUrl(provider) ?? "",
     reasoning: false,
-    input: ['text', 'image'],
+    input: ["text", "image"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: 128_000,
     maxTokens: 16_384,
   } as PiModel;
 }
 
-export const modelSupportsReasoning = (provider: ProviderConfig, modelId: string) => (
-  createPiModel(provider, modelId).reasoning
-  || builtinProviders().some((candidate) => candidate.getModels().some((model) => (
-    model.id === modelId && model.reasoning
-  )))
-);
+export const modelSupportsReasoning = (
+  provider: ProviderConfig,
+  modelId: string,
+) =>
+  createPiModel(provider, modelId).reasoning ||
+  builtinProviders().some((candidate) =>
+    candidate
+      .getModels()
+      .some((model) => model.id === modelId && model.reasoning),
+  );
 
-export function resolveModelContext(provider: ProviderConfig, modelId: string): ModelContext {
+export function resolveModelContext(
+  provider: ProviderConfig,
+  modelId: string,
+): ModelContext {
   const model = createPiModel(provider, modelId);
   return {
     maxTokens: model.contextWindow,
@@ -143,17 +184,23 @@ export function resolveModelContext(provider: ProviderConfig, modelId: string): 
   };
 }
 
-export function buildModel(provider: ProviderConfig, modelId: string): PiModelRuntime {
+export function buildModel(
+  provider: ProviderConfig,
+  modelId: string,
+): PiModelRuntime {
   const model = createPiModel(provider, modelId);
   const models = createModels();
   const builtin = builtinProvider(provider);
-  models.setProvider(builtin ?? createProvider({
-    id: model.provider,
-    name: provider.name,
-    baseUrl: model.baseUrl,
-    auth: workspaceApiKeyAuth(provider),
-    models: [model],
-    api: providerApi(provider.format),
-  }));
+  models.setProvider(
+    builtin ??
+      createProvider({
+        id: model.provider,
+        name: provider.name,
+        baseUrl: model.baseUrl,
+        auth: workspaceApiKeyAuth(provider),
+        models: [model],
+        api: providerApi(provider.format),
+      }),
+  );
   return { models, model };
 }

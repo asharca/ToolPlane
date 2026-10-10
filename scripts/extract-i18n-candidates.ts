@@ -1,47 +1,47 @@
-import path from 'path';
-import ts from 'typescript';
-import { fileURLToPath } from 'url';
+import path from "node:path";
+import ts from "typescript";
+import { fileURLToPath } from "node:url";
 
 export interface Candidate {
   file: string;
   line: number;
   text: string;
-  type: 'jsxText' | 'jsxAttribute' | 'stringLiteral';
+  type: "jsxText" | "jsxAttribute" | "stringLiteral";
   attrName?: string;
 }
 
 const TEXT_ATTRIBUTES = new Set([
   // standard
-  'label',
-  'placeholder',
-  'title',
-  'aria-label',
+  "label",
+  "placeholder",
+  "title",
+  "aria-label",
   // buttons / actions
-  'pendingLabel',
-  'confirmText',
-  'cancelText',
-  'deleteText',
-  'actionText',
-  'retryText',
-  'loadingText',
-  'successText',
-  'errorText',
+  "pendingLabel",
+  "confirmText",
+  "cancelText",
+  "deleteText",
+  "actionText",
+  "retryText",
+  "loadingText",
+  "successText",
+  "errorText",
   // custom content props observed in the codebase
-  'lead',
-  'tail',
-  'subtitle',
-  'description',
-  'prompt',
-  'savedLabel',
-  'emptyText',
-  'noResultsText',
-  'helperText',
-  'hint',
-  'tooltip',
-  'header',
-  'footer',
-  'cta',
-  'alt',
+  "lead",
+  "tail",
+  "subtitle",
+  "description",
+  "prompt",
+  "savedLabel",
+  "emptyText",
+  "noResultsText",
+  "helperText",
+  "hint",
+  "tooltip",
+  "header",
+  "footer",
+  "cta",
+  "alt",
 ]);
 
 function isMeaningfulText(text: string): boolean {
@@ -59,10 +59,11 @@ function collectExpressionStrings(node: ts.Expression | undefined): string[] {
       ...collectExpressionStrings(node.whenFalse),
     ];
   }
-  if (ts.isBinaryExpression(node) && (
-    node.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken ||
-    node.operatorToken.kind === ts.SyntaxKind.BarBarToken
-  )) {
+  if (
+    ts.isBinaryExpression(node) &&
+    (node.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken ||
+      node.operatorToken.kind === ts.SyntaxKind.BarBarToken)
+  ) {
     return [
       ...collectExpressionStrings(node.left),
       ...collectExpressionStrings(node.right),
@@ -74,13 +75,16 @@ function collectExpressionStrings(node: ts.Expression | undefined): string[] {
   return [];
 }
 
-export function extractCandidatesFromSource(file: string, source: string): Candidate[] {
+export function extractCandidatesFromSource(
+  file: string,
+  source: string,
+): Candidate[] {
   const sourceFile = ts.createSourceFile(
     file,
     source,
     ts.ScriptTarget.Latest,
     true,
-    ts.ScriptKind.TSX
+    ts.ScriptKind.TSX,
   );
 
   function line(node: ts.Node): number {
@@ -89,16 +93,17 @@ export function extractCandidatesFromSource(file: string, source: string): Candi
 
   function visit(node: ts.Node): Candidate[] {
     const own: Candidate[] = isJsxTextCandidate(node)
-      ? [{ file, line: line(node), text: node.text.trim(), type: 'jsxText' }]
+      ? [{ file, line: line(node), text: node.text.trim(), type: "jsxText" }]
       : [];
 
     const attrCandidates = ts.isJsxAttribute(node)
       ? extractAttributeCandidates(node)
       : [];
 
-    const exprCandidates = ts.isJsxExpression(node) && node.expression
-      ? extractExpressionCandidates(node, node.expression)
-      : [];
+    const exprCandidates =
+      ts.isJsxExpression(node) && node.expression
+        ? extractExpressionCandidates(node, node.expression)
+        : [];
 
     const childCandidates = node
       .getChildren(sourceFile)
@@ -120,24 +125,29 @@ export function extractCandidatesFromSource(file: string, source: string): Candi
     if (ts.isStringLiteral(node.initializer)) {
       const text = node.initializer.text;
       return isMeaningfulText(text)
-        ? [{ file, line: line(node), text, type: 'jsxAttribute', attrName }]
+        ? [{ file, line: line(node), text, type: "jsxAttribute", attrName }]
         : [];
     }
 
     if (ts.isJsxExpression(node.initializer) && node.initializer.expression) {
-      return collectExpressionStrings(node.initializer.expression).map((text) => ({
-        file,
-        line: line(node),
-        text,
-        type: 'jsxAttribute' as const,
-        attrName,
-      }));
+      return collectExpressionStrings(node.initializer.expression).map(
+        (text) => ({
+          file,
+          line: line(node),
+          text,
+          type: "jsxAttribute" as const,
+          attrName,
+        }),
+      );
     }
 
     return [];
   }
 
-  function extractExpressionCandidates(node: ts.JsxExpression, expression: ts.Expression): Candidate[] {
+  function extractExpressionCandidates(
+    node: ts.JsxExpression,
+    expression: ts.Expression,
+  ): Candidate[] {
     // Catch strings inside JSX children expressions: {show ? 'Yes' : 'No'}, {`template`}
     const parent = node.parent;
     if (!ts.isJsxElement(parent) && !ts.isJsxFragment(parent)) return [];
@@ -145,16 +155,19 @@ export function extractCandidatesFromSource(file: string, source: string): Candi
       file,
       line: line(node),
       text,
-      type: 'stringLiteral' as const,
+      type: "stringLiteral" as const,
     }));
   }
 
   return visit(sourceFile);
 }
 
-export function extractCandidatesFromFiles(files: string[], readFile = ts.sys.readFile): Candidate[] {
+export function extractCandidatesFromFiles(
+  files: string[],
+  readFile = ts.sys.readFile,
+): Candidate[] {
   return files.flatMap((file) => {
-    const content = readFile(file, 'utf8');
+    const content = readFile(file, "utf8");
     if (content === undefined) {
       console.warn(`Warning: could not read file ${file}`);
       return [];
@@ -164,10 +177,14 @@ export function extractCandidatesFromFiles(files: string[], readFile = ts.sys.re
 }
 
 // CLI entry point
-if (path.resolve(fileURLToPath(import.meta.url)) === path.resolve(process.argv[1])) {
+if (
+  path.resolve(fileURLToPath(import.meta.url)) === path.resolve(process.argv[1])
+) {
   const files = process.argv.slice(2);
   if (files.length === 0) {
-    console.error('Usage: pnpm tsx scripts/extract-i18n-candidates.ts <file...>');
+    console.error(
+      "Usage: pnpm tsx scripts/extract-i18n-candidates.ts <file...>",
+    );
     process.exit(1);
   }
   const candidates = extractCandidatesFromFiles(files);

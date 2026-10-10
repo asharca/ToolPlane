@@ -1,10 +1,10 @@
-'use client';
+"use client";
 
-import { AnimatedBadge } from '@/components/motion/animated-badge';
+import { AnimatedBadge } from "@/components/motion/animated-badge";
 
-import { useEffect, useRef, useState } from 'react';
-import { useTranslations } from 'next-intl';
-import { useRouter } from 'next/navigation';
+import { useEffect, useRef, useState } from "react";
+import { useTranslations } from "next-intl";
+import { useRouter } from "next/navigation";
 
 type Status = {
   connected: boolean;
@@ -17,7 +17,14 @@ type Status = {
 };
 
 function runtimeSignature(status: Status): string {
-  return [status.connected, status.connectedAt, status.root, status.platform, status.arch, status.shell].join('|');
+  return [
+    status.connected,
+    status.connectedAt,
+    status.root,
+    status.platform,
+    status.arch,
+    status.shell,
+  ].join("|");
 }
 
 export function SandboxConnectorStatus({
@@ -32,8 +39,10 @@ export function SandboxConnectorStatus({
   className?: string;
 }) {
   const [status, setStatus] = useState<Status | null>(initialStatus ?? null);
-  const lastRuntimeRef = useRef(initialStatus ? runtimeSignature(initialStatus) : null);
-  const t = useTranslations('console.sandboxes');
+  const lastRuntimeRef = useRef(
+    initialStatus ? runtimeSignature(initialStatus) : null,
+  );
+  const t = useTranslations("console.sandboxes");
   const router = useRouter();
 
   useEffect(() => {
@@ -44,7 +53,10 @@ export function SandboxConnectorStatus({
       if (cancelled) return;
       setStatus(next);
       const signature = runtimeSignature(next);
-      if (lastRuntimeRef.current !== null && signature !== lastRuntimeRef.current) {
+      if (
+        lastRuntimeRef.current !== null &&
+        signature !== lastRuntimeRef.current
+      ) {
         router.refresh();
       }
       lastRuntimeRef.current = signature;
@@ -54,7 +66,7 @@ export function SandboxConnectorStatus({
       try {
         const res = await fetch(
           `/api/v1/workspaces/${encodeURIComponent(workspace)}/sandboxes/${encodeURIComponent(sandboxId)}/connector-status`,
-          { cache: 'no-store' },
+          { cache: "no-store" },
         );
         const body = (await res.json()) as Status;
         commitStatus(body);
@@ -81,19 +93,25 @@ export function SandboxConnectorStatus({
 
   const connected = Boolean(status?.connected);
   const label = connected
-    ? t('connectorConnected')
-    : status ? t('waitingForConnector') : t('checkingConnector');
+    ? t("connectorConnected")
+    : status
+      ? t("waitingForConnector")
+      : t("checkingConnector");
   const details = [
-    [status?.platform, status?.arch].filter(Boolean).join('/'),
+    [status?.platform, status?.arch].filter(Boolean).join("/"),
     status?.shell,
     status?.root,
-  ].filter(Boolean).join(' · ');
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
     <AnimatedBadge
       aria-live="polite"
       title={details || undefined}
-      status={connected ? 'success' : 'neutral'} size="sm" className={className}
+      status={connected ? "success" : "neutral"}
+      size="sm"
+      className={className}
     >
       {label}
     </AnimatedBadge>

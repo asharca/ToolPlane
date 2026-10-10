@@ -1,23 +1,27 @@
-import 'server-only';
-import { createHash } from 'node:crypto';
-import { jsonSchema, agentTool, type AgentToolSet } from './agent-tool';
-import { liveStatus } from '@/lib/process/supervisor';
-import { listMcpTools, mcpRpc, type McpTool } from '@/lib/process/mcp-client';
-import { logRequest } from '@/lib/observability/log';
+import "server-only";
+import { createHash } from "node:crypto";
+import { jsonSchema, agentTool, type AgentToolSet } from "./agent-tool";
+import { liveStatus } from "@/lib/process/supervisor";
+import { listMcpTools, mcpRpc, type McpTool } from "@/lib/process/mcp-client";
+import { logRequest } from "@/lib/observability/log";
 import {
   filterMcpToolsForAi,
   isMcpToolExposedToAi,
   loadMcpToolPolicies,
   type McpToolPolicy,
-} from '@/lib/workspace/mcp-tool-exposure';
+} from "@/lib/workspace/mcp-tool-exposure";
 
 function shortHash(input: string, length: number): string {
-  return createHash('sha256').update(input).digest('hex').slice(0, length);
+  return createHash("sha256").update(input).digest("hex").slice(0, length);
 }
 
 export function toolKey(deploymentId: string, toolName: string): string {
   const dep = shortHash(deploymentId, 12);
-  const name = toolName.replace(/[^A-Za-z0-9_-]/g, '_').replace(/^_+|_+$/g, '').slice(0, 48) || 'tool';
+  const name =
+    toolName
+      .replace(/[^A-Za-z0-9_-]/g, "_")
+      .replace(/^_+|_+$/g, "")
+      .slice(0, 48) || "tool";
   const toolHash = shortHash(`${deploymentId}:${toolName}`, 8);
   return `d_${dep}__${name}_${toolHash}`;
 }
@@ -57,13 +61,21 @@ export async function buildToolSet(
   for (const deploymentId of deploymentIds) {
     const policy = policies.get(deploymentId);
     if (!policy) continue;
-    if (deps.liveStatus(deploymentId) !== 'running') continue;
-    const tools = filterMcpToolsForAi(await deps.listMcpTools(deploymentId), policy);
+    if (deps.liveStatus(deploymentId) !== "running") continue;
+    const tools = filterMcpToolsForAi(
+      await deps.listMcpTools(deploymentId),
+      policy,
+    );
     for (const t of tools) {
       set[toolKey(deploymentId, t.name)] = agentTool({
         name: toolKey(deploymentId, t.name),
         description: t.description ?? t.name,
-        parameters: jsonSchema((t.inputSchema ?? { type: 'object', properties: {} }) as Record<string, unknown>),
+        parameters: jsonSchema(
+          (t.inputSchema ?? { type: "object", properties: {} }) as Record<
+            string,
+            unknown
+          >,
+        ),
         toolplaneOrigin: { deploymentId, originalToolName: t.name },
         execute: async (args: Record<string, unknown>) => {
           // Agent tool calls go straight to the MCP process (not through the
@@ -71,24 +83,32 @@ export async function buildToolSet(
           // usage would be invisible in observability. Same path shape as the
           // gateway so it shows in the deployment's Logs and the workspace stats.
           const start = Date.now();
-          const currentPolicy = (await deps.loadMcpToolPolicies([deploymentId], workspaceId))
-            .get(deploymentId);
+          const currentPolicy = (
+            await deps.loadMcpToolPolicies([deploymentId], workspaceId)
+          ).get(deploymentId);
           if (!isMcpToolExposedToAi(currentPolicy, t.name)) {
-            const denied = { error: `MCP tool ${t.name} is not exposed to AI.` };
-            await deps.logRequest({
-              workspaceId,
-              deploymentId,
-              method: 'POST',
-              path: `/mcp/${deploymentId}/rpc#tools/call:${t.name}`,
-              statusCode: 403,
-              outcome: 'denied',
-              durationMs: Date.now() - start,
-              payloadPolicy: 'agent-content',
-              payload: () => ({ request: { name: t.name, arguments: args }, response: denied }),
-            }).catch(() => {});
+            const denied = {
+              error: `MCP tool ${t.name} is not exposed to AI.`,
+            };
+            await deps
+              .logRequest({
+                workspaceId,
+                deploymentId,
+                method: "POST",
+                path: `/mcp/${deploymentId}/rpc#tools/call:${t.name}`,
+                statusCode: 403,
+                outcome: "denied",
+                durationMs: Date.now() - start,
+                payloadPolicy: "agent-content",
+                payload: () => ({
+                  request: { name: t.name, arguments: args },
+                  response: denied,
+                }),
+              })
+              .catch(() => {});
             return denied;
           }
-          const result = await deps.mcpRpc(deploymentId, 'tools/call', {
+          const result = await deps.mcpRpc(deploymentId, "tools/call", {
             name: t.name,
             arguments: args,
           });
@@ -96,16 +116,26 @@ export async function buildToolSet(
             .logRequest({
               workspaceId,
               deploymentId,
-              method: 'POST',
+              method: "POST",
               path: `/mcp/${deploymentId}/rpc#tools/call:${t.name}`,
               statusCode: result ? 200 : 502,
-              outcome: !result || result.isError === true || Boolean(result.error) ? 'error' : 'success',
+              outcome:
+                !result || result.isError === true || result.error
+                  ? "error"
+                  : "success",
               durationMs: Date.now() - start,
-              payloadPolicy: 'agent-content',
-              payload: () => ({ request: { name: t.name, arguments: args }, response: result ?? { error: 'unreachable' } }),
+              payloadPolicy: "agent-content",
+              payload: () => ({
+                request: { name: t.name, arguments: args },
+                response: result ?? { error: "unreachable" },
+              }),
             })
             .catch(() => {});
-          return result ?? { error: `MCP deployment ${deploymentId} is not reachable.` };
+          return (
+            result ?? {
+              error: `MCP deployment ${deploymentId} is not reachable.`,
+            }
+          );
         },
       });
     }

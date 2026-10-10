@@ -1,16 +1,17 @@
-import type { Metadata } from 'next';
-import Link from 'next/link';
-import { notFound } from 'next/navigation';
-import { ChevronRight, Star } from 'lucide-react';
-import { getTranslations } from 'next-intl/server';
-import { SITE } from '@/lib/site';
+import type { Metadata } from "next";
+import Image from "next/image";
+import Link from "next/link";
+import { notFound } from "next/navigation";
+import { ChevronRight, Star } from "lucide-react";
+import { getTranslations } from "next-intl/server";
+import { SITE } from "@/lib/site";
 import {
   getPublicRelatedServers,
   getPublicRelatedSkills,
   getPublicServer,
-} from '../../_lib/catalog';
-import { siteMetadata } from '../../_lib/metadata';
-import { ButtonLink } from '@/components/motion/button';
+} from "../../_lib/catalog";
+import { siteMetadata } from "../../_lib/metadata";
+import { ButtonLink } from "@/components/motion/button";
 
 type RelatedItem = {
   slug: string;
@@ -21,10 +22,13 @@ type RelatedItem = {
 
 function RelatedRow({ href, item }: { href: string; item: RelatedItem }) {
   return (
-    <Link href={href} className="flex gap-2.5 px-4 py-3 transition-colors hover:bg-accent">
+    <Link
+      href={href}
+      className="flex gap-2.5 px-4 py-3 transition-colors hover:bg-accent"
+    >
       {item.iconUrl ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
+        <Image
+          unoptimized
           src={item.iconUrl}
           alt=""
           width={20}
@@ -33,12 +37,19 @@ function RelatedRow({ href, item }: { href: string; item: RelatedItem }) {
           className="mt-0.5 size-5 shrink-0 rounded object-cover"
         />
       ) : (
-        <span aria-hidden="true" className="mt-0.5 size-5 shrink-0 rounded bg-muted" />
+        <span
+          aria-hidden="true"
+          className="mt-0.5 size-5 shrink-0 rounded bg-muted"
+        />
       )}
       <span className="min-w-0">
-        <span className="block truncate text-sm font-medium text-foreground">{item.name}</span>
+        <span className="block truncate text-sm font-medium text-foreground">
+          {item.name}
+        </span>
         {item.description ? (
-          <span className="line-clamp-2 text-xs text-muted-foreground">{item.description}</span>
+          <span className="line-clamp-2 text-xs text-muted-foreground">
+            {item.description}
+          </span>
         ) : null}
       </span>
     </Link>
@@ -50,19 +61,20 @@ export async function generateMetadata({
 }: {
   params: Promise<{ slug: string }>;
 }): Promise<Metadata> {
-  const [{ slug }, t] = await Promise.all([params, getTranslations('server')]);
+  const [{ slug }, t] = await Promise.all([params, getTranslations("server")]);
   const server = await getPublicServer(slug);
   if (!server) {
     return siteMetadata({
       title: `Page not found | ${SITE.name}`,
-      description: t('browseEveryModelContextProtocolServerInTheDirectory'),
+      description: t("browseEveryModelContextProtocolServerInTheDirectory"),
       path: `/server/${encodeURIComponent(slug)}`,
       index: false,
     });
   }
   return siteMetadata({
     title: `${server.name} MCP Server | ${SITE.name}`,
-    description: server.description ?? t('defaultDescription', { name: server.name }),
+    description:
+      server.description ?? t("defaultDescription", { name: server.name }),
     path: `/server/${encodeURIComponent(server.slug)}`,
   });
 }
@@ -73,8 +85,8 @@ export default async function Page({
   params: Promise<{ slug: string }>;
 }) {
   const [t, common] = await Promise.all([
-    getTranslations('server'),
-    getTranslations('common'),
+    getTranslations("server"),
+    getTranslations("common"),
   ]);
   const { slug } = await params;
   const server = await getPublicServer(slug);
@@ -88,20 +100,41 @@ export default async function Page({
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8">
-      <nav className="flex items-center gap-1.5 text-sm text-muted-foreground" aria-label={common('breadcrumb')}>
-        <Link href="/" className="transition-colors hover:text-foreground">{t('home')}</Link>
+      <nav
+        className="flex items-center gap-1.5 text-sm text-muted-foreground"
+        aria-label={common("breadcrumb")}
+      >
+        <Link href="/" className="transition-colors hover:text-foreground">
+          {t("home")}
+        </Link>
         <ChevronRight className="size-3.5" />
-        <Link href="/server" className="transition-colors hover:text-foreground">{t('servers')}</Link>
+        <Link
+          href="/server"
+          className="transition-colors hover:text-foreground"
+        >
+          {t("servers")}
+        </Link>
         <ChevronRight className="size-3.5" />
-        <span className="truncate text-foreground" aria-current="page">{server.name}</span>
+        <span className="truncate text-foreground" aria-current="page">
+          {server.name}
+        </span>
       </nav>
 
       <header className="mt-6">
-        <h1 className="font-mono text-4xl font-bold tracking-tight text-foreground sm:text-5xl">{server.name}</h1>
+        <h1 className="font-mono text-4xl font-bold tracking-tight text-foreground sm:text-5xl">
+          {server.name}
+        </h1>
         <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
           {server.iconUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={server.iconUrl} alt="" width={20} height={20} className="size-5 rounded-full object-cover" />
+            <Image
+              unoptimized
+              loading="eager"
+              src={server.iconUrl}
+              alt=""
+              width={20}
+              height={20}
+              className="size-5 rounded-full object-cover"
+            />
           ) : null}
           {server.author ? <span>{server.author}</span> : null}
           <span className="inline-flex items-center gap-1">
@@ -112,37 +145,49 @@ export default async function Page({
         {server.categories.length > 0 ? (
           <div className="mt-4 flex flex-wrap gap-2">
             {server.categories.map((category) => (
-              <ButtonLink key={category.id} href={`/categories/${category.slug}`} variant="secondary" size="sm">
+              <ButtonLink
+                key={category.id}
+                href={`/categories/${category.slug}`}
+                variant="secondary"
+                size="sm"
+              >
                 {category.name}
               </ButtonLink>
             ))}
           </div>
         ) : null}
         {server.description ? (
-          <p className="mt-4 max-w-2xl text-base leading-relaxed text-foreground">{server.description}</p>
+          <p className="mt-4 max-w-2xl text-base leading-relaxed text-foreground">
+            {server.description}
+          </p>
         ) : null}
       </header>
 
       <div className="mt-8 grid gap-8 lg:grid-cols-3">
         <div className="min-w-0 lg:col-span-2">
           <div className="border-b border-border pb-2">
-            <h2 className="inline border-b-2 border-foreground pb-2 text-sm font-medium text-foreground">{t('about')}</h2>
+            <h2 className="inline border-b-2 border-foreground pb-2 text-sm font-medium text-foreground">
+              {t("about")}
+            </h2>
           </div>
           <p className="mt-5 text-base leading-relaxed text-foreground">
-            {server.description ?? t('defaultDescription', { name: server.name })}
+            {server.description ??
+              t("defaultDescription", { name: server.name })}
           </p>
           <section className="mt-8 rounded-lg border border-border bg-card p-5">
             <h2 className="font-mono text-sm font-semibold uppercase tracking-wider text-foreground">
-              {server.deployable ? t('deployAmpConnect') : t('deploymentUnavailable')}
+              {server.deployable
+                ? t("deployAmpConnect")
+                : t("deploymentUnavailable")}
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">
               {server.deployable
-                ? t('workspaceDeployDescription', { name: server.name })
-                : t('deploymentUnavailableDescription')}
+                ? t("workspaceDeployDescription", { name: server.name })
+                : t("deploymentUnavailableDescription")}
             </p>
             {server.deployable ? (
               <pre className="mt-3 overflow-x-auto rounded-md border border-border bg-background p-3 font-mono text-xs leading-relaxed text-foreground">
-{`POST /api/v1/mcp/<deployment-id>/rpc
+                {`POST /api/v1/mcp/<deployment-id>/rpc
 Authorization: Bearer <your-api-token>
 Content-Type: application/json
 
@@ -155,26 +200,45 @@ Content-Type: application/json
         <aside className="min-w-0 space-y-6">
           <div className="rounded-lg border border-border bg-card p-4">
             <ButtonLink
-              href={server.deployable
-                ? `/app?server=${encodeURIComponent(server.slug)}`
-                : `/app?market=mcp&q=${encodeURIComponent(server.slug)}`}
+              href={
+                server.deployable
+                  ? `/app?server=${encodeURIComponent(server.slug)}`
+                  : `/app?market=mcp&q=${encodeURIComponent(server.slug)}`
+              }
               className="w-full"
             >
-              {server.deployable ? t('signInToRunOnToolplane') : t('browseDeployableServers')}
+              {server.deployable
+                ? t("signInToRunOnToolplane")
+                : t("browseDeployableServers")}
             </ButtonLink>
             <p className="mt-2 text-center text-xs text-muted-foreground">
-              {server.deployable ? t('oneclickCloudHosting') : t('verifiedRecipesOnly')}
+              {server.deployable
+                ? t("oneclickCloudHosting")
+                : t("verifiedRecipesOnly")}
             </p>
           </div>
 
           {related.length > 0 ? (
             <div className="overflow-hidden rounded-lg border border-border">
               <div className="flex items-center justify-between border-b border-border px-4 py-3">
-                <h2 className="text-sm font-semibold text-foreground">{t('relatedMcps')}</h2>
-                <Link href="/server" className="text-xs text-muted-foreground hover:text-foreground">{t('viewMore')}</Link>
+                <h2 className="text-sm font-semibold text-foreground">
+                  {t("relatedMcps")}
+                </h2>
+                <Link
+                  href="/server"
+                  className="text-xs text-muted-foreground hover:text-foreground"
+                >
+                  {t("viewMore")}
+                </Link>
               </div>
               <div className="divide-y divide-border">
-                {related.map((item) => <RelatedRow key={item.slug} href={`/server/${item.slug}`} item={item} />)}
+                {related.map((item) => (
+                  <RelatedRow
+                    key={item.slug}
+                    href={`/server/${item.slug}`}
+                    item={item}
+                  />
+                ))}
               </div>
             </div>
           ) : null}
@@ -182,12 +246,23 @@ Content-Type: application/json
           {relatedSkills.length > 0 ? (
             <div className="overflow-hidden rounded-lg border border-border">
               <div className="flex items-center justify-between border-b border-border px-4 py-3">
-                <h2 className="text-sm font-semibold text-foreground">{t('relatedSkills')}</h2>
-                <Link href="/tools/skills" className="text-xs text-muted-foreground hover:text-foreground">{t('viewAll')}</Link>
+                <h2 className="text-sm font-semibold text-foreground">
+                  {t("relatedSkills")}
+                </h2>
+                <Link
+                  href="/tools/skills"
+                  className="text-xs text-muted-foreground hover:text-foreground"
+                >
+                  {t("viewAll")}
+                </Link>
               </div>
               <div className="divide-y divide-border">
                 {relatedSkills.map((item) => (
-                  <RelatedRow key={item.slug} href={`/tools/skills/${item.slug}`} item={item} />
+                  <RelatedRow
+                    key={item.slug}
+                    href={`/tools/skills/${item.slug}`}
+                    item={item}
+                  />
                 ))}
               </div>
             </div>

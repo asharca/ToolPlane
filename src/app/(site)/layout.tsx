@@ -1,11 +1,11 @@
-import type { Metadata } from 'next';
-import { NextIntlClientProvider } from 'next-intl';
-import { getMessages, getTranslations } from 'next-intl/server';
-import { Header } from '@/components/layout/Header';
-import { Footer } from '@/components/layout/Footer';
-import { siteOrigin } from './_lib/metadata';
+import type { Metadata } from "next";
+import { NextIntlClientProvider } from "next-intl";
+import { getMessages, getTranslations } from "next-intl/server";
+import { Header } from "@/components/layout/Header";
+import { Footer } from "@/components/layout/Footer";
+import { siteOrigin } from "./_lib/metadata";
 
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   metadataBase: siteOrigin(),
@@ -18,21 +18,21 @@ export default async function SiteLayout({
 }) {
   const [messages, common] = await Promise.all([
     getMessages(),
-    getTranslations('common'),
+    getTranslations("common"),
   ]);
   return (
-    <NextIntlClientProvider
-      messages={{ common: messages.common }}
-    >
+    <NextIntlClientProvider messages={{ common: messages.common }}>
       <div className="isolate flex min-h-dvh flex-col bg-background text-foreground">
         <a
           href="#main-content"
           className="sr-only fixed left-3 top-3 z-[100] rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground shadow-lg focus:not-sr-only"
         >
-          {common('skipToContent')}
+          {common("skipToContent")}
         </a>
         <Header />
-        <main id="main-content" className="flex-1">{children}</main>
+        <main id="main-content" className="flex-1">
+          {children}
+        </main>
         <Footer />
       </div>
     </NextIntlClientProvider>

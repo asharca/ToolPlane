@@ -1,4 +1,7 @@
-export type ChannelLogger = Record<'debug' | 'info' | 'warn' | 'error', (message: string, meta?: unknown) => void>;
+export type ChannelLogger = Record<
+  "debug" | "info" | "warn" | "error",
+  (message: string, meta?: unknown) => void
+>;
 
 export const loggerService = {
   withContext(context: string): ChannelLogger {

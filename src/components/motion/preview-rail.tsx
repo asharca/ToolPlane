@@ -173,7 +173,9 @@ export function PreviewRail({
           const selected = item.id === selectedId;
           const highlighted = item.id === highlightedId;
           const distance =
-            displayedIndex < 0 ? Number.POSITIVE_INFINITY : Math.abs(index - displayedIndex);
+            displayedIndex < 0
+              ? Number.POSITIVE_INFINITY
+              : Math.abs(index - displayedIndex);
           const scale = highlighted
             ? 1
             : distance === 1
@@ -227,8 +229,7 @@ export function PreviewRail({
           };
           const handleSelect = (event: MouseEvent<HTMLElement>) => {
             const gesture = tap.take();
-            const tapped =
-              gesture !== null && gesture.pointerType !== "mouse";
+            const tapped = gesture !== null && gesture.pointerType !== "mouse";
 
             if (tapped) {
               // A link would otherwise show its preview and leave the page in
@@ -312,9 +313,7 @@ export function PreviewRail({
           {items.map((item) => (
             <div
               key={item.id}
-              style={
-                isHorizontal ? { width: itemSize } : { height: itemSize }
-              }
+              style={isHorizontal ? { width: itemSize } : { height: itemSize }}
               className={cn(
                 "relative flex items-center",
                 isHorizontal ? "justify-center" : undefined,

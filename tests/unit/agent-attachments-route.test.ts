@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   resolveRequestUser: vi.fn(),
@@ -10,25 +10,28 @@ const mocks = vi.hoisted(() => ({
   systemSettingFindUnique: vi.fn(),
   conversationFindFirst: vi.fn(),
   attachmentCreate: vi.fn(),
-  reserve: vi.fn(), fail: vi.fn(),
+  reserve: vi.fn(),
+  fail: vi.fn(),
 }));
 
-vi.mock('@/lib/agents/upload-reservations', () => ({
-  reserveAttachment: mocks.reserve, commitAttachment: mocks.attachmentCreate, failAttachment: mocks.fail,
+vi.mock("@/lib/agents/upload-reservations", () => ({
+  reserveAttachment: mocks.reserve,
+  commitAttachment: mocks.attachmentCreate,
+  failAttachment: mocks.fail,
 }));
-vi.mock('@/lib/auth/request-user', () => ({
+vi.mock("@/lib/auth/request-user", () => ({
   resolveRequestUser: mocks.resolveRequestUser,
 }));
-vi.mock('@/lib/agents/queries', () => ({
+vi.mock("@/lib/agents/queries", () => ({
   getAgentForRequest: mocks.getAgentForRequest,
 }));
-vi.mock('@/lib/agents/hermes/runtime', () => ({
+vi.mock("@/lib/agents/hermes/runtime", () => ({
   acquireHermesRuntimeWriteLease: mocks.acquireHermesRuntimeWriteLease,
   ensureHermesRuntimeReady: mocks.ensureHermesRuntimeReady,
   HERMES_RUNTIME_COPY_IN_PROGRESS_ERROR:
-    'The Hermes runtime is temporarily unavailable while a clone or image upgrade is in progress.',
+    "The Hermes runtime is temporarily unavailable while a clone or image upgrade is in progress.",
 }));
-vi.mock('@/lib/db', () => ({
+vi.mock("@/lib/db", () => ({
   db: {
     systemSetting: { findUnique: mocks.systemSettingFindUnique },
     conversation: { findFirst: mocks.conversationFindFirst },
@@ -36,31 +39,34 @@ vi.mock('@/lib/db', () => ({
   },
 }));
 
-import { POST } from '@/app/api/v1/agents/[agentId]/attachments/route';
+import { POST } from "@/app/api/v1/agents/[agentId]/attachments/route";
 
-const context = { params: Promise.resolve({ agentId: 'agent-1' }) };
+const context = { params: Promise.resolve({ agentId: "agent-1" }) };
 
-function uploadRequest(body: BodyInit = Buffer.from('spreadsheet bytes')) {
+function uploadRequest(body: BodyInit = Buffer.from("spreadsheet bytes")) {
   return new Request(
-    'http://toolplane.test/api/v1/agents/agent-1/attachments?conversationId=conv-1&filename=report.xlsx',
+    "http://toolplane.test/api/v1/agents/agent-1/attachments?conversationId=conv-1&filename=report.xlsx",
     {
-      method: 'POST',
-      headers: { 'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' },
+      method: "POST",
+      headers: {
+        "content-type":
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      },
       body,
     },
   );
 }
 
-describe('Agent attachment upload route', () => {
+describe("Agent attachment upload route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.resolveRequestUser.mockResolvedValue({ id: 'user-1' });
+    mocks.resolveRequestUser.mockResolvedValue({ id: "user-1" });
     mocks.getAgentForRequest.mockResolvedValue({
-      id: 'agent-1',
-      workspaceId: 'workspace-1',
-      runtime: { id: 'runtime-1', kind: 'hermes' },
+      id: "agent-1",
+      workspaceId: "workspace-1",
+      runtime: { id: "runtime-1", kind: "hermes" },
     });
-    mocks.conversationFindFirst.mockResolvedValue({ id: 'conv-1' });
+    mocks.conversationFindFirst.mockResolvedValue({ id: "conv-1" });
     mocks.systemSettingFindUnique.mockResolvedValue(null);
     mocks.acquireHermesRuntimeWriteLease.mockReturnValue({
       release: mocks.releaseHermesRuntimeWriteLease,
@@ -68,7 +74,11 @@ describe('Agent attachment upload route', () => {
     mocks.ensureHermesRuntimeReady.mockResolvedValue({ port: 4312 });
     mocks.reserve.mockResolvedValue({});
     mocks.fail.mockResolvedValue(undefined);
-    mocks.attachmentCreate.mockImplementation(async (data) => ({ id: 'attachment-1', ...data, storagePath: '/opt/data/workspace/file' }));
+    mocks.attachmentCreate.mockImplementation(async (data) => ({
+      id: "attachment-1",
+      ...data,
+      storagePath: "/opt/data/workspace/file",
+    }));
   });
 
   afterEach(() => {
@@ -76,82 +86,101 @@ describe('Agent attachment upload route', () => {
     vi.unstubAllGlobals();
   });
 
-  it('streams raw bytes to the Hermes workspace and persists returned metadata', async () => {
-    const fetchMock = vi.fn().mockImplementation(async (url: URL, init: RequestInit) => {
-      expect(url.searchParams.get('path')).toMatch(/^attachments\/conv-1\/.+-report\.xlsx$/);
-      expect(init.body).toBeInstanceOf(ReadableStream);
-      expect(new Headers(init.headers).get('x-toolplane-max-upload-bytes')).toBe('1000000000');
-      await expect(new Response(init.body).text()).resolves.toBe('spreadsheet bytes');
-      return new Response(JSON.stringify({
-        path: '/opt/data/workspace/' + url.searchParams.get('path'),
-        size: 17,
-      }), { status: 201, headers: { 'content-type': 'application/json' } });
-    });
-    vi.stubGlobal('fetch', fetchMock);
+  it("streams raw bytes to the Hermes workspace and persists returned metadata", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(async (url: URL, init: RequestInit) => {
+        expect(url.searchParams.get("path")).toMatch(
+          /^attachments\/conv-1\/.+-report\.xlsx$/,
+        );
+        expect(init.body).toBeInstanceOf(ReadableStream);
+        expect(
+          new Headers(init.headers).get("x-toolplane-max-upload-bytes"),
+        ).toBe("1000000000");
+        await expect(new Response(init.body).text()).resolves.toBe(
+          "spreadsheet bytes",
+        );
+        return new Response(
+          JSON.stringify({
+            path: `/opt/data/workspace/${url.searchParams.get("path")}`,
+            size: 17,
+          }),
+          { status: 201, headers: { "content-type": "application/json" } },
+        );
+      });
+    vi.stubGlobal("fetch", fetchMock);
 
     const response = await POST(uploadRequest(), context);
 
     expect(response.status).toBe(201);
-    expect(mocks.attachmentCreate).toHaveBeenCalledWith(expect.objectContaining({
-        workspaceId: 'workspace-1',
-        conversationId: 'conv-1',
-        name: 'report.xlsx',
+    expect(mocks.attachmentCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: "workspace-1",
+        conversationId: "conv-1",
+        name: "report.xlsx",
         size: 17,
-      }));
+      }),
+    );
   });
 
-  it('rejects a declared file above the configured server limit before starting Hermes', async () => {
-    mocks.systemSettingFindUnique.mockResolvedValue({ value: '100' });
-    const request = uploadRequest(Buffer.from('small'));
-    request.headers.set('content-length', '101');
+  it("rejects a declared file above the configured server limit before starting Hermes", async () => {
+    mocks.systemSettingFindUnique.mockResolvedValue({ value: "100" });
+    const request = uploadRequest(Buffer.from("small"));
+    request.headers.set("content-length", "101");
 
     const response = await POST(request, context);
 
     expect(response.status).toBe(413);
-    await expect(response.json()).resolves.toEqual({ error: 'Attachment exceeds the 100 bytes limit.' });
+    await expect(response.json()).resolves.toEqual({
+      error: "Attachment exceeds the 100 bytes limit.",
+    });
     expect(mocks.ensureHermesRuntimeReady).not.toHaveBeenCalled();
     expect(mocks.releaseHermesRuntimeWriteLease).toHaveBeenCalledOnce();
   });
 
-  it('rejects uploads while a full clone holds the Hermes runtime', async () => {
+  it("rejects uploads while a full clone holds the Hermes runtime", async () => {
     mocks.acquireHermesRuntimeWriteLease.mockReturnValue(null);
 
     const response = await POST(uploadRequest(), context);
 
     expect(response.status).toBe(503);
     await expect(response.json()).resolves.toEqual({
-      error: 'The Hermes runtime is temporarily unavailable while a clone or image upgrade is in progress.',
+      error:
+        "The Hermes runtime is temporarily unavailable while a clone or image upgrade is in progress.",
     });
     expect(mocks.ensureHermesRuntimeReady).not.toHaveBeenCalled();
   });
 
-  it('does not allow an attachment to target another Agent conversation', async () => {
+  it("does not allow an attachment to target another Agent conversation", async () => {
     mocks.conversationFindFirst.mockResolvedValue(null);
 
     const response = await POST(uploadRequest(), context);
 
     expect(response.status).toBe(404);
     expect(mocks.conversationFindFirst).toHaveBeenCalledWith({
-      where: { id: 'conv-1', agentId: 'agent-1' },
+      where: { id: "conv-1", agentId: "agent-1" },
       select: { id: true },
     });
     expect(mocks.ensureHermesRuntimeReady).not.toHaveBeenCalled();
   });
 
-  it('returns an actionable JSON error when the runtime upload stream fails', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('socket closed')));
+  it("returns an actionable JSON error when the runtime upload stream fails", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockRejectedValue(new Error("socket closed")),
+    );
 
     const response = await POST(uploadRequest(), context);
 
     expect(response.status).toBe(502);
     await expect(response.json()).resolves.toEqual({
-      error: 'Could not reach the Hermes attachment store.',
+      error: "Could not reach the Hermes attachment store.",
     });
     expect(mocks.attachmentCreate).not.toHaveBeenCalled();
     expect(mocks.fail).toHaveBeenCalledOnce();
   });
 
-  it('rejects unauthenticated uploads before resolving an Agent', async () => {
+  it("rejects unauthenticated uploads before resolving an Agent", async () => {
     mocks.resolveRequestUser.mockResolvedValue(null);
 
     const response = await POST(uploadRequest(), context);
@@ -160,59 +189,89 @@ describe('Agent attachment upload route', () => {
     expect(mocks.getAgentForRequest).not.toHaveBeenCalled();
   });
 
-  it('rejects legacy multipart bodies instead of buffering them in application memory', async () => {
+  it("rejects legacy multipart bodies instead of buffering them in application memory", async () => {
     const form = new FormData();
-    form.set('file', new File(['legacy'], 'legacy.txt', { type: 'text/plain' }));
-    const request = new Request('http://toolplane.test/api/v1/agents/agent-1/attachments', {
-      method: 'POST',
-      body: form,
-    });
+    form.set(
+      "file",
+      new File(["legacy"], "legacy.txt", { type: "text/plain" }),
+    );
+    const request = new Request(
+      "http://toolplane.test/api/v1/agents/agent-1/attachments",
+      {
+        method: "POST",
+        body: form,
+      },
+    );
 
     const response = await POST(request, context);
 
     expect(response.status).toBe(415);
     expect(mocks.ensureHermesRuntimeReady).not.toHaveBeenCalled();
   });
-  it('keeps failed-settlement files tracked after the upstream write succeeds', async () => {
-    vi.stubGlobal('fetch', vi.fn(async (url: URL, init: RequestInit) => {
-      await new Response(init.body).text();
-      return Response.json({ path: '/opt/data/workspace/' + url.searchParams.get('path'), size: 17 }, { status: 201 });
-    }));
-    mocks.attachmentCreate.mockRejectedValueOnce(new Error('database secret must not leak'));
+  it("keeps failed-settlement files tracked after the upstream write succeeds", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: URL, init: RequestInit) => {
+        await new Response(init.body).text();
+        return Response.json(
+          {
+            path: `/opt/data/workspace/${url.searchParams.get("path")}`,
+            size: 17,
+          },
+          { status: 201 },
+        );
+      }),
+    );
+    mocks.attachmentCreate.mockRejectedValueOnce(
+      new Error("database secret must not leak"),
+    );
     const response = await POST(uploadRequest(), context);
     expect(response.status).toBe(503);
-    expect(await response.text()).not.toContain('database secret');
+    expect(await response.text()).not.toContain("database secret");
     expect(mocks.fail).toHaveBeenCalledWith(mocks.reserve.mock.calls[0][0].id);
     expect(mocks.releaseHermesRuntimeWriteLease).toHaveBeenCalledOnce();
   });
-  it('rejects a dishonest Content-Length based on the actual byte stream', async () => {
-    vi.stubGlobal('fetch', vi.fn(async (_url: URL, init: RequestInit) => {
-      await new Response(init.body).text();
-      throw new Error('should not finish');
-    }));
-    const req = uploadRequest(); req.headers.set('content-length', '3');
+  it("rejects a dishonest Content-Length based on the actual byte stream", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: URL, init: RequestInit) => {
+        await new Response(init.body).text();
+        throw new Error("should not finish");
+      }),
+    );
+    const req = uploadRequest();
+    req.headers.set("content-length", "3");
     const response = await POST(req, context);
     expect(response.status).toBe(413);
-    expect(mocks.reserve).toHaveBeenCalledWith(expect.objectContaining({ reservedBytes: 3 }));
+    expect(mocks.reserve).toHaveBeenCalledWith(
+      expect.objectContaining({ reservedBytes: 3 }),
+    );
     expect(mocks.attachmentCreate).not.toHaveBeenCalled();
     expect(mocks.fail).toHaveBeenCalledOnce();
   });
-  it('rejects a returned path outside the reserved upload', async () => {
-    vi.stubGlobal('fetch', vi.fn(async (_url: URL, init: RequestInit) => {
-      await new Response(init.body).text();
-      return Response.json({ path: '/opt/data/workspace/someone-else.txt', size: 17 }, { status: 201 });
-    }));
+  it("rejects a returned path outside the reserved upload", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: URL, init: RequestInit) => {
+        await new Response(init.body).text();
+        return Response.json(
+          { path: "/opt/data/workspace/someone-else.txt", size: 17 },
+          { status: 201 },
+        );
+      }),
+    );
     const response = await POST(uploadRequest(), context);
     expect(response.status).toBe(409);
     expect(mocks.attachmentCreate).not.toHaveBeenCalled();
     expect(mocks.fail).toHaveBeenCalledOnce();
   });
-  it('does not provision a runtime when capacity admission fails', async () => {
-    mocks.reserve.mockRejectedValueOnce(new Error('quota backend is unavailable'));
+  it("does not provision a runtime when capacity admission fails", async () => {
+    mocks.reserve.mockRejectedValueOnce(
+      new Error("quota backend is unavailable"),
+    );
     const response = await POST(uploadRequest(), context);
     expect(response.status).toBe(503);
     expect(mocks.ensureHermesRuntimeReady).not.toHaveBeenCalled();
     expect(mocks.fail).not.toHaveBeenCalled();
   });
-
 });

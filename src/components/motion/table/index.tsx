@@ -140,24 +140,31 @@ export function Table<T>({
     onColumnResize,
   });
 
-  const { selected, allSelected, someSelected, toggleAll, toggleRow, clearSelection } =
-    useRowSelection({
-      sortedRows,
-      selectedRowIds,
-      defaultSelectedRowIds,
-      onSelectionChange,
-    });
+  const {
+    selected,
+    allSelected,
+    someSelected,
+    toggleAll,
+    toggleRow,
+    clearSelection,
+  } = useRowSelection({
+    sortedRows,
+    selectedRowIds,
+    defaultSelectedRowIds,
+    onSelectionChange,
+  });
   const selectedEntries = useMemo(
     () => sortedRows.filter((entry) => selected.has(entry.id)),
     [sortedRows, selected],
   );
-  const selectionHeader = selectable && selectionActions && selectedEntries.length > 0
-    ? selectionActions({
-        selectedRows: selectedEntries.map((entry) => entry.row),
-        selectedRowIds: selectedEntries.map((entry) => entry.id),
-        clearSelection,
-      })
-    : undefined;
+  const selectionHeader =
+    selectable && selectionActions && selectedEntries.length > 0
+      ? selectionActions({
+          selectedRows: selectedEntries.map((entry) => entry.row),
+          selectedRowIds: selectedEntries.map((entry) => entry.id),
+          clearSelection,
+        })
+      : undefined;
 
   const virtualizer = useVirtualizer({
     count: sortedRows.length,
@@ -196,18 +203,21 @@ export function Table<T>({
     // sizes the column.
     const inputOnly = (column: (typeof orderedColumns)[number]) =>
       Boolean(onColumnRename) || (!column.cell && Boolean(column.editable));
-    const total = orderedColumns.reduce((sum, column) => {
-      const resized = widths[column.key];
-      if (resized != null) return sum + resized;
-      const declared = resolveColumnWidth(column.width, rootFontSize);
-      if (declared != null) return sum + declared;
-      return (
-        sum +
-        (inputOnly(column)
-          ? Math.max(minColumnWidth, INPUT_COLUMN_WIDTH)
-          : minColumnWidth)
-      );
-    }, selectable ? CHECKBOX_PX : 0);
+    const total = orderedColumns.reduce(
+      (sum, column) => {
+        const resized = widths[column.key];
+        if (resized != null) return sum + resized;
+        const declared = resolveColumnWidth(column.width, rootFontSize);
+        if (declared != null) return sum + declared;
+        return (
+          sum +
+          (inputOnly(column)
+            ? Math.max(minColumnWidth, INPUT_COLUMN_WIDTH)
+            : minColumnWidth)
+        );
+      },
+      selectable ? CHECKBOX_PX : 0,
+    );
     return Math.round(total);
   }, [
     minColumnWidth,
@@ -247,9 +257,10 @@ export function Table<T>({
   }, []);
 
   const rowRefs = useRef<Record<string, HTMLTableRowElement | null>>({});
-  const [activeRow, setActiveRow] = useState<{ id: string; index: number } | null>(
-    null,
-  );
+  const [activeRow, setActiveRow] = useState<{
+    id: string;
+    index: number;
+  } | null>(null);
   const rowTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activateRow = useCallback((id: string, index: number) => {
     if (rowTimer.current) clearTimeout(rowTimer.current);
@@ -377,7 +388,10 @@ export function Table<T>({
                       )}
                     >
                       {selectable ? (
-                        <td className="text-center" style={{ width: CHECKBOX_PX, minWidth: CHECKBOX_PX }}>
+                        <td
+                          className="text-center"
+                          style={{ width: CHECKBOX_PX, minWidth: CHECKBOX_PX }}
+                        >
                           <div className="flex items-center justify-center">
                             <Checkbox
                               checked={isSelected}

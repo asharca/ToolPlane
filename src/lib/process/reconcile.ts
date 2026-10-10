@@ -1,14 +1,22 @@
-import 'server-only';
-import { db } from '@/lib/db';
-import { startProcess } from './supervisor';
-import { resolveSpawnSpec, type DeploymentForSpawn, type SpawnSpec } from './spawn-spec';
+import "server-only";
+import { db } from "@/lib/db";
+import { startProcess } from "./supervisor";
+import {
+  resolveSpawnSpec,
+  type DeploymentForSpawn,
+  type SpawnSpec,
+} from "./spawn-spec";
 
 type HermesRuntimeRef = { agentId: string; kind: string; workspaceId: string };
 type RunningDeployment = DeploymentForSpawn & {
   id: string;
-  sandbox?: { agentRuntime?: (HermesRuntimeRef & {
-    agent: { publicRuntimeAllocation: { id: string } | null };
-  }) | null } | null;
+  sandbox?: {
+    agentRuntime?:
+      | (HermesRuntimeRef & {
+          agent: { publicRuntimeAllocation: { id: string } | null };
+        })
+      | null;
+  } | null;
 };
 
 export type ReconcileDeps = {
@@ -28,7 +36,7 @@ export type ReconcileDeps = {
 const defaultDeps: ReconcileDeps = {
   loadRunning: async () => {
     const deployments = await db.deployment.findMany({
-      where: { status: { in: ['running', 'provisioning'] } },
+      where: { status: { in: ["running", "provisioning"] } },
       include: {
         server: { select: { name: true } },
         sandbox: {
@@ -38,7 +46,9 @@ const defaultDeps: ReconcileDeps = {
                 agentId: true,
                 kind: true,
                 workspaceId: true,
-                agent: { select: { publicRuntimeAllocation: { select: { id: true } } } },
+                agent: {
+                  select: { publicRuntimeAllocation: { select: { id: true } } },
+                },
               },
             },
           },
@@ -48,13 +58,16 @@ const defaultDeps: ReconcileDeps = {
     // Public Endpoint runtimes are lazy: a request starts them and the idle
     // maintenance pass stops them again. Never eagerly boot every tenant
     // container after an app restart.
-    return deployments.filter((deployment) => (
-      !deployment.sandbox?.agentRuntime?.agent.publicRuntimeAllocation
-    )) as RunningDeployment[];
+    return deployments.filter(
+      (deployment) =>
+        !deployment.sandbox?.agentRuntime?.agent.publicRuntimeAllocation,
+    ) as RunningDeployment[];
   },
   start: startProcess,
   ensureHermesReady: async (workspaceId, agentId) => {
-    const { ensureHermesRuntimeReady } = await import('@/lib/agents/hermes/runtime');
+    const { ensureHermesRuntimeReady } = await import(
+      "@/lib/agents/hermes/runtime"
+    );
     await ensureHermesRuntimeReady(workspaceId, agentId);
   },
 };
@@ -64,17 +77,21 @@ const defaultDeps: ReconcileDeps = {
 // live state matches what the DB (and the UI) claims. startProcess is
 // idempotent — a deployment already supervised is skipped — and a spawn failure
 // flips that one to 'error' without aborting the rest.
-export async function reconcileDeployments(deps: ReconcileDeps = defaultDeps): Promise<number> {
+export async function reconcileDeployments(
+  deps: ReconcileDeps = defaultDeps,
+): Promise<number> {
   const deployments = await deps.loadRunning();
   let started = 0;
   for (const d of deployments) {
     try {
       const runtime = d.sandbox?.agentRuntime;
-      if (runtime?.kind === 'hermes' && deps.ensureHermesReady) {
+      const ensureHermesReady = deps.ensureHermesReady;
+      if (runtime?.kind === "hermes" && ensureHermesReady) {
         await deps.start(d.id, resolveSpawnSpec(d), {
           awaitReady: false,
           workspaceId: runtime.workspaceId,
-          onReady: () => deps.ensureHermesReady!(runtime.workspaceId, runtime.agentId),
+          onReady: () =>
+            ensureHermesReady.call(deps, runtime.workspaceId, runtime.agentId),
         });
       } else {
         await deps.start(d.id, resolveSpawnSpec(d), { awaitReady: false });

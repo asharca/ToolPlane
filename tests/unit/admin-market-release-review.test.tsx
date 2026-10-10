@@ -1,8 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, cleanup } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
-import { assistantReleaseChecksum } from '@/lib/market/assistant-manifest';
-import { skillReleaseChecksum } from '@/lib/market/skill-manifest';
+import { Blob as NodeBlob } from "node:buffer";
+import { assertDefined } from "../assert-defined";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { render, screen, cleanup, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { assistantReleaseChecksum } from "@/lib/market/assistant-manifest";
+import { skillReleaseChecksum } from "@/lib/market/skill-manifest";
 
 const mocks = vi.hoisted(() => ({
   requireAdmin: vi.fn(),
@@ -13,229 +15,351 @@ const mocks = vi.hoisted(() => ({
   revalidatePath: vi.fn(),
 }));
 
-vi.mock('next/cache', () => ({ revalidatePath: mocks.revalidatePath }));
-vi.mock('next-intl/server', () => ({
-  getTranslations: vi.fn().mockResolvedValue(Object.assign((key: string) => key, { has: () => true })),
+vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidatePath }));
+vi.mock("next-intl/server", () => ({
+  getTranslations: vi
+    .fn()
+    .mockResolvedValue(
+      Object.assign((key: string) => key, { has: () => true }),
+    ),
 }));
-vi.mock('@/lib/auth/admin', () => ({ requireAdmin: mocks.requireAdmin }));
-vi.mock('@/lib/db', () => ({
-  db: { marketRelease: { findFirst: async (query: { select?: unknown }) => {
-    if (query.select) return null;
-    const [listing] = await mocks.findMany();
-    return { ...listing.pendingRelease, createdAt: new Date(), reviewStatus: 'pending', listing: { ...listing, pendingReleaseId: listing.pendingRelease.id, latestRelease: null, releases: [] } };
-  } } },
+vi.mock("@/lib/auth/admin", () => ({ requireAdmin: mocks.requireAdmin }));
+vi.mock("@/lib/db", () => ({
+  db: {
+    marketRelease: {
+      findFirst: async (query: { select?: unknown }) => {
+        if (query.select) return null;
+        const [listing] = await mocks.findMany();
+        return {
+          ...listing.pendingRelease,
+          createdAt: new Date(),
+          reviewStatus: "pending",
+          listing: {
+            ...listing,
+            pendingReleaseId: listing.pendingRelease.id,
+            latestRelease: null,
+            releases: [],
+          },
+        };
+      },
+    },
+  },
 }));
-vi.mock('@/components/admin/ReleaseChanges', () => ({ ReleaseChanges: () => null }));
-vi.mock('@/lib/admin/categories', () => ({
-  listCategories: vi.fn().mockResolvedValue([{ id: 'category-1', slug: 'research', name: 'Research' }]),
+vi.mock("@/components/admin/ReleaseChanges", () => ({
+  ReleaseChanges: () => null,
 }));
-vi.mock('@/lib/admin/market-catalog', () => ({
-  listAdminMarketListings: vi.fn().mockResolvedValue({ items: [], total: 0, page: 1, pageSize: 25 }),
-  listAdminPublicToolkits: vi.fn().mockResolvedValue({ items: [], total: 0, page: 1, pageSize: 25 }),
+vi.mock("@/lib/admin/categories", () => ({
+  listCategories: vi
+    .fn()
+    .mockResolvedValue([
+      { id: "category-1", slug: "research", name: "Research" },
+    ]),
 }));
-vi.mock('@/lib/market/skills', () => ({
+vi.mock("@/lib/admin/market-catalog", () => ({
+  listAdminMarketListings: vi
+    .fn()
+    .mockResolvedValue({ items: [], total: 0, page: 1, pageSize: 25 }),
+  listAdminPublicToolkits: vi
+    .fn()
+    .mockResolvedValue({ items: [], total: 0, page: 1, pageSize: 25 }),
+}));
+vi.mock("@/lib/market/skills", () => ({
   rejectMarketRelease: mocks.rejectMarketRelease,
 }));
-vi.mock('@/lib/market/resources', () => ({
+vi.mock("@/lib/market/resources", () => ({
   approveResourceMarketRelease: mocks.approveResourceMarketRelease,
   parseMcpMarketManifest: vi.fn((value) => value),
   parseToolkitMarketManifest: vi.fn((value) => value),
 }));
-import AdminMarketReviewPage from '@/app/admin/reviews/market/[id]/page';
+import AdminMarketReviewPage from "@/app/admin/reviews/market/[id]/page";
 import {
   approveMarketReleaseAction,
   rejectMarketReleaseAction,
-} from '@/lib/admin/market-review-actions';
+} from "@/lib/admin/market-review-actions";
 
-describe('admin market release review', () => {
+describe("admin market release review", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.requireAdmin.mockResolvedValue({ id: 'admin-1' });
+    mocks.requireAdmin.mockResolvedValue({ id: "admin-1" });
     mocks.count.mockResolvedValue(1);
   });
 
-  it('shows pending release details', async () => {
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it("shows pending release details", async () => {
+    vi.stubGlobal("Blob", NodeBlob);
     const manifest = {
       schemaVersion: 1 as const,
-      kind: 'skill' as const,
+      kind: "skill" as const,
       skill: {
-        name: 'Writer',
-        slug: 'writer',
-        description: 'Write carefully.',
-        content: '# Writer\n\nCheck every claim.',
-        files: [{ path: 'references/checklist.md', content: 'Review every source.' }],
+        name: "Writer",
+        slug: "writer",
+        description: "Write carefully.",
+        content: "# Writer\n\nCheck every claim.",
+        files: [
+          { path: "references/checklist.md", content: "Review every source." },
+        ],
         userInvocable: true,
         agentInvocable: true,
-        effort: 'default',
-        source: { type: 'custom' as const },
+        effort: "default",
+        source: { type: "custom" as const },
       },
     };
-    mocks.findMany.mockResolvedValue([{
-      id: 'listing-1',
-      kind: 'skill',
-      namespace: 'acme',
-      slug: 'writer',
-      publisherKind: 'workspace',
-      name: 'Writer',
-      categories: [{ id: 'category-1' }],
-      publisherWorkspace: { name: 'Acme' },
-      publishedBy: { name: 'Ada', email: 'ada@example.com' },
-      pendingRelease: {
-        id: 'release-1',
-        version: 2,
-        releaseNotes: 'Safer defaults',
-        releaseSummary: { fileCount: 2 },
-        checksum: skillReleaseChecksum(manifest),
-        manifest,
-        scanResult: { status: 'clean', checkedFiles: 2 },
+    mocks.findMany.mockResolvedValue([
+      {
+        id: "listing-1",
+        kind: "skill",
+        namespace: "acme",
+        slug: "writer",
+        publisherKind: "workspace",
+        name: "Writer",
+        categories: [{ id: "category-1" }],
+        publisherWorkspace: { name: "Acme" },
+        publishedBy: { name: "Ada", email: "ada@example.com" },
+        pendingRelease: {
+          id: "release-1",
+          version: 2,
+          releaseNotes: "Safer defaults",
+          releaseSummary: { fileCount: 2 },
+          checksum: skillReleaseChecksum(manifest),
+          manifest,
+          scanResult: { status: "clean", checkedFiles: 2 },
+        },
       },
-    }]);
+    ]);
 
-    render(await AdminMarketReviewPage({ params: Promise.resolve({ id: 'listing-1' }), searchParams: Promise.resolve({ releaseId: 'release-1' }) }));
+    render(
+      await AdminMarketReviewPage({
+        params: Promise.resolve({ id: "listing-1" }),
+        searchParams: Promise.resolve({ releaseId: "release-1" }),
+      }),
+    );
 
     expect(mocks.requireAdmin).toHaveBeenCalledOnce();
-    expect(screen.getAllByText('Writer').length).toBeGreaterThan(0);
-    expect(screen.getByText('Safer defaults')).toBeInTheDocument();
+    expect(screen.getAllByText("Writer").length).toBeGreaterThan(0);
+    expect(screen.getByText("Safer defaults")).toBeInTheDocument();
     expect(screen.getByText(/"fileCount": 2/)).toBeInTheDocument();
-    expect(screen.getByText(skillReleaseChecksum(manifest))).toBeInTheDocument();
-    expect(screen.getByText('marketReleaseSkillMarkdown').nextElementSibling)
-      .toHaveTextContent('# Writer Check every claim.');
-    expect(screen.getByText('references/checklist.md').closest('details'))
-      .toHaveTextContent('Review every source.');
-    expect(screen.getByText('marketReleaseManifestJson').parentElement)
-      .toHaveTextContent('"schemaVersion": 1');
-    expect(screen.getByText('marketReleaseScanResult').parentElement)
-      .toHaveTextContent('"status": "clean"');
-    const acknowledgement = screen.getByRole('checkbox', {
+    expect(
+      screen.getByText(skillReleaseChecksum(manifest)),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("marketReleaseSkillMarkdown").nextElementSibling,
+    ).toHaveTextContent("# Writer Check every claim.");
+    expect(
+      screen.getByText("marketReleaseManifestJson").parentElement,
+    ).toHaveTextContent('"schemaVersion": 1');
+    expect(
+      screen.getByText("marketReleaseScanResult").parentElement,
+    ).toHaveTextContent('"status": "clean"');
+    const acknowledgement = screen.getByRole("checkbox", {
       name: /I inspected the complete checksum-covered artifact/,
     });
     expect(acknowledgement).toBeRequired();
-    const form = acknowledgement.closest('form')!;
+    const form = assertDefined(acknowledgement.closest("form"));
     expect(form.checkValidity()).toBe(false);
-    expect(new FormData(form).has('reviewConfirmed')).toBe(false);
+    expect(new FormData(form).has("reviewConfirmed")).toBe(false);
     await userEvent.click(acknowledgement);
     expect(form.checkValidity()).toBe(true);
-    expect(new FormData(form).get('reviewConfirmed')).toBe('yes');
+    expect(new FormData(form).get("reviewConfirmed")).toBe("yes");
+    const references = screen.getByRole("treeitem", { name: "references" });
+    expect(references).toHaveAttribute("aria-expanded", "true");
+    await userEvent.click(
+      screen.getByRole("treeitem", { name: "checklist.md" }),
+    );
+    const preview = await screen.findByRole("dialog", {
+      name: "references/checklist.md",
+    });
+    expect(
+      await within(preview).findByText("Review every source."),
+    ).toBeVisible();
   });
 
-  it('shows assistant instructions, model requirements, and MCP identities', async () => {
+  it("shows assistant instructions, model requirements, and MCP identities", async () => {
     const manifest = {
       schemaVersion: 1 as const,
-      kind: 'assistant' as const,
+      kind: "assistant" as const,
       assistant: {
-        name: 'Research Chat',
-        systemPrompt: 'Verify every source.',
+        name: "Research Chat",
+        systemPrompt: "Verify every source.",
         maxSteps: 8,
-        modelRequirement: { providerFormat: 'openai-compatible', model: 'gpt-5.6' },
-        mcpRequirements: [{ catalogSlug: 'filesystem', name: 'Filesystem MCP' }],
+        modelRequirement: {
+          providerFormat: "openai-compatible",
+          model: "gpt-5.6",
+        },
+        mcpRequirements: [
+          { catalogSlug: "filesystem", name: "Filesystem MCP" },
+        ],
       },
     };
-    mocks.findMany.mockResolvedValue([{
-      id: 'listing-assistant',
-      kind: 'assistant',
-      namespace: 'acme',
-      slug: 'research-chat',
-      publisherKind: 'workspace',
-      name: 'Research Chat',
-      categories: [{ id: 'category-1' }],
-      publisherWorkspace: { name: 'Acme' },
-      publishedBy: { name: 'Ada', email: 'ada@example.com' },
-      pendingRelease: {
-        id: 'release-assistant',
-        version: 1,
-        releaseNotes: 'First version',
-        releaseSummary: { mcpCount: 1 },
-        checksum: assistantReleaseChecksum(manifest),
-        manifest,
-        scanResult: { status: 'clean' },
+    mocks.findMany.mockResolvedValue([
+      {
+        id: "listing-assistant",
+        kind: "assistant",
+        namespace: "acme",
+        slug: "research-chat",
+        publisherKind: "workspace",
+        name: "Research Chat",
+        categories: [{ id: "category-1" }],
+        publisherWorkspace: { name: "Acme" },
+        publishedBy: { name: "Ada", email: "ada@example.com" },
+        pendingRelease: {
+          id: "release-assistant",
+          version: 1,
+          releaseNotes: "First version",
+          releaseSummary: { mcpCount: 1 },
+          checksum: assistantReleaseChecksum(manifest),
+          manifest,
+          scanResult: { status: "clean" },
+        },
       },
-    }]);
+    ]);
 
-    render(await AdminMarketReviewPage({ params: Promise.resolve({ id: 'listing-assistant' }), searchParams: Promise.resolve({ releaseId: 'release-assistant' }) }));
+    render(
+      await AdminMarketReviewPage({
+        params: Promise.resolve({ id: "listing-assistant" }),
+        searchParams: Promise.resolve({ releaseId: "release-assistant" }),
+      }),
+    );
 
-    expect(screen.getByText('Verify every source.')).toBeInTheDocument();
-    expect(screen.getByText('gpt-5.6')).toBeInTheDocument();
-    expect(screen.getByText('Filesystem MCP')).toBeInTheDocument();
-    expect(screen.getByText('filesystem')).toBeInTheDocument();
-    expect(screen.queryByText('errorInvalidMarketRelease')).not.toBeInTheDocument();
+    expect(screen.getByText("Verify every source.")).toBeInTheDocument();
+    expect(screen.getByText("gpt-5.6")).toBeInTheDocument();
+    expect(screen.getByText("Filesystem MCP")).toBeInTheDocument();
+    expect(screen.getByText("filesystem")).toBeInTheDocument();
+    expect(
+      screen.queryByText("errorInvalidMarketRelease"),
+    ).not.toBeInTheDocument();
   });
 
-  it('previews MCP and toolkit resources on their own review pages', async () => {
+  it("previews MCP and toolkit resources on their own review pages", async () => {
     mocks.count.mockResolvedValue(12);
     const listings = [
       {
-        id: 'listing-mcp', kind: 'mcp', namespace: 'acme', slug: 'search', publisherKind: 'workspace', name: 'Search MCP',
-        categories: [{ id: 'category-1' }], publisherWorkspace: { name: 'Acme' }, publishedBy: null,
+        id: "listing-mcp",
+        kind: "mcp",
+        namespace: "acme",
+        slug: "search",
+        publisherKind: "workspace",
+        name: "Search MCP",
+        categories: [{ id: "category-1" }],
+        publisherWorkspace: { name: "Acme" },
+        publishedBy: null,
         pendingRelease: {
-          id: 'release-mcp', version: 2, releaseNotes: null, releaseSummary: {}, checksum: 'mcp', scanResult: null,
+          id: "release-mcp",
+          version: 2,
+          releaseNotes: null,
+          releaseSummary: {},
+          checksum: "mcp",
+          scanResult: null,
           manifest: {
-            kind: 'mcp',
+            kind: "mcp",
             mcp: {
-              recipe: { source: 'npm', ref: '@acme/search', env: ['SEARCH_KEY'] },
-              toolExposure: 'allowlist',
-              allowedTools: ['search'],
+              recipe: {
+                source: "npm",
+                ref: "@acme/search",
+                env: ["SEARCH_KEY"],
+              },
+              toolExposure: "allowlist",
+              allowedTools: ["search"],
             },
           },
         },
       },
       {
-        id: 'listing-toolkit', kind: 'toolkit', namespace: 'acme', slug: 'research', publisherKind: 'workspace', name: 'Research Kit',
-        categories: [{ id: 'category-1' }], publisherWorkspace: { name: 'Acme' }, publishedBy: null,
+        id: "listing-toolkit",
+        kind: "toolkit",
+        namespace: "acme",
+        slug: "research",
+        publisherKind: "workspace",
+        name: "Research Kit",
+        categories: [{ id: "category-1" }],
+        publisherWorkspace: { name: "Acme" },
+        publishedBy: null,
         pendingRelease: {
-          id: 'release-toolkit', version: 1, releaseNotes: null, releaseSummary: {}, checksum: 'toolkit', scanResult: null,
+          id: "release-toolkit",
+          version: 1,
+          releaseNotes: null,
+          releaseSummary: {},
+          checksum: "toolkit",
+          scanResult: null,
           manifest: {
-            kind: 'toolkit',
-            mcps: [{ catalogSlug: 'filesystem', name: 'Filesystem', recipe: { env: ['ROOT'] } }],
-            skills: [{ catalogSlug: 'writer', snapshot: { slug: 'writer', name: 'Writer' } }],
+            kind: "toolkit",
+            mcps: [
+              {
+                catalogSlug: "filesystem",
+                name: "Filesystem",
+                recipe: { env: ["ROOT"] },
+              },
+            ],
+            skills: [
+              {
+                catalogSlug: "writer",
+                snapshot: { slug: "writer", name: "Writer" },
+              },
+            ],
           },
         },
       },
     ];
     mocks.findMany.mockResolvedValue([listings[0]]);
 
-    render(await AdminMarketReviewPage({ params: Promise.resolve({ id: 'listing-mcp' }), searchParams: Promise.resolve({ releaseId: 'release-mcp' }) }));
+    render(
+      await AdminMarketReviewPage({
+        params: Promise.resolve({ id: "listing-mcp" }),
+        searchParams: Promise.resolve({ releaseId: "release-mcp" }),
+      }),
+    );
 
-    expect(screen.getAllByText('@acme/search', { exact: false }).length).toBeGreaterThan(0);
-    expect(screen.getByText('SEARCH_KEY')).toBeInTheDocument();
+    expect(
+      screen.getAllByText("@acme/search", { exact: false }).length,
+    ).toBeGreaterThan(0);
+    expect(screen.getByText("SEARCH_KEY")).toBeInTheDocument();
     cleanup();
     mocks.findMany.mockResolvedValue([listings[1]]);
-    render(await AdminMarketReviewPage({ params: Promise.resolve({ id: 'listing-toolkit' }), searchParams: Promise.resolve({ releaseId: 'release-toolkit' }) }));
-    expect(screen.getByText('Filesystem')).toBeInTheDocument();
-    expect(screen.getByText('Writer')).toBeInTheDocument();
+    render(
+      await AdminMarketReviewPage({
+        params: Promise.resolve({ id: "listing-toolkit" }),
+        searchParams: Promise.resolve({ releaseId: "release-toolkit" }),
+      }),
+    );
+    expect(screen.getByText("Filesystem")).toBeInTheDocument();
+    expect(screen.getByText("Writer")).toBeInTheDocument();
   });
 
-  it('requires an admin and explicit confirmation for approval only', async () => {
+  it("requires an admin and explicit confirmation for approval only", async () => {
     const approveForm = new FormData();
-    approveForm.set('listingId', 'listing-1');
-    approveForm.set('releaseId', 'release-1');
+    approveForm.set("listingId", "listing-1");
+    approveForm.set("releaseId", "release-1");
     await expect(approveMarketReleaseAction({}, approveForm)).resolves.toEqual({
-      error: 'errorMarketReleaseReviewConfirmationRequired',
+      error: "errorMarketReleaseReviewConfirmationRequired",
     });
     expect(mocks.approveResourceMarketRelease).not.toHaveBeenCalled();
 
-    approveForm.set('reviewConfirmed', 'yes');
-    approveForm.append('categoryIds', 'category-1');
+    approveForm.set("reviewConfirmed", "yes");
+    approveForm.append("categoryIds", "category-1");
     await approveMarketReleaseAction({}, approveForm);
 
     const rejectForm = new FormData();
-    rejectForm.set('listingId', 'listing-1');
-    rejectForm.set('releaseId', 'release-2');
-    rejectForm.set('reviewNote', '  Needs changes  ');
+    rejectForm.set("listingId", "listing-1");
+    rejectForm.set("releaseId", "release-2");
+    rejectForm.set("reviewNote", "  Needs changes  ");
     await rejectMarketReleaseAction({}, rejectForm);
 
     expect(mocks.requireAdmin).toHaveBeenCalledTimes(3);
     expect(mocks.approveResourceMarketRelease).toHaveBeenCalledWith({
-      listingId: 'listing-1',
-      releaseId: 'release-1',
-      reviewedById: 'admin-1',
+      listingId: "listing-1",
+      releaseId: "release-1",
+      reviewedById: "admin-1",
       reviewNote: null,
-      categoryIds: ['category-1'],
+      categoryIds: ["category-1"],
     });
     expect(mocks.rejectMarketRelease).toHaveBeenCalledWith({
-      listingId: 'listing-1',
-      releaseId: 'release-2',
-      reviewedById: 'admin-1',
-      reviewNote: 'Needs changes',
+      listingId: "listing-1",
+      releaseId: "release-2",
+      reviewedById: "admin-1",
+      reviewNote: "Needs changes",
     });
   });
 });

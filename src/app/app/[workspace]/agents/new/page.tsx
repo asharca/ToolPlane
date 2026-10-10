@@ -1,4 +1,4 @@
-import { redirect } from 'next/navigation';
+import { redirect } from "next/navigation";
 
 // Retain the previous browse URL for bookmarks while keeping market navigation
 // entirely within the authenticated workspace console.

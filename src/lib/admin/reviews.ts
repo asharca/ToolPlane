@@ -1,21 +1,47 @@
-import 'server-only';
-import { Prisma } from '@prisma/client';
-import { db } from '@/lib/db';
-import { normalizeAdminPage } from './pagination';
+import "server-only";
+import { Prisma } from "@prisma/client";
+import { db } from "@/lib/db";
+import { normalizeAdminPage } from "./pagination";
 
-export const REVIEW_KINDS = ['agent', 'skill', 'mcp', 'toolkit', 'assistant', 'pi-package'] as const;
-export const REVIEW_STATUSES = ['pending', 'approved', 'rejected'] as const;
+export const REVIEW_KINDS = [
+  "agent",
+  "skill",
+  "mcp",
+  "toolkit",
+  "assistant",
+  "pi-package",
+] as const;
+export const REVIEW_STATUSES = ["pending", "approved", "rejected"] as const;
 
 type ReviewRow = {
-  id: string; listingId: string; source: 'agent' | 'market'; kind: string; name: string; slug: string;
-  version: number; reviewStatus: string; submittedAt: Date; reviewedAt: Date | null;
-  reviewNote: string | null; reviewer: string | null; publisher: string | null;
+  id: string;
+  listingId: string;
+  source: "agent" | "market";
+  kind: string;
+  name: string;
+  slug: string;
+  version: number;
+  reviewStatus: string;
+  submittedAt: Date;
+  reviewedAt: Date | null;
+  reviewNote: string | null;
+  reviewer: string | null;
+  publisher: string | null;
 };
 
-export async function listAdminReviews({ q = '', kind = '', status = 'pending', page = 1 }: {
-  q?: string; kind?: string; status?: string; page?: number;
+export async function listAdminReviews({
+  q = "",
+  kind = "",
+  status = "pending",
+  page = 1,
+}: {
+  q?: string;
+  kind?: string;
+  status?: string;
+  page?: number;
 }) {
-  const reviewStatus = REVIEW_STATUSES.find((value) => value === status) ?? 'pending';
+  const reviewStatus =
+    REVIEW_STATUSES.find((value) => value === status) ?? "pending";
   const reviewKind = REVIEW_KINDS.find((value) => value === kind);
   const term = q.trim().slice(0, 200);
   // Union in Postgres keeps pagination bounded across both release stores.
@@ -38,11 +64,26 @@ export async function listAdminReviews({ q = '', kind = '', status = 'pending', 
   const where = Prisma.sql`"reviewStatus" = ${reviewStatus}
     ${reviewKind ? Prisma.sql`AND kind = ${reviewKind}` : Prisma.empty}
     ${term ? Prisma.sql`AND (name ILIKE ${`%${term}%`} OR slug ILIKE ${`%${term}%`} OR publisher ILIKE ${`%${term}%`})` : Prisma.empty}`;
-  const [{ total }] = await db.$queryRaw<Array<{ total: number }>>(Prisma.sql`SELECT count(*)::int AS total FROM (${releases}) r WHERE ${where}`);
+  const [{ total }] = await db.$queryRaw<Array<{ total: number }>>(
+    Prisma.sql`SELECT count(*)::int AS total FROM (${releases}) r WHERE ${where}`,
+  );
   const pageSize = 25;
-  const currentPage = Math.min(normalizeAdminPage(page), Math.max(1, Math.ceil(total / pageSize)));
-  const direction = reviewStatus === 'pending' ? Prisma.sql`ASC` : Prisma.sql`DESC`;
-  const items = await db.$queryRaw<ReviewRow[]>(Prisma.sql`SELECT * FROM (${releases}) r WHERE ${where}
+  const currentPage = Math.min(
+    normalizeAdminPage(page),
+    Math.max(1, Math.ceil(total / pageSize)),
+  );
+  const direction =
+    reviewStatus === "pending" ? Prisma.sql`ASC` : Prisma.sql`DESC`;
+  const items = await db.$queryRaw<
+    ReviewRow[]
+  >(Prisma.sql`SELECT * FROM (${releases}) r WHERE ${where}
     ORDER BY "submittedAt" ${direction}, source, id LIMIT ${pageSize} OFFSET ${(currentPage - 1) * pageSize}`);
-  return { items, total, page: currentPage, pageSize, status: reviewStatus, kind: reviewKind ?? '' };
+  return {
+    items,
+    total,
+    page: currentPage,
+    pageSize,
+    status: reviewStatus,
+    kind: reviewKind ?? "",
+  };
 }

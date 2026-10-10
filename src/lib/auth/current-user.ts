@@ -1,8 +1,8 @@
-import 'server-only';
-import { cache } from 'react';
-import { db } from '@/lib/db';
-import { getSessionUserId } from './session';
-import { activeUserOrNull } from './admin-policy';
+import "server-only";
+import { cache } from "react";
+import { db } from "@/lib/db";
+import { getSessionUserId } from "./session";
+import { activeUserOrNull } from "./admin-policy";
 
 export const getCurrentUser = cache(async () => {
   const userId = await getSessionUserId();
@@ -23,4 +23,6 @@ export const getCurrentUser = cache(async () => {
   return activeUserOrNull(user);
 });
 
-export type CurrentUser = NonNullable<Awaited<ReturnType<typeof getCurrentUser>>>;
+export type CurrentUser = NonNullable<
+  Awaited<ReturnType<typeof getCurrentUser>>
+>;

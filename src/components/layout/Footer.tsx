@@ -1,10 +1,10 @@
-import Link from 'next/link';
-import { FaGithub } from 'react-icons/fa';
-import { getLocale } from 'next-intl/server';
-import { ThemeToggle } from '@/components/theme/ThemeToggle';
-import { getMarketingContent } from '@/lib/marketing/content';
-import { SITE } from '@/lib/site';
-import { Logo } from './Logo';
+import Link from "next/link";
+import { FaGithub } from "react-icons/fa";
+import { getLocale } from "next-intl/server";
+import { ThemeToggle } from "@/components/theme/ThemeToggle";
+import { getMarketingContent } from "@/lib/marketing/content";
+import { SITE } from "@/lib/site";
+import { Logo } from "./Logo";
 
 type FooterLink = {
   label: string;
@@ -12,10 +12,10 @@ type FooterLink = {
 };
 
 const itemClass =
-  'inline-flex min-h-8 items-center text-[13px] text-muted-foreground transition-colors hover:text-foreground';
+  "inline-flex min-h-8 items-center text-[13px] text-muted-foreground transition-colors hover:text-foreground";
 
 function FooterItem({ link }: { link: FooterLink }) {
-  const external = link.href.startsWith('http');
+  const external = link.href.startsWith("http");
   if (external) {
     return (
       <a
@@ -24,7 +24,9 @@ function FooterItem({ link }: { link: FooterLink }) {
         target="_blank"
         rel="noopener noreferrer"
       >
-        {link.href === SITE.sourceUrl && <FaGithub aria-hidden="true" className="mr-1.5 size-3.5" />}
+        {link.href === SITE.sourceUrl && (
+          <FaGithub aria-hidden="true" className="mr-1.5 size-3.5" />
+        )}
         {link.label}
       </a>
     );
@@ -39,9 +41,7 @@ function FooterItem({ link }: { link: FooterLink }) {
 function Column({ title, links }: { title: string; links: FooterLink[] }) {
   return (
     <div>
-      <h2 className="mb-2.5 text-xs font-semibold text-foreground">
-        {title}
-      </h2>
+      <h2 className="mb-2.5 text-xs font-semibold text-foreground">{title}</h2>
       <ul className="space-y-1">
         {links.map((link) => (
           <li key={link.href}>
@@ -57,15 +57,15 @@ export async function Footer() {
   const locale = await getLocale();
   const content = getMarketingContent(locale);
   const { footer, navigation } = content;
-  const productLinks = navigation.links.filter((link) => link.href !== '/');
+  const productLinks = navigation.links.filter((link) => link.href !== "/");
   const resourceLinks: FooterLink[] = [
     { label: footer.sourceCode, href: SITE.sourceUrl },
     { label: footer.mcpProtocol, href: SITE.protocolUrl },
-    { label: footer.documentation, href: '/what-is-an-mcp-server' },
+    { label: footer.documentation, href: "/what-is-an-mcp-server" },
   ];
   const accessLinks: FooterLink[] = [
-    { label: footer.openConsole, href: '/app' },
-    { label: footer.signIn, href: '/app/login' },
+    { label: footer.openConsole, href: "/app" },
+    { label: footer.signIn, href: "/app/login" },
   ];
 
   return (
@@ -89,11 +89,17 @@ export async function Footer() {
           <p className="order-1 text-xs text-muted-foreground md:order-2">
             © {new Date().getFullYear()} {SITE.name}. {footer.rights}
             <span className="mx-1.5">·</span>
-            <Link href="/privacy" className="inline-flex min-h-8 items-center transition-colors hover:text-foreground">
+            <Link
+              href="/privacy"
+              className="inline-flex min-h-8 items-center transition-colors hover:text-foreground"
+            >
               {footer.privacy}
             </Link>
             <span className="mx-1.5">·</span>
-            <Link href="/terms" className="inline-flex min-h-8 items-center transition-colors hover:text-foreground">
+            <Link
+              href="/terms"
+              className="inline-flex min-h-8 items-center transition-colors hover:text-foreground"
+            >
               {footer.terms}
             </Link>
           </p>

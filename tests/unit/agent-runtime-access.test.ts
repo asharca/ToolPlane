@@ -1,5 +1,6 @@
+import { assertDefined } from "../assert-defined";
 // @vitest-environment node
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   AGENT_RUNTIME_TOKEN_MAX_TTL_SECONDS,
   AGENT_RUNTIME_TOKEN_HEADER,
@@ -11,10 +12,10 @@ import {
   runtimeProviderUrl,
   sandboxRuntimeOrigin,
   verifyAgentRuntimeToken,
-} from '@/lib/agents/runtime-access';
-import { getLogContext, withLogContext } from '@/lib/observability/context';
+} from "@/lib/agents/runtime-access";
+import { getLogContext, withLogContext } from "@/lib/observability/context";
 
-describe('Agent runtime access grants', () => {
+describe("Agent runtime access grants", () => {
   const originalSecret = process.env.AUTH_SECRET;
   const originalRuntimeOrigin = process.env.TOOLPLANE_RUNTIME_ORIGIN;
   const originalAppUrl = process.env.NEXT_PUBLIC_APP_URL;
@@ -22,16 +23,16 @@ describe('Agent runtime access grants', () => {
   const originalPort = process.env.PORT;
   const now = Date.UTC(2026, 7, 25, 12, 0, 0);
   const payload = {
-    workspaceId: 'workspace-1',
-    agentId: 'agent-1',
-    sandboxId: 'sandbox-1',
-    providerId: 'provider-1',
-    deploymentIds: ['deployment-1', 'deployment-1'],
+    workspaceId: "workspace-1",
+    agentId: "agent-1",
+    sandboxId: "sandbox-1",
+    providerId: "provider-1",
+    deploymentIds: ["deployment-1", "deployment-1"],
     exp: Math.floor(now / 1000) + 300,
   };
 
   beforeEach(() => {
-    process.env.AUTH_SECRET = 'runtime-token-test-secret';
+    process.env.AUTH_SECRET = "runtime-token-test-secret";
     delete process.env.TOOLPLANE_RUNTIME_ORIGIN;
   });
 
@@ -39,80 +40,102 @@ describe('Agent runtime access grants', () => {
     process.env.AUTH_SECRET = originalSecret;
     process.env.TOOLPLANE_RUNTIME_ORIGIN = originalRuntimeOrigin;
     process.env.NEXT_PUBLIC_APP_URL = originalAppUrl;
-    (process.env as Record<string, string | undefined>).NODE_ENV = originalNodeEnv;
+    (process.env as Record<string, string | undefined>).NODE_ENV =
+      originalNodeEnv;
     process.env.PORT = originalPort;
   });
 
-  it('signs a scoped, expiring grant and rejects tampering or expiration', async () => {
+  it("signs a scoped, expiring grant and rejects tampering or expiration", async () => {
     const token = await createAgentRuntimeToken(payload, now);
     await expect(verifyAgentRuntimeToken(token, now)).resolves.toEqual({
       ...payload,
-      deploymentIds: ['deployment-1'],
+      deploymentIds: ["deployment-1"],
     });
     await expect(verifyAgentRuntimeToken(`${token}x`, now)).resolves.toBeNull();
-    await expect(verifyAgentRuntimeToken(token, now + 301_000)).resolves.toBeNull();
+    await expect(
+      verifyAgentRuntimeToken(token, now + 301_000),
+    ).resolves.toBeNull();
   });
 
-  it('does not mint grants beyond the short lifetime ceiling', async () => {
-    await expect(createAgentRuntimeToken({
-      ...payload,
-      exp: Math.floor(now / 1000) + AGENT_RUNTIME_TOKEN_MAX_TTL_SECONDS + 1,
-    }, now)).rejects.toThrow('payload is invalid');
+  it("does not mint grants beyond the short lifetime ceiling", async () => {
+    await expect(
+      createAgentRuntimeToken(
+        {
+          ...payload,
+          exp: Math.floor(now / 1000) + AGENT_RUNTIME_TOKEN_MAX_TTL_SECONDS + 1,
+        },
+        now,
+      ),
+    ).rejects.toThrow("payload is invalid");
   });
 
-  it('propagates the signed trace across sandbox callbacks without replacing the callback span', async () => {
+  it("propagates the signed trace across sandbox callbacks without replacing the callback span", async () => {
     const grant = await withLogContext({}, async () => ({
-      context: { ...getLogContext()! }, token: await createAgentRuntimeToken(payload, now),
+      context: { ...assertDefined(getLogContext()) },
+      token: await createAgentRuntimeToken(payload, now),
     }));
     const verified = await verifyAgentRuntimeToken(grant.token, now);
     expect(verified?.traceId).toBe(grant.context.traceId);
     await withLogContext({}, async () => {
-      const span = getLogContext()!.spanId;
-      bindRuntimeLogContext(verified!);
-      expect(getLogContext()).toMatchObject({ traceId: grant.context.traceId, parentSpanId: grant.context.spanId, spanId: span, agentId: payload.agentId });
+      const span = assertDefined(getLogContext()).spanId;
+      bindRuntimeLogContext(assertDefined(verified));
+      expect(getLogContext()).toMatchObject({
+        traceId: grant.context.traceId,
+        parentSpanId: grant.context.spanId,
+        spanId: span,
+        agentId: payload.agentId,
+      });
     });
   });
 
-  it('accepts the dedicated header, Bearer, and Claude-compatible x-api-key', async () => {
+  it("accepts the dedicated header, Bearer, and Claude-compatible x-api-key", async () => {
     const token = await createAgentRuntimeToken({
       ...payload,
       exp: Math.floor(Date.now() / 1000) + 300,
     });
     for (const [name, value] of [
       [AGENT_RUNTIME_TOKEN_HEADER, token],
-      ['authorization', `Bearer ${token}`],
-      ['x-api-key', token],
+      ["authorization", `Bearer ${token}`],
+      ["x-api-key", token],
     ] as const) {
-      await expect(agentRuntimeTokenFromRequest({ headers: new Headers({ [name]: value }) }))
-        .resolves.toMatchObject({ agentId: 'agent-1', sandboxId: 'sandbox-1' });
+      await expect(
+        agentRuntimeTokenFromRequest({
+          headers: new Headers({ [name]: value }),
+        }),
+      ).resolves.toMatchObject({ agentId: "agent-1", sandboxId: "sandbox-1" });
     }
   });
 
-  it('builds sandbox-reachable proxy URLs and preserves provider base paths', () => {
-    process.env.NEXT_PUBLIC_APP_URL = 'http://localhost:3000/app/path';
-    expect(sandboxRuntimeOrigin()).toBe('http://host.docker.internal:3000');
-    expect(runtimeModelProxyBase('provider/a')).toBe(
-      'http://host.docker.internal:3000/api/v1/agent-runtime/model/provider%2Fa',
+  it("builds sandbox-reachable proxy URLs and preserves provider base paths", () => {
+    process.env.NEXT_PUBLIC_APP_URL = "http://localhost:3000/app/path";
+    expect(sandboxRuntimeOrigin()).toBe("http://host.docker.internal:3000");
+    expect(runtimeModelProxyBase("provider/a")).toBe(
+      "http://host.docker.internal:3000/api/v1/agent-runtime/model/provider%2Fa",
     );
-    expect(runtimeMcpProxyUrl('deployment/a')).toBe(
-      'http://host.docker.internal:3000/api/v1/agent-runtime/mcp/deployment%2Fa/rpc',
+    expect(runtimeMcpProxyUrl("deployment/a")).toBe(
+      "http://host.docker.internal:3000/api/v1/agent-runtime/mcp/deployment%2Fa/rpc",
     );
-    expect(runtimeProviderUrl(
-      'https://provider.test/v1/',
-      ['chat', 'completions'],
-      '?stream=true',
-    )).toBe('https://provider.test/v1/chat/completions?stream=true');
-    expect(runtimeProviderUrl('https://api.anthropic.com/v1', ['v1', 'messages']))
-      .toBe('https://api.anthropic.com/v1/messages');
-    expect(() => runtimeProviderUrl('https://provider.test/v1', ['..', 'secret']))
-      .toThrow('path is invalid');
+    expect(
+      runtimeProviderUrl(
+        "https://provider.test/v1/",
+        ["chat", "completions"],
+        "?stream=true",
+      ),
+    ).toBe("https://provider.test/v1/chat/completions?stream=true");
+    expect(
+      runtimeProviderUrl("https://api.anthropic.com/v1", ["v1", "messages"]),
+    ).toBe("https://api.anthropic.com/v1/messages");
+    expect(() =>
+      runtimeProviderUrl("https://provider.test/v1", ["..", "secret"]),
+    ).toThrow("path is invalid");
   });
 
-  it('uses the active Next port for sandbox callbacks in development', () => {
-    (process.env as Record<string, string | undefined>).NODE_ENV = 'development';
-    process.env.PORT = '4312';
-    process.env.NEXT_PUBLIC_APP_URL = 'http://stale.example:3000';
+  it("uses the active Next port for sandbox callbacks in development", () => {
+    (process.env as Record<string, string | undefined>).NODE_ENV =
+      "development";
+    process.env.PORT = "4312";
+    process.env.NEXT_PUBLIC_APP_URL = "http://stale.example:3000";
 
-    expect(sandboxRuntimeOrigin()).toBe('http://host.docker.internal:4312');
+    expect(sandboxRuntimeOrigin()).toBe("http://host.docker.internal:4312");
   });
 });

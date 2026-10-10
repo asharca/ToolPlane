@@ -140,7 +140,12 @@ export function RadioGroupItem({
         ) : null}
       </motion.button>
       {label ? (
-        <span className={cn("select-none text-sm text-foreground", disabled && "opacity-60")}>
+        <span
+          className={cn(
+            "select-none text-sm text-foreground",
+            disabled && "opacity-60",
+          )}
+        >
           {label}
         </span>
       ) : null}

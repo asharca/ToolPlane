@@ -1,5 +1,5 @@
-import 'server-only';
-import { normalizeSkillFiles, type SkillBundleFile } from './bundle';
+import "server-only";
+import { normalizeSkillFiles, type SkillBundleFile } from "./bundle";
 
 type SkillMeta = {
   slug: string;
@@ -11,7 +11,7 @@ type SkillMeta = {
 };
 
 function yamlString(value: string): string {
-  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\s+/g, ' ').trim()}"`;
+  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\s+/g, " ").trim()}"`;
 }
 
 // Produce a valid Agent Skill file (SKILL.md): YAML frontmatter with `name`
@@ -23,7 +23,7 @@ export function buildSkillMarkdown(skill: SkillMeta): string {
   const description =
     skill.description?.trim() ||
     `${skill.name} agent skill installed from ToolPlane.`;
-  const by = skill.author ? ` by ${skill.author}` : '';
+  const by = skill.author ? ` by ${skill.author}` : "";
 
   return `---
 name: ${skill.slug}
@@ -65,46 +65,56 @@ type CustomSkillData = {
 };
 
 export function buildCustomSkillMarkdown(s: CustomSkillData): string {
-  const slug = (s.slug || s.name || 'skill').trim();
-  const description = (s.description || `${s.name ?? slug} agent skill.`).trim();
-  const body = (s.content ?? '').trim() || `# ${s.name ?? slug}\n\n${description}`;
+  const slug = (s.slug || s.name || "skill").trim();
+  const description = (
+    s.description || `${s.name ?? slug} agent skill.`
+  ).trim();
+  const body =
+    (s.content ?? "").trim() || `# ${s.name ?? slug}\n\n${description}`;
   if (/^---\r?\n[\s\S]*?\r?\n---/.test(body)) return `${body}\n`;
   return [
-    '---',
+    "---",
     `name: ${slug}`,
     `description: ${yamlString(description)}`,
     `user-invocable: ${s.userInvocable !== false}`,
     `agent-invocable: ${s.agentInvocable !== false}`,
-    `effort: ${s.effort || 'default'}`,
-    '---',
-    '',
+    `effort: ${s.effort || "default"}`,
+    "---",
+    "",
     body,
-    '',
-  ].join('\n');
+    "",
+  ].join("\n");
 }
 
-export function buildInstalledSkillMarkdown(installed: {
-  skillId: string | null;
-  skill: SkillMeta | null;
-} & CustomSkillData): string {
+export function buildInstalledSkillMarkdown(
+  installed: {
+    skillId: string | null;
+    skill: SkillMeta | null;
+  } & CustomSkillData,
+): string {
   // Agent marketplace installs retain the catalog relation while pinning the
   // reviewed release contents on InstalledSkill. Prefer that explicit
   // snapshot; ordinary catalog installs leave it null and continue to resolve
   // the live directory artifact below.
-  if (installed.source === 'agent-market' && installed.content?.trim()) return installed.content;
-  if (installed.skillId && installed.skill) return buildSkillMarkdown(installed.skill);
+  if (installed.source === "agent-market" && installed.content?.trim())
+    return installed.content;
+  if (installed.skillId && installed.skill)
+    return buildSkillMarkdown(installed.skill);
   return buildCustomSkillMarkdown(installed);
 }
 
-export function installedSkillExtraFiles(installed: {
-  skillId: string | null;
-  skill: SkillMeta | null;
-} & CustomSkillData): SkillBundleFile[] {
-  const files = installed.source === 'agent-market' && installed.files != null
-    ? installed.files
-    : installed.skillId && installed.skill
-      ? installed.skill.files
-      : installed.files;
+export function installedSkillExtraFiles(
+  installed: {
+    skillId: string | null;
+    skill: SkillMeta | null;
+  } & CustomSkillData,
+): SkillBundleFile[] {
+  const files =
+    installed.source === "agent-market" && installed.files != null
+      ? installed.files
+      : installed.skillId && installed.skill
+        ? installed.skill.files
+        : installed.files;
   if (!Array.isArray(files)) return [];
   return normalizeSkillFiles(files as SkillBundleFile[]);
 }

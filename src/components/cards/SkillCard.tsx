@@ -1,12 +1,18 @@
-import type { Skill } from '@prisma/client';
-import { EntityCard, ScoreStat } from './EntityCard';
+import type { Skill } from "@prisma/client";
+import { EntityCard, ScoreStat } from "./EntityCard";
 
 type SkillCardData = Pick<
   Skill,
-  'slug' | 'name' | 'description' | 'author' | 'iconUrl' | 'score'
+  "slug" | "name" | "description" | "author" | "iconUrl" | "score"
 > & { categories?: { name: string }[] };
 
-export function SkillCard({ skill, statLabel }: { skill: SkillCardData; statLabel?: string }) {
+export function SkillCard({
+  skill,
+  statLabel,
+}: {
+  skill: SkillCardData;
+  statLabel?: string;
+}) {
   return (
     <EntityCard
       href={`/tools/skills/${skill.slug}`}
