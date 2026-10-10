@@ -1,12 +1,18 @@
 // @vitest-environment node
-import { execFile } from 'node:child_process';
-import { resolve } from 'node:path';
-import { promisify } from 'node:util';
-import { expect, it } from 'vitest';
+import { execFile } from "node:child_process";
+import { resolve } from "node:path";
+import { promisify } from "node:util";
+import { expect, it } from "vitest";
 
-it('releases nested timeout signals while preserving native cancellation and HTTP aborts', async () => {
-  const { stdout } = await promisify(execFile)(process.execPath, [
-    '--expose-gc', '--require', resolve('scripts/abort-signal.cjs'), '-e', String.raw`
+it("releases nested timeout signals while preserving native cancellation and HTTP aborts", async () => {
+  const { stdout } = await promisify(execFile)(
+    process.execPath,
+    [
+      "--expose-gc",
+      "--require",
+      resolve("scripts/abort-signal.cjs"),
+      "-e",
+      `
     const assert = require('node:assert/strict');
     const { setTimeout: delay } = require('node:timers/promises');
     const { createServer } = require('node:http');
@@ -63,6 +69,10 @@ it('releases nested timeout signals while preserving native cancellation and HTT
       console.log('retained=0; owner, timeout, and HTTP cancellation passed');
     })().catch(error => { console.error(error); process.exitCode = 1; });
     `,
-  ], { timeout: 15_000 });
-  expect(stdout.trim()).toBe('retained=0; owner, timeout, and HTTP cancellation passed');
+    ],
+    { timeout: 15_000 },
+  );
+  expect(stdout.trim()).toBe(
+    "retained=0; owner, timeout, and HTTP cancellation passed",
+  );
 }, 20_000);

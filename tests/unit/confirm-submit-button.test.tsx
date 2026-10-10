@@ -1,7 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
-import { ConfirmSubmitButton } from '@/components/dashboard/ConfirmSubmitButton';
+import { describe, expect, it, vi } from "vitest";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { ConfirmSubmitButton } from "@/components/dashboard/ConfirmSubmitButton";
 
 function renderButton({
   action = vi.fn(),
@@ -24,57 +24,65 @@ function renderButton({
   );
 }
 
-describe('ConfirmSubmitButton', () => {
-  it('requires confirmation and restores focus when cancelled', async () => {
+describe("ConfirmSubmitButton", () => {
+  it("requires confirmation and restores focus when cancelled", async () => {
     const action = vi.fn();
     renderButton({ action });
 
-    const trigger = screen.getByRole('button', { name: 'Remove' });
+    const trigger = screen.getByRole("button", { name: "Remove" });
     await userEvent.click(trigger);
 
-    expect(screen.getByText('Remove weather server?')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Confirm' })).toHaveAttribute('type', 'submit');
-    expect(screen.getByRole('button', { name: 'Confirm' })).toHaveFocus();
+    expect(screen.getByText("Remove weather server?")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Confirm" })).toHaveAttribute(
+      "type",
+      "submit",
+    );
+    expect(screen.getByRole("button", { name: "Confirm" })).toHaveFocus();
     expect(action).not.toHaveBeenCalled();
 
-    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
 
-    expect(screen.queryByText('Remove weather server?')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Remove' })).toHaveFocus();
+    expect(
+      screen.queryByText("Remove weather server?"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove" })).toHaveFocus();
     expect(action).not.toHaveBeenCalled();
   });
 
-  it('disables the trigger when the action is unavailable', () => {
+  it("disables the trigger when the action is unavailable", () => {
     renderButton({ disabled: true });
 
-    expect(screen.getByRole('button', { name: 'Remove' })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Remove" })).toBeDisabled();
   });
 
-  it('prevents duplicate input while the form action is pending', async () => {
+  it("prevents duplicate input while the form action is pending", async () => {
     let finishAction: (() => void) | undefined;
     const action = vi.fn(
-      () => new Promise<void>((resolve) => {
-        finishAction = resolve;
-      }),
+      () =>
+        new Promise<void>((resolve) => {
+          finishAction = resolve;
+        }),
     );
     renderButton({ action });
 
-    await userEvent.click(screen.getByRole('button', { name: 'Remove' }));
-    const submit = screen.getByRole('button', { name: 'Confirm' });
+    await userEvent.click(screen.getByRole("button", { name: "Remove" }));
+    const submit = screen.getByRole("button", { name: "Confirm" });
     await userEvent.click(submit);
 
     await waitFor(() => {
       expect(submit).toBeDisabled();
-      expect(submit).toHaveAttribute('aria-busy', 'true');
-      expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled();
+      expect(submit).toHaveAttribute("aria-busy", "true");
+      expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
     });
     await userEvent.click(submit);
     expect(action).toHaveBeenCalledTimes(1);
 
     finishAction?.();
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Remove' })).toBeEnabled();
-      expect(screen.queryByText('Remove weather server?')).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Remove" })).toBeEnabled();
+      expect(
+        screen.queryByText("Remove weather server?"),
+      ).not.toBeInTheDocument();
     });
   });
 });

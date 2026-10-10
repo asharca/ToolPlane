@@ -1,12 +1,18 @@
-'use client';
+"use client";
 
-import { ButtonLink } from '@/components/motion/button/base';
+import { ButtonLink } from "@/components/motion/button/base";
 
-import { useId } from 'react';
+import { useId } from "react";
 
-import { AlertTriangle, ArrowRight, Container, Cpu, KeyRound } from 'lucide-react';
-import { useTranslations } from 'next-intl';
-import type { AgentMarketSetupGuide } from '@/lib/agents/market-setup';
+import {
+  AlertTriangle,
+  ArrowRight,
+  Container,
+  Cpu,
+  KeyRound,
+} from "lucide-react";
+import { useTranslations } from "next-intl";
+import type { AgentMarketSetupGuide } from "@/lib/agents/market-setup";
 
 export function AgentMarketSetupBanner({
   slug,
@@ -15,7 +21,7 @@ export function AgentMarketSetupBanner({
   slug: string;
   setup: AgentMarketSetupGuide;
 }) {
-  const t = useTranslations('console.agents');
+  const t = useTranslations("console.agents");
   const titleId = useId();
 
   return (
@@ -28,10 +34,10 @@ export function AgentMarketSetupBanner({
           <AlertTriangle className="mt-0.5 size-[18px] shrink-0 text-muted-foreground text-muted-foreground" />
           <div className="min-w-0">
             <h3 id={titleId} className="text-sm font-semibold">
-              {t('marketSetupTitle')}
+              {t("marketSetupTitle")}
             </h3>
             <p className="mt-1 text-xs leading-5 text-muted-foreground text-muted-foreground">
-              {t('marketSetupDescription')}
+              {t("marketSetupDescription")}
             </p>
           </div>
         </div>
@@ -45,13 +51,17 @@ export function AgentMarketSetupBanner({
           >
             <Cpu className="size-4 text-muted-foreground text-muted-foreground" />
             <span className="text-xs leading-5">
-              {t('marketSetupProviderRequirement', {
+              {t("marketSetupProviderRequirement", {
                 format: provider.format,
                 model: provider.model,
               })}
             </span>
-            <ButtonLink href={`/app/${encodeURIComponent(slug)}/agents/${encodeURIComponent(provider.agentId)}?settings=agent`} variant="ghost" size="sm">
-              {t('marketSetupOpenAgentSettings')}
+            <ButtonLink
+              href={`/app/${encodeURIComponent(slug)}/agents/${encodeURIComponent(provider.agentId)}?settings=agent`}
+              variant="ghost"
+              size="sm"
+            >
+              {t("marketSetupOpenAgentSettings")}
               <ArrowRight className="size-3.5" />
             </ButtonLink>
           </li>
@@ -63,10 +73,16 @@ export function AgentMarketSetupBanner({
           >
             <KeyRound className="size-4 text-muted-foreground text-muted-foreground" />
             <span className="min-w-0 text-xs leading-5">
-              {t('marketSetupEnvironmentRequirement', { variable: environment.variable })}
+              {t("marketSetupEnvironmentRequirement", {
+                variable: environment.variable,
+              })}
             </span>
-            <ButtonLink href={`/app/${encodeURIComponent(slug)}/mcp/${encodeURIComponent(environment.deploymentId)}`} variant="ghost" size="sm">
-              {t('marketSetupConfigureMcp')}
+            <ButtonLink
+              href={`/app/${encodeURIComponent(slug)}/mcp/${encodeURIComponent(environment.deploymentId)}`}
+              variant="ghost"
+              size="sm"
+            >
+              {t("marketSetupConfigureMcp")}
               <ArrowRight className="size-3.5" />
             </ButtonLink>
           </li>
@@ -78,10 +94,14 @@ export function AgentMarketSetupBanner({
           >
             <Container className="size-4 text-muted-foreground text-muted-foreground" />
             <span className="min-w-0 text-xs leading-5">
-              {t('marketSetupRuntimeRequirement', { runtime: runtime.kind })}
+              {t("marketSetupRuntimeRequirement", { runtime: runtime.kind })}
             </span>
-            <ButtonLink href={`/app/${encodeURIComponent(slug)}/agents/${encodeURIComponent(runtime.agentId)}?settings=hermes`} variant="ghost" size="sm">
-              {t('marketSetupConfigureRuntime')}
+            <ButtonLink
+              href={`/app/${encodeURIComponent(slug)}/agents/${encodeURIComponent(runtime.agentId)}?settings=hermes`}
+              variant="ghost"
+              size="sm"
+            >
+              {t("marketSetupConfigureRuntime")}
               <ArrowRight className="size-3.5" />
             </ButtonLink>
           </li>

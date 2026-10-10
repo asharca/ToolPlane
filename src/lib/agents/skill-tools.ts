@@ -1,11 +1,14 @@
-import 'server-only';
-import path from 'node:path';
-import { jsonSchema, agentTool, type AgentToolSet } from './agent-tool';
-import { mcpRpc } from '@/lib/process/mcp-client';
-import { buildInstalledSkillMarkdown, installedSkillExtraFiles } from '@/lib/skills/artifact';
-import { safeSkillFilePath, type SkillBundleFile } from '@/lib/skills/bundle';
-import { skillLabel } from '@/lib/workspace/skill-label';
-import type { SkillForPrompt } from './resolve';
+import "server-only";
+import path from "node:path";
+import { jsonSchema, agentTool, type AgentToolSet } from "./agent-tool";
+import { mcpRpc } from "@/lib/process/mcp-client";
+import {
+  buildInstalledSkillMarkdown,
+  installedSkillExtraFiles,
+} from "@/lib/skills/artifact";
+import { safeSkillFilePath, type SkillBundleFile } from "@/lib/skills/bundle";
+import { skillLabel } from "@/lib/workspace/skill-label";
+import type { SkillForPrompt } from "./resolve";
 
 const SCRIPT_TIMEOUT_MS = 20_000;
 const MAX_ARG_LENGTH = 2_000;
@@ -38,32 +41,46 @@ function buildSkillIndex(skills: SkillForPrompt[]): RuntimeSkill[] {
 }
 
 function findSkill(skills: RuntimeSkill[], raw: unknown): RuntimeSkill | null {
-  const key = String(raw ?? '').trim().toLowerCase();
+  const key = String(raw ?? "")
+    .trim()
+    .toLowerCase();
   if (!key) return null;
-  return skills.find((s) => s.slug.toLowerCase() === key || s.name.toLowerCase() === key) ?? null;
+  return (
+    skills.find(
+      (s) => s.slug.toLowerCase() === key || s.name.toLowerCase() === key,
+    ) ?? null
+  );
 }
 
-function readSkillPath(skill: RuntimeSkill, rawPath: unknown): SkillBundleFile | { error: string } {
-  const requested = String(rawPath ?? '').trim() || 'SKILL.md';
-  if (/^SKILL\.md$/i.test(requested)) return { path: 'SKILL.md', content: skill.markdown };
+function readSkillPath(
+  skill: RuntimeSkill,
+  rawPath: unknown,
+): SkillBundleFile | { error: string } {
+  const requested = String(rawPath ?? "").trim() || "SKILL.md";
+  if (/^SKILL\.md$/i.test(requested))
+    return { path: "SKILL.md", content: skill.markdown };
   const safePath = safeSkillFilePath(requested);
-  if (!safePath) return { error: 'Invalid skill file path.' };
+  if (!safePath) return { error: "Invalid skill file path." };
   const file = skill.files.find((f) => f.path === safePath);
   if (!file) return { error: `Skill file not found: ${safePath}` };
   return file;
 }
 
 function isRunnableScript(filePath: string): boolean {
-  if (!filePath.startsWith('scripts/')) return false;
-  return ['.js', '.mjs', '.cjs', '.py', '.sh'].includes(path.extname(filePath));
+  if (!filePath.startsWith("scripts/")) return false;
+  return [".js", ".mjs", ".cjs", ".py", ".sh"].includes(path.extname(filePath));
 }
 
-function sandboxProcessForScript(filePath: string, args: string[]): { runtime: 'node' | 'python' | 'bash'; args: string[] } | null {
+function sandboxProcessForScript(
+  filePath: string,
+  args: string[],
+): { runtime: "node" | "python" | "bash"; args: string[] } | null {
   const ext = path.extname(filePath);
   const processArgs = [filePath, ...args];
-  if (ext === '.js' || ext === '.mjs' || ext === '.cjs') return { runtime: 'node', args: processArgs };
-  if (ext === '.py') return { runtime: 'python', args: processArgs };
-  if (ext === '.sh') return { runtime: 'bash', args: processArgs };
+  if (ext === ".js" || ext === ".mjs" || ext === ".cjs")
+    return { runtime: "node", args: processArgs };
+  if (ext === ".py") return { runtime: "python", args: processArgs };
+  if (ext === ".sh") return { runtime: "bash", args: processArgs };
   return null;
 }
 
@@ -73,16 +90,20 @@ async function callSandboxTool(
   name: string,
   args: Record<string, unknown>,
 ) {
-  return rpc(deploymentId, 'tools/call', { name, arguments: args }, 120000);
+  return rpc(deploymentId, "tools/call", { name, arguments: args }, 120000);
 }
 
-function sandboxToolError(result: Record<string, unknown> | null): string | null {
-  if (!result) return 'Sandbox is not reachable.';
+function sandboxToolError(
+  result: Record<string, unknown> | null,
+): string | null {
+  if (!result) return "Sandbox is not reachable.";
   if (result.isError !== true) return null;
   const content = result.content;
-  if (!Array.isArray(content)) return 'Sandbox operation failed.';
+  if (!Array.isArray(content)) return "Sandbox operation failed.";
   const first = content[0] as { text?: unknown } | undefined;
-  return typeof first?.text === 'string' ? first.text : 'Sandbox operation failed.';
+  return typeof first?.text === "string"
+    ? first.text
+    : "Sandbox operation failed.";
 }
 
 async function writeSkillToSandbox(
@@ -91,13 +112,16 @@ async function writeSkillToSandbox(
   skill: RuntimeSkill,
   root: string,
 ): Promise<{ ok: true } | { error: string }> {
-  const files: SkillBundleFile[] = [{ path: 'SKILL.md', content: skill.markdown }, ...skill.files];
+  const files: SkillBundleFile[] = [
+    { path: "SKILL.md", content: skill.markdown },
+    ...skill.files,
+  ];
   for (const file of files) {
     const targetPath = `${root}/${file.path}`;
-    const writeResult = await callSandboxTool(rpc, deploymentId, 'write_file', {
+    const writeResult = await callSandboxTool(rpc, deploymentId, "write_file", {
       path: targetPath,
       content: file.content,
-      encoding: file.encoding ?? 'utf8',
+      encoding: file.encoding ?? "utf8",
     });
     const error = sandboxToolError(writeResult);
     if (error) return { error: `Could not write ${file.path}: ${error}` };
@@ -111,75 +135,109 @@ export function buildSkillToolSet(
 ): AgentToolSet {
   const skills = buildSkillIndex(skillsForPrompt);
   if (skills.length === 0) return {};
-  const skillNames = skills.map((s) => `${s.slug} (${s.name})`).join(', ');
+  const skillNames = skills.map((s) => `${s.slug} (${s.name})`).join(", ");
   const sandboxDeploymentIds = opts.sandboxDeploymentIds ?? [];
   const rpc = opts.rpc ?? mcpRpc;
 
   return {
     skill_list_attached: agentTool({
-      name: 'skill_list_attached',
+      name: "skill_list_attached",
       description: `List the active attached agent skills and their bundled files. Available skills: ${skillNames}`,
-      parameters: jsonSchema({ type: 'object', properties: {} }),
+      parameters: jsonSchema({ type: "object", properties: {} }),
       execute: async () => ({
         skills: skills.map((s) => ({
           slug: s.slug,
           name: s.name,
           description: s.description,
-          files: ['SKILL.md', ...s.files.map((f) => f.path)],
-          binaryFiles: s.files.filter((f) => f.encoding === 'base64').map((f) => f.path),
-          runnableScripts: s.files.filter((f) => isRunnableScript(f.path)).map((f) => f.path),
+          files: ["SKILL.md", ...s.files.map((f) => f.path)],
+          binaryFiles: s.files
+            .filter((f) => f.encoding === "base64")
+            .map((f) => f.path),
+          runnableScripts: s.files
+            .filter((f) => isRunnableScript(f.path))
+            .map((f) => f.path),
         })),
       }),
     }),
 
     skill_read_file: agentTool({
-      name: 'skill_read_file',
+      name: "skill_read_file",
       description:
-        'Read SKILL.md or a bundled file from an attached agent skill. Read SKILL.md before applying a matching skill, then use this for extra docs, examples, or scripts.',
+        "Read SKILL.md or a bundled file from an attached agent skill. Read SKILL.md before applying a matching skill, then use this for extra docs, examples, or scripts.",
       parameters: jsonSchema({
-        type: 'object',
+        type: "object",
         properties: {
-          skill: { type: 'string', description: `Attached skill slug or name. Available: ${skillNames}` },
-          path: { type: 'string', description: 'File path, for example SKILL.md, reference.md, or scripts/tool.py.' },
+          skill: {
+            type: "string",
+            description: `Attached skill slug or name. Available: ${skillNames}`,
+          },
+          path: {
+            type: "string",
+            description:
+              "File path, for example SKILL.md, reference.md, or scripts/tool.py.",
+          },
         },
-        required: ['skill', 'path'],
+        required: ["skill", "path"],
       }),
-      execute: async ({ skill, path: filePath }: { skill: string; path: string }) => {
+      execute: async ({
+        skill,
+        path: filePath,
+      }: {
+        skill: string;
+        path: string;
+      }) => {
         const runtimeSkill = findSkill(skills, skill);
-        if (!runtimeSkill) return { error: `Attached skill not found: ${String(skill)}` };
+        if (!runtimeSkill)
+          return { error: `Attached skill not found: ${String(skill)}` };
         const file = readSkillPath(runtimeSkill, filePath);
-        if ('error' in file) return file;
-        return { skill: runtimeSkill.slug, path: file.path, content: file.content, encoding: file.encoding };
+        if ("error" in file) return file;
+        return {
+          skill: runtimeSkill.slug,
+          path: file.path,
+          content: file.content,
+          encoding: file.encoding,
+        };
       },
     }),
 
     skill_run_script: agentTool({
-      name: 'skill_run_script',
+      name: "skill_run_script",
       description:
-        'Run a bundled script from an attached skill. Only scripts/* files ending in .js, .mjs, .cjs, .py, or .sh are allowed. The script runs in an attached Agent sandbox; without one it is refused. The sandbox permissions and environment apply.',
+        "Run a bundled script from an attached skill. Only scripts/* files ending in .js, .mjs, .cjs, .py, or .sh are allowed. The script runs in an attached Agent sandbox; without one it is refused. The sandbox permissions and environment apply.",
       parameters: jsonSchema({
-        type: 'object',
+        type: "object",
         properties: {
-          skill: { type: 'string', description: `Attached skill slug or name. Available: ${skillNames}` },
-          path: { type: 'string', description: 'Bundled script path under scripts/, for example scripts/convert.py.' },
+          skill: {
+            type: "string",
+            description: `Attached skill slug or name. Available: ${skillNames}`,
+          },
+          path: {
+            type: "string",
+            description:
+              "Bundled script path under scripts/, for example scripts/convert.py.",
+          },
           args: {
-            type: 'array',
-            items: { type: 'string' },
-            description: 'Command-line arguments to pass to the script.',
+            type: "array",
+            items: { type: "string" },
+            description: "Command-line arguments to pass to the script.",
           },
           sandboxDeploymentId: {
-            type: 'string',
-            description: 'Optional sandbox deployment id. Defaults to the first sandbox attached to the agent.',
+            type: "string",
+            description:
+              "Optional sandbox deployment id. Defaults to the first sandbox attached to the agent.",
           },
-          stdin: { type: 'string', description: 'Optional standard input for the script.' },
+          stdin: {
+            type: "string",
+            description: "Optional standard input for the script.",
+          },
         },
-        required: ['skill', 'path'],
+        required: ["skill", "path"],
       }),
       execute: async ({
         skill,
         path: filePath,
         args = [],
-        stdin = '',
+        stdin = "",
         sandboxDeploymentId,
       }: {
         skill: string;
@@ -189,38 +247,67 @@ export function buildSkillToolSet(
         sandboxDeploymentId?: string;
       }) => {
         const runtimeSkill = findSkill(skills, skill);
-        if (!runtimeSkill) return { error: `Attached skill not found: ${String(skill)}` };
+        if (!runtimeSkill)
+          return { error: `Attached skill not found: ${String(skill)}` };
         const file = readSkillPath(runtimeSkill, filePath);
-        if ('error' in file) return file;
+        if ("error" in file) return file;
         if (!isRunnableScript(file.path)) {
-          return { error: 'Only bundled scripts under scripts/ with .js, .mjs, .cjs, .py, or .sh extensions can run.' };
+          return {
+            error:
+              "Only bundled scripts under scripts/ with .js, .mjs, .cjs, .py, or .sh extensions can run.",
+          };
         }
-        if (!Array.isArray(args) || args.some((a) => typeof a !== 'string' || a.length > MAX_ARG_LENGTH)) {
-          return { error: 'Script args must be strings shorter than 2000 characters.' };
+        if (
+          !Array.isArray(args) ||
+          args.some((a) => typeof a !== "string" || a.length > MAX_ARG_LENGTH)
+        ) {
+          return {
+            error: "Script args must be strings shorter than 2000 characters.",
+          };
         }
 
-        if (sandboxDeploymentId && !sandboxDeploymentIds.includes(sandboxDeploymentId)) {
-          return { error: 'The requested sandbox is not attached to this Agent.' };
+        if (
+          sandboxDeploymentId &&
+          !sandboxDeploymentIds.includes(sandboxDeploymentId)
+        ) {
+          return {
+            error: "The requested sandbox is not attached to this Agent.",
+          };
         }
-        const targetSandbox = sandboxDeploymentId && sandboxDeploymentIds.includes(sandboxDeploymentId)
-          ? sandboxDeploymentId
-          : sandboxDeploymentIds[0];
+        const targetSandbox =
+          sandboxDeploymentId &&
+          sandboxDeploymentIds.includes(sandboxDeploymentId)
+            ? sandboxDeploymentId
+            : sandboxDeploymentIds[0];
         if (!targetSandbox) {
-          return { error: 'Skill scripts require a running Agent sandbox.' };
+          return { error: "Skill scripts require a running Agent sandbox." };
         }
         const root = `.toolplane/skills/${runtimeSkill.slug}`;
-        const written = await writeSkillToSandbox(rpc, targetSandbox, runtimeSkill, root);
-        if ('error' in written) return written;
+        const written = await writeSkillToSandbox(
+          rpc,
+          targetSandbox,
+          runtimeSkill,
+          root,
+        );
+        if ("error" in written) return written;
         const processSpec = sandboxProcessForScript(file.path, args);
-        if (!processSpec) return { error: `Unsupported script type: ${file.path}` };
-        const result = await callSandboxTool(rpc, targetSandbox, 'process_exec', {
-          runtime: processSpec.runtime,
-          args: processSpec.args,
-          cwd: root,
-          stdin,
-          timeoutMs: SCRIPT_TIMEOUT_MS,
-        });
-        return result ?? { error: `Sandbox ${targetSandbox} is not reachable.` };
+        if (!processSpec)
+          return { error: `Unsupported script type: ${file.path}` };
+        const result = await callSandboxTool(
+          rpc,
+          targetSandbox,
+          "process_exec",
+          {
+            runtime: processSpec.runtime,
+            args: processSpec.args,
+            cwd: root,
+            stdin,
+            timeoutMs: SCRIPT_TIMEOUT_MS,
+          },
+        );
+        return (
+          result ?? { error: `Sandbox ${targetSandbox} is not reachable.` }
+        );
       },
     }),
   };

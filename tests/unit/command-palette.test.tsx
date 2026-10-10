@@ -1,98 +1,128 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 const { pushMock, setThemeMock } = vi.hoisted(() => ({
   pushMock: vi.fn(),
   setThemeMock: vi.fn(),
 }));
 
-vi.mock('next/navigation', () => ({
+vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: pushMock }),
-  usePathname: () => '/app/acme/mcp',
-  useSearchParams: () => new URLSearchParams('__dashboardTab=tab-1'),
+  usePathname: () => "/app/acme/mcp",
+  useSearchParams: () => new URLSearchParams("__dashboardTab=tab-1"),
 }));
-vi.mock('next-themes', () => ({
-  useTheme: () => ({ resolvedTheme: 'light', setTheme: setThemeMock }),
+vi.mock("next-themes", () => ({
+  useTheme: () => ({ resolvedTheme: "light", setTheme: setThemeMock }),
 }));
-vi.mock('@/components/layout/LocaleSwitcher', () => ({
+vi.mock("@/components/layout/LocaleSwitcher", () => ({
   LocaleSwitcher: () => <button type="button">Language</button>,
 }));
 
-import { DashboardHeaderControls } from '@/components/dashboard/DashboardHeaderControls';
+import { DashboardHeaderControls } from "@/components/dashboard/DashboardHeaderControls";
 
-describe('DashboardHeaderControls (command palette)', () => {
+describe("DashboardHeaderControls (command palette)", () => {
   beforeEach(() => {
     pushMock.mockClear();
     setThemeMock.mockClear();
   });
 
-  it('opens the palette with Cmd+K and navigates a command to the active workspace', async () => {
+  it("opens the palette with Cmd+K and navigates a command to the active workspace", async () => {
     render(<DashboardHeaderControls />);
-    fireEvent.keyDown(document, { key: 'k', metaKey: true });
+    fireEvent.keyDown(document, { key: "k", metaKey: true });
 
-    const dialog = await screen.findByRole('dialog', { name: 'Command palette' });
+    const dialog = await screen.findByRole("dialog", {
+      name: "Command palette",
+    });
     expect(dialog).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole('option', { name: /^Skills/ }));
-    expect(pushMock).toHaveBeenCalledWith('/app/acme/skills');
+    await userEvent.click(screen.getByRole("option", { name: /^Skills/ }));
+    expect(pushMock).toHaveBeenCalledWith("/app/acme/skills");
   });
 
-  it('filters commands by query', async () => {
+  it("filters commands by query", async () => {
     render(<DashboardHeaderControls />);
-    await userEvent.click(screen.getByRole('button', { name: /quick navigation/i }));
+    await userEvent.click(
+      screen.getByRole("button", { name: /quick navigation/i }),
+    );
     const input = screen.getByPlaceholderText(/search navigation items/i);
-    await userEvent.type(input, 'logs');
-    expect(screen.getByRole('option', { name: /Logs/ })).toBeInTheDocument();
-    expect(screen.queryByRole('option', { name: /^Members/ })).toBeNull();
+    await userEvent.type(input, "logs");
+    expect(screen.getByRole("option", { name: /Logs/ })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /^Members/ })).toBeNull();
   });
 
-  it('closes with Escape and restores focus to its trigger', async () => {
+  it("closes with Escape and restores focus to its trigger", async () => {
     const user = userEvent.setup();
     render(<DashboardHeaderControls />);
 
-    const trigger = screen.getByRole('button', { name: /quick navigation/i });
+    const trigger = screen.getByRole("button", { name: /quick navigation/i });
     await user.click(trigger);
-    await user.keyboard('{Escape}');
+    await user.keyboard("{Escape}");
 
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Command palette' })).toBeNull());
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "Command palette" }),
+      ).toBeNull(),
+    );
     await waitFor(() => expect(trigger).toHaveFocus());
   });
 
-  it('opens workspace market routes instead of legacy create pages', async () => {
+  it("opens workspace market routes instead of legacy create pages", async () => {
     render(<DashboardHeaderControls />);
-    await userEvent.click(screen.getByRole('button', { name: /quick navigation/i }));
+    await userEvent.click(
+      screen.getByRole("button", { name: /quick navigation/i }),
+    );
     const input = screen.getByPlaceholderText(/search navigation items/i);
-    await userEvent.type(input, 'Browse MCP');
-    await userEvent.click(screen.getByRole('option', { name: /^Browse MCP/ }));
+    await userEvent.type(input, "Browse MCP");
+    await userEvent.click(screen.getByRole("option", { name: /^Browse MCP/ }));
 
-    expect(pushMock).toHaveBeenCalledWith('/app/acme/market/mcp');
+    expect(pushMock).toHaveBeenCalledWith("/app/acme/market/mcp");
   });
 
-  it('includes the toolkit market in quick navigation', async () => {
+  it("includes the toolkit market in quick navigation", async () => {
     render(<DashboardHeaderControls />);
-    await userEvent.click(screen.getByRole('button', { name: /quick navigation/i }));
-    await userEvent.type(screen.getByPlaceholderText(/search navigation items/i), 'Browse toolkits');
-    await userEvent.click(screen.getByRole('option', { name: /^Browse toolkits/ }));
+    await userEvent.click(
+      screen.getByRole("button", { name: /quick navigation/i }),
+    );
+    await userEvent.type(
+      screen.getByPlaceholderText(/search navigation items/i),
+      "Browse toolkits",
+    );
+    await userEvent.click(
+      screen.getByRole("option", { name: /^Browse toolkits/ }),
+    );
 
-    expect(pushMock).toHaveBeenCalledWith('/app/acme/market/toolkits');
+    expect(pushMock).toHaveBeenCalledWith("/app/acme/market/toolkits");
   });
 
-  it('preserves the return route when opening settings', async () => {
+  it("preserves the return route when opening settings", async () => {
     render(<DashboardHeaderControls />);
-    await userEvent.click(screen.getByRole('button', { name: /quick navigation/i }));
-    await userEvent.type(screen.getByPlaceholderText(/search navigation items/i), 'Settings');
-    await userEvent.click(screen.getByRole('option', { name: /^Settings/i }));
+    await userEvent.click(
+      screen.getByRole("button", { name: /quick navigation/i }),
+    );
+    await userEvent.type(
+      screen.getByPlaceholderText(/search navigation items/i),
+      "Settings",
+    );
+    await userEvent.click(screen.getByRole("option", { name: /^Settings/i }));
 
-    expect(pushMock).toHaveBeenCalledWith('/app/acme/settings?returnTo=%2Fapp%2Facme%2Fmcp%3F__dashboardTab%3Dtab-1');
+    expect(pushMock).toHaveBeenCalledWith(
+      "/app/acme/settings?returnTo=%2Fapp%2Facme%2Fmcp%3F__dashboardTab%3Dtab-1",
+    );
   });
 
-
-  it('toggles the theme from quick navigation', async () => {
+  it("toggles the theme from quick navigation", async () => {
     render(<DashboardHeaderControls />);
-    await userEvent.click(screen.getByRole('button', { name: /quick navigation/i }));
-    await userEvent.type(screen.getByPlaceholderText(/search navigation items/i), 'Toggle dark mode');
-    await userEvent.click(screen.getByRole('option', { name: /^Toggle dark mode/i }));
-    expect(setThemeMock).toHaveBeenCalledWith('dark');
+    await userEvent.click(
+      screen.getByRole("button", { name: /quick navigation/i }),
+    );
+    await userEvent.type(
+      screen.getByPlaceholderText(/search navigation items/i),
+      "Toggle dark mode",
+    );
+    await userEvent.click(
+      screen.getByRole("option", { name: /^Toggle dark mode/i }),
+    );
+    expect(setThemeMock).toHaveBeenCalledWith("dark");
   });
 });

@@ -1,27 +1,24 @@
-'use server';
+"use server";
 
-import type { Prisma } from '@prisma/client';
-import { revalidatePath } from 'next/cache';
-import { db } from '@/lib/db';
-import { getCurrentUser } from '@/lib/auth/current-user';
-import { getWorkspaceForUser } from '@/lib/workspace/queries';
-import { killProcess, restartProcess } from '@/lib/process/supervisor';
-import { resolveSpawnSpec } from '@/lib/process/spawn-spec';
-import { decryptSecretText, encryptSecretText } from '@/lib/security/secrets';
-import {
-  EDITABLE_MCP_SOURCES,
-} from '@/lib/workspace/custom-mcp';
+import type { DeploymentConfigFile, Prisma } from "@prisma/client";
+import { revalidatePath } from "next/cache";
+import { db } from "@/lib/db";
+import { getCurrentUser } from "@/lib/auth/current-user";
+import { getWorkspaceForUser } from "@/lib/workspace/queries";
+import { killProcess, restartProcess } from "@/lib/process/supervisor";
+import { resolveSpawnSpec } from "@/lib/process/spawn-spec";
+import { decryptSecretText, encryptSecretText } from "@/lib/security/secrets";
+import { EDITABLE_MCP_SOURCES } from "@/lib/workspace/custom-mcp";
 import {
   MAX_RUNTIME_TEXT_FILES,
   MAX_RUNTIME_TEXT_FILES_BYTES,
   safeRuntimeFilePath,
   runtimeFilePathKey,
   validateRuntimeTextFiles,
-} from '@/lib/workspace/runtime-files';
-import {
-  missingDeploymentRequiredEnvironment,
-} from '@/lib/workspace/server-recipe';
-import { runMcpDeploymentOperation } from '@/lib/workspace/mcp-operation';
+  type ValidRuntimeTextFile,
+} from "@/lib/workspace/runtime-files";
+import { missingDeploymentRequiredEnvironment } from "@/lib/workspace/server-recipe";
+import { runMcpDeploymentOperation } from "@/lib/workspace/mcp-operation";
 
 export type RuntimeFileMetadata = {
   id: string;
@@ -31,7 +28,13 @@ export type RuntimeFileMetadata = {
 };
 
 export type RuntimeFilesActionState = {
-  error?: 'invalidFile' | 'notAuthorized' | 'deploymentNotFound' | 'fileNotFound' | 'saveFailed' | 'restartFailed';
+  error?:
+    | "invalidFile"
+    | "notAuthorized"
+    | "deploymentNotFound"
+    | "fileNotFound"
+    | "saveFailed"
+    | "restartFailed";
   savedAt?: number;
   file?: RuntimeFileMetadata;
 };
@@ -61,17 +64,24 @@ async function requiresCatalogSetup(deployment: {
   installCfg: unknown;
   server?: { installCfg?: unknown } | null;
 }): Promise<boolean> {
-  if (missingDeploymentRequiredEnvironment(
-    deployment.installCfg,
-    deployment.server?.installCfg,
-  ).length === 0) {
+  if (
+    missingDeploymentRequiredEnvironment(
+      deployment.installCfg,
+      deployment.server?.installCfg,
+    ).length === 0
+  ) {
     return false;
   }
-  await killProcess(deployment.id, { finalStatus: 'setup_required' });
+  await killProcess(deployment.id, { finalStatus: "setup_required" });
   return true;
 }
 
-function metadata(file: { id: string; path: string; size: number; updatedAt: Date }): RuntimeFileMetadata {
+function metadata(file: {
+  id: string;
+  path: string;
+  size: number;
+  updatedAt: Date;
+}): RuntimeFileMetadata {
   return {
     id: file.id,
     path: file.path,
@@ -93,22 +103,29 @@ export async function revealDeploymentRuntimeFileAction({
   workspace: string;
   deploymentId: string;
   fileId: string;
-}): Promise<{ path?: string; content?: string; error?: 'notAuthorized' | 'deploymentNotFound' | 'fileNotFound' }> {
+}): Promise<{
+  path?: string;
+  content?: string;
+  error?: "notAuthorized" | "deploymentNotFound" | "fileNotFound";
+}> {
   const ctx = await authorizedWorkspace(workspace);
-  if (!ctx) return { error: 'notAuthorized' };
+  if (!ctx) return { error: "notAuthorized" };
   const deployment = await editableDeployment(deploymentId, ctx.ws.id);
-  if (!deployment) return { error: 'deploymentNotFound' };
+  if (!deployment) return { error: "deploymentNotFound" };
   const file = await db.deploymentConfigFile.findFirst({
     where: { id: fileId, deploymentId: deployment.id },
     select: { path: true, encryptedContent: true },
   });
-  if (!file) return { error: 'fileNotFound' };
+  if (!file) return { error: "fileNotFound" };
   try {
-    return { path: file.path, content: decryptSecretText(file.encryptedContent) };
+    return {
+      path: file.path,
+      content: decryptSecretText(file.encryptedContent),
+    };
   } catch {
     // A corrupted or differently-keyed secret must not be reflected to a
     // client. The user can replace the file to restore the deployment.
-    return { error: 'fileNotFound' };
+    return { error: "fileNotFound" };
   }
 }
 
@@ -116,123 +133,144 @@ export async function upsertDeploymentRuntimeFileAction(
   _previous: RuntimeFilesActionState,
   formData: FormData,
 ): Promise<RuntimeFilesActionState> {
-  const workspace = String(formData.get('workspace') ?? '');
-  const deploymentId = String(formData.get('deploymentId') ?? '');
-  const pathEntry = formData.get('path');
-  const path = typeof pathEntry === 'string' ? safeRuntimeFilePath(pathEntry) : null;
-  const content = formData.get('content');
-  if (!workspace || !deploymentId || !path || typeof content !== 'string') {
-    return { error: 'invalidFile' };
+  const workspace = String(formData.get("workspace") ?? "");
+  const deploymentId = String(formData.get("deploymentId") ?? "");
+  const pathEntry = formData.get("path");
+  const path =
+    typeof pathEntry === "string" ? safeRuntimeFilePath(pathEntry) : null;
+  const content = formData.get("content");
+  if (!workspace || !deploymentId || !path || typeof content !== "string") {
+    return { error: "invalidFile" };
   }
 
-  let file;
+  let file: ValidRuntimeTextFile | undefined;
   try {
     file = validateRuntimeTextFiles([{ path, content }])[0];
   } catch {
-    return { error: 'invalidFile' };
+    return { error: "invalidFile" };
   }
-  if (!file) return { error: 'invalidFile' };
+  if (!file) return { error: "invalidFile" };
   const ctx = await authorizedWorkspace(workspace);
-  if (!ctx) return { error: 'notAuthorized' };
+  if (!ctx) return { error: "notAuthorized" };
   const deployment = await editableDeployment(deploymentId, ctx.ws.id);
-  if (!deployment) return { error: 'deploymentNotFound' };
+  if (!deployment) return { error: "deploymentNotFound" };
 
   const pathKey = runtimeFilePathKey(file.path);
-  let stored;
+  let stored: Pick<DeploymentConfigFile, "id" | "path" | "size" | "updatedAt">;
   try {
-    stored = await db.$transaction(async (tx) => {
-      const current = await tx.deploymentConfigFile.findMany({
-        where: { deploymentId: deployment.id },
-        select: { pathKey: true, size: true },
-      });
-      const replacing = current.find((existing) => existing.pathKey === pathKey);
-      if (current.length + (replacing ? 0 : 1) > MAX_RUNTIME_TEXT_FILES) {
-        throw new RuntimeFileLimitError('Too many runtime files.');
-      }
-      const totalBytes = current.reduce((total, existing) => total + existing.size, 0)
-        - (replacing?.size ?? 0)
-        + file.size;
-      if (totalBytes > MAX_RUNTIME_TEXT_FILES_BYTES) {
-        throw new RuntimeFileLimitError('Runtime files are too large.');
-      }
-      return tx.deploymentConfigFile.upsert({
-        where: { deploymentId_pathKey: { deploymentId: deployment.id, pathKey } },
-        update: {
-          path: file.path,
-          encryptedContent: encryptSecretText(file.content) as Prisma.InputJsonValue,
-          size: file.size,
-        },
-        create: {
-          deploymentId: deployment.id,
-          path: file.path,
-          pathKey,
-          encryptedContent: encryptSecretText(file.content) as Prisma.InputJsonValue,
-          size: file.size,
-        },
-        select: { id: true, path: true, size: true, updatedAt: true },
-      });
-    }, { isolationLevel: 'Serializable', maxWait: 10_000, timeout: 30_000 });
+    stored = await db.$transaction(
+      async (tx) => {
+        const current = await tx.deploymentConfigFile.findMany({
+          where: { deploymentId: deployment.id },
+          select: { pathKey: true, size: true },
+        });
+        const replacing = current.find(
+          (existing) => existing.pathKey === pathKey,
+        );
+        if (current.length + (replacing ? 0 : 1) > MAX_RUNTIME_TEXT_FILES) {
+          throw new RuntimeFileLimitError("Too many runtime files.");
+        }
+        const totalBytes =
+          current.reduce((total, existing) => total + existing.size, 0) -
+          (replacing?.size ?? 0) +
+          file.size;
+        if (totalBytes > MAX_RUNTIME_TEXT_FILES_BYTES) {
+          throw new RuntimeFileLimitError("Runtime files are too large.");
+        }
+        return tx.deploymentConfigFile.upsert({
+          where: {
+            deploymentId_pathKey: { deploymentId: deployment.id, pathKey },
+          },
+          update: {
+            path: file.path,
+            encryptedContent: encryptSecretText(
+              file.content,
+            ) as Prisma.InputJsonValue,
+            size: file.size,
+          },
+          create: {
+            deploymentId: deployment.id,
+            path: file.path,
+            pathKey,
+            encryptedContent: encryptSecretText(
+              file.content,
+            ) as Prisma.InputJsonValue,
+            size: file.size,
+          },
+          select: { id: true, path: true, size: true, updatedAt: true },
+        });
+      },
+      { isolationLevel: "Serializable", maxWait: 10_000, timeout: 30_000 },
+    );
   } catch (error) {
-    if (error instanceof RuntimeFileLimitError) return { error: 'invalidFile' };
-    return { error: 'saveFailed' };
+    if (error instanceof RuntimeFileLimitError) return { error: "invalidFile" };
+    return { error: "saveFailed" };
   }
 
-  const operation = await runMcpDeploymentOperation(ctx.ws.id, deploymentId, async () => {
-    const current = await editableDeployment(deploymentId, ctx.ws.id);
-    if (!current) return { error: 'deploymentNotFound' } as const;
-    if (await requiresCatalogSetup(current)) {
+  const operation = await runMcpDeploymentOperation(
+    ctx.ws.id,
+    deploymentId,
+    async () => {
+      const current = await editableDeployment(deploymentId, ctx.ws.id);
+      if (!current) return { error: "deploymentNotFound" } as const;
+      if (await requiresCatalogSetup(current)) {
+        return { savedAt: Date.now(), file: metadata(stored) };
+      }
+      try {
+        await restartProcess(current.id, resolveSpawnSpec(current), {
+          awaitReady: false,
+          workspaceId: ctx.ws.id,
+        });
+      } catch {
+        return { error: "restartFailed" } as const;
+      }
       return { savedAt: Date.now(), file: metadata(stored) };
-    }
-    try {
-      await restartProcess(current.id, resolveSpawnSpec(current), {
-        awaitReady: false,
-        workspaceId: ctx.ws.id,
-      });
-    } catch {
-      return { error: 'restartFailed' } as const;
-    }
-    return { savedAt: Date.now(), file: metadata(stored) };
-  });
+    },
+  );
   revalidateDeploymentPaths(workspace, deploymentId);
-  return operation.accepted ? operation.value : { error: 'deploymentNotFound' };
+  return operation.accepted ? operation.value : { error: "deploymentNotFound" };
 }
 
 export async function deleteDeploymentRuntimeFileAction(
   formData: FormData,
 ): Promise<RuntimeFilesActionState> {
-  const workspace = String(formData.get('workspace') ?? '');
-  const deploymentId = String(formData.get('deploymentId') ?? '');
-  const fileId = String(formData.get('fileId') ?? '');
-  if (!workspace || !deploymentId || !fileId) return { error: 'fileNotFound' };
+  const workspace = String(formData.get("workspace") ?? "");
+  const deploymentId = String(formData.get("deploymentId") ?? "");
+  const fileId = String(formData.get("fileId") ?? "");
+  if (!workspace || !deploymentId || !fileId) return { error: "fileNotFound" };
   const ctx = await authorizedWorkspace(workspace);
-  if (!ctx) return { error: 'notAuthorized' };
+  if (!ctx) return { error: "notAuthorized" };
   const deployment = await editableDeployment(deploymentId, ctx.ws.id);
-  if (!deployment) return { error: 'deploymentNotFound' };
+  if (!deployment) return { error: "deploymentNotFound" };
 
-  let removed;
+  let removed: Prisma.BatchPayload;
   try {
     removed = await db.deploymentConfigFile.deleteMany({
       where: { id: fileId, deploymentId: deployment.id },
     });
   } catch {
-    return { error: 'saveFailed' };
+    return { error: "saveFailed" };
   }
-  if (!removed.count) return { error: 'fileNotFound' };
+  if (!removed.count) return { error: "fileNotFound" };
 
-  const operation = await runMcpDeploymentOperation(ctx.ws.id, deploymentId, async () => {
-    const current = await editableDeployment(deploymentId, ctx.ws.id);
-    if (!current) return { error: 'deploymentNotFound' } as const;
-    if (await requiresCatalogSetup(current)) return { savedAt: Date.now() };
-    try {
-      await restartProcess(current.id, resolveSpawnSpec(current), {
-        awaitReady: false,
-        workspaceId: ctx.ws.id,
-      });
-    } catch {
-      return { error: 'restartFailed' } as const;
-    }
-    return { savedAt: Date.now() };
-  });
+  const operation = await runMcpDeploymentOperation(
+    ctx.ws.id,
+    deploymentId,
+    async () => {
+      const current = await editableDeployment(deploymentId, ctx.ws.id);
+      if (!current) return { error: "deploymentNotFound" } as const;
+      if (await requiresCatalogSetup(current)) return { savedAt: Date.now() };
+      try {
+        await restartProcess(current.id, resolveSpawnSpec(current), {
+          awaitReady: false,
+          workspaceId: ctx.ws.id,
+        });
+      } catch {
+        return { error: "restartFailed" } as const;
+      }
+      return { savedAt: Date.now() };
+    },
+  );
   revalidateDeploymentPaths(workspace, deploymentId);
-  return operation.accepted ? operation.value : { error: 'deploymentNotFound' };
+  return operation.accepted ? operation.value : { error: "deploymentNotFound" };
 }

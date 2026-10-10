@@ -1,29 +1,31 @@
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+import { describe, it, expect, vi } from "vitest";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
-vi.mock('@/lib/workspace/management-actions', () => ({
+vi.mock("@/lib/workspace/management-actions", () => ({
   createWorkspaceAction: vi.fn(),
-  removeWorkspaceMemberAction: vi.fn(), leaveWorkspaceAction: vi.fn(), revokeWorkspaceInvitationAction: vi.fn(),
+  removeWorkspaceMemberAction: vi.fn(),
+  leaveWorkspaceAction: vi.fn(),
+  revokeWorkspaceInvitationAction: vi.fn(),
 }));
 
-vi.mock('@/lib/auth/actions', () => ({
+vi.mock("@/lib/auth/actions", () => ({
   logoutAction: vi.fn(),
 }));
 
-vi.mock('next/navigation', () => ({
-  usePathname: () => '/app/acme/work',
+vi.mock("next/navigation", () => ({
+  usePathname: () => "/app/acme/work",
 }));
 
-import { WorkspaceSwitcher } from '@/components/dashboard/WorkspaceSwitcher';
+import { WorkspaceSwitcher } from "@/components/dashboard/WorkspaceSwitcher";
 
 const workspaces = [
-  { id: 'w1', slug: 'acme', name: 'Acme' },
-  { id: 'w2', slug: 'staging', name: 'Staging' },
+  { id: "w1", slug: "acme", name: "Acme" },
+  { id: "w2", slug: "staging", name: "Staging" },
 ];
 
-describe('WorkspaceSwitcher', () => {
-  it('shows the current workspace in a popover', async () => {
+describe("WorkspaceSwitcher", () => {
+  it("shows the current workspace in a popover", async () => {
     const user = userEvent.setup();
     render(
       <WorkspaceSwitcher
@@ -34,21 +36,47 @@ describe('WorkspaceSwitcher', () => {
       />,
     );
 
-    const trigger = screen.getByRole('button', { name: '切换工作区' });
-    expect(screen.queryByRole('dialog')).toBeNull();
+    const trigger = screen.getByRole("button", { name: "切换工作区" });
+    expect(screen.queryByRole("dialog")).toBeNull();
 
     await user.click(trigger);
-    expect(await screen.findByRole('dialog')).toBeInTheDocument();
-    expect(trigger).toHaveAttribute('aria-expanded', 'true');
-    expect(screen.queryByRole('menu')).toBeNull();
-    expect(screen.getByRole('link', { name: /Acme/ })).toHaveAttribute(
-      'aria-current',
-      'page',
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(screen.getByRole("link", { name: /Acme/ })).toHaveAttribute(
+      "aria-current",
+      "page",
     );
-    expect(screen.getByRole('link', { name: /Staging/ })).toHaveAttribute('href', '/app/staging/work');
+    expect(screen.getByRole("link", { name: /Staging/ })).toHaveAttribute(
+      "href",
+      "/app/staging/work",
+    );
   });
 
-  it('uses the workspace initials in compact mode', () => {
+  it("shows the workspace administrator role without treating it as owner or member", async () => {
+    const user = userEvent.setup();
+    render(
+      <WorkspaceSwitcher
+        slug="acme"
+        workspaceName="Acme"
+        userLabel="me@x.com"
+        workspaces={[
+          { id: "w1", slug: "acme", name: "Acme", role: "admin" },
+          { id: "w2", slug: "staging", name: "Staging", role: "member" },
+        ]}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "切换工作区" }));
+    expect(screen.getByRole("link", { name: /Acme/ })).toHaveTextContent(
+      "Administrator",
+    );
+    expect(screen.getByRole("link", { name: /Staging/ })).toHaveTextContent(
+      "Member",
+    );
+  });
+
+  it("uses the workspace initials in compact mode", () => {
     render(
       <WorkspaceSwitcher
         slug="acme"
@@ -59,10 +87,10 @@ describe('WorkspaceSwitcher', () => {
       />,
     );
 
-    expect(screen.getByText('AS')).toBeInTheDocument();
+    expect(screen.getByText("AS")).toBeInTheDocument();
   });
 
-  it('reveals an inline create form', async () => {
+  it("reveals an inline create form", async () => {
     const user = userEvent.setup();
     render(
       <WorkspaceSwitcher
@@ -72,21 +100,23 @@ describe('WorkspaceSwitcher', () => {
         workspaces={workspaces}
       />,
     );
-    await user.click(screen.getByRole('button', { name: '切换工作区' }));
-    await user.click(screen.getByRole('button', { name: /create workspace/i }));
-    const input = screen.getByRole('textbox', { name: 'Workspace name' });
+    await user.click(screen.getByRole("button", { name: "切换工作区" }));
+    await user.click(screen.getByRole("button", { name: /create workspace/i }));
+    const input = screen.getByRole("textbox", { name: "Workspace name" });
     expect(input).toBeInTheDocument();
     expect(input).toHaveFocus();
 
-    await user.type(input, 'New workspace');
-    await user.keyboard('{ArrowLeft}{Home}{End}{ArrowRight}');
+    await user.type(input, "New workspace");
+    await user.keyboard("{ArrowLeft}{Home}{End}{ArrowRight}");
 
     expect(input).toHaveFocus();
-    expect(input).toHaveValue('New workspace');
-    expect(screen.getByRole('button', { name: 'Create workspace' })).toBeInTheDocument();
+    expect(input).toHaveValue("New workspace");
+    expect(
+      screen.getByRole("button", { name: "Create workspace" }),
+    ).toBeInTheDocument();
   });
 
-  it('closes on Escape and restores focus to the trigger', async () => {
+  it("closes on Escape and restores focus to the trigger", async () => {
     const user = userEvent.setup();
     render(
       <WorkspaceSwitcher
@@ -97,15 +127,17 @@ describe('WorkspaceSwitcher', () => {
       />,
     );
 
-    const trigger = screen.getByRole('button', { name: '切换工作区' });
+    const trigger = screen.getByRole("button", { name: "切换工作区" });
     await user.click(trigger);
-    await user.keyboard('{Escape}');
+    await user.keyboard("{Escape}");
 
-    await waitFor(() => expect(trigger).toHaveAttribute('aria-expanded', 'false'));
+    await waitFor(() =>
+      expect(trigger).toHaveAttribute("aria-expanded", "false"),
+    );
     await waitFor(() => expect(trigger).toHaveFocus());
   });
 
-  it('closes when an outside control is clicked', async () => {
+  it("closes when an outside control is clicked", async () => {
     const user = userEvent.setup();
     render(
       <>
@@ -119,16 +151,18 @@ describe('WorkspaceSwitcher', () => {
       </>,
     );
 
-    const trigger = screen.getByRole('button', { name: '切换工作区' });
+    const trigger = screen.getByRole("button", { name: "切换工作区" });
     await user.click(trigger);
-    const outside = screen.getByRole('button', { name: 'Outside' });
+    const outside = screen.getByRole("button", { name: "Outside" });
     await user.click(outside);
 
-    await waitFor(() => expect(trigger).toHaveAttribute('aria-expanded', 'false'));
+    await waitFor(() =>
+      expect(trigger).toHaveAttribute("aria-expanded", "false"),
+    );
     expect(outside).toHaveFocus();
   });
 
-  it('exposes workspace settings and keeps management actions out of the workspace picker', async () => {
+  it("exposes workspace settings and keeps management actions out of the workspace picker", async () => {
     const user = userEvent.setup();
     render(
       <WorkspaceSwitcher
@@ -139,13 +173,17 @@ describe('WorkspaceSwitcher', () => {
       />,
     );
 
-    await user.click(screen.getByRole('button', { name: '切换工作区' }));
+    await user.click(screen.getByRole("button", { name: "切换工作区" }));
 
-    expect(screen.getByRole('link', { name: 'Workspace settings' })).toHaveAttribute(
-      'href',
-      '/app/acme/settings?returnTo=%2Fapp%2Facme%2Fwork',
+    expect(
+      screen.getByRole("link", { name: "Workspace settings" }),
+    ).toHaveAttribute(
+      "href",
+      "/app/acme/settings?returnTo=%2Fapp%2Facme%2Fwork",
     );
-    expect(screen.queryByRole('link', { name: 'Manage workspaces' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /sign out/i })).toBeNull();
+    expect(
+      screen.queryByRole("link", { name: "Manage workspaces" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /sign out/i })).toBeNull();
   });
 });

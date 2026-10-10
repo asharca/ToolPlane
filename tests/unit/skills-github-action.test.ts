@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   create: vi.fn(),
@@ -13,147 +13,180 @@ const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
 }));
 
-vi.mock('next/cache', () => ({ revalidatePath: mocks.revalidatePath }));
-vi.mock('next/navigation', () => ({ redirect: mocks.redirect }));
-vi.mock('next-intl/server', () => ({ getTranslations: async () => (key: string) => key }));
-vi.mock('@/lib/auth/current-user', () => ({ getCurrentUser: mocks.getCurrentUser }));
-vi.mock('@/lib/workspace/queries', () => ({ getWorkspaceForUser: mocks.getWorkspaceForUser }));
-vi.mock('@/lib/admin/settings', () => ({ getSkillImportSettings: mocks.getSkillImportSettings }));
-vi.mock('@/lib/db', () => ({
+vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidatePath }));
+vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));
+vi.mock("next-intl/server", () => ({
+  getTranslations: async () => (key: string) => key,
+}));
+vi.mock("@/lib/auth/current-user", () => ({
+  getCurrentUser: mocks.getCurrentUser,
+}));
+vi.mock("@/lib/workspace/queries", () => ({
+  getWorkspaceForUser: mocks.getWorkspaceForUser,
+}));
+vi.mock("@/lib/admin/settings", () => ({
+  getSkillImportSettings: mocks.getSkillImportSettings,
+}));
+vi.mock("@/lib/db", () => ({
   db: {
     installedSkill: { create: mocks.create, findMany: mocks.findMany },
     $transaction: mocks.transaction,
   },
 }));
-vi.mock('@/lib/skills/bundle', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@/lib/skills/bundle')>()),
+vi.mock("@/lib/skills/bundle", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/skills/bundle")>()),
   fetchGithubSkillBundles: mocks.fetchBundles,
   parseUploadedSkillBundles: mocks.parseUploadedBundles,
 }));
 
-import { importSkillFromGithubAction, uploadSkillFolderAction } from '@/lib/skills/actions';
+import {
+  importSkillFromGithubAction,
+  uploadSkillFolderAction,
+} from "@/lib/skills/actions";
 
 function githubForm(): FormData {
   const form = new FormData();
-  form.set('workspace', 'acme');
-  form.set('repo', 'https://github.com/tikoci/routeros-skills');
+  form.set("workspace", "acme");
+  form.set("repo", "https://github.com/tikoci/routeros-skills");
   return form;
 }
 
 function uploadForm(): FormData {
   const form = new FormData();
-  form.set('workspace', 'acme');
-  form.set('files', JSON.stringify([{ path: 'routeros-firewall/SKILL.md', content: '# Firewall' }]));
+  form.set("workspace", "acme");
+  form.set(
+    "files",
+    JSON.stringify([
+      { path: "routeros-firewall/SKILL.md", content: "# Firewall" },
+    ]),
+  );
   return form;
 }
 
-describe('importSkillFromGithubAction', () => {
+describe("importSkillFromGithubAction", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.getCurrentUser.mockResolvedValue({ id: 'user-1' });
-    mocks.getWorkspaceForUser.mockResolvedValue({ id: 'workspace-1' });
-    mocks.findMany.mockResolvedValue([{ slug: 'routeros-firewall', skill: null }]);
+    mocks.getCurrentUser.mockResolvedValue({ id: "user-1" });
+    mocks.getWorkspaceForUser.mockResolvedValue({ id: "workspace-1" });
+    mocks.findMany.mockResolvedValue([
+      { slug: "routeros-firewall", skill: null },
+    ]);
     mocks.getSkillImportSettings.mockResolvedValue({ maxSkills: 80 });
     mocks.create.mockImplementation(async ({ data }) => ({
       id: `created-${data.name}`,
       ...data,
     }));
-    mocks.transaction.mockImplementation(async (operations: Promise<unknown>[]) => Promise.all(operations));
+    mocks.transaction.mockImplementation(
+      async (operations: Promise<unknown>[]) => Promise.all(operations),
+    );
     mocks.redirect.mockImplementation((url: string) => {
       throw new Error(`REDIRECT:${url}`);
     });
   });
 
-  it('creates every GitHub bundle atomically with source paths and bundled files', async () => {
+  it("creates every GitHub bundle atomically with source paths and bundled files", async () => {
     mocks.fetchBundles.mockResolvedValue([
       {
-        slugHint: 'routeros-firewall',
-        name: 'routeros-firewall',
-        description: 'Firewall rules',
-        author: 'tikoci',
+        slugHint: "routeros-firewall",
+        name: "routeros-firewall",
+        description: "Firewall rules",
+        author: "tikoci",
         source: {
-          owner: 'tikoci',
-          repo: 'routeros-skills',
-          ref: 'HEAD',
-          path: 'routeros-firewall',
-          normalized: 'https://github.com/tikoci/routeros-skills/tree/HEAD/routeros-firewall',
+          owner: "tikoci",
+          repo: "routeros-skills",
+          ref: "HEAD",
+          path: "routeros-firewall",
+          normalized:
+            "https://github.com/tikoci/routeros-skills/tree/HEAD/routeros-firewall",
         },
-        content: '# Firewall',
-        files: [{ path: 'references/dos.md', content: 'dos reference' }],
+        content: "# Firewall",
+        files: [{ path: "references/dos.md", content: "dos reference" }],
       },
       {
-        slugHint: 'routeros-scripting',
-        name: 'routeros-scripting',
-        description: 'Router scripts',
-        author: 'tikoci',
+        slugHint: "routeros-scripting",
+        name: "routeros-scripting",
+        description: "Router scripts",
+        author: "tikoci",
         source: {
-          owner: 'tikoci',
-          repo: 'routeros-skills',
-          ref: 'HEAD',
-          path: 'routeros-scripting',
-          normalized: 'https://github.com/tikoci/routeros-skills/tree/HEAD/routeros-scripting',
+          owner: "tikoci",
+          repo: "routeros-skills",
+          ref: "HEAD",
+          path: "routeros-scripting",
+          normalized:
+            "https://github.com/tikoci/routeros-skills/tree/HEAD/routeros-scripting",
         },
-        content: '# Scripting',
+        content: "# Scripting",
         files: [],
       },
     ]);
 
     await expect(importSkillFromGithubAction({}, githubForm())).rejects.toThrow(
-      'REDIRECT:/app/acme/skills?imported=created-routeros-firewall%2Ccreated-routeros-scripting',
+      "REDIRECT:/app/acme/skills?imported=created-routeros-firewall%2Ccreated-routeros-scripting",
     );
 
     expect(mocks.transaction).toHaveBeenCalledOnce();
-    expect(mocks.fetchBundles).toHaveBeenCalledWith('https://github.com/tikoci/routeros-skills', 80);
+    expect(mocks.fetchBundles).toHaveBeenCalledWith(
+      "https://github.com/tikoci/routeros-skills",
+      80,
+    );
     expect(mocks.create).toHaveBeenNthCalledWith(1, {
       data: expect.objectContaining({
-        workspaceId: 'workspace-1',
-        source: 'github',
-        sourceRef: 'https://github.com/tikoci/routeros-skills/tree/HEAD/routeros-firewall',
-        name: 'routeros-firewall',
-        slug: 'routeros-firewall-2',
-        description: 'Firewall rules',
-        content: '# Firewall',
-        files: [{ path: 'references/dos.md', content: 'dos reference' }],
+        workspaceId: "workspace-1",
+        source: "github",
+        sourceRef:
+          "https://github.com/tikoci/routeros-skills/tree/HEAD/routeros-firewall",
+        name: "routeros-firewall",
+        slug: "routeros-firewall-2",
+        description: "Firewall rules",
+        content: "# Firewall",
+        files: [{ path: "references/dos.md", content: "dos reference" }],
       }),
     });
     expect(mocks.create).toHaveBeenNthCalledWith(2, {
       data: expect.objectContaining({
-        sourceRef: 'https://github.com/tikoci/routeros-skills/tree/HEAD/routeros-scripting',
-        name: 'routeros-scripting',
-        slug: 'routeros-scripting',
+        sourceRef:
+          "https://github.com/tikoci/routeros-skills/tree/HEAD/routeros-scripting",
+        name: "routeros-scripting",
+        slug: "routeros-scripting",
         files: undefined,
       }),
     });
-    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/acme/skills');
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/app/acme/skills");
   });
 
-  it('returns a useful GitHub error without creating partial records', async () => {
-    mocks.fetchBundles.mockRejectedValue(new Error('GitHub request failed (403): API rate limit exceeded.'));
+  it("returns a useful GitHub error without creating partial records", async () => {
+    mocks.fetchBundles.mockRejectedValue(
+      new Error("GitHub request failed (403): API rate limit exceeded."),
+    );
 
-    await expect(importSkillFromGithubAction({}, githubForm())).resolves.toEqual({
-      error: 'GitHub request failed (403): API rate limit exceeded.',
+    await expect(
+      importSkillFromGithubAction({}, githubForm()),
+    ).resolves.toEqual({
+      error: "GitHub request failed (403): API rate limit exceeded.",
     });
     expect(mocks.create).not.toHaveBeenCalled();
     expect(mocks.transaction).not.toHaveBeenCalled();
   });
 
-  it('uses the configured limit for uploaded folders', async () => {
+  it("uses the configured limit for uploaded folders", async () => {
     mocks.parseUploadedBundles.mockReturnValue([
       {
-        rootPath: 'routeros-firewall',
-        name: 'routeros-firewall',
+        rootPath: "routeros-firewall",
+        name: "routeros-firewall",
         description: null,
-        content: '# Firewall',
+        content: "# Firewall",
         files: [],
       },
     ]);
 
     await expect(uploadSkillFolderAction({}, uploadForm())).rejects.toThrow(
-      'REDIRECT:/app/acme/skills?imported=created-routeros-firewall',
+      "REDIRECT:/app/acme/skills?imported=created-routeros-firewall",
     );
 
-    expect(mocks.parseUploadedBundles).toHaveBeenCalledWith([
-      { path: 'routeros-firewall/SKILL.md', content: '# Firewall' },
-    ], '', 80);
+    expect(mocks.parseUploadedBundles).toHaveBeenCalledWith(
+      [{ path: "routeros-firewall/SKILL.md", content: "# Firewall" }],
+      "",
+      80,
+    );
   });
 });

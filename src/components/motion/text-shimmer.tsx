@@ -13,19 +13,18 @@ export interface TextShimmerProps {
   className?: string;
 }
 
-export function TextShimmer({ children, as: Comp = "span", duration = 2.5, className }: TextShimmerProps) {
+export function TextShimmer({
+  children,
+  as: Comp = "span",
+  duration = 2.5,
+  className,
+}: TextShimmerProps) {
   return (
     <>
-      <style>
-        {TEXT_SHIMMER_KEYFRAMES}
-      </style>
+      <style>{TEXT_SHIMMER_KEYFRAMES}</style>
       <Comp
         style={textShimmerStyle(duration)}
-        className={cn(
-          "inline-block",
-          TEXT_SHIMMER_CLASS_NAME,
-          className,
-        )}
+        className={cn("inline-block", TEXT_SHIMMER_CLASS_NAME, className)}
       >
         {children}
       </Comp>

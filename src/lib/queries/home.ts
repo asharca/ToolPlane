@@ -1,5 +1,5 @@
-import { db } from '@/lib/db';
-import { normalizedSkillDescription } from '@/lib/skills/frontmatter';
+import { db } from "@/lib/db";
+import { normalizedSkillDescription } from "@/lib/skills/frontmatter";
 
 const SECTION_SIZE = 6;
 const serverCardSelect = {
@@ -26,28 +26,28 @@ export async function getHomeSections() {
   ] = await Promise.all([
     db.server.findMany({
       where: { isOfficial: true },
-      orderBy: { stars: 'desc' },
+      orderBy: { stars: "desc" },
       take: SECTION_SIZE,
       select: serverCardSelect,
     }),
     db.server.findMany({
       where: { isFeatured: true },
-      orderBy: { stars: 'desc' },
+      orderBy: { stars: "desc" },
       take: SECTION_SIZE,
       select: serverCardSelect,
     }),
     db.server.findMany({
-      orderBy: { stars: 'desc' },
+      orderBy: { stars: "desc" },
       take: SECTION_SIZE,
       select: serverCardSelect,
     }),
     db.server.findMany({
-      orderBy: { createdAt: 'desc' },
+      orderBy: { createdAt: "desc" },
       take: SECTION_SIZE,
       select: serverCardSelect,
     }),
     db.client.findMany({
-      orderBy: { stars: 'desc' },
+      orderBy: { stars: "desc" },
       take: SECTION_SIZE,
       select: {
         slug: true,
@@ -60,7 +60,7 @@ export async function getHomeSections() {
       },
     }),
     db.skill.findMany({
-      orderBy: { score: 'desc' },
+      orderBy: { score: "desc" },
       take: SECTION_SIZE,
       select: {
         slug: true,

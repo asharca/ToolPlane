@@ -1,17 +1,16 @@
-'use client';
-import { Input } from '@/components/motion/input';
-import { Button } from '@/components/motion/button';
+"use client";
+import { Input } from "@/components/motion/input";
+import { Button } from "@/components/motion/button";
 
-
-import { useActionState } from 'react';
-import { HardDriveUpload, RotateCcw, Save } from 'lucide-react';
-import { useTranslations } from 'next-intl';
+import { useActionState } from "react";
+import { HardDriveUpload, RotateCcw, Save } from "lucide-react";
+import { useTranslations } from "next-intl";
 import {
   updateAgentAttachmentLimitAction,
   type AdminSettingsActionState,
-} from '@/lib/admin/settings-actions';
-import { SubmitButton } from '@/components/dashboard/SubmitButton';
-import { AdminBadge, AdminPanel } from '@/components/admin/AdminUI';
+} from "@/lib/admin/settings-actions";
+import { SubmitButton } from "@/components/dashboard/SubmitButton";
+import { AdminBadge, AdminPanel } from "@/components/admin/AdminUI";
 
 export function RuntimeSettingsForm({
   bytes,
@@ -21,70 +20,125 @@ export function RuntimeSettingsForm({
   maxMegabytes,
 }: {
   bytes: number;
-  source: 'database' | 'environment' | 'default';
+  source: "database" | "environment" | "default";
   cached?: boolean;
   minMegabytes: number;
   maxMegabytes: number;
 }) {
-  const t = useTranslations('admin');
-  const [state, action, isPending] = useActionState<AdminSettingsActionState, FormData>(
-    updateAgentAttachmentLimitAction,
-    {},
-  );
+  const t = useTranslations("admin");
+  const [state, action, isPending] = useActionState<
+    AdminSettingsActionState,
+    FormData
+  >(updateAgentAttachmentLimitAction, {});
   const megabytes = Math.max(1, Math.round(bytes / 1_000_000));
-  const sourceLabel = source === 'database'
-    ? t('settingsSourceAdmin')
-    : source === 'environment'
-      ? t('settingsSourceEnvironment')
-      : t('settingsSourceDefault');
+  const sourceLabel =
+    source === "database"
+      ? t("settingsSourceAdmin")
+      : source === "environment"
+        ? t("settingsSourceEnvironment")
+        : t("settingsSourceDefault");
 
   return (
     <AdminPanel
-      title={t('agentAttachmentUploads')}
-      description={t('agentAttachmentUploadsDescription')}
-      actions={<AdminBadge tone={source === 'database' ? 'info' : 'neutral'}>{sourceLabel}</AdminBadge>}
+      title={t("agentAttachmentUploads")}
+      description={t("agentAttachmentUploadsDescription")}
+      actions={
+        <AdminBadge tone={source === "database" ? "info" : "neutral"}>
+          {sourceLabel}
+        </AdminBadge>
+      }
     >
       <form action={action} className="space-y-5">
-        {cached && <p role="alert" className="text-sm text-destructive">{t('attachmentLimitCached')}</p>}
+        {cached && (
+          <p role="alert" className="text-sm text-destructive">
+            {t("attachmentLimitCached")}
+          </p>
+        )}
         <div className="flex items-start gap-3 rounded-md border border-border bg-muted/25 p-4">
-          <HardDriveUpload className="mt-0.5 size-5 shrink-0 text-muted-foreground" aria-hidden="true" />
+          <HardDriveUpload
+            className="mt-0.5 size-5 shrink-0 text-muted-foreground"
+            aria-hidden="true"
+          />
           <div className="min-w-0 text-sm">
-            <p className="font-medium text-foreground">{t('attachmentStorageBehavior')}</p>
-            <p className="mt-1 text-muted-foreground">{t('attachmentStorageBehaviorDescription')}</p>
+            <p className="font-medium text-foreground">
+              {t("attachmentStorageBehavior")}
+            </p>
+            <p className="mt-1 text-muted-foreground">
+              {t("attachmentStorageBehaviorDescription")}
+            </p>
           </div>
         </div>
 
         <div className="max-w-md space-y-1.5">
-          <label htmlFor="max-agent-attachment-size" className="block text-sm font-medium text-foreground">
-            {t('maximumAttachmentSize')}
+          <label
+            htmlFor="max-agent-attachment-size"
+            className="block text-sm font-medium text-foreground"
+          >
+            {t("maximumAttachmentSize")}
           </label>
           <div className="flex items-center gap-2">
-            <Input id="max-agent-attachment-size" name="maxAttachmentSizeMb" type="number" min={minMegabytes} max={maxMegabytes} step={1} defaultValue={String(megabytes)} aria-describedby="max-agent-attachment-size-help" required className="min-w-0 flex-1" />
+            <Input
+              id="max-agent-attachment-size"
+              name="maxAttachmentSizeMb"
+              type="number"
+              min={minMegabytes}
+              max={maxMegabytes}
+              step={1}
+              defaultValue={String(megabytes)}
+              aria-describedby="max-agent-attachment-size-help"
+              required
+              className="min-w-0 flex-1"
+            />
             <span className="text-sm text-muted-foreground">MB</span>
           </div>
-          <p id="max-agent-attachment-size-help" className="text-xs text-muted-foreground">
-            {t('maximumAttachmentSizeHelp', { bytes: bytes.toLocaleString(), max: maxMegabytes.toLocaleString() })}
+          <p
+            id="max-agent-attachment-size-help"
+            className="text-xs text-muted-foreground"
+          >
+            {t("maximumAttachmentSizeHelp", {
+              bytes: bytes.toLocaleString(),
+              max: maxMegabytes.toLocaleString(),
+            })}
           </p>
         </div>
 
         <div className="flex flex-wrap gap-2">
           <SubmitButton
-            pendingLabel={t('saving')}
-            savedLabel={t('saved')}
+            pendingLabel={t("saving")}
+            savedLabel={t("saved")}
             error={state.error}
-            variant="primary" size="md"
+            variant="primary"
+            size="md"
           >
             <Save className="size-4" />
-            {t('saveChanges')}
+            {t("saveChanges")}
           </SubmitButton>
-          {source === 'database' ? (
-            <Button type="submit" name="intent" value="reset" formNoValidate disabled={isPending} variant="secondary" size="md"><RotateCcw className="size-4" />
-            {t('restoreEnvironmentDefault')}</Button>
+          {source === "database" ? (
+            <Button
+              type="submit"
+              name="intent"
+              value="reset"
+              formNoValidate
+              disabled={isPending}
+              variant="secondary"
+              size="md"
+            >
+              <RotateCcw className="size-4" />
+              {t("restoreEnvironmentDefault")}
+            </Button>
           ) : null}
         </div>
 
-        {state.error ? <p className="text-sm text-destructive" role="alert">{state.error}</p> : null}
-        {state.ok ? <p className="text-sm text-accent-foreground" aria-live="polite">{t('runtimeSettingsSaved')}</p> : null}
+        {state.error ? (
+          <p className="text-sm text-destructive" role="alert">
+            {state.error}
+          </p>
+        ) : null}
+        {state.ok ? (
+          <p className="text-sm text-accent-foreground" aria-live="polite">
+            {t("runtimeSettingsSaved")}
+          </p>
+        ) : null}
       </form>
     </AdminPanel>
   );

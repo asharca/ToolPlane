@@ -4,33 +4,38 @@ import {
   downloadImageAsBase64,
   type FileAttachment,
   type ImageAttachment,
-  MAX_FILE_SIZE_BYTES
-} from '../../media'
-import { clampSurrogateBoundary } from '../../text'
-import { channelFetch as fetch, sanitizeRemoteUrl } from '../../http'
-import WebSocket from 'ws'
+  MAX_FILE_SIZE_BYTES,
+} from "../../media";
+import { clampSurrogateBoundary } from "../../text";
+import { channelFetch as fetch, sanitizeRemoteUrl } from "../../http";
+import WebSocket from "ws";
 
-import { ChannelAdapter, type ChannelAdapterConfig, type SendMessageOptions } from '../../ChannelAdapter'
-import { isSlashCommand, SLASH_COMMANDS } from '../../constants'
-import { FlushController } from '../../FlushController'
-import { splitMessage } from '../../utils'
+import {
+  ChannelAdapter,
+  type ChannelAdapterConfig,
+  type SendMessageOptions,
+} from "../../ChannelAdapter";
+import { isSlashCommand, SLASH_COMMANDS } from "../../constants";
+import { FlushController } from "../../FlushController";
+import { splitMessage } from "../../utils";
 
-const DISCORD_API_BASE = 'https://discord.com/api/v10'
-const DISCORD_MAX_LENGTH = 2000
-const USER_AGENT = 'DiscordBot (https://github.com/CherryHQ/cherry-studio, 1.0.0)'
+const DISCORD_API_BASE = "https://discord.com/api/v10";
+const DISCORD_MAX_LENGTH = 2000;
+const USER_AGENT =
+  "DiscordBot (https://github.com/CherryHQ/cherry-studio, 1.0.0)";
 
 // Discord Gateway Opcodes
-const OP_DISPATCH = 0
-const OP_HEARTBEAT = 1
-const OP_IDENTIFY = 2
-const OP_RESUME = 6
-const OP_RECONNECT = 7
-const OP_INVALID_SESSION = 9
-const OP_HELLO = 10
-const OP_HEARTBEAT_ACK = 11
+const OP_DISPATCH = 0;
+const OP_HEARTBEAT = 1;
+const OP_IDENTIFY = 2;
+const OP_RESUME = 6;
+const OP_RECONNECT = 7;
+const OP_INVALID_SESSION = 9;
+const OP_HELLO = 10;
+const OP_HEARTBEAT_ACK = 11;
 
 // Message Flags
-const DISCORD_FLAG_EPHEMERAL = 64
+const DISCORD_FLAG_EPHEMERAL = 64;
 
 // Gateway Intents
 const INTENTS = {
@@ -38,160 +43,170 @@ const INTENTS = {
   GUILD_MESSAGES: 1 << 9,
   GUILD_MESSAGE_REACTIONS: 1 << 10,
   DIRECT_MESSAGES: 1 << 12,
-  MESSAGE_CONTENT: 1 << 15
-}
+  MESSAGE_CONTENT: 1 << 15,
+};
 
 type DiscordAttachment = {
-  id: string
-  filename: string
-  url: string
-  proxy_url: string
-  content_type?: string
-  size: number
-}
+  id: string;
+  filename: string;
+  url: string;
+  proxy_url: string;
+  content_type?: string;
+  size: number;
+};
 
 type DiscordMessage = {
-  id: string
-  channel_id: string
-  guild_id?: string
-  author: { id: string; username: string; bot?: boolean }
-  member?: { roles?: string[] }
-  content: string
-  attachments?: DiscordAttachment[]
-  timestamp: string
-}
+  id: string;
+  channel_id: string;
+  guild_id?: string;
+  author: { id: string; username: string; bot?: boolean };
+  member?: { roles?: string[] };
+  content: string;
+  attachments?: DiscordAttachment[];
+  timestamp: string;
+};
 
 /**
  * Discord rate limit: 5 message operations per 5 seconds per channel.
  * Use 1200ms throttle to stay safely within limits.
  */
-const DISCORD_STREAM_THROTTLE_MS = 1200
+const DISCORD_STREAM_THROTTLE_MS = 1200;
 
 /**
  * Manages a single streaming response by creating a message, then
  * editing it in-place with throttled updates via FlushController.
  */
 class DiscordStreamingController {
-  private messageId: string | null = null
-  private currentText = ''
-  private readonly flush: FlushController
-  private messageCreationPromise: Promise<void> | null = null
-  private _completed = false
+  private messageId: string | null = null;
+  private currentText = "";
+  private readonly flush: FlushController;
+  private messageCreationPromise: Promise<void> | null = null;
+  private _completed = false;
 
   constructor(
     private readonly discordChannelId: string,
-    private readonly apiRequest: DiscordAdapter['apiRequest'],
-    private readonly log: Record<string, (msg: string, meta?: Record<string, unknown>) => void>
+    private readonly apiRequest: DiscordAdapter["apiRequest"],
+    private readonly log: Record<
+      string,
+      (msg: string, meta?: Record<string, unknown>) => void
+    >,
   ) {
-    this.flush = new FlushController(() => this.performFlush())
+    this.flush = new FlushController(() => this.performFlush());
   }
 
   get completed(): boolean {
-    return this._completed
+    return this._completed;
   }
 
   async onText(text: string): Promise<void> {
-    if (this._completed) return
-    this.currentText = text
-    await this.ensureMessageCreated()
+    if (this._completed) return;
+    this.currentText = text;
+    await this.ensureMessageCreated();
     if (this.messageId) {
-      await this.flush.throttledUpdate(DISCORD_STREAM_THROTTLE_MS)
+      await this.flush.throttledUpdate(DISCORD_STREAM_THROTTLE_MS);
     }
   }
 
   async complete(finalText: string): Promise<boolean> {
-    if (this._completed) return false
-    this._completed = true
-    this.flush.complete()
+    if (this._completed) return false;
+    this._completed = true;
+    this.flush.complete();
 
-    if (this.messageCreationPromise) await this.messageCreationPromise
-    if (!this.messageId) return false
+    if (this.messageCreationPromise) await this.messageCreationPromise;
+    if (!this.messageId) return false;
 
-    await this.flush.waitForFlush()
+    await this.flush.waitForFlush();
 
     try {
-      this.currentText = finalText
-      await this.editMessage(finalText)
-      return true
+      this.currentText = finalText;
+      await this.editMessage(finalText);
+      return true;
     } catch (error) {
-      this.log.warn('Failed to finalize Discord stream', {
-        error: error instanceof Error ? error.message : String(error)
-      })
-      return false
+      this.log.warn("Failed to finalize Discord stream", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return false;
     }
   }
 
   async error(errorMessage: string): Promise<void> {
-    if (this._completed) return
-    this._completed = true
-    this.flush.complete()
+    if (this._completed) return;
+    this._completed = true;
+    this.flush.complete();
 
-    if (this.messageCreationPromise) await this.messageCreationPromise
-    if (!this.messageId) return
+    if (this.messageCreationPromise) await this.messageCreationPromise;
+    if (!this.messageId) return;
 
-    await this.flush.waitForFlush()
+    await this.flush.waitForFlush();
 
     try {
       const displayText = this.currentText
         ? `${this.currentText}\n\n---\n**Error**: ${errorMessage}`
-        : `**Error**: ${errorMessage}`
-      await this.editMessage(displayText)
+        : `**Error**: ${errorMessage}`;
+      await this.editMessage(displayText);
     } catch {
       // Best-effort error update
     }
   }
 
   dispose(): void {
-    this._completed = true
-    this.flush.cancelPendingFlush()
-    this.flush.complete()
+    this._completed = true;
+    this.flush.cancelPendingFlush();
+    this.flush.complete();
   }
 
   // ---- Internal ----
 
   private async ensureMessageCreated(): Promise<void> {
-    if (this.messageId) return
+    if (this.messageId) return;
     if (this.messageCreationPromise) {
-      await this.messageCreationPromise
-      return
+      await this.messageCreationPromise;
+      return;
     }
-    this.messageCreationPromise = this.createMessage()
-    await this.messageCreationPromise
+    this.messageCreationPromise = this.createMessage();
+    await this.messageCreationPromise;
   }
 
   private async createMessage(): Promise<void> {
     try {
-      const response = await this.apiRequest(`${DISCORD_API_BASE}/channels/${this.discordChannelId}/messages`, {
-        method: 'POST',
-        body: { content: this.currentText || '...' }
-      })
-      const data = (await response.json()) as { id?: string }
-      this.messageId = data.id ?? null
+      const response = await this.apiRequest(
+        `${DISCORD_API_BASE}/channels/${this.discordChannelId}/messages`,
+        {
+          method: "POST",
+          body: { content: this.currentText || "..." },
+        },
+      );
+      const data = (await response.json()) as { id?: string };
+      this.messageId = data.id ?? null;
     } catch (error) {
-      this.log.warn('Failed to create Discord streaming message', {
-        error: error instanceof Error ? error.message : String(error)
-      })
+      this.log.warn("Failed to create Discord streaming message", {
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
   private async editMessage(text: string): Promise<void> {
-    if (!this.messageId) return
+    if (!this.messageId) return;
     // Discord messages max 2000 chars — truncate with indicator if needed,
     // keeping any surrogate pair at the cut whole so we don't send a lone surrogate.
     const content =
       text.length > DISCORD_MAX_LENGTH
-        ? text.slice(0, clampSurrogateBoundary(text, DISCORD_MAX_LENGTH - 3)) + '...'
-        : text
-    await this.apiRequest(`${DISCORD_API_BASE}/channels/${this.discordChannelId}/messages/${this.messageId}`, {
-      method: 'PATCH',
-      body: { content }
-    })
+        ? text.slice(0, clampSurrogateBoundary(text, DISCORD_MAX_LENGTH - 3)) +
+          "..."
+        : text;
+    await this.apiRequest(
+      `${DISCORD_API_BASE}/channels/${this.discordChannelId}/messages/${this.messageId}`,
+      {
+        method: "PATCH",
+        body: { content },
+      },
+    );
   }
 
   private async performFlush(): Promise<void> {
-    if (!this.messageId || !this.currentText) return
+    if (!this.messageId || !this.currentText) return;
     try {
-      await this.editMessage(this.currentText)
+      await this.editMessage(this.currentText);
     } catch {
       // Swallow flush errors — FlushController will reflush if needed
     }
@@ -199,72 +214,75 @@ class DiscordStreamingController {
 }
 
 // Discord Interaction types
-const INTERACTION_TYPE_PING = 1
-const INTERACTION_TYPE_APPLICATION_COMMAND = 2
+const INTERACTION_TYPE_PING = 1;
+const INTERACTION_TYPE_APPLICATION_COMMAND = 2;
 // Interaction callback response types
-const INTERACTION_CALLBACK_CHANNEL_MESSAGE = 4
-const INTERACTION_CALLBACK_DEFERRED_CHANNEL_MESSAGE = 5
+const INTERACTION_CALLBACK_CHANNEL_MESSAGE = 4;
+const INTERACTION_CALLBACK_DEFERRED_CHANNEL_MESSAGE = 5;
 
 type DiscordInteraction = {
-  id: string
-  type: number
-  token: string
-  channel_id: string
-  guild_id?: string
-  member?: { user: { id: string; username: string }; roles?: string[] }
-  user?: { id: string; username: string }
-  data?: { name: string; options?: Array<{ name: string; value: unknown }> }
-}
+  id: string;
+  type: number;
+  token: string;
+  channel_id: string;
+  guild_id?: string;
+  member?: { user: { id: string; username: string }; roles?: string[] };
+  user?: { id: string; username: string };
+  data?: { name: string; options?: Array<{ name: string; value: unknown }> };
+};
 
 export class DiscordAdapter extends ChannelAdapter {
-  private ws: WebSocket | null = null
-  private readonly botToken: string
-  private readonly allowedChannelIds: string[]
+  private ws: WebSocket | null = null;
+  private readonly botToken: string;
+  private readonly allowedChannelIds: string[];
 
-  private sessionId: string | null = null
-  private applicationId: string | null = null
-  private lastSeq: number | null = null
-  private heartbeatTimer: ReturnType<typeof setInterval> | null = null
-  private heartbeatJitterTimer: ReturnType<typeof setTimeout> | null = null
-  private heartbeatAcked = true
-  private resumeGatewayUrl: string | null = null
-  private reconnectAttempts = 0
-  private reconnectTimer: ReturnType<typeof setTimeout> | null = null
-  private isConnecting = false
-  private shouldStop = false
+  private sessionId: string | null = null;
+  private applicationId: string | null = null;
+  private lastSeq: number | null = null;
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private heartbeatJitterTimer: ReturnType<typeof setTimeout> | null = null;
+  private heartbeatAcked = true;
+  private resumeGatewayUrl: string | null = null;
+  private reconnectAttempts = 0;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private isConnecting = false;
+  private shouldStop = false;
 
-  private readonly reconnectDelays = [1000, 2000, 5000, 10000, 30000, 60000]
-  private readonly maxReconnectAttempts = 50
+  private readonly reconnectDelays = [1000, 2000, 5000, 10000, 30000, 60000];
+  private readonly maxReconnectAttempts = 50;
   /** Per-chat streaming controller. One stream at a time per chat. */
-  private readonly streamingControllers = new Map<string, DiscordStreamingController>()
+  private readonly streamingControllers = new Map<
+    string,
+    DiscordStreamingController
+  >();
 
-  constructor(config: ChannelAdapterConfig<'discord'>) {
-    super(config)
-    const { bot_token, allowed_channel_ids } = config.channelConfig
-    this.botToken = bot_token
-    this.allowedChannelIds = allowed_channel_ids ?? []
-    this.notifyChatIds = [...this.allowedChannelIds]
+  constructor(config: ChannelAdapterConfig<"discord">) {
+    super(config);
+    const { bot_token, allowed_channel_ids } = config.channelConfig;
+    this.botToken = bot_token;
+    this.allowedChannelIds = allowed_channel_ids ?? [];
+    this.notifyChatIds = [...this.allowedChannelIds];
   }
 
   protected override async checkReady(): Promise<boolean> {
-    return !!this.botToken
+    return !!this.botToken;
   }
 
   protected override async performConnect(): Promise<void> {
-    if (!this.botToken) throw new Error('Discord bot token is required')
-    this.shouldStop = false
-    await this.startGateway()
-    this.log.info('Discord bot started')
+    if (!this.botToken) throw new Error("Discord bot token is required");
+    this.shouldStop = false;
+    await this.startGateway();
+    this.log.info("Discord bot started");
   }
 
   protected override async performDisconnect(): Promise<void> {
-    this.shouldStop = true
+    this.shouldStop = true;
     for (const controller of this.streamingControllers.values()) {
-      controller.dispose()
+      controller.dispose();
     }
-    this.streamingControllers.clear()
-    this.cleanup()
-    this.log.info('Discord bot stopped')
+    this.streamingControllers.clear();
+    this.cleanup();
+    this.log.info("Discord bot stopped");
   }
 
   // ─── Gateway Connection ───────────────────────────────────────
@@ -273,142 +291,146 @@ export class DiscordAdapter extends ChannelAdapter {
     const response = await fetch(`${DISCORD_API_BASE}/gateway/bot`, {
       headers: {
         Authorization: `Bot ${this.botToken}`,
-        'User-Agent': USER_AGENT
-      }
-    })
+        "User-Agent": USER_AGENT,
+      },
+    });
     if (!response.ok) {
-      const errorText = await response.text().catch(() => '')
-      throw new Error(`Failed to get gateway URL: HTTP ${response.status} - ${errorText}`)
+      const errorText = await response.text().catch(() => "");
+      throw new Error(
+        `Failed to get gateway URL: HTTP ${response.status} - ${errorText}`,
+      );
     }
-    const data = (await response.json()) as { url: string }
-    return data.url
+    const data = (await response.json()) as { url: string };
+    return data.url;
   }
 
   private async startGateway(): Promise<void> {
-    if (this.isConnecting || this.shouldStop) return
-    this.isConnecting = true
+    if (this.isConnecting || this.shouldStop) return;
+    this.isConnecting = true;
 
     try {
-      this.cleanup()
+      this.cleanup();
 
-      const gatewayUrl = this.resumeGatewayUrl ?? (await this.getGatewayUrl())
-      if (this.shouldStop) return
-      const wsUrl = `${gatewayUrl}?v=10&encoding=json`
-      this.log.info('Connecting to Discord gateway', { url: wsUrl })
+      const gatewayUrl = this.resumeGatewayUrl ?? (await this.getGatewayUrl());
+      if (this.shouldStop) return;
+      const wsUrl = `${gatewayUrl}?v=10&encoding=json`;
+      this.log.info("Connecting to Discord gateway", { url: wsUrl });
 
-      const ws = new WebSocket(sanitizeRemoteUrl(wsUrl, true))
-      this.ws = ws
+      const ws = new WebSocket(sanitizeRemoteUrl(wsUrl, true));
+      this.ws = ws;
 
-      ws.on('open', () => {
-        this.log.info('Discord WebSocket connected')
-      })
+      ws.on("open", () => {
+        this.log.info("Discord WebSocket connected");
+      });
 
-      ws.on('message', (data: Buffer) => {
+      ws.on("message", (data: Buffer) => {
         this.handleWsMessage(data).catch((err) => {
-          this.log.error('Error handling WS message', {
-            error: err instanceof Error ? err.message : String(err)
-          })
-        })
-      })
+          this.log.error("Error handling WS message", {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
+      });
 
-      ws.on('close', (code, reason) => {
-        this.markDisconnected(`WebSocket closed: ${code}`)
-        this.log.warn(`WebSocket closed (code=${code}, reason=${reason.toString()})`)
+      ws.on("close", (code, reason) => {
+        this.markDisconnected(`WebSocket closed: ${code}`);
+        this.log.warn(
+          `WebSocket closed (code=${code}, reason=${reason.toString()})`,
+        );
         // 4004 = Authentication failed — do not reconnect
         if (code !== 4004) {
-          this.scheduleReconnect()
+          this.scheduleReconnect();
         }
-      })
+      });
 
-      ws.on('error', (err) => {
-        this.log.error('Discord WebSocket error', {
-          error: err.message
-        })
-      })
+      ws.on("error", (err) => {
+        this.log.error("Discord WebSocket error", {
+          error: err.message,
+        });
+      });
     } catch (error) {
-      this.log.error('Failed to start Discord gateway', {
-        error: error instanceof Error ? error.message : String(error)
-      })
-      this.scheduleReconnect()
+      this.log.error("Failed to start Discord gateway", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      this.scheduleReconnect();
     } finally {
-      this.isConnecting = false
+      this.isConnecting = false;
     }
   }
 
   // ─── WebSocket Message Handling ───────────────────────────────
 
   private async handleWsMessage(data: Buffer): Promise<void> {
-    let payload: { op: number; d?: unknown; s?: number; t?: string }
+    let payload: { op: number; d?: unknown; s?: number; t?: string };
     try {
-      payload = JSON.parse(data.toString())
+      payload = JSON.parse(data.toString());
     } catch {
-      return
+      return;
     }
 
     if (payload.s !== undefined && payload.s !== null) {
-      this.lastSeq = payload.s
+      this.lastSeq = payload.s;
     }
 
     switch (payload.op) {
       case OP_HELLO:
-        this.handleHello(payload.d as { heartbeat_interval: number })
-        break
+        this.handleHello(payload.d as { heartbeat_interval: number });
+        break;
       case OP_DISPATCH:
-        if (payload.t) await this.handleDispatch(payload.t, payload.d)
-        break
+        if (payload.t) await this.handleDispatch(payload.t, payload.d);
+        break;
       case OP_HEARTBEAT_ACK:
-        this.heartbeatAcked = true
-        break
+        this.heartbeatAcked = true;
+        break;
       case OP_HEARTBEAT:
         // Server requests immediate heartbeat
-        this.sendHeartbeat()
-        break
+        this.sendHeartbeat();
+        break;
       case OP_RECONNECT:
-        this.log.info('Discord gateway requested reconnect')
-        this.ws?.close(4000, 'Reconnect requested')
-        break
+        this.log.info("Discord gateway requested reconnect");
+        this.ws?.close(4000, "Reconnect requested");
+        break;
       case OP_INVALID_SESSION: {
-        const resumable = payload.d === true
+        const resumable = payload.d === true;
         if (resumable && this.sessionId) {
           // Wait 1-5s as per Discord docs then resume
-          await new Promise((r) => setTimeout(r, 1000 + Math.random() * 4000))
-          this.sendResume()
+          await new Promise((r) => setTimeout(r, 1000 + Math.random() * 4000));
+          this.sendResume();
         } else {
-          this.sessionId = null
-          this.lastSeq = null
-          this.resumeGatewayUrl = null
-          await new Promise((r) => setTimeout(r, 1000 + Math.random() * 4000))
-          this.sendIdentify()
+          this.sessionId = null;
+          this.lastSeq = null;
+          this.resumeGatewayUrl = null;
+          await new Promise((r) => setTimeout(r, 1000 + Math.random() * 4000));
+          this.sendIdentify();
         }
-        break
+        break;
       }
     }
   }
 
   private handleHello(data: { heartbeat_interval: number }): void {
-    this.heartbeatAcked = true
+    this.heartbeatAcked = true;
 
     // Jittered first heartbeat as per Discord docs
-    const jitter = Math.random()
+    const jitter = Math.random();
     this.heartbeatJitterTimer = setTimeout(() => {
-      this.heartbeatJitterTimer = null
-      this.sendHeartbeat()
+      this.heartbeatJitterTimer = null;
+      this.sendHeartbeat();
       this.heartbeatTimer = setInterval(() => {
         if (!this.heartbeatAcked) {
-          this.log.warn('Discord heartbeat not acked, reconnecting')
-          this.ws?.close(4000, 'Heartbeat timeout')
-          return
+          this.log.warn("Discord heartbeat not acked, reconnecting");
+          this.ws?.close(4000, "Heartbeat timeout");
+          return;
         }
-        this.heartbeatAcked = false
-        this.sendHeartbeat()
-      }, data.heartbeat_interval)
-    }, data.heartbeat_interval * jitter)
+        this.heartbeatAcked = false;
+        this.sendHeartbeat();
+      }, data.heartbeat_interval);
+    }, data.heartbeat_interval * jitter);
 
     // Identify or resume
     if (this.sessionId && this.lastSeq !== null) {
-      this.sendResume()
+      this.sendResume();
     } else {
-      this.sendIdentify()
+      this.sendIdentify();
     }
   }
 
@@ -418,7 +440,7 @@ export class DiscordAdapter extends ChannelAdapter {
       INTENTS.GUILD_MESSAGES |
       INTENTS.GUILD_MESSAGE_REACTIONS |
       INTENTS.DIRECT_MESSAGES |
-      INTENTS.MESSAGE_CONTENT
+      INTENTS.MESSAGE_CONTENT;
 
     this.send({
       op: OP_IDENTIFY,
@@ -427,11 +449,11 @@ export class DiscordAdapter extends ChannelAdapter {
         intents,
         properties: {
           os: process.platform,
-          browser: 'cherry-studio',
-          device: 'cherry-studio'
-        }
-      }
-    })
+          browser: "cherry-studio",
+          device: "cherry-studio",
+        },
+      },
+    });
   }
 
   private sendResume(): void {
@@ -440,105 +462,124 @@ export class DiscordAdapter extends ChannelAdapter {
       d: {
         token: this.botToken,
         session_id: this.sessionId,
-        seq: this.lastSeq
-      }
-    })
+        seq: this.lastSeq,
+      },
+    });
   }
 
   private sendHeartbeat(): void {
-    this.send({ op: OP_HEARTBEAT, d: this.lastSeq })
+    this.send({ op: OP_HEARTBEAT, d: this.lastSeq });
   }
 
   private send(payload: object): void {
     if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(payload))
+      this.ws.send(JSON.stringify(payload));
     }
   }
 
   // ─── Dispatch Event Handling ──────────────────────────────────
 
-  private async handleDispatch(eventType: string, data: unknown): Promise<void> {
+  private async handleDispatch(
+    eventType: string,
+    data: unknown,
+  ): Promise<void> {
     switch (eventType) {
-      case 'READY': {
+      case "READY": {
         const ready = data as {
-          session_id: string
-          resume_gateway_url: string
-          user: { id: string; username: string }
-          application: { id: string }
-        }
-        this.sessionId = ready.session_id
-        this.resumeGatewayUrl = ready.resume_gateway_url
-        this.applicationId = ready.application.id
-        this.reconnectAttempts = 0
-        this.markConnected()
-        this.log.info(`Discord bot ready (user: ${ready.user.username})`)
+          session_id: string;
+          resume_gateway_url: string;
+          user: { id: string; username: string };
+          application: { id: string };
+        };
+        this.sessionId = ready.session_id;
+        this.resumeGatewayUrl = ready.resume_gateway_url;
+        this.applicationId = ready.application.id;
+        this.reconnectAttempts = 0;
+        this.markConnected();
+        this.log.info(`Discord bot ready (user: ${ready.user.username})`);
         this.registerSlashCommands().catch((err) => {
-          this.log.warn('Failed to register slash commands', {
-            error: err instanceof Error ? err.message : String(err)
-          })
-        })
-        break
+          this.log.warn("Failed to register slash commands", {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
+        break;
       }
-      case 'RESUMED':
-        this.reconnectAttempts = 0
-        this.markConnected()
-        this.log.info('Discord session resumed')
-        break
-      case 'MESSAGE_CREATE':
-        await this.handleMessageCreate(data as DiscordMessage)
-        break
-      case 'INTERACTION_CREATE':
-        await this.handleInteraction(data as DiscordInteraction)
-        break
+      case "RESUMED":
+        this.reconnectAttempts = 0;
+        this.markConnected();
+        this.log.info("Discord session resumed");
+        break;
+      case "MESSAGE_CREATE":
+        await this.handleMessageCreate(data as DiscordMessage);
+        break;
+      case "INTERACTION_CREATE":
+        await this.handleInteraction(data as DiscordInteraction);
+        break;
     }
   }
 
   private async handleMessageCreate(msg: DiscordMessage): Promise<void> {
     // Ignore bot messages (including own)
-    if (msg.author.bot) return
+    if (msg.author.bot) return;
 
-    const chatId = msg.guild_id ? `channel:${msg.channel_id}` : `dm:${msg.channel_id}`
+    const chatId = msg.guild_id
+      ? `channel:${msg.channel_id}`
+      : `dm:${msg.channel_id}`;
 
-    if (!this.isAllowed(chatId, msg.channel_id)) return
+    if (!this.isAllowed(chatId, msg.channel_id)) return;
 
-    const { text, imageUrls, fileAttachments } = this.parseMessageContent(msg)
-    if (!text && imageUrls.length === 0 && fileAttachments.length === 0) return
+    const { text, imageUrls, fileAttachments } = this.parseMessageContent(msg);
+    if (!text && imageUrls.length === 0 && fileAttachments.length === 0) return;
 
     if (isSlashCommand(text)) {
-      const cmd = text.split(/\s+/)[0].slice(1) as 'new' | 'compact' | 'help' | 'whoami'
-      this.emit('command', {
+      const cmd = text.split(/\s+/)[0].slice(1) as
+        | "new"
+        | "compact"
+        | "help"
+        | "whoami";
+      this.emit("command", {
         chatId,
         userId: msg.author.id,
-        userName: msg.author.username ?? '',
+        userName: msg.author.username ?? "",
         roleIds: msg.member?.roles,
-        command: cmd
-      })
+        command: cmd,
+      });
     } else {
       // Download images in parallel, converting to base64
-      let images: ImageAttachment[] | undefined
+      let images: ImageAttachment[] | undefined;
       if (imageUrls.length > 0) {
-        const results = await Promise.all(imageUrls.map((url) => downloadImageAsBase64(url)))
-        const downloaded = results.filter((r): r is ImageAttachment => r !== null)
-        if (downloaded.length > 0) images = downloaded
+        const results = await Promise.all(
+          imageUrls.map((url) => downloadImageAsBase64(url)),
+        );
+        const downloaded = results.filter(
+          (r): r is ImageAttachment => r !== null,
+        );
+        if (downloaded.length > 0) images = downloaded;
       }
 
       // Download non-image file attachments in parallel
-      let files: FileAttachment[] | undefined
+      let files: FileAttachment[] | undefined;
       if (fileAttachments.length > 0) {
-        const results = await Promise.all(fileAttachments.map((att) => downloadFileAsBase64(att.url, att.filename)))
-        const downloaded = results.filter((r): r is FileAttachment => r !== null)
-        if (downloaded.length > 0) files = downloaded
+        const results = await Promise.all(
+          fileAttachments.map((att) =>
+            downloadFileAsBase64(att.url, att.filename),
+          ),
+        );
+        const downloaded = results.filter(
+          (r): r is FileAttachment => r !== null,
+        );
+        if (downloaded.length > 0) files = downloaded;
       }
 
-      this.emit('message', {
+      this.emit("message", {
         chatId,
         userId: msg.author.id,
-        userName: msg.author.username ?? '',
+        userName: msg.author.username ?? "",
         roleIds: msg.member?.roles,
         text,
         images,
-        files
-      })
+        files,
+      });
     }
   }
 
@@ -546,122 +587,161 @@ export class DiscordAdapter extends ChannelAdapter {
    * Parse message text, extract image URLs and downloadable file attachments.
    */
   private parseMessageContent(msg: DiscordMessage): {
-    text: string
-    imageUrls: string[]
-    fileAttachments: DiscordAttachment[]
+    text: string;
+    imageUrls: string[];
+    fileAttachments: DiscordAttachment[];
   } {
-    const text = msg.content.replace(/<@!?\d+>/g, '').trim()
-    const imageUrls: string[] = []
-    const fileAttachments: DiscordAttachment[] = []
+    const text = msg.content.replace(/<@!?\d+>/g, "").trim();
+    const imageUrls: string[] = [];
+    const fileAttachments: DiscordAttachment[] = [];
 
     if (msg.attachments?.length) {
       for (const att of msg.attachments) {
-        if (att.content_type?.startsWith('image/')) {
-          imageUrls.push(att.url)
+        if (att.content_type?.startsWith("image/")) {
+          imageUrls.push(att.url);
         } else if (att.size <= MAX_FILE_SIZE_BYTES) {
-          fileAttachments.push(att)
+          fileAttachments.push(att);
         }
       }
     }
 
-    return { text, imageUrls, fileAttachments }
+    return { text, imageUrls, fileAttachments };
   }
 
   private isAllowed(chatId: string, rawChannelId?: string): boolean {
-    if (this.allowedChannelIds.length === 0) return true
+    if (this.allowedChannelIds.length === 0) return true;
     return (
       this.allowedChannelIds.includes(chatId) ||
-      (rawChannelId !== undefined && this.allowedChannelIds.includes(rawChannelId))
-    )
+      (rawChannelId !== undefined &&
+        this.allowedChannelIds.includes(rawChannelId))
+    );
   }
 
   // ─── Slash Commands ──────────────────────────────────────────
 
   private async registerSlashCommands(): Promise<void> {
-    if (!this.applicationId) return
+    if (!this.applicationId) return;
 
-    await this.apiRequest(`${DISCORD_API_BASE}/applications/${this.applicationId}/commands`, {
-      method: 'PUT',
-      body: SLASH_COMMANDS as unknown as Record<string, unknown>[]
-    })
-    this.log.info('Registered Discord slash commands', { count: SLASH_COMMANDS.length })
+    await this.apiRequest(
+      `${DISCORD_API_BASE}/applications/${this.applicationId}/commands`,
+      {
+        method: "PUT",
+        body: SLASH_COMMANDS as unknown as Record<string, unknown>[],
+      },
+    );
+    this.log.info("Registered Discord slash commands", {
+      count: SLASH_COMMANDS.length,
+    });
   }
 
-  private async handleInteraction(interaction: DiscordInteraction): Promise<void> {
+  private async handleInteraction(
+    interaction: DiscordInteraction,
+  ): Promise<void> {
     // Must always ACK a PING
-    if (interaction.type === INTERACTION_TYPE_PING) return
+    if (interaction.type === INTERACTION_TYPE_PING) return;
 
-    if (interaction.type !== INTERACTION_TYPE_APPLICATION_COMMAND || !interaction.data) return
+    if (
+      interaction.type !== INTERACTION_TYPE_APPLICATION_COMMAND ||
+      !interaction.data
+    )
+      return;
 
-    const commandName = interaction.data.name
-    const user = interaction.member?.user ?? interaction.user
-    const chatId = interaction.guild_id ? `channel:${interaction.channel_id}` : `dm:${interaction.channel_id}`
+    const commandName = interaction.data.name;
+    const user = interaction.member?.user ?? interaction.user;
+    const chatId = interaction.guild_id
+      ? `channel:${interaction.channel_id}`
+      : `dm:${interaction.channel_id}`;
 
     if (!this.isAllowed(chatId, interaction.channel_id)) {
-      await this.respondToInteraction(interaction, 'This bot is not enabled in this channel.', true)
-      return
+      await this.respondToInteraction(
+        interaction,
+        "This bot is not enabled in this channel.",
+        true,
+      );
+      return;
     }
 
     // For /new, /compact, /help — ACK with deferred response, then emit command
-    await this.ackInteraction(interaction)
+    await this.ackInteraction(interaction);
 
-    this.emit('command', {
+    this.emit("command", {
       chatId,
-      userId: user?.id ?? '',
-      userName: user?.username ?? '',
+      userId: user?.id ?? "",
+      userName: user?.username ?? "",
       roleIds: interaction.member?.roles,
-      command: commandName as 'new' | 'compact' | 'help'
-    })
+      command: commandName as "new" | "compact" | "help",
+    });
   }
 
   private async respondToInteraction(
     interaction: DiscordInteraction,
     content: string,
-    ephemeral = false
+    ephemeral = false,
   ): Promise<void> {
-    await fetch(`${DISCORD_API_BASE}/interactions/${interaction.id}/${interaction.token}/callback`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        type: INTERACTION_CALLBACK_CHANNEL_MESSAGE,
-        data: { content, ...(ephemeral ? { flags: DISCORD_FLAG_EPHEMERAL } : {}) }
-      })
-    })
+    await fetch(
+      `${DISCORD_API_BASE}/interactions/${interaction.id}/${interaction.token}/callback`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: INTERACTION_CALLBACK_CHANNEL_MESSAGE,
+          data: {
+            content,
+            ...(ephemeral ? { flags: DISCORD_FLAG_EPHEMERAL } : {}),
+          },
+        }),
+      },
+    );
   }
 
   private async ackInteraction(interaction: DiscordInteraction): Promise<void> {
-    await fetch(`${DISCORD_API_BASE}/interactions/${interaction.id}/${interaction.token}/callback`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: INTERACTION_CALLBACK_DEFERRED_CHANNEL_MESSAGE })
-    })
+    await fetch(
+      `${DISCORD_API_BASE}/interactions/${interaction.id}/${interaction.token}/callback`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: INTERACTION_CALLBACK_DEFERRED_CHANNEL_MESSAGE,
+        }),
+      },
+    );
   }
 
   // ─── Message Sending (REST API) ──────────────────────────────
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- shared adapter signature
-  async sendMessage(chatId: string, text: string, _opts?: SendMessageOptions): Promise<void> {
-    const chunks = splitMessage(text, DISCORD_MAX_LENGTH)
-    const channelId = chatId.split(':')[1]
+  // Shared adapter signature.
+  async sendMessage(
+    chatId: string,
+    text: string,
+    _opts?: SendMessageOptions,
+  ): Promise<void> {
+    const chunks = splitMessage(text, DISCORD_MAX_LENGTH);
+    const channelId = chatId.split(":")[1];
 
     for (let i = 0; i < chunks.length; i++) {
-      await this.apiRequest(`${DISCORD_API_BASE}/channels/${channelId}/messages`, {
-        method: 'POST',
-        body: { content: chunks[i] }
-      })
+      await this.apiRequest(
+        `${DISCORD_API_BASE}/channels/${channelId}/messages`,
+        {
+          method: "POST",
+          body: { content: chunks[i] },
+        },
+      );
 
       if (i < chunks.length - 1) {
-        await new Promise((resolve) => setTimeout(resolve, 100))
+        await new Promise((resolve) => setTimeout(resolve, 100));
       }
     }
   }
 
   async sendTypingIndicator(chatId: string): Promise<void> {
-    const channelId = chatId.split(':')[1]
+    const channelId = chatId.split(":")[1];
     try {
-      await this.apiRequest(`${DISCORD_API_BASE}/channels/${channelId}/typing`, {
-        method: 'POST'
-      })
+      await this.apiRequest(
+        `${DISCORD_API_BASE}/channels/${channelId}/typing`,
+        {
+          method: "POST",
+        },
+      );
     } catch {
       // Typing indicator is best-effort
     }
@@ -670,32 +750,39 @@ export class DiscordAdapter extends ChannelAdapter {
   // ─── Streaming ─────────────────────────────────────────────────
 
   override async onTextUpdate(chatId: string, fullText: string): Promise<void> {
-    const discordChannelId = chatId.split(':')[1]
-    let controller = this.streamingControllers.get(chatId)
+    const discordChannelId = chatId.split(":")[1];
+    let controller = this.streamingControllers.get(chatId);
     if (!controller || controller.completed) {
-      controller = new DiscordStreamingController(discordChannelId, this.apiRequest.bind(this), this.log)
-      this.streamingControllers.set(chatId, controller)
+      controller = new DiscordStreamingController(
+        discordChannelId,
+        this.apiRequest.bind(this),
+        this.log,
+      );
+      this.streamingControllers.set(chatId, controller);
     }
-    await controller.onText(fullText)
+    await controller.onText(fullText);
   }
 
-  override async onStreamComplete(chatId: string, finalText: string): Promise<boolean> {
-    const controller = this.streamingControllers.get(chatId)
-    if (!controller) return false
+  override async onStreamComplete(
+    chatId: string,
+    finalText: string,
+  ): Promise<boolean> {
+    const controller = this.streamingControllers.get(chatId);
+    if (!controller) return false;
     try {
-      return await controller.complete(finalText)
+      return await controller.complete(finalText);
     } finally {
-      this.streamingControllers.delete(chatId)
+      this.streamingControllers.delete(chatId);
     }
   }
 
   override async onStreamError(chatId: string, error: string): Promise<void> {
-    const controller = this.streamingControllers.get(chatId)
-    if (!controller) return
+    const controller = this.streamingControllers.get(chatId);
+    if (!controller) return;
     try {
-      await controller.error(error)
+      await controller.error(error);
     } finally {
-      this.streamingControllers.delete(chatId)
+      this.streamingControllers.delete(chatId);
     }
   }
 
@@ -703,72 +790,85 @@ export class DiscordAdapter extends ChannelAdapter {
 
   private async apiRequest(
     url: string,
-    options?: { method?: string; body?: Record<string, unknown> | Record<string, unknown>[] }
+    options?: {
+      method?: string;
+      body?: Record<string, unknown> | Record<string, unknown>[];
+    },
   ): Promise<Response> {
     const response = await fetch(url, {
-      method: options?.method ?? 'GET',
+      method: options?.method ?? "GET",
       headers: {
         Authorization: `Bot ${this.botToken}`,
-        'Content-Type': 'application/json',
-        'User-Agent': USER_AGENT
+        "Content-Type": "application/json",
+        "User-Agent": USER_AGENT,
       },
-      ...(options?.body ? { body: JSON.stringify(options.body) } : {})
-    })
+      ...(options?.body ? { body: JSON.stringify(options.body) } : {}),
+    });
 
     if (!response.ok) {
-      const errorText = await response.text().catch(() => '')
-      throw new Error(`Discord API error ${url}: HTTP ${response.status} - ${errorText}`)
+      const errorText = await response.text().catch(() => "");
+      throw new Error(
+        `Discord API error ${url}: HTTP ${response.status} - ${errorText}`,
+      );
     }
 
-    return response
+    return response;
   }
 
   // ─── Lifecycle Helpers ────────────────────────────────────────
 
   private cleanup(): void {
     if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer)
-      this.reconnectTimer = null
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
     }
     if (this.heartbeatJitterTimer) {
-      clearTimeout(this.heartbeatJitterTimer)
-      this.heartbeatJitterTimer = null
+      clearTimeout(this.heartbeatJitterTimer);
+      this.heartbeatJitterTimer = null;
     }
     if (this.heartbeatTimer) {
-      clearInterval(this.heartbeatTimer)
-      this.heartbeatTimer = null
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
     }
     if (this.ws) {
-      if (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING) {
-        this.ws.close()
+      if (
+        this.ws.readyState === WebSocket.OPEN ||
+        this.ws.readyState === WebSocket.CONNECTING
+      ) {
+        this.ws.close();
       }
-      this.ws = null
+      this.ws = null;
     }
   }
 
   private scheduleReconnect(): void {
-    if (this.shouldStop) return
+    if (this.shouldStop) return;
 
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      this.markDisconnected('Max reconnect attempts reached')
-      this.log.error('Max reconnect attempts reached, giving up')
-      return
+      this.markDisconnected("Max reconnect attempts reached");
+      this.log.error("Max reconnect attempts reached, giving up");
+      return;
     }
 
-    const delay = this.reconnectDelays[Math.min(this.reconnectAttempts, this.reconnectDelays.length - 1)]
-    this.reconnectAttempts++
+    const delay =
+      this.reconnectDelays[
+        Math.min(this.reconnectAttempts, this.reconnectDelays.length - 1)
+      ];
+    this.reconnectAttempts++;
 
-    this.log.info(`Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts})`)
+    this.log.info(
+      `Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts})`,
+    );
 
     this.reconnectTimer = setTimeout(() => {
-      this.reconnectTimer = null
+      this.reconnectTimer = null;
       if (!this.shouldStop) {
         this.startGateway().catch((err) => {
-          this.log.error('Reconnect failed', {
-            error: err instanceof Error ? err.message : String(err)
-          })
-        })
+          this.log.error("Reconnect failed", {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
       }
-    }, delay)
+    }, delay);
   }
 }

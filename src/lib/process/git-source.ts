@@ -1,13 +1,13 @@
 const NPM_OPTIONS_WITH_VALUE = new Set([
-  '-c',
-  '-p',
-  '--cache',
-  '--call',
-  '--node-options',
-  '--npm',
-  '--package',
-  '--registry',
-  '--userconfig',
+  "-c",
+  "-p",
+  "--cache",
+  "--call",
+  "--node-options",
+  "--npm",
+  "--package",
+  "--registry",
+  "--userconfig",
 ]);
 
 // npm's hosted-git-info shorthands. `owner/repo` remains GitHub-only; other
@@ -31,11 +31,13 @@ const HTTPS_GIT_URL = /^https?:\/\/[^\s?#]+\.git(?:[?#][^\s]*)?$/i;
 const SCP_GIT_URL = /^[^@\s/:]+@[^:\s/]+:[^\s]+$/;
 
 function isGitSource(value: string): boolean {
-  return HOSTED_GIT_SHORTCUT.test(value)
-    || GITHUB_SHORTCUT.test(value)
-    || EXPLICIT_GIT_URL.test(value)
-    || HTTPS_GIT_URL.test(value)
-    || SCP_GIT_URL.test(value);
+  return (
+    HOSTED_GIT_SHORTCUT.test(value) ||
+    GITHUB_SHORTCUT.test(value) ||
+    EXPLICIT_GIT_URL.test(value) ||
+    HTTPS_GIT_URL.test(value) ||
+    SCP_GIT_URL.test(value)
+  );
 }
 
 function npxArgsNeedGit(args: readonly string[]): boolean {
@@ -53,14 +55,19 @@ function npxArgsNeedGit(args: readonly string[]): boolean {
       skipNext = false;
       continue;
     }
-    if (!optionsEnded && arg === '--') {
+    if (!optionsEnded && arg === "--") {
       optionsEnded = true;
       continue;
     }
-    if (!optionsEnded && arg.startsWith('-')) {
-      const [flag, assigned] = arg.split('=', 2);
-      if ((flag === '-p' || flag === '--package') && assigned && isGitSource(assigned)) return true;
-      if ((flag === '-p' || flag === '--package') && assigned === undefined) {
+    if (!optionsEnded && arg.startsWith("-")) {
+      const [flag, assigned] = arg.split("=", 2);
+      if (
+        (flag === "-p" || flag === "--package") &&
+        assigned &&
+        isGitSource(assigned)
+      )
+        return true;
+      if ((flag === "-p" || flag === "--package") && assigned === undefined) {
         packageOptionNext = true;
         continue;
       }
@@ -77,7 +84,10 @@ function npxArgsNeedGit(args: readonly string[]): boolean {
  * Git package references need an image with the Git executable installed.
  * Regular npm/PyPI executions keep the slimmer wrapper images.
  */
-export function commandArgsNeedGit(command: string, args: readonly string[]): boolean {
-  if (command === 'npx') return npxArgsNeedGit(args);
-  return (command === 'uvx' || command === 'uv') && args.some(isGitSource);
+export function commandArgsNeedGit(
+  command: string,
+  args: readonly string[],
+): boolean {
+  if (command === "npx") return npxArgsNeedGit(args);
+  return (command === "uvx" || command === "uv") && args.some(isGitSource);
 }

@@ -1,15 +1,18 @@
-import { observe, recordEvent } from '@/lib/observability/events';
-import 'server-only';
-import { isDedicatedSandboxRuntimeKind } from './runtime-kind';
-import { bindHermesRpcConversation } from './hermes-rpc-session-binding';
-import { normalizeSandboxWorkingDirectory } from './sandbox-runtime';
-import { db } from '@/lib/db';
+import { observe, recordEvent } from "@/lib/observability/events";
+import "server-only";
+import { isDedicatedSandboxRuntimeKind } from "./runtime-kind";
+import { bindHermesRpcConversation } from "./hermes-rpc-session-binding";
+import { normalizeSandboxWorkingDirectory } from "./sandbox-runtime";
+import { db } from "@/lib/db";
 import {
   createAgentRuntimeToken,
   runtimeMcpProxyUrl,
   runtimeModelProxyBase,
-} from './runtime-access';
-import { runSandboxAgentTurn, compactPiHarnessSession } from './sandbox-runtime';
+} from "./runtime-access";
+import {
+  runSandboxAgentTurn,
+  compactPiHarnessSession,
+} from "./sandbox-runtime";
 import type {
   PiHarnessOperationResult,
   RunSandboxAgentTurnOptions,
@@ -17,12 +20,16 @@ import type {
   SandboxRuntimeActivity,
   SandboxRuntimeMessage,
   SandboxRuntimeProvider,
-} from './sandbox-runtime';
-import type { ResolvedAgentPiPackage, SkillForPrompt } from './resolve';
-import type { ContextUsageSnapshot } from '@/lib/context-usage';
-import { resolveModelContext, type ProviderConfig } from './model';
-import { liveStatus } from '@/lib/process/supervisor';
-import type { RuntimeCommand, RuntimeCommandResult, RuntimeUsage } from './runtime-commands';
+} from "./sandbox-runtime";
+import type { ResolvedAgentPiPackage, SkillForPrompt } from "./resolve";
+import type { ContextUsageSnapshot } from "@/lib/context-usage";
+import { resolveModelContext, type ProviderConfig } from "./model";
+import { liveStatus } from "@/lib/process/supervisor";
+import type {
+  RuntimeCommand,
+  RuntimeCommandResult,
+  RuntimeUsage,
+} from "./runtime-commands";
 
 type SandboxTurnAgent = {
   id: string;
@@ -45,7 +52,11 @@ export type RunDedicatedSandboxTurnInput = {
   workingDirectory?: string | null;
   runtimeSessionId?: string;
   command?: string;
-  nativeCompaction?: { contextId: string; customInstructions: string; onResult: (result: PiHarnessOperationResult) => void };
+  nativeCompaction?: {
+    contextId: string;
+    customInstructions: string;
+    onResult: (result: PiHarnessOperationResult) => void;
+  };
   signal?: AbortSignal;
   onTextDelta?: (text: string) => void | Promise<void>;
   onActivity?: (activity: SandboxRuntimeActivity) => void | Promise<void>;
@@ -55,101 +66,138 @@ export type RunDedicatedSandboxTurnInput = {
   onCommandResult?: (result: RuntimeCommandResult) => void | Promise<void>;
 };
 
-export async function runDedicatedSandboxTurn(input: RunDedicatedSandboxTurnInput): Promise<string> {
-  return observe({ domain: 'agent', eventName: 'sandbox.run', workspaceId: input.agent.workspaceId, agentId: input.agent.id,
-    model: input.agent.model ?? undefined, providerId: input.agent.provider?.id, secrets: [input.agent.provider?.apiKey ?? ''] }, async () => {
-  const runtimeKind = input.agent.runtimeKind;
-  if (!isDedicatedSandboxRuntimeKind(runtimeKind)) {
-    throw new Error(`Unsupported sandbox runtime: ${runtimeKind}.`);
-  }
-  if (runtimeKind === 'pi-sdk' && !input.piPackages) throw new Error('PI_PACKAGE_UNAVAILABLE');
-  const provider = input.agent.provider;
-  const modelId = input.agent.model;
-  if (!provider?.id || !modelId) throw new Error('This Agent has no configured model.');
-  const modelContext = resolveModelContext(provider, modelId);
-
-  const links = await db.agentSandbox.findMany({
-    where: {
+export async function runDedicatedSandboxTurn(
+  input: RunDedicatedSandboxTurnInput,
+): Promise<string> {
+  return observe(
+    {
+      domain: "agent",
+      eventName: "sandbox.run",
+      workspaceId: input.agent.workspaceId,
       agentId: input.agent.id,
+      model: input.agent.model ?? undefined,
+      providerId: input.agent.provider?.id,
+      secrets: [input.agent.provider?.apiKey ?? ""],
     },
-    select: {
-      sandboxId: true,
-      isDefault: true,
-      sandbox: { select: { workspaceId: true, kind: true, network: true } },
+    async () => {
+      const runtimeKind = input.agent.runtimeKind;
+      if (!isDedicatedSandboxRuntimeKind(runtimeKind)) {
+        throw new Error(`Unsupported sandbox runtime: ${runtimeKind}.`);
+      }
+      if (runtimeKind === "pi-sdk" && !input.piPackages)
+        throw new Error("PI_PACKAGE_UNAVAILABLE");
+      const provider = input.agent.provider;
+      const modelId = input.agent.model;
+      if (!provider?.id || !modelId)
+        throw new Error("This Agent has no configured model.");
+      const modelContext = resolveModelContext(provider, modelId);
+
+      const links = await db.agentSandbox.findMany({
+        where: {
+          agentId: input.agent.id,
+        },
+        select: {
+          sandboxId: true,
+          isDefault: true,
+          sandbox: { select: { workspaceId: true, kind: true, network: true } },
+        },
+      });
+      const link = links.find((candidate) => candidate.isDefault) ?? links[0];
+      if (
+        links.length !== 1 ||
+        !link ||
+        link.sandbox.workspaceId !== input.agent.workspaceId ||
+        link.sandbox.kind !== "docker" ||
+        link.sandbox.network === "none" ||
+        (input.sandboxId && link.sandboxId !== input.sandboxId)
+      ) {
+        throw new Error(
+          "Assign exactly one Docker sandbox to this Agent before running it.",
+        );
+      }
+
+      if (runtimeKind === "hermes-rpc" && input.runtimeSessionId) {
+        await bindHermesRpcConversation({
+          workspaceId: input.agent.workspaceId,
+          agentId: input.agent.id,
+          conversationId: input.runtimeSessionId,
+          sandboxId: link.sandboxId,
+          providerId: provider.id,
+          modelId,
+          providerFormat: provider.format,
+          workingDirectory: normalizeSandboxWorkingDirectory(
+            input.workingDirectory,
+          ),
+        });
+      }
+      const deploymentIds = [...new Set(input.deploymentIds ?? [])].filter(
+        (deploymentId) => liveStatus(deploymentId) === "running",
+      );
+      const now = Math.floor(Date.now() / 1000);
+      const runtimeAccessToken = await createAgentRuntimeToken({
+        workspaceId: input.agent.workspaceId,
+        agentId: input.agent.id,
+        sandboxId: link.sandboxId,
+        providerId: provider.id,
+        deploymentIds,
+        exp: now + 55 * 60,
+      });
+
+      const options: RunSandboxAgentTurnOptions = {
+        runtimeKind: runtimeKind as SandboxAgentRuntimeKind,
+        workspaceId: input.agent.workspaceId,
+        agentId: input.agent.id,
+        sandboxId: link.sandboxId,
+        provider,
+        modelId,
+        maxSteps: input.agent.maxSteps,
+        contextWindow: modelContext.maxTokens,
+        contextWindowEstimated: modelContext.estimated,
+        modelProxyBase: runtimeModelProxyBase(provider.id),
+        runtimeAccessToken,
+        systemPrompt: input.systemPrompt,
+        disabledBuiltinTools: input.agent.disabledBuiltinTools,
+        messages: input.messages,
+        skills: input.skills,
+        ...(runtimeKind === "pi-sdk" ? { piPackages: input.piPackages } : {}),
+        mcpServers: deploymentIds.map((deploymentId) => ({
+          deploymentId,
+          url: runtimeMcpProxyUrl(deploymentId),
+        })),
+        workingDirectory: input.workingDirectory,
+        runtimeSessionId: input.runtimeSessionId,
+        command: input.command,
+        signal: input.signal,
+        onTextDelta: input.onTextDelta,
+        onActivity: async (activity) => {
+          if (activity.type === "tool")
+            await recordEvent({
+              domain: "agent",
+              eventName: "sandbox.tool",
+              toolName: activity.toolName,
+              outcome: activity.status === "failed" ? "error" : "success",
+              attributes: {
+                status: activity.status,
+                toolCallId: activity.toolCallId,
+              },
+            });
+          await input.onActivity?.(activity);
+        },
+        onContextUsage: input.onContextUsage,
+        onCommands: input.onCommands,
+        onUsage: input.onUsage,
+        onCommandResult: input.onCommandResult,
+      };
+      if (input.nativeCompaction) {
+        const result = await compactPiHarnessSession(
+          options,
+          input.nativeCompaction.contextId,
+          input.nativeCompaction.customInstructions,
+        );
+        input.nativeCompaction.onResult(result);
+        return result.text;
+      }
+      return runSandboxAgentTurn(options);
     },
-  });
-  const link = links.find((candidate) => candidate.isDefault) ?? links[0];
-  if (
-    links.length !== 1
-    || !link
-    || link.sandbox.workspaceId !== input.agent.workspaceId
-    || link.sandbox.kind !== 'docker'
-    || link.sandbox.network === 'none'
-    || (input.sandboxId && link.sandboxId !== input.sandboxId)
-  ) {
-    throw new Error('Assign exactly one Docker sandbox to this Agent before running it.');
-  }
-
-  if (runtimeKind === 'hermes-rpc' && input.runtimeSessionId) {
-    await bindHermesRpcConversation({ workspaceId: input.agent.workspaceId, agentId: input.agent.id,
-      conversationId: input.runtimeSessionId, sandboxId: link.sandboxId, providerId: provider.id,
-      modelId, providerFormat: provider.format, workingDirectory: normalizeSandboxWorkingDirectory(input.workingDirectory) });
-  }
-  const deploymentIds = [...new Set(input.deploymentIds ?? [])]
-    .filter((deploymentId) => liveStatus(deploymentId) === 'running');
-  const now = Math.floor(Date.now() / 1000);
-  const runtimeAccessToken = await createAgentRuntimeToken({
-    workspaceId: input.agent.workspaceId,
-    agentId: input.agent.id,
-    sandboxId: link.sandboxId,
-    providerId: provider.id,
-    deploymentIds,
-    exp: now + 55 * 60,
-  });
-
-  const options: RunSandboxAgentTurnOptions = {
-    runtimeKind: runtimeKind as SandboxAgentRuntimeKind,
-    workspaceId: input.agent.workspaceId,
-    agentId: input.agent.id,
-    sandboxId: link.sandboxId,
-    provider,
-    modelId,
-    maxSteps: input.agent.maxSteps,
-    contextWindow: modelContext.maxTokens,
-    contextWindowEstimated: modelContext.estimated,
-    modelProxyBase: runtimeModelProxyBase(provider.id),
-    runtimeAccessToken,
-    systemPrompt: input.systemPrompt,
-    disabledBuiltinTools: input.agent.disabledBuiltinTools,
-    messages: input.messages,
-    skills: input.skills,
-    ...(runtimeKind === 'pi-sdk' ? { piPackages: input.piPackages } : {}),
-    mcpServers: deploymentIds.map((deploymentId) => ({
-      deploymentId,
-      url: runtimeMcpProxyUrl(deploymentId),
-    })),
-    workingDirectory: input.workingDirectory,
-    runtimeSessionId: input.runtimeSessionId,
-    command: input.command,
-    signal: input.signal,
-    onTextDelta: input.onTextDelta,
-    onActivity: async (activity) => {
-      if (activity.type === 'tool') await recordEvent({ domain: 'agent', eventName: 'sandbox.tool',
-        toolName: activity.toolName, outcome: activity.status === 'failed' ? 'error' : 'success',
-        attributes: { status: activity.status, toolCallId: activity.toolCallId } });
-      await input.onActivity?.(activity);
-    },
-    onContextUsage: input.onContextUsage,
-    onCommands: input.onCommands,
-    onUsage: input.onUsage,
-    onCommandResult: input.onCommandResult,
-  };
-  if (input.nativeCompaction) {
-    const result = await compactPiHarnessSession(options, input.nativeCompaction.contextId, input.nativeCompaction.customInstructions);
-    input.nativeCompaction.onResult(result);
-    return result.text;
-  }
-  return runSandboxAgentTurn(options);
-
-  });
+  );
 }

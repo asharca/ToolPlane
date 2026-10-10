@@ -1,10 +1,10 @@
-import { render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({ pending: false }));
 
-vi.mock('react-dom', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('react-dom')>();
+vi.mock("react-dom", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("react-dom")>();
   return {
     ...actual,
     useFormStatus: () => ({
@@ -16,10 +16,10 @@ vi.mock('react-dom', async (importOriginal) => {
   };
 });
 
-import { SubmitButton } from '@/components/dashboard/SubmitButton';
+import { SubmitButton } from "@/components/dashboard/SubmitButton";
 
-describe('toolkit market import submit button', () => {
-  it('disables itself and announces progress while the import action is pending', () => {
+describe("toolkit market import submit button", () => {
+  it("disables itself and announces progress while the import action is pending", () => {
     mocks.pending = true;
 
     render(
@@ -28,14 +28,14 @@ describe('toolkit market import submit button', () => {
       </SubmitButton>,
     );
 
-    expect(screen.getByRole('button', { name: 'Importing…' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Importing…' })).toHaveAttribute(
-      'aria-busy',
-      'true',
+    expect(screen.getByRole("button", { name: "Importing…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Importing…" })).toHaveAttribute(
+      "aria-busy",
+      "true",
     );
   });
 
-  it('is enabled before an import starts', () => {
+  it("is enabled before an import starts", () => {
     mocks.pending = false;
 
     render(
@@ -44,6 +44,6 @@ describe('toolkit market import submit button', () => {
       </SubmitButton>,
     );
 
-    expect(screen.getByRole('button', { name: 'Import' })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Import" })).toBeEnabled();
   });
 });

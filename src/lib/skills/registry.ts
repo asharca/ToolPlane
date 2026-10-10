@@ -1,8 +1,8 @@
-import { Prisma, type PrismaClient } from '@prisma/client';
-import { fetchGithubSkillBundle } from './bundle';
-import { slugify } from './custom-skill';
-import { writeAudit } from '@/lib/observability/audit';
-import { redactText } from '@/lib/observability/redaction';
+import { Prisma, type PrismaClient } from "@prisma/client";
+import { fetchGithubSkillBundle } from "./bundle";
+import { slugify } from "./custom-skill";
+import { writeAudit } from "@/lib/observability/audit";
+import { redactText } from "@/lib/observability/redaction";
 
 export type GithubSkillRegistrySource = {
   owner: string;
@@ -32,7 +32,7 @@ export type SkillRegistrySyncResult = {
 };
 
 type GithubEntry = {
-  type: 'file' | 'dir' | string;
+  type: "file" | "dir" | string;
   name: string;
   path: string;
   download_url?: string | null;
@@ -49,54 +49,66 @@ type RegistryJson = {
   }[];
 };
 
-const DEFAULT_OWNER = 'asharca';
-const DEFAULT_REPO = 'tp-skills';
-const DEFAULT_REF = 'main';
-const DEFAULT_ROOT = 'skills';
+const DEFAULT_OWNER = "asharca";
+const DEFAULT_REPO = "tp-skills";
+const DEFAULT_REF = "main";
+const DEFAULT_ROOT = "skills";
 
 function cleanPart(raw: string, fallback: string): string {
-  return raw.trim().replace(/^\/+|\/+$/g, '') || fallback;
+  return raw.trim().replace(/^\/+|\/+$/g, "") || fallback;
 }
 
 function githubHeaders(): HeadersInit {
   const token = process.env.GITHUB_TOKEN || process.env.TOOLPLANE_GITHUB_TOKEN;
   return {
-    accept: 'application/vnd.github+json',
-    'user-agent': 'toolplane-skill-registry-sync',
+    accept: "application/vnd.github+json",
+    "user-agent": "toolplane-skill-registry-sync",
     ...(token ? { authorization: `Bearer ${token}` } : {}),
   };
 }
 
-function contentsUrl(source: Required<Pick<GithubSkillRegistrySource, 'owner' | 'repo' | 'ref'>>, path: string): string {
+function contentsUrl(
+  source: Required<Pick<GithubSkillRegistrySource, "owner" | "repo" | "ref">>,
+  path: string,
+): string {
   const encoded = path
-    .split('/')
+    .split("/")
     .filter(Boolean)
     .map(encodeURIComponent)
-    .join('/');
+    .join("/");
   return `https://api.github.com/repos/${source.owner}/${source.repo}/contents/${encoded}?ref=${encodeURIComponent(source.ref)}`;
 }
 
 async function fetchJson<T>(url: string, optional = false): Promise<T | null> {
-  const res = await fetch(url, { headers: githubHeaders(), cache: 'no-store' });
+  const res = await fetch(url, { headers: githubHeaders(), cache: "no-store" });
   if (optional && res.status === 404) return null;
   if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    throw new Error(`GitHub request failed (${res.status}): ${body.slice(0, 240)}`);
+    const body = await res.text().catch(() => "");
+    throw new Error(
+      `GitHub request failed (${res.status}): ${body.slice(0, 240)}`,
+    );
   }
   return (await res.json()) as T;
 }
 
-async function fetchRawJson<T>(url: string, optional = false): Promise<T | null> {
-  const res = await fetch(url, { headers: githubHeaders(), cache: 'no-store' });
+async function fetchRawJson<T>(
+  url: string,
+  optional = false,
+): Promise<T | null> {
+  const res = await fetch(url, { headers: githubHeaders(), cache: "no-store" });
   if (optional && res.status === 404) return null;
   if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    throw new Error(`GitHub raw request failed (${res.status}): ${body.slice(0, 240)}`);
+    const body = await res.text().catch(() => "");
+    throw new Error(
+      `GitHub raw request failed (${res.status}): ${body.slice(0, 240)}`,
+    );
   }
   return (await res.json()) as T;
 }
 
-async function fetchCommitSha(source: Required<Pick<GithubSkillRegistrySource, 'owner' | 'repo' | 'ref'>>): Promise<string | null> {
+async function fetchCommitSha(
+  source: Required<Pick<GithubSkillRegistrySource, "owner" | "repo" | "ref">>,
+): Promise<string | null> {
   const url = `https://api.github.com/repos/${source.owner}/${source.repo}/commits/${encodeURIComponent(source.ref)}`;
   const data = await fetchJson<{ sha?: string }>(url, true);
   return data?.sha || null;
@@ -108,7 +120,7 @@ function normalizeSource(source: GithubSkillRegistrySource) {
     repo: cleanPart(source.repo, DEFAULT_REPO),
     ref: cleanPart(source.ref ?? DEFAULT_REF, DEFAULT_REF),
     rootPath: cleanPart(source.rootPath ?? DEFAULT_ROOT, DEFAULT_ROOT),
-    slugPrefix: source.slugPrefix ?? '',
+    slugPrefix: source.slugPrefix ?? "",
   };
 }
 
@@ -118,75 +130,103 @@ export function defaultTpSkillsSource(): Required<GithubSkillRegistrySource> {
     repo: process.env.TP_SKILLS_REPO || DEFAULT_REPO,
     ref: process.env.TP_SKILLS_REF || DEFAULT_REF,
     rootPath: process.env.TP_SKILLS_ROOT || DEFAULT_ROOT,
-    slugPrefix: process.env.TP_SKILLS_SLUG_PREFIX || '',
+    slugPrefix: process.env.TP_SKILLS_SLUG_PREFIX || "",
   };
 }
 
-export function registryKey(source: Pick<GithubSkillRegistrySource, 'owner' | 'repo'>): string {
+export function registryKey(
+  source: Pick<GithubSkillRegistrySource, "owner" | "repo">,
+): string {
   return `github:${source.owner}/${source.repo}`;
 }
 
-function rawGithubTreeUrl(source: Required<Pick<GithubSkillRegistrySource, 'owner' | 'repo' | 'ref'>>, path: string): string {
+function rawGithubTreeUrl(
+  source: Required<Pick<GithubSkillRegistrySource, "owner" | "repo" | "ref">>,
+  path: string,
+): string {
   return `https://github.com/${source.owner}/${source.repo}/tree/${source.ref}/${path}`;
 }
 
-function rawGithubFileUrl(source: Required<Pick<GithubSkillRegistrySource, 'owner' | 'repo' | 'ref'>>, path: string): string {
+function rawGithubFileUrl(
+  source: Required<Pick<GithubSkillRegistrySource, "owner" | "repo" | "ref">>,
+  path: string,
+): string {
   const encoded = path
-    .split('/')
+    .split("/")
     .filter(Boolean)
     .map(encodeURIComponent)
-    .join('/');
+    .join("/");
   return `https://raw.githubusercontent.com/${source.owner}/${source.repo}/${source.ref}/${encoded}`;
 }
 
 function titleFromSlug(slug: string): string {
   return slug
-    .split('-')
+    .split("-")
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ');
+    .join(" ");
 }
 
 function categoryName(slug: string): string {
   return titleFromSlug(slug) || slug;
 }
 
-function normalizeRegistrySkill(raw: NonNullable<RegistryJson['skills']>[number], rootPath: string): RegistrySkillEntry | null {
-  const path = typeof raw.path === 'string' ? cleanPart(raw.path, '') : '';
+function normalizeRegistrySkill(
+  raw: NonNullable<RegistryJson["skills"]>[number],
+  rootPath: string,
+): RegistrySkillEntry | null {
+  const path = typeof raw.path === "string" ? cleanPart(raw.path, "") : "";
   if (!path) return null;
   const categories = Array.isArray(raw.categories)
     ? raw.categories.map((value) => slugify(String(value))).filter(Boolean)
     : [];
   const score = Number(raw.score);
   return {
-    slug: typeof raw.slug === 'string' && raw.slug.trim() ? slugify(raw.slug) : undefined,
-    path: path.startsWith(`${rootPath}/`) || path === rootPath ? path : `${rootPath}/${path}`,
+    slug:
+      typeof raw.slug === "string" && raw.slug.trim()
+        ? slugify(raw.slug)
+        : undefined,
+    path:
+      path.startsWith(`${rootPath}/`) || path === rootPath
+        ? path
+        : `${rootPath}/${path}`,
     categories,
     curated: raw.curated !== false,
     ...(Number.isFinite(score) ? { score: Math.trunc(score) } : {}),
   };
 }
 
-async function loadRegistryJson(source: ReturnType<typeof normalizeSource>): Promise<RegistrySkillEntry[] | null> {
-  const registry = await fetchRawJson<RegistryJson>(rawGithubFileUrl(source, 'registry.json'), true);
+async function loadRegistryJson(
+  source: ReturnType<typeof normalizeSource>,
+): Promise<RegistrySkillEntry[] | null> {
+  const registry = await fetchRawJson<RegistryJson>(
+    rawGithubFileUrl(source, "registry.json"),
+    true,
+  );
   if (!registry) return null;
-  const rootPath = typeof registry.root === 'string' && registry.root.trim()
-    ? cleanPart(registry.root, source.rootPath)
-    : source.rootPath;
+  const rootPath =
+    typeof registry.root === "string" && registry.root.trim()
+      ? cleanPart(registry.root, source.rootPath)
+      : source.rootPath;
   if (!Array.isArray(registry.skills)) return [];
   return registry.skills
     .map((entry) => normalizeRegistrySkill(entry, rootPath))
     .filter((entry): entry is RegistrySkillEntry => Boolean(entry));
 }
 
-async function listSkillDirectories(source: ReturnType<typeof normalizeSource>): Promise<RegistrySkillEntry[]> {
+async function listSkillDirectories(
+  source: ReturnType<typeof normalizeSource>,
+): Promise<RegistrySkillEntry[]> {
   const fromRegistry = await loadRegistryJson(source);
   if (fromRegistry) return fromRegistry;
 
-  const entries = await fetchJson<GithubEntry[]>(contentsUrl(source, source.rootPath));
-  if (!Array.isArray(entries)) throw new Error(`Registry root is not a directory: ${source.rootPath}`);
+  const entries = await fetchJson<GithubEntry[]>(
+    contentsUrl(source, source.rootPath),
+  );
+  if (!Array.isArray(entries))
+    throw new Error(`Registry root is not a directory: ${source.rootPath}`);
   return entries
-    .filter((entry) => entry.type === 'dir')
+    .filter((entry) => entry.type === "dir")
     .sort((a, b) => a.name.localeCompare(b.name))
     .map((entry, index) => ({
       path: entry.path,
@@ -196,7 +236,9 @@ async function listSkillDirectories(source: ReturnType<typeof normalizeSource>):
 }
 
 async function connectCategories(db: PrismaClient, slugs: string[]) {
-  const unique = [...new Set(slugs.map((slug) => slugify(slug)).filter(Boolean))];
+  const unique = [
+    ...new Set(slugs.map((slug) => slugify(slug)).filter(Boolean)),
+  ];
   if (unique.length === 0) return [];
   const rows = await Promise.all(
     unique.map((slug) =>
@@ -212,7 +254,7 @@ async function connectCategories(db: PrismaClient, slugs: string[]) {
 }
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : 'Unknown error';
+  return error instanceof Error ? error.message : "Unknown error";
 }
 
 export async function syncGithubSkillRegistry(
@@ -225,21 +267,35 @@ export async function syncGithubSkillRegistry(
   const commitSha = await fetchCommitSha(source).catch(() => null);
   const entries = await listSkillDirectories(source);
   const paths = options.paths ? new Set(options.paths) : null;
-  if (paths && (!paths.size || paths.size > 1000 || [...paths].some((path) => !entries.some((entry) => entry.path === path)))) {
-    throw new Error('Retry paths must belong to the selected registry.');
+  if (
+    paths &&
+    (!paths.size ||
+      paths.size > 1000 ||
+      [...paths].some((path) => !entries.some((entry) => entry.path === path)))
+  ) {
+    throw new Error("Retry paths must belong to the selected registry.");
   }
   let created = 0;
   let updated = 0;
-  const failed: SkillRegistrySyncResult['failed'] = [];
+  const failed: SkillRegistrySyncResult["failed"] = [];
 
   for (const [index, entry] of entries.entries()) {
     if (paths && !paths.has(entry.path)) continue;
     try {
-      const bundle = await fetchGithubSkillBundle(rawGithubTreeUrl(source, entry.path));
-      const slug = slugify(`${source.slugPrefix}${entry.slug || bundle.slugHint}`);
-      const existing = await db.skill.findUnique({ where: { slug }, select: { id: true } });
+      const bundle = await fetchGithubSkillBundle(
+        rawGithubTreeUrl(source, entry.path),
+      );
+      const slug = slugify(
+        `${source.slugPrefix}${entry.slug || bundle.slugHint}`,
+      );
+      const existing = await db.skill.findUnique({
+        where: { slug },
+        select: { id: true },
+      });
       const categories = await connectCategories(db, entry.categories ?? []);
-      const files = bundle.files.length ? (bundle.files as unknown as Prisma.InputJsonValue) : Prisma.JsonNull;
+      const files = bundle.files.length
+        ? (bundle.files as unknown as Prisma.InputJsonValue)
+        : Prisma.JsonNull;
       const score = entry.score ?? 7_000 - index;
 
       await db.$transaction(async (tx) => {
@@ -275,14 +331,30 @@ export async function syncGithubSkillRegistry(
             categories: { connect: categories },
           },
         });
-        await writeAudit(tx, { actorId: options.actorId ?? 'system', action: 'catalog.skill.synced', targetType: 'skill', targetId: skill.id,
-          changes: { registry, path: entry.path, created: !existing, commitSha } });
+        await writeAudit(tx, {
+          actorId: options.actorId ?? "system",
+          action: "catalog.skill.synced",
+          targetType: "skill",
+          targetId: skill.id,
+          changes: {
+            registry,
+            path: entry.path,
+            created: !existing,
+            commitSha,
+          },
+        });
       });
 
       if (existing) updated += 1;
       else created += 1;
     } catch (error) {
-      failed.push({ path: entry.path, error: redactText(errorMessage(error), [process.env.GITHUB_TOKEN ?? '', process.env.TOOLPLANE_GITHUB_TOKEN ?? '']).slice(0, 2000) });
+      failed.push({
+        path: entry.path,
+        error: redactText(errorMessage(error), [
+          process.env.GITHUB_TOKEN ?? "",
+          process.env.TOOLPLANE_GITHUB_TOKEN ?? "",
+        ]).slice(0, 2000),
+      });
     }
   }
 

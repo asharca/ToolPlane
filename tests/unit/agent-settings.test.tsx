@@ -1,8 +1,8 @@
-import { fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
-import { AgentSettings } from '@/components/dashboard/agents/AgentSettings';
+import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { AgentSettings } from "@/components/dashboard/agents/AgentSettings";
 
-vi.mock('@/components/dashboard/agents/AgentSettingsForm', () => ({
+vi.mock("@/components/dashboard/agents/AgentSettingsForm", () => ({
   AgentSettingsForm: ({
     activeSection,
     showNavigation,
@@ -12,21 +12,25 @@ vi.mock('@/components/dashboard/agents/AgentSettingsForm', () => ({
   }) => <div>{`settings:${activeSection}:${showNavigation}`}</div>,
 }));
 
-vi.mock('@/components/dashboard/agents/AgentMessagingPanel', () => ({
+vi.mock("@/components/dashboard/agents/AgentMessagingPanel", () => ({
   AgentMessagingPanel: () => <div>channel-settings</div>,
 }));
 
-vi.mock('@/components/dashboard/agents/AgentA2APanel', () => ({ AgentA2APanel: () => <div>native-a2a-panel</div> }));
+vi.mock("@/components/dashboard/agents/AgentA2APanel", () => ({
+  AgentA2APanel: () => <div>native-a2a-panel</div>,
+}));
 
 const settings = {
-  name: 'Release copilot',
-  runtimeKind: 'pi',
-  systemPrompt: '',
-  providerId: 'provider-1',
+  name: "Release copilot",
+  runtimeKind: "pi",
+  systemPrompt: "",
+  providerId: "provider-1",
   providerIds: [],
-  model: 'gpt-5',
+  model: "gpt-5",
   maxSteps: 8,
-  providers: [{ id: 'provider-1', name: 'OpenAI', format: 'openai', models: ['gpt-5'] }],
+  providers: [
+    { id: "provider-1", name: "OpenAI", format: "openai", models: ["gpt-5"] },
+  ],
   deployments: [],
   skills: [],
   toolkits: [],
@@ -34,8 +38,8 @@ const settings = {
   subAgents: [],
 };
 
-describe('AgentSettings', () => {
-  it('renders a settings workspace without the legacy conversation UI', () => {
+describe("AgentSettings", () => {
+  it("renders a settings workspace without the legacy conversation UI", () => {
     render(
       <AgentSettings
         slug="acme"
@@ -47,37 +51,60 @@ describe('AgentSettings', () => {
       />,
     );
 
-    expect(screen.getByText('settings:general:false')).toBeInTheDocument();
-    expect(screen.queryByText('OpenAI · gpt-5')).not.toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: 'Chat' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Delete agent' })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Instructions' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Basic' })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Built-in tools' }));
-    expect(screen.getByText('settings:builtInTools:false')).toBeInTheDocument();
-    expect(screen.queryByPlaceholderText('Message this agent')).not.toBeInTheDocument();
-    expect(screen.queryByText('New chat')).not.toBeInTheDocument();
+    expect(screen.getByText("settings:general:false")).toBeInTheDocument();
+    expect(screen.queryByText("OpenAI · gpt-5")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: "Chat" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Delete agent" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Instructions" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Basic" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Built-in tools" }));
+    expect(screen.getByText("settings:builtInTools:false")).toBeInTheDocument();
+    expect(
+      screen.queryByPlaceholderText("Message this agent"),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("New chat")).not.toBeInTheDocument();
   });
 
-  it.each(['pi', 'hermes'])('keeps channels inside the %s settings navigation', async (runtimeKind) => {
-    render(
-      <AgentSettings
-        slug="acme"
-        agentId="agent-1"
-        settings={{ ...settings, runtimeKind }}
-        channelSettings={{ connections: [] }}
-        ready
-        agentName="Release copilot"
-      />,
-    );
+  it.each(["pi", "hermes"])(
+    "keeps channels inside the %s settings navigation",
+    async (runtimeKind) => {
+      render(
+        <AgentSettings
+          slug="acme"
+          agentId="agent-1"
+          settings={{ ...settings, runtimeKind }}
+          channelSettings={{ connections: [] }}
+          ready
+          agentName="Release copilot"
+        />,
+      );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Channels' }));
-    expect(await screen.findByText('channel-settings')).toBeInTheDocument();
-  });
+      fireEvent.click(screen.getByRole("button", { name: "Channels" }));
+      expect(await screen.findByText("channel-settings")).toBeInTheDocument();
+    },
+  );
 });
 
-it('opens A2A from its deep-linked settings tab', async () => {
-  render(<AgentSettings slug="acme" agentId="agent-1" settings={settings} channelSettings={{ connections: [] }} ready agentName="Agent" initialSettingsTab="a2a" />);
-  expect(await screen.findByText('native-a2a-panel')).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'A2A integration' })).toHaveAttribute('aria-current', 'page');
+it("opens A2A from its deep-linked settings tab", async () => {
+  render(
+    <AgentSettings
+      slug="acme"
+      agentId="agent-1"
+      settings={settings}
+      channelSettings={{ connections: [] }}
+      ready
+      agentName="Agent"
+      initialSettingsTab="a2a"
+    />,
+  );
+  expect(await screen.findByText("native-a2a-panel")).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "A2A integration" }),
+  ).toHaveAttribute("aria-current", "page");
 });

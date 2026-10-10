@@ -1,10 +1,10 @@
-'use client';
+"use client";
 
-import type { Ref } from 'react';
-import { useTranslations } from 'next-intl';
-import { SandboxConsole } from '@/components/dashboard/sandboxes/SandboxConsole';
+import type { Ref } from "react";
+import { useTranslations } from "next-intl";
+import { SandboxConsole } from "@/components/dashboard/sandboxes/SandboxConsole";
 
-export type HermesRuntimeView = 'web' | 'terminal';
+export type HermesRuntimeView = "web" | "terminal";
 
 export function HermesRuntimePanel({
   view,
@@ -19,9 +19,9 @@ export function HermesRuntimePanel({
   dashboardUrl: string;
   iframeRef?: Ref<HTMLIFrameElement>;
 }) {
-  const t = useTranslations('console.agents');
+  const t = useTranslations("console.agents");
 
-  if (view === 'terminal') {
+  if (view === "terminal") {
     return (
       <SandboxConsole
         deploymentId={deploymentId}
@@ -30,7 +30,7 @@ export function HermesRuntimePanel({
         initialEntries={[]}
         terminalOnly
         terminalApiBase={`/api/v1/agents/${agentId}/terminal`}
-        terminalLabel={t('hermesTerminalTitle')}
+        terminalLabel={t("hermesTerminalTitle")}
         terminalSubtitle="/opt/data/workspace"
       />
     );
@@ -39,14 +39,15 @@ export function HermesRuntimePanel({
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
       <div className="shrink-0 border-b border-border bg-muted px-4 py-2 text-xs text-muted-foreground text-muted-foreground sm:px-5">
-        {t('hermesManagedFieldsWarning')}
+        {t("hermesManagedFieldsWarning")}
       </div>
       <iframe
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: Embedded interactive dashboard must remain focusable by workspace tab focus restoration.
         tabIndex={0}
         ref={iframeRef}
         key={dashboardUrl}
         src={dashboardUrl}
-        title={t('hermesDashboardTitle')}
+        title={t("hermesDashboardTitle")}
         sandbox="allow-downloads allow-modals allow-popups allow-same-origin allow-scripts"
         allow="clipboard-read; clipboard-write"
         referrerPolicy="no-referrer"

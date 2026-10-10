@@ -1,18 +1,18 @@
-import { notFound } from 'next/navigation';
-import { getTranslations } from 'next-intl/server';
-import { AgentListingForm } from '@/components/admin/AgentListingForm';
-import { AdminPage, AdminPageHeader } from '@/components/admin/AdminUI';
-import { ConfirmDialog } from '@/components/admin/ConfirmDialog';
-import { listCatalogAgentResources } from '@/lib/admin/agent-market';
-import { listCategories } from '@/lib/admin/categories';
+import { notFound } from "next/navigation";
+import { getTranslations } from "next-intl/server";
+import { AgentListingForm } from "@/components/admin/AgentListingForm";
+import { AdminPage, AdminPageHeader } from "@/components/admin/AdminUI";
+import { ConfirmDialog } from "@/components/admin/ConfirmDialog";
+import { listCatalogAgentResources } from "@/lib/admin/agent-market";
+import { listCategories } from "@/lib/admin/categories";
 import {
   deleteAssistantTemplateAdminAction,
   updateAssistantTemplateAdminAction,
-} from '@/lib/admin/market-catalog-actions';
-import { getAdminAssistantTemplate } from '@/lib/admin/market-catalog';
-import { requireAdmin } from '@/lib/auth/admin';
+} from "@/lib/admin/market-catalog-actions";
+import { getAdminAssistantTemplate } from "@/lib/admin/market-catalog";
+import { requireAdmin } from "@/lib/auth/admin";
 
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
 export default async function EditAssistantTemplatePage({
   params,
@@ -22,7 +22,7 @@ export default async function EditAssistantTemplatePage({
   await requireAdmin();
   const { id } = await params;
   const [t, template, categories, resources] = await Promise.all([
-    getTranslations('admin'),
+    getTranslations("admin"),
     getAdminAssistantTemplate(id),
     listCategories(),
     listCatalogAgentResources(),
@@ -34,10 +34,10 @@ export default async function EditAssistantTemplatePage({
   return (
     <AdminPage className="max-w-5xl">
       <AdminPageHeader
-        title={t('editAssistantTemplate')}
-        description={t('editAssistantTemplateDescription')}
+        title={t("editAssistantTemplate")}
+        description={t("editAssistantTemplateDescription")}
         backHref="/admin/assistants"
-        backLabel={t('directoryAssistants')}
+        backLabel={t("directoryAssistants")}
       />
       <AgentListingForm
         action={updateAssistantTemplateAdminAction}
@@ -51,7 +51,9 @@ export default async function EditAssistantTemplatePage({
           tags: listing.tags,
           curated: listing.curated,
           isFeatured: listing.isFeatured,
-          categoryIds: listing.categories.map(({ id: categoryId }) => categoryId),
+          categoryIds: listing.categories.map(
+            ({ id: categoryId }) => categoryId,
+          ),
           status: listing.status,
           systemPrompt: assistant.systemPrompt,
           maxSteps: assistant.maxSteps,
@@ -62,16 +64,16 @@ export default async function EditAssistantTemplatePage({
         categories={categories}
         servers={resources.servers}
         skills={[]}
-        submitLabel={t('publishAssistantTemplateVersion')}
+        submitLabel={t("publishAssistantTemplateVersion")}
         mode="assistant"
       />
       <div className="border-t border-border pt-6">
         <ConfirmDialog
-          label={t('deleteAssistantTemplate')}
-          prompt={t('deleteAssistantTemplatePrompt')}
+          label={t("deleteAssistantTemplate")}
+          prompt={t("deleteAssistantTemplatePrompt")}
           action={deleteAssistantTemplateAdminAction}
           hidden={{ id: listing.id }}
-          pendingLabel={t('deleting')}
+          pendingLabel={t("deleting")}
           tone="danger"
         />
       </div>

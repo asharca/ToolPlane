@@ -14,11 +14,7 @@ import {
 } from "react";
 import { ThinkingShimmer } from "@/components/agents/loading-states/thinking-shimmer";
 import { AgentDisclosure } from "@/components/agents/agent-disclosure";
-import {
-  EASE_OUT,
-  SPRING_LAYOUT,
-  SPRING_SWAP,
-} from "@/lib/ease";
+import { EASE_OUT, SPRING_LAYOUT, SPRING_SWAP } from "@/lib/ease";
 import { cn } from "@/lib/utils";
 import { ActivityRow } from "./activity-row";
 import type {
@@ -96,7 +92,8 @@ function getSummary(
   if (type === "step" || type === "text") {
     return (
       <>
-        Thought for <span className="tabular-nums">{formatDuration(duration)}</span>
+        Thought for{" "}
+        <span className="tabular-nums">{formatDuration(duration)}</span>
       </>
     );
   }
@@ -180,7 +177,8 @@ export function AgentActivity({
   const toggle = () => {
     const next = !currentOpen;
     setOpen(next);
-    if (next) requestAnimationFrame(() => viewportRef.current?.scrollTo({ top: 0 }));
+    if (next)
+      requestAnimationFrame(() => viewportRef.current?.scrollTo({ top: 0 }));
   };
 
   const liveLabel = activeLabel ?? getActiveLabel(contentType);
@@ -204,9 +202,11 @@ export function AgentActivity({
           role="status"
           className="flex h-7 min-w-0 items-center text-muted-foreground"
         >
-          {renderWorkingStatus
-            ? renderWorkingStatus({ label: liveLabel, duration })
-            : <ThinkingShimmer>{liveLabel}</ThinkingShimmer>}
+          {renderWorkingStatus ? (
+            renderWorkingStatus({ label: liveLabel, duration })
+          ) : (
+            <ThinkingShimmer>{liveLabel}</ThinkingShimmer>
+          )}
         </div>
       ) : (
         <button
@@ -244,9 +244,15 @@ export function AgentActivity({
           ref={viewportRef}
           className={cn(
             "scrollbar-hide pr-1",
-            capped && expanded && !working ? "overflow-y-auto" : "overflow-y-hidden",
+            capped && expanded && !working
+              ? "overflow-y-auto"
+              : "overflow-y-hidden",
           )}
-          style={{ height: viewportHeight, maskImage, WebkitMaskImage: maskImage }}
+          style={{
+            height: viewportHeight,
+            maskImage,
+            WebkitMaskImage: maskImage,
+          }}
         >
           <motion.div
             ref={contentRef}

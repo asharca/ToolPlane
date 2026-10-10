@@ -1,17 +1,24 @@
-import { redirect } from 'next/navigation';
-import { cookies } from 'next/headers';
-import { getCurrentUser } from '@/lib/auth/current-user';
-import { getAgentMarketListingByDirectorySlug } from '@/lib/agents/market';
-import { getDefaultWorkspace, getWorkspaceForUser, listWorkspacesForUser } from '@/lib/workspace/queries';
-import { WorkspaceAccountPage } from '@/components/dashboard/WorkspaceAccountPage';
-import { WorkspaceInvitationPage } from '@/components/dashboard/WorkspaceInvitationPage';
-import { lastWorkspaceCookieName } from '@/lib/workspace/navigation';
+import { redirect } from "next/navigation";
+import { cookies } from "next/headers";
+import { getCurrentUser } from "@/lib/auth/current-user";
+import { getAgentMarketListingByDirectorySlug } from "@/lib/agents/market";
+import {
+  getDefaultWorkspace,
+  getWorkspaceForUser,
+  listWorkspacesForUser,
+} from "@/lib/workspace/queries";
+import { WorkspaceAccountPage } from "@/components/dashboard/WorkspaceAccountPage";
+import { WorkspaceInvitationPage } from "@/components/dashboard/WorkspaceInvitationPage";
+import { lastWorkspaceCookieName } from "@/lib/workspace/navigation";
+import { normalizeAdminPage } from "@/lib/admin/pagination";
 
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
 function intentSlug(value: string | string[] | undefined): string | null {
   const candidate = Array.isArray(value) ? value[0] : value;
-  return candidate && /^[A-Za-z0-9._-]{1,200}$/.test(candidate) ? candidate : null;
+  return candidate && /^[A-Za-z0-9._-]{1,200}$/.test(candidate)
+    ? candidate
+    : null;
 }
 
 export default async function AppIndexPage({
@@ -26,20 +33,26 @@ export default async function AppIndexPage({
     view?: string;
     workspace?: string;
     notice?: string;
+    page?: string;
+    unread?: string;
   }>;
 }) {
   const query = await searchParams;
   const server = intentSlug(query.server);
   const skill = intentSlug(query.skill);
   const agent = intentSlug(query.agent);
-  const rawMarket = Array.isArray(query.market) ? query.market[0] : query.market;
-  const market = ['mcp', 'skills', 'assistants', 'toolkits'].includes(rawMarket ?? '')
-    ? rawMarket as 'mcp' | 'skills' | 'assistants' | 'toolkits'
+  const rawMarket = Array.isArray(query.market)
+    ? query.market[0]
+    : query.market;
+  const market = ["mcp", "skills", "assistants", "toolkits"].includes(
+    rawMarket ?? "",
+  )
+    ? (rawMarket as "mcp" | "skills" | "assistants" | "toolkits")
     : null;
   const rawTerm = Array.isArray(query.q) ? query.q[0] : query.q;
-  const term = rawTerm?.trim().slice(0, 160) ?? '';
+  const term = rawTerm?.trim().slice(0, 160) ?? "";
   const marketIntent = market
-    ? `/app?market=${market}${term ? `&q=${encodeURIComponent(term)}` : ''}`
+    ? `/app?market=${market}${term ? `&q=${encodeURIComponent(term)}` : ""}`
     : null;
   const intent = server
     ? `/app?server=${encodeURIComponent(server)}`
@@ -47,36 +60,88 @@ export default async function AppIndexPage({
       ? `/app?skill=${encodeURIComponent(skill)}`
       : agent
         ? `/app?agent=${encodeURIComponent(agent)}`
-        : marketIntent ?? '/app';
+        : (marketIntent ?? "/app");
   const user = await getCurrentUser();
-  if (query.view === 'invitation') return <WorkspaceInvitationPage signedIn={Boolean(user)} />;
-  if (!user) redirect(`/app/login?next=${encodeURIComponent(['account', 'workspaces'].includes(query.view ?? '') ? `/app?view=${query.view}` : intent)}`);
-  if (query.view === 'account') return <WorkspaceAccountPage user={user} view="account" />;
-  if (query.view === 'workspaces') return <WorkspaceAccountPage user={user} notice={query.notice} />;
+  if (query.view === "notifications") {
+    const page = normalizeAdminPage(Number(query.page ?? 1));
+    const unreadOnly = query.unread === "1";
+    if (!user) {
+      const next = `/app?view=notifications&page=${page}${unreadOnly ? "&unread=1" : ""}`;
+      redirect(`/app/login?next=${encodeURIComponent(next)}`);
+    }
+    const cookieStore = await cookies();
+    const workspace = await getDefaultWorkspace(
+      user.id,
+      cookieStore.get(lastWorkspaceCookieName(user.id))?.value,
+    );
+    if (workspace)
+      redirect(
+        `/app/${encodeURIComponent(workspace.slug)}/notifications?page=${page}${unreadOnly ? "&unread=1" : ""}`,
+      );
+    return (
+      <WorkspaceAccountPage
+        user={user}
+        view="notifications"
+        notificationPage={page}
+        unreadOnly={unreadOnly}
+      />
+    );
+  }
+  if (query.view === "invitation")
+    return <WorkspaceInvitationPage signedIn={Boolean(user)} />;
+  if (!user)
+    redirect(
+      `/app/login?next=${encodeURIComponent(["account", "workspaces"].includes(query.view ?? "") ? `/app?view=${query.view}` : intent)}`,
+    );
+  if (query.view === "account")
+    return <WorkspaceAccountPage user={user} view="account" />;
+  if (query.view === "workspaces")
+    return <WorkspaceAccountPage user={user} notice={query.notice} />;
   const selectedSlug = intentSlug(query.workspace);
-  if (intent !== '/app' && !selectedSlug) {
-    const workspaces = (await listWorkspacesForUser(user.id)).filter((workspace) => workspace.status === 'active');
-    if (workspaces.length !== 1) return <WorkspaceAccountPage user={user} intent={intent} />;
+  if (intent !== "/app" && !selectedSlug) {
+    const workspaces = (await listWorkspacesForUser(user.id)).filter(
+      (workspace) => workspace.status === "active",
+    );
+    if (workspaces.length !== 1)
+      return <WorkspaceAccountPage user={user} intent={intent} />;
   }
   const cookieStore = await cookies();
   const ws = selectedSlug
     ? await getWorkspaceForUser(selectedSlug, user.id)
-    : await getDefaultWorkspace(user.id, cookieStore.get(lastWorkspaceCookieName(user.id))?.value);
-  if (!ws) return <WorkspaceAccountPage user={user} intent={intent !== '/app' ? intent : ''} notice={selectedSlug ? 'unavailable' : ''} />;
+    : await getDefaultWorkspace(
+        user.id,
+        cookieStore.get(lastWorkspaceCookieName(user.id))?.value,
+      );
+  if (!ws)
+    return (
+      <WorkspaceAccountPage
+        user={user}
+        intent={intent !== "/app" ? intent : ""}
+        notice={selectedSlug ? "unavailable" : ""}
+      />
+    );
   if (server) {
-    redirect(`/app/${encodeURIComponent(ws.slug)}/market/mcp/${encodeURIComponent(server)}`);
+    redirect(
+      `/app/${encodeURIComponent(ws.slug)}/market/mcp/${encodeURIComponent(server)}`,
+    );
   }
   if (skill) {
-    redirect(`/app/${encodeURIComponent(ws.slug)}/market/skills/${encodeURIComponent(skill)}`);
+    redirect(
+      `/app/${encodeURIComponent(ws.slug)}/market/skills/${encodeURIComponent(skill)}`,
+    );
   }
   if (agent) {
     const detail = await getAgentMarketListingByDirectorySlug(agent);
     const marketPath = `/app/${encodeURIComponent(ws.slug)}/market/agents`;
-    redirect(detail ? `${marketPath}/${encodeURIComponent(detail.listing.id)}#install` : marketPath);
+    redirect(
+      detail
+        ? `${marketPath}/${encodeURIComponent(detail.listing.id)}#install`
+        : marketPath,
+    );
   }
   if (market) {
     const marketPath = `/app/${encodeURIComponent(ws.slug)}/market/${market}`;
-    redirect(`${marketPath}${term ? `?q=${encodeURIComponent(term)}` : ''}`);
+    redirect(`${marketPath}${term ? `?q=${encodeURIComponent(term)}` : ""}`);
   }
   redirect(`/app/${encodeURIComponent(ws.slug)}/chat`);
 }

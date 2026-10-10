@@ -1,56 +1,76 @@
+import { AnimatedBadge } from "@/components/motion/animated-badge";
 
-import { AnimatedBadge } from '@/components/motion/animated-badge';
-
-import { Button, ButtonLink } from '@/components/motion/button';
-import { Input } from '@/components/motion/input';
-import { FormSelect } from '@/components/ui/FormSelect';
-import { getLocale, getTranslations } from 'next-intl/server';
-import Link from 'next/link';
-import { redirect } from 'next/navigation';
-import { Brain, CopyPlus, Plug, Search, SlidersHorizontal, Wrench } from 'lucide-react';
-import { getCurrentUser } from '@/lib/auth/current-user';
-import { getWorkspaceForUser } from '@/lib/workspace/queries';
-import { getBrowseToolkits, type ToolkitBrowseFilters } from '@/lib/toolkits/queries';
-import { clonePublicToolkitAction } from '@/lib/toolkits/actions';
-import { installMarketResourceAction } from '@/lib/market/actions';
+import { Button, ButtonLink } from "@/components/motion/button";
+import { Input } from "@/components/motion/input";
+import { FormSelect } from "@/components/ui/FormSelect";
+import { getLocale, getTranslations } from "next-intl/server";
+import Link from "next/link";
+import { redirect } from "next/navigation";
+import {
+  Brain,
+  CopyPlus,
+  Plug,
+  Search,
+  SlidersHorizontal,
+  Wrench,
+} from "lucide-react";
+import { getCurrentUser } from "@/lib/auth/current-user";
+import { getWorkspaceForUser } from "@/lib/workspace/queries";
+import {
+  getBrowseToolkits,
+  type ToolkitBrowseFilters,
+} from "@/lib/toolkits/queries";
+import { clonePublicToolkitAction } from "@/lib/toolkits/actions";
+import { installMarketResourceAction } from "@/lib/market/actions";
 import {
   DashboardEmptyState,
   DashboardPage,
   DashboardPagination,
   DashboardSection,
-} from '@/components/dashboard/DashboardUI';
-import { SubmitButton } from '@/components/dashboard/SubmitButton';
-import { MarketCategorySidebar } from '@/components/dashboard/market/MarketCategorySidebar';
-import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
+} from "@/components/dashboard/DashboardUI";
+import { SubmitButton } from "@/components/dashboard/SubmitButton";
+import { MarketCategorySidebar } from "@/components/dashboard/market/MarketCategorySidebar";
+import { formatInTimeZone, resolveUserTimeZone } from "@/lib/timezone";
 
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
 function fmt(d: Date, timeZone: string, locale: string) {
-  return formatInTimeZone(d, timeZone, {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  }, locale);
+  return formatInTimeZone(
+    d,
+    timeZone,
+    {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    },
+    locale,
+  );
 }
 
 function preview(names: string[], fallback: string) {
-  if (names.length === 0) return <span className="text-muted-foreground">{fallback}</span>;
-  return <span className="truncate">{names.join(', ')}</span>;
+  if (names.length === 0)
+    return <span className="text-muted-foreground">{fallback}</span>;
+  return <span className="truncate">{names.join(", ")}</span>;
 }
 
 function firstParam(value: string | string[] | undefined): string {
-  return Array.isArray(value) ? value[0] ?? '' : value ?? '';
+  return Array.isArray(value) ? (value[0] ?? "") : (value ?? "");
 }
 
 function marketHref(
   workspace: string,
-  input: { q?: string; category?: string; sort?: ToolkitBrowseFilters['sort']; page?: number },
+  input: {
+    q?: string;
+    category?: string;
+    sort?: ToolkitBrowseFilters["sort"];
+    page?: number;
+  },
 ) {
   const query = new URLSearchParams();
-  if (input.q) query.set('q', input.q);
-  if (input.category) query.set('category', input.category);
-  if (input.sort === 'name') query.set('sort', input.sort);
-  if (input.page && input.page > 1) query.set('page', String(input.page));
+  if (input.q) query.set("q", input.q);
+  if (input.category) query.set("category", input.category);
+  if (input.sort === "name") query.set("sort", input.sort);
+  if (input.page && input.page > 1) query.set("page", String(input.page));
   const suffix = query.toString();
   const base = `/app/${encodeURIComponent(workspace)}/market/toolkits`;
   return suffix ? `${base}?${suffix}` : base;
@@ -68,26 +88,28 @@ export default async function ToolkitMarketPage({
     sort?: string | string[];
   }>;
 }) {
-  const [{ workspace: slug }, query, t, common, marketT, locale] = await Promise.all([
-    params,
-    searchParams,
-    getTranslations('console.toolkits'),
-    getTranslations('common'),
-    getTranslations('console.market'),
-    getLocale(),
-  ]);
+  const [{ workspace: slug }, query, t, common, marketT, locale] =
+    await Promise.all([
+      params,
+      searchParams,
+      getTranslations("console.toolkits"),
+      getTranslations("common"),
+      getTranslations("console.market"),
+      getLocale(),
+    ]);
   const pageParam = firstParam(query.page);
   const qParam = firstParam(query.q);
   const rawPage = Number(firstParam(pageParam));
   const page = Number.isSafeInteger(rawPage) && rawPage > 0 ? rawPage : 1;
   const q = firstParam(qParam).trim().slice(0, 160);
   const category = firstParam(query.category).trim();
-  const sort: ToolkitBrowseFilters['sort'] = firstParam(query.sort) === 'name' ? 'name' : 'newest';
+  const sort: ToolkitBrowseFilters["sort"] =
+    firstParam(query.sort) === "name" ? "name" : "newest";
   const user = await getCurrentUser();
-  if (!user) redirect('/app/login');
+  if (!user) redirect("/app/login");
   const timeZone = resolveUserTimeZone(user);
   const ws = await getWorkspaceForUser(slug, user.id);
-  if (!ws) redirect('/app');
+  if (!ws) redirect("/app");
 
   const result = await getBrowseToolkits(ws.id, page, q, { category, sort });
   const { items, total, availableTotal, categories, pageSize } = result;
@@ -98,15 +120,21 @@ export default async function ToolkitMarketPage({
   if (page > lastPage) {
     redirect(marketHref(slug, { q, category, sort, page: lastPage }));
   }
-  const hasFilters = Boolean(q || category || sort !== 'newest');
+  const hasFilters = Boolean(q || category || sort !== "newest");
 
   return (
     <DashboardPage className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-2xl font-semibold text-foreground">{t('publicToolkits')}</h2>
+        <h2 className="text-2xl font-semibold text-foreground">
+          {t("publicToolkits")}
+        </h2>
         <div>
-          <ButtonLink href={`/app/${encodeURIComponent(slug)}/toolkits`} variant="ghost" size="md">
-            {t('backToToolkits')}
+          <ButtonLink
+            href={`/app/${encodeURIComponent(slug)}/toolkits`}
+            variant="ghost"
+            size="md"
+          >
+            {t("backToToolkits")}
           </ButtonLink>
         </div>
       </div>
@@ -114,18 +142,35 @@ export default async function ToolkitMarketPage({
       <form className="flex w-full flex-col gap-2 sm:flex-row">
         <input type="hidden" name="category" value={category} />
         <div className="relative min-w-0 flex-1">
-          
-          
-          <Input label={t('searchPublicToolkits')} leftIcon={<Search />} name="q" defaultValue={q} placeholder={t('searchPublicToolkits')} className="w-full" />
+          <Input
+            label={t("searchPublicToolkits")}
+            leftIcon={<Search />}
+            name="q"
+            defaultValue={q}
+            placeholder={t("searchPublicToolkits")}
+            className="w-full"
+          />
         </div>
-        <FormSelect name="sort" defaultValue={sort} label={marketT('sortResources')} options={[{ value: "newest", label: marketT('sortNewest') }, { value: "name", label: marketT('sortName') }]} className="sm:w-40" />
-        <Button variant="secondary" size="md" type="submit"><SlidersHorizontal className="size-4" />{marketT('applyFilters')}</Button>
+        <FormSelect
+          name="sort"
+          defaultValue={sort}
+          label={marketT("sortResources")}
+          options={[
+            { value: "newest", label: marketT("sortNewest") },
+            { value: "name", label: marketT("sortName") },
+          ]}
+          className="sm:w-40"
+        />
+        <Button variant="secondary" size="md" type="submit">
+          <SlidersHorizontal className="size-4" />
+          {marketT("applyFilters")}
+        </Button>
       </form>
 
       <div className="grid min-w-0 gap-6 lg:grid-cols-[13.5rem_minmax(0,1fr)]">
         <MarketCategorySidebar
-          label={marketT('filterByCategory')}
-          allLabel={marketT('allCategories')}
+          label={marketT("filterByCategory")}
+          allLabel={marketT("allCategories")}
           allHref={marketHref(slug, { q, sort })}
           allCount={availableTotal}
           allActive={!category}
@@ -133,34 +178,55 @@ export default async function ToolkitMarketPage({
             name: item.name,
             count: item.count,
             active: item.slug === category,
-            href: marketHref(slug, { q, sort, category: item.slug === category ? undefined : item.slug }),
+            href: marketHref(slug, {
+              q,
+              sort,
+              category: item.slug === category ? undefined : item.slug,
+            }),
           }))}
         />
 
         <div className="min-w-0 space-y-5">
           <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground">
-            <span>{t('toolkitCount', { count: total })}</span>
+            <span>{t("toolkitCount", { count: total })}</span>
             {hasFilters ? (
-              <Link href={marketHref(slug, {})} className="font-medium text-foreground hover:underline">{marketT('clearFilters')}</Link>
+              <Link
+                href={marketHref(slug, {})}
+                className="font-medium text-foreground hover:underline"
+              >
+                {marketT("clearFilters")}
+              </Link>
             ) : null}
           </div>
 
-          <DashboardSection title={q ? t('searchResults', { query: q }) : t('title')} count={total}>
+          <DashboardSection
+            title={q ? t("searchResults", { query: q }) : t("title")}
+            count={total}
+          >
             {items.length === 0 ? (
               <DashboardEmptyState
                 icon={Wrench}
-                description={q ? t('noPublicToolkitsMatch', { query: q }) : t('noPublicToolkitsYet')}
+                description={
+                  q
+                    ? t("noPublicToolkitsMatch", { query: q })
+                    : t("noPublicToolkitsYet")
+                }
               />
             ) : (
               <div className="grid gap-3 md:grid-cols-2">
                 {items.map((toolkit) => (
-                  <article key={toolkit.id} className="rounded-3xl border border-border bg-card flex min-w-0 flex-col p-4">
+                  <article
+                    key={toolkit.id}
+                    className="rounded-3xl border border-border bg-card flex min-w-0 flex-col p-4"
+                  >
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <div className="mb-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                           <span>{toolkit.workspaceName}</span>
                           <span aria-hidden="true">/</span>
-                          <time dateTime={toolkit.createdAt.toISOString()}>{fmt(toolkit.createdAt, timeZone, locale)}</time>
+                          <time dateTime={toolkit.createdAt.toISOString()}>
+                            {fmt(toolkit.createdAt, timeZone, locale)}
+                          </time>
                         </div>
                         {toolkit.marketListing ? (
                           <Link
@@ -170,11 +236,14 @@ export default async function ToolkitMarketPage({
                             {toolkit.name}
                           </Link>
                         ) : (
-                          <h3 className="truncate font-semibold text-foreground">{toolkit.name}</h3>
+                          <h3 className="truncate font-semibold text-foreground">
+                            {toolkit.name}
+                          </h3>
                         )}
                       </div>
                       <AnimatedBadge status="neutral" size="sm">
-                        <Wrench className="size-3.5" />{toolkit.toolCount}
+                        <Wrench className="size-3.5" />
+                        {toolkit.toolCount}
                       </AnimatedBadge>
                     </div>
 
@@ -183,8 +252,13 @@ export default async function ToolkitMarketPage({
                         {toolkit.categories.slice(0, 3).map((item) => (
                           <ButtonLink
                             key={item.slug}
-                            href={marketHref(slug, { q, sort, category: item.slug })}
-                            variant="ghost" size="sm"
+                            href={marketHref(slug, {
+                              q,
+                              sort,
+                              category: item.slug,
+                            })}
+                            variant="ghost"
+                            size="sm"
                           >
                             {item.name}
                           </ButtonLink>
@@ -195,31 +269,63 @@ export default async function ToolkitMarketPage({
                     <div className="mt-4 grid flex-1 grid-cols-2 divide-x divide-border border-y border-border py-3">
                       <div className="min-w-0 pr-3">
                         <div className="mb-1.5 flex items-center gap-2 text-xs font-semibold uppercase text-muted-foreground">
-                          <Plug className="size-3.5" />{t('mcp')} {toolkit.serverCount}
+                          <Plug className="size-3.5" />
+                          {t("mcp")} {toolkit.serverCount}
                         </div>
-                        <p className="truncate text-sm text-foreground">{preview(toolkit.serverNames, t('noMcp'))}</p>
+                        <p className="truncate text-sm text-foreground">
+                          {preview(toolkit.serverNames, t("noMcp"))}
+                        </p>
                       </div>
                       <div className="min-w-0 pl-3">
                         <div className="mb-1.5 flex items-center gap-2 text-xs font-semibold uppercase text-muted-foreground">
-                          <Brain className="size-3.5" />{t('skills')} {toolkit.skillCount}
+                          <Brain className="size-3.5" />
+                          {t("skills")} {toolkit.skillCount}
                         </div>
-                        <p className="truncate text-sm text-foreground">{preview(toolkit.skillNames, t('noSkills'))}</p>
+                        <p className="truncate text-sm text-foreground">
+                          {preview(toolkit.skillNames, t("noSkills"))}
+                        </p>
                       </div>
                     </div>
 
                     {toolkit.customServerCount > 0 ? (
-                      <p className="mt-3 text-xs text-muted-foreground">{t('customSetupSummary', { count: toolkit.customServerCount })}</p>
+                      <p className="mt-3 text-xs text-muted-foreground">
+                        {t("customSetupSummary", {
+                          count: toolkit.customServerCount,
+                        })}
+                      </p>
                     ) : null}
 
-                    <form action={toolkit.marketListing ? installMarketResourceAction : clonePublicToolkitAction} className="mt-4 border-t border-border pt-4">
+                    <form
+                      action={
+                        toolkit.marketListing
+                          ? installMarketResourceAction
+                          : clonePublicToolkitAction
+                      }
+                      className="mt-4 border-t border-border pt-4"
+                    >
                       <input type="hidden" name="workspace" value={slug} />
                       {toolkit.marketListing ? (
-                        <input type="hidden" name="releaseId" value={toolkit.marketListing.releaseId} />
+                        <input
+                          type="hidden"
+                          name="releaseId"
+                          value={toolkit.marketListing.releaseId}
+                        />
                       ) : (
-                        <input type="hidden" name="toolkitId" value={toolkit.id} />
+                        <input
+                          type="hidden"
+                          name="toolkitId"
+                          value={toolkit.id}
+                        />
                       )}
-                      <SubmitButton variant="primary" size="sm" className="w-full" pendingLabel={t('importing')} flash={false}>
-                        <CopyPlus className="size-4" />{t('import')}
+                      <SubmitButton
+                        variant="primary"
+                        size="sm"
+                        className="w-full"
+                        pendingLabel={t("importing")}
+                        flash={false}
+                      >
+                        <CopyPlus className="size-4" />
+                        {t("import")}
                       </SubmitButton>
                     </form>
                   </article>
@@ -231,10 +337,12 @@ export default async function ToolkitMarketPage({
           <DashboardPagination
             page={page}
             lastPage={lastPage}
-            summary={t('paginationSummary', { page, lastPage, total })}
-            previousLabel={common('previous')}
-            nextLabel={common('next')}
-            hrefForPage={(nextPage) => marketHref(slug, { q, category, sort, page: nextPage })}
+            summary={t("paginationSummary", { page, lastPage, total })}
+            previousLabel={common("previous")}
+            nextLabel={common("next")}
+            hrefForPage={(nextPage) =>
+              marketHref(slug, { q, category, sort, page: nextPage })
+            }
           />
         </div>
       </div>

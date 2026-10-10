@@ -1,9 +1,12 @@
-import 'dotenv/config';
-import type { Prisma } from '@prisma/client';
-import { db } from '@/lib/db';
-import { hashPassword } from '@/lib/auth/password';
-import { fetchGithubSkillBundle, type SkillBundleFile } from '@/lib/skills/bundle';
-import { parseSkillFrontmatter } from '@/lib/skills/frontmatter';
+import "dotenv/config";
+import type { Prisma } from "@prisma/client";
+import { db } from "@/lib/db";
+import { hashPassword } from "@/lib/auth/password";
+import {
+  fetchGithubSkillBundle,
+  type SkillBundleFile,
+} from "@/lib/skills/bundle";
+import { parseSkillFrontmatter } from "@/lib/skills/frontmatter";
 
 type CategorySeed = { slug: string; name: string };
 type ServerSeed = {
@@ -13,7 +16,7 @@ type ServerSeed = {
   description: string;
   stars: number;
   categorySlugs: string[];
-  source: 'npm' | 'pypi';
+  source: "npm" | "pypi";
   ref: string;
   readmeUrl: string;
 };
@@ -33,135 +36,187 @@ type LoadedSkill = {
   githubSource: string;
 };
 
-const MCP_REPO = 'https://github.com/modelcontextprotocol/servers';
-const SKILLS_REPO = 'https://github.com/openai/skills';
-const ANTHROPIC_PDF_SKILL = 'https://github.com/anthropics/skills/tree/main/skills/pdf';
-const RAW_MCP = 'https://raw.githubusercontent.com/modelcontextprotocol/servers/main/src';
-const RAW_SKILLS = 'https://raw.githubusercontent.com/openai/skills/main/skills/.curated';
+const MCP_REPO = "https://github.com/modelcontextprotocol/servers";
+const SKILLS_REPO = "https://github.com/openai/skills";
+const ANTHROPIC_PDF_SKILL =
+  "https://github.com/anthropics/skills/tree/main/skills/pdf";
+const RAW_MCP =
+  "https://raw.githubusercontent.com/modelcontextprotocol/servers/main/src";
+const RAW_SKILLS =
+  "https://raw.githubusercontent.com/openai/skills/main/skills/.curated";
 
 const categories: CategorySeed[] = [
-  { slug: 'files', name: 'Files' },
-  { slug: 'web', name: 'Web' },
-  { slug: 'developer-tools', name: 'Developer Tools' },
-  { slug: 'memory', name: 'Memory' },
-  { slug: 'reasoning', name: 'Reasoning' },
-  { slug: 'productivity', name: 'Productivity' },
-  { slug: 'security', name: 'Security' },
-  { slug: 'observability', name: 'Observability' },
-  { slug: 'design', name: 'Design' },
-  { slug: 'deployment', name: 'Deployment' },
-  { slug: 'documents', name: 'Documents' },
+  { slug: "files", name: "Files" },
+  { slug: "web", name: "Web" },
+  { slug: "developer-tools", name: "Developer Tools" },
+  { slug: "memory", name: "Memory" },
+  { slug: "reasoning", name: "Reasoning" },
+  { slug: "productivity", name: "Productivity" },
+  { slug: "security", name: "Security" },
+  { slug: "observability", name: "Observability" },
+  { slug: "design", name: "Design" },
+  { slug: "deployment", name: "Deployment" },
+  { slug: "documents", name: "Documents" },
 ];
 
 const servers: ServerSeed[] = [
   {
-    slug: 'modelcontextprotocol-filesystem',
-    name: 'Filesystem',
-    author: 'Model Context Protocol',
-    description: 'Official reference MCP server for reading, writing, listing, moving, and searching files within allowed directories.',
+    slug: "modelcontextprotocol-filesystem",
+    name: "Filesystem",
+    author: "Model Context Protocol",
+    description:
+      "Official reference MCP server for reading, writing, listing, moving, and searching files within allowed directories.",
     stars: 9800,
-    categorySlugs: ['files', 'developer-tools'],
-    source: 'npm',
-    ref: '@modelcontextprotocol/server-filesystem',
+    categorySlugs: ["files", "developer-tools"],
+    source: "npm",
+    ref: "@modelcontextprotocol/server-filesystem",
     readmeUrl: `${RAW_MCP}/filesystem/README.md`,
   },
   {
-    slug: 'modelcontextprotocol-fetch',
-    name: 'Fetch',
-    author: 'Model Context Protocol',
-    description: 'Official reference MCP server that fetches URLs and converts web content into markdown for agents.',
+    slug: "modelcontextprotocol-fetch",
+    name: "Fetch",
+    author: "Model Context Protocol",
+    description:
+      "Official reference MCP server that fetches URLs and converts web content into markdown for agents.",
     stars: 9400,
-    categorySlugs: ['web', 'developer-tools'],
-    source: 'pypi',
-    ref: 'mcp-server-fetch',
+    categorySlugs: ["web", "developer-tools"],
+    source: "pypi",
+    ref: "mcp-server-fetch",
     readmeUrl: `${RAW_MCP}/fetch/README.md`,
   },
   {
-    slug: 'modelcontextprotocol-git',
-    name: 'Git',
-    author: 'Model Context Protocol',
-    description: 'Official reference MCP server for reading, searching, and manipulating Git repositories programmatically.',
+    slug: "modelcontextprotocol-git",
+    name: "Git",
+    author: "Model Context Protocol",
+    description:
+      "Official reference MCP server for reading, searching, and manipulating Git repositories programmatically.",
     stars: 9100,
-    categorySlugs: ['developer-tools'],
-    source: 'pypi',
-    ref: 'mcp-server-git',
+    categorySlugs: ["developer-tools"],
+    source: "pypi",
+    ref: "mcp-server-git",
     readmeUrl: `${RAW_MCP}/git/README.md`,
   },
   {
-    slug: 'modelcontextprotocol-memory',
-    name: 'Memory',
-    author: 'Model Context Protocol',
-    description: 'Official reference MCP server that provides persistent memory through a local knowledge graph.',
+    slug: "modelcontextprotocol-memory",
+    name: "Memory",
+    author: "Model Context Protocol",
+    description:
+      "Official reference MCP server that provides persistent memory through a local knowledge graph.",
     stars: 8900,
-    categorySlugs: ['memory', 'productivity'],
-    source: 'npm',
-    ref: '@modelcontextprotocol/server-memory',
+    categorySlugs: ["memory", "productivity"],
+    source: "npm",
+    ref: "@modelcontextprotocol/server-memory",
     readmeUrl: `${RAW_MCP}/memory/README.md`,
   },
   {
-    slug: 'modelcontextprotocol-sequential-thinking',
-    name: 'Sequential Thinking',
-    author: 'Model Context Protocol',
-    description: 'Official reference MCP server for structured step-by-step reasoning and problem solving.',
+    slug: "modelcontextprotocol-sequential-thinking",
+    name: "Sequential Thinking",
+    author: "Model Context Protocol",
+    description:
+      "Official reference MCP server for structured step-by-step reasoning and problem solving.",
     stars: 8700,
-    categorySlugs: ['reasoning', 'productivity'],
-    source: 'npm',
-    ref: '@modelcontextprotocol/server-sequential-thinking',
+    categorySlugs: ["reasoning", "productivity"],
+    source: "npm",
+    ref: "@modelcontextprotocol/server-sequential-thinking",
     readmeUrl: `${RAW_MCP}/sequentialthinking/README.md`,
   },
   {
-    slug: 'modelcontextprotocol-time',
-    name: 'Time',
-    author: 'Model Context Protocol',
-    description: 'Official reference MCP server for current time queries and timezone conversions.',
+    slug: "modelcontextprotocol-time",
+    name: "Time",
+    author: "Model Context Protocol",
+    description:
+      "Official reference MCP server for current time queries and timezone conversions.",
     stars: 8300,
-    categorySlugs: ['productivity'],
-    source: 'pypi',
-    ref: 'mcp-server-time',
+    categorySlugs: ["productivity"],
+    source: "pypi",
+    ref: "mcp-server-time",
     readmeUrl: `${RAW_MCP}/time/README.md`,
   },
   {
-    slug: 'modelcontextprotocol-everything',
-    name: 'Everything',
-    author: 'Model Context Protocol',
-    description: 'Official reference MCP server that exercises many MCP protocol features for client testing.',
+    slug: "modelcontextprotocol-everything",
+    name: "Everything",
+    author: "Model Context Protocol",
+    description:
+      "Official reference MCP server that exercises many MCP protocol features for client testing.",
     stars: 7800,
-    categorySlugs: ['developer-tools'],
-    source: 'npm',
-    ref: '@modelcontextprotocol/server-everything',
+    categorySlugs: ["developer-tools"],
+    source: "npm",
+    ref: "@modelcontextprotocol/server-everything",
     readmeUrl: `${RAW_MCP}/everything/README.md`,
   },
 ];
 
 const skills: SkillSeed[] = [
-  { slug: 'openai-docs', score: 9800, categorySlugs: ['developer-tools', 'documents'], sourceUrl: `${RAW_SKILLS}/openai-docs/SKILL.md` },
-  { slug: 'playwright', score: 9300, categorySlugs: ['developer-tools', 'web'], sourceUrl: `${RAW_SKILLS}/playwright/SKILL.md` },
-  { slug: 'pdf', score: 9000, categorySlugs: ['documents'], sourceUrl: `${RAW_SKILLS}/pdf/SKILL.md` },
-  { slug: 'figma-use', score: 8700, categorySlugs: ['design', 'developer-tools'], sourceUrl: `${RAW_SKILLS}/figma-use/SKILL.md` },
-  { slug: 'gh-fix-ci', score: 8400, categorySlugs: ['developer-tools'], sourceUrl: `${RAW_SKILLS}/gh-fix-ci/SKILL.md` },
-  { slug: 'security-threat-model', score: 8200, categorySlugs: ['security'], sourceUrl: `${RAW_SKILLS}/security-threat-model/SKILL.md` },
-  { slug: 'sentry', score: 7900, categorySlugs: ['observability'], sourceUrl: `${RAW_SKILLS}/sentry/SKILL.md` },
-  { slug: 'vercel-deploy', score: 7600, categorySlugs: ['deployment'], sourceUrl: `${RAW_SKILLS}/vercel-deploy/SKILL.md` },
+  {
+    slug: "openai-docs",
+    score: 9800,
+    categorySlugs: ["developer-tools", "documents"],
+    sourceUrl: `${RAW_SKILLS}/openai-docs/SKILL.md`,
+  },
+  {
+    slug: "playwright",
+    score: 9300,
+    categorySlugs: ["developer-tools", "web"],
+    sourceUrl: `${RAW_SKILLS}/playwright/SKILL.md`,
+  },
+  {
+    slug: "pdf",
+    score: 9000,
+    categorySlugs: ["documents"],
+    sourceUrl: `${RAW_SKILLS}/pdf/SKILL.md`,
+  },
+  {
+    slug: "figma-use",
+    score: 8700,
+    categorySlugs: ["design", "developer-tools"],
+    sourceUrl: `${RAW_SKILLS}/figma-use/SKILL.md`,
+  },
+  {
+    slug: "gh-fix-ci",
+    score: 8400,
+    categorySlugs: ["developer-tools"],
+    sourceUrl: `${RAW_SKILLS}/gh-fix-ci/SKILL.md`,
+  },
+  {
+    slug: "security-threat-model",
+    score: 8200,
+    categorySlugs: ["security"],
+    sourceUrl: `${RAW_SKILLS}/security-threat-model/SKILL.md`,
+  },
+  {
+    slug: "sentry",
+    score: 7900,
+    categorySlugs: ["observability"],
+    sourceUrl: `${RAW_SKILLS}/sentry/SKILL.md`,
+  },
+  {
+    slug: "vercel-deploy",
+    score: 7600,
+    categorySlugs: ["deployment"],
+    sourceUrl: `${RAW_SKILLS}/vercel-deploy/SKILL.md`,
+  },
 ];
 
 function titleFromSlug(slug: string): string {
   return slug
-    .split('-')
+    .split("-")
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ');
+    .join(" ");
 }
 
 function parseSkillMarkdown(slug: string, content: string) {
   const meta = parseSkillFrontmatter(content);
   return {
     name: meta.name || titleFromSlug(slug),
-    description: meta.description || `${titleFromSlug(slug)} agent skill from ${SKILLS_REPO}.`,
+    description:
+      meta.description ||
+      `${titleFromSlug(slug)} agent skill from ${SKILLS_REPO}.`,
   };
 }
 
 async function fetchText(url: string): Promise<string> {
   const res = await fetch(url, {
-    headers: { 'user-agent': 'toolplane-real-seed' },
+    headers: { "user-agent": "toolplane-real-seed" },
   });
   if (!res.ok) throw new Error(`failed to fetch ${url}: ${res.status}`);
   return res.text();
@@ -177,61 +232,66 @@ async function loadSkills(): Promise<Map<string, LoadedSkill>> {
       content,
       files: [],
       ...meta,
-      author: 'OpenAI',
+      author: "OpenAI",
       githubSource: seed.sourceUrl.replace(
-        'https://raw.githubusercontent.com/openai/skills/main/',
+        "https://raw.githubusercontent.com/openai/skills/main/",
         `${SKILLS_REPO}/blob/main/`,
       ),
     });
   }
 
   const anthropicPdf = await fetchGithubSkillBundle(ANTHROPIC_PDF_SKILL);
-  out.set('anthropic-pdf', {
+  out.set("anthropic-pdf", {
     seed: {
-      slug: 'anthropic-pdf',
+      slug: "anthropic-pdf",
       score: 9100,
-      categorySlugs: ['documents'],
+      categorySlugs: ["documents"],
       sourceUrl: anthropicPdf.source.normalized,
     },
     content: anthropicPdf.content,
     files: anthropicPdf.files,
-    name: 'Anthropic PDF',
+    name: "Anthropic PDF",
     description:
       anthropicPdf.description ||
-      'PDF skill bundle from anthropics/skills, including its helper scripts and references.',
-    author: anthropicPdf.author || 'Anthropic',
+      "PDF skill bundle from anthropics/skills, including its helper scripts and references.",
+    author: anthropicPdf.author || "Anthropic",
     githubSource: anthropicPdf.source.normalized,
   });
   return out;
 }
 
-async function ensureSmokeWorkspace(): Promise<{ id: string; ownerId: string }> {
-  const email = 'smoke@example.com';
-  const passwordHash = await hashPassword('password123');
+async function ensureSmokeWorkspace(): Promise<{
+  id: string;
+  ownerId: string;
+}> {
+  const email = "smoke@example.com";
+  const passwordHash = await hashPassword("password123");
   const user = await db.user.upsert({
     where: { email },
-    update: { name: 'Smoke Test', passwordHash },
+    update: { name: "Smoke Test", passwordHash },
     create: {
       email,
-      name: 'Smoke Test',
+      name: "Smoke Test",
       passwordHash,
     },
   });
 
   const workspace = await db.workspace.upsert({
-    where: { slug: 'smoke' },
-    update: { name: 'Smoke Test', ownerId: user.id },
+    where: { slug: "smoke" },
+    update: { name: "Smoke Test", ownerId: user.id },
     create: {
-      slug: 'smoke',
-      name: 'Smoke Test',
+      slug: "smoke",
+      name: "Smoke Test",
       ownerId: user.id,
     },
   });
 
   await db.membership.upsert({
-    where: { workspaceId_userId: { workspaceId: workspace.id, userId: user.id } },
-    update: { role: 'owner' },
-    create: { workspaceId: workspace.id, userId: user.id, role: 'owner' },
+    where: {
+      workspaceId_userId: { workspaceId: workspace.id, userId: user.id },
+    },
+    update: { role: "owner" },
+    create: { workspaceId: workspace.id, userId: user.id, role: "owner" },
   });
 
   return { id: workspace.id, ownerId: user.id };
@@ -243,7 +303,9 @@ async function clearMcpAndSkillData() {
     db.syncEvent.deleteMany(),
     db.logEvent.deleteMany(),
     db.toolkitInstallLink.deleteMany(),
-    db.apiToken.deleteMany({ where: { name: { startsWith: 'ToolPlane plugin - ' } } }),
+    db.apiToken.deleteMany({
+      where: { name: { startsWith: "ToolPlane plugin - " } },
+    }),
     db.agentServer.deleteMany(),
     db.agentSkill.deleteMany(),
     db.agentToolkit.deleteMany(),
@@ -252,7 +314,9 @@ async function clearMcpAndSkillData() {
     db.toolkit.deleteMany(),
     db.deployment.deleteMany(),
     db.installedSkill.deleteMany(),
-    db.dailySnapshot.deleteMany({ where: { entityType: { in: ['server', 'skill'] } } }),
+    db.dailySnapshot.deleteMany({
+      where: { entityType: { in: ["server", "skill"] } },
+    }),
     db.server.deleteMany(),
     db.skill.deleteMany(),
   ]);
@@ -288,8 +352,8 @@ async function seedServers(categoryIds: Map<string, string>) {
       ref: s.ref,
       sourceUrl: MCP_REPO,
       env: [],
-      ...(s.slug === 'modelcontextprotocol-filesystem'
-        ? { network: 'none' as const }
+      ...(s.slug === "modelcontextprotocol-filesystem"
+        ? { network: "none" as const }
         : {}),
     };
     const row = await db.server.create({
@@ -315,7 +379,10 @@ async function seedServers(categoryIds: Map<string, string>) {
   return out;
 }
 
-async function seedSkills(categoryIds: Map<string, string>, loadedSkills: Map<string, LoadedSkill>) {
+async function seedSkills(
+  categoryIds: Map<string, string>,
+  loadedSkills: Map<string, LoadedSkill>,
+) {
   const out = new Map<
     string,
     {
@@ -336,7 +403,9 @@ async function seedSkills(categoryIds: Map<string, string>, loadedSkills: Map<st
         author: loaded.author,
         description: loaded.description,
         content: loaded.content,
-        ...(loaded.files.length ? { files: loaded.files as Prisma.InputJsonValue } : {}),
+        ...(loaded.files.length
+          ? { files: loaded.files as Prisma.InputJsonValue }
+          : {}),
         githubSource: loaded.githubSource,
         score: s.score,
         curated: true,
@@ -374,19 +443,19 @@ async function seedSmokeToolkit(
   const toolkit = await db.toolkit.create({
     data: {
       workspaceId,
-      slug: 'me',
-      name: 'Real MCP + Skills',
-      visibility: 'private',
+      slug: "me",
+      name: "Real MCP + Skills",
+      visibility: "private",
       enabled: true,
     },
     select: { id: true },
   });
 
   for (const slug of [
-    'modelcontextprotocol-fetch',
-    'modelcontextprotocol-memory',
-    'modelcontextprotocol-sequential-thinking',
-    'modelcontextprotocol-time',
+    "modelcontextprotocol-fetch",
+    "modelcontextprotocol-memory",
+    "modelcontextprotocol-sequential-thinking",
+    "modelcontextprotocol-time",
   ]) {
     const serverId = serverIds.get(slug);
     if (!serverId) continue;
@@ -396,7 +465,7 @@ async function seedSmokeToolkit(
       data: {
         workspaceId,
         serverId,
-        status: 'stopped',
+        status: "stopped",
         source: s.source,
         sourceRef: s.ref,
         installCfg: { env: {} } as Prisma.InputJsonValue,
@@ -408,7 +477,12 @@ async function seedSmokeToolkit(
     });
   }
 
-  for (const slug of ['openai-docs', 'playwright', 'anthropic-pdf', 'security-threat-model']) {
+  for (const slug of [
+    "openai-docs",
+    "playwright",
+    "anthropic-pdf",
+    "security-threat-model",
+  ]) {
     const s = skillData.get(slug);
     if (!s) continue;
     const installed = await db.installedSkill.create({
@@ -420,12 +494,12 @@ async function seedSmokeToolkit(
         description: s.description,
         content: s.content,
         ...(s.files.length ? { files: s.files as Prisma.InputJsonValue } : {}),
-        source: 'github',
+        source: "github",
         sourceRef: s.sourceUrl,
-        status: 'published',
+        status: "published",
         userInvocable: true,
         agentInvocable: true,
-        effort: 'default',
+        effort: "default",
       },
       select: { id: true },
     });
@@ -436,22 +510,24 @@ async function seedSmokeToolkit(
 }
 
 async function main() {
-  console.log('Fetching real OpenAI curated skills...');
+  console.log("Fetching real OpenAI curated skills...");
   const loadedSkills = await loadSkills();
 
-  console.log('Clearing MCP/Skill-related data...');
+  console.log("Clearing MCP/Skill-related data...");
   await clearMcpAndSkillData();
 
-  console.log('Seeding categories...');
+  console.log("Seeding categories...");
   const categoryIds = await seedCategories();
 
-  console.log('Importing real MCP servers from modelcontextprotocol/servers...');
+  console.log(
+    "Importing real MCP servers from modelcontextprotocol/servers...",
+  );
   const serverIds = await seedServers(categoryIds);
 
-  console.log('Importing real OpenAI curated skills...');
+  console.log("Importing real OpenAI curated skills...");
   const skillData = await seedSkills(categoryIds, loadedSkills);
 
-  console.log('Ensuring smoke workspace and real toolkit...');
+  console.log("Ensuring smoke workspace and real toolkit...");
   const smoke = await ensureSmokeWorkspace();
   await seedSmokeToolkit(smoke.id, serverIds, skillData);
 
@@ -465,8 +541,8 @@ async function main() {
     toolkitSkills: await db.toolkitSkill.count(),
   };
   console.table(counts);
-  console.log('Smoke login: smoke@example.com / password123');
-  console.log('Smoke toolkit: /app/smoke/toolkits/me');
+  console.log("Smoke login: smoke@example.com / password123");
+  console.log("Smoke toolkit: /app/smoke/toolkits/me");
 }
 
 main()

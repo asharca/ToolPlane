@@ -62,7 +62,8 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
     && pnpm --config.auto-install-peers=false --dir runtime/migrator install --prod --frozen-lockfile
 
 # ---- build: prisma generate + next build ----
-FROM ${NODE_IMAGE} AS build
+# Match runtime OpenSSL so assembly bundles the engine used by offline migrations.
+FROM python-runtime-base AS build
 WORKDIR /app
 ARG PNPM_VERSION
 RUN corepack enable && corepack prepare pnpm@${PNPM_VERSION} --activate

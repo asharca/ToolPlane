@@ -1,21 +1,21 @@
-import type { Metadata } from 'next';
-import { getLocale, getTranslations } from 'next-intl/server';
-import { Search } from 'lucide-react';
-import { CapabilityPage } from '@/components/marketing/CapabilityPage';
-import { AgentListingCard } from '@/components/cards/AgentListingCard';
-import { getMarketingContent } from '@/lib/marketing/content';
-import { listPublicAgents } from '../_lib/catalog';
-import { capabilityMetadata } from '../_lib/metadata';
-import { Input } from '@/components/motion/input';
+import type { Metadata } from "next";
+import { getLocale, getTranslations } from "next-intl/server";
+import { Search } from "lucide-react";
+import { CapabilityPage } from "@/components/marketing/CapabilityPage";
+import { AgentListingCard } from "@/components/cards/AgentListingCard";
+import { getMarketingContent } from "@/lib/marketing/content";
+import { listPublicAgents } from "../_lib/catalog";
+import { capabilityMetadata } from "../_lib/metadata";
+import { Input } from "@/components/motion/input";
 
 export function generateMetadata(): Promise<Metadata> {
-  return capabilityMetadata('agents', '/agents');
+  return capabilityMetadata("agents", "/agents");
 }
 
 export default async function Page() {
   const [locale, t, agents] = await Promise.all([
     getLocale(),
-    getTranslations('agentMarket'),
+    getTranslations("agentMarket"),
     listPublicAgents(),
   ]);
   return (
@@ -28,29 +28,41 @@ export default async function Page() {
         <div className="mx-auto max-w-7xl px-6 py-16 lg:px-8 lg:py-24">
           <div className="flex flex-col gap-8 lg:flex-row lg:items-end lg:justify-between">
             <div className="max-w-2xl">
-              <h2 className="text-3xl font-semibold tracking-tight text-foreground">{t('communityAgents')}</h2>
-              <p className="mt-3 text-sm leading-6 text-muted-foreground">{t('heroDescription')}</p>
+              <h2 className="text-3xl font-semibold tracking-tight text-foreground">
+                {t("communityAgents")}
+              </h2>
+              <p className="mt-3 text-sm leading-6 text-muted-foreground">
+                {t("heroDescription")}
+              </p>
             </div>
             <form action="/search" className="relative w-full max-w-md">
               <Input
                 type="search"
                 name="q"
                 maxLength={160}
-                placeholder={t('searchPlaceholder')}
-                aria-label={t('searchPlaceholder')}
+                placeholder={t("searchPlaceholder")}
+                aria-label={t("searchPlaceholder")}
                 leftIcon={<Search aria-hidden="true" />}
               />
             </form>
           </div>
           {agents.length === 0 ? (
             <div className="mt-10 flex min-h-48 flex-col items-center justify-center rounded-2xl border border-border bg-card p-6 text-center">
-              <h3 className="font-semibold text-foreground">{t('emptyTitle')}</h3>
-              <p className="mt-2 max-w-md text-sm text-muted-foreground">{t('emptyDescription')}</p>
+              <h3 className="font-semibold text-foreground">
+                {t("emptyTitle")}
+              </h3>
+              <p className="mt-2 max-w-md text-sm text-muted-foreground">
+                {t("emptyDescription")}
+              </p>
             </div>
           ) : (
             <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {agents.map((agent) => (
-                <AgentListingCard key={agent.id} agent={agent} installLabel={t('clones')} />
+                <AgentListingCard
+                  key={agent.id}
+                  agent={agent}
+                  installLabel={t("clones")}
+                />
               ))}
             </div>
           )}

@@ -1,21 +1,39 @@
 "use client";
 
-import { type KeyboardEvent, type PointerEvent, useCallback, useRef, useState } from "react";
+import {
+  type KeyboardEvent,
+  type PointerEvent,
+  useCallback,
+  useRef,
+  useState,
+} from "react";
 import { capturePointer, releasePointer } from "@/lib/touch";
 
-const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+const clamp = (v: number, lo: number, hi: number) =>
+  Math.min(hi, Math.max(lo, v));
 
 /** Nearest legal value on [min, max] for the given step. max counts as a
  * candidate when the step does not divide the range, so a pointer near the end
  * does not snap back onto the last whole step. */
-export function snapSliderValue(next: number, min: number, max: number, step: number): number {
+export function snapSliderValue(
+  next: number,
+  min: number,
+  max: number,
+  step: number,
+): number {
   if (!(max > min)) return min;
   if (!(step > 0)) return clamp(next, min, max);
   const whole = Math.floor(Number(((max - min) / step).toFixed(6)));
   const lastWhole = Number((min + whole * step).toFixed(6));
-  const toGrid = clamp(Math.round((next - min) / step) * step + min, min, lastWhole);
+  const toGrid = clamp(
+    Math.round((next - min) / step) * step + min,
+    min,
+    lastWhole,
+  );
   const snapped =
-    lastWhole < max && Math.abs(next - max) <= Math.abs(next - toGrid) ? max : toGrid;
+    lastWhole < max && Math.abs(next - max) <= Math.abs(next - toGrid)
+      ? max
+      : toGrid;
   return Number(snapped.toFixed(6));
 }
 
@@ -138,7 +156,9 @@ export function useSlider({
       onLostPointerCapture: endDrag,
     },
     sliderProps: {
-      ref: (node: HTMLElement | null) => { sliderEl.current = node; },
+      ref: (node: HTMLElement | null) => {
+        sliderEl.current = node;
+      },
       role: "slider" as const,
       tabIndex: disabled ? -1 : 0,
       "aria-label": ariaLabel,

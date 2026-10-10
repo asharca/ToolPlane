@@ -1,37 +1,37 @@
-import { useState, type FormEventHandler } from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
-import { Server } from 'lucide-react';
-import { describe, expect, it, vi } from 'vitest';
+import { useState, type FormEventHandler } from "react";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { Server } from "lucide-react";
+import { describe, expect, it, vi } from "vitest";
 import {
   AgentResourceSelect,
   type AgentResourceOption,
-} from '@/components/dashboard/agents/AgentResourceSelect';
+} from "@/components/dashboard/agents/AgentResourceSelect";
 
 const resources: AgentResourceOption[] = [
   {
-    id: 'catalog-running',
-    label: 'Catalog Router',
-    description: 'Routes catalog traffic',
-    source: 'catalog',
-    status: 'running',
-    keywords: ['network'],
+    id: "catalog-running",
+    label: "Catalog Router",
+    description: "Routes catalog traffic",
+    source: "catalog",
+    status: "running",
+    keywords: ["network"],
   },
   {
-    id: 'custom-stopped',
-    label: 'Custom Router',
-    description: 'Routes custom traffic',
-    source: 'custom',
-    status: 'stopped',
-    keywords: ['network'],
+    id: "custom-stopped",
+    label: "Custom Router",
+    description: "Routes custom traffic",
+    source: "custom",
+    status: "stopped",
+    keywords: ["network"],
   },
   {
-    id: 'custom-running',
-    label: 'Custom Logs',
-    description: 'Collects runtime logs',
-    source: 'custom',
-    status: 'running',
-    keywords: ['observability'],
+    id: "custom-running",
+    label: "Custom Logs",
+    description: "Collects runtime logs",
+    source: "custom",
+    status: "running",
+    keywords: ["observability"],
   },
 ];
 
@@ -46,7 +46,9 @@ function ResourceSelectHarness({
   onFormChange?: FormEventHandler<HTMLFormElement>;
   onSubmit?: FormEventHandler<HTMLFormElement>;
 }) {
-  const [selectedIds, setSelectedIds] = useState(() => new Set(initialSelectedIds));
+  const [selectedIds, setSelectedIds] = useState(
+    () => new Set(initialSelectedIds),
+  );
 
   return (
     <form
@@ -69,66 +71,80 @@ function ResourceSelectHarness({
 }
 
 function selectedFormIds(container: HTMLElement): string[] {
-  const form = container.querySelector('form');
-  if (!form) throw new Error('Expected resource select form.');
-  return new FormData(form).getAll('deploymentId').map(String);
+  const form = container.querySelector("form");
+  if (!form) throw new Error("Expected resource select form.");
+  return new FormData(form).getAll("deploymentId").map(String);
 }
 
-describe('AgentResourceSelect', () => {
-  it('combines search, source, and status filters with AND semantics', async () => {
+describe("AgentResourceSelect", () => {
+  it("combines search, source, and status filters with AND semantics", async () => {
     const user = userEvent.setup();
     render(<ResourceSelectHarness />);
 
-    await user.click(screen.getByRole('combobox', { name: 'MCP: Filter by source' }));
-    await user.click(screen.getByRole('option', { name: 'Custom' }));
-    await user.click(screen.getByRole('combobox', { name: 'MCP: Filter by status' }));
-    await user.click(screen.getByRole('option', { name: 'Running' }));
-    await user.type(screen.getByLabelText('Search MCP...'), 'observability');
+    await user.click(
+      screen.getByRole("combobox", { name: "MCP: Filter by source" }),
+    );
+    await user.click(screen.getByRole("option", { name: "Custom" }));
+    await user.click(
+      screen.getByRole("combobox", { name: "MCP: Filter by status" }),
+    );
+    await user.click(screen.getByRole("option", { name: "Running" }));
+    await user.type(screen.getByLabelText("Search MCP..."), "observability");
 
     await waitFor(() => {
-      expect(screen.getByText('Custom Logs')).toBeInTheDocument();
-      expect(screen.queryByText('Catalog Router')).not.toBeInTheDocument();
-      expect(screen.queryByText('Custom Router')).not.toBeInTheDocument();
+      expect(screen.getByText("Custom Logs")).toBeInTheDocument();
+      expect(screen.queryByText("Catalog Router")).not.toBeInTheDocument();
+      expect(screen.queryByText("Custom Router")).not.toBeInTheDocument();
     });
-    expect(screen.getByRole('checkbox', { name: 'Select all matching (1)' })).toBeEnabled();
+    expect(
+      screen.getByRole("checkbox", { name: "Select all matching (1)" }),
+    ).toBeEnabled();
   });
 
-  it('selects every match while preserving filtered-out selections and hidden inputs', async () => {
+  it("selects every match while preserving filtered-out selections and hidden inputs", async () => {
     const user = userEvent.setup();
     const { container } = render(
-      <ResourceSelectHarness initialSelectedIds={['catalog-running']} />,
+      <ResourceSelectHarness initialSelectedIds={["catalog-running"]} />,
     );
 
-    await user.click(screen.getByRole('combobox', { name: 'MCP: Filter by source' }));
-    await user.click(screen.getByRole('option', { name: 'Custom' }));
-    await user.click(screen.getByRole('combobox', { name: 'MCP: Filter by status' }));
-    await user.click(screen.getByRole('option', { name: 'Running' }));
-    await user.click(screen.getByRole('checkbox', { name: 'Select all matching (1)' }));
+    await user.click(
+      screen.getByRole("combobox", { name: "MCP: Filter by source" }),
+    );
+    await user.click(screen.getByRole("option", { name: "Custom" }));
+    await user.click(
+      screen.getByRole("combobox", { name: "MCP: Filter by status" }),
+    );
+    await user.click(screen.getByRole("option", { name: "Running" }));
+    await user.click(
+      screen.getByRole("checkbox", { name: "Select all matching (1)" }),
+    );
 
-    expect(screen.getByText('2 selected')).toBeInTheDocument();
+    expect(screen.getByText("2 selected")).toBeInTheDocument();
     expect(new Set(selectedFormIds(container))).toEqual(
-      new Set(['catalog-running', 'custom-running']),
+      new Set(["catalog-running", "custom-running"]),
     );
   });
 
-  it('marks a partial selection as indeterminate and can clear every selection', async () => {
+  it("marks a partial selection as indeterminate and can clear every selection", async () => {
     const user = userEvent.setup();
     const { container } = render(
-      <ResourceSelectHarness initialSelectedIds={['catalog-running']} />,
+      <ResourceSelectHarness initialSelectedIds={["catalog-running"]} />,
     );
 
-    const selectMatches = screen.getByRole('checkbox', { name: 'Select all matching (3)' });
+    const selectMatches = screen.getByRole("checkbox", {
+      name: "Select all matching (3)",
+    });
     expect(selectMatches).not.toBeChecked();
-    expect(selectMatches).toHaveAttribute('aria-checked', 'mixed');
+    expect(selectMatches).toHaveAttribute("aria-checked", "mixed");
 
-    await user.click(screen.getByRole('button', { name: 'Clear selection' }));
+    await user.click(screen.getByRole("button", { name: "Clear selection" }));
 
-    expect(screen.getByText('0 selected')).toBeInTheDocument();
+    expect(screen.getByText("0 selected")).toBeInTheDocument();
     expect(selectedFormIds(container)).toEqual([]);
-    expect(selectMatches).toHaveAttribute('aria-checked', 'false');
+    expect(selectMatches).toHaveAttribute("aria-checked", "false");
   });
 
-  it('keeps search and filter controls from changing or submitting the parent form', async () => {
+  it("keeps search and filter controls from changing or submitting the parent form", async () => {
     const user = userEvent.setup();
     const onFormChange = vi.fn();
     const onSubmit = vi.fn();
@@ -136,34 +152,43 @@ describe('AgentResourceSelect', () => {
       <ResourceSelectHarness onFormChange={onFormChange} onSubmit={onSubmit} />,
     );
 
-    const search = screen.getByLabelText('Search MCP...');
-    await user.type(search, 'router');
-    await user.click(screen.getByRole('combobox', { name: 'MCP: Filter by source' }));
-    await user.click(screen.getByRole('option', { name: 'Custom' }));
-    await user.click(screen.getByRole('combobox', { name: 'MCP: Filter by status' }));
-    await user.click(screen.getByRole('option', { name: 'Stopped' }));
-    await user.type(search, '{enter}');
+    const search = screen.getByLabelText("Search MCP...");
+    await user.type(search, "router");
+    await user.click(
+      screen.getByRole("combobox", { name: "MCP: Filter by source" }),
+    );
+    await user.click(screen.getByRole("option", { name: "Custom" }));
+    await user.click(
+      screen.getByRole("combobox", { name: "MCP: Filter by status" }),
+    );
+    await user.click(screen.getByRole("option", { name: "Stopped" }));
+    await user.type(search, "{enter}");
 
     expect(onFormChange).not.toHaveBeenCalled();
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
-  it('renders only 100 rows but selects all matches in a larger result set', async () => {
+  it("renders only 100 rows but selects all matches in a larger result set", async () => {
     const user = userEvent.setup();
-    const options: AgentResourceOption[] = Array.from({ length: 125 }, (_, index) => ({
-      id: `mcp-${index}`,
-      label: `MCP ${index}`,
-      source: 'catalog',
-      status: 'running',
-    }));
+    const options: AgentResourceOption[] = Array.from(
+      { length: 125 },
+      (_, index) => ({
+        id: `mcp-${index}`,
+        label: `MCP ${index}`,
+        source: "catalog",
+        status: "running",
+      }),
+    );
     const { container } = render(<ResourceSelectHarness options={options} />);
 
-    expect(screen.getByText('MCP 99')).toBeInTheDocument();
-    expect(screen.queryByText('MCP 100')).not.toBeInTheDocument();
+    expect(screen.getByText("MCP 99")).toBeInTheDocument();
+    expect(screen.queryByText("MCP 100")).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole('checkbox', { name: 'Select all matching (125)' }));
+    await user.click(
+      screen.getByRole("checkbox", { name: "Select all matching (125)" }),
+    );
 
-    expect(screen.getByText('125 selected')).toBeInTheDocument();
+    expect(screen.getByText("125 selected")).toBeInTheDocument();
     expect(selectedFormIds(container)).toHaveLength(125);
   });
 });

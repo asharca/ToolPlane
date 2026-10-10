@@ -1,28 +1,35 @@
-import { withRequestLogging } from '@/lib/observability/http';
-import { resolveRequestUser } from '@/lib/auth/request-user';
+import { withRequestLogging } from "@/lib/observability/http";
+import { resolveRequestUser } from "@/lib/auth/request-user";
 import {
   AGENT_API_SSE_HEADERS,
   encodeSseDone,
   encodeSseEvent,
   encodeSseHeartbeat,
-} from '@/lib/agents/public-api/sse';
+} from "@/lib/agents/public-api/sse";
 import {
   subscribeWorkOutput,
   type WorkOutputActivity,
   type WorkOutputSnapshot,
-} from '@/lib/work/run-control';
-import { getWorkSessionForUser } from '@/lib/work/sessions';
-import { workspaceAccessStream } from '@/lib/workspace/access-stream';
+} from "@/lib/work/run-control";
+import { getWorkSessionForUser } from "@/lib/work/sessions";
+import { workspaceAccessStream } from "@/lib/workspace/access-stream";
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-const LIVE_STATUSES = new Set(['queued', 'running', 'waiting_approval', 'cancelling']);
+const LIVE_STATUSES = new Set([
+  "queued",
+  "running",
+  "waiting_approval",
+  "cancelling",
+]);
 
-function completedOutput(messages: Array<{ role: string; parts: unknown }>): WorkOutputSnapshot {
+function completedOutput(
+  messages: Array<{ role: string; parts: unknown }>,
+): WorkOutputSnapshot {
   let lastUser = -1;
   for (let index = messages.length - 1; index >= 0; index -= 1) {
-    if (messages[index]?.role === 'user') {
+    if (messages[index]?.role === "user") {
       lastUser = index;
       break;
     }
@@ -32,42 +39,70 @@ function completedOutput(messages: Array<{ role: string; parts: unknown }>): Wor
   const toolIndexes = new Map<string, number>();
   let reasoningSequence = 0;
   let runtimeSequence = 0;
-  let timing: Pick<WorkOutputSnapshot, 'startedAt' | 'runtimeKind' | 'modelName'> = {};
+  let timing: Pick<
+    WorkOutputSnapshot,
+    "startedAt" | "runtimeKind" | "modelName"
+  > = {};
   for (const message of messages.slice(lastUser + 1)) {
-    if (message.role !== 'assistant' || !Array.isArray(message.parts)) continue;
+    if (message.role !== "assistant" || !Array.isArray(message.parts)) continue;
     for (const [index, part] of message.parts.entries()) {
-      if (!part || typeof part !== 'object' || !('type' in part)) continue;
+      if (!part || typeof part !== "object" || !("type" in part)) continue;
       const value = part as Record<string, unknown>;
-      if (value.type === 'text' && typeof value.text === 'string') text.push(value.text);
-      if (value.type === 'reasoning' && typeof value.text === 'string') {
+      if (value.type === "text" && typeof value.text === "string")
+        text.push(value.text);
+      if (value.type === "reasoning" && typeof value.text === "string") {
         activities.push({
           id: `reasoning:${++reasoningSequence}`,
-          type: 'reasoning',
-          status: 'completed',
+          type: "reasoning",
+          status: "completed",
           text: value.text,
         });
       }
-      if (value.type === 'work-runtime' && typeof value.runtimeKind === 'string') {
+      if (
+        value.type === "work-runtime" &&
+        typeof value.runtimeKind === "string"
+      ) {
         activities.push({
           id: `runtime:${++runtimeSequence}`,
-          type: 'runtime',
-          status: value.status === 'failed' ? 'failed' : value.status === 'cancelled' ? 'cancelled' : 'completed',
+          type: "runtime",
+          status:
+            value.status === "failed"
+              ? "failed"
+              : value.status === "cancelled"
+                ? "cancelled"
+                : "completed",
           runtimeKind: value.runtimeKind,
         });
       }
-      if (value.type === 'work-tool') {
-        const toolCallId = typeof value.toolCallId === 'string' ? value.toolCallId : `history-${index}`;
-        const isError = value.isError === true || value.status === 'failed';
+      if (value.type === "work-tool") {
+        const toolCallId =
+          typeof value.toolCallId === "string"
+            ? value.toolCallId
+            : `history-${index}`;
+        const isError = value.isError === true || value.status === "failed";
         const id = `tool:${toolCallId}`;
         const activity: WorkOutputActivity = {
           id,
-          type: 'tool',
-          status: isError ? 'failed' : value.status === 'running' ? 'running' : value.status === 'cancelled' ? 'cancelled' : 'completed',
+          type: "tool",
+          status: isError
+            ? "failed"
+            : value.status === "running"
+              ? "running"
+              : value.status === "cancelled"
+                ? "cancelled"
+                : "completed",
           toolCallId,
-          toolName: typeof value.toolName === 'string' ? value.toolName : 'Tool',
-          ...(typeof value.deploymentName === 'string' ? { deploymentName: value.deploymentName } : {}),
-          ...(typeof value.originalToolName === 'string' ? { originalToolName: value.originalToolName } : {}),
-          ...(typeof value.durationMs === 'number' ? { durationMs: value.durationMs } : {}),
+          toolName:
+            typeof value.toolName === "string" ? value.toolName : "Tool",
+          ...(typeof value.deploymentName === "string"
+            ? { deploymentName: value.deploymentName }
+            : {}),
+          ...(typeof value.originalToolName === "string"
+            ? { originalToolName: value.originalToolName }
+            : {}),
+          ...(typeof value.durationMs === "number"
+            ? { durationMs: value.durationMs }
+            : {}),
           input: value.input,
           output: value.output,
           isError,
@@ -77,26 +112,51 @@ function completedOutput(messages: Array<{ role: string; parts: unknown }>): Wor
           toolIndexes.set(id, activities.length);
           activities.push(activity);
         } else {
-          activities[previousIndex] = { ...activities[previousIndex], ...activity };
+          activities[previousIndex] = {
+            ...activities[previousIndex],
+            ...activity,
+          };
         }
       }
-      if (value.type === 'data-work-timing' && value.data && typeof value.data === 'object' && !Array.isArray(value.data)) {
+      if (
+        value.type === "data-work-timing" &&
+        value.data &&
+        typeof value.data === "object" &&
+        !Array.isArray(value.data)
+      ) {
         const data = value.data as Record<string, unknown>;
-        const startedAt = typeof data.startedAt === 'number' && Number.isFinite(data.startedAt) && data.startedAt > 0
-          ? data.startedAt
-          : undefined;
+        const startedAt =
+          typeof data.startedAt === "number" &&
+          Number.isFinite(data.startedAt) &&
+          data.startedAt > 0
+            ? data.startedAt
+            : undefined;
         timing = {
           ...(startedAt === undefined ? {} : { startedAt }),
-          ...(typeof data.runtimeKind === 'string' && data.runtimeKind ? { runtimeKind: data.runtimeKind } : {}),
-          ...(typeof data.modelName === 'string' && data.modelName ? { modelName: data.modelName } : {}),
+          ...(typeof data.runtimeKind === "string" && data.runtimeKind
+            ? { runtimeKind: data.runtimeKind }
+            : {}),
+          ...(typeof data.modelName === "string" && data.modelName
+            ? { modelName: data.modelName }
+            : {}),
         };
       }
     }
   }
-  return { text: text.join('\n'), activities, active: false, done: true, ...timing };
+  return {
+    text: text.join("\n"),
+    activities,
+    active: false,
+    done: true,
+    ...timing,
+  };
 }
 
-function outputData(snapshot: WorkOutputSnapshot, delta?: string, activity?: WorkOutputActivity) {
+function outputData(
+  snapshot: WorkOutputSnapshot,
+  delta?: string,
+  activity?: WorkOutputActivity,
+) {
   return {
     ...snapshot,
     ...(delta === undefined ? {} : { delta }),
@@ -104,81 +164,99 @@ function outputData(snapshot: WorkOutputSnapshot, delta?: string, activity?: Wor
   };
 }
 
-export const GET = withRequestLogging("/api/v1/work-sessions/[workSessionId]/events", async function GET(
-  req: Request,
-  { params }: { params: Promise<{ workSessionId: string }> },
-) {
-  const user = await resolveRequestUser(req);
-  if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
-  const { workSessionId } = await params;
-  const work = await getWorkSessionForUser(user.id, workSessionId);
-  if (!work) return Response.json({ error: 'Not found' }, { status: 404 });
+export const GET = withRequestLogging(
+  "/api/v1/work-sessions/[workSessionId]/events",
+  async function GET(
+    req: Request,
+    { params }: { params: Promise<{ workSessionId: string }> },
+  ) {
+    const user = await resolveRequestUser(req);
+    if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
+    const { workSessionId } = await params;
+    const work = await getWorkSessionForUser(user.id, workSessionId);
+    if (!work) return Response.json({ error: "Not found" }, { status: 404 });
 
-  if (!LIVE_STATUSES.has(work.status)) {
-    const snapshot = completedOutput(work.conversation.messages);
-    return new Response(new ReadableStream<Uint8Array>({
+    if (!LIVE_STATUSES.has(work.status)) {
+      const snapshot = completedOutput(work.conversation.messages);
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(encodeSseEvent("snapshot", snapshot));
+            controller.enqueue(encodeSseEvent("done", snapshot));
+            controller.enqueue(encodeSseDone());
+            controller.close();
+          },
+        }),
+        { headers: AGENT_API_SSE_HEADERS },
+      );
+    }
+
+    let cleanup = () => {};
+    const stream = new ReadableStream<Uint8Array>({
       start(controller) {
-        controller.enqueue(encodeSseEvent('snapshot', snapshot));
-        controller.enqueue(encodeSseEvent('done', snapshot));
-        controller.enqueue(encodeSseDone());
-        controller.close();
-      },
-    }), { headers: AGENT_API_SSE_HEADERS });
-  }
-
-  let cleanup = () => {};
-  const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      let closed = false;
-      let unsubscribe = () => {};
-      const enqueue = (chunk: Uint8Array) => {
-        if (closed) return;
-        try {
-          controller.enqueue(chunk);
-        } catch {
-          close();
+        let closed = false;
+        let unsubscribe = () => {};
+        const enqueue = (chunk: Uint8Array) => {
+          if (closed) return;
+          try {
+            controller.enqueue(chunk);
+          } catch {
+            close();
+          }
+        };
+        const onAbort = () => close();
+        function close() {
+          if (closed) return;
+          closed = true;
+          clearInterval(heartbeat);
+          unsubscribe();
+          req.signal.removeEventListener("abort", onAbort);
+          try {
+            controller.close();
+          } catch {
+            /* the client already disconnected */
+          }
         }
-      };
-      const onAbort = () => close();
-      function close() {
-        if (closed) return;
-        closed = true;
-        clearInterval(heartbeat);
-        unsubscribe();
-        req.signal.removeEventListener('abort', onAbort);
-        try { controller.close(); } catch { /* the client already disconnected */ }
-      }
 
-      const heartbeat = setInterval(() => enqueue(encodeSseHeartbeat()), 15_000);
-      heartbeat.unref?.();
-      const subscription = subscribeWorkOutput(workSessionId, (event) => {
-        enqueue(encodeSseEvent(
-          event.type,
-          outputData(
-            event.snapshot,
-            event.type === 'delta' ? event.delta : undefined,
-            event.type === 'activity' ? event.activity : undefined,
-          ),
-        ));
-        if (event.type === 'done') {
+        const heartbeat = setInterval(
+          () => enqueue(encodeSseHeartbeat()),
+          15_000,
+        );
+        heartbeat.unref?.();
+        const subscription = subscribeWorkOutput(workSessionId, (event) => {
+          enqueue(
+            encodeSseEvent(
+              event.type,
+              outputData(
+                event.snapshot,
+                event.type === "delta" ? event.delta : undefined,
+                event.type === "activity" ? event.activity : undefined,
+              ),
+            ),
+          );
+          if (event.type === "done") {
+            enqueue(encodeSseDone());
+            close();
+          }
+        });
+        unsubscribe = subscription.unsubscribe;
+        cleanup = close;
+        req.signal.addEventListener("abort", onAbort, { once: true });
+        enqueue(encodeSseEvent("snapshot", subscription.snapshot));
+        if (subscription.snapshot.done) {
+          enqueue(encodeSseEvent("done", subscription.snapshot));
           enqueue(encodeSseDone());
           close();
+          return;
         }
-      });
-      unsubscribe = subscription.unsubscribe;
-      cleanup = close;
-      req.signal.addEventListener('abort', onAbort, { once: true });
-      enqueue(encodeSseEvent('snapshot', subscription.snapshot));
-      if (subscription.snapshot.done) {
-        enqueue(encodeSseEvent('done', subscription.snapshot));
-        enqueue(encodeSseDone());
-        close();
-        return;
-      }
-    },
-    cancel() {
-      cleanup();
-    },
-  });
-  return new Response(workspaceAccessStream(stream, work.workspaceId, user.id, req.signal), { headers: AGENT_API_SSE_HEADERS });
-});
+      },
+      cancel() {
+        cleanup();
+      },
+    });
+    return new Response(
+      workspaceAccessStream(stream, work.workspaceId, user.id, req.signal),
+      { headers: AGENT_API_SSE_HEADERS },
+    );
+  },
+);

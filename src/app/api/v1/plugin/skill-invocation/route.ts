@@ -1,52 +1,68 @@
-import { withRequestLogging } from '@/lib/observability/http';
-import { z } from 'zod';
-import { db } from '@/lib/db';
-import { scopeToolkitForToken, json, slug } from '@/lib/plugin/telemetry';
-import { recordEvent } from '@/lib/observability/events';
+import { withRequestLogging } from "@/lib/observability/http";
+import { z } from "zod";
+import { db } from "@/lib/db";
+import { scopeToolkitForToken, json, slug } from "@/lib/plugin/telemetry";
+import { recordEvent } from "@/lib/observability/events";
 
-export const runtime = 'nodejs';
+export const runtime = "nodejs";
 
 const Body = z.object({
   workspaceSlug: slug,
   toolkitSlug: slug,
   skillSlug: slug,
-  source: z.enum(['user', 'agent']),
-  outcome: z.enum(['success', 'error']),
-  errorClass: z.enum(['not_found', 'timeout', 'runtime_error', 'unknown']).optional(),
+  source: z.enum(["user", "agent"]),
+  outcome: z.enum(["success", "error"]),
+  errorClass: z
+    .enum(["not_found", "timeout", "runtime_error", "unknown"])
+    .optional(),
   client: z.string().max(32).optional(),
 });
 
 // The plugin's PostToolUse/PostToolUseFailure hook (matcher "Skill") POSTs here
 // each time a synced skill runs. Skills never traverse the MCP gateway, so this
 // is the only record of skill usage in observability.
-export const POST = withRequestLogging("/api/v1/plugin/skill-invocation", async function POST(req: Request) {
-  let body: z.infer<typeof Body>;
-  try {
-    body = Body.parse(await req.json());
-  } catch {
-    return json({ error: 'bad request' }, 400);
-  }
+export const POST = withRequestLogging(
+  "/api/v1/plugin/skill-invocation",
+  async function POST(req: Request) {
+    let body: z.infer<typeof Body>;
+    try {
+      body = Body.parse(await req.json());
+    } catch {
+      return json({ error: "bad request" }, 400);
+    }
 
-  const scope = await scopeToolkitForToken(
-    req.headers.get('authorization'),
-    body.workspaceSlug,
-    body.toolkitSlug,
-  );
-  if (!scope.ok) return json({ error: scope.error }, scope.status);
+    const scope = await scopeToolkitForToken(
+      req.headers.get("authorization"),
+      body.workspaceSlug,
+      body.toolkitSlug,
+    );
+    if (!scope.ok) return json({ error: scope.error }, scope.status);
 
-  await db.skillInvocation.create({
-    data: {
+    await db.skillInvocation.create({
+      data: {
+        workspaceId: scope.workspaceId,
+        toolkitId: scope.toolkitId,
+        skillSlug: body.skillSlug,
+        source: body.source,
+        outcome: body.outcome,
+        errorClass: body.errorClass ?? null,
+        client: body.client ?? null,
+      },
+    });
+
+    await recordEvent({
+      domain: "plugin",
+      eventName: "plugin.skill.invoked",
       workspaceId: scope.workspaceId,
-      toolkitId: scope.toolkitId,
-      skillSlug: body.skillSlug,
-      source: body.source,
       outcome: body.outcome,
-      errorClass: body.errorClass ?? null,
-      client: body.client ?? null,
-    },
-  });
-
-  await recordEvent({ domain: 'plugin', eventName: 'plugin.skill.invoked', workspaceId: scope.workspaceId,
-    outcome: body.outcome, errorCode: body.errorClass, attributes: { reportedBy: 'client', skill: body.skillSlug, source: body.source, toolkitId: scope.toolkitId } });
-  return json({ ok: true });
-});
+      errorCode: body.errorClass,
+      attributes: {
+        reportedBy: "client",
+        skill: body.skillSlug,
+        source: body.source,
+        toolkitId: scope.toolkitId,
+      },
+    });
+    return json({ ok: true });
+  },
+);

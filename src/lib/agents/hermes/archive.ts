@@ -1,26 +1,39 @@
-import 'server-only';
+import "server-only";
 
-import { spawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
-import { createWriteStream } from 'node:fs';
-import { link, mkdir, mkdtemp, readFile, readdir, rm, stat, statfs, utimes, writeFile } from 'node:fs/promises';
-import os from 'node:os';
-import path from 'node:path';
-import { Readable, Transform } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
+import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { createWriteStream } from "node:fs";
+import {
+  link,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  statfs,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { Readable, Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import {
   HERMES_ARCHIVE_ABSOLUTE_MAX_UNPACKED_BYTES,
   hermesArchiveMaxUploadBytes,
   hermesArchiveMaxUnpackedBytes,
   normalizeHermesArchiveMaxUploadMiB,
-} from './archive-limits';
+} from "./archive-limits";
 
 // A normal long-lived Hermes home can include browser profiles, package
 // managers, and caches. Keep a hard cap for central-directory / filesystem
 // exhaustion, but make it large enough for a legitimate 10 GiB backup.
 export const MAX_HERMES_ARCHIVE_FILES = 200_000;
-export const MAX_HERMES_ARCHIVE_FILE_BYTES = HERMES_ARCHIVE_ABSOLUTE_MAX_UNPACKED_BYTES;
-export const MAX_HERMES_ARCHIVE_UNPACKED_BYTES = HERMES_ARCHIVE_ABSOLUTE_MAX_UNPACKED_BYTES;
+export const MAX_HERMES_ARCHIVE_FILE_BYTES =
+  HERMES_ARCHIVE_ABSOLUTE_MAX_UNPACKED_BYTES;
+export const MAX_HERMES_ARCHIVE_UNPACKED_BYTES =
+  HERMES_ARCHIVE_ABSOLUTE_MAX_UNPACKED_BYTES;
 export const MAX_HERMES_ARCHIVE_RUNTIME_CONFIG_BYTES = 4 * 1024 * 1024;
 // A highly-compressible small cache page is normal. Large entries still use
 // the ratio check to stop a ZIP bomb before it can consume staging storage.
@@ -41,21 +54,22 @@ const STAGING_LOCK_HEARTBEAT_MS = 5 * 60_000;
 // renewing the filesystem lease throughout its Docker phases.
 const STAGING_LOCK_STALE_MS = 30 * 60_000;
 const STAGING_LOCK_RECLAIM_STALE_MS = 5 * 60_000;
-const STAGING_LOCK_NAME = '.toolplane-hermes-import.lock';
-const STAGING_LOCK_LEASE_PREFIX = '.toolplane-hermes-import-lease-';
-const STAGING_LOCK_RECLAIM_NAME = '.toolplane-hermes-import.lock-reclaim';
-const STAGING_LOCK_RECLAIM_LEASE_PREFIX = '.toolplane-hermes-import-reclaim-lease-';
+const STAGING_LOCK_NAME = ".toolplane-hermes-import.lock";
+const STAGING_LOCK_LEASE_PREFIX = ".toolplane-hermes-import-lease-";
+const STAGING_LOCK_RECLAIM_NAME = ".toolplane-hermes-import.lock-reclaim";
+const STAGING_LOCK_RECLAIM_LEASE_PREFIX =
+  ".toolplane-hermes-import-reclaim-lease-";
 const STAGING_SPACE_OVERHEAD_BYTES = 64 * 1024 * 1024;
 
 export class HermesArchiveError extends Error {
   readonly statusCode: number;
 
   constructor(
-    message = 'The archive could not be imported. Upload a trusted ZIP containing a .hermes folder or its contents at the ZIP root.',
+    message = "The archive could not be imported. Upload a trusted ZIP containing a .hermes folder or its contents at the ZIP root.",
     statusCode = 400,
   ) {
     super(message);
-    this.name = 'HermesArchiveError';
+    this.name = "HermesArchiveError";
     this.statusCode = statusCode;
   }
 }
@@ -63,7 +77,7 @@ export class HermesArchiveError extends Error {
 export class HermesArchiveLimitError extends HermesArchiveError {
   constructor(message: string) {
     super(message, 413);
-    this.name = 'HermesArchiveLimitError';
+    this.name = "HermesArchiveLimitError";
   }
 }
 
@@ -473,31 +487,44 @@ except (zipfile.BadZipFile, OSError, RuntimeError, ValueError):
 `;
 
 function preferredPython(): string {
-  return process.env.TOOLPLANE_PYTHON?.trim() || 'python3';
+  return process.env.TOOLPLANE_PYTHON?.trim() || "python3";
 }
 
 function boundedAppend(current: string, chunk: Buffer): string {
   if (current.length >= MAX_ARCHIVE_PROCESS_OUTPUT) return current;
-  return `${current}${chunk.toString('utf8')}`.slice(0, MAX_ARCHIVE_PROCESS_OUTPUT);
+  return `${current}${chunk.toString("utf8")}`.slice(
+    0,
+    MAX_ARCHIVE_PROCESS_OUTPUT,
+  );
 }
 
 function archiveInspectionFailure(output: string): HermesArchiveError {
   try {
     const parsed = JSON.parse(output) as { error?: unknown };
-    const message = typeof parsed.error === 'string' ? parsed.error : '';
+    const message = typeof parsed.error === "string" ? parsed.error : "";
     const messages: Record<string, string> = {
-      'archive file count is invalid': `The archive contains too many ZIP entries. It may contain at most ${MAX_HERMES_ARCHIVE_FILES.toLocaleString()}.`,
-      'archive compression ratio exceeds limit': 'The archive contains a large file that expands too much when extracted.',
-      'archive symlink target is too large': 'The archive contains a symbolic link with an invalid target.',
-      'archive symlink target is invalid': 'The archive contains a symbolic link with an invalid target.',
-      'archive symlink escapes Hermes home': 'The archive contains a symbolic link that escapes the Hermes home.',
-      'unsafe archive symlink': 'The archive contains a symbolic link with an invalid target.',
-      'archive contains too many symbolic links': `The archive contains too many symbolic links. It may contain at most ${MAX_HERMES_ARCHIVE_SYMLINKS.toLocaleString()}.`,
-      'Hermes configuration files cannot be symbolic links': 'The archive configuration files must be regular files.',
-      '.hermes folder not found': 'The archive must contain a .hermes folder or its contents at the ZIP root.',
-      'archive contains files outside .hermes': 'The archive contains files outside the selected .hermes folder.',
-      'archive contains multiple Hermes homes': 'The archive contains more than one .hermes folder.',
-      'not enough staging inodes': 'The server does not have enough temporary filesystem entries for this archive.',
+      "archive file count is invalid": `The archive contains too many ZIP entries. It may contain at most ${MAX_HERMES_ARCHIVE_FILES.toLocaleString()}.`,
+      "archive compression ratio exceeds limit":
+        "The archive contains a large file that expands too much when extracted.",
+      "archive symlink target is too large":
+        "The archive contains a symbolic link with an invalid target.",
+      "archive symlink target is invalid":
+        "The archive contains a symbolic link with an invalid target.",
+      "archive symlink escapes Hermes home":
+        "The archive contains a symbolic link that escapes the Hermes home.",
+      "unsafe archive symlink":
+        "The archive contains a symbolic link with an invalid target.",
+      "archive contains too many symbolic links": `The archive contains too many symbolic links. It may contain at most ${MAX_HERMES_ARCHIVE_SYMLINKS.toLocaleString()}.`,
+      "Hermes configuration files cannot be symbolic links":
+        "The archive configuration files must be regular files.",
+      ".hermes folder not found":
+        "The archive must contain a .hermes folder or its contents at the ZIP root.",
+      "archive contains files outside .hermes":
+        "The archive contains files outside the selected .hermes folder.",
+      "archive contains multiple Hermes homes":
+        "The archive contains more than one .hermes folder.",
+      "not enough staging inodes":
+        "The server does not have enough temporary filesystem entries for this archive.",
     };
     if (message in messages) return new HermesArchiveError(messages[message]);
   } catch {
@@ -523,7 +550,7 @@ async function extractZipArchive(
     const child = spawn(
       preferredPython(),
       [
-        '-c',
+        "-c",
         STAGE_ZIP_SCRIPT,
         archivePath,
         destination,
@@ -537,11 +564,14 @@ async function extractZipArchive(
         String(ARCHIVE_CPU_LIMIT_SECONDS),
         String(limits.maxRuntimeConfigBytes),
       ],
-      { stdio: ['ignore', 'pipe', 'pipe'] },
+      { stdio: ["ignore", "pipe", "pipe"] },
     );
-    let stdout = '';
+    let stdout = "";
     let settled = false;
-    const finish = (error?: Error, result?: { fileCount: number; unpackedBytes: number }) => {
+    const finish = (
+      error?: Error,
+      result?: { fileCount: number; unpackedBytes: number },
+    ) => {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
@@ -550,34 +580,39 @@ async function extractZipArchive(
       else reject(new HermesArchiveError());
     };
     const timeout = setTimeout(() => {
-      child.kill('SIGKILL');
-      finish(new HermesArchiveError('The archive took too long to inspect.'));
+      child.kill("SIGKILL");
+      finish(new HermesArchiveError("The archive took too long to inspect."));
     }, ARCHIVE_TIMEOUT_MS);
-    child.stdout.on('data', (chunk: Buffer) => {
+    child.stdout.on("data", (chunk: Buffer) => {
       stdout = boundedAppend(stdout, chunk);
     });
     child.stderr?.resume();
-    child.once('error', () => {
-      finish(new HermesArchiveError('Could not inspect the archive on this server.'));
+    child.once("error", () => {
+      finish(
+        new HermesArchiveError("Could not inspect the archive on this server."),
+      );
     });
-    child.once('close', (code) => {
+    child.once("close", (code) => {
       if (code !== 0) {
         finish(archiveInspectionFailure(stdout));
         return;
       }
       try {
-        const parsed = JSON.parse(stdout) as { files?: unknown; bytes?: unknown };
+        const parsed = JSON.parse(stdout) as {
+          files?: unknown;
+          bytes?: unknown;
+        };
         const fileCount = Number(parsed.files);
         const unpackedBytes = Number(parsed.bytes);
         if (
-          !Number.isInteger(fileCount)
-          || fileCount < 1
-          || fileCount > MAX_HERMES_ARCHIVE_FILES
-          || !Number.isFinite(unpackedBytes)
-          || unpackedBytes < 0
-          || unpackedBytes > limits.maxUnpackedBytes
+          !Number.isInteger(fileCount) ||
+          fileCount < 1 ||
+          fileCount > MAX_HERMES_ARCHIVE_FILES ||
+          !Number.isFinite(unpackedBytes) ||
+          unpackedBytes < 0 ||
+          unpackedBytes > limits.maxUnpackedBytes
         ) {
-          throw new Error('Invalid archive result.');
+          throw new Error("Invalid archive result.");
         }
         finish(undefined, { fileCount, unpackedBytes });
       } catch {
@@ -594,7 +629,9 @@ type ArchiveLimits = {
   maxRuntimeConfigBytes: number;
 };
 
-function resolveArchiveLimits(options: HermesArchiveStageOptions): ArchiveLimits {
+function resolveArchiveLimits(
+  options: HermesArchiveStageOptions,
+): ArchiveLimits {
   const maxUploadMiB = normalizeHermesArchiveMaxUploadMiB(options.maxUploadMiB);
   return {
     maxUploadMiB,
@@ -605,16 +642,24 @@ function resolveArchiveLimits(options: HermesArchiveStageOptions): ArchiveLimits
 }
 
 function archiveSizeError(maxUploadMiB: number): HermesArchiveLimitError {
-  return new HermesArchiveLimitError(`The archive must be ${maxUploadMiB} MiB or smaller.`);
+  return new HermesArchiveLimitError(
+    `The archive must be ${maxUploadMiB} MiB or smaller.`,
+  );
 }
 
-function assertArchiveMetadata(name: string, size: number | undefined, limits: ArchiveLimits) {
+function assertArchiveMetadata(
+  name: string,
+  size: number | undefined,
+  limits: ArchiveLimits,
+) {
   if (!isSupportedHermesArchiveName(name)) {
-    throw new HermesArchiveError('Upload a .zip archive containing a .hermes folder or its contents at the ZIP root.');
+    throw new HermesArchiveError(
+      "Upload a .zip archive containing a .hermes folder or its contents at the ZIP root.",
+    );
   }
   if (
-    size !== undefined
-    && (!Number.isSafeInteger(size) || size <= 0 || size > limits.maxUploadBytes)
+    size !== undefined &&
+    (!Number.isSafeInteger(size) || size <= 0 || size > limits.maxUploadBytes)
   ) {
     throw archiveSizeError(limits.maxUploadMiB);
   }
@@ -650,16 +695,21 @@ function stagingLockReclaimLeasePath(root: string, token: string): string {
 }
 
 function stagingDirectoryPrefix(token?: string): string {
-  return token ? `toolplane-hermes-import-${token}-` : 'toolplane-hermes-import-';
+  return token
+    ? `toolplane-hermes-import-${token}-`
+    : "toolplane-hermes-import-";
 }
 
 function errorCode(error: unknown): string | undefined {
-  return typeof error === 'object' && error !== null
+  return typeof error === "object" && error !== null
     ? (error as NodeJS.ErrnoException).code
     : undefined;
 }
 
-async function sameStagingEntry(first: string, second: string): Promise<boolean> {
+async function sameStagingEntry(
+  first: string,
+  second: string,
+): Promise<boolean> {
   try {
     const [left, right] = await Promise.all([stat(first), stat(second)]);
     return left.dev === right.dev && left.ino === right.ino;
@@ -669,14 +719,20 @@ async function sameStagingEntry(first: string, second: string): Promise<boolean>
 }
 
 async function processStartIdentity(pid: number): Promise<string | null> {
-  if (process.platform === 'linux') {
+  if (process.platform === "linux") {
     try {
       const [bootId, rawStat] = await Promise.all([
-        readFile('/proc/sys/kernel/random/boot_id', 'utf8'),
-        readFile(`/proc/${pid}/stat`, 'utf8'),
+        readFile("/proc/sys/kernel/random/boot_id", "utf8"),
+        readFile(`/proc/${pid}/stat`, "utf8"),
       ]);
-      const closingName = rawStat.lastIndexOf(')');
-      const fields = closingName >= 0 ? rawStat.slice(closingName + 2).trim().split(/\s+/) : [];
+      const closingName = rawStat.lastIndexOf(")");
+      const fields =
+        closingName >= 0
+          ? rawStat
+              .slice(closingName + 2)
+              .trim()
+              .split(/\s+/)
+          : [];
       // /proc/<pid>/stat field 22 is the process start tick; `fields` starts
       // at field 3 after the executable name and state.
       const startTick = fields[19];
@@ -695,11 +751,13 @@ async function processStartIdentity(pid: number): Promise<string | null> {
   return null;
 }
 
-type StagingLockOwnerLiveness = 'alive' | 'dead' | 'unknown';
+type StagingLockOwnerLiveness = "alive" | "dead" | "unknown";
 
-async function stagingLockOwnerLiveness(lock: string): Promise<StagingLockOwnerLiveness> {
+async function stagingLockOwnerLiveness(
+  lock: string,
+): Promise<StagingLockOwnerLiveness> {
   try {
-    const metadata = JSON.parse(await readFile(lock, 'utf8')) as {
+    const metadata = JSON.parse(await readFile(lock, "utf8")) as {
       hostname?: unknown;
       pid?: unknown;
       processIdentity?: unknown;
@@ -709,34 +767,38 @@ async function stagingLockOwnerLiveness(lock: string): Promise<StagingLockOwnerL
     // reclaim that *expired* record instead of permanently stranding a volume.
     // This is crash recovery, not a distributed-lock guarantee: one staging
     // path must not be mounted by concurrently running ToolPlane app instances.
-    if (metadata.hostname !== os.hostname()) return 'unknown';
+    if (metadata.hostname !== os.hostname()) return "unknown";
     const pid = metadata.pid;
-    if (typeof pid !== 'number' || !Number.isSafeInteger(pid) || pid <= 0) return 'dead';
+    if (typeof pid !== "number" || !Number.isSafeInteger(pid) || pid <= 0)
+      return "dead";
     try {
       process.kill(pid, 0);
       const recordedIdentity = metadata.processIdentity;
-      if (typeof recordedIdentity !== 'string' || !recordedIdentity) {
+      if (typeof recordedIdentity !== "string" || !recordedIdentity) {
         // Old lock records cannot distinguish a reused PID. Be conservative
         // for another live local process, but reclaim a stale self-lock.
-        return pid !== process.pid ? 'alive' : 'dead';
+        return pid !== process.pid ? "alive" : "dead";
       }
       const currentIdentity = await processStartIdentity(pid);
       return currentIdentity === null || currentIdentity === recordedIdentity
-        ? 'alive'
-        : 'dead';
+        ? "alive"
+        : "dead";
     } catch (error) {
-      if (errorCode(error) === 'EPERM') return 'alive';
-      return errorCode(error) === 'ESRCH' ? 'dead' : 'unknown';
+      if (errorCode(error) === "EPERM") return "alive";
+      return errorCode(error) === "ESRCH" ? "dead" : "unknown";
     }
   } catch {
-    return 'dead';
+    return "dead";
   }
 }
 
 async function stagingLockToken(lock: string): Promise<string | null> {
   try {
-    const metadata = JSON.parse(await readFile(lock, 'utf8')) as { token?: unknown };
-    return typeof metadata.token === 'string' && /^[a-z0-9-]{16,128}$/i.test(metadata.token)
+    const metadata = JSON.parse(await readFile(lock, "utf8")) as {
+      token?: unknown;
+    };
+    return typeof metadata.token === "string" &&
+      /^[a-z0-9-]{16,128}$/i.test(metadata.token)
       ? metadata.token
       : null;
   } catch {
@@ -749,18 +811,25 @@ async function stagingReclamationInProgress(root: string): Promise<boolean> {
     await stat(stagingLockReclaimPath(root));
     return true;
   } catch (error) {
-    if (errorCode(error) === 'ENOENT') return false;
+    if (errorCode(error) === "ENOENT") return false;
     throw error;
   }
 }
 
-async function cleanupStagingDirectoriesForToken(root: string, token: string): Promise<void> {
+async function cleanupStagingDirectoriesForToken(
+  root: string,
+  token: string,
+): Promise<void> {
   try {
     const prefix = stagingDirectoryPrefix(token);
     const entries = await readdir(root, { withFileTypes: true });
-    await Promise.all(entries
-      .filter((entry) => entry.isDirectory() && entry.name.startsWith(prefix))
-      .map((entry) => rm(path.join(root, entry.name), { recursive: true, force: true })));
+    await Promise.all(
+      entries
+        .filter((entry) => entry.isDirectory() && entry.name.startsWith(prefix))
+        .map((entry) =>
+          rm(path.join(root, entry.name), { recursive: true, force: true }),
+        ),
+    );
   } catch {
     // The next maintenance pass can retry a directory that was still busy.
   }
@@ -771,10 +840,14 @@ async function cleanupExpiredStagingDirectories(root: string): Promise<void> {
   try {
     const entries = await readdir(root, { withFileTypes: true });
     for (const entry of entries) {
-      if (!entry.isDirectory() || !entry.name.startsWith('toolplane-hermes-import-')) continue;
+      if (
+        !entry.isDirectory() ||
+        !entry.name.startsWith("toolplane-hermes-import-")
+      )
+        continue;
       const directory = path.join(root, entry.name);
       try {
-        const upload = path.join(directory, 'upload.zip');
+        const upload = path.join(directory, "upload.zip");
         const latest = await stat(upload).catch(() => stat(directory));
         if (latest.mtimeMs < cutoff) {
           await rm(directory, { recursive: true, force: true });
@@ -792,25 +865,31 @@ type StagingLockReclamation = {
   release: () => Promise<void>;
 };
 
-async function acquireStagingLockReclamation(root: string): Promise<StagingLockReclamation | null> {
+async function acquireStagingLockReclamation(
+  root: string,
+): Promise<StagingLockReclamation | null> {
   const reclaim = stagingLockReclaimPath(root);
   const token = randomUUID();
   const lease = stagingLockReclaimLeasePath(root, token);
   try {
-    await writeFile(lease, JSON.stringify({
-      token,
-      pid: process.pid,
-      hostname: os.hostname(),
-      processIdentity: await processStartIdentity(process.pid),
-      startedAt: new Date().toISOString(),
-    }), {
-      flag: 'wx',
-      mode: 0o600,
-    });
+    await writeFile(
+      lease,
+      JSON.stringify({
+        token,
+        pid: process.pid,
+        hostname: os.hostname(),
+        processIdentity: await processStartIdentity(process.pid),
+        startedAt: new Date().toISOString(),
+      }),
+      {
+        flag: "wx",
+        mode: 0o600,
+      },
+    );
     await link(lease, reclaim);
   } catch (error) {
     await rm(lease, { force: true }).catch(() => undefined);
-    if (errorCode(error) === 'EEXIST') return null;
+    if (errorCode(error) === "EEXIST") return null;
     throw error;
   }
 
@@ -835,13 +914,14 @@ async function cleanupExpiredStagingLock(root: string): Promise<void> {
     const lock = stagingLockPath(root);
     const details = await stat(lock);
     const liveness = await stagingLockOwnerLiveness(lock);
-    if (liveness === 'alive') return;
+    if (liveness === "alive") return;
     // Same-host PID/start identity can prove a crashed process immediately.
     // An unknown hostname needs the renewed-mtime grace period instead.
     if (
-      liveness === 'unknown'
-      && details.mtimeMs >= Date.now() - STAGING_LOCK_STALE_MS
-    ) return;
+      liveness === "unknown" &&
+      details.mtimeMs >= Date.now() - STAGING_LOCK_STALE_MS
+    )
+      return;
 
     // Serialize stale reclaimers before the second liveness check and unlink.
     // Acquirers observe this sentinel both before and after linking their own
@@ -852,11 +932,12 @@ async function cleanupExpiredStagingLock(root: string): Promise<void> {
     try {
       const current = await stat(lock);
       const currentLiveness = await stagingLockOwnerLiveness(lock);
-      if (currentLiveness === 'alive') return;
+      if (currentLiveness === "alive") return;
       if (
-        currentLiveness === 'unknown'
-        && current.mtimeMs >= Date.now() - STAGING_LOCK_STALE_MS
-      ) return;
+        currentLiveness === "unknown" &&
+        current.mtimeMs >= Date.now() - STAGING_LOCK_STALE_MS
+      )
+        return;
       const token = await stagingLockToken(lock);
       await rm(lock, { force: true });
       if (token) await cleanupStagingDirectoriesForToken(root, token);
@@ -873,12 +954,13 @@ async function cleanupExpiredStagingLeases(root: string): Promise<void> {
   try {
     const entries = await readdir(root, { withFileTypes: true });
     for (const entry of entries) {
-      if (!entry.isFile() || !entry.name.startsWith(STAGING_LOCK_LEASE_PREFIX)) continue;
+      if (!entry.isFile() || !entry.name.startsWith(STAGING_LOCK_LEASE_PREFIX))
+        continue;
       const lease = path.join(root, entry.name);
       try {
         if (
-          (await stat(lease)).mtimeMs < cutoff
-          && await stagingLockOwnerLiveness(lease) !== 'alive'
+          (await stat(lease)).mtimeMs < cutoff &&
+          (await stagingLockOwnerLiveness(lease)) !== "alive"
         ) {
           await rm(lease, { force: true });
         }
@@ -891,14 +973,17 @@ async function cleanupExpiredStagingLeases(root: string): Promise<void> {
   }
 }
 
-async function cleanupExpiredStagingLockReclamation(root: string): Promise<void> {
+async function cleanupExpiredStagingLockReclamation(
+  root: string,
+): Promise<void> {
   try {
     const reclaim = stagingLockReclaimPath(root);
     const details = await stat(reclaim);
     const liveness = await stagingLockOwnerLiveness(reclaim);
     if (
-      liveness === 'dead'
-      || (liveness === 'unknown' && details.mtimeMs < Date.now() - STAGING_LOCK_RECLAIM_STALE_MS)
+      liveness === "dead" ||
+      (liveness === "unknown" &&
+        details.mtimeMs < Date.now() - STAGING_LOCK_RECLAIM_STALE_MS)
     ) {
       await rm(reclaim, { force: true });
     }
@@ -907,17 +992,23 @@ async function cleanupExpiredStagingLockReclamation(root: string): Promise<void>
   }
 }
 
-async function cleanupExpiredStagingLockReclaimLeases(root: string): Promise<void> {
+async function cleanupExpiredStagingLockReclaimLeases(
+  root: string,
+): Promise<void> {
   const cutoff = Date.now() - STAGING_LOCK_RECLAIM_STALE_MS;
   try {
     const entries = await readdir(root, { withFileTypes: true });
     for (const entry of entries) {
-      if (!entry.isFile() || !entry.name.startsWith(STAGING_LOCK_RECLAIM_LEASE_PREFIX)) continue;
+      if (
+        !entry.isFile() ||
+        !entry.name.startsWith(STAGING_LOCK_RECLAIM_LEASE_PREFIX)
+      )
+        continue;
       const lease = path.join(root, entry.name);
       try {
         if (
-          (await stat(lease)).mtimeMs < cutoff
-          && await stagingLockOwnerLiveness(lease) !== 'alive'
+          (await stat(lease)).mtimeMs < cutoff &&
+          (await stagingLockOwnerLiveness(lease)) !== "alive"
         ) {
           await rm(lease, { force: true });
         }
@@ -954,20 +1045,26 @@ function ensureStagingMaintenance(): void {
   stagingMaintenanceGlobal.__hermesArchiveStagingMaintenance = timer;
 }
 
-function requiredStagingBytes(announcedBytes: number | undefined, limits: ArchiveLimits): number {
+function requiredStagingBytes(
+  announcedBytes: number | undefined,
+  limits: ArchiveLimits,
+): number {
   // A request without Content-Length is still supported, but it must reserve
   // enough capacity for the largest allowed ZIP and extracted Hermes home.
   const archiveBytes = announcedBytes ?? limits.maxUploadBytes;
   return archiveBytes + limits.maxUnpackedBytes + STAGING_SPACE_OVERHEAD_BYTES;
 }
 
-async function assertStagingCapacity(root: string, requiredBytes: number): Promise<void> {
+async function assertStagingCapacity(
+  root: string,
+  requiredBytes: number,
+): Promise<void> {
   try {
     const filesystem = await statfs(root);
     const availableBytes = filesystem.bavail * filesystem.bsize;
     if (Number.isFinite(availableBytes) && availableBytes < requiredBytes) {
       throw new HermesArchiveError(
-        'The server does not have enough temporary storage for this archive.',
+        "The server does not have enough temporary storage for this archive.",
         507,
       );
     }
@@ -986,10 +1083,14 @@ async function createStagingDirectory(
   const root = stagingRoot();
   await mkdir(root, { recursive: true, mode: 0o700 });
   await runStagingMaintenance(root);
-  await assertStagingCapacity(root, requiredStagingBytes(announcedBytes, limits));
-  const prefix = stagingToken && /^[a-z0-9-]{16,128}$/i.test(stagingToken)
-    ? stagingDirectoryPrefix(stagingToken)
-    : stagingDirectoryPrefix();
+  await assertStagingCapacity(
+    root,
+    requiredStagingBytes(announcedBytes, limits),
+  );
+  const prefix =
+    stagingToken && /^[a-z0-9-]{16,128}$/i.test(stagingToken)
+      ? stagingDirectoryPrefix(stagingToken)
+      : stagingDirectoryPrefix();
   return mkdtemp(path.join(root, prefix));
 }
 
@@ -1008,20 +1109,28 @@ export async function acquireHermesArchiveImportLock(): Promise<HermesArchiveImp
     const lease = stagingLeasePath(root, token);
     const identity = await processStartIdentity(process.pid);
     try {
-      await writeFile(lease, JSON.stringify({
-        token,
-        pid: process.pid,
-        hostname: os.hostname(),
-        processIdentity: identity,
-        startedAt: new Date().toISOString(),
-      }), {
-        flag: 'wx',
-        mode: 0o600,
-      });
+      await writeFile(
+        lease,
+        JSON.stringify({
+          token,
+          pid: process.pid,
+          hostname: os.hostname(),
+          processIdentity: identity,
+          startedAt: new Date().toISOString(),
+        }),
+        {
+          flag: "wx",
+          mode: 0o600,
+        },
+      );
       await link(lease, lock);
     } catch (error) {
       await rm(lease, { force: true }).catch(() => undefined);
-      if (typeof error === 'object' && error !== null && (error as NodeJS.ErrnoException).code === 'EEXIST') {
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        (error as NodeJS.ErrnoException).code === "EEXIST"
+      ) {
         return null;
       }
       throw error;
@@ -1044,10 +1153,10 @@ export async function acquireHermesArchiveImportLock(): Promise<HermesArchiveImp
     let released = false;
     let leaseLost = false;
     const assertHeld = async () => {
-      if (leaseLost || !await sameStagingEntry(lock, lease)) {
+      if (leaseLost || !(await sameStagingEntry(lock, lease))) {
         leaseLost = true;
         throw new HermesArchiveError(
-          'The archive import lost its temporary-storage reservation. Retry the import.',
+          "The archive import lost its temporary-storage reservation. Retry the import.",
           409,
         );
       }
@@ -1084,20 +1193,41 @@ export async function acquireHermesArchiveImportLock(): Promise<HermesArchiveImp
       },
     };
   } catch (error) {
-    if (typeof error === 'object' && error !== null && (error as NodeJS.ErrnoException).code === 'EEXIST') {
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      (error as NodeJS.ErrnoException).code === "EEXIST"
+    ) {
       return null;
     }
-    if (typeof error === 'object' && error !== null && (error as NodeJS.ErrnoException).code === 'ENOSPC') {
-      throw new HermesArchiveError('The server does not have enough temporary storage for this archive.', 507);
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      (error as NodeJS.ErrnoException).code === "ENOSPC"
+    ) {
+      throw new HermesArchiveError(
+        "The server does not have enough temporary storage for this archive.",
+        507,
+      );
     }
-    throw new HermesArchiveError('Could not prepare temporary storage for this archive.', 500);
+    throw new HermesArchiveError(
+      "Could not prepare temporary storage for this archive.",
+      500,
+    );
   }
 }
 
 function stageFailure(error: unknown): HermesArchiveError {
   if (error instanceof HermesArchiveError) return error;
-  if (typeof error === 'object' && error !== null && (error as NodeJS.ErrnoException).code === 'ENOSPC') {
-    return new HermesArchiveError('The server does not have enough temporary storage for this archive.', 507);
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    (error as NodeJS.ErrnoException).code === "ENOSPC"
+  ) {
+    return new HermesArchiveError(
+      "The server does not have enough temporary storage for this archive.",
+      507,
+    );
   }
   return new HermesArchiveError();
 }
@@ -1107,7 +1237,7 @@ async function stageArchiveFile(
   archivePath: string,
   limits: ArchiveLimits,
 ): Promise<StagedHermesArchive> {
-  const extractionRoot = path.join(directory, 'home');
+  const extractionRoot = path.join(directory, "home");
   const result = await extractZipArchive(archivePath, extractionRoot, {
     maxFileBytes: limits.maxUnpackedBytes,
     maxUnpackedBytes: limits.maxUnpackedBytes,
@@ -1140,10 +1270,10 @@ async function writeArchiveStream(
   await pipeline(
     Readable.fromWeb(body as unknown as Parameters<typeof Readable.fromWeb>[0]),
     limit,
-    createWriteStream(archivePath, { flags: 'wx', mode: 0o600 }),
+    createWriteStream(archivePath, { flags: "wx", mode: 0o600 }),
   );
   if (receivedBytes <= 0) {
-    throw new HermesArchiveError('Choose a non-empty .zip archive to import.');
+    throw new HermesArchiveError("Choose a non-empty .zip archive to import.");
   }
   return receivedBytes;
 }
@@ -1165,9 +1295,13 @@ export async function stageHermesArchiveStream(
   const limits = resolveArchiveLimits(options);
   assertArchiveMetadata(upload.name, upload.size, limits);
 
-  const directory = await createStagingDirectory(upload.size, limits, options.stagingToken);
+  const directory = await createStagingDirectory(
+    upload.size,
+    limits,
+    options.stagingToken,
+  );
   try {
-    const archivePath = path.join(directory, 'upload.zip');
+    const archivePath = path.join(directory, "upload.zip");
     await writeArchiveStream(upload.body, archivePath, limits);
     return await stageArchiveFile(directory, archivePath, limits);
   } catch (error) {

@@ -3,10 +3,10 @@
 > **中文**：[OBSERVABILITY.zh-CN.md](./OBSERVABILITY.zh-CN.md)
 
 The administrator console at `/admin/logs` reads structured events independently
-of workspace business records. Workspace observability is restricted to the
-signed-in user's workspace: retained deployment MCP request/response details
-remain visible where authorized; A2A bodies are administrator-only. Other Agent
-and non-deployment API payloads still require their existing explicit policy.
+of workspace business records. Workspace Logs is restricted to the signed-in
+user's workspace: retained deployment MCP details and sanitized A2A
+request/response bodies are visible where authorized. Other Agent and
+non-deployment API payloads still require their existing explicit policy.
 
 ## Health and error triage
 
@@ -94,14 +94,14 @@ Gateway rows reuse their matching workspace-scoped transport details without
 duplicating the call. Overview counts and pagination remain gateway-only;
 standalone discovery calls remain visible in deployment logs.
 
-Workspace-visible details must carry the permission marker set during safe MCP
+Workspace-visible MCP details must carry the permission marker set during safe MCP
 capture. Older unmarked details remain metadata-only for workspace readers because
 their original capture policy cannot be established; administrator diagnostic
 access is unchanged. Expired or unavailable bodies have no copy action.
 Authorized A2A protocol, communication-tool and native user-entry boundaries retain
 sanitized request/response details by default, without enabling diagnostic capture.
 New A2A and deployment MCP payloads expire within `min(detailDays, eventDays, 1)`
-days. A2A bodies are administrator-only; workspace members can inspect metadata.
+days. Workspace members can read retained A2A bodies after a successful access audit.
 Denied or unauthenticated requests never collect bodies. Existing details are not
 extended or backfilled. Empty responses and responses not received are distinct.
 
@@ -142,13 +142,16 @@ audit records, with no payload; the response declares `x-export-limit: 1000`.
   calls and local task/root-task IDs across poll, restart and worker execution.
   Task duration measures time from admission to the last committed status, not
   HTTP latency. The detail page shows actual request/response and RPC errors,
-  a matching HTTP entry when present, and audited administrator-only bodies.
+  a matching HTTP entry when present, and audited sanitized bodies.
   Expired, uncollected, and workspace-restricted details cannot be copied.
-- Workspace `/app/[workspace]/observability?tab=a2a` filters A2A request or
-  task-chain metadata within the authorized workspace. Task associations never
-  expand that scope; members cannot obtain A2A bodies through lists, details,
-  traces or exports. An administrator who also belongs to the workspace can
-  follow the explicit link to the audited administrator detail page.
+- Workspace sidebar **Logs → A2A requests** at `/app/[workspace]/observability?tab=a2a`
+  scopes requests and task chains to the authorized workspace. The Agent ID filter
+  includes both direct Agent and associated public Endpoint calls; the same filter
+  applies to counts and latency statistics.
+  Members can open retained sanitized bodies on the detail page; each read is
+  audited. Task associations never expand workspace access, and lists, traces
+  and exports remain metadata-only. Administrators retain their separate detail
+  page. The existing `/observability` URL is unchanged.
 - Settings show the latest retained successful audit record and warn before
   leaving unsaved edits. No audit history means no recorded modifier, not
   necessarily that the setting has never changed. Failed saves preserve inputs;

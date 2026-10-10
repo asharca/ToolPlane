@@ -111,7 +111,7 @@ jobs:
       - name: Push Prisma schema
         run: pnpm exec prisma db push
 
-      - name: Lint and typecheck
+      - name: Biome lint, format and typecheck
         run: pnpm check
 
       - name: Build Pi package capture sandbox

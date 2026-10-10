@@ -1,1 +1,1 @@
-export { default } from '../../../settings/providers/page';
+export { default } from "../../../settings/providers/page";

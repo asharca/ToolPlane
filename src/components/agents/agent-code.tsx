@@ -1,11 +1,6 @@
 "use client";
 
-import {
-  type CSSProperties,
-  Fragment,
-  useEffect,
-  useState,
-} from "react";
+import { type CSSProperties, Fragment, useEffect, useState } from "react";
 import { createHighlighter, type Highlighter } from "shiki";
 import { cn } from "@/lib/utils";
 
@@ -57,10 +52,7 @@ function tokenCacheKey(code: string, language: AgentCodeLanguage) {
   return `${language}\u0000${code}`;
 }
 
-export function useAgentCodeTokens(
-  code: string,
-  language: AgentCodeLanguage,
-) {
+export function useAgentCodeTokens(code: string, language: AgentCodeLanguage) {
   const key = tokenCacheKey(code, language);
   const cached = tokenCache.get(key);
   const [result, setResult] = useState<{
@@ -95,7 +87,7 @@ export function useAgentCodeTokens(
             light: token.variants.light?.color,
             dark: token.variants.dark?.color,
           })),
-      );
+        );
       tokenCache.set(key, lines);
       setResult({ key, code, language, lines });
     });
@@ -111,11 +103,7 @@ export function useAgentCodeTokens(
   return null;
 }
 
-export function AgentCodeLine({
-  code,
-  tokens,
-  className,
-}: AgentCodeLineProps) {
+export function AgentCodeLine({ code, tokens, className }: AgentCodeLineProps) {
   return (
     <span className={className}>
       {tokens
@@ -125,7 +113,8 @@ export function AgentCodeLine({
               style={
                 {
                   "--agent-code-light": token.light ?? "currentColor",
-                  "--agent-code-dark": token.dark ?? token.light ?? "currentColor",
+                  "--agent-code-dark":
+                    token.dark ?? token.light ?? "currentColor",
                 } as CSSProperties
               }
               className="text-[var(--agent-code-light)] dark:text-[var(--agent-code-dark)]"

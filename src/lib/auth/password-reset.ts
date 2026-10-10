@@ -1,24 +1,24 @@
-import { systemLog } from '@/lib/observability/system';
-import 'server-only';
-import { db } from '@/lib/db';
-import { hashPassword } from './password';
+import { systemLog } from "@/lib/observability/system";
+import "server-only";
+import { db } from "@/lib/db";
+import { hashPassword } from "./password";
 import {
   generatePasswordResetToken,
   hashPasswordResetToken,
   isPasswordResetToken,
   PASSWORD_RESET_COOLDOWN_MS,
   passwordResetExpiry,
-} from './password-reset-token';
+} from "./password-reset-token";
 import {
   passwordResetEmailConfigured,
   sendPasswordResetEmail,
-} from './password-reset-mail';
+} from "./password-reset-mail";
 
 export async function requestPasswordReset(email: string): Promise<void> {
   if (!passwordResetEmailConfigured()) return;
 
   const user = await db.user.findFirst({
-    where: { email, status: 'active' },
+    where: { email, status: "active" },
     select: { id: true, email: true, locale: true },
   });
   if (!user) return;
@@ -40,7 +40,10 @@ export async function requestPasswordReset(email: string): Promise<void> {
     claimed = true;
   } catch (error) {
     const uniqueConflict =
-      typeof error === 'object' && error !== null && 'code' in error && error.code === 'P2002';
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "P2002";
     if (!uniqueConflict) throw error;
 
     const updated = await db.passwordResetToken.updateMany({
@@ -63,9 +66,10 @@ export async function requestPasswordReset(email: string): Promise<void> {
     });
   } catch (error) {
     await db.passwordResetToken.deleteMany({ where: { tokenHash } });
-    systemLog('error',
-      'Unable to send password-reset email',
-      error instanceof Error ? error.message : 'Unknown error',
+    systemLog(
+      "error",
+      "Unable to send password-reset email",
+      error instanceof Error ? error.message : "Unknown error",
     );
   }
 }
@@ -94,7 +98,9 @@ export async function resetPasswordWithToken(
       where: { id: record.userId },
       data: { passwordHash, sessionVersion: { increment: 1 } },
     });
-    await tx.passwordResetToken.deleteMany({ where: { userId: record.userId } });
+    await tx.passwordResetToken.deleteMany({
+      where: { userId: record.userId },
+    });
     return true;
   });
 }

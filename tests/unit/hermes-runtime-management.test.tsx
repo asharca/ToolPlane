@@ -1,6 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 const actions = vi.hoisted(() => ({
   cloneSandboxAction: vi.fn(async () => undefined),
@@ -12,13 +12,15 @@ const actions = vi.hoisted(() => ({
   updateSandboxSudoAction: vi.fn(async () => undefined),
 }));
 
-vi.mock('@/lib/sandboxes/actions', () => actions);
+vi.mock("@/lib/sandboxes/actions", () => actions);
 
-import { HermesRuntimeManagement } from '@/components/dashboard/agents/HermesRuntimeManagement';
+import { HermesRuntimeManagement } from "@/components/dashboard/agents/HermesRuntimeManagement";
 
 function renderManagement(
-  status = 'stopped',
-  snapshots: React.ComponentProps<typeof HermesRuntimeManagement>['snapshots'] = [],
+  status = "stopped",
+  snapshots: React.ComponentProps<
+    typeof HermesRuntimeManagement
+  >["snapshots"] = [],
   allowSudo = false,
 ) {
   return render(
@@ -38,98 +40,164 @@ function submittedFormData(action: ReturnType<typeof vi.fn>) {
   return action.mock.calls[0]?.[0] as FormData | undefined;
 }
 
-describe('HermesRuntimeManagement', () => {
+describe("HermesRuntimeManagement", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it('scopes rename and environment changes to the managed sandbox', async () => {
+  it("scopes rename and environment changes to the managed sandbox", async () => {
     const user = userEvent.setup();
     renderManagement();
 
-    expect(screen.queryByRole('textbox', { name: 'Clone name' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Clone' })).not.toBeInTheDocument();
-    expect(screen.getByRole('textbox', { name: 'Snapshot name' })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("textbox", { name: "Clone name" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Clone" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("textbox", { name: "Snapshot name" }),
+    ).toBeInTheDocument();
 
-    const name = screen.getByRole('textbox', { name: 'Sandbox name' });
-    expect(name).toHaveValue('Research Hermes');
-    expect(name.closest('form')?.elements.namedItem('workspace')).toHaveValue('acme');
-    expect(name.closest('form')?.elements.namedItem('sandboxId')).toHaveValue('hermes-sandbox-1');
+    const name = screen.getByRole("textbox", { name: "Sandbox name" });
+    expect(name).toHaveValue("Research Hermes");
+    expect(name.closest("form")?.elements.namedItem("workspace")).toHaveValue(
+      "acme",
+    );
+    expect(name.closest("form")?.elements.namedItem("sandboxId")).toHaveValue(
+      "hermes-sandbox-1",
+    );
     await user.clear(name);
-    await user.type(name, 'Renamed Hermes');
-    await user.click(screen.getByRole('button', { name: 'Rename' }));
+    await user.type(name, "Renamed Hermes");
+    await user.click(screen.getByRole("button", { name: "Rename" }));
 
-    await waitFor(() => expect(actions.renameSandboxAction).toHaveBeenCalledOnce());
-    expect(submittedFormData(actions.renameSandboxAction)?.get('workspace')).toBe('acme');
-    expect(submittedFormData(actions.renameSandboxAction)?.get('sandboxId')).toBe('hermes-sandbox-1');
-    expect(submittedFormData(actions.renameSandboxAction)?.get('name')).toBe('Renamed Hermes');
+    await waitFor(() =>
+      expect(actions.renameSandboxAction).toHaveBeenCalledOnce(),
+    );
+    expect(
+      submittedFormData(actions.renameSandboxAction)?.get("workspace"),
+    ).toBe("acme");
+    expect(
+      submittedFormData(actions.renameSandboxAction)?.get("sandboxId"),
+    ).toBe("hermes-sandbox-1");
+    expect(submittedFormData(actions.renameSandboxAction)?.get("name")).toBe(
+      "Renamed Hermes",
+    );
 
-    const environment = screen.getByRole('textbox', { name: 'Hermes environment variables' });
-    expect(environment).toHaveValue('EXISTING=value');
-    expect(environment.closest('form')?.elements.namedItem('workspace')).toHaveValue('acme');
-    expect(environment.closest('form')?.elements.namedItem('sandboxId')).toHaveValue('hermes-sandbox-1');
+    const environment = screen.getByRole("textbox", {
+      name: "Hermes environment variables",
+    });
+    expect(environment).toHaveValue("EXISTING=value");
+    expect(
+      environment.closest("form")?.elements.namedItem("workspace"),
+    ).toHaveValue("acme");
+    expect(
+      environment.closest("form")?.elements.namedItem("sandboxId"),
+    ).toHaveValue("hermes-sandbox-1");
     await user.clear(environment);
-    await user.type(environment, 'API_KEY=secret');
-    await user.click(screen.getByRole('button', { name: 'Save environment' }));
+    await user.type(environment, "API_KEY=secret");
+    await user.click(screen.getByRole("button", { name: "Save environment" }));
 
-    await waitFor(() => expect(actions.updateSandboxEnvAction).toHaveBeenCalledOnce());
-    expect(submittedFormData(actions.updateSandboxEnvAction)?.get('workspace')).toBe('acme');
-    expect(submittedFormData(actions.updateSandboxEnvAction)?.get('sandboxId')).toBe('hermes-sandbox-1');
-    expect(submittedFormData(actions.updateSandboxEnvAction)?.get('env')).toBe('API_KEY=secret');
+    await waitFor(() =>
+      expect(actions.updateSandboxEnvAction).toHaveBeenCalledOnce(),
+    );
+    expect(
+      submittedFormData(actions.updateSandboxEnvAction)?.get("workspace"),
+    ).toBe("acme");
+    expect(
+      submittedFormData(actions.updateSandboxEnvAction)?.get("sandboxId"),
+    ).toBe("hermes-sandbox-1");
+    expect(submittedFormData(actions.updateSandboxEnvAction)?.get("env")).toBe(
+      "API_KEY=secret",
+    );
   });
 
-  it('submits the sudo opt-in scoped to the managed sandbox', async () => {
+  it("submits the sudo opt-in scoped to the managed sandbox", async () => {
     const user = userEvent.setup();
-    renderManagement('stopped', [], true);
+    renderManagement("stopped", [], true);
 
-    const toggle = screen.getByRole('checkbox', { name: 'Allow the agent to use sudo' });
+    const toggle = screen.getByRole("checkbox", {
+      name: "Allow the agent to use sudo",
+    });
     expect(toggle).toBeChecked();
-    expect(toggle.closest('form')?.elements.namedItem('workspace')).toHaveValue('acme');
-    expect(toggle.closest('form')?.elements.namedItem('sandboxId')).toHaveValue('hermes-sandbox-1');
+    expect(toggle.closest("form")?.elements.namedItem("workspace")).toHaveValue(
+      "acme",
+    );
+    expect(toggle.closest("form")?.elements.namedItem("sandboxId")).toHaveValue(
+      "hermes-sandbox-1",
+    );
 
     await user.click(toggle);
-    await user.click(screen.getByRole('button', { name: 'Save sudo setting' }));
+    await user.click(screen.getByRole("button", { name: "Save sudo setting" }));
 
-    await waitFor(() => expect(actions.updateSandboxSudoAction).toHaveBeenCalledOnce());
-    expect(submittedFormData(actions.updateSandboxSudoAction)?.get('workspace')).toBe('acme');
-    expect(submittedFormData(actions.updateSandboxSudoAction)?.get('sandboxId')).toBe('hermes-sandbox-1');
-    expect(submittedFormData(actions.updateSandboxSudoAction)?.get('allowSudo')).toBeNull();
+    await waitFor(() =>
+      expect(actions.updateSandboxSudoAction).toHaveBeenCalledOnce(),
+    );
+    expect(
+      submittedFormData(actions.updateSandboxSudoAction)?.get("workspace"),
+    ).toBe("acme");
+    expect(
+      submittedFormData(actions.updateSandboxSudoAction)?.get("sandboxId"),
+    ).toBe("hermes-sandbox-1");
+    expect(
+      submittedFormData(actions.updateSandboxSudoAction)?.get("allowSudo"),
+    ).toBeNull();
   });
 
-  it('blocks mutations and snapshot creation while the Hermes runtime has a lifecycle operation', () => {
-    renderManagement('copying');
+  it("blocks mutations and snapshot creation while the Hermes runtime has a lifecycle operation", () => {
+    renderManagement("copying");
 
-    expect(screen.getByRole('textbox', { name: 'Sandbox name' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Rename' })).toBeDisabled();
-    expect(screen.getByRole('textbox', { name: 'Hermes environment variables' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Save environment' })).toBeDisabled();
-    expect(screen.getByRole('checkbox', { name: 'Allow the agent to use sudo' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Save sudo setting' })).toBeDisabled();
-    expect(screen.getByRole('textbox', { name: 'Snapshot name' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Create snapshot' })).toBeDisabled();
+    expect(
+      screen.getByRole("textbox", { name: "Sandbox name" }),
+    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Rename" })).toBeDisabled();
+    expect(
+      screen.getByRole("textbox", { name: "Hermes environment variables" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Save environment" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("checkbox", { name: "Allow the agent to use sudo" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Save sudo setting" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("textbox", { name: "Snapshot name" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Create snapshot" }),
+    ).toBeDisabled();
   });
 
-  it('uses the Hermes-specific confirmation before restoring a volume snapshot', async () => {
+  it("uses the Hermes-specific confirmation before restoring a volume snapshot", async () => {
     const user = userEvent.setup();
-    renderManagement('stopped', [{
-      id: 'snapshot-1',
-      name: 'Before configuration change',
-      status: 'ready',
-      error: null,
-      createdAt: 'August 7, 2026',
-    }]);
+    renderManagement("stopped", [
+      {
+        id: "snapshot-1",
+        name: "Before configuration change",
+        status: "ready",
+        error: null,
+        createdAt: "August 7, 2026",
+      },
+    ]);
 
-    const restore = screen.getByRole('button', { name: 'Restore' });
-    const restoreForm = restore.closest('form');
-    if (!restoreForm) throw new Error('Restore form was not rendered.');
+    const restore = screen.getByRole("button", { name: "Restore" });
+    const restoreForm = restore.closest("form");
+    if (!restoreForm) throw new Error("Restore form was not rendered.");
     await user.click(restore);
 
-    expect(restoreForm).toHaveTextContent(/Replace current persistent Hermes data/);
+    expect(restoreForm).toHaveTextContent(
+      /Replace current persistent Hermes data/,
+    );
   });
 
-  it('hides data controls after an unreconciled copy failure', () => {
-    renderManagement('copy_failed');
+  it("hides data controls after an unreconciled copy failure", () => {
+    renderManagement("copy_failed");
 
-    expect(screen.queryByRole('textbox', { name: 'Snapshot name' })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("textbox", { name: "Snapshot name" }),
+    ).not.toBeInTheDocument();
   });
 });

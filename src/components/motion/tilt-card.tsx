@@ -1,7 +1,13 @@
 "use client";
 // asharca.github.io/ui/components/motion/tilt-card
 
-import { motion, useMotionTemplate, useMotionValue, useReducedMotion, useSpring } from "motion/react";
+import {
+  motion,
+  useMotionTemplate,
+  useMotionValue,
+  useReducedMotion,
+  useSpring,
+} from "motion/react";
 import { useRef, type ReactNode } from "react";
 import { SPRING_MOUSE } from "@/lib/ease";
 import { useHoverCapable } from "@/lib/hooks/use-hover-capable";
@@ -14,7 +20,12 @@ export interface TiltCardProps {
   className?: string;
 }
 
-export function TiltCard({ children, max = 12, glare = true, className }: TiltCardProps) {
+export function TiltCard({
+  children,
+  max = 12,
+  glare = true,
+  className,
+}: TiltCardProps) {
   const ref = useRef<HTMLDivElement>(null);
   const reduce = useReducedMotion();
   const canHover = useHoverCapable();
@@ -54,7 +65,10 @@ export function TiltCard({ children, max = 12, glare = true, className }: TiltCa
       onMouseMove={onMove}
       onMouseLeave={onLeave}
       style={{ transform, transformStyle: "preserve-3d" }}
-      className={cn("relative overflow-hidden rounded-2xl will-change-transform", className)}
+      className={cn(
+        "relative overflow-hidden rounded-2xl will-change-transform",
+        className,
+      )}
     >
       {children}
       {glare && enabled ? (

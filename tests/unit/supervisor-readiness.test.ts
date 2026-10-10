@@ -1,10 +1,20 @@
+import { assertDefined } from "../assert-defined";
 // @vitest-environment node
-import { type ChildProcess } from 'node:child_process';
-import { EventEmitter } from 'node:events';
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ChildProcess } from "node:child_process";
+import { EventEmitter } from "node:events";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 const mocks = vi.hoisted(() => ({
   spawn: vi.fn(),
@@ -17,37 +27,43 @@ const mocks = vi.hoisted(() => ({
   resolveRemoteMcpPrivateHostsSettings: vi.fn(),
 }));
 
-vi.mock('node:child_process', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('node:child_process')>();
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
   return { ...actual, spawn: mocks.spawn };
 });
 
-vi.mock('@/lib/db', () => ({
-  db: { deployment: { update: mocks.updateDeployment }, workspace: { findFirst: mocks.findWorkspace } },
+vi.mock("@/lib/db", () => ({
+  db: {
+    deployment: { update: mocks.updateDeployment },
+    workspace: { findFirst: mocks.findWorkspace },
+  },
 }));
 
-vi.mock('@/lib/sandboxes/connector-broker', () => ({
+vi.mock("@/lib/sandboxes/connector-broker", () => ({
   ensureConnectorBroker: mocks.ensureConnectorBroker,
 }));
-vi.mock('@/lib/admin/settings', () => ({
+vi.mock("@/lib/admin/settings", () => ({
   resolveMcpStartupTimeoutSettings: mocks.resolveMcpStartupTimeoutSettings,
-  resolveRemoteMcpPrivateHostsSettings: mocks.resolveRemoteMcpPrivateHostsSettings,
+  resolveRemoteMcpPrivateHostsSettings:
+    mocks.resolveRemoteMcpPrivateHostsSettings,
 }));
 
 // Bridge launch tests exercise supervisor lifecycle behavior, not Docker volume
 // projection. Keep the materializer behind its own unit tests so these fake
 // child processes are never mistaken for Docker helper processes.
-vi.mock('@/lib/process/deployment-config-volume', () => ({
-  DEPLOYMENT_CONFIG_MOUNT_PATH: '/toolplane/config',
-  configVolumeName: (deploymentId: string) => `toolplane_mcp_config_${deploymentId}`,
+vi.mock("@/lib/process/deployment-config-volume", () => ({
+  DEPLOYMENT_CONFIG_MOUNT_PATH: "/toolplane/config",
+  configVolumeName: (deploymentId: string) =>
+    `toolplane_mcp_config_${deploymentId}`,
   materializeDeploymentConfigVolume: mocks.materializeDeploymentConfigVolume,
 }));
-vi.mock('@/lib/process/deployment-runtime-container', () => ({
-  deploymentContainerName: (deploymentId: string) => `toolplane-mcp-${deploymentId}`,
+vi.mock("@/lib/process/deployment-runtime-container", () => ({
+  deploymentContainerName: (deploymentId: string) =>
+    `toolplane-mcp-${deploymentId}`,
   removeDeploymentContainer: mocks.removeDeploymentContainer,
 }));
 
-type Supervisor = typeof import('@/lib/process/supervisor');
+type Supervisor = typeof import("@/lib/process/supervisor");
 type FakeChild = ChildProcess & {
   stdout: EventEmitter;
   stderr: EventEmitter;
@@ -62,7 +78,7 @@ let supervisor: Supervisor;
 let nextPid = 99_000_000;
 
 function createChild(
-  exitOnSignals: Array<NodeJS.Signals | number> = ['SIGTERM', 'SIGKILL'],
+  exitOnSignals: Array<NodeJS.Signals | number> = ["SIGTERM", "SIGKILL"],
 ): FakeChild {
   let exited = false;
   const child = Object.assign(new EventEmitter(), {
@@ -82,17 +98,17 @@ function createChild(
     unref: vi.fn(),
     ref: vi.fn(),
   }) as unknown as FakeChild;
-  child.kill = vi.fn((signal: NodeJS.Signals | number = 'SIGTERM') => {
+  child.kill = vi.fn((signal: NodeJS.Signals | number = "SIGTERM") => {
     if (exitOnSignals.includes(signal)) {
       queueMicrotask(() => {
         if (exited) return;
         exited = true;
         Object.assign(child, {
-          exitCode: typeof signal === 'number' ? signal : null,
-          signalCode: typeof signal === 'string' ? signal : null,
+          exitCode: typeof signal === "number" ? signal : null,
+          signalCode: typeof signal === "string" ? signal : null,
           killed: true,
         });
-        child.emit('exit', child.exitCode, child.signalCode);
+        child.emit("exit", child.exitCode, child.signalCode);
       });
     }
     return true;
@@ -119,18 +135,18 @@ function resetSupervisorGlobals() {
 
 beforeAll(async () => {
   process.env.TOOLPLANE_SUPERVISOR_DIR = registryDir;
-  supervisor = await import('@/lib/process/supervisor');
+  supervisor = await import("@/lib/process/supervisor");
 });
 
 beforeEach(() => {
   vi.useFakeTimers();
   mocks.spawn.mockReset();
   mocks.updateDeployment.mockReset().mockResolvedValue({});
-  mocks.findWorkspace.mockReset().mockResolvedValue({ id: 'workspace-active' });
+  mocks.findWorkspace.mockReset().mockResolvedValue({ id: "workspace-active" });
   mocks.ensureConnectorBroker.mockReset().mockResolvedValue({
     port: 9322,
-    internalUrl: 'http://127.0.0.1:9322',
-    internalToken: 'internal-test-token',
+    internalUrl: "http://127.0.0.1:9322",
+    internalToken: "internal-test-token",
   });
   mocks.materializeDeploymentConfigVolume.mockReset().mockResolvedValue({
     hasFiles: false,
@@ -140,14 +156,14 @@ beforeEach(() => {
   mocks.resolveMcpStartupTimeoutSettings.mockReset().mockResolvedValue({
     idleTimeoutMs: 300_000,
     maxTimeoutMs: 900_000,
-    source: 'database',
+    source: "database",
   });
   mocks.resolveRemoteMcpPrivateHostsSettings.mockReset().mockResolvedValue({
-    value: '*.rhzy.ai,10.0.10.42',
-    source: 'database',
+    value: "*.rhzy.ai,10.0.10.42",
+    source: "database",
   });
   nextPid = 99_000_000;
-  vi.spyOn(process, 'kill').mockReturnValue(true);
+  vi.spyOn(process, "kill").mockReturnValue(true);
   resetSupervisorGlobals();
   rmSync(registryDir, { recursive: true, force: true });
 });
@@ -168,14 +184,14 @@ afterAll(() => {
   }
 });
 
-describe('supervisor readiness races', () => {
-  it('does not require Docker cleanup for a builtin launch', async () => {
+describe("supervisor readiness races", () => {
+  it("does not require Docker cleanup for a builtin launch", async () => {
     const child = createChild();
     mocks.spawn.mockReturnValue(child);
 
     await supervisor.startProcess(
-      'builtin-no-docker',
-      { kind: 'builtin', name: 'Builtin no Docker' },
+      "builtin-no-docker",
+      { kind: "builtin", name: "Builtin no Docker" },
       { awaitReady: false },
     );
 
@@ -184,72 +200,74 @@ describe('supervisor readiness races', () => {
     expect(mocks.resolveRemoteMcpPrivateHostsSettings).not.toHaveBeenCalled();
   });
 
-  it('passes the administrator private host allowlist only to the remote bridge', async () => {
+  it("passes the administrator private host allowlist only to the remote bridge", async () => {
     const child = createChild();
     mocks.spawn.mockReturnValue(child);
     await supervisor.startProcess(
-      'private-remote',
+      "private-remote",
       {
-        kind: 'remote',
-        name: 'Private remote',
-        url: 'https://mcp.rhzy.ai/mcp',
-        transport: 'streamable-http',
+        kind: "remote",
+        name: "Private remote",
+        url: "https://mcp.rhzy.ai/mcp",
+        transport: "streamable-http",
         headers: {},
         timeoutMs: 60_000,
       },
       { awaitReady: false },
     );
 
-    const options = mocks.spawn.mock.calls[0]?.[2] as { env?: Record<string, string> };
+    const options = mocks.spawn.mock.calls[0]?.[2] as {
+      env?: Record<string, string>;
+    };
     expect(mocks.resolveRemoteMcpPrivateHostsSettings).toHaveBeenCalledOnce();
     expect(options.env).toMatchObject({
-      MCP_REMOTE_PRIVATE_HOSTS: '*.rhzy.ai,10.0.10.42',
+      MCP_REMOTE_PRIVATE_HOSTS: "*.rhzy.ai,10.0.10.42",
     });
-    expect(options.env).not.toHaveProperty('DATABASE_URL');
+    expect(options.env).not.toHaveProperty("DATABASE_URL");
   });
 
-  it('runs the ready callback only after the deployment is listening', async () => {
+  it("runs the ready callback only after the deployment is listening", async () => {
     const child = createChild();
     const onReady = vi.fn();
     mocks.spawn.mockReturnValue(child);
 
     await supervisor.startProcess(
-      'ready-callback',
-      { kind: 'builtin', name: 'Ready callback' },
+      "ready-callback",
+      { kind: "builtin", name: "Ready callback" },
       { awaitReady: false, onReady },
     );
     expect(onReady).not.toHaveBeenCalled();
 
-    child.stdout.emit('data', Buffer.from('LISTENING 4566\n'));
+    child.stdout.emit("data", Buffer.from("LISTENING 4566\n"));
     await Promise.resolve();
     expect(onReady).toHaveBeenCalledTimes(1);
   });
 
-  it('ignores a buffered LISTENING line after stop begins', async () => {
+  it("ignores a buffered LISTENING line after stop begins", async () => {
     const child = createChild();
     mocks.spawn.mockReturnValue(child);
 
     await supervisor.startProcess(
-      'late-ready',
-      { kind: 'builtin', name: 'Late ready' },
+      "late-ready",
+      { kind: "builtin", name: "Late ready" },
       { awaitReady: false },
     );
-    await supervisor.stopProcess('late-ready');
+    await supervisor.stopProcess("late-ready");
 
-    child.stdout.emit('data', Buffer.from('LISTENING 4567\n'));
+    child.stdout.emit("data", Buffer.from("LISTENING 4567\n"));
     await Promise.resolve();
 
     const statuses = mocks.updateDeployment.mock.calls.map(
       ([input]) => input.data.status as string,
     );
-    expect(statuses).toEqual(['provisioning', 'stopped']);
-    expect(supervisor.liveStatus('late-ready')).toBeNull();
+    expect(statuses).toEqual(["provisioning", "stopped"]);
+    expect(supervisor.liveStatus("late-ready")).toBeNull();
   });
 
-  it('persists stopped after an earlier running write finishes late', async () => {
+  it("persists stopped after an earlier running write finishes late", async () => {
     const child = createChild();
     mocks.spawn.mockReturnValue(child);
-    let storedStatus = '';
+    let storedStatus = "";
     let releaseRunning: (() => void) | undefined;
     let markRunningStarted: (() => void) | undefined;
     const runningStarted = new Promise<void>((resolve) => {
@@ -258,7 +276,7 @@ describe('supervisor readiness races', () => {
 
     mocks.updateDeployment.mockImplementation(async (input) => {
       const status = input.data.status as string;
-      if (status === 'running') {
+      if (status === "running") {
         markRunningStarted?.();
         await new Promise<void>((resolve) => {
           releaseRunning = resolve;
@@ -269,26 +287,28 @@ describe('supervisor readiness races', () => {
     });
 
     await supervisor.startProcess(
-      'slow-running-write',
-      { kind: 'builtin', name: 'Slow running write' },
+      "slow-running-write",
+      { kind: "builtin", name: "Slow running write" },
       { awaitReady: false },
     );
-    child.stdout.emit('data', Buffer.from('LISTENING 4568\n'));
+    child.stdout.emit("data", Buffer.from("LISTENING 4568\n"));
     await runningStarted;
 
-    const stopping = supervisor.stopProcess('slow-running-write');
+    const stopping = supervisor.stopProcess("slow-running-write");
     await Promise.resolve();
-    expect(releaseRunning).toBeTypeOf('function');
+    expect(releaseRunning).toBeTypeOf("function");
     releaseRunning?.();
     await stopping;
 
-    expect(storedStatus).toBe('stopped');
+    expect(storedStatus).toBe("stopped");
     expect(
-      mocks.updateDeployment.mock.calls.map(([input]) => input.data.status as string),
-    ).toEqual(['provisioning', 'running', 'stopped']);
+      mocks.updateDeployment.mock.calls.map(
+        ([input]) => input.data.status as string,
+      ),
+    ).toEqual(["provisioning", "running", "stopped"]);
   });
 
-  it('signals the child before a slow provisioning write finishes', async () => {
+  it("signals the child before a slow provisioning write finishes", async () => {
     const child = createChild();
     mocks.spawn.mockReturnValue(child);
     let releaseProvisioning: (() => void) | undefined;
@@ -297,7 +317,7 @@ describe('supervisor readiness races', () => {
       markProvisioningStarted = resolve;
     });
     mocks.updateDeployment.mockImplementation(async (input) => {
-      if (input.data.status === 'provisioning') {
+      if (input.data.status === "provisioning") {
         markProvisioningStarted?.();
         await new Promise<void>((resolve) => {
           releaseProvisioning = resolve;
@@ -307,35 +327,40 @@ describe('supervisor readiness races', () => {
     });
 
     await supervisor.startProcess(
-      'slow-provisioning-write',
-      { kind: 'builtin', name: 'Slow provisioning write' },
+      "slow-provisioning-write",
+      { kind: "builtin", name: "Slow provisioning write" },
       { awaitReady: false },
     );
     await provisioningStarted;
-    const stopping = supervisor.stopProcess('slow-provisioning-write');
+    const stopping = supervisor.stopProcess("slow-provisioning-write");
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(child.kill).toHaveBeenCalledWith('SIGTERM');
-    expect(releaseProvisioning).toBeTypeOf('function');
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+    expect(releaseProvisioning).toBeTypeOf("function");
     releaseProvisioning?.();
     await stopping;
-    expect(mocks.updateDeployment.mock.calls.at(-1)?.[0].data.status).toBe('stopped');
+    expect(mocks.updateDeployment.mock.calls.at(-1)?.[0].data.status).toBe(
+      "stopped",
+    );
   });
 
-  it('kills an adopted registry process before its running write finishes', async () => {
-    const deploymentId = 'adopted-running';
+  it("kills an adopted registry process before its running write finishes", async () => {
+    const deploymentId = "adopted-running";
     const pid = 99_123_456;
     let alive = true;
-    vi.mocked(process.kill).mockImplementation(((target: number, signal?: number | NodeJS.Signals) => {
+    vi.mocked(process.kill).mockImplementation(((
+      target: number,
+      signal?: number | NodeJS.Signals,
+    ) => {
       if (target !== pid) return true;
       if (signal === 0) {
         if (alive) return true;
-        const error = new Error('missing') as NodeJS.ErrnoException;
-        error.code = 'ESRCH';
+        const error = new Error("missing") as NodeJS.ErrnoException;
+        error.code = "ESRCH";
         throw error;
       }
-      if (signal === 'SIGKILL') alive = false;
+      if (signal === "SIGKILL") alive = false;
       return true;
     }) as typeof process.kill);
     mkdirSync(registryDir, { recursive: true });
@@ -343,10 +368,10 @@ describe('supervisor readiness races', () => {
       path.join(registryDir, `${deploymentId}.json`),
       JSON.stringify({
         deploymentId,
-        name: 'Adopted',
+        name: "Adopted",
         pid,
         port: 4571,
-        status: 'running',
+        status: "running",
         updatedAt: new Date().toISOString(),
       }),
     );
@@ -357,7 +382,7 @@ describe('supervisor readiness races', () => {
       markRunningStarted = resolve;
     });
     mocks.updateDeployment.mockImplementation(async (input) => {
-      if (input.data.status === 'running') {
+      if (input.data.status === "running") {
         markRunningStarted?.();
         await new Promise<void>((resolve) => {
           releaseRunning = resolve;
@@ -368,7 +393,7 @@ describe('supervisor readiness races', () => {
 
     await supervisor.startProcess(
       deploymentId,
-      { kind: 'builtin', name: 'Ignored replacement' },
+      { kind: "builtin", name: "Ignored replacement" },
       { awaitReady: false },
     );
     await runningStarted;
@@ -376,33 +401,35 @@ describe('supervisor readiness races', () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(process.kill).toHaveBeenCalledWith(pid, 'SIGKILL');
-    expect(releaseRunning).toBeTypeOf('function');
+    expect(process.kill).toHaveBeenCalledWith(pid, "SIGKILL");
+    expect(releaseRunning).toBeTypeOf("function");
     releaseRunning?.();
     await killing;
-    expect(mocks.updateDeployment.mock.calls.at(-1)?.[0].data.status).toBe('stopped');
+    expect(mocks.updateDeployment.mock.calls.at(-1)?.[0].data.status).toBe(
+      "stopped",
+    );
   });
 
-  it('does not duplicate a provisioning process owned by another worker', async () => {
-    const deploymentId = 'adopted-provisioning';
+  it("does not duplicate a provisioning process owned by another worker", async () => {
+    const deploymentId = "adopted-provisioning";
     mkdirSync(registryDir, { recursive: true });
     writeFileSync(
       path.join(registryDir, `${deploymentId}.json`),
       JSON.stringify({
         deploymentId,
-        name: 'Already provisioning',
+        name: "Already provisioning",
         pid: process.pid,
         port: null,
-        status: 'provisioning',
-        generation: 'other-worker-generation',
-        phase: 'pulling-image',
+        status: "provisioning",
+        generation: "other-worker-generation",
+        phase: "pulling-image",
         updatedAt: new Date().toISOString(),
       }),
     );
 
     await supervisor.startProcess(
       deploymentId,
-      { kind: 'builtin', name: 'Should not spawn' },
+      { kind: "builtin", name: "Should not spawn" },
       { awaitReady: false },
     );
     await Promise.resolve();
@@ -410,35 +437,35 @@ describe('supervisor readiness races', () => {
     expect(mocks.spawn).not.toHaveBeenCalled();
     expect(mocks.updateDeployment).toHaveBeenCalledWith({
       where: { id: deploymentId },
-      data: { status: 'provisioning' },
+      data: { status: "provisioning" },
     });
   });
 
-  it('does not delete an unreadable cross-worker registry while it may be atomically replaced', () => {
-    const deploymentId = 'temporarily-unreadable-registry';
+  it("does not delete an unreadable cross-worker registry while it may be atomically replaced", () => {
+    const deploymentId = "temporarily-unreadable-registry";
     const file = path.join(registryDir, `${deploymentId}.json`);
     mkdirSync(registryDir, { recursive: true });
     writeFileSync(file, '{"deploymentId":');
 
-    expect(supervisor.effectiveStatus(deploymentId, 'running')).toBe('stopped');
+    expect(supervisor.effectiveStatus(deploymentId, "running")).toBe("stopped");
     expect(existsSync(file)).toBe(true);
   });
 
-  it('does not duplicate a launch while another worker holds the pre-registry launch lock', async () => {
-    const deploymentId = 'launch-lock-held';
+  it("does not duplicate a launch while another worker holds the pre-registry launch lock", async () => {
+    const deploymentId = "launch-lock-held";
     mkdirSync(registryDir, { recursive: true });
     writeFileSync(
       path.join(registryDir, `${deploymentId}.launch.lock`),
       JSON.stringify({
         pid: process.pid,
         createdAt: new Date().toISOString(),
-        nonce: 'other-worker-lock',
+        nonce: "other-worker-lock",
       }),
     );
 
     await supervisor.startProcess(
       deploymentId,
-      { kind: 'builtin', name: 'Locked launch' },
+      { kind: "builtin", name: "Locked launch" },
       { awaitReady: false },
     );
     await Promise.resolve();
@@ -446,12 +473,12 @@ describe('supervisor readiness races', () => {
     expect(mocks.spawn).not.toHaveBeenCalled();
     expect(mocks.updateDeployment).toHaveBeenCalledWith({
       where: { id: deploymentId },
-      data: { status: 'provisioning' },
+      data: { status: "provisioning" },
     });
   });
 
-  it('recovers an expired launch lock before spawning a replacement', async () => {
-    const deploymentId = 'launch-lock-expired';
+  it("recovers an expired launch lock before spawning a replacement", async () => {
+    const deploymentId = "launch-lock-expired";
     const child = createChild();
     mocks.spawn.mockReturnValue(child);
     mkdirSync(registryDir, { recursive: true });
@@ -459,22 +486,24 @@ describe('supervisor readiness races', () => {
       path.join(registryDir, `${deploymentId}.launch.lock`),
       JSON.stringify({
         pid: process.pid,
-        createdAt: '2000-01-01T00:00:00.000Z',
-        nonce: 'expired-worker-lock',
+        createdAt: "2000-01-01T00:00:00.000Z",
+        nonce: "expired-worker-lock",
       }),
     );
 
     await supervisor.startProcess(
       deploymentId,
-      { kind: 'builtin', name: 'Recovered launch' },
+      { kind: "builtin", name: "Recovered launch" },
       { awaitReady: false },
     );
 
     expect(mocks.spawn).toHaveBeenCalledTimes(1);
-    expect(existsSync(path.join(registryDir, `${deploymentId}.launch.lock`))).toBe(false);
+    expect(
+      existsSync(path.join(registryDir, `${deploymentId}.launch.lock`)),
+    ).toBe(false);
   });
 
-  it('serializes concurrent restarts without orphaning an intermediate child', async () => {
+  it("serializes concurrent restarts without orphaning an intermediate child", async () => {
     const initial = createChild();
     const intermediate = createChild();
     const current = createChild();
@@ -484,68 +513,70 @@ describe('supervisor readiness races', () => {
       .mockReturnValueOnce(current);
 
     await supervisor.startProcess(
-      'concurrent-restart',
-      { kind: 'builtin', name: 'Initial' },
+      "concurrent-restart",
+      { kind: "builtin", name: "Initial" },
       { awaitReady: false },
     );
     const firstRestart = supervisor.restartProcess(
-      'concurrent-restart',
-      { kind: 'builtin', name: 'Intermediate' },
+      "concurrent-restart",
+      { kind: "builtin", name: "Intermediate" },
       { awaitReady: false },
     );
     const secondRestart = supervisor.restartProcess(
-      'concurrent-restart',
-      { kind: 'builtin', name: 'Current' },
+      "concurrent-restart",
+      { kind: "builtin", name: "Current" },
       { awaitReady: false },
     );
 
     await Promise.all([firstRestart, secondRestart]);
 
     expect(mocks.spawn).toHaveBeenCalledTimes(3);
-    expect(initial.kill).toHaveBeenCalledWith('SIGTERM');
-    expect(intermediate.kill).toHaveBeenCalledWith('SIGTERM');
+    expect(initial.kill).toHaveBeenCalledWith("SIGTERM");
+    expect(intermediate.kill).toHaveBeenCalledWith("SIGTERM");
     expect(current.kill).not.toHaveBeenCalled();
 
-    current.stdout.emit('data', Buffer.from('LISTENING 4569\n'));
+    current.stdout.emit("data", Buffer.from("LISTENING 4569\n"));
     await Promise.resolve();
-    expect(supervisor.livePort('concurrent-restart')).toBe(4569);
+    expect(supervisor.livePort("concurrent-restart")).toBe(4569);
   });
 
-  it('ignores an old child exit after its replacement is running', async () => {
+  it("ignores an old child exit after its replacement is running", async () => {
     const oldChild = createChild();
     const replacement = createChild();
     mocks.spawn.mockReturnValueOnce(oldChild).mockReturnValueOnce(replacement);
 
     await supervisor.startProcess(
-      'old-exit',
-      { kind: 'builtin', name: 'Old' },
+      "old-exit",
+      { kind: "builtin", name: "Old" },
       { awaitReady: false },
     );
     const restarting = supervisor.restartProcess(
-      'old-exit',
-      { kind: 'builtin', name: 'Replacement' },
+      "old-exit",
+      { kind: "builtin", name: "Replacement" },
       { awaitReady: false },
     );
     await restarting;
 
-    replacement.stdout.emit('data', Buffer.from('LISTENING 4570\n'));
+    replacement.stdout.emit("data", Buffer.from("LISTENING 4570\n"));
     await Promise.resolve();
     await Promise.resolve();
     await Promise.resolve();
-    expect(mocks.updateDeployment.mock.calls.at(-1)?.[0].data.status).toBe('running');
+    expect(mocks.updateDeployment.mock.calls.at(-1)?.[0].data.status).toBe(
+      "running",
+    );
     const writesBeforeOldExit = mocks.updateDeployment.mock.calls.length;
 
-    oldChild.emit('exit', 0);
+    oldChild.emit("exit", 0);
     await Promise.resolve();
 
     expect(mocks.updateDeployment).toHaveBeenCalledTimes(writesBeforeOldExit);
-    expect(
-      mocks.updateDeployment.mock.calls.at(-1)?.[0].data.status,
-    ).toBe('running');
-    expect(supervisor.livePort('old-exit')).toBe(4570);
+    expect(mocks.updateDeployment.mock.calls.at(-1)?.[0].data.status).toBe(
+      "running",
+    );
+    expect(supervisor.livePort("old-exit")).toBe(4570);
   });
 
-  it('cancels a pending launch during destructive cleanup', async () => {
+  it("cancels a pending launch during destructive cleanup", async () => {
     const child = createChild();
     mocks.spawn.mockReturnValue(child);
     let releaseBroker: (() => void) | undefined;
@@ -554,98 +585,113 @@ describe('supervisor readiness races', () => {
       markBrokerStarted = resolve;
     });
     mocks.ensureConnectorBroker.mockImplementation(
-      () => new Promise((resolve) => {
-        markBrokerStarted?.();
-        releaseBroker = () => resolve({
-          port: 9322,
-          internalUrl: 'http://127.0.0.1:9322',
-          internalToken: 'internal-test-token',
-        });
-      }),
+      () =>
+        new Promise((resolve) => {
+          markBrokerStarted?.();
+          releaseBroker = () =>
+            resolve({
+              port: 9322,
+              internalUrl: "http://127.0.0.1:9322",
+              internalToken: "internal-test-token",
+            });
+        }),
     );
 
     const starting = supervisor.startProcess(
-      'pending-launch',
+      "pending-launch",
       {
-        kind: 'sandbox',
-        name: 'Pending connector',
-        sandboxId: 'sandbox-pending',
-        sandboxKind: 'connector',
-        network: 'isolated',
+        kind: "sandbox",
+        name: "Pending connector",
+        sandboxId: "sandbox-pending",
+        sandboxKind: "connector",
+        network: "isolated",
         env: {},
       },
       { awaitReady: false },
     );
     await brokerStarted;
-    const killing = supervisor.killProcess('pending-launch', { preventRestart: true });
+    const killing = supervisor.killProcess("pending-launch", {
+      preventRestart: true,
+    });
 
-    expect(releaseBroker).toBeTypeOf('function');
+    expect(releaseBroker).toBeTypeOf("function");
     releaseBroker?.();
     await Promise.all([starting, killing]);
 
     expect(mocks.spawn).not.toHaveBeenCalled();
     expect(child.kill).not.toHaveBeenCalled();
-    expect(supervisor.liveStatus('pending-launch')).toBeNull();
-    expect(mocks.updateDeployment.mock.calls.at(-1)?.[0].data.status).toBe('stopped');
+    expect(supervisor.liveStatus("pending-launch")).toBeNull();
+    expect(mocks.updateDeployment.mock.calls.at(-1)?.[0].data.status).toBe(
+      "stopped",
+    );
   });
 
-  it('persists the destructive lifecycle status requested by the caller', async () => {
-    await supervisor.killProcess('deleting-deployment', {
+  it("persists the destructive lifecycle status requested by the caller", async () => {
+    await supervisor.killProcess("deleting-deployment", {
       preventRestart: true,
-      finalStatus: 'deleting',
+      finalStatus: "deleting",
     });
 
-    expect(mocks.updateDeployment.mock.calls.at(-1)?.[0].data.status).toBe('deleting');
+    expect(mocks.updateDeployment.mock.calls.at(-1)?.[0].data.status).toBe(
+      "deleting",
+    );
   });
 
-  it('blocks a durably closed workspace even without an in-memory tombstone', async () => {
+  it("blocks a durably closed workspace even without an in-memory tombstone", async () => {
     mocks.findWorkspace.mockResolvedValue(null);
-    await supervisor.startProcess('closed-after-restart', { kind: 'builtin', name: 'Closed' }, { awaitReady: false, workspaceId: 'workspace-closed' });
-    expect(mocks.findWorkspace).toHaveBeenCalledWith({ where: { id: 'workspace-closed', status: 'active' }, select: { id: true } });
+    await supervisor.startProcess(
+      "closed-after-restart",
+      { kind: "builtin", name: "Closed" },
+      { awaitReady: false, workspaceId: "workspace-closed" },
+    );
+    expect(mocks.findWorkspace).toHaveBeenCalledWith({
+      where: { id: "workspace-closed", status: "active" },
+      select: { id: true },
+    });
     expect(mocks.spawn).not.toHaveBeenCalled();
   });
 
-  it('blocks new deployment ids after workspace teardown begins', async () => {
+  it("blocks new deployment ids after workspace teardown begins", async () => {
     const child = createChild();
     mocks.spawn.mockReturnValue(child);
-    supervisor.preventWorkspaceStarts('workspace-deleting');
+    supervisor.preventWorkspaceStarts("workspace-deleting");
 
     await supervisor.startProcess(
-      'created-after-snapshot',
-      { kind: 'builtin', name: 'Too late' },
-      { awaitReady: false, workspaceId: 'workspace-deleting' },
+      "created-after-snapshot",
+      { kind: "builtin", name: "Too late" },
+      { awaitReady: false, workspaceId: "workspace-deleting" },
     );
 
     expect(mocks.spawn).not.toHaveBeenCalled();
     expect(mocks.updateDeployment).not.toHaveBeenCalled();
   });
 
-  it('escalates a slow SIGTERM to SIGKILL before replacement', async () => {
-    const slowChild = createChild(['SIGKILL']);
+  it("escalates a slow SIGTERM to SIGKILL before replacement", async () => {
+    const slowChild = createChild(["SIGKILL"]);
     const replacement = createChild();
     mocks.spawn.mockReturnValueOnce(slowChild).mockReturnValueOnce(replacement);
 
     await supervisor.startProcess(
-      'slow-termination',
-      { kind: 'builtin', name: 'Slow termination' },
+      "slow-termination",
+      { kind: "builtin", name: "Slow termination" },
       { awaitReady: false },
     );
     const restarting = supervisor.restartProcess(
-      'slow-termination',
-      { kind: 'builtin', name: 'Replacement' },
+      "slow-termination",
+      { kind: "builtin", name: "Replacement" },
       { awaitReady: false },
     );
 
     await vi.advanceTimersByTimeAsync(5000);
     await restarting;
 
-    expect(slowChild.kill).toHaveBeenNthCalledWith(1, 'SIGTERM');
-    expect(slowChild.kill).toHaveBeenNthCalledWith(2, 'SIGKILL');
+    expect(slowChild.kill).toHaveBeenNthCalledWith(1, "SIGTERM");
+    expect(slowChild.kill).toHaveBeenNthCalledWith(2, "SIGKILL");
     expect(mocks.spawn).toHaveBeenCalledTimes(2);
     expect(replacement.kill).not.toHaveBeenCalled();
   });
 
-  it('observes an immediate child exit while provisioning persistence is slow', async () => {
+  it("observes an immediate child exit while provisioning persistence is slow", async () => {
     const child = createChild([]);
     mocks.spawn.mockReturnValue(child);
     let releaseProvisioning: (() => void) | undefined;
@@ -654,18 +700,18 @@ describe('supervisor readiness races', () => {
       markErrorPersisted = resolve;
     });
     mocks.updateDeployment.mockImplementation(async (input) => {
-      if (input.data.status === 'provisioning') {
+      if (input.data.status === "provisioning") {
         await new Promise<void>((resolve) => {
           releaseProvisioning = resolve;
         });
       }
-      if (input.data.status === 'error') markErrorPersisted?.();
+      if (input.data.status === "error") markErrorPersisted?.();
       return {};
     });
 
     const starting = supervisor.startProcess(
-      'immediate-exit',
-      { kind: 'builtin', name: 'Immediate exit' },
+      "immediate-exit",
+      { kind: "builtin", name: "Immediate exit" },
       { awaitReady: true },
     );
     await Promise.resolve();
@@ -673,133 +719,177 @@ describe('supervisor readiness races', () => {
     expect(mocks.spawn).toHaveBeenCalledTimes(1);
 
     Object.assign(child, { exitCode: 1 });
-    child.emit('exit', 1, null);
+    child.emit("exit", 1, null);
     await starting;
 
-    expect(releaseProvisioning).toBeTypeOf('function');
+    expect(releaseProvisioning).toBeTypeOf("function");
     releaseProvisioning?.();
     await errorPersisted;
-    expect(mocks.updateDeployment.mock.calls.at(-1)?.[0].data.status).toBe('error');
+    expect(mocks.updateDeployment.mock.calls.at(-1)?.[0].data.status).toBe(
+      "error",
+    );
   });
 
-  it('injects a stable container name into managed Docker bridge launches', async () => {
+  it("injects a stable container name into managed Docker bridge launches", async () => {
     const child = createChild();
     mocks.spawn.mockReturnValue(child);
 
     await supervisor.startProcess(
-      'named-bridge',
+      "named-bridge",
       {
-        kind: 'bridge',
-        name: 'Named bridge',
-        command: 'docker',
-        args: ['run', '--rm', '-e', 'MCP_TOKEN', 'example/mcp'],
-        env: { MCP_TOKEN: 'bridge-secret' },
+        kind: "bridge",
+        name: "Named bridge",
+        command: "docker",
+        args: ["run", "--rm", "-e", "MCP_TOKEN", "example/mcp"],
+        env: { MCP_TOKEN: "bridge-secret" },
       },
       { awaitReady: false },
     );
 
-    const options = mocks.spawn.mock.calls[0]?.[2] as { env?: Record<string, string> };
-    const args = JSON.parse(options.env?.MCP_ARGS ?? '[]') as string[];
-    expect(args.slice(0, 4)).toEqual(['run', '--name', 'toolplane-mcp-named-bridge', '--rm']);
-    expect(args).toContain('MCP_TOKEN');
-    expect(JSON.stringify(args)).not.toContain('bridge-secret');
-    expect(JSON.parse(options.env?.MCP_CHILD_ENV ?? '{}')).toMatchObject({ MCP_TOKEN: 'bridge-secret' });
-    expect(options.env).not.toHaveProperty('TOOLPLANE_SUPERVISOR_DIR');
+    const options = mocks.spawn.mock.calls[0]?.[2] as {
+      env?: Record<string, string>;
+    };
+    const args = JSON.parse(options.env?.MCP_ARGS ?? "[]") as string[];
+    expect(args.slice(0, 4)).toEqual([
+      "run",
+      "--name",
+      "toolplane-mcp-named-bridge",
+      "--rm",
+    ]);
+    expect(args).toContain("MCP_TOKEN");
+    expect(JSON.stringify(args)).not.toContain("bridge-secret");
+    expect(JSON.parse(options.env?.MCP_CHILD_ENV ?? "{}")).toMatchObject({
+      MCP_TOKEN: "bridge-secret",
+    });
+    expect(options.env).not.toHaveProperty("TOOLPLANE_SUPERVISOR_DIR");
   });
 
-  it('removes a stale managed container before materializing and launching its replacement', async () => {
+  it("removes a stale managed container before materializing and launching its replacement", async () => {
     const child = createChild();
     mocks.spawn.mockReturnValue(child);
 
     await supervisor.startProcess(
-      'stale-bridge',
+      "stale-bridge",
       {
-        kind: 'bridge',
-        name: 'Stale bridge',
-        command: 'docker',
-        args: ['run', '--rm', 'example/mcp'],
+        kind: "bridge",
+        name: "Stale bridge",
+        command: "docker",
+        args: ["run", "--rm", "example/mcp"],
         env: {},
       },
       { awaitReady: false },
     );
 
-    expect(mocks.removeDeploymentContainer).toHaveBeenCalledWith('stale-bridge');
-    expect(mocks.materializeDeploymentConfigVolume).toHaveBeenCalledWith('stale-bridge');
-    expect(mocks.removeDeploymentContainer.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(mocks.removeDeploymentContainer).toHaveBeenCalledWith(
+      "stale-bridge",
+    );
+    expect(mocks.materializeDeploymentConfigVolume).toHaveBeenCalledWith(
+      "stale-bridge",
+    );
+    expect(
+      mocks.removeDeploymentContainer.mock.invocationCallOrder[0],
+    ).toBeLessThan(
       mocks.materializeDeploymentConfigVolume.mock.invocationCallOrder[0],
     );
-    expect(mocks.materializeDeploymentConfigVolume.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.spawn.mock.invocationCallOrder[0],
-    );
+    expect(
+      mocks.materializeDeploymentConfigVolume.mock.invocationCallOrder[0],
+    ).toBeLessThan(mocks.spawn.mock.invocationCallOrder[0]);
   });
 
-  it('does not materialize or spawn a replacement when stale container cleanup fails', async () => {
-    mocks.removeDeploymentContainer.mockRejectedValueOnce(new Error('Docker socket denied cleanup'));
+  it("does not materialize or spawn a replacement when stale container cleanup fails", async () => {
+    mocks.removeDeploymentContainer.mockRejectedValueOnce(
+      new Error("Docker socket denied cleanup"),
+    );
 
-    await expect(supervisor.startProcess(
-      'cleanup-failure',
-      {
-        kind: 'bridge',
-        name: 'Cleanup failure',
-        command: 'docker',
-        args: ['run', '--rm', 'example/mcp'],
-        env: {},
-      },
-      { awaitReady: false },
-    )).rejects.toThrow('Docker socket denied cleanup');
+    await expect(
+      supervisor.startProcess(
+        "cleanup-failure",
+        {
+          kind: "bridge",
+          name: "Cleanup failure",
+          command: "docker",
+          args: ["run", "--rm", "example/mcp"],
+          env: {},
+        },
+        { awaitReady: false },
+      ),
+    ).rejects.toThrow("Docker socket denied cleanup");
 
     expect(mocks.materializeDeploymentConfigVolume).not.toHaveBeenCalled();
     expect(mocks.spawn).not.toHaveBeenCalled();
   });
 
-  it('mounts materialized runtime files read-only, uses their config working directory, and redacts them from stderr', async () => {
+  it("mounts materialized runtime files read-only, uses their config working directory, and redacts them from stderr", async () => {
     const child = createChild();
     mocks.spawn.mockReturnValue(child);
     mocks.materializeDeploymentConfigVolume.mockResolvedValue({
       hasFiles: true,
-      redactionValues: ['{abc=P100s0}'],
+      redactionValues: ["{abc=P100s0}"],
     });
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
 
     await supervisor.startProcess(
-      'ssh-config-bridge',
+      "ssh-config-bridge",
       {
-        kind: 'bridge',
-        name: 'SSH config bridge',
-        command: 'docker',
+        kind: "bridge",
+        name: "SSH config bridge",
+        command: "docker",
         args: [
-          'run', '--rm', 'node:24-bookworm-slim',
-          'npx', '-y', '@fangjunjie/ssh-mcp-server', '--config-file', 'ssh-config.json',
+          "run",
+          "--rm",
+          "node:24-bookworm-slim",
+          "npx",
+          "-y",
+          "@fangjunjie/ssh-mcp-server",
+          "--config-file",
+          "ssh-config.json",
         ],
         env: {},
-        image: 'node:24-bookworm-slim',
+        image: "node:24-bookworm-slim",
         configWorkingDirectory: true,
       },
       { awaitReady: false },
     );
 
-    expect(supervisor.liveRedactionValues('ssh-config-bridge')).toContain('{abc=P100s0}');
+    expect(supervisor.liveRedactionValues("ssh-config-bridge")).toContain(
+      "{abc=P100s0}",
+    );
 
-    expect(mocks.materializeDeploymentConfigVolume).toHaveBeenCalledWith('ssh-config-bridge');
-    const options = mocks.spawn.mock.calls[0]?.[2] as { env?: Record<string, string> };
-    const args = JSON.parse(options.env?.MCP_ARGS ?? '[]') as string[];
-    expect(args).toEqual(expect.arrayContaining([
-      '--mount',
-      'type=volume,src=toolplane_mcp_config_ssh-config-bridge,dst=/toolplane/config,readonly',
-      '--workdir',
-      '/toolplane/config',
-      '--config-file',
-      'ssh-config.json',
-    ]));
+    expect(mocks.materializeDeploymentConfigVolume).toHaveBeenCalledWith(
+      "ssh-config-bridge",
+    );
+    const options = mocks.spawn.mock.calls[0]?.[2] as {
+      env?: Record<string, string>;
+    };
+    const args = JSON.parse(options.env?.MCP_ARGS ?? "[]") as string[];
+    expect(args).toEqual(
+      expect.arrayContaining([
+        "--mount",
+        "type=volume,src=toolplane_mcp_config_ssh-config-bridge,dst=/toolplane/config,readonly",
+        "--workdir",
+        "/toolplane/config",
+        "--config-file",
+        "ssh-config.json",
+      ]),
+    );
 
-    child.stderr.emit('data', Buffer.from('ssh config password={abc=P100s0}\n'));
-    const log = supervisor.getDeploymentRuntimeLogChunk('ssh-config-bridge', { limit: 64 * 1024 });
-    expect(log.text).toContain('[REDACTED]');
-    expect(log.text).not.toContain('{abc=P100s0}');
-    expect(consoleError.mock.calls.flat().join(' ')).not.toContain('{abc=P100s0}');
+    child.stderr.emit(
+      "data",
+      Buffer.from("ssh config password={abc=P100s0}\n"),
+    );
+    const log = supervisor.getDeploymentRuntimeLogChunk("ssh-config-bridge", {
+      limit: 64 * 1024,
+    });
+    expect(log.text).toContain("[REDACTED]");
+    expect(log.text).not.toContain("{abc=P100s0}");
+    expect(consoleError.mock.calls.flat().join(" ")).not.toContain(
+      "{abc=P100s0}",
+    );
   });
 
-  it('mounts Docker runtime files without replacing the image working directory', async () => {
+  it("mounts Docker runtime files without replacing the image working directory", async () => {
     const child = createChild();
     mocks.spawn.mockReturnValue(child);
     mocks.materializeDeploymentConfigVolume.mockResolvedValue({
@@ -808,248 +898,325 @@ describe('supervisor readiness races', () => {
     });
 
     await supervisor.startProcess(
-      'docker-config-bridge',
+      "docker-config-bridge",
       {
-        kind: 'bridge',
-        name: 'Docker config bridge',
-        command: 'docker',
+        kind: "bridge",
+        name: "Docker config bridge",
+        command: "docker",
         args: [
-          'run', '--rm', 'ghcr.io/example/mcp:latest',
-          'mcp-server', '--config', '/toolplane/config/server.toml',
+          "run",
+          "--rm",
+          "ghcr.io/example/mcp:latest",
+          "mcp-server",
+          "--config",
+          "/toolplane/config/server.toml",
         ],
         env: {},
-        image: 'ghcr.io/example/mcp:latest',
+        image: "ghcr.io/example/mcp:latest",
       },
       { awaitReady: false },
     );
 
-    const options = mocks.spawn.mock.calls[0]?.[2] as { env?: Record<string, string> };
-    const args = JSON.parse(options.env?.MCP_ARGS ?? '[]') as string[];
-    expect(args).toEqual(expect.arrayContaining([
-      '--mount',
-      'type=volume,src=toolplane_mcp_config_docker-config-bridge,dst=/toolplane/config,readonly',
-      'ghcr.io/example/mcp:latest',
-      'mcp-server',
-      '--config',
-      '/toolplane/config/server.toml',
-    ]));
-    expect(args).not.toContain('--workdir');
-    expect(args.indexOf('ghcr.io/example/mcp:latest')).toBeGreaterThan(args.indexOf('--mount'));
+    const options = mocks.spawn.mock.calls[0]?.[2] as {
+      env?: Record<string, string>;
+    };
+    const args = JSON.parse(options.env?.MCP_ARGS ?? "[]") as string[];
+    expect(args).toEqual(
+      expect.arrayContaining([
+        "--mount",
+        "type=volume,src=toolplane_mcp_config_docker-config-bridge,dst=/toolplane/config,readonly",
+        "ghcr.io/example/mcp:latest",
+        "mcp-server",
+        "--config",
+        "/toolplane/config/server.toml",
+      ]),
+    );
+    expect(args).not.toContain("--workdir");
+    expect(args.indexOf("ghcr.io/example/mcp:latest")).toBeGreaterThan(
+      args.indexOf("--mount"),
+    );
   });
 
-  it('publishes bridge phases and a redacted stderr-only runtime log generation', async () => {
+  it("publishes bridge phases and a redacted stderr-only runtime log generation", async () => {
     const child = createChild();
     mocks.spawn.mockReturnValue(child);
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
 
     await supervisor.startProcess(
-      'runtime-progress',
+      "runtime-progress",
       {
-        kind: 'bridge',
-        name: 'Runtime progress',
-        command: 'docker',
+        kind: "bridge",
+        name: "Runtime progress",
+        command: "docker",
         args: [
-          'run', '--rm', 'node:24-bookworm-slim',
-          '-e', 'GITHUB_TOOLSETS',
-          '--password', 'argv-password',
-          'ssh://git:url-password@example.test/repo',
+          "run",
+          "--rm",
+          "node:24-bookworm-slim",
+          "-e",
+          "GITHUB_TOOLSETS",
+          "--password",
+          "argv-password",
+          "ssh://git:url-password@example.test/repo",
         ],
-        env: { MCP_TOKEN: 'super-secret-value', GITHUB_TOOLSETS: 'all' },
-        image: 'node:24-bookworm-slim',
+        env: { MCP_TOKEN: "super-secret-value", GITHUB_TOOLSETS: "all" },
+        image: "node:24-bookworm-slim",
       },
       { awaitReady: false },
     );
 
-    expect(supervisor.liveRedactionValues('runtime-progress')).toEqual(expect.arrayContaining([
-      'super-secret-value',
-      'argv-password',
-      'url-password',
-    ]));
-    expect(supervisor.liveRedactionValues('runtime-progress')).not.toContain('all');
+    expect(supervisor.liveRedactionValues("runtime-progress")).toEqual(
+      expect.arrayContaining([
+        "super-secret-value",
+        "argv-password",
+        "url-password",
+      ]),
+    );
+    expect(supervisor.liveRedactionValues("runtime-progress")).not.toContain(
+      "all",
+    );
 
-    const options = mocks.spawn.mock.calls[0]?.[2] as { env?: Record<string, string> };
+    const options = mocks.spawn.mock.calls[0]?.[2] as {
+      env?: Record<string, string>;
+    };
     expect(options.env).toMatchObject({
-      MCP_CONTAINER_NAME: 'toolplane-mcp-runtime-progress',
-      MCP_IMAGE: 'node:24-bookworm-slim',
-      MCP_STARTUP_IDLE_TIMEOUT_MS: '300000',
-      MCP_STARTUP_MAX_TIMEOUT_MS: '900000',
+      MCP_CONTAINER_NAME: "toolplane-mcp-runtime-progress",
+      MCP_IMAGE: "node:24-bookworm-slim",
+      MCP_STARTUP_IDLE_TIMEOUT_MS: "300000",
+      MCP_STARTUP_MAX_TIMEOUT_MS: "900000",
       MCP_RUNTIME_EVENT_TOKEN: expect.any(String),
     });
     const eventToken = options.env?.MCP_RUNTIME_EVENT_TOKEN;
     expect(eventToken).toEqual(expect.any(String));
-    const starting = supervisor.getDeploymentRuntimeSnapshot('runtime-progress');
+    const starting =
+      supervisor.getDeploymentRuntimeSnapshot("runtime-progress");
     expect(starting).toMatchObject({
-      status: 'provisioning',
-      phase: 'preparing-image',
-      containerName: 'toolplane-mcp-runtime-progress',
+      status: "provisioning",
+      phase: "preparing-image",
+      containerName: "toolplane-mcp-runtime-progress",
     });
     expect(starting?.generation).toEqual(expect.any(String));
 
     // An MCP can write arbitrary stderr, so a phase-looking line without the
     // bridge's launch-private token must never alter runtime metadata.
-    child.stderr.emit('data', Buffer.from(
-      '[toolplane-runtime] {"type":"phase","phase":"forged-running","imageState":"forged"}\n',
-    ));
-    expect(supervisor.getDeploymentRuntimeSnapshot('runtime-progress')).toMatchObject({
-      status: 'provisioning',
-      phase: 'preparing-image',
+    child.stderr.emit(
+      "data",
+      Buffer.from(
+        '[toolplane-runtime] {"type":"phase","phase":"forged-running","imageState":"forged"}\n',
+      ),
+    );
+    expect(
+      supervisor.getDeploymentRuntimeSnapshot("runtime-progress"),
+    ).toMatchObject({
+      status: "provisioning",
+      phase: "preparing-image",
     });
 
-    child.stderr.emit('data', Buffer.from(
-      '[toolplane-runtime] {"type":"phase","token":"' + eventToken
-      + '","phase":"pulling-image","imageState":"pulling","containerState":"created"}\n'
-      + 'MCP_TOKEN=super-sec',
-    ));
+    child.stderr.emit(
+      "data",
+      Buffer.from(
+        '[toolplane-runtime] {"type":"phase","token":"' +
+          eventToken +
+          '","phase":"pulling-image","imageState":"pulling","containerState":"created"}\n' +
+          "MCP_TOKEN=super-sec",
+      ),
+    );
 
-    expect(supervisor.getDeploymentRuntimeSnapshot('runtime-progress')).toMatchObject({
-      status: 'provisioning',
-      phase: 'pulling-image',
-      imageState: 'pulling',
-      containerState: 'created',
+    expect(
+      supervisor.getDeploymentRuntimeSnapshot("runtime-progress"),
+    ).toMatchObject({
+      status: "provisioning",
+      phase: "pulling-image",
+      imageState: "pulling",
+      containerState: "created",
     });
     // The configured secret is split across stderr chunks and has no newline
     // yet, so neither its prefix nor the event nonce may have reached logs.
-    const incomplete = supervisor.getDeploymentRuntimeLogChunk('runtime-progress', { limit: 64 * 1024 });
-    expect(incomplete.text).not.toContain('super-sec');
-    expect(incomplete.text).not.toContain(eventToken!);
+    const incomplete = supervisor.getDeploymentRuntimeLogChunk(
+      "runtime-progress",
+      { limit: 64 * 1024 },
+    );
+    expect(incomplete.text).not.toContain("super-sec");
+    expect(incomplete.text).not.toContain(assertDefined(eventToken));
 
-    child.stderr.emit('data', Buffer.from(
-      'ret-value Authorization: Bearer another-secret argv-password url-password\n',
-    ));
-    const log = supervisor.getDeploymentRuntimeLogChunk('runtime-progress', { limit: 64 * 1024 });
-    expect(log.generation).toBe(starting?.generation);
-    expect(log.text).toContain('[REDACTED]');
-    expect(log.text).not.toContain('super-secret-value');
-    expect(log.text).not.toContain('super-sec');
-    expect(log.text).not.toContain('ret-value');
-    expect(log.text).not.toContain('another-secret');
-    expect(log.text).not.toContain('argv-password');
-    expect(log.text).not.toContain('url-password');
-    expect(log.text).not.toContain(eventToken!);
-    expect(consoleError.mock.calls.flat().join(' ')).not.toContain(eventToken!);
-
-    child.stdout.emit('data', Buffer.from('LISTENING 4580\n'));
-    expect(supervisor.getDeploymentRuntimeSnapshot('runtime-progress')).toMatchObject({
-      status: 'running',
-      phase: 'ready',
+    child.stderr.emit(
+      "data",
+      Buffer.from(
+        "ret-value Authorization: Bearer another-secret argv-password url-password\n",
+      ),
+    );
+    const log = supervisor.getDeploymentRuntimeLogChunk("runtime-progress", {
+      limit: 64 * 1024,
     });
-    expect(supervisor.liveMcpRuntimeSnapshot('runtime-progress')).toEqual({
+    expect(log.generation).toBe(starting?.generation);
+    expect(log.text).toContain("[REDACTED]");
+    expect(log.text).not.toContain("super-secret-value");
+    expect(log.text).not.toContain("super-sec");
+    expect(log.text).not.toContain("ret-value");
+    expect(log.text).not.toContain("another-secret");
+    expect(log.text).not.toContain("argv-password");
+    expect(log.text).not.toContain("url-password");
+    expect(log.text).not.toContain(assertDefined(eventToken));
+    expect(consoleError.mock.calls.flat().join(" ")).not.toContain(
+      assertDefined(eventToken),
+    );
+
+    child.stdout.emit("data", Buffer.from("LISTENING 4580\n"));
+    expect(
+      supervisor.getDeploymentRuntimeSnapshot("runtime-progress"),
+    ).toMatchObject({
+      status: "running",
+      phase: "ready",
+    });
+    expect(supervisor.liveMcpRuntimeSnapshot("runtime-progress")).toEqual({
       port: 4580,
       generation: starting?.generation,
       redactionValues: expect.arrayContaining([
-        'super-secret-value',
-        'argv-password',
-        'url-password',
+        "super-secret-value",
+        "argv-password",
+        "url-password",
       ]),
     });
   });
 
-  it('flushes a terminal unterminated stderr line only after redacting its configured secret', async () => {
+  it("flushes a terminal unterminated stderr line only after redacting its configured secret", async () => {
     const child = createChild();
     mocks.spawn.mockReturnValue(child);
 
     await supervisor.startProcess(
-      'runtime-terminal-tail',
+      "runtime-terminal-tail",
       {
-        kind: 'bridge',
-        name: 'Terminal tail',
-        command: 'docker',
-        args: ['run', '--rm', 'node:24-bookworm-slim'],
-        env: { MCP_TOKEN: 'terminal-known-secret' },
-        image: 'node:24-bookworm-slim',
+        kind: "bridge",
+        name: "Terminal tail",
+        command: "docker",
+        args: ["run", "--rm", "node:24-bookworm-slim"],
+        env: { MCP_TOKEN: "terminal-known-secret" },
+        image: "node:24-bookworm-slim",
       },
       { awaitReady: false },
     );
 
-    child.stderr.emit('data', Buffer.from('MCP_TOKEN=terminal-known-'));
-    child.stderr.emit('data', Buffer.from('secret'));
-    const beforeEnd = supervisor.getDeploymentRuntimeLogChunk('runtime-terminal-tail', { limit: 64 * 1024 });
-    expect(beforeEnd.text).toBe('');
+    child.stderr.emit("data", Buffer.from("MCP_TOKEN=terminal-known-"));
+    child.stderr.emit("data", Buffer.from("secret"));
+    const beforeEnd = supervisor.getDeploymentRuntimeLogChunk(
+      "runtime-terminal-tail",
+      { limit: 64 * 1024 },
+    );
+    expect(beforeEnd.text).toBe("");
 
     // ChildProcess emits the stderr stream end/close after its exit; the
     // supervisor must flush that final line through the same redactor.
-    child.stderr.emit('end');
-    const afterEnd = supervisor.getDeploymentRuntimeLogChunk('runtime-terminal-tail', { limit: 64 * 1024 });
-    expect(afterEnd.text).toContain('[REDACTED]');
-    expect(afterEnd.text).not.toContain('terminal-known-secret');
-    expect(afterEnd.text).not.toContain('terminal-known-');
+    child.stderr.emit("end");
+    const afterEnd = supervisor.getDeploymentRuntimeLogChunk(
+      "runtime-terminal-tail",
+      { limit: 64 * 1024 },
+    );
+    expect(afterEnd.text).toContain("[REDACTED]");
+    expect(afterEnd.text).not.toContain("terminal-known-secret");
+    expect(afterEnd.text).not.toContain("terminal-known-");
   });
 
-  it('omits an overlong unterminated stderr line instead of leaking a partial generic credential', async () => {
+  it("omits an overlong unterminated stderr line instead of leaking a partial generic credential", async () => {
     const child = createChild();
     mocks.spawn.mockReturnValue(child);
 
     await supervisor.startProcess(
-      'runtime-overlong-line',
-      { kind: 'builtin', name: 'Overlong line' },
+      "runtime-overlong-line",
+      { kind: "builtin", name: "Overlong line" },
       { awaitReady: false },
     );
-    child.stderr.emit('data', Buffer.from(
-      'Authorization: Bearer generic-split-token-' + 'x'.repeat(300 * 1024),
-    ));
-    const omitted = supervisor.getDeploymentRuntimeLogChunk('runtime-overlong-line', { limit: 64 * 1024 });
-    expect(omitted.text).toContain('omitted overlong stderr line');
-    expect(omitted.text).not.toContain('generic-split-token');
+    child.stderr.emit(
+      "data",
+      Buffer.from(
+        `Authorization: Bearer generic-split-token-${"x".repeat(300 * 1024)}`,
+      ),
+    );
+    const omitted = supervisor.getDeploymentRuntimeLogChunk(
+      "runtime-overlong-line",
+      { limit: 64 * 1024 },
+    );
+    expect(omitted.text).toContain("omitted overlong stderr line");
+    expect(omitted.text).not.toContain("generic-split-token");
 
     // Discard only until the next line break; later useful diagnostics remain.
-    child.stderr.emit('data', Buffer.from('\nnormal diagnostic after omission\n'));
-    const resumed = supervisor.getDeploymentRuntimeLogChunk('runtime-overlong-line', {
-      cursor: omitted.nextCursor,
-      limit: 64 * 1024,
-    });
-    expect(resumed.text).toContain('normal diagnostic after omission');
+    child.stderr.emit(
+      "data",
+      Buffer.from("\nnormal diagnostic after omission\n"),
+    );
+    const resumed = supervisor.getDeploymentRuntimeLogChunk(
+      "runtime-overlong-line",
+      {
+        cursor: omitted.nextCursor,
+        limit: 64 * 1024,
+      },
+    );
+    expect(resumed.text).toContain("normal diagnostic after omission");
   });
 
-  it('resets runtime log cursors for a new launch generation and retains terminal error logs', async () => {
+  it("resets runtime log cursors for a new launch generation and retains terminal error logs", async () => {
     const first = createChild();
     const second = createChild();
     mocks.spawn.mockReturnValueOnce(first).mockReturnValueOnce(second);
 
     await supervisor.startProcess(
-      'runtime-generation',
-      { kind: 'builtin', name: 'First run' },
+      "runtime-generation",
+      { kind: "builtin", name: "First run" },
       { awaitReady: false },
     );
-    first.stderr.emit('data', Buffer.from('first run failed TOKEN=visible-secret\n'));
-    const firstSnapshot = supervisor.getDeploymentRuntimeSnapshot('runtime-generation');
-    const firstLog = supervisor.getDeploymentRuntimeLogChunk('runtime-generation', { limit: 64 * 1024 });
-    expect(firstLog.text).toContain('first run failed');
-    expect(firstLog.text).not.toContain('visible-secret');
+    first.stderr.emit(
+      "data",
+      Buffer.from("first run failed TOKEN=visible-secret\n"),
+    );
+    const firstSnapshot =
+      supervisor.getDeploymentRuntimeSnapshot("runtime-generation");
+    const firstLog = supervisor.getDeploymentRuntimeLogChunk(
+      "runtime-generation",
+      { limit: 64 * 1024 },
+    );
+    expect(firstLog.text).toContain("first run failed");
+    expect(firstLog.text).not.toContain("visible-secret");
 
     Object.assign(first, { exitCode: 1 });
-    first.emit('exit', 1, null);
-    expect(supervisor.getDeploymentRuntimeSnapshot('runtime-generation')).toMatchObject({
-      status: 'error',
-      phase: 'error',
+    first.emit("exit", 1, null);
+    expect(
+      supervisor.getDeploymentRuntimeSnapshot("runtime-generation"),
+    ).toMatchObject({
+      status: "error",
+      phase: "error",
       generation: firstSnapshot?.generation,
     });
 
     await supervisor.startProcess(
-      'runtime-generation',
-      { kind: 'builtin', name: 'Second run' },
+      "runtime-generation",
+      { kind: "builtin", name: "Second run" },
       { awaitReady: false },
     );
-    const secondSnapshot = supervisor.getDeploymentRuntimeSnapshot('runtime-generation');
+    const secondSnapshot =
+      supervisor.getDeploymentRuntimeSnapshot("runtime-generation");
     expect(secondSnapshot?.generation).not.toBe(firstSnapshot?.generation);
-    const reset = supervisor.getDeploymentRuntimeLogChunk('runtime-generation', {
-      generation: firstSnapshot?.generation,
-      cursor: firstLog.nextCursor,
-    });
+    const reset = supervisor.getDeploymentRuntimeLogChunk(
+      "runtime-generation",
+      {
+        generation: firstSnapshot?.generation,
+        cursor: firstLog.nextCursor,
+      },
+    );
     expect(reset).toMatchObject({
       generation: secondSnapshot?.generation,
       cursor: 0,
       nextCursor: 0,
       reset: true,
-      text: '',
+      text: "",
     });
   });
 
-  it('does not report a stale active runtime snapshot after its process is gone', async () => {
+  it("does not report a stale active runtime snapshot after its process is gone", async () => {
     const child = createChild();
     mocks.spawn.mockReturnValue(child);
     await supervisor.startProcess(
-      'stale-runtime',
-      { kind: 'builtin', name: 'Stale runtime' },
+      "stale-runtime",
+      { kind: "builtin", name: "Stale runtime" },
       { awaitReady: false },
     );
 
@@ -1059,24 +1226,29 @@ describe('supervisor readiness races', () => {
     };
     delete globals.__mcpSupervisor;
     delete globals.__mcpSupervisorRuntime;
-    vi.mocked(process.kill).mockImplementation(((pid: number, signal?: number | NodeJS.Signals) => {
+    vi.mocked(process.kill).mockImplementation(((
+      pid: number,
+      signal?: number | NodeJS.Signals,
+    ) => {
       if (pid === child.pid && signal === 0) {
-        const error = new Error('missing') as NodeJS.ErrnoException;
-        error.code = 'ESRCH';
+        const error = new Error("missing") as NodeJS.ErrnoException;
+        error.code = "ESRCH";
         throw error;
       }
       return true;
     }) as typeof process.kill);
 
-    expect(supervisor.getDeploymentRuntimeSnapshot('stale-runtime')).toMatchObject({
-      status: 'stopped',
-      phase: 'stopped',
+    expect(
+      supervisor.getDeploymentRuntimeSnapshot("stale-runtime"),
+    ).toMatchObject({
+      status: "stopped",
+      phase: "stopped",
     });
   });
 
-  it('prefers a newer cross-worker registry generation over a cached runtime record', () => {
-    const deploymentId = 'cross-worker-runtime';
-    const logText = 'new worker is starting\n';
+  it("prefers a newer cross-worker registry generation over a cached runtime record", () => {
+    const deploymentId = "cross-worker-runtime";
+    const logText = "new worker is starting\n";
     const now = new Date().toISOString();
     mkdirSync(registryDir, { recursive: true });
     writeFileSync(
@@ -1084,9 +1256,9 @@ describe('supervisor readiness races', () => {
       JSON.stringify({
         deploymentId,
         pid: process.pid,
-        status: 'error',
-        phase: 'error',
-        generation: 'old-generation',
+        status: "error",
+        phase: "error",
+        generation: "old-generation",
         startedAt: now,
         updatedAt: now,
         logStartCursor: 0,
@@ -1098,13 +1270,13 @@ describe('supervisor readiness races', () => {
       path.join(registryDir, `${deploymentId}.json`),
       JSON.stringify({
         deploymentId,
-        name: 'New worker',
+        name: "New worker",
         pid: process.pid,
         port: null,
-        status: 'provisioning',
-        generation: 'new-generation',
-        phase: 'pulling-image',
-        imageState: 'pulling',
+        status: "provisioning",
+        generation: "new-generation",
+        phase: "pulling-image",
+        imageState: "pulling",
         logStartCursor: 0,
         logEndCursor: Buffer.byteLength(logText),
         updatedAt: now,
@@ -1114,53 +1286,63 @@ describe('supervisor readiness races', () => {
     // no local child after another worker launched the replacement.
     resetSupervisorGlobals();
 
-    expect(supervisor.getDeploymentRuntimeSnapshot(deploymentId)).toMatchObject({
-      status: 'provisioning',
-      phase: 'pulling-image',
-      generation: 'new-generation',
-      imageState: 'pulling',
-    });
-    expect(supervisor.getDeploymentRuntimeLogChunk(deploymentId, { limit: 64 * 1024 })).toMatchObject({
-      generation: 'new-generation',
+    expect(supervisor.getDeploymentRuntimeSnapshot(deploymentId)).toMatchObject(
+      {
+        status: "provisioning",
+        phase: "pulling-image",
+        generation: "new-generation",
+        imageState: "pulling",
+      },
+    );
+    expect(
+      supervisor.getDeploymentRuntimeLogChunk(deploymentId, {
+        limit: 64 * 1024,
+      }),
+    ).toMatchObject({
+      generation: "new-generation",
       text: logText,
     });
-    expect(supervisor.effectiveStatuses([{ id: deploymentId, status: 'error' }]).get(deploymentId))
-      .toBe('provisioning');
+    expect(
+      supervisor
+        .effectiveStatuses([{ id: deploymentId, status: "error" }])
+        .get(deploymentId),
+    ).toBe("provisioning");
   });
 
-  it('does not pair a newer cross-worker port with stale local redaction values', async () => {
-    const deploymentId = 'cross-worker-mcp-snapshot';
+  it("does not pair a newer cross-worker port with stale local redaction values", async () => {
+    const deploymentId = "cross-worker-mcp-snapshot";
     const child = createChild();
     mocks.spawn.mockReturnValue(child);
     await supervisor.startProcess(
       deploymentId,
       {
-        kind: 'bridge',
-        name: 'Old worker',
-        command: 'docker',
-        args: ['run', '--rm', 'example/mcp', '--password', 'old-worker-secret'],
+        kind: "bridge",
+        name: "Old worker",
+        command: "docker",
+        args: ["run", "--rm", "example/mcp", "--password", "old-worker-secret"],
         env: {},
       },
       { awaitReady: false },
     );
-    child.stdout.emit('data', Buffer.from('LISTENING 4590\n'));
-    const oldGeneration = supervisor.getDeploymentRuntimeSnapshot(deploymentId)?.generation;
+    child.stdout.emit("data", Buffer.from("LISTENING 4590\n"));
+    const oldGeneration =
+      supervisor.getDeploymentRuntimeSnapshot(deploymentId)?.generation;
     expect(supervisor.liveMcpRuntimeSnapshot(deploymentId)).toMatchObject({
       port: 4590,
       generation: oldGeneration,
-      redactionValues: expect.arrayContaining(['old-worker-secret']),
+      redactionValues: expect.arrayContaining(["old-worker-secret"]),
     });
 
     writeFileSync(
       path.join(registryDir, `${deploymentId}.json`),
       JSON.stringify({
         deploymentId,
-        name: 'New worker',
-        pid: child.pid! + 1,
+        name: "New worker",
+        pid: assertDefined(child.pid) + 1,
         port: 4591,
-        status: 'running',
-        generation: 'new-worker-generation',
-        phase: 'ready',
+        status: "running",
+        generation: "new-worker-generation",
+        phase: "ready",
         updatedAt: new Date().toISOString(),
       }),
     );
@@ -1170,26 +1352,29 @@ describe('supervisor readiness races', () => {
     expect(supervisor.liveRedactionValues(deploymentId)).toBeNull();
   });
 
-  it('reads live Docker output for the deployment container', async () => {
+  it("reads live Docker output for the deployment container", async () => {
     const dockerLogs = createChild();
     mocks.spawn.mockReturnValue(dockerLogs);
 
-    const reading = supervisor.getDeploymentContainerLogs('live-logs', {
-      containerName: 'toolplane-mcp-live-logs',
+    const reading = supervisor.getDeploymentContainerLogs("live-logs", {
+      containerName: "toolplane-mcp-live-logs",
       limit: 25,
     });
-    dockerLogs.stdout.emit('data', Buffer.from('2026-08-05T09:00:00Z MCP started\n'));
-    dockerLogs.emit('close', 0);
+    dockerLogs.stdout.emit(
+      "data",
+      Buffer.from("2026-08-05T09:00:00Z MCP started\n"),
+    );
+    dockerLogs.emit("close", 0);
 
     await expect(reading).resolves.toMatchObject({
-      containerName: 'toolplane-mcp-live-logs',
-      source: 'docker',
-      text: '2026-08-05T09:00:00Z MCP started\n',
+      containerName: "toolplane-mcp-live-logs",
+      source: "docker",
+      text: "2026-08-05T09:00:00Z MCP started\n",
     });
     expect(mocks.spawn).toHaveBeenCalledWith(
-      'docker',
-      ['logs', '--timestamps', '--tail', '25', 'toolplane-mcp-live-logs'],
-      expect.objectContaining({ stdio: ['ignore', 'pipe', 'pipe'] }),
+      "docker",
+      ["logs", "--timestamps", "--tail", "25", "toolplane-mcp-live-logs"],
+      expect.objectContaining({ stdio: ["ignore", "pipe", "pipe"] }),
     );
   });
 });

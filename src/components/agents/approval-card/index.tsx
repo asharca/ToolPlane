@@ -107,7 +107,9 @@ function QuestionOptions({
                     ...answer,
                     selected: checked
                       ? [...answer.selected, option.value]
-                      : answer.selected.filter((value) => value !== option.value),
+                      : answer.selected.filter(
+                          (value) => value !== option.value,
+                        ),
                   })
                 }
                 className="min-h-9 rounded-lg px-1.5 py-1"
@@ -416,7 +418,9 @@ export function ApprovalCard({
                   className="ml-auto rounded-full"
                 >
                   {busy ? (
-                    <LoaderCircle className={cn("size-4", !reduce && "animate-spin")} />
+                    <LoaderCircle
+                      className={cn("size-4", !reduce && "animate-spin")}
+                    />
                   ) : currentStep === questions.length - 1 ? (
                     <>
                       {submitLabel}

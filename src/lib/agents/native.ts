@@ -1,22 +1,22 @@
-import 'server-only';
+import "server-only";
 import {
   validateToolCall,
   type AssistantMessageEvent,
   type Context,
   type Message,
   type ToolCall,
-} from '@earendil-works/pi-ai';
-import type { ContextUsageSnapshot } from '@/lib/context-usage';
+} from "@earendil-works/pi-ai";
+import type { ContextUsageSnapshot } from "@/lib/context-usage";
 import {
   buildModel,
   providerModelIds,
   type ModelParameters,
   type ProviderConfig,
-} from './model';
-import { resolveMaxSteps, type ReasoningEffort } from './constants';
-import type { AgentToolSet } from './agent-tool';
-import { observe, recordEvent } from '@/lib/observability/events';
-import { withLogContext } from '@/lib/observability/context';
+} from "./model";
+import { resolveMaxSteps, type ReasoningEffort } from "./constants";
+import type { AgentToolSet } from "./agent-tool";
+import { observe, recordEvent } from "@/lib/observability/events";
+import { withLogContext } from "@/lib/observability/context";
 
 const EMPTY_USAGE = {
   input: 0,
@@ -43,28 +43,48 @@ type UiMessageLike = {
   }>;
 };
 
-function runtimeFileText(part: UiMessageLike['parts'][number]): string | null {
-  if (part.type !== 'file' || !part.providerMetadata || typeof part.providerMetadata !== 'object') return null;
-  const toolplane = 'toolplane' in part.providerMetadata ? part.providerMetadata.toolplane : null;
-  if (!toolplane || typeof toolplane !== 'object' || !('runtimePath' in toolplane)) return null;
-  const runtimePath = typeof toolplane.runtimePath === 'string' ? toolplane.runtimePath.trim() : '';
+function runtimeFileText(part: UiMessageLike["parts"][number]): string | null {
+  if (
+    part.type !== "file" ||
+    !part.providerMetadata ||
+    typeof part.providerMetadata !== "object"
+  )
+    return null;
+  const toolplane =
+    "toolplane" in part.providerMetadata
+      ? part.providerMetadata.toolplane
+      : null;
+  if (
+    !toolplane ||
+    typeof toolplane !== "object" ||
+    !("runtimePath" in toolplane)
+  )
+    return null;
+  const runtimePath =
+    typeof toolplane.runtimePath === "string"
+      ? toolplane.runtimePath.trim()
+      : "";
   if (!runtimePath) return null;
-  const filename = (typeof part.filename === 'string' ? part.filename.trim() : '') || 'file';
-  return `[Attached file: ${filename.replace(/\s+/g, ' ').slice(0, 240)} at ${runtimePath.replace(/\s+/g, ' ').slice(0, 1_000)}]`;
+  const filename =
+    (typeof part.filename === "string" ? part.filename.trim() : "") || "file";
+  return `[Attached file: ${filename.replace(/\s+/g, " ").slice(0, 240)} at ${runtimePath.replace(/\s+/g, " ").slice(0, 1_000)}]`;
 }
 
-function messageText(parts: UiMessageLike['parts']): string {
+function messageText(parts: UiMessageLike["parts"]): string {
   return parts
     .flatMap((part) => {
-      if (part.type === 'text' && typeof part.text === 'string') return [part.text];
+      if (part.type === "text" && typeof part.text === "string")
+        return [part.text];
       const runtimeFile = runtimeFileText(part);
       if (runtimeFile) return [runtimeFile];
-      if (part.type !== 'work-tool' || !part.toolName) return [];
+      if (part.type !== "work-tool" || !part.toolName) return [];
       const input = toolResultText(part.input).slice(0, 20_000);
       const output = toolResultText(part.output).slice(0, 20_000);
-      return [`[Recorded ${part.isError ? 'failed' : 'successful'} tool call: ${part.toolName}]\nInput: ${input}\nOutput: ${output}`];
+      return [
+        `[Recorded ${part.isError ? "failed" : "successful"} tool call: ${part.toolName}]\nInput: ${input}\nOutput: ${output}`,
+      ];
     })
-    .join('\n')
+    .join("\n")
     .trim();
 }
 
@@ -72,17 +92,23 @@ export function uiMessagesToPi(messages: readonly UiMessageLike[]): Message[] {
   const converted: Message[] = [];
   for (const message of messages) {
     const text = messageText(message.parts);
-    const images = message.parts.flatMap((part) => (
-      part.type === 'image' && typeof part.data === 'string' && typeof part.mimeType === 'string'
-        ? [{ type: 'image' as const, data: part.data, mimeType: part.mimeType }]
-        : []
-    ));
-    if ((!text && !images.length) || (message.role !== 'user' && message.role !== 'assistant')) continue;
-    if (message.role === 'user') {
+    const images = message.parts.flatMap((part) =>
+      part.type === "image" &&
+      typeof part.data === "string" &&
+      typeof part.mimeType === "string"
+        ? [{ type: "image" as const, data: part.data, mimeType: part.mimeType }]
+        : [],
+    );
+    if (
+      (!text && !images.length) ||
+      (message.role !== "user" && message.role !== "assistant")
+    )
+      continue;
+    if (message.role === "user") {
       converted.push({
-        role: 'user',
+        role: "user",
         content: images.length
-          ? [...(text ? [{ type: 'text' as const, text }] : []), ...images]
+          ? [...(text ? [{ type: "text" as const, text }] : []), ...images]
           : text,
         timestamp: Date.now(),
       });
@@ -90,13 +116,13 @@ export function uiMessagesToPi(messages: readonly UiMessageLike[]): Message[] {
     }
     if (!text) continue;
     converted.push({
-      role: 'assistant',
-      content: [{ type: 'text', text }],
-      api: 'openai-completions',
-      provider: 'toolplane-history',
-      model: 'history',
+      role: "assistant",
+      content: [{ type: "text", text }],
+      api: "openai-completions",
+      provider: "toolplane-history",
+      model: "history",
       usage: EMPTY_USAGE,
-      stopReason: 'stop',
+      stopReason: "stop",
       timestamp: Date.now(),
     });
   }
@@ -104,7 +130,7 @@ export function uiMessagesToPi(messages: readonly UiMessageLike[]): Message[] {
 }
 
 function toolResultText(value: unknown): string {
-  if (typeof value === 'string') return value;
+  if (typeof value === "string") return value;
   try {
     return JSON.stringify(value);
   } catch {
@@ -112,14 +138,18 @@ function toolResultText(value: unknown): string {
   }
 }
 
-function customModelParameterPayload(parameters: ModelParameters['customParameters']): Record<string, unknown> {
+function customModelParameterPayload(
+  parameters: ModelParameters["customParameters"],
+): Record<string, unknown> {
   const payload: Record<string, unknown> = {};
   for (const parameter of parameters ?? []) {
-    if (parameter.type === 'json') {
+    if (parameter.type === "json") {
       try {
         payload[parameter.name] = JSON.parse(String(parameter.value));
       } catch {
-        throw new Error(`Invalid JSON for custom model parameter "${parameter.name}".`);
+        throw new Error(
+          `Invalid JSON for custom model parameter "${parameter.name}".`,
+        );
       }
     } else {
       payload[parameter.name] = parameter.value;
@@ -139,31 +169,48 @@ export type NativeRunOptions = {
   reasoningEffort?: ReasoningEffort;
   signal?: AbortSignal;
   onEvent?: (event: AssistantMessageEvent) => void | Promise<void>;
-  onToolResult?: (toolCall: ToolCall, output: unknown, isError: boolean) => void | Promise<void>;
+  onToolResult?: (
+    toolCall: ToolCall,
+    output: unknown,
+    isError: boolean,
+  ) => void | Promise<void>;
   onContextUsage?: (usage: ContextUsageSnapshot) => void | Promise<void>;
 };
 
-export async function runNativeAgent(options: NativeRunOptions): Promise<string> {
-  return observe({ domain: 'agent', eventName: 'agent.run', model: options.modelId, providerId: options.provider.id,
-    secrets: [options.provider.apiKey] }, () => runNativeSteps(options));
+export async function runNativeAgent(
+  options: NativeRunOptions,
+): Promise<string> {
+  return observe(
+    {
+      domain: "agent",
+      eventName: "agent.run",
+      model: options.modelId,
+      providerId: options.provider.id,
+      secrets: [options.provider.apiKey],
+    },
+    () => runNativeSteps(options),
+  );
 }
 
 async function runNativeSteps(options: NativeRunOptions): Promise<string> {
   const { models, model } = buildModel(options.provider, options.modelId);
-  const reasoning = options.reasoningEffort && options.reasoningEffort !== 'default'
-    ? options.reasoningEffort
-    : undefined;
+  const reasoning =
+    options.reasoningEffort && options.reasoningEffort !== "default"
+      ? options.reasoningEffort
+      : undefined;
   const runtimeModel = reasoning ? { ...model, reasoning: true } : model;
   const modelParameters = options.modelParameters;
-  const maxTokens = modelParameters?.maxOutputTokens === undefined
-    ? undefined
-    : Math.min(modelParameters.maxOutputTokens, model.maxTokens);
+  const maxTokens =
+    modelParameters?.maxOutputTokens === undefined
+      ? undefined
+      : Math.min(modelParameters.maxOutputTokens, model.maxTokens);
   const topP = !reasoning ? modelParameters?.topP : undefined;
   const payloadParameters = {
     ...(topP !== undefined ? { top_p: topP } : {}),
     ...customModelParameterPayload(modelParameters?.customParameters),
   };
-  const contextWindowEstimated = providerModelIds(options.provider)?.includes(options.modelId) !== true;
+  const contextWindowEstimated =
+    providerModelIds(options.provider)?.includes(options.modelId) !== true;
   const tools = Object.values(options.tools);
   const maxSteps = resolveMaxSteps(options.maxSteps);
   const context: Context = {
@@ -171,51 +218,90 @@ async function runNativeSteps(options: NativeRunOptions): Promise<string> {
     messages: [...options.messages],
     ...(tools.length ? { tools } : {}),
   };
-  let text = '';
+  let text = "";
 
   for (let step = 0; step < maxSteps; step += 1) {
     const message = await withLogContext({}, async () => {
-    const modelStart = performance.now();
-    let firstOutputMs: number | undefined;
-    try {
-    const stream = models.streamSimple(runtimeModel, context, {
-      signal: options.signal,
-      maxRetries: 0,
-      ...(reasoning ? { reasoning } : {}),
-      ...(maxTokens ? { maxTokens } : {}),
-      ...(!reasoning && modelParameters?.temperature !== undefined
-        ? { temperature: modelParameters.temperature }
-        : {}),
-      ...(Object.keys(payloadParameters).length ? {
-        onPayload: (payload) => (
-          payload && typeof payload === 'object' && !Array.isArray(payload)
-            ? { ...(payload as Record<string, unknown>), ...payloadParameters }
-            : payload
-        ),
-      } : {}),
+      const modelStart = performance.now();
+      let firstOutputMs: number | undefined;
+      try {
+        const stream = models.streamSimple(runtimeModel, context, {
+          signal: options.signal,
+          maxRetries: 0,
+          ...(reasoning ? { reasoning } : {}),
+          ...(maxTokens ? { maxTokens } : {}),
+          ...(!reasoning && modelParameters?.temperature !== undefined
+            ? { temperature: modelParameters.temperature }
+            : {}),
+          ...(Object.keys(payloadParameters).length
+            ? {
+                onPayload: (payload) =>
+                  payload &&
+                  typeof payload === "object" &&
+                  !Array.isArray(payload)
+                    ? {
+                        ...(payload as Record<string, unknown>),
+                        ...payloadParameters,
+                      }
+                    : payload,
+              }
+            : {}),
+        });
+        for await (const event of stream) {
+          if (firstOutputMs === undefined && event.type === "text_delta")
+            firstOutputMs = Math.round(performance.now() - modelStart);
+          await options.onEvent?.(event);
+        }
+        const message = await stream.result();
+        await recordEvent({
+          domain: "agent",
+          eventName: "model.call",
+          model: options.modelId,
+          durationMs: Math.round(performance.now() - modelStart),
+          outcome:
+            message.stopReason === "aborted"
+              ? "cancelled"
+              : message.stopReason === "error"
+                ? "error"
+                : "success",
+          error:
+            message.stopReason === "error"
+              ? new Error(message.errorMessage || "Model request failed")
+              : undefined,
+          attributes: {
+            step,
+            firstOutputMs,
+            stopReason: message.stopReason,
+            inputTokens: message.usage.input,
+            outputTokens: message.usage.output,
+            cacheReadTokens: message.usage.cacheRead,
+            cacheWriteTokens: message.usage.cacheWrite,
+          },
+        });
+        return message;
+      } catch (error) {
+        await recordEvent({
+          domain: "agent",
+          eventName: "model.call",
+          error,
+          durationMs: Math.round(performance.now() - modelStart),
+          attributes: { step, firstOutputMs },
+        });
+        throw error;
+      }
     });
-    for await (const event of stream) {
-      if (firstOutputMs === undefined && event.type === 'text_delta') firstOutputMs = Math.round(performance.now() - modelStart);
-      await options.onEvent?.(event);
+    if (message.stopReason === "error" || message.stopReason === "aborted") {
+      throw message.stopReason === "aborted"
+        ? new DOMException(
+            message.errorMessage || "Model request aborted.",
+            "AbortError",
+          )
+        : new Error(message.errorMessage || "Model request failed.");
     }
-    const message = await stream.result();
-    await recordEvent({ domain: 'agent', eventName: 'model.call', model: options.modelId,
-      durationMs: Math.round(performance.now() - modelStart),
-      outcome: message.stopReason === 'aborted' ? 'cancelled' : message.stopReason === 'error' ? 'error' : 'success',
-      error: message.stopReason === 'error' ? new Error(message.errorMessage || 'Model request failed') : undefined,
-      attributes: { step, firstOutputMs, stopReason: message.stopReason, inputTokens: message.usage.input,
-        outputTokens: message.usage.output, cacheReadTokens: message.usage.cacheRead, cacheWriteTokens: message.usage.cacheWrite },
-    });
-    return message;
-    } catch (error) {
-      await recordEvent({ domain: 'agent', eventName: 'model.call', error, durationMs: Math.round(performance.now() - modelStart), attributes: { step, firstOutputMs } });
-      throw error;
-    }
-    });
-    if (message.stopReason === 'error' || message.stopReason === 'aborted') {
-      throw message.stopReason === 'aborted' ? new DOMException(message.errorMessage || 'Model request aborted.', 'AbortError') : new Error(message.errorMessage || 'Model request failed.');
-    }
-    if (Number.isFinite(message.usage.totalTokens) && message.usage.totalTokens > 0) {
+    if (
+      Number.isFinite(message.usage.totalTokens) &&
+      message.usage.totalTokens > 0
+    ) {
       await options.onContextUsage?.({
         usedTokens: message.usage.totalTokens,
         maxTokens: model.contextWindow,
@@ -225,48 +311,69 @@ async function runNativeSteps(options: NativeRunOptions): Promise<string> {
     }
     context.messages.push(message);
     const responseText = message.content
-      .filter((content): content is { type: 'text'; text: string } => content.type === 'text')
+      .filter(
+        (content): content is { type: "text"; text: string } =>
+          content.type === "text",
+      )
       .map((content) => content.text)
-      .join('');
+      .join("");
     if (responseText) text += responseText;
 
-    const toolCalls = message.content.filter((content): content is ToolCall => content.type === 'toolCall');
+    const toolCalls = message.content.filter(
+      (content): content is ToolCall => content.type === "toolCall",
+    );
     if (!toolCalls.length) return text;
 
     for (const toolCall of toolCalls) {
       await withLogContext({}, async () => {
-      if (options.signal?.aborted) throw new Error('Model request aborted.');
-      const localTool = options.tools[toolCall.name];
-      let output: unknown;
-      let isError = false;
-      let toolError: unknown;
-      const toolStart = performance.now();
-      try {
-        if (!localTool) throw new Error(`Unknown tool: ${toolCall.name}`);
-        output = await localTool.execute(validateToolCall(tools, toolCall) as Record<string, unknown>);
-      } catch (error) {
-        isError = true;
-        toolError = error;
-        output = { error: error instanceof Error ? error.message : String(error) };
-      }
-      const semanticError = output && typeof output === 'object' && ('isError' in output && output.isError === true || 'error' in output && Boolean(output.error));
-      await recordEvent({ domain: 'agent', eventName: 'tool.call', toolName: toolCall.name,
-        outcome: isError || semanticError ? 'error' : 'success',
-        error: toolError,
-        durationMs: Math.round(performance.now() - toolStart), attributes: { toolCallId: toolCall.id },
-        payloadPolicy: 'agent-content', detail: () => ({ input: toolCall.arguments, output }) });
-      await options.onToolResult?.(toolCall, output, isError);
-      context.messages.push({
-        role: 'toolResult',
-        toolCallId: toolCall.id,
-        toolName: toolCall.name,
-        content: [{ type: 'text', text: toolResultText(output) }],
-        isError,
-        timestamp: Date.now(),
-      });
+        if (options.signal?.aborted) throw new Error("Model request aborted.");
+        const localTool = options.tools[toolCall.name];
+        let output: unknown;
+        let isError = false;
+        let toolError: unknown;
+        const toolStart = performance.now();
+        try {
+          if (!localTool) throw new Error(`Unknown tool: ${toolCall.name}`);
+          output = await localTool.execute(
+            validateToolCall(tools, toolCall) as Record<string, unknown>,
+          );
+        } catch (error) {
+          isError = true;
+          toolError = error;
+          output = {
+            error: error instanceof Error ? error.message : String(error),
+          };
+        }
+        const semanticError =
+          output &&
+          typeof output === "object" &&
+          (("isError" in output && output.isError === true) ||
+            ("error" in output && Boolean(output.error)));
+        await recordEvent({
+          domain: "agent",
+          eventName: "tool.call",
+          toolName: toolCall.name,
+          outcome: isError || semanticError ? "error" : "success",
+          error: toolError,
+          durationMs: Math.round(performance.now() - toolStart),
+          attributes: { toolCallId: toolCall.id },
+          payloadPolicy: "agent-content",
+          detail: () => ({ input: toolCall.arguments, output }),
+        });
+        await options.onToolResult?.(toolCall, output, isError);
+        context.messages.push({
+          role: "toolResult",
+          toolCallId: toolCall.id,
+          toolName: toolCall.name,
+          content: [{ type: "text", text: toolResultText(output) }],
+          isError,
+          timestamp: Date.now(),
+        });
       });
     }
   }
 
-  throw new Error(`Agent reached the ${maxSteps}-turn tool-call limit before completing its response.`);
+  throw new Error(
+    `Agent reached the ${maxSteps}-turn tool-call limit before completing its response.`,
+  );
 }

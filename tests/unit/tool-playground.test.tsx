@@ -1,8 +1,8 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
-import { ToolPlayground } from '@/components/dashboard/ToolPlayground';
+import { ToolPlayground } from "@/components/dashboard/ToolPlayground";
 
 const mocks = vi.hoisted(() => ({
   connectMcpInspectorAction: vi.fn(),
@@ -12,13 +12,19 @@ const mocks = vi.hoisted(() => ({
   refresh: vi.fn(),
 }));
 
-vi.mock('@/lib/workspace/inspector-actions', () => ({
+vi.mock("@/lib/workspace/inspector-actions", () => ({
   connectMcpInspectorAction: mocks.connectMcpInspectorAction,
   runMcpInspectorToolAction: mocks.runMcpInspectorToolAction,
 }));
-vi.mock('@/lib/workspace/actions', () => ({ runMcpConsoleToolAction: mocks.runMcpConsoleToolAction }));
-vi.mock('@/lib/sandboxes/actions', () => ({ startSandboxAction: mocks.startSandboxAction }));
-vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: mocks.refresh }) }));
+vi.mock("@/lib/workspace/actions", () => ({
+  runMcpConsoleToolAction: mocks.runMcpConsoleToolAction,
+}));
+vi.mock("@/lib/sandboxes/actions", () => ({
+  startSandboxAction: mocks.startSandboxAction,
+}));
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ refresh: mocks.refresh }),
+}));
 
 type PlaygroundTool = {
   name: string;
@@ -31,19 +37,30 @@ type PlaygroundTool = {
 
 const tools: PlaygroundTool[] = [
   {
-    name: 'echo',
-    description: 'Echo back the provided message.',
-    inputSchema: { properties: { message: { type: 'string' } }, required: ['message'] },
+    name: "echo",
+    description: "Echo back the provided message.",
+    inputSchema: {
+      properties: { message: { type: "string" } },
+      required: ["message"],
+    },
   },
   {
-    name: 'add',
-    description: 'Add two numbers.',
-    inputSchema: { properties: { a: { type: 'number' }, b: { type: 'number' } } },
+    name: "add",
+    description: "Add two numbers.",
+    inputSchema: {
+      properties: { a: { type: "number" }, b: { type: "number" } },
+    },
   },
 ];
-const sandbox = { id: 'sandbox-1', name: 'Inspector lab', kind: 'docker', running: true, networkEnabled: true };
+const sandbox = {
+  id: "sandbox-1",
+  name: "Inspector lab",
+  kind: "docker",
+  running: true,
+  networkEnabled: true,
+};
 
-describe('ToolPlayground', () => {
+describe("ToolPlayground", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     mocks.connectMcpInspectorAction.mockReset();
@@ -53,153 +70,266 @@ describe('ToolPlayground', () => {
     mocks.refresh.mockReset();
   });
 
-  it('renders tool chips and the first tool description', () => {
-    render(<ToolPlayground workspace="acme" deploymentId="dep1" tools={tools} sandboxes={[sandbox]} connectedSandboxId="sandbox-1" />);
-    expect(screen.getByRole('button', { name: 'echo' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'add' })).toBeInTheDocument();
-    expect(screen.getByText('Echo back the provided message.')).toBeInTheDocument();
-  });
-
-  it('bounds the argument editor without dropping large tool inputs', async () => {
-    const properties = Object.fromEntries(
-      Array.from({ length: 40 }, (_, index) => [`field_${index}`, { type: 'string' }]),
+  it("renders tool chips and the first tool description", () => {
+    render(
+      <ToolPlayground
+        workspace="acme"
+        deploymentId="dep1"
+        tools={tools}
+        sandboxes={[sandbox]}
+        connectedSandboxId="sandbox-1"
+      />,
     );
-    render(<ToolPlayground workspace="acme" deploymentId="dep1" defaultRuntime tools={[
-      { name: 'large_input', inputSchema: { properties } },
-      ...tools,
-    ]} />);
-
-    const editor = screen.getByRole('textbox');
-    expect(editor).toHaveAttribute('rows', '12');
-    expect(JSON.parse((editor as HTMLTextAreaElement).value)).toHaveProperty('field_39', '');
-    await userEvent.click(screen.getByRole('button', { name: 'echo' }));
-    expect(editor).toHaveAttribute('rows', '5');
-    expect(JSON.parse((editor as HTMLTextAreaElement).value)).toEqual({ message: '' });
+    expect(screen.getByRole("button", { name: "echo" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "add" })).toBeInTheDocument();
+    expect(
+      screen.getByText("Echo back the provided message."),
+    ).toBeInTheDocument();
   });
 
-  it('runs a tool through the workspace-scoped console action and shows the result', async () => {
+  it("bounds the argument editor without dropping large tool inputs", async () => {
+    const properties = Object.fromEntries(
+      Array.from({ length: 40 }, (_, index) => [
+        `field_${index}`,
+        { type: "string" },
+      ]),
+    );
+    render(
+      <ToolPlayground
+        workspace="acme"
+        deploymentId="dep1"
+        defaultRuntime
+        tools={[{ name: "large_input", inputSchema: { properties } }, ...tools]}
+      />,
+    );
+
+    const editor = screen.getByRole("textbox");
+    expect(editor).toHaveAttribute("rows", "12");
+    expect(JSON.parse((editor as HTMLTextAreaElement).value)).toHaveProperty(
+      "field_39",
+      "",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "echo" }));
+    expect(editor).toHaveAttribute("rows", "5");
+    expect(JSON.parse((editor as HTMLTextAreaElement).value)).toEqual({
+      message: "",
+    });
+  });
+
+  it("runs a tool through the workspace-scoped console action and shows the result", async () => {
     mocks.runMcpInspectorToolAction.mockResolvedValue({
-      result: { content: [{ type: 'text', text: 'HELLO' }] },
+      result: { content: [{ type: "text", text: "HELLO" }] },
     });
 
-    render(<ToolPlayground workspace="acme" deploymentId="dep1" tools={tools} sandboxes={[sandbox]} connectedSandboxId="sandbox-1" />);
-    await userEvent.click(screen.getByRole('button', { name: /run tool/i }));
+    render(
+      <ToolPlayground
+        workspace="acme"
+        deploymentId="dep1"
+        tools={tools}
+        sandboxes={[sandbox]}
+        connectedSandboxId="sandbox-1"
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: /run tool/i }));
 
     expect(mocks.runMcpInspectorToolAction).toHaveBeenCalledWith({
-      workspace: 'acme',
-      deploymentId: 'dep1',
-      sandboxId: 'sandbox-1',
-      toolName: 'echo',
-      arguments: { message: '' },
+      workspace: "acme",
+      deploymentId: "dep1",
+      sandboxId: "sandbox-1",
+      toolName: "echo",
+      arguments: { message: "" },
     });
-    expect(await screen.findByText('HELLO')).toBeInTheDocument();
+    expect(await screen.findByText("HELLO")).toBeInTheDocument();
   });
 
-  it('uses the managed runtime without requiring an inspector sandbox', async () => {
+  it("uses the managed runtime without requiring an inspector sandbox", async () => {
     mocks.runMcpConsoleToolAction.mockResolvedValue({
-      result: { content: [{ type: 'text', text: 'HELLO' }] },
+      result: { content: [{ type: "text", text: "HELLO" }] },
     });
 
-    render(<ToolPlayground workspace="acme" deploymentId="dep1" tools={tools} defaultRuntime />);
-    expect(screen.queryByRole('button', { name: /connect inspector/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+    render(
+      <ToolPlayground
+        workspace="acme"
+        deploymentId="dep1"
+        tools={tools}
+        defaultRuntime
+      />,
+    );
+    expect(
+      screen.queryByRole("button", { name: /connect inspector/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole('button', { name: /run tool/i }));
+    await userEvent.click(screen.getByRole("button", { name: /run tool/i }));
 
     expect(mocks.runMcpConsoleToolAction).toHaveBeenCalledWith({
-      workspace: 'acme',
-      deploymentId: 'dep1',
-      toolName: 'echo',
-      arguments: { message: '' },
+      workspace: "acme",
+      deploymentId: "dep1",
+      toolName: "echo",
+      arguments: { message: "" },
     });
     expect(mocks.runMcpInspectorToolAction).not.toHaveBeenCalled();
-    expect(await screen.findByText('HELLO')).toBeInTheDocument();
+    expect(await screen.findByText("HELLO")).toBeInTheDocument();
   });
 
-  it('retains destructive-tool confirmation on the direct runtime', async () => {
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true);
-    mocks.runMcpConsoleToolAction.mockResolvedValue({ result: { content: [{ type: 'text', text: 'deleted' }] } });
-    render(<ToolPlayground workspace="acme" deploymentId="dep1" tools={[{ name: 'delete', annotations: { destructiveHint: true } }]} defaultRuntime />);
-    await userEvent.click(screen.getByRole('button', { name: /run tool/i }));
+  it("retains destructive-tool confirmation on the direct runtime", async () => {
+    const confirm = vi
+      .spyOn(window, "confirm")
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(true);
+    mocks.runMcpConsoleToolAction.mockResolvedValue({
+      result: { content: [{ type: "text", text: "deleted" }] },
+    });
+    render(
+      <ToolPlayground
+        workspace="acme"
+        deploymentId="dep1"
+        tools={[{ name: "delete", annotations: { destructiveHint: true } }]}
+        defaultRuntime
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: /run tool/i }));
     expect(confirm).toHaveBeenCalled();
     expect(mocks.runMcpConsoleToolAction).not.toHaveBeenCalled();
-    await userEvent.click(screen.getByRole('button', { name: /run tool/i }));
-    expect(await screen.findByText('deleted')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /run tool/i }));
+    expect(await screen.findByText("deleted")).toBeInTheDocument();
   });
 
   it.each([
-    ['deploymentNotRunning', /check that the deployment is running/i],
-    ['invalidToolCall', /tool is no longer available/i],
-    ['toolDiscoveryFailed', /could not discover tools/i],
-    ['notAuthorized', /do not have access/i],
-  ])('shows a clean direct-runtime error for %s without a sandbox instruction', async (error, message) => {
-    mocks.runMcpConsoleToolAction.mockResolvedValue({ error });
-    render(<ToolPlayground workspace="acme" deploymentId="dep1" tools={tools} defaultRuntime />);
-    await userEvent.click(screen.getByRole('button', { name: /run tool/i }));
-    expect(await screen.findByText(message)).toBeInTheDocument();
-    expect(screen.queryByText(/sandbox connection failed/i)).not.toBeInTheDocument();
-  });
+    ["deploymentNotRunning", /check that the deployment is running/i],
+    ["invalidToolCall", /tool is no longer available/i],
+    ["toolDiscoveryFailed", /could not discover tools/i],
+    ["notAuthorized", /do not have access/i],
+  ])(
+    "shows a clean direct-runtime error for %s without a sandbox instruction",
+    async (error, message) => {
+      mocks.runMcpConsoleToolAction.mockResolvedValue({ error });
+      render(
+        <ToolPlayground
+          workspace="acme"
+          deploymentId="dep1"
+          tools={tools}
+          defaultRuntime
+        />,
+      );
+      await userEvent.click(screen.getByRole("button", { name: /run tool/i }));
+      expect(await screen.findByText(message)).toBeInTheDocument();
+      expect(
+        screen.queryByText(/sandbox connection failed/i),
+      ).not.toBeInTheDocument();
+    },
+  );
 
-  it('updates a managed runtime when tools arrive after provisioning', async () => {
+  it("updates a managed runtime when tools arrive after provisioning", async () => {
     const { rerender } = render(
-      <ToolPlayground key="managed:" workspace="acme" deploymentId="dep1" tools={[]} defaultRuntime />,
+      <ToolPlayground
+        key="managed:"
+        workspace="acme"
+        deploymentId="dep1"
+        tools={[]}
+        defaultRuntime
+      />,
     );
 
-    expect(screen.getByText(/no tools are currently available/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/no tools are currently available/i),
+    ).toBeInTheDocument();
     rerender(
-      <ToolPlayground key="managed:echo|add" workspace="acme" deploymentId="dep1" tools={tools} defaultRuntime />,
+      <ToolPlayground
+        key="managed:echo|add"
+        workspace="acme"
+        deploymentId="dep1"
+        tools={tools}
+        defaultRuntime
+      />,
     );
 
-    expect(await screen.findByRole('button', { name: 'echo' })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: "echo" }),
+    ).toBeInTheDocument();
   });
 
-  it('shows an empty state when there are no tools', () => {
-    render(<ToolPlayground workspace="acme" deploymentId="dep1" tools={[]} sandboxes={[sandbox]} connectedSandboxId="sandbox-1" />);
-    expect(screen.getByText(/no tools are currently available/i)).toBeInTheDocument();
+  it("shows an empty state when there are no tools", () => {
+    render(
+      <ToolPlayground
+        workspace="acme"
+        deploymentId="dep1"
+        tools={[]}
+        sandboxes={[sandbox]}
+        connectedSandboxId="sandbox-1"
+      />,
+    );
+    expect(
+      screen.getByText(/no tools are currently available/i),
+    ).toBeInTheDocument();
   });
 
-  it('loads tools only after connecting the selected sandbox', async () => {
+  it("loads tools only after connecting the selected sandbox", async () => {
     mocks.connectMcpInspectorAction.mockResolvedValue({ tools });
-    render(<ToolPlayground workspace="acme" deploymentId="dep1" tools={[]} sandboxes={[sandbox]} />);
+    render(
+      <ToolPlayground
+        workspace="acme"
+        deploymentId="dep1"
+        tools={[]}
+        sandboxes={[sandbox]}
+      />,
+    );
 
-    expect(screen.queryByRole('button', { name: 'echo' })).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: /connect inspector/i }));
+    expect(
+      screen.queryByRole("button", { name: "echo" }),
+    ).not.toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("button", { name: /connect inspector/i }),
+    );
 
     expect(mocks.connectMcpInspectorAction).toHaveBeenCalledWith({
-      workspace: 'acme', deploymentId: 'dep1', sandboxId: 'sandbox-1',
+      workspace: "acme",
+      deploymentId: "dep1",
+      sandboxId: "sandbox-1",
     });
-    expect(await screen.findByRole('button', { name: 'echo' })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: "echo" }),
+    ).toBeInTheDocument();
     expect(mocks.refresh).toHaveBeenCalled();
   });
 
-  it('starts a stopped sandbox and refreshes its live status', async () => {
+  it("starts a stopped sandbox and refreshes its live status", async () => {
     mocks.startSandboxAction.mockResolvedValue(undefined);
-    render(<ToolPlayground
-      workspace="acme"
-      deploymentId="dep1"
-      tools={[]}
-      sandboxes={[{ ...sandbox, running: false }]}
-    />);
+    render(
+      <ToolPlayground
+        workspace="acme"
+        deploymentId="dep1"
+        tools={[]}
+        sandboxes={[{ ...sandbox, running: false }]}
+      />,
+    );
 
-    await userEvent.click(screen.getByRole('button', { name: /start sandbox/i }));
+    await userEvent.click(
+      screen.getByRole("button", { name: /start sandbox/i }),
+    );
     expect(mocks.startSandboxAction).toHaveBeenCalledWith(expect.any(FormData));
     expect(mocks.refresh).toHaveBeenCalled();
   });
 
-  it('requires connector credentials before offering sandbox controls', () => {
-    render(<ToolPlayground
-      workspace="acme team"
-      deploymentId="dep/1"
-      tools={[]}
-      sandboxes={[sandbox]}
-      credentialsRequired
-    />);
-
-    expect(screen.getByText(/configure this connector's required credentials/i)).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /configure variables/i })).toHaveAttribute(
-      'href',
-      '/app/acme%20team/mcp/dep%2F1?tab=variables',
+  it("requires connector credentials before offering sandbox controls", () => {
+    render(
+      <ToolPlayground
+        workspace="acme team"
+        deploymentId="dep/1"
+        tools={[]}
+        sandboxes={[sandbox]}
+        credentialsRequired
+      />,
     );
-    expect(screen.queryByRole('button', { name: /connect inspector/i })).not.toBeInTheDocument();
+
+    expect(
+      screen.getByText(/configure this connector's required credentials/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: /configure variables/i }),
+    ).toHaveAttribute("href", "/app/acme%20team/mcp/dep%2F1?tab=variables");
+    expect(
+      screen.queryByRole("button", { name: /connect inspector/i }),
+    ).not.toBeInTheDocument();
   });
 });

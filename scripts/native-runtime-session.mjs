@@ -1,17 +1,24 @@
-import { spawn } from 'node:child_process';
-import { createHash, randomUUID } from 'node:crypto';
-import { existsSync } from 'node:fs';
-import { chmod, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
-import { createConnection, createServer } from 'node:net';
-import { dirname } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { spawn } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
+import {
+  chmod,
+  mkdir,
+  readFile,
+  rename,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
+import { createConnection, createServer } from "node:net";
+import { dirname } from "node:path";
+import { pathToFileURL } from "node:url";
 
 // The CLI stays alive between turns, like Cherry's SDK query. No model keys or database access.
 const inputPath = process.argv[2];
-const input = JSON.parse(await readFile(inputPath, 'utf8'));
-const socketPath = `/tmp/toolplane-runtime-${createHash('sha256').update(input.statePath).digest('hex').slice(0, 32)}.sock`;
+const input = JSON.parse(await readFile(inputPath, "utf8"));
+const socketPath = `/tmp/toolplane-runtime-${createHash("sha256").update(input.statePath).digest("hex").slice(0, 32)}.sock`;
 
-if (process.argv[3] === 'serve') await serve();
+if (process.argv[3] === "serve") await serve();
 else await request();
 
 async function request() {
@@ -21,37 +28,56 @@ async function request() {
       const socket = createConnection(socketPath);
       let connected = false;
       let restart = false;
-      let output = '';
-      socket.once('connect', () => { connected = true; socket.write(JSON.stringify(input) + '\n'); });
-      socket.on('data', (data) => {
+      let output = "";
+      socket.once("connect", () => {
+        connected = true;
+        socket.write(`${JSON.stringify(input)}\n`);
+      });
+      socket.on("data", (data) => {
         output += data;
-        let index;
-        while ((index = output.indexOf('\n')) >= 0) {
-          const line = output.slice(0, index); output = output.slice(index + 1);
-          if (JSON.parse(line).type === 'toolplane_session_restart') restart = true;
-          else process.stdout.write(line + '\n');
+        while (true) {
+          const index = output.indexOf("\n");
+          if (index < 0) break;
+          const line = output.slice(0, index);
+          output = output.slice(index + 1);
+          if (JSON.parse(line).type === "toolplane_session_restart")
+            restart = true;
+          else process.stdout.write(`${line}\n`);
         }
       });
-      socket.once('error', (error) => {
+      socket.once("error", (error) => {
         if (connected) reject(error);
-        else if (error.code === 'ECONNREFUSED') void unlink(socketPath).catch(() => {}).then(() => resolve('missing'));
-        else resolve('missing');
+        else if (error.code === "ECONNREFUSED")
+          void unlink(socketPath)
+            .catch(() => {})
+            .then(() => resolve("missing"));
+        else resolve("missing");
       });
-      socket.once('end', () => resolve(restart ? 'restart' : 'done'));
-      const abort = () => { socket.destroy(); process.exit(1); };
-      process.once('SIGTERM', abort);
-      socket.once('close', () => process.removeListener('SIGTERM', abort));
+      socket.once("end", () => resolve(restart ? "restart" : "done"));
+      const abort = () => {
+        socket.destroy();
+        process.exit(1);
+      };
+      process.once("SIGTERM", abort);
+      socket.once("close", () => process.removeListener("SIGTERM", abort));
     });
-    if (result === 'done') return;
-    if (result === 'restart') { launched = false; await new Promise((resolve) => setTimeout(resolve, 100)); }
+    if (result === "done") return;
+    if (result === "restart") {
+      launched = false;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
     if (!launched) {
-      const child = spawn(process.execPath, [process.argv[1], inputPath, 'serve'], { detached: true, stdio: 'ignore' });
+      const child = spawn(
+        process.execPath,
+        [process.argv[1], inputPath, "serve"],
+        { detached: true, stdio: "ignore" },
+      );
       child.unref();
       launched = true;
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  throw new Error('Native runtime session did not start.');
+  throw new Error("Native runtime session did not start.");
 }
 
 async function serve() {
@@ -61,91 +87,184 @@ async function serve() {
   let init;
   let commands;
   let sdkRequestId;
-  let buffer = '';
-  let stderr = '';
+  let buffer = "";
+  let stderr = "";
   let idle;
   let stopping = false;
-  let state = input.kind === 'pi-sdk' ? undefined : await readFile(input.statePath, 'utf8').then(JSON.parse).catch((error) => {
-    if (error.code !== 'ENOENT') throw error;
-    return { id: randomUUID(), seeded: false };
-  });
-  const send = (event) => active?.write(JSON.stringify(event) + '\n');
+  const state =
+    input.kind === "pi-sdk"
+      ? undefined
+      : await readFile(input.statePath, "utf8")
+          .then(JSON.parse)
+          .catch((error) => {
+            if (error.code !== "ENOENT") throw error;
+            return { id: randomUUID(), seeded: false };
+          });
+  const send = (event) => active?.write(`${JSON.stringify(event)}\n`);
   const fail = (text) => {
-    if (input.kind !== 'pi-sdk') { send({ type: 'toolplane_command_result', isError: true, text }); return; }
+    if (input.kind !== "pi-sdk") {
+      send({ type: "toolplane_command_result", isError: true, text });
+      return;
+    }
     if (!active || !sdkRequestId) return;
-    const code = /^PI_[A-Z0-9_]{1,80}$/.test(text) ? text : 'PI_SDK_RUNTIME_FAILED';
-    send({ type: 'toolplane_sdk_response', id: sdkRequestId, success: false, error: { code, message: code } });
+    const code = /^PI_[A-Z0-9_]{1,80}$/.test(text)
+      ? text
+      : "PI_SDK_RUNTIME_FAILED";
+    send({
+      type: "toolplane_sdk_response",
+      id: sdkRequestId,
+      success: false,
+      error: { code, message: code },
+    });
     sdkRequestId = undefined;
   };
   const server = createServer((socket) => {
-    let requestBuffer = '';
-    socket.on('error', () => {});
-    socket.on('data', async (data) => {
+    let requestBuffer = "";
+    socket.on("error", () => {});
+    socket.on("data", async (data) => {
       requestBuffer += data;
-      const newline = requestBuffer.indexOf('\n');
+      const newline = requestBuffer.indexOf("\n");
       if (newline < 0) return;
-      socket.removeAllListeners('data');
+      socket.removeAllListeners("data");
       try {
         const job = JSON.parse(requestBuffer.slice(0, newline));
-        if (active) { socket.end(JSON.stringify({ type: 'toolplane_command_result', isError: true, text: 'This native session is busy.' }) + '\n'); return; }
+        if (active) {
+          socket.end(
+            `${JSON.stringify({
+              type: "toolplane_command_result",
+              isError: true,
+              text: "This native session is busy.",
+            })}\n`,
+          );
+          return;
+        }
         active = socket;
-        if (input.kind === 'pi-sdk') sdkRequestId = randomUUID();
+        if (input.kind === "pi-sdk") sdkRequestId = randomUUID();
         clearTimeout(idle);
-        if (job.signature !== input.signature || (input.kind !== 'pi-sdk' && Date.now() - startedAt > 20 * 60_000)) { send({ type: 'toolplane_session_restart' }); await stop(); return; }
+        if (
+          job.signature !== input.signature ||
+          (input.kind !== "pi-sdk" && Date.now() - startedAt > 20 * 60_000)
+        ) {
+          send({ type: "toolplane_session_restart" });
+          await stop();
+          return;
+        }
         if (!child) await start(job);
         if (init) send(init);
         if (commands) send(commands);
-        if (input.kind === 'pi-sdk') {
+        if (input.kind === "pi-sdk") {
           const args = job.command?.match(/^\/compact(?:\s+([\s\S]*))?$/);
-          child.stdin.write(JSON.stringify({ id: sdkRequestId, type: args ? 'compact' : 'prompt',
-            ...(args ? { customInstructions: args[1] } : { message: job.command || job.message }), context: job.context }) + '\n');
+          child.stdin.write(
+            `${JSON.stringify({
+              id: sdkRequestId,
+              type: args ? "compact" : "prompt",
+              ...(args
+                ? { customInstructions: args[1] }
+                : { message: job.command || job.message }),
+              context: job.context,
+            })}\n`,
+          );
         } else {
           const text = job.command || (state.seeded ? job.message : job.prompt);
-          if (input.kind === 'pi') {
+          if (input.kind === "pi") {
             const args = job.command?.match(/^\/compact(?:\s+([\s\S]*))?$/i);
-            child.stdin.write(JSON.stringify(args ? { id: 'turn', type: 'compact', customInstructions: args[1] } : { id: 'turn', type: 'prompt', message: text }) + '\n');
-          } else child.stdin.write(JSON.stringify({ type: 'user', message: { role: 'user', content: text }, parent_tool_use_id: null, session_id: state.id }) + '\n');
+            child.stdin.write(
+              `${JSON.stringify(
+                args
+                  ? { id: "turn", type: "compact", customInstructions: args[1] }
+                  : { id: "turn", type: "prompt", message: text },
+              )}\n`,
+            );
+          } else
+            child.stdin.write(
+              `${JSON.stringify({
+                type: "user",
+                message: { role: "user", content: text },
+                parent_tool_use_id: null,
+                session_id: state.id,
+              })}\n`,
+            );
         }
-      } catch (error) { fail(input.kind === 'pi-sdk' ? 'PI_SDK_RUNTIME_FAILED' : error.message); await stop(); }
+      } catch (error) {
+        fail(input.kind === "pi-sdk" ? "PI_SDK_RUNTIME_FAILED" : error.message);
+        await stop();
+      }
     });
-    socket.on('close', () => { if (active === socket) void stop(); });
+    socket.on("close", () => {
+      if (active === socket) void stop();
+    });
   });
 
   async function save() {
     await mkdir(dirname(input.statePath), { recursive: true });
-    await writeFile(input.statePath + '.tmp', JSON.stringify(state), { mode: 0o600 });
-    await rename(input.statePath + '.tmp', input.statePath);
+    await writeFile(`${input.statePath}.tmp`, JSON.stringify(state), {
+      mode: 0o600,
+    });
+    await rename(`${input.statePath}.tmp`, input.statePath);
   }
 
   async function start(job) {
     const args = [...input.args];
-    if (input.kind === 'pi-sdk') {
-      child = spawn(input.binary, args, { stdio: ['pipe', 'pipe', 'pipe', 'pipe'], detached: true });
+    if (input.kind === "pi-sdk") {
+      child = spawn(input.binary, args, {
+        stdio: ["pipe", "pipe", "pipe", "pipe"],
+        detached: true,
+      });
       // Package console output is never protocol or public diagnostics.
-      const discard = (chunk) => { stderr = (stderr + chunk.toString()).slice(-8000); };
-      child.stdout.on('data', discard);
-      child.stderr.on('data', discard);
-      child.stdin.on('error', () => { if (!stopping) { fail('PI_SDK_RUNTIME_FAILED'); void stop(); } });
-      child.stdio[3].on('data', (chunk) => {
+      const discard = (chunk) => {
+        stderr = (stderr + chunk.toString()).slice(-8000);
+      };
+      child.stdout.on("data", discard);
+      child.stderr.on("data", discard);
+      child.stdin.on("error", () => {
+        if (!stopping) {
+          fail("PI_SDK_RUNTIME_FAILED");
+          void stop();
+        }
+      });
+      child.stdio[3].on("data", (chunk) => {
         buffer += chunk;
         if (stopping) return;
-        let index;
-        while ((index = buffer.indexOf('\n')) >= 0) {
-          const line = buffer.slice(0, index); buffer = buffer.slice(index + 1);
-          if (Buffer.byteLength(line) > 4 * 1024 * 1024) { fail('PI_SDK_PROTOCOL_INVALID'); void stop(); return; }
+        while (true) {
+          const index = buffer.indexOf("\n");
+          if (index < 0) break;
+          const line = buffer.slice(0, index);
+          buffer = buffer.slice(index + 1);
+          if (Buffer.byteLength(line) > 4 * 1024 * 1024) {
+            fail("PI_SDK_PROTOCOL_INVALID");
+            void stop();
+            return;
+          }
           let event;
-          try { event = JSON.parse(line); } catch { fail('PI_SDK_PROTOCOL_INVALID'); void stop(); return; }
-          if (event.type === 'toolplane_sdk_response') {
+          try {
+            event = JSON.parse(line);
+          } catch {
+            fail("PI_SDK_PROTOCOL_INVALID");
+            void stop();
+            return;
+          }
+          if (event.type === "toolplane_sdk_response") {
             if (!active || event.id !== sdkRequestId) continue;
             // The host owns its JSONL pointer and atomic state; neither crosses the socket.
             const result = event.result && {
-              text: event.result.text, commands: event.result.commands,
+              text: event.result.text,
+              commands: event.result.commands,
               ...(event.result.usage ? { usage: event.result.usage } : {}),
-              ...(event.result.commandResult ? { commandResult: event.result.commandResult } : {}),
+              ...(event.result.commandResult
+                ? { commandResult: event.result.commandResult }
+                : {}),
             };
-            const code = /^PI_[A-Z0-9_]{1,80}$/.test(event.error?.code) ? event.error.code : 'PI_SDK_RUNTIME_FAILED';
-            send({ type: event.type, id: event.id, success: event.success === true,
-              ...(event.success === true ? { result } : { error: { code, message: code } }) });
+            const code = /^PI_[A-Z0-9_]{1,80}$/.test(event.error?.code)
+              ? event.error.code
+              : "PI_SDK_RUNTIME_FAILED";
+            send({
+              type: event.type,
+              id: event.id,
+              success: event.success === true,
+              ...(event.success === true
+                ? { result }
+                : { error: { code, message: code } }),
+            });
             const socket = active;
             active = undefined;
             sdkRequestId = undefined;
@@ -153,76 +272,212 @@ async function serve() {
             idle = setTimeout(stop, 120_000);
           } else if (active) send(event);
         }
-        if (Buffer.byteLength(buffer) > 4 * 1024 * 1024) { fail('PI_SDK_PROTOCOL_INVALID'); void stop(); }
+        if (Buffer.byteLength(buffer) > 4 * 1024 * 1024) {
+          fail("PI_SDK_PROTOCOL_INVALID");
+          void stop();
+        }
       });
-      child.once('error', () => { fail('PI_SDK_RUNTIME_FAILED'); void stop(); });
-      child.once('exit', () => { if (!stopping) fail('PI_SDK_RUNTIME_EXITED'); void stop(); });
+      child.once("error", () => {
+        fail("PI_SDK_RUNTIME_FAILED");
+        void stop();
+      });
+      child.once("exit", () => {
+        if (!stopping) fail("PI_SDK_RUNTIME_EXITED");
+        void stop();
+      });
       return;
     }
-    if (input.kind === 'pi') {
-      const sessionPath = input.statePath + '.jsonl';
-      if (state.seeded && !existsSync(sessionPath) && job.history.length) throw new Error('Native session history is missing. Start a new conversation or restore the sandbox data.');
+    if (input.kind === "pi") {
+      const sessionPath = `${input.statePath}.jsonl`;
+      if (state.seeded && !existsSync(sessionPath) && job.history.length)
+        throw new Error(
+          "Native session history is missing. Start a new conversation or restore the sandbox data.",
+        );
       if (!existsSync(sessionPath) && job.history.length) {
-        const { SessionManager } = await import(pathToFileURL(`${input.packageRoot}/node_modules/@earendil-works/pi-coding-agent/dist/index.js`).href);
-        const manager = SessionManager.open(sessionPath, undefined, process.cwd());
-        for (const message of job.history) manager.appendMessage(message.role === 'assistant'
-          ? { role: 'assistant', content: [{ type: 'text', text: message.text }], api: input.api, provider: 'toolplane', model: input.model,
-            usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, stopReason: 'stop', timestamp: Date.now() }
-          : { role: 'user', content: message.text, timestamp: Date.now() });
+        const { SessionManager } = await import(
+          pathToFileURL(
+            `${input.packageRoot}/node_modules/@earendil-works/pi-coding-agent/dist/index.js`,
+          ).href
+        );
+        const manager = SessionManager.open(
+          sessionPath,
+          undefined,
+          process.cwd(),
+        );
+        for (const message of job.history)
+          manager.appendMessage(
+            message.role === "assistant"
+              ? {
+                  role: "assistant",
+                  content: [{ type: "text", text: message.text }],
+                  api: input.api,
+                  provider: "toolplane",
+                  model: input.model,
+                  usage: {
+                    input: 0,
+                    output: 0,
+                    cacheRead: 0,
+                    cacheWrite: 0,
+                    totalTokens: 0,
+                    cost: {
+                      input: 0,
+                      output: 0,
+                      cacheRead: 0,
+                      cacheWrite: 0,
+                      total: 0,
+                    },
+                  },
+                  stopReason: "stop",
+                  timestamp: Date.now(),
+                }
+              : { role: "user", content: message.text, timestamp: Date.now() },
+          );
         state.seeded = existsSync(sessionPath);
       }
-      args.push('--session', sessionPath);
+      args.push("--session", sessionPath);
     } else {
-      const sessionPath = `${process.env.CLAUDE_CONFIG_DIR}/projects/${process.cwd().replace(/[^a-zA-Z0-9]/g, '-')}/${state.id}.jsonl`;
-      if (state.seeded && !existsSync(sessionPath) && job.history.length) throw new Error('Native session history is missing. Start a new conversation or restore the sandbox data.');
+      const sessionPath = `${process.env.CLAUDE_CONFIG_DIR}/projects/${process.cwd().replace(/[^a-zA-Z0-9]/g, "-")}/${state.id}.jsonl`;
+      if (state.seeded && !existsSync(sessionPath) && job.history.length)
+        throw new Error(
+          "Native session history is missing. Start a new conversation or restore the sandbox data.",
+        );
       if (!existsSync(sessionPath) && job.history.length && !state.seeded) {
         // One-time import of pre-native history into the pinned CLI's resume format; subsequent writes are CLI-owned.
         await mkdir(dirname(sessionPath), { recursive: true });
         let parentUuid = null;
         const rows = job.history.map((message) => {
           const uuid = randomUUID();
-          const row = { type: message.role === 'assistant' ? 'assistant' : 'user', parentUuid, uuid, sessionId: state.id, cwd: process.cwd(), version: '2.1.245', isSidechain: false, userType: 'external', timestamp: new Date().toISOString(),
-            message: message.role === 'assistant' ? { role: 'assistant', content: [{ type: 'text', text: message.text }], model: input.model, id: randomUUID(), type: 'message', stop_reason: 'end_turn', stop_sequence: null, usage: { input_tokens: 0, output_tokens: 0 } }
-              : { role: 'user', content: message.text } };
+          const row = {
+            type: message.role === "assistant" ? "assistant" : "user",
+            parentUuid,
+            uuid,
+            sessionId: state.id,
+            cwd: process.cwd(),
+            version: "2.1.245",
+            isSidechain: false,
+            userType: "external",
+            timestamp: new Date().toISOString(),
+            message:
+              message.role === "assistant"
+                ? {
+                    role: "assistant",
+                    content: [{ type: "text", text: message.text }],
+                    model: input.model,
+                    id: randomUUID(),
+                    type: "message",
+                    stop_reason: "end_turn",
+                    stop_sequence: null,
+                    usage: { input_tokens: 0, output_tokens: 0 },
+                  }
+                : { role: "user", content: message.text },
+          };
           parentUuid = uuid;
           return JSON.stringify(row);
         });
-        await writeFile(sessionPath, rows.join('\n') + '\n', { mode: 0o600 });
+        await writeFile(sessionPath, `${rows.join("\n")}\n`, { mode: 0o600 });
         state.seeded = true;
       }
-      args.push(existsSync(sessionPath) ? '--resume' : '--session-id', state.id);
+      args.push(
+        existsSync(sessionPath) ? "--resume" : "--session-id",
+        state.id,
+      );
     }
-    child = spawn(input.binary, args, { stdio: ['pipe', 'pipe', 'pipe'], detached: true });
-    child.stderr.on('data', (chunk) => { stderr = (stderr + chunk).slice(-8000); });
-    child.stdin.on('error', () => {});
-    child.stdout.on('data', (chunk) => {
+    child = spawn(input.binary, args, {
+      stdio: ["pipe", "pipe", "pipe"],
+      detached: true,
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr = (stderr + chunk).slice(-8000);
+    });
+    child.stdin.on("error", () => {});
+    child.stdout.on("data", (chunk) => {
       buffer += chunk;
-      let index;
-      while ((index = buffer.indexOf('\n')) >= 0) {
-        const line = buffer.slice(0, index); buffer = buffer.slice(index + 1);
+      while (true) {
+        const index = buffer.indexOf("\n");
+        if (index < 0) break;
+        const line = buffer.slice(0, index);
+        buffer = buffer.slice(index + 1);
         let event;
-        try { event = JSON.parse(line); } catch { continue; }
-        if (event.type === 'system' && event.subtype === 'init') init = event;
-        if (event.type === 'system' && event.subtype === 'commands_changed') commands = event;
-        if (input.kind === 'claude-code' && typeof event.session_id === 'string') state.id = event.session_id;
-        send(event);
-        if (input.kind === 'pi' && event.type === 'agent_end') setTimeout(() => child?.stdin.write(JSON.stringify({ type: 'get_state', id: 'settled' }) + '\n'), 50);
-        if (input.kind === 'pi' && event.type === 'response' && event.id === 'settled' && (event.data?.isStreaming || event.data?.isCompacting || event.data?.isRetrying)) {
-          setTimeout(() => child?.stdin.write(JSON.stringify({ type: 'get_state', id: 'settled' }) + '\n'), 50);
+        try {
+          event = JSON.parse(line);
+        } catch {
           continue;
         }
-        const done = input.kind === 'pi' ? event.type === 'response' && (event.id === 'settled' || (event.id === 'turn' && (event.command !== 'prompt' || !event.success))) : event.type === 'result';
+        if (event.type === "system" && event.subtype === "init") init = event;
+        if (event.type === "system" && event.subtype === "commands_changed")
+          commands = event;
+        if (
+          input.kind === "claude-code" &&
+          typeof event.session_id === "string"
+        )
+          state.id = event.session_id;
+        send(event);
+        if (input.kind === "pi" && event.type === "agent_end")
+          setTimeout(
+            () =>
+              child?.stdin.write(
+                `${JSON.stringify({ type: "get_state", id: "settled" })}\n`,
+              ),
+            50,
+          );
+        if (
+          input.kind === "pi" &&
+          event.type === "response" &&
+          event.id === "settled" &&
+          (event.data?.isStreaming ||
+            event.data?.isCompacting ||
+            event.data?.isRetrying)
+        ) {
+          setTimeout(
+            () =>
+              child?.stdin.write(
+                `${JSON.stringify({ type: "get_state", id: "settled" })}\n`,
+              ),
+            50,
+          );
+          continue;
+        }
+        const done =
+          input.kind === "pi"
+            ? event.type === "response" &&
+              (event.id === "settled" ||
+                (event.id === "turn" &&
+                  (event.command !== "prompt" || !event.success)))
+            : event.type === "result";
         if (done) {
-          if (event.type === 'response' && event.command === 'compact') send({ type: 'toolplane_command_result', isError: !event.success, text: event.success ? 'Conversation compacted.' : event.error });
-          else if (event.type === 'response' && !event.success) fail(event.error || 'Pi command failed.');
+          if (event.type === "response" && event.command === "compact")
+            send({
+              type: "toolplane_command_result",
+              isError: !event.success,
+              text: event.success ? "Conversation compacted." : event.error,
+            });
+          else if (event.type === "response" && !event.success)
+            fail(event.error || "Pi command failed.");
           const socket = active;
           state.seeded = true;
-          void save().then(() => { if (active === socket) active = undefined; socket?.end(); idle = setTimeout(stop, 120_000); }, (error) => { fail(error.message); void stop(); });
+          void save().then(
+            () => {
+              if (active === socket) active = undefined;
+              socket?.end();
+              idle = setTimeout(stop, 120_000);
+            },
+            (error) => {
+              fail(error.message);
+              void stop();
+            },
+          );
         }
       }
     });
-    child.once('error', (error) => { fail(error.message); void stop(); });
-    child.once('exit', () => { if (!stopping) fail(stderr || 'Native runtime exited before completing the command.'); void stop(); });
+    child.once("error", (error) => {
+      fail(error.message);
+      void stop();
+    });
+    child.once("exit", () => {
+      if (!stopping)
+        fail(stderr || "Native runtime exited before completing the command.");
+      void stop();
+    });
   }
 
   async function stop() {
@@ -230,24 +485,43 @@ async function serve() {
     stopping = true;
     clearTimeout(idle);
     if (child?.pid) {
-      if (input.kind === 'pi-sdk') {
-        child.stdin.write(JSON.stringify({ id: randomUUID(), type: 'abort' }) + '\n');
-        try { process.kill(-child.pid, 'SIGTERM'); } catch {}
+      if (input.kind === "pi-sdk") {
+        child.stdin.write(
+          `${JSON.stringify({ id: randomUUID(), type: "abort" })}\n`,
+        );
+        try {
+          process.kill(-child.pid, "SIGTERM");
+        } catch {}
         // Detached children must not outlive a disconnected/interrupted request.
         const { promise, resolve } = Promise.withResolvers();
         setTimeout(resolve, 250);
         await promise;
-        try { process.kill(-child.pid, 'SIGKILL'); } catch {}
-      } else { try { process.kill(-child.pid, 'SIGTERM'); } catch {} }
+        try {
+          process.kill(-child.pid, "SIGKILL");
+        } catch {}
+      } else {
+        try {
+          process.kill(-child.pid, "SIGTERM");
+        } catch {}
+      }
     }
-    active?.end(); active = undefined;
+    active?.end();
+    active = undefined;
     server.close();
     await unlink(socketPath).catch(() => {});
     process.exit(0);
   }
-  server.on('error', (error) => { if (error.code === 'EADDRINUSE') process.exit(0); else throw error; });
-  server.listen(socketPath, () => { void chmod(socketPath, 0o600); });
-  process.on('SIGTERM', stop);
+  server.on("error", (error) => {
+    if (error.code === "EADDRINUSE") process.exit(0);
+    else throw error;
+  });
+  server.listen(socketPath, () => {
+    void chmod(socketPath, 0o600);
+  });
+  process.on("SIGTERM", stop);
   // Runtime proxy tokens expire after 55 minutes; do not reuse a CLI beyond their lifetime.
-  if (input.kind !== 'pi-sdk') setTimeout(() => { if (!active) void stop(); }, 45 * 60_000).unref();
+  if (input.kind !== "pi-sdk")
+    setTimeout(() => {
+      if (!active) void stop();
+    }, 45 * 60_000).unref();
 }

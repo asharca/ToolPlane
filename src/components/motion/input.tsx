@@ -29,10 +29,11 @@ export type InputClassNames = {
   errorMessage?: string;
 };
 
-export interface InputProps extends Omit<
-  InputHTMLAttributes<HTMLInputElement>,
-  "value" | "defaultValue" | "onChange"
-> {
+export interface InputProps
+  extends Omit<
+    InputHTMLAttributes<HTMLInputElement>,
+    "value" | "defaultValue" | "onChange"
+  > {
   label?: string;
   value?: string;
   defaultValue?: string;
@@ -104,9 +105,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
   };
 
   return (
-    <div
-      className={cn("flex flex-col gap-1.5", className, classNames?.root)}
-    >
+    <div className={cn("flex flex-col gap-1.5", className, classNames?.root)}>
       {label ? (
         <label
           htmlFor={id}

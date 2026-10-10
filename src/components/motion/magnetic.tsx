@@ -1,6 +1,11 @@
 "use client";
 
-import { motion, useMotionValue, useReducedMotion, useSpring } from "motion/react";
+import {
+  motion,
+  useMotionValue,
+  useReducedMotion,
+  useSpring,
+} from "motion/react";
 import { useRef, type ReactNode } from "react";
 import { SPRING_MOUSE } from "@/lib/ease";
 import { useHoverCapable } from "@/lib/hooks/use-hover-capable";
@@ -12,7 +17,11 @@ export interface MagneticProps {
   className?: string;
 }
 
-export function Magnetic({ children, strength = 0.35, className }: MagneticProps) {
+export function Magnetic({
+  children,
+  strength = 0.35,
+  className,
+}: MagneticProps) {
   const ref = useRef<HTMLDivElement>(null);
   const reduce = useReducedMotion();
   const canHover = useHoverCapable();

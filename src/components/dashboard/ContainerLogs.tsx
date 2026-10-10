@@ -1,14 +1,20 @@
-'use client';
-import { Button } from '@/components/motion/button';
+"use client";
+import { Button } from "@/components/motion/button";
 
-
-import { RefreshCw } from 'lucide-react';
-import { useRouter } from 'next/navigation';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { useTranslations } from 'next-intl';
-import { Input } from '@/components/motion/input';
-import { CopyButton } from './CopyButton';
-import { StatusBadge } from './StatusBadge';
+import { RefreshCw } from "lucide-react";
+import { useRouter } from "next/navigation";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { useTranslations } from "next-intl";
+import { Input } from "@/components/motion/input";
+import { CopyButton } from "./CopyButton";
+import { StatusBadge } from "./StatusBadge";
 
 export type DeploymentRuntimeSnapshotView = {
   status: string;
@@ -36,7 +42,7 @@ type RuntimeResponse = {
   logs: DeploymentRuntimeLogChunkView;
 };
 
-const TERMINAL_STATUSES = new Set(['stopped', 'error']);
+const TERMINAL_STATUSES = new Set(["stopped", "error"]);
 // Keep the browser-side tail no larger than the supervisor's retained stderr
 // file. This prevents a long-running Logs tab from growing without bound.
 const MAX_CLIENT_LOG_BYTES = 512 * 1024;
@@ -51,8 +57,8 @@ function isTerminalStatus(status: string | null | undefined): boolean {
 }
 
 function readablePhase(phase: string | undefined): string {
-  if (!phase) return '—';
-  return phase.replaceAll(/[_-]+/g, ' ');
+  if (!phase) return "—";
+  return phase.replaceAll(/[_-]+/g, " ");
 }
 
 function keepRecentLogText(value: string): { text: string; trimmed: boolean } {
@@ -64,10 +70,16 @@ function keepRecentLogText(value: string): { text: string; trimmed: boolean } {
   // Start at a UTF-8 code-point boundary so trimming cannot introduce a
   // replacement character at the beginning of the rendered log tail.
   let start = bytes.byteLength - MAX_CLIENT_LOG_BYTES;
-  while (start < bytes.byteLength && (bytes[start] & 0b1100_0000) === 0b1000_0000) {
+  while (
+    start < bytes.byteLength &&
+    (bytes[start] & 0b1100_0000) === 0b1000_0000
+  ) {
     start += 1;
   }
-  return { text: new TextDecoder().decode(bytes.subarray(start)), trimmed: true };
+  return {
+    text: new TextDecoder().decode(bytes.subarray(start)),
+    trimmed: true,
+  };
 }
 
 export function ContainerLogs({
@@ -102,21 +114,26 @@ export function ContainerLogs({
   truncatedLabel: string;
 }) {
   const router = useRouter();
-  const t = useTranslations('console.mcp');
-  const [query, setQuery] = useState('');
+  const t = useTranslations("console.mcp");
+  const [query, setQuery] = useState("");
   const [wrap, setWrap] = useState(true);
   const [following, setFollowing] = useState(true);
   const followRef = useRef(true);
   const viewportRef = useRef<HTMLDivElement>(null);
-  const [snapshot, setSnapshot] = useState<DeploymentRuntimeSnapshotView | null>(initialSnapshot);
-  const [runtimeStatus, setRuntimeStatus] = useState(initialSnapshot?.status ?? initialStatus);
+  const [snapshot, setSnapshot] =
+    useState<DeploymentRuntimeSnapshotView | null>(initialSnapshot);
+  const [runtimeStatus, setRuntimeStatus] = useState(
+    initialSnapshot?.status ?? initialStatus,
+  );
   const [logView, setLogView] = useState<RuntimeLogView>({
-    text: initialLogs?.text ?? '',
+    text: initialLogs?.text ?? "",
     truncated: Boolean(initialLogs?.truncated),
   });
   const [refreshing, setRefreshing] = useState(false);
   const [syncError, setSyncError] = useState(false);
-  const generationRef = useRef<string | null>(initialLogs?.generation ?? initialSnapshot?.generation ?? null);
+  const generationRef = useRef<string | null>(
+    initialLogs?.generation ?? initialSnapshot?.generation ?? null,
+  );
   const cursorRef = useRef(initialLogs?.nextCursor ?? 0);
   const statusRef = useRef(initialSnapshot?.status ?? initialStatus);
   const inFlightRef = useRef(false);
@@ -125,12 +142,17 @@ export function ContainerLogs({
   const visibleText = useMemo(() => {
     if (!query) return logView.text;
     const term = query.toLocaleLowerCase();
-    return logView.text.split('\n').filter((line) => line.toLocaleLowerCase().includes(term)).join('\n');
+    return logView.text
+      .split("\n")
+      .filter((line) => line.toLocaleLowerCase().includes(term))
+      .join("\n");
   }, [logView.text, query]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Text and follow-state changes trigger a DOM measurement after rendering the log content.
   useLayoutEffect(() => {
     const viewport = viewportRef.current;
-    if (viewport && followRef.current && !query) viewport.scrollTop = viewport.scrollHeight;
+    if (viewport && followRef.current && !query)
+      viewport.scrollTop = viewport.scrollHeight;
   }, [visibleText, following, query]);
 
   function changeQuery(value: string) {
@@ -143,64 +165,77 @@ export function ContainerLogs({
 
   // The endpoint only exposes supervisor-captured stderr. Docker stdout is MCP
   // protocol traffic and must never be rendered in the dashboard.
-  const sync = useCallback(async (manual = false) => {
-    if (inFlightRef.current) {
-      if (manual) router.refresh();
-      return;
-    }
-
-    inFlightRef.current = true;
-    if (manual) setRefreshing(true);
-    try {
-      const query = new URLSearchParams({
-        cursor: String(cursorRef.current),
-        limit: '16384',
-      });
-      if (generationRef.current) query.set('generation', generationRef.current);
-
-      const response = await fetch(`/api/v1/mcp/${deploymentId}/runtime?${query}`, {
-        cache: 'no-store',
-      });
-      if (!response.ok) throw new Error(`runtime sync failed (${response.status})`);
-      const data = await response.json() as RuntimeResponse;
-      const chunk = data.logs;
-      const previousGeneration = generationRef.current;
-      const generationChanged = Boolean(
-        previousGeneration && chunk.generation && previousGeneration !== chunk.generation,
-      );
-      const shouldReset = chunk.reset || generationChanged;
-
-      setLogView((previous) => {
-        const combined = shouldReset ? chunk.text : `${previous.text}${chunk.text}`;
-        const bounded = keepRecentLogText(combined);
-        return {
-          text: bounded.text,
-          truncated: (shouldReset ? false : previous.truncated)
-            || Boolean(chunk.truncated)
-            || bounded.trimmed,
-        };
-      });
-      generationRef.current = chunk.generation;
-      cursorRef.current = chunk.nextCursor;
-      setSnapshot(data.snapshot);
-      setSyncError(false);
-
-      const nextStatus = data.snapshot?.status ?? 'stopped';
-      const previousStatus = statusRef.current;
-      statusRef.current = nextStatus;
-      setRuntimeStatus(nextStatus);
-      if (previousStatus !== nextStatus) {
-        // Refresh server-rendered controls and the header as soon as the
-        // supervisor reports a lifecycle status transition.
-        router.refresh();
+  const sync = useCallback(
+    async (manual = false) => {
+      if (inFlightRef.current) {
+        if (manual) router.refresh();
+        return;
       }
-    } catch {
-      setSyncError(true);
-    } finally {
-      inFlightRef.current = false;
-      if (manual) setRefreshing(false);
-    }
-  }, [deploymentId, router]);
+
+      inFlightRef.current = true;
+      if (manual) setRefreshing(true);
+      try {
+        const query = new URLSearchParams({
+          cursor: String(cursorRef.current),
+          limit: "16384",
+        });
+        if (generationRef.current)
+          query.set("generation", generationRef.current);
+
+        const response = await fetch(
+          `/api/v1/mcp/${deploymentId}/runtime?${query}`,
+          {
+            cache: "no-store",
+          },
+        );
+        if (!response.ok)
+          throw new Error(`runtime sync failed (${response.status})`);
+        const data = (await response.json()) as RuntimeResponse;
+        const chunk = data.logs;
+        const previousGeneration = generationRef.current;
+        const generationChanged = Boolean(
+          previousGeneration &&
+            chunk.generation &&
+            previousGeneration !== chunk.generation,
+        );
+        const shouldReset = chunk.reset || generationChanged;
+
+        setLogView((previous) => {
+          const combined = shouldReset
+            ? chunk.text
+            : `${previous.text}${chunk.text}`;
+          const bounded = keepRecentLogText(combined);
+          return {
+            text: bounded.text,
+            truncated:
+              (shouldReset ? false : previous.truncated) ||
+              Boolean(chunk.truncated) ||
+              bounded.trimmed,
+          };
+        });
+        generationRef.current = chunk.generation;
+        cursorRef.current = chunk.nextCursor;
+        setSnapshot(data.snapshot);
+        setSyncError(false);
+
+        const nextStatus = data.snapshot?.status ?? "stopped";
+        const previousStatus = statusRef.current;
+        statusRef.current = nextStatus;
+        setRuntimeStatus(nextStatus);
+        if (previousStatus !== nextStatus) {
+          // Refresh server-rendered controls and the header as soon as the
+          // supervisor reports a lifecycle status transition.
+          router.refresh();
+        }
+      } catch {
+        setSyncError(true);
+      } finally {
+        inFlightRef.current = false;
+        if (manual) setRefreshing(false);
+      }
+    },
+    [deploymentId, router],
+  );
 
   useEffect(() => {
     // A Logs visit always gets one fresh chunk. Provisioning emits progress at
@@ -210,7 +245,7 @@ export function ContainerLogs({
     if (isTerminalStatus(currentStatus)) {
       return () => window.clearTimeout(firstPoll);
     }
-    const intervalMs = currentStatus === 'provisioning' ? 1000 : 3000;
+    const intervalMs = currentStatus === "provisioning" ? 1000 : 3000;
     const timer = window.setInterval(() => void sync(), intervalMs);
     return () => {
       window.clearTimeout(firstPoll);
@@ -231,11 +266,15 @@ export function ContainerLogs({
           <dl className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
             <div className="flex gap-1">
               <dt>{statusLabel}:</dt>
-              <dd><StatusBadge status={currentStatus} /></dd>
+              <dd>
+                <StatusBadge status={currentStatus} />
+              </dd>
             </div>
             <div className="flex gap-1">
               <dt>{phaseLabel}:</dt>
-              <dd className="font-medium text-foreground">{readablePhase(snapshot?.phase)}</dd>
+              <dd className="font-medium text-foreground">
+                {readablePhase(snapshot?.phase)}
+              </dd>
             </div>
             {snapshot?.imageState ? (
               <div className="flex gap-1">
@@ -251,31 +290,96 @@ export function ContainerLogs({
             ) : null}
           </dl>
         </div>
-        <Button type="button" onClick={refresh} disabled={refreshing} variant="secondary" size="sm"><RefreshCw className={`size-3.5 ${refreshing ? 'animate-spin' : ''}`} />
-        {refreshLabel}</Button>
+        <Button
+          type="button"
+          onClick={refresh}
+          disabled={refreshing}
+          variant="secondary"
+          size="sm"
+        >
+          <RefreshCw
+            className={`size-3.5 ${refreshing ? "animate-spin" : ""}`}
+          />
+          {refreshLabel}
+        </Button>
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        <Input value={query} onChange={changeQuery} aria-label={t('searchRuntimeLogs')} placeholder={t('searchRuntimeLogs')} className="w-full sm:max-w-xs" />
-        <Button type="button" variant={wrap ? 'secondary' : 'ghost'} size="sm" aria-pressed={wrap} onClick={() => setWrap((value) => !value)}>{t('wrapLogs')}</Button>
-        <Button type="button" variant={following ? 'secondary' : 'ghost'} size="sm" aria-pressed={following} disabled={Boolean(query)} onClick={() => { followRef.current = !following; setFollowing(!following); }}>{t('followLatestLogs')}</Button>
-        {visibleText ? <CopyButton text={visibleText} label={t('copyVisibleLogs')} /> : null}
+        <Input
+          value={query}
+          onChange={changeQuery}
+          aria-label={t("searchRuntimeLogs")}
+          placeholder={t("searchRuntimeLogs")}
+          className="w-full sm:max-w-xs"
+        />
+        <Button
+          type="button"
+          variant={wrap ? "secondary" : "ghost"}
+          size="sm"
+          aria-pressed={wrap}
+          onClick={() => setWrap((value) => !value)}
+        >
+          {t("wrapLogs")}
+        </Button>
+        <Button
+          type="button"
+          variant={following ? "secondary" : "ghost"}
+          size="sm"
+          aria-pressed={following}
+          disabled={Boolean(query)}
+          onClick={() => {
+            followRef.current = !following;
+            setFollowing(!following);
+          }}
+        >
+          {t("followLatestLogs")}
+        </Button>
+        {visibleText ? (
+          <CopyButton text={visibleText} label={t("copyVisibleLogs")} />
+        ) : null}
       </div>
-      <div ref={viewportRef} role="region" aria-label={title} tabIndex={0}
+      <section
+        ref={viewportRef}
+        aria-label={title}
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users must be able to scroll the runtime log viewport.
+        tabIndex={0}
         onScroll={(event) => {
           const viewport = event.currentTarget;
-          const atBottom = !query && viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <= 32;
+          const atBottom =
+            !query &&
+            viewport.scrollHeight -
+              viewport.scrollTop -
+              viewport.clientHeight <=
+              32;
           followRef.current = atBottom;
           setFollowing(atBottom);
         }}
-        className="h-[28rem] max-h-[60dvh] min-h-48 overflow-auto rounded-lg border border-border bg-background p-4">
-        {visibleText ? <pre className={`font-mono text-xs leading-relaxed text-foreground ${wrap ? 'whitespace-pre-wrap [overflow-wrap:anywhere]' : 'whitespace-pre'}`}>{visibleText}</pre>
-          : <p className="text-sm text-muted-foreground">{hasLogs && query ? t('noMatchingRuntimeLogs') : emptyLabel}</p>}
-      </div>
-      {!snapshot ? <p className="text-xs text-muted-foreground">{unavailableLabel}</p> : null}
+        className="h-[28rem] max-h-[60dvh] min-h-48 overflow-auto rounded-lg border border-border bg-background p-4"
+      >
+        {visibleText ? (
+          <pre
+            className={`font-mono text-xs leading-relaxed text-foreground ${wrap ? "whitespace-pre-wrap [overflow-wrap:anywhere]" : "whitespace-pre"}`}
+          >
+            {visibleText}
+          </pre>
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            {hasLogs && query ? t("noMatchingRuntimeLogs") : emptyLabel}
+          </p>
+        )}
+      </section>
+      {!snapshot ? (
+        <p className="text-xs text-muted-foreground">{unavailableLabel}</p>
+      ) : null}
 
-      {logView.truncated ? <p className="text-xs text-muted-foreground">{truncatedLabel}</p> : null}
-      {syncError ? <p className="text-xs text-destructive dark:text-destructive">{syncErrorLabel}</p> : null}
+      {logView.truncated ? (
+        <p className="text-xs text-muted-foreground">{truncatedLabel}</p>
+      ) : null}
+      {syncError ? (
+        <p className="text-xs text-destructive dark:text-destructive">
+          {syncErrorLabel}
+        </p>
+      ) : null}
     </section>
   );
 }

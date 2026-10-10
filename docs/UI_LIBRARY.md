@@ -77,6 +77,34 @@ line endings so persisted multipart CRLF content also reports successful saves.
 Content and market-modified status save in the same transaction, with workspace
 ownership and catalog read-only guards.
 
+File browsing uses the Registry [File Tree](https://asharca.github.io/ui/components/motion/file-tree)
+without component overrides. Sandbox and Agent panels retain lazy directory loading,
+upload targets, preview, download, and confirmed deletion. Skill bundles/import previews,
+runtime files/drafts, knowledge documents, failed imports, and admin Skill/Pi package
+reviews share its keyboard navigation and selection. Chat attachments use compact
+preview cards with image thumbnails. `FilePathTree` adapts artifact paths without changing
+file identities; selected details and actions sit outside tree rows. Runtime-file selection
+shows metadata only: credentials still require the explicit Reveal & edit action.
+Draft navigation never discards unsaved file content. Package review links retain the
+release and return-path query parameters; encoded/binary content is not executed.
+
+`FilePreviewDialog` separates reading from file navigation for Sandbox/Agent files,
+Skill bundles/review artifacts, and local or persisted chat attachments. Desktop uses
+the Registry `CenterMorphModal`; mobile uses a native full-screen dialog. Headers keep
+download/close available while content scrolls. Escape restores focus without resetting
+the tree. Closing aborts pending reads; object URLs are revoked after exit.
+Markdown defaults to the existing safe renderer with a source toggle; text/code uses
+Registry `CodeBlock` with line numbers, copy, and optional wrapping. Images support zoom
+and fit. PDFs use the browser viewer in a Blob iframe, compatible with the existing CSP;
+browsers without a PDF viewer offer download instead. Empty files, read failures, and
+unsupported formats have explicit states. HTML is shown as source, never an executable
+document. Attachment loads accept only same-origin attachment endpoints or base64 data,
+reject redirects, and preserve existing server-side authorization.
+Sandbox RPC failures preserve both HTTP string errors and JSON-RPC error messages.
+`runtime_not_ready` is a server ownership/recovery failure, not an unsupported file;
+follow [runtime recovery](./RUNTIME_OPERATIONS.md#one-runtime-owner) and verify readiness
+before testing previews. Do not bypass the ownership guard or silently retry mutations.
+
 MCP and Skill marketplaces use compact resource rows with actions that wrap on
 narrow screens. Skill source/install/sort filters stay mounted in a collapsed
 accordion; its summary reflects applied GET parameters, and source/install filters
@@ -127,6 +155,10 @@ wrapper with the same radius. The selection column retains a 48px minimum width;
 header and row checkboxes use the same intrinsic size and share a centered axis.
 The scroll viewport and body isolate stacking contexts. The entire sticky header forms
 a higher layer, including bulk actions, so animated row badges cannot paint over it.
+Ordinary dashboard tables use their intrinsic content height, capped at 640px;
+do not estimate the viewport from row count, because collapsed borders and taller
+cells can overflow that estimate even for one row. Explicit heights (such as the
+MCP list's remaining-viewport layout) remain fixed; narrow tables still scroll horizontally.
 
 Workspace pages do not render a breadcrumb bar or reserve its former row.
 Detail pages retain their content headings and actions; `DashboardHeader` only

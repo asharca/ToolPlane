@@ -1,13 +1,13 @@
-'use client';
-import { AnimatedBadge } from '@/components/motion/animated-badge';
-import { Button, ButtonLink } from '@/components/motion/button/base';
-import { Input } from '@/components/motion/input';
-import { FormSelect } from '@/components/ui/FormSelect';
+"use client";
+import { AnimatedBadge } from "@/components/motion/animated-badge";
+import { Button, ButtonLink } from "@/components/motion/button/base";
+import { Input } from "@/components/motion/input";
+import { FormSelect } from "@/components/ui/FormSelect";
 
-import { useLocale, useTranslations } from 'next-intl';
-import { useRouter } from 'next/navigation';
-import { useActionState, useEffect, useMemo, useRef, useState } from 'react';
-import type { FocusEvent } from 'react';
+import { useLocale, useTranslations } from "next-intl";
+import { useRouter } from "next/navigation";
+import { useActionState, useEffect, useMemo, useRef, useState } from "react";
+import type { FocusEvent } from "react";
 import {
   Blocks,
   Bot,
@@ -26,37 +26,47 @@ import {
   Square,
   RefreshCw,
   Users,
-} from 'lucide-react';
+} from "lucide-react";
 import {
   stopAgentRuntimeAction,
   syncAgentRuntimeAction,
   upgradeHermesRuntimeAction,
   updateAgentRuntimeEnvAction,
   updateAgentAction,
-} from '@/lib/agents/actions';
-import type { ActionState } from '@/lib/agents/actions';
-import { AGENT_STEP_BOUNDS } from '@/lib/agents/constants';
+} from "@/lib/agents/actions";
+import type { ActionState } from "@/lib/agents/actions";
+import { AGENT_STEP_BOUNDS } from "@/lib/agents/constants";
 import {
   agentRuntimeBuiltinToolGroups,
   agentRuntimeDisplayName,
   agentRuntimeSupportsProviderFormat,
   agentRuntimeCapabilities,
   isDedicatedSandboxRuntimeKind,
-} from '@/lib/agents/runtime-kind';
-import { formatInTimeZone } from '@/lib/timezone';
-import { AgentResourceSelect } from '@/components/dashboard/agents/AgentResourceSelect';
-import type { AgentResourceOption } from '@/components/dashboard/agents/AgentResourceSelect';
-import { HermesImageSelector } from '@/components/dashboard/agents/HermesImageSelector';
-import { ModelPicker } from '@/components/dashboard/models/ModelPicker';
-import type { ModelProviderOption } from '@/components/dashboard/models/ModelPicker';
-import { useUserTimeZone } from '@/components/timezone/UserTimeZoneContext';
+} from "@/lib/agents/runtime-kind";
+import { formatInTimeZone } from "@/lib/timezone";
+import { AgentResourceSelect } from "@/components/dashboard/agents/AgentResourceSelect";
+import type { AgentResourceOption } from "@/components/dashboard/agents/AgentResourceSelect";
+import { HermesImageSelector } from "@/components/dashboard/agents/HermesImageSelector";
+import { ModelPicker } from "@/components/dashboard/models/ModelPicker";
+import type { ModelProviderOption } from "@/components/dashboard/models/ModelPicker";
+import { useUserTimeZone } from "@/components/timezone/UserTimeZoneContext";
 
-import { AgentBuiltInTools } from '@/components/dashboard/agents/AgentBuiltInTools';
-import { AgentSystemPromptEditor } from '@/components/dashboard/agents/AgentSystemPromptEditor';
+import { AgentBuiltInTools } from "@/components/dashboard/agents/AgentBuiltInTools";
+import { AgentSystemPromptEditor } from "@/components/dashboard/agents/AgentSystemPromptEditor";
 
 type Provider = ModelProviderOption & { format: string };
-type SaveStatus = 'idle' | 'dirty';
-export type AgentSettingsSection = 'general' | 'instructions' | 'builtInTools' | 'mcp' | 'skills' | 'toolkits' | 'piPackages' | 'sandboxes' | 'subAgents' | 'advanced';
+type SaveStatus = "idle" | "dirty";
+export type AgentSettingsSection =
+  | "general"
+  | "instructions"
+  | "builtInTools"
+  | "mcp"
+  | "skills"
+  | "toolkits"
+  | "piPackages"
+  | "sandboxes"
+  | "subAgents"
+  | "advanced";
 
 export type AgentPiPackageOption = {
   marketInstallId: string;
@@ -70,16 +80,18 @@ export type AgentPiPackageOption = {
 };
 
 function checkedIds(options: AgentResourceOption[]) {
-  return new Set(options.filter((option) => option.checked).map((option) => option.id));
+  return new Set(
+    options.filter((option) => option.checked).map((option) => option.id),
+  );
 }
 
 export function AgentSettingsForm({
   slug,
-  workspaceId = '',
+  workspaceId = "",
   agentId,
   runtimeKind,
   name,
-  description = '',
+  description = "",
   systemPrompt,
   disabledBuiltinTools = [],
   providerId,
@@ -98,7 +110,7 @@ export function AgentSettingsForm({
   subAgents,
   runtime = null,
   hermesImages,
-  className = 'max-w-2xl space-y-5 px-8 py-6',
+  className = "max-w-2xl space-y-5 px-8 py-6",
   activeSection: controlledActiveSection,
   onSectionChange,
   showNavigation = true,
@@ -140,124 +152,225 @@ export function AgentSettingsForm({
   onSectionChange?: (section: AgentSettingsSection) => void;
   showNavigation?: boolean;
 }) {
-  const t = useTranslations('console.agents');
+  const t = useTranslations("console.agents");
   const locale = useLocale();
   const { timeZone } = useUserTimeZone();
   const router = useRouter();
   const formRef = useRef<HTMLFormElement>(null);
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [state, formAction, isPending] = useActionState<ActionState, FormData>(updateAgentAction, {});
-  const [syncState, syncFormAction, isSyncPending] = useActionState<ActionState, FormData>(
-    syncAgentRuntimeAction,
+  const [state, formAction, isPending] = useActionState<ActionState, FormData>(
+    updateAgentAction,
     {},
   );
-  const [stopState, stopFormAction, isStopPending] = useActionState<ActionState, FormData>(
-    stopAgentRuntimeAction,
-    {},
-  );
-  const [upgradeState, upgradeFormAction, isUpgradePending] = useActionState<ActionState, FormData>(
-    upgradeHermesRuntimeAction,
-    {},
-  );
-  const [envState, envFormAction, isEnvPending] = useActionState<ActionState, FormData>(
-    updateAgentRuntimeEnvAction,
-    {},
-  );
+  const [syncState, syncFormAction, isSyncPending] = useActionState<
+    ActionState,
+    FormData
+  >(syncAgentRuntimeAction, {});
+  const [stopState, stopFormAction, isStopPending] = useActionState<
+    ActionState,
+    FormData
+  >(stopAgentRuntimeAction, {});
+  const [upgradeState, upgradeFormAction, isUpgradePending] = useActionState<
+    ActionState,
+    FormData
+  >(upgradeHermesRuntimeAction, {});
+  const [envState, envFormAction, isEnvPending] = useActionState<
+    ActionState,
+    FormData
+  >(updateAgentRuntimeEnvAction, {});
   const singleSandboxRuntime = isDedicatedSandboxRuntimeKind(runtimeKind);
   const [nameValue, setNameValue] = useState(name);
   const [descriptionValue, setDescriptionValue] = useState(description);
   const [systemPromptValue, setSystemPromptValue] = useState(systemPrompt);
-  const [disabledBuiltinToolSet, setDisabledBuiltinToolSet] = useState(() => new Set(disabledBuiltinTools));
+  const [disabledBuiltinToolSet, setDisabledBuiltinToolSet] = useState(
+    () => new Set(disabledBuiltinTools),
+  );
   const [selectedProvider, setSelectedProvider] = useState(() => {
     const provider = providers.find((entry) => entry.id === providerId);
-    return provider && agentRuntimeSupportsProviderFormat(runtimeKind, provider.format) ? provider.id : '';
+    return provider &&
+      agentRuntimeSupportsProviderFormat(runtimeKind, provider.format)
+      ? provider.id
+      : "";
   });
-  const [selectedProviderIds, setSelectedProviderIds] = useState(() => new Set(providerIds));
-  const [selectedModel, setSelectedModel] = useState(model ?? '');
+  const [selectedProviderIds, setSelectedProviderIds] = useState(
+    () => new Set(providerIds),
+  );
+  const [selectedModel, setSelectedModel] = useState(model ?? "");
   const [maxStepsValue, setMaxStepsValue] = useState(String(maxSteps));
-  const [selectedDeploymentIds, setSelectedDeploymentIds] = useState(() => checkedIds(deployments));
-  const [selectedSkillIds, setSelectedSkillIds] = useState(() => checkedIds(skills));
-  const [selectedToolkitIds, setSelectedToolkitIds] = useState(() => checkedIds(toolkits));
-  const [selectedPiPackages, setSelectedPiPackages] = useState(() => piPackages.flatMap((pkg) => (
-    pkg.enabledReleaseId ? [{ marketInstallId: pkg.marketInstallId, releaseId: pkg.enabledReleaseId }] : []
-  )));
+  const [selectedDeploymentIds, setSelectedDeploymentIds] = useState(() =>
+    checkedIds(deployments),
+  );
+  const [selectedSkillIds, setSelectedSkillIds] = useState(() =>
+    checkedIds(skills),
+  );
+  const [selectedToolkitIds, setSelectedToolkitIds] = useState(() =>
+    checkedIds(toolkits),
+  );
+  const [selectedPiPackages, setSelectedPiPackages] = useState(() =>
+    piPackages.flatMap((pkg) =>
+      pkg.enabledReleaseId
+        ? [
+            {
+              marketInstallId: pkg.marketInstallId,
+              releaseId: pkg.enabledReleaseId,
+            },
+          ]
+        : [],
+    ),
+  );
   const [selectedSandboxIds, setSelectedSandboxIds] = useState(() => {
     const selected = checkedIds(sandboxes);
     return singleSandboxRuntime
-      ? new Set([...selected].filter((id) => sandboxes.some((sandbox) => (
-          sandbox.id === id && sandbox.kind === 'docker' && sandbox.network !== 'none'
-        ))).slice(0, 1))
+      ? new Set(
+          [...selected]
+            .filter((id) =>
+              sandboxes.some(
+                (sandbox) =>
+                  sandbox.id === id &&
+                  sandbox.kind === "docker" &&
+                  sandbox.network !== "none",
+              ),
+            )
+            .slice(0, 1),
+        )
       : selected;
   });
-  const [selectedDefaultSandboxId, setSelectedDefaultSandboxId] = useState(() => (
-    singleSandboxRuntime
-      ? sandboxes.find((sandbox) => (
-          sandbox.checked && sandbox.kind === 'docker' && sandbox.network !== 'none'
-        ))?.id ?? ''
-      : defaultSandboxId ?? ''
-  ));
-  const [selectedSubAgentIds, setSelectedSubAgentIds] = useState(() => checkedIds(subAgents));
-  const [uncontrolledActiveSection, setUncontrolledActiveSection] = useState<AgentSettingsSection>('general');
-  const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
-  const [lastRuntimeAction, setLastRuntimeAction] = useState<'sync' | 'stop' | 'upgrade' | null>(null);
+  const [selectedDefaultSandboxId, setSelectedDefaultSandboxId] = useState(
+    () =>
+      singleSandboxRuntime
+        ? (sandboxes.find(
+            (sandbox) =>
+              sandbox.checked &&
+              sandbox.kind === "docker" &&
+              sandbox.network !== "none",
+          )?.id ?? "")
+        : (defaultSandboxId ?? ""),
+  );
+  const [selectedSubAgentIds, setSelectedSubAgentIds] = useState(() =>
+    checkedIds(subAgents),
+  );
+  const [uncontrolledActiveSection, setUncontrolledActiveSection] =
+    useState<AgentSettingsSection>("general");
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
+  const [lastRuntimeAction, setLastRuntimeAction] = useState<
+    "sync" | "stop" | "upgrade" | null
+  >(null);
   const compatibleProviders = useMemo(
-    () => providers.filter((provider) => agentRuntimeSupportsProviderFormat(runtimeKind, provider.format)),
+    () =>
+      providers.filter((provider) =>
+        agentRuntimeSupportsProviderFormat(runtimeKind, provider.format),
+      ),
     [providers, runtimeKind],
   );
   const models = useMemo(
-    () => compatibleProviders.find((p) => p.id === selectedProvider)?.models ?? [],
+    () =>
+      compatibleProviders.find((p) => p.id === selectedProvider)?.models ?? [],
     [compatibleProviders, selectedProvider],
   );
-  const selectedProviderOption = compatibleProviders.find((provider) => provider.id === selectedProvider) ?? null;
-  const providerOptions = useMemo(() => providers.map((provider) => ({
-    id: provider.id,
-    label: provider.name,
-    description: t('providerModelCount', { count: provider.models.length }),
-    keywords: provider.models,
-  })), [providers, t]);
+  const selectedProviderOption =
+    compatibleProviders.find((provider) => provider.id === selectedProvider) ??
+    null;
+  const providerOptions = useMemo(
+    () =>
+      providers.map((provider) => ({
+        id: provider.id,
+        label: provider.name,
+        description: t("providerModelCount", { count: provider.models.length }),
+        keywords: provider.models,
+      })),
+    [providers, t],
+  );
   const sandboxOptions = useMemo(
-    () => singleSandboxRuntime
-      ? sandboxes.filter((sandbox) => sandbox.kind === 'docker' && sandbox.network !== 'none')
-      : sandboxes,
+    () =>
+      singleSandboxRuntime
+        ? sandboxes.filter(
+            (sandbox) =>
+              sandbox.kind === "docker" && sandbox.network !== "none",
+          )
+        : sandboxes,
     [sandboxes, singleSandboxRuntime],
   );
-  const isHermes = agentRuntimeCapabilities(runtimeKind)?.providerBinding === 'multiple';
+  const isHermes =
+    agentRuntimeCapabilities(runtimeKind)?.providerBinding === "multiple";
   const environmentSandboxId = runtimeSandboxId ?? runtime?.sandboxId ?? null;
   const runtimeLabel = agentRuntimeDisplayName(runtimeKind);
-  const builtInToolCount = agentRuntimeBuiltinToolGroups(runtimeKind)
-    .reduce((count, group) => count + group.tools.length, 0);
+  const builtInToolCount = agentRuntimeBuiltinToolGroups(runtimeKind).reduce(
+    (count, group) => count + group.tools.length,
+    0,
+  );
   const navigationGroups: Array<{
     label: string;
-    items: Array<{ id: AgentSettingsSection; label: string; count?: number; icon: typeof Bot }>;
+    items: Array<{
+      id: AgentSettingsSection;
+      label: string;
+      count?: number;
+      icon: typeof Bot;
+    }>;
   }> = [
     {
-      label: t('basic'),
+      label: t("basic"),
       items: [
-        { id: 'general', label: t('basic'), icon: Bot },
-        { id: 'instructions', label: t('instructions'), icon: FileText },
+        { id: "general", label: t("basic"), icon: Bot },
+        { id: "instructions", label: t("instructions"), icon: FileText },
       ],
     },
     {
-      label: t('tools'),
+      label: t("tools"),
       items: [
-        { id: 'builtInTools', label: t('builtInTools'), count: builtInToolCount, icon: Hammer },
-        { id: 'mcp', label: t('mcp'), count: selectedDeploymentIds.size, icon: Server },
-        { id: 'skills', label: t('skills'), count: selectedSkillIds.size, icon: PackageCheck },
-        { id: 'toolkits', label: t('toolkits'), count: selectedToolkitIds.size, icon: Blocks },
-        { id: 'piPackages', label: t('piPackages'), count: selectedPiPackages.length, icon: PackageCheck },
-        { id: 'sandboxes', label: t('sandboxes'), count: selectedSandboxIds.size, icon: Box },
-        { id: 'subAgents', label: t('subAgents'), count: selectedSubAgentIds.size, icon: Users },
+        {
+          id: "builtInTools",
+          label: t("builtInTools"),
+          count: builtInToolCount,
+          icon: Hammer,
+        },
+        {
+          id: "mcp",
+          label: t("mcp"),
+          count: selectedDeploymentIds.size,
+          icon: Server,
+        },
+        {
+          id: "skills",
+          label: t("skills"),
+          count: selectedSkillIds.size,
+          icon: PackageCheck,
+        },
+        {
+          id: "toolkits",
+          label: t("toolkits"),
+          count: selectedToolkitIds.size,
+          icon: Blocks,
+        },
+        {
+          id: "piPackages",
+          label: t("piPackages"),
+          count: selectedPiPackages.length,
+          icon: PackageCheck,
+        },
+        {
+          id: "sandboxes",
+          label: t("sandboxes"),
+          count: selectedSandboxIds.size,
+          icon: Box,
+        },
+        {
+          id: "subAgents",
+          label: t("subAgents"),
+          count: selectedSubAgentIds.size,
+          icon: Users,
+        },
       ],
     },
     {
-      label: t('advanced'),
-      items: [{ id: 'advanced', label: t('advanced'), icon: BrainCircuit }],
+      label: t("advanced"),
+      items: [{ id: "advanced", label: t("advanced"), icon: BrainCircuit }],
     },
   ];
   const activeSection = controlledActiveSection ?? uncontrolledActiveSection;
 
   function selectSection(section: AgentSettingsSection) {
-    if (controlledActiveSection === undefined) setUncontrolledActiveSection(section);
+    if (controlledActiveSection === undefined)
+      setUncontrolledActiveSection(section);
     onSectionChange?.(section);
   }
 
@@ -268,14 +381,29 @@ export function AgentSettingsForm({
   }, [router, state.savedAt]);
 
   useEffect(() => {
-    if (!syncState.savedAt && !stopState.savedAt && !upgradeState.savedAt && !envState.savedAt) return;
+    if (
+      !syncState.savedAt &&
+      !stopState.savedAt &&
+      !upgradeState.savedAt &&
+      !envState.savedAt
+    )
+      return;
 
     router.refresh();
-  }, [envState.savedAt, router, stopState.savedAt, syncState.savedAt, upgradeState.savedAt]);
+  }, [
+    envState.savedAt,
+    router,
+    stopState.savedAt,
+    syncState.savedAt,
+    upgradeState.savedAt,
+  ]);
 
-  useEffect(() => () => {
-    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
-  }, []);
+  useEffect(
+    () => () => {
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    },
+    [],
+  );
 
   function clearAutoSaveTimer() {
     if (!autoSaveTimerRef.current) return;
@@ -284,7 +412,7 @@ export function AgentSettingsForm({
   }
 
   function scheduleAutoSave() {
-    setSaveStatus('dirty');
+    setSaveStatus("dirty");
     clearAutoSaveTimer();
     autoSaveTimerRef.current = setTimeout(() => {
       formRef.current?.requestSubmit();
@@ -293,59 +421,68 @@ export function AgentSettingsForm({
 
   function handleSubmit() {
     clearAutoSaveTimer();
-    setSaveStatus('idle');
+    setSaveStatus("idle");
   }
 
   function flushAutoSave(event: FocusEvent<HTMLFormElement>) {
-    if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return;
+    if (
+      event.relatedTarget instanceof Node &&
+      event.currentTarget.contains(event.relatedTarget)
+    )
+      return;
     if (!autoSaveTimerRef.current) return;
     clearAutoSaveTimer();
     event.currentTarget.requestSubmit();
   }
 
-  const activeRuntimeState = lastRuntimeAction === 'sync'
-    ? syncState
-    : lastRuntimeAction === 'stop'
-      ? stopState
-      : upgradeState;
-  const runtimeActionPending = lastRuntimeAction === 'sync'
-    ? isSyncPending
-    : lastRuntimeAction === 'stop'
-      ? isStopPending
-      : isUpgradePending;
+  const activeRuntimeState =
+    lastRuntimeAction === "sync"
+      ? syncState
+      : lastRuntimeAction === "stop"
+        ? stopState
+        : upgradeState;
+  const runtimeActionPending =
+    lastRuntimeAction === "sync"
+      ? isSyncPending
+      : lastRuntimeAction === "stop"
+        ? isStopPending
+        : isUpgradePending;
   const runtimeActionMessage = runtimeActionPending
-    ? lastRuntimeAction === 'sync'
-      ? t('syncingRuntime')
-      : lastRuntimeAction === 'stop'
-        ? t('stoppingRuntime')
-        : t('upgradingHermesRuntime')
+    ? lastRuntimeAction === "sync"
+      ? t("syncingRuntime")
+      : lastRuntimeAction === "stop"
+        ? t("stoppingRuntime")
+        : t("upgradingHermesRuntime")
     : activeRuntimeState.error
       ? activeRuntimeState.error
       : activeRuntimeState.savedAt
-        ? lastRuntimeAction === 'sync'
-          ? t('runtimeSynced')
-          : lastRuntimeAction === 'stop'
-            ? t('runtimeStopped')
-            : t('hermesRuntimeUpgraded')
+        ? lastRuntimeAction === "sync"
+          ? t("runtimeSynced")
+          : lastRuntimeAction === "stop"
+            ? t("runtimeStopped")
+            : t("hermesRuntimeUpgraded")
         : null;
-  const runtimeControlsDisabled = isPending
-    || saveStatus === 'dirty'
-    || isSyncPending
-    || isStopPending
-    || isUpgradePending
-    || isEnvPending;
+  const runtimeControlsDisabled =
+    isPending ||
+    saveStatus === "dirty" ||
+    isSyncPending ||
+    isStopPending ||
+    isUpgradePending ||
+    isEnvPending;
   const envMessage = isEnvPending
-    ? t('savingAndSyncingEnvironment')
+    ? t("savingAndSyncingEnvironment")
     : envState.error
       ? envState.error
       : envState.savedAt
-        ? t('environmentSaved')
+        ? t("environmentSaved")
         : null;
 
   return (
     <form
       ref={formRef}
-      data-unsaved-changes={saveStatus === 'dirty' || isPending || state.error ? 'true' : 'false'}
+      data-unsaved-changes={
+        saveStatus === "dirty" || isPending || state.error ? "true" : "false"
+      }
       action={formAction}
       onBlur={flushAutoSave}
       onChange={scheduleAutoSave}
@@ -354,29 +491,49 @@ export function AgentSettingsForm({
     >
       <input type="hidden" name="workspace" value={slug} />
       <input type="hidden" name="agentId" value={agentId} />
-      {runtimeKind === 'pi-sdk' ? <input type="hidden" name="piPackages" value={JSON.stringify(selectedPiPackages)} /> : null}
+      {runtimeKind === "pi-sdk" ? (
+        <input
+          type="hidden"
+          name="piPackages"
+          value={JSON.stringify(selectedPiPackages)}
+        />
+      ) : null}
 
-      <div className={showNavigation
-        ? 'overflow-hidden rounded-xl border border-border bg-background lg:grid lg:grid-cols-[11.5rem_minmax(0,1fr)]'
-        : 'min-w-0'}>
+      <div
+        className={
+          showNavigation
+            ? "overflow-hidden rounded-xl border border-border bg-background lg:grid lg:grid-cols-[11.5rem_minmax(0,1fr)]"
+            : "min-w-0"
+        }
+      >
         {showNavigation ? (
           <nav
-            aria-label={t('configurationNavigation')}
+            aria-label={t("configurationNavigation")}
             className="bg-muted/20 p-2 lg:p-3"
           >
             <div className="flex min-w-max gap-4 overflow-x-auto px-1 py-1 lg:block lg:min-w-0 lg:space-y-5 lg:overflow-visible">
               {navigationGroups.map((group) => (
-                <div key={group.label} className="flex shrink-0 items-center gap-1.5 lg:block lg:space-y-1">
+                <div
+                  key={group.label}
+                  className="flex shrink-0 items-center gap-1.5 lg:block lg:space-y-1"
+                >
                   <p className="hidden px-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground lg:block">
                     {group.label}
                   </p>
                   {group.items.map(({ id, label, count, icon: Icon }) => {
                     const active = activeSection === id;
                     return (
-                      <Button key={id} type="button" aria-current={active ? 'page' : undefined} onClick={() => selectSection(id)} variant={active ? 'secondary' : 'ghost'} size="sm">
+                      <Button
+                        key={id}
+                        type="button"
+                        aria-current={active ? "page" : undefined}
+                        onClick={() => selectSection(id)}
+                        variant={active ? "secondary" : "ghost"}
+                        size="sm"
+                      >
                         <Icon className="size-4 shrink-0" />
                         <span className="whitespace-nowrap">{label}</span>
-                        {typeof count === 'number' ? (
+                        {typeof count === "number" ? (
                           <AnimatedBadge status="neutral">
                             {count}
                           </AnimatedBadge>
@@ -390,405 +547,735 @@ export function AgentSettingsForm({
           </nav>
         ) : null}
 
-        <div className={`min-w-0 space-y-5 ${showNavigation ? 'p-4 sm:p-5' : ''}`}>
+        <div
+          className={`min-w-0 space-y-5 ${showNavigation ? "p-4 sm:p-5" : ""}`}
+        >
           <header className="flex flex-wrap items-start justify-between gap-3 border-b border-border pb-4">
             <div>
-              <h3 className="text-base font-semibold">{navigationGroups.flatMap((group) => group.items).find((item) => item.id === activeSection)?.label}</h3>
-              <p className="mt-1 text-sm text-muted-foreground">{t(activeSection === 'general' ? 'generalSettingsDescription' : activeSection === 'instructions' ? 'instructionsSettingsDescription' : activeSection === 'advanced' ? 'advanced' : 'resourceSettingsDescription')}</p>
+              <h3 className="text-base font-semibold">
+                {
+                  navigationGroups
+                    .flatMap((group) => group.items)
+                    .find((item) => item.id === activeSection)?.label
+                }
+              </h3>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {t(
+                  activeSection === "general"
+                    ? "generalSettingsDescription"
+                    : activeSection === "instructions"
+                      ? "instructionsSettingsDescription"
+                      : activeSection === "advanced"
+                        ? "advanced"
+                        : "resourceSettingsDescription",
+                )}
+              </p>
             </div>
-            <p role="status" aria-live="polite" className="text-xs text-muted-foreground">{t(isPending ? 'saving' : saveStatus === 'dirty' ? 'unsavedChanges' : state.savedAt && !state.error ? 'saved' : 'autoSaveOn')}</p>
+            <p
+              role="status"
+              aria-live="polite"
+              className="text-xs text-muted-foreground"
+            >
+              {t(
+                isPending
+                  ? "saving"
+                  : saveStatus === "dirty"
+                    ? "unsavedChanges"
+                    : state.savedAt && !state.error
+                      ? "saved"
+                      : "autoSaveOn",
+              )}
+            </p>
           </header>
           {state.error ? (
             <p role="alert" className="text-sm text-destructive">
-              {state.error === 'PI_PACKAGE_MCP_BINDING_REQUIRED' ? t('piPackageMcpBindingRequired') : state.error.startsWith('pi_package')
-                ? t(`piPackageErrors.${['pi_package_agent_busy', 'pi_package_release_not_current', 'pi_packages_runtime_unsupported', 'pi_packages_invalid'].includes(state.error) ? state.error : 'unavailable'}`)
-                : state.error}
+              {state.error === "PI_PACKAGE_MCP_BINDING_REQUIRED"
+                ? t("piPackageMcpBindingRequired")
+                : state.error.startsWith("pi_package")
+                  ? t(
+                      `piPackageErrors.${["pi_package_agent_busy", "pi_package_release_not_current", "pi_packages_runtime_unsupported", "pi_packages_invalid"].includes(state.error) ? state.error : "unavailable"}`,
+                    )
+                  : state.error}
             </p>
           ) : null}
-      <section hidden={activeSection !== 'general'} aria-label={t('basic')}>
-        <div className="space-y-5">
-          <div className="block">
-            
-            <Input label={t('name')} name="name" required value={String(nameValue)} onChange={(value) => setNameValue(value)} className="w-full" />
-          </div>
-          <label className="block">
-            <span className="mb-1.5 block text-xs font-semibold text-foreground">{t('description')}</span>
-            <textarea
-              name="description"
-              value={descriptionValue}
-              onChange={(event) => setDescriptionValue(event.target.value)}
-              maxLength={500}
-              rows={3}
-              placeholder={t('agentDescriptionPlaceholder')}
-              className="min-h-24 w-full resize-y rounded-lg bg-muted/35 p-3 text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            />
-          </label>
-          <div>
-            <span className="mb-1.5 block text-xs font-semibold text-foreground">{t('runtime')}</span>
-            <div className="rounded-lg border border-border bg-background px-3 py-2 flex h-10 items-center justify-between gap-3 px-3 text-sm" aria-label={t('runtime')}>
-              <span className="truncate font-medium text-foreground">{runtimeLabel}</span>
-              {isHermes && runtime?.status ? (
-                <span className="shrink-0 text-xs text-muted-foreground">{runtime.status}</span>
+          <section hidden={activeSection !== "general"} aria-label={t("basic")}>
+            <div className="space-y-5">
+              <div className="block">
+                <Input
+                  label={t("name")}
+                  name="name"
+                  required
+                  value={String(nameValue)}
+                  onChange={(value) => setNameValue(value)}
+                  className="w-full"
+                />
+              </div>
+              <label className="block">
+                <span className="mb-1.5 block text-xs font-semibold text-foreground">
+                  {t("description")}
+                </span>
+                <textarea
+                  name="description"
+                  value={descriptionValue}
+                  onChange={(event) => setDescriptionValue(event.target.value)}
+                  maxLength={500}
+                  rows={3}
+                  placeholder={t("agentDescriptionPlaceholder")}
+                  className="min-h-24 w-full resize-y rounded-lg bg-muted/35 p-3 text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                />
+              </label>
+              <div>
+                <span className="mb-1.5 block text-xs font-semibold text-foreground">
+                  {t("runtime")}
+                </span>
+                <section
+                  className="rounded-lg border border-border bg-background px-3 py-2 flex h-10 items-center justify-between gap-3 px-3 text-sm"
+                  aria-label={t("runtime")}
+                >
+                  <span className="truncate font-medium text-foreground">
+                    {runtimeLabel}
+                  </span>
+                  {isHermes && runtime?.status ? (
+                    <span className="shrink-0 text-xs text-muted-foreground">
+                      {runtime.status}
+                    </span>
+                  ) : null}
+                </section>
+              </div>
+              {runtimeKind === "pi-sdk" ? (
+                <p className="text-xs leading-5 text-muted-foreground">
+                  {t("piSdkRuntimeDescription")}{" "}
+                  {t("piSdkUnsupportedEntrypoints")}
+                </p>
               ) : null}
             </div>
-          </div>
-          {runtimeKind === 'pi-sdk' ? <p className="text-xs leading-5 text-muted-foreground">{t('piSdkRuntimeDescription')} {t('piSdkUnsupportedEntrypoints')}</p> : null}
-        </div>
-      </section>
+          </section>
 
-      <section hidden={activeSection !== 'instructions'} aria-label={t('instructions')}>
-        {isHermes ? (
-          <p className="rounded-md bg-muted/40 px-3 py-3 text-sm leading-6 text-muted-foreground">
-            {t('hermesPromptManaged')}
-          </p>
-        ) : (
-          <AgentSystemPromptEditor
-            workspaceId={workspaceId}
-            name={nameValue}
-            description={descriptionValue}
-            providerId={selectedProvider}
-            model={selectedModel}
-            value={systemPromptValue}
-            onChange={(value) => {
-              setSystemPromptValue(value);
-              scheduleAutoSave();
-            }}
-          />
-        )}
-      </section>
-
-      <section hidden={activeSection !== 'advanced'} aria-label={t('advanced')}>
-        <div className="space-y-6">
-          <div className="block max-w-xs">
-            
-            <Input label={t('maxToolSteps')} name="maxSteps" type="number" min={AGENT_STEP_BOUNDS.min} max={AGENT_STEP_BOUNDS.max} value={String(maxStepsValue)} onChange={(value) => setMaxStepsValue(value)} className="w-full" />
-          </div>
-          {environmentSandboxId ? (
-            <div className="space-y-3 border-t border-border pt-5">
-              <div>
-                <h3 className="text-sm font-semibold text-foreground">{t('environmentVariables')}</h3>
-                <p className="mt-0.5 text-xs text-muted-foreground">
-                  {isHermes ? t('hermesEnvironmentHelp') : t('runtimeEnvironmentHelp')}
-                </p>
-              </div>
-              <textarea
-                name="runtimeEnv"
-                defaultValue={runtimeEnvironment ?? runtime?.environment ?? ''}
-                onChange={(event) => event.stopPropagation()}
-                rows={6}
-                spellCheck={false}
-                placeholder={t('environmentPlaceholder')}
-                className="min-h-36 w-full resize-y rounded-lg bg-muted/35 p-3 text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                aria-label={t('environmentVariables')}
-              />
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <p
-                  role={envState.error ? 'alert' : 'status'}
-                  aria-live="polite"
-                  className={envState.error ? 'text-xs text-destructive' : 'text-xs text-muted-foreground'}
-                >
-                  {envMessage}
-                </p>
-                <Button type="submit" formAction={envFormAction} formNoValidate disabled={runtimeControlsDisabled} aria-busy={isEnvPending} onClick={clearAutoSaveTimer} variant={"secondary"} size={"sm"}>
-                  {isEnvPending ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
-                  {isEnvPending ? t('savingEnvironment') : t('saveEnvironment')}
-                </Button>
-              </div>
-            </div>
-          ) : null}
-        </div>
-      </section>
-
-      {isHermes && runtime ? (
-        <section hidden={activeSection !== 'advanced'} className="rounded-lg border border-border bg-background">
-          <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
-            <div className="flex min-w-0 items-center gap-2.5">
-              <Container className="size-[18px] shrink-0 text-muted-foreground" />
-              <h3 className="text-sm font-semibold text-foreground">Hermes</h3>
-              <AnimatedBadge status="neutral">
-                {runtime.status}
-              </AnimatedBadge>
-            </div>
-            <div className="flex gap-2">
-              <Button type="submit" formAction={syncFormAction} formNoValidate disabled={runtimeControlsDisabled} aria-busy={isSyncPending} onClick={() => setLastRuntimeAction('sync')} variant={"secondary"} size={"sm"}>
-                {isSyncPending ? (
-                  <Loader2 className="size-4 animate-spin" />
-                ) : lastRuntimeAction === 'sync' && syncState.savedAt ? (
-                  <Check className="size-4 text-muted-foreground" />
-                ) : (
-                  <RefreshCw className="size-4" />
-                )}
-                {isSyncPending ? t('syncingRuntime') : lastRuntimeAction === 'sync' && syncState.savedAt ? t('runtimeSynced') : t('syncRuntime')}
-              </Button>
-              <Button type="submit" formAction={stopFormAction} formNoValidate disabled={runtimeControlsDisabled} aria-busy={isStopPending} onClick={() => setLastRuntimeAction('stop')} variant={"secondary"} size={"sm"}>
-                {isStopPending ? (
-                  <Loader2 className="size-4 animate-spin" />
-                ) : lastRuntimeAction === 'stop' && stopState.savedAt ? (
-                  <Check className="size-4 text-muted-foreground" />
-                ) : (
-                  <Square className="size-3.5" />
-                )}
-                {isStopPending ? t('stoppingRuntime') : lastRuntimeAction === 'stop' && stopState.savedAt ? t('runtimeStopped') : t('stopRuntime')}
-              </Button>
-            </div>
-          </div>
-          <div className="space-y-2 px-4 py-4 text-sm">
-            <div className="grid gap-1 sm:grid-cols-[8rem_minmax(0,1fr)]">
-              <span className="text-muted-foreground">{t('dockerImage')}</span>
-              <code className="min-w-0 break-all text-xs text-foreground">{runtime.image}</code>
-            </div>
-            <div className="grid gap-1 sm:grid-cols-[8rem_minmax(0,1fr)]">
-              <span className="text-muted-foreground">{t('sandbox')}</span>
-              <code className="min-w-0 break-all text-xs text-foreground">{runtime.sandboxId}</code>
-            </div>
-            {runtime.lastSyncedAt ? (
-              <div className="grid gap-1 sm:grid-cols-[8rem_minmax(0,1fr)]">
-                <span className="text-muted-foreground">{t('lastSynced')}</span>
-                <span className="text-xs text-foreground">
-                  {formatInTimeZone(
-                    runtime.lastSyncedAt,
-                    timeZone,
-                    { dateStyle: 'medium', timeStyle: 'short' },
-                    locale,
-                  )}
-                </span>
-              </div>
-            ) : null}
-            {runtime.lastError ? (
-              <p className="rounded-md border border-border bg-muted px-3 py-2 text-xs text-destructive text-destructive">
-                {runtime.lastError}
+          <section
+            hidden={activeSection !== "instructions"}
+            aria-label={t("instructions")}
+          >
+            {isHermes ? (
+              <p className="rounded-md bg-muted/40 px-3 py-3 text-sm leading-6 text-muted-foreground">
+                {t("hermesPromptManaged")}
               </p>
-            ) : null}
-            {runtimeActionMessage ? (
-              <p
-                role={activeRuntimeState.error ? 'alert' : 'status'}
-                aria-live="polite"
-                className={activeRuntimeState.error
-                  ? 'rounded-md border border-border bg-muted px-3 py-2 text-xs text-destructive text-destructive'
-                  : 'text-xs text-muted-foreground'}
-              >
-                {runtimeActionMessage}
-              </p>
-            ) : null}
-          </div>
-          <div className="space-y-3 border-t border-border px-4 py-4">
-            <div>
-              <h4 className="text-sm font-semibold text-foreground">{t('hermesVersion')}</h4>
-              <p className="mt-0.5 text-xs text-muted-foreground">{t('hermesRuntimeUpgradeHelp')}</p>
-            </div>
-            <HermesImageSelector
-              key={runtime.image}
-              id="settings-hermes-version"
-              images={hermesImages}
-              value={runtime.image}
-              disabled={runtimeControlsDisabled}
-            />
-            <div className="flex flex-wrap items-center justify-end gap-3">
-              <Button type="submit" formAction={upgradeFormAction} formNoValidate disabled={runtimeControlsDisabled} aria-busy={isUpgradePending} onClick={() => {
-                  clearAutoSaveTimer();
-                  setLastRuntimeAction('upgrade');
-                }} variant={"secondary"} size={"sm"}>
-                {isUpgradePending ? (
-                  <Loader2 className="size-4 animate-spin" />
-                ) : lastRuntimeAction === 'upgrade' && upgradeState.savedAt ? (
-                  <Check className="size-4 text-muted-foreground" />
-                ) : (
-                  <RefreshCw className="size-4" />
-                )}
-                {isUpgradePending
-                  ? t('upgradingHermesRuntime')
-                  : lastRuntimeAction === 'upgrade' && upgradeState.savedAt
-                    ? t('hermesRuntimeUpgraded')
-                    : t('upgradeHermesRuntime')}
-              </Button>
-            </div>
-          </div>
-        </section>
-      ) : null}
-
-      <section hidden={activeSection !== 'builtInTools'} aria-label={t('builtInTools')}>
-        <AgentBuiltInTools
-          runtimeKind={runtimeKind}
-          disabledTools={disabledBuiltinToolSet}
-          onDisabledToolsChange={(next) => {
-            setDisabledBuiltinToolSet(next);
-            scheduleAutoSave();
-          }}
-        />
-      </section>
-
-      <section hidden={activeSection !== 'mcp'} aria-label={t('mcp')}>
-        <AgentResourceSelect
-          icon={Server}
-          label={t('mcp')}
-          name="deploymentId"
-          options={deployments}
-          selectedIds={selectedDeploymentIds}
-          onSelectionChange={(next) => {
-            setSelectedDeploymentIds(next);
-            scheduleAutoSave();
-          }}
-        />
-      </section>
-
-      <section hidden={activeSection !== 'skills'} aria-label={t('skills')}>
-        <AgentResourceSelect
-          icon={PackageCheck}
-          label={t('skills')}
-          name="installedSkillId"
-          options={skills}
-          selectedIds={selectedSkillIds}
-          onSelectionChange={(next) => {
-            setSelectedSkillIds(next);
-            scheduleAutoSave();
-          }}
-        />
-      </section>
-
-      <section hidden={activeSection !== 'toolkits'} aria-label={t('toolkits')}>
-        <AgentResourceSelect
-          icon={Blocks}
-          label={t('toolkits')}
-          name="toolkitId"
-          options={toolkits}
-          selectedIds={selectedToolkitIds}
-          onSelectionChange={(next) => {
-            setSelectedToolkitIds(next);
-            scheduleAutoSave();
-          }}
-        />
-      </section>
-
-      <section hidden={activeSection !== 'piPackages'} aria-label={t('piPackages')} className="space-y-4">
-        {runtimeKind !== 'pi-sdk' ? <>
-          <p className="text-sm text-muted-foreground">{t('piPackagesIncompatible')}</p>
-          <ButtonLink href={`/app/${encodeURIComponent(slug)}/agents?create=1&runtime=pi-sdk`} variant="secondary" size="sm">{t('createPiSdkAgent')}</ButtonLink>
-        </> : <>
-          <div className="space-y-2 rounded-lg border border-border p-3 text-xs leading-5 text-muted-foreground">
-            <p>{t('piPackageSecurity')}</p>
-            <p>{t('piPackageHeadless')}</p>
-            <p>{t('piPackagesNewSession')}</p>
-            <p>{t('piPackagesBusyHelp')}</p>
-            <p>{t('piPackageMcpBindingRequired')}</p>
-          </div>
-          {!piPackages.length ? <p className="text-sm text-muted-foreground">{t('piPackagesEmpty')}</p> : null}
-          {piPackages.map((pkg) => {
-            const selected = selectedPiPackages.find((entry) => entry.marketInstallId === pkg.marketInstallId);
-            const usingWorkspaceVersion = selected?.releaseId === pkg.currentReleaseId;
-            return <div key={pkg.marketInstallId} className="space-y-2 rounded-lg border border-border p-3">
-              <label className="flex items-start gap-3 text-sm font-medium">
-                <input type="checkbox" className="mt-1 size-4 accent-foreground" checked={Boolean(selected)} disabled={isPending || (!selected && (!pkg.currentAvailable || selectedPiPackages.length >= 16))} onChange={(event) => {
-                  setSelectedPiPackages((current) => event.target.checked && pkg.currentReleaseId
-                    ? [...current, { marketInstallId: pkg.marketInstallId, releaseId: pkg.currentReleaseId }]
-                    : current.filter((entry) => entry.marketInstallId !== pkg.marketInstallId));
-                }} />
-                {pkg.name}
-              </label>
-              <p className="text-xs text-muted-foreground">{t('piPackageWorkspaceVersion', { version: pkg.currentVersion ?? '—' })}</p>
-              <p className="text-xs text-muted-foreground">{selected ? t('piPackageEnabledVersion', { version: (usingWorkspaceVersion ? pkg.currentVersion : pkg.enabledVersion) ?? '—' }) : t('piPackageNotEnabled')}</p>
-              {(!pkg.currentAvailable || (selected && !usingWorkspaceVersion && !pkg.enabledAvailable)) ? <p role="status" className="text-xs text-destructive">{t('piPackageUnavailable')}</p> : null}
-              <ButtonLink href={`/app/${encodeURIComponent(slug)}/market/installed/${encodeURIComponent(pkg.marketInstallId)}/clients#workspace-bindings`} variant="ghost" size="sm">{t('piPackageMcpBindings')}</ButtonLink>
-              {selected && !usingWorkspaceVersion && pkg.currentAvailable && pkg.currentReleaseId ? <Button type="button" variant="secondary" size="sm" disabled={isPending} onClick={() => {
-                setSelectedPiPackages((current) => current.map((entry) => entry.marketInstallId === pkg.marketInstallId ? { ...entry, releaseId: pkg.currentReleaseId! } : entry));
-                scheduleAutoSave();
-              }}>{t('piPackageApplyWorkspaceVersion')}</Button> : null}
-            </div>;
-          })}
-          <ButtonLink href={`/app/${encodeURIComponent(slug)}/market/pi-packages`} variant="secondary" size="sm">{t('browsePiPackages')}</ButtonLink>
-        </>}
-      </section>
-
-      <section hidden={activeSection !== 'sandboxes'} aria-label={t('sandboxes')}>
-        <AgentResourceSelect
-          icon={Box}
-          label={t('sandboxes')}
-          name="sandboxId"
-          options={sandboxOptions}
-          selectedIds={selectedSandboxIds}
-          onSelectionChange={(next) => {
-            setSelectedSandboxIds(next);
-            if (!next.has(selectedDefaultSandboxId)) setSelectedDefaultSandboxId([...next][0] ?? '');
-            scheduleAutoSave();
-          }}
-          selectionMode={singleSandboxRuntime ? 'single-required' : 'multiple'}
-        />
-        {!singleSandboxRuntime && selectedSandboxIds.size ? (
-          <div className="mt-3 block text-xs text-muted-foreground">
-            <span className="mb-1 block">Default Work sandbox</span>
-            <FormSelect name="defaultSandboxId" value={selectedDefaultSandboxId} label={"Default Work sandbox"} options={[[...selectedSandboxIds].map((id) => ({ value: id, label: sandboxOptions.find((item) => item.id === id)?.label ?? id }))].flat().filter((option) => option != null)} onValueChange={(value) => { setSelectedDefaultSandboxId(value); scheduleAutoSave(); }} className="w-full" />
-          </div>
-        ) : null}
-        {!isHermes ? <p className="mt-3 text-xs leading-5 text-muted-foreground">{t(runtimeKind === 'pi-sdk' ? 'piSdkRuntimeDescription' : 'nativeHarnessSandboxHelp')}</p> : null}
-      </section>
-
-      <section hidden={activeSection !== 'subAgents'} aria-label={t('subAgents')}>
-        <AgentResourceSelect
-          icon={Users}
-          label={t('subAgents')}
-          name="subAgentId"
-          options={subAgents}
-          selectedIds={selectedSubAgentIds}
-          onSelectionChange={(next) => {
-            setSelectedSubAgentIds(next);
-            scheduleAutoSave();
-          }}
-        />
-      </section>
-
-      <section hidden={activeSection !== 'general'} aria-label={isHermes ? t('modelProviders') : t('model')}>
-        <div className="grid items-start gap-3 sm:grid-cols-2">
-          {isHermes ? (
-            <div className="space-y-2 sm:col-span-2">
-              <AgentResourceSelect
-                icon={Cpu}
-                label={t('modelProviders')}
-                name="providerId"
-                options={providerOptions}
-                selectedIds={selectedProviderIds}
-                onSelectionChange={(next) => {
-                  setSelectedProviderIds(next);
+            ) : (
+              <AgentSystemPromptEditor
+                workspaceId={workspaceId}
+                name={nameValue}
+                description={descriptionValue}
+                providerId={selectedProvider}
+                model={selectedModel}
+                value={systemPromptValue}
+                onChange={(value) => {
+                  setSystemPromptValue(value);
                   scheduleAutoSave();
                 }}
               />
-              <p className="text-xs text-muted-foreground">{t('hermesProviderSelectionHelp')}</p>
+            )}
+          </section>
+
+          <section
+            hidden={activeSection !== "advanced"}
+            aria-label={t("advanced")}
+          >
+            <div className="space-y-6">
+              <div className="block max-w-xs">
+                <Input
+                  label={t("maxToolSteps")}
+                  name="maxSteps"
+                  type="number"
+                  min={AGENT_STEP_BOUNDS.min}
+                  max={AGENT_STEP_BOUNDS.max}
+                  value={String(maxStepsValue)}
+                  onChange={(value) => setMaxStepsValue(value)}
+                  className="w-full"
+                />
+              </div>
+              {environmentSandboxId ? (
+                <div className="space-y-3 border-t border-border pt-5">
+                  <div>
+                    <h3 className="text-sm font-semibold text-foreground">
+                      {t("environmentVariables")}
+                    </h3>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      {isHermes
+                        ? t("hermesEnvironmentHelp")
+                        : t("runtimeEnvironmentHelp")}
+                    </p>
+                  </div>
+                  <textarea
+                    name="runtimeEnv"
+                    defaultValue={
+                      runtimeEnvironment ?? runtime?.environment ?? ""
+                    }
+                    onChange={(event) => event.stopPropagation()}
+                    rows={6}
+                    spellCheck={false}
+                    placeholder={t("environmentPlaceholder")}
+                    className="min-h-36 w-full resize-y rounded-lg bg-muted/35 p-3 text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    aria-label={t("environmentVariables")}
+                  />
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <p
+                      role={envState.error ? "alert" : "status"}
+                      aria-live="polite"
+                      className={
+                        envState.error
+                          ? "text-xs text-destructive"
+                          : "text-xs text-muted-foreground"
+                      }
+                    >
+                      {envMessage}
+                    </p>
+                    <Button
+                      type="submit"
+                      formAction={envFormAction}
+                      formNoValidate
+                      disabled={runtimeControlsDisabled}
+                      aria-busy={isEnvPending}
+                      onClick={clearAutoSaveTimer}
+                      variant={"secondary"}
+                      size={"sm"}
+                    >
+                      {isEnvPending ? (
+                        <Loader2 className="size-4 animate-spin" />
+                      ) : (
+                        <Save className="size-4" />
+                      )}
+                      {isEnvPending
+                        ? t("savingEnvironment")
+                        : t("saveEnvironment")}
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
             </div>
-          ) : (
-            <div className="sm:col-span-2">
-              <input type="hidden" name="providerId" value={selectedProvider} />
-              <input type="hidden" name="model" value={selectedModel} />
-              <span className="mb-1.5 block text-xs font-semibold text-foreground">{t('model')}</span>
-              <ModelPicker
-                providers={compatibleProviders}
-                value={selectedProvider && selectedModel
-                  ? { providerId: selectedProvider, model: selectedModel }
-                  : null}
-                onSelect={(selection) => {
-                  setSelectedProvider(selection.providerId);
-                  setSelectedModel(selection.model);
-                  scheduleAutoSave();
-                }}
-                onConfigure={() => {
-                  window.location.assign(`/app/${encodeURIComponent(slug)}/providers`);
-                }}
-                trigger={(
-                  <Button variant="secondary" type="button" aria-label={`${t('model')}: ${selectedModel || t('selectModel')}`} className="w-full text-left"><span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-semibold text-muted-foreground">
-                    {selectedProviderOption?.name.charAt(0).toUpperCase() || 'M'}
+          </section>
+
+          {isHermes && runtime ? (
+            <section
+              hidden={activeSection !== "advanced"}
+              className="rounded-lg border border-border bg-background"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+                <div className="flex min-w-0 items-center gap-2.5">
+                  <Container className="size-[18px] shrink-0 text-muted-foreground" />
+                  <h3 className="text-sm font-semibold text-foreground">
+                    Hermes
+                  </h3>
+                  <AnimatedBadge status="neutral">
+                    {runtime.status}
+                  </AnimatedBadge>
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    type="submit"
+                    formAction={syncFormAction}
+                    formNoValidate
+                    disabled={runtimeControlsDisabled}
+                    aria-busy={isSyncPending}
+                    onClick={() => setLastRuntimeAction("sync")}
+                    variant={"secondary"}
+                    size={"sm"}
+                  >
+                    {isSyncPending ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : lastRuntimeAction === "sync" && syncState.savedAt ? (
+                      <Check className="size-4 text-muted-foreground" />
+                    ) : (
+                      <RefreshCw className="size-4" />
+                    )}
+                    {isSyncPending
+                      ? t("syncingRuntime")
+                      : lastRuntimeAction === "sync" && syncState.savedAt
+                        ? t("runtimeSynced")
+                        : t("syncRuntime")}
+                  </Button>
+                  <Button
+                    type="submit"
+                    formAction={stopFormAction}
+                    formNoValidate
+                    disabled={runtimeControlsDisabled}
+                    aria-busy={isStopPending}
+                    onClick={() => setLastRuntimeAction("stop")}
+                    variant={"secondary"}
+                    size={"sm"}
+                  >
+                    {isStopPending ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : lastRuntimeAction === "stop" && stopState.savedAt ? (
+                      <Check className="size-4 text-muted-foreground" />
+                    ) : (
+                      <Square className="size-3.5" />
+                    )}
+                    {isStopPending
+                      ? t("stoppingRuntime")
+                      : lastRuntimeAction === "stop" && stopState.savedAt
+                        ? t("runtimeStopped")
+                        : t("stopRuntime")}
+                  </Button>
+                </div>
+              </div>
+              <div className="space-y-2 px-4 py-4 text-sm">
+                <div className="grid gap-1 sm:grid-cols-[8rem_minmax(0,1fr)]">
+                  <span className="text-muted-foreground">
+                    {t("dockerImage")}
                   </span>
-                  <span className="min-w-0 flex-1 truncate">{selectedModel || t('selectModel')}</span>
-                  <span className="hidden max-w-44 truncate text-xs text-muted-foreground sm:block">{selectedProviderOption?.name}</span>
-                  <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" /></Button>
-                )}
-              />
-            </div>
-          )}
-          {!isHermes && selectedProvider && models.length === 0 ? (
-            <p className="rounded-md border border-border bg-muted px-3 py-2 text-xs text-muted-foreground text-muted-foreground sm:col-span-2">
-              {t('thisProviderHasNoCachedModelsRefreshItsModelsOnTheModelProvidersTab')}
-            </p>
+                  <code className="min-w-0 break-all text-xs text-foreground">
+                    {runtime.image}
+                  </code>
+                </div>
+                <div className="grid gap-1 sm:grid-cols-[8rem_minmax(0,1fr)]">
+                  <span className="text-muted-foreground">{t("sandbox")}</span>
+                  <code className="min-w-0 break-all text-xs text-foreground">
+                    {runtime.sandboxId}
+                  </code>
+                </div>
+                {runtime.lastSyncedAt ? (
+                  <div className="grid gap-1 sm:grid-cols-[8rem_minmax(0,1fr)]">
+                    <span className="text-muted-foreground">
+                      {t("lastSynced")}
+                    </span>
+                    <span className="text-xs text-foreground">
+                      {formatInTimeZone(
+                        runtime.lastSyncedAt,
+                        timeZone,
+                        { dateStyle: "medium", timeStyle: "short" },
+                        locale,
+                      )}
+                    </span>
+                  </div>
+                ) : null}
+                {runtime.lastError ? (
+                  <p className="rounded-md border border-border bg-muted px-3 py-2 text-xs text-destructive text-destructive">
+                    {runtime.lastError}
+                  </p>
+                ) : null}
+                {runtimeActionMessage ? (
+                  <p
+                    role={activeRuntimeState.error ? "alert" : "status"}
+                    aria-live="polite"
+                    className={
+                      activeRuntimeState.error
+                        ? "rounded-md border border-border bg-muted px-3 py-2 text-xs text-destructive text-destructive"
+                        : "text-xs text-muted-foreground"
+                    }
+                  >
+                    {runtimeActionMessage}
+                  </p>
+                ) : null}
+              </div>
+              <div className="space-y-3 border-t border-border px-4 py-4">
+                <div>
+                  <h4 className="text-sm font-semibold text-foreground">
+                    {t("hermesVersion")}
+                  </h4>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    {t("hermesRuntimeUpgradeHelp")}
+                  </p>
+                </div>
+                <HermesImageSelector
+                  key={runtime.image}
+                  id="settings-hermes-version"
+                  images={hermesImages}
+                  value={runtime.image}
+                  disabled={runtimeControlsDisabled}
+                />
+                <div className="flex flex-wrap items-center justify-end gap-3">
+                  <Button
+                    type="submit"
+                    formAction={upgradeFormAction}
+                    formNoValidate
+                    disabled={runtimeControlsDisabled}
+                    aria-busy={isUpgradePending}
+                    onClick={() => {
+                      clearAutoSaveTimer();
+                      setLastRuntimeAction("upgrade");
+                    }}
+                    variant={"secondary"}
+                    size={"sm"}
+                  >
+                    {isUpgradePending ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : lastRuntimeAction === "upgrade" &&
+                      upgradeState.savedAt ? (
+                      <Check className="size-4 text-muted-foreground" />
+                    ) : (
+                      <RefreshCw className="size-4" />
+                    )}
+                    {isUpgradePending
+                      ? t("upgradingHermesRuntime")
+                      : lastRuntimeAction === "upgrade" && upgradeState.savedAt
+                        ? t("hermesRuntimeUpgraded")
+                        : t("upgradeHermesRuntime")}
+                  </Button>
+                </div>
+              </div>
+            </section>
           ) : null}
-        </div>
-      </section>
 
+          <section
+            hidden={activeSection !== "builtInTools"}
+            aria-label={t("builtInTools")}
+          >
+            <AgentBuiltInTools
+              runtimeKind={runtimeKind}
+              disabledTools={disabledBuiltinToolSet}
+              onDisabledToolsChange={(next) => {
+                setDisabledBuiltinToolSet(next);
+                scheduleAutoSave();
+              }}
+            />
+          </section>
+
+          <section hidden={activeSection !== "mcp"} aria-label={t("mcp")}>
+            <AgentResourceSelect
+              icon={Server}
+              label={t("mcp")}
+              name="deploymentId"
+              options={deployments}
+              selectedIds={selectedDeploymentIds}
+              onSelectionChange={(next) => {
+                setSelectedDeploymentIds(next);
+                scheduleAutoSave();
+              }}
+            />
+          </section>
+
+          <section hidden={activeSection !== "skills"} aria-label={t("skills")}>
+            <AgentResourceSelect
+              icon={PackageCheck}
+              label={t("skills")}
+              name="installedSkillId"
+              options={skills}
+              selectedIds={selectedSkillIds}
+              onSelectionChange={(next) => {
+                setSelectedSkillIds(next);
+                scheduleAutoSave();
+              }}
+            />
+          </section>
+
+          <section
+            hidden={activeSection !== "toolkits"}
+            aria-label={t("toolkits")}
+          >
+            <AgentResourceSelect
+              icon={Blocks}
+              label={t("toolkits")}
+              name="toolkitId"
+              options={toolkits}
+              selectedIds={selectedToolkitIds}
+              onSelectionChange={(next) => {
+                setSelectedToolkitIds(next);
+                scheduleAutoSave();
+              }}
+            />
+          </section>
+
+          <section
+            hidden={activeSection !== "piPackages"}
+            aria-label={t("piPackages")}
+            className="space-y-4"
+          >
+            {runtimeKind !== "pi-sdk" ? (
+              <>
+                <p className="text-sm text-muted-foreground">
+                  {t("piPackagesIncompatible")}
+                </p>
+                <ButtonLink
+                  href={`/app/${encodeURIComponent(slug)}/agents?create=1&runtime=pi-sdk`}
+                  variant="secondary"
+                  size="sm"
+                >
+                  {t("createPiSdkAgent")}
+                </ButtonLink>
+              </>
+            ) : (
+              <>
+                <div className="space-y-2 rounded-lg border border-border p-3 text-xs leading-5 text-muted-foreground">
+                  <p>{t("piPackageSecurity")}</p>
+                  <p>{t("piPackageHeadless")}</p>
+                  <p>{t("piPackagesNewSession")}</p>
+                  <p>{t("piPackagesBusyHelp")}</p>
+                  <p>{t("piPackageMcpBindingRequired")}</p>
+                </div>
+                {!piPackages.length ? (
+                  <p className="text-sm text-muted-foreground">
+                    {t("piPackagesEmpty")}
+                  </p>
+                ) : null}
+                {piPackages.map((pkg) => {
+                  const selected = selectedPiPackages.find(
+                    (entry) => entry.marketInstallId === pkg.marketInstallId,
+                  );
+                  const usingWorkspaceVersion =
+                    selected?.releaseId === pkg.currentReleaseId;
+                  return (
+                    <div
+                      key={pkg.marketInstallId}
+                      className="space-y-2 rounded-lg border border-border p-3"
+                    >
+                      <label className="flex items-start gap-3 text-sm font-medium">
+                        <input
+                          type="checkbox"
+                          className="mt-1 size-4 accent-foreground"
+                          checked={Boolean(selected)}
+                          disabled={
+                            isPending ||
+                            (!selected &&
+                              (!pkg.currentAvailable ||
+                                selectedPiPackages.length >= 16))
+                          }
+                          onChange={(event) => {
+                            setSelectedPiPackages((current) =>
+                              event.target.checked && pkg.currentReleaseId
+                                ? [
+                                    ...current,
+                                    {
+                                      marketInstallId: pkg.marketInstallId,
+                                      releaseId: pkg.currentReleaseId,
+                                    },
+                                  ]
+                                : current.filter(
+                                    (entry) =>
+                                      entry.marketInstallId !==
+                                      pkg.marketInstallId,
+                                  ),
+                            );
+                          }}
+                        />
+                        {pkg.name}
+                      </label>
+                      <p className="text-xs text-muted-foreground">
+                        {t("piPackageWorkspaceVersion", {
+                          version: pkg.currentVersion ?? "—",
+                        })}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {selected
+                          ? t("piPackageEnabledVersion", {
+                              version:
+                                (usingWorkspaceVersion
+                                  ? pkg.currentVersion
+                                  : pkg.enabledVersion) ?? "—",
+                            })
+                          : t("piPackageNotEnabled")}
+                      </p>
+                      {!pkg.currentAvailable ||
+                      (selected &&
+                        !usingWorkspaceVersion &&
+                        !pkg.enabledAvailable) ? (
+                        <p role="status" className="text-xs text-destructive">
+                          {t("piPackageUnavailable")}
+                        </p>
+                      ) : null}
+                      <ButtonLink
+                        href={`/app/${encodeURIComponent(slug)}/market/installed/${encodeURIComponent(pkg.marketInstallId)}/clients#workspace-bindings`}
+                        variant="ghost"
+                        size="sm"
+                      >
+                        {t("piPackageMcpBindings")}
+                      </ButtonLink>
+                      {selected &&
+                      !usingWorkspaceVersion &&
+                      pkg.currentAvailable &&
+                      pkg.currentReleaseId ? (
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          disabled={isPending}
+                          onClick={() => {
+                            const releaseId = pkg.currentReleaseId;
+                            if (!releaseId) return;
+                            setSelectedPiPackages((current) =>
+                              current.map((entry) =>
+                                entry.marketInstallId === pkg.marketInstallId
+                                  ? {
+                                      ...entry,
+                                      releaseId,
+                                    }
+                                  : entry,
+                              ),
+                            );
+                            scheduleAutoSave();
+                          }}
+                        >
+                          {t("piPackageApplyWorkspaceVersion")}
+                        </Button>
+                      ) : null}
+                    </div>
+                  );
+                })}
+                <ButtonLink
+                  href={`/app/${encodeURIComponent(slug)}/market/pi-packages`}
+                  variant="secondary"
+                  size="sm"
+                >
+                  {t("browsePiPackages")}
+                </ButtonLink>
+              </>
+            )}
+          </section>
+
+          <section
+            hidden={activeSection !== "sandboxes"}
+            aria-label={t("sandboxes")}
+          >
+            <AgentResourceSelect
+              icon={Box}
+              label={t("sandboxes")}
+              name="sandboxId"
+              options={sandboxOptions}
+              selectedIds={selectedSandboxIds}
+              onSelectionChange={(next) => {
+                setSelectedSandboxIds(next);
+                if (!next.has(selectedDefaultSandboxId))
+                  setSelectedDefaultSandboxId([...next][0] ?? "");
+                scheduleAutoSave();
+              }}
+              selectionMode={
+                singleSandboxRuntime ? "single-required" : "multiple"
+              }
+            />
+            {!singleSandboxRuntime && selectedSandboxIds.size ? (
+              <div className="mt-3 block text-xs text-muted-foreground">
+                <span className="mb-1 block">Default Work sandbox</span>
+                <FormSelect
+                  name="defaultSandboxId"
+                  value={selectedDefaultSandboxId}
+                  label={"Default Work sandbox"}
+                  options={[
+                    [...selectedSandboxIds].map((id) => ({
+                      value: id,
+                      label:
+                        sandboxOptions.find((item) => item.id === id)?.label ??
+                        id,
+                    })),
+                  ]
+                    .flat()
+                    .filter((option) => option != null)}
+                  onValueChange={(value) => {
+                    setSelectedDefaultSandboxId(value);
+                    scheduleAutoSave();
+                  }}
+                  className="w-full"
+                />
+              </div>
+            ) : null}
+            {!isHermes ? (
+              <p className="mt-3 text-xs leading-5 text-muted-foreground">
+                {t(
+                  runtimeKind === "pi-sdk"
+                    ? "piSdkRuntimeDescription"
+                    : "nativeHarnessSandboxHelp",
+                )}
+              </p>
+            ) : null}
+          </section>
+
+          <section
+            hidden={activeSection !== "subAgents"}
+            aria-label={t("subAgents")}
+          >
+            <AgentResourceSelect
+              icon={Users}
+              label={t("subAgents")}
+              name="subAgentId"
+              options={subAgents}
+              selectedIds={selectedSubAgentIds}
+              onSelectionChange={(next) => {
+                setSelectedSubAgentIds(next);
+                scheduleAutoSave();
+              }}
+            />
+          </section>
+
+          <section
+            hidden={activeSection !== "general"}
+            aria-label={isHermes ? t("modelProviders") : t("model")}
+          >
+            <div className="grid items-start gap-3 sm:grid-cols-2">
+              {isHermes ? (
+                <div className="space-y-2 sm:col-span-2">
+                  <AgentResourceSelect
+                    icon={Cpu}
+                    label={t("modelProviders")}
+                    name="providerId"
+                    options={providerOptions}
+                    selectedIds={selectedProviderIds}
+                    onSelectionChange={(next) => {
+                      setSelectedProviderIds(next);
+                      scheduleAutoSave();
+                    }}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    {t("hermesProviderSelectionHelp")}
+                  </p>
+                </div>
+              ) : (
+                <div className="sm:col-span-2">
+                  <input
+                    type="hidden"
+                    name="providerId"
+                    value={selectedProvider}
+                  />
+                  <input type="hidden" name="model" value={selectedModel} />
+                  <span className="mb-1.5 block text-xs font-semibold text-foreground">
+                    {t("model")}
+                  </span>
+                  <ModelPicker
+                    providers={compatibleProviders}
+                    value={
+                      selectedProvider && selectedModel
+                        ? { providerId: selectedProvider, model: selectedModel }
+                        : null
+                    }
+                    onSelect={(selection) => {
+                      setSelectedProvider(selection.providerId);
+                      setSelectedModel(selection.model);
+                      scheduleAutoSave();
+                    }}
+                    onConfigure={() => {
+                      window.location.assign(
+                        `/app/${encodeURIComponent(slug)}/providers`,
+                      );
+                    }}
+                    trigger={
+                      <Button
+                        variant="secondary"
+                        type="button"
+                        aria-label={`${t("model")}: ${selectedModel || t("selectModel")}`}
+                        className="w-full text-left"
+                      >
+                        <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-semibold text-muted-foreground">
+                          {selectedProviderOption?.name
+                            .charAt(0)
+                            .toUpperCase() || "M"}
+                        </span>
+                        <span className="min-w-0 flex-1 truncate">
+                          {selectedModel || t("selectModel")}
+                        </span>
+                        <span className="hidden max-w-44 truncate text-xs text-muted-foreground sm:block">
+                          {selectedProviderOption?.name}
+                        </span>
+                        <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+                      </Button>
+                    }
+                  />
+                </div>
+              )}
+              {!isHermes && selectedProvider && models.length === 0 ? (
+                <p className="rounded-md border border-border bg-muted px-3 py-2 text-xs text-muted-foreground text-muted-foreground sm:col-span-2">
+                  {t(
+                    "thisProviderHasNoCachedModelsRefreshItsModelsOnTheModelProvidersTab",
+                  )}
+                </p>
+              ) : null}
+            </div>
+          </section>
         </div>
       </div>
     </form>

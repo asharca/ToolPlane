@@ -16,6 +16,12 @@ enum UserStatus {
   suspended
 }
 
+enum NotificationKind {
+  workspace_invitation
+  site_announcement
+  workspace_announcement
+}
+
 enum McpToolExposure {
   all
   allowlist
@@ -62,6 +68,8 @@ model User {
   passwordResetTokens    PasswordResetToken[]
   ownedWorkspaces        Workspace[]           @relation("WorkspaceOwner")
   memberships            Membership[]
+  sentNotifications      Notification[]        @relation("NotificationSender")
+  notificationReceipts   NotificationRecipient[] @relation("NotificationRecipientUser")
   agentListings          AgentListing[]        @relation("AgentListingPublisher")
   reviewedAgentReleases  AgentRelease[]        @relation("AgentReleaseReviewer")
   agentInstalls          AgentInstall[]        @relation("AgentInstallActor")
@@ -190,6 +198,7 @@ model Workspace {
   owner                  User                     @relation("WorkspaceOwner", fields: [ownerId], references: [id], onDelete: Cascade)
   members                Membership[]
   invitations            WorkspaceInvitation[]
+  notifications          Notification[]           @relation("NotificationWorkspace")
   deployments            Deployment[]
   installedSkills        InstalledSkill[]
   sandboxes              Sandbox[]
@@ -235,9 +244,39 @@ model WorkspaceInvitation {
   tokenHash   String    @unique
   expiresAt   DateTime
   createdAt   DateTime  @default(now())
+  notification Notification? @relation("NotificationInvitation")
 
   @@unique([workspaceId, email])
   @@index([expiresAt])
+}
+
+model Notification {
+  id            String                  @id @default(cuid())
+  kind          NotificationKind
+  title         String?
+  body          String?
+  senderId      String?
+  sender        User?                   @relation("NotificationSender", fields: [senderId], references: [id], onDelete: SetNull)
+  workspaceId   String?
+  workspace     Workspace?              @relation("NotificationWorkspace", fields: [workspaceId], references: [id], onDelete: SetNull)
+  workspaceName String?
+  invitationId  String?                 @unique
+  invitation    WorkspaceInvitation?    @relation("NotificationInvitation", fields: [invitationId], references: [id], onDelete: SetNull)
+  createdAt     DateTime                @default(now())
+  recipients    NotificationRecipient[]
+}
+
+model NotificationRecipient {
+  notificationId String
+  notification   Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User         @relation("NotificationRecipientUser", fields: [userId], references: [id], onDelete: Cascade)
+  readAt         DateTime?
+  createdAt      DateTime     @default(now())
+
+  @@id([notificationId, userId])
+  @@index([userId, createdAt, notificationId])
+  @@index([userId, readAt, createdAt, notificationId])
 }
 
 model Deployment {

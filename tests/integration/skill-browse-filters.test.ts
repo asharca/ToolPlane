@@ -1,7 +1,10 @@
 // @vitest-environment node
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { db } from '@/lib/db';
-import { getBrowseSkills, getSkillBrowseCategories } from '@/lib/workspace/queries';
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { db } from "@/lib/db";
+import {
+  getBrowseSkills,
+  getSkillBrowseCategories,
+} from "@/lib/workspace/queries";
 
 const stamp = Date.now();
 const query = `filter-${stamp}`;
@@ -19,34 +22,39 @@ const skillSlugs = [
   `${query}-unified`,
 ];
 
-let ownerWorkspaceId = '';
+let ownerWorkspaceId = "";
 
-describe('skill browse filters', () => {
+describe("skill browse filters", () => {
   beforeAll(async () => {
     const [owner, foreign] = await Promise.all([
-      db.user.create({ data: { email: ownerEmail, passwordHash: 'x' } }),
-      db.user.create({ data: { email: foreignEmail, passwordHash: 'x' } }),
+      db.user.create({ data: { email: ownerEmail, passwordHash: "x" } }),
+      db.user.create({ data: { email: foreignEmail, passwordHash: "x" } }),
     ]);
-    const [ownerWorkspace, foreignWorkspace, networkCategory, docsCategory] = await Promise.all([
-      db.workspace.create({
-        data: {
-          slug: ownerSlug,
-          name: 'Skill Filter Owner',
-          ownerId: owner.id,
-          members: { create: { userId: owner.id, role: 'owner' } },
-        },
-      }),
-      db.workspace.create({
-        data: {
-          slug: foreignSlug,
-          name: 'Skill Filter Foreign',
-          ownerId: foreign.id,
-          members: { create: { userId: foreign.id, role: 'owner' } },
-        },
-      }),
-      db.category.create({ data: { slug: networkCategorySlug, name: `Network ${stamp}` } }),
-      db.category.create({ data: { slug: docsCategorySlug, name: `Docs ${stamp}` } }),
-    ]);
+    const [ownerWorkspace, foreignWorkspace, networkCategory, docsCategory] =
+      await Promise.all([
+        db.workspace.create({
+          data: {
+            slug: ownerSlug,
+            name: "Skill Filter Owner",
+            ownerId: owner.id,
+            members: { create: { userId: owner.id, role: "owner" } },
+          },
+        }),
+        db.workspace.create({
+          data: {
+            slug: foreignSlug,
+            name: "Skill Filter Foreign",
+            ownerId: foreign.id,
+            members: { create: { userId: foreign.id, role: "owner" } },
+          },
+        }),
+        db.category.create({
+          data: { slug: networkCategorySlug, name: `Network ${stamp}` },
+        }),
+        db.category.create({
+          data: { slug: docsCategorySlug, name: `Docs ${stamp}` },
+        }),
+      ]);
     ownerWorkspaceId = ownerWorkspace.id;
 
     const [githubSkill, otherSkill] = await Promise.all([
@@ -54,8 +62,8 @@ describe('skill browse filters', () => {
         data: {
           slug: skillSlugs[0],
           name: `${query} GitHub`,
-          description: 'Network automation',
-          githubSource: 'https://github.com/example/network-skill',
+          description: "Network automation",
+          githubSource: "https://github.com/example/network-skill",
           curated: true,
           score: 30,
           categories: { connect: { id: networkCategory.id } },
@@ -65,7 +73,7 @@ describe('skill browse filters', () => {
         data: {
           slug: skillSlugs[1],
           name: `${query} Other`,
-          description: 'Document automation',
+          description: "Document automation",
           curated: true,
           score: 20,
           categories: { connect: { id: docsCategory.id } },
@@ -76,7 +84,7 @@ describe('skill browse filters', () => {
       data: {
         slug: skillSlugs[2],
         name: `${query} Uncategorized`,
-        description: 'No category',
+        description: "No category",
         curated: true,
         score: 10,
       },
@@ -85,7 +93,7 @@ describe('skill browse filters', () => {
       data: {
         slug: skillSlugs[3],
         name: `${query} Hidden`,
-        description: 'Not approved for the workspace market',
+        description: "Not approved for the workspace market",
         curated: false,
         score: 100,
         categories: { connect: { id: docsCategory.id } },
@@ -95,7 +103,7 @@ describe('skill browse filters', () => {
       data: {
         slug: skillSlugs[4],
         name: `${query} Unified`,
-        description: 'Published through the unified market',
+        description: "Published through the unified market",
         curated: true,
         score: 200,
         categories: { connect: { id: docsCategory.id } },
@@ -103,7 +111,7 @@ describe('skill browse filters', () => {
     });
     const listing = await db.marketListing.create({
       data: {
-        kind: 'skill',
+        kind: "skill",
         namespace: foreignSlug,
         slug: skillSlugs[4],
         name: `${query} Unified`,
@@ -117,82 +125,127 @@ describe('skill browse filters', () => {
         version: 1,
         manifest: {},
         releaseSummary: {},
-        checksum: '0'.repeat(64),
-        reviewStatus: 'approved',
+        checksum: "0".repeat(64),
+        reviewStatus: "approved",
         publishedAt: new Date(),
       },
     });
     await db.marketListing.update({
       where: { id: listing.id },
-      data: { status: 'published', latestReleaseId: release.id, publishedAt: new Date() },
+      data: {
+        status: "published",
+        latestReleaseId: release.id,
+        publishedAt: new Date(),
+      },
     });
     await Promise.all([
-      db.installedSkill.create({ data: { workspaceId: ownerWorkspace.id, skillId: githubSkill.id } }),
-      db.installedSkill.create({ data: { workspaceId: foreignWorkspace.id, skillId: otherSkill.id } }),
+      db.installedSkill.create({
+        data: { workspaceId: ownerWorkspace.id, skillId: githubSkill.id },
+      }),
+      db.installedSkill.create({
+        data: { workspaceId: foreignWorkspace.id, skillId: otherSkill.id },
+      }),
     ]);
   });
 
   afterAll(async () => {
-    await db.workspace.deleteMany({ where: { slug: { in: [ownerSlug, foreignSlug] } } });
-    await db.marketListing.deleteMany({ where: { namespace: foreignSlug, slug: skillSlugs[4] } });
+    await db.workspace.deleteMany({
+      where: { slug: { in: [ownerSlug, foreignSlug] } },
+    });
+    await db.marketListing.deleteMany({
+      where: { namespace: foreignSlug, slug: skillSlugs[4] },
+    });
     await db.skill.deleteMany({ where: { slug: { in: skillSlugs } } });
-    await db.category.deleteMany({ where: { slug: { in: [networkCategorySlug, docsCategorySlug] } } });
-    await db.user.deleteMany({ where: { email: { in: [ownerEmail, foreignEmail] } } });
+    await db.category.deleteMany({
+      where: { slug: { in: [networkCategorySlug, docsCategorySlug] } },
+    });
+    await db.user.deleteMany({
+      where: { email: { in: [ownerEmail, foreignEmail] } },
+    });
     await db.$disconnect();
   });
 
-  function filters(overrides: Partial<Parameters<typeof getBrowseSkills>[2]> = {}) {
+  function filters(
+    overrides: Partial<Parameters<typeof getBrowseSkills>[2]> = {},
+  ) {
     return {
       workspaceId: ownerWorkspaceId,
-      source: 'all' as const,
-      installation: 'all' as const,
-      category: 'all',
-      sort: 'top' as const,
+      source: "all" as const,
+      installation: "all" as const,
+      category: "all",
+      sort: "top" as const,
       ...overrides,
     };
   }
 
-  it('filters installation status within the current workspace', async () => {
-    const installed = await getBrowseSkills(1, query, filters({ installation: 'installed' }));
+  it("filters installation status within the current workspace", async () => {
+    const installed = await getBrowseSkills(
+      1,
+      query,
+      filters({ installation: "installed" }),
+    );
     expect(installed.all.map((skill) => skill.slug)).toEqual([skillSlugs[0]]);
     expect(installed.all[0].installed).toBe(true);
 
-    const available = await getBrowseSkills(1, query, filters({ installation: 'available' }));
-    expect(available.all.map((skill) => skill.slug).sort()).toEqual([skillSlugs[1], skillSlugs[2]].sort());
+    const available = await getBrowseSkills(
+      1,
+      query,
+      filters({ installation: "available" }),
+    );
+    expect(available.all.map((skill) => skill.slug).sort()).toEqual(
+      [skillSlugs[1], skillSlugs[2]].sort(),
+    );
     expect(available.all.every((skill) => !skill.installed)).toBe(true);
   });
 
-  it('combines source and category filters', async () => {
+  it("combines source and category filters", async () => {
     const result = await getBrowseSkills(
       1,
       query,
-      filters({ source: 'other', category: docsCategorySlug }),
+      filters({ source: "other", category: docsCategorySlug }),
     );
     expect(result.total).toBe(1);
     expect(result.all[0].slug).toBe(skillSlugs[1]);
-    expect(result.all[0].categories.map((category) => category.slug)).toContain(docsCategorySlug);
-  });
-
-  it('supports uncategorized filtering and name sorting', async () => {
-    const uncategorized = await getBrowseSkills(1, query, filters({ category: 'uncategorized' }));
-    expect(uncategorized.all.map((skill) => skill.slug)).toEqual([skillSlugs[2], skillSlugs[4]]);
-
-    const sorted = await getBrowseSkills(1, query, filters({ sort: 'name' }));
-    expect(sorted.all.map((skill) => skill.name)).toEqual(
-      sorted.all.map((skill) => skill.name).toSorted((a, b) => a.localeCompare(b)),
+    expect(result.all[0].categories.map((category) => category.slug)).toContain(
+      docsCategorySlug,
     );
   });
 
-  it('never returns non-curated skills from the workspace market', async () => {
+  it("supports uncategorized filtering and name sorting", async () => {
+    const uncategorized = await getBrowseSkills(
+      1,
+      query,
+      filters({ category: "uncategorized" }),
+    );
+    expect(uncategorized.all.map((skill) => skill.slug)).toEqual([
+      skillSlugs[2],
+      skillSlugs[4],
+    ]);
+
+    const sorted = await getBrowseSkills(1, query, filters({ sort: "name" }));
+    expect(sorted.all.map((skill) => skill.name)).toEqual(
+      sorted.all
+        .map((skill) => skill.name)
+        .toSorted((a, b) => a.localeCompare(b)),
+    );
+  });
+
+  it("never returns non-curated skills from the workspace market", async () => {
     const result = await getBrowseSkills(1, query, filters());
     expect(result.all.map((skill) => skill.slug)).not.toContain(skillSlugs[3]);
     expect(result.all.map((skill) => skill.slug)).toContain(skillSlugs[4]);
     expect(result.total).toBe(4);
   });
 
-  it('lists only categories that contain skills', async () => {
+  it("lists only categories that contain skills", async () => {
     const categories = await getSkillBrowseCategories();
-    expect(categories.find((category) => category.slug === networkCategorySlug)?._count.skills).toBe(1);
-    expect(categories.find((category) => category.slug === docsCategorySlug)?._count.skills).toBe(1);
+    expect(
+      categories.find((category) => category.slug === networkCategorySlug)
+        ?._count.skills,
+    ).toBe(1);
+    expect(
+      categories.find((category) => category.slug === docsCategorySlug)?._count
+        .skills,
+    ).toBe(1);
   });
 });

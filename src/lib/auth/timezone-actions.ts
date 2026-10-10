@@ -1,15 +1,12 @@
-'use server';
+"use server";
 
-import { revalidatePath } from 'next/cache';
-import { db } from '@/lib/db';
-import { getCurrentUser } from '@/lib/auth/current-user';
-import {
-  AUTO_TIME_ZONE_VALUE,
-  normalizeTimeZone,
-} from '@/lib/timezone';
+import { revalidatePath } from "next/cache";
+import { db } from "@/lib/db";
+import { getCurrentUser } from "@/lib/auth/current-user";
+import { AUTO_TIME_ZONE_VALUE, normalizeTimeZone } from "@/lib/timezone";
 
 export type TimeZonePreferenceState = {
-  error?: 'invalidTimeZone' | 'unauthorized';
+  error?: "invalidTimeZone" | "unauthorized";
   savedAt?: number;
 };
 
@@ -26,7 +23,7 @@ export async function syncDetectedTimeZone(value: string): Promise<boolean> {
   });
   if (result.count === 0) return false;
 
-  revalidatePath('/', 'layout');
+  revalidatePath("/", "layout");
   return true;
 }
 
@@ -35,15 +32,15 @@ export async function updateTimeZonePreference(
   formData: FormData,
 ): Promise<TimeZonePreferenceState> {
   const user = await getCurrentUser();
-  if (!user) return { error: 'unauthorized' };
+  if (!user) return { error: "unauthorized" };
 
-  const selected = String(formData.get('timeZone') ?? '');
+  const selected = String(formData.get("timeZone") ?? "");
   const automatic = selected === AUTO_TIME_ZONE_VALUE;
   const timeZoneOverride = automatic ? null : normalizeTimeZone(selected);
-  if (!automatic && !timeZoneOverride) return { error: 'invalidTimeZone' };
+  if (!automatic && !timeZoneOverride) return { error: "invalidTimeZone" };
 
   const detectedTimeZone = automatic
-    ? normalizeTimeZone(formData.get('detectedTimeZone'))
+    ? normalizeTimeZone(formData.get("detectedTimeZone"))
     : null;
   const result = await db.user.updateMany({
     where: { id: user.id },
@@ -52,8 +49,8 @@ export async function updateTimeZonePreference(
       ...(detectedTimeZone ? { detectedTimeZone } : {}),
     },
   });
-  if (result.count === 0) return { error: 'unauthorized' };
+  if (result.count === 0) return { error: "unauthorized" };
 
-  revalidatePath('/', 'layout');
+  revalidatePath("/", "layout");
   return { savedAt: Date.now() };
 }

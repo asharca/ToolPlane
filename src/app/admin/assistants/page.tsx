@@ -1,57 +1,64 @@
-
-import { ButtonLink } from '@/components/motion/button';
-import { Plus } from 'lucide-react';
-import { getTranslations } from 'next-intl/server';
+import { ButtonLink } from "@/components/motion/button";
+import { Plus } from "lucide-react";
+import { getTranslations } from "next-intl/server";
 import {
   AdminPage,
   AdminPageHeader,
   AdminSearchForm,
-} from '@/components/admin/AdminUI';
-import { MarketListingManagement } from '@/components/admin/MarketCatalogManagement';
-import { listCategories } from '@/lib/admin/categories';
-import { listAdminMarketListings } from '@/lib/admin/market-catalog';
-import { requireAdmin } from '@/lib/auth/admin';
+} from "@/components/admin/AdminUI";
+import { MarketListingManagement } from "@/components/admin/MarketCatalogManagement";
+import { listCategories } from "@/lib/admin/categories";
+import { listAdminMarketListings } from "@/lib/admin/market-catalog";
+import { requireAdmin } from "@/lib/auth/admin";
 
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
 function firstParam(value: string | string[] | undefined) {
-  return Array.isArray(value) ? value[0] ?? '' : value ?? '';
+  return Array.isArray(value) ? (value[0] ?? "") : (value ?? "");
 }
 
 export default async function AdminAssistantsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string | string[]; listingPage?: string | string[] }>;
+  searchParams: Promise<{
+    q?: string | string[];
+    listingPage?: string | string[];
+  }>;
 }) {
   await requireAdmin();
-  const [t, query] = await Promise.all([getTranslations('admin'), searchParams]);
+  const [t, query] = await Promise.all([
+    getTranslations("admin"),
+    searchParams,
+  ]);
   const q = firstParam(query.q).trim().slice(0, 200);
   const page = Number(firstParam(query.listingPage));
   const [result, categories] = await Promise.all([
-    listAdminMarketListings({ kind: 'assistant', q, page }),
+    listAdminMarketListings({ kind: "assistant", q, page }),
     listCategories(),
   ]);
 
   return (
     <AdminPage>
       <AdminPageHeader
-        title={t('directoryAssistants')}
-        description={t('assistantsDirectoryDescription')}
-        meta={t('assistantListingCount', { count: result.total.toLocaleString() })}
-        actions={(
+        title={t("directoryAssistants")}
+        description={t("assistantsDirectoryDescription")}
+        meta={t("assistantListingCount", {
+          count: result.total.toLocaleString(),
+        })}
+        actions={
           <ButtonLink href="/admin/assistants/new" variant="primary" size="md">
             <Plus className="size-4" aria-hidden="true" />
-            {t('addAssistantTemplate')}
+            {t("addAssistantTemplate")}
           </ButtonLink>
-        )}
+        }
       />
 
       <AdminSearchForm
         defaultValue={q}
-        placeholder={t('searchAssistantListings')}
-        label={t('searchAssistantListings')}
-        searchLabel={t('search')}
-        clearLabel={t('clear')}
+        placeholder={t("searchAssistantListings")}
+        label={t("searchAssistantListings")}
+        searchLabel={t("search")}
+        clearLabel={t("clear")}
         clearHref="/admin/assistants"
       />
 

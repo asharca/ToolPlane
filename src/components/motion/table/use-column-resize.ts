@@ -34,8 +34,8 @@ export function useColumnResize<T>({
       const snapshot = { ...widths };
       for (const column of orderedColumns) {
         if (snapshot[column.key] == null) {
-          const measured = thRefs.current[column.key]?.getBoundingClientRect()
-            .width;
+          const measured =
+            thRefs.current[column.key]?.getBoundingClientRect().width;
           snapshot[column.key] = measured
             ? Math.round(measured)
             : minColumnWidth;

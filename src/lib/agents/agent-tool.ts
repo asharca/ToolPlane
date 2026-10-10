@@ -1,4 +1,4 @@
-import { Type, type Tool, type TSchema } from '@earendil-works/pi-ai';
+import { Type, type Tool, type TSchema } from "@earendil-works/pi-ai";
 
 export type AgentTool = Tool & {
   execute(args: Record<string, unknown>, ...rest: unknown[]): Promise<unknown>;

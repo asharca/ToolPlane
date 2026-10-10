@@ -8,34 +8,36 @@ export const DEFAULT_SKILL_IMPORT_SKILLS = 64;
 export const MAX_SKILL_IMPORT_SKILLS = MAX_SKILL_IMPORT_FILES;
 
 export function isValidSkillImportMaxSkills(value: unknown): value is number {
-  return typeof value === 'number'
-    && Number.isSafeInteger(value)
-    && value >= MIN_SKILL_IMPORT_SKILLS
-    && value <= MAX_SKILL_IMPORT_SKILLS;
+  return (
+    typeof value === "number" &&
+    Number.isSafeInteger(value) &&
+    value >= MIN_SKILL_IMPORT_SKILLS &&
+    value <= MAX_SKILL_IMPORT_SKILLS
+  );
 }
 
 export const TEXT_SKILL_EXTENSIONS = [
-  '.bash',
-  '.cjs',
-  '.css',
-  '.csv',
-  '.html',
-  '.js',
-  '.json',
-  '.jsx',
-  '.md',
-  '.mjs',
-  '.py',
-  '.sh',
-  '.svg',
-  '.toml',
-  '.ts',
-  '.tsx',
-  '.txt',
-  '.xml',
-  '.yaml',
-  '.yml',
-  '.xsd',
+  ".bash",
+  ".cjs",
+  ".css",
+  ".csv",
+  ".html",
+  ".js",
+  ".json",
+  ".jsx",
+  ".md",
+  ".mjs",
+  ".py",
+  ".sh",
+  ".svg",
+  ".toml",
+  ".ts",
+  ".tsx",
+  ".txt",
+  ".xml",
+  ".yaml",
+  ".yml",
+  ".xsd",
 ] as const;
 
 export const TEXT_SKILL_EXTENSION_SET = new Set<string>(TEXT_SKILL_EXTENSIONS);

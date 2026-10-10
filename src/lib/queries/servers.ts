@@ -1,33 +1,35 @@
-import { db } from '@/lib/db';
-import { parseServerRecipe } from '@/lib/workspace/server-recipe';
+import { db } from "@/lib/db";
+import { parseServerRecipe } from "@/lib/workspace/server-recipe";
 
-export interface ListOpts { page: number; pageSize: number; }
+export interface ListOpts {
+  page: number;
+  pageSize: number;
+}
 
 export async function listServers(opts: ListOpts) {
-  const page = Number.isSafeInteger(opts.page) && opts.page > 0
-    ? opts.page
-    : 1;
-  const pageSize = Number.isSafeInteger(opts.pageSize) && opts.pageSize > 0
-    ? Math.min(100, opts.pageSize)
-    : 30;
+  const page = Number.isSafeInteger(opts.page) && opts.page > 0 ? opts.page : 1;
+  const pageSize =
+    Number.isSafeInteger(opts.pageSize) && opts.pageSize > 0
+      ? Math.min(100, opts.pageSize)
+      : 30;
   const total = await db.server.count();
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   if (page > totalPages) return { items: [], total, page, pageSize };
 
   const items = await db.server.findMany({
-      orderBy: { stars: 'desc' },
-      skip: (page - 1) * pageSize,
-      take: pageSize,
-      select: {
-        slug: true,
-        name: true,
-        author: true,
-        description: true,
-        iconUrl: true,
-        stars: true,
-        categories: { select: { name: true }, take: 1 },
-      },
-    });
+    orderBy: { stars: "desc" },
+    skip: (page - 1) * pageSize,
+    take: pageSize,
+    select: {
+      slug: true,
+      name: true,
+      author: true,
+      description: true,
+      iconUrl: true,
+      stars: true,
+      categories: { select: { name: true }, take: 1 },
+    },
+  });
   return { items, total, page, pageSize };
 }
 
@@ -62,11 +64,14 @@ export async function getRelatedServers(
 ) {
   const where =
     categoryIds.length > 0
-      ? { id: { not: excludeId }, categories: { some: { id: { in: categoryIds } } } }
+      ? {
+          id: { not: excludeId },
+          categories: { some: { id: { in: categoryIds } } },
+        }
       : { id: { not: excludeId } };
   return db.server.findMany({
     where,
-    orderBy: { stars: 'desc' },
+    orderBy: { stars: "desc" },
     take,
     select: { slug: true, name: true, description: true, iconUrl: true },
   });

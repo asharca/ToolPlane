@@ -1,11 +1,11 @@
-import 'server-only';
-import { db } from '@/lib/db';
-import { isAgentEndpointRuntimeSandboxConfig } from '@/lib/agents/public-api/tool-policy';
+import "server-only";
+import { db } from "@/lib/db";
+import { isAgentEndpointRuntimeSandboxConfig } from "@/lib/agents/public-api/tool-policy";
 
 export async function listSandboxes(workspaceId: string) {
   return db.sandbox.findMany({
-    where: { workspaceId, kind: { not: 'hermes' } },
-    orderBy: { createdAt: 'desc' },
+    where: { workspaceId, kind: { not: "hermes" } },
+    orderBy: { createdAt: "desc" },
     include: {
       deployment: true,
       agentLinks: { select: { agent: { select: { id: true, name: true } } } },
@@ -18,10 +18,10 @@ export async function listManagedAgentRuntimes(workspaceId: string) {
   const runtimes = await db.agentRuntime.findMany({
     where: {
       workspaceId,
-      kind: 'hermes',
+      kind: "hermes",
       agent: { publicRuntimeAllocation: { is: null } },
     },
-    orderBy: { createdAt: 'desc' },
+    orderBy: { createdAt: "desc" },
     select: {
       id: true,
       image: true,
@@ -41,7 +41,7 @@ export async function listManagedAgentRuntimes(workspaceId: string) {
           deploymentId: true,
           deployment: { select: { status: true } },
           snapshots: {
-            orderBy: { createdAt: 'desc' },
+            orderBy: { createdAt: "desc" },
             select: {
               id: true,
               name: true,
@@ -54,18 +54,18 @@ export async function listManagedAgentRuntimes(workspaceId: string) {
       },
     },
   });
-  return runtimes.filter((runtime) => (
-    !isAgentEndpointRuntimeSandboxConfig(runtime.sandbox.config)
-  ));
+  return runtimes.filter(
+    (runtime) => !isAgentEndpointRuntimeSandboxConfig(runtime.sandbox.config),
+  );
 }
 
 export async function getSandbox(workspaceId: string, sandboxId: string) {
   return db.sandbox.findFirst({
-    where: { id: sandboxId, workspaceId, kind: { not: 'hermes' } },
+    where: { id: sandboxId, workspaceId, kind: { not: "hermes" } },
     include: {
       deployment: true,
       agentLinks: { include: { agent: { select: { id: true, name: true } } } },
-      snapshots: { orderBy: { createdAt: 'desc' } },
+      snapshots: { orderBy: { createdAt: "desc" } },
     },
   });
 }

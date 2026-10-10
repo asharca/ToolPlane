@@ -51,7 +51,9 @@ function StepRow({ item }: { item: AgentActivityStep }) {
       <span
         className={cn(
           "min-w-0 flex-1 leading-5",
-          state === "pending" ? "text-muted-foreground/55" : "text-foreground/90",
+          state === "pending"
+            ? "text-muted-foreground/55"
+            : "text-foreground/90",
         )}
       >
         {item.label}
@@ -73,11 +75,7 @@ function TextRow({ item }: { item: AgentActivityText }) {
   );
 }
 
-function SearchResultRow({
-  result,
-}: {
-  result: AgentSearchResult;
-}) {
+function SearchResultRow({ result }: { result: AgentSearchResult }) {
   const content = (
     <>
       <span
@@ -126,7 +124,11 @@ function SearchRow({ item }: { item: AgentActivitySearch }) {
   return (
     <div className="space-y-0.5">
       <div className="flex min-h-7 items-center gap-2.5 rounded-md px-1.5 py-1 text-muted-foreground">
-        <Search aria-hidden="true" className="size-4 shrink-0" strokeWidth={1.7} />
+        <Search
+          aria-hidden="true"
+          className="size-4 shrink-0"
+          strokeWidth={1.7}
+        />
         <span className="min-w-0 truncate">{item.query}</span>
       </div>
       {item.results?.length ? (
@@ -189,7 +191,8 @@ function ToolRow({ item }: { item: AgentActivityTool }) {
       <span className="min-w-0 flex-1 truncate rounded-lg bg-muted/80 px-2.5 py-1 font-mono text-xs text-muted-foreground/70">
         {item.target}
       </span>
-      {typeof item.additions === "number" || typeof item.deletions === "number" ? (
+      {typeof item.additions === "number" ||
+      typeof item.deletions === "number" ? (
         <span className="flex shrink-0 items-center gap-2 font-mono tabular-nums">
           {typeof item.additions === "number" ? (
             <span className="text-emerald-500">+{item.additions}</span>

@@ -3,10 +3,10 @@
 export function safeRelativePath(value: unknown): string | null {
   const next = Array.isArray(value) ? value[0] : value;
   if (
-    typeof next === 'string' &&
-    next.startsWith('/') &&
-    !next.startsWith('//') &&
-    !next.startsWith('/\\')
+    typeof next === "string" &&
+    next.startsWith("/") &&
+    !next.startsWith("//") &&
+    !next.startsWith("/\\")
   ) {
     return next;
   }

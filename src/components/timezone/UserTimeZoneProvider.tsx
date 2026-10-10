@@ -1,4 +1,4 @@
-'use client';
+"use client";
 
 import {
   startTransition,
@@ -6,18 +6,15 @@ import {
   useMemo,
   useRef,
   type ReactNode,
-} from 'react';
-import { useRouter } from 'next/navigation';
-import { syncDetectedTimeZone } from '@/lib/auth/timezone-actions';
-import {
-  normalizeTimeZone,
-  resolveTimeZone,
-} from '@/lib/timezone';
+} from "react";
+import { useRouter } from "next/navigation";
+import { syncDetectedTimeZone } from "@/lib/auth/timezone-actions";
+import { normalizeTimeZone, resolveTimeZone } from "@/lib/timezone";
 import {
   UserTimeZoneContext,
   useDetectedClientTimeZone,
   type UserTimeZoneContextValue,
-} from './UserTimeZoneContext';
+} from "./UserTimeZoneContext";
 
 export function UserTimeZoneProvider({
   children,
@@ -49,10 +46,13 @@ export function UserTimeZoneProvider({
   }, [clientTimeZone, router, savedDetectedTimeZone]);
 
   const effectiveDetectedTimeZone = clientTimeZone ?? savedDetectedTimeZone;
-  const value = useMemo<UserTimeZoneContextValue>(() => ({
-    detectedTimeZone: effectiveDetectedTimeZone,
-    timeZone: resolveTimeZone(timeZoneOverride ?? effectiveDetectedTimeZone),
-  }), [effectiveDetectedTimeZone, timeZoneOverride]);
+  const value = useMemo<UserTimeZoneContextValue>(
+    () => ({
+      detectedTimeZone: effectiveDetectedTimeZone,
+      timeZone: resolveTimeZone(timeZoneOverride ?? effectiveDetectedTimeZone),
+    }),
+    [effectiveDetectedTimeZone, timeZoneOverride],
+  );
 
   return (
     <UserTimeZoneContext.Provider value={value}>

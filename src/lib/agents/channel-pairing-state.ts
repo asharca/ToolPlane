@@ -1,8 +1,8 @@
-import type { Prisma } from '@prisma/client';
+import type { Prisma } from "@prisma/client";
 
 export type AgentChannelPairingState = {
   provider: string;
-  status: 'waiting' | 'scanned' | 'ready' | 'expired' | 'error';
+  status: "waiting" | "scanned" | "ready" | "expired" | "error";
   qrPayload?: string;
   scanUrl?: string;
   providerSessionId?: string;
@@ -14,23 +14,30 @@ export type AgentChannelPairingState = {
   extra?: Record<string, string>;
 };
 
-function recordValue(value: Prisma.JsonValue | null | undefined): Record<string, unknown> {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? value as Record<string, unknown>
+function recordValue(
+  value: Prisma.JsonValue | null | undefined,
+): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
     : {};
 }
 
 function textValue(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
-export function pairingFromConfig(raw: Prisma.JsonValue | null): AgentChannelPairingState | null {
+export function pairingFromConfig(
+  raw: Prisma.JsonValue | null,
+): AgentChannelPairingState | null {
   const config = recordValue(raw);
   const pairing = recordValue(config.pairing as Prisma.JsonValue | null);
   const provider = textValue(pairing.provider);
-  const status = textValue(pairing.status) as AgentChannelPairingState['status'] | undefined;
+  const status = textValue(pairing.status) as
+    | AgentChannelPairingState["status"]
+    | undefined;
   if (!provider || !status) return null;
-  if (!['waiting', 'scanned', 'ready', 'expired', 'error'].includes(status)) return null;
+  if (!["waiting", "scanned", "ready", "expired", "error"].includes(status))
+    return null;
   const extra = recordValue(pairing.extra as Prisma.JsonValue | null);
   return {
     provider,

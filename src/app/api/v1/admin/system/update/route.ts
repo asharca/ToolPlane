@@ -1,65 +1,76 @@
-import { withRequestLogging } from '@/lib/observability/http';
-import { NextResponse } from 'next/server';
-import { adminGate } from '@/lib/auth/admin-policy';
-import { getCurrentUser } from '@/lib/auth/current-user';
-import { isSameOriginRequest } from '@/lib/http/origin';
-import { applySystemUpdate, getLocalSystemUpdateStatus, getSystemUpdateStatus } from '@/lib/system/release-update';
+import { withRequestLogging } from "@/lib/observability/http";
+import { NextResponse } from "next/server";
+import { adminGate } from "@/lib/auth/admin-policy";
+import { getCurrentUser } from "@/lib/auth/current-user";
+import { isSameOriginRequest } from "@/lib/http/origin";
+import {
+  applySystemUpdate,
+  getLocalSystemUpdateStatus,
+  getSystemUpdateStatus,
+} from "@/lib/system/release-update";
 
-export const runtime = 'nodejs';
+export const runtime = "nodejs";
 
 async function requireApiAdmin() {
   const user = await getCurrentUser();
   const gate = adminGate(user);
-  if (gate === 'login') {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (gate === "login") {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  if (gate === 'forbidden') {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  if (gate === "forbidden") {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
   return null;
 }
 
-export const GET = withRequestLogging("/api/v1/admin/system/update", async function GET(request: Request) {
-  if (!(await getCurrentUser())) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-  const url = new URL(request.url);
-  if (url.searchParams.get('local') === '1') {
-    const local = await getLocalSystemUpdateStatus();
-    // Old clients only inspect version/process identity after an HTTP 200.
-    const awaitingRecovery = local.updateJob.status === 'idle' && !local.runtimeReady;
-    return NextResponse.json(local, {
-      status: awaitingRecovery ? 503 : 200,
-      headers: {
-        'Cache-Control': 'no-store, no-cache, must-revalidate',
-        ...(awaitingRecovery ? { 'Retry-After': '2' } : {}),
-      },
+export const GET = withRequestLogging(
+  "/api/v1/admin/system/update",
+  async function GET(request: Request) {
+    if (!(await getCurrentUser())) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    const url = new URL(request.url);
+    if (url.searchParams.get("local") === "1") {
+      const local = await getLocalSystemUpdateStatus();
+      // Old clients only inspect version/process identity after an HTTP 200.
+      const awaitingRecovery =
+        local.updateJob.status === "idle" && !local.runtimeReady;
+      return NextResponse.json(local, {
+        status: awaitingRecovery ? 503 : 200,
+        headers: {
+          "Cache-Control": "no-store, no-cache, must-revalidate",
+          ...(awaitingRecovery ? { "Retry-After": "2" } : {}),
+        },
+      });
+    }
+    return NextResponse.json(await getSystemUpdateStatus(), {
+      headers: { "Cache-Control": "no-store, no-cache, must-revalidate" },
     });
-  }
-  return NextResponse.json(await getSystemUpdateStatus(), {
-    headers: { 'Cache-Control': 'no-store, no-cache, must-revalidate' },
-  });
-});
+  },
+);
 
-export const POST = withRequestLogging("/api/v1/admin/system/update", async function POST(request: Request) {
-  if (!isSameOriginRequest(request)) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-  }
-  const denied = await requireApiAdmin();
-  if (denied) return denied;
+export const POST = withRequestLogging(
+  "/api/v1/admin/system/update",
+  async function POST(request: Request) {
+    if (!isSameOriginRequest(request)) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    const denied = await requireApiAdmin();
+    if (denied) return denied;
 
-  const result = await applySystemUpdate();
-  const status = result.ok
-    ? result.status === 'restarting' || result.status === 'updating'
-      ? 202
-      : 200
-    : result.status === 'disabled'
-      ? 400
-      : result.status === 'unavailable'
-        ? 503
-        : 500;
+    const result = await applySystemUpdate();
+    const status = result.ok
+      ? result.status === "restarting" || result.status === "updating"
+        ? 202
+        : 200
+      : result.status === "disabled"
+        ? 400
+        : result.status === "unavailable"
+          ? 503
+          : 500;
 
-  return NextResponse.json(result, {
-    status,
-  });
-});
+    return NextResponse.json(result, {
+      status,
+    });
+  },
+);
