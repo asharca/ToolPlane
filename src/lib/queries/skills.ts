@@ -1,7 +1,10 @@
-import { db } from '@/lib/db';
-import { normalizedSkillDescription } from '@/lib/skills/frontmatter';
+import { db } from "@/lib/db";
+import { normalizedSkillDescription } from "@/lib/skills/frontmatter";
 
-export interface SkillListOptions { page: number; pageSize: number }
+export interface SkillListOptions {
+  page: number;
+  pageSize: number;
+}
 
 const skillCardSelect = {
   slug: true,
@@ -13,7 +16,9 @@ const skillCardSelect = {
   categories: { select: { name: true }, take: 1 },
 } as const;
 
-function normalizeSkillCards<Skill extends { description: string | null }>(skills: Skill[]) {
+function normalizeSkillCards<Skill extends { description: string | null }>(
+  skills: Skill[],
+) {
   return skills.map((skill) => ({
     ...skill,
     description: normalizedSkillDescription(skill.description),
@@ -22,15 +27,16 @@ function normalizeSkillCards<Skill extends { description: string | null }>(skill
 
 export async function listSkills(opts: SkillListOptions) {
   const page = Number.isSafeInteger(opts.page) && opts.page > 0 ? opts.page : 1;
-  const pageSize = Number.isSafeInteger(opts.pageSize) && opts.pageSize > 0
-    ? Math.min(100, opts.pageSize)
-    : 30;
+  const pageSize =
+    Number.isSafeInteger(opts.pageSize) && opts.pageSize > 0
+      ? Math.min(100, opts.pageSize)
+      : 30;
   const total = await db.skill.count();
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   if (page > totalPages) return { items: [], total, page, pageSize };
 
   const skills = await db.skill.findMany({
-    orderBy: { score: 'desc' },
+    orderBy: { score: "desc" },
     skip: (page - 1) * pageSize,
     take: pageSize,
     select: skillCardSelect,
@@ -40,7 +46,7 @@ export async function listSkills(opts: SkillListOptions) {
 
 export async function listTopSkills(take = 100) {
   const skills = await db.skill.findMany({
-    orderBy: { score: 'desc' },
+    orderBy: { score: "desc" },
     take: Math.min(100, Math.max(1, take)),
     select: skillCardSelect,
   });
@@ -79,7 +85,7 @@ export async function getRelatedSkills(categoryIds: string[], take = 3) {
       : {};
   const skills = await db.skill.findMany({
     where,
-    orderBy: { score: 'desc' },
+    orderBy: { score: "desc" },
     take,
     select: {
       slug: true,

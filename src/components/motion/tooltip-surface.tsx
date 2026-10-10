@@ -17,7 +17,12 @@ const offsetFrom: Record<Side, { x?: number; y?: number }> = {
 };
 
 // Small tooltip surfaces need the lighter spawn used by the original Tooltip.
-const TOOLTIP_SPRING = { type: "spring", stiffness: 380, damping: 30, mass: 0.7 } as const;
+const TOOLTIP_SPRING = {
+  type: "spring",
+  stiffness: 380,
+  damping: 30,
+  mass: 0.7,
+} as const;
 
 function buildVariants(side: Side): Variants {
   const o = offsetFrom[side];
@@ -71,7 +76,10 @@ export function TooltipSurface({
   ref?: Ref<HTMLSpanElement>;
 }) {
   const reduce = useReducedMotion();
-  const variants = useMemo(() => reduce ? REDUCED_VARIANTS : buildVariants(side), [reduce, side]);
+  const variants = useMemo(
+    () => (reduce ? REDUCED_VARIANTS : buildVariants(side)),
+    [reduce, side],
+  );
   return (
     <motion.span
       ref={ref}

@@ -1,1 +1,1 @@
-export { default } from '../../../settings/tokens/page';
+export { default } from "../../../settings/tokens/page";

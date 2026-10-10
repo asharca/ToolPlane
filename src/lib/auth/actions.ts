@@ -1,25 +1,25 @@
-'use server';
+"use server";
 
-import { systemLog } from '@/lib/observability/system';
-import { redirect } from 'next/navigation';
-import { revalidatePath } from 'next/cache';
-import { cookies, headers } from 'next/headers';
-import { after } from 'next/server';
-import { getTranslations } from 'next-intl/server';
-import { db } from '@/lib/db';
-import { hashPassword, verifyPassword } from './password';
+import { systemLog } from "@/lib/observability/system";
+import { redirect } from "next/navigation";
+import { revalidatePath } from "next/cache";
+import { cookies, headers } from "next/headers";
+import { after } from "next/server";
+import { getTranslations } from "next-intl/server";
+import { db } from "@/lib/db";
+import { hashPassword, verifyPassword } from "./password";
 import {
   PASSWORD_MAX_LENGTH,
   PASSWORD_MIN_LENGTH,
   validatePassword,
-} from './password-policy';
-import { createSession, clearSession, getSessionUserId } from './session';
-import { createApiToken, revokeApiToken } from './tokens';
-import { safeRelativePath } from './safe-redirect';
-import { reconcileAdminRole } from './admin';
-import { normalizeTimeZone } from '@/lib/timezone';
-import { requestPasswordReset, resetPasswordWithToken } from './password-reset';
-import { allowPasswordResetRequest } from './request-rate-limit';
+} from "./password-policy";
+import { createSession, clearSession, getSessionUserId } from "./session";
+import { createApiToken, revokeApiToken } from "./tokens";
+import { safeRelativePath } from "./safe-redirect";
+import { reconcileAdminRole } from "./admin";
+import { normalizeTimeZone } from "@/lib/timezone";
+import { requestPasswordReset, resetPasswordWithToken } from "./password-reset";
+import { allowPasswordResetRequest } from "./request-rate-limit";
 
 export type AuthState = { error?: string; success?: string };
 
@@ -28,41 +28,48 @@ const EMAIL_MAX_LENGTH = 320;
 const NAME_MAX_LENGTH = 160;
 const RESET_TOKEN_MAX_LENGTH = 128;
 
-function boundedText(formData: FormData, name: string, maxLength: number): string | null {
+function boundedText(
+  formData: FormData,
+  name: string,
+  maxLength: number,
+): string | null {
   const value = formData.get(name);
-  return typeof value === 'string' && value.length <= maxLength ? value : null;
+  return typeof value === "string" && value.length <= maxLength ? value : null;
 }
 
 function normalizedEmail(formData: FormData): string {
-  return boundedText(formData, 'email', EMAIL_MAX_LENGTH)?.trim().toLowerCase() ?? '';
+  return (
+    boundedText(formData, "email", EMAIL_MAX_LENGTH)?.trim().toLowerCase() ?? ""
+  );
 }
 
 export async function signupAction(
   _prev: AuthState,
   formData: FormData,
 ): Promise<AuthState> {
-  const t = await getTranslations('auth');
+  const t = await getTranslations("auth");
   const email = normalizedEmail(formData);
-  const password = boundedText(formData, 'password', PASSWORD_MAX_LENGTH);
-  const rawName = boundedText(formData, 'name', NAME_MAX_LENGTH);
-  const name = rawName?.trim() ?? '';
-  const detectedTimeZone = normalizeTimeZone(formData.get('detectedTimeZone'));
+  const password = boundedText(formData, "password", PASSWORD_MAX_LENGTH);
+  const rawName = boundedText(formData, "name", NAME_MAX_LENGTH);
+  const name = rawName?.trim() ?? "";
+  const detectedTimeZone = normalizeTimeZone(formData.get("detectedTimeZone"));
 
-  if (!EMAIL_RE.test(email)) return { error: t('invalidEmail') };
-  if (rawName === null) return { error: t('nameTooLong', { max: NAME_MAX_LENGTH }) };
+  if (!EMAIL_RE.test(email)) return { error: t("invalidEmail") };
+  if (rawName === null)
+    return { error: t("nameTooLong", { max: NAME_MAX_LENGTH }) };
   if (password === null) {
-    return { error: t('passwordTooLong', { max: PASSWORD_MAX_LENGTH }) };
+    return { error: t("passwordTooLong", { max: PASSWORD_MAX_LENGTH }) };
   }
   const passwordError = validatePassword(password);
-  if (passwordError === 'too_short') {
-    return { error: t('passwordTooShort', { min: PASSWORD_MIN_LENGTH }) };
+  if (passwordError === "too_short") {
+    return { error: t("passwordTooShort", { min: PASSWORD_MIN_LENGTH }) };
   }
-  if (passwordError === 'too_long') {
-    return { error: t('passwordTooLong', { max: PASSWORD_MAX_LENGTH }) };
+  if (passwordError === "too_long") {
+    return { error: t("passwordTooLong", { max: PASSWORD_MAX_LENGTH }) };
   }
 
   const existing = await db.user.findUnique({ where: { email } });
-  if (existing) return { error: t('emailAlreadyExists') };
+  if (existing) return { error: t("emailAlreadyExists") };
 
   const user = await db.user.create({
     data: {
@@ -74,25 +81,26 @@ export async function signupAction(
   });
   await createSession(user.id, user.sessionVersion);
   await reconcileAdminRole(user);
-  redirect(safeRelativePath(formData.get('next')) ?? '/app');
+  redirect(safeRelativePath(formData.get("next")) ?? "/app");
 }
 
 export async function loginAction(
   _prev: AuthState,
   formData: FormData,
 ): Promise<AuthState> {
-  const t = await getTranslations('auth');
+  const t = await getTranslations("auth");
   const email = normalizedEmail(formData);
-  const password = boundedText(formData, 'password', PASSWORD_MAX_LENGTH);
-  const detectedTimeZone = normalizeTimeZone(formData.get('detectedTimeZone'));
+  const password = boundedText(formData, "password", PASSWORD_MAX_LENGTH);
+  const detectedTimeZone = normalizeTimeZone(formData.get("detectedTimeZone"));
 
-  if (!EMAIL_RE.test(email) || password === null) return { error: t('invalidCredentials') };
+  if (!EMAIL_RE.test(email) || password === null)
+    return { error: t("invalidCredentials") };
 
   const user = await db.user.findUnique({ where: { email } });
   if (!user || !(await verifyPassword(password, user.passwordHash)))
-    return { error: t('invalidCredentials') };
+    return { error: t("invalidCredentials") };
 
-  if (user.status === 'suspended') return { error: t('accountSuspended') };
+  if (user.status === "suspended") return { error: t("accountSuspended") };
 
   await createSession(user.id, user.sessionVersion);
   await reconcileAdminRole(user);
@@ -105,29 +113,29 @@ export async function loginAction(
   }
 
   // Restore locale preference across devices
-  if (user.locale && user.locale !== 'en') {
+  if (user.locale && user.locale !== "en") {
     const cookieStore = await cookies();
-    cookieStore.set('NEXT_LOCALE', user.locale, {
+    cookieStore.set("NEXT_LOCALE", user.locale, {
       httpOnly: true,
-      sameSite: 'lax',
-      path: '/',
+      sameSite: "lax",
+      path: "/",
       maxAge: 60 * 60 * 24 * 365,
     });
   }
 
-  redirect(safeRelativePath(formData.get('next')) ?? '/app');
+  redirect(safeRelativePath(formData.get("next")) ?? "/app");
 }
 
 export async function logoutAction(): Promise<void> {
   await clearSession();
-  redirect('/');
+  redirect("/");
 }
 
 export async function forgotPasswordAction(
   _prev: AuthState,
   formData: FormData,
 ): Promise<AuthState> {
-  const t = await getTranslations('auth');
+  const t = await getTranslations("auth");
   const email = normalizedEmail(formData);
 
   // Always return the same result so the form cannot be used to enumerate users.
@@ -138,70 +146,83 @@ export async function forgotPasswordAction(
         try {
           await requestPasswordReset(email);
         } catch (error) {
-          systemLog('error',
-            'Unable to process password-reset request',
-            error instanceof Error ? error.message : 'Unknown error',
+          systemLog(
+            "error",
+            "Unable to process password-reset request",
+            error instanceof Error ? error.message : "Unknown error",
           );
         }
       });
     }
   }
-  return { success: t('forgotPasswordSent') };
+  return { success: t("forgotPasswordSent") };
 }
 
 export async function resetPasswordAction(
   _prev: AuthState,
   formData: FormData,
 ): Promise<AuthState> {
-  const t = await getTranslations('auth');
-  const token = boundedText(formData, 'token', RESET_TOKEN_MAX_LENGTH) ?? '';
-  const password = boundedText(formData, 'password', PASSWORD_MAX_LENGTH);
-  const confirmation = boundedText(formData, 'passwordConfirmation', PASSWORD_MAX_LENGTH);
+  const t = await getTranslations("auth");
+  const token = boundedText(formData, "token", RESET_TOKEN_MAX_LENGTH) ?? "";
+  const password = boundedText(formData, "password", PASSWORD_MAX_LENGTH);
+  const confirmation = boundedText(
+    formData,
+    "passwordConfirmation",
+    PASSWORD_MAX_LENGTH,
+  );
   if (password === null || confirmation === null) {
-    return { error: t('passwordTooLong', { max: PASSWORD_MAX_LENGTH }) };
+    return { error: t("passwordTooLong", { max: PASSWORD_MAX_LENGTH }) };
   }
-  if (password !== confirmation) return { error: t('passwordMismatch') };
+  if (password !== confirmation) return { error: t("passwordMismatch") };
 
   const passwordError = validatePassword(password);
-  if (passwordError === 'too_short') {
-    return { error: t('passwordTooShort', { min: PASSWORD_MIN_LENGTH }) };
+  if (passwordError === "too_short") {
+    return { error: t("passwordTooShort", { min: PASSWORD_MIN_LENGTH }) };
   }
-  if (passwordError === 'too_long') {
-    return { error: t('passwordTooLong', { max: PASSWORD_MAX_LENGTH }) };
+  if (passwordError === "too_long") {
+    return { error: t("passwordTooLong", { max: PASSWORD_MAX_LENGTH }) };
   }
 
   if (!(await resetPasswordWithToken(token, password))) {
-    return { error: t('resetLinkInvalid') };
+    return { error: t("resetLinkInvalid") };
   }
   await clearSession();
-  return { success: t('passwordResetComplete') };
+  return { success: t("passwordResetComplete") };
 }
 
 export async function changePasswordAction(
   _prev: AuthState,
   formData: FormData,
 ): Promise<AuthState> {
-  const t = await getTranslations('auth');
+  const t = await getTranslations("auth");
   const userId = await getSessionUserId();
-  if (!userId) return { error: t('signInRequired') };
+  if (!userId) return { error: t("signInRequired") };
 
-  const currentPassword = boundedText(formData, 'currentPassword', PASSWORD_MAX_LENGTH);
-  const newPassword = boundedText(formData, 'newPassword', PASSWORD_MAX_LENGTH);
-  const confirmation = boundedText(formData, 'passwordConfirmation', PASSWORD_MAX_LENGTH);
+  const currentPassword = boundedText(
+    formData,
+    "currentPassword",
+    PASSWORD_MAX_LENGTH,
+  );
+  const newPassword = boundedText(formData, "newPassword", PASSWORD_MAX_LENGTH);
+  const confirmation = boundedText(
+    formData,
+    "passwordConfirmation",
+    PASSWORD_MAX_LENGTH,
+  );
   if (currentPassword === null) {
-    return { error: t('currentPasswordInvalid') };
+    return { error: t("currentPasswordInvalid") };
   }
   if (newPassword === null || confirmation === null) {
-    return { error: t('passwordTooLong', { max: PASSWORD_MAX_LENGTH }) };
+    return { error: t("passwordTooLong", { max: PASSWORD_MAX_LENGTH }) };
   }
-  if (newPassword !== confirmation) return { error: t('passwordMismatch') };
+  if (newPassword !== confirmation) return { error: t("passwordMismatch") };
 
   const passwordError = validatePassword(newPassword);
-  if (passwordError === 'too_short') {
-    return { error: t('passwordTooShort', { min: PASSWORD_MIN_LENGTH }) };
+  if (passwordError === "too_short") {
+    return { error: t("passwordTooShort", { min: PASSWORD_MIN_LENGTH }) };
   }
-  if (passwordError === 'too_long') {
-    return { error: t('passwordTooLong', { max: PASSWORD_MAX_LENGTH }) };
+  if (passwordError === "too_long") {
+    return { error: t("passwordTooLong", { max: PASSWORD_MAX_LENGTH }) };
   }
 
   const user = await db.user.findUnique({
@@ -209,10 +230,10 @@ export async function changePasswordAction(
     select: { id: true, passwordHash: true },
   });
   if (!user || !(await verifyPassword(currentPassword, user.passwordHash))) {
-    return { error: t('currentPasswordInvalid') };
+    return { error: t("currentPasswordInvalid") };
   }
   if (await verifyPassword(newPassword, user.passwordHash)) {
-    return { error: t('passwordMustChange') };
+    return { error: t("passwordMustChange") };
   }
 
   const passwordHash = await hashPassword(newPassword);
@@ -228,9 +249,9 @@ export async function changePasswordAction(
       select: { id: true, sessionVersion: true },
     });
   });
-  if (!updated) return { error: t('currentPasswordInvalid') };
+  if (!updated) return { error: t("currentPasswordInvalid") };
   await createSession(updated.id, updated.sessionVersion);
-  return { success: t('passwordChanged') };
+  return { success: t("passwordChanged") };
 }
 
 export type TokenState = { error?: string; token?: string };
@@ -240,12 +261,12 @@ export async function createTokenAction(
   formData: FormData,
 ): Promise<TokenState> {
   const userId = await getSessionUserId();
-  if (!userId) return { error: 'You must be signed in.' };
+  if (!userId) return { error: "You must be signed in." };
 
-  const name = String(formData.get('name') ?? '').trim();
+  const name = String(formData.get("name") ?? "").trim();
   const { token } = await createApiToken(userId, name);
-  revalidatePath('/app');
-  const workspace = String(formData.get('workspace') ?? '');
+  revalidatePath("/app");
+  const workspace = String(formData.get("workspace") ?? "");
   if (workspace) revalidatePath(`/app/${workspace}/settings/tokens`);
   return { token };
 }
@@ -253,9 +274,9 @@ export async function createTokenAction(
 export async function revokeTokenAction(formData: FormData): Promise<void> {
   const userId = await getSessionUserId();
   if (!userId) return;
-  const id = String(formData.get('id') ?? '');
+  const id = String(formData.get("id") ?? "");
   if (id) await revokeApiToken(userId, id);
-  revalidatePath('/app');
-  const workspace = String(formData.get('workspace') ?? '');
+  revalidatePath("/app");
+  const workspace = String(formData.get("workspace") ?? "");
   if (workspace) revalidatePath(`/app/${workspace}/settings/tokens`);
 }

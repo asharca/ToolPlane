@@ -1,1 +1,1 @@
-export { default } from '../../../../items/[namespace]/[listingSlug]/page';
+export { default } from "../../../../items/[namespace]/[listingSlug]/page";

@@ -1,5 +1,5 @@
-import { lstat, readdir, rm } from 'node:fs/promises';
-import path from 'node:path';
+import { lstat, readdir, rm } from "node:fs/promises";
+import path from "node:path";
 
 /**
  * Trim only build-time metadata from the copied migration CLI. Keep executable
@@ -11,7 +11,9 @@ import path from 'node:path';
 export async function pruneMigrationMetadata(root) {
   const stat = await lstat(root);
   if (!stat.isDirectory() || stat.isSymbolicLink()) {
-    throw new Error(`Migration metadata root must be a real directory: ${root}`);
+    throw new Error(
+      `Migration metadata root must be a real directory: ${root}`,
+    );
   }
   const removed = { files: 0, bytes: 0 };
   async function visit(directory) {
@@ -19,10 +21,11 @@ export async function pruneMigrationMetadata(root) {
       const target = path.join(directory, entry.name);
       if (entry.isDirectory()) {
         await visit(target);
-      } else if (entry.isFile() && (
-        /\.d\.[cm]?ts$/.test(entry.name)
-        || /\.(?:[cm]?[jt]s|css)\.map$/.test(entry.name)
-      )) {
+      } else if (
+        entry.isFile() &&
+        (/\.d\.[cm]?ts$/.test(entry.name) ||
+          /\.(?:[cm]?[jt]s|css)\.map$/.test(entry.name))
+      ) {
         const metadata = await lstat(target);
         await rm(target);
         removed.files += 1;

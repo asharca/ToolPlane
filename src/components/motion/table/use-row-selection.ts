@@ -17,9 +17,7 @@ export function useRowSelection<T>({
   );
   const selected = useMemo(
     () =>
-      selectedRowIds !== undefined
-        ? new Set(selectedRowIds)
-        : internalSelected,
+      selectedRowIds !== undefined ? new Set(selectedRowIds) : internalSelected,
     [selectedRowIds, internalSelected],
   );
 
@@ -56,5 +54,12 @@ export function useRowSelection<T>({
   );
   const clearSelection = useCallback(() => commit(new Set()), [commit]);
 
-  return { selected, allSelected, someSelected, toggleAll, toggleRow, clearSelection };
+  return {
+    selected,
+    allSelected,
+    someSelected,
+    toggleAll,
+    toggleRow,
+    clearSelection,
+  };
 }

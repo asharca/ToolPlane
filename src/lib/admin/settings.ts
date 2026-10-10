@@ -1,22 +1,23 @@
-import 'server-only';
-import { saveAuditedSetting } from './audited-setting';
+import "server-only";
+import { saveAuditedSetting } from "./audited-setting";
 
-import { db } from '@/lib/db';
+import { db } from "@/lib/db";
 import {
   DEFAULT_HERMES_ARCHIVE_MAX_UPLOAD_MIB,
   isValidHermesArchiveMaxUploadMiB,
   normalizeHermesArchiveMaxUploadMiB,
-} from '@/lib/agents/hermes/archive-limits';
+} from "@/lib/agents/hermes/archive-limits";
 import {
   DEFAULT_SKILL_IMPORT_SKILLS,
   isValidSkillImportMaxSkills,
-} from '@/lib/skills/limits';
-import { parseRemoteMcpPrivateHosts } from '../../../scripts/remote-mcp-private-hosts.mjs';
+} from "@/lib/skills/limits";
+import { parseRemoteMcpPrivateHosts } from "../../../scripts/remote-mcp-private-hosts.mjs";
 
-export const HERMES_ARCHIVE_MAX_UPLOAD_MIB_SETTING_KEY = 'hermes.maxArchiveUploadMiB';
-export const MCP_STARTUP_TIMEOUTS_SETTING_KEY = 'mcp.startupTimeouts';
-export const REMOTE_MCP_PRIVATE_HOSTS_SETTING_KEY = 'mcp.remotePrivateHosts';
-export const SKILL_IMPORT_MAX_SKILLS_SETTING_KEY = 'skills.maxImportSkills';
+export const HERMES_ARCHIVE_MAX_UPLOAD_MIB_SETTING_KEY =
+  "hermes.maxArchiveUploadMiB";
+export const MCP_STARTUP_TIMEOUTS_SETTING_KEY = "mcp.startupTimeouts";
+export const REMOTE_MCP_PRIVATE_HOSTS_SETTING_KEY = "mcp.remotePrivateHosts";
+export const SKILL_IMPORT_MAX_SKILLS_SETTING_KEY = "skills.maxImportSkills";
 
 export const DEFAULT_MCP_STARTUP_IDLE_TIMEOUT_MS = 90_000;
 export const DEFAULT_MCP_STARTUP_MAX_TIMEOUT_MS = 5 * 60_000;
@@ -30,7 +31,7 @@ export type SystemSettings = {
 export type McpStartupTimeoutSettings = {
   idleTimeoutMs: number;
   maxTimeoutMs: number;
-  source: 'database' | 'environment' | 'default';
+  source: "database" | "environment" | "default";
 };
 
 export type SkillImportSettings = {
@@ -39,7 +40,7 @@ export type SkillImportSettings = {
 
 export type RemoteMcpPrivateHostsSettings = {
   value: string;
-  source: 'database' | 'environment' | 'default';
+  source: "database" | "environment" | "default";
 };
 
 function toSystemSettings(value?: string | null): SystemSettings {
@@ -54,7 +55,11 @@ function toSystemSettings(value?: string | null): SystemSettings {
 function validMcpStartupTimeout(value: unknown): number | null {
   const parsed = Number(value);
   if (!Number.isSafeInteger(parsed)) return null;
-  if (parsed < MIN_MCP_STARTUP_TIMEOUT_MS || parsed > MAX_MCP_STARTUP_TIMEOUT_MS) return null;
+  if (
+    parsed < MIN_MCP_STARTUP_TIMEOUT_MS ||
+    parsed > MAX_MCP_STARTUP_TIMEOUT_MS
+  )
+    return null;
   return parsed;
 }
 
@@ -72,7 +77,8 @@ function environmentTimeout(
   legacy: string | undefined,
   fallback: number,
 ): { value: number; configured: boolean } {
-  const configured = validMcpStartupTimeout(primary) ?? validMcpStartupTimeout(legacy);
+  const configured =
+    validMcpStartupTimeout(primary) ?? validMcpStartupTimeout(legacy);
   return configured === null
     ? { value: fallback, configured: false }
     : { value: configured, configured: true };
@@ -94,24 +100,34 @@ export function environmentMcpStartupTimeoutSettings(): McpStartupTimeoutSetting
     return {
       idleTimeoutMs: DEFAULT_MCP_STARTUP_IDLE_TIMEOUT_MS,
       maxTimeoutMs: DEFAULT_MCP_STARTUP_MAX_TIMEOUT_MS,
-      source: 'default',
+      source: "default",
     };
   }
 
   return {
     idleTimeoutMs: idle.value,
     maxTimeoutMs: max.value,
-    source: idle.configured || max.configured ? 'environment' : 'default',
+    source: idle.configured || max.configured ? "environment" : "default",
   };
 }
 
-function parseMcpStartupTimeoutSettings(value?: string | null): Omit<McpStartupTimeoutSettings, 'source'> | null {
+function parseMcpStartupTimeoutSettings(
+  value?: string | null,
+): Omit<McpStartupTimeoutSettings, "source"> | null {
   if (!value) return null;
   try {
-    const parsed = JSON.parse(value) as { idleTimeoutMs?: unknown; maxTimeoutMs?: unknown };
+    const parsed = JSON.parse(value) as {
+      idleTimeoutMs?: unknown;
+      maxTimeoutMs?: unknown;
+    };
     const idleTimeoutMs = validMcpStartupTimeout(parsed?.idleTimeoutMs);
     const maxTimeoutMs = validMcpStartupTimeout(parsed?.maxTimeoutMs);
-    if (idleTimeoutMs === null || maxTimeoutMs === null || maxTimeoutMs < idleTimeoutMs) return null;
+    if (
+      idleTimeoutMs === null ||
+      maxTimeoutMs === null ||
+      maxTimeoutMs < idleTimeoutMs
+    )
+      return null;
     return {
       idleTimeoutMs,
       maxTimeoutMs,
@@ -140,10 +156,14 @@ export async function getHermesArchiveSettings(): Promise<SystemSettings> {
 
 export async function updateHermesArchiveSettings(
   hermesArchiveMaxUploadMiB: number,
-  actorId = 'system',
+  actorId = "system",
 ): Promise<SystemSettings> {
   const value = normalizeHermesArchiveMaxUploadMiB(hermesArchiveMaxUploadMiB);
-  await saveAuditedSetting(HERMES_ARCHIVE_MAX_UPLOAD_MIB_SETTING_KEY, String(value), actorId);
+  await saveAuditedSetting(
+    HERMES_ARCHIVE_MAX_UPLOAD_MIB_SETTING_KEY,
+    String(value),
+    actorId,
+  );
   return toSystemSettings(String(value));
 }
 
@@ -167,11 +187,18 @@ export async function getSkillImportSettings(): Promise<SkillImportSettings> {
   }
 }
 
-export async function updateSkillImportSettings(maxSkills: number, actorId = 'system'): Promise<SkillImportSettings> {
+export async function updateSkillImportSettings(
+  maxSkills: number,
+  actorId = "system",
+): Promise<SkillImportSettings> {
   if (!isValidSkillImportMaxSkills(maxSkills)) {
-    throw new Error('Invalid skill import maximum.');
+    throw new Error("Invalid skill import maximum.");
   }
-  await saveAuditedSetting(SKILL_IMPORT_MAX_SKILLS_SETTING_KEY, String(maxSkills), actorId);
+  await saveAuditedSetting(
+    SKILL_IMPORT_MAX_SKILLS_SETTING_KEY,
+    String(maxSkills),
+    actorId,
+  );
   return { maxSkills };
 }
 
@@ -184,7 +211,7 @@ export async function resolveMcpStartupTimeoutSettings(): Promise<McpStartupTime
       select: { value: true },
     });
     const parsed = parseMcpStartupTimeoutSettings(setting?.value);
-    if (parsed) return { ...parsed, source: 'database' };
+    if (parsed) return { ...parsed, source: "database" };
   } catch {
     // A rolling deploy may briefly run before the shared settings table exists.
   }
@@ -194,25 +221,29 @@ export async function resolveMcpStartupTimeoutSettings(): Promise<McpStartupTime
 export async function updateMcpStartupTimeoutSettings(
   idleTimeoutMs: number,
   maxTimeoutMs: number,
-  actorId = 'system',
+  actorId = "system",
 ): Promise<McpStartupTimeoutSettings> {
   if (!isValidMcpStartupTimeouts(idleTimeoutMs, maxTimeoutMs)) {
-    throw new Error('Invalid MCP startup timeouts.');
+    throw new Error("Invalid MCP startup timeouts.");
   }
   const value = JSON.stringify({ idleTimeoutMs, maxTimeoutMs });
   await saveAuditedSetting(MCP_STARTUP_TIMEOUTS_SETTING_KEY, value, actorId);
-  return { idleTimeoutMs, maxTimeoutMs, source: 'database' };
+  return { idleTimeoutMs, maxTimeoutMs, source: "database" };
 }
 
-export async function resetMcpStartupTimeoutSettings(actorId = 'system'): Promise<void> {
+export async function resetMcpStartupTimeoutSettings(
+  actorId = "system",
+): Promise<void> {
   await saveAuditedSetting(MCP_STARTUP_TIMEOUTS_SETTING_KEY, null, actorId);
 }
 
 function environmentRemoteMcpPrivateHostsSettings(): RemoteMcpPrivateHostsSettings {
-  const parsed = parseRemoteMcpPrivateHosts(process.env.TOOLPLANE_REMOTE_MCP_PRIVATE_HOSTS ?? '');
+  const parsed = parseRemoteMcpPrivateHosts(
+    process.env.TOOLPLANE_REMOTE_MCP_PRIVATE_HOSTS ?? "",
+  );
   return parsed?.value
-    ? { value: parsed.value, source: 'environment' }
-    : { value: '', source: 'default' };
+    ? { value: parsed.value, source: "environment" }
+    : { value: "", source: "default" };
 }
 
 // Resolve this for every Remote MCP launch so an administrator's saved
@@ -226,25 +257,31 @@ export async function resolveRemoteMcpPrivateHostsSettings(): Promise<RemoteMcpP
     if (setting) {
       const parsed = parseRemoteMcpPrivateHosts(setting.value);
       // A malformed persisted override must not fall back to a permissive env.
-      return { value: parsed?.value ?? '', source: 'database' };
+      return { value: parsed?.value ?? "", source: "database" };
     }
   } catch {
     // Do not widen a saved administrator policy when Postgres is unavailable.
-    return { value: '', source: 'default' };
+    return { value: "", source: "default" };
   }
   return environmentRemoteMcpPrivateHostsSettings();
 }
 
 export async function updateRemoteMcpPrivateHostsSettings(
   value: string,
-  actorId = 'system',
+  actorId = "system",
 ): Promise<RemoteMcpPrivateHostsSettings> {
   const parsed = parseRemoteMcpPrivateHosts(value);
-  if (!parsed) throw new Error('Invalid Remote MCP private host allowlist.');
-  await saveAuditedSetting(REMOTE_MCP_PRIVATE_HOSTS_SETTING_KEY, parsed.value, actorId);
-  return { value: parsed.value, source: 'database' };
+  if (!parsed) throw new Error("Invalid Remote MCP private host allowlist.");
+  await saveAuditedSetting(
+    REMOTE_MCP_PRIVATE_HOSTS_SETTING_KEY,
+    parsed.value,
+    actorId,
+  );
+  return { value: parsed.value, source: "database" };
 }
 
-export async function resetRemoteMcpPrivateHostsSettings(actorId = 'system'): Promise<void> {
+export async function resetRemoteMcpPrivateHostsSettings(
+  actorId = "system",
+): Promise<void> {
   await saveAuditedSetting(REMOTE_MCP_PRIVATE_HOSTS_SETTING_KEY, null, actorId);
 }

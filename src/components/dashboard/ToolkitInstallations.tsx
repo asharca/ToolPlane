@@ -1,52 +1,147 @@
-'use client';
-import { Button } from '@/components/motion/button';
+"use client";
+import { Button } from "@/components/motion/button";
 
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { useTranslations } from "next-intl";
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { useTranslations } from 'next-intl';
-
-type Installation = { id: string; client: string; label: string; status: string; lastUsedAt: string | null };
+type Installation = {
+  id: string;
+  client: string;
+  label: string;
+  status: string;
+  lastUsedAt: string | null;
+};
 export function ToolkitInstallations({ mcpUrl }: { mcpUrl: string }) {
-  const t = useTranslations('console.toolkits');
+  const t = useTranslations("console.toolkits");
   const router = useRouter();
   const [items, setItems] = useState<Installation[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(false);
   // Use a relative same-origin API path, never send cookies to a configured external origin.
-  const endpoint = new URL(mcpUrl, 'https://toolplane.invalid').pathname.replace(/\/mcp$/, '/installations');
+  const endpoint = new URL(
+    mcpUrl,
+    "https://toolplane.invalid",
+  ).pathname.replace(/\/mcp$/, "/installations");
   async function load() {
-    setBusy(true); setError(false);
+    setBusy(true);
+    setError(false);
     try {
-      const response = await fetch(endpoint, { cache: 'no-store' });
-      if (!response.ok) throw new Error('Failed');
+      const response = await fetch(endpoint, { cache: "no-store" });
+      if (!response.ok) throw new Error("Failed");
       const data = await response.json();
       setItems(data.installations);
-    } catch { setError(true); } finally { setBusy(false); }
+    } catch {
+      setError(true);
+    } finally {
+      setBusy(false);
+    }
   }
-  async function mutate(operation: 'revoke' | 'revoke-all' | 'rotate-link', installationId?: string) {
-    if (!window.confirm(t(operation === 'rotate-link' ? 'installationRotateWarning' : 'installationRevokeWarning'))) return;
-    setBusy(true); setError(false);
+  async function mutate(
+    operation: "revoke" | "revoke-all" | "rotate-link",
+    installationId?: string,
+  ) {
+    if (
+      !window.confirm(
+        t(
+          operation === "rotate-link"
+            ? "installationRotateWarning"
+            : "installationRevokeWarning",
+        ),
+      )
+    )
+      return;
+    setBusy(true);
+    setError(false);
     try {
-      const response = await fetch(endpoint, { method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ operation, ...(installationId ? { installationId } : {}) }) });
-      if (!response.ok) throw new Error('Failed');
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          operation,
+          ...(installationId ? { installationId } : {}),
+        }),
+      });
+      if (!response.ok) throw new Error("Failed");
       await load();
-      if (operation === 'rotate-link') router.refresh();
-    } catch { setError(true); } finally { setBusy(false); }
+      if (operation === "rotate-link") router.refresh();
+    } catch {
+      setError(true);
+    } finally {
+      setBusy(false);
+    }
   }
-  return <section className="mt-4 border-t border-border pt-3 text-sm">
-    <div className="flex flex-wrap gap-3">
-      <Button type="button" disabled={busy} onClick={load} variant="ghost" size="md">{t('installationDevices')}</Button>
-      <Button type="button" disabled={busy} onClick={() => mutate('revoke-all')} variant="ghost" size="md">{t('installationRevokeAll')}</Button>
-      <Button type="button" disabled={busy} onClick={() => mutate('rotate-link')} variant="ghost" size="md">{t('installationRotateLink')}</Button>
-    </div>
-    {error && <p role="alert" className="mt-2">{t('installationError')}</p>}
-    {items && <ul className="mt-2 space-y-2">{items.length === 0 && <li>{t('installationEmpty')}</li>}
-      {items.map((item) => <li key={item.id} className="flex flex-wrap items-center justify-between gap-2">
-        <span>{item.label} · {item.client} · {t(item.status === 'active' ? 'installationActive' : 'installationRevoked')} · {t('installationLastUsed')}: {item.lastUsedAt ? new Date(item.lastUsedAt).toISOString() : '—'}</span>
-        {item.status === 'active' && <Button type="button" disabled={busy} onClick={() => mutate('revoke', item.id)} variant="ghost" size="md">{t('installationRevoke')}</Button>}
-      </li>)}
-    </ul>}
-  </section>;
+  return (
+    <section className="mt-4 border-t border-border pt-3 text-sm">
+      <div className="flex flex-wrap gap-3">
+        <Button
+          type="button"
+          disabled={busy}
+          onClick={load}
+          variant="ghost"
+          size="md"
+        >
+          {t("installationDevices")}
+        </Button>
+        <Button
+          type="button"
+          disabled={busy}
+          onClick={() => mutate("revoke-all")}
+          variant="ghost"
+          size="md"
+        >
+          {t("installationRevokeAll")}
+        </Button>
+        <Button
+          type="button"
+          disabled={busy}
+          onClick={() => mutate("rotate-link")}
+          variant="ghost"
+          size="md"
+        >
+          {t("installationRotateLink")}
+        </Button>
+      </div>
+      {error && (
+        <p role="alert" className="mt-2">
+          {t("installationError")}
+        </p>
+      )}
+      {items && (
+        <ul className="mt-2 space-y-2">
+          {items.length === 0 && <li>{t("installationEmpty")}</li>}
+          {items.map((item) => (
+            <li
+              key={item.id}
+              className="flex flex-wrap items-center justify-between gap-2"
+            >
+              <span>
+                {item.label} · {item.client} ·{" "}
+                {t(
+                  item.status === "active"
+                    ? "installationActive"
+                    : "installationRevoked",
+                )}{" "}
+                · {t("installationLastUsed")}:{" "}
+                {item.lastUsedAt
+                  ? new Date(item.lastUsedAt).toISOString()
+                  : "—"}
+              </span>
+              {item.status === "active" && (
+                <Button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => mutate("revoke", item.id)}
+                  variant="ghost"
+                  size="md"
+                >
+                  {t("installationRevoke")}
+                </Button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
 }

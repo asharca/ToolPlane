@@ -1,11 +1,15 @@
-import 'dotenv/config';
-import { PrismaClient } from '@prisma/client';
-import { PrismaPg } from '@prisma/adapter-pg';
-import { defaultTpSkillsSource, syncGithubSkillRegistry } from '@/lib/skills/registry';
+import "dotenv/config";
+import { PrismaClient } from "@prisma/client";
+import { PrismaPg } from "@prisma/adapter-pg";
+import {
+  defaultTpSkillsSource,
+  syncGithubSkillRegistry,
+} from "@/lib/skills/registry";
 
 function createClient(): PrismaClient {
   const connectionString = process.env.DATABASE_URL;
-  if (!connectionString) throw new Error('DATABASE_URL environment variable is not set.');
+  if (!connectionString)
+    throw new Error("DATABASE_URL environment variable is not set.");
   return new PrismaClient({ adapter: new PrismaPg({ connectionString }) });
 }
 
@@ -13,7 +17,9 @@ async function main() {
   const db = createClient();
   try {
     const source = defaultTpSkillsSource();
-    console.log(`Syncing ${source.owner}/${source.repo}@${source.ref}/${source.rootPath}...`);
+    console.log(
+      `Syncing ${source.owner}/${source.repo}@${source.ref}/${source.rootPath}...`,
+    );
     const result = await syncGithubSkillRegistry(db, source);
     console.log(
       `Found ${result.found}; created ${result.created}; updated ${result.updated}; failed ${result.failed.length}.`,

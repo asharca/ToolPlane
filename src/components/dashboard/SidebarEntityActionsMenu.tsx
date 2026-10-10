@@ -1,10 +1,15 @@
-'use client';
-import { Button } from '@/components/motion/button';
+"use client";
+import { Button } from "@/components/motion/button";
 
-
-import { ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuItem, ContextMenuSeparator } from '@/components/motion/context-menu';
-import { MoreHorizontal, Pencil, Pin, PinOff, Trash2 } from 'lucide-react';
-import { useState } from 'react';
+import {
+  ContextMenu,
+  ContextMenuTrigger,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+} from "@/components/motion/context-menu";
+import { MoreHorizontal, Pencil, Pin, PinOff, Trash2 } from "lucide-react";
+import { useState } from "react";
 
 export function SidebarEntityActionsMenu({
   actionsLabel,
@@ -27,7 +32,6 @@ export function SidebarEntityActionsMenu({
   pinLabel: string;
   unpinLabel: string;
 }) {
-
   const [open, setOpen] = useState(false);
   return (
     <ContextMenu open={open} onOpenChange={setOpen}>
@@ -44,14 +48,16 @@ export function SidebarEntityActionsMenu({
               return;
             }
             const rect = event.currentTarget.getBoundingClientRect();
-            event.currentTarget.dispatchEvent(new MouseEvent('contextmenu', {
-              bubbles: true,
-              clientX: rect.right,
-              clientY: rect.bottom,
-            }));
+            event.currentTarget.dispatchEvent(
+              new MouseEvent("contextmenu", {
+                bubbles: true,
+                clientX: rect.right,
+                clientY: rect.bottom,
+              }),
+            );
           }}
           onKeyDown={(event) => {
-            if (event.key === 'ArrowDown') {
+            if (event.key === "ArrowDown") {
               event.preventDefault();
               event.currentTarget.click();
             }
@@ -61,10 +67,19 @@ export function SidebarEntityActionsMenu({
         </Button>
       </ContextMenuTrigger>
       <ContextMenuContent ariaLabel={actionsLabel}>
-        <ContextMenuItem onSelect={onEdit}><Pencil className="size-4" />{editLabel}</ContextMenuItem>
-        <ContextMenuItem onSelect={onTogglePin}>{pinned ? <PinOff className="size-4" /> : <Pin className="size-4" />}{pinned ? unpinLabel : pinLabel}</ContextMenuItem>
+        <ContextMenuItem onSelect={onEdit}>
+          <Pencil className="size-4" />
+          {editLabel}
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={onTogglePin}>
+          {pinned ? <PinOff className="size-4" /> : <Pin className="size-4" />}
+          {pinned ? unpinLabel : pinLabel}
+        </ContextMenuItem>
         <ContextMenuSeparator />
-        <ContextMenuItem onSelect={onDelete} tone="destructive"><Trash2 className="size-4" />{deleteLabel}</ContextMenuItem>
+        <ContextMenuItem onSelect={onDelete} tone="destructive">
+          <Trash2 className="size-4" />
+          {deleteLabel}
+        </ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>
   );

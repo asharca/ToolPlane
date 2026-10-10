@@ -1,5 +1,5 @@
-import { getTranslations } from 'next-intl/server';
-import { Button, ButtonLink } from '@/components/motion/button';
+import { getTranslations } from "next-intl/server";
+import { Button, ButtonLink } from "@/components/motion/button";
 
 function pageWindow(page: number, total: number): number[] {
   const span = 2;
@@ -9,7 +9,6 @@ function pageWindow(page: number, total: number): number[] {
   for (let i = start; i <= end; i++) out.push(i);
   return out;
 }
-
 
 type PaginationProps = {
   page: number;
@@ -29,25 +28,25 @@ type PaginationProps = {
 
 export async function Pagination(props: PaginationProps) {
   const { page, totalPages } = props;
-  const t = await getTranslations('common');
+  const t = await getTranslations("common");
   if (totalPages <= 1) return null;
-  const href = props.hrefForPage ?? ((p: number) =>
-    p <= 1 ? props.basePath : `${props.pagePath}/${p}`
-  );
+  const href =
+    props.hrefForPage ??
+    ((p: number) => (p <= 1 ? props.basePath : `${props.pagePath}/${p}`));
   const nums = pageWindow(page, totalPages);
 
   return (
     <nav
-      aria-label={t('pagination')}
+      aria-label={t("pagination")}
       className="mt-10 flex flex-wrap items-center justify-center gap-1"
     >
       {page > 1 ? (
         <ButtonLink href={href(page - 1)} variant="secondary" size="sm">
-          {t('previous')}
+          {t("previous")}
         </ButtonLink>
       ) : (
         <Button disabled variant="secondary" size="sm">
-          {t('previous')}
+          {t("previous")}
         </Button>
       )}
 
@@ -83,10 +82,12 @@ export async function Pagination(props: PaginationProps) {
 
       {page < totalPages ? (
         <ButtonLink href={href(page + 1)} variant="secondary" size="sm">
-          {t('next')}
+          {t("next")}
         </ButtonLink>
       ) : (
-        <Button disabled variant="secondary" size="sm">{t('next')}</Button>
+        <Button disabled variant="secondary" size="sm">
+          {t("next")}
+        </Button>
       )}
     </nav>
   );

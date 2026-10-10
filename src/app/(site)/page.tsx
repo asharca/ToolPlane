@@ -1,15 +1,15 @@
-import type { Metadata } from 'next';
-import { NextIntlClientProvider } from 'next-intl';
-import { getLocale, getMessages } from 'next-intl/server';
-import { HomeView } from '@/components/home/HomeView';
-import { getMarketingContent } from '@/lib/marketing/content';
-import { SITE } from '@/lib/site';
+import type { Metadata } from "next";
+import { NextIntlClientProvider } from "next-intl";
+import { getLocale, getMessages } from "next-intl/server";
+import { HomeView } from "@/components/home/HomeView";
+import { getMarketingContent } from "@/lib/marketing/content";
+import { SITE } from "@/lib/site";
 import {
   getPublicHomeSections,
   getPublicServerCount,
   listPublicCategories,
-} from './_lib/catalog';
-import { siteMetadata } from './_lib/metadata';
+} from "./_lib/catalog";
+import { siteMetadata } from "./_lib/metadata";
 
 export async function generateMetadata(): Promise<Metadata> {
   const locale = await getLocale();
@@ -17,7 +17,7 @@ export async function generateMetadata(): Promise<Metadata> {
   return siteMetadata({
     title: `${SITE.name} | ${home.eyebrow}`,
     description: home.description,
-    path: '/',
+    path: "/",
   });
 }
 
@@ -35,8 +35,14 @@ export default async function Home() {
     .map(({ slug, name }) => ({ slug, name }));
 
   return (
-    <NextIntlClientProvider messages={{ common: messages.common, home: messages.home }}>
-      <HomeView {...sections} categories={categories} serverCount={serverCount} />
+    <NextIntlClientProvider
+      messages={{ common: messages.common, home: messages.home }}
+    >
+      <HomeView
+        {...sections}
+        categories={categories}
+        serverCount={serverCount}
+      />
     </NextIntlClientProvider>
   );
 }

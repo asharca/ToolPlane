@@ -1,10 +1,6 @@
 "use client";
 
-import {
-  AnimatePresence,
-  motion,
-  useReducedMotion,
-} from "motion/react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { type ReactNode, useEffect, useLayoutEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { EASE_OUT, SPRING_PANEL } from "@/lib/ease";
@@ -42,7 +38,9 @@ export function MorphingModal({
     if (!backgroundScrollLocked) return;
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-    return () => { document.body.style.overflow = prev; };
+    return () => {
+      document.body.style.overflow = prev;
+    };
   }, [backgroundScrollLocked]);
 
   if (!portalReady) return null;
@@ -52,7 +50,9 @@ export function MorphingModal({
   return createPortal(
     <AnimatePresence
       initial={false}
-      onExitComplete={() => { if (!open) setBackgroundScrollLocked(false); }}
+      onExitComplete={() => {
+        if (!open) setBackgroundScrollLocked(false);
+      }}
     >
       {open ? (
         <PresenceGate key="backdrop">
@@ -108,16 +108,45 @@ export function MorphingModal({
                   <AnimatePresence mode="popLayout" initial={false}>
                     <motion.div
                       key={viewId}
-                      className={cn("[opacity:var(--modal-opacity)]", !reduce && "[filter:var(--modal-filter)]")}
-                      initial={reduce
-                        ? { "--modal-opacity": 0 }
-                        : { "--modal-opacity": 0, y: 8, "--modal-filter": "blur(4px)" }}
-                      animate={reduce
-                        ? { "--modal-opacity": 1, transition: { duration: 0.18, ease: EASE_OUT } }
-                        : { "--modal-opacity": 1, y: 0, "--modal-filter": "blur(0px)", transition: { duration: 0.24, ease: EASE_OUT } }}
-                      exit={reduce
-                        ? { "--modal-opacity": 0, transition: { duration: 0.14, ease: EASE_OUT } }
-                        : { "--modal-opacity": 0, y: -8, "--modal-filter": "blur(4px)", transition: { duration: 0.16, ease: EASE_OUT } }}
+                      className={cn(
+                        "[opacity:var(--modal-opacity)]",
+                        !reduce && "[filter:var(--modal-filter)]",
+                      )}
+                      initial={
+                        reduce
+                          ? { "--modal-opacity": 0 }
+                          : {
+                              "--modal-opacity": 0,
+                              y: 8,
+                              "--modal-filter": "blur(4px)",
+                            }
+                      }
+                      animate={
+                        reduce
+                          ? {
+                              "--modal-opacity": 1,
+                              transition: { duration: 0.18, ease: EASE_OUT },
+                            }
+                          : {
+                              "--modal-opacity": 1,
+                              y: 0,
+                              "--modal-filter": "blur(0px)",
+                              transition: { duration: 0.24, ease: EASE_OUT },
+                            }
+                      }
+                      exit={
+                        reduce
+                          ? {
+                              "--modal-opacity": 0,
+                              transition: { duration: 0.14, ease: EASE_OUT },
+                            }
+                          : {
+                              "--modal-opacity": 0,
+                              y: -8,
+                              "--modal-filter": "blur(4px)",
+                              transition: { duration: 0.16, ease: EASE_OUT },
+                            }
+                      }
                     >
                       {children}
                     </motion.div>

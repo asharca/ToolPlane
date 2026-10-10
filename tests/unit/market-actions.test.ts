@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   getCurrentUser: vi.fn(),
@@ -9,52 +9,59 @@ const mocks = vi.hoisted(() => ({
   redirect: vi.fn(),
 }));
 
-vi.mock('next/cache', () => ({ revalidatePath: mocks.revalidatePath }));
-vi.mock('next/navigation', () => ({ redirect: mocks.redirect }));
-vi.mock('@/lib/auth/current-user', () => ({ getCurrentUser: mocks.getCurrentUser }));
-vi.mock('@/lib/workspace/queries', () => ({ getWorkspaceForUser: mocks.getWorkspaceForUser }));
-vi.mock('@/lib/chat/service', () => ({ deleteChatAssistant: vi.fn() }));
-vi.mock('@/lib/market/skills', () => ({
+vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidatePath }));
+vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));
+vi.mock("@/lib/auth/current-user", () => ({
+  getCurrentUser: mocks.getCurrentUser,
+}));
+vi.mock("@/lib/workspace/queries", () => ({
+  getWorkspaceForUser: mocks.getWorkspaceForUser,
+}));
+vi.mock("@/lib/chat/service", () => ({ deleteChatAssistant: vi.fn() }));
+vi.mock("@/lib/market/skills", () => ({
   ignoreMarketUpdate: vi.fn(),
   MarketError: class MarketError extends Error {},
   publishAssistantRelease: vi.fn(),
   publishSkillRelease: vi.fn(),
   removeMarketInstall: vi.fn(),
 }));
-vi.mock('@/lib/market/resources', () => ({
+vi.mock("@/lib/market/resources", () => ({
   installMarketRelease: mocks.installMarketRelease,
   publishMcpRelease: vi.fn(),
   publishToolkitRelease: vi.fn(),
   updateMarketInstall: vi.fn(),
 }));
-vi.mock('@/lib/market/publisher-management', () => ({
+vi.mock("@/lib/market/publisher-management", () => ({
   unpublishMarketListing: vi.fn(),
   withdrawMarketRelease: vi.fn(),
 }));
 
-import { installMarketResourceAction } from '@/lib/market/actions';
+import { installMarketResourceAction } from "@/lib/market/actions";
 
-describe('market install action', () => {
+describe("market install action", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.getCurrentUser.mockResolvedValue({ id: 'user-1' });
-    mocks.getWorkspaceForUser.mockResolvedValue({ id: 'workspace-1' });
+    mocks.getCurrentUser.mockResolvedValue({ id: "user-1" });
+    mocks.getWorkspaceForUser.mockResolvedValue({ id: "workspace-1" });
   });
 
   it.each([
-    ['setup_required', '/app/acme/mcp/deployment-1?tab=variables'],
-    ['stopped', '/app/acme/mcp/deployment-1'],
-  ])('redirects an MCP in %s state to its next required step', async (status, expected) => {
-    mocks.installMarketRelease.mockResolvedValue({
-      kind: 'mcp',
-      resource: { id: 'deployment-1', status },
-    });
-    const form = new FormData();
-    form.set('workspace', 'acme');
-    form.set('releaseId', 'release-1');
+    ["setup_required", "/app/acme/mcp/deployment-1?tab=variables"],
+    ["stopped", "/app/acme/mcp/deployment-1"],
+  ])(
+    "redirects an MCP in %s state to its next required step",
+    async (status, expected) => {
+      mocks.installMarketRelease.mockResolvedValue({
+        kind: "mcp",
+        resource: { id: "deployment-1", status },
+      });
+      const form = new FormData();
+      form.set("workspace", "acme");
+      form.set("releaseId", "release-1");
 
-    await installMarketResourceAction(form);
+      await installMarketResourceAction(form);
 
-    expect(mocks.redirect).toHaveBeenCalledWith(expected);
-  });
+      expect(mocks.redirect).toHaveBeenCalledWith(expected);
+    },
+  );
 });

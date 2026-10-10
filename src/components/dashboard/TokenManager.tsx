@@ -1,15 +1,14 @@
-'use client';
-import { Button } from '@/components/motion/button';
-import { Input } from '@/components/motion/input';
+"use client";
+import { Button } from "@/components/motion/button";
+import { Input } from "@/components/motion/input";
 
-
-import { useTranslations } from 'next-intl';
-import { useActionState, useState } from 'react';
-import { useFormStatus } from 'react-dom';
-import { KeyRound, Copy, Check, Trash2 } from 'lucide-react';
-import { createTokenAction, revokeTokenAction } from '@/lib/auth/actions';
-import type { TokenState } from '@/lib/auth/actions';
-import { DashboardEmptyState, DashboardPanel } from './DashboardUI';
+import { useTranslations } from "next-intl";
+import { useActionState, useState } from "react";
+import { useFormStatus } from "react-dom";
+import { KeyRound, Copy, Check, Trash2 } from "lucide-react";
+import { createTokenAction, revokeTokenAction } from "@/lib/auth/actions";
+import type { TokenState } from "@/lib/auth/actions";
+import { DashboardEmptyState, DashboardPanel } from "./DashboardUI";
 
 export type TokenView = {
   id: string;
@@ -20,32 +19,46 @@ export type TokenView = {
 };
 
 function CreateButton() {
-  const t = useTranslations('console.tokens');
+  const t = useTranslations("console.tokens");
   const { pending } = useFormStatus();
   return (
-    <Button type="submit" disabled={pending} variant="primary" size="md">{pending ? t('creating') : t('createToken')}</Button>
+    <Button type="submit" disabled={pending} variant="primary" size="md">
+      {pending ? t("creating") : t("createToken")}
+    </Button>
   );
 }
 
 function NewTokenReveal({ token }: { token: string }) {
-  const t = useTranslations('console.tokens');
+  const t = useTranslations("console.tokens");
   const [copied, setCopied] = useState(false);
   return (
     <div className="rounded-md border border-border bg-muted p-3 border-border bg-muted">
       <p className="mb-2 text-xs font-medium text-(--color-success) dark:text-(--color-success)">
-        {t('copyThisTokenNowYouWontBeAbleToSeeItAgain')}
+        {t("copyThisTokenNowYouWontBeAbleToSeeItAgain")}
       </p>
       <div className="flex items-center gap-2">
         <code className="min-w-0 flex-1 truncate rounded bg-card px-2 py-1.5 font-mono text-sm text-foreground">
           {token}
         </code>
-        <Button type="button" onClick={() => {
-          navigator.clipboard.writeText(token).then(() => {
-            setCopied(true);
-            setTimeout(() => setCopied(false), 1500);
-          });
-        }} variant="secondary" size="sm" className="shrink-0">{copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-        {copied ? t('copied') : t('copy')}</Button>
+        <Button
+          type="button"
+          onClick={() => {
+            navigator.clipboard.writeText(token).then(() => {
+              setCopied(true);
+              setTimeout(() => setCopied(false), 1500);
+            });
+          }}
+          variant="secondary"
+          size="sm"
+          className="shrink-0"
+        >
+          {copied ? (
+            <Check className="h-3.5 w-3.5" />
+          ) : (
+            <Copy className="h-3.5 w-3.5" />
+          )}
+          {copied ? t("copied") : t("copy")}
+        </Button>
       </div>
     </div>
   );
@@ -53,12 +66,12 @@ function NewTokenReveal({ token }: { token: string }) {
 
 export function TokenManager({
   tokens,
-  workspaceSlug = '',
+  workspaceSlug = "",
 }: {
   tokens: TokenView[];
   workspaceSlug?: string;
 }) {
-  const t = useTranslations('console.tokens');
+  const t = useTranslations("console.tokens");
   const [state, formAction] = useActionState<TokenState, FormData>(
     createTokenAction,
     {},
@@ -66,8 +79,10 @@ export function TokenManager({
 
   return (
     <DashboardPanel
-      title={t('tokens')}
-      description={t('personalBearerTokensForTheMcpGatewayAndJsonApiScopedToYourAccountNotThisWorkspace')}
+      title={t("tokens")}
+      description={t(
+        "personalBearerTokensForTheMcpGatewayAndJsonApiScopedToYourAccountNotThisWorkspace",
+      )}
     >
       <div className="space-y-4">
         {state.token ? <NewTokenReveal token={state.token} /> : null}
@@ -79,14 +94,22 @@ export function TokenManager({
               htmlFor="token-name"
               className="text-sm font-medium text-foreground"
             >
-              {t('tokenName')}
+              {t("tokenName")}
             </label>
-            <Input id="token-name" name="name" type="text" placeholder={t('egMyLaptop')} />
+            <Input
+              id="token-name"
+              name="name"
+              type="text"
+              placeholder={t("egMyLaptop")}
+            />
           </div>
           <CreateButton />
         </form>
         {state.error ? (
-          <p className="text-sm text-destructive dark:text-destructive" role="alert">
+          <p
+            className="text-sm text-destructive dark:text-destructive"
+            role="alert"
+          >
             {state.error}
           </p>
         ) : null}
@@ -94,8 +117,8 @@ export function TokenManager({
         {tokens.length === 0 ? (
           <DashboardEmptyState
             icon={KeyRound}
-            title={t('noTokensYet')}
-            description={t('createOneAboveToConnectAnAgentOrCli')}
+            title={t("noTokensYet")}
+            description={t("createOneAboveToConnectAnAgentOrCli")}
             className="min-h-48"
           />
         ) : (
@@ -111,17 +134,28 @@ export function TokenManager({
                   </span>
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium text-foreground">
-                      {token.name || t('untitledToken')}
+                      {token.name || t("untitledToken")}
                     </p>
                     <p className="truncate font-mono text-xs text-muted-foreground">
-                      {token.prefix}… · {token.lastUsedAt ? `last used ${token.lastUsedAt}` : t('neverUsed')} {t('created')} {token.createdAt}
+                      {token.prefix}… ·{" "}
+                      {token.lastUsedAt
+                        ? `last used ${token.lastUsedAt}`
+                        : t("neverUsed")}{" "}
+                      {t("created")} {token.createdAt}
                     </p>
                   </div>
                 </div>
                 <form action={revokeTokenAction}>
                   <input type="hidden" name="id" value={token.id} />
                   <input type="hidden" name="workspace" value={workspaceSlug} />
-                  <Button type="submit" variant="secondary" size="sm" className="inline-flex items-center"><Trash2 className="h-3.5 w-3.5" /> {t('revoke')}</Button>
+                  <Button
+                    type="submit"
+                    variant="secondary"
+                    size="sm"
+                    className="inline-flex items-center"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" /> {t("revoke")}
+                  </Button>
                 </form>
               </li>
             ))}

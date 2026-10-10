@@ -1,10 +1,16 @@
-import 'server-only';
-import { assertRuntimeOwner, runtimeAbortSignal } from '@/lib/runtime/ownership-state';
-import { liveMcpRuntimeSnapshot, livePort } from './supervisor';
-import { parseMcpToolCatalogResult, type McpToolDefinition } from './mcp-tool-catalog';
-import { persistDeploymentMcpToolCatalog } from './mcp-tool-catalog-store';
-import { recordEvent } from '@/lib/observability/events';
-import { withLogContext } from '@/lib/observability/context';
+import "server-only";
+import {
+  assertRuntimeOwner,
+  runtimeAbortSignal,
+} from "@/lib/runtime/ownership-state";
+import { liveMcpRuntimeSnapshot, livePort } from "./supervisor";
+import {
+  parseMcpToolCatalogResult,
+  type McpToolDefinition,
+} from "./mcp-tool-catalog";
+import { persistDeploymentMcpToolCatalog } from "./mcp-tool-catalog-store";
+import { recordEvent } from "@/lib/observability/events";
+import { withLogContext } from "@/lib/observability/context";
 
 export type McpTool = McpToolDefinition;
 
@@ -23,7 +29,7 @@ export type McpPrompt = {
 };
 
 export type McpPromptMessage = {
-  role: 'user' | 'assistant';
+  role: "user" | "assistant";
   content: {
     type: string;
     text?: string;
@@ -37,8 +43,8 @@ export type McpPromptResult = {
 
 export class McpPayloadTooLargeError extends Error {
   constructor() {
-    super('MCP payload exceeded the configured byte limit.');
-    this.name = 'McpPayloadTooLargeError';
+    super("MCP payload exceeded the configured byte limit.");
+    this.name = "McpPayloadTooLargeError";
   }
 }
 
@@ -61,14 +67,14 @@ const MAX_PROMPT_NAME_LENGTH = 240;
 const MAX_PROMPT_TEXT_LENGTH = 100_000;
 
 function trimmedString(value: unknown, maxLength: number): string | undefined {
-  if (typeof value !== 'string') return undefined;
+  if (typeof value !== "string") return undefined;
   const text = value.trim();
   return text && text.length <= maxLength ? text : undefined;
 }
 
 function record(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? value as Record<string, unknown>
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
     : null;
 }
 
@@ -78,8 +84,12 @@ function parsePromptArgument(value: unknown): McpPromptArgument | null {
   if (!name) return null;
   return {
     name,
-    ...(trimmedString(input?.title, MAX_PROMPT_NAME_LENGTH) ? { title: trimmedString(input?.title, MAX_PROMPT_NAME_LENGTH) } : {}),
-    ...(trimmedString(input?.description, 2_000) ? { description: trimmedString(input?.description, 2_000) } : {}),
+    ...(trimmedString(input?.title, MAX_PROMPT_NAME_LENGTH)
+      ? { title: trimmedString(input?.title, MAX_PROMPT_NAME_LENGTH) }
+      : {}),
+    ...(trimmedString(input?.description, 2_000)
+      ? { description: trimmedString(input?.description, 2_000) }
+      : {}),
     required: input?.required === true,
   };
 }
@@ -91,14 +101,18 @@ function parsePrompt(value: unknown): McpPrompt | null {
   const argumentsValue = Array.isArray(input?.arguments) ? input.arguments : [];
   if (argumentsValue.length > MAX_PROMPT_ARGUMENTS) return null;
   const argumentsList = argumentsValue.map(parsePromptArgument);
-  if (argumentsList.some((argument) => !argument)) return null;
-  const names = new Set(argumentsList.map((argument) => argument!.name));
+  if (!argumentsList.every((argument) => argument !== null)) return null;
+  const names = new Set(argumentsList.map((argument) => argument.name));
   if (names.size !== argumentsList.length) return null;
   return {
     name,
-    ...(trimmedString(input?.title, MAX_PROMPT_NAME_LENGTH) ? { title: trimmedString(input?.title, MAX_PROMPT_NAME_LENGTH) } : {}),
-    ...(trimmedString(input?.description, 2_000) ? { description: trimmedString(input?.description, 2_000) } : {}),
-    arguments: argumentsList as McpPromptArgument[],
+    ...(trimmedString(input?.title, MAX_PROMPT_NAME_LENGTH)
+      ? { title: trimmedString(input?.title, MAX_PROMPT_NAME_LENGTH) }
+      : {}),
+    ...(trimmedString(input?.description, 2_000)
+      ? { description: trimmedString(input?.description, 2_000) }
+      : {}),
+    arguments: argumentsList,
   };
 }
 
@@ -112,14 +126,21 @@ function parsePromptResult(value: unknown): McpPromptResult | null {
     const role = inputMessage?.role;
     const content = record(inputMessage?.content);
     const type = trimmedString(content?.type, 80);
-    if ((role !== 'user' && role !== 'assistant') || !type) return null;
-    const text = typeof content?.text === 'string' && content.text.length <= MAX_PROMPT_TEXT_LENGTH
-      ? content.text
-      : undefined;
-    parsedMessages.push({ role, content: { type, ...(text !== undefined ? { text } : {}) } });
+    if ((role !== "user" && role !== "assistant") || !type) return null;
+    const text =
+      typeof content?.text === "string" &&
+      content.text.length <= MAX_PROMPT_TEXT_LENGTH
+        ? content.text
+        : undefined;
+    parsedMessages.push({
+      role,
+      content: { type, ...(text !== undefined ? { text } : {}) },
+    });
   }
   return {
-    ...(trimmedString(input?.description, 2_000) ? { description: trimmedString(input?.description, 2_000) } : {}),
+    ...(trimmedString(input?.description, 2_000)
+      ? { description: trimmedString(input?.description, 2_000) }
+      : {}),
     messages: parsedMessages,
   };
 }
@@ -131,8 +152,9 @@ async function readJsonResponse(
 ): Promise<unknown> {
   if (!maxBytes && !onResponseBytes) return response.json();
   const byteLimit = maxBytes ?? Number.POSITIVE_INFINITY;
-  const announced = Number(response.headers.get('content-length') ?? 0);
-  if (Number.isFinite(announced) && announced > byteLimit) throw new McpPayloadTooLargeError();
+  const announced = Number(response.headers.get("content-length") ?? 0);
+  if (Number.isFinite(announced) && announced > byteLimit)
+    throw new McpPayloadTooLargeError();
   if (!response.body) {
     onResponseBytes?.(0);
     return null;
@@ -140,14 +162,16 @@ async function readJsonResponse(
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let received = 0;
-  let text = '';
+  let text = "";
   try {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
       received += value.byteLength;
       if (received > byteLimit) {
-        await reader.cancel('MCP response byte limit exceeded').catch(() => undefined);
+        await reader
+          .cancel("MCP response byte limit exceeded")
+          .catch(() => undefined);
         throw new McpPayloadTooLargeError();
       }
       text += decoder.decode(value, { stream: true });
@@ -173,41 +197,73 @@ async function mcpRpcAtPort(
   assertRuntimeOwner();
   const start = performance.now();
   let httpStatus: number | undefined;
-  const request = { jsonrpc: '2.0', id: Date.now(), method, ...(params === undefined ? {} : { params }) };
+  const request = {
+    jsonrpc: "2.0",
+    id: Date.now(),
+    method,
+    ...(params === undefined ? {} : { params }),
+  };
   let response: unknown;
   try {
     const body = JSON.stringify(request);
-    if (options.maxRequestBytes && new TextEncoder().encode(body).byteLength > options.maxRequestBytes) {
+    if (
+      options.maxRequestBytes &&
+      new TextEncoder().encode(body).byteLength > options.maxRequestBytes
+    ) {
       throw new McpPayloadTooLargeError();
     }
     const timeoutSignal = AbortSignal.timeout(timeoutMs);
+    const ownerSignal = runtimeAbortSignal();
     const res = await fetch(`http://127.0.0.1:${port}/`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      method: "POST",
+      headers: { "content-type": "application/json" },
       body,
-      signal: AbortSignal.any([timeoutSignal, ...(options.signal ? [options.signal] : []), ...(runtimeAbortSignal() ? [runtimeAbortSignal()!] : [])]),
-      cache: 'no-store',
+      signal: AbortSignal.any([
+        timeoutSignal,
+        ...(options.signal ? [options.signal] : []),
+        ...(ownerSignal ? [ownerSignal] : []),
+      ]),
+      cache: "no-store",
     });
     httpStatus = res.status;
-    const json = await readJsonResponse(res, options.maxResponseBytes, options.onResponseBytes) as {
+    const json = (await readJsonResponse(
+      res,
+      options.maxResponseBytes,
+      options.onResponseBytes,
+    )) as {
       result?: Record<string, unknown>;
       error?: { code?: number; message?: string };
     } | null;
     response = json;
     if (!res.ok || json?.error) {
-      const error = new Error(json?.error?.message ?? `MCP upstream HTTP ${res.status}`);
+      const error = new Error(
+        json?.error?.message ?? `MCP upstream HTTP ${res.status}`,
+      );
       Object.assign(error, { code: json?.error?.code ?? `HTTP_${res.status}` });
       throw error;
     }
-    await recordEvent({ domain: 'mcp', eventName: 'mcp.rpc', rpcMethod: method,
-      toolName: typeof params?.name === 'string' ? params.name : undefined, httpStatus,
-      outcome: json?.result?.isError === true ? 'error' : 'success',
-      durationMs: Math.round(performance.now() - start), detail: { request, response } });
+    await recordEvent({
+      domain: "mcp",
+      eventName: "mcp.rpc",
+      rpcMethod: method,
+      toolName: typeof params?.name === "string" ? params.name : undefined,
+      httpStatus,
+      outcome: json?.result?.isError === true ? "error" : "success",
+      durationMs: Math.round(performance.now() - start),
+      detail: { request, response },
+    });
     return json?.result ?? null;
   } catch (error) {
-    await recordEvent({ domain: 'mcp', eventName: 'mcp.rpc', rpcMethod: method,
-      toolName: typeof params?.name === 'string' ? params.name : undefined, httpStatus,
-      error, durationMs: Math.round(performance.now() - start), detail: { request, response } });
+    await recordEvent({
+      domain: "mcp",
+      eventName: "mcp.rpc",
+      rpcMethod: method,
+      toolName: typeof params?.name === "string" ? params.name : undefined,
+      httpStatus,
+      error,
+      durationMs: Math.round(performance.now() - start),
+      detail: { request, response },
+    });
     if (error instanceof McpPayloadTooLargeError) throw error;
     return null;
   }
@@ -221,12 +277,24 @@ export async function mcpRpc(
   options: McpRpcOptions = {},
 ): Promise<Record<string, unknown> | null> {
   const port = livePort(deploymentId);
-  return withLogContext({ deploymentId, secrets: liveMcpRuntimeSnapshot(deploymentId)?.redactionValues }, async () => {
-    if (port) return mcpRpcAtPort(port, method, params, timeoutMs, options);
-    await recordEvent({ domain: 'mcp', eventName: 'mcp.rpc', rpcMethod: method,
-      error: new Error('MCP deployment is not running'), errorCode: 'deployment_unavailable', httpStatus: 503 });
-    return null;
-  });
+  return withLogContext(
+    {
+      deploymentId,
+      secrets: liveMcpRuntimeSnapshot(deploymentId)?.redactionValues,
+    },
+    async () => {
+      if (port) return mcpRpcAtPort(port, method, params, timeoutMs, options);
+      await recordEvent({
+        domain: "mcp",
+        eventName: "mcp.rpc",
+        rpcMethod: method,
+        error: new Error("MCP deployment is not running"),
+        errorCode: "deployment_unavailable",
+        httpStatus: 503,
+      });
+      return null;
+    },
+  );
 }
 
 export async function listMcpTools(
@@ -246,70 +314,80 @@ export async function listMcpTools(
     if (remainingMs <= 0) return [];
     const before = liveMcpRuntimeSnapshot(deploymentId);
     if (
-      !before
-      || (requestGeneration !== undefined && before.generation !== requestGeneration)
-      || (requestPort !== undefined && before.port !== requestPort)
-    ) return [];
+      !before ||
+      (requestGeneration !== undefined &&
+        before.generation !== requestGeneration) ||
+      (requestPort !== undefined && before.port !== requestPort)
+    )
+      return [];
     requestGeneration ??= before.generation;
     requestPort ??= before.port;
-    for (const secret of before.redactionValues) requestRedactionValues.add(secret);
+    for (const secret of before.redactionValues)
+      requestRedactionValues.add(secret);
     let result: Record<string, unknown> | null;
     let responseBytes = 0;
     try {
-      result = await withLogContext({ deploymentId, secrets: [...requestRedactionValues] }, () => mcpRpcAtPort(
-        before.port,
-        'tools/list',
-        cursor ? { cursor } : undefined,
-        Math.min(5_000, remainingMs),
-        {
-          ...options,
-          maxResponseBytes: Math.min(
-            options.maxResponseBytes ?? MAX_TOOLS_RESPONSE_BYTES,
-            remainingResponseBytes,
+      result = await withLogContext(
+        { deploymentId, secrets: [...requestRedactionValues] },
+        () =>
+          mcpRpcAtPort(
+            before.port,
+            "tools/list",
+            cursor ? { cursor } : undefined,
+            Math.min(5_000, remainingMs),
+            {
+              ...options,
+              maxResponseBytes: Math.min(
+                options.maxResponseBytes ?? MAX_TOOLS_RESPONSE_BYTES,
+                remainingResponseBytes,
+              ),
+              onResponseBytes: (bytes) => {
+                responseBytes = bytes;
+                options.onResponseBytes?.(bytes);
+              },
+            },
           ),
-          onResponseBytes: (bytes) => {
-            responseBytes = bytes;
-            options.onResponseBytes?.(bytes);
-          },
-        },
-      ));
+      );
     } catch (error) {
       if (error instanceof McpPayloadTooLargeError) return [];
       throw error;
     }
     const after = liveMcpRuntimeSnapshot(deploymentId);
     if (
-      !after
-      || after.generation !== before.generation
-      || after.port !== before.port
-    ) return [];
+      !after ||
+      after.generation !== before.generation ||
+      after.port !== before.port
+    )
+      return [];
     // Never replace a complete snapshot with a partial pagination result.
     remainingResponseBytes -= responseBytes;
     if (!result || !Array.isArray(result.tools)) return [];
     if (result.tools.length > MAX_TOOLS - tools.length) return [];
     const pageCatalog = parseMcpToolCatalogResult(result.tools);
     if (!pageCatalog.ok) return [];
-    const combined = parseMcpToolCatalogResult([...tools, ...pageCatalog.tools]);
+    const combined = parseMcpToolCatalogResult([
+      ...tools,
+      ...pageCatalog.tools,
+    ]);
     if (!combined.ok) return [];
     tools = combined.tools;
 
     if (result.nextCursor === undefined) {
-      return persistDeploymentMcpToolCatalog(
-        deploymentId,
-        tools,
-        [...requestRedactionValues],
-      ).catch(() => []);
+      return persistDeploymentMcpToolCatalog(deploymentId, tools, [
+        ...requestRedactionValues,
+      ]).catch(() => []);
     }
     const nextCursor = result.nextCursor;
     if (
-      typeof nextCursor !== 'string'
-      || !nextCursor
-      || nextCursor.length > 4_000
-      || seenCursors.has(nextCursor)
-      || page === MAX_TOOL_PAGES - 1
-      || tools.length >= MAX_TOOLS
-      || remainingResponseBytes <= 0
-    ) return [];
+      typeof nextCursor !== "string" ||
+      !nextCursor ||
+      nextCursor.length > 4_000 ||
+      seenCursors.has(nextCursor) ||
+      page === MAX_TOOL_PAGES - 1 ||
+      tools.length >= MAX_TOOLS ||
+      remainingResponseBytes <= 0
+    )
+      return [];
     seenCursors.add(nextCursor);
     cursor = nextCursor;
   }
@@ -324,10 +402,14 @@ export async function listMcpPrompts(
   const seen = new Set<string>();
   let cursor: string | undefined;
 
-  for (let page = 0; page < MAX_PROMPT_PAGES && prompts.length < MAX_PROMPTS; page += 1) {
+  for (
+    let page = 0;
+    page < MAX_PROMPT_PAGES && prompts.length < MAX_PROMPTS;
+    page += 1
+  ) {
     const result = await mcpRpc(
       deploymentId,
-      'prompts/list',
+      "prompts/list",
       cursor ? { cursor } : undefined,
       5000,
       options,
@@ -357,8 +439,13 @@ export async function getMcpPrompt(
 ): Promise<McpPromptResult | null> {
   const result = await mcpRpc(
     deploymentId,
-    'prompts/get',
-    { name, ...(Object.keys(argumentsValue).length ? { arguments: argumentsValue } : {}) },
+    "prompts/get",
+    {
+      name,
+      ...(Object.keys(argumentsValue).length
+        ? { arguments: argumentsValue }
+        : {}),
+    },
     30_000,
     options,
   );

@@ -1,8 +1,8 @@
-import 'server-only';
-import { db } from '@/lib/db';
+import "server-only";
+import { db } from "@/lib/db";
 
 export type McpToolPolicy = {
-  mode: 'all' | 'allowlist';
+  mode: "all" | "allowlist";
   allowedTools: readonly string[];
   publicInvocable?: boolean;
 };
@@ -13,9 +13,11 @@ export type StoredMcpToolPolicy = {
   publicInvocable?: boolean;
 };
 
-export function mcpToolPolicyFromStored(stored: StoredMcpToolPolicy): McpToolPolicy {
+export function mcpToolPolicyFromStored(
+  stored: StoredMcpToolPolicy,
+): McpToolPolicy {
   return {
-    mode: stored.mcpToolExposure === 'allowlist' ? 'allowlist' : 'all',
+    mode: stored.mcpToolExposure === "allowlist" ? "allowlist" : "all",
     allowedTools: stored.mcpAllowedTools,
     publicInvocable: stored.publicInvocable === true,
   };
@@ -26,7 +28,7 @@ export function isMcpToolExposedToAi(
   toolName: string,
 ): boolean {
   if (!policy) return false;
-  return policy.mode === 'all' || policy.allowedTools.includes(toolName);
+  return policy.mode === "all" || policy.allowedTools.includes(toolName);
 }
 
 export function filterMcpToolsForAi<T extends { name: string }>(
@@ -53,8 +55,10 @@ export async function loadMcpToolPolicies(
     },
   });
 
-  return new Map(deployments.map((deployment) => [
-    deployment.id,
-    mcpToolPolicyFromStored(deployment),
-  ]));
+  return new Map(
+    deployments.map((deployment) => [
+      deployment.id,
+      mcpToolPolicyFromStored(deployment),
+    ]),
+  );
 }

@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from "zod";
 
 export const AGENT_API_MAX_BODY_BYTES = 256 * 1024;
 export const AGENT_API_MAX_INPUT_CHARACTERS = 20_000;
@@ -18,9 +18,12 @@ const MetadataValue = z.union([
 
 const Metadata = z
   .record(z.string().trim().min(1).max(64), MetadataValue)
-  .refine((value) => Object.keys(value).length <= AGENT_API_MAX_METADATA_ENTRIES, {
-    message: `metadata may contain at most ${AGENT_API_MAX_METADATA_ENTRIES} entries`,
-  });
+  .refine(
+    (value) => Object.keys(value).length <= AGENT_API_MAX_METADATA_ENTRIES,
+    {
+      message: `metadata may contain at most ${AGENT_API_MAX_METADATA_ENTRIES} entries`,
+    },
+  );
 
 const AgentResponseBodySchema = z
   .object({
@@ -34,7 +37,7 @@ const AgentResponseBodySchema = z
 
 const OpenAIMessageSchema = z
   .object({
-    role: z.enum(['user', 'assistant']),
+    role: z.enum(["user", "assistant"]),
     content: z.string().max(AGENT_API_MAX_INPUT_CHARACTERS),
   })
   .strict();
@@ -50,19 +53,29 @@ const OpenAIChatBodySchema = z
   })
   .strict()
   .refine(
-    (value) => value.messages.reduce((total, message) => total + message.content.length, 0)
-      <= AGENT_API_MAX_INPUT_CHARACTERS,
-    { message: `messages may contain at most ${AGENT_API_MAX_INPUT_CHARACTERS} characters` },
+    (value) =>
+      value.messages.reduce(
+        (total, message) => total + message.content.length,
+        0,
+      ) <= AGENT_API_MAX_INPUT_CHARACTERS,
+    {
+      message: `messages may contain at most ${AGENT_API_MAX_INPUT_CHARACTERS} characters`,
+    },
   )
   .refine(
-    (value) => value.messages[value.messages.length - 1]?.role === 'user',
-    { message: 'the final message must have role user' },
+    (value) => value.messages[value.messages.length - 1]?.role === "user",
+    { message: "the final message must have role user" },
   );
 
 const ClientTokenBodySchema = z
   .object({
     end_user: z.string().trim().min(1).max(200),
-    expires_in: z.number().int().min(60).max(15 * 60).default(15 * 60),
+    expires_in: z
+      .number()
+      .int()
+      .min(60)
+      .max(15 * 60)
+      .default(15 * 60),
     origin: z.string().url().max(2_000).optional(),
   })
   .strict();
@@ -73,10 +86,17 @@ export type AgentClientTokenBody = z.infer<typeof ClientTokenBodySchema>;
 
 export type ParsedPublicApiBody<T> =
   | { ok: true; value: T }
-  | { ok: false; reason: 'too_large' | 'invalid_json' | 'invalid_body'; detail?: string };
+  | {
+      ok: false;
+      reason: "too_large" | "invalid_json" | "invalid_body";
+      detail?: string;
+    };
 
-export function requestBodyMayFit(req: Request, maxBytes = AGENT_API_MAX_BODY_BYTES): boolean {
-  const announced = Number(req.headers.get('content-length') ?? 0);
+export function requestBodyMayFit(
+  req: Request,
+  maxBytes = AGENT_API_MAX_BODY_BYTES,
+): boolean {
+  const announced = Number(req.headers.get("content-length") ?? 0);
   return !Number.isFinite(announced) || announced <= 0 || announced <= maxBytes;
 }
 
@@ -84,7 +104,7 @@ async function readRequestText(
   req: Request,
   maxBytes: number,
 ): Promise<{ ok: true; text: string } | { ok: false }> {
-  if (!req.body) return { ok: true, text: '' };
+  if (!req.body) return { ok: true, text: "" };
   const reader = req.body.getReader();
   const readSignal = AbortSignal.any([
     req.signal,
@@ -92,22 +112,29 @@ async function readRequestText(
   ]);
   const decoder = new TextDecoder();
   let received = 0;
-  let text = '';
+  let text = "";
   let rejectAbort: ((reason?: unknown) => void) | undefined;
-  const aborted = new Promise<never>((_resolve, reject) => { rejectAbort = reject; });
+  const aborted = new Promise<never>((_resolve, reject) => {
+    rejectAbort = reject;
+  });
   const abortRead = () => {
     void reader.cancel(readSignal.reason).catch(() => undefined);
-    rejectAbort?.(readSignal.reason ?? new DOMException('Request body read aborted.', 'AbortError'));
+    rejectAbort?.(
+      readSignal.reason ??
+        new DOMException("Request body read aborted.", "AbortError"),
+    );
   };
   if (readSignal.aborted) abortRead();
-  else readSignal.addEventListener('abort', abortRead, { once: true });
+  else readSignal.addEventListener("abort", abortRead, { once: true });
   try {
     while (true) {
       const { done, value } = await Promise.race([reader.read(), aborted]);
       if (done) break;
       received += value.byteLength;
       if (received > maxBytes) {
-        await reader.cancel('request body limit exceeded').catch(() => undefined);
+        await reader
+          .cancel("request body limit exceeded")
+          .catch(() => undefined);
         return { ok: false };
       }
       text += decoder.decode(value, { stream: true });
@@ -115,7 +142,7 @@ async function readRequestText(
     text += decoder.decode();
     return { ok: true, text };
   } finally {
-    readSignal.removeEventListener('abort', abortRead);
+    readSignal.removeEventListener("abort", abortRead);
     reader.releaseLock();
   }
 }
@@ -125,25 +152,26 @@ export async function parseJson<T>(
   schema: z.ZodType<T>,
   maxBytes = AGENT_API_MAX_BODY_BYTES,
 ): Promise<ParsedPublicApiBody<T>> {
-  if (!requestBodyMayFit(req, maxBytes)) return { ok: false, reason: 'too_large' };
+  if (!requestBodyMayFit(req, maxBytes))
+    return { ok: false, reason: "too_large" };
   let body: Awaited<ReturnType<typeof readRequestText>>;
   try {
     body = await readRequestText(req, maxBytes);
   } catch {
-    return { ok: false, reason: 'invalid_json' };
+    return { ok: false, reason: "invalid_json" };
   }
-  if (!body.ok) return { ok: false, reason: 'too_large' };
+  if (!body.ok) return { ok: false, reason: "too_large" };
   let raw: unknown;
   try {
     raw = JSON.parse(body.text);
   } catch {
-    return { ok: false, reason: 'invalid_json' };
+    return { ok: false, reason: "invalid_json" };
   }
   const parsed = schema.safeParse(raw);
   if (!parsed.success) {
     return {
       ok: false,
-      reason: 'invalid_body',
+      reason: "invalid_body",
       detail: parsed.error.issues[0]?.message,
     };
   }
@@ -164,6 +192,9 @@ export function parseAgentClientTokenRequest(req: Request) {
 
 export function openAIInput(body: OpenAIChatBody): string {
   return body.messages
-    .map((message) => `${message.role === 'assistant' ? 'Assistant' : 'User'}: ${message.content}`)
-    .join('\n\n');
+    .map(
+      (message) =>
+        `${message.role === "assistant" ? "Assistant" : "User"}: ${message.content}`,
+    )
+    .join("\n\n");
 }

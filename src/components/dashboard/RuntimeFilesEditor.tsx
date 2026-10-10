@@ -1,21 +1,43 @@
-'use client';
-import { AnimatedBadge } from '@/components/motion/animated-badge';
+"use client";
+import { AnimatedBadge } from "@/components/motion/animated-badge";
 
-import { Button } from '@/components/motion/button';
-import { Input } from '@/components/motion/input';
+import { Button } from "@/components/motion/button";
+import { Input } from "@/components/motion/input";
 
-
-import { useRef, useState, useTransition, type ChangeEvent, type FormEvent } from 'react';
-import { useTranslations } from 'next-intl';
-import { Eye, FileText, Loader2, Plus, RefreshCw, Trash2, Upload, X } from 'lucide-react';
-import { deleteDeploymentRuntimeFileAction, revealDeploymentRuntimeFileAction, upsertDeploymentRuntimeFileAction, type RuntimeFileMetadata, type RuntimeFilesActionState } from '@/lib/workspace/runtime-files-actions';
+import {
+  useId,
+  useRef,
+  useState,
+  useTransition,
+  type ChangeEvent,
+  type FormEvent,
+} from "react";
+import { useTranslations } from "next-intl";
+import {
+  Eye,
+  FileText,
+  Loader2,
+  Plus,
+  RefreshCw,
+  Trash2,
+  Upload,
+  X,
+} from "lucide-react";
+import {
+  deleteDeploymentRuntimeFileAction,
+  revealDeploymentRuntimeFileAction,
+  upsertDeploymentRuntimeFileAction,
+  type RuntimeFileMetadata,
+  type RuntimeFilesActionState,
+} from "@/lib/workspace/runtime-files-actions";
+import { FilePathTree } from "./FilePathTree";
 
 type Draft = {
   /** A present id means the user explicitly revealed an existing file. */
   fileId?: string;
   path: string;
   content: string;
-  source: 'new' | 'upload' | 'revealed';
+  source: "new" | "upload" | "revealed";
 };
 
 function formatBytes(size: number): string {
@@ -28,44 +50,44 @@ function formatUpdatedAt(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return new Intl.DateTimeFormat(undefined, {
-    dateStyle: 'medium',
-    timeStyle: 'short',
+    dateStyle: "medium",
+    timeStyle: "short",
   }).format(date);
 }
 
 function runtimeFilePathKey(value: string): string | null {
   const trimmed = value.trim();
-  return trimmed ? trimmed.normalize('NFC').toLocaleLowerCase('en-US') : null;
+  return trimmed ? trimmed.normalize("NFC").toLocaleLowerCase("en-US") : null;
 }
 
 function actionErrorMessage(
-  error: RuntimeFilesActionState['error'],
+  error: RuntimeFilesActionState["error"],
   t: ReturnType<typeof useTranslations>,
 ): string | null {
   switch (error) {
-    case 'invalidFile':
-      return t('invalidRuntimeFile');
-    case 'notAuthorized':
-      return t('runtimeFileNotAuthorized');
-    case 'deploymentNotFound':
-      return t('deploymentNotFound');
-    case 'fileNotFound':
-      return t('runtimeFileNotFound');
-    case 'saveFailed':
-      return t('runtimeFileSaveFailed');
-    case 'restartFailed':
-      return t('runtimeFileRestartFailed');
+    case "invalidFile":
+      return t("invalidRuntimeFile");
+    case "notAuthorized":
+      return t("runtimeFileNotAuthorized");
+    case "deploymentNotFound":
+      return t("deploymentNotFound");
+    case "fileNotFound":
+      return t("runtimeFileNotFound");
+    case "saveFailed":
+      return t("runtimeFileSaveFailed");
+    case "restartFailed":
+      return t("runtimeFileRestartFailed");
     default:
       return null;
   }
 }
 
 function removeActionErrorMessage(
-  error: RuntimeFilesActionState['error'],
+  error: RuntimeFilesActionState["error"],
   t: ReturnType<typeof useTranslations>,
 ): string | null {
-  if (error === 'saveFailed') return t('runtimeFileRemoveFailed');
-  if (error === 'restartFailed') return t('runtimeFileRemoveRestartFailed');
+  if (error === "saveFailed") return t("runtimeFileRemoveFailed");
+  if (error === "restartFailed") return t("runtimeFileRemoveRestartFailed");
   return actionErrorMessage(error, t);
 }
 
@@ -90,14 +112,18 @@ export function RuntimeFilesEditor({
   initialFiles: RuntimeFileMetadata[];
   relativePathArgumentsWork?: boolean;
 }) {
-  const t = useTranslations('console.mcp');
+  const t = useTranslations("console.mcp");
+  const pathId = useId();
   const [draft, setDraft] = useState<Draft | null>(null);
   const [savedFiles, setSavedFiles] = useState<RuntimeFileMetadata[]>([]);
-  const [removedFileIds, setRemovedFileIds] = useState<Set<string>>(() => new Set());
+  const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
+  const [removedFileIds, setRemovedFileIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [revealError, setRevealError] = useState<string | null>(null);
   const [mutationError, setMutationError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<'saved' | 'removed' | null>(null);
+  const [notice, setNotice] = useState<"saved" | "removed" | null>(null);
   const [isRevealing, startReveal] = useTransition();
   const [isSaving, startSave] = useTransition();
   const [isDeleting, startDelete] = useTransition();
@@ -119,6 +145,8 @@ export function RuntimeFilesEditor({
     }),
     ...savedFiles.filter((file) => !removedFileIds.has(file.id)),
   ].sort((left, right) => left.path.localeCompare(right.path));
+  const selectedFile =
+    files.find((file) => file.id === selectedFileId) ?? files[0];
 
   const clearMutationFeedback = () => {
     setMutationError(null);
@@ -143,19 +171,21 @@ export function RuntimeFilesEditor({
             fileId: file.id,
             path: result.path,
             content: result.content,
-            source: 'revealed',
+            source: "revealed",
           });
           return;
         }
-        setRevealError(actionErrorMessage(result.error, t) ?? t('runtimeFileRevealFailed'));
+        setRevealError(
+          actionErrorMessage(result.error, t) ?? t("runtimeFileRevealFailed"),
+        );
       } catch {
-        setRevealError(t('runtimeFileRevealFailed'));
+        setRevealError(t("runtimeFileRevealFailed"));
       }
     });
   };
 
   const startNewFile = () => {
-    setDraft({ path: '', content: '', source: 'new' });
+    setDraft({ path: "", content: "", source: "new" });
     setUploadError(null);
     setRevealError(null);
     clearMutationFeedback();
@@ -167,7 +197,7 @@ export function RuntimeFilesEditor({
     const file = event.target.files?.[0];
     // Reset immediately, so selecting the same file after fixing it fires a
     // new change event.
-    event.target.value = '';
+    event.target.value = "";
     if (!file) return;
 
     setUploadError(null);
@@ -176,17 +206,22 @@ export function RuntimeFilesEditor({
     try {
       const bytes = new Uint8Array(await file.arrayBuffer());
       if (bytes.includes(0)) {
-        throw new Error('Selected files must be plain text; binary files are not supported.');
+        throw new Error(
+          "Selected files must be plain text; binary files are not supported.",
+        );
       }
       // File.text() silently substitutes invalid sequences. A fatal decoder
       // keeps the browser-side behavior aligned with the server text-only
       // validation and prevents accidentally uploading a binary file.
       // `ignoreBOM: true` retains a UTF-8 BOM if the user supplied one,
       // rather than silently changing the file while importing it.
-      const content = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
-      setDraft({ path: file.name, content, source: 'upload' });
+      const content = new TextDecoder("utf-8", {
+        fatal: true,
+        ignoreBOM: true,
+      }).decode(bytes);
+      setDraft({ path: file.name, content, source: "upload" });
     } catch {
-      setUploadError(t('invalidRuntimeTextUpload'));
+      setUploadError(t("invalidRuntimeTextUpload"));
     }
   };
 
@@ -199,7 +234,9 @@ export function RuntimeFilesEditor({
       try {
         const result = await upsertDeploymentRuntimeFileAction({}, formData);
         if (result.error || !result.savedAt) {
-          setMutationError(actionErrorMessage(result.error, t) ?? t('runtimeFileSaveFailed'));
+          setMutationError(
+            actionErrorMessage(result.error, t) ?? t("runtimeFileSaveFailed"),
+          );
           return;
         }
         const savedFile = result.file;
@@ -207,32 +244,36 @@ export function RuntimeFilesEditor({
           const fileKey = runtimeFilePathKey(savedFile.path);
           setSavedFiles((current) => {
             const next = [
-              ...current.filter((file) => (
-                file.id !== savedFile.id
-                && (!fileKey || runtimeFilePathKey(file.path) !== fileKey)
-              )),
+              ...current.filter(
+                (file) =>
+                  file.id !== savedFile.id &&
+                  (!fileKey || runtimeFilePathKey(file.path) !== fileKey),
+              ),
               savedFile,
             ];
-            return next.sort((left, right) => left.path.localeCompare(right.path));
+            return next.sort((left, right) =>
+              left.path.localeCompare(right.path),
+            );
           });
         }
         setDraft(null);
         setUploadError(null);
         setRevealError(null);
-        setNotice('saved');
+        setNotice("saved");
       } catch {
-        setMutationError(t('runtimeFileSaveFailed'));
+        setMutationError(t("runtimeFileSaveFailed"));
       }
     });
   };
 
   const removeFile = (file: RuntimeFileMetadata) => {
-    if (!window.confirm(t('removeRuntimeFileConfirm', { path: file.path }))) return;
+    if (!window.confirm(t("removeRuntimeFileConfirm", { path: file.path })))
+      return;
 
     const formData = new FormData();
-    formData.set('workspace', workspace);
-    formData.set('deploymentId', deploymentId);
-    formData.set('fileId', file.id);
+    formData.set("workspace", workspace);
+    formData.set("deploymentId", deploymentId);
+    formData.set("fileId", file.id);
     setDeletingFileId(file.id);
     setMutationError(null);
     setNotice(null);
@@ -240,15 +281,20 @@ export function RuntimeFilesEditor({
       try {
         const result = await deleteDeploymentRuntimeFileAction(formData);
         if (result.error || !result.savedAt) {
-          setMutationError(removeActionErrorMessage(result.error, t) ?? t('runtimeFileRemoveFailed'));
+          setMutationError(
+            removeActionErrorMessage(result.error, t) ??
+              t("runtimeFileRemoveFailed"),
+          );
           return;
         }
         setRemovedFileIds((current) => new Set([...current, file.id]));
-        setSavedFiles((current) => current.filter((candidate) => candidate.id !== file.id));
-        setDraft((current) => current?.fileId === file.id ? null : current);
-        setNotice('removed');
+        setSavedFiles((current) =>
+          current.filter((candidate) => candidate.id !== file.id),
+        );
+        setDraft((current) => (current?.fileId === file.id ? null : current));
+        setNotice("removed");
       } catch {
-        setMutationError(t('runtimeFileRemoveFailed'));
+        setMutationError(t("runtimeFileRemoveFailed"));
       } finally {
         setDeletingFileId(null);
       }
@@ -258,44 +304,71 @@ export function RuntimeFilesEditor({
   const draftPathKey = draft ? runtimeFilePathKey(draft.path) : null;
   const draftFileId = draft?.fileId;
   const currentPathAlreadyExists = Boolean(
-    draftPathKey && files.some((file) => runtimeFilePathKey(file.path) === draftPathKey && file.id !== draftFileId),
+    draftPathKey &&
+      files.some(
+        (file) =>
+          runtimeFilePathKey(file.path) === draftPathKey &&
+          file.id !== draftFileId,
+      ),
   );
 
   return (
-    <section className="max-w-4xl rounded-lg border border-border" aria-labelledby="runtime-files-heading">
+    <section
+      className="max-w-4xl rounded-lg border border-border"
+      aria-labelledby="runtime-files-heading"
+    >
       <header className="flex flex-wrap items-start justify-between gap-4 border-b border-border px-4 py-4">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <FileText className="size-4 text-muted-foreground" />
-            <h2 id="runtime-files-heading" className="text-sm font-semibold text-foreground">
-              {t('runtimeFiles')}
+            <h2
+              id="runtime-files-heading"
+              className="text-sm font-semibold text-foreground"
+            >
+              {t("runtimeFiles")}
             </h2>
-            <AnimatedBadge  status="neutral" size="sm" showIcon={false}>
+            <AnimatedBadge status="neutral" size="sm" showIcon={false}>
               {files.length}
             </AnimatedBadge>
           </div>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
-            {t('runtimeFilesDescription')}
+            {t("runtimeFilesDescription")}
           </p>
           {relativePathArgumentsWork ? (
             <p className="mt-1 text-xs leading-5 text-muted-foreground">
-              {t('runtimeFilesRelativeArgumentHint')}
+              {t("runtimeFilesRelativeArgumentHint")}
             </p>
           ) : null}
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
-            {t('runtimeFilesAbsolutePathHint')}
+            {t("runtimeFilesAbsolutePathHint")}
           </p>
         </div>
         <div className="flex shrink-0 flex-wrap gap-2">
-          <Button type="button" onClick={pickUpload} disabled={isSaving || isRevealing || isDeleting} variant="secondary" size="sm"><Upload className="size-3.5" />
-          {t('uploadTextFile')}</Button>
-          <Button type="button" onClick={startNewFile} disabled={isSaving || isRevealing || isDeleting} variant="primary" size="sm"><Plus className="size-3.5" />
-          {t('addFile')}</Button>
+          <Button
+            type="button"
+            onClick={pickUpload}
+            disabled={isSaving || isRevealing || isDeleting}
+            variant="secondary"
+            size="sm"
+          >
+            <Upload className="size-3.5" />
+            {t("uploadTextFile")}
+          </Button>
+          <Button
+            type="button"
+            onClick={startNewFile}
+            disabled={isSaving || isRevealing || isDeleting}
+            variant="primary"
+            size="sm"
+          >
+            <Plus className="size-3.5" />
+            {t("addFile")}
+          </Button>
           <input
             ref={uploadInputRef}
             type="file"
             tabIndex={-1}
-            aria-label={t('uploadTextFile')}
+            aria-label={t("uploadTextFile")}
             disabled={isSaving || isRevealing || isDeleting}
             onChange={readUpload}
             className="sr-only"
@@ -306,117 +379,234 @@ export function RuntimeFilesEditor({
       <div className="divide-y divide-border">
         {files.length === 0 ? (
           <p className="px-4 py-10 text-center text-sm text-muted-foreground">
-            {t('noRuntimeFiles')}
+            {t("noRuntimeFiles")}
           </p>
         ) : (
-          files.map((file) => (
-            <div key={file.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
-              <div className="min-w-0">
-                <code className="block break-all font-mono text-xs text-foreground">{file.path}</code>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {formatBytes(file.size)}
-                  <span aria-hidden="true"> · </span>
-                  <time dateTime={file.updatedAt}>{t('runtimeFileUpdated', { value: formatUpdatedAt(file.updatedAt) })}</time>
-                </p>
-              </div>
-              <div className="flex shrink-0 items-center gap-1">
-                <Button type="button" onClick={() => revealFile(file)} disabled={isRevealing || isSaving || isDeleting} aria-busy={isRevealing} variant="ghost" size="sm" className="inline-flex items-center">{isRevealing ? <Loader2 className="size-3.5 animate-spin" /> : <Eye className="size-3.5" />}
-                {isRevealing ? t('revealing') : t('revealAndEdit')}</Button>
-                <Button type="button" onClick={() => removeFile(file)} disabled={isSaving || isRevealing || isDeleting} variant="ghost" size="sm" className="inline-flex items-center">{isDeleting && deletingFileId === file.id
-                  ? <Loader2 className="size-3.5 animate-spin" />
-                  : <Trash2 className="size-3.5" />}
-                {isDeleting && deletingFileId === file.id ? t('removing') : t('remove')}</Button>
-              </div>
+          <div className="grid min-w-0 gap-3 p-3 sm:grid-cols-[minmax(0,16rem)_minmax(0,1fr)]">
+            <div className="max-h-80 min-w-0 overflow-auto">
+              <FilePathTree
+                files={files.map((file) => ({
+                  path: file.path,
+                  value: file.id,
+                }))}
+                ariaLabel={t("runtimeFiles")}
+                value={selectedFile?.id ?? null}
+                onSelect={setSelectedFileId}
+                disabled={isRevealing || isSaving || isDeleting}
+              />
             </div>
-          ))
+            {selectedFile ? (
+              <div className="min-w-0 space-y-3 p-2">
+                <code className="block break-all font-mono text-xs">
+                  {selectedFile.path}
+                </code>
+                <p className="text-xs text-muted-foreground">
+                  {formatBytes(selectedFile.size)} ·{" "}
+                  <time dateTime={selectedFile.updatedAt}>
+                    {t("runtimeFileUpdated", {
+                      value: formatUpdatedAt(selectedFile.updatedAt),
+                    })}
+                  </time>
+                </p>
+                <div className="flex flex-wrap items-center gap-1">
+                  <Button
+                    type="button"
+                    onClick={() => revealFile(selectedFile)}
+                    disabled={isRevealing || isSaving || isDeleting}
+                    aria-busy={isRevealing}
+                    variant="ghost"
+                    size="sm"
+                  >
+                    {isRevealing ? (
+                      <Loader2 className="size-3.5 animate-spin" />
+                    ) : (
+                      <Eye className="size-3.5" />
+                    )}
+                    {isRevealing ? t("revealing") : t("revealAndEdit")}
+                  </Button>
+                  <Button
+                    type="button"
+                    onClick={() => removeFile(selectedFile)}
+                    disabled={isSaving || isRevealing || isDeleting}
+                    variant="ghost"
+                    size="sm"
+                  >
+                    {isDeleting && deletingFileId === selectedFile.id ? (
+                      <Loader2 className="size-3.5 animate-spin" />
+                    ) : (
+                      <Trash2 className="size-3.5" />
+                    )}
+                    {isDeleting && deletingFileId === selectedFile.id
+                      ? t("removing")
+                      : t("remove")}
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+          </div>
         )}
       </div>
 
       {draft ? (
-        <form onSubmit={saveFile} className="border-t border-border bg-muted/20 px-4 py-4">
+        <form
+          onSubmit={saveFile}
+          className="border-t border-border bg-muted/20 px-4 py-4"
+        >
           <input type="hidden" name="workspace" value={workspace} />
           <input type="hidden" name="deploymentId" value={deploymentId} />
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <h3 className="text-sm font-semibold text-foreground">
-                {draft.source === 'revealed' ? t('editRuntimeFile') : t('addRuntimeFile')}
+                {draft.source === "revealed"
+                  ? t("editRuntimeFile")
+                  : t("addRuntimeFile")}
               </h3>
               <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                {draft.source === 'revealed'
-                  ? t('revealedRuntimeFileHelp')
-                  : t('newRuntimeFileHelp')}
+                {draft.source === "revealed"
+                  ? t("revealedRuntimeFileHelp")
+                  : t("newRuntimeFileHelp")}
               </p>
             </div>
-            <Button type="button" onClick={() => {
-              setDraft(null);
-              setUploadError(null);
-              setRevealError(null);
-              clearMutationFeedback();
-            }} disabled={isSaving || isDeleting} aria-label={t('closeRuntimeFileEditor')} variant="ghost" size="md"><X className="size-4" /></Button>
+            <Button
+              type="button"
+              onClick={() => {
+                setDraft(null);
+                setUploadError(null);
+                setRevealError(null);
+                clearMutationFeedback();
+              }}
+              disabled={isSaving || isDeleting}
+              aria-label={t("closeRuntimeFileEditor")}
+              variant="ghost"
+              size="md"
+            >
+              <X className="size-4" />
+            </Button>
           </div>
 
           <div className="mt-4 space-y-3">
-            {draft.source === 'revealed' ? (
+            {draft.source === "revealed" ? (
               <>
                 <input type="hidden" name="path" value={draft.path} />
                 <div>
-                  <p className="text-xs font-medium text-muted-foreground">{t('filePath')}</p>
+                  <p className="text-xs font-medium text-muted-foreground">
+                    {t("filePath")}
+                  </p>
                   <code className="mt-1 block break-all rounded-md border border-border bg-background px-3 py-2 font-mono text-xs text-foreground">
                     {draft.path}
                   </code>
                 </div>
               </>
             ) : (
-              <label className="block space-y-1.5 text-xs font-medium text-muted-foreground">
-                {t('filePath')}
-                <Input name="path" value={draft.path} onChange={(value) => setDraft((current) => current && {
-                    ...current,
-                    path: value,
-                  })} required disabled={isSaving || isDeleting} placeholder="ssh-config.json" spellCheck={false} className="w-full" />
+              <label
+                htmlFor={pathId}
+                className="block space-y-1.5 text-xs font-medium text-muted-foreground"
+              >
+                {t("filePath")}
+                <Input
+                  id={pathId}
+                  name="path"
+                  value={draft.path}
+                  onChange={(value) =>
+                    setDraft(
+                      (current) =>
+                        current && {
+                          ...current,
+                          path: value,
+                        },
+                    )
+                  }
+                  required
+                  disabled={isSaving || isDeleting}
+                  placeholder="ssh-config.json"
+                  spellCheck={false}
+                  className="w-full"
+                />
               </label>
             )}
 
             {currentPathAlreadyExists ? (
               <p className="rounded-md border border-border bg-muted px-3 py-2 text-xs text-foreground text-foreground">
-                {t('runtimeFileReplaceWarning', { path: draft.path.trim() })}
+                {t("runtimeFileReplaceWarning", { path: draft.path.trim() })}
               </p>
             ) : null}
 
             <label className="block space-y-1.5 text-xs font-medium text-muted-foreground">
-              {t('textContent')}
-              <textarea name="content" value={draft.content} onChange={(event) => setDraft((current) => current && {
-                  ...current,
-                  content: event.target.value,
-                })} disabled={isSaving || isDeleting} spellCheck={false} aria-invalid={Boolean(error)} aria-describedby={error ? 'runtime-file-error' : undefined} className="min-h-36 w-full resize-y rounded-lg bg-muted/35 p-3 text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring h-[min(24rem,50dvh)] min-h-32 max-h-[60dvh]" />
+              {t("textContent")}
+              <textarea
+                name="content"
+                value={draft.content}
+                onChange={(event) =>
+                  setDraft(
+                    (current) =>
+                      current && {
+                        ...current,
+                        content: event.target.value,
+                      },
+                  )
+                }
+                disabled={isSaving || isDeleting}
+                spellCheck={false}
+                aria-invalid={Boolean(error)}
+                aria-describedby={error ? "runtime-file-error" : undefined}
+                className="min-h-36 w-full resize-y rounded-lg bg-muted/35 p-3 text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring h-[min(24rem,50dvh)] min-h-32 max-h-[60dvh]"
+              />
             </label>
           </div>
 
           <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
             <div className="min-h-5" aria-live="polite">
               {error ? (
-                <p id="runtime-file-error" className="text-sm text-destructive dark:text-destructive" role="alert">
+                <p
+                  id="runtime-file-error"
+                  className="text-sm text-destructive dark:text-destructive"
+                  role="alert"
+                >
                   {error}
                 </p>
               ) : notice ? (
-                <p role="status"><AnimatedBadge status="success">
-                  {notice === 'saved' ? t('runtimeFileSaved') : t('runtimeFileRemoved')}
-                </AnimatedBadge></p>
+                <p role="status">
+                  <AnimatedBadge status="success">
+                    {notice === "saved"
+                      ? t("runtimeFileSaved")
+                      : t("runtimeFileRemoved")}
+                  </AnimatedBadge>
+                </p>
               ) : null}
             </div>
-            <Button type="submit" disabled={isSaving || isDeleting || !draft.path.trim()} variant="primary" size="sm">{isSaving ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
-            {isSaving ? t('savingAndRestarting') : t('saveAndRestart')}</Button>
+            <Button
+              type="submit"
+              disabled={isSaving || isDeleting || !draft.path.trim()}
+              variant="primary"
+              size="sm"
+            >
+              {isSaving ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <RefreshCw className="size-3.5" />
+              )}
+              {isSaving ? t("savingAndRestarting") : t("saveAndRestart")}
+            </Button>
           </div>
         </form>
       ) : (
         <div className="min-h-5 px-4 py-3" aria-live="polite">
           {error ? (
-            <p id="runtime-file-error" className="text-sm text-destructive dark:text-destructive" role="alert">
+            <p
+              id="runtime-file-error"
+              className="text-sm text-destructive dark:text-destructive"
+              role="alert"
+            >
               {error}
             </p>
           ) : notice ? (
-            <p role="status"><AnimatedBadge status="success">
-              {notice === 'saved' ? t('runtimeFileSaved') : t('runtimeFileRemoved')}
-            </AnimatedBadge></p>
+            <p role="status">
+              <AnimatedBadge status="success">
+                {notice === "saved"
+                  ? t("runtimeFileSaved")
+                  : t("runtimeFileRemoved")}
+              </AnimatedBadge>
+            </p>
           ) : null}
         </div>
       )}

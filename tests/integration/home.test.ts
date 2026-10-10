@@ -1,10 +1,10 @@
 // @vitest-environment node
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { db } from '@/lib/db';
-import { getHomeSections } from '@/lib/queries/home';
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { db } from "@/lib/db";
+import { getHomeSections } from "@/lib/queries/home";
 
-const PREFIX = 'home-';
-const BASE = new Date('2020-01-01T00:00:00Z').getTime();
+const PREFIX = "home-";
+const BASE = new Date("2020-01-01T00:00:00Z").getTime();
 
 async function cleanup() {
   await db.server.deleteMany({ where: { slug: { startsWith: PREFIX } } });
@@ -31,7 +31,7 @@ beforeAll(async () => {
   await db.server.create({
     data: {
       slug: `${PREFIX}top`,
-      name: 'Top Server',
+      name: "Top Server",
       stars: 10_000_000,
       isOfficial: true,
       isFeatured: true,
@@ -59,8 +59,8 @@ afterAll(async () => {
   await db.$disconnect();
 });
 
-describe('getHomeSections', () => {
-  it('returns six sections, each limited to 6 and correctly ordered', async () => {
+describe("getHomeSections", () => {
+  it("returns six sections, each limited to 6 and correctly ordered", async () => {
     const s = await getHomeSections();
 
     for (const list of [

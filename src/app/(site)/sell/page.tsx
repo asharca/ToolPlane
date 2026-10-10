@@ -1,6 +1,6 @@
-import type { Metadata } from 'next';
-import { redirect } from 'next/navigation';
-import { SITE } from '@/lib/site';
+import type { Metadata } from "next";
+import { redirect } from "next/navigation";
+import { SITE } from "@/lib/site";
 
 export function generateMetadata(): Metadata {
   return {

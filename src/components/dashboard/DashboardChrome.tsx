@@ -1,28 +1,28 @@
-'use client';
+"use client";
 
+import { useEffect, useState } from "react";
+import type { ReactNode } from "react";
+import { usePathname, useSearchParams } from "next/navigation";
+import { Menu } from "lucide-react";
+import { useTranslations } from "next-intl";
+import { DashboardSidebar } from "./DashboardSidebar";
+import { DashboardLogo } from "./DashboardLogo";
+import { DashboardRuntimeConfigProvider } from "./DashboardRuntimeConfig";
+import { usePersistentBoolean } from "@/lib/use-persistent-boolean";
+import { dashboardSidebarCookieName } from "@/lib/sidebar-preferences";
 import {
-  useEffect,
-  useState,
-} from 'react';
-import type { ReactNode } from 'react';
-import { usePathname, useSearchParams } from 'next/navigation';
-import { Menu } from 'lucide-react';
-import { useTranslations } from 'next-intl';
-import { DashboardSidebar } from './DashboardSidebar';
-import { DashboardLogo } from './DashboardLogo';
-import { DashboardRuntimeConfigProvider } from './DashboardRuntimeConfig';
-import { usePersistentBoolean } from '@/lib/use-persistent-boolean';
-import { dashboardSidebarCookieName } from '@/lib/sidebar-preferences';
-import { hasUnsavedWorkspaceChanges, lastWorkspaceCookieName } from '@/lib/workspace/navigation';
-import { AnimatedSidebarTrigger } from '@/components/motion/animated-sidebar';
-import { Tooltip } from '@/components/motion/tooltip';
-import { WorkspaceShell } from '@/components/workspace/workspace-shell';
+  hasUnsavedWorkspaceChanges,
+  lastWorkspaceCookieName,
+} from "@/lib/workspace/navigation";
+import { AnimatedSidebarTrigger } from "@/components/motion/animated-sidebar";
+import { Tooltip } from "@/components/motion/tooltip";
+import { WorkspaceShell } from "@/components/workspace/workspace-shell";
 import {
   DASHBOARD_DETACHED_QUERY_PARAM,
   DashboardTabBar,
   DashboardTabContent,
   DashboardTabsProvider,
-} from './DashboardTabs';
+} from "./DashboardTabs";
 
 type Workspace = { id: string; slug: string; name: string };
 
@@ -51,56 +51,87 @@ export function DashboardChrome({
 }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const [detached] = useState(() => searchParams.get(DASHBOARD_DETACHED_QUERY_PARAM) === '1');
+  const [detached] = useState(
+    () => searchParams.get(DASHBOARD_DETACHED_QUERY_PARAM) === "1",
+  );
   const [open, setOpen] = useState(false);
   const [collapsed, setCollapsed] = usePersistentBoolean(
     `toolplane:dashboard-sidebar:${slug}`,
     initialSidebarCollapsed,
     dashboardSidebarCookieName(workspaceId),
   );
-  const t = useTranslations('console.sidebar');
-  const workspaceT = useTranslations('console.workspaces');
+  const t = useTranslations("console.sidebar");
+  const workspaceT = useTranslations("console.workspaces");
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Path navigation must reapply the detached marker even when search parameters are unchanged.
   useEffect(() => {
-    if (!detached || searchParams.get(DASHBOARD_DETACHED_QUERY_PARAM) === '1') return;
+    if (!detached || searchParams.get(DASHBOARD_DETACHED_QUERY_PARAM) === "1")
+      return;
     // Feature links need not know about the window shell; keep reloads detached too.
     const url = new URL(window.location.href);
-    url.searchParams.set(DASHBOARD_DETACHED_QUERY_PARAM, '1');
-    window.history.replaceState(null, '', url);
+    url.searchParams.set(DASHBOARD_DETACHED_QUERY_PARAM, "1");
+    window.history.replaceState(null, "", url);
   }, [detached, pathname, searchParams]);
 
   useEffect(() => {
-    const confirm = () => window.confirm(workspaceT('unsavedChanges'));
+    const confirm = () => window.confirm(workspaceT("unsavedChanges"));
     const click = (event: MouseEvent) => {
-      if (event.defaultPrevented || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
-      const link = event.target instanceof Element ? event.target.closest('a') : null;
-      if (!link || link.target === '_blank' || link.hasAttribute('download')) return;
+      if (
+        event.defaultPrevented ||
+        event.button !== 0 ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.shiftKey ||
+        event.altKey
+      )
+        return;
+      const link =
+        event.target instanceof Element ? event.target.closest("a") : null;
+      if (!link || link.target === "_blank" || link.hasAttribute("download"))
+        return;
       const target = new URL(link.href, location.href);
-      if (target.origin === location.origin && target.pathname.startsWith(`/app/${slug}/`)) return;
-      if (hasUnsavedWorkspaceChanges() && !confirm()) { event.preventDefault(); event.stopPropagation(); }
+      if (
+        target.origin === location.origin &&
+        target.pathname.startsWith(`/app/${slug}/`)
+      )
+        return;
+      if (hasUnsavedWorkspaceChanges() && !confirm()) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
     };
     const submit = (event: SubmitEvent) => {
-      if (!(event.target instanceof HTMLFormElement) || !event.target.hasAttribute('data-workspace-navigation')) return;
-      if (hasUnsavedWorkspaceChanges(document, event.target) && !confirm()) { event.preventDefault(); event.stopPropagation(); }
+      if (
+        !(event.target instanceof HTMLFormElement) ||
+        !event.target.hasAttribute("data-workspace-navigation")
+      )
+        return;
+      if (hasUnsavedWorkspaceChanges(document, event.target) && !confirm()) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
     };
     const unload = (event: BeforeUnloadEvent) => {
-      if (hasUnsavedWorkspaceChanges()) { event.preventDefault(); event.returnValue = ''; }
+      if (hasUnsavedWorkspaceChanges()) {
+        event.preventDefault();
+        event.returnValue = "";
+      }
     };
-    document.addEventListener('click', click, true);
-    document.addEventListener('submit', submit, true);
-    window.addEventListener('beforeunload', unload);
+    document.addEventListener("click", click, true);
+    document.addEventListener("submit", submit, true);
+    window.addEventListener("beforeunload", unload);
     return () => {
-      document.removeEventListener('click', click, true);
-      document.removeEventListener('submit', submit, true);
-      window.removeEventListener('beforeunload', unload);
+      document.removeEventListener("click", click, true);
+      document.removeEventListener("submit", submit, true);
+      window.removeEventListener("beforeunload", unload);
     };
   }, [slug, workspaceT]);
 
   useEffect(() => {
     if (!userId) return;
-    document.cookie = `${lastWorkspaceCookieName(userId)}=${encodeURIComponent(slug)}; Path=/; Max-Age=31536000; SameSite=Lax${location.protocol === 'https:' ? '; Secure' : ''}`;
+    // biome-ignore lint/suspicious/noDocumentCookie: Persist synchronously on HTTP development origins and browsers without Cookie Store support.
+    document.cookie = `${lastWorkspaceCookieName(userId)}=${encodeURIComponent(slug)}; Path=/; Max-Age=31536000; SameSite=Lax${location.protocol === "https:" ? "; Secure" : ""}`;
   }, [slug, userId]);
-
 
   if (detached) {
     return (
@@ -122,13 +153,30 @@ export function DashboardChrome({
           openMobile={open}
           onOpenMobileChange={setOpen}
           scroll="none"
-          sidebar={<DashboardSidebar slug={slug} workspaceName={workspaceName} userLabel={userLabel} workspaces={workspaces} isAdmin={isAdmin} />}
-          mobileHeader={<><Tooltip content={t('openMenu')}><AnimatedSidebarTrigger aria-label={t('openMenu')}><Menu aria-hidden="true" className="size-5" /></AnimatedSidebarTrigger></Tooltip><DashboardLogo /></>}
+          sidebar={
+            <DashboardSidebar
+              slug={slug}
+              workspaceName={workspaceName}
+              userLabel={userLabel}
+              workspaces={workspaces}
+              isAdmin={isAdmin}
+            />
+          }
+          mobileHeader={
+            <>
+              <Tooltip content={t("openMenu")}>
+                <AnimatedSidebarTrigger aria-label={t("openMenu")}>
+                  <Menu aria-hidden="true" className="size-5" />
+                </AnimatedSidebarTrigger>
+              </Tooltip>
+              <DashboardLogo />
+            </>
+          }
           tabBar={<DashboardTabBar canInstall={isAdmin} />}
         >
           <DashboardTabContent>{children}</DashboardTabContent>
         </WorkspaceShell>
-        </DashboardTabsProvider>
+      </DashboardTabsProvider>
     </DashboardRuntimeConfigProvider>
   );
 }

@@ -1,8 +1,8 @@
-'use client';
+"use client";
 
-import { ArrowRight } from 'lucide-react';
-import { installAgentFromMarketAction } from '@/lib/agents/actions';
-import { SubmitButton } from '@/components/dashboard/SubmitButton';
+import { ArrowRight } from "lucide-react";
+import { installAgentFromMarketAction } from "@/lib/agents/actions";
+import { SubmitButton } from "@/components/dashboard/SubmitButton";
 
 export function AgentMarketInstallForm({
   workspace,
@@ -27,7 +27,9 @@ export function AgentMarketInstallForm({
         pendingLabel={labels.pending}
         savedLabel={labels.submit}
         flash={false}
-        variant="primary" size="md" className="w-full"
+        variant="primary"
+        size="md"
+        className="w-full"
       >
         {labels.submit}
         <ArrowRight className="size-4" />

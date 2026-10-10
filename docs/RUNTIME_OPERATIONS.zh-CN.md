@@ -20,6 +20,8 @@
 
 Docker/Coolify 健康检查应使用 `/api/v1/readiness`，而不是 `/api/v1/health`，停机宽限须为 60 秒（手工重启使用 `docker restart --timeout 60`）。发布归档不会修改已有容器的健康检查和停止超时配置，应更新部署定义并在受控重部署时生效。原地更新后的容器不能直接按旧镜像重建，必须先保留当前运行版本。
 
+Docker 构建与运行阶段共用 `python-runtime-base`，确保 Prisma 组装时检测到的 OpenSSL ABI 与启动环境一致。须保持这些系统库一致，否则镜像可能只包含 OpenSSL 1.1 引擎，而生产需要 OpenSSL 3，导致启动时临时联网下载。上线前应使用最终镜像，在禁止外网访问的隔离备份数据库上验证 `prisma migrate deploy`。
+
 受管启动器在 Next 前加载 `abort-signal.cjs`，对原生 `AbortSignal.any()` 的结果短暂添加再移除 abort 监听器，启动弱引用源信号跟踪。Node 24.21 否则会在超时后保留嵌套组合信号，最终令 MCP/消息通道请求报 `Set maximum size exceeded`。发布组装时须将该文件与内嵌 `server.cjs` 放在同一目录。将来升级 Node 后，先运行 `pnpm vitest run tests/unit/abort-signal.test.ts` 验证，再移除兼容处理。已经耗尽信号集合的进程须受控重启；只重启 MCP bridge 无法清空主进程的信号集合。
 
 ## 单一运行时所有者

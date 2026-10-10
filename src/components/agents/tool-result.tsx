@@ -265,21 +265,15 @@ export function ToolResult({
         </span>
         <span className="flex min-w-0 flex-1 items-baseline gap-2">
           <span className="min-w-0 truncate font-medium text-foreground/90">
-            <ActionSwapRollText value={titleKey}>
-              {title}
-            </ActionSwapRollText>
+            <ActionSwapRollText value={titleKey}>{title}</ActionSwapRollText>
           </span>
           {meta ? (
             <span className="shrink-0 text-xs text-muted-foreground/60">
-              <ActionSwapRollText value={metaKey}>
-                {meta}
-              </ActionSwapRollText>
+              <ActionSwapRollText value={metaKey}>{meta}</ActionSwapRollText>
             </span>
           ) : null}
           <span className="min-w-0 truncate font-mono text-[11px] text-muted-foreground/55">
-            <ActionSwapRollText value={toolKey}>
-              {tool}
-            </ActionSwapRollText>
+            <ActionSwapRollText value={toolKey}>{tool}</ActionSwapRollText>
           </span>
         </span>
         <span
@@ -309,40 +303,40 @@ export function ToolResult({
       >
         <div className="pl-6 pt-1.5">
           <div className="overflow-hidden rounded-xl bg-muted/80">
-          <div
-            ref={viewportRef}
-            role="log"
-            aria-live="polite"
-            className="scrollbar-hide overflow-y-auto"
-            style={{ maxHeight }}
-          >
-            <div className={cn("p-3", contentClassName)}>{children}</div>
-          </div>
+            <div
+              ref={viewportRef}
+              role="log"
+              aria-live="polite"
+              className="scrollbar-hide overflow-y-auto"
+              style={{ maxHeight }}
+            >
+              <div className={cn("p-3", contentClassName)}>{children}</div>
+            </div>
 
             {canCopy || onRetry ? (
               <div className="flex items-center gap-0.5 px-2 pb-1.5">
-              {canCopy ? (
-                <ToolResultAction
-                  label={copied ? "Copied" : "Copy result"}
-                  onClick={handleCopy}
-                >
-                  {copied ? (
-                    <Check className="size-3.5" />
-                  ) : (
-                    <Copy className="size-3.5" />
-                  )}
-                </ToolResultAction>
-              ) : null}
-              {onRetry ? (
-                <ToolResultAction label="Run again" onClick={onRetry}>
-                  <RotateCcw className="size-3.5" />
-                </ToolResultAction>
-              ) : null}
-              <span className="ml-auto text-[11px] text-muted-foreground/55">
-                <ActionSwapRollText value={status}>
-                  {statusLabel}
-                </ActionSwapRollText>
-              </span>
+                {canCopy ? (
+                  <ToolResultAction
+                    label={copied ? "Copied" : "Copy result"}
+                    onClick={handleCopy}
+                  >
+                    {copied ? (
+                      <Check className="size-3.5" />
+                    ) : (
+                      <Copy className="size-3.5" />
+                    )}
+                  </ToolResultAction>
+                ) : null}
+                {onRetry ? (
+                  <ToolResultAction label="Run again" onClick={onRetry}>
+                    <RotateCcw className="size-3.5" />
+                  </ToolResultAction>
+                ) : null}
+                <span className="ml-auto text-[11px] text-muted-foreground/55">
+                  <ActionSwapRollText value={status}>
+                    {statusLabel}
+                  </ActionSwapRollText>
+                </span>
               </div>
             ) : null}
           </div>

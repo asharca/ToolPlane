@@ -8,8 +8,8 @@ function parseQuotedScalar(value: string): string {
       return value
         .slice(1, -1)
         .replace(/\\"/g, '"')
-        .replace(/\\n/g, '\n')
-        .replace(/\\\\/g, '\\');
+        .replace(/\\n/g, "\n")
+        .replace(/\\\\/g, "\\");
     }
   }
   if (value.startsWith("'") && value.endsWith("'")) {
@@ -25,23 +25,22 @@ function blockIndent(lines: string[]): number {
   return indents.length ? Math.min(...indents) : 0;
 }
 
-function parseBlockScalar(
-  marker: string,
-  rawLines: string[],
-): string {
+function parseBlockScalar(marker: string, rawLines: string[]): string {
   const indent = blockIndent(rawLines);
-  const lines = rawLines.map((line) => line.slice(Math.min(indent, line.length)));
-  const folded = marker.startsWith('>');
+  const lines = rawLines.map((line) =>
+    line.slice(Math.min(indent, line.length)),
+  );
+  const folded = marker.startsWith(">");
   let value = folded
     ? lines.reduce((result, line, index) => {
         if (index === 0) return line;
         const previous = lines[index - 1];
-        return `${result}${!previous.trim() || !line.trim() ? '\n' : ' '}${line}`;
-      }, '')
-    : lines.join('\n');
+        return `${result}${!previous.trim() || !line.trim() ? "\n" : " "}${line}`;
+      }, "")
+    : lines.join("\n");
 
-  if (marker.endsWith('-')) value = value.replace(/\n+$/, '');
-  else if (!marker.endsWith('+')) value = `${value.replace(/\n+$/, '')}\n`;
+  if (marker.endsWith("-")) value = value.replace(/\n+$/, "");
+  else if (!marker.endsWith("+")) value = `${value.replace(/\n+$/, "")}\n`;
   return value;
 }
 
@@ -59,8 +58,9 @@ export function parseSkillFrontmatter(content: string): Record<string, string> {
 
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
-    if (!line.trim() || /^\s/.test(line) || line.trimStart().startsWith('#')) continue;
-    const separator = line.indexOf(':');
+    if (!line.trim() || /^\s/.test(line) || line.trimStart().startsWith("#"))
+      continue;
+    const separator = line.indexOf(":");
     if (separator === -1) continue;
 
     const key = line.slice(0, separator).trim();
@@ -91,12 +91,12 @@ export function normalizedSkillDescription(
 ): string | null {
   const frontmatterDescription = content
     ? parseSkillFrontmatter(content).description?.trim()
-    : '';
+    : "";
   if (frontmatterDescription) return frontmatterDescription;
 
   const value = description?.trim();
   if (!value || /^[|>][+-]?$/.test(value)) return null;
   return value.includes('\\"')
-    ? value.replace(/\\"/g, '"').replace(/\\\\/g, '\\')
+    ? value.replace(/\\"/g, '"').replace(/\\\\/g, "\\")
     : value;
 }

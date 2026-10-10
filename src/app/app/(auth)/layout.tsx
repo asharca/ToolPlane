@@ -1,10 +1,10 @@
-import type { Metadata } from 'next';
-import Link from 'next/link';
-import { Logo } from '@/components/layout/Logo';
-import { ThemeToggle } from '@/components/theme/ThemeToggle';
-import { LocaleSwitcher } from '@/components/layout/LocaleSwitcher';
-import { NextIntlClientProvider } from 'next-intl';
-import { getMessages } from 'next-intl/server';
+import type { Metadata } from "next";
+import Link from "next/link";
+import { Logo } from "@/components/layout/Logo";
+import { ThemeToggle } from "@/components/theme/ThemeToggle";
+import { LocaleSwitcher } from "@/components/layout/LocaleSwitcher";
+import { NextIntlClientProvider } from "next-intl";
+import { getMessages } from "next-intl/server";
 
 export const metadata: Metadata = {
   robots: { index: false, follow: false, noarchive: true },
@@ -17,7 +17,9 @@ export default async function AuthLayout({
 }) {
   const messages = await getMessages();
   return (
-    <NextIntlClientProvider messages={{ common: messages.common, auth: messages.auth }}>
+    <NextIntlClientProvider
+      messages={{ common: messages.common, auth: messages.auth }}
+    >
       <div className="flex min-h-dvh flex-col bg-background">
         <header className="flex h-14 items-center justify-between px-6">
           <Link href="/" className="group flex items-center gap-2">

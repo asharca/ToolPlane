@@ -1,5 +1,8 @@
-import { redirect } from 'next/navigation';
-import { legacyMarketRedirectTarget, type MarketSearchParams } from '@/lib/workspace/market-url';
+import { redirect } from "next/navigation";
+import {
+  legacyMarketRedirectTarget,
+  type MarketSearchParams,
+} from "@/lib/workspace/market-url";
 
 export default async function LegacyMcpMarketRedirect({
   params,
@@ -9,5 +12,5 @@ export default async function LegacyMcpMarketRedirect({
   searchParams: Promise<MarketSearchParams>;
 }) {
   const [{ workspace }, query] = await Promise.all([params, searchParams]);
-  redirect(legacyMarketRedirectTarget(workspace, 'mcp', query));
+  redirect(legacyMarketRedirectTarget(workspace, "mcp", query));
 }

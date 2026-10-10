@@ -1,22 +1,33 @@
-import 'server-only';
-import { db } from '@/lib/db';
-import { updateAgentChannelConnectionCredentials } from '@/lib/agents/channel-connections';
-import { configWithPairing, pairingFromConfig, type AgentChannelPairingState } from '@/lib/agents/channel-pairing-state';
-import { getMessagingPlatform } from '@/lib/agents/platforms';
-import { decryptSecretRecord, encryptSecretRecord } from '@/lib/security/secrets';
+import "server-only";
+import { db } from "@/lib/db";
+import { updateAgentChannelConnectionCredentials } from "@/lib/agents/channel-connections";
+import {
+  configWithPairing,
+  pairingFromConfig,
+  type AgentChannelPairingState,
+} from "@/lib/agents/channel-pairing-state";
+import { getMessagingPlatform } from "@/lib/agents/platforms";
+import {
+  decryptSecretRecord,
+  encryptSecretRecord,
+} from "@/lib/security/secrets";
 
-const TELEGRAM_ONBOARDING_DEFAULT_URL = 'https://setup.hermes-agent.nousresearch.com';
-const WECOM_QR_GENERATE_URL = 'https://work.weixin.qq.com/ai/qc/generate';
-const WECOM_QR_QUERY_URL = 'https://work.weixin.qq.com/ai/qc/query_result';
-const WECOM_QR_CODE_PAGE = 'https://work.weixin.qq.com/ai/qc/gen?source=toolplane&scode=';
-const WEIXIN_ILINK_BASE_URL = 'https://ilinkai.weixin.qq.com';
-const WEIXIN_GET_BOT_QR = 'ilink/bot/get_bot_qrcode';
-const WEIXIN_GET_QR_STATUS = 'ilink/bot/get_qrcode_status';
+const TELEGRAM_ONBOARDING_DEFAULT_URL =
+  "https://setup.hermes-agent.nousresearch.com";
+const WECOM_QR_GENERATE_URL = "https://work.weixin.qq.com/ai/qc/generate";
+const WECOM_QR_QUERY_URL = "https://work.weixin.qq.com/ai/qc/query_result";
+const WECOM_QR_CODE_PAGE =
+  "https://work.weixin.qq.com/ai/qc/gen?source=toolplane&scode=";
+const WEIXIN_ILINK_BASE_URL = "https://ilinkai.weixin.qq.com";
+const WEIXIN_GET_BOT_QR = "ilink/bot/get_bot_qrcode";
+const WEIXIN_GET_QR_STATUS = "ilink/bot/get_qrcode_status";
 const WEIXIN_APP_CLIENT_VERSION = (2 << 16) | (2 << 8) | 0;
-const DINGTALK_REGISTRATION_DEFAULT_BASE_URL = 'https://oapi.dingtalk.com';
-const DINGTALK_REGISTRATION_DEFAULT_SOURCE = 'openClaw';
+const DINGTALK_REGISTRATION_DEFAULT_BASE_URL = "https://oapi.dingtalk.com";
+const DINGTALK_REGISTRATION_DEFAULT_SOURCE = "openClaw";
 
-type ChannelRow = NonNullable<Awaited<ReturnType<typeof db.agentChannelConnection.findFirst>>>;
+type ChannelRow = NonNullable<
+  Awaited<ReturnType<typeof db.agentChannelConnection.findFirst>>
+>;
 
 function expiresIn(seconds: number) {
   return new Date(Date.now() + seconds * 1000).toISOString();
@@ -25,40 +36,62 @@ function expiresIn(seconds: number) {
 async function jsonFetch(url: string, init?: RequestInit) {
   const res = await fetch(url, {
     ...init,
-    cache: 'no-store',
+    cache: "no-store",
     signal: AbortSignal.timeout(15000),
   });
   const text = await res.text();
   if (!res.ok) throw new Error(`Pairing provider returned HTTP ${res.status}.`);
   const parsed = JSON.parse(text) as unknown;
-  if (!parsed || typeof parsed !== 'object') throw new Error('Invalid JSON response.');
+  if (!parsed || typeof parsed !== "object")
+    throw new Error("Invalid JSON response.");
   return parsed as Record<string, unknown>;
 }
 
 function record(value: unknown): Record<string, unknown> {
-  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
 }
 
 function text(value: unknown) {
-  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
-  return typeof value === 'string' ? value.trim() : '';
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return typeof value === "string" ? value.trim() : "";
 }
 
 function numberValue(value: unknown, fallback: number) {
-  const parsed = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : Number.NaN;
+  const parsed =
+    typeof value === "number"
+      ? value
+      : typeof value === "string"
+        ? Number(value)
+        : Number.NaN;
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
 function telegramOnboardingBaseUrl() {
-  return (process.env.TELEGRAM_ONBOARDING_URL || TELEGRAM_ONBOARDING_DEFAULT_URL).trim().replace(/\/$/, '');
+  return (
+    process.env.TELEGRAM_ONBOARDING_URL || TELEGRAM_ONBOARDING_DEFAULT_URL
+  )
+    .trim()
+    .replace(/\/$/, "");
 }
 
 function dingtalkRegistrationBaseUrl() {
-  return (process.env.DINGTALK_REGISTRATION_BASE_URL || DINGTALK_REGISTRATION_DEFAULT_BASE_URL).trim().replace(/\/$/, '');
+  return (
+    process.env.DINGTALK_REGISTRATION_BASE_URL ||
+    DINGTALK_REGISTRATION_DEFAULT_BASE_URL
+  )
+    .trim()
+    .replace(/\/$/, "");
 }
 
 function dingtalkRegistrationSource() {
-  return (process.env.DINGTALK_REGISTRATION_SOURCE || DINGTALK_REGISTRATION_DEFAULT_SOURCE).trim() || DINGTALK_REGISTRATION_DEFAULT_SOURCE;
+  return (
+    (
+      process.env.DINGTALK_REGISTRATION_SOURCE ||
+      DINGTALK_REGISTRATION_DEFAULT_SOURCE
+    ).trim() || DINGTALK_REGISTRATION_DEFAULT_SOURCE
+  );
 }
 
 function pairingSecrets(row: ChannelRow) {
@@ -70,7 +103,11 @@ function pairingSecrets(row: ChannelRow) {
   }
 }
 
-async function updatePairing(row: ChannelRow, pairing: AgentChannelPairingState, secrets?: Record<string, string>) {
+async function updatePairing(
+  row: ChannelRow,
+  pairing: AgentChannelPairingState,
+  secrets?: Record<string, string>,
+) {
   const updated = await db.agentChannelConnection.update({
     where: { id: row.id },
     data: {
@@ -85,15 +122,21 @@ async function updatePairing(row: ChannelRow, pairing: AgentChannelPairingState,
   return updated;
 }
 
-async function requestTelegramPairing(): Promise<{ pairing: AgentChannelPairingState; secrets: Record<string, string> }> {
-  const raw = await jsonFetch(`${telegramOnboardingBaseUrl()}/v1/telegram/pairings`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'User-Agent': 'ToolPlane/1.0',
+async function requestTelegramPairing(): Promise<{
+  pairing: AgentChannelPairingState;
+  secrets: Record<string, string>;
+}> {
+  const raw = await jsonFetch(
+    `${telegramOnboardingBaseUrl()}/v1/telegram/pairings`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "User-Agent": "ToolPlane/1.0",
+      },
+      body: JSON.stringify({ bot_name: "ToolPlane Agent" }),
     },
-    body: JSON.stringify({ bot_name: 'ToolPlane Agent' }),
-  });
+  );
   const pairingId = text(raw.pairing_id);
   const pollToken = text(raw.poll_token);
   const expiresAt = text(raw.expires_at);
@@ -101,18 +144,19 @@ async function requestTelegramPairing(): Promise<{ pairing: AgentChannelPairingS
   const qrPayload = text(raw.qr_payload) || deepLink;
   const suggestedUsername = text(raw.suggested_username);
   if (!pairingId || !pollToken || !expiresAt || !deepLink || !qrPayload) {
-    throw new Error('Telegram setup service returned an incomplete response.');
+    throw new Error("Telegram setup service returned an incomplete response.");
   }
   return {
     pairing: {
-      provider: 'telegram_managed_bot',
-      status: 'waiting',
+      provider: "telegram_managed_bot",
+      status: "waiting",
       qrPayload,
       scanUrl: deepLink,
       providerSessionId: pairingId,
       requestedAt: new Date().toISOString(),
       expiresAt,
-      message: 'Scan this QR in Telegram to create the managed bot, then check setup status.',
+      message:
+        "Scan this QR in Telegram to create the managed bot, then check setup status.",
       extra: {
         deepLink,
         suggestedUsername,
@@ -122,83 +166,113 @@ async function requestTelegramPairing(): Promise<{ pairing: AgentChannelPairingS
   };
 }
 
-async function checkTelegramPairing(row: ChannelRow, pairing: AgentChannelPairingState) {
+async function checkTelegramPairing(
+  row: ChannelRow,
+  pairing: AgentChannelPairingState,
+) {
   const pairingId = pairing.providerSessionId;
-  if (!pairingId) throw new Error('Telegram pairing session is missing pairing id.');
+  if (!pairingId)
+    throw new Error("Telegram pairing session is missing pairing id.");
   const secrets = pairingSecrets(row);
   const pollToken = secrets.pollToken;
-  if (!pollToken) throw new Error('Telegram pairing session is missing poll token.');
+  if (!pollToken)
+    throw new Error("Telegram pairing session is missing poll token.");
 
-  const raw = await jsonFetch(`${telegramOnboardingBaseUrl()}/v1/telegram/pairings/${encodeURIComponent(pairingId)}`, {
-    headers: {
-      Authorization: `Bearer ${pollToken}`,
-      'User-Agent': 'ToolPlane/1.0',
+  const raw = await jsonFetch(
+    `${telegramOnboardingBaseUrl()}/v1/telegram/pairings/${encodeURIComponent(pairingId)}`,
+    {
+      headers: {
+        Authorization: `Bearer ${pollToken}`,
+        "User-Agent": "ToolPlane/1.0",
+      },
     },
-  });
+  );
   const status = text(raw.status);
-  if (status === 'ready') {
+  if (status === "ready") {
     const botToken = text(raw.token);
     const botUsername = text(raw.bot_username);
     const ownerUserId = text(raw.owner_user_id);
-    if (!botToken) throw new Error('Telegram setup service did not return a bot token.');
-    await updatePairing(row, {
-      ...pairing,
-      status: 'ready',
-      lastCheckedAt: new Date().toISOString(),
-      message: ownerUserId
-        ? 'Telegram bot is ready. Confirm the allowed user ID below before saving.'
-        : 'Telegram bot is ready. Add at least one numeric Telegram user ID before saving.',
-      error: undefined,
-      extra: {
-        ...pairing.extra,
-        botUsername,
-        ownerUserId,
+    if (!botToken)
+      throw new Error("Telegram setup service did not return a bot token.");
+    await updatePairing(
+      row,
+      {
+        ...pairing,
+        status: "ready",
+        lastCheckedAt: new Date().toISOString(),
+        message: ownerUserId
+          ? "Telegram bot is ready. Confirm the allowed user ID below before saving."
+          : "Telegram bot is ready. Add at least one numeric Telegram user ID before saving.",
+        error: undefined,
+        extra: {
+          ...pairing.extra,
+          botUsername,
+          ownerUserId,
+        },
       },
-    }, { ...secrets, botToken });
+      { ...secrets, botToken },
+    );
     return;
   }
-  await updatePairing(row, {
-    ...pairing,
-    status: Date.parse(pairing.expiresAt ?? '') < Date.now() ? 'expired' : 'waiting',
-    lastCheckedAt: new Date().toISOString(),
-    message: 'Waiting for Telegram managed bot confirmation.',
-    error: undefined,
-  }, secrets);
+  await updatePairing(
+    row,
+    {
+      ...pairing,
+      status:
+        Date.parse(pairing.expiresAt ?? "") < Date.now()
+          ? "expired"
+          : "waiting",
+      lastCheckedAt: new Date().toISOString(),
+      message: "Waiting for Telegram managed bot confirmation.",
+      error: undefined,
+    },
+    secrets,
+  );
 }
 
 async function requestWeComPairing(): Promise<AgentChannelPairingState> {
   const raw = await jsonFetch(`${WECOM_QR_GENERATE_URL}?source=toolplane`, {
-    headers: { 'User-Agent': 'ToolPlane/1.0' },
+    headers: { "User-Agent": "ToolPlane/1.0" },
   });
   const data = record(raw.data);
   const scode = text(data.scode);
   const authUrl = text(data.auth_url);
-  if (!scode || !authUrl) throw new Error('WeCom returned an incomplete QR response.');
+  if (!scode || !authUrl)
+    throw new Error("WeCom returned an incomplete QR response.");
   return {
-    provider: 'wecom_admin_qr',
-    status: 'waiting',
+    provider: "wecom_admin_qr",
+    status: "waiting",
     qrPayload: authUrl,
     scanUrl: `${WECOM_QR_CODE_PAGE}${encodeURIComponent(scode)}`,
     providerSessionId: scode,
     requestedAt: new Date().toISOString(),
     expiresAt: expiresIn(300),
-    message: 'Scan this QR in WeCom to create or authorize the AI Bot.',
+    message: "Scan this QR in WeCom to create or authorize the AI Bot.",
   };
 }
 
-async function checkWeComPairing(row: ChannelRow, pairing: AgentChannelPairingState) {
+async function checkWeComPairing(
+  row: ChannelRow,
+  pairing: AgentChannelPairingState,
+) {
   const scode = pairing.providerSessionId;
-  if (!scode) throw new Error('WeCom pairing session is missing scode.');
-  const raw = await jsonFetch(`${WECOM_QR_QUERY_URL}?scode=${encodeURIComponent(scode)}`, {
-    headers: { 'User-Agent': 'ToolPlane/1.0' },
-  });
+  if (!scode) throw new Error("WeCom pairing session is missing scode.");
+  const raw = await jsonFetch(
+    `${WECOM_QR_QUERY_URL}?scode=${encodeURIComponent(scode)}`,
+    {
+      headers: { "User-Agent": "ToolPlane/1.0" },
+    },
+  );
   const data = record(raw.data);
   const status = text(data.status).toLowerCase();
-  if (status === 'success') {
+  if (status === "success") {
     const botInfo = record(data.bot_info);
     const botId = text(botInfo.botid) || text(botInfo.bot_id);
     const secret = text(botInfo.secret);
-    if (!botId || !secret) throw new Error('WeCom scan succeeded, but Bot ID or Secret was missing.');
+    if (!botId || !secret)
+      throw new Error(
+        "WeCom scan succeeded, but Bot ID or Secret was missing.",
+      );
     await updateAgentChannelConnectionCredentials({
       workspaceId: row.workspaceId,
       connectionId: row.id,
@@ -207,22 +281,25 @@ async function checkWeComPairing(row: ChannelRow, pairing: AgentChannelPairingSt
         WECOM_SECRET: secret,
       },
     });
-    const latest = await db.agentChannelConnection.findUniqueOrThrow({ where: { id: row.id } });
+    const latest = await db.agentChannelConnection.findUniqueOrThrow({
+      where: { id: row.id },
+    });
     await updatePairing(latest, {
       ...pairing,
-      status: 'ready',
+      status: "ready",
       qrPayload: undefined,
       lastCheckedAt: new Date().toISOString(),
-      message: 'WeCom scan completed. Bot ID and Secret were saved.',
+      message: "WeCom scan completed. Bot ID and Secret were saved.",
       error: undefined,
     });
     return;
   }
   await updatePairing(row, {
     ...pairing,
-    status: Date.parse(pairing.expiresAt ?? '') < Date.now() ? 'expired' : 'waiting',
+    status:
+      Date.parse(pairing.expiresAt ?? "") < Date.now() ? "expired" : "waiting",
     lastCheckedAt: new Date().toISOString(),
-    message: status ? `WeCom status: ${status}` : 'Waiting for WeCom scan.',
+    message: status ? `WeCom status: ${status}` : "Waiting for WeCom scan.",
     error: undefined,
   });
 }
@@ -231,42 +308,51 @@ async function requestWeixinPairing(): Promise<AgentChannelPairingState> {
   const url = `${WEIXIN_ILINK_BASE_URL}/${WEIXIN_GET_BOT_QR}?bot_type=3`;
   const raw = await jsonFetch(url, {
     headers: {
-      'iLink-App-Id': 'bot',
-      'iLink-App-ClientVersion': String(WEIXIN_APP_CLIENT_VERSION),
+      "iLink-App-Id": "bot",
+      "iLink-App-ClientVersion": String(WEIXIN_APP_CLIENT_VERSION),
     },
   });
   const qrcode = text(raw.qrcode);
   const qrcodeUrl = text(raw.qrcode_img_content);
-  if (!qrcode) throw new Error('Weixin returned an incomplete QR response.');
+  if (!qrcode) throw new Error("Weixin returned an incomplete QR response.");
   return {
-    provider: 'weixin_ilink_qr',
-    status: 'waiting',
+    provider: "weixin_ilink_qr",
+    status: "waiting",
     qrPayload: qrcodeUrl || qrcode,
     scanUrl: qrcodeUrl || undefined,
     providerSessionId: qrcode,
     requestedAt: new Date().toISOString(),
     expiresAt: expiresIn(480),
-    message: 'Scan this QR in WeChat and confirm login.',
+    message: "Scan this QR in WeChat and confirm login.",
     extra: { baseUrl: WEIXIN_ILINK_BASE_URL },
   };
 }
 
-async function checkWeixinPairing(row: ChannelRow, pairing: AgentChannelPairingState) {
+async function checkWeixinPairing(
+  row: ChannelRow,
+  pairing: AgentChannelPairingState,
+) {
   const qrcode = pairing.providerSessionId;
-  if (!qrcode) throw new Error('Weixin pairing session is missing QR id.');
+  if (!qrcode) throw new Error("Weixin pairing session is missing QR id.");
   const baseUrl = pairing.extra?.baseUrl || WEIXIN_ILINK_BASE_URL;
-  const raw = await jsonFetch(`${baseUrl}/${WEIXIN_GET_QR_STATUS}?qrcode=${encodeURIComponent(qrcode)}`, {
-    headers: {
-      'iLink-App-Id': 'bot',
-      'iLink-App-ClientVersion': String(WEIXIN_APP_CLIENT_VERSION),
+  const raw = await jsonFetch(
+    `${baseUrl}/${WEIXIN_GET_QR_STATUS}?qrcode=${encodeURIComponent(qrcode)}`,
+    {
+      headers: {
+        "iLink-App-Id": "bot",
+        "iLink-App-ClientVersion": String(WEIXIN_APP_CLIENT_VERSION),
+      },
     },
-  });
-  const status = text(raw.status) || 'wait';
-  if (status === 'confirmed') {
+  );
+  const status = text(raw.status) || "wait";
+  if (status === "confirmed") {
     const accountId = text(raw.ilink_bot_id);
     const token = text(raw.bot_token);
     const nextBaseUrl = text(raw.baseurl) || baseUrl;
-    if (!accountId || !token) throw new Error('Weixin login confirmed, but account ID or token was missing.');
+    if (!accountId || !token)
+      throw new Error(
+        "Weixin login confirmed, but account ID or token was missing.",
+      );
     await updateAgentChannelConnectionCredentials({
       workspaceId: row.workspaceId,
       connectionId: row.id,
@@ -276,78 +362,100 @@ async function checkWeixinPairing(row: ChannelRow, pairing: AgentChannelPairingS
         WEIXIN_BASE_URL: nextBaseUrl,
       },
     });
-    const latest = await db.agentChannelConnection.findUniqueOrThrow({ where: { id: row.id } });
+    const latest = await db.agentChannelConnection.findUniqueOrThrow({
+      where: { id: row.id },
+    });
     await updatePairing(latest, {
       ...pairing,
-      status: 'ready',
+      status: "ready",
       qrPayload: undefined,
       lastCheckedAt: new Date().toISOString(),
-      message: 'Weixin login completed. Account ID and token were saved.',
+      message: "Weixin login completed. Account ID and token were saved.",
       error: undefined,
       extra: { baseUrl: nextBaseUrl },
     });
     return;
   }
-  if (status === 'scaned_but_redirect') {
+  if (status === "scaned_but_redirect") {
     const redirectHost = text(raw.redirect_host);
     await updatePairing(row, {
       ...pairing,
-      status: 'scanned',
+      status: "scanned",
       lastCheckedAt: new Date().toISOString(),
-      message: 'Scanned. Waiting for confirmation in WeChat.',
-      extra: redirectHost ? { baseUrl: `https://${redirectHost}` } : pairing.extra,
+      message: "Scanned. Waiting for confirmation in WeChat.",
+      extra: redirectHost
+        ? { baseUrl: `https://${redirectHost}` }
+        : pairing.extra,
     });
     return;
   }
   await updatePairing(row, {
     ...pairing,
-    status: status === 'expired' ? 'expired' : status === 'scaned' ? 'scanned' : 'waiting',
+    status:
+      status === "expired"
+        ? "expired"
+        : status === "scaned"
+          ? "scanned"
+          : "waiting",
     lastCheckedAt: new Date().toISOString(),
-    message: status === 'scaned' ? 'Scanned. Confirm login in WeChat.' : `Weixin status: ${status}`,
+    message:
+      status === "scaned"
+        ? "Scanned. Confirm login in WeChat."
+        : `Weixin status: ${status}`,
     error: undefined,
   });
 }
 
-async function dingtalkRegistrationPost(path: string, payload: Record<string, unknown>) {
+async function dingtalkRegistrationPost(
+  path: string,
+  payload: Record<string, unknown>,
+) {
   const raw = await jsonFetch(`${dingtalkRegistrationBaseUrl()}${path}`, {
-    method: 'POST',
+    method: "POST",
     headers: {
-      'Content-Type': 'application/json',
-      'User-Agent': 'ToolPlane/1.0',
+      "Content-Type": "application/json",
+      "User-Agent": "ToolPlane/1.0",
     },
     body: JSON.stringify(payload),
   });
   if (raw.errcode !== undefined && Number(raw.errcode) !== 0) {
-    throw new Error(`DingTalk ${path} failed: ${text(raw.errmsg) || `errcode ${text(raw.errcode)}`}`);
+    throw new Error(
+      `DingTalk ${path} failed: ${text(raw.errmsg) || `errcode ${text(raw.errcode)}`}`,
+    );
   }
   return raw;
 }
 
 async function requestDingTalkPairing(): Promise<AgentChannelPairingState> {
-  const init = await dingtalkRegistrationPost('/app/registration/init', {
+  const init = await dingtalkRegistrationPost("/app/registration/init", {
     source: dingtalkRegistrationSource(),
   });
   const nonce = text(init.nonce);
-  if (!nonce) throw new Error('DingTalk registration init response missing nonce.');
+  if (!nonce)
+    throw new Error("DingTalk registration init response missing nonce.");
 
-  const begin = await dingtalkRegistrationPost('/app/registration/begin', { nonce });
+  const begin = await dingtalkRegistrationPost("/app/registration/begin", {
+    nonce,
+  });
   const deviceCode = text(begin.device_code);
   const verificationUrl = text(begin.verification_uri_complete);
   if (!deviceCode || !verificationUrl) {
-    throw new Error('DingTalk registration begin response missing device code or verification URL.');
+    throw new Error(
+      "DingTalk registration begin response missing device code or verification URL.",
+    );
   }
   const expiresInSeconds = Math.max(numberValue(begin.expires_in, 7200), 60);
   const interval = Math.max(numberValue(begin.interval, 3), 2);
 
   return {
-    provider: 'dingtalk_device_qr',
-    status: 'waiting',
+    provider: "dingtalk_device_qr",
+    status: "waiting",
     qrPayload: verificationUrl,
     scanUrl: verificationUrl,
     providerSessionId: deviceCode,
     requestedAt: new Date().toISOString(),
     expiresAt: expiresIn(expiresInSeconds),
-    message: 'Scan this QR in DingTalk to authorize Stream Mode credentials.',
+    message: "Scan this QR in DingTalk to authorize Stream Mode credentials.",
     extra: {
       interval: String(interval),
       source: dingtalkRegistrationSource(),
@@ -355,17 +463,25 @@ async function requestDingTalkPairing(): Promise<AgentChannelPairingState> {
   };
 }
 
-async function checkDingTalkPairing(row: ChannelRow, pairing: AgentChannelPairingState) {
+async function checkDingTalkPairing(
+  row: ChannelRow,
+  pairing: AgentChannelPairingState,
+) {
   const deviceCode = pairing.providerSessionId;
-  if (!deviceCode) throw new Error('DingTalk pairing session is missing device code.');
-  const raw = await dingtalkRegistrationPost('/app/registration/poll', { device_code: deviceCode });
+  if (!deviceCode)
+    throw new Error("DingTalk pairing session is missing device code.");
+  const raw = await dingtalkRegistrationPost("/app/registration/poll", {
+    device_code: deviceCode,
+  });
   const status = text(raw.status).toUpperCase();
 
-  if (status === 'SUCCESS') {
+  if (status === "SUCCESS") {
     const clientId = text(raw.client_id);
     const clientSecret = text(raw.client_secret);
     if (!clientId || !clientSecret) {
-      throw new Error('DingTalk authorization succeeded, but Client ID or Client Secret was missing.');
+      throw new Error(
+        "DingTalk authorization succeeded, but Client ID or Client Secret was missing.",
+      );
     }
     await updateAgentChannelConnectionCredentials({
       workspaceId: row.workspaceId,
@@ -375,44 +491,50 @@ async function checkDingTalkPairing(row: ChannelRow, pairing: AgentChannelPairin
         DINGTALK_CLIENT_SECRET: clientSecret,
       },
     });
-    const latest = await db.agentChannelConnection.findUniqueOrThrow({ where: { id: row.id } });
+    const latest = await db.agentChannelConnection.findUniqueOrThrow({
+      where: { id: row.id },
+    });
     await updatePairing(latest, {
       ...pairing,
-      status: 'ready',
+      status: "ready",
       qrPayload: undefined,
       lastCheckedAt: new Date().toISOString(),
-      message: 'DingTalk authorization completed. Client ID and Client Secret were saved.',
+      message:
+        "DingTalk authorization completed. Client ID and Client Secret were saved.",
       error: undefined,
     });
     return;
   }
 
-  if (status === 'WAITING') {
+  if (status === "WAITING") {
     await updatePairing(row, {
       ...pairing,
-      status: Date.parse(pairing.expiresAt ?? '') < Date.now() ? 'expired' : 'waiting',
+      status:
+        Date.parse(pairing.expiresAt ?? "") < Date.now()
+          ? "expired"
+          : "waiting",
       lastCheckedAt: new Date().toISOString(),
-      message: 'Waiting for DingTalk QR authorization.',
+      message: "Waiting for DingTalk QR authorization.",
       error: undefined,
     });
     return;
   }
 
-  if (status === 'EXPIRED') {
+  if (status === "EXPIRED") {
     await updatePairing(row, {
       ...pairing,
-      status: 'expired',
+      status: "expired",
       lastCheckedAt: new Date().toISOString(),
-      message: 'DingTalk authorization expired. Request a new QR code.',
+      message: "DingTalk authorization expired. Request a new QR code.",
       error: undefined,
     });
     return;
   }
 
-  const reason = text(raw.fail_reason) || status || 'unknown status';
+  const reason = text(raw.fail_reason) || status || "unknown status";
   await updatePairing(row, {
     ...pairing,
-    status: 'error',
+    status: "error",
     lastCheckedAt: new Date().toISOString(),
     message: `DingTalk authorization failed: ${reason}`,
     error: reason,
@@ -421,69 +543,121 @@ async function checkDingTalkPairing(row: ChannelRow, pairing: AgentChannelPairin
 
 function unsupportedPairing(platform: string): AgentChannelPairingState {
   return {
-    provider: 'external_setup_runner',
-    status: 'error',
+    provider: "external_setup_runner",
+    status: "error",
     requestedAt: new Date().toISOString(),
-    message: 'No active setup runner is configured for this platform yet.',
+    message: "No active setup runner is configured for this platform yet.",
     error: `Set up a ToolPlane pairing provider for ${platform}.`,
   };
 }
 
-async function feishuRegistration(domain: string, params: Record<string, string>) {
-  const origin = domain === 'lark' ? 'https://accounts.larksuite.com' : 'https://accounts.feishu.cn';
+async function feishuRegistration(
+  domain: string,
+  params: Record<string, string>,
+) {
+  const origin =
+    domain === "lark"
+      ? "https://accounts.larksuite.com"
+      : "https://accounts.feishu.cn";
   return jsonFetch(`${origin}/oauth/v1/app/registration`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams(params).toString(),
   });
 }
 
 async function requestFeishuPairing(row: ChannelRow) {
-  const domain = decryptSecretRecord(row.credentials).FEISHU_DOMAIN === 'lark' ? 'lark' : 'feishu';
-  await feishuRegistration(domain, { action: 'init' });
+  const domain =
+    decryptSecretRecord(row.credentials).FEISHU_DOMAIN === "lark"
+      ? "lark"
+      : "feishu";
+  await feishuRegistration(domain, { action: "init" });
   const raw = await feishuRegistration(domain, {
-    action: 'begin', archetype: 'PersonalAgent', auth_method: 'client_secret', request_user_info: 'open_id',
+    action: "begin",
+    archetype: "PersonalAgent",
+    auth_method: "client_secret",
+    request_user_info: "open_id",
   });
   const deviceCode = text(raw.device_code);
   const scanUrl = text(raw.verification_uri_complete);
-  if (!deviceCode || !scanUrl) throw new Error('Feishu registration returned an incomplete response.');
+  if (!deviceCode || !scanUrl)
+    throw new Error("Feishu registration returned an incomplete response.");
   return {
     pairing: {
-      provider: 'feishu_device_qr', status: 'waiting', qrPayload: scanUrl, scanUrl,
-      requestedAt: new Date().toISOString(), expiresAt: expiresIn(numberValue(raw.expires_in, 600)),
+      provider: "feishu_device_qr",
+      status: "waiting",
+      qrPayload: scanUrl,
+      scanUrl,
+      requestedAt: new Date().toISOString(),
+      expiresAt: expiresIn(numberValue(raw.expires_in, 600)),
       extra: { domain, interval: String(numberValue(raw.interval, 5)) },
     } satisfies AgentChannelPairingState,
     secrets: { deviceCode },
   };
 }
 
-async function checkFeishuPairing(row: ChannelRow, pairing: AgentChannelPairingState) {
+async function checkFeishuPairing(
+  row: ChannelRow,
+  pairing: AgentChannelPairingState,
+) {
   const deviceCode = pairingSecrets(row).deviceCode;
-  if (!deviceCode) throw new Error('Request a new Feishu QR code.');
-  const raw = await feishuRegistration(pairing.extra?.domain ?? 'feishu', { action: 'poll', device_code: deviceCode });
+  if (!deviceCode) throw new Error("Request a new Feishu QR code.");
+  const raw = await feishuRegistration(pairing.extra?.domain ?? "feishu", {
+    action: "poll",
+    device_code: deviceCode,
+  });
   const appId = text(raw.client_id);
   const appSecret = text(raw.client_secret);
   if (appId && appSecret) {
     const updated = await updateAgentChannelConnectionCredentials({
-      workspaceId: row.workspaceId, connectionId: row.id,
-      credentials: { FEISHU_APP_ID: appId, FEISHU_APP_SECRET: appSecret, FEISHU_DOMAIN: pairing.extra?.domain ?? 'feishu' },
+      workspaceId: row.workspaceId,
+      connectionId: row.id,
+      credentials: {
+        FEISHU_APP_ID: appId,
+        FEISHU_APP_SECRET: appSecret,
+        FEISHU_DOMAIN: pairing.extra?.domain ?? "feishu",
+      },
     });
     if (updated.error) throw new Error(updated.error);
-    const latest = await db.agentChannelConnection.findUniqueOrThrow({ where: { id: row.id } });
-    await updatePairing(latest, {
-      ...pairing, status: 'ready', qrPayload: undefined, scanUrl: undefined,
-      lastCheckedAt: new Date().toISOString(), error: undefined,
-    }, {});
+    const latest = await db.agentChannelConnection.findUniqueOrThrow({
+      where: { id: row.id },
+    });
+    await updatePairing(
+      latest,
+      {
+        ...pairing,
+        status: "ready",
+        qrPayload: undefined,
+        scanUrl: undefined,
+        lastCheckedAt: new Date().toISOString(),
+        error: undefined,
+      },
+      {},
+    );
     return;
   }
   const error = text(raw.error);
-  if (error && !['authorization_pending', 'slow_down', 'expired_token'].includes(error)) {
-    throw new Error(error === 'access_denied' ? 'Feishu authorization was denied.' : 'Feishu authorization failed.');
+  if (
+    error &&
+    !["authorization_pending", "slow_down", "expired_token"].includes(error)
+  ) {
+    throw new Error(
+      error === "access_denied"
+        ? "Feishu authorization was denied."
+        : "Feishu authorization failed.",
+    );
   }
   await updatePairing(row, {
-    ...pairing, status: error === 'expired_token' ? 'expired' : 'waiting',
+    ...pairing,
+    status: error === "expired_token" ? "expired" : "waiting",
     lastCheckedAt: new Date().toISOString(),
-    extra: { ...pairing.extra, interval: String(numberValue(pairing.extra?.interval, 5) + (error === 'slow_down' ? 5 : 0)) },
+    extra: {
+      ...pairing.extra,
+      interval: String(
+        numberValue(pairing.extra?.interval, 5) +
+          (error === "slow_down" ? 5 : 0),
+      ),
+    },
   });
 }
 
@@ -496,32 +670,42 @@ export async function requestAgentChannelPairing(
   workspaceId: string,
   connectionId: string,
 ): Promise<AgentChannelPairingResult> {
-  const row = await db.agentChannelConnection.findFirst({ where: { id: connectionId, workspaceId } });
-  if (!row) return { error: 'Channel connection not found.' };
+  const row = await db.agentChannelConnection.findFirst({
+    where: { id: connectionId, workspaceId },
+  });
+  if (!row) return { error: "Channel connection not found." };
   const platform = getMessagingPlatform(row.platform);
-  if (!platform?.pairing) return { error: 'This platform does not use QR pairing.' };
+  if (!platform?.pairing)
+    return { error: "This platform does not use QR pairing." };
 
   try {
     const requested =
-      platform.pairing.provider === 'feishu_device_qr'
+      platform.pairing.provider === "feishu_device_qr"
         ? await requestFeishuPairing(row)
-        : platform.pairing.provider === 'telegram_managed_bot'
-        ? await requestTelegramPairing()
-        : platform.pairing.provider === 'wecom_admin_qr'
-          ? { pairing: await requestWeComPairing(), secrets: undefined }
-          : platform.pairing.provider === 'weixin_ilink_qr'
-            ? { pairing: await requestWeixinPairing(), secrets: undefined }
-            : platform.pairing.provider === 'dingtalk_device_qr'
-              ? { pairing: await requestDingTalkPairing(), secrets: undefined }
-              : { pairing: unsupportedPairing(platform.slug), secrets: undefined };
+        : platform.pairing.provider === "telegram_managed_bot"
+          ? await requestTelegramPairing()
+          : platform.pairing.provider === "wecom_admin_qr"
+            ? { pairing: await requestWeComPairing(), secrets: undefined }
+            : platform.pairing.provider === "weixin_ilink_qr"
+              ? { pairing: await requestWeixinPairing(), secrets: undefined }
+              : platform.pairing.provider === "dingtalk_device_qr"
+                ? {
+                    pairing: await requestDingTalkPairing(),
+                    secrets: undefined,
+                  }
+                : {
+                    pairing: unsupportedPairing(platform.slug),
+                    secrets: undefined,
+                  };
     await updatePairing(row, requested.pairing, requested.secrets);
     const pairing = requested.pairing;
     return { pairing };
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Failed to request QR.';
+    const message =
+      error instanceof Error ? error.message : "Failed to request QR.";
     const pairing: AgentChannelPairingState = {
       provider: platform.pairing.provider,
-      status: 'error',
+      status: "error",
       requestedAt: new Date().toISOString(),
       message,
       error: message,
@@ -535,39 +719,54 @@ export async function checkAgentChannelPairing(
   workspaceId: string,
   connectionId: string,
 ): Promise<AgentChannelPairingResult> {
-  const row = await db.agentChannelConnection.findFirst({ where: { id: connectionId, workspaceId } });
-  if (!row) return { error: 'Channel connection not found.' };
+  const row = await db.agentChannelConnection.findFirst({
+    where: { id: connectionId, workspaceId },
+  });
+  if (!row) return { error: "Channel connection not found." };
   const platform = getMessagingPlatform(row.platform);
-  if (!platform?.pairing) return { error: 'This platform does not use QR pairing.' };
+  if (!platform?.pairing)
+    return { error: "This platform does not use QR pairing." };
   const pairing = pairingFromConfig(row.config);
-  if (!pairing) return { error: 'Request a QR code first.' };
-  if (['ready', 'expired', 'error'].includes(pairing.status)) return {};
+  if (!pairing) return { error: "Request a QR code first." };
+  if (["ready", "expired", "error"].includes(pairing.status)) return {};
   if (pairing.expiresAt && Date.parse(pairing.expiresAt) <= Date.now()) {
-    await updatePairing(row, { ...pairing, status: 'expired', qrPayload: undefined, scanUrl: undefined }, {});
+    await updatePairing(
+      row,
+      {
+        ...pairing,
+        status: "expired",
+        qrPayload: undefined,
+        scanUrl: undefined,
+      },
+      {},
+    );
     return {};
   }
 
   try {
-    if (pairing.provider === 'feishu_device_qr') {
+    if (pairing.provider === "feishu_device_qr") {
       await checkFeishuPairing(row, pairing);
-    } else if (pairing.provider === 'telegram_managed_bot') {
+    } else if (pairing.provider === "telegram_managed_bot") {
       await checkTelegramPairing(row, pairing);
-    } else if (pairing.provider === 'wecom_admin_qr') {
+    } else if (pairing.provider === "wecom_admin_qr") {
       await checkWeComPairing(row, pairing);
-    } else if (pairing.provider === 'weixin_ilink_qr') {
+    } else if (pairing.provider === "weixin_ilink_qr") {
       await checkWeixinPairing(row, pairing);
-    } else if (pairing.provider === 'dingtalk_device_qr') {
+    } else if (pairing.provider === "dingtalk_device_qr") {
       await checkDingTalkPairing(row, pairing);
     } else {
       await updatePairing(row, unsupportedPairing(platform.slug));
-      return { error: `No active setup runner is configured for ${platform.label}.` };
+      return {
+        error: `No active setup runner is configured for ${platform.label}.`,
+      };
     }
     return {};
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Failed to check QR scan.';
+    const message =
+      error instanceof Error ? error.message : "Failed to check QR scan.";
     await updatePairing(row, {
       ...pairing,
-      status: 'error',
+      status: "error",
       lastCheckedAt: new Date().toISOString(),
       error: message,
       message,
@@ -581,48 +780,65 @@ export async function applyAgentChannelPairing(
   connectionId: string,
   allowedUserIdsText: string,
 ): Promise<AgentChannelPairingResult> {
-  const row = await db.agentChannelConnection.findFirst({ where: { id: connectionId, workspaceId } });
-  if (!row) return { error: 'Channel connection not found.' };
+  const row = await db.agentChannelConnection.findFirst({
+    where: { id: connectionId, workspaceId },
+  });
+  if (!row) return { error: "Channel connection not found." };
   const platform = getMessagingPlatform(row.platform);
-  if (platform?.slug !== 'telegram') return { error: 'Only Telegram QR setup needs an apply step.' };
+  if (platform?.slug !== "telegram")
+    return { error: "Only Telegram QR setup needs an apply step." };
   const pairing = pairingFromConfig(row.config);
-  if (pairing?.provider !== 'telegram_managed_bot') return { error: 'Request Telegram QR setup first.' };
-  if (pairing.status !== 'ready') return { error: 'Telegram setup is not ready yet.' };
+  if (pairing?.provider !== "telegram_managed_bot")
+    return { error: "Request Telegram QR setup first." };
+  if (pairing.status !== "ready")
+    return { error: "Telegram setup is not ready yet." };
   const secrets = pairingSecrets(row);
   const botToken = secrets.botToken;
-  if (!botToken) return { error: 'Telegram setup token is missing. Start a new QR setup.' };
+  if (!botToken)
+    return { error: "Telegram setup token is missing. Start a new QR setup." };
 
-  const allowedUserIds = Array.from(new Set(
-    allowedUserIdsText
-      .split(',')
-      .map((value) => value.trim())
-      .filter(Boolean),
-  ));
+  const allowedUserIds = Array.from(
+    new Set(
+      allowedUserIdsText
+        .split(",")
+        .map((value) => value.trim())
+        .filter(Boolean),
+    ),
+  );
   const invalid = allowedUserIds.find((value) => !/^\d+$/.test(value));
-  if (invalid) return { error: `Allowed Telegram user IDs must be numeric: ${invalid}` };
+  if (invalid)
+    return { error: `Allowed Telegram user IDs must be numeric: ${invalid}` };
 
   const updated = await updateAgentChannelConnectionCredentials({
     workspaceId: row.workspaceId,
     connectionId: row.id,
     credentials: {
       TELEGRAM_BOT_TOKEN: botToken,
-      TELEGRAM_ALLOWED_USERS: allowedUserIds.join(','),
+      TELEGRAM_ALLOWED_USERS: allowedUserIds.join(","),
       TELEGRAM_ALLOW_ALL_USERS: String(allowedUserIds.length === 0),
     },
   });
   if (updated.error) return updated;
-  const latest = await db.agentChannelConnection.findUniqueOrThrow({ where: { id: row.id } });
-  await updatePairing(latest, {
-    ...pairing,
-    status: 'ready',
-    qrPayload: undefined,
-    lastCheckedAt: new Date().toISOString(),
-    message: 'Telegram setup saved. Start the hosted runner when ready.',
-    error: undefined,
-    extra: {
-      ...pairing.extra,
-      ...(allowedUserIds.length ? { allowedUserIds: allowedUserIds.join(',') } : { allowedUserIds: '*' }),
+  const latest = await db.agentChannelConnection.findUniqueOrThrow({
+    where: { id: row.id },
+  });
+  await updatePairing(
+    latest,
+    {
+      ...pairing,
+      status: "ready",
+      qrPayload: undefined,
+      lastCheckedAt: new Date().toISOString(),
+      message: "Telegram setup saved. Start the hosted runner when ready.",
+      error: undefined,
+      extra: {
+        ...pairing.extra,
+        ...(allowedUserIds.length
+          ? { allowedUserIds: allowedUserIds.join(",") }
+          : { allowedUserIds: "*" }),
+      },
     },
-  }, {});
+    {},
+  );
   return {};
 }

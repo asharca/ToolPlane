@@ -1,17 +1,24 @@
-import 'server-only';
-import { trackRuntimeOperation, runtimeAbortSignal, markRuntimeUncertain } from '@/lib/runtime/ownership-state';
-import { createHash } from 'node:crypto';
-import { spawn } from 'node:child_process';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
-import os from 'node:os';
-import path from 'node:path';
-import type { Prisma } from '@prisma/client';
-import { db } from '@/lib/db';
-import { getAgent } from '@/lib/agents/queries';
-import { resolveAgentTools, type SkillForPrompt } from '@/lib/agents/resolve';
-import { buildInstalledSkillMarkdown, installedSkillExtraFiles } from '@/lib/skills/artifact';
-import { parseSkillFrontmatter } from '@/lib/skills/bundle';
-import { resolveSpawnSpec } from '@/lib/process/spawn-spec';
+import "server-only";
+import {
+  trackRuntimeOperation,
+  runtimeAbortSignal,
+  markRuntimeUncertain,
+} from "@/lib/runtime/ownership-state";
+import { createHash } from "node:crypto";
+import { spawn } from "node:child_process";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import type { Prisma } from "@prisma/client";
+import { db } from "@/lib/db";
+import { getAgent } from "@/lib/agents/queries";
+import { resolveAgentTools, type SkillForPrompt } from "@/lib/agents/resolve";
+import {
+  buildInstalledSkillMarkdown,
+  installedSkillExtraFiles,
+} from "@/lib/skills/artifact";
+import { parseSkillFrontmatter } from "@/lib/skills/bundle";
+import { resolveSpawnSpec } from "@/lib/process/spawn-spec";
 import {
   effectiveStatus,
   killProcess,
@@ -19,7 +26,7 @@ import {
   restartProcess,
   startProcess,
   stopProcess,
-} from '@/lib/process/supervisor';
+} from "@/lib/process/supervisor";
 import {
   copyDockerVolume,
   removeDockerSandboxRuntimeStrict,
@@ -28,46 +35,51 @@ import {
   sandboxSyncContainerName,
   sandboxVolumeName,
   stopDockerSandboxContainer,
-} from '@/lib/sandboxes/runtime';
-import { HERMES_RUNTIME_KIND, isValidHermesImage } from './constants';
-import { HERMES_ARCHIVE_IMPORT_TIMEOUT_MS } from './archive-limits';
+} from "@/lib/sandboxes/runtime";
+import { HERMES_RUNTIME_KIND, isValidHermesImage } from "./constants";
+import { HERMES_ARCHIVE_IMPORT_TIMEOUT_MS } from "./archive-limits";
 import {
   renderHermesConfig,
   renderHermesEnvPayload,
   renderHermesMcpBindingFingerprint,
   renderHermesSkillBundle,
-} from './config';
-import { deriveHermesRuntimeToken } from './token';
+} from "./config";
+import { deriveHermesRuntimeToken } from "./token";
 import {
   HERMES_ENV_MERGE_SCRIPT,
   withoutHermesChannelEnv,
-} from './env-merge-script';
-import { beginWorkspaceOperation } from '@/lib/workspace/operation-gate';
-import { readSandboxEnv, sandboxConfigWithEnv } from '@/lib/sandboxes/env';
-import { runtimeEnv } from '@/lib/runtime-env';
+} from "./env-merge-script";
+import { beginWorkspaceOperation } from "@/lib/workspace/operation-gate";
+import { readSandboxEnv, sandboxConfigWithEnv } from "@/lib/sandboxes/env";
+import { runtimeEnv } from "@/lib/runtime-env";
 
 const DOCKER_TIMEOUT_MS = 15 * 60_000;
 const HERMES_ARCHIVE_COPY_TIMEOUT_MS = HERMES_ARCHIVE_IMPORT_TIMEOUT_MS;
 const HERMES_SYNC_CONTAINER_RESOURCE_LIMITS = [
-  '--memory', '1g',
-  '--memory-swap', '1g',
-  '--pids-limit', '256',
-  '--cpus', '2',
+  "--memory",
+  "1g",
+  "--memory-swap",
+  "1g",
+  "--pids-limit",
+  "256",
+  "--cpus",
+  "2",
 ];
-const TOOLPLANE_SKILL_ROOT = 'toolplane-agent';
+const TOOLPLANE_SKILL_ROOT = "toolplane-agent";
 const HERMES_CONFIG_VERSION = 8;
 const DASHBOARD_READY_CACHE_MS = 15_000;
 const BLOCKED_SANDBOX_LIFECYCLE_STATES = new Set([
-  'copying',
-  'copy_failed',
-  'restoring',
-  'restore_failed',
-  'restore_cleanup_required',
-  'upgrading',
-  'deleting',
+  "copying",
+  "copy_failed",
+  "restoring",
+  "restore_failed",
+  "restore_cleanup_required",
+  "upgrading",
+  "deleting",
 ]);
-const SANDBOX_LIFECYCLE_ERROR = 'The Hermes sandbox has a pending lifecycle operation.';
-const CONFIG_COMPATIBILITY_SCRIPT = String.raw`import pathlib
+const SANDBOX_LIFECYCLE_ERROR =
+  "The Hermes sandbox has a pending lifecycle operation.";
+const CONFIG_COMPATIBILITY_SCRIPT = `import pathlib
 import sys
 
 import yaml
@@ -105,7 +117,7 @@ for path in paths:
         )
         raise SystemExit(78)
 `;
-const CONFIG_MERGE_SCRIPT = String.raw`import os
+const CONFIG_MERGE_SCRIPT = `import os
 import pathlib
 import sys
 import tempfile
@@ -258,14 +270,18 @@ type HermesRuntimeWriteLeaseInfo = {
   released: boolean;
 };
 
-const runtimeWriteLeaseInfo = new WeakMap<HermesRuntimeWriteLease, HermesRuntimeWriteLeaseInfo>();
+const runtimeWriteLeaseInfo = new WeakMap<
+  HermesRuntimeWriteLease,
+  HermesRuntimeWriteLeaseInfo
+>();
 
 export const HERMES_RUNTIME_MAINTENANCE_IN_PROGRESS_ERROR =
-  'The Hermes runtime is temporarily unavailable while a clone or image upgrade is in progress.';
+  "The Hermes runtime is temporarily unavailable while a clone or image upgrade is in progress.";
 
 // Retain the original export for existing API callers while broadening its
 // message now that the same write gate also protects image upgrades.
-export const HERMES_RUNTIME_COPY_IN_PROGRESS_ERROR = HERMES_RUNTIME_MAINTENANCE_IN_PROGRESS_ERROR;
+export const HERMES_RUNTIME_COPY_IN_PROGRESS_ERROR =
+  HERMES_RUNTIME_MAINTENANCE_IN_PROGRESS_ERROR;
 
 const globalRuntime = globalThis as unknown as {
   __hermesDashboardReady?: Map<string, DashboardReadyEntry>;
@@ -274,7 +290,8 @@ const globalRuntime = globalThis as unknown as {
 };
 
 function dashboardReadyCache(): Map<string, DashboardReadyEntry> {
-  if (!globalRuntime.__hermesDashboardReady) globalRuntime.__hermesDashboardReady = new Map();
+  if (!globalRuntime.__hermesDashboardReady)
+    globalRuntime.__hermesDashboardReady = new Map();
   return globalRuntime.__hermesDashboardReady;
 }
 
@@ -283,7 +300,8 @@ function hermesRuntimeAccessKey(workspaceId: string, agentId: string) {
 }
 
 function hermesRuntimeAccessStates(): Map<string, HermesRuntimeAccessState> {
-  return globalRuntime.__hermesRuntimeAccessStates ??= new Map();
+  globalRuntime.__hermesRuntimeAccessStates ??= new Map();
+  return globalRuntime.__hermesRuntimeAccessStates;
 }
 
 function getHermesRuntimeAccessState(
@@ -310,19 +328,22 @@ function clearHermesRuntimeAccessStateIfIdle(
   state: HermesRuntimeAccessState,
 ) {
   if (
-    state.activeWrites !== 0
-    || state.copyInProgress
-    || state.pendingCopies !== 0
-    || state.drained
-    || state.available
-  ) return;
+    state.activeWrites !== 0 ||
+    state.copyInProgress ||
+    state.pendingCopies !== 0 ||
+    state.drained ||
+    state.available
+  )
+    return;
   const states = hermesRuntimeAccessStates();
   const key = hermesRuntimeAccessKey(workspaceId, agentId);
   if (states.get(key) === state) states.delete(key);
 }
 
 function runtimeAccessIsClosed(workspaceId: string, agentId: string): boolean {
-  const state = hermesRuntimeAccessStates().get(hermesRuntimeAccessKey(workspaceId, agentId));
+  const state = hermesRuntimeAccessStates().get(
+    hermesRuntimeAccessKey(workspaceId, agentId),
+  );
   return Boolean(state && (state.copyInProgress || state.pendingCopies > 0));
 }
 
@@ -334,9 +355,9 @@ function holdsHermesRuntimeWriteLease(
   if (!lease) return false;
   const info = runtimeWriteLeaseInfo.get(lease);
   return Boolean(
-    info
-    && !info.released
-    && info.key === hermesRuntimeAccessKey(workspaceId, agentId),
+    info &&
+      !info.released &&
+      info.key === hermesRuntimeAccessKey(workspaceId, agentId),
   );
 }
 
@@ -446,16 +467,22 @@ async function acquireHermesRuntimePairCopyLeases(
   const releases: Array<() => void> = [];
   try {
     for (const reservation of reservations) {
-      releases.push(await activateHermesRuntimeCopyLease(
-        workspaceId,
-        reservation.agentId,
-        reservation.state,
-      ));
+      releases.push(
+        await activateHermesRuntimeCopyLease(
+          workspaceId,
+          reservation.agentId,
+          reservation.state,
+        ),
+      );
     }
   } catch (error) {
     for (const release of releases.reverse()) release();
     for (const reservation of reservations.slice(releases.length)) {
-      cancelHermesRuntimeCopyReservation(workspaceId, reservation.agentId, reservation.state);
+      cancelHermesRuntimeCopyReservation(
+        workspaceId,
+        reservation.agentId,
+        reservation.state,
+      );
     }
     throw error;
   }
@@ -497,17 +524,22 @@ function enqueueHermesOperation<T>(
   access: HermesOperationAccess = {},
 ): Promise<T> {
   if (
-    !access.bypassRuntimeAccessGate
-    && runtimeAccessIsClosed(workspaceId, agentId)
-    && !holdsHermesRuntimeWriteLease(workspaceId, agentId, access.writeLease)
-  ) return Promise.resolve(rejected);
+    !access.bypassRuntimeAccessGate &&
+    runtimeAccessIsClosed(workspaceId, agentId) &&
+    !holdsHermesRuntimeWriteLease(workspaceId, agentId, access.writeLease)
+  )
+    return Promise.resolve(rejected);
   const releaseWorkspaceOperation = beginWorkspaceOperation(workspaceId);
   if (!releaseWorkspaceOperation) return Promise.resolve(rejected);
-  const queues = globalRuntime.__hermesOperationQueues ??= new Map();
+  globalRuntime.__hermesOperationQueues ??= new Map();
+  const queues = globalRuntime.__hermesOperationQueues;
   const key = `${workspaceId}:${agentId}`;
   const previous = queues.get(key) ?? Promise.resolve();
   const result = previous.catch(() => undefined).then(operation);
-  const tail = result.then(() => undefined, () => undefined);
+  const tail = result.then(
+    () => undefined,
+    () => undefined,
+  );
   queues.set(key, tail);
   return result.finally(() => {
     if (queues.get(key) === tail) queues.delete(key);
@@ -528,13 +560,16 @@ export function runHermesDashboardMutation<T>(
   operation: (ready: { port?: number; error?: string }) => Promise<T>,
 ): Promise<T | undefined> {
   if (!holdsHermesRuntimeWriteLease(workspaceId, agentId, writeLease)) {
-    return Promise.reject(new Error('The Hermes dashboard write lease is invalid or expired.'));
+    return Promise.reject(
+      new Error("The Hermes dashboard write lease is invalid or expired."),
+    );
   }
   return enqueueHermesOperation(
     workspaceId,
     agentId,
     undefined as T | undefined,
-    async () => operation(await ensureHermesDashboardReadyUnlocked(workspaceId, agentId)),
+    async () =>
+      operation(await ensureHermesDashboardReadyUnlocked(workspaceId, agentId)),
     { writeLease },
   );
 }
@@ -557,28 +592,45 @@ function enqueueHermesPairOperation<T>(
     workspaceId,
     firstAgentId,
     rejected,
-    () => enqueueHermesOperation(
-      workspaceId,
-      secondAgentId,
-      rejected,
-      operation,
-      { bypassRuntimeAccessGate: true },
-    ),
+    () =>
+      enqueueHermesOperation(workspaceId, secondAgentId, rejected, operation, {
+        bypassRuntimeAccessGate: true,
+      }),
     { bypassRuntimeAccessGate: true },
   );
 }
 
 function dockerEnv(): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { NODE_ENV: process.env.NODE_ENV ?? 'production' };
-  for (const key of ['PATH', 'HOME', 'DOCKER_HOST', 'DOCKER_CERT_PATH', 'DOCKER_TLS_VERIFY', 'LANG', 'LC_ALL']) {
+  const env: NodeJS.ProcessEnv = {
+    NODE_ENV: process.env.NODE_ENV ?? "production",
+  };
+  for (const key of [
+    "PATH",
+    "HOME",
+    "DOCKER_HOST",
+    "DOCKER_CERT_PATH",
+    "DOCKER_TLS_VERIFY",
+    "LANG",
+    "LC_ALL",
+  ]) {
     if (process.env[key]) env[key] = process.env[key];
   }
   return env;
 }
 
-function runDocker(args: string[], input?: string, timeoutMs = DOCKER_TIMEOUT_MS, signal?: AbortSignal): Promise<DockerResult> {
-  const cleanup = ['stop', 'rm', 'inspect'].includes(args[0]) || (args[0] === 'volume' && ['rm', 'inspect'].includes(args[1]));
-  return trackRuntimeOperation(() => runDockerOwned(args, input, timeoutMs, signal), cleanup);
+function runDocker(
+  args: string[],
+  input?: string,
+  timeoutMs = DOCKER_TIMEOUT_MS,
+  signal?: AbortSignal,
+): Promise<DockerResult> {
+  const cleanup =
+    ["stop", "rm", "inspect"].includes(args[0]) ||
+    (args[0] === "volume" && ["rm", "inspect"].includes(args[1]));
+  return trackRuntimeOperation(
+    () => runDockerOwned(args, input, timeoutMs, signal),
+    cleanup,
+  );
 }
 function runDockerOwned(
   args: string[],
@@ -587,13 +639,17 @@ function runDockerOwned(
   signal?: AbortSignal,
 ): Promise<DockerResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn('docker', args, {
+    const ownerSignal = runtimeAbortSignal();
+    const child = spawn("docker", args, {
       env: dockerEnv(),
-      stdio: ['pipe', 'pipe', 'pipe'],
-      signal: signal && runtimeAbortSignal() ? AbortSignal.any([signal, runtimeAbortSignal()!]) : signal ?? runtimeAbortSignal(),
+      stdio: ["pipe", "pipe", "pipe"],
+      signal:
+        signal && ownerSignal
+          ? AbortSignal.any([signal, ownerSignal])
+          : (signal ?? ownerSignal),
     });
-    let stdout = '';
-    let stderr = '';
+    let stdout = "";
+    let stderr = "";
     let settled = false;
     const finish = (error?: Error) => {
       if (settled) return;
@@ -602,21 +658,25 @@ function runDockerOwned(
       if (error) reject(error);
       else resolve({ stdout, stderr });
     };
-    const timer = setTimeout(() => { markRuntimeUncertain(); child.kill('SIGKILL'); }, timeoutMs);
-    child.stdout.on('data', (chunk) => {
+    const timer = setTimeout(() => {
+      markRuntimeUncertain();
+      child.kill("SIGKILL");
+    }, timeoutMs);
+    child.stdout.on("data", (chunk) => {
       stdout = `${stdout}${chunk}`.slice(-32_000);
     });
-    child.stderr.on('data', (chunk) => {
+    child.stderr.on("data", (chunk) => {
       stderr = `${stderr}${chunk}`.slice(-32_000);
     });
-    child.on('error', (error) => {
+    child.on("error", (error) => {
       finish(error);
     });
-    child.on('close', (code) => {
+    child.on("close", (code) => {
       if (code === 0) finish();
-      else finish(new Error(stderr.trim() || `docker exited with code ${code}`));
+      else
+        finish(new Error(stderr.trim() || `docker exited with code ${code}`));
     });
-    child.stdin.end(input ?? '');
+    child.stdin.end(input ?? "");
   });
 }
 
@@ -624,21 +684,22 @@ function safeSkillName(value: string): string {
   const name = value
     .trim()
     .toLowerCase()
-    .replace(/[^a-z0-9_-]+/g, '-')
-    .replace(/^-+|-+$/g, '')
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
     .slice(0, 80);
-  return name || 'skill';
+  return name || "skill";
 }
 
 function runtimePublicBaseUrl(): string {
-  const configured = runtimeEnv('TOOLPLANE_HERMES_CALLBACK_URL')
-    || runtimeEnv('NEXT_PUBLIC_APP_URL')
-    || 'http://localhost:3000';
+  const configured =
+    runtimeEnv("TOOLPLANE_HERMES_CALLBACK_URL") ||
+    runtimeEnv("NEXT_PUBLIC_APP_URL") ||
+    "http://localhost:3000";
   const url = new URL(configured);
-  if (url.hostname === 'localhost' || url.hostname === '127.0.0.1') {
-    url.hostname = 'host.docker.internal';
+  if (url.hostname === "localhost" || url.hostname === "127.0.0.1") {
+    url.hostname = "host.docker.internal";
   }
-  return url.toString().replace(/\/$/, '');
+  return url.toString().replace(/\/$/, "");
 }
 
 export function hermesRuntimeMcpUrl(runtimeId: string): string {
@@ -653,27 +714,34 @@ async function writeSkill(
 ): Promise<string> {
   const markdown = buildInstalledSkillMarkdown(skill);
   const frontmatterName = parseSkillFrontmatter(markdown).name;
-  const fallback = skill.slug || skill.skill?.slug || skill.name || skill.skill?.name || 'skill';
+  const fallback =
+    skill.slug ||
+    skill.skill?.slug ||
+    skill.name ||
+    skill.skill?.name ||
+    "skill";
   const base = safeSkillName(frontmatterName || fallback);
   let name = base;
-  for (let suffix = 2; usedNames.has(name); suffix += 1) name = `${base}-${suffix}`;
+  for (let suffix = 2; usedNames.has(name); suffix += 1)
+    name = `${base}-${suffix}`;
   usedNames.add(name);
 
-  const directory = path.join(root, 'skills', TOOLPLANE_SKILL_ROOT, name);
+  const directory = path.join(root, "skills", TOOLPLANE_SKILL_ROOT, name);
   await mkdir(directory, { recursive: true });
-  await writeFile(path.join(directory, 'SKILL.md'), markdown, { mode: 0o600 });
+  await writeFile(path.join(directory, "SKILL.md"), markdown, { mode: 0o600 });
   hash.update(`SKILL.md:${name}\0${markdown}\0`);
 
   for (const file of installedSkillExtraFiles(skill)) {
-    const target = path.join(directory, ...file.path.split('/'));
+    const target = path.join(directory, ...file.path.split("/"));
     await mkdir(path.dirname(target), { recursive: true });
-    const content = file.encoding === 'base64'
-      ? Buffer.from(file.content, 'base64')
-      : file.content;
+    const content =
+      file.encoding === "base64"
+        ? Buffer.from(file.content, "base64")
+        : file.content;
     await writeFile(target, content, { mode: 0o600 });
     hash.update(`${name}/${file.path}\0`);
-    hash.update(typeof content === 'string' ? content : content);
-    hash.update('\0');
+    hash.update(typeof content === "string" ? content : content);
+    hash.update("\0");
   }
   return name;
 }
@@ -683,23 +751,40 @@ async function validateHermesConfigCompatibility(params: {
   sandboxId: string;
   signal?: AbortSignal;
 }): Promise<void> {
-  await runDocker([
-    'run', '--rm', '--network', 'none', '--read-only',
-    '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
-    '--user', 'hermes',
-    ...HERMES_SYNC_CONTAINER_RESOURCE_LIMITS,
-    '-v', `${sandboxVolumeName(params.sandboxId)}:/opt/data:ro`,
-    '--env', 'HERMES_HOME=/opt/data',
-    '--entrypoint', '/opt/hermes/.venv/bin/python',
-    params.image,
-    '-c', CONFIG_COMPATIBILITY_SCRIPT,
-  ], undefined, DOCKER_TIMEOUT_MS, params.signal);
+  await runDocker(
+    [
+      "run",
+      "--rm",
+      "--network",
+      "none",
+      "--read-only",
+      "--cap-drop",
+      "ALL",
+      "--security-opt",
+      "no-new-privileges",
+      "--user",
+      "hermes",
+      ...HERMES_SYNC_CONTAINER_RESOURCE_LIMITS,
+      "-v",
+      `${sandboxVolumeName(params.sandboxId)}:/opt/data:ro`,
+      "--env",
+      "HERMES_HOME=/opt/data",
+      "--entrypoint",
+      "/opt/hermes/.venv/bin/python",
+      params.image,
+      "-c",
+      CONFIG_COMPATIBILITY_SCRIPT,
+    ],
+    undefined,
+    DOCKER_TIMEOUT_MS,
+    params.signal,
+  );
 }
 
 function renderManagedHermesConfig(
   agent: NonNullable<Awaited<ReturnType<typeof getAgent>>>,
 ): string {
-  if (!agent.runtime) throw new Error('Hermes runtime is not configured.');
+  if (!agent.runtime) throw new Error("Hermes runtime is not configured.");
   return renderHermesConfig({
     maxSteps: agent.maxSteps,
     providers: agent.modelProviders.map(({ provider }) => ({
@@ -711,7 +796,7 @@ function renderManagedHermesConfig(
       models: provider.models,
     })),
     mcpUrl: hermesRuntimeMcpUrl(agent.runtime.id),
-    mcpToken: deriveHermesRuntimeToken(agent.runtime.id, 'toolplane-mcp'),
+    mcpToken: deriveHermesRuntimeToken(agent.runtime.id, "toolplane-mcp"),
     systemPrompt: agent.publicRuntimeAllocation?.revision.systemPrompt,
     publicRuntime: Boolean(agent.publicRuntimeAllocation),
   });
@@ -720,30 +805,34 @@ function renderManagedHermesConfig(
 async function buildProjection(
   agent: NonNullable<Awaited<ReturnType<typeof getAgent>>>,
 ): Promise<{ directory: string; configHash: string }> {
-  if (!agent.runtime) throw new Error('Hermes runtime is not configured.');
-  const directory = await mkdtemp(path.join(os.tmpdir(), 'toolplane-hermes-'));
-  const hash = createHash('sha256');
+  if (!agent.runtime) throw new Error("Hermes runtime is not configured.");
+  const directory = await mkdtemp(path.join(os.tmpdir(), "toolplane-hermes-"));
+  const hash = createHash("sha256");
   const resolved = resolveAgentTools(agent);
   const config = renderManagedHermesConfig(agent);
   const runtimeEnvironment = readSandboxEnv(agent.runtime.sandbox.config);
   const projectedEnvironment = {
     ...runtimeEnvironment,
-    API_SERVER_KEY: deriveHermesRuntimeToken(agent.runtime.id, 'hermes-api'),
+    API_SERVER_KEY: deriveHermesRuntimeToken(agent.runtime.id, "hermes-api"),
   };
   const envPayload = renderHermesEnvPayload(projectedEnvironment);
   const profileEnvPayload = renderHermesEnvPayload({
-    API_SERVER_KEY: deriveHermesRuntimeToken(agent.runtime.id, 'hermes-api'),
+    API_SERVER_KEY: deriveHermesRuntimeToken(agent.runtime.id, "hermes-api"),
   });
-  await writeFile(path.join(directory, 'config.yaml'), config, { mode: 0o600 });
-  await writeFile(path.join(directory, 'env.json'), envPayload, { mode: 0o600 });
-  await writeFile(path.join(directory, 'profile-env.json'), profileEnvPayload, { mode: 0o600 });
+  await writeFile(path.join(directory, "config.yaml"), config, { mode: 0o600 });
+  await writeFile(path.join(directory, "env.json"), envPayload, {
+    mode: 0o600,
+  });
+  await writeFile(path.join(directory, "profile-env.json"), profileEnvPayload, {
+    mode: 0o600,
+  });
   await writeFile(
-    path.join(directory, '.toolplane-merge-config.py'),
+    path.join(directory, ".toolplane-merge-config.py"),
     CONFIG_MERGE_SCRIPT,
     { mode: 0o600 },
   );
   await writeFile(
-    path.join(directory, '.toolplane-merge-env.py'),
+    path.join(directory, ".toolplane-merge-env.py"),
     HERMES_ENV_MERGE_SCRIPT,
     { mode: 0o600 },
   );
@@ -751,24 +840,28 @@ async function buildProjection(
   // Native channel values are merely a one-time compatibility seed; Hermes'
   // volume owns them afterwards, so they must not keep invalidating the
   // ToolPlane projection fingerprint.
-  hash.update(`env\0${renderHermesEnvPayload(withoutHermesChannelEnv(projectedEnvironment))}\0`);
+  hash.update(
+    `env\0${renderHermesEnvPayload(withoutHermesChannelEnv(projectedEnvironment))}\0`,
+  );
   hash.update(`profile-env\0${profileEnvPayload}\0`);
-  hash.update(`mcp-bindings\0${renderHermesMcpBindingFingerprint(resolved.deploymentIds)}\0`);
+  hash.update(
+    `mcp-bindings\0${renderHermesMcpBindingFingerprint(resolved.deploymentIds)}\0`,
+  );
 
   const usedNames = new Set<string>();
   const skillNames: string[] = [];
   for (const skill of resolved.skills) {
     skillNames.push(await writeSkill(directory, skill, usedNames, hash));
   }
-  await mkdir(path.join(directory, 'skill-bundles'), { recursive: true });
+  await mkdir(path.join(directory, "skill-bundles"), { recursive: true });
   const bundle = renderHermesSkillBundle(skillNames);
   await writeFile(
-    path.join(directory, 'skill-bundles', `${TOOLPLANE_SKILL_ROOT}.yaml`),
+    path.join(directory, "skill-bundles", `${TOOLPLANE_SKILL_ROOT}.yaml`),
     bundle,
     { mode: 0o600 },
   );
   hash.update(bundle);
-  return { directory, configHash: hash.digest('hex') };
+  return { directory, configHash: hash.digest("hex") };
 }
 
 export async function syncHermesProfileProjection(
@@ -777,39 +870,79 @@ export async function syncHermesProfileProjection(
   profile: string,
   writeLease: HermesRuntimeWriteLease,
 ): Promise<boolean> {
-  if (profile === 'default') return true;
+  if (profile === "default") return true;
   if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(profile)) return false;
   const projected = await runHermesDashboardMutation(
     workspaceId,
     agentId,
     writeLease,
     async (ready) => {
-      if (!ready.port) throw new Error(ready.error || 'Hermes runtime is unavailable.');
+      if (!ready.port)
+        throw new Error(ready.error || "Hermes runtime is unavailable.");
       const agent = await getAgent(workspaceId, agentId);
-      if (!agent?.runtime || agent.runtime.kind !== HERMES_RUNTIME_KIND) return false;
+      if (!agent?.runtime || agent.runtime.kind !== HERMES_RUNTIME_KIND)
+        return false;
       const profileDirectory = `/opt/data/profiles/${profile}`;
       const configPath = `${profileDirectory}/config.yaml`;
       const envPath = `${profileDirectory}/.env`;
       const container = sandboxContainerName(agent.runtime.sandboxId);
       try {
-        await runDocker(['exec', container, 'test', '-d', profileDirectory], undefined, 30_000);
+        await runDocker(
+          ["exec", container, "test", "-d", profileDirectory],
+          undefined,
+          30_000,
+        );
       } catch {
-        throw new Error('Hermes profile does not exist.');
+        throw new Error("Hermes profile does not exist.");
       }
       await runDocker(
-        ['exec', '--user', 'hermes', container, '/opt/hermes/.venv/bin/python', '-c', CONFIG_COMPATIBILITY_SCRIPT, configPath],
+        [
+          "exec",
+          "--user",
+          "hermes",
+          container,
+          "/opt/hermes/.venv/bin/python",
+          "-c",
+          CONFIG_COMPATIBILITY_SCRIPT,
+          configPath,
+        ],
         undefined,
         30_000,
       );
       await runDocker(
-        ['exec', '--user', 'hermes', '-i', container, '/opt/hermes/.venv/bin/python', '-c', CONFIG_MERGE_SCRIPT, configPath, '-'],
+        [
+          "exec",
+          "--user",
+          "hermes",
+          "-i",
+          container,
+          "/opt/hermes/.venv/bin/python",
+          "-c",
+          CONFIG_MERGE_SCRIPT,
+          configPath,
+          "-",
+        ],
         renderManagedHermesConfig(agent),
         30_000,
       );
       await runDocker(
-        ['exec', '--user', 'hermes', '-i', container, '/opt/hermes/.venv/bin/python', '-c', HERMES_ENV_MERGE_SCRIPT, envPath, '-'],
+        [
+          "exec",
+          "--user",
+          "hermes",
+          "-i",
+          container,
+          "/opt/hermes/.venv/bin/python",
+          "-c",
+          HERMES_ENV_MERGE_SCRIPT,
+          envPath,
+          "-",
+        ],
         renderHermesEnvPayload({
-          API_SERVER_KEY: deriveHermesRuntimeToken(agent.runtime.id, 'hermes-api'),
+          API_SERVER_KEY: deriveHermesRuntimeToken(
+            agent.runtime.id,
+            "hermes-api",
+          ),
         }),
         30_000,
       );
@@ -828,66 +961,93 @@ async function installProjection(params: {
   const volume = sandboxVolumeName(params.sandboxId);
   const initContainer = sandboxSyncContainerName(params.sandboxId);
   const hermesOwnedPaths = [
-    '/opt/data/config.yaml',
-    '/opt/data/.env',
-    '/opt/data/.toolplane-env-keys.json',
-    '/opt/data/SOUL.md',
-    '/opt/data/cron',
-    '/opt/data/sessions',
-    '/opt/data/logs',
-    '/opt/data/memories',
-    '/opt/data/pairing',
-    '/opt/data/hooks',
-    '/opt/data/image_cache',
-    '/opt/data/audio_cache',
-    '/opt/data/profiles',
-    '/opt/data/skills',
-    '/opt/data/skill-bundles',
-  ].join(' ');
-  await runDocker(['volume', 'create', volume], undefined, DOCKER_TIMEOUT_MS, params.signal);
+    "/opt/data/config.yaml",
+    "/opt/data/.env",
+    "/opt/data/.toolplane-env-keys.json",
+    "/opt/data/SOUL.md",
+    "/opt/data/cron",
+    "/opt/data/sessions",
+    "/opt/data/logs",
+    "/opt/data/memories",
+    "/opt/data/pairing",
+    "/opt/data/hooks",
+    "/opt/data/image_cache",
+    "/opt/data/audio_cache",
+    "/opt/data/profiles",
+    "/opt/data/skills",
+    "/opt/data/skill-bundles",
+  ].join(" ");
+  await runDocker(
+    ["volume", "create", volume],
+    undefined,
+    DOCKER_TIMEOUT_MS,
+    params.signal,
+  );
   params.signal?.throwIfAborted();
-  await runDocker(['rm', '-f', initContainer]).catch(() => undefined);
+  await runDocker(["rm", "-f", initContainer]).catch(() => undefined);
   const installCommand = [
-    'set -eu',
+    "set -eu",
     `rm -rf /opt/data/skills/${TOOLPLANE_SKILL_ROOT} /opt/data/skill-bundles/${TOOLPLANE_SKILL_ROOT}.yaml`,
-    'mkdir -p /opt/data/skills /opt/data/skill-bundles',
+    "mkdir -p /opt/data/skills /opt/data/skill-bundles",
     `if [ -d /tmp/toolplane/skills/${TOOLPLANE_SKILL_ROOT} ]; then cp -R /tmp/toolplane/skills/${TOOLPLANE_SKILL_ROOT} /opt/data/skills/; fi`,
     `if [ -f /tmp/toolplane/skill-bundles/${TOOLPLANE_SKILL_ROOT}.yaml ]; then cp /tmp/toolplane/skill-bundles/${TOOLPLANE_SKILL_ROOT}.yaml /opt/data/skill-bundles/; fi`,
-    '/opt/hermes/.venv/bin/python /tmp/toolplane/.toolplane-merge-config.py /opt/data/config.yaml /tmp/toolplane/config.yaml',
-    '/opt/hermes/.venv/bin/python -c "from hermes_cli import config; migrate = getattr(config, \'migrate_config\', None); migrate(interactive=False, quiet=True) if callable(migrate) else None"',
-    '/opt/hermes/.venv/bin/python /tmp/toolplane/.toolplane-merge-env.py /opt/data/.env /tmp/toolplane/env.json',
-    'for profile in /opt/data/profiles/*; do [ -d "$profile" ] || continue; name=${profile##*/}; [ ${#name} -le 64 ] || continue; case "$name" in [a-z0-9]*) ;; *) continue ;; esac; case "$name" in *[!a-z0-9_-]*) continue ;; esac; /opt/hermes/.venv/bin/python /tmp/toolplane/.toolplane-merge-config.py "$profile/config.yaml" /tmp/toolplane/config.yaml; /opt/hermes/.venv/bin/python /tmp/toolplane/.toolplane-merge-env.py "$profile/.env" /tmp/toolplane/profile-env.json; done',
+    "/opt/hermes/.venv/bin/python /tmp/toolplane/.toolplane-merge-config.py /opt/data/config.yaml /tmp/toolplane/config.yaml",
+    "/opt/hermes/.venv/bin/python -c \"from hermes_cli import config; migrate = getattr(config, 'migrate_config', None); migrate(interactive=False, quiet=True) if callable(migrate) else None\"",
+    "/opt/hermes/.venv/bin/python /tmp/toolplane/.toolplane-merge-env.py /opt/data/.env /tmp/toolplane/env.json",
+    `for profile in /opt/data/profiles/*; do [ -d "$profile" ] || continue; name=\${profile##*/}; [ \${#name} -le 64 ] || continue; case "$name" in [a-z0-9]*) ;; *) continue ;; esac; case "$name" in *[!a-z0-9_-]*) continue ;; esac; /opt/hermes/.venv/bin/python /tmp/toolplane/.toolplane-merge-config.py "$profile/config.yaml" /tmp/toolplane/config.yaml; /opt/hermes/.venv/bin/python /tmp/toolplane/.toolplane-merge-env.py "$profile/.env" /tmp/toolplane/profile-env.json; done`,
     `if id hermes >/dev/null 2>&1; then for path in ${hermesOwnedPaths}; do [ ! -e "$path" ] || chown -R "$(id -u hermes):$(id -g hermes)" "$path"; done; chown -R "$(id -u hermes):$(id -g hermes)" /opt/data/workspace 2>/dev/null || true; fi`,
-  ].join(' && ');
-  await runDocker([
-    'create', '--name', initContainer, '--network', 'none',
-    '--cap-drop', 'ALL', '--cap-add', 'CHOWN', '--cap-add', 'DAC_OVERRIDE',
-    '--security-opt', 'no-new-privileges',
-    ...HERMES_SYNC_CONTAINER_RESOURCE_LIMITS,
-    '--env', 'HERMES_HOME=/opt/data',
-    '-v', `${volume}:/opt/data`, '--entrypoint', '/bin/sh', params.image, '-c', installCommand,
-  ], undefined, DOCKER_TIMEOUT_MS, params.signal);
+  ].join(" && ");
+  await runDocker(
+    [
+      "create",
+      "--name",
+      initContainer,
+      "--network",
+      "none",
+      "--cap-drop",
+      "ALL",
+      "--cap-add",
+      "CHOWN",
+      "--cap-add",
+      "DAC_OVERRIDE",
+      "--security-opt",
+      "no-new-privileges",
+      ...HERMES_SYNC_CONTAINER_RESOURCE_LIMITS,
+      "--env",
+      "HERMES_HOME=/opt/data",
+      "-v",
+      `${volume}:/opt/data`,
+      "--entrypoint",
+      "/bin/sh",
+      params.image,
+      "-c",
+      installCommand,
+    ],
+    undefined,
+    DOCKER_TIMEOUT_MS,
+    params.signal,
+  );
   try {
     await runDocker(
-      ['cp', `${params.directory}/.`, `${initContainer}:/tmp/toolplane`],
+      ["cp", `${params.directory}/.`, `${initContainer}:/tmp/toolplane`],
       undefined,
       DOCKER_TIMEOUT_MS,
       params.signal,
     );
     await runDocker(
-      ['start', '--attach', initContainer],
+      ["start", "--attach", initContainer],
       undefined,
       DOCKER_TIMEOUT_MS,
       params.signal,
     );
   } finally {
-    await runDocker(['rm', '-f', initContainer]).catch(() => undefined);
+    await runDocker(["rm", "-f", initContainer]).catch(() => undefined);
   }
 }
 
 async function removeHermesContainerStrict(sandboxId: string): Promise<void> {
   try {
-    await runDocker(['rm', '-f', sandboxContainerName(sandboxId)]);
+    await runDocker(["rm", "-f", sandboxContainerName(sandboxId)]);
   } catch (error) {
     // A missing container is the desired postcondition. Every other Docker
     // failure must abort the rebuild so the old container cannot be reused
@@ -908,37 +1068,58 @@ export async function copyHermesArchiveToVolume(params: {
 }): Promise<void> {
   const volume = sandboxVolumeName(params.sandboxId);
   const initContainer = sandboxSyncContainerName(params.sandboxId);
-  await runDocker(['volume', 'create', volume]);
+  await runDocker(["volume", "create", volume]);
   await runDocker(
-    ['rm', '-f', initContainer],
+    ["rm", "-f", initContainer],
     undefined,
     HERMES_ARCHIVE_COPY_TIMEOUT_MS,
   ).catch(() => undefined);
 
   const installCommand = [
-    'set -eu',
-    'mkdir -p /opt/data',
-    'cp -R /tmp/toolplane-import/. /opt/data/',
+    "set -eu",
+    "mkdir -p /opt/data",
+    "cp -R /tmp/toolplane-import/. /opt/data/",
     'if id hermes >/dev/null 2>&1; then chown -R "$(id -u hermes):$(id -g hermes)" /opt/data; fi',
-  ].join(' && ');
+  ].join(" && ");
   await runDocker([
-    'create', '--name', initContainer, '--network', 'none',
-    '--label', 'toolplane.hermes-archive-import=true',
-    '--cap-drop', 'ALL', '--cap-add', 'CHOWN', '--cap-add', 'DAC_OVERRIDE',
-    '--security-opt', 'no-new-privileges',
+    "create",
+    "--name",
+    initContainer,
+    "--network",
+    "none",
+    "--label",
+    "toolplane.hermes-archive-import=true",
+    "--cap-drop",
+    "ALL",
+    "--cap-add",
+    "CHOWN",
+    "--cap-add",
+    "DAC_OVERRIDE",
+    "--security-opt",
+    "no-new-privileges",
     ...HERMES_SYNC_CONTAINER_RESOURCE_LIMITS,
-    '-v', `${volume}:/opt/data`, '--entrypoint', '/bin/sh', params.image, '-c', installCommand,
+    "-v",
+    `${volume}:/opt/data`,
+    "--entrypoint",
+    "/bin/sh",
+    params.image,
+    "-c",
+    installCommand,
   ]);
   try {
     await runDocker(
-      ['cp', `${params.directory}/.`, `${initContainer}:/tmp/toolplane-import`],
+      ["cp", `${params.directory}/.`, `${initContainer}:/tmp/toolplane-import`],
       undefined,
       HERMES_ARCHIVE_COPY_TIMEOUT_MS,
     );
-    await runDocker(['start', '--attach', initContainer], undefined, HERMES_ARCHIVE_COPY_TIMEOUT_MS);
+    await runDocker(
+      ["start", "--attach", initContainer],
+      undefined,
+      HERMES_ARCHIVE_COPY_TIMEOUT_MS,
+    );
   } finally {
     await runDocker(
-      ['rm', '-f', initContainer],
+      ["rm", "-f", initContainer],
       undefined,
       HERMES_ARCHIVE_COPY_TIMEOUT_MS,
     ).catch(() => undefined);
@@ -950,7 +1131,10 @@ async function updateRuntimeState(
   runtimeId: string,
   data: Prisma.AgentRuntimeUpdateManyMutationInput,
 ) {
-  await db.agentRuntime.updateMany({ where: { id: runtimeId, workspaceId }, data });
+  await db.agentRuntime.updateMany({
+    where: { id: runtimeId, workspaceId },
+    data,
+  });
 }
 
 async function startHermesProcess(
@@ -961,12 +1145,14 @@ async function startHermesProcess(
   await startProcess(deployment.id, resolveSpawnSpec(deployment), {
     awaitReady: false,
     workspaceId,
-    onReady: async () => { await ensureHermesRuntimeReady(workspaceId, agentId); },
+    onReady: async () => {
+      await ensureHermesRuntimeReady(workspaceId, agentId);
+    },
   });
 }
 
 function isJsonRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function hermesInstallConfigWithImage(params: {
@@ -980,13 +1166,15 @@ function hermesInstallConfigWithImage(params: {
   // Preserve any forward-compatible sandbox fields while restoring every
   // ToolPlane-owned Hermes field. This protects an older/incomplete runtime
   // row from starting with an old image after an upgrade.
-  const existing = (isJsonRecord(params.installCfg) ? params.installCfg : {}) as Prisma.InputJsonObject;
+  const existing = (
+    isJsonRecord(params.installCfg) ? params.installCfg : {}
+  ) as Prisma.InputJsonObject;
   return {
     ...existing,
     sandboxId: params.sandboxId,
     kind: HERMES_RUNTIME_KIND,
     image: params.image,
-    network: 'isolated',
+    network: "isolated",
     volumeName: sandboxVolumeName(params.sandboxId),
     runtimeId: params.runtimeId,
     runtimeModelName: params.runtimeModelName,
@@ -1001,7 +1189,7 @@ async function setHermesRuntimeUpgradePending(
 ): Promise<void> {
   const runtime = agent.runtime;
   if (!runtime || runtime.kind !== HERMES_RUNTIME_KIND) {
-    throw new Error('Hermes runtime is not configured.');
+    throw new Error("Hermes runtime is not configured.");
   }
 
   const installCfg = hermesInstallConfigWithImage({
@@ -1025,7 +1213,7 @@ async function setHermesRuntimeUpgradePending(
         },
         data: {
           image,
-          status: 'upgrading',
+          status: "upgrading",
           configHash: null,
           lastError: null,
         },
@@ -1042,37 +1230,45 @@ async function setHermesRuntimeUpgradePending(
         where: {
           id: runtime.sandbox.deploymentId,
           workspaceId,
-          source: 'sandbox',
+          source: "sandbox",
         },
         data: {
           sourceRef: image,
           installCfg,
-          status: 'upgrading',
+          status: "upgrading",
         },
       }),
     ]);
-    if (runtimeUpdate.count !== 1 || sandboxUpdate.count !== 1 || deploymentUpdate.count !== 1) {
-      throw new Error('The Hermes runtime changed before its image could be upgraded.');
+    if (
+      runtimeUpdate.count !== 1 ||
+      sandboxUpdate.count !== 1 ||
+      deploymentUpdate.count !== 1
+    ) {
+      throw new Error(
+        "The Hermes runtime changed before its image could be upgraded.",
+      );
     }
   });
 }
 
 export type HermesRuntimeVolumeCopyResult<T = undefined> =
   | {
-      status: 'copied';
+      status: "copied";
       data?: T;
       // A source restart failure must not turn a completed target copy into a
       // false negative. The source runtime is marked with this error as well.
       sourceRestartError?: string;
     }
   | {
-      status: 'error';
+      status: "error";
       error: string;
     };
 
 function copyErrorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
-  return message.trim().slice(0, 4000) || 'Could not copy the Hermes runtime volume.';
+  return (
+    message.trim().slice(0, 4000) || "Could not copy the Hermes runtime volume."
+  );
 }
 
 function isMissingDockerVolume(error: unknown): boolean {
@@ -1086,7 +1282,7 @@ export type HermesRuntimeMaintenanceOptions = {
    */
   quiesce?: boolean;
   /** Persisted while the volume is unavailable, including across app workers. */
-  operationStatus?: 'copying' | 'restoring';
+  operationStatus?: "copying" | "restoring";
   /**
    * A restored volume may contain an old ToolPlane MCP token, provider
    * projection, skill bundle, or .env. Reproject those managed files before
@@ -1111,8 +1307,8 @@ export type HermesRuntimeMaintenanceContext = {
 };
 
 export type HermesRuntimeMaintenanceResult<T> =
-  | { status: 'completed'; data: T }
-  | { status: 'error'; error: string };
+  | { status: "completed"; data: T }
+  | { status: "error"; error: string };
 
 function isWorkspaceOwnedHermesRuntime(
   agent: NonNullable<Awaited<ReturnType<typeof getAgent>>> | null,
@@ -1120,22 +1316,24 @@ function isWorkspaceOwnedHermesRuntime(
   agentId: string,
   sandboxId: string,
 ): agent is NonNullable<Awaited<ReturnType<typeof getAgent>>> & {
-  runtime: NonNullable<NonNullable<Awaited<ReturnType<typeof getAgent>>>['runtime']>;
+  runtime: NonNullable<
+    NonNullable<Awaited<ReturnType<typeof getAgent>>>["runtime"]
+  >;
 } {
   const runtime = agent?.runtime;
   return Boolean(
-    agent
-    && runtime
-    && agent.id === agentId
-    && agent.workspaceId === workspaceId
-    && runtime.id
-    && runtime.kind === HERMES_RUNTIME_KIND
-    && runtime.workspaceId === workspaceId
-    && runtime.sandboxId === sandboxId
-    && runtime.sandbox.id === sandboxId
-    && runtime.sandbox.workspaceId === workspaceId
-    && runtime.sandbox.deployment.workspaceId === workspaceId
-    && runtime.sandbox.deployment.source === 'sandbox',
+    agent &&
+      runtime &&
+      agent.id === agentId &&
+      agent.workspaceId === workspaceId &&
+      runtime.id &&
+      runtime.kind === HERMES_RUNTIME_KIND &&
+      runtime.workspaceId === workspaceId &&
+      runtime.sandboxId === sandboxId &&
+      runtime.sandbox.id === sandboxId &&
+      runtime.sandbox.workspaceId === workspaceId &&
+      runtime.sandbox.deployment.workspaceId === workspaceId &&
+      runtime.sandbox.deployment.source === "sandbox",
   );
 }
 
@@ -1156,13 +1354,16 @@ export async function runHermesRuntimeMaintenance<T>(
 ): Promise<HermesRuntimeMaintenanceResult<T>> {
   let releaseMaintenanceLease: (() => void) | undefined;
   try {
-    releaseMaintenanceLease = await acquireHermesRuntimeUpgradeLease(workspaceId, agentId);
+    releaseMaintenanceLease = await acquireHermesRuntimeUpgradeLease(
+      workspaceId,
+      agentId,
+    );
   } catch (error) {
-    return { status: 'error', error: copyErrorMessage(error) };
+    return { status: "error", error: copyErrorMessage(error) };
   }
 
   const rejected: HermesRuntimeMaintenanceResult<T> = {
-    status: 'error',
+    status: "error",
     error: SANDBOX_LIFECYCLE_ERROR,
   };
   try {
@@ -1170,13 +1371,14 @@ export async function runHermesRuntimeMaintenance<T>(
       workspaceId,
       agentId,
       rejected,
-      () => runHermesRuntimeMaintenanceUnlocked(
-        workspaceId,
-        agentId,
-        sandboxId,
-        options,
-        operation,
-      ),
+      () =>
+        runHermesRuntimeMaintenanceUnlocked(
+          workspaceId,
+          agentId,
+          sandboxId,
+          options,
+          operation,
+        ),
       { bypassRuntimeAccessGate: true },
     );
   } finally {
@@ -1193,7 +1395,7 @@ async function runHermesRuntimeMaintenanceUnlocked<T>(
 ): Promise<HermesRuntimeMaintenanceResult<T>> {
   const agent = await getAgent(workspaceId, agentId);
   if (!isWorkspaceOwnedHermesRuntime(agent, workspaceId, agentId, sandboxId)) {
-    return { status: 'error', error: 'Hermes runtime not found.' };
+    return { status: "error", error: "Hermes runtime not found." };
   }
 
   const runtime = agent.runtime;
@@ -1201,17 +1403,17 @@ async function runHermesRuntimeMaintenanceUnlocked<T>(
   const effective = effectiveStatus(deployment.id, deployment.status);
   const allowsRestoreRecovery = options.allowRestoreFailed ?? false;
   if (
-    (BLOCKED_SANDBOX_LIFECYCLE_STATES.has(deployment.status)
-      && !(allowsRestoreRecovery && deployment.status === 'restore_failed'))
-    || (BLOCKED_SANDBOX_LIFECYCLE_STATES.has(effective)
-      && !(allowsRestoreRecovery && effective === 'restore_failed'))
+    (BLOCKED_SANDBOX_LIFECYCLE_STATES.has(deployment.status) &&
+      !(allowsRestoreRecovery && deployment.status === "restore_failed")) ||
+    (BLOCKED_SANDBOX_LIFECYCLE_STATES.has(effective) &&
+      !(allowsRestoreRecovery && effective === "restore_failed"))
   ) {
-    return { status: 'error', error: SANDBOX_LIFECYCLE_ERROR };
+    return { status: "error", error: SANDBOX_LIFECYCLE_ERROR };
   }
 
   const quiesce = options.quiesce ?? false;
-  const operationStatus = options.operationStatus ?? 'copying';
-  const wasActive = effective === 'running' || effective === 'provisioning';
+  const operationStatus = options.operationStatus ?? "copying";
+  const wasActive = effective === "running" || effective === "provisioning";
   const originalDeploymentStatus = deployment.status;
   const originalRuntimeStatus = runtime.status;
   let resumeAllowed = true;
@@ -1223,8 +1425,12 @@ async function runHermesRuntimeMaintenanceUnlocked<T>(
     deploymentId: deployment.id,
     volumeName: sandboxVolumeName(runtime.sandboxId),
     wasActive,
-    requestSync: () => { syncAfter = true; },
-    preventResume: () => { resumeAllowed = false; },
+    requestSync: () => {
+      syncAfter = true;
+    },
+    preventResume: () => {
+      resumeAllowed = false;
+    },
   };
   let maintenancePrepared = false;
   let quiesceAttempted = false;
@@ -1239,7 +1445,7 @@ async function runHermesRuntimeMaintenanceUnlocked<T>(
           where: {
             id: deployment.id,
             workspaceId,
-            source: 'sandbox',
+            source: "sandbox",
             status: originalDeploymentStatus,
           },
           data: { status: operationStatus },
@@ -1256,7 +1462,9 @@ async function runHermesRuntimeMaintenanceUnlocked<T>(
         }),
       ]);
       if (deploymentUpdate.count !== 1 || runtimeUpdate.count !== 1) {
-        throw new Error('The Hermes runtime changed before its volume operation could begin.');
+        throw new Error(
+          "The Hermes runtime changed before its volume operation could begin.",
+        );
       }
       maintenancePrepared = true;
       dashboardReadyCache().delete(deployment.id);
@@ -1281,7 +1489,9 @@ async function runHermesRuntimeMaintenanceUnlocked<T>(
         data: { configHash: null, configVersion: 0, lastError: null },
       });
       if (invalidated.count !== 1) {
-        throw new Error('The Hermes runtime changed before its restored volume could be projected.');
+        throw new Error(
+          "The Hermes runtime changed before its restored volume could be projected.",
+        );
       }
     }
     if (options.reprojectAfter || syncAfter) {
@@ -1290,7 +1500,7 @@ async function runHermesRuntimeMaintenanceUnlocked<T>(
       resumeAllowed = false;
       const synced = await syncHermesRuntimeUnlocked(workspaceId, agentId, {
         start: wasActive,
-        allowRestoring: operationStatus === 'restoring',
+        allowRestoring: operationStatus === "restoring",
         preserveStoppedWhenNotStarting: true,
       });
       if (synced.error) throw new Error(synced.error);
@@ -1298,47 +1508,58 @@ async function runHermesRuntimeMaintenanceUnlocked<T>(
     }
 
     completed = true;
-    result = { status: 'completed', data };
+    result = { status: "completed", data };
   } catch (error) {
-    result = { status: 'error', error: copyErrorMessage(error) };
+    result = { status: "error", error: copyErrorMessage(error) };
   } finally {
     if (quiesce && !reprojected && resumeAllowed) {
       if (wasActive && quiesceAttempted) {
         try {
           await startHermesProcess(workspaceId, agentId, deployment);
           await updateRuntimeState(workspaceId, runtime.id, {
-            status: 'provisioning',
+            status: "provisioning",
             lastError: null,
           });
         } catch (error) {
-          const message = `The Hermes runtime could not be restarted after a volume operation: ${copyErrorMessage(error)}`
-            .slice(0, 4000);
+          const message =
+            `The Hermes runtime could not be restarted after a volume operation: ${copyErrorMessage(error)}`.slice(
+              0,
+              4000,
+            );
           await Promise.all([
-            db.deployment.updateMany({
-              where: { id: deployment.id, workspaceId, source: 'sandbox' },
-              data: { status: 'error' },
-            }).catch(() => undefined),
+            db.deployment
+              .updateMany({
+                where: { id: deployment.id, workspaceId, source: "sandbox" },
+                data: { status: "error" },
+              })
+              .catch(() => undefined),
             updateRuntimeState(workspaceId, runtime.id, {
-              status: 'error',
+              status: "error",
               lastError: message,
             }).catch(() => undefined),
           ]);
-          result = { status: 'error', error: message };
+          result = { status: "error", error: message };
         }
       } else if (!wasActive) {
         // On success a deliberately stopped runtime stays stopped. On a safe
         // failed restore/snapshot, return to the state that preceded the
         // maintenance marker. Callers that could not restore a safe volume use
         // preventResume() and persist restore_failed/cleanup_required instead.
-        const deploymentStatus = completed ? 'stopped' : originalDeploymentStatus;
+        const deploymentStatus = completed
+          ? "stopped"
+          : originalDeploymentStatus;
         const runtimeStatus = completed
-          ? agent.modelProviders.length > 0 ? 'stopped' : 'setup_required'
+          ? agent.modelProviders.length > 0
+            ? "stopped"
+            : "setup_required"
           : originalRuntimeStatus;
         await Promise.all([
-          db.deployment.updateMany({
-            where: { id: deployment.id, workspaceId, source: 'sandbox' },
-            data: { status: deploymentStatus },
-          }).catch(() => undefined),
+          db.deployment
+            .updateMany({
+              where: { id: deployment.id, workspaceId, source: "sandbox" },
+              data: { status: deploymentStatus },
+            })
+            .catch(() => undefined),
           updateRuntimeState(workspaceId, runtime.id, {
             status: runtimeStatus,
             lastError: completed ? null : runtime.lastError,
@@ -1346,10 +1567,12 @@ async function runHermesRuntimeMaintenanceUnlocked<T>(
         ]);
       } else if (!quiesceAttempted && maintenancePrepared) {
         await Promise.all([
-          db.deployment.updateMany({
-            where: { id: deployment.id, workspaceId, source: 'sandbox' },
-            data: { status: originalDeploymentStatus },
-          }).catch(() => undefined),
+          db.deployment
+            .updateMany({
+              where: { id: deployment.id, workspaceId, source: "sandbox" },
+              data: { status: originalDeploymentStatus },
+            })
+            .catch(() => undefined),
           updateRuntimeState(workspaceId, runtime.id, {
             status: originalRuntimeStatus,
           }).catch(() => undefined),
@@ -1357,7 +1580,7 @@ async function runHermesRuntimeMaintenanceUnlocked<T>(
       }
     }
   }
-  return result!;
+  return result;
 }
 
 /**
@@ -1376,8 +1599,9 @@ export async function copyHermesRuntimeVolume<T = undefined>(
   afterCopy?: () => Promise<T>,
 ): Promise<HermesRuntimeVolumeCopyResult<T>> {
   const invalid: HermesRuntimeVolumeCopyResult<T> = {
-    status: 'error' as const,
-    error: 'Source and target must be distinct Hermes agents in this workspace.',
+    status: "error" as const,
+    error:
+      "Source and target must be distinct Hermes agents in this workspace.",
   };
   if (sourceAgentId === targetAgentId) return invalid;
 
@@ -1395,7 +1619,13 @@ export async function copyHermesRuntimeVolume<T = undefined>(
       sourceAgentId,
       targetAgentId,
       invalid,
-      () => copyHermesRuntimeVolumeUnlocked(workspaceId, sourceAgentId, targetAgentId, afterCopy),
+      () =>
+        copyHermesRuntimeVolumeUnlocked(
+          workspaceId,
+          sourceAgentId,
+          targetAgentId,
+          afterCopy,
+        ),
     );
   } finally {
     releaseCopyLeases();
@@ -1415,62 +1645,76 @@ async function copyHermesRuntimeVolumeUnlocked<T>(
   const sourceRuntime = sourceAgent?.runtime;
   const targetRuntime = targetAgent?.runtime;
   if (
-    !sourceAgent
-    || !targetAgent
-    || !sourceRuntime
-    || !targetRuntime
-    || sourceAgent.workspaceId !== workspaceId
-    || targetAgent.workspaceId !== workspaceId
-    || sourceRuntime.workspaceId !== workspaceId
-    || targetRuntime.workspaceId !== workspaceId
-    || sourceRuntime.kind !== HERMES_RUNTIME_KIND
-    || targetRuntime.kind !== HERMES_RUNTIME_KIND
-    || sourceRuntime.sandbox.workspaceId !== workspaceId
-    || targetRuntime.sandbox.workspaceId !== workspaceId
-    || sourceRuntime.sandbox.deployment.workspaceId !== workspaceId
-    || targetRuntime.sandbox.deployment.workspaceId !== workspaceId
-    || sourceRuntime.sandbox.deployment.source !== 'sandbox'
-    || targetRuntime.sandbox.deployment.source !== 'sandbox'
+    !sourceAgent ||
+    !targetAgent ||
+    !sourceRuntime ||
+    !targetRuntime ||
+    sourceAgent.workspaceId !== workspaceId ||
+    targetAgent.workspaceId !== workspaceId ||
+    sourceRuntime.workspaceId !== workspaceId ||
+    targetRuntime.workspaceId !== workspaceId ||
+    sourceRuntime.kind !== HERMES_RUNTIME_KIND ||
+    targetRuntime.kind !== HERMES_RUNTIME_KIND ||
+    sourceRuntime.sandbox.workspaceId !== workspaceId ||
+    targetRuntime.sandbox.workspaceId !== workspaceId ||
+    sourceRuntime.sandbox.deployment.workspaceId !== workspaceId ||
+    targetRuntime.sandbox.deployment.workspaceId !== workspaceId ||
+    sourceRuntime.sandbox.deployment.source !== "sandbox" ||
+    targetRuntime.sandbox.deployment.source !== "sandbox"
   ) {
     return {
-      status: 'error',
-      error: 'Source and target must be workspace-owned Hermes runtimes.',
+      status: "error",
+      error: "Source and target must be workspace-owned Hermes runtimes.",
     };
   }
 
   const sourceDeployment = sourceRuntime.sandbox.deployment;
   const targetDeployment = targetRuntime.sandbox.deployment;
-  const sourceStatus = effectiveStatus(sourceDeployment.id, sourceDeployment.status);
-  const targetStatus = effectiveStatus(targetDeployment.id, targetDeployment.status);
-  if (BLOCKED_SANDBOX_LIFECYCLE_STATES.has(sourceDeployment.status)
-    || BLOCKED_SANDBOX_LIFECYCLE_STATES.has(sourceStatus)) {
-    return { status: 'error', error: SANDBOX_LIFECYCLE_ERROR };
+  const sourceStatus = effectiveStatus(
+    sourceDeployment.id,
+    sourceDeployment.status,
+  );
+  const targetStatus = effectiveStatus(
+    targetDeployment.id,
+    targetDeployment.status,
+  );
+  if (
+    BLOCKED_SANDBOX_LIFECYCLE_STATES.has(sourceDeployment.status) ||
+    BLOCKED_SANDBOX_LIFECYCLE_STATES.has(sourceStatus)
+  ) {
+    return { status: "error", error: SANDBOX_LIFECYCLE_ERROR };
   }
-  if (BLOCKED_SANDBOX_LIFECYCLE_STATES.has(targetDeployment.status)
-    || BLOCKED_SANDBOX_LIFECYCLE_STATES.has(targetStatus)) {
-    return { status: 'error', error: 'The target Hermes sandbox has a pending lifecycle operation.' };
+  if (
+    BLOCKED_SANDBOX_LIFECYCLE_STATES.has(targetDeployment.status) ||
+    BLOCKED_SANDBOX_LIFECYCLE_STATES.has(targetStatus)
+  ) {
+    return {
+      status: "error",
+      error: "The target Hermes sandbox has a pending lifecycle operation.",
+    };
   }
 
   // The operation is intentionally destructive to its destination volume on a
   // failed copy. Only accept an untouched runtime created for this clone.
   if (
-    targetDeployment.status !== 'stopped'
-    || targetStatus !== 'stopped'
-    || targetRuntime.configHash !== null
-    || targetRuntime.lastSyncedAt !== null
+    targetDeployment.status !== "stopped" ||
+    targetStatus !== "stopped" ||
+    targetRuntime.configHash !== null ||
+    targetRuntime.lastSyncedAt !== null
   ) {
     return {
-      status: 'error',
-      error: 'The target Hermes runtime must be newly created and stopped before copying its volume.',
+      status: "error",
+      error:
+        "The target Hermes runtime must be newly created and stopped before copying its volume.",
     };
   }
 
-  const sourceWasLive = sourceStatus === 'running' || sourceStatus === 'provisioning';
+  const sourceWasLive =
+    sourceStatus === "running" || sourceStatus === "provisioning";
   const sourceVolume = sandboxVolumeName(sourceRuntime.sandboxId);
   const targetVolume = sandboxVolumeName(targetRuntime.sandboxId);
-  const targetRuntimeStatus = targetAgent.modelProviders.length > 0
-    ? 'stopped'
-    : 'setup_required';
+  const targetRuntimeStatus =
+    targetAgent.modelProviders.length > 0 ? "stopped" : "setup_required";
   let sourceQuiesceAttempted = false;
   let result: HermesRuntimeVolumeCopyResult<T>;
 
@@ -1480,10 +1724,10 @@ async function copyHermesRuntimeVolumeUnlocked<T>(
         where: {
           id: targetDeployment.id,
           workspaceId,
-          source: 'sandbox',
-          status: 'stopped',
+          source: "sandbox",
+          status: "stopped",
         },
-        data: { status: 'copying' },
+        data: { status: "copying" },
       }),
       db.agentRuntime.updateMany({
         where: {
@@ -1493,11 +1737,13 @@ async function copyHermesRuntimeVolumeUnlocked<T>(
           sandboxId: targetRuntime.sandboxId,
           kind: HERMES_RUNTIME_KIND,
         },
-        data: { status: 'copying', lastError: null },
+        data: { status: "copying", lastError: null },
       }),
     ]);
     if (targetDeploymentUpdate.count !== 1 || targetRuntimeUpdate.count !== 1) {
-      throw new Error('The target Hermes runtime changed before its volume could be copied.');
+      throw new Error(
+        "The target Hermes runtime changed before its volume could be copied.",
+      );
     }
     const sourceRuntimeUpdate = await db.agentRuntime.updateMany({
       where: {
@@ -1507,10 +1753,12 @@ async function copyHermesRuntimeVolumeUnlocked<T>(
         sandboxId: sourceRuntime.sandboxId,
         kind: HERMES_RUNTIME_KIND,
       },
-      data: { status: 'copying' },
+      data: { status: "copying" },
     });
     if (sourceRuntimeUpdate.count !== 1) {
-      throw new Error('The source Hermes runtime changed before its volume could be copied.');
+      throw new Error(
+        "The source Hermes runtime changed before its volume could be copied.",
+      );
     }
 
     // From this point the source runtime is marked unavailable even if a stop
@@ -1518,7 +1766,7 @@ async function copyHermesRuntimeVolumeUnlocked<T>(
     sourceQuiesceAttempted = true;
     // Persist the maintenance state so requests from another app process are
     // rejected while this process holds the in-memory paired runtime locks.
-    await killProcess(sourceDeployment.id, { finalStatus: 'copying' });
+    await killProcess(sourceDeployment.id, { finalStatus: "copying" });
     await stopDockerSandboxContainer(sourceRuntime.sandboxId);
     try {
       await copyDockerVolume(sourceVolume, targetVolume);
@@ -1532,8 +1780,8 @@ async function copyHermesRuntimeVolumeUnlocked<T>(
 
     const [targetDeploymentReady, targetRuntimeReady] = await Promise.all([
       db.deployment.updateMany({
-        where: { id: targetDeployment.id, workspaceId, source: 'sandbox' },
-        data: { status: 'stopped' },
+        where: { id: targetDeployment.id, workspaceId, source: "sandbox" },
+        data: { status: "stopped" },
       }),
       db.agentRuntime.updateMany({
         where: { id: targetRuntime.id, workspaceId, agentId: targetAgentId },
@@ -1548,78 +1796,106 @@ async function copyHermesRuntimeVolumeUnlocked<T>(
       }),
     ]);
     if (targetDeploymentReady.count !== 1 || targetRuntimeReady.count !== 1) {
-      throw new Error('The copied Hermes runtime could not be finalized.');
+      throw new Error("The copied Hermes runtime could not be finalized.");
     }
-    result = data === undefined ? { status: 'copied' } : { status: 'copied', data };
+    result =
+      data === undefined ? { status: "copied" } : { status: "copied", data };
   } catch (error) {
     const copyError = copyErrorMessage(error);
     let cleanupError: string | null = null;
     try {
-      await removeDockerSandboxRuntimeStrict(targetRuntime.sandboxId, targetVolume);
+      await removeDockerSandboxRuntimeStrict(
+        targetRuntime.sandboxId,
+        targetVolume,
+      );
     } catch (cleanup) {
       cleanupError = copyErrorMessage(cleanup);
     }
     const message = cleanupError
-      ? `${copyError} Cleanup of the partial target volume also failed: ${cleanupError}`.slice(0, 4000)
+      ? `${copyError} Cleanup of the partial target volume also failed: ${cleanupError}`.slice(
+          0,
+          4000,
+        )
       : copyError;
     const cleanupSucceeded = cleanupError === null;
     await Promise.all([
-      db.deployment.updateMany({
-        where: { id: targetDeployment.id, workspaceId, source: 'sandbox' },
-        data: { status: cleanupSucceeded ? 'stopped' : 'copy_failed' },
-      }).catch(() => undefined),
-      db.agentRuntime.updateMany({
-        where: { id: targetRuntime.id, workspaceId, agentId: targetAgentId },
-        data: cleanupSucceeded
-          ? {
-              status: targetRuntimeStatus,
-              configHash: null,
-              lastSyncedAt: null,
-              lastStartedAt: null,
-              lastError: message,
-            }
-          : { status: 'error', lastError: message },
-      }).catch(() => undefined),
+      db.deployment
+        .updateMany({
+          where: { id: targetDeployment.id, workspaceId, source: "sandbox" },
+          data: { status: cleanupSucceeded ? "stopped" : "copy_failed" },
+        })
+        .catch(() => undefined),
+      db.agentRuntime
+        .updateMany({
+          where: { id: targetRuntime.id, workspaceId, agentId: targetAgentId },
+          data: cleanupSucceeded
+            ? {
+                status: targetRuntimeStatus,
+                configHash: null,
+                lastSyncedAt: null,
+                lastStartedAt: null,
+                lastError: message,
+              }
+            : { status: "error", lastError: message },
+        })
+        .catch(() => undefined),
     ]);
-    result = { status: 'error', error: message };
+    result = { status: "error", error: message };
   }
 
   if (!sourceQuiesceAttempted) return result;
   if (!sourceWasLive) {
-    const sourceRuntimeStatus = sourceRuntime.status === 'setup_required' || sourceRuntime.status === 'error'
-      ? sourceRuntime.status
-      : 'stopped';
+    const sourceRuntimeStatus =
+      sourceRuntime.status === "setup_required" ||
+      sourceRuntime.status === "error"
+        ? sourceRuntime.status
+        : "stopped";
     await Promise.all([
-      db.deployment.updateMany({
-        where: { id: sourceDeployment.id, workspaceId, source: 'sandbox' },
-        data: { status: sourceDeployment.status === 'error' ? 'error' : 'stopped' },
+      db.deployment
+        .updateMany({
+          where: { id: sourceDeployment.id, workspaceId, source: "sandbox" },
+          data: {
+            status: sourceDeployment.status === "error" ? "error" : "stopped",
+          },
+        })
+        .catch(() => undefined),
+      updateRuntimeState(workspaceId, sourceRuntime.id, {
+        status: sourceRuntimeStatus,
       }).catch(() => undefined),
-      updateRuntimeState(workspaceId, sourceRuntime.id, { status: sourceRuntimeStatus }).catch(() => undefined),
     ]);
     return result;
   }
   try {
     await startHermesProcess(workspaceId, sourceAgentId, sourceDeployment);
     await updateRuntimeState(workspaceId, sourceRuntime.id, {
-      status: 'provisioning',
+      status: "provisioning",
       lastError: null,
     }).catch(() => undefined);
   } catch (error) {
     const restartError = copyErrorMessage(error);
-    const message = `The source Hermes runtime could not be restarted after a volume copy: ${restartError}`
-      .slice(0, 4000);
+    const message =
+      `The source Hermes runtime could not be restarted after a volume copy: ${restartError}`.slice(
+        0,
+        4000,
+      );
     await Promise.all([
-      db.deployment.updateMany({
-        where: { id: sourceDeployment.id, workspaceId, source: 'sandbox' },
-        data: { status: 'error' },
-      }).catch(() => undefined),
+      db.deployment
+        .updateMany({
+          where: { id: sourceDeployment.id, workspaceId, source: "sandbox" },
+          data: { status: "error" },
+        })
+        .catch(() => undefined),
       updateRuntimeState(workspaceId, sourceRuntime.id, {
-        status: 'error',
+        status: "error",
         lastError: message,
       }).catch(() => undefined),
     ]);
-    if (result.status === 'copied') return { ...result, sourceRestartError: message };
-    return { status: 'error', error: `${result.error} ${message}`.slice(0, 4000) };
+    if (result.status === "copied")
+      return { ...result, sourceRestartError: message };
+    return {
+      status: "error",
+      error: `${result.error} ${message}`.slice(0, 4000),
+    };
   }
   return result;
 }
@@ -1641,17 +1917,24 @@ export async function upgradeHermesRuntime(
   agentId: string,
   rawImage: unknown,
 ): Promise<HermesRuntimeUpgradeResult> {
-  const image = String(rawImage ?? '').trim();
+  const image = String(rawImage ?? "").trim();
   if (!isValidHermesImage(image)) {
-    return { status: 'error', error: 'Enter a valid Docker image reference.' };
+    return { status: "error", error: "Enter a valid Docker image reference." };
   }
 
   const current = await getAgent(workspaceId, agentId);
   if (!current?.runtime || current.runtime.kind !== HERMES_RUNTIME_KIND) {
-    return { status: 'error', error: 'Hermes runtime not found.' };
+    return { status: "error", error: "Hermes runtime not found." };
   }
-  if (BLOCKED_SANDBOX_LIFECYCLE_STATES.has(current.runtime.sandbox.deployment.status)) {
-    return { status: current.runtime.sandbox.deployment.status, error: SANDBOX_LIFECYCLE_ERROR };
+  if (
+    BLOCKED_SANDBOX_LIFECYCLE_STATES.has(
+      current.runtime.sandbox.deployment.status,
+    )
+  ) {
+    return {
+      status: current.runtime.sandbox.deployment.status,
+      error: SANDBOX_LIFECYCLE_ERROR,
+    };
   }
 
   try {
@@ -1660,17 +1943,20 @@ export async function upgradeHermesRuntime(
     await pullDockerImage(image, DOCKER_TIMEOUT_MS);
   } catch (error) {
     return {
-      status: 'error',
+      status: "error",
       error: `Could not pull Hermes image: ${copyErrorMessage(error)}`,
     };
   }
 
-  const releaseUpgradeLease = await acquireHermesRuntimeUpgradeLease(workspaceId, agentId);
+  const releaseUpgradeLease = await acquireHermesRuntimeUpgradeLease(
+    workspaceId,
+    agentId,
+  );
   try {
     return await enqueueHermesOperation(
       workspaceId,
       agentId,
-      { status: 'error', error: SANDBOX_LIFECYCLE_ERROR },
+      { status: "error", error: SANDBOX_LIFECYCLE_ERROR },
       () => upgradeHermesRuntimeUnlocked(workspaceId, agentId, image),
       { bypassRuntimeAccessGate: true },
     );
@@ -1686,7 +1972,7 @@ async function upgradeHermesRuntimeUnlocked(
 ): Promise<HermesRuntimeUpgradeResult> {
   const agent = await getAgent(workspaceId, agentId);
   if (!agent?.runtime || agent.runtime.kind !== HERMES_RUNTIME_KIND) {
-    return { status: 'error', error: 'Hermes runtime not found.' };
+    return { status: "error", error: "Hermes runtime not found." };
   }
   const runtime = agent.runtime;
   const deployment = runtime.sandbox.deployment;
@@ -1708,7 +1994,7 @@ async function upgradeHermesRuntimeUnlocked(
     // Forcefully tear down the old supervisor child and its container after
     // all image references point at the new image. The named data volume is
     // intentionally retained, then `sync` projects managed files into it.
-    await killProcess(deployment.id, { finalStatus: 'upgrading' });
+    await killProcess(deployment.id, { finalStatus: "upgrading" });
     await removeHermesContainerStrict(runtime.sandboxId);
 
     const synced = await syncHermesRuntimeUnlocked(workspaceId, agentId, {
@@ -1719,15 +2005,19 @@ async function upgradeHermesRuntimeUnlocked(
     const message = copyErrorMessage(error);
     if (upgradePending) {
       await Promise.all([
-        updateRuntimeState(workspaceId, runtime.id, { status: 'error', lastError: message })
-          .catch(() => undefined),
-        db.deployment.updateMany({
-          where: { id: deployment.id, workspaceId, source: 'sandbox' },
-          data: { status: 'error' },
+        updateRuntimeState(workspaceId, runtime.id, {
+          status: "error",
+          lastError: message,
         }).catch(() => undefined),
+        db.deployment
+          .updateMany({
+            where: { id: deployment.id, workspaceId, source: "sandbox" },
+            data: { status: "error" },
+          })
+          .catch(() => undefined),
       ]);
     }
-    return { status: 'error', error: message };
+    return { status: "error", error: message };
   }
 }
 
@@ -1759,7 +2049,7 @@ export async function syncHermesRuntime(
   return enqueueHermesOperation(
     workspaceId,
     agentId,
-    { status: 'deleting', error: SANDBOX_LIFECYCLE_ERROR },
+    { status: "deleting", error: SANDBOX_LIFECYCLE_ERROR },
     () => syncHermesRuntimeUnlocked(workspaceId, agentId, options),
   );
 }
@@ -1771,15 +2061,15 @@ async function syncHermesRuntimeUnlocked(
 ): Promise<{ status: string; error?: string }> {
   const agent = await getAgent(workspaceId, agentId);
   if (!agent?.runtime || agent.runtime.kind !== HERMES_RUNTIME_KIND) {
-    return { status: 'native' };
+    return { status: "native" };
   }
   const runtime = agent.runtime;
   const deploymentId = runtime.sandbox.deploymentId;
   const deploymentStatus = runtime.sandbox.deployment.status;
   if (
-    BLOCKED_SANDBOX_LIFECYCLE_STATES.has(deploymentStatus)
-    && !(options.allowUpgrading && deploymentStatus === 'upgrading')
-    && !(options.allowRestoring && deploymentStatus === 'restoring')
+    BLOCKED_SANDBOX_LIFECYCLE_STATES.has(deploymentStatus) &&
+    !(options.allowUpgrading && deploymentStatus === "upgrading") &&
+    !(options.allowRestoring && deploymentStatus === "restoring")
   ) {
     return { status: deploymentStatus, error: SANDBOX_LIFECYCLE_ERROR };
   }
@@ -1791,24 +2081,31 @@ async function syncHermesRuntimeUnlocked(
     options.signal?.throwIfAborted();
     const configured = agent.modelProviders.length > 0;
     if (
-      !options.force
-      && projection.configHash === runtime.configHash
-      && runtime.configVersion >= HERMES_CONFIG_VERSION
+      !options.force &&
+      projection.configHash === runtime.configHash &&
+      runtime.configVersion >= HERMES_CONFIG_VERSION
     ) {
       if (!configured || options.start === false) {
-        const status = configured ? 'stopped' : 'setup_required';
-        await updateRuntimeState(workspaceId, runtime.id, { status, lastError: null });
+        const status = configured ? "stopped" : "setup_required";
+        await updateRuntimeState(workspaceId, runtime.id, {
+          status,
+          lastError: null,
+        });
         return { status };
       }
       if (!livePort(deploymentId)) {
         options.signal?.throwIfAborted();
-        await startHermesProcess(workspaceId, agentId, runtime.sandbox.deployment);
+        await startHermesProcess(
+          workspaceId,
+          agentId,
+          runtime.sandbox.deployment,
+        );
         await updateRuntimeState(workspaceId, runtime.id, {
-          status: 'provisioning',
+          status: "provisioning",
           lastStartedAt: new Date(),
           lastError: null,
         });
-        return { status: 'provisioning' };
+        return { status: "provisioning" };
       }
       return { status: runtime.status };
     }
@@ -1816,11 +2113,12 @@ async function syncHermesRuntimeUnlocked(
     // Keep the durable maintenance marker through the projection. Otherwise
     // this second stop would briefly persist `stopped`, allowing unrelated
     // sandbox lifecycle work to enter while managed files are being replaced.
-    const preservedLifecycleStatus = options.allowUpgrading && deploymentStatus === 'upgrading'
-      ? 'upgrading'
-      : options.allowRestoring && deploymentStatus === 'restoring'
-        ? 'restoring'
-        : undefined;
+    const preservedLifecycleStatus =
+      options.allowUpgrading && deploymentStatus === "upgrading"
+        ? "upgrading"
+        : options.allowRestoring && deploymentStatus === "restoring"
+          ? "restoring"
+          : undefined;
     // Reject an explicitly ancient imported config before taking a currently
     // usable runtime down. Hermes deliberately retired those migrations, so
     // deleting or blindly bumping the version would risk corrupting channels
@@ -1850,9 +2148,15 @@ async function syncHermesRuntimeUnlocked(
     options.signal?.throwIfAborted();
 
     const nextStatus = configured
-      ? options.start !== false ? 'provisioning' : options.preserveStoppedWhenNotStarting ? 'stopped' : 'setup_required'
-      : 'setup_required';
-    const launchEnvironment = withoutHermesChannelEnv(readSandboxEnv(runtime.sandbox.config));
+      ? options.start !== false
+        ? "provisioning"
+        : options.preserveStoppedWhenNotStarting
+          ? "stopped"
+          : "setup_required"
+      : "setup_required";
+    const launchEnvironment = withoutHermesChannelEnv(
+      readSandboxEnv(runtime.sandbox.config),
+    );
     const launchInstallCfg = hermesInstallConfigWithImage({
       installCfg: runtime.sandbox.deployment.installCfg,
       image: runtime.image,
@@ -1870,13 +2174,17 @@ async function syncHermesRuntimeUnlocked(
         configVersion: HERMES_CONFIG_VERSION,
         configHash: projection.configHash,
         lastSyncedAt: new Date(),
-        lastStartedAt: configured && options.start !== false ? new Date() : runtime.lastStartedAt,
+        lastStartedAt:
+          configured && options.start !== false
+            ? new Date()
+            : runtime.lastStartedAt,
         lastError: null,
       }),
       db.deployment.updateMany({
         where: { id: deploymentId, workspaceId },
         data: {
-          status: configured && options.start !== false ? 'provisioning' : 'stopped',
+          status:
+            configured && options.start !== false ? "provisioning" : "stopped",
           installCfg: launchInstallCfg,
         },
       }),
@@ -1885,30 +2193,41 @@ async function syncHermesRuntimeUnlocked(
       // UI/database while leaving their effective values in Hermes' volume.
       db.sandbox.updateMany({
         where: { id: runtime.sandboxId, workspaceId },
-        data: { config: sandboxConfigWithEnv(runtime.sandbox.config, launchEnvironment) ?? {} },
+        data: {
+          config:
+            sandboxConfigWithEnv(runtime.sandbox.config, launchEnvironment) ??
+            {},
+        },
       }),
     ]);
 
     if (!configured || options.start === false) return { status: nextStatus };
     options.signal?.throwIfAborted();
     await startHermesProcess(workspaceId, agentId, runtime.sandbox.deployment);
-    return { status: 'provisioning' };
+    return { status: "provisioning" };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await Promise.all([
-      updateRuntimeState(workspaceId, runtime.id, { status: 'error', lastError: message.slice(0, 4000) }),
+      updateRuntimeState(workspaceId, runtime.id, {
+        status: "error",
+        lastError: message.slice(0, 4000),
+      }),
       db.deployment.updateMany({
         where: { id: deploymentId, workspaceId },
-        data: { status: 'error' },
+        data: { status: "error" },
       }),
     ]);
-    return { status: 'error', error: message };
+    return { status: "error", error: message };
   } finally {
-    if (projection) await rm(projection.directory, { recursive: true, force: true });
+    if (projection)
+      await rm(projection.directory, { recursive: true, force: true });
   }
 }
 
-async function abortableDelay(milliseconds: number, signal?: AbortSignal): Promise<void> {
+async function abortableDelay(
+  milliseconds: number,
+  signal?: AbortSignal,
+): Promise<void> {
   if (!signal) {
     await new Promise((resolve) => setTimeout(resolve, milliseconds));
     return;
@@ -1916,14 +2235,16 @@ async function abortableDelay(milliseconds: number, signal?: AbortSignal): Promi
   signal.throwIfAborted();
   await new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => {
-      signal.removeEventListener('abort', abort);
+      signal.removeEventListener("abort", abort);
       resolve();
     }, milliseconds);
     const abort = () => {
       clearTimeout(timer);
-      reject(signal.reason ?? new DOMException('Operation aborted.', 'AbortError'));
+      reject(
+        signal.reason ?? new DOMException("Operation aborted.", "AbortError"),
+      );
     };
-    signal.addEventListener('abort', abort, { once: true });
+    signal.addEventListener("abort", abort, { once: true });
   });
 }
 
@@ -1941,29 +2262,37 @@ async function waitForHermesHealth(
     if (port) {
       try {
         const timeoutSignal = AbortSignal.timeout(5_000);
-        const response = await fetch(`http://127.0.0.1:${port}/hermes/health/detailed`, {
-          signal: signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal,
-          cache: 'no-store',
-        });
+        const response = await fetch(
+          `http://127.0.0.1:${port}/hermes/health/detailed`,
+          {
+            signal: signal
+              ? AbortSignal.any([signal, timeoutSignal])
+              : timeoutSignal,
+            cache: "no-store",
+          },
+        );
         if (response.ok) {
-          const status = await response.json() as {
+          const status = (await response.json()) as {
             gateway_state?: unknown;
             pid?: unknown;
             exit_reason?: unknown;
           };
           latestHealth = {
-            gatewayState: typeof status.gateway_state === 'string' ? status.gateway_state : undefined,
-            pid: Number.isInteger(status.pid) && Number(status.pid) > 0
-              ? Number(status.pid)
-              : undefined,
-            exitReason: typeof status.exit_reason === 'string'
-              ? status.exit_reason.slice(0, 500)
-              : undefined,
+            gatewayState:
+              typeof status.gateway_state === "string"
+                ? status.gateway_state
+                : undefined,
+            pid:
+              Number.isInteger(status.pid) && Number(status.pid) > 0
+                ? Number(status.pid)
+                : undefined,
+            exitReason:
+              typeof status.exit_reason === "string"
+                ? status.exit_reason.slice(0, 500)
+                : undefined,
           };
-          if (
-            latestHealth.gatewayState === 'running'
-            && latestHealth.pid
-          ) return { port, health: latestHealth };
+          if (latestHealth.gatewayState === "running" && latestHealth.pid)
+            return { port, health: latestHealth };
         }
       } catch {
         signal?.throwIfAborted();
@@ -1977,9 +2306,11 @@ async function waitForHermesHealth(
           const response = await fetch(
             `http://127.0.0.1:${port}/hermes/control/gateway/default/up`,
             {
-              method: 'POST',
-              signal: signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal,
-              cache: 'no-store',
+              method: "POST",
+              signal: signal
+                ? AbortSignal.any([signal, timeoutSignal])
+                : timeoutSignal,
+              cache: "no-store",
             },
           );
           defaultUpRequested = response.ok;
@@ -1995,16 +2326,21 @@ async function waitForHermesHealth(
   return { health: latestHealth };
 }
 
-async function waitForHermesDashboard(deploymentId: string): Promise<number | null> {
+async function waitForHermesDashboard(
+  deploymentId: string,
+): Promise<number | null> {
   const deadline = Date.now() + 45_000;
   while (Date.now() < deadline) {
     const port = livePort(deploymentId);
     if (port) {
       try {
-        const response = await fetch(`http://127.0.0.1:${port}/hermes-dashboard/api/status`, {
-          signal: AbortSignal.timeout(5_000),
-          cache: 'no-store',
-        });
+        const response = await fetch(
+          `http://127.0.0.1:${port}/hermes-dashboard/api/status`,
+          {
+            signal: AbortSignal.timeout(5_000),
+            cache: "no-store",
+          },
+        );
         if (response.ok) return port;
       } catch {
         // The dashboard starts alongside the gateway and may need a few seconds.
@@ -2026,7 +2362,11 @@ export async function ensureHermesRuntimeReady(
     { error: SANDBOX_LIFECYCLE_ERROR },
     () => {
       options.signal?.throwIfAborted();
-      return ensureHermesRuntimeReadyUnlocked(workspaceId, agentId, options.signal);
+      return ensureHermesRuntimeReadyUnlocked(
+        workspaceId,
+        agentId,
+        options.signal,
+      );
     },
     { writeLease: options.writeLease },
   );
@@ -2040,13 +2380,17 @@ async function ensureHermesRuntimeReadyUnlocked(
   signal?.throwIfAborted();
   const agent = await getAgent(workspaceId, agentId);
   if (!agent?.runtime || agent.runtime.kind !== HERMES_RUNTIME_KIND) {
-    return { error: 'Hermes runtime is not configured.' };
+    return { error: "Hermes runtime is not configured." };
   }
-  if (BLOCKED_SANDBOX_LIFECYCLE_STATES.has(agent.runtime.sandbox.deployment.status)) {
+  if (
+    BLOCKED_SANDBOX_LIFECYCLE_STATES.has(
+      agent.runtime.sandbox.deployment.status,
+    )
+  ) {
     return { error: SANDBOX_LIFECYCLE_ERROR };
   }
   if (agent.modelProviders.length === 0) {
-    return { error: 'This Hermes agent has no model provider configured.' };
+    return { error: "This Hermes agent has no model provider configured." };
   }
 
   const deploymentId = agent.runtime.sandbox.deploymentId;
@@ -2060,15 +2404,24 @@ async function ensureHermesRuntimeReadyUnlocked(
   }
   const ready = await waitForHermesHealth(deploymentId, signal);
   if (!ready.port) {
-    const detail = ready.health?.exitReason
-      || (ready.health?.gatewayState ? `gateway state: ${ready.health.gatewayState}` : null);
+    const detail =
+      ready.health?.exitReason ||
+      (ready.health?.gatewayState
+        ? `gateway state: ${ready.health.gatewayState}`
+        : null);
     const message = detail
       ? `Hermes gateway did not become healthy within 45 seconds (${detail}).`
-      : 'Hermes gateway did not become healthy within 45 seconds.';
-    await updateRuntimeState(workspaceId, agent.runtime.id, { status: 'error', lastError: message });
+      : "Hermes gateway did not become healthy within 45 seconds.";
+    await updateRuntimeState(workspaceId, agent.runtime.id, {
+      status: "error",
+      lastError: message,
+    });
     return { error: message };
   }
-  await updateRuntimeState(workspaceId, agent.runtime.id, { status: 'running', lastError: null });
+  await updateRuntimeState(workspaceId, agent.runtime.id, {
+    status: "running",
+    lastError: null,
+  });
   return { port: ready.port };
 }
 
@@ -2090,9 +2443,13 @@ async function ensureHermesDashboardReadyUnlocked(
 ): Promise<{ port?: number; error?: string }> {
   const agent = await getAgent(workspaceId, agentId);
   if (!agent?.runtime || agent.runtime.kind !== HERMES_RUNTIME_KIND) {
-    return { error: 'Hermes runtime is not configured.' };
+    return { error: "Hermes runtime is not configured." };
   }
-  if (BLOCKED_SANDBOX_LIFECYCLE_STATES.has(agent.runtime.sandbox.deployment.status)) {
+  if (
+    BLOCKED_SANDBOX_LIFECYCLE_STATES.has(
+      agent.runtime.sandbox.deployment.status,
+    )
+  ) {
     return { error: SANDBOX_LIFECYCLE_ERROR };
   }
 
@@ -2100,9 +2457,9 @@ async function ensureHermesDashboardReadyUnlocked(
   const live = livePort(deploymentId);
   const cached = dashboardReadyCache().get(deploymentId);
   if (
-    live
-    && cached?.port === live
-    && Date.now() - cached.checkedAt < DASHBOARD_READY_CACHE_MS
+    live &&
+    cached?.port === live &&
+    Date.now() - cached.checkedAt < DASHBOARD_READY_CACHE_MS
   ) {
     return { port: live };
   }
@@ -2118,12 +2475,15 @@ async function ensureHermesDashboardReadyUnlocked(
     port = await waitForHermesDashboard(deploymentId);
   }
   if (!port) {
-    const message = 'Hermes dashboard did not become healthy within 45 seconds.';
-    await updateRuntimeState(workspaceId, agent.runtime.id, { lastError: message });
+    const message =
+      "Hermes dashboard did not become healthy within 45 seconds.";
+    await updateRuntimeState(workspaceId, agent.runtime.id, {
+      lastError: message,
+    });
     return { error: message };
   }
   await updateRuntimeState(workspaceId, agent.runtime.id, {
-    ...(agent.modelProviders.length > 0 ? { status: 'running' } : {}),
+    ...(agent.modelProviders.length > 0 ? { status: "running" } : {}),
     lastError: null,
   });
   dashboardReadyCache().set(deploymentId, { port, checkedAt: Date.now() });
@@ -2131,33 +2491,46 @@ async function ensureHermesDashboardReadyUnlocked(
 }
 
 export async function stopHermesRuntime(workspaceId: string, agentId: string) {
-  await enqueueHermesOperation(
-    workspaceId,
-    agentId,
-    undefined,
-    () => stopHermesRuntimeUnlocked(workspaceId, agentId),
+  await enqueueHermesOperation(workspaceId, agentId, undefined, () =>
+    stopHermesRuntimeUnlocked(workspaceId, agentId),
   );
 }
 
 async function stopHermesRuntimeUnlocked(workspaceId: string, agentId: string) {
   const agent = await getAgent(workspaceId, agentId);
   if (!agent?.runtime || agent.runtime.kind !== HERMES_RUNTIME_KIND) return;
-  if (BLOCKED_SANDBOX_LIFECYCLE_STATES.has(agent.runtime.sandbox.deployment.status)) return;
+  if (
+    BLOCKED_SANDBOX_LIFECYCLE_STATES.has(
+      agent.runtime.sandbox.deployment.status,
+    )
+  )
+    return;
   const deploymentId = agent.runtime.sandbox.deploymentId;
   dashboardReadyCache().delete(deploymentId);
   try {
     await stopProcess(deploymentId);
     await stopDockerSandboxContainer(agent.runtime.sandboxId);
-    await updateRuntimeState(workspaceId, agent.runtime.id, { status: 'stopped', lastError: null });
+    await updateRuntimeState(workspaceId, agent.runtime.id, {
+      status: "stopped",
+      lastError: null,
+    });
   } catch (error) {
-    const message = `Could not stop the Hermes runtime: ${copyErrorMessage(error)}`.slice(0, 4000);
+    const message =
+      `Could not stop the Hermes runtime: ${copyErrorMessage(error)}`.slice(
+        0,
+        4000,
+      );
     await Promise.all([
-      updateRuntimeState(workspaceId, agent.runtime.id, { status: 'error', lastError: message })
-        .catch(() => undefined),
-      db.deployment.updateMany({
-        where: { id: deploymentId, workspaceId, source: 'sandbox' },
-        data: { status: 'error' },
+      updateRuntimeState(workspaceId, agent.runtime.id, {
+        status: "error",
+        lastError: message,
       }).catch(() => undefined),
+      db.deployment
+        .updateMany({
+          where: { id: deploymentId, workspaceId, source: "sandbox" },
+          data: { status: "error" },
+        })
+        .catch(() => undefined),
     ]);
     throw new Error(message, { cause: error });
   }
@@ -2170,19 +2543,20 @@ export async function cleanupHermesRuntime(
 ): Promise<boolean> {
   return enqueueHermesOperation(workspaceId, agentId, false, async () => {
     const agent = await getAgent(workspaceId, agentId);
-    if (!agent?.runtime || agent.runtime.kind !== HERMES_RUNTIME_KIND) return true;
+    if (!agent?.runtime || agent.runtime.kind !== HERMES_RUNTIME_KIND)
+      return true;
     dashboardReadyCache().delete(agent.runtime.sandbox.deploymentId);
     await killProcess(agent.runtime.sandbox.deploymentId, {
       preventRestart: true,
-      finalStatus: 'deleting',
+      finalStatus: "deleting",
     });
     await db.deployment.updateMany({
       where: {
         id: agent.runtime.sandbox.deploymentId,
         workspaceId,
-        source: 'sandbox',
+        source: "sandbox",
       },
-      data: { status: 'deleting' },
+      data: { status: "deleting" },
     });
     await removeDockerSandboxRuntimeStrict(
       agent.runtime.sandboxId,

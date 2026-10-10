@@ -20,6 +20,8 @@ Update completion requires the target version, a replacement process identity, a
 
 Docker/Coolify health checks must use `/api/v1/readiness`, not `/api/v1/health`, and allow a 60-second stop grace period (`docker restart --timeout 60` for manual restarts). The release archive does not change an existing container's health-check or stop-timeout configuration: update the deployment definition and apply it during a controlled redeploy. Do not recreate an in-place-updated container from its old image without first preserving the running release.
 
+The Docker build and runtime stages share `python-runtime-base` so Prisma assembly detects the same OpenSSL ABI used at startup. Keep these system libraries aligned; otherwise the image can bundle an OpenSSL 1.1 engine while production needs OpenSSL 3 and attempts a network download. Verify the final image's `prisma migrate deploy` against an isolated backup database without outbound network access before rollout.
+
 The managed launcher loads `abort-signal.cjs` before Next. It briefly adds/removes an abort listener on each native `AbortSignal.any()` result to start weak source following: Node 24.21 otherwise retains nested timeout composites after expiry, eventually failing MCP/channel requests with `Set maximum size exceeded`. Keep this file beside the embedded `server.cjs` when assembling a release. Verify a future Node upgrade with `pnpm vitest run tests/unit/abort-signal.test.ts` before removing the workaround. An already exhausted process needs a controlled restart; restarting only an MCP bridge does not clear the app's signal registry.
 
 ## One runtime owner

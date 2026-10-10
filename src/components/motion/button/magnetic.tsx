@@ -12,7 +12,10 @@ export interface MagneticButtonProps extends ButtonProps {
   magneticClassName?: string;
 }
 
-export const MagneticButton = forwardRef<HTMLButtonElement, MagneticButtonProps>(function MagneticButton(
+export const MagneticButton = forwardRef<
+  HTMLButtonElement,
+  MagneticButtonProps
+>(function MagneticButton(
   { strength = 0.25, magneticClassName, children, ...rest },
   ref,
 ) {

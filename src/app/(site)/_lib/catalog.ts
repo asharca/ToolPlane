@@ -1,22 +1,22 @@
-import 'server-only';
-import { unstable_cache } from 'next/cache';
-import { db } from '@/lib/db';
-import { getHomeSections } from '@/lib/queries/home';
+import "server-only";
+import { unstable_cache } from "next/cache";
+import { db } from "@/lib/db";
+import { getHomeSections } from "@/lib/queries/home";
 import {
   getRelatedServers,
   getServer,
   listServers,
-} from '@/lib/queries/servers';
-import { getClient, listClients } from '@/lib/queries/clients';
+} from "@/lib/queries/servers";
+import { getClient, listClients } from "@/lib/queries/clients";
 import {
   getRelatedSkills,
   getSkill,
   listSkills,
   listTopSkills,
-} from '@/lib/queries/skills';
-import { getCategory, listCategories } from '@/lib/queries/categories';
-import { listPublicAgentDirectory } from '@/lib/queries/public-agents';
-import { VISIBLE_AGENT_LISTING_ORIGIN } from '@/lib/agents/market-visibility';
+} from "@/lib/queries/skills";
+import { getCategory, listCategories } from "@/lib/queries/categories";
+import { listPublicAgentDirectory } from "@/lib/queries/public-agents";
+import { VISIBLE_AGENT_LISTING_ORIGIN } from "@/lib/agents/market-visibility";
 
 const FIVE_MINUTES = 300;
 
@@ -25,93 +25,92 @@ const FIVE_MINUTES = 300;
 
 export const getPublicHomeSections = unstable_cache(
   getHomeSections,
-  ['public-directory-home'],
+  ["public-directory-home"],
   { revalidate: FIVE_MINUTES },
 );
 
 export const getPublicServerCount = unstable_cache(
   () => db.server.count(),
-  ['public-directory-server-count'],
+  ["public-directory-server-count"],
   { revalidate: FIVE_MINUTES },
 );
 
 export const listPublicServers = unstable_cache(
   (page: number, pageSize: number) => listServers({ page, pageSize }),
-  ['public-directory-servers'],
+  ["public-directory-servers"],
   { revalidate: FIVE_MINUTES },
 );
 
 export const getPublicServer = unstable_cache(
   (slug: string) => getServer(slug),
-  ['public-directory-server'],
+  ["public-directory-server"],
   { revalidate: FIVE_MINUTES },
 );
 
 export const getPublicRelatedServers = unstable_cache(
   (excludeId: string, categoryIds: string[], take: number) =>
     getRelatedServers(excludeId, categoryIds, take),
-  ['public-directory-related-servers'],
+  ["public-directory-related-servers"],
   { revalidate: FIVE_MINUTES },
 );
 
 export const listPublicClients = unstable_cache(
   (page: number, pageSize: number) => listClients({ page, pageSize }),
-  ['public-directory-clients'],
+  ["public-directory-clients"],
   { revalidate: FIVE_MINUTES },
 );
 
 export const getPublicClientCount = unstable_cache(
   () => db.client.count(),
-  ['public-directory-client-count'],
+  ["public-directory-client-count"],
   { revalidate: FIVE_MINUTES },
 );
 
 export const getPublicClient = unstable_cache(
   (slug: string) => getClient(slug),
-  ['public-directory-client'],
+  ["public-directory-client"],
   { revalidate: FIVE_MINUTES },
 );
 
 export const listPublicSkills = unstable_cache(
   (page: number, pageSize: number) => listSkills({ page, pageSize }),
-  ['public-directory-skills'],
+  ["public-directory-skills"],
   { revalidate: FIVE_MINUTES },
 );
 
 export const listPublicTopSkills = unstable_cache(
   () => listTopSkills(100),
-  ['public-directory-top-skills'],
+  ["public-directory-top-skills"],
   { revalidate: FIVE_MINUTES },
 );
 
 export const getPublicSkillCount = unstable_cache(
   () => db.skill.count(),
-  ['public-directory-skill-count'],
+  ["public-directory-skill-count"],
   { revalidate: FIVE_MINUTES },
 );
 
 export const getPublicSkill = unstable_cache(
   (slug: string) => getSkill(slug),
-  ['public-directory-skill'],
+  ["public-directory-skill"],
   { revalidate: FIVE_MINUTES },
 );
 
 export const getPublicRelatedSkills = unstable_cache(
-  (categoryIds: string[], take: number) =>
-    getRelatedSkills(categoryIds, take),
-  ['public-directory-related-skills'],
+  (categoryIds: string[], take: number) => getRelatedSkills(categoryIds, take),
+  ["public-directory-related-skills"],
   { revalidate: FIVE_MINUTES },
 );
 
 export const listPublicCategories = unstable_cache(
   listCategories,
-  ['public-directory-categories'],
+  ["public-directory-categories"],
   { revalidate: FIVE_MINUTES },
 );
 
 export const getPublicCategory = unstable_cache(
   (slug: string) => getCategory(slug),
-  ['public-directory-category'],
+  ["public-directory-category"],
   { revalidate: FIVE_MINUTES },
 );
 
@@ -119,9 +118,9 @@ export const getPublicAgentListing = unstable_cache(
   async (publisherOrDirectorySlug: string, listingSlug?: string) => {
     const result = await db.agentListing.findFirst({
       where: {
-        status: 'published',
+        status: "published",
         latestReleaseId: { not: null },
-        latestRelease: { is: { reviewStatus: 'approved' } },
+        latestRelease: { is: { reviewStatus: "approved" } },
         AND: [
           VISIBLE_AGENT_LISTING_ORIGIN,
           listingSlug
@@ -131,7 +130,7 @@ export const getPublicAgentListing = unstable_cache(
               }
             : {
                 directorySlug: publisherOrDirectorySlug,
-                publisherKind: 'platform',
+                publisherKind: "platform",
               },
         ],
       },
@@ -150,12 +149,15 @@ export const getPublicAgentListing = unstable_cache(
     });
     if (!result?.latestRelease) return null;
     const raw = result.latestRelease.releaseSummary;
-    const summary = raw && typeof raw === 'object' && !Array.isArray(raw)
-      ? raw as Record<string, unknown>
-      : {};
+    const summary =
+      raw && typeof raw === "object" && !Array.isArray(raw)
+        ? (raw as Record<string, unknown>)
+        : {};
     const count = (key: string) => {
       const value = summary[key];
-      return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+      return typeof value === "number" &&
+        Number.isSafeInteger(value) &&
+        value >= 0
         ? value
         : 0;
     };
@@ -172,19 +174,19 @@ export const getPublicAgentListing = unstable_cache(
       release: {
         version: result.latestRelease.version,
         summary: {
-          resourceCount: count('resourceCount'),
-          subAgentCount: count('subAgentCount'),
+          resourceCount: count("resourceCount"),
+          subAgentCount: count("subAgentCount"),
         },
       },
     };
   },
-  ['public-directory-agent'],
+  ["public-directory-agent"],
   { revalidate: FIVE_MINUTES },
 );
 
 export const listPublicAgents = unstable_cache(
   () => listPublicAgentDirectory({ take: 24 }),
-  ['public-directory-agents'],
+  ["public-directory-agents"],
   { revalidate: FIVE_MINUTES },
 );
 
@@ -197,10 +199,10 @@ export const getPublicSitemapEntries = unstable_cache(
       db.category.findMany({ select: { slug: true } }),
       db.agentListing.findMany({
         where: {
-          status: 'published',
+          status: "published",
           latestReleaseId: { not: null },
           AND: [VISIBLE_AGENT_LISTING_ORIGIN],
-          latestRelease: { is: { reviewStatus: 'approved' } },
+          latestRelease: { is: { reviewStatus: "approved" } },
         },
         select: {
           slug: true,
@@ -212,6 +214,6 @@ export const getPublicSitemapEntries = unstable_cache(
     ]);
     return { servers, clients, skills, categories, agents };
   },
-  ['public-directory-sitemap'],
+  ["public-directory-sitemap"],
   { revalidate: 3600 },
 );

@@ -1,13 +1,13 @@
-'use client';
-import { AnimatedBadge } from '@/components/motion/animated-badge';
+"use client";
+import { AnimatedBadge } from "@/components/motion/animated-badge";
 
-import { Button } from '@/components/motion/button';
-import { Input } from '@/components/motion/input';
+import { Button } from "@/components/motion/button";
+import { Input } from "@/components/motion/input";
 
-
-import { useId, useRef, useState, type ChangeEvent } from 'react';
-import { useTranslations } from 'next-intl';
-import { FileText, Plus, Trash2, Upload } from 'lucide-react';
+import { useId, useRef, useState, type ChangeEvent } from "react";
+import { useTranslations } from "next-intl";
+import { FileText, Plus, Trash2, Upload } from "lucide-react";
+import { FilePathTree } from "./FilePathTree";
 
 export type RuntimeFileDraft = {
   path: string;
@@ -34,18 +34,23 @@ function replaceOrAppendDrafts(
 
 export function runtimeFilePathKey(value: string): string | null {
   const trimmed = value.trim();
-  return trimmed ? trimmed.normalize('NFC').toLocaleLowerCase('en-US') : null;
+  return trimmed ? trimmed.normalize("NFC").toLocaleLowerCase("en-US") : null;
 }
 
 async function readPlainTextFile(file: File): Promise<RuntimeFileDraft> {
   const bytes = new Uint8Array(await file.arrayBuffer());
   if (bytes.includes(0)) {
-    throw new Error('Selected files must be plain text; binary files are not supported.');
+    throw new Error(
+      "Selected files must be plain text; binary files are not supported.",
+    );
   }
   // File.text() replaces malformed UTF-8 sequences. A fatal decoder ensures
   // that a binary file cannot become an apparently valid text configuration.
   // `ignoreBOM: true` preserves a user-supplied UTF-8 BOM exactly.
-  const content = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
+  const content = new TextDecoder("utf-8", {
+    fatal: true,
+    ignoreBOM: true,
+  }).decode(bytes);
   return { path: file.name, content };
 }
 
@@ -65,78 +70,107 @@ export function RuntimeFileDraftsInput({
   disabled?: boolean;
   relativePathArgumentsWork?: boolean;
 }) {
-  const t = useTranslations('console.mcp');
+  const t = useTranslations("console.mcp");
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const activeIndex = Math.min(selectedIndex, Math.max(0, value.length - 1));
   const inputRef = useRef<HTMLInputElement>(null);
   const id = useId();
 
   const addFile = () => {
     setUploadError(null);
-    onChange([...value, { path: '', content: '' }]);
+    setSelectedIndex(value.length);
+    onChange([...value, { path: "", content: "" }]);
   };
 
   const updateFile = (index: number, update: Partial<RuntimeFileDraft>) => {
-    onChange(value.map((file, currentIndex) => (
-      currentIndex === index ? { ...file, ...update } : file
-    )));
+    onChange(
+      value.map((file, currentIndex) =>
+        currentIndex === index ? { ...file, ...update } : file,
+      ),
+    );
   };
 
   const removeFile = (index: number) => {
     setUploadError(null);
+    setSelectedIndex((current) => (current > index ? current - 1 : current));
     onChange(value.filter((_, currentIndex) => currentIndex !== index));
   };
 
   const uploadFiles = async (event: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? []);
     // Allow the same file to be selected again after the user fixes it.
-    event.target.value = '';
+    event.target.value = "";
     if (files.length === 0) return;
 
     setUploadError(null);
     try {
       const drafts = await Promise.all(files.map(readPlainTextFile));
       onChange(replaceOrAppendDrafts(value, drafts));
+      setSelectedIndex(0);
     } catch {
-      setUploadError(t('invalidRuntimeTextUpload'));
+      setUploadError(t("invalidRuntimeTextUpload"));
     }
   };
 
   return (
-    <section className="rounded-lg border border-border" aria-labelledby={`${id}-heading`}>
+    <section
+      className="rounded-lg border border-border"
+      aria-labelledby={`${id}-heading`}
+    >
       <header className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-4 py-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <FileText className="size-4 text-muted-foreground" />
-            <h3 id={`${id}-heading`} className="text-sm font-semibold text-foreground">
-              {t('runtimeFiles')}
+            <h3
+              id={`${id}-heading`}
+              className="text-sm font-semibold text-foreground"
+            >
+              {t("runtimeFiles")}
             </h3>
-            <AnimatedBadge  status="neutral" size="sm" showIcon={false}>
+            <AnimatedBadge status="neutral" size="sm" showIcon={false}>
               {value.length}
             </AnimatedBadge>
           </div>
           <p className="mt-1 max-w-xl text-xs leading-5 text-muted-foreground">
-            {t('runtimeFilesCreateDescription')}
+            {t("runtimeFilesCreateDescription")}
           </p>
           {relativePathArgumentsWork ? (
             <p className="mt-1 max-w-xl text-xs leading-5 text-muted-foreground">
-              {t('runtimeFilesRelativeArgumentHint')}
+              {t("runtimeFilesRelativeArgumentHint")}
             </p>
           ) : null}
           <p className="mt-1 max-w-xl text-xs leading-5 text-muted-foreground">
-            {t('runtimeFilesAbsolutePathHint')}
+            {t("runtimeFilesAbsolutePathHint")}
           </p>
         </div>
         <div className="flex shrink-0 flex-wrap gap-2">
-          <Button type="button" disabled={disabled} onClick={() => inputRef.current?.click()} variant="secondary" size="sm"><Upload className="size-3.5" />
-          {t('uploadTextFiles')}</Button>
-          <Button type="button" disabled={disabled} onClick={addFile} variant="secondary" size="sm"><Plus className="size-3.5" />
-          {t('addFile')}</Button>
+          <Button
+            type="button"
+            disabled={disabled}
+            onClick={() => inputRef.current?.click()}
+            variant="secondary"
+            size="sm"
+          >
+            <Upload className="size-3.5" />
+            {t("uploadTextFiles")}
+          </Button>
+          <Button
+            type="button"
+            disabled={disabled}
+            onClick={addFile}
+            variant="secondary"
+            size="sm"
+          >
+            <Plus className="size-3.5" />
+            {t("addFile")}
+          </Button>
           <input
             ref={inputRef}
             type="file"
             multiple
             tabIndex={-1}
-            aria-label={t('uploadTextFiles')}
+            aria-label={t("uploadTextFiles")}
             disabled={disabled}
             onChange={uploadFiles}
             className="sr-only"
@@ -146,23 +180,64 @@ export function RuntimeFileDraftsInput({
 
       {value.length === 0 ? (
         <p className="px-4 py-8 text-center text-sm text-muted-foreground">
-          {t('noRuntimeFilesToCreate')}
+          {t("noRuntimeFilesToCreate")}
         </p>
       ) : (
-        <div className="divide-y divide-border">
-          {value.map((file, index) => (
-            <div key={index} className="space-y-3 px-4 py-4">
+        <div className="grid min-w-0 gap-3 p-3 sm:grid-cols-[minmax(0,14rem)_minmax(0,1fr)]">
+          <div className="max-h-80 min-w-0 overflow-auto">
+            <FilePathTree
+              files={value.map((file, index) => ({
+                path: file.path || `${t("addFile")} ${index + 1}`,
+                value: String(index),
+              }))}
+              ariaLabel={t("runtimeFiles")}
+              value={String(activeIndex)}
+              onSelect={(index) => setSelectedIndex(Number(index))}
+              disabled={disabled}
+            />
+          </div>
+          {value.slice(activeIndex, activeIndex + 1).map((file) => (
+            <div key={activeIndex} className="min-w-0 space-y-3 p-2">
               <div className="flex flex-wrap items-end justify-between gap-3">
-                <label className="min-w-0 flex-1 space-y-1.5 text-xs font-medium text-muted-foreground">
-                  {t('relativeFilePath')}
-                  <Input value={file.path} onChange={(value) => updateFile(index, { path: value })} disabled={disabled} placeholder="ssh-config.json" spellCheck={false} />
+                <label
+                  htmlFor={`${id}-path`}
+                  className="min-w-0 flex-1 space-y-1.5 text-xs font-medium text-muted-foreground"
+                >
+                  {t("relativeFilePath")}
+                  <Input
+                    id={`${id}-path`}
+                    value={file.path}
+                    onChange={(value) =>
+                      updateFile(activeIndex, { path: value })
+                    }
+                    disabled={disabled}
+                    placeholder="ssh-config.json"
+                    spellCheck={false}
+                  />
                 </label>
-                <Button type="button" disabled={disabled} onClick={() => removeFile(index)} variant="ghost" size="sm" className="inline-flex items-center"><Trash2 className="size-3.5" />
-                {t('remove')}</Button>
+                <Button
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => removeFile(activeIndex)}
+                  variant="ghost"
+                  size="sm"
+                  className="inline-flex items-center"
+                >
+                  <Trash2 className="size-3.5" />
+                  {t("remove")}
+                </Button>
               </div>
               <label className="block space-y-1.5 text-xs font-medium text-muted-foreground">
-                {t('textContent')}
-                <textarea value={file.content} onChange={(event) => updateFile(index, { content: event.target.value })} disabled={disabled} spellCheck={false} className="min-h-36 w-full resize-y rounded-lg bg-muted/35 p-3 text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring min-h-44" />
+                {t("textContent")}
+                <textarea
+                  value={file.content}
+                  onChange={(event) =>
+                    updateFile(activeIndex, { content: event.target.value })
+                  }
+                  disabled={disabled}
+                  spellCheck={false}
+                  className="min-h-44 w-full resize-y rounded-lg bg-muted/35 p-3 text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                />
               </label>
             </div>
           ))}
@@ -170,7 +245,10 @@ export function RuntimeFileDraftsInput({
       )}
 
       {uploadError ? (
-        <p className="border-t border-border px-4 py-3 text-xs text-destructive dark:text-destructive" role="alert">
+        <p
+          className="border-t border-border px-4 py-3 text-xs text-destructive dark:text-destructive"
+          role="alert"
+        >
           {uploadError}
         </p>
       ) : null}

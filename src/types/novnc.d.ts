@@ -1,4 +1,4 @@
-declare module '@novnc/novnc' {
+declare module "@novnc/novnc" {
   type Credentials = {
     username?: string;
     password?: string;

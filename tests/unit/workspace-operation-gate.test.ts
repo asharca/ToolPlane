@@ -1,14 +1,14 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from "vitest";
 import {
   beginWorkspaceOperation,
   closeWorkspaceOperations,
-} from '@/lib/workspace/operation-gate';
+} from "@/lib/workspace/operation-gate";
 
-describe('workspace operation gate', () => {
-  it('blocks new operations and drains work that began before teardown', async () => {
+describe("workspace operation gate", () => {
+  it("blocks new operations and drains work that began before teardown", async () => {
     const workspaceId = `workspace-drain-${Date.now()}`;
     const release = beginWorkspaceOperation(workspaceId);
-    expect(release).toBeTypeOf('function');
+    expect(release).toBeTypeOf("function");
 
     const drained = vi.fn();
     const closing = closeWorkspaceOperations(workspaceId).then(drained);
@@ -23,13 +23,13 @@ describe('workspace operation gate', () => {
     expect(beginWorkspaceOperation(workspaceId)).toBeNull();
   });
 
-  it('does not block unrelated workspaces', async () => {
+  it("does not block unrelated workspaces", async () => {
     const closedWorkspaceId = `workspace-closed-${Date.now()}`;
     const openWorkspaceId = `workspace-open-${Date.now()}`;
     await closeWorkspaceOperations(closedWorkspaceId);
 
     const release = beginWorkspaceOperation(openWorkspaceId);
-    expect(release).toBeTypeOf('function');
+    expect(release).toBeTypeOf("function");
     release?.();
   });
 });

@@ -1,9 +1,9 @@
-import 'server-only';
-import { z } from 'zod';
-import { verifyApiTokenContext } from '@/lib/auth/tokens';
-import { db } from '@/lib/db';
-import { toolkitAccessWhere } from '@/lib/auth/toolkit-scope';
-import { enrichLogContext } from '@/lib/observability/context';
+import "server-only";
+import { z } from "zod";
+import { verifyApiTokenContext } from "@/lib/auth/tokens";
+import { db } from "@/lib/db";
+import { toolkitAccessWhere } from "@/lib/auth/toolkit-scope";
+import { enrichLogContext } from "@/lib/observability/context";
 
 // Slugs are lowercase, 2+ chars, dash-separated — same shape the install/sync
 // scripts validate before they ever POST, so anything else is malformed.
@@ -13,7 +13,7 @@ export const slug = z.string().regex(SLUG);
 export function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { 'content-type': 'application/json; charset=utf-8' },
+    headers: { "content-type": "application/json; charset=utf-8" },
   });
 }
 
@@ -31,14 +31,17 @@ export async function scopeToolkitForToken(
   toolkitSlug: string,
 ): Promise<Scope> {
   const principal = await verifyApiTokenContext(authHeader);
-  if (!principal) return { ok: false, status: 401, error: 'unauthorized' };
+  if (!principal) return { ok: false, status: 401, error: "unauthorized" };
 
   const toolkit = await db.toolkit.findFirst({
     where: toolkitAccessWhere(principal, workspaceSlug, toolkitSlug),
     select: { id: true, workspaceId: true },
   });
-  if (!toolkit) return { ok: false, status: 404, error: 'toolkit not found' };
-  enrichLogContext({ workspaceId: toolkit.workspaceId, actorId: principal.user.id });
+  if (!toolkit) return { ok: false, status: 404, error: "toolkit not found" };
+  enrichLogContext({
+    workspaceId: toolkit.workspaceId,
+    actorId: principal.user.id,
+  });
 
   return { ok: true, workspaceId: toolkit.workspaceId, toolkitId: toolkit.id };
 }

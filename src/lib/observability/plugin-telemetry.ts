@@ -1,5 +1,5 @@
-import 'server-only';
-import { db } from '@/lib/db';
+import "server-only";
+import { db } from "@/lib/db";
 
 export type SkillInvocationRow = {
   id: string;
@@ -30,7 +30,7 @@ export async function getPluginTelemetry(workspaceId: string, hours = 24) {
   const [invocations, syncs] = await Promise.all([
     db.skillInvocation.findMany({
       where: { workspaceId, createdAt: { gte: since } },
-      orderBy: { createdAt: 'desc' },
+      orderBy: { createdAt: "desc" },
       take: 200,
       select: {
         id: true,
@@ -43,7 +43,7 @@ export async function getPluginTelemetry(workspaceId: string, hours = 24) {
     }),
     db.syncEvent.findMany({
       where: { workspaceId, createdAt: { gte: since } },
-      orderBy: { createdAt: 'desc' },
+      orderBy: { createdAt: "desc" },
       take: 200,
       select: {
         id: true,
@@ -59,11 +59,11 @@ export async function getPluginTelemetry(workspaceId: string, hours = 24) {
   ]);
 
   const skillTotal = invocations.length;
-  const skillErrors = invocations.filter((i) => i.outcome === 'error').length;
-  const byUser = invocations.filter((i) => i.source === 'user').length;
+  const skillErrors = invocations.filter((i) => i.outcome === "error").length;
+  const byUser = invocations.filter((i) => i.source === "user").length;
 
-  const applied = syncs.filter((s) => s.outcome === 'applied').length;
-  const failures = syncs.filter((s) => s.outcome === 'failure').length;
+  const applied = syncs.filter((s) => s.outcome === "applied").length;
+  const failures = syncs.filter((s) => s.outcome === "failure").length;
 
   return {
     skill: {

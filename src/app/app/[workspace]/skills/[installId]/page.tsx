@@ -1,40 +1,62 @@
-/* eslint-disable react/jsx-key -- DashboardTable consumes cell arrays as indexed values. */
+/* DashboardTable consumes cell arrays as indexed values. */
 
-import { AnimatedBadge } from '@/components/motion/animated-badge';
-import { BouncyAccordion } from '@/components/motion/bouncy-accordion';
+import { AnimatedBadge } from "@/components/motion/animated-badge";
+import { BouncyAccordion } from "@/components/motion/bouncy-accordion";
 
-import { FormSelect } from '@/components/ui/FormSelect';
+import { FormSelect } from "@/components/ui/FormSelect";
 
-import { ButtonLink, Button } from '@/components/motion/button';
-import { FormCheckbox } from '@/components/ui/FormCheckbox';
-import { getLocale, getTranslations } from 'next-intl/server';
-import type { ReactNode } from 'react';
-import { redirect, notFound } from 'next/navigation';
-import { CheckCircle2, ExternalLink, FileArchive, FileCode2, GitBranch, Info, LinkIcon, Settings2, XCircle } from 'lucide-react';
-import { getCurrentUser } from '@/lib/auth/current-user';
-import { getWorkspaceForUser } from '@/lib/workspace/queries';
-import { db } from '@/lib/db';
-import { buildInstalledSkillMarkdown, installedSkillExtraFiles } from '@/lib/skills/artifact';
-import { deleteCustomSkillAction, updateSkillAttributesAction } from '@/lib/skills/actions';
-import { skillLabel } from '@/lib/workspace/skill-label';
-import { ConfirmSubmitButton } from '@/components/dashboard/ConfirmSubmitButton';
-import { SkillMarkdownViewer } from '@/components/dashboard/SkillMarkdownViewer';
-import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
+import { ButtonLink, Button } from "@/components/motion/button";
+import { FormCheckbox } from "@/components/ui/FormCheckbox";
+import { getLocale, getTranslations } from "next-intl/server";
+import type { ReactNode } from "react";
+import { redirect, notFound } from "next/navigation";
+import {
+  CheckCircle2,
+  ExternalLink,
+  FileArchive,
+  FileCode2,
+  GitBranch,
+  Info,
+  LinkIcon,
+  Settings2,
+  XCircle,
+} from "lucide-react";
+import { getCurrentUser } from "@/lib/auth/current-user";
+import { getWorkspaceForUser } from "@/lib/workspace/queries";
+import { db } from "@/lib/db";
+import {
+  buildInstalledSkillMarkdown,
+  installedSkillExtraFiles,
+} from "@/lib/skills/artifact";
+import {
+  deleteCustomSkillAction,
+  updateSkillAttributesAction,
+} from "@/lib/skills/actions";
+import { skillLabel } from "@/lib/workspace/skill-label";
+import { ConfirmSubmitButton } from "@/components/dashboard/ConfirmSubmitButton";
+import { SkillMarkdownViewer } from "@/components/dashboard/SkillMarkdownViewer";
+import { BundledFiles } from "@/components/dashboard/FilePathTree";
+import { formatInTimeZone, resolveUserTimeZone } from "@/lib/timezone";
 
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
 function formatBytes(value: string): string {
-  const bytes = Buffer.byteLength(value, 'utf8');
+  const bytes = Buffer.byteLength(value, "utf8");
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 function formatDate(date: Date, timeZone: string, locale: string): string {
-  return formatInTimeZone(date, timeZone, {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }, locale);
+  return formatInTimeZone(
+    date,
+    timeZone,
+    {
+      dateStyle: "medium",
+      timeStyle: "short",
+    },
+    locale,
+  );
 }
 
 function sourceLabel(
@@ -42,11 +64,11 @@ function sourceLabel(
   hasCatalogSkill: boolean,
   t: Awaited<ReturnType<typeof getTranslations>>,
 ): string {
-  if (hasCatalogSkill) return t('catalogSkill');
-  if (!source) return t('workspaceSkill');
-  if (source === 'github') return t('githubImport');
-  if (source === 'upload') return t('uploadedBundle');
-  if (source === 'custom') return t('customSkill');
+  if (hasCatalogSkill) return t("catalogSkill");
+  if (!source) return t("workspaceSkill");
+  if (source === "github") return t("githubImport");
+  if (source === "upload") return t("uploadedBundle");
+  if (source === "custom") return t("customSkill");
   return source;
 }
 
@@ -54,7 +76,7 @@ function sourceHref(value: string | null): string | null {
   if (!value) return null;
   try {
     const url = new URL(value);
-    return url.protocol === 'http:' || url.protocol === 'https:' ? value : null;
+    return url.protocol === "http:" || url.protocol === "https:" ? value : null;
   } catch {
     return null;
   }
@@ -64,11 +86,11 @@ function githubOriginalUrl(value: string | null | undefined): string | null {
   if (!value) return null;
   try {
     const url = new URL(value);
-    if (url.hostname === 'github.com') return value;
-    if (url.hostname !== 'raw.githubusercontent.com') return null;
-    const [owner, repo, ref, ...path] = url.pathname.split('/').filter(Boolean);
+    if (url.hostname === "github.com") return value;
+    if (url.hostname !== "raw.githubusercontent.com") return null;
+    const [owner, repo, ref, ...path] = url.pathname.split("/").filter(Boolean);
     if (!owner || !repo || !ref || path.length === 0) return null;
-    return `https://github.com/${owner}/${repo}/blob/${ref}/${path.map(encodeURIComponent).join('/')}`;
+    return `https://github.com/${owner}/${repo}/blob/${ref}/${path.map(encodeURIComponent).join("/")}`;
   } catch {
     return null;
   }
@@ -85,15 +107,23 @@ function sourceReferenceDetail({
   githubOriginal: string | null;
   t: Awaited<ReturnType<typeof getTranslations>>;
 }): { label: string; value: string; href?: string | null } | null {
-  if (source === 'upload' && sourceRef) {
-    return { label: t('importFolder'), value: sourceRef };
+  if (source === "upload" && sourceRef) {
+    return { label: t("importFolder"), value: sourceRef };
   }
   if (githubOriginal) {
-    return { label: t('githubOriginal'), value: githubOriginal, href: githubOriginal };
+    return {
+      label: t("githubOriginal"),
+      value: githubOriginal,
+      href: githubOriginal,
+    };
   }
-  if (source === 'github' && sourceRef) {
+  if (source === "github" && sourceRef) {
     const href = sourceHref(sourceRef);
-    return { label: t('githubOriginal'), value: sourceRef, ...(href ? { href } : {}) };
+    return {
+      label: t("githubOriginal"),
+      value: sourceRef,
+      ...(href ? { href } : {}),
+    };
   }
   return null;
 }
@@ -102,7 +132,7 @@ function frontmatterValue(markdown: string, key: string): string | null {
   const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(markdown);
   if (!match) return null;
   for (const line of match[1].split(/\r?\n/)) {
-    const idx = line.indexOf(':');
+    const idx = line.indexOf(":");
     if (idx === -1) continue;
     if (line.slice(0, idx).trim() !== key) continue;
     const value = line.slice(idx + 1).trim();
@@ -110,7 +140,7 @@ function frontmatterValue(markdown: string, key: string): string | null {
       (value.startsWith('"') && value.endsWith('"')) ||
       (value.startsWith("'") && value.endsWith("'"))
     ) {
-      return value.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+      return value.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, "\\");
     }
     return value || null;
   }
@@ -122,7 +152,7 @@ function DetailItem({
   value,
   icon,
   href,
-  className = '',
+  className = "",
 }: {
   label: string;
   value: string;
@@ -131,7 +161,9 @@ function DetailItem({
   className?: string;
 }) {
   return (
-    <div className={`min-w-0 rounded-md border border-border bg-muted/20 p-3 ${className}`}>
+    <div
+      className={`min-w-0 rounded-md border border-border bg-muted/20 p-3 ${className}`}
+    >
       <div className="mb-1 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
         {icon}
         {label}
@@ -146,7 +178,9 @@ function DetailItem({
           {value}
         </a>
       ) : (
-        <p className="break-words text-sm font-medium text-foreground">{value}</p>
+        <p className="break-words text-sm font-medium text-foreground">
+          {value}
+        </p>
       )}
     </div>
   );
@@ -155,7 +189,11 @@ function DetailItem({
 function BooleanPill({ value, label }: { value: boolean; label: string }) {
   const Icon = value ? CheckCircle2 : XCircle;
   return (
-    <AnimatedBadge status={value ? 'success' : 'neutral'} size="sm" showIcon={false}>
+    <AnimatedBadge
+      status={value ? "success" : "neutral"}
+      size="sm"
+      showIcon={false}
+    >
       <Icon className="size-3.5" />
       {label}
     </AnimatedBadge>
@@ -168,41 +206,57 @@ export default async function SkillInspectorPage({
   params: Promise<{ workspace: string; installId: string }>;
 }) {
   const [t, locale, common] = await Promise.all([
-    getTranslations('console.skills'),
+    getTranslations("console.skills"),
     getLocale(),
-    getTranslations('common'),
+    getTranslations("common"),
   ]);
   const { workspace: slug, installId } = await params;
   const user = await getCurrentUser();
-  if (!user) redirect('/app/login');
+  if (!user) redirect("/app/login");
   const timeZone = resolveUserTimeZone(user);
   const ws = await getWorkspaceForUser(slug, user.id);
-  if (!ws) redirect('/app');
+  if (!ws) redirect("/app");
 
   const install = await db.installedSkill.findFirst({
     where: { id: installId, workspaceId: ws.id },
     include: {
       marketInstall: { select: { id: true } },
-      toolkitLinks: { where: { toolkit: { marketInstall: { isNot: null } } }, select: { toolkitId: true }, take: 1 },
+      toolkitLinks: {
+        where: { toolkit: { marketInstall: { isNot: null } } },
+        select: { toolkitId: true },
+        take: 1,
+      },
       skill: {
-        select: { slug: true, name: true, description: true, author: true, githubSource: true, content: true, files: true },
+        select: {
+          slug: true,
+          name: true,
+          description: true,
+          author: true,
+          githubSource: true,
+          content: true,
+          files: true,
+        },
       },
     },
   });
   if (!install) notFound();
 
   const isCustom = !install.skillId;
-  const marketManaged = Boolean(install.marketInstall || install.toolkitLinks.length);
+  const marketManaged = Boolean(
+    install.marketInstall || install.toolkitLinks.length,
+  );
   const label = skillLabel(install);
   const markdown = buildInstalledSkillMarkdown(install);
-  const markdownDescription = frontmatterValue(markdown, 'description');
+  const markdownDescription = frontmatterValue(markdown, "description");
   let extraFiles: { path: string; content: string }[] = [];
   try {
     extraFiles = installedSkillExtraFiles(install);
   } catch {
     extraFiles = [];
   }
-  const githubOriginal = githubOriginalUrl(install.sourceRef) || githubOriginalUrl(install.skill?.githubSource);
+  const githubOriginal =
+    githubOriginalUrl(install.sourceRef) ||
+    githubOriginalUrl(install.skill?.githubSource);
   const sourceRef = install.sourceRef || install.skill?.githubSource || null;
   const sourceRefDetail = sourceReferenceDetail({
     source: install.source,
@@ -210,164 +264,263 @@ export default async function SkillInspectorPage({
     githubOriginal,
     t,
   });
-  const installSourceLabel = sourceLabel(install.source, Boolean(install.skillId), t);
-  const effortLabel = install.effort === 'low'
-    ? t('low')
-    : install.effort === 'high'
-      ? t('high')
-      : t('default');
+  const installSourceLabel = sourceLabel(
+    install.source,
+    Boolean(install.skillId),
+    t,
+  );
+  const effortLabel =
+    install.effort === "low"
+      ? t("low")
+      : install.effort === "high"
+        ? t("high")
+        : t("default");
   const downloadHref = `/api/v1/skills/${install.id}/download`;
 
   return (
-    <>
-      <div className="min-w-0 p-4 sm:p-6 w-full max-w-none space-y-5">
-        <section className="rounded-xl border border-border bg-card overflow-hidden">
-          <div className="border-b border-border px-5 py-4 sm:px-6">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-              <div className="min-w-0">
-                <div className="mb-2 flex flex-wrap items-center gap-2">
-                  <AnimatedBadge  status="neutral" size="sm" showIcon={false}>
-                    {installSourceLabel}
+    <div className="min-w-0 p-4 sm:p-6 w-full max-w-none space-y-5">
+      <section className="rounded-xl border border-border bg-card overflow-hidden">
+        <div className="border-b border-border px-5 py-4 sm:px-6">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div className="min-w-0">
+              <div className="mb-2 flex flex-wrap items-center gap-2">
+                <AnimatedBadge status="neutral" size="sm" showIcon={false}>
+                  {installSourceLabel}
+                </AnimatedBadge>
+                {extraFiles.length ? (
+                  <AnimatedBadge status="neutral" size="sm" showIcon={false}>
+                    {extraFiles.length} {t("bundledFiles")}
                   </AnimatedBadge>
-                  {extraFiles.length ? (
-                    <AnimatedBadge  status="neutral" size="sm" showIcon={false}>
-                      {extraFiles.length} {t('bundledFiles')}
-                    </AnimatedBadge>
-                  ) : null}
-                </div>
-                <h1 className="break-words text-xl font-semibold tracking-tight text-foreground">
-                  {label.name}
-                </h1>
-                <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
-                  {markdownDescription || install.description || install.skill?.description || t('noDescriptionProvided')}
-                </p>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {githubOriginal ? (
-                  <ButtonLink href={githubOriginal} target="_blank" rel="noreferrer" variant="secondary" size="md">
-                    <ExternalLink className="size-4" />
-                    {t('openGithub')}
-                  </ButtonLink>
                 ) : null}
               </div>
+              <h1 className="break-words text-xl font-semibold tracking-tight text-foreground">
+                {label.name}
+              </h1>
+              <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
+                {markdownDescription ||
+                  install.description ||
+                  install.skill?.description ||
+                  t("noDescriptionProvided")}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {githubOriginal ? (
+                <ButtonLink
+                  href={githubOriginal}
+                  target="_blank"
+                  rel="noreferrer"
+                  variant="secondary"
+                  size="md"
+                >
+                  <ExternalLink className="size-4" />
+                  {t("openGithub")}
+                </ButtonLink>
+              ) : null}
             </div>
           </div>
-        </section>
+        </div>
+      </section>
 
-        <SkillMarkdownViewer
-          markdown={markdown}
-          downloadHref={downloadHref}
-          editable={isCustom ? { workspace: slug, installId: install.id, content: markdown } : undefined}
+      <SkillMarkdownViewer
+        markdown={markdown}
+        downloadHref={downloadHref}
+        editable={
+          isCustom
+            ? { workspace: slug, installId: install.id, content: markdown }
+            : undefined
+        }
+      />
+
+      <BouncyAccordion
+        items={[
+          {
+            id: "properties",
+            title: t("workspaceControls"),
+            description: (
+              <>
+                <div className="grid gap-3 p-5 sm:grid-cols-2 sm:p-6 xl:grid-cols-4">
+                  <DetailItem
+                    label={t("slug")}
+                    value={label.slug}
+                    icon={<FileCode2 className="size-3.5" />}
+                  />
+                  <DetailItem
+                    label={t("source")}
+                    value={installSourceLabel}
+                    icon={<GitBranch className="size-3.5" />}
+                  />
+                  <DetailItem
+                    label={t("created")}
+                    value={formatDate(install.createdAt, timeZone, locale)}
+                    icon={<Info className="size-3.5" />}
+                  />
+                  <DetailItem
+                    label={t("skillmdSize")}
+                    value={formatBytes(markdown)}
+                    icon={<FileArchive className="size-3.5" />}
+                  />
+                  {sourceRefDetail ? (
+                    <DetailItem
+                      label={sourceRefDetail.label}
+                      value={sourceRefDetail.value}
+                      href={sourceRefDetail.href}
+                      icon={<LinkIcon className="size-3.5" />}
+                      className="sm:col-span-2"
+                    />
+                  ) : null}
+                  <DetailItem
+                    label={t("effort")}
+                    value={effortLabel}
+                    icon={<Settings2 className="size-3.5" />}
+                  />
+                  <DetailItem
+                    label={t("bundleFiles")}
+                    value={String(extraFiles.length)}
+                    icon={<FileArchive className="size-3.5" />}
+                  />
+                </div>
+
+                <div className="flex flex-wrap gap-2 border-t border-border px-5 py-4 sm:px-6">
+                  <BooleanPill
+                    value={install.userInvocable}
+                    label={`${t("user")}: ${t(install.userInvocable ? "invocationEnabled" : "invocationDisabled")}`}
+                  />
+                  <BooleanPill
+                    value={install.agentInvocable}
+                    label={`${t("agent")}: ${t(install.agentInvocable ? "invocationEnabled" : "invocationDisabled")}`}
+                  />
+                </div>
+                {!isCustom && marketManaged ? (
+                  <div className="px-5 pb-4">
+                    <ButtonLink
+                      href={`/app/${slug}/market/installed`}
+                      variant="secondary"
+                      size="sm"
+                    >
+                      {t("manageMarketInstall")}
+                    </ButtonLink>
+                  </div>
+                ) : null}
+
+                {isCustom ? (
+                  <div className="border-t border-border px-5 py-4 sm:px-6">
+                    <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        {t("workspaceControls")}
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {marketManaged ? (
+                          <ButtonLink
+                            href={`/app/${slug}/market/installed`}
+                            variant="secondary"
+                            size="sm"
+                          >
+                            {t("manageMarketInstall")}
+                          </ButtonLink>
+                        ) : (
+                          <form action={deleteCustomSkillAction}>
+                            <input
+                              type="hidden"
+                              name="workspace"
+                              value={slug}
+                            />
+                            <input
+                              type="hidden"
+                              name="installId"
+                              value={install.id}
+                            />
+                            <ConfirmSubmitButton
+                              triggerLabel={t("delete")}
+                              confirmLabel={common("confirm")}
+                              cancelLabel={common("cancel")}
+                              prompt={`${t("delete")} ${label.name}?`}
+                              pendingLabel={`${t("delete")}…`}
+                              triggerVariant="secondary"
+                              triggerSize="sm"
+                            />
+                          </form>
+                        )}
+                      </div>
+                    </div>
+
+                    <form
+                      action={updateSkillAttributesAction}
+                      className="flex flex-wrap items-end gap-3"
+                    >
+                      <input type="hidden" name="workspace" value={slug} />
+                      <input
+                        type="hidden"
+                        name="installId"
+                        value={install.id}
+                      />
+                      <div className="inline-flex h-9 items-center gap-2 rounded-md border border-border px-3 text-sm text-foreground">
+                        <FormCheckbox
+                          name="userInvocable"
+                          defaultChecked={install.userInvocable}
+                          label={t("user")}
+                        />
+                      </div>
+                      <div className="inline-flex h-9 items-center gap-2 rounded-md border border-border px-3 text-sm text-foreground">
+                        <FormCheckbox
+                          name="agentInvocable"
+                          defaultChecked={install.agentInvocable}
+                          label={t("agent")}
+                        />
+                      </div>
+                      <label
+                        htmlFor="skill-effort"
+                        className="space-y-1 text-xs font-medium uppercase tracking-wide text-muted-foreground"
+                      >
+                        {t("effort")}
+                        <FormSelect
+                          id="skill-effort"
+                          name="effort"
+                          defaultValue={install.effort}
+                          label={t("effort")}
+                          options={[
+                            { value: "default", label: t("default") },
+                            { value: "low", label: t("low") },
+                            { value: "high", label: t("high") },
+                          ]}
+                        />
+                      </label>
+                      <Button variant="primary" size="sm" type="submit">
+                        {t("save")}
+                      </Button>
+                    </form>
+                  </div>
+                ) : null}
+              </>
+            ),
+          },
+        ]}
+      />
+
+      {extraFiles.length ? (
+        <BouncyAccordion
+          items={[
+            {
+              id: "files",
+              title: t("bundleFiles"),
+              description: (
+                <>
+                  <BundledFiles
+                    files={extraFiles.map((file) => ({
+                      ...file,
+                      size: formatBytes(file.content),
+                    }))}
+                    ariaLabel={t("bundleFiles")}
+                  />
+                </>
+              ),
+            },
+          ]}
         />
-
-        <BouncyAccordion items={[{ id: 'properties', title: t('workspaceControls'), description: <>
-
-          <div className="grid gap-3 p-5 sm:grid-cols-2 sm:p-6 xl:grid-cols-4">
-            <DetailItem
-              label={t('slug')}
-              value={label.slug}
-              icon={<FileCode2 className="size-3.5" />}
-            />
-            <DetailItem
-              label={t('source')}
-              value={installSourceLabel}
-              icon={<GitBranch className="size-3.5" />}
-            />
-            <DetailItem
-              label={t('created')}
-              value={formatDate(install.createdAt, timeZone, locale)}
-              icon={<Info className="size-3.5" />}
-            />
-            <DetailItem
-              label={t('skillmdSize')}
-              value={formatBytes(markdown)}
-              icon={<FileArchive className="size-3.5" />}
-            />
-            {sourceRefDetail ? (
-              <DetailItem
-                label={sourceRefDetail.label}
-                value={sourceRefDetail.value}
-                href={sourceRefDetail.href}
-                icon={<LinkIcon className="size-3.5" />}
-                className="sm:col-span-2"
-              />
-            ) : null}
-            <DetailItem
-              label={t('effort')}
-              value={effortLabel}
-              icon={<Settings2 className="size-3.5" />}
-            />
-            <DetailItem
-              label={t('bundleFiles')}
-              value={String(extraFiles.length)}
-              icon={<FileArchive className="size-3.5" />}
-            />
-          </div>
-
-          <div className="flex flex-wrap gap-2 border-t border-border px-5 py-4 sm:px-6">
-            <BooleanPill value={install.userInvocable} label={`${t('user')}: ${t(install.userInvocable ? 'invocationEnabled' : 'invocationDisabled')}`} />
-            <BooleanPill value={install.agentInvocable} label={`${t('agent')}: ${t(install.agentInvocable ? 'invocationEnabled' : 'invocationDisabled')}`} />
-          </div>
-          {!isCustom && marketManaged ? <div className="px-5 pb-4"><ButtonLink href={`/app/${slug}/market/installed`} variant="secondary" size="sm">{t('manageMarketInstall')}</ButtonLink></div> : null}
-
-          {isCustom ? (
-            <div className="border-t border-border px-5 py-4 sm:px-6">
-              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  {t('workspaceControls')}
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  {marketManaged ? <ButtonLink href={`/app/${slug}/market/installed`} variant="secondary" size="sm">{t('manageMarketInstall')}</ButtonLink> : <form action={deleteCustomSkillAction}>
-                    <input type="hidden" name="workspace" value={slug} />
-                    <input type="hidden" name="installId" value={install.id} />
-                    <ConfirmSubmitButton triggerLabel={t('delete')} confirmLabel={common('confirm')} cancelLabel={common('cancel')} prompt={`${t('delete')} ${label.name}?`} pendingLabel={`${t('delete')}…`} triggerVariant="secondary" triggerSize="sm" />
-                  </form>}
-                </div>
-              </div>
-
-              <form action={updateSkillAttributesAction} className="flex flex-wrap items-end gap-3">
-                <input type="hidden" name="workspace" value={slug} />
-                <input type="hidden" name="installId" value={install.id} />
-                <div className="inline-flex h-9 items-center gap-2 rounded-md border border-border px-3 text-sm text-foreground">
-                  <FormCheckbox name="userInvocable" defaultChecked={install.userInvocable} label={t('user')} />
-                  
-                </div>
-                <div className="inline-flex h-9 items-center gap-2 rounded-md border border-border px-3 text-sm text-foreground">
-                  <FormCheckbox name="agentInvocable" defaultChecked={install.agentInvocable} label={t('agent')} />
-                  
-                </div>
-                <label className="space-y-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  {t('effort')}
-                  <FormSelect name="effort" defaultValue={install.effort} label={t('effort')} options={[{ value: 'default', label: t('default') }, { value: 'low', label: t('low') }, { value: 'high', label: t('high') }]} />
-                </label>
-                <Button variant="primary" size="sm" type="submit">{t('save')}</Button>
-              </form>
-            </div>
-          ) : null}
-        </> }]} />
-
-        {extraFiles.length ? (
-          <BouncyAccordion items={[{ id: 'files', title: t('bundleFiles'), description: <>
-            <div className="divide-y divide-border">
-              {extraFiles.map((file) => (
-                <BouncyAccordion key={file.path} items={[{ id: 'details', title: <><span className="min-w-0 break-all font-mono text-foreground">
-                      {file.path}
-                    </span>
-                    <span className="text-xs text-muted-foreground">
-                      {formatBytes(file.content)}
-                    </span></>, description: <><pre className="max-h-96 overflow-auto border-t border-border bg-muted/30 p-5 font-mono text-xs leading-6 text-foreground sm:p-6">
-                    {file.content}
-                  </pre></> }]} />
-              ))}
-            </div>
-          </> }]} />
-        ) : (
-          <section className="rounded-xl border border-border bg-muted px-5 py-4 text-sm text-muted-foreground sm:px-6">
-            {t('noBundledFilesThisSkillSyncsAsASingleSkillmdFile')}
-          </section>
-        )}
-
-      </div>
-    </>
+      ) : (
+        <section className="rounded-xl border border-border bg-muted px-5 py-4 text-sm text-muted-foreground sm:px-6">
+          {t("noBundledFilesThisSkillSyncsAsASingleSkillmdFile")}
+        </section>
+      )}
+    </div>
   );
 }

@@ -1,40 +1,57 @@
-import 'server-only';
-import { Prisma } from '@prisma/client';
-import { db } from '@/lib/db';
-import { writeAudit } from '@/lib/observability/audit';
-import { conversationTitleFromParts } from '@/lib/agents/conversation-title';
-import { defaultProviderModel, fillProviderModelMetadata, type ProviderModelValues } from '@/lib/agents/model-catalog';
-import { matchingPiModelReferences } from '@/lib/agents/provider-catalog';
-import { HERMES_RUNTIME_KIND, resolveHermesImage } from '@/lib/agents/hermes/constants';
-import { hermesProviderName } from '@/lib/agents/hermes/config';
-import { withoutHermesChannelEnv } from '@/lib/agents/hermes/env-merge-script';
-import { HERMES_PROFILE_NAME } from '@/lib/agents/hermes/profiles';
+import "server-only";
+import { Prisma } from "@prisma/client";
+import { db } from "@/lib/db";
+import { writeAudit } from "@/lib/observability/audit";
+import { conversationTitleFromParts } from "@/lib/agents/conversation-title";
+import {
+  defaultProviderModel,
+  fillProviderModelMetadata,
+  type ProviderModelValues,
+} from "@/lib/agents/model-catalog";
+import { matchingPiModelReferences } from "@/lib/agents/provider-catalog";
+import {
+  HERMES_RUNTIME_KIND,
+  resolveHermesImage,
+} from "@/lib/agents/hermes/constants";
+import { hermesProviderName } from "@/lib/agents/hermes/config";
+import { withoutHermesChannelEnv } from "@/lib/agents/hermes/env-merge-script";
+import { HERMES_PROFILE_NAME } from "@/lib/agents/hermes/profiles";
 import {
   agentRuntimeDisplayName,
   agentRuntimeSupportsProviderFormat,
   isDedicatedSandboxRuntimeKind,
   normalizeDisabledBuiltinTools,
   type ImplementedAgentRuntimeKind,
-} from '@/lib/agents/runtime-kind';
-import { DEFAULT_SANDBOX_IMAGE, sandboxVolumeName } from '@/lib/sandboxes/runtime';
-import { readSandboxEnv, sandboxConfigWithEnv, type SandboxEnv } from '@/lib/sandboxes/env';
-import { parseAgentMarketResourceMap } from '@/lib/agents/market-setup';
-import { sandboxExecutionBusy } from './sandbox-execution-gate';
-import { TERMINAL } from '@/lib/a2a/model';
+} from "@/lib/agents/runtime-kind";
+import {
+  DEFAULT_SANDBOX_IMAGE,
+  sandboxVolumeName,
+} from "@/lib/sandboxes/runtime";
+import {
+  readSandboxEnv,
+  sandboxConfigWithEnv,
+  type SandboxEnv,
+} from "@/lib/sandboxes/env";
+import { parseAgentMarketResourceMap } from "@/lib/agents/market-setup";
+import { sandboxExecutionBusy } from "./sandbox-execution-gate";
+import { TERMINAL } from "@/lib/a2a/model";
 
 const UNAVAILABLE_SANDBOX_STATUSES = [
-  'copying',
-  'copy_failed',
-  'restoring',
-  'restore_failed',
-  'restore_cleanup_required',
-  'upgrading',
-  'deleting',
+  "copying",
+  "copy_failed",
+  "restoring",
+  "restore_failed",
+  "restore_cleanup_required",
+  "upgrading",
+  "deleting",
 ];
 
 function slugify(input: string): string {
-  const base = input.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-  return base || 'agent';
+  const base = input
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return base || "agent";
 }
 
 async function lockAgentSlugNamespace(
@@ -54,7 +71,11 @@ async function uniqueAgentSlug(
   baseSlug: string,
 ): Promise<string> {
   let slug = baseSlug;
-  for (let i = 1; await tx.agent.findFirst({ where: { workspaceId, slug } }); i += 1) {
+  for (
+    let i = 1;
+    await tx.agent.findFirst({ where: { workspaceId, slug } });
+    i += 1
+  ) {
     slug = `${baseSlug}-${i}`;
   }
   return slug;
@@ -89,17 +110,26 @@ export const DEFAULT_AGENT_CLONE_OPTIONS: Required<AgentCloneOptions> = {
   copyHermesVolume: false,
 };
 
-function normalizeCloneOptions(options: AgentCloneOptions | undefined): Required<AgentCloneOptions> {
+function normalizeCloneOptions(
+  options: AgentCloneOptions | undefined,
+): Required<AgentCloneOptions> {
   return {
     copyMcp: options?.copyMcp ?? DEFAULT_AGENT_CLONE_OPTIONS.copyMcp,
     copySkills: options?.copySkills ?? DEFAULT_AGENT_CLONE_OPTIONS.copySkills,
-    copyToolkits: options?.copyToolkits ?? DEFAULT_AGENT_CLONE_OPTIONS.copyToolkits,
-    copySandboxes: options?.copySandboxes ?? DEFAULT_AGENT_CLONE_OPTIONS.copySandboxes,
-    copySubAgents: options?.copySubAgents ?? DEFAULT_AGENT_CLONE_OPTIONS.copySubAgents,
-    copyConversations: options?.copyConversations ?? DEFAULT_AGENT_CLONE_OPTIONS.copyConversations,
-    copyHermesEnvironment: options?.copyHermesEnvironment
-      ?? DEFAULT_AGENT_CLONE_OPTIONS.copyHermesEnvironment,
-    copyHermesVolume: options?.copyHermesVolume ?? DEFAULT_AGENT_CLONE_OPTIONS.copyHermesVolume,
+    copyToolkits:
+      options?.copyToolkits ?? DEFAULT_AGENT_CLONE_OPTIONS.copyToolkits,
+    copySandboxes:
+      options?.copySandboxes ?? DEFAULT_AGENT_CLONE_OPTIONS.copySandboxes,
+    copySubAgents:
+      options?.copySubAgents ?? DEFAULT_AGENT_CLONE_OPTIONS.copySubAgents,
+    copyConversations:
+      options?.copyConversations ??
+      DEFAULT_AGENT_CLONE_OPTIONS.copyConversations,
+    copyHermesEnvironment:
+      options?.copyHermesEnvironment ??
+      DEFAULT_AGENT_CLONE_OPTIONS.copyHermesEnvironment,
+    copyHermesVolume:
+      options?.copyHermesVolume ?? DEFAULT_AGENT_CLONE_OPTIONS.copyHermesVolume,
   };
 }
 
@@ -107,10 +137,14 @@ async function uniqueSandboxSlug(
   tx: Prisma.TransactionClient,
   workspaceId: string,
   baseSlug: string,
-  suffix = 'runtime',
+  suffix = "runtime",
 ): Promise<string> {
   let slug = `${baseSlug}-${suffix}`;
-  for (let i = 1; await tx.sandbox.findFirst({ where: { workspaceId, slug } }); i += 1) {
+  for (
+    let i = 1;
+    await tx.sandbox.findFirst({ where: { workspaceId, slug } });
+    i += 1
+  ) {
     slug = `${baseSlug}-${suffix}-${i}`;
   }
   return slug;
@@ -126,9 +160,9 @@ async function createDedicatedSandboxRecords(
     data: {
       workspaceId,
       name: `Sandbox: ${agent.name} Workspace`,
-      source: 'sandbox',
+      source: "sandbox",
       sourceRef: DEFAULT_SANDBOX_IMAGE,
-      status: 'stopped',
+      status: "stopped",
     },
   });
   const sandbox = await tx.sandbox.create({
@@ -137,9 +171,9 @@ async function createDedicatedSandboxRecords(
       deploymentId: deployment.id,
       name: `${agent.name} Workspace`,
       slug: sandboxSlug,
-      kind: 'docker',
+      kind: "docker",
       image: DEFAULT_SANDBOX_IMAGE,
-      network: 'isolated',
+      network: "isolated",
       agentLinks: { create: { agentId: agent.id, isDefault: true } },
     },
   });
@@ -148,9 +182,9 @@ async function createDedicatedSandboxRecords(
     data: {
       installCfg: {
         sandboxId: sandbox.id,
-        kind: 'docker',
+        kind: "docker",
         image: DEFAULT_SANDBOX_IMAGE,
-        network: 'isolated',
+        network: "isolated",
         volumeName: sandboxVolumeName(sandbox.id),
         env: {},
         allowSudo: false,
@@ -171,16 +205,16 @@ export async function createAgentRecords(
     data: { workspaceId, name, slug, runtimeKind: options.runtime },
   });
   if (options.runtime !== HERMES_RUNTIME_KIND) return agent;
-  if (!sandboxSlug) throw new Error('A Hermes agent requires a sandbox slug.');
+  if (!sandboxSlug) throw new Error("A Hermes agent requires a sandbox slug.");
 
   const image = resolveHermesImage(options.hermesImage);
   const deployment = await tx.deployment.create({
     data: {
       workspaceId,
       name: `Hermes runtime: ${name}`,
-      source: 'sandbox',
+      source: "sandbox",
       sourceRef: image,
-      status: 'stopped',
+      status: "stopped",
     },
   });
   const sandbox = await tx.sandbox.create({
@@ -191,8 +225,11 @@ export async function createAgentRecords(
       slug: sandboxSlug,
       kind: HERMES_RUNTIME_KIND,
       image,
-      network: 'isolated',
-      config: { managedBy: 'agent-runtime', ...(options.allowSudo ? { allowSudo: true } : {}) },
+      network: "isolated",
+      config: {
+        managedBy: "agent-runtime",
+        ...(options.allowSudo ? { allowSudo: true } : {}),
+      },
     },
   });
   const runtime = await tx.agentRuntime.create({
@@ -202,7 +239,7 @@ export async function createAgentRecords(
       sandboxId: sandbox.id,
       kind: HERMES_RUNTIME_KIND,
       image,
-      status: 'setup_required',
+      status: "setup_required",
     },
   });
   await tx.deployment.update({
@@ -212,7 +249,7 @@ export async function createAgentRecords(
         sandboxId: sandbox.id,
         kind: HERMES_RUNTIME_KIND,
         image,
-        network: 'isolated',
+        network: "isolated",
         volumeName: sandboxVolumeName(sandbox.id),
         runtimeId: runtime.id,
         runtimeModelName: slug,
@@ -229,7 +266,7 @@ export async function createAgent(
   name: string,
   options: CreateAgentOptions,
 ) {
-  const cleanName = name.trim() || 'New agent';
+  const cleanName = name.trim() || "New agent";
   return db.$transaction(async (tx) => {
     if (options.piPackages !== undefined) {
       await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${workspaceId} FOR UPDATE`;
@@ -237,14 +274,33 @@ export async function createAgent(
     await lockAgentSlugNamespace(tx, workspaceId);
     const slug = await uniqueAgentSlug(tx, workspaceId, slugify(cleanName));
     const isDedicated = isDedicatedSandboxRuntimeKind(options.runtime);
-    const sandboxSlug = options.runtime === HERMES_RUNTIME_KIND || isDedicated
-      ? await uniqueSandboxSlug(tx, workspaceId, slug, isDedicated ? 'workspace' : 'runtime')
-      : undefined;
-    const agent = await createAgentRecords(tx, workspaceId, cleanName, slug, options, sandboxSlug);
+    const sandboxSlug =
+      options.runtime === HERMES_RUNTIME_KIND || isDedicated
+        ? await uniqueSandboxSlug(
+            tx,
+            workspaceId,
+            slug,
+            isDedicated ? "workspace" : "runtime",
+          )
+        : undefined;
+    const agent = await createAgentRecords(
+      tx,
+      workspaceId,
+      cleanName,
+      slug,
+      options,
+      sandboxSlug,
+    );
     if (isDedicated && sandboxSlug) {
       await createDedicatedSandboxRecords(tx, workspaceId, agent, sandboxSlug);
     }
-    await validateAndWritePiPackages(tx, workspaceId, agent.id, options.runtime, options.piPackages);
+    await validateAndWritePiPackages(
+      tx,
+      workspaceId,
+      agent.id,
+      options.runtime,
+      options.piPackages,
+    );
     return agent;
   });
 }
@@ -327,172 +383,209 @@ export async function cloneAgent(
   }
   let runtime: CreateAgentOptions;
   if (
-    source.runtimeKind === HERMES_RUNTIME_KIND
-    && source.runtime?.workspaceId === workspaceId
-    && source.runtime.kind === HERMES_RUNTIME_KIND
-    && source.runtime.sandbox.workspaceId === workspaceId
+    source.runtimeKind === HERMES_RUNTIME_KIND &&
+    source.runtime?.workspaceId === workspaceId &&
+    source.runtime.kind === HERMES_RUNTIME_KIND &&
+    source.runtime.sandbox.workspaceId === workspaceId
   ) {
-    runtime = { runtime: 'hermes', hermesImage: source.runtime.image };
+    runtime = { runtime: "hermes", hermesImage: source.runtime.image };
   } else {
-    throw new Error(`Agent runtime "${source.runtimeKind}" is not available for cloning.`);
+    throw new Error(
+      `Agent runtime "${source.runtimeKind}" is not available for cloning.`,
+    );
   }
   if (cloneOptions.copySandboxes && source.sandboxes.length > 0) {
     throw new AgentConfigurationError(
-      'Sandboxes are exclusive to one agent and cannot be reused by a clone. Clear sandbox bindings before cloning.',
+      "Sandboxes are exclusive to one agent and cannot be reused by a clone. Clear sandbox bindings before cloning.",
     );
   }
-  if (runtime.runtime === HERMES_RUNTIME_KIND
-    && cloneOptions.copyConversations
-    && !cloneOptions.copyHermesVolume) {
+  if (
+    runtime.runtime === HERMES_RUNTIME_KIND &&
+    cloneOptions.copyConversations &&
+    !cloneOptions.copyHermesVolume
+  ) {
     throw new AgentConfigurationError(
-      'Hermes conversations can only be cloned with the Hermes persistent volume.',
+      "Hermes conversations can only be cloned with the Hermes persistent volume.",
     );
   }
   // A Hermes volume contains the files referenced by conversations and their
   // runtime session state. Keep those database records together with a volume
   // clone, even if a stale/non-UI caller omitted the dependent checkbox.
-  const effectiveCloneOptions = runtime.runtime === HERMES_RUNTIME_KIND && cloneOptions.copyHermesVolume
-    ? { ...cloneOptions, copyConversations: true }
-    : cloneOptions;
-  return db.$transaction(async (tx) => {
-    await lockAgentSlugNamespace(tx, workspaceId);
-    const slug = await uniqueAgentSlug(tx, workspaceId, slugify(cleanName));
-    const sandboxSlug = runtime.runtime === HERMES_RUNTIME_KIND
-      ? await uniqueSandboxSlug(tx, workspaceId, slug)
-      : undefined;
-    let providerId: string | null = null;
-    if (runtime.runtime !== HERMES_RUNTIME_KIND && source.providerId) {
-      const provider = await lockProvider(tx, workspaceId, source.providerId);
-      if (provider) {
-        assertRuntimeProviderFormat(runtime.runtime, provider.format);
-        providerId = provider.id;
+  const effectiveCloneOptions =
+    runtime.runtime === HERMES_RUNTIME_KIND && cloneOptions.copyHermesVolume
+      ? { ...cloneOptions, copyConversations: true }
+      : cloneOptions;
+  return db.$transaction(
+    async (tx) => {
+      await lockAgentSlugNamespace(tx, workspaceId);
+      const slug = await uniqueAgentSlug(tx, workspaceId, slugify(cleanName));
+      const sandboxSlug =
+        runtime.runtime === HERMES_RUNTIME_KIND
+          ? await uniqueSandboxSlug(tx, workspaceId, slug)
+          : undefined;
+      let providerId: string | null = null;
+      if (runtime.runtime !== HERMES_RUNTIME_KIND && source.providerId) {
+        const provider = await lockProvider(tx, workspaceId, source.providerId);
+        if (provider) {
+          assertRuntimeProviderFormat(runtime.runtime, provider.format);
+          providerId = provider.id;
+        }
       }
-    }
-    const modelProviderIds: string[] = [];
-    if (runtime.runtime === HERMES_RUNTIME_KIND) {
-      const requestedIds = source.modelProviders.length > 0
-        ? source.modelProviders.map((link) => link.providerId)
-        : source.providerId ? [source.providerId] : [];
-      for (const requestedId of [...new Set(requestedIds)].sort()) {
-        const provider = await lockProvider(tx, workspaceId, requestedId);
-        if (provider) modelProviderIds.push(provider.id);
+      const modelProviderIds: string[] = [];
+      if (runtime.runtime === HERMES_RUNTIME_KIND) {
+        const requestedIds =
+          source.modelProviders.length > 0
+            ? source.modelProviders.map((link) => link.providerId)
+            : source.providerId
+              ? [source.providerId]
+              : [];
+        for (const requestedId of [...new Set(requestedIds)].sort()) {
+          const provider = await lockProvider(tx, workspaceId, requestedId);
+          if (provider) modelProviderIds.push(provider.id);
+        }
       }
-    }
-    const cloned = await createAgentRecords(
-      tx,
-      workspaceId,
-      cleanName,
-      slug,
-      runtime,
-      sandboxSlug,
-    );
-    await tx.agent.update({
-      where: { id: cloned.id },
-      data: {
-        description: source.description,
-        systemPrompt: runtime.runtime === HERMES_RUNTIME_KIND ? null : source.systemPrompt,
-        providerId,
-        model: runtime.runtime === HERMES_RUNTIME_KIND ? null : providerId ? source.model : null,
-        disabledBuiltinTools: source.disabledBuiltinTools,
-        maxSteps: source.maxSteps,
-      },
-    });
-    if (
-      runtime.runtime === HERMES_RUNTIME_KIND
-      && effectiveCloneOptions.copyHermesEnvironment
-      && source.runtime?.sandbox
-    ) {
-      const env = readSandboxEnv(source.runtime.sandbox.config);
-      const targetRuntime = await tx.agentRuntime.findUniqueOrThrow({
-        where: { agentId: cloned.id },
-        select: {
-          id: true,
-          sandboxId: true,
-          image: true,
-          sandbox: { select: { deploymentId: true, config: true } },
+      const cloned = await createAgentRecords(
+        tx,
+        workspaceId,
+        cleanName,
+        slug,
+        runtime,
+        sandboxSlug,
+      );
+      await tx.agent.update({
+        where: { id: cloned.id },
+        data: {
+          description: source.description,
+          systemPrompt:
+            runtime.runtime === HERMES_RUNTIME_KIND
+              ? null
+              : source.systemPrompt,
+          providerId,
+          model:
+            runtime.runtime === HERMES_RUNTIME_KIND
+              ? null
+              : providerId
+                ? source.model
+                : null,
+          disabledBuiltinTools: source.disabledBuiltinTools,
+          maxSteps: source.maxSteps,
         },
       });
-      await Promise.all([
-        tx.sandbox.update({
-          where: { id: targetRuntime.sandboxId },
-          data: { config: sandboxConfigWithEnv(targetRuntime.sandbox.config, env) ?? {} },
-        }),
-        tx.deployment.update({
-          where: { id: targetRuntime.sandbox.deploymentId },
-          data: {
-            installCfg: {
-              sandboxId: targetRuntime.sandboxId,
-              kind: HERMES_RUNTIME_KIND,
-              image: targetRuntime.image,
-              network: 'isolated',
-              volumeName: sandboxVolumeName(targetRuntime.sandboxId),
-              runtimeId: targetRuntime.id,
-              runtimeModelName: slug,
-              env: withoutHermesChannelEnv(env),
-            },
+      if (
+        runtime.runtime === HERMES_RUNTIME_KIND &&
+        effectiveCloneOptions.copyHermesEnvironment &&
+        source.runtime?.sandbox
+      ) {
+        const env = readSandboxEnv(source.runtime.sandbox.config);
+        const targetRuntime = await tx.agentRuntime.findUniqueOrThrow({
+          where: { agentId: cloned.id },
+          select: {
+            id: true,
+            sandboxId: true,
+            image: true,
+            sandbox: { select: { deploymentId: true, config: true } },
           },
+        });
+        await Promise.all([
+          tx.sandbox.update({
+            where: { id: targetRuntime.sandboxId },
+            data: {
+              config:
+                sandboxConfigWithEnv(targetRuntime.sandbox.config, env) ?? {},
+            },
+          }),
+          tx.deployment.update({
+            where: { id: targetRuntime.sandbox.deploymentId },
+            data: {
+              installCfg: {
+                sandboxId: targetRuntime.sandboxId,
+                kind: HERMES_RUNTIME_KIND,
+                image: targetRuntime.image,
+                network: "isolated",
+                volumeName: sandboxVolumeName(targetRuntime.sandboxId),
+                runtimeId: targetRuntime.id,
+                runtimeModelName: slug,
+                env: withoutHermesChannelEnv(env),
+              },
+            },
+          }),
+        ]);
+      }
+      await Promise.all([
+        tx.agentServer.createMany({
+          data: (effectiveCloneOptions.copyMcp ? source.servers : []).map(
+            (server) => ({
+              agentId: cloned.id,
+              deploymentId: server.deploymentId,
+            }),
+          ),
+        }),
+        tx.agentSkill.createMany({
+          data: (effectiveCloneOptions.copySkills ? source.skills : []).map(
+            (skill) => ({
+              agentId: cloned.id,
+              installedSkillId: skill.installedSkillId,
+            }),
+          ),
+        }),
+        tx.agentToolkit.createMany({
+          data: (effectiveCloneOptions.copyToolkits ? source.toolkits : []).map(
+            (toolkit) => ({
+              agentId: cloned.id,
+              toolkitId: toolkit.toolkitId,
+            }),
+          ),
+        }),
+        tx.agentSandbox.createMany({
+          data: (effectiveCloneOptions.copySandboxes
+            ? source.sandboxes
+            : []
+          ).map((sandbox) => ({
+            agentId: cloned.id,
+            sandboxId: sandbox.sandboxId,
+            isDefault: sandbox.isDefault,
+          })),
+        }),
+        tx.agentKnowledgeBase.createMany({
+          data: source.knowledgeBases.map((link) => ({
+            agentId: cloned.id,
+            knowledgeBaseId: link.knowledgeBaseId,
+          })),
+        }),
+        tx.agentSubAgent.createMany({
+          data: (effectiveCloneOptions.copySubAgents
+            ? source.subAgents
+            : []
+          ).map((subAgent) => ({
+            parentId: cloned.id,
+            childId: subAgent.childId,
+          })),
+        }),
+        tx.agentModelProvider.createMany({
+          data: modelProviderIds.map((modelProviderId) => ({
+            agentId: cloned.id,
+            providerId: modelProviderId,
+          })),
         }),
       ]);
-    }
-    await Promise.all([
-      tx.agentServer.createMany({
-        data: (effectiveCloneOptions.copyMcp ? source.servers : []).map((server) => ({
-          agentId: cloned.id,
-          deploymentId: server.deploymentId,
-        })),
-      }),
-      tx.agentSkill.createMany({
-        data: (effectiveCloneOptions.copySkills ? source.skills : []).map((skill) => ({
-          agentId: cloned.id,
-          installedSkillId: skill.installedSkillId,
-        })),
-      }),
-      tx.agentToolkit.createMany({
-        data: (effectiveCloneOptions.copyToolkits ? source.toolkits : []).map((toolkit) => ({
-          agentId: cloned.id,
-          toolkitId: toolkit.toolkitId,
-        })),
-      }),
-      tx.agentSandbox.createMany({
-        data: (effectiveCloneOptions.copySandboxes ? source.sandboxes : []).map((sandbox) => ({
-          agentId: cloned.id,
-          sandboxId: sandbox.sandboxId,
-          isDefault: sandbox.isDefault,
-        })),
-      }),
-      tx.agentKnowledgeBase.createMany({
-        data: source.knowledgeBases.map((link) => ({
-          agentId: cloned.id,
-          knowledgeBaseId: link.knowledgeBaseId,
-        })),
-      }),
-      tx.agentSubAgent.createMany({
-        data: (effectiveCloneOptions.copySubAgents ? source.subAgents : []).map((subAgent) => ({
-          parentId: cloned.id,
-          childId: subAgent.childId,
-        })),
-      }),
-      tx.agentModelProvider.createMany({
-        data: modelProviderIds.map((modelProviderId) => ({
-          agentId: cloned.id,
-          providerId: modelProviderId,
-        })),
-      }),
-    ]);
-    const conversationsDeferred = runtime.runtime === HERMES_RUNTIME_KIND
-      && effectiveCloneOptions.copyHermesVolume
-      && effectiveCloneOptions.copyConversations;
-    const conversationIds = effectiveCloneOptions.copyConversations && !conversationsDeferred
-      ? await cloneAgentConversationsInTransaction(
-          tx,
-          workspaceId,
-          sourceAgentId,
-          cloned.id,
-          false,
-        )
-      : [];
-    return { ...cloned, conversationIds, conversationsDeferred };
-  }, { maxWait: 10_000, timeout: 30_000 });
+      const conversationsDeferred =
+        runtime.runtime === HERMES_RUNTIME_KIND &&
+        effectiveCloneOptions.copyHermesVolume &&
+        effectiveCloneOptions.copyConversations;
+      const conversationIds =
+        effectiveCloneOptions.copyConversations && !conversationsDeferred
+          ? await cloneAgentConversationsInTransaction(
+              tx,
+              workspaceId,
+              sourceAgentId,
+              cloned.id,
+              false,
+            )
+          : [];
+      return { ...cloned, conversationIds, conversationsDeferred };
+    },
+    { maxWait: 10_000, timeout: 30_000 },
+  );
 }
 
 export type AgentCloneConversationId = { sourceId: string; targetId: string };
@@ -517,7 +610,7 @@ type SourceConversationForClone = {
 function copiedMessageParts(parts: Prisma.JsonValue) {
   // Prisma distinguishes JSON null from SQL NULL for required Json fields.
   // A historic message can legitimately contain the former.
-  return parts === null ? Prisma.JsonNull : parts as Prisma.InputJsonValue;
+  return parts === null ? Prisma.JsonNull : (parts as Prisma.InputJsonValue);
 }
 
 async function copyConversationsInTransaction(
@@ -532,13 +625,14 @@ async function copyConversationsInTransaction(
     // Before runtime aliases existed, external-message conversations used the
     // deterministic session key as their title. Recover that identity so a
     // copied Hermes volume can continue those legacy channel sessions too.
-    const legacyMessagingSessionKey = conversation.title?.startsWith('msg:')
+    const legacyMessagingSessionKey = conversation.title?.startsWith("msg:")
       ? conversation.title
       : undefined;
     const runtimeSession = preserveHermesSession
       ? defaultConversationRuntimeSession(sourceAgentId, conversation.id, {
           runtimeSessionId: conversation.runtimeSessionId ?? undefined,
-          runtimeSessionKey: conversation.runtimeSessionKey ?? legacyMessagingSessionKey,
+          runtimeSessionKey:
+            conversation.runtimeSessionKey ?? legacyMessagingSessionKey,
         })
       : undefined;
     const copiedConversation = await tx.conversation.create({
@@ -548,14 +642,19 @@ async function copyConversationsInTransaction(
         createdAt: conversation.createdAt,
         reasoningEffort: conversation.reasoningEffort,
         ...(runtimeSession ?? {}),
-        ...(preserveHermesSession ? {
-          hermesProfile: conversation.hermesProfile,
-          hermesProvider: conversation.hermesProvider,
-          hermesModel: conversation.hermesModel,
-        } : {}),
+        ...(preserveHermesSession
+          ? {
+              hermesProfile: conversation.hermesProfile,
+              hermesProvider: conversation.hermesProvider,
+              hermesModel: conversation.hermesModel,
+            }
+          : {}),
       },
     });
-    conversationIds.push({ sourceId: conversation.id, targetId: copiedConversation.id });
+    conversationIds.push({
+      sourceId: conversation.id,
+      targetId: copiedConversation.id,
+    });
     if (conversation.messages.length > 0) {
       await tx.message.createMany({
         data: conversation.messages.map((message) => ({
@@ -582,7 +681,7 @@ async function cloneAgentConversationsInTransaction(
       where: { id: sourceAgentId, workspaceId },
       select: {
         conversations: {
-          orderBy: { createdAt: 'asc' },
+          orderBy: { createdAt: "asc" },
           select: {
             id: true,
             title: true,
@@ -594,7 +693,7 @@ async function cloneAgentConversationsInTransaction(
             reasoningEffort: true,
             createdAt: true,
             messages: {
-              orderBy: { createdAt: 'asc' },
+              orderBy: { createdAt: "asc" },
               select: { role: true, parts: true, createdAt: true },
             },
           },
@@ -606,7 +705,8 @@ async function cloneAgentConversationsInTransaction(
       select: { id: true },
     }),
   ]);
-  if (!source || !target) throw new Error('The source or target agent is no longer available.');
+  if (!source || !target)
+    throw new Error("The source or target agent is no longer available.");
   return copyConversationsInTransaction(
     tx,
     sourceAgentId,
@@ -632,110 +732,117 @@ export async function cloneHermesVolumeData(
   sourceAgentId: string,
   targetAgentId: string,
 ): Promise<HermesVolumeCloneData> {
-  return db.$transaction(async (tx) => {
-    const [source, target] = await Promise.all([
-      tx.agent.findFirst({
-        where: { id: sourceAgentId, workspaceId },
-        select: {
-          runtime: {
-            select: {
-              kind: true,
-              workspaceId: true,
-              sandbox: { select: { workspaceId: true } },
+  return db.$transaction(
+    async (tx) => {
+      const [source, target] = await Promise.all([
+        tx.agent.findFirst({
+          where: { id: sourceAgentId, workspaceId },
+          select: {
+            runtime: {
+              select: {
+                kind: true,
+                workspaceId: true,
+                sandbox: { select: { workspaceId: true } },
+              },
             },
-          },
-          conversations: {
-            orderBy: { createdAt: 'asc' },
-            select: {
-              id: true,
-              title: true,
-              runtimeSessionId: true,
-              runtimeSessionKey: true,
-              hermesProfile: true,
-              hermesProvider: true,
-              hermesModel: true,
-              reasoningEffort: true,
-              createdAt: true,
-              messages: {
-                orderBy: { createdAt: 'asc' },
-                select: { role: true, parts: true, createdAt: true },
+            conversations: {
+              orderBy: { createdAt: "asc" },
+              select: {
+                id: true,
+                title: true,
+                runtimeSessionId: true,
+                runtimeSessionKey: true,
+                hermesProfile: true,
+                hermesProvider: true,
+                hermesModel: true,
+                reasoningEffort: true,
+                createdAt: true,
+                messages: {
+                  orderBy: { createdAt: "asc" },
+                  select: { role: true, parts: true, createdAt: true },
+                },
+              },
+            },
+            attachments: {
+              where: { storage: "hermes-volume" },
+              select: {
+                conversationId: true,
+                name: true,
+                mimeType: true,
+                size: true,
+                storage: true,
+                storagePath: true,
+                createdAt: true,
               },
             },
           },
-          attachments: {
-            where: { storage: 'hermes-volume' },
-            select: {
-              conversationId: true,
-              name: true,
-              mimeType: true,
-              size: true,
-              storage: true,
-              storagePath: true,
-              createdAt: true,
+        }),
+        tx.agent.findFirst({
+          where: { id: targetAgentId, workspaceId },
+          select: {
+            id: true,
+            runtime: {
+              select: {
+                id: true,
+                kind: true,
+                workspaceId: true,
+                sandbox: { select: { workspaceId: true } },
+              },
             },
           },
-        },
-      }),
-      tx.agent.findFirst({
-        where: { id: targetAgentId, workspaceId },
-        select: {
-          id: true,
-          runtime: {
-            select: {
-              id: true,
-              kind: true,
-              workspaceId: true,
-              sandbox: { select: { workspaceId: true } },
-            },
-          },
-        },
-      }),
-    ]);
-    const sourceHermesRuntime = source?.runtime;
-    const targetHermesRuntime = target?.runtime;
-    if (
-      !source
-      || !target
-      || sourceHermesRuntime?.kind !== HERMES_RUNTIME_KIND
-      || targetHermesRuntime?.kind !== HERMES_RUNTIME_KIND
-      || sourceHermesRuntime.workspaceId !== workspaceId
-      || targetHermesRuntime.workspaceId !== workspaceId
-      || sourceHermesRuntime.sandbox.workspaceId !== workspaceId
-      || targetHermesRuntime.sandbox.workspaceId !== workspaceId
-    ) {
-      throw new Error('Source and target must be workspace-owned Hermes agents.');
-    }
+        }),
+      ]);
+      const sourceHermesRuntime = source?.runtime;
+      const targetHermesRuntime = target?.runtime;
+      if (
+        !source ||
+        !target ||
+        sourceHermesRuntime?.kind !== HERMES_RUNTIME_KIND ||
+        targetHermesRuntime?.kind !== HERMES_RUNTIME_KIND ||
+        sourceHermesRuntime.workspaceId !== workspaceId ||
+        targetHermesRuntime.workspaceId !== workspaceId ||
+        sourceHermesRuntime.sandbox.workspaceId !== workspaceId ||
+        targetHermesRuntime.sandbox.workspaceId !== workspaceId
+      ) {
+        throw new Error(
+          "Source and target must be workspace-owned Hermes agents.",
+        );
+      }
 
-    const conversationIds = await copyConversationsInTransaction(
-      tx,
-      sourceAgentId,
-      target.id,
-      source.conversations,
-      true,
-    );
-    if (source.attachments.length === 0) return { conversationIds, attachmentCount: 0 };
+      const conversationIds = await copyConversationsInTransaction(
+        tx,
+        sourceAgentId,
+        target.id,
+        source.conversations,
+        true,
+      );
+      if (source.attachments.length === 0)
+        return { conversationIds, attachmentCount: 0 };
 
-    const targetConversationBySource = new Map(
-      conversationIds.map(({ sourceId, targetId }) => [sourceId, targetId]),
-    );
-    const copiedAttachments = await tx.agentAttachment.createMany({
-      data: source.attachments.map((attachment) => ({
-        workspaceId,
-        agentId: target.id,
-        conversationId: attachment.conversationId
-          ? targetConversationBySource.get(attachment.conversationId) ?? null
-          : null,
-        runtimeId: targetHermesRuntime.id,
-        name: attachment.name,
-        mimeType: attachment.mimeType,
-        size: attachment.size,
-        storage: attachment.storage,
-        storagePath: attachment.storagePath,
-        createdAt: attachment.createdAt,
-      })),
-    });
-    return { conversationIds, attachmentCount: copiedAttachments.count };
-  }, { maxWait: 10_000, timeout: 30_000 });
+      const targetConversationBySource = new Map(
+        conversationIds.map(({ sourceId, targetId }) => [sourceId, targetId]),
+      );
+      const copiedAttachments = await tx.agentAttachment.createMany({
+        data: source.attachments.map((attachment) => ({
+          workspaceId,
+          agentId: target.id,
+          conversationId: attachment.conversationId
+            ? (targetConversationBySource.get(attachment.conversationId) ??
+              null)
+            : null,
+          runtimeId: targetHermesRuntime.id,
+          name: attachment.name,
+          mimeType: attachment.mimeType,
+          size: attachment.size,
+          storage: attachment.storage,
+          storagePath: attachment.storagePath,
+          createdAt: attachment.createdAt,
+        })),
+      });
+      return { conversationIds, attachmentCount: copiedAttachments.count };
+    },
+    { maxWait: 10_000, timeout: 30_000 },
+  );
 }
 
 export type AgentConfig = {
@@ -762,7 +869,7 @@ export type AgentToolSelection = {
 export class AgentConfigurationError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = 'AgentConfigurationError';
+    this.name = "AgentConfigurationError";
   }
 }
 
@@ -774,18 +881,34 @@ async function validateAndWritePiPackages(
   piPackages: Array<{ marketInstallId: string; releaseId: string }> | undefined,
 ) {
   if (piPackages === undefined) return; // undefined = no change
-  if (runtimeKind !== 'pi-sdk') throw new AgentConfigurationError('pi_packages_runtime_unsupported');
-  if (!Array.isArray(piPackages) || piPackages.some((pkg) => !pkg || typeof pkg !== 'object'
-    || Object.keys(pkg).some((key) => key !== 'marketInstallId' && key !== 'releaseId')
-    || typeof pkg.marketInstallId !== 'string' || !pkg.marketInstallId
-    || typeof pkg.releaseId !== 'string' || !pkg.releaseId)) {
-    throw new AgentConfigurationError('pi_packages_invalid');
+  if (runtimeKind !== "pi-sdk")
+    throw new AgentConfigurationError("pi_packages_runtime_unsupported");
+  if (
+    !Array.isArray(piPackages) ||
+    piPackages.some(
+      (pkg) =>
+        !pkg ||
+        typeof pkg !== "object" ||
+        Object.keys(pkg).some(
+          (key) => key !== "marketInstallId" && key !== "releaseId",
+        ) ||
+        typeof pkg.marketInstallId !== "string" ||
+        !pkg.marketInstallId ||
+        typeof pkg.releaseId !== "string" ||
+        !pkg.releaseId,
+    )
+  ) {
+    throw new AgentConfigurationError("pi_packages_invalid");
   }
   await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${workspaceId} FOR UPDATE`;
-  if (piPackages.length > 16) throw new AgentConfigurationError('Too many Pi packages (max 16).');
+  if (piPackages.length > 16)
+    throw new AgentConfigurationError("Too many Pi packages (max 16).");
   const seenInstalls = new Set<string>();
   for (const pkg of piPackages) {
-    if (seenInstalls.has(pkg.marketInstallId)) throw new AgentConfigurationError(`Duplicate marketInstallId: ${pkg.marketInstallId}`);
+    if (seenInstalls.has(pkg.marketInstallId))
+      throw new AgentConfigurationError(
+        `Duplicate marketInstallId: ${pkg.marketInstallId}`,
+      );
     seenInstalls.add(pkg.marketInstallId);
   }
   // Validate each install/release belongs to workspace and is approved
@@ -800,30 +923,62 @@ async function validateAndWritePiPackages(
         currentReleaseId: true,
       },
     });
-    if (!install) throw new AgentConfigurationError(`Unknown or inaccessible market install: ${pkg.marketInstallId}`);
-    if (install.listing.kind !== 'pi-package') throw new AgentConfigurationError(`Market install is not a pi-package: ${pkg.marketInstallId}`);
-    if (install.listing.status !== 'published') throw new AgentConfigurationError(`Listing is not published: ${pkg.marketInstallId}`);
-    if (install.status !== 'ready') throw new AgentConfigurationError(`Market install is not ready: ${pkg.marketInstallId}`);
+    if (!install)
+      throw new AgentConfigurationError(
+        `Unknown or inaccessible market install: ${pkg.marketInstallId}`,
+      );
+    if (install.listing.kind !== "pi-package")
+      throw new AgentConfigurationError(
+        `Market install is not a pi-package: ${pkg.marketInstallId}`,
+      );
+    if (install.listing.status !== "published")
+      throw new AgentConfigurationError(
+        `Listing is not published: ${pkg.marketInstallId}`,
+      );
+    if (install.status !== "ready")
+      throw new AgentConfigurationError(
+        `Market install is not ready: ${pkg.marketInstallId}`,
+      );
     const release = await tx.marketRelease.findFirst({
       where: { id: pkg.releaseId, listingId: install.listingId },
       select: { id: true, listingId: true, reviewStatus: true },
     });
-    if (!release || release.reviewStatus !== 'approved') throw new AgentConfigurationError(`Release not approved: ${pkg.releaseId}`);
+    if (release?.reviewStatus !== "approved")
+      throw new AgentConfigurationError(
+        `Release not approved: ${pkg.releaseId}`,
+      );
     // First-time bind can only use currentReleaseId; existing bind may keep an approved older release
-    const existingBind = agentId ? await tx.agentPiPackage.findFirst({
-      where: { agentId, marketInstallId: pkg.marketInstallId },
-      select: { releaseId: true },
-    }) : null;
-    if (pkg.releaseId !== install.currentReleaseId && pkg.releaseId !== existingBind?.releaseId) {
-      throw new AgentConfigurationError('pi_package_release_not_current');
+    const existingBind = agentId
+      ? await tx.agentPiPackage.findFirst({
+          where: { agentId, marketInstallId: pkg.marketInstallId },
+          select: { releaseId: true },
+        })
+      : null;
+    if (
+      pkg.releaseId !== install.currentReleaseId &&
+      pkg.releaseId !== existingBind?.releaseId
+    ) {
+      throw new AgentConfigurationError("pi_package_release_not_current");
     }
   }
   const existing = await tx.agentPiPackage.findMany({ where: { agentId } });
-  if (existing.length === piPackages.length && existing.every((bound) =>
-    piPackages.some((pkg) => pkg.marketInstallId === bound.marketInstallId && pkg.releaseId === bound.releaseId))) return;
-  const sandboxes = await tx.agentSandbox.findMany({ where: { agentId }, select: { sandboxId: true } });
+  if (
+    existing.length === piPackages.length &&
+    existing.every((bound) =>
+      piPackages.some(
+        (pkg) =>
+          pkg.marketInstallId === bound.marketInstallId &&
+          pkg.releaseId === bound.releaseId,
+      ),
+    )
+  )
+    return;
+  const sandboxes = await tx.agentSandbox.findMany({
+    where: { agentId },
+    select: { sandboxId: true },
+  });
   if (sandboxes.some(({ sandboxId }) => sandboxExecutionBusy(sandboxId))) {
-    throw new AgentConfigurationError('pi_package_agent_busy');
+    throw new AgentConfigurationError("pi_package_agent_busy");
   }
   // Check agent is not busy (no active A2A task, Work, or execution lease)
   const busyTask = await tx.a2ATask.findFirst({
@@ -833,15 +988,15 @@ async function validateAndWritePiPackages(
     },
     select: { id: true },
   });
-  if (busyTask) throw new AgentConfigurationError('pi_package_agent_busy');
+  if (busyTask) throw new AgentConfigurationError("pi_package_agent_busy");
   const busyWork = await tx.workSession.findFirst({
     where: {
       agentId,
-      status: { in: ['queued', 'running', 'waiting_approval', 'cancelling'] },
+      status: { in: ["queued", "running", "waiting_approval", "cancelling"] },
     },
     select: { id: true },
   });
-  if (busyWork) throw new AgentConfigurationError('pi_package_agent_busy');
+  if (busyWork) throw new AgentConfigurationError("pi_package_agent_busy");
   // Write: replace all bindings atomically
   await tx.agentPiPackage.deleteMany({ where: { agentId } });
   if (piPackages.length > 0) {
@@ -871,12 +1026,16 @@ function assertRuntimeSandboxes(
 ) {
   if (!isDedicatedSandboxRuntimeKind(runtime)) return;
   if (allowAutomatic && requestedIds.length === 0) return;
-  if (requestedIds.length !== 1 || sandboxes.length !== 1 || sandboxes[0]?.kind !== 'docker') {
+  if (
+    requestedIds.length !== 1 ||
+    sandboxes.length !== 1 ||
+    sandboxes[0]?.kind !== "docker"
+  ) {
     throw new AgentConfigurationError(
       `${agentRuntimeDisplayName(runtime)} requires exactly one Docker sandbox.`,
     );
   }
-  if (sandboxes[0]?.network === 'none') {
+  if (sandboxes[0]?.network === "none") {
     throw new AgentConfigurationError(
       `${agentRuntimeDisplayName(runtime)} requires a networked Docker sandbox.`,
     );
@@ -896,17 +1055,22 @@ function assertSandboxesUnassigned(conflict: SandboxAssignmentConflict | null) {
 }
 
 function isSandboxAssignmentConstraintError(error: unknown): boolean {
-  if (!error || typeof error !== 'object' || !('code' in error) || error.code !== 'P2002') {
+  if (
+    !error ||
+    typeof error !== "object" ||
+    !("code" in error) ||
+    error.code !== "P2002"
+  ) {
     return false;
   }
-  const meta = 'meta' in error ? error.meta : undefined;
-  return JSON.stringify(meta ?? '').includes('sandboxId');
+  const meta = "meta" in error ? error.meta : undefined;
+  return JSON.stringify(meta ?? "").includes("sandboxId");
 }
 
 function rethrowSandboxAssignmentConstraint(error: unknown): never {
   if (isSandboxAssignmentConstraintError(error)) {
     throw new AgentConfigurationError(
-      'The selected sandbox was assigned to another agent. Choose an unassigned sandbox.',
+      "The selected sandbox was assigned to another agent. Choose an unassigned sandbox.",
     );
   }
   throw error;
@@ -916,8 +1080,22 @@ async function lockProvider(
   tx: Prisma.TransactionClient,
   workspaceId: string,
   providerId: string,
-): Promise<{ id: string; name: string; format: string; baseUrl: string; models: string[] } | null> {
-  const providers = await tx.$queryRaw<Array<{ id: string; name: string; format: string; baseUrl: string; models: string[] }>>`
+): Promise<{
+  id: string;
+  name: string;
+  format: string;
+  baseUrl: string;
+  models: string[];
+} | null> {
+  const providers = await tx.$queryRaw<
+    Array<{
+      id: string;
+      name: string;
+      format: string;
+      baseUrl: string;
+      models: string[];
+    }>
+  >`
     SELECT "id", "name", "format", "baseUrl", "models"
     FROM "ModelProvider"
     WHERE "id" = ${providerId} AND "workspaceId" = ${workspaceId}
@@ -938,7 +1116,9 @@ function assertExactResources(
   const found = new Set(rows.map(({ id }) => id));
   const missing = requestedIds.filter((id) => !found.has(id));
   if (missing.length > 0) {
-    throw new AgentConfigurationError(`Unknown or unavailable ${label}: ${missing.join(', ')}`);
+    throw new AgentConfigurationError(
+      `Unknown or unavailable ${label}: ${missing.join(", ")}`,
+    );
   }
 }
 
@@ -952,7 +1132,7 @@ export async function createConfiguredAgent(
   tools: AgentToolSelection,
   options: CreateAgentOptions,
 ) {
-  const cleanName = cfg.name.trim() || 'New agent';
+  const cleanName = cfg.name.trim() || "New agent";
   const deploymentIds = uniqueIds(tools.deploymentIds);
   const installedSkillIds = uniqueIds(tools.installedSkillIds);
   const toolkitIds = uniqueIds(tools.toolkitIds);
@@ -960,143 +1140,197 @@ export async function createConfiguredAgent(
   const subAgentIds = uniqueIds(tools.subAgentIds ?? []);
 
   try {
-    return await db.$transaction(async (tx) => {
-      if (options.piPackages !== undefined || cfg.piPackages !== undefined) {
-        await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${workspaceId} FOR UPDATE`;
-      }
-      await lockAgentSlugNamespace(tx, workspaceId);
-      const slug = await uniqueAgentSlug(tx, workspaceId, slugify(cleanName));
-      const isDedicated = isDedicatedSandboxRuntimeKind(options.runtime);
-      const automaticSandbox = isDedicated && sandboxIds.length === 0;
-      const sandboxSlug = options.runtime === HERMES_RUNTIME_KIND || automaticSandbox
-        ? await uniqueSandboxSlug(tx, workspaceId, slug, automaticSandbox ? 'workspace' : 'runtime')
-        : undefined;
-      const isHermes = options.runtime === HERMES_RUNTIME_KIND;
-      const modelProviderIds = isHermes
-        ? uniqueIds(cfg.providerIds ?? (cfg.providerId ? [cfg.providerId] : [])).sort()
-        : [];
-      if (!isHermes && cfg.model && !cfg.providerId) {
-        throw new AgentConfigurationError('A model requires a model provider.');
-      }
-      if (isHermes) {
-        for (const providerId of modelProviderIds) {
-          if (!await lockProvider(tx, workspaceId, providerId)) {
-            throw new AgentConfigurationError(`Unknown model provider: ${providerId}`);
+    return await db.$transaction(
+      async (tx) => {
+        if (options.piPackages !== undefined || cfg.piPackages !== undefined) {
+          await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${workspaceId} FOR UPDATE`;
+        }
+        await lockAgentSlugNamespace(tx, workspaceId);
+        const slug = await uniqueAgentSlug(tx, workspaceId, slugify(cleanName));
+        const isDedicated = isDedicatedSandboxRuntimeKind(options.runtime);
+        const automaticSandbox = isDedicated && sandboxIds.length === 0;
+        const sandboxSlug =
+          options.runtime === HERMES_RUNTIME_KIND || automaticSandbox
+            ? await uniqueSandboxSlug(
+                tx,
+                workspaceId,
+                slug,
+                automaticSandbox ? "workspace" : "runtime",
+              )
+            : undefined;
+        const isHermes = options.runtime === HERMES_RUNTIME_KIND;
+        const modelProviderIds = isHermes
+          ? uniqueIds(
+              cfg.providerIds ?? (cfg.providerId ? [cfg.providerId] : []),
+            ).sort()
+          : [];
+        if (!isHermes && cfg.model && !cfg.providerId) {
+          throw new AgentConfigurationError(
+            "A model requires a model provider.",
+          );
+        }
+        if (isHermes) {
+          for (const providerId of modelProviderIds) {
+            if (!(await lockProvider(tx, workspaceId, providerId))) {
+              throw new AgentConfigurationError(
+                `Unknown model provider: ${providerId}`,
+              );
+            }
+          }
+        } else if (cfg.providerId) {
+          const provider = await lockProvider(tx, workspaceId, cfg.providerId);
+          if (!provider)
+            throw new AgentConfigurationError(
+              `Unknown model provider: ${cfg.providerId}`,
+            );
+          assertRuntimeProviderFormat(options.runtime, provider.format);
+          if (cfg.model && !provider.models.includes(cfg.model)) {
+            throw new AgentConfigurationError(
+              `Unknown or unavailable model: ${cfg.model}`,
+            );
           }
         }
-      } else if (cfg.providerId) {
-        const provider = await lockProvider(tx, workspaceId, cfg.providerId);
-        if (!provider) throw new AgentConfigurationError(`Unknown model provider: ${cfg.providerId}`);
-        assertRuntimeProviderFormat(options.runtime, provider.format);
-        if (cfg.model && !provider.models.includes(cfg.model)) {
-          throw new AgentConfigurationError(`Unknown or unavailable model: ${cfg.model}`);
+
+        // Interactive transactions use one pg connection; keep these awaits
+        // sequential so the adapter never issues overlapping client.query calls.
+        const deployments = await tx.deployment.findMany({
+          where: {
+            id: { in: deploymentIds },
+            workspaceId,
+            OR: [{ source: null }, { source: { not: "sandbox" } }],
+          },
+          select: { id: true },
+        });
+        const skills = await tx.installedSkill.findMany({
+          where: { id: { in: installedSkillIds }, workspaceId },
+          select: { id: true },
+        });
+        const toolkits = await tx.toolkit.findMany({
+          where: { id: { in: toolkitIds }, workspaceId },
+          select: { id: true },
+        });
+        const sandboxes = await tx.sandbox.findMany({
+          where: {
+            id: { in: sandboxIds },
+            workspaceId,
+            kind: { not: HERMES_RUNTIME_KIND },
+            deployment: { status: { notIn: UNAVAILABLE_SANDBOX_STATUSES } },
+          },
+          select: { id: true, kind: true, network: true },
+        });
+        const subAgents = await tx.agent.findMany({
+          where: { id: { in: subAgentIds }, workspaceId },
+          select: { id: true },
+        });
+        const sandboxConflict = await tx.agentSandbox.findFirst({
+          where: { sandboxId: { in: sandboxIds } },
+          select: {
+            agent: { select: { name: true } },
+            sandbox: { select: { name: true } },
+          },
+        });
+        assertExactResources("MCP deployment", deploymentIds, deployments);
+        assertExactResources("installed skill", installedSkillIds, skills);
+        assertExactResources("toolkit", toolkitIds, toolkits);
+        assertExactResources("sandbox", sandboxIds, sandboxes);
+        assertExactResources("sub-agent", subAgentIds, subAgents);
+        assertRuntimeSandboxes(options.runtime, sandboxIds, sandboxes, true);
+        assertSandboxesUnassigned(sandboxConflict);
+
+        const agent = await createAgentRecords(
+          tx,
+          workspaceId,
+          cleanName,
+          slug,
+          options,
+          sandboxSlug,
+        );
+        if (automaticSandbox && sandboxSlug) {
+          await createDedicatedSandboxRecords(
+            tx,
+            workspaceId,
+            agent,
+            sandboxSlug,
+          );
         }
-      }
-
-      // Interactive transactions use one pg connection; keep these awaits
-      // sequential so the adapter never issues overlapping client.query calls.
-      const deployments = await tx.deployment.findMany({
-        where: {
-          id: { in: deploymentIds },
+        await tx.agent.update({
+          where: { id: agent.id },
+          data: {
+            name: cleanName,
+            description: cfg.description?.trim() || null,
+            systemPrompt: isHermes ? null : cfg.systemPrompt,
+            providerId: isHermes ? null : cfg.providerId,
+            model: isHermes ? null : cfg.providerId ? cfg.model : null,
+            disabledBuiltinTools: isHermes
+              ? []
+              : normalizeDisabledBuiltinTools(
+                  options.runtime,
+                  cfg.disabledBuiltinTools,
+                ),
+            maxSteps: cfg.maxSteps,
+          },
+        });
+        await tx.agentModelProvider.createMany({
+          data: modelProviderIds.map((providerId) => ({
+            agentId: agent.id,
+            providerId,
+          })),
+        });
+        await tx.agentServer.createMany({
+          data: deployments.map(({ id }) => ({
+            agentId: agent.id,
+            deploymentId: id,
+          })),
+        });
+        await tx.agentSkill.createMany({
+          data: skills.map(({ id }) => ({
+            agentId: agent.id,
+            installedSkillId: id,
+          })),
+        });
+        await tx.agentToolkit.createMany({
+          data: toolkits.map(({ id }) => ({
+            agentId: agent.id,
+            toolkitId: id,
+          })),
+        });
+        await tx.agentSandbox.createMany({
+          data: sandboxes.map(({ id }) => ({
+            agentId: agent.id,
+            sandboxId: id,
+            isDefault:
+              isDedicatedSandboxRuntimeKind(options.runtime) ||
+              id === tools.defaultSandboxId ||
+              (!tools.defaultSandboxId && id === sandboxes[0]?.id),
+          })),
+        });
+        await tx.agentSubAgent.createMany({
+          data: subAgents.map(({ id }) => ({
+            parentId: agent.id,
+            childId: id,
+          })),
+        });
+        await validateAndWritePiPackages(
+          tx,
           workspaceId,
-          OR: [{ source: null }, { source: { not: 'sandbox' } }],
-        },
-        select: { id: true },
-      });
-      const skills = await tx.installedSkill.findMany({
-        where: { id: { in: installedSkillIds }, workspaceId },
-        select: { id: true },
-      });
-      const toolkits = await tx.toolkit.findMany({
-        where: { id: { in: toolkitIds }, workspaceId },
-        select: { id: true },
-      });
-      const sandboxes = await tx.sandbox.findMany({
-        where: {
-          id: { in: sandboxIds },
-          workspaceId,
-          kind: { not: HERMES_RUNTIME_KIND },
-          deployment: { status: { notIn: UNAVAILABLE_SANDBOX_STATUSES } },
-        },
-        select: { id: true, kind: true, network: true },
-      });
-      const subAgents = await tx.agent.findMany({
-        where: { id: { in: subAgentIds }, workspaceId },
-        select: { id: true },
-      });
-      const sandboxConflict = await tx.agentSandbox.findFirst({
-        where: { sandboxId: { in: sandboxIds } },
-        select: {
-          agent: { select: { name: true } },
-          sandbox: { select: { name: true } },
-        },
-      });
-      assertExactResources('MCP deployment', deploymentIds, deployments);
-      assertExactResources('installed skill', installedSkillIds, skills);
-      assertExactResources('toolkit', toolkitIds, toolkits);
-      assertExactResources('sandbox', sandboxIds, sandboxes);
-      assertExactResources('sub-agent', subAgentIds, subAgents);
-      assertRuntimeSandboxes(options.runtime, sandboxIds, sandboxes, true);
-      assertSandboxesUnassigned(sandboxConflict);
-
-      const agent = await createAgentRecords(
-        tx,
-        workspaceId,
-        cleanName,
-        slug,
-        options,
-        sandboxSlug,
-      );
-      if (automaticSandbox && sandboxSlug) {
-        await createDedicatedSandboxRecords(tx, workspaceId, agent, sandboxSlug);
-      }
-      await tx.agent.update({
-        where: { id: agent.id },
-        data: {
-          name: cleanName,
-          description: cfg.description?.trim() || null,
-          systemPrompt: isHermes ? null : cfg.systemPrompt,
-          providerId: isHermes ? null : cfg.providerId,
-          model: isHermes ? null : cfg.providerId ? cfg.model : null,
-          disabledBuiltinTools: isHermes
-            ? []
-            : normalizeDisabledBuiltinTools(options.runtime, cfg.disabledBuiltinTools),
-          maxSteps: cfg.maxSteps,
-        },
-      });
-      await tx.agentModelProvider.createMany({
-        data: modelProviderIds.map((providerId) => ({ agentId: agent.id, providerId })),
-      });
-      await tx.agentServer.createMany({
-        data: deployments.map(({ id }) => ({ agentId: agent.id, deploymentId: id })),
-      });
-      await tx.agentSkill.createMany({
-        data: skills.map(({ id }) => ({ agentId: agent.id, installedSkillId: id })),
-      });
-      await tx.agentToolkit.createMany({
-        data: toolkits.map(({ id }) => ({ agentId: agent.id, toolkitId: id })),
-      });
-      await tx.agentSandbox.createMany({
-        data: sandboxes.map(({ id }) => ({
-          agentId: agent.id,
-          sandboxId: id,
-          isDefault: isDedicatedSandboxRuntimeKind(options.runtime)
-            || id === tools.defaultSandboxId
-            || (!tools.defaultSandboxId && id === sandboxes[0]?.id),
-        })),
-      });
-      await tx.agentSubAgent.createMany({
-        data: subAgents.map(({ id }) => ({ parentId: agent.id, childId: id })),
-      });
-      await validateAndWritePiPackages(tx, workspaceId, agent.id, options.runtime, options.piPackages ?? cfg.piPackages);
-      return agent;
-    }, { maxWait: 10_000, timeout: 30_000 });
+          agent.id,
+          options.runtime,
+          options.piPackages ?? cfg.piPackages,
+        );
+        return agent;
+      },
+      { maxWait: 10_000, timeout: 30_000 },
+    );
   } catch (error) {
     rethrowSandboxAssignmentConstraint(error);
   }
 }
 
-export async function updateAgent(workspaceId: string, agentId: string, cfg: AgentConfig) {
+export async function updateAgent(
+  workspaceId: string,
+  agentId: string,
+  cfg: AgentConfig,
+) {
   await db.$transaction(async (tx) => {
     if (cfg.piPackages !== undefined) {
       await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${workspaceId} FOR UPDATE`;
@@ -1115,8 +1349,11 @@ export async function updateAgent(workspaceId: string, agentId: string, cfg: Age
     let providerId = isHermes ? null : cfg.providerId;
     const modelProviderIds: string[] = [];
     if (isHermes) {
-      const requestedIds = cfg.providerIds ?? (cfg.providerId ? [cfg.providerId] : []);
-      for (const requestedId of [...new Set(requestedIds.filter(Boolean))].sort()) {
+      const requestedIds =
+        cfg.providerIds ?? (cfg.providerId ? [cfg.providerId] : []);
+      for (const requestedId of [
+        ...new Set(requestedIds.filter(Boolean)),
+      ].sort()) {
         const provider = await lockProvider(tx, workspaceId, requestedId);
         if (provider) modelProviderIds.push(provider.id);
       }
@@ -1126,7 +1363,9 @@ export async function updateAgent(workspaceId: string, agentId: string, cfg: Age
       else {
         assertRuntimeProviderFormat(agent.runtimeKind, provider.format);
         if (cfg.model && !provider.models.includes(cfg.model)) {
-          throw new AgentConfigurationError(`Unknown or unavailable model: ${cfg.model}`);
+          throw new AgentConfigurationError(
+            `Unknown or unavailable model: ${cfg.model}`,
+          );
         }
       }
     }
@@ -1134,13 +1373,22 @@ export async function updateAgent(workspaceId: string, agentId: string, cfg: Age
       where: { id: agentId, workspaceId },
       data: {
         name: cfg.name,
-        ...(cfg.description === undefined ? {} : { description: cfg.description?.trim() || null }),
+        ...(cfg.description === undefined
+          ? {}
+          : { description: cfg.description?.trim() || null }),
         ...(isHermes ? {} : { systemPrompt: cfg.systemPrompt }),
         providerId,
         model: isHermes ? null : providerId ? cfg.model : null,
         ...(cfg.disabledBuiltinTools === undefined
           ? {}
-          : { disabledBuiltinTools: isHermes ? [] : normalizeDisabledBuiltinTools(agent.runtimeKind, cfg.disabledBuiltinTools) }),
+          : {
+              disabledBuiltinTools: isHermes
+                ? []
+                : normalizeDisabledBuiltinTools(
+                    agent.runtimeKind,
+                    cfg.disabledBuiltinTools,
+                  ),
+            }),
         maxSteps: cfg.maxSteps,
       },
     });
@@ -1153,7 +1401,9 @@ export async function updateAgent(workspaceId: string, agentId: string, cfg: Age
     });
     const removedProviderIds = agent.modelProviders
       .map(({ providerId: currentProviderId }) => currentProviderId)
-      .filter((currentProviderId) => !modelProviderIds.includes(currentProviderId));
+      .filter(
+        (currentProviderId) => !modelProviderIds.includes(currentProviderId),
+      );
     if (removedProviderIds.length) {
       await tx.conversation.updateMany({
         where: {
@@ -1163,7 +1413,13 @@ export async function updateAgent(workspaceId: string, agentId: string, cfg: Age
         data: { hermesProvider: null, hermesModel: null },
       });
     }
-    await validateAndWritePiPackages(tx, workspaceId, agentId, agent.runtimeKind, cfg.piPackages);
+    await validateAndWritePiPackages(
+      tx,
+      workspaceId,
+      agentId,
+      agent.runtimeKind,
+      cfg.piPackages,
+    );
   });
 }
 
@@ -1186,11 +1442,16 @@ export async function updateAgentModelSelection(
 
     if (agent.runtimeKind === HERMES_RUNTIME_KIND) {
       const providerIds: string[] = [];
-      for (const providerId of [...new Set(requestedProviderIds.filter(Boolean))].sort()) {
+      for (const providerId of [
+        ...new Set(requestedProviderIds.filter(Boolean)),
+      ].sort()) {
         const provider = await lockProvider(tx, workspaceId, providerId);
         if (provider) providerIds.push(provider.id);
       }
-      await tx.agent.updateMany({ where: { id: agentId, workspaceId }, data: { providerId: null, model: null } });
+      await tx.agent.updateMany({
+        where: { id: agentId, workspaceId },
+        data: { providerId: null, model: null },
+      });
       await tx.agentModelProvider.deleteMany({ where: { agentId } });
       await tx.agentModelProvider.createMany({
         data: providerIds.map((providerId) => ({ agentId, providerId })),
@@ -1211,17 +1472,24 @@ export async function updateAgentModelSelection(
     }
 
     const providerId = requestedProviderIds[0];
-    const provider = providerId ? await lockProvider(tx, workspaceId, providerId) : null;
+    const provider = providerId
+      ? await lockProvider(tx, workspaceId, providerId)
+      : null;
     if (provider) {
       assertRuntimeProviderFormat(agent.runtimeKind, provider.format);
       if (model && !provider.models.includes(model)) {
-        throw new AgentConfigurationError(`Unknown or unavailable model: ${model}`);
+        throw new AgentConfigurationError(
+          `Unknown or unavailable model: ${model}`,
+        );
       }
     }
     const validProviderId = provider?.id ?? null;
     await tx.agent.updateMany({
       where: { id: agentId, workspaceId },
-      data: { providerId: validProviderId, model: validProviderId ? model : null },
+      data: {
+        providerId: validProviderId,
+        model: validProviderId ? model : null,
+      },
     });
     return agent.runtimeKind;
   });
@@ -1238,23 +1506,29 @@ export async function bindHermesAgentModelProvider(
       where: { id: agentId, workspaceId, runtimeKind: HERMES_RUNTIME_KIND },
       select: { id: true },
     });
-    if (!agent) throw new AgentConfigurationError('Hermes agent not found.');
+    if (!agent) throw new AgentConfigurationError("Hermes agent not found.");
 
     const providers = await tx.modelProvider.findMany({
       where: { workspaceId, models: { has: model } },
       select: { id: true },
     });
-    const bareAlias = providerAlias.replace(/^custom:/, '');
-    const provider = providers.find(({ id }) => hermesProviderName(id) === bareAlias);
-    if (!provider || !await lockProvider(tx, workspaceId, provider.id)) {
-      throw new AgentConfigurationError('The selected ToolPlane model is not available.');
+    const bareAlias = providerAlias.replace(/^custom:/, "");
+    const provider = providers.find(
+      ({ id }) => hermesProviderName(id) === bareAlias,
+    );
+    if (!provider || !(await lockProvider(tx, workspaceId, provider.id))) {
+      throw new AgentConfigurationError(
+        "The selected ToolPlane model is not available.",
+      );
     }
     const stillAvailable = await tx.modelProvider.findFirst({
       where: { id: provider.id, workspaceId, models: { has: model } },
       select: { id: true },
     });
     if (!stillAvailable) {
-      throw new AgentConfigurationError('The selected ToolPlane model is not available.');
+      throw new AgentConfigurationError(
+        "The selected ToolPlane model is not available.",
+      );
     }
     await tx.agentModelProvider.createMany({
       data: [{ agentId, providerId: provider.id }],
@@ -1288,11 +1562,12 @@ export async function setHermesRuntimeEnv(
 
     const config = sandboxConfigWithEnv(runtime.sandbox.config, env);
     const existingInstallCfg = runtime.sandbox.deployment.installCfg;
-    const installCfg = existingInstallCfg
-      && typeof existingInstallCfg === 'object'
-      && !Array.isArray(existingInstallCfg)
-      ? existingInstallCfg as Prisma.InputJsonObject
-      : {};
+    const installCfg =
+      existingInstallCfg &&
+      typeof existingInstallCfg === "object" &&
+      !Array.isArray(existingInstallCfg)
+        ? (existingInstallCfg as Prisma.InputJsonObject)
+        : {};
     const [sandboxUpdated, deploymentUpdated] = await Promise.all([
       tx.sandbox.updateMany({
         where: { id: runtime.sandbox.id, workspaceId },
@@ -1302,13 +1577,17 @@ export async function setHermesRuntimeEnv(
         where: {
           id: runtime.sandbox.deploymentId,
           workspaceId,
-          source: 'sandbox',
+          source: "sandbox",
         },
-        data: { installCfg: { ...installCfg, env: withoutHermesChannelEnv(env) } },
+        data: {
+          installCfg: { ...installCfg, env: withoutHermesChannelEnv(env) },
+        },
       }),
     ]);
     if (sandboxUpdated.count !== 1 || deploymentUpdated.count !== 1) {
-      throw new Error('Could not update the Hermes runtime environment projection.');
+      throw new Error(
+        "Could not update the Hermes runtime environment projection.",
+      );
     }
     return true;
   });
@@ -1325,37 +1604,50 @@ export async function setAgentTools(
   });
   if (!agent) return;
   const requestedSandboxIds = uniqueIds(tools.sandboxIds ?? []);
-  const [deployments, skills, toolkits, sandboxes, subAgents, sandboxConflict] = await Promise.all([
-    db.deployment.findMany({ where: { id: { in: tools.deploymentIds }, workspaceId }, select: { id: true } }),
-    db.installedSkill.findMany({ where: { id: { in: tools.installedSkillIds }, workspaceId }, select: { id: true } }),
-    db.toolkit.findMany({ where: { id: { in: tools.toolkitIds }, workspaceId }, select: { id: true } }),
-    db.sandbox.findMany({
-      where: {
-        id: { in: requestedSandboxIds },
-        workspaceId,
-        kind: { not: HERMES_RUNTIME_KIND },
-        deployment: {
-          status: { notIn: UNAVAILABLE_SANDBOX_STATUSES },
+  const [deployments, skills, toolkits, sandboxes, subAgents, sandboxConflict] =
+    await Promise.all([
+      db.deployment.findMany({
+        where: { id: { in: tools.deploymentIds }, workspaceId },
+        select: { id: true },
+      }),
+      db.installedSkill.findMany({
+        where: { id: { in: tools.installedSkillIds }, workspaceId },
+        select: { id: true },
+      }),
+      db.toolkit.findMany({
+        where: { id: { in: tools.toolkitIds }, workspaceId },
+        select: { id: true },
+      }),
+      db.sandbox.findMany({
+        where: {
+          id: { in: requestedSandboxIds },
+          workspaceId,
+          kind: { not: HERMES_RUNTIME_KIND },
+          deployment: {
+            status: { notIn: UNAVAILABLE_SANDBOX_STATUSES },
+          },
         },
-      },
-      select: { id: true, kind: true, network: true },
-    }),
-    // Same-workspace agents only, never the agent itself (no self-delegation).
-    db.agent.findMany({
-      where: { id: { in: tools.subAgentIds ?? [], not: agentId }, workspaceId },
-      select: { id: true },
-    }),
-    db.agentSandbox.findFirst({
-      where: {
-        sandboxId: { in: requestedSandboxIds },
-        agentId: { not: agentId },
-      },
-      select: {
-        agent: { select: { name: true } },
-        sandbox: { select: { name: true } },
-      },
-    }),
-  ]);
+        select: { id: true, kind: true, network: true },
+      }),
+      // Same-workspace agents only, never the agent itself (no self-delegation).
+      db.agent.findMany({
+        where: {
+          id: { in: tools.subAgentIds ?? [], not: agentId },
+          workspaceId,
+        },
+        select: { id: true },
+      }),
+      db.agentSandbox.findFirst({
+        where: {
+          sandboxId: { in: requestedSandboxIds },
+          agentId: { not: agentId },
+        },
+        select: {
+          agent: { select: { name: true } },
+          sandbox: { select: { name: true } },
+        },
+      }),
+    ]);
   assertRuntimeSandboxes(agent.runtimeKind, requestedSandboxIds, sandboxes);
   assertSandboxesUnassigned(sandboxConflict);
   try {
@@ -1365,26 +1657,38 @@ export async function setAgentTools(
       db.agentToolkit.deleteMany({ where: { agentId } }),
       db.agentSandbox.deleteMany({ where: { agentId } }),
       db.agentSubAgent.deleteMany({ where: { parentId: agentId } }),
-      db.agentServer.createMany({ data: deployments.map((d) => ({ agentId, deploymentId: d.id })) }),
-      db.agentSkill.createMany({ data: skills.map((s) => ({ agentId, installedSkillId: s.id })) }),
-      db.agentToolkit.createMany({ data: toolkits.map((t) => ({ agentId, toolkitId: t.id })) }),
+      db.agentServer.createMany({
+        data: deployments.map((d) => ({ agentId, deploymentId: d.id })),
+      }),
+      db.agentSkill.createMany({
+        data: skills.map((s) => ({ agentId, installedSkillId: s.id })),
+      }),
+      db.agentToolkit.createMany({
+        data: toolkits.map((t) => ({ agentId, toolkitId: t.id })),
+      }),
       db.agentSandbox.createMany({
         data: sandboxes.map((s) => ({
           agentId,
           sandboxId: s.id,
-          isDefault: isDedicatedSandboxRuntimeKind(agent.runtimeKind)
-            || s.id === tools.defaultSandboxId
-            || (!tools.defaultSandboxId && s.id === sandboxes[0]?.id),
+          isDefault:
+            isDedicatedSandboxRuntimeKind(agent.runtimeKind) ||
+            s.id === tools.defaultSandboxId ||
+            (!tools.defaultSandboxId && s.id === sandboxes[0]?.id),
         })),
       }),
-      db.agentSubAgent.createMany({ data: subAgents.map((s) => ({ parentId: agentId, childId: s.id })) }),
+      db.agentSubAgent.createMany({
+        data: subAgents.map((s) => ({ parentId: agentId, childId: s.id })),
+      }),
     ]);
   } catch (error) {
     rethrowSandboxAssignmentConstraint(error);
   }
 }
 
-export async function getAgentDeleteTargets(workspaceId: string, agentId: string) {
+export async function getAgentDeleteTargets(
+  workspaceId: string,
+  agentId: string,
+) {
   const agent = await db.agent.findFirst({
     where: { id: agentId, workspaceId },
     select: {
@@ -1396,8 +1700,11 @@ export async function getAgentDeleteTargets(workspaceId: string, agentId: string
   const map = agent.marketInstall
     ? parseAgentMarketResourceMap(agent.marketInstall.resourceMap)
     : null;
-  if (agent.marketInstall && (!map || !Object.values(map.agents).includes(agentId))) {
-    throw new Error('The marketplace install resource map is invalid.');
+  if (
+    agent.marketInstall &&
+    (!map || !Object.values(map.agents).includes(agentId))
+  ) {
+    throw new Error("The marketplace install resource map is invalid.");
   }
   const requestedAgentIds = map
     ? [...new Set([agentId, ...Object.values(map.agents)])]
@@ -1443,43 +1750,58 @@ export async function getAgentDeleteTargets(workspaceId: string, agentId: string
       },
     },
   });
-  const deletableAgents = agents.filter((candidate) => (
-    candidate.id === agentId
-    || (
-      candidate.parentLinks.length === 0
-      && !candidate.marketInstall
-      && !candidate.unifiedMarketInstall
-      && !candidate.sourceMarketListing
-      && candidate.publicEndpoints.length === 0
-    )
-  ));
+  const deletableAgents = agents.filter(
+    (candidate) =>
+      candidate.id === agentId ||
+      (candidate.parentLinks.length === 0 &&
+        !candidate.marketInstall &&
+        !candidate.unifiedMarketInstall &&
+        !candidate.sourceMarketListing &&
+        candidate.publicEndpoints.length === 0),
+  );
   const allowedSandboxIds = new Set(Object.values(map?.sandboxes ?? {}));
-  const sandboxes = new Map<string, {
-    id: string;
-    kind: string;
-    deploymentId: string;
-    volumeName: string;
-    snapshotVolumeNames: string[];
-  }>();
+  const sandboxes = new Map<
+    string,
+    {
+      id: string;
+      kind: string;
+      deploymentId: string;
+      volumeName: string;
+      snapshotVolumeNames: string[];
+    }
+  >();
   for (const candidate of deletableAgents.flatMap((row) => [
     ...row.sandboxes.map(({ sandbox }) => sandbox),
     ...(row.runtime ? [row.runtime.sandbox] : []),
   ])) {
-    if (map && allowedSandboxIds.size > 0 && !allowedSandboxIds.has(candidate.id)) continue;
+    if (
+      map &&
+      allowedSandboxIds.size > 0 &&
+      !allowedSandboxIds.has(candidate.id)
+    )
+      continue;
     const config = candidate.deployment.installCfg;
-    const volumeName = config && typeof config === 'object' && !Array.isArray(config)
-      && typeof (config as Record<string, unknown>).volumeName === 'string'
-      ? String((config as Record<string, unknown>).volumeName)
-      : sandboxVolumeName(candidate.id);
+    const volumeName =
+      config &&
+      typeof config === "object" &&
+      !Array.isArray(config) &&
+      typeof (config as Record<string, unknown>).volumeName === "string"
+        ? String((config as Record<string, unknown>).volumeName)
+        : sandboxVolumeName(candidate.id);
     sandboxes.set(candidate.id, {
       id: candidate.id,
       kind: candidate.kind,
       deploymentId: candidate.deploymentId,
       volumeName,
-      snapshotVolumeNames: candidate.snapshots.map(({ volumeName: name }) => name),
+      snapshotVolumeNames: candidate.snapshots.map(
+        ({ volumeName: name }) => name,
+      ),
     });
   }
-  return { agentIds: deletableAgents.map(({ id }) => id), sandboxes: [...sandboxes.values()] };
+  return {
+    agentIds: deletableAgents.map(({ id }) => id),
+    sandboxes: [...sandboxes.values()],
+  };
 }
 
 export async function deleteAgent(workspaceId: string, agentId: string) {
@@ -1494,155 +1816,201 @@ export async function deleteAgent(workspaceId: string, agentId: string) {
   if (install) {
     const resourceMap = parseAgentMarketResourceMap(install.resourceMap);
     if (!resourceMap || !Object.values(resourceMap.agents).includes(agentId)) {
-      throw new Error('The marketplace install resource map is invalid.');
+      throw new Error("The marketplace install resource map is invalid.");
     }
     const candidateAgentIds = [...new Set(Object.values(resourceMap.agents))];
-    return db.$transaction(async (tx) => {
-      const candidates = await tx.agent.findMany({
-        where: { workspaceId, id: { in: candidateAgentIds } },
-        select: {
-          id: true,
-          parentLinks: {
-            where: { parentId: { notIn: candidateAgentIds } },
-            take: 1,
-            select: { parentId: true },
+    return db.$transaction(
+      async (tx) => {
+        const candidates = await tx.agent.findMany({
+          where: { workspaceId, id: { in: candidateAgentIds } },
+          select: {
+            id: true,
+            parentLinks: {
+              where: { parentId: { notIn: candidateAgentIds } },
+              take: 1,
+              select: { parentId: true },
+            },
+            marketInstall: { select: { id: true } },
+            unifiedMarketInstall: { select: { id: true } },
+            sourceMarketListing: { select: { id: true } },
+            publicEndpoints: { take: 1, select: { id: true } },
           },
-          marketInstall: { select: { id: true } },
-          unifiedMarketInstall: { select: { id: true } },
-          sourceMarketListing: { select: { id: true } },
-          publicEndpoints: { take: 1, select: { id: true } },
-        },
-      });
-      const deletableAgentIds = candidates.filter((candidate) => (
-        candidate.id === agentId
-        || (
-          candidate.parentLinks.length === 0
-          && !candidate.marketInstall
-          && !candidate.unifiedMarketInstall
-          && !candidate.sourceMarketListing
-          && candidate.publicEndpoints.length === 0
-        )
-      )).map(({ id }) => id);
+        });
+        const deletableAgentIds = candidates
+          .filter(
+            (candidate) =>
+              candidate.id === agentId ||
+              (candidate.parentLinks.length === 0 &&
+                !candidate.marketInstall &&
+                !candidate.unifiedMarketInstall &&
+                !candidate.sourceMarketListing &&
+                candidate.publicEndpoints.length === 0),
+          )
+          .map(({ id }) => id);
 
-      const candidateToolkitIds = [...new Set(Object.values(resourceMap.toolkits))];
-      const toolkits = await tx.toolkit.findMany({
-        where: { workspaceId, id: { in: candidateToolkitIds } },
-        select: {
-          id: true,
-          visibility: true,
-          agentLinks: {
-            where: { agentId: { notIn: deletableAgentIds } },
-            take: 1,
-            select: { agentId: true },
+        const candidateToolkitIds = [
+          ...new Set(Object.values(resourceMap.toolkits)),
+        ];
+        const toolkits = await tx.toolkit.findMany({
+          where: { workspaceId, id: { in: candidateToolkitIds } },
+          select: {
+            id: true,
+            visibility: true,
+            agentLinks: {
+              where: { agentId: { notIn: deletableAgentIds } },
+              take: 1,
+              select: { agentId: true },
+            },
+            sourceMarketListing: { select: { id: true } },
+            marketInstall: { select: { id: true } },
+            installLinks: { take: 1, select: { id: true } },
+            apiTokens: { take: 1, select: { id: true } },
           },
-          sourceMarketListing: { select: { id: true } },
-          marketInstall: { select: { id: true } },
-          installLinks: { take: 1, select: { id: true } },
-          apiTokens: { take: 1, select: { id: true } },
-        },
-      });
-      const deletableToolkitIds = toolkits.filter((toolkit) => (
-        toolkit.visibility === 'private'
-        && toolkit.agentLinks.length === 0
-        && !toolkit.sourceMarketListing
-        && !toolkit.marketInstall
-        && toolkit.installLinks.length === 0
-        && toolkit.apiTokens.length === 0
-      )).map(({ id }) => id);
+        });
+        const deletableToolkitIds = toolkits
+          .filter(
+            (toolkit) =>
+              toolkit.visibility === "private" &&
+              toolkit.agentLinks.length === 0 &&
+              !toolkit.sourceMarketListing &&
+              !toolkit.marketInstall &&
+              toolkit.installLinks.length === 0 &&
+              toolkit.apiTokens.length === 0,
+          )
+          .map(({ id }) => id);
 
-      const candidateDeploymentIds = [...new Set(Object.values(resourceMap.deployments))];
-      const deployments = await tx.deployment.findMany({
-        where: { workspaceId, id: { in: candidateDeploymentIds } },
-        select: {
-          id: true,
-          serverId: true,
-          publicInvocable: true,
-          agentLinks: {
-            where: { agentId: { notIn: deletableAgentIds } },
-            take: 1,
-            select: { agentId: true },
+        const candidateDeploymentIds = [
+          ...new Set(Object.values(resourceMap.deployments)),
+        ];
+        const deployments = await tx.deployment.findMany({
+          where: { workspaceId, id: { in: candidateDeploymentIds } },
+          select: {
+            id: true,
+            serverId: true,
+            publicInvocable: true,
+            agentLinks: {
+              where: { agentId: { notIn: deletableAgentIds } },
+              take: 1,
+              select: { agentId: true },
+            },
+            toolkitLinks: {
+              where: { toolkitId: { notIn: deletableToolkitIds } },
+              take: 1,
+              select: { toolkitId: true },
+            },
+            chatAssistantGrants: { take: 1, select: { assistantId: true } },
+            sourceMarketListing: { select: { id: true } },
+            marketInstall: { select: { id: true } },
           },
-          toolkitLinks: {
-            where: { toolkitId: { notIn: deletableToolkitIds } },
-            take: 1,
-            select: { toolkitId: true },
-          },
-          chatAssistantGrants: { take: 1, select: { assistantId: true } },
-          sourceMarketListing: { select: { id: true } },
-          marketInstall: { select: { id: true } },
-        },
-      });
-      const deletableDeploymentIds = deployments.filter((deployment) => (
-        !deployment.serverId
-        && !deployment.publicInvocable
-        && deployment.agentLinks.length === 0
-        && deployment.toolkitLinks.length === 0
-        && deployment.chatAssistantGrants.length === 0
-        && !deployment.sourceMarketListing
-        && !deployment.marketInstall
-      )).map(({ id }) => id);
+        });
+        const deletableDeploymentIds = deployments
+          .filter(
+            (deployment) =>
+              !deployment.serverId &&
+              !deployment.publicInvocable &&
+              deployment.agentLinks.length === 0 &&
+              deployment.toolkitLinks.length === 0 &&
+              deployment.chatAssistantGrants.length === 0 &&
+              !deployment.sourceMarketListing &&
+              !deployment.marketInstall,
+          )
+          .map(({ id }) => id);
 
-      const candidateSkillIds = [...new Set(Object.values(resourceMap.skills))];
-      const skills = await tx.installedSkill.findMany({
-        where: { workspaceId, id: { in: candidateSkillIds } },
-        select: {
-          id: true,
-          skillId: true,
-          agentLinks: {
-            where: { agentId: { notIn: deletableAgentIds } },
-            take: 1,
-            select: { agentId: true },
+        const candidateSkillIds = [
+          ...new Set(Object.values(resourceMap.skills)),
+        ];
+        const skills = await tx.installedSkill.findMany({
+          where: { workspaceId, id: { in: candidateSkillIds } },
+          select: {
+            id: true,
+            skillId: true,
+            agentLinks: {
+              where: { agentId: { notIn: deletableAgentIds } },
+              take: 1,
+              select: { agentId: true },
+            },
+            toolkitLinks: {
+              where: { toolkitId: { notIn: deletableToolkitIds } },
+              take: 1,
+              select: { toolkitId: true },
+            },
+            sourceMarketListing: { select: { id: true } },
+            marketInstall: { select: { id: true } },
           },
-          toolkitLinks: {
-            where: { toolkitId: { notIn: deletableToolkitIds } },
-            take: 1,
-            select: { toolkitId: true },
-          },
-          sourceMarketListing: { select: { id: true } },
-          marketInstall: { select: { id: true } },
-        },
-      });
-      const deletableSkillIds = skills.filter((skill) => (
-        !skill.skillId
-        && skill.agentLinks.length === 0
-        && skill.toolkitLinks.length === 0
-        && !skill.sourceMarketListing
-        && !skill.marketInstall
-      )).map(({ id }) => id);
+        });
+        const deletableSkillIds = skills
+          .filter(
+            (skill) =>
+              !skill.skillId &&
+              skill.agentLinks.length === 0 &&
+              skill.toolkitLinks.length === 0 &&
+              !skill.sourceMarketListing &&
+              !skill.marketInstall,
+          )
+          .map(({ id }) => id);
 
-      const mappedSandboxIds = [...new Set(Object.values(resourceMap.sandboxes))];
-      const legacySandboxes = await tx.sandbox.findMany({
-        where: {
-          workspaceId,
-          AND: [{
-            OR: [
-              { agentLinks: { some: { agentId: { in: deletableAgentIds } } } },
-              { agentRuntime: { is: { agentId: { in: deletableAgentIds } } } },
+        const mappedSandboxIds = [
+          ...new Set(Object.values(resourceMap.sandboxes)),
+        ];
+        const legacySandboxes = await tx.sandbox.findMany({
+          where: {
+            workspaceId,
+            AND: [
+              {
+                OR: [
+                  {
+                    agentLinks: {
+                      some: { agentId: { in: deletableAgentIds } },
+                    },
+                  },
+                  {
+                    agentRuntime: {
+                      is: { agentId: { in: deletableAgentIds } },
+                    },
+                  },
+                ],
+              },
             ],
-          }],
-          ...(mappedSandboxIds.length > 0
-            ? { id: { in: mappedSandboxIds } }
-            : {}),
-        },
-        select: { id: true, deploymentId: true },
-      });
-      const sandboxDeploymentIds = legacySandboxes.map(({ deploymentId }) => deploymentId);
+            ...(mappedSandboxIds.length > 0
+              ? { id: { in: mappedSandboxIds } }
+              : {}),
+          },
+          select: { id: true, deploymentId: true },
+        });
+        const sandboxDeploymentIds = legacySandboxes.map(
+          ({ deploymentId }) => deploymentId,
+        );
 
-      await tx.agentInstall.delete({ where: { id: install.id } });
-      await tx.agent.deleteMany({ where: { workspaceId, id: { in: deletableAgentIds } } });
-      await tx.toolkit.deleteMany({ where: { workspaceId, id: { in: deletableToolkitIds } } });
-      await tx.installedSkill.deleteMany({ where: { workspaceId, id: { in: deletableSkillIds } } });
-      await tx.deployment.deleteMany({
-        where: {
-          workspaceId,
-          id: { in: [...new Set([...deletableDeploymentIds, ...sandboxDeploymentIds])] },
-        },
-      });
-      await tx.agentListing.updateMany({
-        where: { id: install.release.listingId, installCount: { gt: 0 } },
-        data: { installCount: { decrement: 1 } },
-      });
-    }, { isolationLevel: 'Serializable' });
+        await tx.agentInstall.delete({ where: { id: install.id } });
+        await tx.agent.deleteMany({
+          where: { workspaceId, id: { in: deletableAgentIds } },
+        });
+        await tx.toolkit.deleteMany({
+          where: { workspaceId, id: { in: deletableToolkitIds } },
+        });
+        await tx.installedSkill.deleteMany({
+          where: { workspaceId, id: { in: deletableSkillIds } },
+        });
+        await tx.deployment.deleteMany({
+          where: {
+            workspaceId,
+            id: {
+              in: [
+                ...new Set([
+                  ...deletableDeploymentIds,
+                  ...sandboxDeploymentIds,
+                ]),
+              ],
+            },
+          },
+        });
+        await tx.agentListing.updateMany({
+          where: { id: install.release.listingId, installCount: { gt: 0 } },
+          data: { installCount: { decrement: 1 } },
+        });
+      },
+      { isolationLevel: "Serializable" },
+    );
   }
 
   const [runtime, sandboxes] = await Promise.all([
@@ -1665,7 +2033,7 @@ export async function deleteAgent(workspaceId: string, agentId: string) {
         where: {
           id: { in: [...new Set(sandboxDeploymentIds)] },
           workspaceId,
-          source: 'sandbox',
+          source: "sandbox",
         },
       });
     }
@@ -1676,12 +2044,25 @@ export async function deleteAgent(workspaceId: string, agentId: string) {
 export async function createProvider(
   workspaceId: string,
   data: { name: string; format: string; baseUrl: string; apiKey: string },
-  actorId = 'system',
+  actorId = "system",
 ) {
   return db.$transaction(async (tx) => {
-    const provider = await tx.modelProvider.create({ data: { workspaceId, ...data } });
-    await writeAudit(tx, { actorId, workspaceId, action: 'provider.created', targetType: 'modelProvider', targetId: provider.id,
-      changes: { name: data.name, format: data.format, baseUrl: data.baseUrl, credentialChanged: true } });
+    const provider = await tx.modelProvider.create({
+      data: { workspaceId, ...data },
+    });
+    await writeAudit(tx, {
+      actorId,
+      workspaceId,
+      action: "provider.created",
+      targetType: "modelProvider",
+      targetId: provider.id,
+      changes: {
+        name: data.name,
+        format: data.format,
+        baseUrl: data.baseUrl,
+        credentialChanged: true,
+      },
+    });
     return provider;
   });
 }
@@ -1697,20 +2078,40 @@ export async function updateProvider(
   workspaceId: string,
   providerId: string,
   data: { name: string; format: string; baseUrl: string; apiKey?: string },
-  actorId = 'system',
+  actorId = "system",
 ) {
   await db.$transaction(async (tx) => {
-    if (!await lockProvider(tx, workspaceId, providerId)) return;
-    const before = await tx.modelProvider.findFirst({ where: { id: providerId, workspaceId }, select: { name: true, format: true, baseUrl: true } });
-    await tx.modelProvider.updateMany({ where: { id: providerId, workspaceId }, data });
-    await writeAudit(tx, { actorId, workspaceId, action: 'provider.changed', targetType: 'modelProvider', targetId: providerId,
-      changes: { before, after: { name: data.name, format: data.format, baseUrl: data.baseUrl }, credentialChanged: data.apiKey !== undefined } });
+    if (!(await lockProvider(tx, workspaceId, providerId))) return;
+    const before = await tx.modelProvider.findFirst({
+      where: { id: providerId, workspaceId },
+      select: { name: true, format: true, baseUrl: true },
+    });
+    await tx.modelProvider.updateMany({
+      where: { id: providerId, workspaceId },
+      data,
+    });
+    await writeAudit(tx, {
+      actorId,
+      workspaceId,
+      action: "provider.changed",
+      targetType: "modelProvider",
+      targetId: providerId,
+      changes: {
+        before,
+        after: { name: data.name, format: data.format, baseUrl: data.baseUrl },
+        credentialChanged: data.apiKey !== undefined,
+      },
+    });
   });
 }
 
-export async function deleteProvider(workspaceId: string, providerId: string, actorId = 'system') {
+export async function deleteProvider(
+  workspaceId: string,
+  providerId: string,
+  actorId = "system",
+) {
   return db.$transaction(async (tx) => {
-    if (!await lockProvider(tx, workspaceId, providerId)) return [];
+    if (!(await lockProvider(tx, workspaceId, providerId))) return [];
 
     const hermesAgents = await tx.agent.findMany({
       where: {
@@ -1740,59 +2141,115 @@ export async function deleteProvider(workspaceId: string, providerId: string, ac
       },
       data: { hermesProvider: null, hermesModel: null },
     });
-    await tx.modelProvider.deleteMany({ where: { id: providerId, workspaceId } });
-    await writeAudit(tx, { actorId, workspaceId, action: 'provider.deleted', targetType: 'modelProvider', targetId: providerId });
-    return hermesAgents.flatMap(({ id, runtime }) => (
-      runtime ? [{ agentId: id, sandboxId: runtime.sandboxId }] : []
-    ));
+    await tx.modelProvider.deleteMany({
+      where: { id: providerId, workspaceId },
+    });
+    await writeAudit(tx, {
+      actorId,
+      workspaceId,
+      action: "provider.deleted",
+      targetType: "modelProvider",
+      targetId: providerId,
+    });
+    return hermesAgents.flatMap(({ id, runtime }) =>
+      runtime ? [{ agentId: id, sandboxId: runtime.sandboxId }] : [],
+    );
   });
 }
 
 function providerModelData(model: ProviderModelValues) {
   return {
     ...model,
-    cost: model.cost ? model.cost as unknown as Prisma.InputJsonValue : Prisma.DbNull,
+    cost: model.cost
+      ? (model.cost as unknown as Prisma.InputJsonValue)
+      : Prisma.DbNull,
   };
 }
 
 async function fillStoredProviderModels(
   tx: Prisma.TransactionClient,
-  provider: { id: string; name: string; format: string; baseUrl: string; models: string[] },
+  provider: {
+    id: string;
+    name: string;
+    format: string;
+    baseUrl: string;
+    models: string[];
+  },
 ) {
   const records = await tx.providerModel.findMany({
     where: { providerId: provider.id },
     select: {
-      modelId: true, name: true, group: true, primaryType: true, source: true,
-      capabilities: true, inputModalities: true,
-      contextWindow: true, maxInputTokens: true, maxOutputTokens: true, cost: true,
+      modelId: true,
+      name: true,
+      group: true,
+      primaryType: true,
+      source: true,
+      capabilities: true,
+      inputModalities: true,
+      contextWindow: true,
+      maxInputTokens: true,
+      maxOutputTokens: true,
+      cost: true,
     },
   });
   const storedIds = new Set(records.map(({ modelId }) => modelId));
-  const missing = uniqueIds(provider.models).filter((modelId) => !storedIds.has(modelId));
+  const missing = uniqueIds(provider.models).filter(
+    (modelId) => !storedIds.has(modelId),
+  );
   if (missing.length) {
     await tx.providerModel.createMany({
       data: missing.map((modelId) => ({
-        ...providerModelData(fillProviderModelMetadata(defaultProviderModel(modelId),
-          matchingPiModelReferences(provider.format, [modelId], provider.baseUrl, provider.name)[0] ?? null)),
+        ...providerModelData(
+          fillProviderModelMetadata(
+            defaultProviderModel(modelId),
+            matchingPiModelReferences(
+              provider.format,
+              [modelId],
+              provider.baseUrl,
+              provider.name,
+            )[0] ?? null,
+          ),
+        ),
         providerId: provider.id,
-        source: 'remote',
+        source: "remote",
       })),
     });
   }
   for (const record of records) {
-    const { source, ...model } = record as ProviderModelValues & { source: string };
-    const reference = matchingPiModelReferences(provider.format, [model.modelId, model.name], provider.baseUrl, provider.name)[0] ?? null;
-    const filled = fillProviderModelMetadata(source === 'remote' && reference ? {
-      ...model,
-      contextWindow: reference.contextWindow,
-      maxOutputTokens: reference.maxOutputTokens,
-      cost: reference.cost,
-    } : model, reference);
-    const data = Object.fromEntries(Object.entries(filled)
-      .filter(([key, value]) => value !== model[key as keyof ProviderModelValues])) as Prisma.ProviderModelUpdateInput;
+    const { source, ...model } = record as ProviderModelValues & {
+      source: string;
+    };
+    const reference =
+      matchingPiModelReferences(
+        provider.format,
+        [model.modelId, model.name],
+        provider.baseUrl,
+        provider.name,
+      )[0] ?? null;
+    const filled = fillProviderModelMetadata(
+      source === "remote" && reference
+        ? {
+            ...model,
+            contextWindow: reference.contextWindow,
+            maxOutputTokens: reference.maxOutputTokens,
+            cost: reference.cost,
+          }
+        : model,
+      reference,
+    );
+    const data = Object.fromEntries(
+      Object.entries(filled).filter(
+        ([key, value]) => value !== model[key as keyof ProviderModelValues],
+      ),
+    ) as Prisma.ProviderModelUpdateInput;
     if (Object.keys(data).length) {
       await tx.providerModel.update({
-        where: { providerId_modelId: { providerId: provider.id, modelId: model.modelId } },
+        where: {
+          providerId_modelId: {
+            providerId: provider.id,
+            modelId: model.modelId,
+          },
+        },
         data,
       });
     }
@@ -1803,7 +2260,7 @@ export async function backfillProviderModels(workspaceId: string) {
   const providers = await db.modelProvider.findMany({
     where: { workspaceId },
     select: { id: true },
-    orderBy: { id: 'asc' },
+    orderBy: { id: "asc" },
   });
   for (const { id } of providers) {
     await db.$transaction(async (tx) => {
@@ -1813,24 +2270,35 @@ export async function backfillProviderModels(workspaceId: string) {
   }
 }
 
-export async function setProviderModels(workspaceId: string, providerId: string, models: string[]) {
+export async function setProviderModels(
+  workspaceId: string,
+  providerId: string,
+  models: string[],
+) {
   await db.$transaction(async (tx) => {
     const provider = await lockProvider(tx, workspaceId, providerId);
     if (!provider) return;
-    const remoteModelIds = uniqueIds(models.map((model) => model.trim()).filter(Boolean));
+    const remoteModelIds = uniqueIds(
+      models.map((model) => model.trim()).filter(Boolean),
+    );
     await tx.providerModel.deleteMany({
       where: {
         providerId,
-        source: 'remote',
-        ...(remoteModelIds.length ? { modelId: { notIn: remoteModelIds } } : {}),
+        source: "remote",
+        ...(remoteModelIds.length
+          ? { modelId: { notIn: remoteModelIds } }
+          : {}),
       },
     });
     const manualModels = await tx.providerModel.findMany({
-      where: { providerId, source: 'manual' },
+      where: { providerId, source: "manual" },
       select: { modelId: true },
-      orderBy: { createdAt: 'asc' },
+      orderBy: { createdAt: "asc" },
     });
-    const nextModels = uniqueIds([...remoteModelIds, ...manualModels.map(({ modelId }) => modelId)]);
+    const nextModels = uniqueIds([
+      ...remoteModelIds,
+      ...manualModels.map(({ modelId }) => modelId),
+    ]);
     await fillStoredProviderModels(tx, { ...provider, models: nextModels });
     await tx.modelProvider.update({
       where: { id: providerId },
@@ -1859,18 +2327,29 @@ export async function addProviderModels(
 ) {
   await db.$transaction(async (tx) => {
     const provider = await lockProvider(tx, workspaceId, providerId);
-    if (!provider) throw new ProviderModelError('Provider not found.');
+    if (!provider) throw new ProviderModelError("Provider not found.");
     const requestedIds = models.map(({ modelId }) => modelId);
-    if (new Set(requestedIds).size !== requestedIds.length
-      || requestedIds.some((modelId) => provider.models.includes(modelId))) {
-      throw new ProviderModelError('A model with that ID already exists.');
+    if (
+      new Set(requestedIds).size !== requestedIds.length ||
+      requestedIds.some((modelId) => provider.models.includes(modelId))
+    ) {
+      throw new ProviderModelError("A model with that ID already exists.");
     }
     await tx.providerModel.createMany({
       data: models.map((model) => ({
-        ...providerModelData(fillProviderModelMetadata(model,
-          matchingPiModelReferences(provider.format, [model.modelId, model.name], provider.baseUrl, provider.name)[0] ?? null)),
+        ...providerModelData(
+          fillProviderModelMetadata(
+            model,
+            matchingPiModelReferences(
+              provider.format,
+              [model.modelId, model.name],
+              provider.baseUrl,
+              provider.name,
+            )[0] ?? null,
+          ),
+        ),
         providerId,
-        source: 'manual',
+        source: "manual",
       })),
     });
     await tx.modelProvider.update({
@@ -1887,23 +2366,31 @@ export async function updateProviderModel(
 ) {
   await db.$transaction(async (tx) => {
     const provider = await lockProvider(tx, workspaceId, providerId);
-    if (!provider) throw new ProviderModelError('Provider not found.');
+    if (!provider) throw new ProviderModelError("Provider not found.");
     if (!provider.models.includes(model.modelId)) {
-      throw new ProviderModelError('Model not found.');
+      throw new ProviderModelError("Model not found.");
     }
     const stored = await tx.providerModel.findUnique({
       where: { providerId_modelId: { providerId, modelId: model.modelId } },
       select: { cost: true },
     });
-    const metadata = fillProviderModelMetadata({
-      ...model,
-      cost: model.cost ?? stored?.cost as ProviderModelValues['cost'],
-    }, matchingPiModelReferences(provider.format, [model.modelId, model.name], provider.baseUrl, provider.name)[0] ?? null);
+    const metadata = fillProviderModelMetadata(
+      {
+        ...model,
+        cost: model.cost ?? (stored?.cost as ProviderModelValues["cost"]),
+      },
+      matchingPiModelReferences(
+        provider.format,
+        [model.modelId, model.name],
+        provider.baseUrl,
+        provider.name,
+      )[0] ?? null,
+    );
     const { modelId, ...values } = providerModelData(metadata);
     await tx.providerModel.upsert({
       where: { providerId_modelId: { providerId, modelId } },
-      create: { providerId, modelId, ...values, source: 'manual' },
-      update: { ...values, source: 'manual' },
+      create: { providerId, modelId, ...values, source: "manual" },
+      update: { ...values, source: "manual" },
     });
   });
 }
@@ -1914,45 +2401,52 @@ export async function deleteProviderModel(
   modelId: string,
 ) {
   await db.$transaction(async (tx) => {
-    if (!await lockProvider(tx, workspaceId, providerId)) {
-      throw new ProviderModelError('Provider not found.');
+    if (!(await lockProvider(tx, workspaceId, providerId))) {
+      throw new ProviderModelError("Provider not found.");
     }
     const provider = await tx.modelProvider.findUnique({
       where: { id: providerId },
       select: { models: true },
     });
-    if (!provider?.models.includes(modelId)) throw new ProviderModelError('Model not found.');
-    const [agent, assistant, knowledgeBase, workspace, conversation] = await Promise.all([
-      tx.agent.findFirst({ where: { workspaceId, providerId, model: modelId }, select: { id: true } }),
-      tx.chatAssistant.findFirst({
-        where: { workspaceId, modelProviderId: providerId, model: modelId },
-        select: { id: true },
-      }),
-      tx.knowledgeBase.findFirst({
-        where: { workspaceId, providerId, embeddingModel: modelId },
-        select: { id: true },
-      }),
-      tx.workspace.findFirst({
-        where: {
-          id: workspaceId,
-          OR: [
-            { defaultModelProviderId: providerId, defaultModel: modelId },
-            { titleModelProviderId: providerId, titleModel: modelId },
-          ],
-        },
-        select: { id: true },
-      }),
-      tx.conversation.findFirst({
-        where: {
-          agent: { workspaceId },
-          hermesProvider: { in: hermesProviderAliases([providerId]) },
-          hermesModel: modelId,
-        },
-        select: { id: true },
-      }),
-    ]);
+    if (!provider?.models.includes(modelId))
+      throw new ProviderModelError("Model not found.");
+    const [agent, assistant, knowledgeBase, workspace, conversation] =
+      await Promise.all([
+        tx.agent.findFirst({
+          where: { workspaceId, providerId, model: modelId },
+          select: { id: true },
+        }),
+        tx.chatAssistant.findFirst({
+          where: { workspaceId, modelProviderId: providerId, model: modelId },
+          select: { id: true },
+        }),
+        tx.knowledgeBase.findFirst({
+          where: { workspaceId, providerId, embeddingModel: modelId },
+          select: { id: true },
+        }),
+        tx.workspace.findFirst({
+          where: {
+            id: workspaceId,
+            OR: [
+              { defaultModelProviderId: providerId, defaultModel: modelId },
+              { titleModelProviderId: providerId, titleModel: modelId },
+            ],
+          },
+          select: { id: true },
+        }),
+        tx.conversation.findFirst({
+          where: {
+            agent: { workspaceId },
+            hermesProvider: { in: hermesProviderAliases([providerId]) },
+            hermesModel: modelId,
+          },
+          select: { id: true },
+        }),
+      ]);
     if (agent || assistant || knowledgeBase || workspace || conversation) {
-      throw new ProviderModelError('This model is in use and cannot be removed.');
+      throw new ProviderModelError(
+        "This model is in use and cannot be removed.",
+      );
     }
     await tx.providerModel.deleteMany({ where: { providerId, modelId } });
     await tx.modelProvider.update({
@@ -1977,11 +2471,13 @@ export function defaultConversationRuntimeSession(
   conversationId: string,
   overrides: Partial<ConversationRuntimeSession> = {},
 ): ConversationRuntimeSession {
-  const runtimeSessionId = nonEmptyString(overrides.runtimeSessionId) || conversationId;
+  const runtimeSessionId =
+    nonEmptyString(overrides.runtimeSessionId) || conversationId;
   return {
     runtimeSessionId,
-    runtimeSessionKey: nonEmptyString(overrides.runtimeSessionKey)
-      || `agent:${agentId}:console:${runtimeSessionId}`,
+    runtimeSessionKey:
+      nonEmptyString(overrides.runtimeSessionKey) ||
+      `agent:${agentId}:console:${runtimeSessionId}`,
   };
 }
 
@@ -1992,12 +2488,21 @@ export async function createConversation(
   runtimeSession?: Partial<ConversationRuntimeSession>,
 ) {
   return db.$transaction(async (tx) => {
-    const agent = await tx.agent.findFirst({ where: { id: agentId, workspaceId }, select: { id: true } });
+    const agent = await tx.agent.findFirst({
+      where: { id: agentId, workspaceId },
+      select: { id: true },
+    });
     if (!agent) return null;
-    const conversation = await tx.conversation.create({ data: { agentId, title: title ?? null } });
+    const conversation = await tx.conversation.create({
+      data: { agentId, title: title ?? null },
+    });
     return tx.conversation.update({
       where: { id: conversation.id },
-      data: defaultConversationRuntimeSession(agent.id, conversation.id, runtimeSession),
+      data: defaultConversationRuntimeSession(
+        agent.id,
+        conversation.id,
+        runtimeSession,
+      ),
     });
   });
 }
@@ -2020,15 +2525,19 @@ export async function setHermesConversationSelection(
   selection: HermesConversationSelection,
 ): Promise<HermesConversationSelectionResult | null> {
   if (
-    !HERMES_PROFILE_NAME.test(selection.profile)
-    || (selection.provider === null) !== (selection.model === null)
-    || (selection.provider !== null && (!selection.provider || selection.provider.length > 128))
-    || (selection.model !== null && (!selection.model || selection.model.length > 512))
-  ) return null;
-  const storedProfile = selection.profile === 'default' ? null : selection.profile;
+    !HERMES_PROFILE_NAME.test(selection.profile) ||
+    (selection.provider === null) !== (selection.model === null) ||
+    (selection.provider !== null &&
+      (!selection.provider || selection.provider.length > 128)) ||
+    (selection.model !== null &&
+      (!selection.model || selection.model.length > 512))
+  )
+    return null;
+  const storedProfile =
+    selection.profile === "default" ? null : selection.profile;
   return db.$transaction(async (tx) => {
     const agent = await tx.agent.findFirst({
-      where: { id: agentId, workspaceId, runtime: { is: { kind: 'hermes' } } },
+      where: { id: agentId, workspaceId, runtime: { is: { kind: "hermes" } } },
       select: { id: true, publicRuntimeAllocation: { select: { id: true } } },
     });
     if (!agent || agent.publicRuntimeAllocation) return null;
@@ -2061,17 +2570,25 @@ export async function setHermesConversationSelection(
         workSession: { select: { id: true, status: true } },
       },
     });
-    const editableWorkConversation = conversation?.workSession
-      && ['idle', 'waiting_user', 'completed', 'failed'].includes(conversation.workSession.status);
+    const editableWorkConversation =
+      conversation?.workSession &&
+      ["idle", "waiting_user", "completed", "failed"].includes(
+        conversation.workSession.status,
+      );
     if (
-      !conversation
-      || conversation.title?.startsWith('msg:')
-      || conversation.publicApiConversation
-      || (conversation.workSession && !editableWorkConversation)
-    ) return null;
+      !conversation ||
+      conversation.title?.startsWith("msg:") ||
+      conversation.publicApiConversation ||
+      (conversation.workSession && !editableWorkConversation)
+    )
+      return null;
 
-    const currentProfile = conversation.hermesProfile || 'default';
-    if (currentProfile !== selection.profile && conversation._count.messages > 0 && !editableWorkConversation) {
+    const currentProfile = conversation.hermesProfile || "default";
+    if (
+      currentProfile !== selection.profile &&
+      conversation._count.messages > 0 &&
+      !editableWorkConversation
+    ) {
       return createSelectedConversation();
     }
     await tx.conversation.update({
@@ -2097,9 +2614,20 @@ export async function renameConsoleConversation(
 ): Promise<boolean> {
   const conversation = await db.conversation.findFirst({
     where: { id: conversationId, agentId, agent: { workspaceId } },
-    select: { id: true, title: true, publicApiConversation: { select: { id: true } }, workSession: { select: { id: true } } },
+    select: {
+      id: true,
+      title: true,
+      publicApiConversation: { select: { id: true } },
+      workSession: { select: { id: true } },
+    },
   });
-  if (!conversation || conversation.title?.startsWith('msg:') || conversation.publicApiConversation || conversation.workSession) return false;
+  if (
+    !conversation ||
+    conversation.title?.startsWith("msg:") ||
+    conversation.publicApiConversation ||
+    conversation.workSession
+  )
+    return false;
   const updated = await db.conversation.updateMany({
     where: { id: conversation.id, agentId, agent: { workspaceId } },
     data: { title },
@@ -2114,9 +2642,20 @@ export async function deleteConsoleConversation(
 ): Promise<boolean> {
   const conversation = await db.conversation.findFirst({
     where: { id: conversationId, agentId, agent: { workspaceId } },
-    select: { id: true, title: true, publicApiConversation: { select: { id: true } }, workSession: { select: { id: true } } },
+    select: {
+      id: true,
+      title: true,
+      publicApiConversation: { select: { id: true } },
+      workSession: { select: { id: true } },
+    },
   });
-  if (!conversation || conversation.title?.startsWith('msg:') || conversation.publicApiConversation || conversation.workSession) return false;
+  if (
+    !conversation ||
+    conversation.title?.startsWith("msg:") ||
+    conversation.publicApiConversation ||
+    conversation.workSession
+  )
+    return false;
   const deleted = await db.conversation.deleteMany({
     where: { id: conversation.id, agentId, agent: { workspaceId } },
   });
@@ -2141,10 +2680,13 @@ export async function ensureConversationRuntimeSession(
 
     const desired = defaultConversationRuntimeSession(
       agentId,
-      nonEmptyString(conversation.runtimeSessionId)
-        || nonEmptyString(fallback.runtimeSessionId)
-        || conversation.id,
-      { runtimeSessionKey: conversation.runtimeSessionKey ?? fallback.runtimeSessionKey },
+      nonEmptyString(conversation.runtimeSessionId) ||
+        nonEmptyString(fallback.runtimeSessionId) ||
+        conversation.id,
+      {
+        runtimeSessionKey:
+          conversation.runtimeSessionKey ?? fallback.runtimeSessionKey,
+      },
     );
     if (conversation.runtimeSessionId === null) {
       await tx.conversation.updateMany({
@@ -2165,7 +2707,10 @@ export async function ensureConversationRuntimeSession(
     return defaultConversationRuntimeSession(
       agentId,
       nonEmptyString(resolved?.runtimeSessionId) || desired.runtimeSessionId,
-      { runtimeSessionKey: resolved?.runtimeSessionKey ?? desired.runtimeSessionKey },
+      {
+        runtimeSessionKey:
+          resolved?.runtimeSessionKey ?? desired.runtimeSessionKey,
+      },
     );
   });
 }
@@ -2176,7 +2721,7 @@ export async function appendMessage(
   parts: Prisma.InputJsonValue,
 ) {
   return db.$transaction(async (tx) => {
-    if (role === 'user') {
+    if (role === "user") {
       const title = conversationTitleFromParts(parts);
       if (title) {
         // Claim the title before inserting the first user message. Concurrent
@@ -2187,7 +2732,7 @@ export async function appendMessage(
             id: conversationId,
             title: null,
             messages: {
-              none: { role: 'user' },
+              none: { role: "user" },
             },
           },
           data: { title },
@@ -2210,7 +2755,7 @@ export async function appendConversationTurn(
         where: {
           id: conversationId,
           title: null,
-          messages: { none: { role: 'user' } },
+          messages: { none: { role: "user" } },
         },
         data: { title },
       });
@@ -2224,7 +2769,7 @@ export async function appendConversationTurn(
     const user = await tx.message.create({
       data: {
         conversationId,
-        role: 'user',
+        role: "user",
         parts: userParts,
         createdAt: userCreatedAt,
       },
@@ -2232,7 +2777,7 @@ export async function appendConversationTurn(
     const assistant = await tx.message.create({
       data: {
         conversationId,
-        role: 'assistant',
+        role: "assistant",
         parts: assistantParts,
         createdAt: assistantCreatedAt,
       },

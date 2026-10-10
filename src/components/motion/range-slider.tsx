@@ -15,7 +15,12 @@ import { type SliderOptions, useSlider } from "@/lib/hooks/use-slider";
 import { TOUCH_GESTURE_CLASS } from "@/lib/touch";
 import { cn } from "@/lib/utils";
 
-const SPRING_BOUNCY = { type: "spring", stiffness: 500, damping: 14, mass: 0.7 } as const;
+const SPRING_BOUNCY = {
+  type: "spring",
+  stiffness: 500,
+  damping: 14,
+  mass: 0.7,
+} as const;
 
 export interface RangeSliderProps extends SliderOptions {
   /** Render a tick dot at each step. */
@@ -23,9 +28,14 @@ export interface RangeSliderProps extends SliderOptions {
   className?: string;
 }
 
-export function RangeSlider({ showTicks = true, className, ...options }: RangeSliderProps) {
+export function RangeSlider({
+  showTicks = true,
+  className,
+  ...options
+}: RangeSliderProps) {
   const reduce = useReducedMotion();
-  const { percent, dragging, min, max, step, trackProps, sliderProps } = useSlider(options);
+  const { percent, dragging, min, max, step, trackProps, sliderProps } =
+    useSlider(options);
   const [trackWidth, setTrackWidth] = useState(292);
   useLayoutEffect(() => {
     const track = trackProps.ref.current;
@@ -46,15 +56,20 @@ export function RangeSlider({ showTicks = true, className, ...options }: RangeSl
   }, [percent, target]);
   const smooth = useSpring(target, SPRING_GLIDE);
   const pos = reduce ? target : smooth;
-  const thumbX = useTransform(pos, (p) => 8 + Math.max(0, trackWidth - 20) * p / 100);
-  const fillX = useTransform(pos, (p) => p >= 100
-    ? "0%"
-    : `calc(${p - 100}% + ${14 - 0.16 * p}px)`);
+  const thumbX = useTransform(
+    pos,
+    (p) => 8 + (Math.max(0, trackWidth - 20) * p) / 100,
+  );
+  const fillX = useTransform(pos, (p) =>
+    p >= 100 ? "0%" : `calc(${p - 100}% + ${14 - 0.16 * p}px)`,
+  );
 
   const steps = Math.floor(Number(((max - min) / step).toFixed(6)));
   const ticks =
     showTicks && steps > 0 && steps <= 50
-      ? Array.from({ length: steps + 1 }, (_, i) => Number((min + i * step).toFixed(6)))
+      ? Array.from({ length: steps + 1 }, (_, i) =>
+          Number((min + i * step).toFixed(6)),
+        )
       : [];
 
   return (
@@ -69,8 +84,14 @@ export function RangeSlider({ showTicks = true, className, ...options }: RangeSl
         className,
       )}
     >
-      <div aria-hidden="true" className="pointer-events-none absolute inset-x-[2px] inset-y-0 overflow-hidden rounded-lg">
-        <motion.div className="absolute inset-0 rounded-lg bg-foreground/15" style={{ x: fillX }} />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-x-[2px] inset-y-0 overflow-hidden rounded-lg"
+      >
+        <motion.div
+          className="absolute inset-0 rounded-lg bg-foreground/15"
+          style={{ x: fillX }}
+        />
       </div>
 
       <div className="pointer-events-none absolute inset-x-[10px] inset-y-0">

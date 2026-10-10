@@ -16,9 +16,7 @@ export function useColumnReorder<T>({
   thRefs: HeaderCellRefs;
   onColumnOrderChange?: (keys: string[]) => void;
 }) {
-  const [order, setOrder] = useState<string[]>(() =>
-    columns.map((c) => c.key),
-  );
+  const [order, setOrder] = useState<string[]>(() => columns.map((c) => c.key));
   const [dragKey, setDragKey] = useState<string | null>(null);
   const [dropIndex, setDropIndex] = useState<number | null>(null);
 

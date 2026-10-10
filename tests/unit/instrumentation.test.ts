@@ -1,8 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   ensureConnectorBroker: vi.fn(),
-  ownerReady: vi.fn(), ownerFailed: vi.fn(),
+  ownerReady: vi.fn(),
+  ownerFailed: vi.fn(),
   ensureHermesDashboardBroker: vi.fn(),
   ensureSandboxNetwork: vi.fn(),
   cleanupHermesArchiveStaging: vi.fn(),
@@ -12,48 +13,63 @@ const mocks = vi.hoisted(() => ({
   reconcileAgentChannelRunners: vi.fn(),
 }));
 
-vi.mock('@/lib/runtime/owner', () => ({ startRuntimeOwner: async (recover: () => Promise<void>) => {
-  try { await recover(); mocks.ownerReady(); } catch (error) { mocks.ownerFailed(error); throw error; }
-} }));
-vi.mock('@/lib/a2a/worker', () => ({ startA2AWorker: vi.fn(async () => undefined) }));
-vi.mock('@/lib/work/coordinator', () => ({ startWorkCoordinator: async () => undefined }));
-vi.mock('@/lib/sandboxes/connector-broker', () => ({
+vi.mock("@/lib/runtime/owner", () => ({
+  startRuntimeOwner: async (recover: () => Promise<void>) => {
+    try {
+      await recover();
+      mocks.ownerReady();
+    } catch (error) {
+      mocks.ownerFailed(error);
+      throw error;
+    }
+  },
+}));
+vi.mock("@/lib/a2a/worker", () => ({
+  startA2AWorker: vi.fn(async () => undefined),
+}));
+vi.mock("@/lib/work/coordinator", () => ({
+  startWorkCoordinator: async () => undefined,
+}));
+vi.mock("@/lib/sandboxes/connector-broker", () => ({
   ensureConnectorBroker: mocks.ensureConnectorBroker,
 }));
-vi.mock('@/lib/agents/hermes/dashboard-broker', () => ({
+vi.mock("@/lib/agents/hermes/dashboard-broker", () => ({
   ensureHermesDashboardBroker: mocks.ensureHermesDashboardBroker,
 }));
-vi.mock('@/lib/process/supervisor', () => ({
+vi.mock("@/lib/process/supervisor", () => ({
   ensureSandboxNetwork: mocks.ensureSandboxNetwork,
 }));
-vi.mock('@/lib/agents/hermes/archive', () => ({
+vi.mock("@/lib/agents/hermes/archive", () => ({
   cleanupHermesArchiveStaging: mocks.cleanupHermesArchiveStaging,
 }));
-vi.mock('@/lib/process/deployment-config-volume', () => ({
-  removeStaleDeploymentConfigMaterializerHelpers: mocks.removeStaleDeploymentConfigMaterializerHelpers,
+vi.mock("@/lib/process/deployment-config-volume", () => ({
+  removeStaleDeploymentConfigMaterializerHelpers:
+    mocks.removeStaleDeploymentConfigMaterializerHelpers,
 }));
-vi.mock('@/lib/sandboxes/reconcile', () => ({
+vi.mock("@/lib/sandboxes/reconcile", () => ({
   reconcileSandboxVolumeCopies: mocks.reconcileSandboxVolumeCopies,
 }));
-vi.mock('@/lib/process/reconcile', () => ({
+vi.mock("@/lib/process/reconcile", () => ({
   reconcileDeployments: mocks.reconcileDeployments,
 }));
-vi.mock('@/lib/agents/channel-runtime', () => ({
+vi.mock("@/lib/agents/channel-runtime", () => ({
   reconcileAgentChannelRunners: mocks.reconcileAgentChannelRunners,
 }));
 
-import { register } from '@/instrumentation';
+import { register } from "@/instrumentation";
 
-const reconcileGlobal = globalThis as typeof globalThis & { __mcpReconciled?: boolean };
+const reconcileGlobal = globalThis as typeof globalThis & {
+  __mcpReconciled?: boolean;
+};
 
-describe('startup sandbox lifecycle reconciliation', () => {
+describe("startup sandbox lifecycle reconciliation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.useFakeTimers();
-    vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
     delete reconcileGlobal.__mcpReconciled;
-    process.env.NEXT_RUNTIME = 'nodejs';
+    process.env.NEXT_RUNTIME = "nodejs";
     delete process.env.NEXT_PHASE;
     mocks.ensureConnectorBroker.mockResolvedValue(undefined);
     mocks.ensureHermesDashboardBroker.mockResolvedValue(undefined);
@@ -74,9 +90,9 @@ describe('startup sandbox lifecycle reconciliation', () => {
     delete process.env.NEXT_PHASE;
   });
 
-  it('retries helper recovery but does not declare readiness after an initial cleanup failure', async () => {
+  it("retries helper recovery but does not declare readiness after an initial cleanup failure", async () => {
     mocks.reconcileSandboxVolumeCopies
-      .mockRejectedValueOnce(new Error('docker unavailable'))
+      .mockRejectedValueOnce(new Error("docker unavailable"))
       .mockResolvedValueOnce({
         helpersRemoved: 1,
         hermesArchiveHelpersRemoved: 1,
@@ -84,7 +100,7 @@ describe('startup sandbox lifecycle reconciliation', () => {
         restoresInterrupted: 1,
         upgradesInterrupted: 1,
         snapshotsInterrupted: 1,
-    });
+      });
 
     await register();
     await vi.waitFor(() => {
@@ -94,11 +110,15 @@ describe('startup sandbox lifecycle reconciliation', () => {
     expect(mocks.cleanupHermesArchiveStaging).toHaveBeenCalledTimes(1);
     expect(mocks.reconcileAgentChannelRunners).toHaveBeenCalledTimes(1);
     expect(mocks.ensureHermesDashboardBroker).toHaveBeenCalledTimes(1);
-    expect(mocks.removeStaleDeploymentConfigMaterializerHelpers).toHaveBeenCalledTimes(1);
+    expect(
+      mocks.removeStaleDeploymentConfigMaterializerHelpers,
+    ).toHaveBeenCalledTimes(1);
     expect(mocks.reconcileSandboxVolumeCopies).toHaveBeenCalledTimes(1);
-    const firstCutoff = mocks.reconcileSandboxVolumeCopies.mock.calls[0][0].helpersCreatedBefore;
+    const firstCutoff =
+      mocks.reconcileSandboxVolumeCopies.mock.calls[0][0].helpersCreatedBefore;
     expect(firstCutoff).toBeInstanceOf(Date);
-    const configHelperCutoff = mocks.removeStaleDeploymentConfigMaterializerHelpers.mock.calls[0][0];
+    const configHelperCutoff =
+      mocks.removeStaleDeploymentConfigMaterializerHelpers.mock.calls[0][0];
     expect(configHelperCutoff).toBeInstanceOf(Date);
     expect(configHelperCutoff.getTime()).toBeLessThan(firstCutoff.getTime());
 
@@ -108,16 +128,21 @@ describe('startup sandbox lifecycle reconciliation', () => {
     expect(
       mocks.reconcileSandboxVolumeCopies.mock.calls[1][0].helpersCreatedBefore,
     ).toBe(firstCutoff);
-    expect(mocks.removeStaleDeploymentConfigMaterializerHelpers).toHaveBeenCalledTimes(1);
+    expect(
+      mocks.removeStaleDeploymentConfigMaterializerHelpers,
+    ).toHaveBeenCalledTimes(1);
     expect(mocks.ownerReady).not.toHaveBeenCalled();
     expect(mocks.ownerFailed).toHaveBeenCalled();
   });
 
-  it('does not block the web server on slow deployment recovery', async () => {
+  it("does not block the web server on slow deployment recovery", async () => {
     let finishRecovery!: (count: number) => void;
-    mocks.reconcileDeployments.mockImplementation(() => new Promise<number>((resolve) => {
-      finishRecovery = resolve;
-    }));
+    mocks.reconcileDeployments.mockImplementation(
+      () =>
+        new Promise<number>((resolve) => {
+          finishRecovery = resolve;
+        }),
+    );
 
     await register();
     await vi.waitFor(() => {

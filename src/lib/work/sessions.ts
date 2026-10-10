@@ -1,26 +1,26 @@
-import 'server-only';
-import { posix } from 'node:path';
-import type { Prisma } from '@prisma/client';
-import { db } from '@/lib/db';
+import "server-only";
+import { posix } from "node:path";
+import type { Prisma } from "@prisma/client";
+import { db } from "@/lib/db";
 import {
   defaultConversationRuntimeSession,
   type HermesConversationSelection,
-} from '@/lib/agents/mutations';
-import type { ReasoningEffort } from '@/lib/agents/constants';
-import { isWorkRuntimeKind } from '@/lib/agents/runtime-kind';
-import { AGENT_PI_PACKAGES_INCLUDE } from '@/lib/agents/queries';
-import { resolveAgentPiPackages } from '@/lib/agents/resolve';
-import type { ResolvedAgentPiPackage } from '@/lib/agents/resolve';
-import type { ComposerReference } from './composer-types';
+} from "@/lib/agents/mutations";
+import type { ReasoningEffort } from "@/lib/agents/constants";
+import { isWorkRuntimeKind } from "@/lib/agents/runtime-kind";
+import { AGENT_PI_PACKAGES_INCLUDE } from "@/lib/agents/queries";
+import { resolveAgentPiPackages } from "@/lib/agents/resolve";
+import type { ResolvedAgentPiPackage } from "@/lib/agents/resolve";
+import type { ComposerReference } from "./composer-types";
 import {
   claimWorkAttachments,
   workMessageParts,
   type PreparedWorkAttachment,
-} from '@/lib/attachments/work';
+} from "@/lib/attachments/work";
 import {
   allowedWorkSessionSources,
   type WorkSessionStatus,
-} from '@/lib/work/state-machine';
+} from "@/lib/work/state-machine";
 
 type CreateWorkSessionInput = {
   workspaceId: string;
@@ -39,9 +39,9 @@ type CreateWorkSessionInput = {
 
 export type WorkSessionTransitionResult =
   | { ok: true; changed: boolean; status: WorkSessionStatus }
-  | { ok: false; reason: 'not_found' }
-  | { ok: false; reason: 'invalid_input' }
-  | { ok: false; reason: 'invalid_transition'; status: string };
+  | { ok: false; reason: "not_found" }
+  | { ok: false; reason: "invalid_input" }
+  | { ok: false; reason: "invalid_transition"; status: string };
 
 const workSessionClientInclude = {
   agent: { select: { id: true, name: true } },
@@ -54,8 +54,14 @@ const workSessionClientInclude = {
       deployment: { select: { status: true } },
     },
   },
-  conversation: { include: { messages: { orderBy: [{ createdAt: 'asc' as const }, { id: 'asc' as const }] } } },
-  approvals: { orderBy: { requestedAt: 'desc' as const } },
+  conversation: {
+    include: {
+      messages: {
+        orderBy: [{ createdAt: "asc" as const }, { id: "asc" as const }],
+      },
+    },
+  },
+  approvals: { orderBy: { requestedAt: "desc" as const } },
 } satisfies Prisma.WorkSessionInclude;
 
 const workSessionSummaryInclude = {
@@ -72,17 +78,28 @@ const workSessionSummaryInclude = {
 } as const;
 
 export function normalizeWorkDirectory(value: unknown): string | null {
-  if (typeof value !== 'string' || value.length > 1_000 || value.includes('\0')) return null;
-  const input = value.trim().replace(/\\/g, '/').replace(/^\/(?:opt\/data\/workspace|workspace)(?:\/|$)/, '') || '.';
-  if (input.startsWith('/')) return null;
+  if (typeof value !== "string" || value.length > 1_000 || value.includes("\0"))
+    return null;
+  const input =
+    value
+      .trim()
+      .replace(/\\/g, "/")
+      .replace(/^\/(?:opt\/data\/workspace|workspace)(?:\/|$)/, "") || ".";
+  if (input.startsWith("/")) return null;
   const normalized = posix.normalize(input);
-  if (normalized === '..' || normalized.startsWith('../')) return null;
-  return normalized === '.' ? '.' : normalized.replace(/^\.\//, '');
+  if (normalized === ".." || normalized.startsWith("../")) return null;
+  return normalized === "." ? "." : normalized.replace(/^\.\//, "");
 }
 
-export function workSessionWorkingDirectory(value: Prisma.JsonValue | null): string {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return '.';
-  return normalizeWorkDirectory((value as { workingDirectory?: unknown }).workingDirectory) ?? '.';
+export function workSessionWorkingDirectory(
+  value: Prisma.JsonValue | null,
+): string {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return ".";
+  return (
+    normalizeWorkDirectory(
+      (value as { workingDirectory?: unknown }).workingDirectory,
+    ) ?? "."
+  );
 }
 
 export function assertWorkPiPackageSnapshot(
@@ -90,23 +107,38 @@ export function assertWorkPiPackageSnapshot(
   value: unknown,
   piPackages: readonly ResolvedAgentPiPackage[],
 ): void {
-  if (runtimeKind !== 'pi-sdk') return;
-  const saved = value && typeof value === 'object' && 'piPackages' in value ? value.piPackages : null;
-  if (!Array.isArray(saved) || saved.length !== piPackages.length || !saved.every((item, index) => {
-    const current = piPackages[index];
-    return item && typeof item === 'object'
-      && item.marketInstallId === current.marketInstallId
-      && item.releaseId === current.releaseId
-      && item.checksum === current.checksum && item.mcpBindingsChecksum === current.mcpBindingsChecksum;
-  })) throw new Error('PI_SDK_PACKAGE_SET_CHANGED');
+  if (runtimeKind !== "pi-sdk") return;
+  const saved =
+    value && typeof value === "object" && "piPackages" in value
+      ? value.piPackages
+      : null;
+  if (
+    !Array.isArray(saved) ||
+    saved.length !== piPackages.length ||
+    !saved.every((item, index) => {
+      const current = piPackages[index];
+      return (
+        item &&
+        typeof item === "object" &&
+        item.marketInstallId === current.marketInstallId &&
+        item.releaseId === current.releaseId &&
+        item.checksum === current.checksum &&
+        item.mcpBindingsChecksum === current.mcpBindingsChecksum
+      );
+    })
+  )
+    throw new Error("PI_SDK_PACKAGE_SET_CHANGED");
 }
 
 export async function createWorkSession(input: CreateWorkSessionInput) {
   const task = input.task.trim();
   if (!task || task.length > 20_000) return null;
-  const workingDirectory = normalizeWorkDirectory(input.workingDirectory ?? '.');
+  const workingDirectory = normalizeWorkDirectory(
+    input.workingDirectory ?? ".",
+  );
   if (!workingDirectory) return null;
-  const acceptanceCriteria = input.acceptanceCriteria?.trim().slice(0, 20_000) || null;
+  const acceptanceCriteria =
+    input.acceptanceCriteria?.trim().slice(0, 20_000) || null;
   return db.$transaction(async (tx) => {
     const agent = await tx.agent.findFirst({
       where: { id: input.agentId, workspaceId: input.workspaceId },
@@ -125,7 +157,14 @@ export async function createWorkSession(input: CreateWorkSessionInput) {
             id: true,
             kind: true,
             sandboxId: true,
-            sandbox: { select: { id: true, workspaceId: true, kind: true, network: true } },
+            sandbox: {
+              select: {
+                id: true,
+                workspaceId: true,
+                kind: true,
+                network: true,
+              },
+            },
           },
         },
         servers: { select: { deploymentId: true } },
@@ -153,33 +192,36 @@ export async function createWorkSession(input: CreateWorkSessionInput) {
       },
     });
     if (
-      !agent
-      || !isWorkRuntimeKind(agent.runtimeKind)
-      || (input.hermesSelection !== undefined && agent.runtimeKind !== 'hermes')
-    ) return null;
+      !agent ||
+      !isWorkRuntimeKind(agent.runtimeKind) ||
+      (input.hermesSelection !== undefined && agent.runtimeKind !== "hermes")
+    )
+      return null;
 
     let sandboxId: string;
-    if (agent.runtimeKind === 'hermes') {
+    if (agent.runtimeKind === "hermes") {
       const runtime = agent.runtime;
       if (
-        runtime?.kind !== 'hermes'
-        || runtime.sandbox.workspaceId !== input.workspaceId
-        || runtime.sandbox.kind !== 'hermes'
-        || runtime.sandbox.network === 'none'
-        || agent.modelProviders.length === 0
-        || (input.sandboxId && input.sandboxId !== runtime.sandboxId)
-      ) return null;
+        runtime?.kind !== "hermes" ||
+        runtime.sandbox.workspaceId !== input.workspaceId ||
+        runtime.sandbox.kind !== "hermes" ||
+        runtime.sandbox.network === "none" ||
+        agent.modelProviders.length === 0 ||
+        (input.sandboxId && input.sandboxId !== runtime.sandboxId)
+      )
+        return null;
       sandboxId = runtime.sandboxId;
     } else {
       if (agent.sandboxes.length !== 1) return null;
       const link = agent.sandboxes[0];
       if (
-        !link
-        || (input.sandboxId && input.sandboxId !== link.sandboxId)
-        || agent.runtime?.sandboxId === link.sandboxId
-        || link.sandbox.kind !== 'docker'
-        || link.sandbox.network === 'none'
-      ) return null;
+        !link ||
+        (input.sandboxId && input.sandboxId !== link.sandboxId) ||
+        agent.runtime?.sandboxId === link.sandboxId ||
+        link.sandbox.kind !== "docker" ||
+        link.sandbox.network === "none"
+      )
+        return null;
       sandboxId = link.sandboxId;
     }
     const piPackages = resolveAgentPiPackages(agent);
@@ -188,14 +230,19 @@ export async function createWorkSession(input: CreateWorkSessionInput) {
       data: {
         agentId: agent.id,
         title: task.slice(0, 80),
-        ...(input.reasoningEffort && input.reasoningEffort !== 'default'
+        ...(input.reasoningEffort && input.reasoningEffort !== "default"
           ? { reasoningEffort: input.reasoningEffort }
           : {}),
-        ...(input.hermesSelection ? {
-          hermesProfile: input.hermesSelection.profile === 'default' ? null : input.hermesSelection.profile,
-          hermesProvider: input.hermesSelection.provider,
-          hermesModel: input.hermesSelection.model,
-        } : {}),
+        ...(input.hermesSelection
+          ? {
+              hermesProfile:
+                input.hermesSelection.profile === "default"
+                  ? null
+                  : input.hermesSelection.profile,
+              hermesProvider: input.hermesSelection.provider,
+              hermesModel: input.hermesSelection.model,
+            }
+          : {}),
       },
     });
     await tx.conversation.update({
@@ -215,9 +262,14 @@ export async function createWorkSession(input: CreateWorkSessionInput) {
     await tx.message.create({
       data: {
         conversationId: conversation.id,
-        role: 'user',
+        role: "user",
         parts: workMessageParts(task, attachments, input.references),
-        textCharacters: task.length + (input.references ?? []).reduce((total, item) => total + item.text.length, 0),
+        textCharacters:
+          task.length +
+          (input.references ?? []).reduce(
+            (total, item) => total + item.text.length,
+            0,
+          ),
       },
     });
     return tx.workSession.create({
@@ -236,26 +288,52 @@ export async function createWorkSession(input: CreateWorkSessionInput) {
           model: agent.model,
           systemPrompt: agent.systemPrompt,
           agentMaxSteps: agent.maxSteps,
-          ...(agent.runtimeKind === 'pi-sdk' ? {
-            piPackages: piPackages.map(({ marketInstallId, releaseId, checksum, mcpBindingsChecksum }) => ({ marketInstallId, releaseId, checksum,
-              ...(mcpBindingsChecksum ? { mcpBindingsChecksum } : {}) })),
-          } : {}),
-          deploymentIds: [...new Set([
-            ...agent.servers.map((item) => item.deploymentId),
-            ...agent.toolkits.flatMap((item) => item.toolkit.servers.map((server) => server.deploymentId)),
-          ])],
-          installedSkillIds: [...new Set([
-            ...agent.skills.map((item) => item.installedSkillId),
-            ...agent.toolkits.flatMap((item) => item.toolkit.skills.map((skill) => skill.installedSkillId)),
-          ])],
-          knowledgeBaseIds: agent.knowledgeBases.map((item) => item.knowledgeBaseId),
+          ...(agent.runtimeKind === "pi-sdk"
+            ? {
+                piPackages: piPackages.map(
+                  ({
+                    marketInstallId,
+                    releaseId,
+                    checksum,
+                    mcpBindingsChecksum,
+                  }) => ({
+                    marketInstallId,
+                    releaseId,
+                    checksum,
+                    ...(mcpBindingsChecksum ? { mcpBindingsChecksum } : {}),
+                  }),
+                ),
+              }
+            : {}),
+          deploymentIds: [
+            ...new Set([
+              ...agent.servers.map((item) => item.deploymentId),
+              ...agent.toolkits.flatMap((item) =>
+                item.toolkit.servers.map((server) => server.deploymentId),
+              ),
+            ]),
+          ],
+          installedSkillIds: [
+            ...new Set([
+              ...agent.skills.map((item) => item.installedSkillId),
+              ...agent.toolkits.flatMap((item) =>
+                item.toolkit.skills.map((skill) => skill.installedSkillId),
+              ),
+            ]),
+          ],
+          knowledgeBaseIds: agent.knowledgeBases.map(
+            (item) => item.knowledgeBaseId,
+          ),
           sandboxId,
           runtimeId: agent.runtime?.id ?? null,
           workingDirectory,
         },
-        status: 'queued',
+        status: "queued",
       },
-      include: { conversation: true, sandbox: { include: { deployment: true } } },
+      include: {
+        conversation: true,
+        sandbox: { include: { deployment: true } },
+      },
     });
   });
 }
@@ -266,7 +344,9 @@ export async function transitionWorkSession(
   status: WorkSessionStatus,
   data: Prisma.WorkSessionUpdateManyMutationInput = {},
 ): Promise<WorkSessionTransitionResult> {
-  const sources = allowedWorkSessionSources(status).filter((source) => source !== status);
+  const sources = allowedWorkSessionSources(status).filter(
+    (source) => source !== status,
+  );
   const updated = await db.workSession.updateMany({
     where: { id: workSessionId, workspaceId, status: { in: sources } },
     data: { status, ...data },
@@ -277,32 +357,43 @@ export async function transitionWorkSession(
     where: { id: workSessionId, workspaceId },
     select: { status: true },
   });
-  if (!current) return { ok: false, reason: 'not_found' };
+  if (!current) return { ok: false, reason: "not_found" };
   if (current.status === status) return { ok: true, changed: false, status };
-  return { ok: false, reason: 'invalid_transition', status: current.status };
+  return { ok: false, reason: "invalid_transition", status: current.status };
 }
 
 export function startWorkSession(workspaceId: string, workSessionId: string) {
-  return transitionWorkSession(workspaceId, workSessionId, 'running', {
+  return transitionWorkSession(workspaceId, workSessionId, "running", {
     error: null,
     waitingQuestion: null,
     startedAt: new Date(),
   });
 }
 
-export function waitForWorkSessionUser(workspaceId: string, workSessionId: string, question?: string) {
-  return transitionWorkSession(workspaceId, workSessionId, 'waiting_user', {
+export function waitForWorkSessionUser(
+  workspaceId: string,
+  workSessionId: string,
+  question?: string,
+) {
+  return transitionWorkSession(workspaceId, workSessionId, "waiting_user", {
     waitingQuestion: question?.trim().slice(0, 20_000) || null,
   });
 }
 
-export function waitForWorkSessionApproval(workspaceId: string, workSessionId: string) {
-  return transitionWorkSession(workspaceId, workSessionId, 'waiting_approval');
+export function waitForWorkSessionApproval(
+  workspaceId: string,
+  workSessionId: string,
+) {
+  return transitionWorkSession(workspaceId, workSessionId, "waiting_approval");
 }
 
-export function failWorkSession(workspaceId: string, workSessionId: string, error: string) {
-  return transitionWorkSession(workspaceId, workSessionId, 'failed', {
-    error: error.trim().slice(0, 500) || 'Work failed.',
+export function failWorkSession(
+  workspaceId: string,
+  workSessionId: string,
+  error: string,
+) {
+  return transitionWorkSession(workspaceId, workSessionId, "failed", {
+    error: error.trim().slice(0, 500) || "Work failed.",
     completedAt: new Date(),
   });
 }
@@ -314,48 +405,60 @@ export function cancelWorkSession(workspaceId: string, workSessionId: string) {
       where: {
         id: workSessionId,
         workspaceId,
-        status: { in: ['running', 'waiting_approval'] },
+        status: { in: ["running", "waiting_approval"] },
       },
-      data: { status: 'cancelling', cancelRequestedAt: now },
+      data: { status: "cancelling", cancelRequestedAt: now },
     });
     if (cancelling.count) {
       await tx.workApproval.updateMany({
-        where: { workSessionId, status: 'pending' },
-        data: { status: 'expired', resolvedAt: now },
+        where: { workSessionId, status: "pending" },
+        data: { status: "expired", resolvedAt: now },
       });
-      return { ok: true, changed: true, status: 'cancelling' };
+      return { ok: true, changed: true, status: "cancelling" };
     }
     const stopped = await tx.workSession.updateMany({
       where: {
         id: workSessionId,
         workspaceId,
-        status: { in: ['queued', 'waiting_user'] },
+        status: { in: ["queued", "waiting_user"] },
       },
       data: {
-        status: 'idle',
+        status: "idle",
         error: null,
         waitingQuestion: null,
         cancelRequestedAt: now,
         completedAt: now,
       },
     });
-    if (stopped.count) return { ok: true, changed: true, status: 'idle' };
+    if (stopped.count) return { ok: true, changed: true, status: "idle" };
     const current = await tx.workSession.findFirst({
       where: { id: workSessionId, workspaceId },
       select: { status: true },
     });
-    if (!current) return { ok: false, reason: 'not_found' };
-    if (current.status === 'cancelling' || current.status === 'cancelled') {
-      return { ok: true, changed: false, status: current.status as WorkSessionStatus };
+    if (!current) return { ok: false, reason: "not_found" };
+    if (current.status === "cancelling" || current.status === "cancelled") {
+      return {
+        ok: true,
+        changed: false,
+        status: current.status as WorkSessionStatus,
+      };
     }
-    return { ok: false, reason: 'invalid_transition', status: current.status };
+    return { ok: false, reason: "invalid_transition", status: current.status };
   });
 }
 
-export async function finalizeWorkSessionCancellation(workspaceId: string, workSessionId: string) {
+export async function finalizeWorkSessionCancellation(
+  workspaceId: string,
+  workSessionId: string,
+) {
   const result = await db.workSession.updateMany({
-    where: { id: workSessionId, workspaceId, status: 'cancelling' },
-    data: { status: 'idle', error: null, waitingQuestion: null, completedAt: new Date() },
+    where: { id: workSessionId, workspaceId, status: "cancelling" },
+    data: {
+      status: "idle",
+      error: null,
+      waitingQuestion: null,
+      completedAt: new Date(),
+    },
   });
   return result.count === 1;
 }
@@ -366,9 +469,9 @@ export async function resumeWorkSession(
   actorId?: string,
 ): Promise<WorkSessionTransitionResult> {
   const updated = await db.workSession.updateMany({
-    where: { id: workSessionId, workspaceId, status: 'failed' },
+    where: { id: workSessionId, workspaceId, status: "failed" },
     data: {
-      status: 'queued',
+      status: "queued",
       ...(actorId ? { a2aActorId: actorId } : {}),
       result: null,
       error: null,
@@ -377,13 +480,13 @@ export async function resumeWorkSession(
       cancelRequestedAt: null,
     },
   });
-  if (updated.count === 1) return { ok: true, changed: true, status: 'queued' };
+  if (updated.count === 1) return { ok: true, changed: true, status: "queued" };
   const current = await db.workSession.findFirst({
     where: { id: workSessionId, workspaceId },
     select: { status: true },
   });
-  if (!current) return { ok: false, reason: 'not_found' };
-  return { ok: false, reason: 'invalid_transition', status: current.status };
+  if (!current) return { ok: false, reason: "not_found" };
+  return { ok: false, reason: "invalid_transition", status: current.status };
 }
 
 export async function appendWorkSessionInput(
@@ -399,16 +502,23 @@ export async function appendWorkSessionInput(
   } = {},
 ): Promise<WorkSessionTransitionResult> {
   const text = input.trim();
-  if (!text || text.length > 20_000) return { ok: false, reason: 'invalid_input' };
+  if (!text || text.length > 20_000)
+    return { ok: false, reason: "invalid_input" };
 
   return db.$transaction(async (tx) => {
     const work = await tx.workSession.findFirst({
       where: { id: workSessionId, workspaceId },
       select: { conversationId: true, status: true },
     });
-    if (!work) return { ok: false, reason: 'not_found' } as const;
-    if (!['idle', 'waiting_user', 'completed', 'failed'].includes(work.status)) {
-      return { ok: false, reason: 'invalid_transition', status: work.status } as const;
+    if (!work) return { ok: false, reason: "not_found" } as const;
+    if (
+      !["idle", "waiting_user", "completed", "failed"].includes(work.status)
+    ) {
+      return {
+        ok: false,
+        reason: "invalid_transition",
+        status: work.status,
+      } as const;
     }
 
     const updated = await tx.workSession.updateMany({
@@ -418,7 +528,7 @@ export async function appendWorkSessionInput(
         status: work.status,
       },
       data: {
-        status: 'queued',
+        status: "queued",
         ...(options.a2aActorId ? { a2aActorId: options.a2aActorId } : {}),
         result: null,
         artifacts: [],
@@ -429,17 +539,27 @@ export async function appendWorkSessionInput(
       },
     });
     if (updated.count !== 1) {
-      return { ok: false, reason: 'invalid_transition', status: work.status } as const;
+      return {
+        ok: false,
+        reason: "invalid_transition",
+        status: work.status,
+      } as const;
     }
     if (options.reasoningEffort) {
       await tx.conversation.update({
         where: { id: work.conversationId },
-        data: { reasoningEffort: options.reasoningEffort === 'default' ? null : options.reasoningEffort },
+        data: {
+          reasoningEffort:
+            options.reasoningEffort === "default"
+              ? null
+              : options.reasoningEffort,
+        },
       });
     }
     const attachments = options.attachments ?? [];
     if (attachments.length) {
-      if (!options.uploadedById) return { ok: false, reason: 'invalid_input' } as const;
+      if (!options.uploadedById)
+        return { ok: false, reason: "invalid_input" } as const;
       await claimWorkAttachments(tx, {
         workspaceId,
         userId: options.uploadedById,
@@ -450,19 +570,28 @@ export async function appendWorkSessionInput(
     await tx.message.create({
       data: {
         conversationId: work.conversationId,
-        role: 'user',
+        role: "user",
         parts: workMessageParts(text, attachments, options.references),
-        textCharacters: text.length + (options.references ?? []).reduce((total, item) => total + item.text.length, 0),
+        textCharacters:
+          text.length +
+          (options.references ?? []).reduce(
+            (total, item) => total + item.text.length,
+            0,
+          ),
       },
     });
-    return { ok: true, changed: true, status: 'queued' } as const;
+    return { ok: true, changed: true, status: "queued" } as const;
   });
 }
 
 export async function listWorkSessions(workspaceId: string, agentId?: string) {
   return db.workSession.findMany({
-    where: { workspaceId, status: { not: 'archived' }, ...(agentId ? { agentId } : {}) },
-    orderBy: { updatedAt: 'desc' },
+    where: {
+      workspaceId,
+      status: { not: "archived" },
+      ...(agentId ? { agentId } : {}),
+    },
+    orderBy: { updatedAt: "desc" },
     take: 100,
     include: workSessionSummaryInclude,
   });
@@ -485,20 +614,33 @@ export async function getWorkSession(
   });
 }
 
-export async function getWorkSessionForUser(userId: string, workSessionId: string) {
+export async function getWorkSessionForUser(
+  userId: string,
+  workSessionId: string,
+) {
   return db.workSession.findFirst({
     where: {
       id: workSessionId,
-      workspace: { status: 'active', OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
+      workspace: {
+        status: "active",
+        OR: [{ ownerId: userId }, { members: { some: { userId } } }],
+      },
     },
     include: workSessionClientInclude,
   });
 }
 
-export async function archiveWorkSession(workspaceId: string, workSessionId: string) {
+export async function archiveWorkSession(
+  workspaceId: string,
+  workSessionId: string,
+) {
   const result = await db.workSession.updateMany({
-    where: { id: workSessionId, workspaceId, status: { in: ['idle', 'completed', 'failed', 'cancelled'] } },
-    data: { status: 'archived' },
+    where: {
+      id: workSessionId,
+      workspaceId,
+      status: { in: ["idle", "completed", "failed", "cancelled"] },
+    },
+    data: { status: "archived" },
   });
   return result.count === 1;
 }

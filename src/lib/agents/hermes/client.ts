@@ -1,15 +1,15 @@
-import { observe, recordEvent } from '@/lib/observability/events';
-import 'server-only';
-import type { FileUIPart, UIMessage } from 'ai';
-import type { ReasoningEffort } from '../constants';
+import { observe, recordEvent } from "@/lib/observability/events";
+import "server-only";
+import type { FileUIPart, UIMessage } from "ai";
+import type { ReasoningEffort } from "../constants";
 import {
   ensureHermesRuntimeReady,
   type HermesRuntimeWriteLease,
-} from './runtime';
+} from "./runtime";
 import type {
   HermesAssistantSegment,
   HermesUIMessage,
-} from './message-segments';
+} from "./message-segments";
 import {
   ensureHermesProfileProjection,
   hasHermesProfileChatCapabilities,
@@ -17,7 +17,7 @@ import {
   HERMES_DEFAULT_PROFILE,
   listHermesProfileModels,
   normalizeHermesProfile,
-} from './profiles';
+} from "./profiles";
 
 type HermesRuntimeAgent = {
   id: string;
@@ -27,11 +27,11 @@ type HermesRuntimeAgent = {
 };
 
 type HermesContentPart =
-  | { type: 'text'; text: string }
-  | { type: 'image_url'; image_url: { url: string; detail?: string } };
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string; detail?: string } };
 
 type HermesMessage = {
-  role: 'user' | 'assistant';
+  role: "user" | "assistant";
   content: string | HermesContentPart[];
 };
 
@@ -43,45 +43,52 @@ type HermesStoredMessage = {
 
 function fileLabel(part: FileUIPart): string {
   const toolplane = part.providerMetadata?.toolplane;
-  const runtimePath = toolplane && typeof toolplane === 'object' && 'runtimePath' in toolplane
-    ? String(toolplane.runtimePath ?? '').trim()
-    : '';
-  if (runtimePath) return `[Attached file: ${part.filename || 'file'} at ${runtimePath}]`;
-  return `[Attachment: ${part.filename || 'file'} (${part.mediaType}) ${part.url}]`;
+  const runtimePath =
+    toolplane && typeof toolplane === "object" && "runtimePath" in toolplane
+      ? String(toolplane.runtimePath ?? "").trim()
+      : "";
+  if (runtimePath)
+    return `[Attached file: ${part.filename || "file"} at ${runtimePath}]`;
+  return `[Attachment: ${part.filename || "file"} (${part.mediaType}) ${part.url}]`;
 }
 
 export function uiMessagesToHermes(messages: UIMessage[]): HermesMessage[] {
   return messages
-    .filter((message): message is UIMessage & { role: 'user' | 'assistant' } => (
-      message.role === 'user' || message.role === 'assistant'
-    ))
+    .filter(
+      (message): message is UIMessage & { role: "user" | "assistant" } =>
+        message.role === "user" || message.role === "assistant",
+    )
     .map((message) => {
       const parts: HermesContentPart[] = [];
       for (const part of message.parts) {
-        if (part.type === 'text' && part.text) {
-          parts.push({ type: 'text', text: part.text });
+        if (part.type === "text" && part.text) {
+          parts.push({ type: "text", text: part.text });
         } else if (
-          part.type === 'file'
-          && message.role === 'user'
-          && part.mediaType.startsWith('image/')
-          && (/^https?:\/\//.test(part.url) || /^data:image\//.test(part.url))
+          part.type === "file" &&
+          message.role === "user" &&
+          part.mediaType.startsWith("image/") &&
+          (/^https?:\/\//.test(part.url) || /^data:image\//.test(part.url))
         ) {
-          parts.push({ type: 'image_url', image_url: { url: part.url } });
-        } else if (part.type === 'file') {
-          parts.push({ type: 'text', text: fileLabel(part) });
+          parts.push({ type: "image_url", image_url: { url: part.url } });
+        } else if (part.type === "file") {
+          parts.push({ type: "text", text: fileLabel(part) });
         }
       }
-      const onlyText = parts.every((part) => part.type === 'text');
+      const onlyText = parts.every((part) => part.type === "text");
       return {
         role: message.role,
         content: onlyText
-          ? parts.map((part) => part.type === 'text' ? part.text : '').join('\n\n')
+          ? parts
+              .map((part) => (part.type === "text" ? part.text : ""))
+              .join("\n\n")
           : parts,
       };
     })
-    .filter((message) => (
-      typeof message.content === 'string' ? Boolean(message.content.trim()) : message.content.length > 0
-    ));
+    .filter((message) =>
+      typeof message.content === "string"
+        ? Boolean(message.content.trim())
+        : message.content.length > 0,
+    );
 }
 
 async function hermesFetch(params: {
@@ -98,8 +105,8 @@ async function hermesFetch(params: {
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<{ baseUrl: string; response: Response }> {
-  if (!params.agent.runtime || params.agent.runtime.kind !== 'hermes') {
-    throw new Error('Hermes runtime is not configured.');
+  if (params.agent.runtime?.kind !== "hermes") {
+    throw new Error("Hermes runtime is not configured.");
   }
   const timeoutSignal = AbortSignal.timeout(params.timeoutMs ?? 60 * 60_000);
   const signal = params.signal
@@ -110,14 +117,20 @@ async function hermesFetch(params: {
     params.agent.id,
     { writeLease: params.writeLease, signal },
   );
-  if (!ready.port) throw new Error(ready.error || 'Hermes runtime is unavailable.');
+  if (!ready.port)
+    throw new Error(ready.error || "Hermes runtime is unavailable.");
 
-  const profile = normalizeHermesProfile(params.profile || HERMES_DEFAULT_PROFILE);
-  if (!profile) throw new Error('Invalid Hermes profile.');
+  const profile = normalizeHermesProfile(
+    params.profile || HERMES_DEFAULT_PROFILE,
+  );
+  if (!profile) throw new Error("Invalid Hermes profile.");
   if ((params.provider == null) !== (params.model == null)) {
-    throw new Error('Hermes provider and model must be selected together.');
+    throw new Error("Hermes provider and model must be selected together.");
   }
-  const profilePath = profile === HERMES_DEFAULT_PROFILE ? '' : `/p/${encodeURIComponent(profile)}`;
+  const profilePath =
+    profile === HERMES_DEFAULT_PROFILE
+      ? ""
+      : `/p/${encodeURIComponent(profile)}`;
   const baseUrl = `http://127.0.0.1:${ready.port}/hermes${profilePath}`;
   const body = JSON.stringify({
     messages: params.messages,
@@ -125,25 +138,34 @@ async function hermesFetch(params: {
     ...(params.provider && params.model
       ? { provider: params.provider, model: params.model }
       : { model: params.agent.slug }),
-    ...(params.reasoningEffort && params.reasoningEffort !== 'default'
-      ? { model_options: { reasoning: { enabled: true, effort: params.reasoningEffort } } }
+    ...(params.reasoningEffort && params.reasoningEffort !== "default"
+      ? {
+          model_options: {
+            reasoning: { enabled: true, effort: params.reasoningEffort },
+          },
+        }
       : {}),
   });
-  const request = () => fetch(`${baseUrl}/v1/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'x-hermes-session-id': params.sessionId,
-      'x-hermes-session-key': params.sessionKey,
-    },
-    body,
-    signal,
-    cache: 'no-store',
-  });
+  const request = () =>
+    fetch(`${baseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-hermes-session-id": params.sessionId,
+        "x-hermes-session-key": params.sessionKey,
+      },
+      body,
+      signal,
+      cache: "no-store",
+    });
   let response = await request();
   if (response.status === 401 && profile !== HERMES_DEFAULT_PROFILE) {
     await response.body?.cancel().catch(() => undefined);
-    await ensureHermesProfileProjection(params.agent, profile, params.writeLease);
+    await ensureHermesProfileProjection(
+      params.agent,
+      profile,
+      params.writeLease,
+    );
     response = await request();
   }
   return { baseUrl, response };
@@ -161,17 +183,23 @@ async function hermesProfileChatStream(params: {
   writeLease?: HermesRuntimeWriteLease;
   signal?: AbortSignal;
 }): Promise<{ baseUrl: string; response: Response; sessionEvents: boolean }> {
-  if (!params.agent.runtime || params.agent.runtime.kind !== 'hermes') {
-    throw new Error('Hermes runtime is not configured.');
+  if (params.agent.runtime?.kind !== "hermes") {
+    throw new Error("Hermes runtime is not configured.");
   }
-  const profile = normalizeHermesProfile(params.profile || HERMES_DEFAULT_PROFILE);
-  if (!profile) throw new Error('Invalid Hermes profile.');
+  const profile = normalizeHermesProfile(
+    params.profile || HERMES_DEFAULT_PROFILE,
+  );
+  if (!profile) throw new Error("Invalid Hermes profile.");
   if ((params.provider == null) !== (params.model == null)) {
-    throw new Error('Hermes provider and model must be selected together.');
+    throw new Error("Hermes provider and model must be selected together.");
   }
 
   if (profile !== HERMES_DEFAULT_PROFILE) {
-    await ensureHermesProfileProjection(params.agent, profile, params.writeLease);
+    await ensureHermesProfileProjection(
+      params.agent,
+      profile,
+      params.writeLease,
+    );
   }
 
   const timeoutSignal = AbortSignal.timeout(60 * 60_000);
@@ -183,27 +211,38 @@ async function hermesProfileChatStream(params: {
     params.agent.id,
     { writeLease: params.writeLease, signal },
   );
-  if (!ready.port) throw new Error(ready.error || 'Hermes runtime is unavailable.');
-  const profilePath = profile === HERMES_DEFAULT_PROFILE ? '' : `/p/${encodeURIComponent(profile)}`;
+  if (!ready.port)
+    throw new Error(ready.error || "Hermes runtime is unavailable.");
+  const profilePath =
+    profile === HERMES_DEFAULT_PROFILE
+      ? ""
+      : `/p/${encodeURIComponent(profile)}`;
   const baseUrl = `http://127.0.0.1:${ready.port}/hermes${profilePath}`;
   const headers = {
-    'content-type': 'application/json',
-    'x-hermes-session-id': params.sessionId,
-    'x-hermes-session-key': params.sessionKey,
+    "content-type": "application/json",
+    "x-hermes-session-id": params.sessionId,
+    "x-hermes-session-key": params.sessionKey,
   };
 
   const capabilities = await fetch(`${baseUrl}/v1/capabilities`, {
     headers,
     signal,
-    cache: 'no-store',
+    cache: "no-store",
   });
-  const profileChatSupported = capabilities.ok
-    && hasHermesProfileChatCapabilities(await capabilities.json().catch(() => null));
+  const profileChatSupported =
+    capabilities.ok &&
+    hasHermesProfileChatCapabilities(
+      await capabilities.json().catch(() => null),
+    );
   if (!profileChatSupported) {
     await capabilities.body?.cancel().catch(() => undefined);
-    if (profile === HERMES_DEFAULT_PROFILE && params.provider == null && params.model == null) {
+    if (
+      profile === HERMES_DEFAULT_PROFILE &&
+      params.provider == null &&
+      params.model == null
+    ) {
       return {
-        ...await hermesFetch({
+        ...(await hermesFetch({
           agent: params.agent,
           messages: params.messages,
           sessionId: params.sessionId,
@@ -212,29 +251,41 @@ async function hermesProfileChatStream(params: {
           reasoningEffort: params.reasoningEffort,
           writeLease: params.writeLease,
           signal: params.signal,
-        }),
+        })),
         sessionEvents: false,
       };
     }
-    throw new Error('Hermes profile/model chat requires runtime v0.20.0 or newer. Upgrade this Agent\'s Hermes image.');
+    throw new Error(
+      "Hermes profile/model chat requires runtime v0.20.0 or newer. Upgrade this Agent's Hermes image.",
+    );
   }
 
   let provider = params.provider;
   let model = params.model;
   if (!provider || !model) {
-    const options = await listHermesProfileModels(params.agent, profile, params.writeLease);
+    const options = await listHermesProfileModels(
+      params.agent,
+      profile,
+      params.writeLease,
+    );
     provider = options.provider;
     model = options.model;
-    if (!provider || !model || !hasHermesProfileModel(options, provider, model)) {
-      throw new Error(`Hermes profile "${profile}" has no available default model.`);
+    if (
+      !provider ||
+      !model ||
+      !hasHermesProfileModel(options, provider, model)
+    ) {
+      throw new Error(
+        `Hermes profile "${profile}" has no available default model.`,
+      );
     }
   }
 
   // Hermes' session API loses named-custom credentials after canonicalizing
   // ToolPlane providers to "custom". The OpenAI-compatible path preserves them.
-  if (provider.replace(/^custom:/, '').startsWith('toolplane-')) {
+  if (provider.replace(/^custom:/, "").startsWith("toolplane-")) {
     return {
-      ...await hermesFetch({
+      ...(await hermesFetch({
         agent: params.agent,
         messages: params.messages,
         sessionId: params.sessionId,
@@ -246,27 +297,30 @@ async function hermesProfileChatStream(params: {
         reasoningEffort: params.reasoningEffort,
         writeLease: params.writeLease,
         signal: params.signal,
-      }),
+      })),
       sessionEvents: false,
     };
   }
-  const userMessage = params.messages.filter((message) => message.role === 'user').at(-1);
-  if (!userMessage) throw new Error('Hermes chat requires a user message.');
+  const userMessage = params.messages
+    .filter((message) => message.role === "user")
+    .at(-1);
+  if (!userMessage) throw new Error("Hermes chat requires a user message.");
 
   const create = await fetch(`${baseUrl}/api/sessions`, {
-    method: 'POST',
+    method: "POST",
     headers,
-    body: JSON.stringify({ id: params.sessionId, source: 'api_server' }),
+    body: JSON.stringify({ id: params.sessionId, source: "api_server" }),
     signal,
-    cache: 'no-store',
+    cache: "no-store",
   });
-  if (create.status !== 201 && create.status !== 409) throw await responseError(create);
+  if (create.status !== 201 && create.status !== 409)
+    throw await responseError(create);
   await create.body?.cancel().catch(() => undefined);
 
   const response = await fetch(
     `${baseUrl}/api/sessions/${encodeURIComponent(params.sessionId)}/chat/stream`,
     {
-      method: 'POST',
+      method: "POST",
       headers,
       body: JSON.stringify({
         message: userMessage.content,
@@ -276,12 +330,16 @@ async function hermesProfileChatStream(params: {
         // "custom". Its confirmed-lock check compares that class with the
         // requested provider alias and rejects an otherwise correct turn.
         // Explicit provider requests already fail closed during resolution.
-        ...(params.reasoningEffort && params.reasoningEffort !== 'default'
-          ? { model_options: { reasoning: { enabled: true, effort: params.reasoningEffort } } }
+        ...(params.reasoningEffort && params.reasoningEffort !== "default"
+          ? {
+              model_options: {
+                reasoning: { enabled: true, effort: params.reasoningEffort },
+              },
+            }
           : {}),
       }),
       signal,
-      cache: 'no-store',
+      cache: "no-store",
     },
   );
   return { baseUrl, response, sessionEvents: true };
@@ -292,7 +350,7 @@ async function responseError(response: Response): Promise<Error> {
   if (!reader) return new Error(`Hermes runtime returned ${response.status}.`);
   const decoder = new TextDecoder();
   let received = 0;
-  let text = '';
+  let text = "";
   try {
     while (received <= 4_096) {
       const { done, value } = await reader.read();
@@ -300,13 +358,13 @@ async function responseError(response: Response): Promise<Error> {
       received += value.byteLength;
       text += decoder.decode(value, { stream: true });
       if (received > 4_096) {
-        await reader.cancel('error body limit exceeded').catch(() => undefined);
+        await reader.cancel("error body limit exceeded").catch(() => undefined);
         break;
       }
     }
     text += decoder.decode();
   } catch {
-    text = '';
+    text = "";
   } finally {
     reader.releaseLock();
   }
@@ -317,39 +375,46 @@ async function responseError(response: Response): Promise<Error> {
 function sseData(block: string): string {
   return block
     .split(/\r?\n/)
-    .filter((line) => line.startsWith('data:'))
+    .filter((line) => line.startsWith("data:"))
     .map((line) => line.slice(5).trimStart())
-    .join('\n');
+    .join("\n");
 }
 
 function textDelta(data: string): string {
-  if (!data || data === '[DONE]') return '';
+  if (!data || data === "[DONE]") return "";
   try {
     const parsed = JSON.parse(data) as {
-      choices?: Array<{ delta?: { content?: string | Array<{ type?: string; text?: string }> } }>;
+      choices?: Array<{
+        delta?: { content?: string | Array<{ type?: string; text?: string }> };
+      }>;
     };
     const content = parsed.choices?.[0]?.delta?.content;
-    if (typeof content === 'string') return content;
+    if (typeof content === "string") return content;
     if (Array.isArray(content)) {
-      return content.map((part) => part.type === 'text' ? part.text ?? '' : '').join('');
+      return content
+        .map((part) => (part.type === "text" ? (part.text ?? "") : ""))
+        .join("");
     }
   } catch {
-    return '';
+    return "";
   }
-  return '';
+  return "";
 }
 
-function sessionStreamEvent(block: string): { event: string; data: Record<string, unknown> } | null {
-  const event = block
-    .split(/\r?\n/)
-    .find((line) => line.startsWith('event:'))
-    ?.slice(6)
-    .trim() ?? '';
+function sessionStreamEvent(
+  block: string,
+): { event: string; data: Record<string, unknown> } | null {
+  const event =
+    block
+      .split(/\r?\n/)
+      .find((line) => line.startsWith("event:"))
+      ?.slice(6)
+      .trim() ?? "";
   const data = sseData(block);
   if (!event || !data) return null;
   try {
     const parsed = JSON.parse(data) as unknown;
-    return parsed && typeof parsed === 'object'
+    return parsed && typeof parsed === "object"
       ? { event, data: parsed as Record<string, unknown> }
       : null;
   } catch {
@@ -358,13 +423,17 @@ function sessionStreamEvent(block: string): { event: string; data: Record<string
 }
 
 function storedMessageText(content: unknown): string {
-  if (typeof content === 'string') return content;
-  if (!Array.isArray(content)) return '';
-  return content.flatMap((part) => (
-    part && typeof part === 'object' && (part as { type?: unknown }).type === 'text'
-      ? [String((part as { text?: unknown }).text ?? '')]
-      : []
-  )).join('');
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .flatMap((part) =>
+      part &&
+      typeof part === "object" &&
+      (part as { type?: unknown }).type === "text"
+        ? [String((part as { text?: unknown }).text ?? "")]
+        : [],
+    )
+    .join("");
 }
 
 async function readHermesAssistantSegments(
@@ -376,24 +445,26 @@ async function readHermesAssistantSegments(
   const response = await fetch(
     `${baseUrl}/api/sessions/${encodeURIComponent(conversationId)}/messages`,
     {
-      headers: { accept: 'application/json' },
+      headers: { accept: "application/json" },
       signal: signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal,
-      cache: 'no-store',
+      cache: "no-store",
     },
   );
   if (!response.ok) return [];
-  const body = await response.json().catch(() => ({})) as { data?: HermesStoredMessage[] };
+  const body = (await response.json().catch(() => ({}))) as {
+    data?: HermesStoredMessage[];
+  };
   const messages = Array.isArray(body.data) ? body.data : [];
   let turnStart = -1;
   for (let index = messages.length - 1; index >= 0; index -= 1) {
-    if (messages[index]?.role === 'user') {
+    if (messages[index]?.role === "user") {
       turnStart = index + 1;
       break;
     }
   }
   if (turnStart < 0) return [];
   return messages.slice(turnStart).flatMap((message, index) => {
-    if (message.role !== 'assistant') return [];
+    if (message.role !== "assistant") return [];
     const text = storedMessageText(message.content);
     if (!text.trim()) return [];
     return [{ id: String(message.id ?? index), text }];
@@ -414,201 +485,278 @@ export async function writeHermesChatStream(params: {
   reasoningEffort?: ReasoningEffort;
   writeLease?: HermesRuntimeWriteLease;
   signal?: AbortSignal;
-  writer: import('ai').UIMessageStreamWriter<HermesUIMessage>;
+  writer: import("ai").UIMessageStreamWriter<HermesUIMessage>;
 }): Promise<{ runtimeSessionId: string }> {
-  return observe({ domain: 'agent', eventName: 'hermes.run', workspaceId: params.agent.workspaceId, agentId: params.agent.id }, async () => {
-  const runtimeSessionId = params.runtimeSessionId || params.conversationId;
-  const projectedMessages = uiMessagesToHermes(params.messages);
-  const { baseUrl, response, sessionEvents } = await hermesProfileChatStream({
-    agent: params.agent,
-    messages: projectedMessages,
-    sessionId: runtimeSessionId,
-    sessionKey: params.sessionKey || `agent:${params.agent.id}:console:${runtimeSessionId}`,
-    profile: params.profile,
-    provider: params.provider,
-    model: params.model,
-    reasoningEffort: params.reasoningEffort,
-    writeLease: params.writeLease,
-    signal: params.signal,
-  });
-  if (!response.ok) throw await responseError(response);
-  if (!response.body) throw new Error('Hermes runtime returned an empty stream.');
+  return observe(
+    {
+      domain: "agent",
+      eventName: "hermes.run",
+      workspaceId: params.agent.workspaceId,
+      agentId: params.agent.id,
+    },
+    async () => {
+      const runtimeSessionId = params.runtimeSessionId || params.conversationId;
+      const projectedMessages = uiMessagesToHermes(params.messages);
+      const { baseUrl, response, sessionEvents } =
+        await hermesProfileChatStream({
+          agent: params.agent,
+          messages: projectedMessages,
+          sessionId: runtimeSessionId,
+          sessionKey:
+            params.sessionKey ||
+            `agent:${params.agent.id}:console:${runtimeSessionId}`,
+          profile: params.profile,
+          provider: params.provider,
+          model: params.model,
+          reasoningEffort: params.reasoningEffort,
+          writeLease: params.writeLease,
+          signal: params.signal,
+        });
+      if (!response.ok) throw await responseError(response);
+      if (!response.body)
+        throw new Error("Hermes runtime returned an empty stream.");
 
-  const textPartId = `hermes-${params.conversationId}`;
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  let streamedText = '';
-  let completedText = '';
-  let completed = false;
-  let hasProcessEvents = false;
-  let effectiveSessionId = response.headers.get('x-hermes-session-id') || runtimeSessionId;
-  let activeTextPartId: string | null = null;
-  let textSequence = 0;
-  let reasoningPartId: string | null = null;
-  let reasoningSequence = 0;
-  let toolSequence = 0;
-  const pendingToolCallIds = new Map<string, string[]>();
+      const textPartId = `hermes-${params.conversationId}`;
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let streamedText = "";
+      let completedText = "";
+      let completed = false;
+      let hasProcessEvents = false;
+      let effectiveSessionId =
+        response.headers.get("x-hermes-session-id") || runtimeSessionId;
+      let activeTextPartId: string | null = null;
+      let textSequence = 0;
+      let reasoningPartId: string | null = null;
+      let reasoningSequence = 0;
+      let toolSequence = 0;
+      const pendingToolCallIds = new Map<string, string[]>();
 
-  const endText = () => {
-    if (!activeTextPartId) return;
-    params.writer.write({ type: 'text-end', id: activeTextPartId });
-    activeTextPartId = null;
-  };
-  const startText = () => {
-    if (activeTextPartId) return activeTextPartId;
-    activeTextPartId = textSequence === 0 ? textPartId : `${textPartId}-${textSequence}`;
-    textSequence += 1;
-    params.writer.write({ type: 'text-start', id: activeTextPartId });
-    return activeTextPartId;
-  };
-  const writeText = (delta: string) => {
-    if (!delta) return;
-    params.writer.write({ type: 'text-delta', id: startText(), delta });
-  };
-  const endReasoning = () => {
-    if (!reasoningPartId) return;
-    params.writer.write({ type: 'reasoning-end', id: reasoningPartId });
-    reasoningPartId = null;
-  };
-  const startReasoning = () => {
-    if (reasoningPartId) return reasoningPartId;
-    reasoningPartId = `hermes-${params.conversationId}-reasoning-${reasoningSequence++}`;
-    params.writer.write({ type: 'reasoning-start', id: reasoningPartId });
-    return reasoningPartId;
-  };
-  const toolName = (data: Record<string, unknown>) => (
-    typeof data.tool_name === 'string' && data.tool_name.trim() ? data.tool_name : 'tool'
+      const endText = () => {
+        if (!activeTextPartId) return;
+        params.writer.write({ type: "text-end", id: activeTextPartId });
+        activeTextPartId = null;
+      };
+      const startText = () => {
+        if (activeTextPartId) return activeTextPartId;
+        activeTextPartId =
+          textSequence === 0 ? textPartId : `${textPartId}-${textSequence}`;
+        textSequence += 1;
+        params.writer.write({ type: "text-start", id: activeTextPartId });
+        return activeTextPartId;
+      };
+      const writeText = (delta: string) => {
+        if (!delta) return;
+        params.writer.write({ type: "text-delta", id: startText(), delta });
+      };
+      const endReasoning = () => {
+        if (!reasoningPartId) return;
+        params.writer.write({ type: "reasoning-end", id: reasoningPartId });
+        reasoningPartId = null;
+      };
+      const startReasoning = () => {
+        if (reasoningPartId) return reasoningPartId;
+        reasoningPartId = `hermes-${params.conversationId}-reasoning-${reasoningSequence++}`;
+        params.writer.write({ type: "reasoning-start", id: reasoningPartId });
+        return reasoningPartId;
+      };
+      const toolName = (data: Record<string, unknown>) =>
+        typeof data.tool_name === "string" && data.tool_name.trim()
+          ? data.tool_name
+          : "tool";
+      const startTool = (data: Record<string, unknown>, callId?: string) => {
+        const name = toolName(data);
+        const id =
+          callId ?? `hermes-${params.conversationId}-tool-${toolSequence++}`;
+        if (!callId) {
+          const ids = pendingToolCallIds.get(name) ?? [];
+          ids.push(id);
+          pendingToolCallIds.set(name, ids);
+        }
+        params.writer.write({
+          type: "tool-input-start",
+          toolCallId: id,
+          toolName: name,
+        });
+        params.writer.write({
+          type: "tool-input-available",
+          toolCallId: id,
+          toolName: name,
+          input: data.args ?? {},
+        });
+        return id;
+      };
+      const completeTool = (data: Record<string, unknown>, failed: boolean) => {
+        const name = toolName(data);
+        const ids = pendingToolCallIds.get(name);
+        const id =
+          ids?.shift() ??
+          startTool(
+            data,
+            `hermes-${params.conversationId}-tool-${toolSequence++}`,
+          );
+        if (failed) {
+          const errorText =
+            typeof data.error === "string"
+              ? data.error
+              : typeof data.preview === "string" && data.preview
+                ? data.preview
+                : "Tool failed.";
+          params.writer.write({
+            type: "tool-output-error",
+            toolCallId: id,
+            errorText,
+          });
+          return;
+        }
+        params.writer.write({
+          type: "tool-output-available",
+          toolCallId: id,
+          output: data.result ?? data.preview ?? null,
+        });
+      };
+
+      const handleBlock = (block: string) => {
+        if (!sessionEvents) {
+          const data = sseData(block);
+          if (data === "[DONE]") {
+            completed = true;
+            return;
+          }
+          const delta = textDelta(data);
+          if (delta) {
+            streamedText += delta;
+            writeText(delta);
+          }
+          return;
+        }
+        const item = sessionStreamEvent(block);
+        if (!item) return;
+        if (
+          [
+            "tool.started",
+            "tool.completed",
+            "tool.failed",
+            "run.completed",
+            "error",
+          ].includes(item.event)
+        ) {
+          void recordEvent({
+            domain: "agent",
+            eventName: `hermes.${item.event}`,
+            toolName:
+              typeof item.data.tool_name === "string"
+                ? item.data.tool_name
+                : undefined,
+            outcome:
+              item.event === "error" || item.event === "tool.failed"
+                ? "error"
+                : "success",
+            attributes: { runtimeSessionId: effectiveSessionId },
+          });
+        }
+        if (item.event === "assistant.delta") {
+          const delta =
+            typeof item.data.delta === "string" ? item.data.delta : "";
+          if (delta) {
+            endReasoning();
+            streamedText += delta;
+            writeText(delta);
+          }
+        } else if (item.event === "tool.progress") {
+          hasProcessEvents = true;
+          endText();
+          const delta =
+            typeof item.data.delta === "string" ? item.data.delta : "";
+          if (delta)
+            params.writer.write({
+              type: "reasoning-delta",
+              id: startReasoning(),
+              delta,
+            });
+        } else if (item.event === "tool.started") {
+          hasProcessEvents = true;
+          endText();
+          endReasoning();
+          startTool(item.data);
+        } else if (
+          item.event === "tool.completed" ||
+          item.event === "tool.failed"
+        ) {
+          hasProcessEvents = true;
+          endText();
+          endReasoning();
+          completeTool(item.data, item.event === "tool.failed");
+        } else if (
+          item.event === "assistant.completed" &&
+          typeof item.data.content === "string"
+        ) {
+          completedText = item.data.content;
+          completed = true;
+          if (typeof item.data.session_id === "string")
+            effectiveSessionId = item.data.session_id;
+        } else if (item.event === "run.completed") {
+          completed = true;
+          if (typeof item.data.session_id === "string")
+            effectiveSessionId = item.data.session_id;
+        } else if (item.event === "error") {
+          throw new Error(
+            typeof item.data.message === "string"
+              ? item.data.message
+              : "Hermes runtime request failed.",
+          );
+        }
+      };
+
+      while (true) {
+        const { done, value } = await reader.read();
+        buffer += decoder.decode(value, { stream: !done });
+        let match = /\r?\n\r?\n/.exec(buffer);
+        while (match) {
+          const block = buffer.slice(0, match.index);
+          buffer = buffer.slice(match.index + match[0].length);
+          handleBlock(block);
+          match = /\r?\n\r?\n/.exec(buffer);
+        }
+        if (done) break;
+      }
+      handleBlock(buffer);
+      if (!completed)
+        throw new Error(
+          "Hermes runtime ended the stream before the turn completed.",
+        );
+      if (!streamedText && completedText) {
+        writeText(completedText);
+      }
+      endReasoning();
+      endText();
+      const safeSessionId = effectiveSessionId.trim();
+      if (
+        !safeSessionId ||
+        safeSessionId.length > 256 ||
+        /[^\x20-\uFFFF]/.test(safeSessionId)
+      ) {
+        throw new Error("Hermes runtime returned an invalid session ID.");
+      }
+      const segments =
+        sessionEvents && !hasProcessEvents
+          ? await readHermesAssistantSegments(
+              baseUrl,
+              safeSessionId,
+              params.signal,
+            )
+          : [];
+      if (segments.length) {
+        params.writer.write({
+          type: "data-hermes-messages",
+          id: `hermes-messages-${params.conversationId}`,
+          data: { segments },
+        });
+      }
+      return { runtimeSessionId: safeSessionId };
+    },
   );
-  const startTool = (data: Record<string, unknown>, callId?: string) => {
-    const name = toolName(data);
-    const id = callId ?? `hermes-${params.conversationId}-tool-${toolSequence++}`;
-    if (!callId) {
-      const ids = pendingToolCallIds.get(name) ?? [];
-      ids.push(id);
-      pendingToolCallIds.set(name, ids);
-    }
-    params.writer.write({ type: 'tool-input-start', toolCallId: id, toolName: name });
-    params.writer.write({
-      type: 'tool-input-available',
-      toolCallId: id,
-      toolName: name,
-      input: data.args ?? {},
-    });
-    return id;
-  };
-  const completeTool = (data: Record<string, unknown>, failed: boolean) => {
-    const name = toolName(data);
-    const ids = pendingToolCallIds.get(name);
-    const id = ids?.shift() ?? startTool(data, `hermes-${params.conversationId}-tool-${toolSequence++}`);
-    if (failed) {
-      const errorText = typeof data.error === 'string'
-        ? data.error
-        : typeof data.preview === 'string' && data.preview
-          ? data.preview
-          : 'Tool failed.';
-      params.writer.write({ type: 'tool-output-error', toolCallId: id, errorText });
-      return;
-    }
-    params.writer.write({
-      type: 'tool-output-available',
-      toolCallId: id,
-      output: data.result ?? data.preview ?? null,
-    });
-  };
-
-  const handleBlock = (block: string) => {
-    if (!sessionEvents) {
-      const data = sseData(block);
-      if (data === '[DONE]') {
-        completed = true;
-        return;
-      }
-      const delta = textDelta(data);
-      if (delta) {
-        streamedText += delta;
-        writeText(delta);
-      }
-      return;
-    }
-    const item = sessionStreamEvent(block);
-    if (!item) return;
-    if (['tool.started', 'tool.completed', 'tool.failed', 'run.completed', 'error'].includes(item.event)) {
-      void recordEvent({ domain: 'agent', eventName: `hermes.${item.event}`,
-        toolName: typeof item.data.tool_name === 'string' ? item.data.tool_name : undefined,
-        outcome: item.event === 'error' || item.event === 'tool.failed' ? 'error' : 'success',
-        attributes: { runtimeSessionId: effectiveSessionId } });
-    }
-    if (item.event === 'assistant.delta') {
-      const delta = typeof item.data.delta === 'string' ? item.data.delta : '';
-      if (delta) {
-        endReasoning();
-        streamedText += delta;
-        writeText(delta);
-      }
-    } else if (item.event === 'tool.progress') {
-      hasProcessEvents = true;
-      endText();
-      const delta = typeof item.data.delta === 'string' ? item.data.delta : '';
-      if (delta) params.writer.write({ type: 'reasoning-delta', id: startReasoning(), delta });
-    } else if (item.event === 'tool.started') {
-      hasProcessEvents = true;
-      endText();
-      endReasoning();
-      startTool(item.data);
-    } else if (item.event === 'tool.completed' || item.event === 'tool.failed') {
-      hasProcessEvents = true;
-      endText();
-      endReasoning();
-      completeTool(item.data, item.event === 'tool.failed');
-    } else if (item.event === 'assistant.completed' && typeof item.data.content === 'string') {
-      completedText = item.data.content;
-      completed = true;
-      if (typeof item.data.session_id === 'string') effectiveSessionId = item.data.session_id;
-    } else if (item.event === 'run.completed') {
-      completed = true;
-      if (typeof item.data.session_id === 'string') effectiveSessionId = item.data.session_id;
-    } else if (item.event === 'error') {
-      throw new Error(typeof item.data.message === 'string' ? item.data.message : 'Hermes runtime request failed.');
-    }
-  };
-
-  while (true) {
-    const { done, value } = await reader.read();
-    buffer += decoder.decode(value, { stream: !done });
-    let match = /\r?\n\r?\n/.exec(buffer);
-    while (match) {
-      const block = buffer.slice(0, match.index);
-      buffer = buffer.slice(match.index + match[0].length);
-      handleBlock(block);
-      match = /\r?\n\r?\n/.exec(buffer);
-    }
-    if (done) break;
-  }
-  handleBlock(buffer);
-  if (!completed) throw new Error('Hermes runtime ended the stream before the turn completed.');
-  if (!streamedText && completedText) {
-    writeText(completedText);
-  }
-  endReasoning();
-  endText();
-  const safeSessionId = effectiveSessionId.trim();
-  if (!safeSessionId || safeSessionId.length > 256 || /[\u0000-\u001f]/.test(safeSessionId)) {
-    throw new Error('Hermes runtime returned an invalid session ID.');
-  }
-  const segments = sessionEvents && !hasProcessEvents
-    ? await readHermesAssistantSegments(baseUrl, safeSessionId, params.signal)
-    : [];
-  if (segments.length) {
-    params.writer.write({
-      type: 'data-hermes-messages',
-      id: `hermes-messages-${params.conversationId}`,
-      data: { segments },
-    });
-  }
-  return { runtimeSessionId: safeSessionId };
-
-  });
 }
 
 export async function runHermesText(params: {
@@ -620,35 +768,48 @@ export async function runHermesText(params: {
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<string> {
-  return observe({ domain: 'agent', eventName: 'hermes.run', workspaceId: params.agent.workspaceId, agentId: params.agent.id }, async () => {
-  const { response } = await hermesFetch({
-    agent: params.agent,
-    messages: uiMessagesToHermes(params.messages),
-    sessionId: params.sessionId,
-    sessionKey: params.sessionKey,
-    stream: false,
-    writeLease: params.writeLease,
-    signal: params.signal,
-    timeoutMs: params.timeoutMs,
-  });
-  if (!response.ok) throw await responseError(response);
-  const body = await response.json() as {
-    choices?: Array<{ message?: { content?: string | Array<{ type?: string; text?: string }> } }>;
-  };
-  const content = body.choices?.[0]?.message?.content;
-  if (typeof content === 'string') return content;
-  if (Array.isArray(content)) {
-    return content.map((part) => part.type === 'text' ? part.text ?? '' : '').join('');
-  }
-  return '';
-
-  });
+  return observe(
+    {
+      domain: "agent",
+      eventName: "hermes.run",
+      workspaceId: params.agent.workspaceId,
+      agentId: params.agent.id,
+    },
+    async () => {
+      const { response } = await hermesFetch({
+        agent: params.agent,
+        messages: uiMessagesToHermes(params.messages),
+        sessionId: params.sessionId,
+        sessionKey: params.sessionKey,
+        stream: false,
+        writeLease: params.writeLease,
+        signal: params.signal,
+        timeoutMs: params.timeoutMs,
+      });
+      if (!response.ok) throw await responseError(response);
+      const body = (await response.json()) as {
+        choices?: Array<{
+          message?: {
+            content?: string | Array<{ type?: string; text?: string }>;
+          };
+        }>;
+      };
+      const content = body.choices?.[0]?.message?.content;
+      if (typeof content === "string") return content;
+      if (Array.isArray(content)) {
+        return content
+          .map((part) => (part.type === "text" ? (part.text ?? "") : ""))
+          .join("");
+      }
+      return "";
+    },
+  );
 }
 
 export class HermesResponseTooLargeError extends Error {
   constructor() {
-    super('Hermes response exceeded the configured output limit.');
-    this.name = 'HermesResponseTooLargeError';
+    super("Hermes response exceeded the configured output limit.");
+    this.name = "HermesResponseTooLargeError";
   }
 }
 
@@ -661,27 +822,30 @@ export async function deleteHermesSession(params: {
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<boolean> {
-  if (!params.agent.runtime || params.agent.runtime.kind !== 'hermes') {
-    throw new Error('Hermes runtime is not configured.');
+  if (params.agent.runtime?.kind !== "hermes") {
+    throw new Error("Hermes runtime is not configured.");
   }
   const timeoutSignal = AbortSignal.timeout(params.timeoutMs ?? 30_000);
-  const signal = params.signal ? AbortSignal.any([params.signal, timeoutSignal]) : timeoutSignal;
+  const signal = params.signal
+    ? AbortSignal.any([params.signal, timeoutSignal])
+    : timeoutSignal;
   const ready = await ensureHermesRuntimeReady(
     params.agent.workspaceId,
     params.agent.id,
     { writeLease: params.writeLease, signal },
   );
-  if (!ready.port) throw new Error(ready.error || 'Hermes runtime is unavailable.');
+  if (!ready.port)
+    throw new Error(ready.error || "Hermes runtime is unavailable.");
   const response = await fetch(
     `http://127.0.0.1:${ready.port}/hermes/api/sessions/${encodeURIComponent(params.sessionId)}`,
     {
-      method: 'DELETE',
+      method: "DELETE",
       headers: {
-        'x-hermes-session-id': params.sessionId,
-        'x-hermes-session-key': params.sessionKey,
+        "x-hermes-session-id": params.sessionId,
+        "x-hermes-session-key": params.sessionKey,
       },
       signal,
-      cache: 'no-store',
+      cache: "no-store",
     },
   );
   if (response.status === 404) return false;
@@ -705,62 +869,79 @@ export async function runHermesTextStream(params: {
   maxOutputCharacters?: number;
   onDelta: (delta: string) => void | Promise<void>;
 }): Promise<string> {
-  return observe({ domain: 'agent', eventName: 'hermes.run', workspaceId: params.agent.workspaceId, agentId: params.agent.id }, async () => {
-  const { response } = await hermesFetch({
-    agent: params.agent,
-    messages: uiMessagesToHermes(params.messages),
-    sessionId: params.sessionId,
-    sessionKey: params.sessionKey,
-    stream: true,
-    writeLease: params.writeLease,
-    signal: params.signal,
-    timeoutMs: params.timeoutMs,
-  });
-  if (!response.ok) throw await responseError(response);
-  if (!response.body) throw new Error('Hermes runtime returned an empty stream.');
+  return observe(
+    {
+      domain: "agent",
+      eventName: "hermes.run",
+      workspaceId: params.agent.workspaceId,
+      agentId: params.agent.id,
+    },
+    async () => {
+      const { response } = await hermesFetch({
+        agent: params.agent,
+        messages: uiMessagesToHermes(params.messages),
+        sessionId: params.sessionId,
+        sessionKey: params.sessionKey,
+        stream: true,
+        writeLease: params.writeLease,
+        signal: params.signal,
+        timeoutMs: params.timeoutMs,
+      });
+      if (!response.ok) throw await responseError(response);
+      if (!response.body)
+        throw new Error("Hermes runtime returned an empty stream.");
 
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  let text = '';
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      buffer += decoder.decode(value, { stream: !done });
-      if (params.maxOutputCharacters && buffer.length > params.maxOutputCharacters + 65_536) {
-        throw new HermesResponseTooLargeError();
-      }
-      let match = /\r?\n\r?\n/.exec(buffer);
-      while (match) {
-        const block = buffer.slice(0, match.index);
-        buffer = buffer.slice(match.index + match[0].length);
-        const delta = textDelta(sseData(block));
-        if (delta) {
-          if (params.maxOutputCharacters && text.length + delta.length > params.maxOutputCharacters) {
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let text = "";
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          buffer += decoder.decode(value, { stream: !done });
+          if (
+            params.maxOutputCharacters &&
+            buffer.length > params.maxOutputCharacters + 65_536
+          ) {
             throw new HermesResponseTooLargeError();
           }
-          text += delta;
-          await params.onDelta(delta);
+          let match = /\r?\n\r?\n/.exec(buffer);
+          while (match) {
+            const block = buffer.slice(0, match.index);
+            buffer = buffer.slice(match.index + match[0].length);
+            const delta = textDelta(sseData(block));
+            if (delta) {
+              if (
+                params.maxOutputCharacters &&
+                text.length + delta.length > params.maxOutputCharacters
+              ) {
+                throw new HermesResponseTooLargeError();
+              }
+              text += delta;
+              await params.onDelta(delta);
+            }
+            match = /\r?\n\r?\n/.exec(buffer);
+          }
+          if (done) break;
         }
-        match = /\r?\n\r?\n/.exec(buffer);
+        const trailing = textDelta(sseData(buffer));
+        if (trailing) {
+          if (
+            params.maxOutputCharacters &&
+            text.length + trailing.length > params.maxOutputCharacters
+          ) {
+            throw new HermesResponseTooLargeError();
+          }
+          text += trailing;
+          await params.onDelta(trailing);
+        }
+        return text;
+      } catch (error) {
+        await reader.cancel(error).catch(() => undefined);
+        throw error;
+      } finally {
+        reader.releaseLock();
       }
-      if (done) break;
-    }
-    const trailing = textDelta(sseData(buffer));
-    if (trailing) {
-      if (params.maxOutputCharacters && text.length + trailing.length > params.maxOutputCharacters) {
-        throw new HermesResponseTooLargeError();
-      }
-      text += trailing;
-      await params.onDelta(trailing);
-    }
-    return text;
-  } catch (error) {
-    await reader.cancel(error).catch(() => undefined);
-    throw error;
-  } finally {
-    reader.releaseLock();
-  }
-
-  });
+    },
+  );
 }

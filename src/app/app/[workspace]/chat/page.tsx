@@ -1,39 +1,47 @@
-import { redirect } from 'next/navigation';
-import { cookies } from 'next/headers';
-import { getLocale, getTranslations } from 'next-intl/server';
-import { getCurrentUser } from '@/lib/auth/current-user';
-import { getWorkspaceForUser } from '@/lib/workspace/queries';
+import { redirect } from "next/navigation";
+import { cookies } from "next/headers";
+import { getLocale, getTranslations } from "next-intl/server";
+import { getCurrentUser } from "@/lib/auth/current-user";
+import { getWorkspaceForUser } from "@/lib/workspace/queries";
 import {
   listAgentDeploymentOptions,
   listProviders,
-} from '@/lib/agents/queries';
+} from "@/lib/agents/queries";
 import {
   getChatThreadForWorkspace,
   listChatAssistantsForWorkspace,
   listRunningChatThreadIds,
-} from '@/lib/chat/service';
-import { parseChatAssistantModelParameters } from '@/lib/chat/schemas';
-import type { HermesUIMessage } from '@/lib/agents/hermes/message-segments';
-import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
-import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
-import { WorkspaceAssistantChat } from '@/components/dashboard/chat/WorkspaceAssistantChat';
-import { modelSupportsReasoning, resolveModelContext } from '@/lib/agents/model';
+} from "@/lib/chat/service";
+import { parseChatAssistantModelParameters } from "@/lib/chat/schemas";
+import type { HermesUIMessage } from "@/lib/agents/hermes/message-segments";
+import { formatInTimeZone, resolveUserTimeZone } from "@/lib/timezone";
+import { DashboardHeader } from "@/components/dashboard/DashboardHeader";
+import { WorkspaceAssistantChat } from "@/components/dashboard/chat/WorkspaceAssistantChat";
+import {
+  modelSupportsReasoning,
+  resolveModelContext,
+} from "@/lib/agents/model";
 import {
   getAssistantMarketTemplate,
   listAssistantMarketTemplates,
-} from '@/lib/market/skills';
+} from "@/lib/market/skills";
 import {
   assistantChatExpandedCookieName,
   assistantChatGroupPreferencesCookieName,
   assistantChatSidebarCookieName,
   parseBooleanRecordCookie,
-} from '@/lib/sidebar-preferences';
-import { parseSidebarGroupPreferencesCookie } from '@/lib/sidebar-groups';
+} from "@/lib/sidebar-preferences";
+import { parseSidebarGroupPreferencesCookie } from "@/lib/sidebar-groups";
 
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
 function formatDate(value: Date, timeZone: string, locale: string) {
-  return formatInTimeZone(value, timeZone, { month: 'short', day: 'numeric' }, locale);
+  return formatInTimeZone(
+    value,
+    timeZone,
+    { month: "short", day: "numeric" },
+    locale,
+  );
 }
 
 export default async function WorkspaceChatPage({
@@ -55,47 +63,65 @@ export default async function WorkspaceChatPage({
     searchParams,
     getCurrentUser(),
     getLocale(),
-    getTranslations('console.agents'),
+    getTranslations("console.agents"),
   ]);
-  if (!user) redirect('/app/login');
+  if (!user) redirect("/app/login");
   const workspace = await getWorkspaceForUser(slug, user.id);
-  if (!workspace) redirect('/app');
+  if (!workspace) redirect("/app");
   const cookieStore = await cookies();
-  const initialSidebarOpen = cookieStore.get(assistantChatSidebarCookieName(workspace.id))?.value !== 'false';
+  const initialSidebarOpen =
+    cookieStore.get(assistantChatSidebarCookieName(workspace.id))?.value !==
+    "false";
   const initialExpandedAssistants = parseBooleanRecordCookie(
     cookieStore.get(assistantChatExpandedCookieName(workspace.id))?.value,
   );
   const initialGroupPreferences = parseSidebarGroupPreferencesCookie(
-    cookieStore.get(assistantChatGroupPreferencesCookieName(workspace.id))?.value,
+    cookieStore.get(assistantChatGroupPreferencesCookieName(workspace.id))
+      ?.value,
   );
 
   if (query.agent || query.c) {
     const destination = new URLSearchParams();
-    if (query.agent) destination.set('agent', query.agent);
-    if (query.c) destination.set('c', query.c);
+    if (query.agent) destination.set("agent", query.agent);
+    if (query.c) destination.set("c", query.c);
     return redirect(`/app/${encodeURIComponent(slug)}/work?${destination}`);
   }
 
-  const [assistants, providers, deployments, selectedTemplate, listedTemplates, runningThreadIds] = await Promise.all([
+  const [
+    assistants,
+    providers,
+    deployments,
+    selectedTemplate,
+    listedTemplates,
+    runningThreadIds,
+  ] = await Promise.all([
     listChatAssistantsForWorkspace(workspace.id),
     listProviders(workspace.id),
     listAgentDeploymentOptions(workspace.id),
-    query.newAssistant === '1' && query.template
+    query.newAssistant === "1" && query.template
       ? getAssistantMarketTemplate(query.template)
       : Promise.resolve(null),
     listAssistantMarketTemplates({ limit: 12 }),
     listRunningChatThreadIds(user.id, workspace.id),
   ]);
-  const templates = selectedTemplate && !listedTemplates.some((item) => item.releaseId === selectedTemplate.releaseId)
-    ? [selectedTemplate, ...listedTemplates]
-    : listedTemplates;
+  const templates =
+    selectedTemplate &&
+    !listedTemplates.some(
+      (item) => item.releaseId === selectedTemplate.releaseId,
+    )
+      ? [selectedTemplate, ...listedTemplates]
+      : listedTemplates;
   const marketTemplates = templates.map((template) => {
     const assistant = template.manifest.assistant;
-    const resolvedSlugs = new Set(deployments
-      .filter((deployment) => assistant.mcpRequirements.some((requirement) => (
-        deployment.catalogSlug === requirement.catalogSlug
-      )))
-      .map((deployment) => deployment.catalogSlug));
+    const resolvedSlugs = new Set(
+      deployments
+        .filter((deployment) =>
+          assistant.mcpRequirements.some(
+            (requirement) => deployment.catalogSlug === requirement.catalogSlug,
+          ),
+        )
+        .map((deployment) => deployment.catalogSlug),
+    );
     return {
       releaseId: template.releaseId,
       name: assistant.name,
@@ -105,16 +131,25 @@ export default async function WorkspaceChatPage({
       maxSteps: assistant.maxSteps,
       providerFormat: assistant.modelRequirement?.providerFormat ?? null,
       model: assistant.modelRequirement?.model ?? null,
-      deploymentIds: deployments.filter((deployment) => assistant.mcpRequirements.some((requirement) => (
-        deployment.catalogSlug === requirement.catalogSlug
-      ))).map((deployment) => deployment.id),
+      deploymentIds: deployments
+        .filter((deployment) =>
+          assistant.mcpRequirements.some(
+            (requirement) => deployment.catalogSlug === requirement.catalogSlug,
+          ),
+        )
+        .map((deployment) => deployment.id),
       missingMcpNames: assistant.mcpRequirements
         .filter((requirement) => !resolvedSlugs.has(requirement.catalogSlug))
         .map((requirement) => requirement.name),
     };
   });
-  const providersById = new Map(providers.map((provider) => [provider.id, provider]));
-  const activeAssistant = assistants.find((item) => item.id === query.assistant) ?? assistants[0] ?? null;
+  const providersById = new Map(
+    providers.map((provider) => [provider.id, provider]),
+  );
+  const activeAssistant =
+    assistants.find((item) => item.id === query.assistant) ??
+    assistants[0] ??
+    null;
   const activeAssistantProvider = activeAssistant?.modelProviderId
     ? providersById.get(activeAssistant.modelProviderId)
     : null;
@@ -123,17 +158,21 @@ export default async function WorkspaceChatPage({
     (model) => model.modelId === activeAssistantModel,
   );
   const reasoningAvailable = Boolean(
-    activeAssistantProvider
-    && activeAssistantModel
-    && (
-      activeAssistantModelRecord?.capabilities.includes('reasoning')
-      || modelSupportsReasoning(activeAssistantProvider, activeAssistantModel)
-    ),
+    activeAssistantProvider &&
+      activeAssistantModel &&
+      (activeAssistantModelRecord?.capabilities.includes("reasoning") ||
+        modelSupportsReasoning(activeAssistantProvider, activeAssistantModel)),
   );
-  const requestedThreadId = query.thread ?? activeAssistant?.threads[0]?.id ?? null;
-  let activeThread = activeAssistant && requestedThreadId
-    ? await getChatThreadForWorkspace(workspace.id, activeAssistant.id, requestedThreadId)
-    : null;
+  const requestedThreadId =
+    query.thread ?? activeAssistant?.threads[0]?.id ?? null;
+  let activeThread =
+    activeAssistant && requestedThreadId
+      ? await getChatThreadForWorkspace(
+          workspace.id,
+          activeAssistant.id,
+          requestedThreadId,
+        )
+      : null;
   if (!activeThread && query.thread && activeAssistant?.threads[0]) {
     activeThread = await getChatThreadForWorkspace(
       workspace.id,
@@ -142,15 +181,17 @@ export default async function WorkspaceChatPage({
     );
   }
   const timeZone = resolveUserTimeZone(user);
-  const initialMessages: HermesUIMessage[] = (activeThread?.messages ?? []).map((message) => ({
-    id: message.id,
-    role: message.role as HermesUIMessage['role'],
-    parts: message.parts as HermesUIMessage['parts'],
-  }));
+  const initialMessages: HermesUIMessage[] = (activeThread?.messages ?? []).map(
+    (message) => ({
+      id: message.id,
+      role: message.role as HermesUIMessage["role"],
+      parts: message.parts as HermesUIMessage["parts"],
+    }),
+  );
 
   return (
     <>
-      <DashboardHeader title={t('chat')} />
+      <DashboardHeader title={t("chat")} />
       <WorkspaceAssistantChat
         slug={slug}
         workspaceId={workspace.id}
@@ -158,13 +199,17 @@ export default async function WorkspaceChatPage({
         initialExpandedAssistants={initialExpandedAssistants}
         initialGroupPreferences={initialGroupPreferences}
         initialSidebarOpen={initialSidebarOpen}
-        startCreating={query.newAssistant === '1'}
+        startCreating={query.newAssistant === "1"}
         selectedAssistantId={activeAssistant?.id ?? null}
         selectedThreadId={activeThread?.id ?? null}
         reasoningAvailable={reasoningAvailable}
         branch={activeThread?.branch ?? null}
         initialMessages={initialMessages}
-        marketTemplate={marketTemplates.find((template) => template.releaseId === selectedTemplate?.releaseId) ?? null}
+        marketTemplate={
+          marketTemplates.find(
+            (template) => template.releaseId === selectedTemplate?.releaseId,
+          ) ?? null
+        }
         marketTemplates={marketTemplates}
         providers={providers.map((provider) => ({
           id: provider.id,
@@ -189,9 +234,10 @@ export default async function WorkspaceChatPage({
           const modelProvider = assistant.modelProviderId
             ? providersById.get(assistant.modelProviderId)
             : null;
-          const modelContext = modelProvider && assistant.model
-            ? resolveModelContext(modelProvider, assistant.model)
-            : null;
+          const modelContext =
+            modelProvider && assistant.model
+              ? resolveModelContext(modelProvider, assistant.model)
+              : null;
           const threads = assistant.threads.map((thread) => ({
             id: thread.id,
             title: thread.title,
@@ -201,17 +247,18 @@ export default async function WorkspaceChatPage({
               : null,
           }));
           if (
-            assistant.id === activeAssistant?.id
-            && activeThread
-            && !threads.some((thread) => thread.id === activeThread.id)
+            assistant.id === activeAssistant?.id &&
+            activeThread &&
+            !threads.some((thread) => thread.id === activeThread.id)
           ) {
+            const lastMessage = activeThread.messages.at(-1);
             threads.unshift({
               id: activeThread.id,
               title: activeThread.title,
               createdAt: formatDate(activeThread.createdAt, timeZone, locale),
-              lastMessageAt: activeThread.messages.at(-1)?.createdAt
-                ? formatDate(activeThread.messages.at(-1)!.createdAt, timeZone, locale)
-              : null,
+              lastMessageAt: lastMessage?.createdAt
+                ? formatDate(lastMessage.createdAt, timeZone, locale)
+                : null,
             });
           }
           return {
@@ -222,12 +269,16 @@ export default async function WorkspaceChatPage({
             systemPrompt: assistant.systemPrompt,
             modelProviderId: assistant.modelProviderId,
             model: assistant.model,
-            modelParameters: parseChatAssistantModelParameters(assistant.modelParameters) ?? null,
+            modelParameters:
+              parseChatAssistantModelParameters(assistant.modelParameters) ??
+              null,
             maxSteps: assistant.maxSteps,
             providerName: assistant.modelProvider?.name ?? null,
             contextWindow: modelContext?.maxTokens ?? null,
             contextWindowEstimated: modelContext?.estimated ?? true,
-            deploymentIds: assistant.mcpGrants.map((grant) => grant.deploymentId),
+            deploymentIds: assistant.mcpGrants.map(
+              (grant) => grant.deploymentId,
+            ),
             webSearchAvailable: true,
             threads,
           };

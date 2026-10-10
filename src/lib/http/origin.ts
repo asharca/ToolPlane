@@ -1,17 +1,17 @@
-import 'server-only';
-import { runtimeEnv } from '@/lib/runtime-env';
+import "server-only";
+import { runtimeEnv } from "@/lib/runtime-env";
 
-type HeaderReader = Pick<Headers, 'get'>;
+type HeaderReader = Pick<Headers, "get">;
 
 function firstHeaderValue(value: string | null): string | null {
-  return value?.split(',')[0]?.trim() || null;
+  return value?.split(",")[0]?.trim() || null;
 }
 
 function normalizedHttpOrigin(raw: string | null | undefined): string | null {
   if (!raw) return null;
   try {
     const url = new URL(raw);
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
     return url.origin;
   } catch {
     return null;
@@ -27,7 +27,9 @@ function hostnameFromHost(host: string): string | null {
 }
 
 function isLocalHostname(hostname: string | null): boolean {
-  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+  return (
+    hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1"
+  );
 }
 
 function isLocalOrigin(origin: string): boolean {
@@ -39,18 +41,21 @@ function isLocalOrigin(origin: string): boolean {
 }
 
 function protocolForHost(headers: HeaderReader, host: string): string {
-  const forwardedProto = firstHeaderValue(headers.get('x-forwarded-proto'))?.toLowerCase();
-  if (forwardedProto === 'http' || forwardedProto === 'https') return forwardedProto;
-  return isLocalHostname(hostnameFromHost(host)) ? 'http' : 'https';
+  const forwardedProto = firstHeaderValue(
+    headers.get("x-forwarded-proto"),
+  )?.toLowerCase();
+  if (forwardedProto === "http" || forwardedProto === "https")
+    return forwardedProto;
+  return isLocalHostname(hostnameFromHost(host)) ? "http" : "https";
 }
 
 function configuredOrigin(): string | null {
-  return normalizedHttpOrigin(runtimeEnv('NEXT_PUBLIC_APP_URL'));
+  return normalizedHttpOrigin(runtimeEnv("NEXT_PUBLIC_APP_URL"));
 }
 
 function requestOriginFromHeaders(headers: HeaderReader): string | null {
-  const forwardedHost = firstHeaderValue(headers.get('x-forwarded-host'));
-  const host = forwardedHost ?? firstHeaderValue(headers.get('host'));
+  const forwardedHost = firstHeaderValue(headers.get("x-forwarded-host"));
+  const host = forwardedHost ?? firstHeaderValue(headers.get("host"));
   if (!host) return null;
   return normalizedHttpOrigin(`${protocolForHost(headers, host)}://${host}`);
 }
@@ -62,7 +67,11 @@ function resolveOrigin(requestOrigin: string | null): string {
   // influenced by Host / X-Forwarded-Host. Keep a small dev escape hatch so a
   // local server on :3001/:3002 still generates usable URLs when .env says :3000.
   if (configured) {
-    if (requestOrigin && isLocalOrigin(configured) && isLocalOrigin(requestOrigin)) {
+    if (
+      requestOrigin &&
+      isLocalOrigin(configured) &&
+      isLocalOrigin(requestOrigin)
+    ) {
       return requestOrigin;
     }
     return configured;
@@ -70,7 +79,7 @@ function resolveOrigin(requestOrigin: string | null): string {
 
   if (requestOrigin) return requestOrigin;
 
-  const port = process.env.PORT || '3000';
+  const port = process.env.PORT || "3000";
   return `http://localhost:${port}`;
 }
 
@@ -79,7 +88,9 @@ export function originFromHeaders(headers: HeaderReader): string {
 }
 
 export function originFromRequest(req: Request): string {
-  return resolveOrigin(requestOriginFromHeaders(req.headers) ?? normalizedHttpOrigin(req.url));
+  return resolveOrigin(
+    requestOriginFromHeaders(req.headers) ?? normalizedHttpOrigin(req.url),
+  );
 }
 
 // Cookie-authenticated JSON and raw-body mutations need an explicit CSRF
@@ -87,6 +98,6 @@ export function originFromRequest(req: Request): string {
 // protection automatically. API routes that intentionally support cross-origin
 // Bearer-token clients should not use this helper.
 export function isSameOriginRequest(req: Request): boolean {
-  const suppliedOrigin = normalizedHttpOrigin(req.headers.get('origin'));
+  const suppliedOrigin = normalizedHttpOrigin(req.headers.get("origin"));
   return suppliedOrigin !== null && suppliedOrigin === originFromRequest(req);
 }

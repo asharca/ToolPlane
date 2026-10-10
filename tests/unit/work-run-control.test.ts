@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from "vitest";
 import {
   finishWorkOutput,
   publishWorkActivity,
@@ -7,56 +7,111 @@ import {
   startWorkOutput,
   subscribeWorkOutput,
   type WorkOutputEvent,
-} from '@/lib/work/run-control';
+} from "@/lib/work/run-control";
 
-describe('Work output channel', () => {
-  it('replays accumulated output to late subscribers and reports completion', () => {
-    const workSessionId = 'work-output-replay';
+describe("Work output channel", () => {
+  it("replays accumulated output to late subscribers and reports completion", () => {
+    const workSessionId = "work-output-replay";
     const events: WorkOutputEvent[] = [];
-    const first = subscribeWorkOutput(workSessionId, (event) => events.push(event));
+    const first = subscribeWorkOutput(workSessionId, (event) =>
+      events.push(event),
+    );
 
-    expect(first.snapshot).toEqual({ text: '', activities: [], active: false, done: false });
-    startWorkOutput(workSessionId, { startedAt: 1_000, runtimeKind: 'pi', modelName: 'model-a' });
-    publishWorkActivity(workSessionId, {
-      id: 'tool:call-1', type: 'tool', status: 'running', toolCallId: 'call-1', toolName: 'read_file', input: '{}',
+    expect(first.snapshot).toEqual({
+      text: "",
+      activities: [],
+      active: false,
+      done: false,
+    });
+    startWorkOutput(workSessionId, {
+      startedAt: 1_000,
+      runtimeKind: "pi",
+      modelName: "model-a",
     });
     publishWorkActivity(workSessionId, {
-      id: 'tool:call-1', type: 'tool', status: 'completed', toolCallId: 'call-1', toolName: 'read_file', output: 'done',
+      id: "tool:call-1",
+      type: "tool",
+      status: "running",
+      toolCallId: "call-1",
+      toolName: "read_file",
+      input: "{}",
     });
-    publishWorkOutput(workSessionId, 'Hel');
-    publishWorkOutput(workSessionId, 'lo');
+    publishWorkActivity(workSessionId, {
+      id: "tool:call-1",
+      type: "tool",
+      status: "completed",
+      toolCallId: "call-1",
+      toolName: "read_file",
+      output: "done",
+    });
+    publishWorkOutput(workSessionId, "Hel");
+    publishWorkOutput(workSessionId, "lo");
 
     const late = subscribeWorkOutput(workSessionId, () => {});
     expect(late.snapshot).toEqual({
-      text: 'Hello',
-      activities: [{
-        id: 'tool:call-1', type: 'tool', status: 'completed', toolCallId: 'call-1', toolName: 'read_file', input: '{}', output: 'done',
-      }],
+      text: "Hello",
+      activities: [
+        {
+          id: "tool:call-1",
+          type: "tool",
+          status: "completed",
+          toolCallId: "call-1",
+          toolName: "read_file",
+          input: "{}",
+          output: "done",
+        },
+      ],
       active: true,
       done: false,
       startedAt: 1_000,
-      runtimeKind: 'pi',
-      modelName: 'model-a',
+      runtimeKind: "pi",
+      modelName: "model-a",
     });
 
     finishWorkOutput(workSessionId);
-    expect(events.map((event) => event.type)).toEqual(['start', 'activity', 'activity', 'delta', 'delta', 'done']);
+    expect(events.map((event) => event.type)).toEqual([
+      "start",
+      "activity",
+      "activity",
+      "delta",
+      "delta",
+      "done",
+    ]);
     expect(events.at(-1)?.snapshot).toEqual({
-      text: 'Hello', activities: late.snapshot.activities, active: false, done: true,
-      startedAt: 1_000, runtimeKind: 'pi', modelName: 'model-a',
+      text: "Hello",
+      activities: late.snapshot.activities,
+      active: false,
+      done: true,
+      startedAt: 1_000,
+      runtimeKind: "pi",
+      modelName: "model-a",
     });
 
     const finished = subscribeWorkOutput(workSessionId, () => {});
     expect(finished.snapshot).toEqual({
-      text: 'Hello', activities: late.snapshot.activities, active: false, done: true,
-      startedAt: 1_000, runtimeKind: 'pi', modelName: 'model-a',
+      text: "Hello",
+      activities: late.snapshot.activities,
+      active: false,
+      done: true,
+      startedAt: 1_000,
+      runtimeKind: "pi",
+      modelName: "model-a",
     });
 
-    startWorkOutput(workSessionId, { startedAt: 2_000, runtimeKind: 'hermes', modelName: 'model-b' });
+    startWorkOutput(workSessionId, {
+      startedAt: 2_000,
+      runtimeKind: "hermes",
+      modelName: "model-b",
+    });
     const nextTurn = subscribeWorkOutput(workSessionId, () => {});
     expect(nextTurn.snapshot).toEqual({
-      text: '', activities: [], active: true, done: false,
-      startedAt: 2_000, runtimeKind: 'hermes', modelName: 'model-b',
+      text: "",
+      activities: [],
+      active: true,
+      done: false,
+      startedAt: 2_000,
+      runtimeKind: "hermes",
+      modelName: "model-b",
     });
     finishWorkOutput(workSessionId);
     first.unsubscribe();

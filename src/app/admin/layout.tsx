@@ -1,26 +1,38 @@
-import type { Metadata } from 'next';
-import { getTranslations } from 'next-intl/server';
-import { requireAdmin } from '@/lib/auth/admin';
-import { AdminChrome } from '@/components/admin/AdminChrome';
-import { UserTimeZoneProvider } from '@/components/timezone/UserTimeZoneProvider';
-import { NextIntlClientProvider } from 'next-intl';
-import { getMessages } from 'next-intl/server';
+import type { Metadata } from "next";
+import { getTranslations } from "next-intl/server";
+import { requireAdmin } from "@/lib/auth/admin";
+import { AdminChrome } from "@/components/admin/AdminChrome";
+import { UserTimeZoneProvider } from "@/components/timezone/UserTimeZoneProvider";
+import { NextIntlClientProvider } from "next-intl";
+import { getMessages } from "next-intl/server";
 
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
 export async function generateMetadata(): Promise<Metadata> {
-  const t = await getTranslations('admin');
+  const t = await getTranslations("admin");
   return {
-    title: `${t('adminConsoleTitle')} | ToolPlane`,
+    title: `${t("adminConsoleTitle")} | ToolPlane`,
     robots: { index: false, follow: false },
   };
 }
 
-export default async function AdminLayout({ children }: { children: React.ReactNode }) {
+export default async function AdminLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   const admin = await requireAdmin();
   const messages = await getMessages();
   return (
-    <NextIntlClientProvider messages={{ common: messages.common, admin: messages.admin, adminOps: messages.adminOps, console: messages.console }}>
+    <NextIntlClientProvider
+      messages={{
+        common: messages.common,
+        filePreview: messages.filePreview,
+        admin: messages.admin,
+        adminOps: messages.adminOps,
+        console: messages.console,
+      }}
+    >
       <UserTimeZoneProvider
         detectedTimeZone={admin.detectedTimeZone}
         timeZoneOverride={admin.timeZoneOverride}

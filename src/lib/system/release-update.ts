@@ -1,33 +1,46 @@
-import 'server-only';
+import "server-only";
 
-import { createHash, randomUUID } from 'node:crypto';
-import { createReadStream } from 'node:fs';
-import { access, cp, mkdir, open, readFile, rename, rm, stat } from 'node:fs/promises';
-import path from 'node:path';
-import { spawn } from 'node:child_process';
-import { runtimeIsReady } from '@/lib/runtime/ownership-state';
+import { createHash, randomUUID } from "node:crypto";
+import { createReadStream } from "node:fs";
+import {
+  access,
+  cp,
+  mkdir,
+  open,
+  readFile,
+  rename,
+  rm,
+  stat,
+} from "node:fs/promises";
+import path from "node:path";
+import { spawn } from "node:child_process";
+import { runtimeIsReady } from "@/lib/runtime/ownership-state";
 
-const DEFAULT_UPDATE_REPO = 'asharca/ToolPlane';
-const DEFAULT_UPDATE_ARTIFACT = 'toolplane-runtime-linux-amd64.tar.gz';
-const UPDATE_DIR = '.toolplane-update';
-const VERSION_FILE = '.toolplane-version';
+const DEFAULT_UPDATE_REPO = "asharca/ToolPlane";
+const DEFAULT_UPDATE_ARTIFACT = "toolplane-runtime-linux-amd64.tar.gz";
+const UPDATE_DIR = ".toolplane-update";
+const VERSION_FILE = ".toolplane-version";
 const MAX_DOWNLOAD_BYTES = 1_500_000_000;
 const RELEASE_LOOKUP_TIMEOUT_MS = 30_000;
 const RELEASE_DOWNLOAD_TIMEOUT_MS = 15 * 60_000;
-const TRUSTED_DOWNLOAD_HOSTS = new Set(['github.com', 'objects.githubusercontent.com', 'release-assets.githubusercontent.com']);
+const TRUSTED_DOWNLOAD_HOSTS = new Set([
+  "github.com",
+  "objects.githubusercontent.com",
+  "release-assets.githubusercontent.com",
+]);
 
 export const RUNTIME_UPDATE_ENTRIES = [
-  '.next',
-  'node_modules',
-  'messages',
-  'public',
-  'package.json',
-  'next.config.ts',
-  'server.js',
-  'scripts',
-  'packages',
-  'prisma',
-  'prisma.config.ts',
+  ".next",
+  "node_modules",
+  "messages",
+  "public",
+  "package.json",
+  "next.config.ts",
+  "server.js",
+  "scripts",
+  "packages",
+  "prisma",
+  "prisma.config.ts",
   VERSION_FILE,
 ] as const;
 
@@ -68,7 +81,7 @@ export type LocalSystemUpdateStatus = {
 };
 
 export type SystemUpdateJobStatus = {
-  status: 'idle' | 'downloading' | 'applying' | 'restarting' | 'failed';
+  status: "idle" | "downloading" | "applying" | "restarting" | "failed";
   targetVersion: string | null;
   message: string | null;
   startedAt: string | null;
@@ -78,7 +91,7 @@ export type SystemUpdateJobStatus = {
 export type SystemUpdateResult =
   | {
       ok: true;
-      status: 'up_to_date' | 'updating' | 'restarting';
+      status: "up_to_date" | "updating" | "restarting";
       runtimeId: string;
       currentVersion: string;
       latestVersion: string | null;
@@ -87,7 +100,7 @@ export type SystemUpdateResult =
     }
   | {
       ok: false;
-      status: 'disabled' | 'unavailable' | 'failed';
+      status: "disabled" | "unavailable" | "failed";
       runtimeId: string;
       currentVersion: string;
       latestVersion: string | null;
@@ -113,7 +126,7 @@ updateGlobals.__toolplaneRuntimeId = runtimeId;
 
 function idleUpdateJob(): SystemUpdateJobStatus {
   return {
-    status: 'idle',
+    status: "idle",
     targetVersion: null,
     message: null,
     startedAt: null,
@@ -128,8 +141,8 @@ function currentUpdateJob(): SystemUpdateJobStatus {
 }
 
 function setUpdateJob(
-  status: SystemUpdateJobStatus['status'],
-  input: Pick<SystemUpdateJobStatus, 'targetVersion' | 'message' | 'startedAt'>,
+  status: SystemUpdateJobStatus["status"],
+  input: Pick<SystemUpdateJobStatus, "targetVersion" | "message" | "startedAt">,
 ): void {
   updateGlobals.__toolplaneSystemUpdateJob = {
     status,
@@ -139,11 +152,15 @@ function setUpdateJob(
 }
 
 function activeUpdateJob(job: SystemUpdateJobStatus): boolean {
-  return job.status === 'downloading' || job.status === 'applying' || job.status === 'restarting';
+  return (
+    job.status === "downloading" ||
+    job.status === "applying" ||
+    job.status === "restarting"
+  );
 }
 
 function updateEnabled(): boolean {
-  return process.env.TOOLPLANE_UPDATE_ENABLED !== 'false';
+  return process.env.TOOLPLANE_UPDATE_ENABLED !== "false";
 }
 
 function updateRepo(): string {
@@ -184,10 +201,12 @@ async function canWriteRuntime(root: string): Promise<boolean> {
   }
 }
 
-export async function readCurrentVersion(root = versionRoot()): Promise<string> {
+export async function readCurrentVersion(
+  root = versionRoot(),
+): Promise<string> {
   const versionPath = path.join(/* turbopackIgnore: true */ root, VERSION_FILE);
   try {
-    const value = (await readFile(versionPath, 'utf8')).trim();
+    const value = (await readFile(versionPath, "utf8")).trim();
     if (value) return value;
   } catch {
     // Older images do not have a version file.
@@ -195,20 +214,24 @@ export async function readCurrentVersion(root = versionRoot()): Promise<string> 
   if (process.env.TOOLPLANE_VERSION) return process.env.TOOLPLANE_VERSION;
   try {
     const manifest = JSON.parse(
-      await readFile(path.join(/* turbopackIgnore: true */ root, 'package.json'), 'utf8'),
+      await readFile(
+        path.join(/* turbopackIgnore: true */ root, "package.json"),
+        "utf8",
+      ),
     ) as { version?: unknown };
-    if (typeof manifest.version === 'string' && manifest.version.trim()) return manifest.version.trim();
+    if (typeof manifest.version === "string" && manifest.version.trim())
+      return manifest.version.trim();
   } catch {
     // Development checkouts do not have a release version file.
   }
-  return 'unknown';
+  return "unknown";
 }
 
 function githubHeaders(): HeadersInit {
   const token = process.env.TOOLPLANE_GITHUB_TOKEN || process.env.GITHUB_TOKEN;
   return {
-    accept: 'application/vnd.github+json',
-    'user-agent': 'ToolPlane updater',
+    accept: "application/vnd.github+json",
+    "user-agent": "ToolPlane updater",
     ...(token ? { authorization: `Bearer ${token}` } : {}),
   };
 }
@@ -221,17 +244,22 @@ async function fetchLatestRelease(): Promise<GitHubRelease> {
     : `https://api.github.com/repos/${repo}/releases/latest`;
   const response = await fetch(endpoint, {
     headers: githubHeaders(),
-    cache: 'no-store',
+    cache: "no-store",
     signal: AbortSignal.timeout(RELEASE_LOOKUP_TIMEOUT_MS),
   });
   if (!response.ok) {
-    const body = await response.text().catch(() => '');
-    throw new Error(`GitHub release lookup failed: ${response.status} ${response.statusText} ${body.slice(0, 300)}`);
+    const body = await response.text().catch(() => "");
+    throw new Error(
+      `GitHub release lookup failed: ${response.status} ${response.statusText} ${body.slice(0, 300)}`,
+    );
   }
   return (await response.json()) as GitHubRelease;
 }
 
-function findReleaseAsset(release: GitHubRelease, name: string): GitHubReleaseAsset | null {
+function findReleaseAsset(
+  release: GitHubRelease,
+  name: string,
+): GitHubReleaseAsset | null {
   return release.assets?.find((asset) => asset.name === name) ?? null;
 }
 
@@ -246,13 +274,25 @@ export async function getSystemUpdateStatus(): Promise<SystemUpdateStatus> {
   const root = runtimeRoot();
 
   if (!updateEnabled()) {
-    return disabledStatus(currentVersion, artifactName, 'Updates are disabled.');
+    return disabledStatus(
+      currentVersion,
+      artifactName,
+      "Updates are disabled.",
+    );
   }
   if (!root) {
-    return disabledStatus(currentVersion, artifactName, 'Runtime directory is not configured.');
+    return disabledStatus(
+      currentVersion,
+      artifactName,
+      "Runtime directory is not configured.",
+    );
   }
   if (!(await canWriteRuntime(root))) {
-    return disabledStatus(currentVersion, artifactName, 'Runtime directory is not writable.');
+    return disabledStatus(
+      currentVersion,
+      artifactName,
+      "Runtime directory is not writable.",
+    );
   }
 
   try {
@@ -280,7 +320,9 @@ export async function getSystemUpdateStatus(): Promise<SystemUpdateStatus> {
       runtimeId,
       currentVersion,
       latestVersion,
-      updateAvailable: latestVersion ? !sameVersion(currentVersion, latestVersion) : null,
+      updateAvailable: latestVersion
+        ? !sameVersion(currentVersion, latestVersion)
+        : null,
       releaseName: release.name ?? latestVersion,
       releaseUrl: release.html_url ?? null,
       artifactName,
@@ -301,7 +343,11 @@ export async function getLocalSystemUpdateStatus(): Promise<LocalSystemUpdateSta
   };
 }
 
-function disabledStatus(currentVersion: string, artifactName: string, reason: string): SystemUpdateStatus {
+function disabledStatus(
+  currentVersion: string,
+  artifactName: string,
+  reason: string,
+): SystemUpdateStatus {
   return {
     enabled: updateEnabled(),
     canUpdate: false,
@@ -325,38 +371,46 @@ export async function applySystemUpdate(): Promise<SystemUpdateResult> {
   if (activeUpdateJob(existingJob)) {
     return {
       ok: true,
-      status: existingJob.status === 'restarting' ? 'restarting' : 'updating',
+      status: existingJob.status === "restarting" ? "restarting" : "updating",
       runtimeId,
       currentVersion,
       latestVersion: existingJob.targetVersion,
       artifactName,
-      message: existingJob.message ?? 'An update is already in progress.',
+      message: existingJob.message ?? "An update is already in progress.",
     };
   }
 
   if (!updateEnabled()) {
-    return { ok: false, status: 'disabled', runtimeId, currentVersion, latestVersion: null, artifactName, message: 'Updates are disabled.' };
-  }
-  if (!root) {
     return {
       ok: false,
-      status: 'unavailable',
+      status: "disabled",
       runtimeId,
       currentVersion,
       latestVersion: null,
       artifactName,
-      message: 'Runtime directory is not configured.',
+      message: "Updates are disabled.",
+    };
+  }
+  if (!root) {
+    return {
+      ok: false,
+      status: "unavailable",
+      runtimeId,
+      currentVersion,
+      latestVersion: null,
+      artifactName,
+      message: "Runtime directory is not configured.",
     };
   }
   if (!(await canWriteRuntime(root))) {
     return {
       ok: false,
-      status: 'unavailable',
+      status: "unavailable",
       runtimeId,
       currentVersion,
       latestVersion: null,
       artifactName,
-      message: 'Runtime directory is not writable.',
+      message: "Runtime directory is not writable.",
     };
   }
 
@@ -364,14 +418,21 @@ export async function applySystemUpdate(): Promise<SystemUpdateResult> {
     const release = await fetchLatestRelease();
     const latestVersion = release.tag_name || null;
     if (sameVersion(currentVersion, latestVersion)) {
-      return { ok: true, status: 'up_to_date', runtimeId, currentVersion, latestVersion, artifactName };
+      return {
+        ok: true,
+        status: "up_to_date",
+        runtimeId,
+        currentVersion,
+        latestVersion,
+        artifactName,
+      };
     }
 
     const artifact = findReleaseAsset(release, artifactName);
     if (!artifact) {
       return {
         ok: false,
-        status: 'unavailable',
+        status: "unavailable",
         runtimeId,
         currentVersion,
         latestVersion,
@@ -384,7 +445,7 @@ export async function applySystemUpdate(): Promise<SystemUpdateResult> {
     if (!checksumAsset) {
       return {
         ok: false,
-        status: 'unavailable',
+        status: "unavailable",
         runtimeId,
         currentVersion,
         latestVersion,
@@ -400,36 +461,52 @@ export async function applySystemUpdate(): Promise<SystemUpdateResult> {
     if (activeUpdateJob(concurrentJob)) {
       return {
         ok: true,
-        status: concurrentJob.status === 'restarting' ? 'restarting' : 'updating',
+        status:
+          concurrentJob.status === "restarting" ? "restarting" : "updating",
         runtimeId,
         currentVersion,
         latestVersion: concurrentJob.targetVersion,
         artifactName,
-        message: concurrentJob.message ?? 'An update is already in progress.',
+        message: concurrentJob.message ?? "An update is already in progress.",
       };
     }
 
     const startedAt = new Date().toISOString();
-    setUpdateJob('downloading', {
+    setUpdateJob("downloading", {
       targetVersion: latestVersion,
-      message: 'Downloading and verifying the release.',
+      message: "Downloading and verifying the release.",
       startedAt,
     });
     setImmediate(() => {
-      void runSystemUpdateJob(root, artifact, checksumAsset, latestVersion, startedAt);
+      void runSystemUpdateJob(
+        root,
+        artifact,
+        checksumAsset,
+        latestVersion,
+        startedAt,
+      );
     });
 
     return {
       ok: true,
-      status: 'updating',
+      status: "updating",
       runtimeId,
       currentVersion,
       latestVersion,
       artifactName,
-      message: 'Update started. ToolPlane will restart when the release is ready.',
+      message:
+        "Update started. ToolPlane will restart when the release is ready.",
     };
   } catch (error) {
-    return { ok: false, status: 'failed', runtimeId, currentVersion, latestVersion: null, artifactName, message: displayError(error) };
+    return {
+      ok: false,
+      status: "failed",
+      runtimeId,
+      currentVersion,
+      latestVersion: null,
+      artifactName,
+      message: displayError(error),
+    };
   }
 }
 
@@ -443,27 +520,32 @@ async function runSystemUpdateJob(
   try {
     await downloadAndApplyRelease(root, artifact, checksumAsset, async () => {
       const shutdown = updateGlobals.__toolplaneShutdown;
-      if (!shutdown || process.listenerCount('SIGTERM') === 0) {
-        throw new Error('Online updates require the managed production launcher. No runtime files were replaced.');
+      if (!shutdown || process.listenerCount("SIGTERM") === 0) {
+        throw new Error(
+          "Online updates require the managed production launcher. No runtime files were replaced.",
+        );
       }
-      setUpdateJob('applying', {
+      setUpdateJob("applying", {
         targetVersion,
-        message: 'Release verified. Draining runtime operations before replacing files.',
+        message:
+          "Release verified. Draining runtime operations before replacing files.",
         startedAt,
       });
       // Shutdown imports must still resolve against the running release.
       if (!(await shutdown())) {
-        throw new Error('Runtime shutdown was not clean. No runtime files were replaced; inspect recovery before restarting.');
+        throw new Error(
+          "Runtime shutdown was not clean. No runtime files were replaced; inspect recovery before restarting.",
+        );
       }
     });
-    setUpdateJob('restarting', {
+    setUpdateJob("restarting", {
       targetVersion,
-      message: 'Release files updated. ToolPlane is restarting.',
+      message: "Release files updated. ToolPlane is restarting.",
       startedAt,
     });
     scheduleRestart();
   } catch (error) {
-    setUpdateJob('failed', {
+    setUpdateJob("failed", {
       targetVersion,
       message: displayError(error),
       startedAt,
@@ -479,49 +561,76 @@ async function downloadAndApplyRelease(
 ): Promise<void> {
   const updateRoot = path.join(/* turbopackIgnore: true */ root, UPDATE_DIR);
   const stamp = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  const workRoot = path.join(/* turbopackIgnore: true */ updateRoot, `work-${stamp}`);
-  const stagingRoot = path.join(/* turbopackIgnore: true */ workRoot, 'staging');
-  const archivePath = path.join(/* turbopackIgnore: true */ workRoot, artifact.name);
-  const checksumPath = path.join(/* turbopackIgnore: true */ workRoot, checksumAsset.name);
-  const backupRoot = path.join(/* turbopackIgnore: true */ updateRoot, `backup-${stamp}`);
+  const workRoot = path.join(
+    /* turbopackIgnore: true */ updateRoot,
+    `work-${stamp}`,
+  );
+  const stagingRoot = path.join(
+    /* turbopackIgnore: true */ workRoot,
+    "staging",
+  );
+  const archivePath = path.join(
+    /* turbopackIgnore: true */ workRoot,
+    artifact.name,
+  );
+  const checksumPath = path.join(
+    /* turbopackIgnore: true */ workRoot,
+    checksumAsset.name,
+  );
+  const backupRoot = path.join(
+    /* turbopackIgnore: true */ updateRoot,
+    `backup-${stamp}`,
+  );
 
   await mkdir(stagingRoot, { recursive: true });
 
   try {
     await downloadFile(artifact.browser_download_url, archivePath);
-    await downloadFile(checksumAsset.browser_download_url, checksumPath, 1_000_000);
+    await downloadFile(
+      checksumAsset.browser_download_url,
+      checksumPath,
+      1_000_000,
+    );
     await verifyChecksum(archivePath, checksumPath, artifact.name);
     await extractArchive(archivePath, stagingRoot);
 
-    const appRoot = path.join(/* turbopackIgnore: true */ stagingRoot, 'app');
+    const appRoot = path.join(/* turbopackIgnore: true */ stagingRoot, "app");
     const payloadRoot = (await pathExists(appRoot)) ? appRoot : stagingRoot;
     await assertPayload(payloadRoot);
     await onVerified();
     await replaceRuntimeEntries(root, payloadRoot, backupRoot);
-    await rm(backupRoot, { recursive: true, force: true }).catch(() => undefined);
+    await rm(backupRoot, { recursive: true, force: true }).catch(
+      () => undefined,
+    );
   } finally {
     await rm(workRoot, { recursive: true, force: true }).catch(() => undefined);
   }
 }
 
-async function downloadFile(url: string, dest: string, maxBytes = MAX_DOWNLOAD_BYTES): Promise<void> {
+async function downloadFile(
+  url: string,
+  dest: string,
+  maxBytes = MAX_DOWNLOAD_BYTES,
+): Promise<void> {
   validateDownloadUrl(url);
   const response = await fetch(url, {
     headers: githubHeaders(),
-    redirect: 'follow',
+    redirect: "follow",
     signal: AbortSignal.timeout(RELEASE_DOWNLOAD_TIMEOUT_MS),
   });
   if (!response.ok || !response.body) {
-    throw new Error(`Download failed: ${response.status} ${response.statusText}`);
+    throw new Error(
+      `Download failed: ${response.status} ${response.statusText}`,
+    );
   }
   validateDownloadUrl(response.url);
 
-  const size = Number(response.headers.get('content-length') ?? 0);
+  const size = Number(response.headers.get("content-length") ?? 0);
   if (size > maxBytes) {
     throw new Error(`Download is too large: ${size} bytes`);
   }
 
-  const file = await open(dest, 'w', 0o600);
+  const file = await open(dest, "w", 0o600);
   try {
     let downloaded = 0;
     const reader = response.body.getReader();
@@ -541,16 +650,20 @@ async function downloadFile(url: string, dest: string, maxBytes = MAX_DOWNLOAD_B
 
 function validateDownloadUrl(rawUrl: string): void {
   const parsed = new URL(rawUrl);
-  if (parsed.protocol !== 'https:') {
-    throw new Error('Only HTTPS release downloads are allowed.');
+  if (parsed.protocol !== "https:") {
+    throw new Error("Only HTTPS release downloads are allowed.");
   }
   if (!TRUSTED_DOWNLOAD_HOSTS.has(parsed.hostname)) {
     throw new Error(`Release download host is not trusted: ${parsed.hostname}`);
   }
 }
 
-async function verifyChecksum(archivePath: string, checksumPath: string, artifactName: string): Promise<void> {
-  const checksumText = await readFile(checksumPath, 'utf8');
+async function verifyChecksum(
+  archivePath: string,
+  checksumPath: string,
+  artifactName: string,
+): Promise<void> {
+  const checksumText = await readFile(checksumPath, "utf8");
   const expected = parseChecksum(checksumText, artifactName);
   if (!expected) {
     throw new Error(`Checksum file does not contain ${artifactName}`);
@@ -561,10 +674,18 @@ async function verifyChecksum(archivePath: string, checksumPath: string, artifac
   }
 }
 
-export function parseChecksum(text: string, artifactName: string): string | null {
+export function parseChecksum(
+  text: string,
+  artifactName: string,
+): string | null {
   for (const line of text.split(/\r?\n/)) {
     const [hash, file] = line.trim().split(/\s+/);
-    if (hash && file && path.basename(file) === artifactName && /^[a-fA-F0-9]{64}$/.test(hash)) {
+    if (
+      hash &&
+      file &&
+      path.basename(file) === artifactName &&
+      /^[a-fA-F0-9]{64}$/.test(hash)
+    ) {
       return hash.toLowerCase();
     }
   }
@@ -572,51 +693,71 @@ export function parseChecksum(text: string, artifactName: string): string | null
 }
 
 async function sha256File(filePath: string): Promise<string> {
-  const hash = createHash('sha256');
+  const hash = createHash("sha256");
   for await (const chunk of createReadStream(filePath)) {
     hash.update(chunk);
   }
-  return hash.digest('hex');
+  return hash.digest("hex");
 }
 
-function runCommand(command: string, args: string[], timeoutMs = 120_000): Promise<void> {
+function runCommand(
+  command: string,
+  args: string[],
+  timeoutMs = 120_000,
+): Promise<void> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { stdio: ['ignore', 'ignore', 'pipe'] });
-    let stderr = '';
+    const child = spawn(command, args, { stdio: ["ignore", "ignore", "pipe"] });
+    let stderr = "";
     const timer = setTimeout(() => {
-      child.kill('SIGTERM');
+      child.kill("SIGTERM");
       reject(new Error(`${command} timed out`));
     }, timeoutMs);
-    child.stderr.setEncoding('utf8');
-    child.stderr.on('data', (chunk: string) => {
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => {
       stderr += chunk;
       if (stderr.length > 10_000) stderr = stderr.slice(-10_000);
     });
-    child.on('error', (error) => {
+    child.on("error", (error) => {
       clearTimeout(timer);
       reject(error);
     });
-    child.on('close', (code) => {
+    child.on("close", (code) => {
       clearTimeout(timer);
       if (code === 0) resolve();
-      else reject(new Error(`${command} ${args.join(' ')} failed with ${code}: ${stderr}`));
+      else
+        reject(
+          new Error(
+            `${command} ${args.join(" ")} failed with ${code}: ${stderr}`,
+          ),
+        );
     });
   });
 }
 
-async function extractArchive(archivePath: string, dest: string): Promise<void> {
-  await runCommand('tar', ['-xzf', archivePath, '-C', dest], 10 * 60_000);
+async function extractArchive(
+  archivePath: string,
+  dest: string,
+): Promise<void> {
+  await runCommand("tar", ["-xzf", archivePath, "-C", dest], 10 * 60_000);
 }
 
 async function assertPayload(payloadRoot: string): Promise<void> {
   for (const entry of RUNTIME_UPDATE_ENTRIES) {
-    if (!(await pathExists(path.join(/* turbopackIgnore: true */ payloadRoot, entry)))) {
+    if (
+      !(await pathExists(
+        path.join(/* turbopackIgnore: true */ payloadRoot, entry),
+      ))
+    ) {
       throw new Error(`Release artifact is missing runtime entry: ${entry}`);
     }
   }
 }
 
-async function replaceRuntimeEntries(root: string, payloadRoot: string, backupRoot: string): Promise<void> {
+async function replaceRuntimeEntries(
+  root: string,
+  payloadRoot: string,
+  backupRoot: string,
+): Promise<void> {
   await mkdir(backupRoot, { recursive: true });
   const replacements: ReplacementRecord[] = [];
   const installed: string[] = [];
@@ -624,14 +765,20 @@ async function replaceRuntimeEntries(root: string, payloadRoot: string, backupRo
   try {
     for (const entry of RUNTIME_UPDATE_ENTRIES) {
       const dest = path.join(/* turbopackIgnore: true */ root, entry);
-      const backupPath = path.join(/* turbopackIgnore: true */ backupRoot, entry);
+      const backupPath = path.join(
+        /* turbopackIgnore: true */ backupRoot,
+        entry,
+      );
       const hadExisting = await pathExists(dest);
       if (hadExisting) {
         await mkdir(path.dirname(backupPath), { recursive: true });
         await movePath(dest, backupPath);
       }
       replacements.push({ entry, backupPath, hadExisting });
-      await movePath(path.join(/* turbopackIgnore: true */ payloadRoot, entry), dest);
+      await movePath(
+        path.join(/* turbopackIgnore: true */ payloadRoot, entry),
+        dest,
+      );
       installed.push(entry);
     }
   } catch (error) {
@@ -640,13 +787,23 @@ async function replaceRuntimeEntries(root: string, payloadRoot: string, backupRo
   }
 }
 
-async function rollbackRuntimeEntries(root: string, replacements: ReplacementRecord[], installed: string[]): Promise<void> {
+async function rollbackRuntimeEntries(
+  root: string,
+  replacements: ReplacementRecord[],
+  installed: string[],
+): Promise<void> {
   for (const entry of installed.reverse()) {
-    await rm(path.join(/* turbopackIgnore: true */ root, entry), { recursive: true, force: true }).catch(() => undefined);
+    await rm(path.join(/* turbopackIgnore: true */ root, entry), {
+      recursive: true,
+      force: true,
+    }).catch(() => undefined);
   }
   for (const record of replacements.reverse()) {
     if (record.hadExisting) {
-      await movePath(record.backupPath, path.join(/* turbopackIgnore: true */ root, record.entry)).catch(() => undefined);
+      await movePath(
+        record.backupPath,
+        path.join(/* turbopackIgnore: true */ root, record.entry),
+      ).catch(() => undefined);
     }
   }
 }
@@ -655,7 +812,7 @@ async function movePath(source: string, dest: string): Promise<void> {
   try {
     await rename(source, dest);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'EXDEV') throw error;
+    if ((error as NodeJS.ErrnoException).code !== "EXDEV") throw error;
     await cp(source, dest, {
       recursive: true,
       force: true,
@@ -666,8 +823,11 @@ async function movePath(source: string, dest: string): Promise<void> {
 }
 
 function scheduleRestart(): void {
-  const delay = Math.max(250, Number(process.env.TOOLPLANE_RESTART_DELAY_MS) || 750);
+  const delay = Math.max(
+    250,
+    Number(process.env.TOOLPLANE_RESTART_DELAY_MS) || 750,
+  );
   setTimeout(() => {
-    process.kill(process.pid, 'SIGTERM');
+    process.kill(process.pid, "SIGTERM");
   }, delay).unref();
 }

@@ -1,33 +1,56 @@
+import { FormSelect } from "@/components/ui/FormSelect";
 
-import { FormSelect } from '@/components/ui/FormSelect';
+import { Button, ButtonLink } from "@/components/motion/button";
+import { FormCheckbox } from "@/components/ui/FormCheckbox";
+import { Input } from "@/components/motion/input";
+import { getTranslations } from "next-intl/server";
+import Link from "next/link";
+import { redirect, notFound } from "next/navigation";
+import { headers } from "next/headers";
+import {
+  Brain,
+  CopyPlus,
+  Globe,
+  Pencil,
+  Server as ServerIcon,
+  Settings,
+  Trash2,
+  X,
+} from "lucide-react";
+import { getCurrentUser } from "@/lib/auth/current-user";
+import { db } from "@/lib/db";
+import { getWorkspaceForUser } from "@/lib/workspace/queries";
+import {
+  getToolkitBySlug,
+  getOrCreateDefaultToolkit,
+  getToolkitMcpCandidates,
+  getToolkitSkillCandidates,
+} from "@/lib/toolkits/queries";
+import { getOrCreateToolkitInstallLink } from "@/lib/toolkits/install-link";
+import { installBaseFromHeaders } from "@/lib/plugin/service-base";
+import { installationName } from "@/lib/plugin/installation-identity";
+import { effectiveStatus, liveStatus } from "@/lib/process/supervisor";
+import { deploymentLabel } from "@/lib/workspace/deployment-label";
+import { skillLabel } from "@/lib/workspace/skill-label";
+import { listMcpTools } from "@/lib/process/mcp-client";
+import { ToolkitInstall } from "@/components/dashboard/ToolkitInstall";
+import {
+  ToolkitResourcePicker,
+  type ToolkitPickerItem,
+} from "@/components/dashboard/toolkits/ToolkitResourcePicker";
+import { TabBar } from "@/components/dashboard/TabBar";
+import { SubmitButton } from "@/components/dashboard/SubmitButton";
+import { ConfirmSubmitButton } from "@/components/dashboard/ConfirmSubmitButton";
+import {
+  cloneToolkitAction,
+  deleteToolkitAction,
+  renameToolkitAction,
+  removeServerFromToolkitAction,
+  removeSkillFromToolkitAction,
+  updateToolkitAvailabilityAction,
+} from "@/lib/toolkits/actions";
 
-import { Button, ButtonLink } from '@/components/motion/button';
-import { FormCheckbox } from '@/components/ui/FormCheckbox';
-import { Input } from '@/components/motion/input';
-import { getTranslations } from 'next-intl/server';
-import Link from 'next/link';
-import { redirect, notFound } from 'next/navigation';
-import { headers } from 'next/headers';
-import { Brain, CopyPlus, Globe, Pencil, Server as ServerIcon, Settings, Trash2, X } from 'lucide-react';
-import { getCurrentUser } from '@/lib/auth/current-user';
-import { db } from '@/lib/db';
-import { getWorkspaceForUser } from '@/lib/workspace/queries';
-import { getToolkitBySlug, getOrCreateDefaultToolkit, getToolkitMcpCandidates, getToolkitSkillCandidates } from '@/lib/toolkits/queries';
-import { getOrCreateToolkitInstallLink } from '@/lib/toolkits/install-link';
-import { installBaseFromHeaders } from '@/lib/plugin/service-base';
-import { installationName } from '@/lib/plugin/installation-identity';
-import { effectiveStatus, liveStatus } from '@/lib/process/supervisor';
-import { deploymentLabel } from '@/lib/workspace/deployment-label';
-import { skillLabel } from '@/lib/workspace/skill-label';
-import { listMcpTools } from '@/lib/process/mcp-client';
-import { ToolkitInstall } from '@/components/dashboard/ToolkitInstall';
-import { ToolkitResourcePicker, type ToolkitPickerItem } from '@/components/dashboard/toolkits/ToolkitResourcePicker';
-import { TabBar } from '@/components/dashboard/TabBar';
-import { SubmitButton } from '@/components/dashboard/SubmitButton';
-import { ConfirmSubmitButton } from '@/components/dashboard/ConfirmSubmitButton';
-import { cloneToolkitAction, deleteToolkitAction, renameToolkitAction, removeServerFromToolkitAction, removeSkillFromToolkitAction, updateToolkitAvailabilityAction } from '@/lib/toolkits/actions';
-
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
 export default async function ToolkitDetailPage({
   params,
@@ -36,44 +59,58 @@ export default async function ToolkitDetailPage({
   params: Promise<{ workspace: string; slug: string }>;
   searchParams: Promise<{ tab?: string }>;
 }) {
-  const t = await getTranslations('console.toolkits');
-  const common = await getTranslations('common');
-  const mcpT = await getTranslations('console.mcp');
+  const t = await getTranslations("console.toolkits");
+  const common = await getTranslations("common");
+  const mcpT = await getTranslations("console.mcp");
   const { workspace: wsSlug, slug: toolkitSlug } = await params;
   const { tab } = await searchParams;
 
   const user = await getCurrentUser();
-  if (!user) redirect('/app/login');
+  if (!user) redirect("/app/login");
   const ws = await getWorkspaceForUser(wsSlug, user.id);
-  if (!ws) redirect('/app');
-  const managerMembership = ws.ownerId === user.id
-    ? null
-    : await db.membership.findUnique({
-      where: { workspaceId_userId: { workspaceId: ws.id, userId: user.id } },
-      select: { role: true },
-    });
-  const canManagePublishing = ws.ownerId === user.id || managerMembership?.role === 'admin';
+  if (!ws) redirect("/app");
+  const managerMembership =
+    ws.ownerId === user.id
+      ? null
+      : await db.membership.findUnique({
+          where: {
+            workspaceId_userId: { workspaceId: ws.id, userId: user.id },
+          },
+          select: { role: true },
+        });
+  const canManagePublishing =
+    ws.ownerId === user.id || managerMembership?.role === "admin";
 
-  if (toolkitSlug === 'me') await getOrCreateDefaultToolkit(ws.id);
+  if (toolkitSlug === "me") await getOrCreateDefaultToolkit(ws.id);
   const toolkit = await getToolkitBySlug(ws.id, toolkitSlug);
   if (!toolkit) notFound();
 
   const base = `/app/${wsSlug}/toolkits/${toolkitSlug}`;
   const tabs = [
-    { key: 'overview', label: t('overview') },
-    { key: 'mcps', label: t('mcps'), count: toolkit.servers.length },
-    { key: 'skills', label: t('skillsTab'), count: toolkit.skills.length },
-    { key: 'settings', label: t('settings') },
+    { key: "overview", label: t("overview") },
+    { key: "mcps", label: t("mcps"), count: toolkit.servers.length },
+    { key: "skills", label: t("skillsTab"), count: toolkit.skills.length },
+    { key: "settings", label: t("settings") },
   ];
-  const current = tabs.some((t) => t.key === tab) ? tab! : 'overview';
+  const current = tabs.find((item) => item.key === tab)?.key ?? "overview";
 
-  const [mcpCandidates, skillCandidates, toolCounts, requestHeaders, installLink] = await Promise.all([
-    current === 'mcps' ? getToolkitMcpCandidates(ws.id, toolkit.id) : Promise.resolve([]),
-    current === 'skills' ? getToolkitSkillCandidates(ws.id, toolkit.id) : Promise.resolve([]),
-    current === 'overview'
+  const [
+    mcpCandidates,
+    skillCandidates,
+    toolCounts,
+    requestHeaders,
+    installLink,
+  ] = await Promise.all([
+    current === "mcps"
+      ? getToolkitMcpCandidates(ws.id, toolkit.id)
+      : Promise.resolve([]),
+    current === "skills"
+      ? getToolkitSkillCandidates(ws.id, toolkit.id)
+      : Promise.resolve([]),
+    current === "overview"
       ? Promise.all(
           toolkit.servers.map(async (s) =>
-            liveStatus(s.deployment.id) === 'running'
+            liveStatus(s.deployment.id) === "running"
               ? (await listMcpTools(s.deployment.id)).length
               : null,
           ),
@@ -86,17 +123,23 @@ export default async function ToolkitDetailPage({
   const installUrl = `${origin}/install/${installLink.id}`;
   const uninstallUrl = `${installUrl}/uninstall`;
   const mcpUrl = `${origin}/api/v1/workspaces/${wsSlug}/toolkits/${toolkitSlug}/mcp`;
-  const mcpPickerItems: ToolkitPickerItem[] = mcpCandidates.map((deployment) => {
-    const label = deploymentLabel(deployment);
-    return {
-      id: deployment.id,
-      name: label.name,
-      description: deployment.server?.description ?? label.ref,
-      source: label.source,
-      status: effectiveStatus(deployment.id, deployment.status),
-      keywords: [deployment.server?.slug ?? '', deployment.sourceRef ?? '', deployment.source ?? ''],
-    };
-  });
+  const mcpPickerItems: ToolkitPickerItem[] = mcpCandidates.map(
+    (deployment) => {
+      const label = deploymentLabel(deployment);
+      return {
+        id: deployment.id,
+        name: label.name,
+        description: deployment.server?.description ?? label.ref,
+        source: label.source,
+        status: effectiveStatus(deployment.id, deployment.status),
+        keywords: [
+          deployment.server?.slug ?? "",
+          deployment.sourceRef ?? "",
+          deployment.source ?? "",
+        ],
+      };
+    },
+  );
   const skillPickerItems: ToolkitPickerItem[] = skillCandidates.map((skill) => {
     const label = skillLabel(skill);
     return {
@@ -104,358 +147,469 @@ export default async function ToolkitDetailPage({
       name: label.name,
       description: skill.skill?.description ?? skill.description,
       source: label.source,
-      keywords: [label.slug, skill.sourceRef ?? '', skill.userInvocable ? 'user' : '', skill.agentInvocable ? 'agent' : ''],
+      keywords: [
+        label.slug,
+        skill.sourceRef ?? "",
+        skill.userInvocable ? "user" : "",
+        skill.agentInvocable ? "agent" : "",
+      ],
     };
   });
 
   const cardHeader =
-    'flex items-center gap-2 border-b border-border bg-muted/25 px-4 py-3';
-  const defaultCloneName = t('copyNameDefault', { name: toolkit.name.slice(0, 55).trimEnd() });
+    "flex items-center gap-2 border-b border-border bg-muted/25 px-4 py-3";
+  const defaultCloneName = t("copyNameDefault", {
+    name: toolkit.name.slice(0, 55).trimEnd(),
+  });
   return (
-    <>
-      <div className="p-4 sm:p-6 space-y-5">
-        <div className="space-y-2">
-          <div className="flex flex-wrap items-center gap-2.5">
-            <h1 className="text-2xl font-bold tracking-tight text-foreground">
-              {toolkit.name}
-            </h1>
-            <span className="inline-flex items-center gap-1.5 text-sm text-muted-foreground">
-              <span
-                className={`size-2 rounded-full ${
-                  toolkit.enabled ? 'bg-(--color-success)' : 'bg-muted-foreground/60'
-                }`}
-              />
-              {toolkit.enabled ? t('enabled') : t('disabled')}
-            </span>
-            <ButtonLink href={`/app/${encodeURIComponent(wsSlug)}/toolkits/pi-packages?${new URLSearchParams({ toolkit: toolkitSlug })}#compose`} variant="secondary" size="sm">{t('packageExistingToolkit')}</ButtonLink>
-          </div>
-          <code className="block w-full max-w-full overflow-x-auto whitespace-nowrap pb-1 font-mono text-xs text-muted-foreground">
-            {installUrl}
-          </code>
+    <div className="p-4 sm:p-6 space-y-5">
+      <div className="space-y-2">
+        <div className="flex flex-wrap items-center gap-2.5">
+          <h1 className="text-2xl font-bold tracking-tight text-foreground">
+            {toolkit.name}
+          </h1>
+          <span className="inline-flex items-center gap-1.5 text-sm text-muted-foreground">
+            <span
+              className={`size-2 rounded-full ${
+                toolkit.enabled
+                  ? "bg-(--color-success)"
+                  : "bg-muted-foreground/60"
+              }`}
+            />
+            {toolkit.enabled ? t("enabled") : t("disabled")}
+          </span>
+          <ButtonLink
+            href={`/app/${encodeURIComponent(wsSlug)}/toolkits/pi-packages?${new URLSearchParams({ toolkit: toolkitSlug })}#compose`}
+            variant="secondary"
+            size="sm"
+          >
+            {t("packageExistingToolkit")}
+          </ButtonLink>
         </div>
+        <code className="block w-full max-w-full overflow-x-auto whitespace-nowrap pb-1 font-mono text-xs text-muted-foreground">
+          {installUrl}
+        </code>
+      </div>
 
-        <TabBar tabs={tabs} current={current} basePath={base} />
+      <TabBar tabs={tabs} current={current} basePath={base} />
 
-        {current === 'overview' ? (
-          <div className="space-y-5">
-            <ToolkitInstall
-              installUrl={installUrl}
-              uninstallUrl={uninstallUrl}
-              mcpUrl={mcpUrl}
-              toolkitSlug={toolkitSlug}
-              installationKey={installationName({ base: origin, workspaceSlug: wsSlug, toolkitSlug, workspaceId: ws.id, toolkitId: toolkit.id })}
-              serverCount={toolkit.servers.length}
-              skillCount={toolkit.skills.length}
-            />
+      {current === "overview" ? (
+        <div className="space-y-5">
+          <ToolkitInstall
+            installUrl={installUrl}
+            uninstallUrl={uninstallUrl}
+            mcpUrl={mcpUrl}
+            toolkitSlug={toolkitSlug}
+            installationKey={installationName({
+              base: origin,
+              workspaceSlug: wsSlug,
+              toolkitSlug,
+              workspaceId: ws.id,
+              toolkitId: toolkit.id,
+            })}
+            serverCount={toolkit.servers.length}
+            skillCount={toolkit.skills.length}
+          />
 
-            <section className="rounded-xl border border-border bg-card overflow-hidden">
-              <header className={cardHeader}>
-                <h2 className="text-sm font-semibold text-foreground">
-                  {t('connectedMcp')}
-                </h2>
-                <span className="text-sm text-muted-foreground">
-                  {toolkit.servers.length}
-                </span>
-              </header>
-              {toolkit.servers.length === 0 ? (
-                <p className="px-4 py-8 text-center text-sm text-muted-foreground">
-                  {t('noServersAttachedYetAddSomeFromTheMcpsTab')}
-                </p>
-              ) : (
-                <ul className="divide-y divide-border">
-                  {toolkit.servers.map((s, i) => (
-                    <li
-                      key={s.id}
-                      className="flex items-center justify-between gap-3 px-4 py-3"
+          <section className="rounded-xl border border-border bg-card overflow-hidden">
+            <header className={cardHeader}>
+              <h2 className="text-sm font-semibold text-foreground">
+                {t("connectedMcp")}
+              </h2>
+              <span className="text-sm text-muted-foreground">
+                {toolkit.servers.length}
+              </span>
+            </header>
+            {toolkit.servers.length === 0 ? (
+              <p className="px-4 py-8 text-center text-sm text-muted-foreground">
+                {t("noServersAttachedYetAddSomeFromTheMcpsTab")}
+              </p>
+            ) : (
+              <ul className="divide-y divide-border">
+                {toolkit.servers.map((s, i) => (
+                  <li
+                    key={s.id}
+                    className="flex items-center justify-between gap-3 px-4 py-3"
+                  >
+                    <Link
+                      href={`/app/${wsSlug}/mcp/${s.deployment.id}`}
+                      className="flex items-center gap-2.5 text-sm font-medium text-foreground hover:underline"
                     >
-                      <Link
-                        href={`/app/${wsSlug}/mcp/${s.deployment.id}`}
-                        className="flex items-center gap-2.5 text-sm font-medium text-foreground hover:underline"
-                      >
-                        <span className="flex size-7 items-center justify-center rounded-md bg-muted">
-                          <ServerIcon className="size-4 text-muted-foreground" />
-                        </span>
-                        {deploymentLabel(s.deployment).name}
-                      </Link>
-                      <span className="text-sm text-muted-foreground">
-                        {toolCounts[i] === null
-                          ? mcpT('stopped')
-                          : mcpT('toolsCount', { count: toolCounts[i] })}
+                      <span className="flex size-7 items-center justify-center rounded-md bg-muted">
+                        <ServerIcon className="size-4 text-muted-foreground" />
                       </span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </section>
+                      {deploymentLabel(s.deployment).name}
+                    </Link>
+                    <span className="text-sm text-muted-foreground">
+                      {toolCounts[i] === null
+                        ? mcpT("stopped")
+                        : mcpT("toolsCount", { count: toolCounts[i] })}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
 
-            <section className="rounded-xl border border-border bg-card overflow-hidden">
-              <header className={cardHeader}>
-                <h2 className="text-sm font-semibold text-foreground">
-                  {t('skills')}
-                </h2>
-                <span className="text-sm text-muted-foreground">
-                  {toolkit.skills.length}
-                </span>
-              </header>
-              {toolkit.skills.length === 0 ? (
-                <p className="px-4 py-8 text-center text-sm text-muted-foreground">
-                  {t('noSkillsAttachedYet')}
-                </p>
-              ) : (
-                <ul className="divide-y divide-border">
-                  {toolkit.skills.map((s) => (
-                    <li
-                      key={s.id}
-                      className="flex items-center justify-between gap-3 px-4 py-3"
+          <section className="rounded-xl border border-border bg-card overflow-hidden">
+            <header className={cardHeader}>
+              <h2 className="text-sm font-semibold text-foreground">
+                {t("skills")}
+              </h2>
+              <span className="text-sm text-muted-foreground">
+                {toolkit.skills.length}
+              </span>
+            </header>
+            {toolkit.skills.length === 0 ? (
+              <p className="px-4 py-8 text-center text-sm text-muted-foreground">
+                {t("noSkillsAttachedYet")}
+              </p>
+            ) : (
+              <ul className="divide-y divide-border">
+                {toolkit.skills.map((s) => (
+                  <li
+                    key={s.id}
+                    className="flex items-center justify-between gap-3 px-4 py-3"
+                  >
+                    <Link
+                      href={`/app/${wsSlug}/skills/${s.installedSkill.id}`}
+                      className="flex items-center gap-2.5 text-sm font-medium text-foreground hover:underline"
                     >
-                      <Link
-                        href={`/app/${wsSlug}/skills/${s.installedSkill.id}`}
-                        className="flex items-center gap-2.5 text-sm font-medium text-foreground hover:underline"
-                      >
-                        <span className="flex size-7 items-center justify-center rounded-md bg-muted">
-                          <Brain className="size-4 text-muted-foreground" />
-                        </span>
-                        {skillLabel(s.installedSkill).name}
-                      </Link>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </section>
-          </div>
-        ) : null}
-
-        {current === 'mcps' ? (
-          <div className="space-y-5">
-            <section className="rounded-xl border border-border bg-card overflow-hidden">
-              <header className={cardHeader}>
-                <h2 className="text-sm font-semibold text-foreground">
-                  {t('inThisToolkit')}
-                </h2>
-                <span className="text-sm text-muted-foreground">
-                  {toolkit.servers.length}
-                </span>
-              </header>
-              {toolkit.servers.length === 0 ? (
-                <p className="px-4 py-8 text-center text-sm text-muted-foreground">
-                  {t('noServersInThisToolkitYet')}
-                </p>
-              ) : (
-                <ul className="divide-y divide-border">
-                  {toolkit.servers.map((s) => (
-                    <li
-                      key={s.id}
-                      className="flex items-center justify-between gap-3 px-4 py-3"
-                    >
-                      <span className="flex items-center gap-2.5 text-sm font-medium text-foreground">
-                        <span className="flex size-7 items-center justify-center rounded-md bg-muted">
-                          <ServerIcon className="size-4 text-muted-foreground" />
-                        </span>
-                        {deploymentLabel(s.deployment).name}
+                      <span className="flex size-7 items-center justify-center rounded-md bg-muted">
+                        <Brain className="size-4 text-muted-foreground" />
                       </span>
-                      <form action={removeServerFromToolkitAction}>
-                        <input type="hidden" name="workspace" value={wsSlug} />
-                        <input type="hidden" name="toolkitSlug" value={toolkitSlug} />
-                        <input type="hidden" name="deploymentId" value={s.deployment.id} />
-                        <Button variant="ghost" size="sm" type="submit"><X className="size-3.5" />
-                        {t('remove')}</Button>
-                      </form>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </section>
+                      {skillLabel(s.installedSkill).name}
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        </div>
+      ) : null}
 
-            <ToolkitResourcePicker
-              kind="mcp"
-              workspaceSlug={wsSlug}
-              toolkitSlug={toolkitSlug}
-              items={mcpPickerItems}
-              emptyHref={`/app/${wsSlug}/market/mcp`}
-            />
-          </div>
-        ) : null}
-
-        {current === 'skills' ? (
-          <div className="space-y-5">
-            <section className="rounded-xl border border-border bg-card overflow-hidden">
-              <header className={cardHeader}>
-                <h2 className="text-sm font-semibold text-foreground">
-                  {t('inThisToolkit')}
-                </h2>
-                <span className="text-sm text-muted-foreground">
-                  {toolkit.skills.length}
-                </span>
-              </header>
-              {toolkit.skills.length === 0 ? (
-                <p className="px-4 py-8 text-center text-sm text-muted-foreground">
-                  {t('noSkillsInThisToolkitYet')}
-                </p>
-              ) : (
-                <ul className="divide-y divide-border">
-                  {toolkit.skills.map((s) => (
-                    <li
-                      key={s.id}
-                      className="flex items-center justify-between gap-3 px-4 py-3"
-                    >
-                      <span className="flex items-center gap-2.5 text-sm font-medium text-foreground">
-                        <span className="flex size-7 items-center justify-center rounded-md bg-muted">
-                          <Brain className="size-4 text-muted-foreground" />
-                        </span>
-                        {skillLabel(s.installedSkill).name}
+      {current === "mcps" ? (
+        <div className="space-y-5">
+          <section className="rounded-xl border border-border bg-card overflow-hidden">
+            <header className={cardHeader}>
+              <h2 className="text-sm font-semibold text-foreground">
+                {t("inThisToolkit")}
+              </h2>
+              <span className="text-sm text-muted-foreground">
+                {toolkit.servers.length}
+              </span>
+            </header>
+            {toolkit.servers.length === 0 ? (
+              <p className="px-4 py-8 text-center text-sm text-muted-foreground">
+                {t("noServersInThisToolkitYet")}
+              </p>
+            ) : (
+              <ul className="divide-y divide-border">
+                {toolkit.servers.map((s) => (
+                  <li
+                    key={s.id}
+                    className="flex items-center justify-between gap-3 px-4 py-3"
+                  >
+                    <span className="flex items-center gap-2.5 text-sm font-medium text-foreground">
+                      <span className="flex size-7 items-center justify-center rounded-md bg-muted">
+                        <ServerIcon className="size-4 text-muted-foreground" />
                       </span>
-                      <form action={removeSkillFromToolkitAction}>
-                        <input type="hidden" name="workspace" value={wsSlug} />
-                        <input type="hidden" name="toolkitSlug" value={toolkitSlug} />
-                        <input
-                          type="hidden"
-                          name="installedSkillId"
-                          value={s.installedSkill.id}
-                        />
-                        <Button variant="ghost" size="sm" type="submit"><X className="size-3.5" />
-                        {t('remove')}</Button>
-                      </form>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </section>
+                      {deploymentLabel(s.deployment).name}
+                    </span>
+                    <form action={removeServerFromToolkitAction}>
+                      <input type="hidden" name="workspace" value={wsSlug} />
+                      <input
+                        type="hidden"
+                        name="toolkitSlug"
+                        value={toolkitSlug}
+                      />
+                      <input
+                        type="hidden"
+                        name="deploymentId"
+                        value={s.deployment.id}
+                      />
+                      <Button variant="ghost" size="sm" type="submit">
+                        <X className="size-3.5" />
+                        {t("remove")}
+                      </Button>
+                    </form>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
 
-            <ToolkitResourcePicker
-              kind="skill"
-              workspaceSlug={wsSlug}
-              toolkitSlug={toolkitSlug}
-              items={skillPickerItems}
-              emptyHref={`/app/${wsSlug}/market/skills`}
-            />
-          </div>
-        ) : null}
+          <ToolkitResourcePicker
+            kind="mcp"
+            workspaceSlug={wsSlug}
+            toolkitSlug={toolkitSlug}
+            items={mcpPickerItems}
+            emptyHref={`/app/${wsSlug}/market/mcp`}
+          />
+        </div>
+      ) : null}
 
-        {current === 'settings' ? (
-          <div className="max-w-3xl divide-y divide-border">
-            <section className="pb-6">
+      {current === "skills" ? (
+        <div className="space-y-5">
+          <section className="rounded-xl border border-border bg-card overflow-hidden">
+            <header className={cardHeader}>
+              <h2 className="text-sm font-semibold text-foreground">
+                {t("inThisToolkit")}
+              </h2>
+              <span className="text-sm text-muted-foreground">
+                {toolkit.skills.length}
+              </span>
+            </header>
+            {toolkit.skills.length === 0 ? (
+              <p className="px-4 py-8 text-center text-sm text-muted-foreground">
+                {t("noSkillsInThisToolkitYet")}
+              </p>
+            ) : (
+              <ul className="divide-y divide-border">
+                {toolkit.skills.map((s) => (
+                  <li
+                    key={s.id}
+                    className="flex items-center justify-between gap-3 px-4 py-3"
+                  >
+                    <span className="flex items-center gap-2.5 text-sm font-medium text-foreground">
+                      <span className="flex size-7 items-center justify-center rounded-md bg-muted">
+                        <Brain className="size-4 text-muted-foreground" />
+                      </span>
+                      {skillLabel(s.installedSkill).name}
+                    </span>
+                    <form action={removeSkillFromToolkitAction}>
+                      <input type="hidden" name="workspace" value={wsSlug} />
+                      <input
+                        type="hidden"
+                        name="toolkitSlug"
+                        value={toolkitSlug}
+                      />
+                      <input
+                        type="hidden"
+                        name="installedSkillId"
+                        value={s.installedSkill.id}
+                      />
+                      <Button variant="ghost" size="sm" type="submit">
+                        <X className="size-3.5" />
+                        {t("remove")}
+                      </Button>
+                    </form>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+
+          <ToolkitResourcePicker
+            kind="skill"
+            workspaceSlug={wsSlug}
+            toolkitSlug={toolkitSlug}
+            items={skillPickerItems}
+            emptyHref={`/app/${wsSlug}/market/skills`}
+          />
+        </div>
+      ) : null}
+
+      {current === "settings" ? (
+        <div className="max-w-3xl divide-y divide-border">
+          <section className="pb-6">
+            <div className="flex items-center gap-2">
+              <Globe className="size-4 text-muted-foreground" />
+              <h2 className="text-sm font-semibold text-foreground">
+                {t("availability")}
+              </h2>
+            </div>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">
+              {t("availabilityDescription")}
+            </p>
+            {canManagePublishing ? (
+              <form
+                action={updateToolkitAvailabilityAction}
+                className="mt-4 flex max-w-xl flex-col gap-3"
+              >
+                <input type="hidden" name="workspace" value={wsSlug} />
+                <input type="hidden" name="toolkitSlug" value={toolkitSlug} />
+                <label
+                  htmlFor="toolkit-visibility"
+                  className="space-y-1.5 text-xs font-medium text-muted-foreground"
+                >
+                  {t("visibility")}
+                  <FormSelect
+                    id="toolkit-visibility"
+                    name="visibility"
+                    defaultValue={toolkit.visibility}
+                    label={t("visibility")}
+                    options={[
+                      { value: "private", label: t("private") },
+                      { value: "public", label: t("public") },
+                    ]}
+                  />
+                </label>
+                <div className="inline-flex items-start gap-2.5 rounded-md border border-border px-3 py-2.5 text-sm text-foreground">
+                  <FormCheckbox
+                    name="enabled"
+                    defaultChecked={toolkit.enabled}
+                    label={t("enabled")}
+                  />
+                  <span>
+                    <span className="mt-0.5 block text-xs font-normal leading-5 text-muted-foreground">
+                      {t("enabledDescription")}
+                    </span>
+                  </span>
+                </div>
+                <SubmitButton
+                  pendingLabel={t("savingAvailability")}
+                  savedLabel={t("availabilitySaved")}
+                  variant="secondary"
+                  size="sm"
+                  className="w-full sm:w-fit"
+                >
+                  {t("saveAvailability")}
+                </SubmitButton>
+              </form>
+            ) : (
+              <p className="mt-4 text-xs leading-5 text-muted-foreground">
+                {t("onlyWorkspaceManagersCanUpdateAvailability")}
+              </p>
+            )}
+          </section>
+
+          <section className="py-6">
+            <div className="flex items-center gap-2">
+              <Settings className="size-4 text-muted-foreground" />
+              <h2 className="text-sm font-semibold text-foreground">
+                {t("generalSettings")}
+              </h2>
+            </div>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">
+              {t("renameToolkitDescription")}
+            </p>
+            <form
+              action={renameToolkitAction}
+              className="mt-4 flex max-w-xl flex-col items-stretch gap-2 sm:flex-row sm:items-end"
+            >
+              <input type="hidden" name="workspace" value={wsSlug} />
+              <input type="hidden" name="toolkitSlug" value={toolkitSlug} />
+              <label
+                htmlFor="toolkit-name"
+                className="min-w-0 flex-1 space-y-1.5 text-xs font-medium text-muted-foreground"
+              >
+                {t("toolkitName")}
+                <Input
+                  id="toolkit-name"
+                  name="name"
+                  defaultValue={toolkit.name}
+                  required
+                  maxLength={60}
+                  pattern=".*\S.*"
+                  title={t("nameCannotBeBlank")}
+                  className="min-w-0"
+                />
+              </label>
+              <SubmitButton
+                pendingLabel={t("renaming")}
+                savedLabel={t("renamed")}
+                variant="secondary"
+                size="sm"
+                className="w-full sm:w-auto"
+              >
+                <Pencil className="size-3.5" />
+                {t("rename")}
+              </SubmitButton>
+            </form>
+          </section>
+
+          <section className="py-6">
+            <div className="flex items-center gap-2">
+              <CopyPlus className="size-4 text-muted-foreground" />
+              <h2 className="text-sm font-semibold text-foreground">
+                {t("cloneToolkit")}
+              </h2>
+            </div>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">
+              {t("cloneToolkitDescription")}
+            </p>
+            <form
+              action={cloneToolkitAction}
+              className="mt-4 flex max-w-xl flex-col items-stretch gap-2 sm:flex-row sm:items-end"
+            >
+              <input type="hidden" name="workspace" value={wsSlug} />
+              <input type="hidden" name="toolkitSlug" value={toolkitSlug} />
+              <label
+                htmlFor="toolkit-copy-name"
+                className="min-w-0 flex-1 space-y-1.5 text-xs font-medium text-muted-foreground"
+              >
+                {t("copyName")}
+                <Input
+                  id="toolkit-copy-name"
+                  name="name"
+                  defaultValue={defaultCloneName}
+                  required
+                  maxLength={60}
+                  pattern=".*\S.*"
+                  title={t("nameCannotBeBlank")}
+                  className="min-w-0"
+                />
+              </label>
+              <SubmitButton
+                flash={false}
+                pendingLabel={t("cloning")}
+                variant="secondary"
+                size="sm"
+                className="w-full sm:w-auto"
+              >
+                <CopyPlus className="size-3.5" />
+                {t("clone")}
+              </SubmitButton>
+            </form>
+          </section>
+
+          {toolkitSlug !== "me" ? (
+            <section className="pt-6">
               <div className="flex items-center gap-2">
-                <Globe className="size-4 text-muted-foreground" />
-                <h2 className="text-sm font-semibold text-foreground">
-                  {t('availability')}
+                <Trash2 className="size-4 text-destructive dark:text-destructive" />
+                <h2 className="text-sm font-semibold text-destructive dark:text-destructive">
+                  {t("dangerZone")}
                 </h2>
               </div>
-              <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                {t('availabilityDescription')}
-              </p>
-              {canManagePublishing ? (
-                <form action={updateToolkitAvailabilityAction} className="mt-4 flex max-w-xl flex-col gap-3">
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-4">
+                <div>
+                  <p className="text-sm font-medium text-foreground">
+                    {t("deleteToolkit")}
+                  </p>
+                  <p className="mt-0.5 max-w-xl text-xs leading-5 text-muted-foreground">
+                    {t("deleteToolkitDescription")}
+                  </p>
+                </div>
+                <form action={deleteToolkitAction}>
                   <input type="hidden" name="workspace" value={wsSlug} />
                   <input type="hidden" name="toolkitSlug" value={toolkitSlug} />
-                  <label className="space-y-1.5 text-xs font-medium text-muted-foreground">
-                    {t('visibility')}
-                    <FormSelect name="visibility" defaultValue={toolkit.visibility} label={t('visibility')} options={[{ value: 'private', label: t('private') }, { value: 'public', label: t('public') }]} />
-                  </label>
-                  <div className="inline-flex items-start gap-2.5 rounded-md border border-border px-3 py-2.5 text-sm text-foreground">
-                    <FormCheckbox name="enabled" defaultChecked={toolkit.enabled} label={t('enabled')} />
-                    <span>
-                      
-                      <span className="mt-0.5 block text-xs font-normal leading-5 text-muted-foreground">
-                        {t('enabledDescription')}
-                      </span>
-                    </span>
-                  </div>
-                  <SubmitButton pendingLabel={t('savingAvailability')} savedLabel={t('availabilitySaved')} variant="secondary" size="sm" className="w-full sm:w-fit">
-                    {t('saveAvailability')}
-                  </SubmitButton>
+                  <ConfirmSubmitButton
+                    triggerLabel={
+                      <>
+                        <Trash2 className="size-3.5" />
+                        {t("deleteToolkit")}
+                      </>
+                    }
+                    confirmLabel={common("confirm")}
+                    cancelLabel={common("cancel")}
+                    prompt={t("deleteToolkitPrompt", { name: toolkit.name })}
+                    pendingLabel={t("deleting")}
+                    promptClassName="text-xs text-muted-foreground"
+                    className="max-w-xl items-center justify-end"
+                    triggerVariant="secondary"
+                    triggerSize="sm"
+                    confirmVariant="primary"
+                    confirmSize="sm"
+                    cancelVariant="secondary"
+                    cancelSize="sm"
+                  />
                 </form>
-              ) : (
-                <p className="mt-4 text-xs leading-5 text-muted-foreground">
-                  {t('onlyWorkspaceManagersCanUpdateAvailability')}
-                </p>
-              )}
-            </section>
-
-            <section className="py-6">
-              <div className="flex items-center gap-2">
-                <Settings className="size-4 text-muted-foreground" />
-                <h2 className="text-sm font-semibold text-foreground">
-                  {t('generalSettings')}
-                </h2>
               </div>
-              <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                {t('renameToolkitDescription')}
-              </p>
-              <form
-                action={renameToolkitAction}
-                className="mt-4 flex max-w-xl flex-col items-stretch gap-2 sm:flex-row sm:items-end"
-              >
-                <input type="hidden" name="workspace" value={wsSlug} />
-                <input type="hidden" name="toolkitSlug" value={toolkitSlug} />
-                <label className="min-w-0 flex-1 space-y-1.5 text-xs font-medium text-muted-foreground">
-                  {t('toolkitName')}
-                  <Input name="name" defaultValue={toolkit.name} required maxLength={60} pattern=".*\S.*" title={t('nameCannotBeBlank')} className="min-w-0" />
-                </label>
-                <SubmitButton pendingLabel={t('renaming')} savedLabel={t('renamed')} variant="secondary" size="sm" className="w-full sm:w-auto">
-                  <Pencil className="size-3.5" />
-                  {t('rename')}
-                </SubmitButton>
-              </form>
             </section>
-
-            <section className="py-6">
-              <div className="flex items-center gap-2">
-                <CopyPlus className="size-4 text-muted-foreground" />
-                <h2 className="text-sm font-semibold text-foreground">
-                  {t('cloneToolkit')}
-                </h2>
-              </div>
-              <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                {t('cloneToolkitDescription')}
-              </p>
-              <form
-                action={cloneToolkitAction}
-                className="mt-4 flex max-w-xl flex-col items-stretch gap-2 sm:flex-row sm:items-end"
-              >
-                <input type="hidden" name="workspace" value={wsSlug} />
-                <input type="hidden" name="toolkitSlug" value={toolkitSlug} />
-                <label className="min-w-0 flex-1 space-y-1.5 text-xs font-medium text-muted-foreground">
-                  {t('copyName')}
-                  <Input name="name" defaultValue={defaultCloneName} required maxLength={60} pattern=".*\S.*" title={t('nameCannotBeBlank')} className="min-w-0" />
-                </label>
-                <SubmitButton flash={false} pendingLabel={t('cloning')} variant="secondary" size="sm" className="w-full sm:w-auto">
-                  <CopyPlus className="size-3.5" />
-                  {t('clone')}
-                </SubmitButton>
-              </form>
-            </section>
-
-            {toolkitSlug !== 'me' ? (
-              <section className="pt-6">
-                <div className="flex items-center gap-2">
-                  <Trash2 className="size-4 text-destructive dark:text-destructive" />
-                  <h2 className="text-sm font-semibold text-destructive dark:text-destructive">
-                    {t('dangerZone')}
-                  </h2>
-                </div>
-                <div className="mt-3 flex flex-wrap items-center justify-between gap-4">
-                  <div>
-                    <p className="text-sm font-medium text-foreground">{t('deleteToolkit')}</p>
-                    <p className="mt-0.5 max-w-xl text-xs leading-5 text-muted-foreground">
-                      {t('deleteToolkitDescription')}
-                    </p>
-                  </div>
-                  <form action={deleteToolkitAction}>
-                    <input type="hidden" name="workspace" value={wsSlug} />
-                    <input type="hidden" name="toolkitSlug" value={toolkitSlug} />
-                    <ConfirmSubmitButton triggerLabel={
-                        <>
-                          <Trash2 className="size-3.5" />
-                          {t('deleteToolkit')}
-                        </>
-                      } confirmLabel={common('confirm')} cancelLabel={common('cancel')} prompt={t('deleteToolkitPrompt', { name: toolkit.name })} pendingLabel={t('deleting')} promptClassName="text-xs text-muted-foreground" className="max-w-xl items-center justify-end" triggerVariant="secondary" triggerSize="sm" confirmVariant="primary" confirmSize="sm" cancelVariant="secondary" cancelSize="sm" />
-                  </form>
-                </div>
-              </section>
-            ) : null}
-          </div>
-        ) : null}
-      </div>
-    </>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
   );
 }

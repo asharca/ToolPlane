@@ -1,16 +1,15 @@
-import 'server-only';
-import { beginWorkspaceOperation } from '@/lib/workspace/operation-gate';
+import "server-only";
+import { beginWorkspaceOperation } from "@/lib/workspace/operation-gate";
 
-type McpOperationResult<T> =
-  | { accepted: true; value: T }
-  | { accepted: false };
+type McpOperationResult<T> = { accepted: true; value: T } | { accepted: false };
 
 const operationGlobal = globalThis as typeof globalThis & {
   __mcpWorkspaceOperationQueues?: Map<string, Promise<void>>;
 };
 
 function queues(): Map<string, Promise<void>> {
-  return operationGlobal.__mcpWorkspaceOperationQueues ??= new Map();
+  operationGlobal.__mcpWorkspaceOperationQueues ??= new Map();
+  return operationGlobal.__mcpWorkspaceOperationQueues;
 }
 
 // Serialize configuration writes and lifecycle actions for one deployment,

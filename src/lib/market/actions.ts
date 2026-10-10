@@ -1,17 +1,17 @@
-'use server';
+"use server";
 
-import { randomUUID } from 'node:crypto';
-import { revalidatePath } from 'next/cache';
-import { redirect } from 'next/navigation';
-import { getCurrentUser } from '@/lib/auth/current-user';
-import { deleteChatAssistant } from '@/lib/chat/service';
+import { randomUUID } from "node:crypto";
+import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
+import { getCurrentUser } from "@/lib/auth/current-user";
+import { deleteChatAssistant } from "@/lib/chat/service";
 import {
   ignoreMarketUpdate,
   MarketError,
   publishAssistantRelease,
   publishSkillRelease,
   removeMarketInstall,
-} from '@/lib/market/skills';
+} from "@/lib/market/skills";
 import {
   installMarketRelease,
   publishMcpRelease,
@@ -19,12 +19,12 @@ import {
   publishAssembledPiPackageRelease,
   publishToolkitRelease,
   updateMarketInstall,
-} from '@/lib/market/resources';
+} from "@/lib/market/resources";
 import {
   unpublishMarketListing,
   withdrawMarketRelease,
-} from '@/lib/market/publisher-management';
-import { getWorkspaceForUser } from '@/lib/workspace/queries';
+} from "@/lib/market/publisher-management";
+import { getWorkspaceForUser } from "@/lib/workspace/queries";
 
 export type MarketActionState = {
   ok?: boolean;
@@ -41,25 +41,32 @@ async function actionContext(workspaceSlug: string) {
 
 function actionError(error: unknown): string {
   if (error instanceof MarketError) return error.code;
-  return 'action_failed';
+  return "action_failed";
 }
 
 function tags(raw: FormDataEntryValue | null): string[] {
-  return String(raw ?? '').split(',').map((value) => value.trim()).filter(Boolean);
+  return String(raw ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
 }
 
 function categoryIds(formData: FormData): string[] {
-  return formData.getAll('categoryIds').map(String).map((value) => value.trim()).filter(Boolean);
+  return formData
+    .getAll("categoryIds")
+    .map(String)
+    .map((value) => value.trim())
+    .filter(Boolean);
 }
 
 export async function publishSkillReleaseAction(
   _previous: MarketActionState,
   formData: FormData,
 ): Promise<MarketActionState> {
-  const workspaceSlug = String(formData.get('workspace') ?? '');
-  const installedSkillId = String(formData.get('installedSkillId') ?? '');
+  const workspaceSlug = String(formData.get("workspace") ?? "");
+  const installedSkillId = String(formData.get("installedSkillId") ?? "");
   const ctx = await actionContext(workspaceSlug);
-  if (!ctx || !installedSkillId) return { error: 'not_authorized' };
+  if (!ctx || !installedSkillId) return { error: "not_authorized" };
   try {
     const result = await publishSkillRelease({
       workspaceId: ctx.workspace.id,
@@ -67,12 +74,12 @@ export async function publishSkillReleaseAction(
       publishedById: ctx.user.id,
       categoryIds: categoryIds(formData),
       listing: {
-        slug: String(formData.get('slug') ?? ''),
-        name: String(formData.get('name') ?? ''),
-        summary: String(formData.get('summary') ?? ''),
-        tags: tags(formData.get('tags')),
+        slug: String(formData.get("slug") ?? ""),
+        name: String(formData.get("name") ?? ""),
+        summary: String(formData.get("summary") ?? ""),
+        tags: tags(formData.get("tags")),
       },
-      releaseNotes: String(formData.get('releaseNotes') ?? ''),
+      releaseNotes: String(formData.get("releaseNotes") ?? ""),
     });
     revalidatePath(`/app/${workspaceSlug}/market/publish`);
     revalidatePath(`/app/${workspaceSlug}/skills/${installedSkillId}`);
@@ -86,10 +93,10 @@ export async function publishAssistantReleaseAction(
   _previous: MarketActionState,
   formData: FormData,
 ): Promise<MarketActionState> {
-  const workspaceSlug = String(formData.get('workspace') ?? '');
-  const assistantId = String(formData.get('assistantId') ?? '');
+  const workspaceSlug = String(formData.get("workspace") ?? "");
+  const assistantId = String(formData.get("assistantId") ?? "");
   const ctx = await actionContext(workspaceSlug);
-  if (!ctx || !assistantId) return { error: 'not_authorized' };
+  if (!ctx || !assistantId) return { error: "not_authorized" };
   try {
     const result = await publishAssistantRelease({
       workspaceId: ctx.workspace.id,
@@ -97,12 +104,12 @@ export async function publishAssistantReleaseAction(
       publishedById: ctx.user.id,
       categoryIds: categoryIds(formData),
       listing: {
-        slug: String(formData.get('slug') ?? ''),
-        name: String(formData.get('name') ?? ''),
-        summary: String(formData.get('summary') ?? ''),
-        tags: tags(formData.get('tags')),
+        slug: String(formData.get("slug") ?? ""),
+        name: String(formData.get("name") ?? ""),
+        summary: String(formData.get("summary") ?? ""),
+        tags: tags(formData.get("tags")),
       },
-      releaseNotes: String(formData.get('releaseNotes') ?? ''),
+      releaseNotes: String(formData.get("releaseNotes") ?? ""),
     });
     revalidatePath(`/app/${workspaceSlug}/market/publish`);
     revalidatePath(`/app/${workspaceSlug}/chat`);
@@ -116,10 +123,10 @@ export async function publishMcpReleaseAction(
   _previous: MarketActionState,
   formData: FormData,
 ): Promise<MarketActionState> {
-  const workspaceSlug = String(formData.get('workspace') ?? '');
-  const deploymentId = String(formData.get('deploymentId') ?? '');
+  const workspaceSlug = String(formData.get("workspace") ?? "");
+  const deploymentId = String(formData.get("deploymentId") ?? "");
   const ctx = await actionContext(workspaceSlug);
-  if (!ctx || !deploymentId) return { error: 'not_authorized' };
+  if (!ctx || !deploymentId) return { error: "not_authorized" };
   try {
     const result = await publishMcpRelease({
       workspaceId: ctx.workspace.id,
@@ -127,12 +134,12 @@ export async function publishMcpReleaseAction(
       publishedById: ctx.user.id,
       categoryIds: categoryIds(formData),
       listing: {
-        slug: String(formData.get('slug') ?? ''),
-        name: String(formData.get('name') ?? ''),
-        summary: String(formData.get('summary') ?? ''),
-        tags: tags(formData.get('tags')),
+        slug: String(formData.get("slug") ?? ""),
+        name: String(formData.get("name") ?? ""),
+        summary: String(formData.get("summary") ?? ""),
+        tags: tags(formData.get("tags")),
       },
-      releaseNotes: String(formData.get('releaseNotes') ?? ''),
+      releaseNotes: String(formData.get("releaseNotes") ?? ""),
     });
     revalidatePath(`/app/${workspaceSlug}/market/publish`);
     revalidatePath(`/app/${workspaceSlug}/mcp/${deploymentId}`);
@@ -146,10 +153,10 @@ export async function publishToolkitReleaseAction(
   _previous: MarketActionState,
   formData: FormData,
 ): Promise<MarketActionState> {
-  const workspaceSlug = String(formData.get('workspace') ?? '');
-  const toolkitId = String(formData.get('toolkitId') ?? '');
+  const workspaceSlug = String(formData.get("workspace") ?? "");
+  const toolkitId = String(formData.get("toolkitId") ?? "");
   const ctx = await actionContext(workspaceSlug);
-  if (!ctx || !toolkitId) return { error: 'not_authorized' };
+  if (!ctx || !toolkitId) return { error: "not_authorized" };
   try {
     const result = await publishToolkitRelease({
       workspaceId: ctx.workspace.id,
@@ -157,12 +164,12 @@ export async function publishToolkitReleaseAction(
       publishedById: ctx.user.id,
       categoryIds: categoryIds(formData),
       listing: {
-        slug: String(formData.get('slug') ?? ''),
-        name: String(formData.get('name') ?? ''),
-        summary: String(formData.get('summary') ?? ''),
-        tags: tags(formData.get('tags')),
+        slug: String(formData.get("slug") ?? ""),
+        name: String(formData.get("name") ?? ""),
+        summary: String(formData.get("summary") ?? ""),
+        tags: tags(formData.get("tags")),
       },
-      releaseNotes: String(formData.get('releaseNotes') ?? ''),
+      releaseNotes: String(formData.get("releaseNotes") ?? ""),
     });
     revalidatePath(`/app/${workspaceSlug}/market/publish`);
     revalidatePath(`/app/${workspaceSlug}/toolkits`);
@@ -176,25 +183,26 @@ export async function publishPiPackageReleaseAction(
   _previous: MarketActionState,
   formData: FormData,
 ): Promise<MarketActionState> {
-  const workspaceSlug = String(formData.get('workspace') ?? '');
+  const workspaceSlug = String(formData.get("workspace") ?? "");
   const ctx = await actionContext(workspaceSlug);
-  if (!ctx) return { error: 'not_authorized' };
+  if (!ctx) return { error: "not_authorized" };
   try {
     const result = await publishPiPackageRelease({
       workspaceId: ctx.workspace.id,
       publishedById: ctx.user.id,
-      source: String(formData.get('source') ?? ''),
-      sourceId: String(formData.get('sourceId') ?? '') || undefined,
-      visibility: formData.get('visibility') === 'public' ? 'public' : 'private',
-      listingId: String(formData.get('listingId') ?? '') || undefined,
+      source: String(formData.get("source") ?? ""),
+      sourceId: String(formData.get("sourceId") ?? "") || undefined,
+      visibility:
+        formData.get("visibility") === "public" ? "public" : "private",
+      listingId: String(formData.get("listingId") ?? "") || undefined,
       categoryIds: categoryIds(formData),
       listing: {
-        slug: String(formData.get('slug') ?? ''),
-        name: String(formData.get('name') ?? ''),
-        summary: String(formData.get('summary') ?? ''),
-        tags: tags(formData.get('tags')),
+        slug: String(formData.get("slug") ?? ""),
+        name: String(formData.get("name") ?? ""),
+        summary: String(formData.get("summary") ?? ""),
+        tags: tags(formData.get("tags")),
       },
-      releaseNotes: String(formData.get('releaseNotes') ?? ''),
+      releaseNotes: String(formData.get("releaseNotes") ?? ""),
     });
     revalidatePath(`/app/${workspaceSlug}/toolkits/pi-packages`);
     return { ok: true, listingId: result.listing.id };
@@ -207,34 +215,42 @@ export async function publishAssembledPiPackageReleaseAction(
   _previous: MarketActionState,
   formData: FormData,
 ): Promise<MarketActionState> {
-  const workspaceSlug = String(formData.get('workspace') ?? '');
+  const workspaceSlug = String(formData.get("workspace") ?? "");
   const ctx = await actionContext(workspaceSlug);
-  if (!ctx) return { error: 'not_authorized' };
+  if (!ctx) return { error: "not_authorized" };
   try {
-    const selectedTools = formData.getAll('mcpTools').map((value) => JSON.parse(String(value)) as unknown);
+    const selectedTools = formData
+      .getAll("mcpTools")
+      .map((value) => JSON.parse(String(value)) as unknown);
     const mcps = new Map<string, string[]>();
     for (const value of selectedTools) {
-      if (!Array.isArray(value) || value.length !== 2 || value.some((part) => typeof part !== 'string')) return { error: 'invalid_manifest' };
+      if (
+        !Array.isArray(value) ||
+        value.length !== 2 ||
+        value.some((part) => typeof part !== "string")
+      )
+        return { error: "invalid_manifest" };
       const [deploymentId, tool] = value as [string, string];
       mcps.set(deploymentId, [...(mcps.get(deploymentId) ?? []), tool]);
     }
     const result = await publishAssembledPiPackageRelease({
       workspaceId: ctx.workspace.id,
       publishedById: ctx.user.id,
-      name: String(formData.get('packageName') ?? ''),
-      version: String(formData.get('packageVersion') ?? ''),
-      installedSkillIds: formData.getAll('installedSkillIds').map(String),
+      name: String(formData.get("packageName") ?? ""),
+      version: String(formData.get("packageVersion") ?? ""),
+      installedSkillIds: formData.getAll("installedSkillIds").map(String),
       mcps: [...mcps].map(([deploymentId, tools]) => ({ deploymentId, tools })),
-      visibility: formData.get('visibility') === 'public' ? 'public' : 'private',
-      listingId: String(formData.get('listingId') ?? '') || undefined,
+      visibility:
+        formData.get("visibility") === "public" ? "public" : "private",
+      listingId: String(formData.get("listingId") ?? "") || undefined,
       categoryIds: categoryIds(formData),
       listing: {
-        slug: String(formData.get('slug') ?? ''),
-        name: String(formData.get('name') ?? ''),
-        summary: String(formData.get('summary') ?? ''),
-        tags: tags(formData.get('tags')),
+        slug: String(formData.get("slug") ?? ""),
+        name: String(formData.get("name") ?? ""),
+        summary: String(formData.get("summary") ?? ""),
+        tags: tags(formData.get("tags")),
       },
-      releaseNotes: String(formData.get('releaseNotes') ?? ''),
+      releaseNotes: String(formData.get("releaseNotes") ?? ""),
     });
     revalidatePath(`/app/${workspaceSlug}/toolkits/pi-packages`);
     return { ok: true, listingId: result.listing.id };
@@ -244,37 +260,47 @@ export async function publishAssembledPiPackageReleaseAction(
 }
 
 export async function installMarketResourceAction(formData: FormData) {
-  const workspaceSlug = String(formData.get('workspace') ?? '');
-  const releaseId = String(formData.get('releaseId') ?? '');
+  const workspaceSlug = String(formData.get("workspace") ?? "");
+  const releaseId = String(formData.get("releaseId") ?? "");
   const ctx = await actionContext(workspaceSlug);
   if (!ctx || !releaseId) return;
   const result = await installMarketRelease({
     releaseId,
     targetWorkspaceId: ctx.workspace.id,
     installedById: ctx.user.id,
-    idempotencyKey: String(formData.get('idempotencyKey') ?? '') || randomUUID(),
+    idempotencyKey:
+      String(formData.get("idempotencyKey") ?? "") || randomUUID(),
   }).catch((error: unknown) => {
-    if (formData.get('kind') !== 'pi-package') throw error;
-    redirect(`/app/${encodeURIComponent(workspaceSlug)}/market/installed?error=${encodeURIComponent(actionError(error))}`);
+    if (formData.get("kind") !== "pi-package") throw error;
+    redirect(
+      `/app/${encodeURIComponent(workspaceSlug)}/market/installed?error=${encodeURIComponent(actionError(error))}`,
+    );
   });
   revalidatePath(`/app/${workspaceSlug}/market`);
   revalidatePath(`/app/${workspaceSlug}/market/installed`);
-  if (result.kind === 'pi-package') {
-    redirect(`/app/${workspaceSlug}/market/installed#install-${result.install.id}`);
+  if (result.kind === "pi-package") {
+    redirect(
+      `/app/${workspaceSlug}/market/installed#install-${result.install.id}`,
+    );
   }
-  if (result.kind === 'skill') {
+  if (result.kind === "skill") {
     revalidatePath(`/app/${workspaceSlug}/skills`);
     redirect(`/app/${workspaceSlug}/skills/${result.resource.id}`);
   }
-  if (result.kind === 'mcp') {
+  if (result.kind === "mcp") {
     revalidatePath(`/app/${workspaceSlug}/mcp`);
-    redirect(`/app/${workspaceSlug}/mcp/${result.resource.id}${
-      result.resource.status === 'setup_required' ? '?tab=variables' : ''
-    }`);
+    redirect(
+      `/app/${workspaceSlug}/mcp/${result.resource.id}${
+        result.resource.status === "setup_required" ? "?tab=variables" : ""
+      }`,
+    );
   }
-  if (result.kind === 'toolkit') {
-    if (!('slug' in result.resource)) {
-      throw new MarketError('listing_conflict', 'The toolkit installation is inconsistent.');
+  if (result.kind === "toolkit") {
+    if (!("slug" in result.resource)) {
+      throw new MarketError(
+        "listing_conflict",
+        "The toolkit installation is inconsistent.",
+      );
     }
     revalidatePath(`/app/${workspaceSlug}/toolkits`);
     redirect(`/app/${workspaceSlug}/toolkits/${result.resource.slug}`);
@@ -284,45 +310,50 @@ export async function installMarketResourceAction(formData: FormData) {
 export const installMarketSkillAction = installMarketResourceAction;
 
 export async function updateMarketInstallAction(formData: FormData) {
-  const workspaceSlug = String(formData.get('workspace') ?? '');
-  const installId = String(formData.get('installId') ?? '');
+  const workspaceSlug = String(formData.get("workspace") ?? "");
+  const installId = String(formData.get("installId") ?? "");
   const ctx = await actionContext(workspaceSlug);
   if (!ctx || !installId) return;
   const result = await updateMarketInstall({
     installId,
     targetWorkspaceId: ctx.workspace.id,
     actorId: ctx.user.id,
-    targetReleaseId: String(formData.get('targetReleaseId') ?? '') || undefined,
-    currentReleaseId: String(formData.get('currentReleaseId') ?? '') || undefined,
-    force: formData.get('force') === 'yes',
+    targetReleaseId: String(formData.get("targetReleaseId") ?? "") || undefined,
+    currentReleaseId:
+      String(formData.get("currentReleaseId") ?? "") || undefined,
+    force: formData.get("force") === "yes",
   }).catch((error: unknown) => {
-    if (formData.get('kind') !== 'pi-package') throw error;
-    redirect(`/app/${encodeURIComponent(workspaceSlug)}/market/installed?error=${encodeURIComponent(actionError(error))}`);
+    if (formData.get("kind") !== "pi-package") throw error;
+    redirect(
+      `/app/${encodeURIComponent(workspaceSlug)}/market/installed?error=${encodeURIComponent(actionError(error))}`,
+    );
   });
-  revalidatePath(`/app/${workspaceSlug}/market`, 'layout');
+  revalidatePath(`/app/${workspaceSlug}/market`, "layout");
   revalidatePath(`/app/${workspaceSlug}/market/installed`);
-  if (result.installedSkillId) revalidatePath(`/app/${workspaceSlug}/skills/${result.installedSkillId}`);
+  if (result.installedSkillId)
+    revalidatePath(`/app/${workspaceSlug}/skills/${result.installedSkillId}`);
 }
 
 export async function ignoreMarketUpdateAction(formData: FormData) {
-  const workspaceSlug = String(formData.get('workspace') ?? '');
-  const installId = String(formData.get('installId') ?? '');
+  const workspaceSlug = String(formData.get("workspace") ?? "");
+  const installId = String(formData.get("installId") ?? "");
   const ctx = await actionContext(workspaceSlug);
   if (!ctx || !installId) return;
   await ignoreMarketUpdate({
     installId,
     targetWorkspaceId: ctx.workspace.id,
     actorId: ctx.user.id,
-    targetReleaseId: String(formData.get('targetReleaseId') ?? '') || undefined,
-    currentReleaseId: String(formData.get('currentReleaseId') ?? '') || undefined,
+    targetReleaseId: String(formData.get("targetReleaseId") ?? "") || undefined,
+    currentReleaseId:
+      String(formData.get("currentReleaseId") ?? "") || undefined,
   });
-  revalidatePath(`/app/${workspaceSlug}/market`, 'layout');
+  revalidatePath(`/app/${workspaceSlug}/market`, "layout");
   revalidatePath(`/app/${workspaceSlug}/market/installed`);
 }
 
 export async function removeMarketInstallAction(formData: FormData) {
-  const workspaceSlug = String(formData.get('workspace') ?? '');
-  const installId = String(formData.get('installId') ?? '');
+  const workspaceSlug = String(formData.get("workspace") ?? "");
+  const installId = String(formData.get("installId") ?? "");
   const ctx = await actionContext(workspaceSlug);
   if (!ctx || !installId) return;
   try {
@@ -332,17 +363,19 @@ export async function removeMarketInstallAction(formData: FormData) {
       actorId: ctx.user.id,
     });
   } catch (error) {
-    const code = error instanceof MarketError ? error.code : 'action_failed';
-    redirect(`/app/${encodeURIComponent(workspaceSlug)}/market/installed?error=${encodeURIComponent(code)}`);
+    const code = error instanceof MarketError ? error.code : "action_failed";
+    redirect(
+      `/app/${encodeURIComponent(workspaceSlug)}/market/installed?error=${encodeURIComponent(code)}`,
+    );
   }
-  revalidatePath(`/app/${workspaceSlug}/market`, 'layout');
+  revalidatePath(`/app/${workspaceSlug}/market`, "layout");
   revalidatePath(`/app/${workspaceSlug}/market/installed`);
   redirect(`/app/${encodeURIComponent(workspaceSlug)}/market/installed`);
 }
 
 export async function withdrawMarketReleaseAction(formData: FormData) {
-  const workspaceSlug = String(formData.get('workspace') ?? '');
-  const listingId = String(formData.get('listingId') ?? '');
+  const workspaceSlug = String(formData.get("workspace") ?? "");
+  const listingId = String(formData.get("listingId") ?? "");
   const ctx = await actionContext(workspaceSlug);
   if (!ctx || !listingId) return;
   await withdrawMarketRelease({
@@ -350,14 +383,14 @@ export async function withdrawMarketReleaseAction(formData: FormData) {
     listingId,
     actorId: ctx.user.id,
   });
-  revalidatePath(`/app/${workspaceSlug}/market`, 'layout');
+  revalidatePath(`/app/${workspaceSlug}/market`, "layout");
   revalidatePath(`/app/${workspaceSlug}/market/publish`);
   revalidatePath(`/app/${workspaceSlug}/toolkits/pi-packages`);
 }
 
 export async function unpublishMarketListingAction(formData: FormData) {
-  const workspaceSlug = String(formData.get('workspace') ?? '');
-  const listingId = String(formData.get('listingId') ?? '');
+  const workspaceSlug = String(formData.get("workspace") ?? "");
+  const listingId = String(formData.get("listingId") ?? "");
   const ctx = await actionContext(workspaceSlug);
   if (!ctx || !listingId) return;
   await unpublishMarketListing({
@@ -365,22 +398,24 @@ export async function unpublishMarketListingAction(formData: FormData) {
     listingId,
     actorId: ctx.user.id,
   });
-  revalidatePath(`/app/${workspaceSlug}/market`, 'layout');
+  revalidatePath(`/app/${workspaceSlug}/market`, "layout");
   revalidatePath(`/app/${workspaceSlug}/market/publish`);
   revalidatePath(`/app/${workspaceSlug}/toolkits/pi-packages`);
 }
 
 export async function removeAssistantMarketCopyAction(formData: FormData) {
-  const workspaceSlug = String(formData.get('workspace') ?? '');
-  const assistantId = String(formData.get('assistantId') ?? '');
+  const workspaceSlug = String(formData.get("workspace") ?? "");
+  const assistantId = String(formData.get("assistantId") ?? "");
   const ctx = await actionContext(workspaceSlug);
   if (!ctx || !assistantId) return;
   try {
     await deleteChatAssistant(ctx.user.id, assistantId);
   } catch {
-    redirect(`/app/${encodeURIComponent(workspaceSlug)}/market/installed?error=action_failed`);
+    redirect(
+      `/app/${encodeURIComponent(workspaceSlug)}/market/installed?error=action_failed`,
+    );
   }
-  revalidatePath(`/app/${workspaceSlug}/market`, 'layout');
+  revalidatePath(`/app/${workspaceSlug}/market`, "layout");
   revalidatePath(`/app/${workspaceSlug}/market/installed`);
   revalidatePath(`/app/${workspaceSlug}/chat`);
   redirect(`/app/${encodeURIComponent(workspaceSlug)}/market/installed`);

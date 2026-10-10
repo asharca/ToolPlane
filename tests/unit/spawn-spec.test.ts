@@ -1,10 +1,11 @@
-import { describe, it, expect } from 'vitest';
+import { assertDefined } from "../assert-defined";
+import { describe, it, expect } from "vitest";
 import {
   buildSpawnSpec,
   buildStdioConfigSpawnSpec,
   resolveSpawnSpec,
-} from '@/lib/process/spawn-spec';
-import { MCP_NETWORK } from '@/lib/process/sandbox';
+} from "@/lib/process/spawn-spec";
+import { MCP_NETWORK } from "@/lib/process/sandbox";
 import {
   buildConnectorConfig,
   CONNECTOR_PACKAGE_VERSION,
@@ -13,339 +14,416 @@ import {
   connectorFromConfig,
   connectorServerUrlFromHeaders,
   hashConnectorToken,
-} from '@/lib/sandboxes/connector';
+} from "@/lib/sandboxes/connector";
 
-describe('buildSpawnSpec — every custom source runs in a hardened container', () => {
-  it('always uses `docker run` with the hardening flags', () => {
+describe("buildSpawnSpec — every custom source runs in a hardened container", () => {
+  it("always uses `docker run` with the hardening flags", () => {
     const cases: [string, string][] = [
-      ['npm', 'pkg'],
-      ['github', 'https://github.com/o/r'],
-      ['pypi', 'pkg'],
-      ['docker', 'img'],
+      ["npm", "pkg"],
+      ["github", "https://github.com/o/r"],
+      ["pypi", "pkg"],
+      ["docker", "img"],
     ];
     for (const [source, ref] of cases) {
       const { command, args } = buildSpawnSpec(source, ref);
-      expect(command).toBe('docker');
-      expect(args[0]).toBe('run');
+      expect(command).toBe("docker");
+      expect(args[0]).toBe("run");
       expect(args).toEqual(
         expect.arrayContaining([
-          '--cap-drop',
-          'ALL',
-          '--security-opt',
-          'no-new-privileges',
-          '--read-only',
-          '--network',
+          "--cap-drop",
+          "ALL",
+          "--security-opt",
+          "no-new-privileges",
+          "--read-only",
+          "--network",
           MCP_NETWORK,
         ]),
       );
     }
   });
 
-  it('npm/github wrap in node + npx, cache redirected to tmpfs', () => {
-    const { args, env } = buildSpawnSpec('npm', 'mcp-server-fetch');
-    expect(args).toContain('node:24-bookworm-slim');
-    expect(args.slice(-3)).toEqual(['npx', '-y', 'mcp-server-fetch']);
-    expect(args).toContain('npm_config_cache');
-    expect(env.npm_config_cache).toBe('/tmp/.npm');
+  it("npm/github wrap in node + npx, cache redirected to tmpfs", () => {
+    const { args, env } = buildSpawnSpec("npm", "mcp-server-fetch");
+    expect(args).toContain("node:24-bookworm-slim");
+    expect(args.slice(-3)).toEqual(["npx", "-y", "mcp-server-fetch"]);
+    expect(args).toContain("npm_config_cache");
+    expect(env.npm_config_cache).toBe("/tmp/.npm");
   });
 
-  it('pypi wraps in the uv image + uvx, cache redirected to tmpfs', () => {
-    const { args, env } = buildSpawnSpec('pypi', 'mcp-server-fetch');
-    expect(args.some((a) => a.startsWith('ghcr.io/astral-sh/uv'))).toBe(true);
-    expect(args.slice(-2)).toEqual(['uvx', 'mcp-server-fetch']);
-    expect(args).toContain('UV_CACHE_DIR');
-    expect(env.UV_CACHE_DIR).toBe('/tmp/.uv');
+  it("pypi wraps in the uv image + uvx, cache redirected to tmpfs", () => {
+    const { args, env } = buildSpawnSpec("pypi", "mcp-server-fetch");
+    expect(args.some((a) => a.startsWith("ghcr.io/astral-sh/uv"))).toBe(true);
+    expect(args.slice(-2)).toEqual(["uvx", "mcp-server-fetch"]);
+    expect(args).toContain("UV_CACHE_DIR");
+    expect(env.UV_CACHE_DIR).toBe("/tmp/.uv");
   });
 
-  it('docker source runs the image directly with its start command', () => {
-    const { args } = buildSpawnSpec('docker', 'mcp/slack', 'node app.js');
-    expect(args.slice(-3)).toEqual(['mcp/slack', 'node', 'app.js']);
+  it("docker source runs the image directly with its start command", () => {
+    const { args } = buildSpawnSpec("docker", "mcp/slack", "node app.js");
+    expect(args.slice(-3)).toEqual(["mcp/slack", "node", "app.js"]);
   });
 
-  it('keeps MCP env values out of Docker argv', () => {
-    const { args, env } = buildSpawnSpec('npm', 'pkg', undefined, { TOKEN: 'secret', HOST: 'h' });
-    expect(args).toContain('TOKEN');
-    expect(args).toContain('HOST');
-    expect(args.join(' ')).not.toContain('secret');
-    expect(env).toMatchObject({ TOKEN: 'secret', HOST: 'h' });
+  it("keeps MCP env values out of Docker argv", () => {
+    const { args, env } = buildSpawnSpec("npm", "pkg", undefined, {
+      TOKEN: "secret",
+      HOST: "h",
+    });
+    expect(args).toContain("TOKEN");
+    expect(args).toContain("HOST");
+    expect(args.join(" ")).not.toContain("secret");
+    expect(env).toMatchObject({ TOKEN: "secret", HOST: "h" });
   });
 
   it('network "none" swaps the sandbox bridge for full isolation', () => {
-    const { args } = buildSpawnSpec('npm', 'pkg', undefined, {}, false, 'none');
-    expect(args).toContain('none');
+    const { args } = buildSpawnSpec("npm", "pkg", undefined, {}, false, "none");
+    expect(args).toContain("none");
     expect(args).not.toContain(MCP_NETWORK);
   });
 
-  it('rebuild re-fetches: npm --prefer-online, pypi --refresh, docker --pull always', () => {
-    expect(buildSpawnSpec('npm', 'pkg', undefined, {}, true).args).toContain('--prefer-online');
-    expect(buildSpawnSpec('pypi', 'pkg', undefined, {}, true).args).toContain('--refresh');
-    const d = buildSpawnSpec('docker', 'img', undefined, {}, true).args;
-    expect(d).toContain('--pull');
-    expect(d).toContain('always');
+  it("rebuild re-fetches: npm --prefer-online, pypi --refresh, docker --pull always", () => {
+    expect(buildSpawnSpec("npm", "pkg", undefined, {}, true).args).toContain(
+      "--prefer-online",
+    );
+    expect(buildSpawnSpec("pypi", "pkg", undefined, {}, true).args).toContain(
+      "--refresh",
+    );
+    const d = buildSpawnSpec("docker", "img", undefined, {}, true).args;
+    expect(d).toContain("--pull");
+    expect(d).toContain("always");
   });
 
-  it('throws on unsupported source', () => {
-    expect(() => buildSpawnSpec('brew', 'x')).toThrow(/Unsupported MCP source/);
+  it("throws on unsupported source", () => {
+    expect(() => buildSpawnSpec("brew", "x")).toThrow(/Unsupported MCP source/);
   });
 });
 
-describe('resolveSpawnSpec', () => {
-  it('runs npx JSON configs with their exact args inside the hardened Node container', () => {
-    const commandArgs = ['-y', '@fangjunjie/ssh-mcp-server', '--host', '192.168.1.1'];
+describe("resolveSpawnSpec", () => {
+  it("runs npx JSON configs with their exact args inside the hardened Node container", () => {
+    const commandArgs = [
+      "-y",
+      "@fangjunjie/ssh-mcp-server",
+      "--host",
+      "192.168.1.1",
+    ];
     const { command, args, env } = buildStdioConfigSpawnSpec(
-      'npx',
+      "npx",
       commandArgs,
-      { SSH_PASSWORD: 'secret' },
+      { SSH_PASSWORD: "secret" },
     );
 
-    expect(command).toBe('docker');
-    expect(args).toContain('--cap-drop');
-    expect(args).toContain('SSH_PASSWORD');
-    expect(args.join(' ')).not.toContain('secret');
-    expect(env.SSH_PASSWORD).toBe('secret');
-    const imageIndex = args.indexOf('node:24-bookworm-slim');
-    expect(args.slice(imageIndex + 1)).toEqual(['npx', ...commandArgs]);
+    expect(command).toBe("docker");
+    expect(args).toContain("--cap-drop");
+    expect(args).toContain("SSH_PASSWORD");
+    expect(args.join(" ")).not.toContain("secret");
+    expect(env.SSH_PASSWORD).toBe("secret");
+    const imageIndex = args.indexOf("node:24-bookworm-slim");
+    expect(args.slice(imageIndex + 1)).toEqual(["npx", ...commandArgs]);
   });
 
-  it('runs uvx and uv JSON configs in the Python wrapper and rejects arbitrary commands', () => {
-    const uvx = buildStdioConfigSpawnSpec('uvx', ['mcp-server-fetch']);
-    const uvxImageIndex = uvx.args.findIndex((arg) => arg.startsWith('ghcr.io/astral-sh/uv'));
-    expect(uvx.args.slice(uvxImageIndex + 1)).toEqual(['uvx', 'mcp-server-fetch']);
+  it("runs uvx and uv JSON configs in the Python wrapper and rejects arbitrary commands", () => {
+    const uvx = buildStdioConfigSpawnSpec("uvx", ["mcp-server-fetch"]);
+    const uvxImageIndex = uvx.args.findIndex((arg) =>
+      arg.startsWith("ghcr.io/astral-sh/uv"),
+    );
+    expect(uvx.args.slice(uvxImageIndex + 1)).toEqual([
+      "uvx",
+      "mcp-server-fetch",
+    ]);
 
-    const uvArgs = ['run', '--with', 'mcp-server-fetch', 'mcp-server-fetch'];
-    const uv = buildStdioConfigSpawnSpec('uv', uvArgs, {}, true);
-    const uvImageIndex = uv.args.findIndex((arg) => arg.startsWith('ghcr.io/astral-sh/uv'));
-    expect(uv.args.slice(uvImageIndex + 1)).toEqual(['uv', ...uvArgs]);
+    const uvArgs = ["run", "--with", "mcp-server-fetch", "mcp-server-fetch"];
+    const uv = buildStdioConfigSpawnSpec("uv", uvArgs, {}, true);
+    const uvImageIndex = uv.args.findIndex((arg) =>
+      arg.startsWith("ghcr.io/astral-sh/uv"),
+    );
+    expect(uv.args.slice(uvImageIndex + 1)).toEqual(["uv", ...uvArgs]);
 
-    expect(() => buildStdioConfigSpawnSpec('bash', ['-lc', 'whoami'])).toThrow(/Unsupported/);
+    expect(() => buildStdioConfigSpawnSpec("bash", ["-lc", "whoami"])).toThrow(
+      /Unsupported/,
+    );
   });
 
-  it('uses Git-capable wrappers for documented Git source forms on any forge', () => {
+  it("uses Git-capable wrappers for documented Git source forms on any forge", () => {
     const npxGitSources = [
-      'github:owner/repo#commit-or-tag',
-      'gitlab:group/repository#commit-or-tag',
-      'bitbucket:workspace/repository#commit-or-tag',
-      'gist:11081aaa281#commit-or-tag',
-      'https://git.example.test/group/repository.git#commit-or-tag',
-      'git+https://git.example.test/group/repository.git#commit-or-tag',
-      'git+ssh://git@git.example.test/group/repository.git#commit-or-tag',
-      'ssh://git@git.example.test/group/repository.git#commit-or-tag',
-      'git://git.example.test/group/repository.git#commit-or-tag',
-      'deployer@git.example.test:group/repository.git#commit-or-tag',
+      "github:owner/repo#commit-or-tag",
+      "gitlab:group/repository#commit-or-tag",
+      "bitbucket:workspace/repository#commit-or-tag",
+      "gist:11081aaa281#commit-or-tag",
+      "https://git.example.test/group/repository.git#commit-or-tag",
+      "git+https://git.example.test/group/repository.git#commit-or-tag",
+      "git+ssh://git@git.example.test/group/repository.git#commit-or-tag",
+      "ssh://git@git.example.test/group/repository.git#commit-or-tag",
+      "git://git.example.test/group/repository.git#commit-or-tag",
+      "deployer@git.example.test:group/repository.git#commit-or-tag",
     ];
 
     for (const source of npxGitSources) {
-      const npxArgs = ['-y', source, '--config-file', 'server.json'];
-      const npx = buildStdioConfigSpawnSpec('npx', npxArgs);
-      expect(npx.image).toBe('node:24-bookworm');
-      expect(npx.args.slice(npx.args.indexOf(npx.image) + 1)).toEqual(['npx', ...npxArgs]);
+      const npxArgs = ["-y", source, "--config-file", "server.json"];
+      const npx = buildStdioConfigSpawnSpec("npx", npxArgs);
+      expect(npx.image).toBe("node:24-bookworm");
+      expect(npx.args.slice(npx.args.indexOf(npx.image) + 1)).toEqual([
+        "npx",
+        ...npxArgs,
+      ]);
     }
 
     const npxPackageArgForms = [
       [
-        '-y',
-        '--package=git+https://git.example.test/group/repository.git#commit-or-tag',
-        'server-command',
+        "-y",
+        "--package=git+https://git.example.test/group/repository.git#commit-or-tag",
+        "server-command",
       ],
       [
-        '-y',
-        '--package',
-        'git+https://git.example.test/group/repository.git#commit-or-tag',
-        'server-command',
+        "-y",
+        "--package",
+        "git+https://git.example.test/group/repository.git#commit-or-tag",
+        "server-command",
       ],
       [
-        '-y',
-        '-p',
-        'git://git.example.test/group/repository.git#commit-or-tag',
-        'server-command',
+        "-y",
+        "-p",
+        "git://git.example.test/group/repository.git#commit-or-tag",
+        "server-command",
       ],
     ];
     for (const args of npxPackageArgForms) {
-      expect(buildStdioConfigSpawnSpec('npx', args).image).toBe('node:24-bookworm');
+      expect(buildStdioConfigSpawnSpec("npx", args).image).toBe(
+        "node:24-bookworm",
+      );
     }
 
     const uvxGitSources = [
-      'git+https://git.example.test/group/repository.git@commit-or-tag',
-      'git+ssh://git@git.example.test/group/repository.git@commit-or-tag',
-      'git+git://git.example.test/group/repository.git@commit-or-tag',
+      "git+https://git.example.test/group/repository.git@commit-or-tag",
+      "git+ssh://git@git.example.test/group/repository.git@commit-or-tag",
+      "git+git://git.example.test/group/repository.git@commit-or-tag",
     ];
     for (const source of uvxGitSources) {
-      const uvxArgs = ['--from', source, 'server-command', '--config-file', 'server.toml'];
-      const uvx = buildStdioConfigSpawnSpec('uvx', uvxArgs);
-      expect(uvx.image).toBe('ghcr.io/astral-sh/uv:python3.13-bookworm');
-      expect(uvx.args.slice(uvx.args.indexOf(uvx.image) + 1)).toEqual(['uvx', ...uvxArgs]);
-    }
-  });
-
-  it('keeps registry packages and non-Git direct URLs in the slim wrappers', () => {
-    expect(buildStdioConfigSpawnSpec('npx', ['-y', '@modelcontextprotocol/server-fetch']).image)
-      .toBe('node:24-bookworm-slim');
-    expect(buildStdioConfigSpawnSpec('npx', ['-y', 'https://downloads.example.test/mcp.tgz']).image)
-      .toBe('node:24-bookworm-slim');
-    expect(buildStdioConfigSpawnSpec('uvx', ['--from', 'https://downloads.example.test/mcp.whl', 'mcp']).image)
-      .toBe('ghcr.io/astral-sh/uv:python3.13-bookworm-slim');
-  });
-
-  it('runs JSON Docker configs with ToolPlane-controlled argv and exact container args', () => {
-    const image = 'ghcr.io/acme/stdio-mcp:latest';
-    const containerArgs = ['node', 'server.mjs', '--config', '/toolplane/config/server.json'];
-    const { command, args, image: resolvedImage } = buildStdioConfigSpawnSpec(
-      'docker',
-      ['run', '-i', '--rm', image, ...containerArgs],
-      { API_TOKEN: 'secret' },
-      true,
-    );
-
-    expect(command).toBe('docker');
-    expect(resolvedImage).toBe(image);
-    expect(args).toEqual(expect.arrayContaining([
-      '--cap-drop',
-      'ALL',
-      '--read-only',
-      '--pull',
-      'always',
-      '-e',
-      'API_TOKEN',
-    ]));
-    expect(args.filter((arg) => arg === '-i')).toHaveLength(1);
-    expect(args.filter((arg) => arg === '--rm')).toHaveLength(1);
-    const imageIndex = args.indexOf(image);
-    expect(args.slice(imageIndex)).toEqual([image, ...containerArgs]);
-  });
-
-  it('resolves a stored MCP JSON config with a relative runtime file to a bridge spec', () => {
-    const spec = resolveSpawnSpec({
-      serverId: null,
-      server: null,
-      name: 'ssh-mcp-server',
-      source: 'config',
-      sourceRef: 'npx',
-      installCfg: {
-        command: 'npx',
-        args: ['-y', '@fangjunjie/ssh-mcp-server', '--config-file', 'ssh-config.json'],
-        env: {},
-      },
-    });
-    expect(spec).toMatchObject({
-      kind: 'bridge',
-      name: 'ssh-mcp-server',
-      command: 'docker',
-      configWorkingDirectory: true,
-    });
-    if (spec.kind === 'bridge') {
-      expect(spec.args.slice(-5)).toEqual([
-        'npx',
-        '-y',
-        '@fangjunjie/ssh-mcp-server',
-        '--config-file',
-        'ssh-config.json',
+      const uvxArgs = [
+        "--from",
+        source,
+        "server-command",
+        "--config-file",
+        "server.toml",
+      ];
+      const uvx = buildStdioConfigSpawnSpec("uvx", uvxArgs);
+      expect(uvx.image).toBe("ghcr.io/astral-sh/uv:python3.13-bookworm");
+      expect(uvx.args.slice(uvx.args.indexOf(uvx.image) + 1)).toEqual([
+        "uvx",
+        ...uvxArgs,
       ]);
     }
   });
 
-  it('keeps an image-defined working directory for JSON Docker configs', () => {
-    const image = 'ghcr.io/acme/stdio-mcp:latest';
+  it("keeps registry packages and non-Git direct URLs in the slim wrappers", () => {
+    expect(
+      buildStdioConfigSpawnSpec("npx", [
+        "-y",
+        "@modelcontextprotocol/server-fetch",
+      ]).image,
+    ).toBe("node:24-bookworm-slim");
+    expect(
+      buildStdioConfigSpawnSpec("npx", [
+        "-y",
+        "https://downloads.example.test/mcp.tgz",
+      ]).image,
+    ).toBe("node:24-bookworm-slim");
+    expect(
+      buildStdioConfigSpawnSpec("uvx", [
+        "--from",
+        "https://downloads.example.test/mcp.whl",
+        "mcp",
+      ]).image,
+    ).toBe("ghcr.io/astral-sh/uv:python3.13-bookworm-slim");
+  });
+
+  it("runs JSON Docker configs with ToolPlane-controlled argv and exact container args", () => {
+    const image = "ghcr.io/acme/stdio-mcp:latest";
+    const containerArgs = [
+      "node",
+      "server.mjs",
+      "--config",
+      "/toolplane/config/server.json",
+    ];
+    const {
+      command,
+      args,
+      image: resolvedImage,
+    } = buildStdioConfigSpawnSpec(
+      "docker",
+      ["run", "-i", "--rm", image, ...containerArgs],
+      { API_TOKEN: "secret" },
+      true,
+    );
+
+    expect(command).toBe("docker");
+    expect(resolvedImage).toBe(image);
+    expect(args).toEqual(
+      expect.arrayContaining([
+        "--cap-drop",
+        "ALL",
+        "--read-only",
+        "--pull",
+        "always",
+        "-e",
+        "API_TOKEN",
+      ]),
+    );
+    expect(args.filter((arg) => arg === "-i")).toHaveLength(1);
+    expect(args.filter((arg) => arg === "--rm")).toHaveLength(1);
+    const imageIndex = args.indexOf(image);
+    expect(args.slice(imageIndex)).toEqual([image, ...containerArgs]);
+  });
+
+  it("resolves a stored MCP JSON config with a relative runtime file to a bridge spec", () => {
     const spec = resolveSpawnSpec({
       serverId: null,
       server: null,
-      name: 'Docker JSON MCP',
-      source: 'config',
-      sourceRef: 'docker',
+      name: "ssh-mcp-server",
+      source: "config",
+      sourceRef: "npx",
       installCfg: {
-        command: 'docker',
-        args: ['run', '-i', '--rm', image, 'node', 'server.mjs'],
+        command: "npx",
+        args: [
+          "-y",
+          "@fangjunjie/ssh-mcp-server",
+          "--config-file",
+          "ssh-config.json",
+        ],
+        env: {},
+      },
+    });
+    expect(spec).toMatchObject({
+      kind: "bridge",
+      name: "ssh-mcp-server",
+      command: "docker",
+      configWorkingDirectory: true,
+    });
+    if (spec.kind === "bridge") {
+      expect(spec.args.slice(-5)).toEqual([
+        "npx",
+        "-y",
+        "@fangjunjie/ssh-mcp-server",
+        "--config-file",
+        "ssh-config.json",
+      ]);
+    }
+  });
+
+  it("keeps an image-defined working directory for JSON Docker configs", () => {
+    const image = "ghcr.io/acme/stdio-mcp:latest";
+    const spec = resolveSpawnSpec({
+      serverId: null,
+      server: null,
+      name: "Docker JSON MCP",
+      source: "config",
+      sourceRef: "docker",
+      installCfg: {
+        command: "docker",
+        args: ["run", "-i", "--rm", image, "node", "server.mjs"],
         env: {},
       },
     });
 
     expect(spec).toMatchObject({
-      kind: 'bridge',
-      name: 'Docker JSON MCP',
+      kind: "bridge",
+      name: "Docker JSON MCP",
       image,
     });
-    expect(spec).not.toHaveProperty('configWorkingDirectory');
-    if (spec.kind === 'bridge') {
+    expect(spec).not.toHaveProperty("configWorkingDirectory");
+    if (spec.kind === "bridge") {
       const imageIndex = spec.args.indexOf(image);
-      expect(spec.args.slice(imageIndex)).toEqual([image, 'node', 'server.mjs']);
+      expect(spec.args.slice(imageIndex)).toEqual([
+        image,
+        "node",
+        "server.mjs",
+      ]);
     }
   });
 
-  it('keeps GitHub-backed uvx configs in the managed config working directory', () => {
+  it("keeps GitHub-backed uvx configs in the managed config working directory", () => {
     const spec = resolveSpawnSpec({
       serverId: null,
       server: null,
-      name: 'GitHub uvx MCP',
-      source: 'config',
-      sourceRef: 'uvx',
+      name: "GitHub uvx MCP",
+      source: "config",
+      sourceRef: "uvx",
       installCfg: {
-        command: 'uvx',
+        command: "uvx",
         args: [
-          '--from',
-          'git+https://github.com/owner/repo@commit-or-tag',
-          'server-command',
-          '--config-file',
-          'server.toml',
+          "--from",
+          "git+https://github.com/owner/repo@commit-or-tag",
+          "server-command",
+          "--config-file",
+          "server.toml",
         ],
         env: {},
       },
     });
 
     expect(spec).toMatchObject({
-      kind: 'bridge',
-      image: 'ghcr.io/astral-sh/uv:python3.13-bookworm',
+      kind: "bridge",
+      image: "ghcr.io/astral-sh/uv:python3.13-bookworm",
       configWorkingDirectory: true,
     });
   });
 
-  it('derives the connector server URL from trusted request routing headers', () => {
+  it("derives the connector server URL from trusted request routing headers", () => {
     const requestHeaders = new Headers({
-      'x-forwarded-host': 'toolplane.example.com, proxy.internal',
-      'x-forwarded-proto': 'https, http',
+      "x-forwarded-host": "toolplane.example.com, proxy.internal",
+      "x-forwarded-proto": "https, http",
     });
 
-    expect(connectorServerUrlFromHeaders(requestHeaders)).toBe('https://toolplane.example.com');
+    expect(connectorServerUrlFromHeaders(requestHeaders)).toBe(
+      "https://toolplane.example.com",
+    );
   });
 
-  it('builtin for catalog (in-process, not containerized)', () => {
+  it("builtin for catalog (in-process, not containerized)", () => {
     expect(
-      resolveSpawnSpec({ serverId: 's1', server: { name: 'Stripe' }, name: null, source: null, sourceRef: null, installCfg: null }),
-    ).toEqual({ kind: 'builtin', name: 'Stripe' });
+      resolveSpawnSpec({
+        serverId: "s1",
+        server: { name: "Stripe" },
+        name: null,
+        source: null,
+        sourceRef: null,
+        installCfg: null,
+      }),
+    ).toEqual({ kind: "builtin", name: "Stripe" });
   });
 
-  it('bridge for a catalog server that has an admin recipe (real package)', () => {
+  it("bridge for a catalog server that has an admin recipe (real package)", () => {
     const spec = resolveSpawnSpec({
-      serverId: 's1',
-      server: { name: 'Firecrawl' },
+      serverId: "s1",
+      server: { name: "Firecrawl" },
       name: null,
-      source: 'npm',
-      sourceRef: 'firecrawl-mcp',
-      installCfg: { env: { FIRECRAWL_API_KEY: '' } },
+      source: "npm",
+      sourceRef: "firecrawl-mcp",
+      installCfg: { env: { FIRECRAWL_API_KEY: "" } },
     });
-    expect(spec.kind).toBe('bridge');
-    if (spec.kind === 'bridge') {
-      expect(spec.name).toBe('Firecrawl');
-      expect(spec.command).toBe('docker');
-      expect(spec.args.slice(-1)).toEqual(['firecrawl-mcp']);
+    expect(spec.kind).toBe("bridge");
+    if (spec.kind === "bridge") {
+      expect(spec.name).toBe("Firecrawl");
+      expect(spec.command).toBe("docker");
+      expect(spec.args.slice(-1)).toEqual(["firecrawl-mcp"]);
     }
   });
 
-  it('bridge runs a hardened docker container for a custom deployment', () => {
+  it("bridge runs a hardened docker container for a custom deployment", () => {
     const spec = resolveSpawnSpec({
       serverId: null,
       server: null,
-      name: 'Slack',
-      source: 'docker',
-      sourceRef: 'mcp/slack',
-      installCfg: { env: { TOKEN: 'x' }, startCommand: 'node app.js' },
+      name: "Slack",
+      source: "docker",
+      sourceRef: "mcp/slack",
+      installCfg: { env: { TOKEN: "x" }, startCommand: "node app.js" },
     });
-    expect(spec.kind).toBe('bridge');
-    if (spec.kind === 'bridge') {
-      expect(spec.command).toBe('docker');
-      expect(spec.args).toContain('--cap-drop');
-      expect(spec.args).toContain('TOKEN');
-      expect(spec.args.join(' ')).not.toContain('TOKEN=x');
-      expect(spec.containerEnv).toMatchObject({ TOKEN: 'x' });
-      expect(spec.args.slice(-3)).toEqual(['mcp/slack', 'node', 'app.js']);
+    expect(spec.kind).toBe("bridge");
+    if (spec.kind === "bridge") {
+      expect(spec.command).toBe("docker");
+      expect(spec.args).toContain("--cap-drop");
+      expect(spec.args).toContain("TOKEN");
+      expect(spec.args.join(" ")).not.toContain("TOKEN=x");
+      expect(spec.containerEnv).toMatchObject({ TOKEN: "x" });
+      expect(spec.args.slice(-3)).toEqual(["mcp/slack", "node", "app.js"]);
     }
   });
 
@@ -353,345 +431,385 @@ describe('resolveSpawnSpec', () => {
     const spec = resolveSpawnSpec({
       serverId: null,
       server: null,
-      name: 'x',
-      source: 'npm',
-      sourceRef: 'pkg',
-      installCfg: { network: 'none' },
+      name: "x",
+      source: "npm",
+      sourceRef: "pkg",
+      installCfg: { network: "none" },
     });
-    if (spec.kind === 'bridge') {
-      expect(spec.args).toContain('none');
+    if (spec.kind === "bridge") {
+      expect(spec.args).toContain("none");
       expect(spec.args).not.toContain(MCP_NETWORK);
     }
   });
 
-  it('resolves remote MCP auth from private env references', () => {
-    expect(resolveSpawnSpec({
-      serverId: 'remote-1',
-      server: { name: 'Hosted search' },
-      name: null,
-      source: 'remote',
-      sourceRef: 'https://mcp.example.com/mcp',
-      installCfg: {
-        transport: 'streamable-http',
-        authType: 'headers',
-        env: { API_TOKEN: 'secret-value', UNUSED: 'not-forwarded' },
-        headerEnv: { 'X-Api-Key': 'API_TOKEN' },
-        timeoutMs: 15_000,
-      },
-    })).toEqual({
-      kind: 'remote',
-      name: 'Hosted search',
-      url: 'https://mcp.example.com/mcp',
-      transport: 'streamable-http',
-      headers: { 'X-Api-Key': 'secret-value' },
+  it("resolves remote MCP auth from private env references", () => {
+    expect(
+      resolveSpawnSpec({
+        serverId: "remote-1",
+        server: { name: "Hosted search" },
+        name: null,
+        source: "remote",
+        sourceRef: "https://mcp.example.com/mcp",
+        installCfg: {
+          transport: "streamable-http",
+          authType: "headers",
+          env: { API_TOKEN: "secret-value", UNUSED: "not-forwarded" },
+          headerEnv: { "X-Api-Key": "API_TOKEN" },
+          timeoutMs: 15_000,
+        },
+      }),
+    ).toEqual({
+      kind: "remote",
+      name: "Hosted search",
+      url: "https://mcp.example.com/mcp",
+      transport: "streamable-http",
+      headers: { "X-Api-Key": "secret-value" },
       timeoutMs: 15_000,
     });
   });
 
   it.each([
-    ['http://mcp.example.com/mcp', 'streamable-http'],
-    ['http://mcp.example.com:8000/mcp', 'streamable-http'],
-    ['http://mcp.example.com:8000/sse', 'sse'],
-    ['https://mcp.example.com:443/mcp', 'streamable-http'],
-    ['https://mcp.example.com:8443/sse', 'sse'],
-  ])('resolves %s with %s without dropping authentication', (url, transport) => {
-    expect(resolveSpawnSpec({
-      serverId: null,
-      name: 'Remote',
-      source: 'remote',
-      sourceRef: url,
-      installCfg: { transport, authType: 'bearer', env: { TOKEN: 'test-token' }, bearerEnv: 'TOKEN' },
-    })).toEqual({
-      kind: 'remote',
-      name: 'Remote',
-      url: new URL(url).href,
-      transport,
-      headers: { authorization: 'Bearer test-token' },
-      timeoutMs: 60_000,
-    });
-  });
+    ["http://mcp.example.com/mcp", "streamable-http"],
+    ["http://mcp.example.com:8000/mcp", "streamable-http"],
+    ["http://mcp.example.com:8000/sse", "sse"],
+    ["https://mcp.example.com:443/mcp", "streamable-http"],
+    ["https://mcp.example.com:8443/sse", "sse"],
+  ])(
+    "resolves %s with %s without dropping authentication",
+    (url, transport) => {
+      expect(
+        resolveSpawnSpec({
+          serverId: null,
+          name: "Remote",
+          source: "remote",
+          sourceRef: url,
+          installCfg: {
+            transport,
+            authType: "bearer",
+            env: { TOKEN: "test-token" },
+            bearerEnv: "TOKEN",
+          },
+        }),
+      ).toEqual({
+        kind: "remote",
+        name: "Remote",
+        url: new URL(url).href,
+        transport,
+        headers: { authorization: "Bearer test-token" },
+        timeoutMs: 60_000,
+      });
+    },
+  );
 
-  it('rejects unsafe remote MCP URLs and missing credential references', () => {
+  it("rejects unsafe remote MCP URLs and missing credential references", () => {
     const deployment = {
       serverId: null,
       server: null,
-      name: 'Remote',
-      source: 'remote',
-      sourceRef: 'https://mcp.example.com:0/mcp',
-      installCfg: { authType: 'none' },
+      name: "Remote",
+      source: "remote",
+      sourceRef: "https://mcp.example.com:0/mcp",
+      installCfg: { authType: "none" },
     };
     expect(() => resolveSpawnSpec(deployment)).toThrow(/not allowed/);
-    expect(() => resolveSpawnSpec({
-      ...deployment,
-      sourceRef: 'https://mcp.example.com/mcp',
-      installCfg: { authType: 'bearer', env: {}, bearerEnv: 'TOKEN' },
-    })).toThrow(/TOKEN is not configured/);
-    expect(() => resolveSpawnSpec({
-      ...deployment,
-      sourceRef: 'https://100.64.0.1/mcp',
-      installCfg: { authType: 'none' },
-    })).toThrow(/not allowed/);
+    expect(() =>
+      resolveSpawnSpec({
+        ...deployment,
+        sourceRef: "https://mcp.example.com/mcp",
+        installCfg: { authType: "bearer", env: {}, bearerEnv: "TOKEN" },
+      }),
+    ).toThrow(/TOKEN is not configured/);
+    expect(() =>
+      resolveSpawnSpec({
+        ...deployment,
+        sourceRef: "https://100.64.0.1/mcp",
+        installCfg: { authType: "none" },
+      }),
+    ).toThrow(/not allowed/);
   });
 
-  it('sandbox source resolves to the sandbox MCP server spec', () => {
+  it("sandbox source resolves to the sandbox MCP server spec", () => {
     const spec = resolveSpawnSpec({
       serverId: null,
       server: null,
-      name: 'Sandbox: Lab',
-      source: 'sandbox',
-      sourceRef: 'mcr.microsoft.com/devcontainers/javascript-node:24-bookworm',
+      name: "Sandbox: Lab",
+      source: "sandbox",
+      sourceRef: "mcr.microsoft.com/devcontainers/javascript-node:24-bookworm",
       installCfg: {
-        sandboxId: 'sb1',
-        kind: 'docker',
-        image: 'node:24-bookworm-slim',
-        volumeName: 'vol1',
-        network: 'none',
-        env: { A: '1' },
+        sandboxId: "sb1",
+        kind: "docker",
+        image: "node:24-bookworm-slim",
+        volumeName: "vol1",
+        network: "none",
+        env: { A: "1" },
       },
     });
     expect(spec).toEqual({
-      kind: 'sandbox',
-      name: 'Sandbox: Lab',
-      sandboxId: 'sb1',
-      sandboxKind: 'docker',
-      image: 'node:24-bookworm-slim',
-      volumeName: 'vol1',
-      network: 'none',
-      env: { A: '1' },
+      kind: "sandbox",
+      name: "Sandbox: Lab",
+      sandboxId: "sb1",
+      sandboxKind: "docker",
+      image: "node:24-bookworm-slim",
+      volumeName: "vol1",
+      network: "none",
+      env: { A: "1" },
     });
   });
 
-  it('sandbox source supports WebSocket connector specs', () => {
+  it("sandbox source supports WebSocket connector specs", () => {
     const spec = resolveSpawnSpec({
       serverId: null,
       server: null,
-      name: 'Sandbox: Remote lab',
-      source: 'sandbox',
-      sourceRef: 'connector://mcpcon_deadbeef/srv/workspace',
+      name: "Sandbox: Remote lab",
+      source: "sandbox",
+      sourceRef: "connector://mcpcon_deadbeef/srv/workspace",
       installCfg: {
-        sandboxId: 'sb-connector',
-        kind: 'connector',
-        network: 'isolated',
+        sandboxId: "sb-connector",
+        kind: "connector",
+        network: "isolated",
         connector: {
-          provider: 'websocket',
-          protocolVersion: '2026-07-connector-ws',
-          serverUrl: 'https://app.example.com',
-          remoteRoot: '/srv/workspace',
-          tokenHash: hashConnectorToken('mcpcon_deadbeef'),
-          tokenPrefix: 'mcpcon_deadb',
-          packageName: '/api/v1/connectors/package.tgz',
-          createdAt: '2026-07-05T00:00:00.000Z',
+          provider: "websocket",
+          protocolVersion: "2026-07-connector-ws",
+          serverUrl: "https://app.example.com",
+          remoteRoot: "/srv/workspace",
+          tokenHash: hashConnectorToken("mcpcon_deadbeef"),
+          tokenPrefix: "mcpcon_deadb",
+          packageName: "/api/v1/connectors/package.tgz",
+          createdAt: "2026-07-05T00:00:00.000Z",
         },
       },
     });
 
     expect(spec).toEqual({
-      kind: 'sandbox',
-      name: 'Sandbox: Remote lab',
-      sandboxId: 'sb-connector',
-      sandboxKind: 'connector',
-      network: 'isolated',
+      kind: "sandbox",
+      name: "Sandbox: Remote lab",
+      sandboxId: "sb-connector",
+      sandboxKind: "connector",
+      network: "isolated",
       env: {},
       connector: {
-        provider: 'websocket',
-        protocolVersion: '2026-07-connector-ws-v2',
-        serverUrl: 'https://app.example.com',
-        remoteRoot: '/srv/workspace',
-        tokenHash: hashConnectorToken('mcpcon_deadbeef'),
-        tokenPrefix: 'mcpcon_deadb',
-        packageName: '/api/v1/connectors/package.tgz',
-        createdAt: '2026-07-05T00:00:00.000Z',
+        provider: "websocket",
+        protocolVersion: "2026-07-connector-ws-v2",
+        serverUrl: "https://app.example.com",
+        remoteRoot: "/srv/workspace",
+        tokenHash: hashConnectorToken("mcpcon_deadbeef"),
+        tokenPrefix: "mcpcon_deadb",
+        packageName: "/api/v1/connectors/package.tgz",
+        createdAt: "2026-07-05T00:00:00.000Z",
       },
     });
   });
 
-  it('sandbox source preserves the scoped Hermes runtime identity', () => {
+  it("sandbox source preserves the scoped Hermes runtime identity", () => {
     const spec = resolveSpawnSpec({
       serverId: null,
       server: null,
-      name: 'Hermes runtime: Research',
-      source: 'sandbox',
-      sourceRef: 'nousresearch/hermes-agent:latest',
+      name: "Hermes runtime: Research",
+      source: "sandbox",
+      sourceRef: "nousresearch/hermes-agent:latest",
       installCfg: {
-        sandboxId: 'sb-hermes',
-        kind: 'hermes',
-        image: 'nousresearch/hermes-agent:latest',
-        volumeName: 'hermes-volume',
-        network: 'isolated',
-        runtimeId: 'runtime-1',
-        runtimeModelName: 'research',
+        sandboxId: "sb-hermes",
+        kind: "hermes",
+        image: "nousresearch/hermes-agent:latest",
+        volumeName: "hermes-volume",
+        network: "isolated",
+        runtimeId: "runtime-1",
+        runtimeModelName: "research",
       },
     });
 
     expect(spec).toEqual({
-      kind: 'sandbox',
-      name: 'Hermes runtime: Research',
-      sandboxId: 'sb-hermes',
-      sandboxKind: 'hermes',
-      image: 'nousresearch/hermes-agent:latest',
-      volumeName: 'hermes-volume',
-      network: 'isolated',
+      kind: "sandbox",
+      name: "Hermes runtime: Research",
+      sandboxId: "sb-hermes",
+      sandboxKind: "hermes",
+      image: "nousresearch/hermes-agent:latest",
+      volumeName: "hermes-volume",
+      network: "isolated",
       env: {},
-      runtimeId: 'runtime-1',
-      runtimeModelName: 'research',
+      runtimeId: "runtime-1",
+      runtimeModelName: "research",
     });
   });
 
-  it('sandbox source surfaces the opt-in sudo setting', () => {
+  it("sandbox source surfaces the opt-in sudo setting", () => {
     const spec = resolveSpawnSpec({
       serverId: null,
       server: null,
-      name: 'Hermes runtime: Research',
-      source: 'sandbox',
-      sourceRef: 'nousresearch/hermes-agent:latest',
+      name: "Hermes runtime: Research",
+      source: "sandbox",
+      sourceRef: "nousresearch/hermes-agent:latest",
       installCfg: {
-        sandboxId: 'sb-hermes',
-        kind: 'hermes',
-        image: 'nousresearch/hermes-agent:latest',
-        volumeName: 'hermes-volume',
-        network: 'isolated',
-        runtimeId: 'runtime-1',
-        runtimeModelName: 'research',
+        sandboxId: "sb-hermes",
+        kind: "hermes",
+        image: "nousresearch/hermes-agent:latest",
+        volumeName: "hermes-volume",
+        network: "isolated",
+        runtimeId: "runtime-1",
+        runtimeModelName: "research",
         allowSudo: true,
       },
     });
 
-    expect(spec).toEqual(expect.objectContaining({
-      kind: 'sandbox',
-      sandboxId: 'sb-hermes',
-      allowSudo: true,
-    }));
+    expect(spec).toEqual(
+      expect.objectContaining({
+        kind: "sandbox",
+        sandboxId: "sb-hermes",
+        allowSudo: true,
+      }),
+    );
   });
 
-  it('generates the one-command WebSocket connector command', () => {
+  it("generates the one-command WebSocket connector command", () => {
     const connector = buildConnectorConfig(
       {
-        serverUrl: 'https://app.example.com/',
-        remoteRoot: '/srv/workspace',
+        serverUrl: "https://app.example.com/",
+        remoteRoot: "/srv/workspace",
       },
-      'mcpcon_deadbeef',
+      "mcpcon_deadbeef",
     );
 
-    expect(connectorClientCommand(connector, 'mcpcon_deadbeef')).toBe(
+    expect(connectorClientCommand(connector, "mcpcon_deadbeef")).toBe(
       `npx -y --no-audit --package "https://app.example.com/api/v1/connectors/package.tgz?v=${CONNECTOR_PACKAGE_VERSION}" connector connect --server "https://app.example.com" --token "mcpcon_deadbeef" --root "/srv/workspace" --screen-vnc "auto"`,
     );
   });
 
-  it('uses the exact same command for a Windows root with spaces', () => {
+  it("uses the exact same command for a Windows root with spaces", () => {
     const connector = buildConnectorConfig(
       {
-        serverUrl: 'https://app.example.com/',
-        remoteRoot: 'C:\\Users\\Ada Lovelace\\ToolPlane Sandbox',
+        serverUrl: "https://app.example.com/",
+        remoteRoot: "C:\\Users\\Ada Lovelace\\ToolPlane Sandbox",
       },
-      'mcpcon_deadbeef',
+      "mcpcon_deadbeef",
     );
 
-    expect(connectorClientCommand(connector, 'mcpcon_deadbeef')).toBe(
+    expect(connectorClientCommand(connector, "mcpcon_deadbeef")).toBe(
       `npx -y --no-audit --package "https://app.example.com/api/v1/connectors/package.tgz?v=${CONNECTOR_PACKAGE_VERSION}" connector connect --server "https://app.example.com" --token "mcpcon_deadbeef" --root "C:\\Users\\Ada Lovelace\\ToolPlane Sandbox" --screen-vnc "auto"`,
     );
   });
 
-  it('drops URL path, credentials, query, and fragment before generating a command', () => {
+  it("drops URL path, credentials, query, and fragment before generating a command", () => {
     const connector = buildConnectorConfig(
-      { serverUrl: 'https://user:pass@app.example.com/base?x=1&next=bad#hash' },
-      'mcpcon_deadbeef',
+      { serverUrl: "https://user:pass@app.example.com/base?x=1&next=bad#hash" },
+      "mcpcon_deadbeef",
     );
 
-    expect(connector.serverUrl).toBe('https://app.example.com');
-    expect(connectorClientCommand(connector, 'mcpcon_deadbeef')).toBe(
+    expect(connector.serverUrl).toBe("https://app.example.com");
+    expect(connectorClientCommand(connector, "mcpcon_deadbeef")).toBe(
       `npx -y --no-audit --package "https://app.example.com/api/v1/connectors/package.tgz?v=${CONNECTOR_PACKAGE_VERSION}" connector connect --server "https://app.example.com" --token "mcpcon_deadbeef" --root "~/toolplane-sandbox" --screen-vnc "auto"`,
     );
   });
 
-  it('generates an Android ADB bridge command with a device-safe root', () => {
-    const connector = buildConnectorConfig({ serverUrl: 'https://app.example.com' }, 'mcpcon_deadbeef');
+  it("generates an Android ADB bridge command with a device-safe root", () => {
+    const connector = buildConnectorConfig(
+      { serverUrl: "https://app.example.com" },
+      "mcpcon_deadbeef",
+    );
 
-    expect(connectorAndroidClientCommand(connector, 'mcpcon_deadbeef')).toBe(
+    expect(connectorAndroidClientCommand(connector, "mcpcon_deadbeef")).toBe(
       `npx -y --no-audit --package "https://app.example.com/api/v1/connectors/package.tgz?v=${CONNECTOR_PACKAGE_VERSION}" connector connect --server "https://app.example.com" --token "mcpcon_deadbeef" --root "/sdcard/ToolPlane" --android "auto"`,
     );
   });
 
-  it('rejects a token that contains shell syntax', () => {
-    const connector = buildConnectorConfig({ serverUrl: 'https://app.example.com' }, 'mcpcon_deadbeef');
+  it("rejects a token that contains shell syntax", () => {
+    const connector = buildConnectorConfig(
+      { serverUrl: "https://app.example.com" },
+      "mcpcon_deadbeef",
+    );
 
-    expect(() => connectorClientCommand(connector, 'mcpcon_ok;whoami')).toThrow(/unsupported argument/i);
+    expect(() => connectorClientCommand(connector, "mcpcon_ok;whoami")).toThrow(
+      /unsupported argument/i,
+    );
   });
 
-  it('rejects percent expansion in a custom package argument for Windows cmd', () => {
-    const connector = buildConnectorConfig({
-      serverUrl: 'https://app.example.com',
-      packageName: 'https://packages.example.com/%PATH%/connector.tgz',
-    }, 'mcpcon_deadbeef');
+  it("rejects percent expansion in a custom package argument for Windows cmd", () => {
+    const connector = buildConnectorConfig(
+      {
+        serverUrl: "https://app.example.com",
+        packageName: "https://packages.example.com/%PATH%/connector.tgz",
+      },
+      "mcpcon_deadbeef",
+    );
 
-    expect(connector.packageName).toBe('/api/v1/connectors/package.tgz');
-    expect(connectorClientCommand(connector, 'mcpcon_deadbeef')).not.toContain('%PATH%');
+    expect(connector.packageName).toBe("/api/v1/connectors/package.tgz");
+    expect(connectorClientCommand(connector, "mcpcon_deadbeef")).not.toContain(
+      "%PATH%",
+    );
   });
 
-  it('normalizes legacy connector package and root names', () => {
-    const legacyPackage = `@${['mcp', 'market'].join('-')}/connector`;
-    const legacyRoot = `~/${['mcp', 'market'].join('')}-sandbox`;
+  it("normalizes legacy connector package and root names", () => {
+    const legacyPackage = `@${["mcp", "market"].join("-")}/connector`;
+    const legacyRoot = `~/${["mcp", "market"].join("")}-sandbox`;
     const connector = connectorFromConfig({
       connector: {
-        provider: 'websocket',
-        protocolVersion: '2026-07-connector-ws',
-        serverUrl: 'http://localhost:3002',
+        provider: "websocket",
+        protocolVersion: "2026-07-connector-ws",
+        serverUrl: "http://localhost:3002",
         remoteRoot: legacyRoot,
-        tokenHash: hashConnectorToken('mcpcon_deadbeef'),
-        tokenPrefix: 'mcpcon_deadb',
+        tokenHash: hashConnectorToken("mcpcon_deadbeef"),
+        tokenPrefix: "mcpcon_deadb",
         packageName: legacyPackage,
-        createdAt: '2026-07-05T00:00:00.000Z',
+        createdAt: "2026-07-05T00:00:00.000Z",
       },
     });
 
     expect(connector).not.toBeNull();
-    expect(connectorClientCommand(connector!, 'mcpcon_deadbeef')).toBe(
+    expect(
+      connectorClientCommand(assertDefined(connector), "mcpcon_deadbeef"),
+    ).toBe(
       `npx -y --no-audit --package "http://localhost:3002/api/v1/connectors/package.tgz?v=${CONNECTOR_PACKAGE_VERSION}" connector connect --server "http://localhost:3002" --token "mcpcon_deadbeef" --root "~/toolplane-sandbox" --screen-vnc "auto"`,
     );
   });
 
-  it('normalizes the unpublished registry connector package to the hosted tarball', () => {
+  it("normalizes the unpublished registry connector package to the hosted tarball", () => {
     const connector = connectorFromConfig({
       connector: {
-        provider: 'websocket',
-        protocolVersion: '2026-07-connector-ws',
-        serverUrl: 'http://localhost:3002',
-        remoteRoot: '~/toolplane-sandbox',
-        tokenHash: hashConnectorToken('mcpcon_deadbeef'),
-        tokenPrefix: 'mcpcon_deadb',
-        packageName: '@toolplane/connector',
-        createdAt: '2026-07-05T00:00:00.000Z',
+        provider: "websocket",
+        protocolVersion: "2026-07-connector-ws",
+        serverUrl: "http://localhost:3002",
+        remoteRoot: "~/toolplane-sandbox",
+        tokenHash: hashConnectorToken("mcpcon_deadbeef"),
+        tokenPrefix: "mcpcon_deadb",
+        packageName: "@toolplane/connector",
+        createdAt: "2026-07-05T00:00:00.000Z",
       },
     });
 
     expect(connector).not.toBeNull();
-    expect(connectorClientCommand(connector!, 'mcpcon_deadbeef')).toBe(
+    expect(
+      connectorClientCommand(assertDefined(connector), "mcpcon_deadbeef"),
+    ).toBe(
       `npx -y --no-audit --package "http://localhost:3002/api/v1/connectors/package.tgz?v=${CONNECTOR_PACKAGE_VERSION}" connector connect --server "http://localhost:3002" --token "mcpcon_deadbeef" --root "~/toolplane-sandbox" --screen-vnc "auto"`,
     );
   });
 
-  it('replaces roots with shell expansion syntax before generating the portable command', () => {
-    const connector = buildConnectorConfig({
-      serverUrl: 'https://app.example.com',
-      remoteRoot: '$HOME/private',
-    }, 'mcpcon_deadbeef');
+  it("replaces roots with shell expansion syntax before generating the portable command", () => {
+    const connector = buildConnectorConfig(
+      {
+        serverUrl: "https://app.example.com",
+        remoteRoot: "$HOME/private",
+      },
+      "mcpcon_deadbeef",
+    );
 
-    expect(connector.remoteRoot).toBe('~/toolplane-sandbox');
-    expect(connectorClientCommand(connector, 'mcpcon_deadbeef')).not.toContain('$HOME');
+    expect(connector.remoteRoot).toBe("~/toolplane-sandbox");
+    expect(connectorClientCommand(connector, "mcpcon_deadbeef")).not.toContain(
+      "$HOME",
+    );
   });
 
-  it('repairs a persisted platform URL that was written into remoteRoot', () => {
+  it("repairs a persisted platform URL that was written into remoteRoot", () => {
     const connector = connectorFromConfig({
       connector: {
-        provider: 'websocket',
-        serverUrl: 'http://localhost:3000',
-        remoteRoot: 'http://localhost:3000',
-        tokenHash: hashConnectorToken('mcpcon_deadbeef'),
-        tokenPrefix: 'mcpcon_deadb',
-        packageName: '/api/v1/connectors/package.tgz',
-        createdAt: '2026-07-12T00:00:00.000Z',
+        provider: "websocket",
+        serverUrl: "http://localhost:3000",
+        remoteRoot: "http://localhost:3000",
+        tokenHash: hashConnectorToken("mcpcon_deadbeef"),
+        tokenPrefix: "mcpcon_deadb",
+        packageName: "/api/v1/connectors/package.tgz",
+        createdAt: "2026-07-12T00:00:00.000Z",
       },
     });
 
-    expect(connector?.remoteRoot).toBe('~/toolplane-sandbox');
+    expect(connector?.remoteRoot).toBe("~/toolplane-sandbox");
   });
 });

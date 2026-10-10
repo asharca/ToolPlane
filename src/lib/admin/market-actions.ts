@@ -1,53 +1,72 @@
-'use server';
+"use server";
 
-import { redirect } from 'next/navigation';
-import { revalidatePath } from 'next/cache';
-import { getTranslations } from 'next-intl/server';
-import { requireAdmin } from '@/lib/auth/admin';
-import { db } from '@/lib/db';
+import { redirect } from "next/navigation";
+import { revalidatePath } from "next/cache";
+import { getTranslations } from "next-intl/server";
+import { requireAdmin } from "@/lib/auth/admin";
+import { db } from "@/lib/db";
 import {
-  createDirectoryServer, updateDirectoryServer, deleteDirectoryServer,
-  createDirectorySkill, updateDirectorySkill, deleteDirectorySkill,
-  setServerRecipe, setServerVerified,
-} from '@/lib/admin/market';
-import { parseServerRecipe } from '@/lib/workspace/server-recipe';
-import { validateServerRecipe } from '@/lib/admin/recipe-validate';
-import { fetchGithubSkillBundle } from '@/lib/skills/bundle';
-import { syncGithubSkillRegistry, type GithubSkillRegistrySource } from '@/lib/skills/registry';
-import { recordEvent } from '@/lib/observability/events';
-import { redactText } from '@/lib/observability/redaction';
+  createDirectoryServer,
+  updateDirectoryServer,
+  deleteDirectoryServer,
+  createDirectorySkill,
+  updateDirectorySkill,
+  deleteDirectorySkill,
+  setServerRecipe,
+  setServerVerified,
+} from "@/lib/admin/market";
+import { parseServerRecipe } from "@/lib/workspace/server-recipe";
+import { validateServerRecipe } from "@/lib/admin/recipe-validate";
+import { fetchGithubSkillBundle, type SkillBundle } from "@/lib/skills/bundle";
+import {
+  syncGithubSkillRegistry,
+  type GithubSkillRegistrySource,
+} from "@/lib/skills/registry";
+import { recordEvent } from "@/lib/observability/events";
+import { redactText } from "@/lib/observability/redaction";
 import {
   fetchServerSourceMetadata,
   type ServerMetadataSource,
   type ServerSourceMetadata,
-} from '@/lib/admin/server-source';
-import { isValidMcpRef } from '@/lib/workspace/custom-mcp';
-import type { AdminActionState } from '@/lib/admin/user-actions';
+} from "@/lib/admin/server-source";
+import { isValidMcpRef } from "@/lib/workspace/custom-mcp";
+import type { AdminActionState } from "@/lib/admin/user-actions";
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]*[a-z0-9]$/;
-const str = (fd: FormData, k: string) => String(fd.get(k) ?? '').trim();
-const nul = (v: string) => (v === '' ? null : v);
-const num = (v: string) => { const n = Number(v); return Number.isFinite(n) ? Math.trunc(n) : 0; };
-const ids = (fd: FormData) => fd.getAll('categoryIds').map((v) => String(v));
-const ALLOWED_SOURCE_URL_HOSTS = new Set(['github.com', 'www.npmjs.com', 'pypi.org']);
+const str = (fd: FormData, k: string) => String(fd.get(k) ?? "").trim();
+const nul = (v: string) => (v === "" ? null : v);
+const num = (v: string) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.trunc(n) : 0;
+};
+const ids = (fd: FormData) => fd.getAll("categoryIds").map((v) => String(v));
+const ALLOWED_SOURCE_URL_HOSTS = new Set([
+  "github.com",
+  "www.npmjs.com",
+  "pypi.org",
+]);
 
 function sourceMetadataFromForm(fd: FormData) {
-  const source = str(fd, 'sourceMetadataSource') as ServerMetadataSource;
-  const ref = str(fd, 'sourceMetadataRef');
-  const sourceUrl = str(fd, 'sourceMetadataCanonicalUrl');
+  const source = str(fd, "sourceMetadataSource") as ServerMetadataSource;
+  const ref = str(fd, "sourceMetadataRef");
+  const sourceUrl = str(fd, "sourceMetadataCanonicalUrl");
   if (!sourceUrl) return undefined;
-  if (!['github', 'npm', 'pypi'].includes(source) || !isValidMcpRef(source, ref)) {
-    throw new Error('Invalid source metadata reference.');
+  if (
+    !["github", "npm", "pypi"].includes(source) ||
+    !isValidMcpRef(source, ref)
+  ) {
+    throw new Error("Invalid source metadata reference.");
   }
   const url = new URL(sourceUrl);
   if (
-    url.protocol !== 'https:'
-    || url.username
-    || url.password
-    || url.search
-    || url.hash
-    || !ALLOWED_SOURCE_URL_HOSTS.has(url.hostname.toLowerCase())
-  ) throw new Error('Invalid canonical source URL.');
+    url.protocol !== "https:" ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash ||
+    !ALLOWED_SOURCE_URL_HOSTS.has(url.hostname.toLowerCase())
+  )
+    throw new Error("Invalid canonical source URL.");
   return { source, ref, sourceUrl };
 }
 
@@ -61,12 +80,22 @@ export async function fetchServerSourceMetadataAction(
   fd: FormData,
 ): Promise<ServerSourceMetadataActionState> {
   await requireAdmin();
-  const t = await getTranslations('admin');
-  const source = str(fd, 'sourceMetadataSource') as ServerMetadataSource;
+  const t = await getTranslations("admin");
+  const source = str(fd, "sourceMetadataSource") as ServerMetadataSource;
   try {
-    return { metadata: await fetchServerSourceMetadata({ source, ref: str(fd, 'sourceMetadataRef') }) };
+    return {
+      metadata: await fetchServerSourceMetadata({
+        source,
+        ref: str(fd, "sourceMetadataRef"),
+      }),
+    };
   } catch (error) {
-    return { error: t('errorSourceMetadataFetch', { message: error instanceof Error ? error.message : t('errorActionFailed') }) };
+    return {
+      error: t("errorSourceMetadataFetch", {
+        message:
+          error instanceof Error ? error.message : t("errorActionFailed"),
+      }),
+    };
   }
 }
 
@@ -81,77 +110,122 @@ export type SkillRegistrySyncActionState = {
   source?: GithubSkillRegistrySource;
 };
 
-export async function createServerAction(_prev: AdminActionState, fd: FormData): Promise<AdminActionState> {
+export async function createServerAction(
+  _prev: AdminActionState,
+  fd: FormData,
+): Promise<AdminActionState> {
   const admin = await requireAdmin();
-  const t = await getTranslations('admin');
-  const slug = str(fd, 'slug').toLowerCase();
-  const name = str(fd, 'name');
-  if (!name || !SLUG_RE.test(slug)) return { error: t('errorNameSlugRequired') };
+  const t = await getTranslations("admin");
+  const slug = str(fd, "slug").toLowerCase();
+  const name = str(fd, "name");
+  if (!name || !SLUG_RE.test(slug))
+    return { error: t("errorNameSlugRequired") };
   try {
-    await createDirectoryServer({
-      slug, name, author: nul(str(fd, 'author')), description: nul(str(fd, 'description')),
-      iconUrl: nul(str(fd, 'iconUrl')), stars: num(str(fd, 'stars')),
-      isOfficial: fd.get('isOfficial') === 'on', isFeatured: fd.get('isFeatured') === 'on', categoryIds: ids(fd),
-      readme: nul(str(fd, 'readme').slice(0, 500_000)),
-      sourceMetadata: sourceMetadataFromForm(fd),
-    }, admin.id);
+    await createDirectoryServer(
+      {
+        slug,
+        name,
+        author: nul(str(fd, "author")),
+        description: nul(str(fd, "description")),
+        iconUrl: nul(str(fd, "iconUrl")),
+        stars: num(str(fd, "stars")),
+        isOfficial: fd.get("isOfficial") === "on",
+        isFeatured: fd.get("isFeatured") === "on",
+        categoryIds: ids(fd),
+        readme: nul(str(fd, "readme").slice(0, 500_000)),
+        sourceMetadata: sourceMetadataFromForm(fd),
+      },
+      admin.id,
+    );
   } catch {
-    return { error: t('errorServerExists') };
+    return { error: t("errorServerExists") };
   }
-  revalidatePath('/admin/servers');
-  redirect('/admin/servers');
+  revalidatePath("/admin/servers");
+  redirect("/admin/servers");
 }
 
-export async function updateServerAction(_prev: AdminActionState, fd: FormData): Promise<AdminActionState> {
+export async function updateServerAction(
+  _prev: AdminActionState,
+  fd: FormData,
+): Promise<AdminActionState> {
   const admin = await requireAdmin();
-  const t = await getTranslations('admin');
-  const id = str(fd, 'id');
-  const name = str(fd, 'name');
-  if (!name) return { error: t('errorNameRequired') };
+  const t = await getTranslations("admin");
+  const id = str(fd, "id");
+  const name = str(fd, "name");
+  if (!name) return { error: t("errorNameRequired") };
   try {
-    await updateDirectoryServer(id, {
-      name, author: nul(str(fd, 'author')), description: nul(str(fd, 'description')),
-      iconUrl: nul(str(fd, 'iconUrl')), stars: num(str(fd, 'stars')),
-      isOfficial: fd.get('isOfficial') === 'on', isFeatured: fd.get('isFeatured') === 'on', categoryIds: ids(fd),
-      readme: nul(str(fd, 'readme').slice(0, 500_000)),
-      sourceMetadata: sourceMetadataFromForm(fd),
-    }, admin.id);
+    await updateDirectoryServer(
+      id,
+      {
+        name,
+        author: nul(str(fd, "author")),
+        description: nul(str(fd, "description")),
+        iconUrl: nul(str(fd, "iconUrl")),
+        stars: num(str(fd, "stars")),
+        isOfficial: fd.get("isOfficial") === "on",
+        isFeatured: fd.get("isFeatured") === "on",
+        categoryIds: ids(fd),
+        readme: nul(str(fd, "readme").slice(0, 500_000)),
+        sourceMetadata: sourceMetadataFromForm(fd),
+      },
+      admin.id,
+    );
   } catch {
-    return { error: t('errorActionFailed') };
+    return { error: t("errorActionFailed") };
   }
-  revalidatePath('/admin/servers');
+  revalidatePath("/admin/servers");
   revalidatePath(`/admin/servers/${id}/edit`);
   return {};
 }
 
-export async function deleteServerAction(_prev: AdminActionState, fd: FormData): Promise<AdminActionState> {
+export async function deleteServerAction(
+  _prev: AdminActionState,
+  fd: FormData,
+): Promise<AdminActionState> {
   const admin = await requireAdmin();
-  const t = await getTranslations('admin');
+  const t = await getTranslations("admin");
   try {
-    await deleteDirectoryServer(str(fd, 'id'), admin.id);
+    await deleteDirectoryServer(str(fd, "id"), admin.id);
   } catch (e) {
-    const count = e instanceof Error ? /^(?:Refused: )?(\d+) live deployment/.exec(e.message)?.[1] : undefined;
-    return { error: count ? t('errorServerReferenced', { count: Number(count) }) : t('errorActionFailed') };
+    const count =
+      e instanceof Error
+        ? /^(?:Refused: )?(\d+) live deployment/.exec(e.message)?.[1]
+        : undefined;
+    return {
+      error: count
+        ? t("errorServerReferenced", { count: Number(count) })
+        : t("errorActionFailed"),
+    };
   }
-  revalidatePath('/admin/servers');
-  redirect('/admin/servers');
+  revalidatePath("/admin/servers");
+  redirect("/admin/servers");
 }
 
 function slugify(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
-export async function importSkillFromGithubAction(_prev: AdminActionState, fd: FormData): Promise<AdminActionState> {
+export async function importSkillFromGithubAction(
+  _prev: AdminActionState,
+  fd: FormData,
+): Promise<AdminActionState> {
   const admin = await requireAdmin();
-  const t = await getTranslations('admin');
-  const source = str(fd, 'githubSource').trim();
-  if (!source) return { error: t('errorGithubSourceRequired') };
+  const t = await getTranslations("admin");
+  const source = str(fd, "githubSource").trim();
+  if (!source) return { error: t("errorGithubSourceRequired") };
 
-  let bundle;
+  let bundle: SkillBundle;
   try {
     bundle = await fetchGithubSkillBundle(source);
   } catch (e) {
-    return { error: t('errorGithubFetch', { message: e instanceof Error ? e.message : t('errorActionFailed') }) };
+    return {
+      error: t("errorGithubFetch", {
+        message: e instanceof Error ? e.message : t("errorActionFailed"),
+      }),
+    };
   }
 
   const name = bundle.name;
@@ -159,31 +233,36 @@ export async function importSkillFromGithubAction(_prev: AdminActionState, fd: F
   const author = bundle.author;
 
   let slug = slugify(bundle.slugHint);
-  if (!SLUG_RE.test(slug)) slug = slugify(`${bundle.source.owner}-${bundle.source.repo}`);
+  if (!SLUG_RE.test(slug))
+    slug = slugify(`${bundle.source.owner}-${bundle.source.repo}`);
 
   const existing = await db.skill.findUnique({ where: { slug } });
-  if (existing?.githubSource === bundle.source.normalized) return { error: t('errorAlreadyImported', { slug }) };
+  if (existing?.githubSource === bundle.source.normalized)
+    return { error: t("errorAlreadyImported", { slug }) };
   if (existing) slug = `${slug}-${Date.now().toString(36)}`;
 
   try {
-    await createDirectorySkill({
-      slug,
-      name,
-      author,
-      description,
-      iconUrl: null,
-      githubSource: bundle.source.normalized,
-      content: bundle.content,
-      ...(bundle.files.length ? { files: bundle.files } : {}),
-      score: 0,
-      categoryIds: [],
-    }, admin.id);
+    await createDirectorySkill(
+      {
+        slug,
+        name,
+        author,
+        description,
+        iconUrl: null,
+        githubSource: bundle.source.normalized,
+        content: bundle.content,
+        ...(bundle.files.length ? { files: bundle.files } : {}),
+        score: 0,
+        categoryIds: [],
+      },
+      admin.id,
+    );
   } catch {
-    return { error: t('errorSkillCreate') };
+    return { error: t("errorSkillCreate") };
   }
 
-  revalidatePath('/admin/skills');
-  redirect('/admin/skills');
+  revalidatePath("/admin/skills");
+  redirect("/admin/skills");
 }
 
 export async function syncSkillRegistryAction(
@@ -191,25 +270,45 @@ export async function syncSkillRegistryAction(
   fd: FormData,
 ): Promise<SkillRegistrySyncActionState> {
   const admin = await requireAdmin();
-  const t = await getTranslations('admin');
-  const owner = str(fd, 'owner');
-  const repo = str(fd, 'repo');
-  const ref = str(fd, 'ref') || 'main';
-  const rootPath = str(fd, 'rootPath') || 'skills';
-  const slugPrefix = str(fd, 'slugPrefix');
-  const retry = str(fd, 'intent') === 'retry';
-  const source = retry ? previous.source : { owner, repo, ref, rootPath, slugPrefix };
-  if (!source || !/^[a-zA-Z0-9-]{1,100}$/.test(source.owner) || !/^[a-zA-Z0-9_.-]{1,100}$/.test(source.repo)) return { error: t('errorOwnerRepoRequired') };
+  const t = await getTranslations("admin");
+  const owner = str(fd, "owner");
+  const repo = str(fd, "repo");
+  const ref = str(fd, "ref") || "main";
+  const rootPath = str(fd, "rootPath") || "skills";
+  const slugPrefix = str(fd, "slugPrefix");
+  const retry = str(fd, "intent") === "retry";
+  const source = retry
+    ? previous.source
+    : { owner, repo, ref, rootPath, slugPrefix };
+  if (
+    !source ||
+    !/^[a-zA-Z0-9-]{1,100}$/.test(source.owner) ||
+    !/^[a-zA-Z0-9_.-]{1,100}$/.test(source.repo)
+  )
+    return { error: t("errorOwnerRepoRequired") };
   const paths = retry ? previous.failures?.map(({ path }) => path) : undefined;
-  if (retry && (!paths?.length || paths.length > 1000)) return { ...previous, error: t('errorActionFailed') };
+  if (retry && (!paths?.length || paths.length > 1000))
+    return { ...previous, error: t("errorActionFailed") };
 
   try {
-    const result = await syncGithubSkillRegistry(db, source, { paths, actorId: admin.id });
-    await recordEvent({ domain: 'system', eventName: 'skills.registry.sync', actorId: admin.id,
-      outcome: result.failed.length ? 'error' : 'success', message: `Skill registry sync: ${result.created} created, ${result.updated} updated, ${result.failed.length} failed`,
-      attributes: { registry: result.registry, failed: result.failed, retried: retry } });
-    revalidatePath('/admin/skills');
-    revalidatePath('/app/[workspace]/market/skills', 'page');
+    const result = await syncGithubSkillRegistry(db, source, {
+      paths,
+      actorId: admin.id,
+    });
+    await recordEvent({
+      domain: "system",
+      eventName: "skills.registry.sync",
+      actorId: admin.id,
+      outcome: result.failed.length ? "error" : "success",
+      message: `Skill registry sync: ${result.created} created, ${result.updated} updated, ${result.failed.length} failed`,
+      attributes: {
+        registry: result.registry,
+        failed: result.failed,
+        retried: retry,
+      },
+    });
+    revalidatePath("/admin/skills");
+    revalidatePath("/app/[workspace]/market/skills", "page");
     return {
       ok: true,
       found: result.found,
@@ -218,76 +317,136 @@ export async function syncSkillRegistryAction(
       failed: result.failed.length,
       failures: result.failed,
       source,
-      error: result.failed.length > 0 ? t('errorSyncPartial', { count: result.failed.length }) : undefined,
+      error:
+        result.failed.length > 0
+          ? t("errorSyncPartial", { count: result.failed.length })
+          : undefined,
     };
   } catch (e) {
-    const message = redactText(e instanceof Error ? e.message : t('errorActionFailed'), [process.env.GITHUB_TOKEN ?? '', process.env.TOOLPLANE_GITHUB_TOKEN ?? '']).slice(0, 2000);
-    await recordEvent({ domain: 'system', eventName: 'skills.registry.sync', actorId: admin.id, outcome: 'error', message });
-    return { ...(retry ? previous : {}), ok: false, error: t('errorSyncFailed', { message }) };
+    const message = redactText(
+      e instanceof Error ? e.message : t("errorActionFailed"),
+      [
+        process.env.GITHUB_TOKEN ?? "",
+        process.env.TOOLPLANE_GITHUB_TOKEN ?? "",
+      ],
+    ).slice(0, 2000);
+    await recordEvent({
+      domain: "system",
+      eventName: "skills.registry.sync",
+      actorId: admin.id,
+      outcome: "error",
+      message,
+    });
+    return {
+      ...(retry ? previous : {}),
+      ok: false,
+      error: t("errorSyncFailed", { message }),
+    };
   }
 }
 
-export async function createSkillAction(_prev: AdminActionState, fd: FormData): Promise<AdminActionState> {
+export async function createSkillAction(
+  _prev: AdminActionState,
+  fd: FormData,
+): Promise<AdminActionState> {
   const admin = await requireAdmin();
-  const t = await getTranslations('admin');
-  const slug = str(fd, 'slug').toLowerCase();
-  const name = str(fd, 'name');
-  if (!name || !SLUG_RE.test(slug)) return { error: t('errorNameSlugRequired') };
+  const t = await getTranslations("admin");
+  const slug = str(fd, "slug").toLowerCase();
+  const name = str(fd, "name");
+  if (!name || !SLUG_RE.test(slug))
+    return { error: t("errorNameSlugRequired") };
   try {
-    await createDirectorySkill({
-      slug, name, author: nul(str(fd, 'author')), description: nul(str(fd, 'description')),
-      iconUrl: nul(str(fd, 'iconUrl')), githubSource: nul(str(fd, 'githubSource')),
-      score: num(str(fd, 'score')), categoryIds: ids(fd),
-    }, admin.id);
+    await createDirectorySkill(
+      {
+        slug,
+        name,
+        author: nul(str(fd, "author")),
+        description: nul(str(fd, "description")),
+        iconUrl: nul(str(fd, "iconUrl")),
+        githubSource: nul(str(fd, "githubSource")),
+        score: num(str(fd, "score")),
+        categoryIds: ids(fd),
+      },
+      admin.id,
+    );
   } catch {
-    return { error: t('errorSkillExists') };
+    return { error: t("errorSkillExists") };
   }
-  revalidatePath('/admin/skills');
-  redirect('/admin/skills');
+  revalidatePath("/admin/skills");
+  redirect("/admin/skills");
 }
 
-export async function updateSkillAction(_prev: AdminActionState, fd: FormData): Promise<AdminActionState> {
+export async function updateSkillAction(
+  _prev: AdminActionState,
+  fd: FormData,
+): Promise<AdminActionState> {
   const admin = await requireAdmin();
-  const t = await getTranslations('admin');
-  const id = str(fd, 'id');
-  const name = str(fd, 'name');
-  if (!name) return { error: t('errorNameRequired') };
+  const t = await getTranslations("admin");
+  const id = str(fd, "id");
+  const name = str(fd, "name");
+  if (!name) return { error: t("errorNameRequired") };
   try {
-    await updateDirectorySkill(id, {
-      name, author: nul(str(fd, 'author')), description: nul(str(fd, 'description')),
-      iconUrl: nul(str(fd, 'iconUrl')), githubSource: nul(str(fd, 'githubSource')),
-      score: num(str(fd, 'score')), categoryIds: ids(fd),
-    }, admin.id);
+    await updateDirectorySkill(
+      id,
+      {
+        name,
+        author: nul(str(fd, "author")),
+        description: nul(str(fd, "description")),
+        iconUrl: nul(str(fd, "iconUrl")),
+        githubSource: nul(str(fd, "githubSource")),
+        score: num(str(fd, "score")),
+        categoryIds: ids(fd),
+      },
+      admin.id,
+    );
   } catch {
-    return { error: t('errorActionFailed') };
+    return { error: t("errorActionFailed") };
   }
-  revalidatePath('/admin/skills');
+  revalidatePath("/admin/skills");
   revalidatePath(`/admin/skills/${id}/edit`);
   return {};
 }
 
-export async function deleteSkillAction(_prev: AdminActionState, fd: FormData): Promise<AdminActionState> {
+export async function deleteSkillAction(
+  _prev: AdminActionState,
+  fd: FormData,
+): Promise<AdminActionState> {
   const admin = await requireAdmin();
-  const t = await getTranslations('admin');
+  const t = await getTranslations("admin");
   try {
-    await deleteDirectorySkill(str(fd, 'id'), admin.id);
+    await deleteDirectorySkill(str(fd, "id"), admin.id);
   } catch (e) {
-    const count = e instanceof Error ? /^(?:Refused: )?(\d+) workspace install/.exec(e.message)?.[1] : undefined;
-    return { error: count ? t('errorSkillInstalled', { count: Number(count) }) : t('errorActionFailed') };
+    const count =
+      e instanceof Error
+        ? /^(?:Refused: )?(\d+) workspace install/.exec(e.message)?.[1]
+        : undefined;
+    return {
+      error: count
+        ? t("errorSkillInstalled", { count: Number(count) })
+        : t("errorActionFailed"),
+    };
   }
-  revalidatePath('/admin/skills');
-  redirect('/admin/skills');
+  revalidatePath("/admin/skills");
+  redirect("/admin/skills");
 }
 
 // ---- Server deploy recipes ----
 
-export type RecipeActionState = { error?: string; ok?: boolean; toolCount?: number; tools?: string[] };
+export type RecipeActionState = {
+  error?: string;
+  ok?: boolean;
+  toolCount?: number;
+  tools?: string[];
+};
 
-const SOURCES = new Set(['npm', 'pypi', 'github', 'docker', 'remote']);
+const SOURCES = new Set(["npm", "pypi", "github", "docker", "remote"]);
 
 // Free-form env-keys field → list (comma / whitespace / newline separated).
 function envKeys(raw: string): string[] {
-  return raw.split(/[\s,]+/).map((k) => k.trim()).filter(Boolean);
+  return raw
+    .split(/[\s,]+/)
+    .map((k) => k.trim())
+    .filter(Boolean);
 }
 
 // "KEY=value" lines → map (throwaway test values used only during validation).
@@ -304,79 +463,102 @@ function envPairs(raw: string): Record<string, string> {
 function headerEnvPairs(raw: string): Record<string, string> {
   const out: Record<string, string> = {};
   for (const line of raw.split(/\n+/)) {
-    const separator = line.indexOf('=');
-    if (separator > 0) out[line.slice(0, separator).trim()] = line.slice(separator + 1).trim();
+    const separator = line.indexOf("=");
+    if (separator > 0)
+      out[line.slice(0, separator).trim()] = line.slice(separator + 1).trim();
   }
   return out;
 }
 
 function recipeFromForm(fd: FormData) {
-  const source = str(fd, 'recipeSource');
+  const source = str(fd, "recipeSource");
   if (!SOURCES.has(source)) return null;
   return parseServerRecipe({
     source,
-    ref: str(fd, 'recipeRef'),
-    sourceUrl: str(fd, 'recipeSourceUrl'),
-    startCommand: str(fd, 'recipeStartCommand'),
-    env: envKeys(str(fd, 'recipeEnv')),
-    envValues: envPairs(str(fd, 'recipeEnvValues')),
-    network: fd.get('recipeNetwork') === 'on' ? 'none' : undefined,
-    transport: str(fd, 'recipeTransport') === 'sse' ? 'sse' : 'streamable-http',
-    authType: ['bearer', 'headers'].includes(str(fd, 'recipeAuthType'))
-      ? str(fd, 'recipeAuthType')
-      : 'none',
-    bearerEnv: str(fd, 'recipeBearerEnv'),
-    headerEnv: headerEnvPairs(str(fd, 'recipeHeaderEnv')),
+    ref: str(fd, "recipeRef"),
+    sourceUrl: str(fd, "recipeSourceUrl"),
+    startCommand: str(fd, "recipeStartCommand"),
+    env: envKeys(str(fd, "recipeEnv")),
+    envValues: envPairs(str(fd, "recipeEnvValues")),
+    network: fd.get("recipeNetwork") === "on" ? "none" : undefined,
+    transport: str(fd, "recipeTransport") === "sse" ? "sse" : "streamable-http",
+    authType: ["bearer", "headers"].includes(str(fd, "recipeAuthType"))
+      ? str(fd, "recipeAuthType")
+      : "none",
+    bearerEnv: str(fd, "recipeBearerEnv"),
+    headerEnv: headerEnvPairs(str(fd, "recipeHeaderEnv")),
   });
 }
 
-export async function setServerRecipeAction(_prev: RecipeActionState, fd: FormData): Promise<RecipeActionState> {
+export async function setServerRecipeAction(
+  _prev: RecipeActionState,
+  fd: FormData,
+): Promise<RecipeActionState> {
   const admin = await requireAdmin();
-  const t = await getTranslations('admin');
-  const id = str(fd, 'id');
+  const t = await getTranslations("admin");
+  const id = str(fd, "id");
   const recipe = recipeFromForm(fd);
-  if (!recipe) return { error: t('errorInvalidRecipe') };
+  if (!recipe) return { error: t("errorInvalidRecipe") };
   try {
     await setServerRecipe(id, recipe, admin.id);
   } catch {
-    return { error: t('errorActionFailed') };
+    return { error: t("errorActionFailed") };
   }
   revalidatePath(`/admin/servers/${id}/edit`);
-  revalidatePath('/admin/servers');
+  revalidatePath("/admin/servers");
   return { ok: true };
 }
 
-export async function removeServerRecipeAction(_prev: RecipeActionState, fd: FormData): Promise<RecipeActionState> {
+export async function removeServerRecipeAction(
+  _prev: RecipeActionState,
+  fd: FormData,
+): Promise<RecipeActionState> {
   const admin = await requireAdmin();
-  const t = await getTranslations('admin');
-  const id = str(fd, 'id');
+  const t = await getTranslations("admin");
+  const id = str(fd, "id");
   try {
     await setServerRecipe(id, null, admin.id);
   } catch {
-    return { error: t('errorActionFailed') };
+    return { error: t("errorActionFailed") };
   }
   revalidatePath(`/admin/servers/${id}/edit`);
-  revalidatePath('/admin/servers');
+  revalidatePath("/admin/servers");
   return { ok: true };
 }
 
-export async function validateServerRecipeAction(_prev: RecipeActionState, fd: FormData): Promise<RecipeActionState> {
+export async function validateServerRecipeAction(
+  _prev: RecipeActionState,
+  fd: FormData,
+): Promise<RecipeActionState> {
   const admin = await requireAdmin();
-  const t = await getTranslations('admin');
-  const id = str(fd, 'id');
-  const server = await db.server.findUnique({ where: { id }, select: { installCfg: true, updatedAt: true } });
+  const t = await getTranslations("admin");
+  const id = str(fd, "id");
+  const server = await db.server.findUnique({
+    where: { id },
+    select: { installCfg: true, updatedAt: true },
+  });
   const recipe = parseServerRecipe(server?.installCfg);
-  if (!recipe) return { error: t('errorSaveRecipeFirst') };
+  if (!server || !recipe) return { error: t("errorSaveRecipeFirst") };
 
-  const result = await validateServerRecipe(recipe, envPairs(str(fd, 'testEnv')));
-  if (!result.ok) return { error: t('errorValidationFailed', { message: result.error }) };
+  const result = await validateServerRecipe(
+    recipe,
+    envPairs(str(fd, "testEnv")),
+  );
+  if (!result.ok)
+    return { error: t("errorValidationFailed", { message: result.error }) };
 
   try {
-    await setServerVerified(id, result.toolCount, result.toolCatalog, server!.updatedAt, admin.id);
+    await setServerVerified(
+      id,
+      result.toolCount,
+      result.toolCatalog,
+      server.updatedAt,
+      admin.id,
+    );
   } catch {
-    return { error: t('errorSaveRecipeFirst') };
+    return { error: t("errorSaveRecipeFirst") };
   }
   revalidatePath(`/admin/servers/${id}/edit`);
-  revalidatePath('/admin/servers');
+  revalidatePath("/admin/servers");
   return { ok: true, toolCount: result.toolCount, tools: result.tools };
 }

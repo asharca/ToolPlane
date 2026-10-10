@@ -1,5 +1,5 @@
-export const HERMES_RUNTIME_KIND = 'hermes';
-export const HERMES_IMAGE_REPOSITORY = 'nousresearch/hermes-agent';
+export const HERMES_RUNTIME_KIND = "hermes";
+export const HERMES_IMAGE_REPOSITORY = "nousresearch/hermes-agent";
 export const DEFAULT_HERMES_IMAGE = `${HERMES_IMAGE_REPOSITORY}:latest`;
 
 // Kept intentionally small and pinned where possible. The Docker Hub tag list
@@ -17,9 +17,9 @@ export const HERMES_IMAGE_OPTIONS = [
   `${HERMES_IMAGE_REPOSITORY}:v2026.7.1`,
 ] as const;
 
-const PUBLIC_HERMES_RELEASE_IMAGES = new Set<string>(HERMES_IMAGE_OPTIONS.filter((image) => (
-  image !== DEFAULT_HERMES_IMAGE
-)));
+const PUBLIC_HERMES_RELEASE_IMAGES = new Set<string>(
+  HERMES_IMAGE_OPTIONS.filter((image) => image !== DEFAULT_HERMES_IMAGE),
+);
 
 const DOCKER_IMAGE = /^[A-Za-z0-9][A-Za-z0-9._/@:+-]{0,254}$/;
 
@@ -30,9 +30,11 @@ const DOCKER_IMAGE = /^[A-Za-z0-9][A-Za-z0-9._/@:+-]{0,254}$/;
  * supports trusted custom registries and tags.
  */
 export function isValidHermesImage(value: unknown): value is string {
-  return typeof value === 'string'
-    && value.trim().length > 0
-    && DOCKER_IMAGE.test(value.trim());
+  return (
+    typeof value === "string" &&
+    value.trim().length > 0 &&
+    DOCKER_IMAGE.test(value.trim())
+  );
 }
 
 /**
@@ -45,8 +47,8 @@ export function isPublicHermesImage(value: unknown): value is string {
   if (!isValidHermesImage(value)) return false;
   const image = value.trim();
   if (PUBLIC_HERMES_RELEASE_IMAGES.has(image)) return true;
-  const configured = (process.env.TOOLPLANE_PUBLIC_HERMES_IMAGES ?? '')
-    .split(',')
+  const configured = (process.env.TOOLPLANE_PUBLIC_HERMES_IMAGES ?? "")
+    .split(",")
     .map((item) => item.trim())
     .filter(Boolean);
   return configured.includes(image) && /@sha256:[a-f0-9]{64}$/i.test(image);
@@ -57,26 +59,33 @@ export function isPinnedPublicHermesImage(value: unknown): value is string {
   if (!isValidHermesImage(value)) return false;
   const image = value.trim();
   if (
-    new RegExp(`^(?:docker\\.io/)?${HERMES_IMAGE_REPOSITORY.replace('/', '\\/')}@sha256:[a-f0-9]{64}$`, 'i')
-      .test(image)
-  ) return true;
-  return (process.env.TOOLPLANE_PUBLIC_HERMES_IMAGES ?? '')
-    .split(',')
-    .map((item) => item.trim())
-    .filter(Boolean)
-    .includes(image)
-    && /@sha256:[a-f0-9]{64}$/i.test(image);
+    new RegExp(
+      `^(?:docker\\.io/)?${HERMES_IMAGE_REPOSITORY.replace("/", "\\/")}@sha256:[a-f0-9]{64}$`,
+      "i",
+    ).test(image)
+  )
+    return true;
+  return (
+    (process.env.TOOLPLANE_PUBLIC_HERMES_IMAGES ?? "")
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .includes(image) && /@sha256:[a-f0-9]{64}$/i.test(image)
+  );
 }
 
 export function resolveHermesImage(raw: unknown): string {
   const configured = process.env.TOOLPLANE_HERMES_IMAGE?.trim();
-  const fallback = configured && isValidHermesImage(configured)
-    ? configured
-    : DEFAULT_HERMES_IMAGE;
-  const value = String(raw ?? '').trim();
+  const fallback =
+    configured && isValidHermesImage(configured)
+      ? configured
+      : DEFAULT_HERMES_IMAGE;
+  const value = String(raw ?? "").trim();
   return isValidHermesImage(value) ? value : fallback;
 }
 
-export function isHermesRuntimeKind(value: unknown): value is typeof HERMES_RUNTIME_KIND {
+export function isHermesRuntimeKind(
+  value: unknown,
+): value is typeof HERMES_RUNTIME_KIND {
   return value === HERMES_RUNTIME_KIND;
 }

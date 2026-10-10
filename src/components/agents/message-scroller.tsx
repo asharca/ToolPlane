@@ -28,7 +28,9 @@ function truncateMessageText(text: string, limit: number) {
 
 function getMessageText(message: HTMLElement) {
   const surface =
-    message.querySelector<HTMLElement>('[data-slot="message-bubble-content"]') ??
+    message.querySelector<HTMLElement>(
+      '[data-slot="message-bubble-content"]',
+    ) ??
     message.querySelector<HTMLElement>('[data-slot="message-content"]') ??
     message;
   return (surface.textContent ?? "").replace(/\s+/g, " ").trim();
@@ -201,9 +203,7 @@ export function MessageScroller({
       }
     }
 
-    setActiveRailId((current) =>
-      current === nearestId ? current : nearestId,
-    );
+    setActiveRailId((current) => (current === nearestId ? current : nearestId));
   }, [followThreshold, navigation]);
 
   const syncRailItems = useCallback(() => {
@@ -279,9 +279,12 @@ export function MessageScroller({
       viewport.scrollTop = viewport.scrollHeight;
     }
     if (scrollTimerRef.current) window.clearTimeout(scrollTimerRef.current);
-    scrollTimerRef.current = window.setTimeout(() => {
-      programmaticScrollRef.current = false;
-    }, behavior === "smooth" ? 320 : 0);
+    scrollTimerRef.current = window.setTimeout(
+      () => {
+        programmaticScrollRef.current = false;
+      },
+      behavior === "smooth" ? 320 : 0,
+    );
   }, []);
 
   const handleScroll = useCallback(() => {
@@ -398,9 +401,12 @@ export function MessageScroller({
         viewport.scrollTop = top;
       }
       if (scrollTimerRef.current) window.clearTimeout(scrollTimerRef.current);
-      scrollTimerRef.current = window.setTimeout(() => {
-        programmaticScrollRef.current = false;
-      }, behavior === "smooth" ? 320 : 0);
+      scrollTimerRef.current = window.setTimeout(
+        () => {
+          programmaticScrollRef.current = false;
+        },
+        behavior === "smooth" ? 320 : 0,
+      );
     },
     [railItems, reduce, scrollToEnd, setFollowing, smooth],
   );

@@ -1,24 +1,24 @@
-import 'server-only';
-import { Prisma } from '@prisma/client';
-import { db } from '@/lib/db';
+import "server-only";
+import { Prisma } from "@prisma/client";
+import { db } from "@/lib/db";
 import {
   attachmentIdsFromParts,
   claimWorkspaceAttachments,
-} from '@/lib/attachments/messages';
-import { AGENT_STEP_BOUNDS } from '@/lib/agents/constants';
-import { getAssistantMarketTemplate } from '@/lib/market/skills';
+} from "@/lib/attachments/messages";
+import { AGENT_STEP_BOUNDS } from "@/lib/agents/constants";
+import { getAssistantMarketTemplate } from "@/lib/market/skills";
 import {
   chatBranchNavigation,
   chatMessagePath,
   latestChatBranchLeaf,
-} from './branches';
+} from "./branches";
 import type {
   CreateChatAssistantInput,
   CreateChatThreadInput,
   GenerateChatAssistantPromptInput,
   UpdateChatAssistantInput,
   UpdateChatThreadInput,
-} from './schemas';
+} from "./schemas";
 
 export const CHAT_TURN_STALE_AFTER_MS = 5 * 60 * 1000;
 
@@ -27,7 +27,7 @@ const providerForClient = {
 } as const;
 
 const grantForClient = {
-  orderBy: { createdAt: 'asc' as const },
+  orderBy: { createdAt: "asc" as const },
   select: {
     deploymentId: true,
     deployment: {
@@ -49,9 +49,12 @@ const grantForClient = {
 } as const;
 
 export class ChatServiceError extends Error {
-  constructor(readonly status: number, message: string) {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
     super(message);
-    this.name = 'ChatServiceError';
+    this.name = "ChatServiceError";
   }
 }
 
@@ -78,18 +81,28 @@ export type ChatBranchNode = {
   awaitingInput: boolean;
 };
 
-function isAwaitingInput(message: Pick<StoredChatMessage, 'role' | 'parts'>) {
-  return message.role === 'user' && Array.isArray(message.parts) && message.parts.length === 0;
+function isAwaitingInput(message: Pick<StoredChatMessage, "role" | "parts">) {
+  return (
+    message.role === "user" &&
+    Array.isArray(message.parts) &&
+    message.parts.length === 0
+  );
 }
 
-function projectActiveChatBranch<T extends { activeMessageId: string | null; messages: StoredChatMessage[] }>(
-  thread: T | null,
-) {
+function projectActiveChatBranch<
+  T extends { activeMessageId: string | null; messages: StoredChatMessage[] },
+>(thread: T | null) {
   if (!thread) return null;
   const path = chatMessagePath(thread.messages, thread.activeMessageId);
   const activeIds = new Set(path.map((message) => message.id));
-  const parentIds = new Set(thread.messages.flatMap((message) => message.parentId ? [message.parentId] : []));
-  const leafCount = thread.messages.filter((message) => !parentIds.has(message.id)).length;
+  const parentIds = new Set(
+    thread.messages.flatMap((message) =>
+      message.parentId ? [message.parentId] : [],
+    ),
+  );
+  const leafCount = thread.messages.filter(
+    (message) => !parentIds.has(message.id),
+  ).length;
   return {
     ...thread,
     messages: path.filter((message) => !isAwaitingInput(message)),
@@ -104,8 +117,12 @@ function projectActiveChatBranch<T extends { activeMessageId: string | null; mes
         status: message.status,
         modelId: message.modelId,
         createdAt: message.createdAt.toISOString(),
-        preview: messageTitle(Array.isArray(message.parts) ? message.parts as Array<Record<string, unknown>> : [])
-          ?? (message.role === 'user' ? 'User message' : 'Assistant message'),
+        preview:
+          messageTitle(
+            Array.isArray(message.parts)
+              ? (message.parts as Array<Record<string, unknown>>)
+              : [],
+          ) ?? (message.role === "user" ? "User message" : "Assistant message"),
         active: activeIds.has(message.id),
         awaitingInput: isAwaitingInput(message),
       })),
@@ -117,24 +134,25 @@ async function requireWorkspace(userId: string, workspaceId: string) {
   const workspace = await db.workspace.findFirst({
     where: {
       id: workspaceId,
-      status: 'active', OR: [{ ownerId: userId }, { members: { some: { userId } } }],
+      status: "active",
+      OR: [{ ownerId: userId }, { members: { some: { userId } } }],
     },
     select: { id: true },
   });
-  if (!workspace) throw new ChatServiceError(404, 'Workspace not found');
+  if (!workspace) throw new ChatServiceError(404, "Workspace not found");
   return workspace;
 }
 
 async function validateAssistantResources(
   workspaceId: string,
-  input: Pick<UpdateChatAssistantInput, 'modelProviderId' | 'deploymentIds'>,
+  input: Pick<UpdateChatAssistantInput, "modelProviderId" | "deploymentIds">,
 ) {
   if (input.modelProviderId) {
     const provider = await db.modelProvider.findFirst({
       where: { id: input.modelProviderId, workspaceId },
       select: { id: true },
     });
-    if (!provider) throw new ChatServiceError(400, 'Model provider not found');
+    if (!provider) throw new ChatServiceError(400, "Model provider not found");
   }
 
   if (input.deploymentIds !== undefined) {
@@ -143,12 +161,18 @@ async function validateAssistantResources(
         id: { in: input.deploymentIds },
         workspaceId,
         sandbox: { is: null },
-        OR: [{ source: null }, { source: { not: 'sandbox' } }],
+        OR: [{ source: null }, { source: { not: "sandbox" } }],
       },
-      select: { id: true, server: { select: { slug: true, verifiedAt: true } } },
+      select: {
+        id: true,
+        server: { select: { slug: true, verifiedAt: true } },
+      },
     });
     if (deployments.length !== input.deploymentIds.length) {
-      throw new ChatServiceError(400, 'One or more MCP deployments are invalid');
+      throw new ChatServiceError(
+        400,
+        "One or more MCP deployments are invalid",
+      );
     }
     return deployments;
   }
@@ -159,12 +183,12 @@ async function validateAssistantResources(
 export async function listChatAssistantsForWorkspace(workspaceId: string) {
   return db.chatAssistant.findMany({
     where: { workspaceId },
-    orderBy: [{ pinned: 'desc' }, { updatedAt: 'desc' }],
+    orderBy: [{ pinned: "desc" }, { updatedAt: "desc" }],
     include: {
       modelProvider: providerForClient,
       mcpGrants: grantForClient,
       threads: {
-        orderBy: { updatedAt: 'desc' },
+        orderBy: { updatedAt: "desc" },
         take: 50,
         select: {
           id: true,
@@ -172,7 +196,7 @@ export async function listChatAssistantsForWorkspace(workspaceId: string) {
           createdAt: true,
           updatedAt: true,
           messages: {
-            orderBy: { createdAt: 'desc' },
+            orderBy: { createdAt: "desc" },
             take: 1,
             select: { id: true, role: true, parts: true, createdAt: true },
           },
@@ -182,16 +206,23 @@ export async function listChatAssistantsForWorkspace(workspaceId: string) {
   });
 }
 
-export async function listChatAssistantsForUser(userId: string, workspaceId: string) {
+export async function listChatAssistantsForUser(
+  userId: string,
+  workspaceId: string,
+) {
   await requireWorkspace(userId, workspaceId);
   return listChatAssistantsForWorkspace(workspaceId);
 }
 
-export async function listRunningChatThreadIds(userId: string, workspaceId: string) {
+export async function listRunningChatThreadIds(
+  userId: string,
+  workspaceId: string,
+) {
   await requireWorkspace(userId, workspaceId);
   const turns = await db.chatTurn.findMany({
     where: {
-      thread: { workspaceId }, status: 'pending',
+      thread: { workspaceId },
+      status: "pending",
       createdAt: { gte: new Date(Date.now() - CHAT_TURN_STALE_AFTER_MS) },
     },
     select: { threadId: true },
@@ -199,58 +230,79 @@ export async function listRunningChatThreadIds(userId: string, workspaceId: stri
   return turns.map((turn) => turn.threadId);
 }
 
-export async function getChatAssistantForWorkspace(workspaceId: string, assistantId: string) {
+export async function getChatAssistantForWorkspace(
+  workspaceId: string,
+  assistantId: string,
+) {
   return db.chatAssistant.findFirst({
     where: { id: assistantId, workspaceId },
     include: {
       modelProvider: providerForClient,
       mcpGrants: grantForClient,
       threads: {
-        orderBy: { updatedAt: 'desc' },
+        orderBy: { updatedAt: "desc" },
         take: 50,
         include: {
-          messages: { orderBy: { createdAt: 'desc' }, take: 1 },
+          messages: { orderBy: { createdAt: "desc" }, take: 1 },
         },
       },
     },
   });
 }
 
-export async function getChatAssistantForUser(userId: string, assistantId: string) {
+export async function getChatAssistantForUser(
+  userId: string,
+  assistantId: string,
+) {
   return db.chatAssistant.findFirst({
     where: {
       id: assistantId,
-      workspace: { status: 'active', OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
+      workspace: {
+        status: "active",
+        OR: [{ ownerId: userId }, { members: { some: { userId } } }],
+      },
     },
     include: {
       modelProvider: providerForClient,
       mcpGrants: grantForClient,
       threads: {
-        orderBy: { updatedAt: 'desc' },
+        orderBy: { updatedAt: "desc" },
         take: 50,
-        include: { messages: { orderBy: { createdAt: 'desc' }, take: 1 } },
+        include: { messages: { orderBy: { createdAt: "desc" }, take: 1 } },
       },
     },
   });
 }
 
-export async function createChatAssistant(userId: string, input: CreateChatAssistantInput) {
+export async function createChatAssistant(
+  userId: string,
+  input: CreateChatAssistantInput,
+) {
   await requireWorkspace(userId, input.workspaceId);
   const template = input.marketTemplateReleaseId
     ? await getAssistantMarketTemplate(input.marketTemplateReleaseId)
     : null;
   if (input.marketTemplateReleaseId && !template) {
-    throw new ChatServiceError(400, 'Assistant market template not found');
+    throw new ChatServiceError(400, "Assistant market template not found");
   }
-  const deployments = await validateAssistantResources(input.workspaceId, input);
+  const deployments = await validateAssistantResources(
+    input.workspaceId,
+    input,
+  );
   if (template) {
-    const selectedSlugs = new Set(deployments.flatMap(({ server }) => (
-      server?.slug && server.verifiedAt ? [server.slug] : []
-    )));
-    const missing = template.manifest.assistant.mcpRequirements
-      .filter(({ catalogSlug }) => !selectedSlugs.has(catalogSlug));
+    const selectedSlugs = new Set(
+      deployments.flatMap(({ server }) =>
+        server?.slug && server.verifiedAt ? [server.slug] : [],
+      ),
+    );
+    const missing = template.manifest.assistant.mcpRequirements.filter(
+      ({ catalogSlug }) => !selectedSlugs.has(catalogSlug),
+    );
     if (missing.length) {
-      throw new ChatServiceError(400, `Install and select the required MCP servers: ${missing.map(({ name }) => name).join(', ')}`);
+      throw new ChatServiceError(
+        400,
+        `Install and select the required MCP servers: ${missing.map(({ name }) => name).join(", ")}`,
+      );
     }
   }
   const data = {
@@ -261,12 +313,14 @@ export async function createChatAssistant(userId: string, input: CreateChatAssis
     modelProviderId: input.modelProviderId ?? null,
     model: input.model ?? null,
     modelParameters: input.modelParameters
-      ? input.modelParameters as Prisma.InputJsonValue
+      ? (input.modelParameters as Prisma.InputJsonValue)
       : Prisma.DbNull,
     maxSteps: input.maxSteps ?? AGENT_STEP_BOUNDS.default,
     marketTemplateReleaseId: input.marketTemplateReleaseId ?? null,
     mcpGrants: {
-      create: (input.deploymentIds ?? []).map((deploymentId) => ({ deploymentId })),
+      create: (input.deploymentIds ?? []).map((deploymentId) => ({
+        deploymentId,
+      })),
     },
   };
   if (!template) {
@@ -282,21 +336,25 @@ export async function createChatAssistant(userId: string, input: CreateChatAssis
     });
     const attributed = await tx.marketListing.updateMany({
       where: {
-        kind: 'assistant',
-        status: 'published',
+        kind: "assistant",
+        status: "published",
         latestReleaseId: template.releaseId,
-        latestRelease: { is: { reviewStatus: 'approved' } },
+        latestRelease: { is: { reviewStatus: "approved" } },
       },
       data: { installCount: { increment: 1 } },
     });
-    if (attributed.count !== 1) throw new ChatServiceError(400, 'Assistant market template not found');
+    if (attributed.count !== 1)
+      throw new ChatServiceError(400, "Assistant market template not found");
     return assistant;
   });
 }
 
 export async function installAssistantMarketRelease(
   userId: string,
-  input: Omit<CreateChatAssistantInput, 'workspaceId' | 'marketTemplateReleaseId' | 'name'> & {
+  input: Omit<
+    CreateChatAssistantInput,
+    "workspaceId" | "marketTemplateReleaseId" | "name"
+  > & {
     workspaceId: string;
     releaseId: string;
     name?: string;
@@ -304,9 +362,13 @@ export async function installAssistantMarketRelease(
 ) {
   await requireWorkspace(userId, input.workspaceId);
   const template = await getAssistantMarketTemplate(input.releaseId);
-  if (!template) throw new ChatServiceError(404, 'Assistant market template not found');
+  if (!template)
+    throw new ChatServiceError(404, "Assistant market template not found");
   const definition = template.manifest.assistant;
-  const model = input.model !== undefined ? input.model : definition.modelRequirement?.model ?? null;
+  const model =
+    input.model !== undefined
+      ? input.model
+      : (definition.modelRequirement?.model ?? null);
   let modelProviderId = input.modelProviderId ?? null;
   if (modelProviderId) {
     const provider = await db.modelProvider.findFirst({
@@ -314,49 +376,71 @@ export async function installAssistantMarketRelease(
       select: { id: true, format: true, models: true },
     });
     if (
-      !provider
-      || (
-        definition.modelRequirement
-        && input.model === undefined
-        && provider.format !== definition.modelRequirement.providerFormat
-      )
-      || (model && provider.models.length > 0 && !provider.models.includes(model))
+      !provider ||
+      (definition.modelRequirement &&
+        input.model === undefined &&
+        provider.format !== definition.modelRequirement.providerFormat) ||
+      (model && provider.models.length > 0 && !provider.models.includes(model))
     ) {
-      throw new ChatServiceError(400, 'Model provider does not support the selected model');
+      throw new ChatServiceError(
+        400,
+        "Model provider does not support the selected model",
+      );
     }
   } else if (definition.modelRequirement) {
     const providers = await db.modelProvider.findMany({
-      where: { workspaceId: input.workspaceId, format: definition.modelRequirement.providerFormat },
-      orderBy: { createdAt: 'asc' },
+      where: {
+        workspaceId: input.workspaceId,
+        format: definition.modelRequirement.providerFormat,
+      },
+      orderBy: { createdAt: "asc" },
       select: { id: true, models: true },
     });
-    modelProviderId = providers.find((provider) => (
-      !model || provider.models.length === 0 || provider.models.includes(model)
-    ))?.id ?? null;
+    modelProviderId =
+      providers.find(
+        (provider) =>
+          !model ||
+          provider.models.length === 0 ||
+          provider.models.includes(model),
+      )?.id ?? null;
     if (!modelProviderId) {
-      throw new ChatServiceError(409, 'Install a compatible model provider before installing this assistant');
+      throw new ChatServiceError(
+        409,
+        "Install a compatible model provider before installing this assistant",
+      );
     }
   }
   if (model && !modelProviderId) {
-    throw new ChatServiceError(400, 'Select a model provider for the selected model');
+    throw new ChatServiceError(
+      400,
+      "Select a model provider for the selected model",
+    );
   }
 
   let deploymentIds = input.deploymentIds;
   if (deploymentIds === undefined && definition.mcpRequirements.length > 0) {
-    const requiredSlugs = definition.mcpRequirements.map(({ catalogSlug }) => catalogSlug);
+    const requiredSlugs = definition.mcpRequirements.map(
+      ({ catalogSlug }) => catalogSlug,
+    );
     const deployments = await db.deployment.findMany({
       where: {
         workspaceId: input.workspaceId,
         sandbox: { is: null },
-        server: { is: { slug: { in: requiredSlugs }, verifiedAt: { not: null } } },
-        OR: [{ source: null }, { source: { not: 'sandbox' } }],
+        server: {
+          is: { slug: { in: requiredSlugs }, verifiedAt: { not: null } },
+        },
+        OR: [{ source: null }, { source: { not: "sandbox" } }],
       },
-      orderBy: { createdAt: 'asc' },
+      orderBy: { createdAt: "asc" },
       select: { id: true, server: { select: { slug: true } } },
     });
-    const deploymentBySlug = new Map(deployments.flatMap((deployment) => (
-      deployment.server ? [[deployment.server.slug, deployment.id] as const] : []
-    )));
+    const deploymentBySlug = new Map(
+      deployments.flatMap((deployment) =>
+        deployment.server
+          ? [[deployment.server.slug, deployment.id] as const]
+          : [],
+      ),
+    );
     deploymentIds = requiredSlugs.flatMap((slug) => {
       const id = deploymentBySlug.get(slug);
       return id ? [id] : [];
@@ -367,7 +451,10 @@ export async function installAssistantMarketRelease(
     workspaceId: input.workspaceId,
     marketTemplateReleaseId: input.releaseId,
     name: input.name?.trim() || definition.name,
-    systemPrompt: input.systemPrompt !== undefined ? input.systemPrompt : definition.systemPrompt,
+    systemPrompt:
+      input.systemPrompt !== undefined
+        ? input.systemPrompt
+        : definition.systemPrompt,
     modelProviderId,
     model,
     maxSteps: input.maxSteps ?? definition.maxSteps,
@@ -383,11 +470,14 @@ export async function updateChatAssistant(
   const assistant = await db.chatAssistant.findFirst({
     where: {
       id: assistantId,
-      workspace: { status: 'active', OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
+      workspace: {
+        status: "active",
+        OR: [{ ownerId: userId }, { members: { some: { userId } } }],
+      },
     },
     select: { id: true, workspaceId: true },
   });
-  if (!assistant) throw new ChatServiceError(404, 'Chat assistant not found');
+  if (!assistant) throw new ChatServiceError(404, "Chat assistant not found");
   await validateAssistantResources(assistant.workspaceId, input);
 
   return db.$transaction(async (tx) => {
@@ -395,7 +485,10 @@ export async function updateChatAssistant(
       await tx.chatAssistantMcpGrant.deleteMany({ where: { assistantId } });
       if (input.deploymentIds.length) {
         await tx.chatAssistantMcpGrant.createMany({
-          data: input.deploymentIds.map((deploymentId) => ({ assistantId, deploymentId })),
+          data: input.deploymentIds.map((deploymentId) => ({
+            assistantId,
+            deploymentId,
+          })),
         });
       }
     }
@@ -404,17 +497,28 @@ export async function updateChatAssistant(
       data: {
         ...(input.name !== undefined ? { name: input.name } : {}),
         ...(input.pinned !== undefined ? { pinned: input.pinned } : {}),
-        ...(input.description !== undefined ? { description: input.description } : {}),
-        ...(input.systemPrompt !== undefined ? { systemPrompt: input.systemPrompt } : {}),
+        ...(input.description !== undefined
+          ? { description: input.description }
+          : {}),
+        ...(input.systemPrompt !== undefined
+          ? { systemPrompt: input.systemPrompt }
+          : {}),
         ...(input.modelProviderId !== undefined
-          ? { modelProviderId: input.modelProviderId, ...(input.modelProviderId === null && input.model === undefined ? { model: null } : {}) }
+          ? {
+              modelProviderId: input.modelProviderId,
+              ...(input.modelProviderId === null && input.model === undefined
+                ? { model: null }
+                : {}),
+            }
           : {}),
         ...(input.model !== undefined ? { model: input.model } : {}),
-        ...(input.modelParameters !== undefined ? {
-          modelParameters: input.modelParameters
-            ? input.modelParameters as Prisma.InputJsonValue
-            : Prisma.DbNull,
-        } : {}),
+        ...(input.modelParameters !== undefined
+          ? {
+              modelParameters: input.modelParameters
+                ? (input.modelParameters as Prisma.InputJsonValue)
+                : Prisma.DbNull,
+            }
+          : {}),
         ...(input.maxSteps !== undefined ? { maxSteps: input.maxSteps } : {}),
       },
       include: { modelProvider: providerForClient, mcpGrants: grantForClient },
@@ -424,13 +528,16 @@ export async function updateChatAssistant(
 
 export async function getChatPromptGenerationModel(
   userId: string,
-  input: Pick<GenerateChatAssistantPromptInput, 'workspaceId' | 'modelProviderId'>,
+  input: Pick<
+    GenerateChatAssistantPromptInput,
+    "workspaceId" | "modelProviderId"
+  >,
 ) {
   await requireWorkspace(userId, input.workspaceId);
   const provider = await db.modelProvider.findFirst({
     where: { id: input.modelProviderId, workspaceId: input.workspaceId },
   });
-  if (!provider) throw new ChatServiceError(400, 'Model provider not found');
+  if (!provider) throw new ChatServiceError(400, "Model provider not found");
   return provider;
 }
 
@@ -439,15 +546,24 @@ export async function deleteChatAssistant(userId: string, assistantId: string) {
     const assistant = await tx.chatAssistant.findFirst({
       where: {
         id: assistantId,
-        workspace: { status: 'active', OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
+        workspace: {
+          status: "active",
+          OR: [{ ownerId: userId }, { members: { some: { userId } } }],
+        },
       },
-      select: { id: true, marketTemplateRelease: { select: { listingId: true } } },
+      select: {
+        id: true,
+        marketTemplateRelease: { select: { listingId: true } },
+      },
     });
-    if (!assistant) throw new ChatServiceError(404, 'Chat assistant not found');
+    if (!assistant) throw new ChatServiceError(404, "Chat assistant not found");
     await tx.chatAssistant.delete({ where: { id: assistant.id } });
     if (assistant.marketTemplateRelease) {
       await tx.marketListing.updateMany({
-        where: { id: assistant.marketTemplateRelease.listingId, installCount: { gt: 0 } },
+        where: {
+          id: assistant.marketTemplateRelease.listingId,
+          installCount: { gt: 0 },
+        },
         data: { installCount: { decrement: 1 } },
       });
     }
@@ -462,13 +578,20 @@ export async function createChatThread(
   const assistant = await db.chatAssistant.findFirst({
     where: {
       id: assistantId,
-      workspace: { status: 'active', OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
+      workspace: {
+        status: "active",
+        OR: [{ ownerId: userId }, { members: { some: { userId } } }],
+      },
     },
     select: { id: true, workspaceId: true },
   });
-  if (!assistant) throw new ChatServiceError(404, 'Chat assistant not found');
+  if (!assistant) throw new ChatServiceError(404, "Chat assistant not found");
   return db.chatThread.create({
-    data: { workspaceId: assistant.workspaceId, assistantId, title: input.title ?? null },
+    data: {
+      workspaceId: assistant.workspaceId,
+      assistantId,
+      title: input.title ?? null,
+    },
   });
 }
 
@@ -482,10 +605,13 @@ export async function getChatThreadForWorkspace(
     where: { id: threadId, workspaceId, assistantId },
     include: {
       assistant: {
-        include: { modelProvider: providerForClient, mcpGrants: grantForClient },
+        include: {
+          modelProvider: providerForClient,
+          mcpGrants: grantForClient,
+        },
       },
-      messages: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] },
-      turns: { orderBy: { createdAt: 'desc' }, take: 20 },
+      messages: { orderBy: [{ createdAt: "asc" }, { id: "asc" }] },
+      turns: { orderBy: { createdAt: "desc" }, take: 20 },
     },
   });
   return projectActiveChatBranch(thread);
@@ -495,30 +621,45 @@ export async function getChatThreadForUser(userId: string, threadId: string) {
   const thread = await db.chatThread.findFirst({
     where: {
       id: threadId,
-      workspace: { status: 'active', OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
+      workspace: {
+        status: "active",
+        OR: [{ ownerId: userId }, { members: { some: { userId } } }],
+      },
     },
     include: {
       assistant: {
-        include: { modelProvider: providerForClient, mcpGrants: grantForClient },
+        include: {
+          modelProvider: providerForClient,
+          mcpGrants: grantForClient,
+        },
       },
-      messages: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] },
-      turns: { orderBy: { createdAt: 'desc' }, take: 20 },
+      messages: { orderBy: [{ createdAt: "asc" }, { id: "asc" }] },
+      turns: { orderBy: { createdAt: "desc" }, take: 20 },
     },
   });
   return projectActiveChatBranch(thread);
 }
 
-export async function updateChatThread(userId: string, threadId: string, input: UpdateChatThreadInput) {
+export async function updateChatThread(
+  userId: string,
+  threadId: string,
+  input: UpdateChatThreadInput,
+) {
   return db.$transaction(async (tx) => {
     const authorized = await tx.chatThread.findFirst({
       where: {
         id: threadId,
-        workspace: { status: 'active', OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
+        workspace: {
+          status: "active",
+          OR: [{ ownerId: userId }, { members: { some: { userId } } }],
+        },
       },
       select: { id: true },
     });
-    if (!authorized) throw new ChatServiceError(404, 'Chat thread not found');
-    await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "ChatThread" WHERE "id" = ${threadId} FOR UPDATE`);
+    if (!authorized) throw new ChatServiceError(404, "Chat thread not found");
+    await tx.$queryRaw(
+      Prisma.sql`SELECT "id" FROM "ChatThread" WHERE "id" = ${threadId} FOR UPDATE`,
+    );
     const thread = await tx.chatThread.findUnique({
       where: { id: threadId },
       select: {
@@ -526,34 +667,42 @@ export async function updateChatThread(userId: string, threadId: string, input: 
         id: true,
         workspaceId: true,
         messages: {
-          orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-          select: { id: true, parentId: true, siblingGroupId: true, role: true },
+          orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+          select: {
+            id: true,
+            parentId: true,
+            siblingGroupId: true,
+            role: true,
+          },
         },
       },
     });
-    if (!thread) throw new ChatServiceError(404, 'Chat thread not found');
+    if (!thread) throw new ChatServiceError(404, "Chat thread not found");
     if (input.assistantId && input.assistantId !== thread.assistantId) {
       const target = await tx.chatAssistant.findFirst({
         where: { id: input.assistantId, workspaceId: thread.workspaceId },
         select: { id: true },
       });
-      if (!target) throw new ChatServiceError(404, 'Chat assistant not found');
+      if (!target) throw new ChatServiceError(404, "Chat assistant not found");
       const pendingTurn = await tx.chatTurn.findFirst({
-        where: { threadId, status: 'pending' },
+        where: { threadId, status: "pending" },
         select: { id: true },
       });
-      if (pendingTurn) throw new ChatServiceError(409, 'A chat turn is still running');
+      if (pendingTurn)
+        throw new ChatServiceError(409, "A chat turn is still running");
     }
     const activeMessageId = input.activeMessageId
       ? latestChatBranchLeaf(thread.messages, input.activeMessageId)
       : null;
     if (input.activeMessageId && !activeMessageId) {
-      throw new ChatServiceError(404, 'Chat message not found');
+      throw new ChatServiceError(404, "Chat message not found");
     }
     return tx.chatThread.update({
       where: { id: threadId },
       data: {
-        ...(input.assistantId !== undefined ? { assistantId: input.assistantId } : {}),
+        ...(input.assistantId !== undefined
+          ? { assistantId: input.assistantId }
+          : {}),
         ...(input.title !== undefined ? { title: input.title } : {}),
         ...(input.activeMessageId !== undefined ? { activeMessageId } : {}),
       },
@@ -561,17 +710,26 @@ export async function updateChatThread(userId: string, threadId: string, input: 
   });
 }
 
-export async function reserveChatBranch(userId: string, threadId: string, anchorMessageId: string) {
+export async function reserveChatBranch(
+  userId: string,
+  threadId: string,
+  anchorMessageId: string,
+) {
   return db.$transaction(async (tx) => {
     const authorized = await tx.chatThread.findFirst({
       where: {
         id: threadId,
-        workspace: { status: 'active', OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
+        workspace: {
+          status: "active",
+          OR: [{ ownerId: userId }, { members: { some: { userId } } }],
+        },
       },
       select: { id: true },
     });
-    if (!authorized) throw new ChatServiceError(404, 'Chat thread not found');
-    await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "ChatThread" WHERE "id" = ${threadId} FOR UPDATE`);
+    if (!authorized) throw new ChatServiceError(404, "Chat thread not found");
+    await tx.$queryRaw(
+      Prisma.sql`SELECT "id" FROM "ChatThread" WHERE "id" = ${threadId} FOR UPDATE`,
+    );
     const thread = await tx.chatThread.findUnique({
       where: { id: threadId },
       select: {
@@ -579,7 +737,7 @@ export async function reserveChatBranch(userId: string, threadId: string, anchor
         activeMessageId: true,
         turns: {
           where: {
-            status: 'pending',
+            status: "pending",
             createdAt: { gte: new Date(Date.now() - CHAT_TURN_STALE_AFTER_MS) },
           },
           take: 1,
@@ -587,40 +745,49 @@ export async function reserveChatBranch(userId: string, threadId: string, anchor
         },
       },
     });
-    if (!thread) throw new ChatServiceError(404, 'Chat thread not found');
+    if (!thread) throw new ChatServiceError(404, "Chat thread not found");
 
     const anchor = await tx.chatMessage.findFirst({
-      where: { id: anchorMessageId, threadId, role: 'assistant' },
+      where: { id: anchorMessageId, threadId, role: "assistant" },
       select: {
         id: true,
         children: {
-          where: { role: 'user' },
+          where: { role: "user" },
           take: 1,
           select: { id: true },
         },
       },
     });
-    if (!anchor) throw new ChatServiceError(400, 'A branch must start from an assistant message');
+    if (!anchor)
+      throw new ChatServiceError(
+        400,
+        "A branch must start from an assistant message",
+      );
 
     const turn = await tx.chatTurn.create({
-      data: { threadId, status: 'completed', completedAt: new Date() },
+      data: { threadId, status: "completed", completedAt: new Date() },
     });
     const reservations = [];
     const reservationCount = anchor.children.length ? 1 : 2;
     for (let index = 0; index < reservationCount; index += 1) {
-      reservations.push(await tx.chatMessage.create({
-        data: {
-          threadId,
-          turnId: turn.id,
-          parentId: anchor.id,
-          role: 'user',
-          parts: [] as Prisma.InputJsonValue,
-        },
-      }));
+      reservations.push(
+        await tx.chatMessage.create({
+          data: {
+            threadId,
+            turnId: turn.id,
+            parentId: anchor.id,
+            role: "user",
+            parts: [] as Prisma.InputJsonValue,
+          },
+        }),
+      );
     }
 
+    const reservation = reservations.at(-1);
+    if (!reservation)
+      throw new Error("Chat branch reservation is unavailable.");
     const activated = thread.turns.length === 0;
-    const activeMessageId = activated ? reservations.at(-1)!.id : thread.activeMessageId;
+    const activeMessageId = activated ? reservation.id : thread.activeMessageId;
     await tx.chatThread.update({
       where: { id: threadId },
       data: { activeMessageId, updatedAt: new Date() },
@@ -629,22 +796,31 @@ export async function reserveChatBranch(userId: string, threadId: string, anchor
   });
 }
 
-export async function deleteReservedChatBranch(userId: string, threadId: string, messageId: string) {
+export async function deleteReservedChatBranch(
+  userId: string,
+  threadId: string,
+  messageId: string,
+) {
   return db.$transaction(async (tx) => {
     const authorized = await tx.chatThread.findFirst({
       where: {
         id: threadId,
-        workspace: { status: 'active', OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
+        workspace: {
+          status: "active",
+          OR: [{ ownerId: userId }, { members: { some: { userId } } }],
+        },
       },
       select: { id: true },
     });
-    if (!authorized) throw new ChatServiceError(404, 'Chat thread not found');
-    await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "ChatThread" WHERE "id" = ${threadId} FOR UPDATE`);
+    if (!authorized) throw new ChatServiceError(404, "Chat thread not found");
+    await tx.$queryRaw(
+      Prisma.sql`SELECT "id" FROM "ChatThread" WHERE "id" = ${threadId} FOR UPDATE`,
+    );
     const thread = await tx.chatThread.findUnique({
       where: { id: threadId },
       select: { id: true, activeMessageId: true },
     });
-    if (!thread) throw new ChatServiceError(404, 'Chat thread not found');
+    if (!thread) throw new ChatServiceError(404, "Chat thread not found");
 
     const message = await tx.chatMessage.findFirst({
       where: { id: messageId, threadId },
@@ -657,17 +833,19 @@ export async function deleteReservedChatBranch(userId: string, threadId: string,
       },
     });
     if (
-      !message
-      || message.role !== 'user'
-      || !Array.isArray(message.parts)
-      || message.parts.length > 0
-      || message.children.length > 0
+      message?.role !== "user" ||
+      !Array.isArray(message.parts) ||
+      message.parts.length > 0 ||
+      message.children.length > 0
     ) {
-      throw new ChatServiceError(400, 'Only an empty branch can be deleted');
+      throw new ChatServiceError(400, "Only an empty branch can be deleted");
     }
 
     await tx.chatMessage.delete({ where: { id: message.id } });
-    const activeMessageId = thread.activeMessageId === message.id ? message.parentId : thread.activeMessageId;
+    const activeMessageId =
+      thread.activeMessageId === message.id
+        ? message.parentId
+        : thread.activeMessageId;
     await tx.chatThread.update({
       where: { id: threadId },
       data: { activeMessageId, updatedAt: new Date() },
@@ -680,17 +858,26 @@ export async function deleteChatThread(userId: string, threadId: string) {
   const result = await db.chatThread.deleteMany({
     where: {
       id: threadId,
-      workspace: { status: 'active', OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
+      workspace: {
+        status: "active",
+        OR: [{ ownerId: userId }, { members: { some: { userId } } }],
+      },
     },
   });
-  if (!result.count) throw new ChatServiceError(404, 'Chat thread not found');
+  if (!result.count) throw new ChatServiceError(404, "Chat thread not found");
 }
 
-export async function getChatThreadForExecution(userId: string, threadId: string) {
+export async function getChatThreadForExecution(
+  userId: string,
+  threadId: string,
+) {
   const thread = await db.chatThread.findFirst({
     where: {
       id: threadId,
-      workspace: { status: 'active', OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
+      workspace: {
+        status: "active",
+        OR: [{ ownerId: userId }, { members: { some: { userId } } }],
+      },
     },
     include: {
       assistant: {
@@ -700,7 +887,7 @@ export async function getChatThreadForExecution(userId: string, threadId: string
             where: {
               deployment: {
                 sandbox: { is: null },
-                OR: [{ source: null }, { source: { not: 'sandbox' } }],
+                OR: [{ source: null }, { source: { not: "sandbox" } }],
               },
             },
             select: {
@@ -717,7 +904,7 @@ export async function getChatThreadForExecution(userId: string, threadId: string
           },
         },
       },
-      messages: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] },
+      messages: { orderBy: [{ createdAt: "asc" }, { id: "asc" }] },
     },
   });
   return projectActiveChatBranch(thread);
@@ -725,11 +912,11 @@ export async function getChatThreadForExecution(userId: string, threadId: string
 
 function messageTitle(parts: Array<Record<string, unknown>>): string | null {
   const text = parts
-    .filter((part) => part.type === 'text' && typeof part.text === 'string')
+    .filter((part) => part.type === "text" && typeof part.text === "string")
     .map((part) => part.text as string)
-    .join(' ')
+    .join(" ")
     .trim()
-    .replace(/\s+/g, ' ');
+    .replace(/\s+/g, " ");
   return text ? text.slice(0, 80) : null;
 }
 
@@ -738,54 +925,72 @@ export async function beginChatTurn(
   parts: Array<Record<string, unknown>>,
   attachmentOwner: { workspaceId: string; userId: string },
   request: {
-    trigger?: 'submit-message' | 'regenerate-message';
+    trigger?: "submit-message" | "regenerate-message";
     messageId?: string;
     clientLastMessageId?: string;
     modelId?: string;
     expectedAssistantId?: string;
   } = {},
 ) {
-  const trigger = request.trigger ?? 'submit-message';
-  const attachmentIds = trigger === 'submit-message' ? attachmentIdsFromParts(parts) : [];
+  const trigger = request.trigger ?? "submit-message";
+  const attachmentIds =
+    trigger === "submit-message" ? attachmentIdsFromParts(parts) : [];
   const authorizedThread = await db.chatThread.findFirst({
     where: { id: threadId, workspaceId: attachmentOwner.workspaceId },
     select: { id: true },
   });
-  if (!authorizedThread) throw new ChatServiceError(404, 'Chat thread not found');
+  if (!authorizedThread)
+    throw new ChatServiceError(404, "Chat thread not found");
   const now = new Date();
   await db.chatTurn.updateMany({
     where: {
       threadId,
-      status: 'pending',
+      status: "pending",
       createdAt: { lt: new Date(now.getTime() - CHAT_TURN_STALE_AFTER_MS) },
     },
     data: {
-      status: 'failed',
-      error: 'Chat turn expired before completion.',
+      status: "failed",
+      error: "Chat turn expired before completion.",
       completedAt: now,
     },
   });
   await db.chatMessage.updateMany({
-    where: { threadId, status: 'pending', turn: { status: 'failed' } },
-    data: { status: 'failed' },
+    where: { threadId, status: "pending", turn: { status: "failed" } },
+    data: { status: "failed" },
   });
 
   try {
     return await db.$transaction(async (tx) => {
-      await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "ChatThread" WHERE "id" = ${threadId} FOR UPDATE`);
+      await tx.$queryRaw(
+        Prisma.sql`SELECT "id" FROM "ChatThread" WHERE "id" = ${threadId} FOR UPDATE`,
+      );
       const thread = await tx.chatThread.findUnique({
         where: { id: threadId },
-        select: { activeMessageId: true, assistantId: true, title: true, workspaceId: true },
+        select: {
+          activeMessageId: true,
+          assistantId: true,
+          title: true,
+          workspaceId: true,
+        },
       });
       if (!thread || thread.workspaceId !== attachmentOwner.workspaceId) {
-        throw new ChatServiceError(404, 'Chat thread not found');
+        throw new ChatServiceError(404, "Chat thread not found");
       }
-      if (request.expectedAssistantId && thread.assistantId !== request.expectedAssistantId) {
-        throw new ChatServiceError(409, 'Chat assistant changed; retry the message');
+      if (
+        request.expectedAssistantId &&
+        thread.assistantId !== request.expectedAssistantId
+      ) {
+        throw new ChatServiceError(
+          409,
+          "Chat assistant changed; retry the message",
+        );
       }
 
-      const targetId = request.messageId
-        ?? (trigger === 'regenerate-message' ? request.clientLastMessageId : undefined);
+      const targetId =
+        request.messageId ??
+        (trigger === "regenerate-message"
+          ? request.clientLastMessageId
+          : undefined);
       const target = targetId
         ? await tx.chatMessage.findFirst({
             where: { id: targetId, threadId },
@@ -800,51 +1005,68 @@ export async function beginChatTurn(
             },
           })
         : null;
-      if (targetId && !target) throw new ChatServiceError(404, 'Chat message not found');
+      if (targetId && !target)
+        throw new ChatServiceError(404, "Chat message not found");
 
       const turn = await tx.chatTurn.create({ data: { threadId } });
       let assistantParentId: string;
       let historyLeafId: string;
       let assistantMessageId: string;
 
-      if (trigger === 'regenerate-message') {
-        if (!target || (target.role !== 'assistant' && target.role !== 'user')) {
-          throw new ChatServiceError(400, 'A user or assistant message is required for regeneration');
+      if (trigger === "regenerate-message") {
+        if (
+          !target ||
+          (target.role !== "assistant" && target.role !== "user")
+        ) {
+          throw new ChatServiceError(
+            400,
+            "A user or assistant message is required for regeneration",
+          );
         }
-        assistantParentId = target.role === 'assistant' ? target.parentId ?? '' : target.id;
-        if (!assistantParentId) throw new ChatServiceError(400, 'The selected message cannot be regenerated');
+        assistantParentId =
+          target.role === "assistant" ? (target.parentId ?? "") : target.id;
+        if (!assistantParentId)
+          throw new ChatServiceError(
+            400,
+            "The selected message cannot be regenerated",
+          );
         historyLeafId = assistantParentId;
 
-        const retryInPlace = target.role === 'assistant'
-          && (target.status !== 'success' || (Array.isArray(target.parts) && target.parts.length === 0));
+        const retryInPlace =
+          target.role === "assistant" &&
+          (target.status !== "success" ||
+            (Array.isArray(target.parts) && target.parts.length === 0));
         if (retryInPlace) {
           await tx.chatMessage.update({
             where: { id: target.id },
             data: {
               turnId: turn.id,
-              status: 'pending',
+              status: "pending",
               modelId: request.modelId ?? null,
               parts: [] as Prisma.InputJsonValue,
             },
           });
           assistantMessageId = target.id;
         } else {
-          let siblingGroupId = target.role === 'assistant'
-            ? target.siblingGroupId ?? turn.id
-            : null;
-          if (target.role === 'assistant' && !target.siblingGroupId) {
+          let siblingGroupId =
+            target.role === "assistant"
+              ? (target.siblingGroupId ?? turn.id)
+              : null;
+          if (target.role === "assistant" && !target.siblingGroupId) {
             await tx.chatMessage.update({
               where: { id: target.id },
               data: { siblingGroupId },
             });
-          } else if (target.role === 'user') {
+          } else if (target.role === "user") {
             const assistantSiblings = await tx.chatMessage.findMany({
-              where: { threadId, parentId: target.id, role: 'assistant' },
-              orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+              where: { threadId, parentId: target.id, role: "assistant" },
+              orderBy: [{ createdAt: "asc" }, { id: "asc" }],
               select: { id: true, siblingGroupId: true },
             });
             if (assistantSiblings.length) {
-              siblingGroupId = assistantSiblings.find((message) => message.siblingGroupId)?.siblingGroupId ?? turn.id;
+              siblingGroupId =
+                assistantSiblings.find((message) => message.siblingGroupId)
+                  ?.siblingGroupId ?? turn.id;
               await tx.chatMessage.updateMany({
                 where: {
                   id: { in: assistantSiblings.map((message) => message.id) },
@@ -860,8 +1082,8 @@ export async function beginChatTurn(
               turnId: turn.id,
               parentId: assistantParentId,
               siblingGroupId,
-              role: 'assistant',
-              status: 'pending',
+              role: "assistant",
+              status: "pending",
               modelId: request.modelId ?? null,
               parts: [] as Prisma.InputJsonValue,
             },
@@ -869,8 +1091,11 @@ export async function beginChatTurn(
           assistantMessageId = assistantMessage.id;
         }
       } else {
-        if (request.messageId && target?.role !== 'user') {
-          throw new ChatServiceError(400, 'Only user messages can be edited and resent');
+        if (request.messageId && target?.role !== "user") {
+          throw new ChatServiceError(
+            400,
+            "Only user messages can be edited and resent",
+          );
         }
         await claimWorkspaceAttachments(tx, {
           ids: attachmentIds,
@@ -878,29 +1103,32 @@ export async function beginChatTurn(
           uploadedById: attachmentOwner.userId,
           scope: { chatThreadId: threadId },
         });
-        const activePlaceholder = !target && thread.activeMessageId
-          ? await tx.chatMessage.findFirst({
-              where: {
-                id: thread.activeMessageId,
-                threadId,
-                role: 'user',
-                parts: { equals: [] },
-              },
-              select: { id: true },
-            })
-          : null;
+        const activePlaceholder =
+          !target && thread.activeMessageId
+            ? await tx.chatMessage.findFirst({
+                where: {
+                  id: thread.activeMessageId,
+                  threadId,
+                  role: "user",
+                  parts: { equals: [] },
+                },
+                select: { id: true },
+              })
+            : null;
         let userMessage: { id: string };
         if (activePlaceholder) {
           userMessage = await tx.chatMessage.update({
             where: { id: activePlaceholder.id },
             data: {
               turnId: turn.id,
-              status: 'success',
+              status: "success",
               parts: parts as Prisma.InputJsonValue,
             },
           });
         } else {
-          const siblingGroupId = target ? target.siblingGroupId ?? turn.id : null;
+          const siblingGroupId = target
+            ? (target.siblingGroupId ?? turn.id)
+            : null;
           if (target && !target.siblingGroupId) {
             await tx.chatMessage.update({
               where: { id: target.id },
@@ -913,7 +1141,7 @@ export async function beginChatTurn(
               turnId: turn.id,
               parentId: target ? target.parentId : thread.activeMessageId,
               siblingGroupId,
-              role: 'user',
+              role: "user",
               parts: parts as Prisma.InputJsonValue,
             },
           });
@@ -925,8 +1153,8 @@ export async function beginChatTurn(
             threadId,
             turnId: turn.id,
             parentId: assistantParentId,
-            role: 'assistant',
-            status: 'pending',
+            role: "assistant",
+            status: "pending",
             modelId: request.modelId ?? null,
             parts: [] as Prisma.InputJsonValue,
           },
@@ -939,40 +1167,56 @@ export async function beginChatTurn(
         data: {
           activeMessageId: assistantMessageId,
           updatedAt: new Date(),
-          ...(!thread.title && trigger === 'submit-message' ? { title: messageTitle(parts) } : {}),
+          ...(!thread.title && trigger === "submit-message"
+            ? { title: messageTitle(parts) }
+            : {}),
         },
       });
       return { ...turn, assistantMessageId, assistantParentId, historyLeafId };
     });
   } catch (error) {
     if (
-      typeof error === 'object'
-      && error !== null
-      && 'code' in error
-      && error.code === 'P2002'
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "P2002"
     ) {
-      throw new ChatServiceError(409, 'A chat turn is already running');
+      throw new ChatServiceError(409, "A chat turn is already running");
     }
     throw error;
   }
 }
 
-export async function getChatHistoryForExecution(userId: string, threadId: string, leafMessageId: string) {
+export async function getChatHistoryForExecution(
+  userId: string,
+  threadId: string,
+  leafMessageId: string,
+) {
   const thread = await db.chatThread.findFirst({
     where: {
       id: threadId,
-      workspace: { status: 'active', OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
+      workspace: {
+        status: "active",
+        OR: [{ ownerId: userId }, { members: { some: { userId } } }],
+      },
     },
     select: {
       messages: {
-        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-        select: { id: true, parentId: true, role: true, parts: true, createdAt: true },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        select: {
+          id: true,
+          parentId: true,
+          role: true,
+          parts: true,
+          createdAt: true,
+        },
       },
     },
   });
-  if (!thread) throw new ChatServiceError(404, 'Chat thread not found');
+  if (!thread) throw new ChatServiceError(404, "Chat thread not found");
   const path = chatMessagePath(thread.messages, leafMessageId);
-  if (path.at(-1)?.id !== leafMessageId) throw new ChatServiceError(404, 'Chat message not found');
+  if (path.at(-1)?.id !== leafMessageId)
+    throw new ChatServiceError(404, "Chat message not found");
   return path;
 }
 
@@ -984,15 +1228,22 @@ export async function completeChatTurn(
 ) {
   return db.$transaction(async (tx) => {
     const updated = await tx.chatTurn.updateMany({
-      where: { id: turnId, threadId, status: 'pending' },
-      data: { status: 'completed', error: null, completedAt: new Date() },
+      where: { id: turnId, threadId, status: "pending" },
+      data: { status: "completed", error: null, completedAt: new Date() },
     });
     if (!updated.count) return false;
     const message = await tx.chatMessage.updateMany({
-      where: { id: assistantMessageId, threadId, turnId, role: 'assistant', status: 'pending' },
-      data: { status: 'success', parts: parts as Prisma.InputJsonValue },
+      where: {
+        id: assistantMessageId,
+        threadId,
+        turnId,
+        role: "assistant",
+        status: "pending",
+      },
+      data: { status: "success", parts: parts as Prisma.InputJsonValue },
     });
-    if (message.count !== 1) throw new ChatServiceError(409, 'Chat response is no longer pending');
+    if (message.count !== 1)
+      throw new ChatServiceError(409, "Chat response is no longer pending");
     await tx.chatThread.updateMany({
       where: { id: threadId, activeMessageId: assistantMessageId },
       data: { updatedAt: new Date() },
@@ -1004,14 +1255,14 @@ export async function completeChatTurn(
 export async function finishChatTurn(
   threadId: string,
   turnId: string,
-  status: 'failed' | 'cancelled',
+  status: "failed" | "cancelled",
   error?: string,
   assistantMessageId?: string,
   parts?: Array<Record<string, unknown>>,
 ) {
   return db.$transaction(async (tx) => {
     const turn = await tx.chatTurn.updateMany({
-      where: { id: turnId, threadId, status: 'pending' },
+      where: { id: turnId, threadId, status: "pending" },
       data: {
         status,
         error: error?.slice(0, 500) ?? null,
@@ -1021,10 +1272,14 @@ export async function finishChatTurn(
     if (!turn.count) return false;
     if (assistantMessageId) {
       const message = await tx.chatMessage.updateMany({
-        where: { id: assistantMessageId, threadId, turnId, status: 'pending' },
-        data: { status, ...(parts ? { parts: parts as Prisma.InputJsonValue } : {}) },
+        where: { id: assistantMessageId, threadId, turnId, status: "pending" },
+        data: {
+          status,
+          ...(parts ? { parts: parts as Prisma.InputJsonValue } : {}),
+        },
       });
-      if (message.count !== 1) throw new ChatServiceError(409, 'Chat response is no longer pending');
+      if (message.count !== 1)
+        throw new ChatServiceError(409, "Chat response is no longer pending");
     }
     return true;
   });

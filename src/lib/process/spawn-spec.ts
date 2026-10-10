@@ -4,25 +4,28 @@ import {
   WRAP_IMAGE,
   CACHE_ENV,
   type McpNetwork,
-} from './sandbox';
-import { commandArgsNeedGit } from './git-source';
-import { sshTargetIdFromConfig } from '@/lib/sandboxes/ssh-targets';
-import { connectorFromConfig, type SandboxConnectorConfig } from '@/lib/sandboxes/connector';
-import { isValidRemoteMcpUrl } from '@/lib/remote-mcp/url';
-import { parseDockerJsonArgs } from '@/lib/workspace/docker-json-command';
+} from "./sandbox";
+import { commandArgsNeedGit } from "./git-source";
+import { sshTargetIdFromConfig } from "@/lib/sandboxes/ssh-targets";
+import {
+  connectorFromConfig,
+  type SandboxConnectorConfig,
+} from "@/lib/sandboxes/connector";
+import { isValidRemoteMcpUrl } from "@/lib/remote-mcp/url";
+import { parseDockerJsonArgs } from "@/lib/workspace/docker-json-command";
 
 export type SpawnSpec =
-  | { kind: 'builtin'; name: string }
+  | { kind: "builtin"; name: string }
   | {
-      kind: 'remote';
+      kind: "remote";
       name: string;
       url: string;
-      transport: 'streamable-http' | 'sse';
+      transport: "streamable-http" | "sse";
       headers: Record<string, string>;
       timeoutMs: number;
     }
   | {
-      kind: 'bridge';
+      kind: "bridge";
       name: string;
       command: string;
       args: string[];
@@ -38,10 +41,10 @@ export type SpawnSpec =
       configWorkingDirectory?: boolean;
     }
   | {
-      kind: 'sandbox';
+      kind: "sandbox";
       name: string;
       sandboxId: string;
-      sandboxKind: 'docker' | 'connector' | 'hermes' | 'ssh';
+      sandboxKind: "docker" | "connector" | "hermes" | "ssh";
       sshTargetId?: string;
       image?: string;
       volumeName?: string;
@@ -75,86 +78,110 @@ function splitArgs(s: string | undefined): string[] {
 
 const REMOTE_HEADER_NAME_RE = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 const REMOTE_BLOCKED_HEADERS = new Set([
-  'connection',
-  'content-length',
-  'constructor',
-  'host',
-  'mcp-protocol-version',
-  'mcp-session-id',
-  'prototype',
-  'transfer-encoding',
-  'upgrade',
-  '__proto__',
+  "connection",
+  "content-length",
+  "constructor",
+  "host",
+  "mcp-protocol-version",
+  "mcp-session-id",
+  "prototype",
+  "transfer-encoding",
+  "upgrade",
+  "__proto__",
 ]);
 
 function readRemoteCfg(
   sourceRef: string | null,
   installCfg: unknown,
-): Omit<Extract<SpawnSpec, { kind: 'remote' }>, 'kind' | 'name'> {
+): Omit<Extract<SpawnSpec, { kind: "remote" }>, "kind" | "name"> {
   let url: URL;
   try {
-    url = new URL(sourceRef ?? '');
+    url = new URL(sourceRef ?? "");
   } catch {
-    throw new Error('Remote MCP URL is invalid.');
+    throw new Error("Remote MCP URL is invalid.");
   }
-  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
-    throw new Error('Remote MCP URL must use HTTP or HTTPS.');
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    throw new Error("Remote MCP URL must use HTTP or HTTPS.");
   }
   if (url.username || url.password || url.search || url.hash) {
-    throw new Error('Remote MCP URL cannot contain credentials, query parameters, or a fragment.');
+    throw new Error(
+      "Remote MCP URL cannot contain credentials, query parameters, or a fragment.",
+    );
   }
-  if (!isValidRemoteMcpUrl(sourceRef ?? '')) throw new Error('Remote MCP URL is not allowed.');
+  if (!isValidRemoteMcpUrl(sourceRef ?? ""))
+    throw new Error("Remote MCP URL is not allowed.");
 
-  if (!installCfg || typeof installCfg !== 'object' || Array.isArray(installCfg)) {
-    throw new Error('Remote MCP configuration is invalid.');
+  if (
+    !installCfg ||
+    typeof installCfg !== "object" ||
+    Array.isArray(installCfg)
+  ) {
+    throw new Error("Remote MCP configuration is invalid.");
   }
   const cfg = installCfg as Record<string, unknown>;
-  const transport = cfg.transport ?? 'streamable-http';
-  if (transport !== 'streamable-http' && transport !== 'sse') {
-    throw new Error('Remote MCP transport must be streamable-http or sse.');
+  const transport = cfg.transport ?? "streamable-http";
+  if (transport !== "streamable-http" && transport !== "sse") {
+    throw new Error("Remote MCP transport must be streamable-http or sse.");
   }
-  const authType = cfg.authType ?? 'none';
-  if (authType !== 'none' && authType !== 'bearer' && authType !== 'headers') {
-    throw new Error('Remote MCP authentication type is invalid.');
+  const authType = cfg.authType ?? "none";
+  if (authType !== "none" && authType !== "bearer" && authType !== "headers") {
+    throw new Error("Remote MCP authentication type is invalid.");
   }
   const timeoutMs = cfg.timeoutMs ?? 60_000;
-  if (!Number.isInteger(timeoutMs) || Number(timeoutMs) < 1_000 || Number(timeoutMs) > 600_000) {
-    throw new Error('Remote MCP timeout must be between 1000 and 600000 milliseconds.');
+  if (
+    !Number.isInteger(timeoutMs) ||
+    Number(timeoutMs) < 1_000 ||
+    Number(timeoutMs) > 600_000
+  ) {
+    throw new Error(
+      "Remote MCP timeout must be between 1000 and 600000 milliseconds.",
+    );
   }
-  const env = cfg.env && typeof cfg.env === 'object' && !Array.isArray(cfg.env)
-    ? cfg.env as Record<string, unknown>
-    : {};
+  const env =
+    cfg.env && typeof cfg.env === "object" && !Array.isArray(cfg.env)
+      ? (cfg.env as Record<string, unknown>)
+      : {};
   const envValue = (key: unknown): string => {
-    if (typeof key !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
-      throw new Error('Remote MCP credential reference is invalid.');
+    if (typeof key !== "string" || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+      throw new Error("Remote MCP credential reference is invalid.");
     }
     const value = env[key];
-    if (typeof value !== 'string' || value.length === 0) {
+    if (typeof value !== "string" || value.length === 0) {
       throw new Error(`Remote MCP credential ${key} is not configured.`);
     }
     return value;
   };
 
   const headers: Record<string, string> = {};
-  if (authType === 'bearer') {
+  if (authType === "bearer") {
     headers.authorization = `Bearer ${envValue(cfg.bearerEnv)}`;
-  } else if (authType === 'headers') {
-    if (!cfg.headerEnv || typeof cfg.headerEnv !== 'object' || Array.isArray(cfg.headerEnv)) {
-      throw new Error('Remote MCP custom header configuration is invalid.');
+  } else if (authType === "headers") {
+    if (
+      !cfg.headerEnv ||
+      typeof cfg.headerEnv !== "object" ||
+      Array.isArray(cfg.headerEnv)
+    ) {
+      throw new Error("Remote MCP custom header configuration is invalid.");
     }
     const entries = Object.entries(cfg.headerEnv as Record<string, unknown>);
     if (entries.length === 0 || entries.length > 32) {
-      throw new Error('Remote MCP custom headers must contain between 1 and 32 entries.');
+      throw new Error(
+        "Remote MCP custom headers must contain between 1 and 32 entries.",
+      );
     }
     const seen = new Set<string>();
     for (const [rawName, envKey] of entries) {
       const name = rawName.toLowerCase();
-      if (!REMOTE_HEADER_NAME_RE.test(rawName) || REMOTE_BLOCKED_HEADERS.has(name) || seen.has(name)) {
-        throw new Error('A remote MCP header is not allowed.');
+      if (
+        !REMOTE_HEADER_NAME_RE.test(rawName) ||
+        REMOTE_BLOCKED_HEADERS.has(name) ||
+        seen.has(name)
+      ) {
+        throw new Error("A remote MCP header is not allowed.");
       }
       const value = envValue(envKey);
       if (value.length > 8_192 || /[\r\n]/.test(value)) {
-        throw new Error('A remote MCP header has an invalid value.');
+        throw new Error("A remote MCP header has an invalid value.");
       }
       seen.add(name);
       headers[rawName] = value;
@@ -184,44 +211,52 @@ export function buildSpawnSpec(
   startCommand?: string,
   env: Record<string, string> = {},
   rebuild = false,
-  network: McpNetwork = 'isolated',
+  network: McpNetwork = "isolated",
 ): DockerSpawnSpec {
-  const run = ['run', ...sandboxFlags(network)];
+  const run = ["run", ...sandboxFlags(network)];
 
   switch (source) {
-    case 'npm':
-    case 'github': {
-      const inner = rebuild ? ['npx', '-y', '--prefer-online', ref] : ['npx', '-y', ref];
-      const image = source === 'github' ? WRAP_IMAGE.npmGit : WRAP_IMAGE.npm;
+    case "npm":
+    case "github": {
+      const inner = rebuild
+        ? ["npx", "-y", "--prefer-online", ref]
+        : ["npx", "-y", ref];
+      const image = source === "github" ? WRAP_IMAGE.npmGit : WRAP_IMAGE.npm;
       const containerEnv = { ...CACHE_ENV.npm, ...env };
       return {
-        command: 'docker',
+        command: "docker",
         args: [...run, ...envFlags(containerEnv), image, ...inner],
         image,
         env: containerEnv,
       };
     }
-    case 'pypi': {
-      const inner = rebuild ? ['uvx', '--refresh', ref] : ['uvx', ref];
+    case "pypi": {
+      const inner = rebuild ? ["uvx", "--refresh", ref] : ["uvx", ref];
       const containerEnv = { ...CACHE_ENV.pypi, ...env };
       return {
-        command: 'docker',
+        command: "docker",
         args: [...run, ...envFlags(containerEnv), WRAP_IMAGE.pypi, ...inner],
         image: WRAP_IMAGE.pypi,
         env: containerEnv,
       };
     }
-    case 'docker': {
-      const pull = rebuild ? ['--pull', 'always'] : [];
+    case "docker": {
+      const pull = rebuild ? ["--pull", "always"] : [];
       return {
-        command: 'docker',
-        args: [...run, ...pull, ...envFlags(env), ref, ...splitArgs(startCommand)],
+        command: "docker",
+        args: [
+          ...run,
+          ...pull,
+          ...envFlags(env),
+          ref,
+          ...splitArgs(startCommand),
+        ],
         image: ref,
         env,
       };
     }
     default:
-      throw new Error(`Unsupported MCP source: ${source || '(none)'}`);
+      throw new Error(`Unsupported MCP source: ${source || "(none)"}`);
   }
 }
 
@@ -230,20 +265,22 @@ export function buildStdioConfigSpawnSpec(
   commandArgs: string[],
   env: Record<string, string> = {},
   rebuild = false,
-  network: McpNetwork = 'isolated',
+  network: McpNetwork = "isolated",
 ): DockerSpawnSpec {
-  const run = ['run', ...sandboxFlags(network)];
-  if (command === 'npx') {
-    const refresh = rebuild ? ['--prefer-online'] : [];
-    const image = commandArgsNeedGit(command, commandArgs) ? WRAP_IMAGE.npmGit : WRAP_IMAGE.npm;
+  const run = ["run", ...sandboxFlags(network)];
+  if (command === "npx") {
+    const refresh = rebuild ? ["--prefer-online"] : [];
+    const image = commandArgsNeedGit(command, commandArgs)
+      ? WRAP_IMAGE.npmGit
+      : WRAP_IMAGE.npm;
     const containerEnv = { ...CACHE_ENV.npm, ...env };
     return {
-      command: 'docker',
+      command: "docker",
       args: [
         ...run,
         ...envFlags(containerEnv),
         image,
-        'npx',
+        "npx",
         ...refresh,
         ...commandArgs,
       ],
@@ -251,12 +288,14 @@ export function buildStdioConfigSpawnSpec(
       env: containerEnv,
     };
   }
-  if (command === 'uvx' || command === 'uv') {
-    const refresh = command === 'uvx' && rebuild ? ['--refresh'] : [];
-    const image = commandArgsNeedGit(command, commandArgs) ? WRAP_IMAGE.pypiGit : WRAP_IMAGE.pypi;
+  if (command === "uvx" || command === "uv") {
+    const refresh = command === "uvx" && rebuild ? ["--refresh"] : [];
+    const image = commandArgsNeedGit(command, commandArgs)
+      ? WRAP_IMAGE.pypiGit
+      : WRAP_IMAGE.pypi;
     const containerEnv = { ...CACHE_ENV.pypi, ...env };
     return {
-      command: 'docker',
+      command: "docker",
       args: [
         ...run,
         ...envFlags(containerEnv),
@@ -269,23 +308,18 @@ export function buildStdioConfigSpawnSpec(
       env: containerEnv,
     };
   }
-  if (command === 'docker') {
-    const { image, commandArgs: containerArgs } = parseDockerJsonArgs(commandArgs);
-    const pull = rebuild ? ['--pull', 'always'] : [];
+  if (command === "docker") {
+    const { image, commandArgs: containerArgs } =
+      parseDockerJsonArgs(commandArgs);
+    const pull = rebuild ? ["--pull", "always"] : [];
     return {
-      command: 'docker',
-      args: [
-        ...run,
-        ...pull,
-        ...envFlags(env),
-        image,
-        ...containerArgs,
-      ],
+      command: "docker",
+      args: [...run, ...pull, ...envFlags(env), image, ...containerArgs],
       image,
       env,
     };
   }
-  throw new Error(`Unsupported stdio MCP command: ${command || '(none)'}`);
+  throw new Error(`Unsupported stdio MCP command: ${command || "(none)"}`);
 }
 
 function readCfg(installCfg: unknown): {
@@ -307,13 +341,13 @@ function readCfg(installCfg: unknown): {
     startCommand: c.startCommand,
     command: c.command,
     args: Array.isArray(c.args) ? c.args : [],
-    network: c.network === 'none' ? 'none' : 'isolated',
+    network: c.network === "none" ? "none" : "isolated",
   };
 }
 
 function readSandboxCfg(installCfg: unknown): {
   sandboxId: string;
-  kind: 'docker' | 'connector' | 'hermes' | 'ssh';
+  kind: "docker" | "connector" | "hermes" | "ssh";
   sshTargetId?: string;
   image?: string;
   volumeName?: string;
@@ -337,19 +371,25 @@ function readSandboxCfg(installCfg: unknown): {
   };
   const connector = connectorFromConfig(installCfg);
   const sshTargetId = sshTargetIdFromConfig(installCfg);
-  if (c.kind === 'ssh' && !sshTargetId) throw new Error('Legacy SSH configuration is disabled; select an approved SSH target.');
-  const kind = c.kind === 'ssh' && sshTargetId ? 'ssh' : c.kind === 'hermes' && c.runtimeId
-    ? 'hermes'
-    : c.kind === 'connector' && connector
-      ? 'connector'
-      : 'docker';
+  if (c.kind === "ssh" && !sshTargetId)
+    throw new Error(
+      "Legacy SSH configuration is disabled; select an approved SSH target.",
+    );
+  const kind =
+    c.kind === "ssh" && sshTargetId
+      ? "ssh"
+      : c.kind === "hermes" && c.runtimeId
+        ? "hermes"
+        : c.kind === "connector" && connector
+          ? "connector"
+          : "docker";
   return {
-    sandboxId: c.sandboxId ?? '',
+    sandboxId: c.sandboxId ?? "",
     kind,
     ...(sshTargetId ? { sshTargetId } : {}),
     image: c.image,
     volumeName: c.volumeName,
-    network: c.network === 'none' ? 'none' : 'isolated',
+    network: c.network === "none" ? "none" : "isolated",
     env: c.env ?? {},
     connector: connector ?? undefined,
     runtimeId: c.runtimeId,
@@ -358,12 +398,15 @@ function readSandboxCfg(installCfg: unknown): {
   };
 }
 
-export function resolveSpawnSpec(d: DeploymentForSpawn, rebuild = false): SpawnSpec {
-  if (d.source === 'sandbox') {
+export function resolveSpawnSpec(
+  d: DeploymentForSpawn,
+  rebuild = false,
+): SpawnSpec {
+  if (d.source === "sandbox") {
     const cfg = readSandboxCfg(d.installCfg);
     return {
-      kind: 'sandbox',
-      name: d.name ?? 'Sandbox',
+      kind: "sandbox",
+      name: d.name ?? "Sandbox",
       sandboxId: cfg.sandboxId,
       sandboxKind: cfg.kind,
       ...(cfg.sshTargetId ? { sshTargetId: cfg.sshTargetId } : {}),
@@ -373,15 +416,17 @@ export function resolveSpawnSpec(d: DeploymentForSpawn, rebuild = false): SpawnS
       ...(cfg.volumeName ? { volumeName: cfg.volumeName } : {}),
       ...(cfg.connector ? { connector: cfg.connector } : {}),
       ...(cfg.runtimeId ? { runtimeId: cfg.runtimeId } : {}),
-      ...(cfg.runtimeModelName ? { runtimeModelName: cfg.runtimeModelName } : {}),
+      ...(cfg.runtimeModelName
+        ? { runtimeModelName: cfg.runtimeModelName }
+        : {}),
       ...(cfg.allowSudo ? { allowSudo: true } : {}),
     };
   }
 
-  if (d.source === 'remote') {
+  if (d.source === "remote") {
     return {
-      kind: 'remote',
-      name: d.name ?? d.server?.name ?? 'Remote MCP',
+      kind: "remote",
+      name: d.name ?? d.server?.name ?? "Remote MCP",
       ...readRemoteCfg(d.sourceRef, d.installCfg),
     };
   }
@@ -390,19 +435,26 @@ export function resolveSpawnSpec(d: DeploymentForSpawn, rebuild = false): SpawnS
   // rows that have no admin-wired recipe (serverId set, source null). A catalog
   // deployment WITH a source runs its real package in a container, same path as
   // a custom deployment.
-  if (!d.source) return { kind: 'builtin', name: d.name ?? d.server?.name ?? 'mcp' };
-  const { env, startCommand, command, args: commandArgs, network } = readCfg(d.installCfg);
-  if (d.source === 'config') {
+  if (!d.source)
+    return { kind: "builtin", name: d.name ?? d.server?.name ?? "mcp" };
+  const {
+    env,
+    startCommand,
+    command,
+    args: commandArgs,
+    network,
+  } = readCfg(d.installCfg);
+  if (d.source === "config") {
     const configSpec = buildStdioConfigSpawnSpec(
-      command ?? '',
+      command ?? "",
       commandArgs,
       env,
       rebuild,
       network,
     );
     return {
-      kind: 'bridge',
-      name: d.name ?? 'custom',
+      kind: "bridge",
+      name: d.name ?? "custom",
       command: configSpec.command,
       args: configSpec.args,
       env,
@@ -410,20 +462,20 @@ export function resolveSpawnSpec(d: DeploymentForSpawn, rebuild = false): SpawnS
       image: configSpec.image,
       // Docker JSON preserves the image's own WORKDIR. Its mounted runtime
       // files are still available at /toolplane/config via absolute paths.
-      ...(command !== 'docker' ? { configWorkingDirectory: true } : {}),
+      ...(command !== "docker" ? { configWorkingDirectory: true } : {}),
     };
   }
   const packageSpec = buildSpawnSpec(
     d.source,
-    d.sourceRef ?? '',
+    d.sourceRef ?? "",
     startCommand,
     env,
     rebuild,
     network,
   );
   return {
-    kind: 'bridge',
-    name: d.name ?? d.server?.name ?? d.sourceRef ?? 'custom',
+    kind: "bridge",
+    name: d.name ?? d.server?.name ?? d.sourceRef ?? "custom",
     command: packageSpec.command,
     args: packageSpec.args,
     env,

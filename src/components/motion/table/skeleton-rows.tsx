@@ -18,11 +18,18 @@ export function SkeletonRows<T>({
   return (
     <>
       {Array.from({ length: count }, (_, r) => (
-        // biome-ignore lint/suspicious/noArrayIndexKey: static placeholder rows
-        <tr key={r} style={{ height: rowHeight }} className="border-border/60 border-b">
+        <tr
+          // biome-ignore lint/suspicious/noArrayIndexKey: Static placeholder rows have no item identity or state.
+          key={r}
+          style={{ height: rowHeight }}
+          className="border-border/60 border-b"
+        >
           {selectable ? <td /> : null}
           {columns.map((column) => (
-            <td key={column.key} className={cn("px-4", alignText(column.align))}>
+            <td
+              key={column.key}
+              className={cn("px-4", alignText(column.align))}
+            >
               <div
                 className={cn(
                   "h-3 animate-pulse rounded-full bg-muted",

@@ -190,7 +190,9 @@ export function ToolApproval({
             </span>
           </div>
           {description ? (
-            <p className="mt-2 leading-5 text-muted-foreground">{description}</p>
+            <p className="mt-2 leading-5 text-muted-foreground">
+              {description}
+            </p>
           ) : null}
 
           {parameters.length ? (
@@ -214,10 +216,7 @@ export function ToolApproval({
         </div>
       </div>
 
-      <AgentDisclosure
-        id={detailsId}
-        open={currentOpen}
-      >
+      <AgentDisclosure id={detailsId} open={currentOpen}>
         <dl className="mx-4 mb-4 grid gap-2 rounded-xl border border-border/50 bg-background/70 p-3">
           {parameters.map((parameter) => (
             <div

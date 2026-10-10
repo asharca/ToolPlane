@@ -1,5 +1,5 @@
-import type { ReactNode } from 'react';
-import { McpRequestLogs } from '@/components/dashboard/McpRequestLogs';
+import type { ReactNode } from "react";
+import { McpRequestLogs } from "@/components/dashboard/McpRequestLogs";
 
 export type ObservabilityLogView = {
   id: string;
@@ -15,6 +15,14 @@ export type ObservabilityLogView = {
   time: string;
 };
 
-export function ObservabilityLogs({ logs, searchControls }: { logs: ObservabilityLogView[]; searchControls?: ReactNode }) {
-  return <McpRequestLogs logs={logs} showServer searchControls={searchControls} />;
+export function ObservabilityLogs({
+  logs,
+  searchControls,
+}: {
+  logs: ObservabilityLogView[];
+  searchControls?: ReactNode;
+}) {
+  return (
+    <McpRequestLogs logs={logs} showServer searchControls={searchControls} />
+  );
 }

@@ -1,12 +1,18 @@
-import type { Client } from '@prisma/client';
-import { EntityCard, StarStat } from './EntityCard';
+import type { Client } from "@prisma/client";
+import { EntityCard, StarStat } from "./EntityCard";
 
 type ClientCardData = Pick<
   Client,
-  'slug' | 'name' | 'description' | 'author' | 'iconUrl' | 'stars'
+  "slug" | "name" | "description" | "author" | "iconUrl" | "stars"
 > & { categories?: { name: string }[] };
 
-export function ClientCard({ client, statLabel }: { client: ClientCardData; statLabel?: string }) {
+export function ClientCard({
+  client,
+  statLabel,
+}: {
+  client: ClientCardData;
+  statLabel?: string;
+}) {
   return (
     <EntityCard
       href={`/client/${client.slug}`}

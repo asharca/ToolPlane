@@ -1,10 +1,13 @@
-import 'server-only';
-import { createHmac } from 'node:crypto';
-import type { Prisma } from '@prisma/client';
-import type { AgentApiPrincipal } from '@/lib/agents/public-api/auth';
-import { db } from '@/lib/db';
-import { AgentApiError, publicErrorMessage } from '@/lib/agents/public-api/errors';
-import { runtimeEnv } from '@/lib/runtime-env';
+import "server-only";
+import { createHmac } from "node:crypto";
+import type { Prisma } from "@prisma/client";
+import type { AgentApiPrincipal } from "@/lib/agents/public-api/auth";
+import { db } from "@/lib/db";
+import {
+  AgentApiError,
+  publicErrorMessage,
+} from "@/lib/agents/public-api/errors";
+import { runtimeEnv } from "@/lib/runtime-env";
 
 export type AgentApiRateLimitInput = {
   endpointId: string;
@@ -23,7 +26,7 @@ export type AgentApiRateLimitResult = {
 };
 
 type CounterResult = { count: number };
-type CounterClient = Pick<Prisma.TransactionClient, '$queryRaw'>;
+type CounterClient = Pick<Prisma.TransactionClient, "$queryRaw">;
 
 function windowStart(nowMs: number, seconds: number): Date {
   const sizeMs = seconds * 1_000;
@@ -83,7 +86,7 @@ export async function takeAgentApiRateLimit(
       [`endpoint:${input.endpointId}:day`, input.endpointDaily] as const,
       [`client:${input.clientId}:day`, input.clientDaily] as const,
     ]) {
-      if (!await takeCounter(tx, key, limit, daySeconds, nowMs)) {
+      if (!(await takeCounter(tx, key, limit, daySeconds, nowMs))) {
         throw rateLimitError(nowMs, daySeconds);
       }
     }
@@ -91,9 +94,9 @@ export async function takeAgentApiRateLimit(
   });
 
   const headers = new Headers({
-    'ratelimit-limit': String(minuteLimit),
-    'ratelimit-remaining': String(result.remaining),
-    'ratelimit-reset': String(result.minuteReset),
+    "ratelimit-limit": String(minuteLimit),
+    "ratelimit-remaining": String(result.remaining),
+    "ratelimit-reset": String(result.minuteReset),
   });
   return {
     limit: minuteLimit,
@@ -115,8 +118,8 @@ export function takeAgentApiPrincipalRateLimit(
 
 function rateLimitError(nowMs: number, seconds: number): AgentApiError {
   return new AgentApiError(
-    'rate_limit_exceeded',
-    publicErrorMessage('rate_limit_exceeded'),
+    "rate_limit_exceeded",
+    publicErrorMessage("rate_limit_exceeded"),
     429,
     Math.max(1, Math.ceil(counterWindowRemaining(nowMs, seconds) / 1_000)),
   );
@@ -127,7 +130,9 @@ function counterWindowRemaining(nowMs: number, seconds: number): number {
   return start + seconds * 1_000 - nowMs;
 }
 
-export async function pruneAgentApiUsageBuckets(now = new Date()): Promise<number> {
+export async function pruneAgentApiUsageBuckets(
+  now = new Date(),
+): Promise<number> {
   const deleted = await db.$queryRaw<Array<{ key: string }>>`
     WITH candidates AS (
       SELECT "key", "windowStart", "windowSeconds"
@@ -147,57 +152,76 @@ export async function pruneAgentApiUsageBuckets(now = new Date()): Promise<numbe
 }
 
 function requestAddress(headers: Headers): string | null {
-  if (runtimeEnv('AGENT_API_TRUST_PROXY_HEADERS') !== 'true') return null;
-  return (headers.get('x-real-ip') || headers.get('x-forwarded-for')?.split(',')[0] || '')
-    .trim()
-    .slice(0, 128) || null;
+  if (runtimeEnv("AGENT_API_TRUST_PROXY_HEADERS") !== "true") return null;
+  return (
+    (
+      headers.get("x-real-ip") ||
+      headers.get("x-forwarded-for")?.split(",")[0] ||
+      ""
+    )
+      .trim()
+      .slice(0, 128) || null
+  );
 }
 
-function addressBucket(request: Pick<Request, 'headers'>): string | null {
+function addressBucket(request: Pick<Request, "headers">): string | null {
   const address = requestAddress(request.headers);
   if (!address) return null;
-  const secret = runtimeEnv('AUTH_SECRET');
-  if (!secret) throw new Error('AUTH_SECRET environment variable is not set');
-  return createHmac('sha256', secret)
-    .update('toolplane:agent-api:auth-ip\0')
+  const secret = runtimeEnv("AUTH_SECRET");
+  if (!secret) throw new Error("AUTH_SECRET environment variable is not set");
+  return createHmac("sha256", secret)
+    .update("toolplane:agent-api:auth-ip\0")
     .update(address)
-    .digest('base64url');
+    .digest("base64url");
 }
 
 /** Cheap, pre-verification admission bound for credential lookup traffic. */
 export async function takeAgentApiAuthAttemptLimit(
-  request: Pick<Request, 'headers'>,
+  request: Pick<Request, "headers">,
 ): Promise<void> {
   const nowMs = Date.now();
-  if (!await takeCounter(db, 'auth-attempt:global', 100_000, 60, nowMs)) {
+  if (!(await takeCounter(db, "auth-attempt:global", 100_000, 60, nowMs))) {
     throw rateLimitError(nowMs, 60);
   }
   const addressHash = addressBucket(request);
-  if (addressHash && !await takeCounter(db, `auth-attempt:${addressHash}`, 600, 60, nowMs)) {
+  if (
+    addressHash &&
+    !(await takeCounter(db, `auth-attempt:${addressHash}`, 600, 60, nowMs))
+  ) {
     throw rateLimitError(nowMs, 60);
   }
 }
 
 /** Bound credential guessing even when no valid Endpoint/client can be found. */
-export async function takeAgentApiAuthFailureLimit(request: Pick<Request, 'headers'>): Promise<void> {
+export async function takeAgentApiAuthFailureLimit(
+  request: Pick<Request, "headers">,
+): Promise<void> {
   const nowMs = Date.now();
-  if (!await takeCounter(db, 'auth-failure:global', 2_000, 60, nowMs)) {
+  if (!(await takeCounter(db, "auth-failure:global", 2_000, 60, nowMs))) {
     throw rateLimitError(nowMs, 60);
   }
   const addressHash = addressBucket(request);
-  if (addressHash && !await takeCounter(db, `auth-failure:${addressHash}`, 30, 60, nowMs)) {
+  if (
+    addressHash &&
+    !(await takeCounter(db, `auth-failure:${addressHash}`, 30, 60, nowMs))
+  ) {
     throw rateLimitError(nowMs, 60);
   }
 }
 
 /** Bound unauthenticated browser preflight lookups before reading Endpoint CORS config. */
-export async function takeAgentApiPreflightLimit(request: Pick<Request, 'headers'>): Promise<void> {
+export async function takeAgentApiPreflightLimit(
+  request: Pick<Request, "headers">,
+): Promise<void> {
   const nowMs = Date.now();
-  if (!await takeCounter(db, 'preflight:global', 50_000, 60, nowMs)) {
+  if (!(await takeCounter(db, "preflight:global", 50_000, 60, nowMs))) {
     throw rateLimitError(nowMs, 60);
   }
   const addressHash = addressBucket(request);
-  if (addressHash && !await takeCounter(db, `preflight:${addressHash}`, 300, 60, nowMs)) {
+  if (
+    addressHash &&
+    !(await takeCounter(db, `preflight:${addressHash}`, 300, 60, nowMs))
+  ) {
     throw rateLimitError(nowMs, 60);
   }
 }

@@ -1,13 +1,18 @@
-import 'server-only';
-import { trackRuntimeOperation, runtimeAbortSignal, markRuntimeUncertain } from '@/lib/runtime/ownership-state';
-import { spawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import "server-only";
+import {
+  trackRuntimeOperation,
+  runtimeAbortSignal,
+  markRuntimeUncertain,
+} from "@/lib/runtime/ownership-state";
+import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 
-export { DEFAULT_SANDBOX_IMAGE } from './images';
+export { DEFAULT_SANDBOX_IMAGE } from "./images";
 
 const VOLUME_COPY_TIMEOUT_MS = 15 * 60_000;
 const MAX_DOCKER_ERROR_BYTES = 64 * 1024;
-const VOLUME_HELPER_IMAGE = process.env.SANDBOX_VOLUME_HELPER_IMAGE?.trim() || 'alpine:3.20';
+const VOLUME_HELPER_IMAGE =
+  process.env.SANDBOX_VOLUME_HELPER_IMAGE?.trim() || "alpine:3.20";
 const DOCKER_IMAGE_REFERENCE = /^[A-Za-z0-9][A-Za-z0-9._/@:+-]{0,254}$/;
 
 export class DockerVolumeCopyCleanupError extends AggregateError {
@@ -15,17 +20,17 @@ export class DockerVolumeCopyCleanupError extends AggregateError {
 
   constructor(errors: unknown[], message: string, helperName?: string) {
     super(errors, message);
-    this.name = 'DockerVolumeCopyCleanupError';
+    this.name = "DockerVolumeCopyCleanupError";
     this.helperName = helperName;
   }
 }
 
 export function sandboxVolumeName(sandboxId: string): string {
-  return `toolplane_sandbox_${sandboxId.replace(/[^a-zA-Z0-9_.-]/g, '_')}`;
+  return `toolplane_sandbox_${sandboxId.replace(/[^a-zA-Z0-9_.-]/g, "_")}`;
 }
 
 export function sandboxContainerName(sandboxId: string): string {
-  return `toolplane-sandbox-${sandboxId.replace(/[^a-zA-Z0-9_.-]/g, '_')}`;
+  return `toolplane-sandbox-${sandboxId.replace(/[^a-zA-Z0-9_.-]/g, "_")}`;
 }
 
 export function sandboxSyncContainerName(sandboxId: string): string {
@@ -33,12 +38,22 @@ export function sandboxSyncContainerName(sandboxId: string): string {
 }
 
 export function sandboxSnapshotVolumeName(snapshotId: string): string {
-  return `toolplane_snapshot_${snapshotId.replace(/[^a-zA-Z0-9_.-]/g, '_')}`;
+  return `toolplane_snapshot_${snapshotId.replace(/[^a-zA-Z0-9_.-]/g, "_")}`;
 }
 
 function dockerEnv(): NodeJS.ProcessEnv {
-  const out: NodeJS.ProcessEnv = { NODE_ENV: process.env.NODE_ENV ?? 'production' };
-  for (const key of ['PATH', 'HOME', 'DOCKER_HOST', 'DOCKER_CERT_PATH', 'DOCKER_TLS_VERIFY', 'LANG', 'LC_ALL']) {
+  const out: NodeJS.ProcessEnv = {
+    NODE_ENV: process.env.NODE_ENV ?? "production",
+  };
+  for (const key of [
+    "PATH",
+    "HOME",
+    "DOCKER_HOST",
+    "DOCKER_CERT_PATH",
+    "DOCKER_TLS_VERIFY",
+    "LANG",
+    "LC_ALL",
+  ]) {
     if (process.env[key]) out[key] = process.env[key];
   }
   return out;
@@ -57,8 +72,9 @@ export async function pullDockerImage(
   image: string,
   timeoutMs = VOLUME_COPY_TIMEOUT_MS,
 ): Promise<void> {
-  if (!DOCKER_IMAGE_REFERENCE.test(image)) throw new Error('Invalid Docker image reference.');
-  await runDocker(['pull', image], timeoutMs);
+  if (!DOCKER_IMAGE_REFERENCE.test(image))
+    throw new Error("Invalid Docker image reference.");
+  await runDocker(["pull", image], timeoutMs);
 }
 
 /** Pull a reviewed tag, then freeze the exact registry content address. */
@@ -66,42 +82,52 @@ export async function resolveDockerImageDigest(
   image: string,
   timeoutMs = VOLUME_COPY_TIMEOUT_MS,
 ): Promise<string> {
-  if (!DOCKER_IMAGE_REFERENCE.test(image)) throw new Error('Invalid Docker image reference.');
+  if (!DOCKER_IMAGE_REFERENCE.test(image))
+    throw new Error("Invalid Docker image reference.");
   if (/@sha256:[a-f0-9]{64}$/i.test(image)) return image;
   await pullDockerImage(image, timeoutMs);
   const raw = await runDocker(
-    ['image', 'inspect', '--format', '{{json .RepoDigests}}', image],
+    ["image", "inspect", "--format", "{{json .RepoDigests}}", image],
     timeoutMs,
   );
   let digests: unknown;
   try {
     digests = JSON.parse(raw.trim());
   } catch {
-    throw new Error('Docker did not return a valid image digest.');
+    throw new Error("Docker did not return a valid image digest.");
   }
-  if (!Array.isArray(digests)) throw new Error('Docker image has no immutable registry digest.');
-  const valid = digests.filter((value): value is string => (
-    typeof value === 'string' && /@sha256:[a-f0-9]{64}$/i.test(value)
-  ));
-  const lastSlash = image.lastIndexOf('/');
-  const lastColon = image.lastIndexOf(':');
+  if (!Array.isArray(digests))
+    throw new Error("Docker image has no immutable registry digest.");
+  const valid = digests.filter(
+    (value): value is string =>
+      typeof value === "string" && /@sha256:[a-f0-9]{64}$/i.test(value),
+  );
+  const lastSlash = image.lastIndexOf("/");
+  const lastColon = image.lastIndexOf(":");
   const withoutTag = lastColon > lastSlash ? image.slice(0, lastColon) : image;
-  const selected = valid.find((value) => value.startsWith(`${withoutTag}@`)) ?? valid[0];
+  const selected =
+    valid.find((value) => value.startsWith(`${withoutTag}@`)) ?? valid[0];
   if (!selected || !DOCKER_IMAGE_REFERENCE.test(selected)) {
-    throw new Error('Docker image has no immutable registry digest.');
+    throw new Error("Docker image has no immutable registry digest.");
   }
   return selected;
 }
 
 function runDocker(args: string[], timeoutMs = 30_000): Promise<string> {
-  const cleanup = ['stop', 'rm', 'inspect'].includes(args[0]) || (args[0] === 'volume' && ['rm', 'inspect'].includes(args[1]));
+  const cleanup =
+    ["stop", "rm", "inspect"].includes(args[0]) ||
+    (args[0] === "volume" && ["rm", "inspect"].includes(args[1]));
   return trackRuntimeOperation(() => runDockerOwned(args, timeoutMs), cleanup);
 }
 function runDockerOwned(args: string[], timeoutMs = 30_000): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn('docker', args, { env: dockerEnv(), ...(runtimeAbortSignal() ? { signal: runtimeAbortSignal() } : {}), stdio: ['ignore', 'pipe', 'pipe'] });
-    let stdout = '';
-    let stderr = '';
+    const child = spawn("docker", args, {
+      env: dockerEnv(),
+      ...(runtimeAbortSignal() ? { signal: runtimeAbortSignal() } : {}),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
     let settled = false;
     const finish = (error?: Error) => {
       if (settled) return;
@@ -112,24 +138,34 @@ function runDockerOwned(args: string[], timeoutMs = 30_000): Promise<string> {
     };
     const timer = setTimeout(() => {
       markRuntimeUncertain();
-      child.kill('SIGKILL');
+      child.kill("SIGKILL");
       finish(new Error(`Docker command timed out after ${timeoutMs}ms.`));
     }, timeoutMs);
 
-    child.stdout?.on('data', (chunk: Buffer) => {
+    child.stdout?.on("data", (chunk: Buffer) => {
       if (stdout.length < MAX_DOCKER_ERROR_BYTES) {
-        stdout += chunk.toString().slice(0, MAX_DOCKER_ERROR_BYTES - stdout.length);
+        stdout += chunk
+          .toString()
+          .slice(0, MAX_DOCKER_ERROR_BYTES - stdout.length);
       }
     });
-    child.stderr?.on('data', (chunk: Buffer) => {
+    child.stderr?.on("data", (chunk: Buffer) => {
       if (stderr.length < MAX_DOCKER_ERROR_BYTES) {
-        stderr += chunk.toString().slice(0, MAX_DOCKER_ERROR_BYTES - stderr.length);
+        stderr += chunk
+          .toString()
+          .slice(0, MAX_DOCKER_ERROR_BYTES - stderr.length);
       }
     });
-    child.once('error', (error) => finish(error));
-    child.once('exit', (code, signal) => {
+    child.once("error", (error) => finish(error));
+    child.once("exit", (code, signal) => {
       if (code === 0) finish();
-      else finish(new Error(stderr.trim() || `Docker command failed (${signal ?? code ?? 'unknown'}).`));
+      else
+        finish(
+          new Error(
+            stderr.trim() ||
+              `Docker command failed (${signal ?? code ?? "unknown"}).`,
+          ),
+        );
     });
   });
 }
@@ -158,48 +194,50 @@ export function dockerVolumeCopyArgs(
   helperName?: string,
 ): string[] {
   if (!validVolumeName(sourceVolume) || !validVolumeName(destinationVolume)) {
-    throw new Error('Invalid Docker volume name.');
+    throw new Error("Invalid Docker volume name.");
   }
   if (sourceVolume === destinationVolume) {
-    throw new Error('Source and destination Docker volumes must be different.');
+    throw new Error("Source and destination Docker volumes must be different.");
   }
   if (helperName && !validVolumeName(helperName)) {
-    throw new Error('Invalid Docker helper container name.');
+    throw new Error("Invalid Docker helper container name.");
   }
 
   const prepareDestination = replace
-    ? 'rm -rf /to/* /to/.[!.]* /to/..?*'
+    ? "rm -rf /to/* /to/.[!.]* /to/..?*"
     : 'test -z "$(find /to -mindepth 1 -print -quit)"';
   return [
-    'run',
-    '--rm',
-    ...(helperName ? ['--name', helperName, '--label', 'toolplane.volume-copy=true'] : []),
-    '--read-only',
-    '--network',
-    'none',
-    '--memory',
-    '512m',
-    '--cpus',
-    '1',
-    '--pids-limit',
-    '128',
-    '--cap-drop',
-    'ALL',
-    '--cap-add',
-    'CHOWN',
-    '--cap-add',
-    'DAC_OVERRIDE',
-    '--cap-add',
-    'FOWNER',
-    '--security-opt',
-    'no-new-privileges',
-    '--mount',
+    "run",
+    "--rm",
+    ...(helperName
+      ? ["--name", helperName, "--label", "toolplane.volume-copy=true"]
+      : []),
+    "--read-only",
+    "--network",
+    "none",
+    "--memory",
+    "512m",
+    "--cpus",
+    "1",
+    "--pids-limit",
+    "128",
+    "--cap-drop",
+    "ALL",
+    "--cap-add",
+    "CHOWN",
+    "--cap-add",
+    "DAC_OVERRIDE",
+    "--cap-add",
+    "FOWNER",
+    "--security-opt",
+    "no-new-privileges",
+    "--mount",
     `type=volume,src=${sourceVolume},dst=/from,readonly`,
-    '--mount',
+    "--mount",
     `type=volume,src=${destinationVolume},dst=/to`,
     VOLUME_HELPER_IMAGE,
-    'sh',
-    '-c',
+    "sh",
+    "-c",
     `set -euo pipefail; ${prepareDestination}; tar -C /from -cf - . | tar -C /to -xpf -`,
   ];
 }
@@ -209,15 +247,22 @@ export async function copyDockerVolume(
   destinationVolume: string,
   options: { replace?: boolean } = {},
 ): Promise<void> {
-  if (!validVolumeName(destinationVolume)) throw new Error('Invalid Docker volume name.');
-  if (!validVolumeName(sourceVolume)) throw new Error('Invalid Docker volume name.');
-  await runDocker(['volume', 'inspect', sourceVolume]);
-  await runDocker(['volume', 'create', destinationVolume]);
+  if (!validVolumeName(destinationVolume))
+    throw new Error("Invalid Docker volume name.");
+  if (!validVolumeName(sourceVolume))
+    throw new Error("Invalid Docker volume name.");
+  await runDocker(["volume", "inspect", sourceVolume]);
+  await runDocker(["volume", "create", destinationVolume]);
   const helperName = `toolplane-volume-copy-${randomUUID()}`;
   let copyError: unknown;
   try {
     await runDocker(
-      dockerVolumeCopyArgs(sourceVolume, destinationVolume, options.replace, helperName),
+      dockerVolumeCopyArgs(
+        sourceVolume,
+        destinationVolume,
+        options.replace,
+        helperName,
+      ),
       VOLUME_COPY_TIMEOUT_MS,
     );
   } catch (error) {
@@ -230,22 +275,25 @@ export async function copyDockerVolume(
     if (copyError) {
       throw new DockerVolumeCopyCleanupError(
         [copyError, cleanupError],
-        'Docker volume copy failed and its helper container could not be removed.',
+        "Docker volume copy failed and its helper container could not be removed.",
         helperName,
       );
     }
     throw new DockerVolumeCopyCleanupError(
       [cleanupError],
-      'Docker volume copy helper container could not be removed.',
+      "Docker volume copy helper container could not be removed.",
       helperName,
     );
   }
   if (copyError) throw copyError;
 }
 
-export async function removeDockerVolumeCopyHelper(helperName: string): Promise<void> {
-  if (!validVolumeName(helperName)) throw new Error('Invalid Docker helper container name.');
-  await runDockerIdempotent(['rm', '-f', helperName], /no such container/i);
+export async function removeDockerVolumeCopyHelper(
+  helperName: string,
+): Promise<void> {
+  if (!validVolumeName(helperName))
+    throw new Error("Invalid Docker helper container name.");
+  await runDockerIdempotent(["rm", "-f", helperName], /no such container/i);
 }
 
 async function removeStaleDockerHelpers(
@@ -253,28 +301,38 @@ async function removeStaleDockerHelpers(
   createdBefore: Date,
   timeoutMs?: number,
 ): Promise<number> {
-  const output = await runDocker([
-    'ps',
-    '-aq',
-    '--filter',
-    label,
-  ], timeoutMs);
+  const output = await runDocker(["ps", "-aq", "--filter", label], timeoutMs);
   const containerIds = output.split(/\s+/).filter(Boolean);
   let removed = 0;
   for (const containerId of containerIds) {
     let created: string;
     try {
-      created = (await runDocker(['inspect', '--format', '{{.Created}}', containerId], timeoutMs)).trim();
+      created = (
+        await runDocker(
+          ["inspect", "--format", "{{.Created}}", containerId],
+          timeoutMs,
+        )
+      ).trim();
     } catch (error) {
-      if (error instanceof Error && /no such (object|container)/i.test(error.message)) continue;
+      if (
+        error instanceof Error &&
+        /no such (object|container)/i.test(error.message)
+      )
+        continue;
       throw error;
     }
     const createdAt = Date.parse(created);
     if (!Number.isFinite(createdAt)) {
-      throw new Error(`Docker returned an invalid creation time for copy helper ${containerId}.`);
+      throw new Error(
+        `Docker returned an invalid creation time for copy helper ${containerId}.`,
+      );
     }
     if (createdAt >= createdBefore.getTime()) continue;
-    await runDockerIdempotent(['rm', '-f', containerId], /no such container/i, timeoutMs);
+    await runDockerIdempotent(
+      ["rm", "-f", containerId],
+      /no such container/i,
+      timeoutMs,
+    );
     removed += 1;
   }
   return removed;
@@ -283,7 +341,10 @@ async function removeStaleDockerHelpers(
 export async function removeStaleDockerVolumeCopyHelpers(
   createdBefore = new Date(),
 ): Promise<number> {
-  return removeStaleDockerHelpers('label=toolplane.volume-copy=true', createdBefore);
+  return removeStaleDockerHelpers(
+    "label=toolplane.volume-copy=true",
+    createdBefore,
+  );
 }
 
 // Archive imports use a named, stopped init container rather than `docker run
@@ -294,7 +355,7 @@ export async function removeStaleHermesArchiveImportHelpers(
   timeoutMs?: number,
 ): Promise<number> {
   return removeStaleDockerHelpers(
-    'label=toolplane.hermes-archive-import=true',
+    "label=toolplane.hermes-archive-import=true",
     createdBefore,
     timeoutMs,
   );
@@ -302,22 +363,35 @@ export async function removeStaleHermesArchiveImportHelpers(
 
 export async function removeDockerVolume(volumeName: string): Promise<void> {
   if (!validVolumeName(volumeName)) return;
-  await dockerBestEffort(['volume', 'rm', '-f', volumeName]);
+  await dockerBestEffort(["volume", "rm", "-f", volumeName]);
 }
 
-export async function removeDockerVolumeStrict(volumeName: string, timeoutMs?: number): Promise<void> {
-  if (!validVolumeName(volumeName)) throw new Error('Invalid Docker volume name.');
-  await runDockerIdempotent(['volume', 'rm', '-f', volumeName], /no such volume/i, timeoutMs);
+export async function removeDockerVolumeStrict(
+  volumeName: string,
+  timeoutMs?: number,
+): Promise<void> {
+  if (!validVolumeName(volumeName))
+    throw new Error("Invalid Docker volume name.");
+  await runDockerIdempotent(
+    ["volume", "rm", "-f", volumeName],
+    /no such volume/i,
+    timeoutMs,
+  );
 }
 
-export async function removeDockerSandboxRuntime(sandboxId: string, volumeName?: string | null): Promise<void> {
-  await dockerBestEffort(['rm', '-f', sandboxSyncContainerName(sandboxId)]);
-  await dockerBestEffort(['rm', '-f', sandboxContainerName(sandboxId)]);
+export async function removeDockerSandboxRuntime(
+  sandboxId: string,
+  volumeName?: string | null,
+): Promise<void> {
+  await dockerBestEffort(["rm", "-f", sandboxSyncContainerName(sandboxId)]);
+  await dockerBestEffort(["rm", "-f", sandboxContainerName(sandboxId)]);
   await removeDockerVolume(volumeName || sandboxVolumeName(sandboxId));
 }
 
-export async function removeDockerSandboxContainer(sandboxId: string): Promise<void> {
-  await dockerBestEffort(['rm', '-f', sandboxContainerName(sandboxId)]);
+export async function removeDockerSandboxContainer(
+  sandboxId: string,
+): Promise<void> {
+  await dockerBestEffort(["rm", "-f", sandboxContainerName(sandboxId)]);
 }
 
 export async function removeDockerSandboxRuntimeStrict(
@@ -326,21 +400,26 @@ export async function removeDockerSandboxRuntimeStrict(
   options: { timeoutMs?: number } = {},
 ): Promise<void> {
   await runDockerIdempotent(
-    ['rm', '-f', sandboxSyncContainerName(sandboxId)],
+    ["rm", "-f", sandboxSyncContainerName(sandboxId)],
     /no such container/i,
     options.timeoutMs,
   );
   await runDockerIdempotent(
-    ['rm', '-f', sandboxContainerName(sandboxId)],
+    ["rm", "-f", sandboxContainerName(sandboxId)],
     /no such container/i,
     options.timeoutMs,
   );
-  await removeDockerVolumeStrict(volumeName || sandboxVolumeName(sandboxId), options.timeoutMs);
+  await removeDockerVolumeStrict(
+    volumeName || sandboxVolumeName(sandboxId),
+    options.timeoutMs,
+  );
 }
 
-export async function stopDockerSandboxContainer(sandboxId: string): Promise<void> {
+export async function stopDockerSandboxContainer(
+  sandboxId: string,
+): Promise<void> {
   await runDockerIdempotent(
-    ['stop', '--time', '10', sandboxContainerName(sandboxId)],
+    ["stop", "--time", "10", sandboxContainerName(sandboxId)],
     /no such container/i,
   );
 }

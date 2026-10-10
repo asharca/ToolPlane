@@ -1,25 +1,25 @@
 // Keeps remote MCP credentials behind ToolPlane's loopback JSON-RPC surface.
 // The official SDK owns MCP initialization, sessions, Streamable HTTP and SSE.
-import http from 'node:http';
-import { lookup } from 'node:dns/promises';
-import { isIP } from 'node:net';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
-import { ResultSchema } from '@modelcontextprotocol/sdk/types.js';
-import undici from 'undici';
+import http from "node:http";
+import { lookup } from "node:dns/promises";
+import { isIP } from "node:net";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
+import { ResultSchema } from "@modelcontextprotocol/sdk/types.js";
+import undici from "undici";
 import {
   isPrivateRemoteMcpIp,
   normalizeRemoteMcpHostname,
   parseRemoteMcpPrivateHosts,
-} from './remote-mcp-private-hosts.mjs';
+} from "./remote-mcp-private-hosts.mjs";
 
 const { Agent, fetch: undiciFetch } = undici;
 
-const NAME = process.env.MCP_NAME || 'remote-mcp';
-const RUNTIME_EVENT_TOKEN = (process.env.MCP_RUNTIME_EVENT_TOKEN || '').trim();
-let rawConfig = process.env.MCP_REMOTE_CONFIG || '';
-let rawPrivateHosts = process.env.MCP_REMOTE_PRIVATE_HOSTS || '';
+const NAME = process.env.MCP_NAME || "remote-mcp";
+const RUNTIME_EVENT_TOKEN = (process.env.MCP_RUNTIME_EVENT_TOKEN || "").trim();
+let rawConfig = process.env.MCP_REMOTE_CONFIG || "";
+let rawPrivateHosts = process.env.MCP_REMOTE_PRIVATE_HOSTS || "";
 delete process.env.MCP_REMOTE_CONFIG;
 delete process.env.MCP_REMOTE_PRIVATE_HOSTS;
 
@@ -32,146 +32,218 @@ function parseConfig() {
   try {
     value = JSON.parse(rawConfig);
   } catch {
-    invalidConfig('malformed JSON');
+    invalidConfig("malformed JSON");
   } finally {
-    rawConfig = '';
+    rawConfig = "";
   }
-  if (!value || typeof value !== 'object' || Array.isArray(value)) invalidConfig('expected an object');
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    invalidConfig("expected an object");
 
   let url;
   try {
     url = new URL(value.url);
   } catch {
-    invalidConfig('invalid URL');
+    invalidConfig("invalid URL");
   }
-  if (url.protocol !== 'https:' && url.protocol !== 'http:') invalidConfig('URL must use HTTP or HTTPS');
-  if (url.username || url.password || url.port === '0' || url.search || url.hash) {
-    invalidConfig('URL cannot contain credentials, port zero, query parameters, or a fragment');
+  if (url.protocol !== "https:" && url.protocol !== "http:")
+    invalidConfig("URL must use HTTP or HTTPS");
+  if (
+    url.username ||
+    url.password ||
+    url.port === "0" ||
+    url.search ||
+    url.hash
+  ) {
+    invalidConfig(
+      "URL cannot contain credentials, port zero, query parameters, or a fragment",
+    );
   }
-  if (value.transport !== 'streamable-http' && value.transport !== 'sse') {
-    invalidConfig('unsupported transport');
+  if (value.transport !== "streamable-http" && value.transport !== "sse") {
+    invalidConfig("unsupported transport");
   }
-  if (!Number.isInteger(value.timeoutMs) || value.timeoutMs < 1_000 || value.timeoutMs > 600_000) {
-    invalidConfig('timeout is out of range');
+  if (
+    !Number.isInteger(value.timeoutMs) ||
+    value.timeoutMs < 1_000 ||
+    value.timeoutMs > 600_000
+  ) {
+    invalidConfig("timeout is out of range");
   }
-  if (!value.headers || typeof value.headers !== 'object' || Array.isArray(value.headers)) {
-    invalidConfig('headers must be an object');
+  if (
+    !value.headers ||
+    typeof value.headers !== "object" ||
+    Array.isArray(value.headers)
+  ) {
+    invalidConfig("headers must be an object");
   }
   const headers = Object.create(null);
   for (const [name, headerValue] of Object.entries(value.headers)) {
-    if (typeof headerValue !== 'string' || headerValue.length > 8_192 || /[\r\n]/.test(headerValue)) {
-      invalidConfig('invalid header value');
+    if (
+      typeof headerValue !== "string" ||
+      headerValue.length > 8_192 ||
+      /[\r\n]/.test(headerValue)
+    ) {
+      invalidConfig("invalid header value");
     }
     try {
       new Headers({ [name]: headerValue });
     } catch {
-      invalidConfig('invalid header name');
+      invalidConfig("invalid header name");
     }
     headers[name] = headerValue;
   }
-  return { url, transport: value.transport, timeoutMs: value.timeoutMs, headers };
+  return {
+    url,
+    transport: value.transport,
+    timeoutMs: value.timeoutMs,
+    headers,
+  };
 }
 
 function parsePrivateHosts() {
   try {
     const parsed = parseRemoteMcpPrivateHosts(rawPrivateHosts);
-    if (!parsed) invalidConfig('private host allowlist must contain DNS hosts, wildcard suffixes, or private IP addresses');
+    if (!parsed)
+      invalidConfig(
+        "private host allowlist must contain DNS hosts, wildcard suffixes, or private IP addresses",
+      );
     return parsed;
   } finally {
-    rawPrivateHosts = '';
+    rawPrivateHosts = "";
   }
 }
 
 const CONFIG = parseConfig();
 const PRIVATE_TARGETS = parsePrivateHosts();
-const secretValues = [...new Set(Object.values(CONFIG.headers).flatMap((value) => {
-  const match = /^(?:Bearer|Basic)\s+(.+)$/i.exec(value);
-  return match ? [value, match[1]] : [value];
-}).filter(Boolean))].sort((a, b) => b.length - a.length);
+const secretValues = [
+  ...new Set(
+    Object.values(CONFIG.headers)
+      .flatMap((value) => {
+        const match = /^(?:Bearer|Basic)\s+(.+)$/i.exec(value);
+        return match ? [value, match[1]] : [value];
+      })
+      .filter(Boolean),
+  ),
+].sort((a, b) => b.length - a.length);
 
 function safeMessage(error) {
   let message = error instanceof Error ? error.message : String(error);
-  message = message.split(CONFIG.url.href).join('[remote MCP endpoint]');
+  message = message.split(CONFIG.url.href).join("[remote MCP endpoint]");
   for (const secret of secretValues) {
-    message = message.split(secret).join('[REDACTED]');
+    message = message.split(secret).join("[REDACTED]");
     const encoded = encodeURIComponent(secret);
-    if (encoded !== secret) message = message.split(encoded).join('[REDACTED]');
+    if (encoded !== secret) message = message.split(encoded).join("[REDACTED]");
   }
   return message
-    .replace(/(authorization\s*[:=]\s*(?:(?:bearer|basic)\s+)?)[^\s,;]+/gi, '$1[REDACTED]')
-    .replace(/((?:api[_-]?key|token|secret|password)\s*[=:]\s*)[^\s,;&]+/gi, '$1[REDACTED]')
+    .replace(
+      /(authorization\s*[:=]\s*(?:(?:bearer|basic)\s+)?)[^\s,;]+/gi,
+      "$1[REDACTED]",
+    )
+    .replace(
+      /((?:api[_-]?key|token|secret|password)\s*[=:]\s*)[^\s,;&]+/gi,
+      "$1[REDACTED]",
+    )
     .slice(0, 1_000);
 }
 
 function runtimePhase(phase, message) {
-  const event = { type: 'phase', phase };
+  const event = { type: "phase", phase };
   if (RUNTIME_EVENT_TOKEN) event.token = RUNTIME_EVENT_TOKEN;
   if (message) event.message = message;
-  process.stderr.write('[toolplane-runtime] ' + JSON.stringify(event) + '\n');
+  process.stderr.write(`[toolplane-runtime] ${JSON.stringify(event)}\n`);
 }
 
 function blockedIpv4(address) {
-  const octets = address.split('.').map(Number);
-  if (octets.length !== 4 || octets.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return true;
+  const octets = address.split(".").map(Number);
+  if (
+    octets.length !== 4 ||
+    octets.some((part) => !Number.isInteger(part) || part < 0 || part > 255)
+  )
+    return true;
   const [a, b, c] = octets;
-  return a === 0
-    || a === 10
-    || a === 127
-    || (a === 100 && b >= 64 && b <= 127)
-    || (a === 169 && b === 254)
-    || (a === 172 && b >= 16 && b <= 31)
-    || (a === 192 && b === 0 && c === 0)
-    || (a === 192 && b === 0 && c === 2)
-    || (a === 192 && b === 168)
-    || (a === 198 && (b === 18 || b === 19))
-    || (a === 198 && b === 51 && c === 100)
-    || (a === 203 && b === 0 && c === 113)
-    || a >= 224;
+  return (
+    a === 0 ||
+    a === 10 ||
+    a === 127 ||
+    (a === 100 && b >= 64 && b <= 127) ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 0 && c === 0) ||
+    (a === 192 && b === 0 && c === 2) ||
+    (a === 192 && b === 168) ||
+    (a === 198 && (b === 18 || b === 19)) ||
+    (a === 198 && b === 51 && c === 100) ||
+    (a === 203 && b === 0 && c === 113) ||
+    a >= 224
+  );
 }
 
 function blockedIpv6(address) {
-  const normalized = address.toLowerCase().split('%')[0];
+  const normalized = address.toLowerCase().split("%")[0];
   const dotted = normalized.match(/(\d+\.\d+\.\d+\.\d+)$/)?.[1];
-  if (dotted && normalized.startsWith('::')) return blockedIpv4(dotted);
-  if (normalized.startsWith('::ffff:')) {
-    const words = normalized.slice(7).split(':');
-    if (words.length === 2 && words.every((word) => /^[0-9a-f]{1,4}$/.test(word))) {
+  if (dotted && normalized.startsWith("::")) return blockedIpv4(dotted);
+  if (normalized.startsWith("::ffff:")) {
+    const words = normalized.slice(7).split(":");
+    if (
+      words.length === 2 &&
+      words.every((word) => /^[0-9a-f]{1,4}$/.test(word))
+    ) {
       const high = Number.parseInt(words[0], 16);
       const low = Number.parseInt(words[1], 16);
       return blockedIpv4(`${high >> 8}.${high & 255}.${low >> 8}.${low & 255}`);
     }
   }
-  const first = Number.parseInt(normalized.split(':')[0] || '0', 16);
-  return normalized === '::'
-    || normalized === '::1'
-    || (first & 0xfe00) === 0xfc00
-    || (first & 0xffc0) === 0xfe80
-    || (first & 0xffc0) === 0xfec0
-    || (first & 0xff00) === 0xff00
-    || normalized.startsWith('64:ff9b:')
-    || normalized.startsWith('100:')
-    || normalized.startsWith('2001:db8:');
+  const first = Number.parseInt(normalized.split(":")[0] || "0", 16);
+  return (
+    normalized === "::" ||
+    normalized === "::1" ||
+    (first & 0xfe00) === 0xfc00 ||
+    (first & 0xffc0) === 0xfe80 ||
+    (first & 0xffc0) === 0xfec0 ||
+    (first & 0xff00) === 0xff00 ||
+    normalized.startsWith("64:ff9b:") ||
+    normalized.startsWith("100:") ||
+    normalized.startsWith("2001:db8:")
+  );
 }
 
 function blockedIp(address) {
   const family = isIP(address);
-  return family === 4 ? blockedIpv4(address) : family === 6 ? blockedIpv6(address) : true;
+  return family === 4
+    ? blockedIpv4(address)
+    : family === 6
+      ? blockedIpv6(address)
+      : true;
 }
 
 function allowlistedPrivateIp(hostname, address) {
   if (!isPrivateRemoteMcpIp(address)) return false;
-  return (PRIVATE_TARGETS.ips.has(address) && hostname === address)
-    || PRIVATE_TARGETS.hosts.has(hostname)
-    || [...PRIVATE_TARGETS.suffixes].some((suffix) => hostname.endsWith(`.${suffix}`));
+  return (
+    (PRIVATE_TARGETS.ips.has(address) && hostname === address) ||
+    PRIVATE_TARGETS.hosts.has(hostname) ||
+    [...PRIVATE_TARGETS.suffixes].some((suffix) =>
+      hostname.endsWith(`.${suffix}`),
+    )
+  );
 }
 
 function validateRemoteUrl(url, allowQuery = false) {
-  if ((url.protocol !== 'https:' && url.protocol !== 'http:') || url.username || url.password || url.port === '0' || (!allowQuery && url.search) || url.hash) {
-    throw new Error('Remote MCP endpoint is not allowed.');
+  if (
+    (url.protocol !== "https:" && url.protocol !== "http:") ||
+    url.username ||
+    url.password ||
+    url.port === "0" ||
+    (!allowQuery && url.search) ||
+    url.hash
+  ) {
+    throw new Error("Remote MCP endpoint is not allowed.");
   }
   const hostname = normalizeRemoteMcpHostname(url.hostname);
-  if (hostname === 'localhost' || hostname.endsWith('.localhost') || hostname.endsWith('.local')) {
-    throw new Error('Remote MCP endpoint is not allowed.');
+  if (
+    hostname === "localhost" ||
+    hostname.endsWith(".localhost") ||
+    hostname.endsWith(".local")
+  ) {
+    throw new Error("Remote MCP endpoint is not allowed.");
   }
   return hostname;
 }
@@ -179,10 +251,14 @@ function validateRemoteUrl(url, allowQuery = false) {
 async function resolveRemoteUrl(url, allowQuery = false) {
   const hostname = validateRemoteUrl(url, allowQuery);
   const addresses = await lookup(hostname, { all: true, verbatim: true });
-  if (addresses.length === 0 || addresses.some(({ address }) => (
-    blockedIp(address) && !allowlistedPrivateIp(hostname, address)
-  ))) {
-    throw new Error('Remote MCP endpoint resolved to a non-public address.');
+  if (
+    addresses.length === 0 ||
+    addresses.some(
+      ({ address }) =>
+        blockedIp(address) && !allowlistedPrivateIp(hostname, address),
+    )
+  ) {
+    throw new Error("Remote MCP endpoint resolved to a non-public address.");
   }
   return { hostname, addresses };
 }
@@ -192,7 +268,7 @@ function createPinnedDispatcher(hostname, addresses) {
     connect: {
       lookup(requestHostname, options, callback) {
         if (normalizeRemoteMcpHostname(requestHostname) !== hostname) {
-          callback(new Error('Remote MCP endpoint is not allowed.'));
+          callback(new Error("Remote MCP endpoint is not allowed."));
           return;
         }
         if (options.all) {
@@ -208,55 +284,79 @@ function createPinnedDispatcher(hostname, addresses) {
 
 async function safeFetch(input, init) {
   const url = new URL(input instanceof Request ? input.url : input);
-  if (url.origin !== CONFIG.url.origin) throw new Error('Remote MCP endpoint is not allowed.');
+  if (url.origin !== CONFIG.url.origin)
+    throw new Error("Remote MCP endpoint is not allowed.");
   // Legacy SSE servers announce a same-origin POST endpoint with a session ID
   // in its query string. The configured URL itself remains query-free.
-  validateRemoteUrl(url, CONFIG.transport === 'sse');
-  if (!pinnedDispatcher) throw new Error('Remote MCP endpoint is not allowed.');
-  return undiciFetch(input, { ...init, redirect: 'error', dispatcher: pinnedDispatcher });
+  validateRemoteUrl(url, CONFIG.transport === "sse");
+  if (!pinnedDispatcher) throw new Error("Remote MCP endpoint is not allowed.");
+  return undiciFetch(input, {
+    ...init,
+    redirect: "error",
+    dispatcher: pinnedDispatcher,
+  });
 }
 
-const requestInit = { headers: CONFIG.headers, redirect: 'error' };
-const transport = CONFIG.transport === 'sse'
-  ? new SSEClientTransport(CONFIG.url, {
-      requestInit,
-      eventSourceInit: { fetch: safeFetch },
-      fetch: safeFetch,
-    })
-  : new StreamableHTTPClientTransport(CONFIG.url, { requestInit, fetch: safeFetch });
-const client = new Client({ name: 'toolplane-http-bridge', version: '1.0.0' }, { capabilities: {} });
+const requestInit = { headers: CONFIG.headers, redirect: "error" };
+const transport =
+  CONFIG.transport === "sse"
+    ? new SSEClientTransport(CONFIG.url, {
+        requestInit,
+        eventSourceInit: { fetch: safeFetch },
+        fetch: safeFetch,
+      })
+    : new StreamableHTTPClientTransport(CONFIG.url, {
+        requestInit,
+        fetch: safeFetch,
+      });
+const client = new Client(
+  { name: "toolplane-http-bridge", version: "1.0.0" },
+  { capabilities: {} },
+);
 let initResult = null;
 let shuttingDown = false;
 let pinnedDispatcher = null;
 
 const server = http.createServer((req, res) => {
-  if (req.method === 'GET' && req.url === '/health') {
-    res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ status: 'ok', name: NAME }));
+  if (req.method === "GET" && req.url === "/health") {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ status: "ok", name: NAME }));
     return;
   }
-  if (req.method !== 'POST') {
+  if (req.method !== "POST") {
     res.writeHead(405);
     res.end();
     return;
   }
-  let body = '';
-  req.on('data', (chunk) => {
+  let body = "";
+  req.on("data", (chunk) => {
     body += chunk;
     if (body.length > 1_000_000) req.destroy();
   });
-  req.on('end', async () => {
+  req.on("end", async () => {
     let msg;
     try {
-      msg = JSON.parse(body || '{}');
+      msg = JSON.parse(body || "{}");
     } catch {
-      res.writeHead(400, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }));
+      res.writeHead(400, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: null,
+          error: { code: -32700, message: "Parse error" },
+        }),
+      );
       return;
     }
-    if (!msg || typeof msg !== 'object' || typeof msg.method !== 'string') {
-      res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ jsonrpc: '2.0', id: msg?.id ?? null, error: { code: -32600, message: 'Invalid Request' } }));
+    if (!msg || typeof msg !== "object" || typeof msg.method !== "string") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: msg?.id ?? null,
+          error: { code: -32600, message: "Invalid Request" },
+        }),
+      );
       return;
     }
     if (msg.id === undefined || msg.id === null) {
@@ -264,23 +364,34 @@ const server = http.createServer((req, res) => {
       res.end();
       return;
     }
-    if (msg.method === 'initialize') {
-      res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: initResult }));
+    if (msg.method === "initialize") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: initResult }),
+      );
       return;
     }
     try {
       const result = await client.request(
-        { method: msg.method, ...(msg.params === undefined ? {} : { params: msg.params }) },
+        {
+          method: msg.method,
+          ...(msg.params === undefined ? {} : { params: msg.params }),
+        },
         ResultSchema,
         { timeout: CONFIG.timeoutMs },
       );
-      res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result }));
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result }));
     } catch (error) {
       const code = Number.isInteger(error?.code) ? error.code : -32000;
-      res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ jsonrpc: '2.0', id: msg.id, error: { code, message: safeMessage(error) } }));
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: msg.id,
+          error: { code, message: safeMessage(error) },
+        }),
+      );
     }
   });
 });
@@ -302,24 +413,32 @@ async function shutdown(code) {
   process.exitCode = code;
 }
 
-process.once('SIGTERM', () => void shutdown(0));
-process.once('SIGINT', () => void shutdown(0));
+process.once("SIGTERM", () => void shutdown(0));
+process.once("SIGINT", () => void shutdown(0));
 
 async function start() {
   try {
-    if (CONFIG.url.protocol === 'http:') {
+    if (CONFIG.url.protocol === "http:") {
       // Never include endpoint URLs, headers or credentials in this warning.
-      process.stderr.write('mcp-http-bridge: WARNING: HTTP is unencrypted. Credentials, tool arguments and results can be intercepted or modified. Prefer HTTPS; use HTTP only on a trusted, protected network. ToolPlane HTTPS does not encrypt this upstream connection.\n');
+      process.stderr.write(
+        "mcp-http-bridge: WARNING: HTTP is unencrypted. Credentials, tool arguments and results can be intercepted or modified. Prefer HTTPS; use HTTP only on a trusted, protected network. ToolPlane HTTPS does not encrypt this upstream connection.\n",
+      );
     }
-    runtimePhase('initializing', 'Connecting to remote MCP.');
+    runtimePhase("initializing", "Connecting to remote MCP.");
     const remote = await resolveRemoteUrl(CONFIG.url);
-    pinnedDispatcher = createPinnedDispatcher(remote.hostname, remote.addresses);
+    pinnedDispatcher = createPinnedDispatcher(
+      remote.hostname,
+      remote.addresses,
+    );
     let timer;
     try {
       await Promise.race([
         client.connect(transport, { timeout: CONFIG.timeoutMs }),
         new Promise((_, reject) => {
-          timer = setTimeout(() => reject(new Error('Remote MCP connection timed out.')), CONFIG.timeoutMs);
+          timer = setTimeout(
+            () => reject(new Error("Remote MCP connection timed out.")),
+            CONFIG.timeoutMs,
+          );
         }),
       ]);
     } finally {
@@ -327,21 +446,26 @@ async function start() {
     }
     if (shuttingDown) return;
     initResult = {
-      protocolVersion: transport.protocolVersion ?? '2025-06-18',
+      protocolVersion: transport.protocolVersion ?? "2025-06-18",
       capabilities: client.getServerCapabilities() ?? {},
-      serverInfo: client.getServerVersion() ?? { name: NAME, version: 'unknown' },
-      ...(client.getInstructions() ? { instructions: client.getInstructions() } : {}),
+      serverInfo: client.getServerVersion() ?? {
+        name: NAME,
+        version: "unknown",
+      },
+      ...(client.getInstructions()
+        ? { instructions: client.getInstructions() }
+        : {}),
     };
-    server.listen(Number(process.env.MCP_PORT || 0), '127.0.0.1', () => {
+    server.listen(Number(process.env.MCP_PORT || 0), "127.0.0.1", () => {
       if (shuttingDown) return;
       const address = server.address();
-      const port = typeof address === 'object' && address ? address.port : 0;
-      runtimePhase('ready');
+      const port = typeof address === "object" && address ? address.port : 0;
+      runtimePhase("ready");
       process.stdout.write(`LISTENING ${port}\n`);
     });
   } catch (error) {
     const message = safeMessage(error);
-    runtimePhase('error', message);
+    runtimePhase("error", message);
     process.stderr.write(`mcp-http-bridge: startup failed: ${message}\n`);
     await shutdown(1);
   }

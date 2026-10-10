@@ -1,16 +1,16 @@
-import { withRequestLogging } from '@/lib/observability/http';
+import { withRequestLogging } from "@/lib/observability/http";
 import {
   ensureHermesDashboardBroker,
   hermesDashboardBrokerPublicUrl,
-} from '@/lib/agents/hermes/dashboard-broker';
+} from "@/lib/agents/hermes/dashboard-broker";
 import {
   createHermesDashboardBrokerAccessToken,
   verifyHermesDashboardAccessToken,
-} from '@/lib/agents/hermes/token';
-import { db } from '@/lib/db';
-import { isAgentEndpointRuntimeSandboxConfig } from '@/lib/agents/public-api/tool-policy';
+} from "@/lib/agents/hermes/token";
+import { db } from "@/lib/db";
+import { isAgentEndpointRuntimeSandboxConfig } from "@/lib/agents/public-api/tool-policy";
 
-export const runtime = 'nodejs';
+export const runtime = "nodejs";
 
 type RouteParams = Promise<{
   runtimeId: string;
@@ -24,45 +24,52 @@ function errorResponse(message: string, status: number): Response {
     {
       status,
       headers: {
-        'cache-control': 'no-store',
-        'referrer-policy': 'no-referrer',
-        'x-content-type-options': 'nosniff',
+        "cache-control": "no-store",
+        "referrer-policy": "no-referrer",
+        "x-content-type-options": "nosniff",
       },
     },
   );
 }
 
 function firstHeaderValue(value: string | null): string | null {
-  return value?.split(',')[0]?.trim() || null;
+  return value?.split(",")[0]?.trim() || null;
 }
 
 function dashboardParentOrigin(req: Request): string {
   const requestUrl = new URL(req.url);
-  const host = firstHeaderValue(req.headers.get('x-forwarded-host'))
-    ?? firstHeaderValue(req.headers.get('host'))
-    ?? requestUrl.host;
-  const forwardedProto = firstHeaderValue(req.headers.get('x-forwarded-proto'))?.toLowerCase();
-  const protocol = forwardedProto === 'http' || forwardedProto === 'https'
-    ? `${forwardedProto}:`
-    : requestUrl.protocol;
+  const host =
+    firstHeaderValue(req.headers.get("x-forwarded-host")) ??
+    firstHeaderValue(req.headers.get("host")) ??
+    requestUrl.host;
+  const forwardedProto = firstHeaderValue(
+    req.headers.get("x-forwarded-proto"),
+  )?.toLowerCase();
+  const protocol =
+    forwardedProto === "http" || forwardedProto === "https"
+      ? `${forwardedProto}:`
+      : requestUrl.protocol;
   return new URL(`${protocol}//${host}`).origin;
 }
 
-async function redirectToDashboardBroker(req: Request, params: RouteParams): Promise<Response> {
+async function redirectToDashboardBroker(
+  req: Request,
+  params: RouteParams,
+): Promise<Response> {
   const { runtimeId, accessToken, path = [] } = await params;
   if (!verifyHermesDashboardAccessToken(runtimeId, accessToken)) {
-    return errorResponse('Dashboard access is invalid or expired.', 401);
+    return errorResponse("Dashboard access is invalid or expired.", 401);
   }
   const runtime = await db.agentRuntime.findFirst({
     where: {
       id: runtimeId,
-      kind: 'hermes',
+      kind: "hermes",
       agent: { publicRuntimeAllocation: { is: null } },
     },
     select: { sandbox: { select: { config: true } } },
   });
   if (!runtime || isAgentEndpointRuntimeSandboxConfig(runtime.sandbox.config)) {
-    return errorResponse('Dashboard access is invalid or expired.', 401);
+    return errorResponse("Dashboard access is invalid or expired.", 401);
   }
 
   try {
@@ -73,7 +80,10 @@ async function redirectToDashboardBroker(req: Request, params: RouteParams): Pro
     publicRequestUrl.protocol = parentUrl.protocol;
     publicRequestUrl.hostname = parentUrl.hostname;
     publicRequestUrl.port = parentUrl.port;
-    const brokerToken = createHermesDashboardBrokerAccessToken(runtimeId, parentOrigin);
+    const brokerToken = createHermesDashboardBrokerAccessToken(
+      runtimeId,
+      parentOrigin,
+    );
     const location = hermesDashboardBrokerPublicUrl(
       publicRequestUrl.toString(),
       runtimeId,
@@ -85,39 +95,59 @@ async function redirectToDashboardBroker(req: Request, params: RouteParams): Pro
       status: 307,
       headers: {
         location,
-        'cache-control': 'no-store',
-        'referrer-policy': 'no-referrer',
-        'x-content-type-options': 'nosniff',
+        "cache-control": "no-store",
+        "referrer-policy": "no-referrer",
+        "x-content-type-options": "nosniff",
       },
     });
   } catch (error) {
     return errorResponse(
-      error instanceof Error ? error.message : 'Hermes dashboard broker is unavailable.',
+      error instanceof Error
+        ? error.message
+        : "Hermes dashboard broker is unavailable.",
       503,
     );
   }
 }
 
-export const GET = withRequestLogging("/api/v1/agent-runtimes/[runtimeId]/dashboard/[accessToken]/[[...path]]", async function GET(req: Request, { params }: { params: RouteParams }) {
-  return redirectToDashboardBroker(req, params);
-});
+export const GET = withRequestLogging(
+  "/api/v1/agent-runtimes/[runtimeId]/dashboard/[accessToken]/[[...path]]",
+  async function GET(req: Request, { params }: { params: RouteParams }) {
+    return redirectToDashboardBroker(req, params);
+  },
+);
 
-export const HEAD = withRequestLogging("/api/v1/agent-runtimes/[runtimeId]/dashboard/[accessToken]/[[...path]]", async function HEAD(req: Request, { params }: { params: RouteParams }) {
-  return redirectToDashboardBroker(req, params);
-});
+export const HEAD = withRequestLogging(
+  "/api/v1/agent-runtimes/[runtimeId]/dashboard/[accessToken]/[[...path]]",
+  async function HEAD(req: Request, { params }: { params: RouteParams }) {
+    return redirectToDashboardBroker(req, params);
+  },
+);
 
-export const POST = withRequestLogging("/api/v1/agent-runtimes/[runtimeId]/dashboard/[accessToken]/[[...path]]", async function POST(req: Request, { params }: { params: RouteParams }) {
-  return redirectToDashboardBroker(req, params);
-});
+export const POST = withRequestLogging(
+  "/api/v1/agent-runtimes/[runtimeId]/dashboard/[accessToken]/[[...path]]",
+  async function POST(req: Request, { params }: { params: RouteParams }) {
+    return redirectToDashboardBroker(req, params);
+  },
+);
 
-export const PUT = withRequestLogging("/api/v1/agent-runtimes/[runtimeId]/dashboard/[accessToken]/[[...path]]", async function PUT(req: Request, { params }: { params: RouteParams }) {
-  return redirectToDashboardBroker(req, params);
-});
+export const PUT = withRequestLogging(
+  "/api/v1/agent-runtimes/[runtimeId]/dashboard/[accessToken]/[[...path]]",
+  async function PUT(req: Request, { params }: { params: RouteParams }) {
+    return redirectToDashboardBroker(req, params);
+  },
+);
 
-export const PATCH = withRequestLogging("/api/v1/agent-runtimes/[runtimeId]/dashboard/[accessToken]/[[...path]]", async function PATCH(req: Request, { params }: { params: RouteParams }) {
-  return redirectToDashboardBroker(req, params);
-});
+export const PATCH = withRequestLogging(
+  "/api/v1/agent-runtimes/[runtimeId]/dashboard/[accessToken]/[[...path]]",
+  async function PATCH(req: Request, { params }: { params: RouteParams }) {
+    return redirectToDashboardBroker(req, params);
+  },
+);
 
-export const DELETE = withRequestLogging("/api/v1/agent-runtimes/[runtimeId]/dashboard/[accessToken]/[[...path]]", async function DELETE(req: Request, { params }: { params: RouteParams }) {
-  return redirectToDashboardBroker(req, params);
-});
+export const DELETE = withRequestLogging(
+  "/api/v1/agent-runtimes/[runtimeId]/dashboard/[accessToken]/[[...path]]",
+  async function DELETE(req: Request, { params }: { params: RouteParams }) {
+    return redirectToDashboardBroker(req, params);
+  },
+);

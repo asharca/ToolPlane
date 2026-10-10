@@ -3,58 +3,58 @@
 // root fs (writable /tmp only), capped resources, and a dedicated network off
 // the app/db network. Only the MCP's own env (installCfg.env) ever enters it.
 
-export type McpNetwork = 'isolated' | 'none';
+export type McpNetwork = "isolated" | "none";
 
 // Dedicated bridge network for MCP containers — present egress to the internet
 // but not on the app/db compose network. `ensureSandboxNetwork()` creates it.
-export const MCP_NETWORK = 'mcp-sandbox';
+export const MCP_NETWORK = "mcp-sandbox";
 
 export const SANDBOX = {
-  memory: '512m',
-  cpus: '1',
+  memory: "512m",
+  cpus: "1",
   pids: 256,
-  tmpfs: '/tmp:rw,exec,size=256m',
+  tmpfs: "/tmp:rw,exec,size=256m",
 } as const;
 
 // npm/github packages run inside Node; PyPI packages inside the uv image (uv +
 // a managed Python). docker-source MCPs use the user's own image.
 export const WRAP_IMAGE = {
-  npm: 'node:24-bookworm-slim',
-  npmGit: 'node:24-bookworm',
-  github: 'node:24-bookworm-slim',
-  pypi: 'ghcr.io/astral-sh/uv:python3.13-bookworm-slim',
-  pypiGit: 'ghcr.io/astral-sh/uv:python3.13-bookworm',
+  npm: "node:24-bookworm-slim",
+  npmGit: "node:24-bookworm",
+  github: "node:24-bookworm-slim",
+  pypi: "ghcr.io/astral-sh/uv:python3.13-bookworm-slim",
+  pypiGit: "ghcr.io/astral-sh/uv:python3.13-bookworm",
 } as const;
 
 // `--read-only` means npm/uv can't write their default cache dirs, so redirect
 // them (and HOME) onto the writable tmpfs.
 export const CACHE_ENV = {
-  npm: { npm_config_cache: '/tmp/.npm', HOME: '/tmp' },
-  pypi: { UV_CACHE_DIR: '/tmp/.uv', XDG_CACHE_HOME: '/tmp', HOME: '/tmp' },
+  npm: { npm_config_cache: "/tmp/.npm", HOME: "/tmp" },
+  pypi: { UV_CACHE_DIR: "/tmp/.uv", XDG_CACHE_HOME: "/tmp", HOME: "/tmp" },
 } as const;
 
 export function sandboxFlags(network: McpNetwork): string[] {
   return [
-    '-i',
-    '--rm',
-    '--cap-drop',
-    'ALL',
-    '--security-opt',
-    'no-new-privileges',
-    '--read-only',
-    '--tmpfs',
+    "-i",
+    "--rm",
+    "--cap-drop",
+    "ALL",
+    "--security-opt",
+    "no-new-privileges",
+    "--read-only",
+    "--tmpfs",
     SANDBOX.tmpfs,
-    '--pids-limit',
+    "--pids-limit",
     String(SANDBOX.pids),
-    '--memory',
+    "--memory",
     SANDBOX.memory,
-    '--cpus',
+    "--cpus",
     SANDBOX.cpus,
-    '--network',
-    network === 'none' ? 'none' : MCP_NETWORK,
+    "--network",
+    network === "none" ? "none" : MCP_NETWORK,
   ];
 }
 
 export function envFlags(env: Record<string, string>): string[] {
-  return Object.keys(env).flatMap((key) => ['-e', key]);
+  return Object.keys(env).flatMap((key) => ["-e", key]);
 }

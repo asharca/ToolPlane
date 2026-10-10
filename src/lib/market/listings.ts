@@ -1,55 +1,95 @@
-import 'server-only';
+import "server-only";
 
-import { Prisma } from '@prisma/client';
-import { db } from '@/lib/db';
-import { marketReleaseChecksum } from '@/lib/market/artifact';
-import { parseAssistantReleaseManifest } from '@/lib/market/assistant-manifest';
-import { parseSkillReleaseManifest } from '@/lib/market/skill-manifest';
+import type { Prisma } from "@prisma/client";
+import { db } from "@/lib/db";
+import { marketReleaseChecksum } from "@/lib/market/artifact";
+import { parseAssistantReleaseManifest } from "@/lib/market/assistant-manifest";
+import { parseSkillReleaseManifest } from "@/lib/market/skill-manifest";
 import {
   parsePiPackageReleaseManifest,
   scanPiPackageReleaseManifest,
   projectPiPackageSummary,
-} from '@/lib/market/pi-package-manifest';
+} from "@/lib/market/pi-package-manifest";
 import {
   parseResourceMarketManifest,
   projectPublicResourceMarketManifest,
-} from '@/lib/market/resources';
-import { scanMarketArtifact, scanSkillReleaseManifest } from '@/lib/market/secret-scan';
-import type { PiPackageSummary } from '@/lib/market/pi-package-manifest';
-import type { PublicResourceMarketManifest } from '@/lib/market/resources';
+} from "@/lib/market/resources";
+import {
+  scanMarketArtifact,
+  scanSkillReleaseManifest,
+} from "@/lib/market/secret-scan";
+import type { PiPackageSummary } from "@/lib/market/pi-package-manifest";
+import type { PublicResourceMarketManifest } from "@/lib/market/resources";
 
-const LISTING_KINDS = new Set(['mcp', 'skill', 'toolkit', 'agent', 'assistant', 'pi-package']);
-
+const LISTING_KINDS = new Set([
+  "mcp",
+  "skill",
+  "toolkit",
+  "agent",
+  "assistant",
+  "pi-package",
+]);
 
 export type MarketViewer = { workspaceId: string; userId: string };
 
-async function visibleListings(viewer?: MarketViewer): Promise<Prisma.MarketListingWhereInput> {
-  if (!viewer) return { visibility: 'public' };
-  const workspace = await db.workspace.findFirst({ where: { id: viewer.workspaceId, status: 'active', OR: [{ ownerId: viewer.userId }, { members: { some: { userId: viewer.userId } } }] }, select: { id: true } });
-  return workspace ? { OR: [{ visibility: 'public' }, { visibility: 'private', publisherWorkspaceId: workspace.id }] } : { visibility: 'public' };
+async function visibleListings(
+  viewer?: MarketViewer,
+): Promise<Prisma.MarketListingWhereInput> {
+  if (!viewer) return { visibility: "public" };
+  const workspace = await db.workspace.findFirst({
+    where: {
+      id: viewer.workspaceId,
+      status: "active",
+      OR: [
+        { ownerId: viewer.userId },
+        { members: { some: { userId: viewer.userId } } },
+      ],
+    },
+    select: { id: true },
+  });
+  return workspace
+    ? {
+        OR: [
+          { visibility: "public" },
+          { visibility: "private", publisherWorkspaceId: workspace.id },
+        ],
+      }
+    : { visibility: "public" };
 }
 
-export async function listMarketListings(input: {
-  kind?: string;
-  q?: string;
-  tag?: string;
-  category?: string;
-  sort?: 'popular' | 'newest' | 'name';
-  page?: number;
-  pageSize?: number;
-  viewer?: MarketViewer;
-} = {}) {
-  const kind = LISTING_KINDS.has(input.kind ?? '') ? input.kind : undefined;
-  const term = input.q?.trim().slice(0, 200) ?? '';
-  const tag = input.tag?.trim().toLocaleLowerCase().slice(0, 40) ?? '';
-  const category = input.category?.trim().toLocaleLowerCase().slice(0, 120) ?? '';
-  const sort = input.sort === 'newest' || input.sort === 'name' ? input.sort : 'popular';
-  const page = Number.isSafeInteger(input.page) && (input.page ?? 0) > 0 ? input.page! : 1;
-  const pageSize = Number.isSafeInteger(input.pageSize) && (input.pageSize ?? 0) > 0
-    ? Math.min(50, input.pageSize!)
-    : 24;
-  if (kind === 'agent') {
-    const { listAgentMarketListings } = await import('@/lib/agents/market');
+export async function listMarketListings(
+  input: {
+    kind?: string;
+    q?: string;
+    tag?: string;
+    category?: string;
+    sort?: "popular" | "newest" | "name";
+    page?: number;
+    pageSize?: number;
+    viewer?: MarketViewer;
+  } = {},
+) {
+  const kind = LISTING_KINDS.has(input.kind ?? "") ? input.kind : undefined;
+  const term = input.q?.trim().slice(0, 200) ?? "";
+  const tag = input.tag?.trim().toLocaleLowerCase().slice(0, 40) ?? "";
+  const category =
+    input.category?.trim().toLocaleLowerCase().slice(0, 120) ?? "";
+  const sort =
+    input.sort === "newest" || input.sort === "name" ? input.sort : "popular";
+  const page =
+    Number.isSafeInteger(input.page) &&
+    input.page !== undefined &&
+    input.page > 0
+      ? input.page
+      : 1;
+  const pageSize =
+    Number.isSafeInteger(input.pageSize) &&
+    input.pageSize !== undefined &&
+    input.pageSize > 0
+      ? Math.min(50, input.pageSize)
+      : 24;
+  if (kind === "agent") {
+    const { listAgentMarketListings } = await import("@/lib/agents/market");
     const result = await listAgentMarketListings({
       q: term || tag,
       category,
@@ -61,8 +101,8 @@ export async function listMarketListings(input: {
       ...result,
       items: result.items.map((item) => ({
         id: item.id,
-        kind: 'agent' as const,
-        namespace: item.workspaceSlug ?? 'toolplane',
+        kind: "agent" as const,
+        namespace: item.workspaceSlug ?? "toolplane",
         slug: item.directorySlug,
         name: item.name,
         summary: item.summary,
@@ -83,20 +123,26 @@ export async function listMarketListings(input: {
   }
   const baseWhere: Prisma.MarketListingWhereInput = {
     AND: [await visibleListings(input.viewer)],
-    status: 'published',
+    status: "published",
     latestReleaseId: { not: null },
-    latestRelease: { is: { reviewStatus: 'approved' } },
+    latestRelease: { is: { reviewStatus: "approved" } },
     ...(kind ? { kind } : {}),
-    ...(term ? {
-      OR: [
-        { name: { contains: term, mode: 'insensitive' } },
-        { summary: { contains: term, mode: 'insensitive' } },
-        { namespace: { contains: term, mode: 'insensitive' } },
-        { slug: { contains: term, mode: 'insensitive' } },
-        { tags: { has: term.toLocaleLowerCase() } },
-        { categories: { some: { name: { contains: term, mode: 'insensitive' } } } },
-      ],
-    } : {}),
+    ...(term
+      ? {
+          OR: [
+            { name: { contains: term, mode: "insensitive" } },
+            { summary: { contains: term, mode: "insensitive" } },
+            { namespace: { contains: term, mode: "insensitive" } },
+            { slug: { contains: term, mode: "insensitive" } },
+            { tags: { has: term.toLocaleLowerCase() } },
+            {
+              categories: {
+                some: { name: { contains: term, mode: "insensitive" } },
+              },
+            },
+          ],
+        }
+      : {}),
   };
   const where: Prisma.MarketListingWhereInput = {
     ...baseWhere,
@@ -104,12 +150,15 @@ export async function listMarketListings(input: {
     ...(category ? { categories: { some: { slug: category } } } : {}),
   };
   const orderBy: Prisma.MarketListingOrderByWithRelationInput[] = [
-    { isFeatured: 'desc' },
-    ...(sort === 'newest'
-      ? [{ publishedAt: 'desc' as const }]
-      : sort === 'name'
-        ? [{ name: 'asc' as const }]
-        : [{ installCount: 'desc' as const }, { publishedAt: 'desc' as const }]),
+    { isFeatured: "desc" },
+    ...(sort === "newest"
+      ? [{ publishedAt: "desc" as const }]
+      : sort === "name"
+        ? [{ name: "asc" as const }]
+        : [
+            { installCount: "desc" as const },
+            { publishedAt: "desc" as const },
+          ]),
   ];
   const [total, availableTotal, items] = await Promise.all([
     db.marketListing.count({ where }),
@@ -128,29 +177,37 @@ export async function listMarketListings(input: {
         summary: true,
         iconUrl: true,
         tags: true,
-        categories: { select: { slug: true, name: true }, orderBy: { name: 'asc' } },
+        categories: {
+          select: { slug: true, name: true },
+          orderBy: { name: "asc" },
+        },
         curated: true,
         isFeatured: true,
         installCount: true,
         publishedAt: true,
-        latestRelease: { select: { id: true, version: true, releaseSummary: true } },
+        latestRelease: {
+          select: { id: true, version: true, releaseSummary: true },
+        },
       },
     }),
   ]);
   return { items, total, availableTotal, page, pageSize };
 }
 
-export async function listMarketListingCategories(kind: 'skill' | 'assistant' | 'pi-package', viewer?: MarketViewer) {
+export async function listMarketListingCategories(
+  kind: "skill" | "assistant" | "pi-package",
+  viewer?: MarketViewer,
+) {
   const listingWhere: Prisma.MarketListingWhereInput = {
     kind,
     AND: [await visibleListings(viewer)],
-    status: 'published',
+    status: "published",
     latestReleaseId: { not: null },
-    latestRelease: { is: { reviewStatus: 'approved' } },
+    latestRelease: { is: { reviewStatus: "approved" } },
   };
   const rows = await db.category.findMany({
     where: { marketListings: { some: listingWhere } },
-    orderBy: { name: 'asc' },
+    orderBy: { name: "asc" },
     select: {
       slug: true,
       name: true,
@@ -158,19 +215,27 @@ export async function listMarketListingCategories(kind: 'skill' | 'assistant' | 
     },
   });
   return rows
-    .map((row) => ({ slug: row.slug, name: row.name, count: row._count.marketListings }))
+    .map((row) => ({
+      slug: row.slug,
+      name: row.name,
+      count: row._count.marketListings,
+    }))
     .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
 }
 
-export async function getMarketListing(namespace: string, slug: string, viewer?: MarketViewer) {
+export async function getMarketListing(
+  namespace: string,
+  slug: string,
+  viewer?: MarketViewer,
+) {
   const listing = await db.marketListing.findFirst({
     where: {
       namespace,
       slug,
       AND: [await visibleListings(viewer)],
-      status: 'published',
+      status: "published",
       latestReleaseId: { not: null },
-      latestRelease: { is: { reviewStatus: 'approved' } },
+      latestRelease: { is: { reviewStatus: "approved" } },
     },
     select: {
       id: true,
@@ -182,7 +247,10 @@ export async function getMarketListing(namespace: string, slug: string, viewer?:
       summary: true,
       iconUrl: true,
       tags: true,
-      categories: { select: { slug: true, name: true }, orderBy: { name: 'asc' } },
+      categories: {
+        select: { slug: true, name: true },
+        orderBy: { name: "asc" },
+      },
       metadata: true,
       status: true,
       visibility: true,
@@ -208,26 +276,60 @@ export async function getMarketListing(namespace: string, slug: string, viewer?:
   const latestRelease = listing.latestRelease;
   let publicManifest: PublicResourceMarketManifest | null = null;
   let piPackage: PiPackageSummary | null = null;
-  if (listing.kind === 'skill') {
-    const manifest = parseSkillReleaseManifest(latestRelease.manifest, latestRelease.checksum);
-    if (scanSkillReleaseManifest(manifest, latestRelease.releaseNotes).status === 'blocked') return null;
-  } else if (listing.kind === 'assistant') {
-    const manifest = parseAssistantReleaseManifest(latestRelease.manifest, latestRelease.checksum);
-    if (scanMarketArtifact(manifest, latestRelease.releaseNotes).status === 'blocked') return null;
-  } else if (listing.kind === 'pi-package') {
-    const manifest = parsePiPackageReleaseManifest(latestRelease.manifest, latestRelease.checksum);
-    if (scanPiPackageReleaseManifest(manifest, latestRelease.releaseNotes).status === 'blocked') return null;
+  if (listing.kind === "skill") {
+    const manifest = parseSkillReleaseManifest(
+      latestRelease.manifest,
+      latestRelease.checksum,
+    );
+    if (
+      scanSkillReleaseManifest(manifest, latestRelease.releaseNotes).status ===
+      "blocked"
+    )
+      return null;
+  } else if (listing.kind === "assistant") {
+    const manifest = parseAssistantReleaseManifest(
+      latestRelease.manifest,
+      latestRelease.checksum,
+    );
+    if (
+      scanMarketArtifact(manifest, latestRelease.releaseNotes).status ===
+      "blocked"
+    )
+      return null;
+  } else if (listing.kind === "pi-package") {
+    const manifest = parsePiPackageReleaseManifest(
+      latestRelease.manifest,
+      latestRelease.checksum,
+    );
+    if (
+      scanPiPackageReleaseManifest(manifest, latestRelease.releaseNotes)
+        .status === "blocked"
+    )
+      return null;
     piPackage = projectPiPackageSummary(manifest.package);
-  } else if (listing.kind === 'mcp' || listing.kind === 'toolkit') {
-    const manifest = parseResourceMarketManifest(latestRelease.manifest, latestRelease.checksum);
-    if (scanMarketArtifact(manifest, latestRelease.releaseNotes).status === 'blocked') return null;
+  } else if (listing.kind === "mcp" || listing.kind === "toolkit") {
+    const manifest = parseResourceMarketManifest(
+      latestRelease.manifest,
+      latestRelease.checksum,
+    );
+    if (
+      scanMarketArtifact(manifest, latestRelease.releaseNotes).status ===
+      "blocked"
+    )
+      return null;
     publicManifest = projectPublicResourceMarketManifest(manifest);
   }
   const publicListing = {
     ...listing,
-    metadata: listing.kind === 'pi-package' && piPackage ? { name: piPackage.name, version: piPackage.version } : listing.metadata,
+    metadata:
+      listing.kind === "pi-package" && piPackage
+        ? { name: piPackage.name, version: piPackage.version }
+        : listing.metadata,
     piPackage,
-    latestRelease: listing.kind === 'pi-package' ? { ...latestRelease, manifest: null } : latestRelease,
+    latestRelease:
+      listing.kind === "pi-package"
+        ? { ...latestRelease, manifest: null }
+        : latestRelease,
   };
   if (!publicManifest) return publicListing;
   return {

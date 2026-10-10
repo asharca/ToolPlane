@@ -1,7 +1,12 @@
-import 'server-only';
-import { assertRuntimeOwner, trackRuntimeOperation, runtimeAbortSignal, markRuntimeUncertain } from '@/lib/runtime/ownership-state';
-import { recordEvent } from '@/lib/observability/events';
-import { spawn, type ChildProcess } from 'node:child_process';
+import "server-only";
+import {
+  assertRuntimeOwner,
+  trackRuntimeOperation,
+  runtimeAbortSignal,
+  markRuntimeUncertain,
+} from "@/lib/runtime/ownership-state";
+import { recordEvent } from "@/lib/observability/events";
+import { spawn, type ChildProcess } from "node:child_process";
 import {
   existsSync,
   closeSync,
@@ -13,29 +18,29 @@ import {
   rmSync,
   statSync,
   writeFileSync,
-} from 'node:fs';
-import { randomUUID } from 'node:crypto';
-import { StringDecoder } from 'node:string_decoder';
-import os from 'node:os';
-import path from 'node:path';
-import { db } from '@/lib/db';
-import { type SpawnSpec } from './spawn-spec';
-import { MCP_NETWORK } from './sandbox';
-import { ensureConnectorBroker } from '@/lib/sandboxes/connector-broker';
-import { deriveHermesRuntimeToken } from '@/lib/agents/hermes/token';
+} from "node:fs";
+import { randomUUID } from "node:crypto";
+import { StringDecoder } from "node:string_decoder";
+import os from "node:os";
+import path from "node:path";
+import { db } from "@/lib/db";
+import type { SpawnSpec } from "./spawn-spec";
+import { MCP_NETWORK } from "./sandbox";
+import { ensureConnectorBroker } from "@/lib/sandboxes/connector-broker";
+import { deriveHermesRuntimeToken } from "@/lib/agents/hermes/token";
 import {
   resolveMcpStartupTimeoutSettings,
   resolveRemoteMcpPrivateHostsSettings,
-} from '@/lib/admin/settings';
+} from "@/lib/admin/settings";
 import {
   DEPLOYMENT_CONFIG_MOUNT_PATH,
   configVolumeName,
   materializeDeploymentConfigVolume,
-} from './deployment-config-volume';
+} from "./deployment-config-volume";
 import {
   deploymentContainerName as managedDeploymentContainerName,
   removeDeploymentContainer,
-} from './deployment-runtime-container';
+} from "./deployment-runtime-container";
 
 type Entry = {
   child: ChildProcess;
@@ -135,12 +140,14 @@ function store(): Store {
 }
 
 function persistQueues(): Map<string, Promise<void>> {
-  if (!g.__mcpSupervisorPersistQueues) g.__mcpSupervisorPersistQueues = new Map();
+  if (!g.__mcpSupervisorPersistQueues)
+    g.__mcpSupervisorPersistQueues = new Map();
   return g.__mcpSupervisorPersistQueues;
 }
 
 function lifecycleQueues(): Map<string, Promise<void>> {
-  if (!g.__mcpSupervisorLifecycleQueues) g.__mcpSupervisorLifecycleQueues = new Map();
+  if (!g.__mcpSupervisorLifecycleQueues)
+    g.__mcpSupervisorLifecycleQueues = new Map();
   return g.__mcpSupervisorLifecycleQueues;
 }
 
@@ -170,14 +177,21 @@ export function allowProcessRestart(deploymentId: string): void {
 }
 
 function launchPrevented(deploymentId: string, workspaceId?: string): boolean {
-  return tombstones().has(deploymentId)
-    || (workspaceId !== undefined && workspaceTombstones().has(workspaceId));
+  return (
+    tombstones().has(deploymentId) ||
+    (workspaceId !== undefined && workspaceTombstones().has(workspaceId))
+  );
 }
 
-function enqueueLifecycle<T>(deploymentId: string, operation: () => Promise<T>): Promise<T> {
+function enqueueLifecycle<T>(
+  deploymentId: string,
+  operation: () => Promise<T>,
+): Promise<T> {
   const queues = lifecycleQueues();
   const previous = queues.get(deploymentId) ?? Promise.resolve();
-  const result = previous.catch(() => undefined).then(() => trackRuntimeOperation(operation, true));
+  const result = previous
+    .catch(() => undefined)
+    .then(() => trackRuntimeOperation(operation, true));
   const tail = result.then(
     () => undefined,
     () => undefined,
@@ -190,12 +204,22 @@ function enqueueLifecycle<T>(deploymentId: string, operation: () => Promise<T>):
   });
 }
 
-const BUILTIN = path.join(process.cwd(), 'scripts', 'mcp-server.mjs');
-const BRIDGE = path.join(process.cwd(), 'scripts', 'mcp-stdio-bridge.mjs');
-const REMOTE_BRIDGE = path.join(process.cwd(), 'scripts', 'mcp-http-bridge.mjs');
-const SANDBOX_SERVER = path.join(process.cwd(), 'scripts', 'sandbox-mcp-server.mjs');
-import { resolveSshTargetForWorkspace } from '@/lib/sandboxes/ssh-targets';
-const REGISTRY_DIR = process.env.TOOLPLANE_SUPERVISOR_DIR || path.join(os.tmpdir(), 'toolplane-supervisor');
+const BUILTIN = path.join(process.cwd(), "scripts", "mcp-server.mjs");
+const BRIDGE = path.join(process.cwd(), "scripts", "mcp-stdio-bridge.mjs");
+const REMOTE_BRIDGE = path.join(
+  process.cwd(),
+  "scripts",
+  "mcp-http-bridge.mjs",
+);
+const SANDBOX_SERVER = path.join(
+  process.cwd(),
+  "scripts",
+  "sandbox-mcp-server.mjs",
+);
+import { resolveSshTargetForWorkspace } from "@/lib/sandboxes/ssh-targets";
+const REGISTRY_DIR =
+  process.env.TOOLPLANE_SUPERVISOR_DIR ||
+  path.join(os.tmpdir(), "toolplane-supervisor");
 
 // The bridge uses progress-aware idle and overall budgets. This supervisor
 // timeout only bounds callers that explicitly await readiness; it never marks
@@ -213,13 +237,18 @@ const LAUNCH_LOCK_MAX_AGE_MS = 10 * 60_000;
 async function persist(deploymentId: string, status: string) {
   const queues = persistQueues();
   const previous = queues.get(deploymentId) ?? Promise.resolve();
-  const write = previous.catch(() => undefined).then(async () => {
-    try {
-      await db.deployment.update({ where: { id: deploymentId }, data: { status } });
-    } catch {
-      // deployment may have been removed; ignore
-    }
-  });
+  const write = previous
+    .catch(() => undefined)
+    .then(async () => {
+      try {
+        await db.deployment.update({
+          where: { id: deploymentId },
+          data: { status },
+        });
+      } catch {
+        // deployment may have been removed; ignore
+      }
+    });
   queues.set(deploymentId, write);
   await write;
   if (queues.get(deploymentId) === write) {
@@ -228,7 +257,7 @@ async function persist(deploymentId: string, status: string) {
 }
 
 function safeId(id: string): string {
-  return id.replace(/[^a-zA-Z0-9_.-]/g, '_');
+  return id.replace(/[^a-zA-Z0-9_.-]/g, "_");
 }
 
 export function deploymentContainerName(deploymentId: string): string {
@@ -280,10 +309,21 @@ type LaunchLockRecord = {
 
 function launchLockIsStale(file: string): boolean {
   try {
-    const lock = JSON.parse(readFileSync(file, 'utf8')) as LaunchLockRecord;
-    const createdAt = typeof lock.createdAt === 'string' ? Date.parse(lock.createdAt) : Number.NaN;
-    if (!Number.isFinite(createdAt) || Date.now() - createdAt > LAUNCH_LOCK_MAX_AGE_MS) return true;
-    if (typeof lock.pid === 'number' && Number.isInteger(lock.pid) && lock.pid > 0) {
+    const lock = JSON.parse(readFileSync(file, "utf8")) as LaunchLockRecord;
+    const createdAt =
+      typeof lock.createdAt === "string"
+        ? Date.parse(lock.createdAt)
+        : Number.NaN;
+    if (
+      !Number.isFinite(createdAt) ||
+      Date.now() - createdAt > LAUNCH_LOCK_MAX_AGE_MS
+    )
+      return true;
+    if (
+      typeof lock.pid === "number" &&
+      Number.isInteger(lock.pid) &&
+      lock.pid > 0
+    ) {
       return !pidAlive(lock.pid);
     }
     return true;
@@ -307,18 +347,23 @@ function acquireLaunchLock(deploymentId: string): (() => void) | null {
     let descriptor: number | undefined;
     let ownsLock = false;
     try {
-      descriptor = openSync(file, 'wx', 0o600);
+      descriptor = openSync(file, "wx", 0o600);
       ownsLock = true;
-      writeFileSync(descriptor, JSON.stringify({
-        pid: process.pid,
-        createdAt: new Date().toISOString(),
-        nonce,
-      }));
+      writeFileSync(
+        descriptor,
+        JSON.stringify({
+          pid: process.pid,
+          createdAt: new Date().toISOString(),
+          nonce,
+        }),
+      );
       closeSync(descriptor);
       descriptor = undefined;
       return () => {
         try {
-          const current = JSON.parse(readFileSync(file, 'utf8')) as LaunchLockRecord;
+          const current = JSON.parse(
+            readFileSync(file, "utf8"),
+          ) as LaunchLockRecord;
           if (current.nonce === nonce) rmSync(file, { force: true });
         } catch {
           // A replacement lock (or already-cleaned lock) is not ours to remove.
@@ -326,13 +371,24 @@ function acquireLaunchLock(deploymentId: string): (() => void) | null {
       };
     } catch (error) {
       if (descriptor !== undefined) {
-        try { closeSync(descriptor); } catch { /* best effort */ }
+        try {
+          closeSync(descriptor);
+        } catch {
+          /* best effort */
+        }
       }
       if (ownsLock) {
-        try { rmSync(file, { force: true }); } catch { /* best effort */ }
+        try {
+          rmSync(file, { force: true });
+        } catch {
+          /* best effort */
+        }
         return null;
       }
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST' || !launchLockIsStale(file)) {
+      if (
+        (error as NodeJS.ErrnoException).code !== "EEXIST" ||
+        !launchLockIsStale(file)
+      ) {
         return null;
       }
       try {
@@ -346,13 +402,16 @@ function acquireLaunchLock(deploymentId: string): (() => void) | null {
 }
 
 function asOptionalRuntimeString(value: unknown): string | undefined {
-  return typeof value === 'string' && value.length > 0 && value.length <= 512
+  return typeof value === "string" && value.length > 0 && value.length <= 512
     ? value
     : undefined;
 }
 
-function runtimeRecordFromUnknown(value: unknown, deploymentId: string): RuntimeRecord | null {
-  if (!value || typeof value !== 'object') return null;
+function runtimeRecordFromUnknown(
+  value: unknown,
+  deploymentId: string,
+): RuntimeRecord | null {
+  if (!value || typeof value !== "object") return null;
   const input = value as Record<string, unknown>;
   if (input.deploymentId !== deploymentId) return null;
   const status = asOptionalRuntimeString(input.status);
@@ -361,25 +420,42 @@ function runtimeRecordFromUnknown(value: unknown, deploymentId: string): Runtime
   if (!status || !phase || !generation) return null;
   const numberOr = (field: string, fallback: number) => {
     const candidate = input[field];
-    return typeof candidate === 'number' && Number.isFinite(candidate) && candidate >= 0
+    return typeof candidate === "number" &&
+      Number.isFinite(candidate) &&
+      candidate >= 0
       ? Math.floor(candidate)
       : fallback;
   };
-  const logStartCursor = numberOr('logStartCursor', 0);
-  const logEndCursor = Math.max(logStartCursor, numberOr('logEndCursor', logStartCursor));
-  const pid = numberOr('pid', 0);
+  const logStartCursor = numberOr("logStartCursor", 0);
+  const logEndCursor = Math.max(
+    logStartCursor,
+    numberOr("logEndCursor", logStartCursor),
+  );
+  const pid = numberOr("pid", 0);
   return {
     deploymentId,
     status,
     phase,
     generation,
     ...(pid > 0 ? { pid } : {}),
-    ...(asOptionalRuntimeString(input.containerName) ? { containerName: asOptionalRuntimeString(input.containerName) } : {}),
-    ...(asOptionalRuntimeString(input.containerState) ? { containerState: asOptionalRuntimeString(input.containerState) } : {}),
-    ...(asOptionalRuntimeString(input.imageState) ? { imageState: asOptionalRuntimeString(input.imageState) } : {}),
-    ...(asOptionalRuntimeString(input.startedAt) ? { startedAt: asOptionalRuntimeString(input.startedAt) } : {}),
-    ...(asOptionalRuntimeString(input.lastActivityAt) ? { lastActivityAt: asOptionalRuntimeString(input.lastActivityAt) } : {}),
-    ...(asOptionalRuntimeString(input.updatedAt) ? { updatedAt: asOptionalRuntimeString(input.updatedAt) } : {}),
+    ...(asOptionalRuntimeString(input.containerName)
+      ? { containerName: asOptionalRuntimeString(input.containerName) }
+      : {}),
+    ...(asOptionalRuntimeString(input.containerState)
+      ? { containerState: asOptionalRuntimeString(input.containerState) }
+      : {}),
+    ...(asOptionalRuntimeString(input.imageState)
+      ? { imageState: asOptionalRuntimeString(input.imageState) }
+      : {}),
+    ...(asOptionalRuntimeString(input.startedAt)
+      ? { startedAt: asOptionalRuntimeString(input.startedAt) }
+      : {}),
+    ...(asOptionalRuntimeString(input.lastActivityAt)
+      ? { lastActivityAt: asOptionalRuntimeString(input.lastActivityAt) }
+      : {}),
+    ...(asOptionalRuntimeString(input.updatedAt)
+      ? { updatedAt: asOptionalRuntimeString(input.updatedAt) }
+      : {}),
     logStartCursor,
     logEndCursor,
   };
@@ -404,7 +480,7 @@ function readRuntimeRecord(
   try {
     if (!existsSync(runtimePath(deploymentId))) return null;
     const parsed = runtimeRecordFromUnknown(
-      JSON.parse(readFileSync(runtimePath(deploymentId), 'utf8')),
+      JSON.parse(readFileSync(runtimePath(deploymentId), "utf8")),
       deploymentId,
     );
     if (parsed) runtimeStore().set(deploymentId, parsed);
@@ -434,8 +510,19 @@ function touchRuntime(record: RuntimeRecord, activity = false): void {
   record.updatedAt = now;
 }
 
-function runtimeFields(record: RuntimeRecord): Pick<RegistryEntry,
-  'generation' | 'phase' | 'containerName' | 'containerState' | 'imageState' | 'startedAt' | 'lastActivityAt' | 'logStartCursor' | 'logEndCursor'
+function runtimeFields(
+  record: RuntimeRecord,
+): Pick<
+  RegistryEntry,
+  | "generation"
+  | "phase"
+  | "containerName"
+  | "containerState"
+  | "imageState"
+  | "startedAt"
+  | "lastActivityAt"
+  | "logStartCursor"
+  | "logEndCursor"
 > {
   return {
     generation: record.generation,
@@ -463,23 +550,42 @@ function syncRuntimeRegistry(entry: Entry): void {
   });
 }
 
-function updateRuntime(entry: Entry, update: Partial<Pick<RuntimeRecord,
-  'status' | 'phase' | 'containerName' | 'containerState' | 'imageState'
->>, activity = false): void {
-  const changed = Object.entries(update).some(([key, value]) => entry.runtime[key as keyof RuntimeRecord] !== value);
+function updateRuntime(
+  entry: Entry,
+  update: Partial<
+    Pick<
+      RuntimeRecord,
+      "status" | "phase" | "containerName" | "containerState" | "imageState"
+    >
+  >,
+  activity = false,
+): void {
+  const changed = Object.entries(update).some(
+    ([key, value]) => entry.runtime[key as keyof RuntimeRecord] !== value,
+  );
   Object.assign(entry.runtime, update);
   touchRuntime(entry.runtime, activity);
   writeRuntimeRecord(entry.runtime);
   syncRuntimeRegistry(entry);
-  if (changed) void recordEvent({ domain: 'runtime', eventName: 'runtime.state', deploymentId: entry.runtime.deploymentId,
-    outcome: entry.runtime.status === 'error' ? 'error' : 'success',
-    attributes: { generation: entry.runtime.generation, phase: entry.runtime.phase, status: entry.runtime.status,
-      imageState: entry.runtime.imageState, containerState: entry.runtime.containerState } });
+  if (changed)
+    void recordEvent({
+      domain: "runtime",
+      eventName: "runtime.state",
+      deploymentId: entry.runtime.deploymentId,
+      outcome: entry.runtime.status === "error" ? "error" : "success",
+      attributes: {
+        generation: entry.runtime.generation,
+        phase: entry.runtime.phase,
+        status: entry.runtime.status,
+        imageState: entry.runtime.imageState,
+        containerState: entry.runtime.containerState,
+      },
+    });
 }
 
 function updateDetachedRuntime(
   deploymentId: string,
-  update: Partial<Pick<RuntimeRecord, 'status' | 'phase'>>,
+  update: Partial<Pick<RuntimeRecord, "status" | "phase">>,
   activity = false,
 ): void {
   const runtime = readRuntimeRecord(deploymentId, { fresh: true });
@@ -492,7 +598,7 @@ function updateDetachedRuntime(
 function resetRuntimeLog(deploymentId: string): void {
   try {
     ensureRegistryDir();
-    writeFileSync(runtimeLogPath(deploymentId), '', { mode: 0o600 });
+    writeFileSync(runtimeLogPath(deploymentId), "", { mode: 0o600 });
   } catch {
     // The process can still start when local log storage is temporarily bad.
   }
@@ -504,7 +610,7 @@ function secretValuesFromEnv(env: Record<string, string>): string[] {
     // Configured MCP env is intentionally treated as confidential by default.
     // Short primitives cannot meaningfully reveal a credential and redacting
     // them would make normal logs unreadable (e.g. PORT=3).
-    if (typeof value === 'string' && value.length >= 4) values.add(value);
+    if (typeof value === "string" && value.length >= 4) values.add(value);
   }
   return [...values].sort((a, b) => b.length - a.length);
 }
@@ -512,15 +618,23 @@ function secretValuesFromEnv(env: Record<string, string>): string[] {
 function sensitiveArgValues(args: readonly string[]): string[] {
   const values = new Set<string>();
   const add = (value: string | undefined) => {
-    if (value && value.length >= 3 && value.length <= 16 * 1024) values.add(value);
+    if (value && value.length >= 3 && value.length <= 16 * 1024)
+      values.add(value);
   };
-  const isSensitiveName = (name: string) => /(?:api[_-]?key|token|secret|pass(?:word)?|credential|authorization|cookie|private[_-]?key|client[_-]?secret)/i.test(name);
+  const isSensitiveName = (name: string) =>
+    /(?:api[_-]?key|token|secret|pass(?:word)?|credential|authorization|cookie|private[_-]?key|client[_-]?secret)/i.test(
+      name,
+    );
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     const equals = /^--?([^=]+)=(.*)$/.exec(arg);
     if (equals && isSensitiveName(equals[1])) add(equals[2]);
-    if (/^--?(?:api[_-]?key|token|secret|pass(?:word)?|credential|authorization|cookie|private[_-]?key|client[_-]?secret)$/i.test(arg)) {
+    if (
+      /^--?(?:api[_-]?key|token|secret|pass(?:word)?|credential|authorization|cookie|private[_-]?key|client[_-]?secret)$/i.test(
+        arg,
+      )
+    ) {
       add(args[index + 1]);
       index += 1;
       continue;
@@ -528,9 +642,9 @@ function sensitiveArgValues(args: readonly string[]): string[] {
     // A manually-specified `docker -e KEY=value` can bypass installCfg.env.
     // Treat every explicit env value as confidential, matching the policy for
     // the structured env object above.
-    if (arg === '-e' || arg === '--env') {
+    if (arg === "-e" || arg === "--env") {
       const pair = args[index + 1];
-      const separator = pair?.indexOf('=') ?? -1;
+      const separator = pair?.indexOf("=") ?? -1;
       if (separator >= 0) add(pair.slice(separator + 1));
       index += 1;
     }
@@ -538,7 +652,9 @@ function sensitiveArgValues(args: readonly string[]): string[] {
     // Credential-bearing URLs are common in SSH and Git MCP configs. Capture
     // only their userinfo components as redaction values; never retain the argv
     // itself in the runtime registry or log.
-    for (const match of arg.matchAll(/(?:[a-z][a-z0-9+.-]*:\/\/)?([^:/@\s]+):([^@/\s]+)@/gi)) {
+    for (const match of arg.matchAll(
+      /(?:[a-z][a-z0-9+.-]*:\/\/)?([^:/@\s]+):([^@/\s]+)@/gi,
+    )) {
       add(match[2]);
     }
     for (const match of arg.matchAll(/[a-z][a-z0-9+.-]*:\/\/([^:/@\s]+)@/gi)) {
@@ -557,15 +673,19 @@ function sensitiveArgValues(args: readonly string[]): string[] {
 }
 
 function redactionValuesForSpec(spec: SpawnSpec): string[] {
-  const values = new Set(spec.kind === 'bridge' || spec.kind === 'sandbox'
-    ? secretValuesFromEnv(spec.env)
-    : []);
-  if (spec.kind === 'bridge') {
-    const shortConfiguredValues = new Set(Object.values(spec.env).filter((value) => value.length < 4));
+  const values = new Set(
+    spec.kind === "bridge" || spec.kind === "sandbox"
+      ? secretValuesFromEnv(spec.env)
+      : [],
+  );
+  if (spec.kind === "bridge") {
+    const shortConfiguredValues = new Set(
+      Object.values(spec.env).filter((value) => value.length < 4),
+    );
     for (const value of sensitiveArgValues(spec.args)) {
       if (!shortConfiguredValues.has(value)) values.add(value);
     }
-  } else if (spec.kind === 'remote') {
+  } else if (spec.kind === "remote") {
     for (const value of Object.values(spec.headers)) {
       if (!value) continue;
       values.add(value);
@@ -579,29 +699,45 @@ function redactionValuesForSpec(spec: SpawnSpec): string[] {
 function redactRuntimeLog(value: string, secretValues: string[]): string {
   let redacted = value;
   for (const secret of secretValues) {
-    redacted = redacted.split(secret).join('[REDACTED]');
+    redacted = redacted.split(secret).join("[REDACTED]");
     const escaped = JSON.stringify(secret).slice(1, -1);
-    if (escaped !== secret) redacted = redacted.split(escaped).join('[REDACTED]');
+    if (escaped !== secret)
+      redacted = redacted.split(escaped).join("[REDACTED]");
   }
   // Key/value, JSON, URLs and common token prefixes cover output that echoes a
   // secret without it being present in the deployment's configured env.
   redacted = redacted
-    .replace(/(\b(?:authorization|proxy-authorization)\s*:\s*(?:(?:bearer|basic)\s+)?)[^\s,;]+/gi, '$1[REDACTED]')
-    .replace(/((?:api[_-]?key|token|secret|password|passwd|credential|cookie|private[_-]?key|client[_-]?secret)\s*[=:]\s*)(["']?)[^\s,;&"']+/gi, '$1$2[REDACTED]')
-    .replace(/("(?:api[_-]?key|token|secret|password|passwd|credential|authorization|cookie|private[_-]?key|client[_-]?secret)"\s*:\s*")[^"]*(")/gi, '$1[REDACTED]$2')
-    .replace(/([?&](?:api[_-]?key|token|access[_-]?token|secret|password)=)[^&#\s]+/gi, '$1[REDACTED]')
-    .replace(/\b(?:sk-(?:proj-)?[A-Za-z0-9_-]+|sk-ant-[A-Za-z0-9_-]+|gh[pousr]_[A-Za-z0-9_]+|xox[baprs]-[A-Za-z0-9-]+)\b/g, '[REDACTED]');
+    .replace(
+      /(\b(?:authorization|proxy-authorization)\s*:\s*(?:(?:bearer|basic)\s+)?)[^\s,;]+/gi,
+      "$1[REDACTED]",
+    )
+    .replace(
+      /((?:api[_-]?key|token|secret|password|passwd|credential|cookie|private[_-]?key|client[_-]?secret)\s*[=:]\s*)(["']?)[^\s,;&"']+/gi,
+      "$1$2[REDACTED]",
+    )
+    .replace(
+      /("(?:api[_-]?key|token|secret|password|passwd|credential|authorization|cookie|private[_-]?key|client[_-]?secret)"\s*:\s*")[^"]*(")/gi,
+      "$1[REDACTED]$2",
+    )
+    .replace(
+      /([?&](?:api[_-]?key|token|access[_-]?token|secret|password)=)[^&#\s]+/gi,
+      "$1[REDACTED]",
+    )
+    .replace(
+      /\b(?:sk-(?:proj-)?[A-Za-z0-9_-]+|sk-ant-[A-Za-z0-9_-]+|gh[pousr]_[A-Za-z0-9_]+|xox[baprs]-[A-Za-z0-9-]+)\b/g,
+      "[REDACTED]",
+    );
   return redacted;
 }
 
 function appendRuntimeLog(entry: Entry, value: string): string {
-  if (!value) return '';
+  if (!value) return "";
   const redacted = redactRuntimeLog(value, entry.redactionValues);
   const prefix = `[${new Date().toISOString()}] [stderr] `;
   const content = redacted
     .split(/(?<=\n)/)
     .map((line) => (line ? `${prefix}${line}` : line))
-    .join('');
+    .join("");
   const appended = Buffer.from(content);
   try {
     ensureRegistryDir();
@@ -609,10 +745,13 @@ function appendRuntimeLog(entry: Entry, value: string): string {
       ? readFileSync(runtimeLogPath(entry.runtime.deploymentId))
       : Buffer.alloc(0);
     const next = Buffer.concat([previous, appended]);
-    const kept = next.byteLength > RUNTIME_LOG_MAX_BYTES
-      ? next.subarray(next.byteLength - RUNTIME_LOG_MAX_BYTES)
-      : next;
-    writeFileSync(runtimeLogPath(entry.runtime.deploymentId), kept, { mode: 0o600 });
+    const kept =
+      next.byteLength > RUNTIME_LOG_MAX_BYTES
+        ? next.subarray(next.byteLength - RUNTIME_LOG_MAX_BYTES)
+        : next;
+    writeFileSync(runtimeLogPath(entry.runtime.deploymentId), kept, {
+      mode: 0o600,
+    });
     entry.runtime.logEndCursor += appended.byteLength;
     entry.runtime.logStartCursor = entry.runtime.logEndCursor - kept.byteLength;
   } catch {
@@ -626,19 +765,30 @@ function appendRuntimeLog(entry: Entry, value: string): string {
 
 function recordRuntimeStderr(entry: Entry, value: string): void {
   const redacted = appendRuntimeLog(entry, value);
-  if (redacted) void recordEvent({ domain: 'runtime', eventName: 'runtime.stderr', deploymentId: entry.runtime.deploymentId,
-    level: 'info', message: redacted.trimEnd(), secrets: entry.redactionValues,
-    attributes: { generation: entry.runtime.generation, stream: 'stderr' }, detail: { output: redacted } });
+  if (redacted)
+    void recordEvent({
+      domain: "runtime",
+      eventName: "runtime.stderr",
+      deploymentId: entry.runtime.deploymentId,
+      level: "info",
+      message: redacted.trimEnd(),
+      secrets: entry.redactionValues,
+      attributes: { generation: entry.runtime.generation, stream: "stderr" },
+      detail: { output: redacted },
+    });
 }
 
-function completeStderrLines(value: string, terminal: boolean): { lines: string[]; tail: string } {
+function completeStderrLines(
+  value: string,
+  terminal: boolean,
+): { lines: string[]; tail: string } {
   const lines: string[] = [];
   let start = 0;
   for (let index = 0; index < value.length; index += 1) {
     const char = value[index];
-    if (char !== '\n' && char !== '\r') continue;
+    if (char !== "\n" && char !== "\r") continue;
     let end = index + 1;
-    if (char === '\r' && value[index + 1] === '\n') {
+    if (char === "\r" && value[index + 1] === "\n") {
       end += 1;
       index += 1;
     }
@@ -648,32 +798,38 @@ function completeStderrLines(value: string, terminal: boolean): { lines: string[
   const tail = value.slice(start);
   if (terminal && tail) {
     lines.push(tail);
-    return { lines, tail: '' };
+    return { lines, tail: "" };
   }
   return { lines, tail };
 }
 
 function formatBridgeRuntimeEvent(event: BridgeRuntimeEvent): string {
-  const field = (value: unknown) => typeof value === 'string'
-    ? value.replace(/[\r\n]/g, ' ').slice(0, 512)
-    : '';
+  const field = (value: unknown) =>
+    typeof value === "string"
+      ? value.replace(/[\r\n]/g, " ").slice(0, 512)
+      : "";
   const details = [
-    `phase=${field(event.phase) || 'unknown'}`,
+    `phase=${field(event.phase) || "unknown"}`,
     ...(field(event.imageState) ? [`image=${field(event.imageState)}`] : []),
-    ...(field(event.containerState) ? [`container=${field(event.containerState)}`] : []),
+    ...(field(event.containerState)
+      ? [`container=${field(event.containerState)}`]
+      : []),
   ];
-  return `[toolplane-runtime] ${details.join(' ')}\n`;
+  return `[toolplane-runtime] ${details.join(" ")}\n`;
 }
 
 function consumeBridgeRuntimeEvent(entry: Entry, line: string): boolean {
   const marker = line.indexOf(BRIDGE_RUNTIME_EVENT_PREFIX);
   if (marker < 0) return false;
   try {
-    const event = JSON.parse(line.slice(marker + BRIDGE_RUNTIME_EVENT_PREFIX.length).trim()) as BridgeRuntimeEvent;
+    const event = JSON.parse(
+      line.slice(marker + BRIDGE_RUNTIME_EVENT_PREFIX.length).trim(),
+    ) as BridgeRuntimeEvent;
     // A containerized MCP can write arbitrary stderr. Only the bridge knows
     // the launch-private token, so an event without it must be treated as an
     // ordinary (redacted) diagnostic rather than trusted lifecycle metadata.
-    if (event.type !== 'phase' || event.token !== entry.runtimeEventToken) return false;
+    if (event.type !== "phase" || event.token !== entry.runtimeEventToken)
+      return false;
     updateRuntimeFromBridgeEvent(entry, event);
     recordRuntimeStderr(entry, formatBridgeRuntimeEvent(event));
     return true;
@@ -682,18 +838,25 @@ function consumeBridgeRuntimeEvent(entry: Entry, line: string): boolean {
   }
 }
 
-function recordCompleteStderr(entry: Entry, value: string, terminal = false): void {
+function recordCompleteStderr(
+  entry: Entry,
+  value: string,
+  terminal = false,
+): void {
   const { lines, tail } = completeStderrLines(value, terminal);
-  let ordinary = '';
+  let ordinary = "";
   const flushOrdinary = () => {
     if (!ordinary) return;
     recordRuntimeStderr(entry, ordinary);
-    ordinary = '';
+    ordinary = "";
   };
   for (const line of lines) {
     if (line.length > STDERR_LINE_BUFFER_MAX_CHARS) {
       flushOrdinary();
-      recordRuntimeStderr(entry, '[toolplane-runtime] omitted overlong stderr line\n');
+      recordRuntimeStderr(
+        entry,
+        "[toolplane-runtime] omitted overlong stderr line\n",
+      );
       continue;
     }
     if (consumeBridgeRuntimeEvent(entry, line)) {
@@ -709,9 +872,9 @@ function recordCompleteStderr(entry: Entry, value: string, terminal = false): vo
 function discardUntilLineBreak(entry: Entry, value: string): string {
   if (!entry.discardingOverlongStderrLine) return value;
   const index = value.search(/[\r\n]/);
-  if (index < 0) return '';
+  if (index < 0) return "";
   let next = index + 1;
-  if (value[index] === '\r' && value[next] === '\n') next += 1;
+  if (value[index] === "\r" && value[next] === "\n") next += 1;
   entry.discardingOverlongStderrLine = false;
   return value.slice(next);
 }
@@ -725,9 +888,12 @@ function captureRuntimeStderr(entry: Entry, value: string): void {
   // Never emit a raw prefix from a line that has grown beyond the bounded
   // buffer. An unknown Authorization/token value might itself be split across
   // chunks, so a safe omission is preferable to a partially redacted leak.
-  entry.stderrBuffer = '';
+  entry.stderrBuffer = "";
   entry.discardingOverlongStderrLine = true;
-  recordRuntimeStderr(entry, '[toolplane-runtime] omitted overlong stderr line\n');
+  recordRuntimeStderr(
+    entry,
+    "[toolplane-runtime] omitted overlong stderr line\n",
+  );
 }
 
 function flushRuntimeStderr(entry: Entry): void {
@@ -738,10 +904,10 @@ function flushRuntimeStderr(entry: Entry): void {
 function readRuntimeLog(deploymentId: string): string {
   try {
     return existsSync(runtimeLogPath(deploymentId))
-      ? readFileSync(runtimeLogPath(deploymentId), 'utf8')
-      : '';
+      ? readFileSync(runtimeLogPath(deploymentId), "utf8")
+      : "";
   } catch {
-    return '';
+    return "";
   }
 }
 
@@ -752,15 +918,21 @@ function registryGeneration(entry: RegistryEntry): string {
   return entry.generation ?? `legacy-${entry.pid}`;
 }
 
-function registryDiffersFromRuntime(entry: RegistryEntry, runtime: RuntimeRecord): boolean {
-  return entry.pid !== runtime.pid
-    || (entry.generation !== undefined && entry.generation !== runtime.generation);
+function registryDiffersFromRuntime(
+  entry: RegistryEntry,
+  runtime: RuntimeRecord,
+): boolean {
+  return (
+    entry.pid !== runtime.pid ||
+    (entry.generation !== undefined && entry.generation !== runtime.generation)
+  );
 }
 
 function snapshotFromRegistry(entry: RegistryEntry): DeploymentRuntimeSnapshot {
   return {
     status: entry.status,
-    phase: entry.phase ?? (entry.status === 'running' ? 'ready' : 'initializing'),
+    phase:
+      entry.phase ?? (entry.status === "running" ? "ready" : "initializing"),
     generation: registryGeneration(entry),
     ...(entry.containerName ? { containerName: entry.containerName } : {}),
     ...(entry.containerState ? { containerState: entry.containerState } : {}),
@@ -771,12 +943,15 @@ function snapshotFromRegistry(entry: RegistryEntry): DeploymentRuntimeSnapshot {
   };
 }
 
-export function getDeploymentRuntimeSnapshot(deploymentId: string): DeploymentRuntimeSnapshot | null {
+export function getDeploymentRuntimeSnapshot(
+  deploymentId: string,
+): DeploymentRuntimeSnapshot | null {
   const local = localLiveEntry(deploymentId);
   // A process can be owned by another Next worker. In that case never serve a
   // permanently cached runtime record: its worker may already have restarted
   // the deployment and replaced both generation and log file.
-  const runtime = local?.runtime ?? readRuntimeRecord(deploymentId, { fresh: true });
+  const runtime =
+    local?.runtime ?? readRuntimeRecord(deploymentId, { fresh: true });
   const registry = readRegistry(deploymentId);
   if (registry && (!runtime || registryDiffersFromRuntime(registry, runtime))) {
     return snapshotFromRegistry(registry);
@@ -789,13 +964,13 @@ export function getDeploymentRuntimeSnapshot(deploymentId: string): DeploymentRu
   // Runtime metadata intentionally survives terminal failures so the UI can
   // read the last stderr generation. Do not, however, let a stale active
   // snapshot resurrect a process after the Next worker (or its child) died.
-  if (runtime.status === 'running' || runtime.status === 'provisioning') {
+  if (runtime.status === "running" || runtime.status === "provisioning") {
     const live = registry ?? (local ? registryFromLocalEntry(local) : null);
     if (!live || (runtime.pid !== undefined && runtime.pid !== live.pid)) {
       return {
         ...snapshotFromRuntime(runtime),
-        status: 'stopped',
-        phase: 'stopped',
+        status: "stopped",
+        phase: "stopped",
       };
     }
   }
@@ -804,7 +979,10 @@ export function getDeploymentRuntimeSnapshot(deploymentId: string): DeploymentRu
 
 function boundedLogLimit(value: number | undefined): number {
   if (!Number.isFinite(value)) return RUNTIME_LOG_CHUNK_DEFAULT_BYTES;
-  return Math.max(1, Math.min(RUNTIME_LOG_CHUNK_MAX_BYTES, Math.floor(value as number)));
+  return Math.max(
+    1,
+    Math.min(RUNTIME_LOG_CHUNK_MAX_BYTES, Math.floor(value as number)),
+  );
 }
 
 export function getDeploymentRuntimeLogChunk(
@@ -812,12 +990,15 @@ export function getDeploymentRuntimeLogChunk(
   options: { generation?: string; cursor?: number; limit?: number } = {},
 ): DeploymentRuntimeLogChunk {
   const local = localLiveEntry(deploymentId);
-  const runtime = local?.runtime ?? readRuntimeRecord(deploymentId, { fresh: true });
+  const runtime =
+    local?.runtime ?? readRuntimeRecord(deploymentId, { fresh: true });
   const registry = readRegistry(deploymentId);
-  const registryWins = registry !== null && (!runtime || registryDiffersFromRuntime(registry, runtime));
+  const registryWins =
+    registry !== null &&
+    (!runtime || registryDiffersFromRuntime(registry, runtime));
   const generation = registryWins
     ? registryGeneration(registry)
-    : runtime?.generation ?? (registry ? registryGeneration(registry) : null);
+    : (runtime?.generation ?? (registry ? registryGeneration(registry) : null));
   const log = (() => {
     try {
       return existsSync(runtimeLogPath(deploymentId))
@@ -827,22 +1008,28 @@ export function getDeploymentRuntimeLogChunk(
       return Buffer.alloc(0);
     }
   })();
-  const registryLogEnd = registryWins && typeof registry.logEndCursor === 'number'
-    ? registry.logEndCursor
-    : undefined;
-  const registryLogStart = registryWins && typeof registry.logStartCursor === 'number'
-    ? registry.logStartCursor
-    : undefined;
-  const logEndCursor = registryLogEnd ?? runtime?.logEndCursor ?? log.byteLength;
-  const logStartCursor = registryLogStart !== undefined
-    ? Math.max(0, Math.min(registryLogStart, logEndCursor))
-    : runtime
-    ? Math.max(0, Math.min(runtime.logStartCursor, logEndCursor))
-    : Math.max(0, logEndCursor - log.byteLength);
-  const requestedCursor = typeof options.cursor === 'number' && Number.isFinite(options.cursor)
-    ? Math.max(0, Math.floor(options.cursor))
-    : 0;
-  let reset = options.generation !== undefined && options.generation !== generation;
+  const registryLogEnd =
+    registryWins && typeof registry.logEndCursor === "number"
+      ? registry.logEndCursor
+      : undefined;
+  const registryLogStart =
+    registryWins && typeof registry.logStartCursor === "number"
+      ? registry.logStartCursor
+      : undefined;
+  const logEndCursor =
+    registryLogEnd ?? runtime?.logEndCursor ?? log.byteLength;
+  const logStartCursor =
+    registryLogStart !== undefined
+      ? Math.max(0, Math.min(registryLogStart, logEndCursor))
+      : runtime
+        ? Math.max(0, Math.min(runtime.logStartCursor, logEndCursor))
+        : Math.max(0, logEndCursor - log.byteLength);
+  const requestedCursor =
+    typeof options.cursor === "number" && Number.isFinite(options.cursor)
+      ? Math.max(0, Math.floor(options.cursor))
+      : 0;
+  let reset =
+    options.generation !== undefined && options.generation !== generation;
   let cursor = reset ? logStartCursor : requestedCursor;
   if (cursor < logStartCursor || cursor > logEndCursor) {
     reset = true;
@@ -857,8 +1044,12 @@ export function getDeploymentRuntimeLogChunk(
     cursor,
     nextCursor,
     reset,
-    text: slice.toString('utf8'),
-    ...(cursor > logStartCursor ? {} : logStartCursor > 0 ? { truncated: true } : {}),
+    text: slice.toString("utf8"),
+    ...(cursor > logStartCursor
+      ? {}
+      : logStartCursor > 0
+        ? { truncated: true }
+        : {}),
   };
 }
 
@@ -870,19 +1061,26 @@ type BridgeRuntimeEvent = {
   imageState?: string;
 };
 
-const BRIDGE_RUNTIME_EVENT_PREFIX = '[toolplane-runtime] ';
+const BRIDGE_RUNTIME_EVENT_PREFIX = "[toolplane-runtime] ";
 
-function initialRuntimeRecord(deploymentId: string, spec: SpawnSpec, pid?: number): RuntimeRecord {
+function initialRuntimeRecord(
+  deploymentId: string,
+  spec: SpawnSpec,
+  pid?: number,
+): RuntimeRecord {
   const now = new Date().toISOString();
-  const containerName = spec.kind === 'bridge' && spec.command === 'docker'
-    ? deploymentContainerName(deploymentId)
-    : spec.kind === 'sandbox' && spec.sandboxKind === 'docker' && spec.sandboxId
-      ? sandboxContainerName(spec.sandboxId)
-      : undefined;
+  const containerName =
+    spec.kind === "bridge" && spec.command === "docker"
+      ? deploymentContainerName(deploymentId)
+      : spec.kind === "sandbox" &&
+          spec.sandboxKind === "docker" &&
+          spec.sandboxId
+        ? sandboxContainerName(spec.sandboxId)
+        : undefined;
   return {
     deploymentId,
-    status: 'provisioning',
-    phase: spec.kind === 'bridge' ? 'preparing-image' : 'initializing',
+    status: "provisioning",
+    phase: spec.kind === "bridge" ? "preparing-image" : "initializing",
     generation: randomUUID(),
     ...(pid ? { pid } : {}),
     ...(containerName ? { containerName } : {}),
@@ -894,64 +1092,97 @@ function initialRuntimeRecord(deploymentId: string, spec: SpawnSpec, pid?: numbe
   };
 }
 
-function updateRuntimeFromBridgeEvent(entry: Entry, event: BridgeRuntimeEvent): void {
-  if (event.type !== 'phase') return;
+function updateRuntimeFromBridgeEvent(
+  entry: Entry,
+  event: BridgeRuntimeEvent,
+): void {
+  if (event.type !== "phase") return;
   const phase = asOptionalRuntimeString(event.phase);
   const containerState = asOptionalRuntimeString(event.containerState);
   const imageState = asOptionalRuntimeString(event.imageState);
   if (!phase && !containerState && !imageState) return;
-  updateRuntime(entry, {
-    ...(phase ? { phase } : {}),
-    ...(containerState ? { containerState } : {}),
-    ...(imageState ? { imageState } : {}),
-  }, true);
+  updateRuntime(
+    entry,
+    {
+      ...(phase ? { phase } : {}),
+      ...(containerState ? { containerState } : {}),
+      ...(imageState ? { imageState } : {}),
+    },
+    true,
+  );
 }
 
-function bridgeImage(spec: Extract<SpawnSpec, { kind: 'bridge' }>): string {
+function bridgeImage(spec: Extract<SpawnSpec, { kind: "bridge" }>): string {
   if (spec.image) return spec.image;
-  if (spec.command !== 'docker' || spec.args[0] !== 'run') return '';
+  if (spec.command !== "docker" || spec.args[0] !== "run") return "";
 
   // Most callers receive `image` from buildSpawnSpec. Keep a small, private
   // fallback for older callers that destructure only command/args (such as the
   // recipe validator). It is used solely for bridge readiness checks and is
   // never recorded in supervisor logs.
   const optionsWithValue = new Set([
-    '--name', '--cap-drop', '--security-opt', '--tmpfs', '--pids-limit',
-    '--memory', '--cpus', '--network', '--pull', '--env', '--env-file', '-e',
-    '--mount', '--workdir',
+    "--name",
+    "--cap-drop",
+    "--security-opt",
+    "--tmpfs",
+    "--pids-limit",
+    "--memory",
+    "--cpus",
+    "--network",
+    "--pull",
+    "--env",
+    "--env-file",
+    "-e",
+    "--mount",
+    "--workdir",
   ]);
   for (let index = 1; index < spec.args.length; index += 1) {
     const value = spec.args[index];
-    if (value === '--') return spec.args[index + 1] ?? '';
+    if (value === "--") return spec.args[index + 1] ?? "";
     if (optionsWithValue.has(value)) {
       index += 1;
       continue;
     }
-    if (value.startsWith('-')) continue;
+    if (value.startsWith("-")) continue;
     return value;
   }
-  return '';
+  return "";
 }
 
 function dockerCliEnv(): NodeJS.ProcessEnv {
   const env = {} as NodeJS.ProcessEnv;
-  for (const key of ['PATH', 'HOME', 'DOCKER_HOST', 'DOCKER_CERT_PATH', 'DOCKER_TLS_VERIFY', 'LANG', 'LC_ALL']) {
+  for (const key of [
+    "PATH",
+    "HOME",
+    "DOCKER_HOST",
+    "DOCKER_CERT_PATH",
+    "DOCKER_TLS_VERIFY",
+    "LANG",
+    "LC_ALL",
+  ]) {
     if (process.env[key] !== undefined) env[key] = process.env[key];
   }
   return env;
 }
 
-type DockerLogsResult = { code: number | null; text: string; error: string | null };
+type DockerLogsResult = {
+  code: number | null;
+  text: string;
+  error: string | null;
+};
 
-function readDockerLogs(containerName: string, limit: number): Promise<DockerLogsResult> {
+function readDockerLogs(
+  containerName: string,
+  limit: number,
+): Promise<DockerLogsResult> {
   return new Promise((resolve) => {
-    let stdout = '';
-    let stderr = '';
+    let stdout = "";
+    let stderr = "";
     let settled = false;
     const child = spawn(
-      'docker',
-      ['logs', '--timestamps', '--tail', String(limit), containerName],
-      { env: dockerCliEnv(), stdio: ['ignore', 'pipe', 'pipe'] },
+      "docker",
+      ["logs", "--timestamps", "--tail", String(limit), containerName],
+      { env: dockerCliEnv(), stdio: ["ignore", "pipe", "pipe"] },
     );
     const finish = (code: number | null, error: string | null) => {
       if (settled) return;
@@ -961,24 +1192,28 @@ function readDockerLogs(containerName: string, limit: number): Promise<DockerLog
     };
     const timer = setTimeout(() => {
       if (settled) return;
-      try { child.kill('SIGTERM'); } catch { /* process may have exited */ }
-      finish(null, 'docker logs timed out');
+      try {
+        child.kill("SIGTERM");
+      } catch {
+        /* process may have exited */
+      }
+      finish(null, "docker logs timed out");
     }, DOCKER_LOG_TIMEOUT_MS);
-    child.stdout?.on('data', (chunk: Buffer) => {
-      stdout += chunk.toString('utf8');
+    child.stdout?.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString("utf8");
     });
-    child.stderr?.on('data', (chunk: Buffer) => {
-      stderr += chunk.toString('utf8');
+    child.stderr?.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString("utf8");
     });
-    child.once('error', (error) => finish(null, error.message));
-    child.once('close', (code) => finish(code, code === 0 ? null : null));
+    child.once("error", (error) => finish(null, error.message));
+    child.once("close", (code) => finish(code, code === 0 ? null : null));
   });
 }
 
 export type DeploymentContainerLogs = {
   containerName: string;
   text: string;
-  source: 'docker' | 'captured' | 'none';
+  source: "docker" | "captured" | "none";
   error: string | null;
 };
 
@@ -986,18 +1221,19 @@ export async function getDeploymentContainerLogs(
   deploymentId: string,
   options: { containerName?: string; limit?: number } = {},
 ): Promise<DeploymentContainerLogs> {
-  const containerName = options.containerName || deploymentContainerName(deploymentId);
+  const containerName =
+    options.containerName || deploymentContainerName(deploymentId);
   const limit = Math.min(1000, Math.max(1, Math.floor(options.limit ?? 500)));
   const docker = await readDockerLogs(containerName, limit);
   if (docker.code === 0) {
-    return { containerName, text: docker.text, source: 'docker', error: null };
+    return { containerName, text: docker.text, source: "docker", error: null };
   }
 
   const captured = readRuntimeLog(deploymentId);
   return {
     containerName,
     text: captured,
-    source: captured ? 'captured' : 'none',
+    source: captured ? "captured" : "none",
     error: docker.error,
   };
 }
@@ -1008,17 +1244,22 @@ function pidAlive(pid: number): boolean {
     process.kill(pid, 0);
     return true;
   } catch (error) {
-    return (error as NodeJS.ErrnoException).code === 'EPERM';
+    return (error as NodeJS.ErrnoException).code === "EPERM";
   }
 }
 
 function childTerminated(child: ChildProcess): boolean {
-  return child.exitCode !== null
-    || child.signalCode !== null
-    || (child.pid === undefined ? true : !pidAlive(child.pid));
+  return (
+    child.exitCode !== null ||
+    child.signalCode !== null ||
+    (child.pid === undefined ? true : !pidAlive(child.pid))
+  );
 }
 
-function waitForChildExit(child: ChildProcess, timeoutMs: number): Promise<boolean> {
+function waitForChildExit(
+  child: ChildProcess,
+  timeoutMs: number,
+): Promise<boolean> {
   if (childTerminated(child)) return Promise.resolve(true);
   return new Promise<boolean>((resolve) => {
     let settled = false;
@@ -1026,8 +1267,8 @@ function waitForChildExit(child: ChildProcess, timeoutMs: number): Promise<boole
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      child.off('exit', onExit);
-      child.off('error', onError);
+      child.off("exit", onExit);
+      child.off("error", onError);
       resolve(exited);
     };
     const onExit = () => finish(true);
@@ -1035,18 +1276,18 @@ function waitForChildExit(child: ChildProcess, timeoutMs: number): Promise<boole
       if (childTerminated(child)) finish(true);
     };
     const timer = setTimeout(() => finish(childTerminated(child)), timeoutMs);
-    child.once('exit', onExit);
-    child.once('error', onError);
+    child.once("exit", onExit);
+    child.once("error", onError);
     if (childTerminated(child)) finish(true);
   });
 }
 
 async function terminateChild(entry: Entry, force: boolean): Promise<void> {
   entry.stopping = true;
-  entry.status = 'stopped';
+  entry.status = "stopped";
   if (childTerminated(entry.child)) return;
 
-  const signal = force ? 'SIGKILL' : 'SIGTERM';
+  const signal = force ? "SIGKILL" : "SIGTERM";
   try {
     entry.child.kill(signal);
   } catch {
@@ -1056,12 +1297,12 @@ async function terminateChild(entry: Entry, force: boolean): Promise<void> {
   if (await waitForChildExit(entry.child, graceMs)) return;
 
   try {
-    entry.child.kill('SIGKILL');
+    entry.child.kill("SIGKILL");
   } catch {
     // Re-check through the exit waiter below.
   }
   if (await waitForChildExit(entry.child, KILL_GRACE_MS)) return;
-  throw new Error(`Process ${entry.pid ?? 'unknown'} did not terminate.`);
+  throw new Error(`Process ${entry.pid ?? "unknown"} did not terminate.`);
 }
 
 function waitForPidExit(pid: number, timeoutMs: number): Promise<boolean> {
@@ -1081,17 +1322,20 @@ function waitForPidExit(pid: number, timeoutMs: number): Promise<boolean> {
   });
 }
 
-async function terminateRegisteredProcess(pid: number, force: boolean): Promise<void> {
+async function terminateRegisteredProcess(
+  pid: number,
+  force: boolean,
+): Promise<void> {
   if (!pidAlive(pid)) return;
   try {
-    process.kill(pid, force ? 'SIGKILL' : 'SIGTERM');
+    process.kill(pid, force ? "SIGKILL" : "SIGTERM");
   } catch (error) {
     if (!pidAlive(pid)) return;
     throw error;
   }
   if (await waitForPidExit(pid, force ? KILL_GRACE_MS : STOP_GRACE_MS)) return;
   try {
-    process.kill(pid, 'SIGKILL');
+    process.kill(pid, "SIGKILL");
   } catch (error) {
     if (!pidAlive(pid)) return;
     throw error;
@@ -1104,7 +1348,7 @@ function readRegistry(deploymentId: string): RegistryEntry | null {
   const file = registryPath(deploymentId);
   if (!existsSync(file)) return null;
   try {
-    const entry = JSON.parse(readFileSync(file, 'utf8')) as RegistryEntry;
+    const entry = JSON.parse(readFileSync(file, "utf8")) as RegistryEntry;
     if (entry.deploymentId !== deploymentId || !pidAlive(entry.pid)) {
       rmSync(file, { force: true });
       return null;
@@ -1131,15 +1375,18 @@ function deleteRegistry(deploymentId: string, pid?: number) {
 
 function localLiveEntry(deploymentId: string): Entry | null {
   const entry = store().get(deploymentId);
-  if (!entry || entry.stopping || !entry.pid || childTerminated(entry.child)) return null;
+  if (!entry || entry.stopping || !entry.pid || childTerminated(entry.child))
+    return null;
   return entry;
 }
 
 function registryFromLocalEntry(entry: Entry): RegistryEntry {
+  const pid = entry.pid;
+  if (pid === undefined) throw new Error("Live process has no PID.");
   return {
     deploymentId: entry.runtime.deploymentId,
     name: entry.name,
-    pid: entry.pid!,
+    pid,
     port: entry.port,
     status: entry.status,
     updatedAt: new Date().toISOString(),
@@ -1152,7 +1399,10 @@ function liveRegistry(deploymentId: string): RegistryEntry | null {
   const persisted = readRegistry(deploymentId);
   // A different live PID (or a new generation from another worker) owns the
   // deployment now. Prefer the cross-worker registry over a stale local map.
-  if (persisted && (!local || registryDiffersFromRuntime(persisted, local.runtime))) {
+  if (
+    persisted &&
+    (!local || registryDiffersFromRuntime(persisted, local.runtime))
+  ) {
     return persisted;
   }
   return local ? registryFromLocalEntry(local) : persisted;
@@ -1162,35 +1412,67 @@ function liveRegistry(deploymentId: string): RegistryEntry | null {
 // Called by the runtime owner before reconciliation. Unavailable Docker
 // leaves execution unready rather than advertising a healthy runtime.
 export function ensureSandboxNetwork(): Promise<void> {
-  return trackRuntimeOperation(() => new Promise<void>((resolve, reject) => {
-    let child: ChildProcess | undefined;
-    let settled = false;
-    const finish = (error?: Error) => {
-      if (settled) return;
-      settled = true; clearTimeout(timer);
-      if (error) reject(error); else resolve();
-    };
-    const timer = setTimeout(() => {
-      markRuntimeUncertain(); child?.kill('SIGKILL');
-      finish(new Error('Sandbox network setup timed out.'));
-    }, 30_000);
-    const launch = (args: string[], done: (code: number | null) => void) => {
-      try {
-        // Recheck ownership before the mutation, not just before async inspect.
-        assertRuntimeOwner();
-        child = spawn('docker', args, { stdio: 'ignore', ...(runtimeAbortSignal() ? { signal: runtimeAbortSignal() } : {}) });
-        child.once('error', () => finish(new Error('Docker is unavailable during runtime recovery.')));
-        child.once('exit', (code) => { if (!settled) done(code); });
-      } catch (error) { finish(error instanceof Error ? error : new Error('Runtime owner unavailable.')); }
-    };
-    launch(['network', 'inspect', MCP_NETWORK], (code) => {
-      if (code === 0) finish();
-      else launch(['network', 'create', MCP_NETWORK], (created) => {
-        if (created === 0) finish();
-        else launch(['network', 'inspect', MCP_NETWORK], (exists) => finish(exists === 0 ? undefined : new Error('Sandbox network is unavailable.')));
-      });
-    });
-  }));
+  return trackRuntimeOperation(
+    () =>
+      new Promise<void>((resolve, reject) => {
+        let child: ChildProcess | undefined;
+        let settled = false;
+        const finish = (error?: Error) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          if (error) reject(error);
+          else resolve();
+        };
+        const timer = setTimeout(() => {
+          markRuntimeUncertain();
+          child?.kill("SIGKILL");
+          finish(new Error("Sandbox network setup timed out."));
+        }, 30_000);
+        const launch = (
+          args: string[],
+          done: (code: number | null) => void,
+        ) => {
+          try {
+            // Recheck ownership before the mutation, not just before async inspect.
+            assertRuntimeOwner();
+            child = spawn("docker", args, {
+              stdio: "ignore",
+              ...(runtimeAbortSignal() ? { signal: runtimeAbortSignal() } : {}),
+            });
+            child.once("error", () =>
+              finish(
+                new Error("Docker is unavailable during runtime recovery."),
+              ),
+            );
+            child.once("exit", (code) => {
+              if (!settled) done(code);
+            });
+          } catch (error) {
+            finish(
+              error instanceof Error
+                ? error
+                : new Error("Runtime owner unavailable."),
+            );
+          }
+        };
+        launch(["network", "inspect", MCP_NETWORK], (code) => {
+          if (code === 0) finish();
+          else
+            launch(["network", "create", MCP_NETWORK], (created) => {
+              if (created === 0) finish();
+              else
+                launch(["network", "inspect", MCP_NETWORK], (exists) =>
+                  finish(
+                    exists === 0
+                      ? undefined
+                      : new Error("Sandbox network is unavailable."),
+                  ),
+                );
+            });
+        });
+      }),
+  );
 }
 
 export function liveStatus(deploymentId: string): string | null {
@@ -1202,11 +1484,14 @@ export function liveStatus(deploymentId: string): string | null {
 // 'running'/'provisioning' is stale — the real status is 'stopped'. Terminal DB
 // states (stopped/error) are accurate as-is. Use this — not `liveStatus(id) ??
 // dbStatus` — wherever a deployment's status is displayed.
-const ACTIVE_STATES = new Set(['running', 'provisioning']);
-export function effectiveStatus(deploymentId: string, dbStatus: string): string {
+const ACTIVE_STATES = new Set(["running", "provisioning"]);
+export function effectiveStatus(
+  deploymentId: string,
+  dbStatus: string,
+): string {
   const live = liveStatus(deploymentId);
   if (live) return live;
-  return ACTIVE_STATES.has(dbStatus) ? 'stopped' : dbStatus;
+  return ACTIVE_STATES.has(dbStatus) ? "stopped" : dbStatus;
 }
 
 export function effectiveStatuses(
@@ -1223,8 +1508,13 @@ export function effectiveStatuses(
   for (const deployment of deployments) {
     const local = localLiveEntry(deployment.id);
     const filename = `${safeId(deployment.id)}.json`;
-    const registered = registryFiles.has(filename) ? readRegistry(deployment.id) : null;
-    if (registered && (!local || registryDiffersFromRuntime(registered, local.runtime))) {
+    const registered = registryFiles.has(filename)
+      ? readRegistry(deployment.id)
+      : null;
+    if (
+      registered &&
+      (!local || registryDiffersFromRuntime(registered, local.runtime))
+    ) {
       statuses.set(deployment.id, registered.status);
       continue;
     }
@@ -1234,7 +1524,8 @@ export function effectiveStatuses(
     }
     statuses.set(
       deployment.id,
-      registered?.status ?? (ACTIVE_STATES.has(deployment.status) ? 'stopped' : deployment.status),
+      registered?.status ??
+        (ACTIVE_STATES.has(deployment.status) ? "stopped" : deployment.status),
     );
   }
 
@@ -1250,11 +1541,14 @@ export function livePort(deploymentId: string): number | null {
  * the worker that owns the child process, so a newer cross-worker registry
  * generation must fail closed instead of pairing its port with stale secrets.
  */
-export function liveMcpRuntimeSnapshot(deploymentId: string): LiveMcpRuntimeSnapshot | null {
+export function liveMcpRuntimeSnapshot(
+  deploymentId: string,
+): LiveMcpRuntimeSnapshot | null {
   const entry = localLiveEntry(deploymentId);
-  if (!entry || entry.status !== 'running' || !entry.port) return null;
+  if (entry?.status !== "running" || !entry.port) return null;
   const persisted = readRegistry(deploymentId);
-  if (persisted && registryDiffersFromRuntime(persisted, entry.runtime)) return null;
+  if (persisted && registryDiffersFromRuntime(persisted, entry.runtime))
+    return null;
   return {
     port: entry.port,
     generation: entry.runtime.generation,
@@ -1270,7 +1564,8 @@ export function liveRedactionValues(deploymentId: string): string[] | null {
   const entry = localLiveEntry(deploymentId);
   if (!entry) return null;
   const persisted = readRegistry(deploymentId);
-  if (persisted && registryDiffersFromRuntime(persisted, entry.runtime)) return null;
+  if (persisted && registryDiffersFromRuntime(persisted, entry.runtime))
+    return null;
   return [...entry.redactionValues];
 }
 
@@ -1285,19 +1580,21 @@ type LaunchResult = {
 };
 
 function withDeploymentConfigVolume(
-  spec: Extract<SpawnSpec, { kind: 'bridge' }>,
+  spec: Extract<SpawnSpec, { kind: "bridge" }>,
   deploymentId: string,
-): Extract<SpawnSpec, { kind: 'bridge' }> {
-  if (spec.command !== 'docker' || spec.args[0] !== 'run') {
-    throw new Error('Runtime files require a Docker-backed MCP deployment.');
+): Extract<SpawnSpec, { kind: "bridge" }> {
+  if (spec.command !== "docker" || spec.args[0] !== "run") {
+    throw new Error("Runtime files require a Docker-backed MCP deployment.");
   }
   return {
     ...spec,
     args: [
-      'run',
-      '--mount',
+      "run",
+      "--mount",
       `type=volume,src=${configVolumeName(deploymentId)},dst=${DEPLOYMENT_CONFIG_MOUNT_PATH},readonly`,
-      ...(spec.configWorkingDirectory ? ['--workdir', DEPLOYMENT_CONFIG_MOUNT_PATH] : []),
+      ...(spec.configWorkingDirectory
+        ? ["--workdir", DEPLOYMENT_CONFIG_MOUNT_PATH]
+        : []),
       ...spec.args.slice(1),
     ],
   };
@@ -1309,7 +1606,14 @@ async function launchProcess(
   workspaceId?: string,
 ): Promise<LaunchResult> {
   if (launchPrevented(deploymentId, workspaceId)) return { ready: null };
-  if (workspaceId && !await db.workspace.findFirst({ where: { id: workspaceId, status: 'active' }, select: { id: true } })) return { ready: null };
+  if (
+    workspaceId &&
+    !(await db.workspace.findFirst({
+      where: { id: workspaceId, status: "active" },
+      select: { id: true },
+    }))
+  )
+    return { ready: null };
   assertRuntimeOwner();
   const s = store();
   const existing = s.get(deploymentId);
@@ -1317,7 +1621,10 @@ async function launchProcess(
     return { ready: null };
   }
   const registered = readRegistry(deploymentId);
-  if (registered && (registered.status === 'running' || registered.status === 'provisioning')) {
+  if (
+    registered &&
+    (registered.status === "running" || registered.status === "provisioning")
+  ) {
     // Another worker is already responsible for this child. Cross-worker
     // readiness promises are not shareable, so return immediately and let the
     // runtime snapshot polling surface its phase instead of spawning a second
@@ -1326,15 +1633,27 @@ async function launchProcess(
     return { ready: null };
   }
 
-  const connectorBroker = spec.kind === 'sandbox' && spec.sandboxKind === 'connector'
-    ? await ensureConnectorBroker()
-    : null;
-  const sshWorkspaceId = spec.kind === 'sandbox' && spec.sandboxKind === 'ssh'
-    ? workspaceId ?? (await db.deployment.findUnique({ where: { id: deploymentId }, select: { workspaceId: true } }))?.workspaceId
-    : undefined;
-  const sshTarget = spec.kind === 'sandbox' && spec.sandboxKind === 'ssh'
-    ? resolveSshTargetForWorkspace(spec.sshTargetId ?? '', sshWorkspaceId ?? '')
-    : null;
+  const connectorBroker =
+    spec.kind === "sandbox" && spec.sandboxKind === "connector"
+      ? await ensureConnectorBroker()
+      : null;
+  const sshWorkspaceId =
+    spec.kind === "sandbox" && spec.sandboxKind === "ssh"
+      ? (workspaceId ??
+        (
+          await db.deployment.findUnique({
+            where: { id: deploymentId },
+            select: { workspaceId: true },
+          })
+        )?.workspaceId)
+      : undefined;
+  const sshTarget =
+    spec.kind === "sandbox" && spec.sandboxKind === "ssh"
+      ? resolveSshTargetForWorkspace(
+          spec.sshTargetId ?? "",
+          sshWorkspaceId ?? "",
+        )
+      : null;
   if (launchPrevented(deploymentId, workspaceId)) return { ready: null };
   const releaseLaunchLock = acquireLaunchLock(deploymentId);
   if (!releaseLaunchLock) {
@@ -1342,94 +1661,126 @@ async function launchProcess(
     // Do not race it; surface provisioning until that worker publishes a
     // registry or reports its own failure.
     const owner = readRegistry(deploymentId);
-    void persist(deploymentId, owner?.status === 'running' || owner?.status === 'provisioning'
-      ? owner.status
-      : 'provisioning');
+    void persist(
+      deploymentId,
+      owner?.status === "running" || owner?.status === "provisioning"
+        ? owner.status
+        : "provisioning",
+    );
     return { ready: null };
   }
   const releaseLockAndReturn = (result: LaunchResult): LaunchResult => {
     releaseLaunchLock();
     return result;
   };
-  if (launchPrevented(deploymentId, workspaceId)) return releaseLockAndReturn({ ready: null });
+  if (launchPrevented(deploymentId, workspaceId))
+    return releaseLockAndReturn({ ready: null });
   const existingAfterLock = s.get(deploymentId);
-  if (existingAfterLock && existingAfterLock.child.exitCode === null && !existingAfterLock.stopping) {
+  if (
+    existingAfterLock &&
+    existingAfterLock.child.exitCode === null &&
+    !existingAfterLock.stopping
+  ) {
     return releaseLockAndReturn({ ready: null });
   }
   const registeredAfterLock = readRegistry(deploymentId);
-  if (registeredAfterLock && (registeredAfterLock.status === 'running' || registeredAfterLock.status === 'provisioning')) {
+  if (
+    registeredAfterLock &&
+    (registeredAfterLock.status === "running" ||
+      registeredAfterLock.status === "provisioning")
+  ) {
     void persist(deploymentId, registeredAfterLock.status);
     return releaseLockAndReturn({ ready: null });
   }
   let configRedactionValues: string[] = [];
   let launchSpec = spec;
   try {
-    if (spec.kind === 'bridge' && spec.command === 'docker' && spec.args[0] === 'run') {
+    if (
+      spec.kind === "bridge" &&
+      spec.command === "docker" &&
+      spec.args[0] === "run"
+    ) {
       // A bridge can exit after Docker has created the named runtime container.
       // The per-deployment launch lock lets this launch safely clear that stale
       // container before it materializes a replacement configuration volume.
       await removeDeploymentContainer(deploymentId);
       const config = await materializeDeploymentConfigVolume(deploymentId);
       configRedactionValues = config.redactionValues;
-      if (config.hasFiles) launchSpec = withDeploymentConfigVolume(spec, deploymentId);
+      if (config.hasFiles)
+        launchSpec = withDeploymentConfigVolume(spec, deploymentId);
     }
   } catch (error) {
     releaseLaunchLock();
-    await persist(deploymentId, 'error');
+    await persist(deploymentId, "error");
     throw error;
   }
-  if (launchPrevented(deploymentId, workspaceId)) return releaseLockAndReturn({ ready: null });
-  const managedSpec: SpawnSpec = launchSpec.kind === 'bridge'
-    && launchSpec.command === 'docker'
-    && launchSpec.args[0] === 'run'
-    ? {
-        ...launchSpec,
-        args: ['run', '--name', deploymentContainerName(deploymentId), ...launchSpec.args.slice(1)],
-      }
-    : launchSpec;
-  const script = managedSpec.kind === 'bridge'
-    ? BRIDGE
-    : managedSpec.kind === 'remote'
-      ? REMOTE_BRIDGE
-      : managedSpec.kind === 'sandbox'
-        ? SANDBOX_SERVER
-        : BUILTIN;
-  const managedBridgeImage = managedSpec.kind === 'bridge' ? bridgeImage(managedSpec) : '';
-  const startupTimeouts = managedSpec.kind === 'bridge'
-    ? await resolveMcpStartupTimeoutSettings()
-    : null;
-  const remotePrivateHosts = managedSpec.kind === 'remote'
-    ? await resolveRemoteMcpPrivateHostsSettings()
-    : null;
+  if (launchPrevented(deploymentId, workspaceId))
+    return releaseLockAndReturn({ ready: null });
+  const managedSpec: SpawnSpec =
+    launchSpec.kind === "bridge" &&
+    launchSpec.command === "docker" &&
+    launchSpec.args[0] === "run"
+      ? {
+          ...launchSpec,
+          args: [
+            "run",
+            "--name",
+            deploymentContainerName(deploymentId),
+            ...launchSpec.args.slice(1),
+          ],
+        }
+      : launchSpec;
+  const script =
+    managedSpec.kind === "bridge"
+      ? BRIDGE
+      : managedSpec.kind === "remote"
+        ? REMOTE_BRIDGE
+        : managedSpec.kind === "sandbox"
+          ? SANDBOX_SERVER
+          : BUILTIN;
+  const managedBridgeImage =
+    managedSpec.kind === "bridge" ? bridgeImage(managedSpec) : "";
+  const startupTimeouts =
+    managedSpec.kind === "bridge"
+      ? await resolveMcpStartupTimeoutSettings()
+      : null;
+  const remotePrivateHosts =
+    managedSpec.kind === "remote"
+      ? await resolveRemoteMcpPrivateHostsSettings()
+      : null;
   // This is deliberately generated after the SpawnSpec is built. It is never
   // stored in that spec, the runtime registry, or the captured log stream.
-  const runtimeEventToken = managedSpec.kind === 'bridge' || managedSpec.kind === 'remote'
-    ? randomUUID()
-    : '';
+  const runtimeEventToken =
+    managedSpec.kind === "bridge" || managedSpec.kind === "remote"
+      ? randomUUID()
+      : "";
   // Keep app secrets out of the bridge. Docker argv contains only env names;
   // their exact deployment-scoped values travel in the bridge environment.
   const env =
-    managedSpec.kind === 'bridge'
+    managedSpec.kind === "bridge" && startupTimeouts
       ? {
           ...dockerCliEnv(),
-          MCP_PORT: '0',
+          MCP_PORT: "0",
           MCP_NAME: managedSpec.name,
           MCP_COMMAND: managedSpec.command,
           MCP_ARGS: JSON.stringify(managedSpec.args),
-          MCP_CHILD_ENV: JSON.stringify(managedSpec.containerEnv ?? managedSpec.env),
-          MCP_CONTAINER_NAME: managedSpec.command === 'docker'
-            ? deploymentContainerName(deploymentId)
-            : '',
+          MCP_CHILD_ENV: JSON.stringify(
+            managedSpec.containerEnv ?? managedSpec.env,
+          ),
+          MCP_CONTAINER_NAME:
+            managedSpec.command === "docker"
+              ? deploymentContainerName(deploymentId)
+              : "",
           MCP_IMAGE: managedBridgeImage,
-          MCP_STARTUP_IDLE_TIMEOUT_MS: String(startupTimeouts!.idleTimeoutMs),
-          MCP_STARTUP_MAX_TIMEOUT_MS: String(startupTimeouts!.maxTimeoutMs),
+          MCP_STARTUP_IDLE_TIMEOUT_MS: String(startupTimeouts.idleTimeoutMs),
+          MCP_STARTUP_MAX_TIMEOUT_MS: String(startupTimeouts.maxTimeoutMs),
           MCP_RUNTIME_EVENT_TOKEN: runtimeEventToken,
         }
-      : managedSpec.kind === 'remote'
+      : managedSpec.kind === "remote" && remotePrivateHosts
         ? {
-            PATH: process.env.PATH ?? '',
-            NODE_ENV: process.env.NODE_ENV ?? 'production',
-            MCP_PORT: '0',
+            PATH: process.env.PATH ?? "",
+            NODE_ENV: process.env.NODE_ENV ?? "production",
+            MCP_PORT: "0",
             MCP_NAME: managedSpec.name,
             MCP_REMOTE_CONFIG: JSON.stringify({
               url: managedSpec.url,
@@ -1439,43 +1790,50 @@ async function launchProcess(
             }),
             // Only the bridge sees this admin-controlled setting; deployment
             // config cannot opt individual workspace MCPs into private access.
-            MCP_REMOTE_PRIVATE_HOSTS: remotePrivateHosts!.value,
+            MCP_REMOTE_PRIVATE_HOSTS: remotePrivateHosts.value,
             MCP_RUNTIME_EVENT_TOKEN: runtimeEventToken,
           }
-        : managedSpec.kind === 'sandbox'
-        ? {
-            PATH: process.env.PATH ?? '',
-            NODE_ENV: process.env.NODE_ENV ?? 'production',
-            HOME: process.env.HOME ?? '',
-            DOCKER_HOST: process.env.DOCKER_HOST ?? '',
-            DOCKER_CERT_PATH: process.env.DOCKER_CERT_PATH ?? '',
-            DOCKER_TLS_VERIFY: process.env.DOCKER_TLS_VERIFY ?? '',
-            LANG: process.env.LANG ?? '',
-            LC_ALL: process.env.LC_ALL ?? '',
-            MCP_PORT: '0',
-            MCP_NAME: managedSpec.name,
-            SANDBOX_ID: managedSpec.sandboxId,
-            SANDBOX_KIND: managedSpec.sandboxKind,
-            SANDBOX_SSH_CONFIG: sshTarget ? JSON.stringify(sshTarget) : '',
-            SANDBOX_IMAGE: managedSpec.image ?? '',
-            SANDBOX_VOLUME: managedSpec.volumeName ?? '',
-            SANDBOX_NETWORK: managedSpec.network,
-            SANDBOX_ALLOW_SUDO: String(managedSpec.allowSudo === true),
-            SANDBOX_ENV_JSON: JSON.stringify(managedSpec.env ?? {}),
-            SANDBOX_CONNECTOR_BROKER_URL: connectorBroker?.internalUrl ?? '',
-            SANDBOX_CONNECTOR_BROKER_TOKEN: connectorBroker?.internalToken ?? '',
-            SANDBOX_CONNECTOR_REMOTE_ROOT: managedSpec.connector?.remoteRoot ?? '',
-            HERMES_RUNTIME_ID: managedSpec.runtimeId ?? '',
-            HERMES_RUNTIME_API_KEY: managedSpec.runtimeId
-              ? deriveHermesRuntimeToken(managedSpec.runtimeId, 'hermes-api')
-              : '',
-            HERMES_RUNTIME_DASHBOARD_TOKEN: managedSpec.runtimeId
-              ? deriveHermesRuntimeToken(managedSpec.runtimeId, 'hermes-dashboard-api')
-              : '',
-            HERMES_RUNTIME_MODEL_NAME: managedSpec.runtimeModelName ?? 'hermes-agent',
-            TOOLPLANE_MAX_ATTACHMENT_BYTES: process.env.TOOLPLANE_MAX_ATTACHMENT_BYTES ?? '',
-          }
-        : { ...process.env, MCP_PORT: '0', MCP_NAME: managedSpec.name };
+        : managedSpec.kind === "sandbox"
+          ? {
+              PATH: process.env.PATH ?? "",
+              NODE_ENV: process.env.NODE_ENV ?? "production",
+              HOME: process.env.HOME ?? "",
+              DOCKER_HOST: process.env.DOCKER_HOST ?? "",
+              DOCKER_CERT_PATH: process.env.DOCKER_CERT_PATH ?? "",
+              DOCKER_TLS_VERIFY: process.env.DOCKER_TLS_VERIFY ?? "",
+              LANG: process.env.LANG ?? "",
+              LC_ALL: process.env.LC_ALL ?? "",
+              MCP_PORT: "0",
+              MCP_NAME: managedSpec.name,
+              SANDBOX_ID: managedSpec.sandboxId,
+              SANDBOX_KIND: managedSpec.sandboxKind,
+              SANDBOX_SSH_CONFIG: sshTarget ? JSON.stringify(sshTarget) : "",
+              SANDBOX_IMAGE: managedSpec.image ?? "",
+              SANDBOX_VOLUME: managedSpec.volumeName ?? "",
+              SANDBOX_NETWORK: managedSpec.network,
+              SANDBOX_ALLOW_SUDO: String(managedSpec.allowSudo === true),
+              SANDBOX_ENV_JSON: JSON.stringify(managedSpec.env ?? {}),
+              SANDBOX_CONNECTOR_BROKER_URL: connectorBroker?.internalUrl ?? "",
+              SANDBOX_CONNECTOR_BROKER_TOKEN:
+                connectorBroker?.internalToken ?? "",
+              SANDBOX_CONNECTOR_REMOTE_ROOT:
+                managedSpec.connector?.remoteRoot ?? "",
+              HERMES_RUNTIME_ID: managedSpec.runtimeId ?? "",
+              HERMES_RUNTIME_API_KEY: managedSpec.runtimeId
+                ? deriveHermesRuntimeToken(managedSpec.runtimeId, "hermes-api")
+                : "",
+              HERMES_RUNTIME_DASHBOARD_TOKEN: managedSpec.runtimeId
+                ? deriveHermesRuntimeToken(
+                    managedSpec.runtimeId,
+                    "hermes-dashboard-api",
+                  )
+                : "",
+              HERMES_RUNTIME_MODEL_NAME:
+                managedSpec.runtimeModelName ?? "hermes-agent",
+              TOOLPLANE_MAX_ATTACHMENT_BYTES:
+                process.env.TOOLPLANE_MAX_ATTACHMENT_BYTES ?? "",
+            }
+          : { ...process.env, MCP_PORT: "0", MCP_NAME: managedSpec.name };
 
   // A deployment launch owns one log generation. Reset before the child can
   // write stderr so a previous failure cannot be mistaken for this launch.
@@ -1484,7 +1842,7 @@ async function launchProcess(
   try {
     child = spawn(process.execPath, [script], {
       env,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ["ignore", "pipe", "pipe"],
     });
   } catch (error) {
     releaseLaunchLock();
@@ -1496,19 +1854,24 @@ async function launchProcess(
   const entry: Entry = {
     child,
     port: null,
-    status: 'provisioning',
+    status: "provisioning",
     pid: child.pid,
     name: managedSpec.name,
-    stopGraceMs: managedSpec.kind === 'sandbox' && managedSpec.sandboxKind === 'hermes' ? 35_000 : undefined,
+    stopGraceMs:
+      managedSpec.kind === "sandbox" && managedSpec.sandboxKind === "hermes"
+        ? 35_000
+        : undefined,
     runtime,
     redactionValues: [
       ...redactionValuesForSpec(managedSpec),
       ...configRedactionValues,
       ...(runtimeEventToken ? [runtimeEventToken] : []),
-    ].filter((value, index, values) => values.indexOf(value) === index).sort((a, b) => b.length - a.length),
+    ]
+      .filter((value, index, values) => values.indexOf(value) === index)
+      .sort((a, b) => b.length - a.length),
     runtimeEventToken,
-    stderrBuffer: '',
-    stderrDecoder: new StringDecoder('utf8'),
+    stderrBuffer: "",
+    stderrDecoder: new StringDecoder("utf8"),
     discardingOverlongStderrLine: false,
   };
   s.set(deploymentId, entry);
@@ -1519,38 +1882,46 @@ async function launchProcess(
         name: managedSpec.name,
         pid: child.pid,
         port: null,
-        status: 'provisioning',
+        status: "provisioning",
         updatedAt: new Date().toISOString(),
         ...runtimeFields(runtime),
       });
     }
   } catch (error) {
     if (store().get(deploymentId) === entry) s.delete(deploymentId);
-    try { child.kill('SIGTERM'); } catch { /* best effort */ }
+    try {
+      child.kill("SIGTERM");
+    } catch {
+      /* best effort */
+    }
     releaseLaunchLock();
     throw error;
   }
   releaseLaunchLock();
   const ready = new Promise<void>((resolve) => {
-    child.stdout?.on('data', (buf: Buffer) => {
+    child.stdout?.on("data", (buf: Buffer) => {
       const m = /LISTENING (\d+)/.exec(buf.toString());
       if (m) {
         // A buffered readiness line can arrive after stopProcess has already
         // revoked this process. Never let it recreate a running registry or DB
         // status. Per-deployment persistence queues preserve the same ordering
         // when a previously-started running write is still in flight.
-        if (entry.stopping || child.exitCode !== null || store().get(deploymentId) !== entry) {
+        if (
+          entry.stopping ||
+          child.exitCode !== null ||
+          store().get(deploymentId) !== entry
+        ) {
           resolve();
           return;
         }
         entry.port = Number(m[1]);
-        entry.status = 'running';
-        updateRuntime(entry, { status: 'running', phase: 'ready' }, true);
-        void persist(deploymentId, 'running');
+        entry.status = "running";
+        updateRuntime(entry, { status: "running", phase: "ready" }, true);
+        void persist(deploymentId, "running");
         resolve();
       }
     });
-    child.stderr?.on('data', (buf: Buffer) => {
+    child.stderr?.on("data", (buf: Buffer) => {
       const text = entry.stderrDecoder.write(buf);
       // Never let a late stderr event from a replaced process write into the
       // replacement's generation.
@@ -1564,43 +1935,60 @@ async function launchProcess(
       captureRuntimeStderr(entry, entry.stderrDecoder.end());
       flushRuntimeStderr(entry);
     };
-    child.stderr?.once('end', flushCapturedStderr);
-    child.once('close', flushCapturedStderr);
-    child.once('exit', () => resolve());
-    child.once('error', () => {
+    child.stderr?.once("end", flushCapturedStderr);
+    child.once("close", flushCapturedStderr);
+    child.once("exit", () => resolve());
+    child.once("error", () => {
       flushCapturedStderr();
       resolve();
     });
     setTimeout(resolve, READY_TIMEOUT_MS);
   });
 
-  child.on('exit', (code, signal) => {
-    void recordEvent({ domain: 'runtime', eventName: 'runtime.exit', deploymentId,
-      outcome: entry.stopping || code === 0 ? 'success' : 'error', attributes: { code, signal, generation: entry.runtime.generation } });
-    entry.status = entry.stopping ? 'stopped' : code === 0 ? 'stopped' : 'error';
+  child.on("exit", (code, signal) => {
+    void recordEvent({
+      domain: "runtime",
+      eventName: "runtime.exit",
+      deploymentId,
+      outcome: entry.stopping || code === 0 ? "success" : "error",
+      attributes: { code, signal, generation: entry.runtime.generation },
+    });
+    entry.status = entry.stopping
+      ? "stopped"
+      : code === 0
+        ? "stopped"
+        : "error";
     if (child.pid) deleteRegistry(deploymentId, child.pid);
     if (entry.stopping || store().get(deploymentId) !== entry) return;
-    updateRuntime(entry, {
-      status: entry.status,
-      phase: entry.status === 'error' ? 'error' : 'stopped',
-    }, true);
+    updateRuntime(
+      entry,
+      {
+        status: entry.status,
+        phase: entry.status === "error" ? "error" : "stopped",
+      },
+      true,
+    );
     void persist(deploymentId, entry.status);
   });
-  child.on('error', () => {
-    entry.status = entry.stopping ? 'stopped' : 'error';
+  child.on("error", () => {
+    entry.status = entry.stopping ? "stopped" : "error";
     if (child.pid) deleteRegistry(deploymentId, child.pid);
     if (entry.stopping || store().get(deploymentId) !== entry) return;
-    updateRuntime(entry, {
-      status: entry.status,
-      phase: entry.status === 'error' ? 'error' : 'stopped',
-    }, true);
+    updateRuntime(
+      entry,
+      {
+        status: entry.status,
+        phase: entry.status === "error" ? "error" : "stopped",
+      },
+      true,
+    );
     void persist(deploymentId, entry.status);
   });
 
   // Status persistence is ordered per deployment but deliberately does not
   // hold the lifecycle queue. A stop must be able to signal the local child
   // even while a slow database write is still in flight.
-  void persist(deploymentId, 'provisioning');
+  void persist(deploymentId, "provisioning");
   return { ready };
 }
 
@@ -1610,11 +1998,13 @@ export async function startProcess(
   options: StartProcessOptions = {},
 ): Promise<void> {
   assertRuntimeOwner();
-  const { ready } = await enqueueLifecycle(deploymentId, () => (
-    launchProcess(deploymentId, spec, options.workspaceId)
-  ));
+  const { ready } = await enqueueLifecycle(deploymentId, () =>
+    launchProcess(deploymentId, spec, options.workspaceId),
+  );
   if (ready && options.onReady) {
-    void ready.then(() => liveStatus(deploymentId) === 'running' && options.onReady?.()).catch(() => undefined);
+    void ready
+      .then(() => liveStatus(deploymentId) === "running" && options.onReady?.())
+      .catch(() => undefined);
   }
   if ((options.awaitReady ?? true) && ready) await ready;
 }
@@ -1622,7 +2012,7 @@ export async function startProcess(
 async function stopProcessUnlocked(
   deploymentId: string,
   force = false,
-  finalStatus = 'stopped',
+  finalStatus = "stopped",
 ): Promise<void> {
   const e = store().get(deploymentId);
   const registered = readRegistry(deploymentId);
@@ -1633,19 +2023,27 @@ async function stopProcessUnlocked(
     }
   } catch (error) {
     if (e) {
-      e.status = 'error';
-      updateRuntime(e, { status: 'error', phase: 'error' }, true);
+      e.status = "error";
+      updateRuntime(e, { status: "error", phase: "error" }, true);
     } else {
-      updateDetachedRuntime(deploymentId, { status: 'error', phase: 'error' }, true);
+      updateDetachedRuntime(
+        deploymentId,
+        { status: "error", phase: "error" },
+        true,
+      );
     }
-    await persist(deploymentId, 'error');
+    await persist(deploymentId, "error");
     throw error;
   }
   deleteRegistry(deploymentId);
   if (e) {
-    updateRuntime(e, { status: finalStatus, phase: 'stopped' }, true);
+    updateRuntime(e, { status: finalStatus, phase: "stopped" }, true);
   } else {
-    updateDetachedRuntime(deploymentId, { status: finalStatus, phase: 'stopped' }, true);
+    updateDetachedRuntime(
+      deploymentId,
+      { status: finalStatus, phase: "stopped" },
+      true,
+    );
   }
   if (e && store().get(deploymentId) === e) store().delete(deploymentId);
   await persist(deploymentId, finalStatus);
@@ -1667,7 +2065,9 @@ export async function restartProcess(
     return launchProcess(deploymentId, spec, options.workspaceId);
   });
   if (ready && options.onReady) {
-    void ready.then(() => liveStatus(deploymentId) === 'running' && options.onReady?.()).catch(() => undefined);
+    void ready
+      .then(() => liveStatus(deploymentId) === "running" && options.onReady?.())
+      .catch(() => undefined);
   }
   if ((options.awaitReady ?? true) && ready) await ready;
 }
@@ -1683,9 +2083,8 @@ export async function killProcess(
 ): Promise<void> {
   assertRuntimeOwner(true);
   if (options.preventRestart) tombstones().add(deploymentId);
-  await enqueueLifecycle(
-    deploymentId,
-    () => stopProcessUnlocked(deploymentId, true, options.finalStatus),
+  await enqueueLifecycle(deploymentId, () =>
+    stopProcessUnlocked(deploymentId, true, options.finalStatus),
   );
 }
 
@@ -1695,18 +2094,24 @@ export async function killMany(
   deploymentIds: string[],
   options: KillProcessOptions = {},
 ): Promise<void> {
-  await Promise.all(deploymentIds.map((id) => killProcess(id, {
-    ...options,
-    preventRestart: true,
-  })));
+  await Promise.all(
+    deploymentIds.map((id) =>
+      killProcess(id, {
+        ...options,
+        preventRestart: true,
+      }),
+    ),
+  );
 }
 
 // Shutdown must be able to stop only this process's children after a lost lease.
 export async function shutdownOwnedProcesses(): Promise<void> {
-  await Promise.all([...store().entries()].map(async ([id, entry]) => {
-    await terminateChild(entry, false);
-    deleteRegistry(id, entry.pid);
-    if (store().get(id) === entry) store().delete(id);
-    // entry.stopping suppresses exit-handler DB updates. Preserve desired state for restart.
-  }));
+  await Promise.all(
+    [...store().entries()].map(async ([id, entry]) => {
+      await terminateChild(entry, false);
+      deleteRegistry(id, entry.pid);
+      if (store().get(id) === entry) store().delete(id);
+      // entry.stopping suppresses exit-handler DB updates. Preserve desired state for restart.
+    }),
+  );
 }

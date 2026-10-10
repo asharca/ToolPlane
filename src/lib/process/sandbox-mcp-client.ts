@@ -1,24 +1,28 @@
-import 'server-only';
+import "server-only";
 
-import { mcpRpc } from './mcp-client';
-import { parseMcpToolCatalogResult, type McpToolDefinition } from './mcp-tool-catalog';
-import type { SpawnSpec } from './spawn-spec';
+import { mcpRpc } from "./mcp-client";
+import {
+  parseMcpToolCatalogResult,
+  type McpToolDefinition,
+} from "./mcp-tool-catalog";
+import type { SpawnSpec } from "./spawn-spec";
 
-type RemoteSpec = Extract<SpawnSpec, { kind: 'remote' }>;
+type RemoteSpec = Extract<SpawnSpec, { kind: "remote" }>;
 
 const MAX_PAGES = 10;
 const MAX_TOOLS = 1_000;
 
 export class SandboxMcpAuthenticationError extends Error {
   constructor() {
-    super('The remote MCP rejected its credentials.');
-    this.name = 'SandboxMcpAuthenticationError';
+    super("The remote MCP rejected its credentials.");
+    this.name = "SandboxMcpAuthenticationError";
   }
 }
 
 // Runs with `node -e` inside the selected sandbox. Configuration and secrets
 // are supplied on stdin so they never enter the process argv or runtime logs.
-const BOOTSTRAP = "let s='';process.stdin.setEncoding('utf8');process.stdin.on('data',c=>s+=c);process.stdin.on('end',()=>{const i=s.indexOf('\\n');globalThis.__MCP_CONFIG=JSON.parse(s.slice(0,i));(0,eval)(s.slice(i+1))})";
+const BOOTSTRAP =
+  "let s='';process.stdin.setEncoding('utf8');process.stdin.on('data',c=>s+=c);process.stdin.on('end',()=>{const i=s.indexOf('\\n');globalThis.__MCP_CONFIG=JSON.parse(s.slice(0,i));(0,eval)(s.slice(i+1))})";
 
 const CLIENT = String.raw`(async()=>{
 const c=globalThis.__MCP_CONFIG,base=new URL(c.url),dns=require('node:dns').promises,net=require('node:net'),norm=h=>String(h).toLowerCase().replace(/^\[|\]$/g,'').replace(/\.$/,''),targets=typeof c.privateHosts==='string'?c.privateHosts.split(',').filter(Boolean):[];
@@ -37,15 +41,15 @@ try{const result=c.transport==='sse'?await legacy():await streamable();process.s
 })()`;
 
 function object(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? value as Record<string, unknown>
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
     : null;
 }
 
 function firstText(value: Record<string, unknown> | null): string | null {
   const content = Array.isArray(value?.content) ? value.content : [];
   const first = object(content[0]);
-  return typeof first?.text === 'string' ? first.text : null;
+  return typeof first?.text === "string" ? first.text : null;
 }
 
 export async function mcpRpcViaSandbox(
@@ -53,7 +57,7 @@ export async function mcpRpcViaSandbox(
   remote: RemoteSpec,
   method: string,
   params?: Record<string, unknown>,
-  privateHosts = '',
+  privateHosts = "",
 ): Promise<Record<string, unknown> | null> {
   const stdin = `${JSON.stringify({
     url: remote.url,
@@ -66,12 +70,12 @@ export async function mcpRpcViaSandbox(
   })}\n${CLIENT}`;
   const outer = await mcpRpc(
     sandboxDeploymentId,
-    'tools/call',
+    "tools/call",
     {
-      name: 'process_exec',
+      name: "process_exec",
       arguments: {
-        runtime: 'node',
-        args: ['-e', BOOTSTRAP],
+        runtime: "node",
+        args: ["-e", BOOTSTRAP],
         stdin,
         timeoutMs: Math.min(remote.timeoutMs, 120_000),
       },
@@ -88,7 +92,11 @@ export async function mcpRpcViaSandbox(
   } catch {
     return null;
   }
-  if (!execution || execution.exitCode !== 0 || execution.timedOut === true || typeof execution.stdout !== 'string') {
+  if (
+    execution?.exitCode !== 0 ||
+    execution.timedOut === true ||
+    typeof execution.stdout !== "string"
+  ) {
     return null;
   }
   let response: Record<string, unknown> | null;
@@ -97,14 +105,15 @@ export async function mcpRpcViaSandbox(
   } catch {
     return null;
   }
-  if (response?.error === 'authentication_failed') throw new SandboxMcpAuthenticationError();
+  if (response?.error === "authentication_failed")
+    throw new SandboxMcpAuthenticationError();
   return response && !response.error ? object(response.result) : null;
 }
 
 export async function listMcpToolsViaSandbox(
   sandboxDeploymentId: string,
   remote: RemoteSpec,
-  privateHosts = '',
+  privateHosts = "",
 ): Promise<McpToolDefinition[] | null> {
   const tools: McpToolDefinition[] = [];
   const cursors = new Set<string>();
@@ -113,18 +122,24 @@ export async function listMcpToolsViaSandbox(
     const result = await mcpRpcViaSandbox(
       sandboxDeploymentId,
       remote,
-      'tools/list',
+      "tools/list",
       cursor ? { cursor } : undefined,
       privateHosts,
     );
     const listed = parseMcpToolCatalogResult(result?.tools);
-    if (!listed.ok || listed.tools.length > MAX_TOOLS - tools.length) return null;
+    if (!listed.ok || listed.tools.length > MAX_TOOLS - tools.length)
+      return null;
     const combined = parseMcpToolCatalogResult([...tools, ...listed.tools]);
     if (!combined.ok) return null;
     tools.splice(0, tools.length, ...combined.tools);
     if (result?.nextCursor === undefined) return tools;
     const nextCursor = result.nextCursor;
-    if (typeof nextCursor !== 'string' || !nextCursor || nextCursor.length > 4_000 || cursors.has(nextCursor)) {
+    if (
+      typeof nextCursor !== "string" ||
+      !nextCursor ||
+      nextCursor.length > 4_000 ||
+      cursors.has(nextCursor)
+    ) {
       return null;
     }
     cursors.add(nextCursor);

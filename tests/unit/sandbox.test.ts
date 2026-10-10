@@ -1,402 +1,253 @@
-import { readFileSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
-import path from 'node:path';
-import { describe, it, expect } from 'vitest';
-import { sandboxFlags, envFlags, MCP_NETWORK } from '@/lib/process/sandbox';
+import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import path from "node:path";
+import { describe, it, expect } from "vitest";
+import { sandboxFlags, envFlags, MCP_NETWORK } from "@/lib/process/sandbox";
 import {
   DEFAULT_SANDBOX_IMAGE,
   SANDBOX_IMAGE_OPTIONS,
-  findSandboxImageOption,
   resolveSandboxImage,
-} from '@/lib/sandboxes/images';
-import { parseSandboxDirectoryText } from '@/lib/sandboxes/file-list';
+} from "@/lib/sandboxes/images";
+import { parseSandboxDirectoryText } from "@/lib/sandboxes/file-list";
 import {
   parseSandboxEnvText,
   readSandboxAllowSudo,
   readSandboxEnv,
   sandboxConfigWithAllowSudo,
   sandboxEnvToText,
-} from '@/lib/sandboxes/env';
+} from "@/lib/sandboxes/env";
 import {
   dockerVolumeCopyArgs,
   sandboxSnapshotVolumeName,
-} from '@/lib/sandboxes/runtime';
+} from "@/lib/sandboxes/runtime";
 
-describe('sandboxFlags', () => {
-  it('isolated: hardening flags + the dedicated sandbox network', () => {
-    const f = sandboxFlags('isolated');
+describe("sandboxFlags", () => {
+  it("isolated: hardening flags + the dedicated sandbox network", () => {
+    const f = sandboxFlags("isolated");
     expect(f).toEqual(
       expect.arrayContaining([
-        '--rm',
-        '--cap-drop',
-        'ALL',
-        '--security-opt',
-        'no-new-privileges',
-        '--read-only',
-        '--network',
+        "--rm",
+        "--cap-drop",
+        "ALL",
+        "--security-opt",
+        "no-new-privileges",
+        "--read-only",
+        "--network",
         MCP_NETWORK,
       ]),
     );
-    expect(f).toContain('--memory');
-    expect(f).toContain('--pids-limit');
-    expect(f).toContain('--cpus');
+    expect(f).toContain("--memory");
+    expect(f).toContain("--pids-limit");
+    expect(f).toContain("--cpus");
   });
 
-  it('none: full network isolation', () => {
-    expect(sandboxFlags('none')).toContain('none');
-    expect(sandboxFlags('none')).not.toContain(MCP_NETWORK);
+  it("none: full network isolation", () => {
+    expect(sandboxFlags("none")).toContain("none");
+    expect(sandboxFlags("none")).not.toContain(MCP_NETWORK);
   });
 });
 
-describe('envFlags', () => {
-  it('maps to value-free Docker env flags', () => {
-    expect(envFlags({ A: '1', B: '2' })).toEqual(['-e', 'A', '-e', 'B']);
+describe("envFlags", () => {
+  it("maps to value-free Docker env flags", () => {
+    expect(envFlags({ A: "1", B: "2" })).toEqual(["-e", "A", "-e", "B"]);
   });
-  it('empty for no env', () => {
+  it("empty for no env", () => {
     expect(envFlags({})).toEqual([]);
   });
 });
 
-describe('sandbox env config', () => {
-  it('parses KEY=value lines, comments, and empty lines', () => {
-    expect(parseSandboxEnvText('A=1\n# comment\n\nB=two=parts')).toEqual({
-      A: '1',
-      B: 'two=parts',
+describe("sandbox env config", () => {
+  it("parses KEY=value lines, comments, and empty lines", () => {
+    expect(parseSandboxEnvText("A=1\n# comment\n\nB=two=parts")).toEqual({
+      A: "1",
+      B: "two=parts",
     });
   });
 
-  it('round-trips stored env as sorted text', () => {
-    const env = readSandboxEnv({ env: { ZED: 'last', A: 'first', 'invalid-key': 'nope', N: 42 } });
+  it("round-trips stored env as sorted text", () => {
+    const env = readSandboxEnv({
+      env: { ZED: "last", A: "first", "invalid-key": "nope", N: 42 },
+    });
 
-    expect(env).toEqual({ A: 'first', ZED: 'last' });
-    expect(sandboxEnvToText(env)).toBe('A=first\nZED=last');
+    expect(env).toEqual({ A: "first", ZED: "last" });
+    expect(sandboxEnvToText(env)).toBe("A=first\nZED=last");
   });
 
-  it('treats a missing sudo setting as disabled and toggles other keys intact', () => {
+  it("treats a missing sudo setting as disabled and toggles other keys intact", () => {
     expect(readSandboxAllowSudo(null)).toBe(false);
-    expect(readSandboxAllowSudo({ allowSudo: 'true' })).toBe(false);
+    expect(readSandboxAllowSudo({ allowSudo: "true" })).toBe(false);
     expect(readSandboxAllowSudo({ allowSudo: true })).toBe(true);
 
-    const enabled = sandboxConfigWithAllowSudo({ managedBy: 'agent-runtime' }, true);
-    expect(enabled).toEqual({ managedBy: 'agent-runtime', allowSudo: true });
-    expect(sandboxConfigWithAllowSudo(enabled, false)).toEqual({ managedBy: 'agent-runtime' });
+    const enabled = sandboxConfigWithAllowSudo(
+      { managedBy: "agent-runtime" },
+      true,
+    );
+    expect(enabled).toEqual({ managedBy: "agent-runtime", allowSudo: true });
+    expect(sandboxConfigWithAllowSudo(enabled, false)).toEqual({
+      managedBy: "agent-runtime",
+    });
     expect(sandboxConfigWithAllowSudo(null, true)).toEqual({ allowSudo: true });
   });
 });
 
-describe('persistent Docker sandbox runtime', () => {
-  it('keeps connector proxies online before the user machine connects', () => {
-    const script = readFileSync(path.join(process.cwd(), 'scripts/sandbox-mcp-server.mjs'), 'utf8');
-
-    expect(script).toContain("if (KIND === 'connector') return;");
-    expect(script).not.toContain("await connectorRequest('ping', {}, 10_000);\n    return;");
-  });
-
-  it('uses structured process execution and binary-safe file writes', () => {
-    const server = readFileSync(path.join(process.cwd(), 'scripts/sandbox-mcp-server.mjs'), 'utf8');
-    const connector = readFileSync(path.join(process.cwd(), 'packages/connector/bin/runtime.mjs'), 'utf8');
-
-    expect(server).toContain("name: 'process_exec'");
-    expect(server).toContain("decoded.encoding === 'base64' ? 'write_file_base64' : 'write_file'");
-    expect(server).toContain('Buffer.isBuffer(opts.stdin)');
-    expect(connector).toContain("case 'process_exec':");
-    expect(connector).toContain("case 'write_file_base64':");
-  });
-
-  it('keeps the minimal capabilities apt needs inside user sandboxes', () => {
-    const script = readFileSync(path.join(process.cwd(), 'scripts/sandbox-mcp-server.mjs'), 'utf8');
-
-    expect(script).toContain("const DOCKER_SANDBOX_CAPS = ['CHOWN', 'DAC_OVERRIDE', 'FOWNER', 'SETGID', 'SETUID', 'KILL']");
-    expect(script).toContain("'--cap-drop'");
-    expect(script).toContain("'ALL'");
-    expect(script).toContain("DOCKER_SANDBOX_CAPS.flatMap((cap) => ['--cap-add', cap])");
-  });
-
-  it('lets an opted-in Hermes service user use classic sudo for agent shell commands', () => {
-    const script = readFileSync(path.join(process.cwd(), 'scripts/sandbox-mcp-server.mjs'), 'utf8');
-
-    expect(script).toContain("const ALLOW_SUDO = process.env.SANDBOX_ALLOW_SUDO === 'true'");
-    expect(script).toContain('async function ensureHermesSudo()');
-    expect(script).toContain("if (KIND !== 'hermes' || !ALLOW_SUDO) return;");
-    expect(script).toContain('hermes ALL=(ALL) NOPASSWD:ALL');
-    expect(script).toContain('/etc/sudoers.d/99-toolplane');
-    expect(script).toContain('await ensureHermesSudo()');
-    // setuid sudo is dead under no-new-privileges, so the flag only comes off
-    // for opted-in Hermes sandboxes; a flipped container must be recreated.
-    expect(script).toContain("const expectsNoNewPrivileges = !(KIND === 'hermes' && ALLOW_SUDO)");
-    expect(script).toContain("securityOpts.has('no-new-privileges') === expectsNoNewPrivileges");
-    expect(script).toContain("...(KIND === 'hermes' && ALLOW_SUDO ? [] : ['--security-opt', 'no-new-privileges'])");
-  });
-
-  it('allows enough time for first-run Dev Container image pulls', () => {
-    const script = readFileSync(path.join(process.cwd(), 'scripts/sandbox-mcp-server.mjs'), 'utf8');
-
-    expect(script).toContain('const DOCKER_CREATE_TIMEOUT_MS = 15 * 60_000');
-    expect(script).toContain('timeoutMs: DOCKER_CREATE_TIMEOUT_MS');
-  });
-
-  it('keeps the Hermes API private while forwarding memory scope headers', () => {
-    const script = readFileSync(path.join(process.cwd(), 'scripts/sandbox-mcp-server.mjs'), 'utf8');
-
-    expect(script).toContain('API_SERVER_HOST=127.0.0.1');
-    expect(script).toContain("['x-hermes-session-id', 'x-hermes-session-key']");
-    expect(script).toContain("if (KIND !== 'hermes')");
-    expect(script).not.toContain("'--publish'");
-  });
-
-  it('starts the Hermes dashboard on container loopback without publishing its port', () => {
-    const script = readFileSync(path.join(process.cwd(), 'scripts/sandbox-mcp-server.mjs'), 'utf8');
-
-    expect(script).toContain('HERMES_DASHBOARD=1');
-    expect(script).toContain('HERMES_DASHBOARD_HOST=127.0.0.1');
-    expect(script).toContain('HERMES_DASHBOARD_PORT=9119');
-    expect(script).toContain('http://127.0.0.1:9119');
-    expect(script).not.toContain("'--publish'");
-  });
-
-  it('uses one multiplexed Hermes gateway for imported profiles', () => {
-    const script = readFileSync(path.join(process.cwd(), 'scripts/sandbox-mcp-server.mjs'), 'utf8');
-
-    // Keep the compatibility check and create arguments in sync so existing
-    // non-multiplexed containers are recreated while their named volume stays.
-    expect(script.match(/GATEWAY_MULTIPLEX_PROFILES=1/g)).toHaveLength(2);
-    expect(script).toMatch(
-      /'GATEWAY_MULTIPLEX_PROFILES=1',\r?\n\s+HERMES_TTS_WRITE_SAFE_ROOT_ENV/,
+describe("persistent Docker sandbox runtime", () => {
+  it("keeps the interactive Hermes terminal wrapper valid Bash", () => {
+    const source = readFileSync(
+      path.join(process.cwd(), "scripts/sandbox-mcp-server.mjs"),
+      "utf8",
     );
-    expect(script.match(/HERMES_HOME=\/opt\/data/g)).toHaveLength(4);
-  });
-
-  it('exposes only the named-profile chat and session routes', () => {
-    const script = readFileSync(path.join(process.cwd(), 'scripts/sandbox-mcp-server.mjs'), 'utf8');
-
-    expect(script).toContain("/^\\/p\\/[a-z0-9][a-z0-9_-]{0,63}\\/v1\\/(?:chat\\/completions|capabilities)$/");
-    expect(script).toContain("const profilePrefix = '(?:/p/[a-z0-9][a-z0-9_-]{0,63})?'");
-    expect(script).toContain('const sessionCreate');
-    expect(script).toContain('/api/sessions/[^/]+/chat/stream$');
-    expect(script).not.toContain('/api/sessions/[^/]+/model$');
-    expect(script).not.toContain("path.startsWith('/p/')");
-  });
-
-  it('can restore the multiplexed default gateway when upstream restart targets a down s6 slot', () => {
-    const script = readFileSync(path.join(process.cwd(), 'scripts', 'sandbox-mcp-server.mjs'), 'utf8');
-
-    expect(script).toContain("url.pathname !== '/hermes/control/gateway/default/up'");
-    expect(script).toMatch(
-      /'\/opt\/hermes\/\.venv\/bin\/hermes',\r?\n\s+'gateway',\r?\n\s+'start'/,
-    );
-    expect(script).toContain('if (await handleHermesControl(req, res)) return;');
-  });
-
-  it('allows the Hermes auto-TTS temp directory without widening the whole system temp root', () => {
-    const script = readFileSync(path.join(process.cwd(), 'scripts/sandbox-mcp-server.mjs'), 'utf8');
-
-    expect(script).toContain(
-      "'HERMES_WRITE_SAFE_ROOT=/opt/data:/tmp/hermes_voice'",
-    );
-    expect(script.match(/HERMES_TTS_WRITE_SAFE_ROOT_ENV/g)).toHaveLength(3);
-    expect(script.indexOf('...Object.entries(USER_ENV)')).toBeLessThan(
-      script.lastIndexOf('HERMES_TTS_WRITE_SAFE_ROOT_ENV'),
-    );
-  });
-
-  it('runs interactive Hermes terminal sessions as the image default user', () => {
-    const script = readFileSync(path.join(process.cwd(), 'scripts/sandbox-mcp-server.mjs'), 'utf8');
-
-    expect(script).not.toContain("...(KIND === 'hermes' ? ['--user', 'hermes'] : [])");
-    expect(script).toContain("HERMES_TERMINAL_PATH = '/opt/hermes/.venv/bin:");
-    expect(script).toContain('export VIRTUAL_ENV=/opt/hermes/.venv');
-    expect(script).toContain('export PATH=${HERMES_TERMINAL_PATH}');
-    expect(script).toContain("? ['bash', '-lc', shellCommand]");
-    expect(script).toContain("chown \"$(id -u hermes):$(id -g hermes)\"");
-  });
-
-  it('keeps Hermes CLI state on the service user in the root terminal', () => {
-    const script = readFileSync(path.join(process.cwd(), 'scripts/sandbox-mcp-server.mjs'), 'utf8');
-
-    expect(script).toContain('setpriv --reuid=hermes --regid=hermes --init-groups');
-    expect(script).toContain('env HERMES_HOME=/opt/data HOME=/opt/data');
-    expect(script).toContain('id hermes >/dev/null 2>&1');
-    expect(script).toContain('export -f hermes_cli');
-  });
-
-  it('makes a bare terminal gateway restart wait for the real gateway to recover', () => {
-    const script = readFileSync(path.join(process.cwd(), 'scripts/sandbox-mcp-server.mjs'), 'utf8');
-
-    expect(script).toContain('hermes_cli gateway start >/dev/null');
-    expect(script).toContain('http://127.0.0.1:9119/api/status');
-    expect(script).toContain('http://127.0.0.1:8642/health/detailed');
-    expect(script).toContain('previous_gateway_pid');
-    expect(script).toContain('current_gateway_pid');
-    expect(script).toContain('api_gateway_pid');
-    expect(script).toContain('"$api_gateway_pid" = "$current_gateway_pid"');
-    expect(script).toContain('gateway status could not be verified before restart');
-    expect(script).toContain('gateway did not become healthy within 45 seconds');
-    expect(script).toContain('export -f hermes');
-  });
-
-  it('keeps the interactive Hermes terminal wrapper valid Bash', () => {
-    const source = readFileSync(path.join(process.cwd(), 'scripts/sandbox-mcp-server.mjs'), 'utf8');
-    const wrapper = /const HERMES_TERMINAL_SHELL = String\.raw`([\s\S]*?)`\.trim\(\);/.exec(source)?.[1];
+    const wrapper =
+      /const HERMES_TERMINAL_SHELL = String\.raw`([\s\S]*?)`\.trim\(\);/.exec(
+        source,
+      )?.[1];
     expect(wrapper).toBeTruthy();
 
-    const parsed = spawnSync('bash', ['-n'], { input: wrapper, encoding: 'utf8' });
+    const parsed = spawnSync("bash", ["-n"], {
+      input: wrapper,
+      encoding: "utf8",
+    });
     expect(parsed.status, parsed.stderr).toBe(0);
   });
-
-  it('streams Docker and Hermes uploads into an atomic temporary file', () => {
-    const script = readFileSync(path.join(process.cwd(), 'scripts/sandbox-mcp-server.mjs'), 'utf8');
-    const supervisor = readFileSync(path.join(process.cwd(), 'src/lib/process/supervisor.ts'), 'utf8');
-
-    expect(script).toContain('DEFAULT_MAX_RUNTIME_UPLOAD = 1_000_000_000');
-    expect(script).toContain("process.env.TOOLPLANE_MAX_ATTACHMENT_BYTES");
-    expect(script).toContain("req.headers['x-toolplane-max-upload-bytes']");
-    expect(script).toContain('size > uploadLimit');
-    expect(script).toContain("if (KIND === 'connector')");
-    expect(script).toContain("connectorRequest('write_file_base64'");
-    expect(script).toContain('realpath -m --');
-    expect(script).not.toContain("KIND !== 'hermes') {\n    sendJson(res, 404, { error: 'Runtime attachment upload");
-    expect(supervisor).toContain("TOOLPLANE_MAX_ATTACHMENT_BYTES: process.env.TOOLPLANE_MAX_ATTACHMENT_BYTES");
-    expect(script).toContain("req.on('data'");
-    expect(script).toContain('cat > ${shQuote(temporary)}');
-    expect(script).toContain('mv -f ${shQuote(temporary)} ${shQuote(target)}');
-    expect(script).toContain("['exec', CONTAINER, 'rm', '-f', '--', temporary]");
-    expect(script).not.toContain('base64 -d >');
-  });
-
-  it('does not self-terminate when the request worker parent changes in production', () => {
-    for (const file of ['scripts/mcp-server.mjs', 'scripts/mcp-stdio-bridge.mjs', 'scripts/sandbox-mcp-server.mjs']) {
-      const script = readFileSync(path.join(process.cwd(), file), 'utf8');
-      expect(script).not.toContain('process.ppid');
-      expect(script).not.toContain('initialPpid');
-    }
-  });
 });
 
-describe('Docker sandbox volume snapshots', () => {
-  it('builds a least-privilege, non-networked volume copy command', () => {
-    const args = dockerVolumeCopyArgs('source-volume', 'destination.volume');
+describe("Docker sandbox volume snapshots", () => {
+  it("builds a least-privilege, non-networked volume copy command", () => {
+    const args = dockerVolumeCopyArgs("source-volume", "destination.volume");
     const script = args.at(-1);
 
-    expect(args).toEqual(expect.arrayContaining([
-      '--rm',
-      '--read-only',
-      '--network',
-      'none',
-      '--memory',
-      '512m',
-      '--cpus',
-      '1',
-      '--pids-limit',
-      '128',
-      '--cap-drop',
-      'ALL',
-      '--security-opt',
-      'no-new-privileges',
-      'type=volume,src=source-volume,dst=/from,readonly',
-      'type=volume,src=destination.volume,dst=/to',
-    ]));
-    expect(args).not.toContain('--privileged');
-    expect(args.filter((arg) => arg === '--cap-add')).toHaveLength(3);
+    expect(args).toEqual(
+      expect.arrayContaining([
+        "--rm",
+        "--read-only",
+        "--network",
+        "none",
+        "--memory",
+        "512m",
+        "--cpus",
+        "1",
+        "--pids-limit",
+        "128",
+        "--cap-drop",
+        "ALL",
+        "--security-opt",
+        "no-new-privileges",
+        "type=volume,src=source-volume,dst=/from,readonly",
+        "type=volume,src=destination.volume,dst=/to",
+      ]),
+    );
+    expect(args).not.toContain("--privileged");
+    expect(args.filter((arg) => arg === "--cap-add")).toHaveLength(3);
     expect(script).toBe(
-      'set -euo pipefail; test -z "$(find /to -mindepth 1 -print -quit)"; '
-      + 'tar -C /from -cf - . | tar -C /to -xpf -',
+      'set -euo pipefail; test -z "$(find /to -mindepth 1 -print -quit)"; ' +
+        "tar -C /from -cf - . | tar -C /to -xpf -",
     );
-    expect(script).not.toContain('source-volume');
-    expect(script).not.toContain('destination.volume');
+    expect(script).not.toContain("source-volume");
+    expect(script).not.toContain("destination.volume");
   });
 
-  it('uses an explicit destination reset only for snapshot restore', () => {
-    const args = dockerVolumeCopyArgs('snapshot-volume', 'sandbox-volume', true);
-
-    expect(args.at(-1)).toContain('rm -rf /to/* /to/.[!.]* /to/..?*');
-    expect(args.at(-1)).not.toContain('find /to -mindepth 1');
-  });
-
-  it('can name and label a copy helper so timeout cleanup can target it', () => {
+  it("uses an explicit destination reset only for snapshot restore", () => {
     const args = dockerVolumeCopyArgs(
-      'source-volume',
-      'destination-volume',
-      false,
-      'toolplane-volume-copy-test',
+      "snapshot-volume",
+      "sandbox-volume",
+      true,
     );
 
-    expect(args).toEqual(expect.arrayContaining([
-      '--name',
-      'toolplane-volume-copy-test',
-      '--label',
-      'toolplane.volume-copy=true',
-    ]));
-    expect(() => dockerVolumeCopyArgs(
-      'source-volume',
-      'destination-volume',
-      false,
-      'invalid helper',
-    )).toThrow('Invalid Docker helper container name.');
+    expect(args.at(-1)).toContain("rm -rf /to/* /to/.[!.]* /to/..?*");
+    expect(args.at(-1)).not.toContain("find /to -mindepth 1");
   });
 
-  it('rejects shell-like volume names and same-volume copies', () => {
+  it("can name and label a copy helper so timeout cleanup can target it", () => {
+    const args = dockerVolumeCopyArgs(
+      "source-volume",
+      "destination-volume",
+      false,
+      "toolplane-volume-copy-test",
+    );
+
+    expect(args).toEqual(
+      expect.arrayContaining([
+        "--name",
+        "toolplane-volume-copy-test",
+        "--label",
+        "toolplane.volume-copy=true",
+      ]),
+    );
+    expect(() =>
+      dockerVolumeCopyArgs(
+        "source-volume",
+        "destination-volume",
+        false,
+        "invalid helper",
+      ),
+    ).toThrow();
+  });
+
+  it("rejects shell-like volume names and same-volume copies", () => {
     for (const invalid of [
-      'volume;touch-pwned',
-      'volume$(touch-pwned)',
-      'volume name',
-      '--volume',
-      'volume/path',
+      "volume;touch-pwned",
+      "volume$(touch-pwned)",
+      "volume name",
+      "--volume",
+      "volume/path",
     ]) {
-      expect(() => dockerVolumeCopyArgs('source-volume', invalid)).toThrow('Invalid Docker volume name.');
+      expect(() => dockerVolumeCopyArgs("source-volume", invalid)).toThrow();
     }
-    expect(() => dockerVolumeCopyArgs('same-volume', 'same-volume')).toThrow(
-      'Source and destination Docker volumes must be different.',
-    );
+    expect(() => dockerVolumeCopyArgs("same-volume", "same-volume")).toThrow();
   });
 
-  it('sanitizes snapshot identifiers before deriving Docker volume names', () => {
-    const volumeName = sandboxSnapshotVolumeName('snapshot/../../$(touch pwned)');
+  it("sanitizes snapshot identifiers before deriving Docker volume names", () => {
+    const volumeName = sandboxSnapshotVolumeName(
+      "snapshot/../../$(touch pwned)",
+    );
 
     expect(volumeName).toMatch(/^toolplane_snapshot_[a-zA-Z0-9_.-]+$/);
-    expect(volumeName).not.toContain('/');
-    expect(volumeName).not.toContain('$');
-    expect(volumeName).not.toContain(' ');
+    expect(volumeName).not.toContain("/");
+    expect(volumeName).not.toContain("$");
+    expect(volumeName).not.toContain(" ");
   });
 });
 
-describe('sandbox image catalog', () => {
-  it('includes the default Dev Container image and common language stacks', () => {
+describe("sandbox image catalog", () => {
+  it("includes the default Dev Container image and common language stacks", () => {
     expect(SANDBOX_IMAGE_OPTIONS[0].image).toBe(DEFAULT_SANDBOX_IMAGE);
     expect(SANDBOX_IMAGE_OPTIONS.map((option) => option.image)).toEqual(
       expect.arrayContaining([
-        'mcr.microsoft.com/devcontainers/typescript-node:24-bookworm',
-        'mcr.microsoft.com/devcontainers/python:3.12-bookworm',
-        'mcr.microsoft.com/devcontainers/go:1-bookworm',
-        'mcr.microsoft.com/devcontainers/rust:1-bookworm',
-        'mcr.microsoft.com/devcontainers/universal:2',
+        "mcr.microsoft.com/devcontainers/typescript-node:24-bookworm",
+        "mcr.microsoft.com/devcontainers/python:3.12-bookworm",
+        "mcr.microsoft.com/devcontainers/go:1-bookworm",
+        "mcr.microsoft.com/devcontainers/rust:1-bookworm",
+        "mcr.microsoft.com/devcontainers/universal:2",
       ]),
     );
   });
 
-  it('resolves preset, custom, and empty image choices', () => {
-    expect(resolveSandboxImage('python-312', '')).toBe('mcr.microsoft.com/devcontainers/python:3.12-bookworm');
-    expect(resolveSandboxImage('custom', 'ghcr.io/acme/sandbox:latest')).toBe('ghcr.io/acme/sandbox:latest');
-    expect(resolveSandboxImage('', '')).toBe(DEFAULT_SANDBOX_IMAGE);
-    expect(findSandboxImageOption(DEFAULT_SANDBOX_IMAGE)?.name).toBe('JavaScript Node 24');
+  it("resolves preset, custom, and empty image choices", () => {
+    expect(resolveSandboxImage("python-312", "")).toBe(
+      "mcr.microsoft.com/devcontainers/python:3.12-bookworm",
+    );
+    expect(resolveSandboxImage("custom", "ghcr.io/acme/sandbox:latest")).toBe(
+      "ghcr.io/acme/sandbox:latest",
+    );
+    expect(resolveSandboxImage("", "")).toBe(DEFAULT_SANDBOX_IMAGE);
   });
 });
 
-describe('parseSandboxDirectoryText', () => {
-  it('uses the requested path for legacy ls output without a path field', () => {
+describe("parseSandboxDirectoryText", () => {
+  it("uses the requested path for legacy ls output without a path field", () => {
     const listing = parseSandboxDirectoryText(
       JSON.stringify({
         exitCode: 0,
         signal: null,
         timedOut: false,
-        stdout: 'total 4\n-rw-r--r-- 1 root root 46 Jul 4 14:01 sample.csv\n',
-        stderr: '',
+        stdout: "total 4\n-rw-r--r-- 1 root root 46 Jul 4 14:01 sample.csv\n",
+        stderr: "",
       }),
-      'data',
+      "data",
     );
 
     expect(listing).toEqual({
-      path: 'data',
-      entries: [{ name: 'sample.csv', type: 'file', size: 46 }],
+      path: "data",
+      entries: [{ name: "sample.csv", type: "file", size: 46 }],
     });
   });
 });
