@@ -1,5 +1,7 @@
 # ToolPlane 项目介绍
 
+[![测试覆盖率](https://codecov.io/gh/asharca/ToolPlane/branch/main/graph/badge.svg)](https://app.codecov.io/gh/asharca/ToolPlane/tree/main)
+
 > 统一管理 MCP 和 Skill，同步到 AI 客户端，或在沙箱中直接运行 Agent。
 
 ToolPlane 是一个自托管的 AI 工具与 Agent 平台，以工作区组织工具、技能、模型和运行环境。实例凭据、工作区数据与托管运行时由部署者管理。
@@ -93,9 +95,12 @@ pnpm dev
 | `pnpm format` / `pnpm format:check` | 全仓格式化 / 只检查格式 |
 | `pnpm check:staged` / `pnpm check` | 暂存区检查 / 全量 Biome 与类型检查 |
 | `pnpm test` | 运行测试 |
+| `pnpm test:coverage` | 运行测试并生成覆盖率报告 |
 | `pnpm build` | 生产构建 |
 | `pnpm db:migrate` / `pnpm db:studio` | 开发数据库迁移与查看 |
 | `pnpm connector:dev` | 调试设备连接器 |
+
+覆盖率徽章展示 main 分支最近成功上传的 Vitest 报告，统计 src 与 packages/connector/bin 的 JS/TS 源码（包含未命中的文件），不代表外部容器或子进程内部代码的覆盖率。
 
 ## 文档
 

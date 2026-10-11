@@ -341,6 +341,7 @@ describe("immutable Pi package manifests", () => {
     expect(parsePiPackageReleaseManifest(manifest)).toEqual(manifest);
   });
 
+  // Real 16–96 MiB fixtures take over 10s with V8 coverage on CI runners.
   it("rejects file, entry, decoded total and serialized JSON limits", () => {
     expect(() =>
       parsePiPackageReleaseManifest(
@@ -370,7 +371,7 @@ describe("immutable Pi package manifests", () => {
     expect(() => parsePiPackageReleaseManifest(manifest)).toThrow(
       "pi_package_manifest_too_large",
     );
-  });
+  }, 30_000);
 
   it("accepts exactly 20,000 entries", () => {
     const manifest = withEntries(
