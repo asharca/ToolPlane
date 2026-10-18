@@ -7,6 +7,9 @@
 * add selected-sandbox batch start, stop and restart with disruptive-action confirmation, workspace-scoped lifecycle guards and per-sandbox results, including Hermes runtimes
 * add request-level A2A debugging across HTTP, MCP and native entries, with redacted 24-hour administrator-only bodies, committed task timelines, and workspace-scoped metadata views
 
+### Documentation
+* add an evidence-based repository lessons notebook, require coding agents to read and maintain it, and promote recurring lessons into durable guidance
+
 ### Bug Fixes
 * preserve indexed package and configuration context in staged checks so React/Next rules remain enabled without rejecting valid suppressions or reading unstaged dependency changes
 * serialize terminal input requests and drain pending writes before closing a session, preventing keystroke reordering through asynchronous sandbox proxies

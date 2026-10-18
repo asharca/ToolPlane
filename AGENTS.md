@@ -25,6 +25,15 @@ details live in `docs/`. Read only the references relevant to the task.
 - Report the result, checks actually run, and any remaining blocker concisely in
   the user's language. Do not claim completion from a successful tool exit alone.
 
+## Lessons learned
+
+Before changing code, read [LESSONS.md](LESSONS.md) and apply the relevant lessons.
+When a user correction, rework, regression, or verification gap reveals a reusable
+lesson, update that notebook in the same change with evidence and the check that
+would have caught it. Merge duplicate causes; do not invent incidents or counts.
+Follow its promotion rules for recurring lessons; keep durable guidance here or
+in the relevant subsystem document rather than duplicating it.
+
 ## Security invariants
 
 - Verify workspace ownership on every workspace-scoped query and mutation,
