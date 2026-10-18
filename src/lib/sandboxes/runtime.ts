@@ -241,6 +241,35 @@ export function dockerVolumeCopyArgs(
     `set -euo pipefail; ${prepareDestination}; tar -C /from -cf - . | tar -C /to -xpf -`,
   ];
 }
+export async function assertDockerVolumeExists(
+  volumeName: string,
+): Promise<void> {
+  if (!validVolumeName(volumeName))
+    throw new Error("Invalid Docker volume name.");
+  await runDocker(["volume", "inspect", volumeName]);
+}
+
+export async function setDockerSandboxPaused(
+  sandboxId: string,
+  paused: boolean,
+): Promise<void> {
+  const container = sandboxContainerName(sandboxId);
+  let state: { Running: boolean; Paused: boolean };
+  try {
+    state = JSON.parse(
+      await runDocker(["inspect", "--format", "{{json .State}}", container]),
+    );
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      /no such (object|container)/i.test(error.message)
+    )
+      return;
+    throw error;
+  }
+  if (state.Running && state.Paused !== paused)
+    await runDocker([paused ? "pause" : "unpause", container]);
+}
 
 export async function copyDockerVolume(
   sourceVolume: string,

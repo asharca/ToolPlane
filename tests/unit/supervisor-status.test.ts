@@ -41,7 +41,9 @@ describe("effectiveStatus (no live process)", () => {
 
   it("reads live state from the cross-worker process registry", () => {
     const deploymentId = `registry-test-${Date.now()}`;
-    const dir = path.join(os.tmpdir(), "toolplane-supervisor");
+    const dir =
+      process.env.TOOLPLANE_SUPERVISOR_DIR ||
+      path.join(os.tmpdir(), "toolplane-supervisor");
     const file = path.join(dir, `${deploymentId}.json`);
     mkdirSync(dir, { recursive: true });
     writeFileSync(
@@ -72,7 +74,9 @@ describe("effectiveStatus (no live process)", () => {
 
   it("resolves a batch from one registry snapshot and downgrades stale active states", () => {
     const deploymentId = `registry-batch-test-${Date.now()}`;
-    const dir = path.join(os.tmpdir(), "toolplane-supervisor");
+    const dir =
+      process.env.TOOLPLANE_SUPERVISOR_DIR ||
+      path.join(os.tmpdir(), "toolplane-supervisor");
     const file = path.join(dir, `${deploymentId}.json`);
     mkdirSync(dir, { recursive: true });
     writeFileSync(

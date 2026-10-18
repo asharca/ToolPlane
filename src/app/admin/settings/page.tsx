@@ -18,11 +18,16 @@ import {
   AdminPanel,
 } from "@/components/admin/AdminUI";
 import { McpRuntimeSettingsForm } from "@/components/admin/McpRuntimeSettingsForm";
+import { AgentConcurrencySettingsForm } from "@/components/admin/AgentConcurrencySettingsForm";
 import { RemoteMcpPrivateHostsSettingsForm } from "@/components/admin/RemoteMcpPrivateHostsSettingsForm";
 import { RuntimeSettingsForm } from "@/components/admin/RuntimeSettingsForm";
 import { SkillImportSettingsForm } from "@/components/admin/SkillImportSettingsForm";
 import { SystemSettingsForm } from "@/components/admin/SystemSettingsForm";
 import {
+  AGENT_CONCURRENCY_SETTING_KEY,
+  getAgentConcurrencySettings,
+  MAX_AGENT_CONCURRENCY,
+  MAX_TOTAL_AGENT_CONCURRENCY,
   getHermesArchiveSettings,
   HERMES_ARCHIVE_MAX_UPLOAD_MIB_SETTING_KEY,
   MCP_STARTUP_TIMEOUTS_SETTING_KEY,
@@ -46,6 +51,7 @@ export default async function AdminSettingsPage() {
     skillImportSettings,
     mcpStartupTimeouts,
     remoteMcpPrivateHosts,
+    agentConcurrency,
   ] = await Promise.all([
     getTranslations("admin"),
     resolveAgentAttachmentLimit(),
@@ -53,11 +59,13 @@ export default async function AdminSettingsPage() {
     getSkillImportSettings(),
     resolveMcpStartupTimeoutSettings(),
     resolveRemoteMcpPrivateHostsSettings(),
+    getAgentConcurrencySettings(),
   ]);
   const [ops, locale, changes] = await Promise.all([
     getTranslations("adminOps"),
     getLocale(),
     getSettingChanges([
+      AGENT_CONCURRENCY_SETTING_KEY,
       AGENT_ATTACHMENT_LIMIT_SETTING_KEY,
       MCP_STARTUP_TIMEOUTS_SETTING_KEY,
       REMOTE_MCP_PRIVATE_HOSTS_SETTING_KEY,
@@ -106,6 +114,14 @@ export default async function AdminSettingsPage() {
         description={t("systemSettingsDescription")}
       />
       <SettingsChanges>
+        {section(
+          AGENT_CONCURRENCY_SETTING_KEY,
+          <AgentConcurrencySettingsForm
+            {...agentConcurrency}
+            perAgentLimit={MAX_AGENT_CONCURRENCY}
+            totalLimit={MAX_TOTAL_AGENT_CONCURRENCY}
+          />,
+        )}
         {section(
           AGENT_ATTACHMENT_LIMIT_SETTING_KEY,
           <RuntimeSettingsForm

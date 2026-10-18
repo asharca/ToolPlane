@@ -1,12 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import {
-  cpSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -23,10 +16,18 @@ if (files.length) {
   // Materialize index contents outside the worktree: Biome never edits user files.
   const snapshot = mkdtempSync(join(tmpdir(), "toolplane-staged-"));
   try {
-    for (const file of ["biome.json", ".gitignore"]) {
-      if (existsSync(file)) cpSync(file, join(snapshot, file));
-    }
-    for (const file of files) {
+    const context = git(
+      "ls-files",
+      "-z",
+      "--",
+      "biome.json",
+      ".gitignore",
+      "package.json",
+    )
+      .toString()
+      .split("\0")
+      .filter(Boolean);
+    for (const file of new Set([...context, ...files])) {
       const target = join(snapshot, file);
       mkdirSync(dirname(target), { recursive: true });
       writeFileSync(target, git("show", `:${file}`));

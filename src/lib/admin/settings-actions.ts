@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { getTranslations } from "next-intl/server";
 import { requireAdmin } from "@/lib/auth/admin";
+import { refreshAgentExecutionLimits } from "@/lib/agents/agent-execution-gate";
 import {
   MAX_ADMIN_ATTACHMENT_MEGABYTES,
   MIN_ADMIN_ATTACHMENT_MEGABYTES,
@@ -10,6 +11,11 @@ import {
   setAgentAttachmentLimitBytes,
 } from "@/lib/agents/attachment-limits";
 import {
+  isValidAgentConcurrency,
+  MAX_AGENT_CONCURRENCY,
+  MAX_TOTAL_AGENT_CONCURRENCY,
+  resetAgentConcurrencySettings,
+  updateAgentConcurrencySettings,
   isValidMcpStartupTimeouts,
   MAX_MCP_STARTUP_TIMEOUT_MS,
   MIN_MCP_STARTUP_TIMEOUT_MS,
@@ -39,6 +45,40 @@ function parseWholeNumber(formData: FormData, key: string): number | null {
   if (!/^\d+$/.test(raw)) return null;
   const value = Number(raw);
   return Number.isSafeInteger(value) ? value : null;
+}
+
+export async function updateAgentConcurrencySettingsAction(
+  _prev: AdminSettingsActionState,
+  formData: FormData,
+): Promise<AdminSettingsActionState> {
+  const admin = await requireAdmin();
+  const t = await getTranslations("admin");
+  try {
+    if (formData.get("intent") === "reset") {
+      await resetAgentConcurrencySettings(admin.id);
+    } else {
+      const maxPerAgent = parseWholeNumber(formData, "agentMaxConcurrent");
+      const maxTotal = parseWholeNumber(formData, "agentMaxTotalConcurrent");
+      if (
+        maxPerAgent === null ||
+        maxTotal === null ||
+        !isValidAgentConcurrency(maxPerAgent, maxTotal)
+      ) {
+        return {
+          error: t("errorAgentConcurrency", {
+            perAgent: MAX_AGENT_CONCURRENCY,
+            total: MAX_TOTAL_AGENT_CONCURRENCY,
+          }),
+        };
+      }
+      await updateAgentConcurrencySettings(maxPerAgent, maxTotal, admin.id);
+    }
+  } catch {
+    return { error: t("errorActionFailed") };
+  }
+  refreshAgentExecutionLimits();
+  revalidatePath("/admin/settings");
+  return { ok: true };
 }
 
 export async function updateAgentAttachmentLimitAction(

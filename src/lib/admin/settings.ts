@@ -1,4 +1,5 @@
 import "server-only";
+import type { Prisma } from "@prisma/client";
 import { saveAuditedSetting } from "./audited-setting";
 
 import { db } from "@/lib/db";
@@ -18,6 +19,69 @@ export const HERMES_ARCHIVE_MAX_UPLOAD_MIB_SETTING_KEY =
 export const MCP_STARTUP_TIMEOUTS_SETTING_KEY = "mcp.startupTimeouts";
 export const REMOTE_MCP_PRIVATE_HOSTS_SETTING_KEY = "mcp.remotePrivateHosts";
 export const SKILL_IMPORT_MAX_SKILLS_SETTING_KEY = "skills.maxImportSkills";
+export const AGENT_CONCURRENCY_SETTING_KEY = "agents.concurrency";
+export const MAX_AGENT_CONCURRENCY = 32;
+export const MAX_TOTAL_AGENT_CONCURRENCY = 256;
+
+export type AgentConcurrencySettings = {
+  maxPerAgent: number;
+  maxTotal: number;
+  source: "database" | "default";
+};
+
+export function isValidAgentConcurrency(
+  maxPerAgent: unknown,
+  maxTotal: unknown,
+): boolean {
+  return (
+    typeof maxPerAgent === "number" &&
+    typeof maxTotal === "number" &&
+    Number.isSafeInteger(maxPerAgent) &&
+    Number.isSafeInteger(maxTotal) &&
+    maxPerAgent >= 1 &&
+    maxPerAgent <= MAX_AGENT_CONCURRENCY &&
+    maxTotal >= maxPerAgent &&
+    maxTotal <= MAX_TOTAL_AGENT_CONCURRENCY
+  );
+}
+
+export async function getAgentConcurrencySettings(
+  client: Pick<Prisma.TransactionClient, "systemSetting"> = db,
+): Promise<AgentConcurrencySettings> {
+  const setting = await client.systemSetting.findUnique({
+    where: { key: AGENT_CONCURRENCY_SETTING_KEY },
+    select: { value: true },
+  });
+  if (!setting) return { maxPerAgent: 1, maxTotal: 16, source: "default" };
+  const parsed = JSON.parse(setting.value);
+  if (!isValidAgentConcurrency(parsed?.maxPerAgent, parsed?.maxTotal))
+    throw new Error("Invalid Agent concurrency settings.");
+  return {
+    maxPerAgent: parsed.maxPerAgent,
+    maxTotal: parsed.maxTotal,
+    source: "database",
+  };
+}
+
+export async function updateAgentConcurrencySettings(
+  maxPerAgent: number,
+  maxTotal: number,
+  actorId: string,
+): Promise<void> {
+  if (!isValidAgentConcurrency(maxPerAgent, maxTotal))
+    throw new Error("Invalid Agent concurrency settings.");
+  await saveAuditedSetting(
+    AGENT_CONCURRENCY_SETTING_KEY,
+    JSON.stringify({ maxPerAgent, maxTotal }),
+    actorId,
+  );
+}
+
+export async function resetAgentConcurrencySettings(
+  actorId: string,
+): Promise<void> {
+  await saveAuditedSetting(AGENT_CONCURRENCY_SETTING_KEY, null, actorId);
+}
 
 export const DEFAULT_MCP_STARTUP_IDLE_TIMEOUT_MS = 90_000;
 export const DEFAULT_MCP_STARTUP_MAX_TIMEOUT_MS = 5 * 60_000;

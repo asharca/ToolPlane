@@ -23,6 +23,25 @@ vi.mock("@/components/dashboard/agents/AgentModelDialog", () => ({
 vi.mock("@/components/dashboard/ConversationMessage", () => ({
   AssistantMarkdown: ({ text }: { text: string }) => <div>{text}</div>,
 }));
+vi.mock("@/components/dashboard/sandboxes/SandboxConsole", () => ({
+  SandboxConsole: ({
+    deploymentId,
+    rpcApiBase,
+    terminalApiBase,
+  }: {
+    deploymentId: string;
+    rpcApiBase?: string;
+    terminalApiBase?: string;
+  }) => (
+    <div
+      data-testid="selected-workspace"
+      data-rpc={rpcApiBase}
+      data-terminal={terminalApiBase}
+    >
+      {deploymentId}
+    </div>
+  ),
+}));
 const agent = {
   id: "worker",
   name: "Builder",
@@ -87,6 +106,101 @@ function showSession(overrides: Partial<WorkSession> = {}) {
     />,
   );
 }
+describe("conversation workspace selection", () => {
+  it("switches files and terminal together without falling back to Agent template files", () => {
+    vi.stubGlobal("matchMedia", () => ({
+      matches: true,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }));
+    const props = {
+      slug: "team",
+      workspaceId: "workspace",
+      agents: [agent],
+      sessions: [],
+      selectedWorkSessionId: null,
+    };
+    const conversation = {
+      id: "conversation-one",
+      agentId: agent.id,
+      source: null,
+      readOnly: true,
+      messages: [],
+      sandbox: {
+        id: "isolated-one",
+        name: "Conversation files",
+        kind: "docker",
+        running: true,
+        deploymentId: "isolated-deployment-one",
+      },
+    };
+    const view = render(
+      <WorkspaceWork {...props} selectedConversation={conversation} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Files" }));
+    expect(screen.getByTestId("selected-workspace")).toHaveTextContent(
+      "isolated-deployment-one",
+    );
+    expect(screen.getByTestId("selected-workspace")).toHaveAttribute(
+      "data-rpc",
+      "/api/v1/agents/worker/conversations/conversation-one/sandbox/rpc",
+    );
+    view.rerender(
+      <WorkspaceWork
+        {...props}
+        selectedConversation={{
+          ...conversation,
+          id: "conversation-two",
+          sandbox: {
+            ...conversation.sandbox,
+            id: "isolated-two",
+            deploymentId: "isolated-deployment-two",
+          },
+        }}
+      />,
+    );
+    expect(screen.getByTestId("selected-workspace")).toHaveTextContent(
+      "isolated-deployment-two",
+    );
+    expect(screen.getByTestId("selected-workspace")).toHaveAttribute(
+      "data-terminal",
+      "/api/v1/agents/worker/conversations/conversation-two/sandbox/terminal",
+    );
+    view.rerender(
+      <WorkspaceWork
+        {...props}
+        selectedConversation={{
+          ...conversation,
+          sandbox: {
+            ...conversation.sandbox,
+            status: "copying",
+            running: false,
+          },
+        }}
+      />,
+    );
+    expect(screen.queryByTestId("selected-workspace")).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/Creating this conversation’s isolated workspace/),
+    ).toBeInTheDocument();
+    view.rerender(
+      <WorkspaceWork
+        {...props}
+        selectedConversation={{
+          ...conversation,
+          id: "not-created",
+          sandbox: null,
+        }}
+      />,
+    );
+    expect(screen.queryByTestId("selected-workspace")).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/workspace will be created on its first execution/),
+    ).toBeInTheDocument();
+  });
+});
 
 describe("Work attachment transaction failures", () => {
   it("discards earlier uploads when a later attachment is rejected without submitting a task", async () => {

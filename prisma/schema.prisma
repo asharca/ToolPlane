@@ -346,6 +346,8 @@ model Sandbox {
   workSessions       WorkSession[]
   knowledgeDocuments KnowledgeDocument[]
   channelConnections AgentChannelConnection[]
+  conversations      Conversation[]
+  a2aContexts         A2AContext[]
 
   @@unique([workspaceId, slug])
 }
@@ -1151,6 +1153,8 @@ model Conversation {
   id                    String                   @id @default(cuid())
   agentId               String
   agent                 Agent                    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  sandboxId             String?                  @unique
+  sandbox               Sandbox?                 @relation(fields: [sandboxId], references: [id], onDelete: Restrict)
   title                 String?
   // Hermes keeps its own state in the runtime volume. These aliases let a
   // cloned ToolPlane conversation retain the source runtime's session identity
@@ -1173,6 +1177,8 @@ model Conversation {
   workspaceAttachments  WorkspaceAttachment[]
   publicApiConversation AgentPublicConversation?
   workSession           WorkSession?
+
+  @@index([sandboxId])
 }
 
 model Message {
@@ -1654,6 +1660,9 @@ model A2AContext {
   workspace           Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   agentId             String?
   agent               Agent?               @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  sandboxId           String?
+  sandbox             Sandbox? @relation(fields: [sandboxId], references: [id], onDelete: Restrict)
+  @@index([sandboxId])
   targetBinding       String?
   endpointId          String?
   endpoint            AgentEndpoint?       @relation(fields: [endpointId], references: [id], onDelete: Cascade)

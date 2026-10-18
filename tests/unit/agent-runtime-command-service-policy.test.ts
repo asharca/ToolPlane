@@ -248,12 +248,6 @@ describe("runtime command output and failure policies", () => {
         ).toContainEqual(
           expect.objectContaining({ type: "data-conversation-clear" }),
         );
-      expect(mocks.turn).toHaveBeenCalledWith(
-        expect.objectContaining({
-          sandboxId: "sandbox",
-          deploymentIds: ["server"],
-        }),
-      );
     },
   );
   it.each(["", "pause", "clear", "build a website"])(

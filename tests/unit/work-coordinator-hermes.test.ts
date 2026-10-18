@@ -546,8 +546,9 @@ describe("Work coordinator", () => {
   });
 
   it.each(["pi", "claude-code", "dsh", "hermes-rpc"])(
-    "streams %s through the legacy sandbox runner with text deltas",
+    "streams %s through its conversation runner even when the previous sandbox is stopped",
     async (runtimeKind) => {
+      mocks.effectiveStatus.mockReturnValue("stopped");
       mocks.workFindUnique.mockResolvedValue({
         id: "work-1",
         workspaceId: "workspace-1",
@@ -607,7 +608,7 @@ describe("Work coordinator", () => {
       );
       expect(mocks.runDedicatedSandboxTurn).toHaveBeenCalledWith(
         expect.objectContaining({
-          sandboxId: "sandbox-1",
+          conversationId: "conversation-1",
           runtimeSessionId: "conversation-1",
           workingDirectory: "src",
         }),
@@ -896,7 +897,6 @@ describe("Work coordinator", () => {
     ["no-model-provider", "no configured model provider"],
     ["no-conversation", "conversation no longer exists"],
     ["maintenance", "maintenance in progress"],
-    ["stopped-sandbox", "sandbox is not running"],
     ["no-model", "no configured model"],
   ])(
     "fails safely when runtime prerequisite %s changes",
@@ -910,11 +910,9 @@ describe("Work coordinator", () => {
       if (change === "no-conversation")
         mocks.runtimeSession.mockResolvedValue(null);
       if (change === "maintenance") mocks.leaseAvailable = false;
-      if (change === "stopped-sandbox" || change === "no-model") {
+      if (change === "no-model") {
         work.runtimeKind = "pi";
         agent.runtimeKind = "pi";
-        if (change === "stopped-sandbox")
-          mocks.effectiveStatus.mockReturnValue("stopped");
       }
       mocks.workFindUnique.mockResolvedValue(work);
       mocks.getAgentForRun.mockResolvedValue(agent);

@@ -30,6 +30,7 @@ import {
   workSidebarCookieName,
 } from "@/lib/sidebar-preferences";
 import { parseSidebarGroupPreferencesCookie } from "@/lib/sidebar-groups";
+import { getConversationWorkspaceSandbox } from "@/lib/agents/conversation-workspace";
 
 export const dynamic = "force-dynamic";
 
@@ -93,6 +94,7 @@ function serializeWorkSession(session: WorkSummary | WorkDetail) {
           id: session.sandbox.id,
           name: session.sandbox.name,
           kind: session.sandbox.kind,
+          status: session.sandbox.deployment.status,
           deploymentId: session.sandbox.deploymentId,
           running:
             effectiveStatus(
@@ -176,6 +178,25 @@ export default async function WorkspaceWorkPage({
     return redirect(
       `/app/${encodeURIComponent(slug)}/work?w=${encodeURIComponent(conversation.workSession.id)}`,
     );
+  const [conversationSandbox, workSandbox] = await Promise.all([
+    conversation &&
+    !conversation.publicApiConversation &&
+    agents.find((agent) => agent.id === conversation.agentId)?.runtimeKind !==
+      "hermes"
+      ? getConversationWorkspaceSandbox({
+          workspaceId: workspace.id,
+          agentId: conversation.agentId,
+          conversationId: conversation.id,
+        })
+      : Promise.resolve(null),
+    selectedSession && selectedSession.runtimeKind !== "hermes"
+      ? getConversationWorkspaceSandbox({
+          workspaceId: workspace.id,
+          agentId: selectedSession.agentId,
+          conversationId: selectedSession.conversationId,
+        })
+      : Promise.resolve(null),
+  ]);
   const source = parseMessagingSessionTitle(conversation?.title);
   const providersById = new Map(
     providers.map((provider) => [provider.id, provider]),
@@ -204,7 +225,16 @@ export default async function WorkspaceWorkPage({
         selectedWorkSessionId={c ? null : (w ?? null)}
         selectedSession={
           selectedSession
-            ? { ...serializeWorkSession(selectedSession), titlePending }
+            ? {
+                ...serializeWorkSession({
+                  ...selectedSession,
+                  sandbox:
+                    selectedSession.runtimeKind === "hermes"
+                      ? selectedSession.sandbox
+                      : workSandbox,
+                }),
+                titlePending,
+              }
             : null
         }
         selectedConversation={
@@ -214,6 +244,21 @@ export default async function WorkspaceWorkPage({
                 agentId: conversation.agentId,
                 title: conversation.title,
                 source,
+                sandbox: conversationSandbox
+                  ? {
+                      ...conversationSandbox,
+                      status: conversationSandbox.deployment.status,
+                      running:
+                        effectiveStatus(
+                          conversationSandbox.deploymentId,
+                          conversationSandbox.deployment.status,
+                        ) === "running",
+                    }
+                  : null,
+                legacyWorkspace:
+                  Boolean(conversation.publicApiConversation) ||
+                  agents.find((agent) => agent.id === conversation.agentId)
+                    ?.runtimeKind === "hermes",
                 readOnly: Boolean(source || conversation.publicApiConversation),
                 reasoningEffort: normalizeReasoningEffort(
                   conversation.reasoningEffort,
@@ -333,7 +378,12 @@ export default async function WorkspaceWorkPage({
                   }),
           };
         })}
-        sessions={sessions.map(serializeWorkSession)}
+        sessions={sessions.map((session) =>
+          serializeWorkSession({
+            ...session,
+            sandbox: session.runtimeKind === "hermes" ? session.sandbox : null,
+          }),
+        )}
       />
     </>
   );

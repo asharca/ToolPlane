@@ -13,6 +13,8 @@ describe("native A2A execution credentials and sandbox serialization", () => {
       workspaceId: "ws",
       agentId: "agent",
       sandboxId: "sandbox",
+      conversationId: "conversation",
+      a2aContextId: "context",
       providerId: "provider",
       deploymentIds: [],
       exp: Math.floor(Date.now() / 1000) + 60,
@@ -25,6 +27,8 @@ describe("native A2A execution credentials and sandbox serialization", () => {
     expect(await verifyAgentRuntimeToken(token)).toMatchObject({
       a2aTaskId: "task",
       a2aLeaseToken: "lease",
+      conversationId: "conversation",
+      a2aContextId: "context",
     });
     await expect(
       createAgentRuntimeToken({ ...payload, a2aTaskId: "task" }),

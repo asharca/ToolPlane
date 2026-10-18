@@ -32,14 +32,20 @@ import {
   SandboxExecutionBusyError,
 } from "@/lib/agents/sandbox-execution-gate";
 import { PiRuntimeInterruptedError } from "@/lib/agents/pi-harness";
-import { localTarget } from "./local-policy";
 import { reconcileLocalWaits } from "./local-continuation";
 import { reconcileRemoteTasks } from "./remote-executor";
 import { executeTask, type TaskExecutor } from "./executor";
+import {
+  AgentExecutionBusyError,
+  withAgentExecutionLease,
+} from "@/lib/agents/agent-execution-gate";
+import { localTaskSandbox } from "./local-sandbox";
+import { deleteAgentContextSandbox } from "@/lib/agents/conversation-sandbox";
 
 type ActiveExecution = {
   controller: AbortController;
   native: boolean;
+  local: boolean;
   running: boolean;
 };
 type State = {
@@ -60,8 +66,11 @@ const state: State = globalState.__nativeA2AWorker ?? {
 };
 globalState.__nativeA2AWorker = state;
 function nativeFailure(error: unknown) {
-  if (error instanceof SandboxExecutionBusyError)
-    return "PI_SANDBOX_BUSY: The target sandbox is busy; the child task was not started.";
+  if (
+    error instanceof SandboxExecutionBusyError ||
+    error instanceof AgentExecutionBusyError
+  )
+    return "PI_SANDBOX_BUSY: The target Agent/session is busy; the child task was not started.";
   // Only fixed codes may escape: native exception text can contain credentials or task content.
   const code =
     error instanceof Error
@@ -78,9 +87,14 @@ export function executeA2ATask(
   if (state.stopped || !runtimeCanOperate() || state.active.has(id))
     return Promise.resolve();
   const controller = new AbortController();
-  const active: ActiveExecution = { controller, native: false, running: false };
+  const active: ActiveExecution = {
+    controller,
+    native: false,
+    local: false,
+    running: false,
+  };
   state.active.set(id, active);
-  const operation = async (unavailable?: Error) => {
+  const operation = async () => {
     let claimed: A2ATask | null;
     try {
       if (state.stopped || !runtimeCanOperate()) return;
@@ -153,7 +167,6 @@ export function executeA2ATask(
               !runtimeCanOperate())
           )
             throw new PiRuntimeInterruptedError();
-          if (unavailable) throw unavailable;
           release = beginWorkspaceOperation(grant.workspaceId);
           if (!release) throw new Error("Workspace closing");
           // A bound operation must reach its executor even after expiry or revocation,
@@ -300,11 +313,13 @@ export function executeA2ATask(
     if (!queued || state.stopped || !runtimeCanOperate()) return;
     active.native = queued.executionBackend === "pi-harness";
     const grant = queued.grant as unknown as TaskGrant;
+    active.local = isLocalGrant(grant);
     const run = () => {
       if (
         !active.native &&
+        !active.local &&
         [...state.active.values()].filter(
-          (entry) => entry.running && !entry.native,
+          (entry) => entry.running && !entry.native && !entry.local,
         ).length >= A2A_LIMITS.workerConcurrency
       )
         return Promise.resolve();
@@ -314,40 +329,43 @@ export function executeA2ATask(
     if (!isLocalGrant(grant)) return run();
     let reserved = false;
     try {
-      let sandboxId: string;
-      if (active.native && queued.nativeOperationId) {
-        // Resolve only the assigned workspace sandbox. The executor separately
-        // chooses authorized drive or owner-only cleanup; this grants no model call.
-        const assigned = await db.agentSandbox.findMany({
-          where: {
-            agentId: grant.agentId,
-            agent: { workspaceId: grant.workspaceId },
-            sandbox: { workspaceId: grant.workspaceId, kind: "docker" },
-          },
-          select: { sandboxId: true },
-        });
-        if (assigned.length !== 1) throw new Error("PI_TARGET_UNAVAILABLE");
-        sandboxId = assigned[0].sandboxId;
-      } else {
-        sandboxId = (
-          await localTarget(
-            db,
-            grant.workspaceId,
-            grant.agentId,
-            grant.ancestorTaskIds.length === 0
-              ? grant.entryPolicy
-              : "delegation",
-          )
-        ).sandboxId;
-      }
-      // Gate reentrancy belongs to one task's executor, not a child inheriting
-      // the parent's async context. Busy roots queue; busy children fail promptly.
-      if (sandboxExecutionBusy(sandboxId))
-        throw new SandboxExecutionBusyError();
-      return await withSandboxExecutionLease(sandboxId, () => {
-        reserved = true;
-        return run();
-      });
+      const work =
+        !grant.ancestorTaskIds.length && grant.entryPolicy?.kind === "work"
+          ? await db.workSession.findFirst({
+              where: {
+                id: grant.entryPolicy.sourceId,
+                workspaceId: grant.workspaceId,
+                agentId: grant.agentId,
+              },
+              select: { conversationId: true },
+            })
+          : null;
+      const sessionId =
+        !grant.ancestorTaskIds.length && grant.entryPolicy
+          ? (work?.conversationId ?? grant.entryPolicy.sourceId)
+          : queued.contextId;
+      return await withAgentExecutionLease(
+        {
+          agentId: grant.agentId,
+          sessionId,
+          signal: controller.signal,
+          wait: false,
+        },
+        async () => {
+          const cleanup = Boolean(active.native && queued.nativeOperationId);
+          const { sandboxId } = await localTaskSandbox(
+            queued,
+            cleanup,
+            controller.signal,
+          );
+          if (sandboxExecutionBusy(sandboxId))
+            throw new SandboxExecutionBusyError();
+          return withSandboxExecutionLease(sandboxId, () => {
+            reserved = true;
+            return run();
+          });
+        },
+      );
     } catch (error) {
       if (reserved) throw error;
       if (
@@ -356,20 +374,28 @@ export function executeA2ATask(
       )
         return;
       if (
-        error instanceof SandboxExecutionBusyError &&
-        !grant.ancestorTaskIds.length
+        (error instanceof SandboxExecutionBusyError ||
+          error instanceof AgentExecutionBusyError) &&
+        (!grant.ancestorTaskIds.length ||
+          (active.native && queued.nativeOperationId))
       )
         return;
       const failure =
-        error instanceof SandboxExecutionBusyError
+        error instanceof SandboxExecutionBusyError ||
+        error instanceof AgentExecutionBusyError
           ? error
           : new Error("PI_TARGET_UNAVAILABLE");
-      if (active.native && queued.nativeOperationId) return operation(failure);
+      if (active.native && queued.nativeOperationId)
+        throw new PiRuntimeInterruptedError(
+          "Bound native sandbox is unavailable; operation retained for recovery.",
+          { cause: error },
+        );
       await interruptTask(
         id,
         active.native
           ? nativeFailure(failure)
-          : error instanceof SandboxExecutionBusyError
+          : error instanceof SandboxExecutionBusyError ||
+              error instanceof AgentExecutionBusyError
             ? "The target Agent sandbox is busy; the child task was not started."
             : "Local execution is unavailable.",
       );
@@ -405,12 +431,19 @@ export async function tickA2AWorker() {
       { state: TaskState.TASK_STATE_SUBMITTED },
       { state: TaskState.TASK_STATE_WORKING, phase: "resumable" },
     ];
-    // Separate pages keep queued legacy work from hiding native cleanup/recovery
-    // when the legacy slots are occupied. Workspace quotas still bound admission.
+    // Separate pages prevent pooled public/remote work from hiding local admission
+    // or native cleanup. Local execution is bounded by the administrator limits.
     const queues = await Promise.all(
-      ["pi-harness", "legacy"].map((executionBackend) =>
+      [
+        { executionBackend: "pi-harness" },
+        { executionBackend: "legacy", context: { targetKind: "local" } },
+        {
+          executionBackend: "legacy",
+          context: { targetKind: { not: "local" } },
+        },
+      ].map((scope) =>
         db.a2ATask.findMany({
-          where: { executionBackend, OR: ready },
+          where: { ...scope, OR: ready },
           orderBy: [{ depth: "desc" }, { createdAt: "asc" }],
           take: 16,
           select: { id: true },
@@ -431,8 +464,15 @@ export async function tickA2AWorker() {
           tasks: { none: { state: { in: [...ACTIVE, 6, 8] } } },
         },
         take: 25,
-        select: { id: true },
+        select: { id: true, workspaceId: true, agentId: true },
       });
+      for (const context of contexts)
+        if (context.agentId)
+          await deleteAgentContextSandbox({
+            workspaceId: context.workspaceId,
+            agentId: context.agentId,
+            contextId: context.id,
+          });
       if (contexts.length)
         await db.a2AContext.deleteMany({
           where: {

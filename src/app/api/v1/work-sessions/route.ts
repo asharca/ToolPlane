@@ -24,6 +24,7 @@ import {
   prepareWorkAttachments,
   WorkAttachmentError,
 } from "@/lib/attachments/work";
+import { getConversationWorkspaceSandbox } from "@/lib/agents/conversation-workspace";
 
 export const runtime = "nodejs";
 
@@ -38,7 +39,22 @@ export const GET = withRequestLogging(
     const agent = await getAgentForRequest(agentId, user.id);
     if (!agent)
       return Response.json({ error: "Agent not found" }, { status: 404 });
-    return Response.json(await listWorkSessions(agent.workspaceId, agent.id));
+    const sessions = await listWorkSessions(agent.workspaceId, agent.id);
+    return Response.json(
+      await Promise.all(
+        sessions.map(async (session) => {
+          const sandbox =
+            session.runtimeKind === "hermes"
+              ? session.sandbox
+              : await getConversationWorkspaceSandbox({
+                  workspaceId: agent.workspaceId,
+                  agentId: agent.id,
+                  conversationId: session.conversationId,
+                });
+          return { ...session, sandboxId: sandbox?.id ?? null, sandbox };
+        }),
+      ),
+    );
   },
 );
 

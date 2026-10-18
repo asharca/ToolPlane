@@ -174,6 +174,51 @@ environment configuration before restarting a runtime that was previously
 running. This keeps its control-plane configuration aligned even when the
 restored volume originated from an older runtime state.
 
+#### Agent conversation sandboxes
+
+Ordinary Pi, Pi SDK, Claude Code, DSH and Hermes RPC Agents use their assigned
+Docker sandbox as a template. The first execution of each conversation creates
+a durable, independent `/workspace` volume and container from that template;
+delegated A2A contexts without a console conversation receive their own mapping.
+Later turns reuse the saved mapping and native session state. Files and Terminal
+follow the selected conversation, and opening an unallocated conversation does
+not expose or provision its template workspace. Copies do not merge changes back
+into the template or other conversations; external services are still shared.
+Terminal streams revalidate credentials, workspace membership and the exact sandbox
+mapping every 15 seconds; revoked access closes the existing stream.
+An open conversation terminal does not block turns in its already-running sandbox;
+startup and destructive lifecycle operations still require exclusive access.
+
+In **Admin → System settings → Agent conversation concurrency**, administrators
+set simultaneous executions per Agent (1–32, default 1) and platform-wide
+(1–256, default 16, never less than the per-Agent limit). Limits count executing
+turns, not saved conversations. Different conversations may run concurrently;
+the same conversation remains serial. Ordinary requests wait for capacity and
+can be cancelled. Native root tasks remain queued; nested delegated tasks fail
+promptly when capacity is unavailable rather than deadlocking their parent.
+Saving a lower limit does not interrupt running turns. Managed Hermes and public
+endpoint allocations retain their existing independent concurrency policies.
+Durable local/remote task admission is separately bounded per workspace by the
+platform execution limit plus 16 queued tasks, with existing storage quotas intact.
+
+First-use copying temporarily pauses the template container under its lifecycle
+and execution locks, then unpauses it without terminating its existing shells.
+Active template file/terminal access blocks the copy. A durable pause marker lets
+startup recovery unpause an interrupted snapshot. A failed copy retains its
+non-runnable mapping; it never silently substitutes an empty workspace.
+
+After 15 idle minutes, owner maintenance stops conversation containers while
+retaining their volumes. Active executions, pending work, file/terminal streams
+and live PTYs prevent idle shutdown. The next execution restarts the same saved
+sandbox. Deleting a conversation removes its owned runtime and volume before
+deleting the mapping; failed cleanup remains retryable. Agent configuration and
+runtime maintenance cannot race active executions, and changing the template
+assignment is blocked while isolated conversation/context sandboxes remain.
+
+Before deploying this change, apply migration
+`20261018000000_agent_conversation_sandboxes` and regenerate the Prisma client.
+The existing single-runtime-owner deployment requirement still applies.
+
 ### User Connector
 
 Connector mode lets a user expose one directory on their own machine without

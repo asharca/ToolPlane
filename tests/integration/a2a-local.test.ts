@@ -31,7 +31,6 @@ import { publishLocalArtifact } from "@/lib/a2a/local-artifacts";
 import { getConsoleTaskTree } from "@/lib/a2a/console-tasks";
 import {
   createLocalRootGrant,
-  createLocalEntryGrant,
   childGrant,
   assertLocalGrant,
   LOCAL_LIMITS,
@@ -41,7 +40,7 @@ import { createEntryPolicy } from "@/lib/a2a/entry-policy";
 import type { LocalA2AGrant } from "@/lib/a2a/principal";
 import {
   submitTask,
-  claimTask,
+  claimTask as claimStoredTask,
   bindPiHarnessOperation,
   finishTask,
   getTask,
@@ -57,21 +56,57 @@ import {
 } from "@/lib/a2a/local-continuation";
 import { textArtifact } from "@/lib/a2a/model";
 import {
-  executeA2ATask,
+  executeA2ATask as executeStoredTask,
   startA2AWorker,
   stopA2AWorker,
 } from "@/lib/a2a/worker";
-import {
-  createAgentRuntimeToken,
-  type AgentRuntimeTokenPayload,
-} from "@/lib/agents/runtime-access";
+import { createAgentRuntimeToken } from "@/lib/agents/runtime-access";
+import type { AgentRuntimeTokenPayload } from "@/lib/agents/runtime-access";
 import { assertLocalRuntimeToken } from "@/lib/a2a/local-runtime";
 import { handleLocalMcp } from "@/lib/a2a/local-mcp";
 import { executeLocalMcpTool } from "@/lib/a2a/local-mcp-tools";
 import { withSandboxExecutionLease } from "@/lib/agents/sandbox-execution-gate";
 import { isAgentRuntimeGrantCurrent } from "@/lib/agents/runtime-grant";
-import { submitNativeEntry } from "@/lib/a2a/ingress";
+import {
+  latestEntryText,
+  nativeEntryResult,
+  submitNativeEntry,
+} from "@/lib/a2a/ingress";
 import { localAgentCard } from "@/lib/a2a/local-http";
+import type { TaskExecutor } from "@/lib/a2a/executor";
+import {
+  assertMappedDeployment,
+  assertMappedVolume,
+  mapTaskSandbox,
+  taskSandbox,
+} from "./task-sandbox-fixture";
+import type * as SandboxRuntime from "@/lib/sandboxes/runtime";
+import type * as ProcessSupervisor from "@/lib/process/supervisor";
+
+// Keep PostgreSQL mapping/authorization real; the executor never starts a runtime.
+vi.mock("@/lib/sandboxes/runtime", async (original) => {
+  const runtime = await original<typeof SandboxRuntime>();
+  return {
+    ...runtime,
+    assertDockerVolumeExists: vi.fn(async (name: string) =>
+      assertMappedVolume(name, runtime.sandboxVolumeName),
+    ),
+  };
+});
+vi.mock("@/lib/process/supervisor", async (original) => ({
+  ...(await original<typeof ProcessSupervisor>()),
+  startProcess: vi.fn((id: string) => assertMappedDeployment(id)),
+}));
+
+async function claimTask(id: string) {
+  const row = await claimStoredTask(id);
+  if (row) await mapTaskSandbox(row);
+  return row;
+}
+async function executeA2ATask(id: string, executor: TaskExecutor) {
+  await mapTaskSandbox(await db.a2ATask.findUniqueOrThrow({ where: { id } }));
+  return executeStoredTask(id, executor);
+}
 
 vi.mock("@/lib/db", async (original) => {
   if (process.env.TOOLPLANE_TEST_PGLITE !== "1") return original();
@@ -110,11 +145,7 @@ async function root() {
     assertDefined(r),
   );
 }
-async function child(
-  parent: Awaited<ReturnType<typeof root>>,
-  index = 1,
-  input = request(),
-) {
+async function child(parent: A2ATask, index = 1, input = request()) {
   const authority = await childGrant(
     parent.id,
     assertDefined(parent.leaseToken),
@@ -127,18 +158,16 @@ async function child(
     }),
   };
 }
-function runtimeToken(
-  parent: Awaited<ReturnType<typeof root>>,
-  index = 0,
-): AgentRuntimeTokenPayload {
+function runtimeToken(parent: A2ATask, index = 0): AgentRuntimeTokenPayload {
   return {
     workspaceId: ws,
     agentId: agents[index],
-    sandboxId: sandboxes[index],
+    ...taskSandbox(parent),
     providerId: provider,
     deploymentIds: [],
     exp: Math.floor(Date.now() / 1000) + 300,
     a2aTaskId: parent.id,
+    a2aContextId: parent.contextId,
     a2aLeaseToken: assertDefined(parent.leaseToken),
   };
 }
@@ -250,6 +279,41 @@ afterAll(async () => {
 });
 
 describe("local Agent authorization and legacy continuations", () => {
+  it("admits configured execution capacity plus a bounded queue and frees canceled slots", async () => {
+    const key = "agents.concurrency";
+    const previous = await db.systemSetting.findUnique({ where: { key } });
+    const maxTotal = 20;
+    const value = JSON.stringify({ maxPerAgent: maxTotal, maxTotal });
+    await db.systemSetting.upsert({
+      where: { key },
+      create: { key, value },
+      update: { value },
+    });
+    try {
+      const tasks: A2ATask[] = [];
+      for (
+        let index = 0;
+        index < maxTotal + LOCAL_LIMITS.queuedPerWorkspace;
+        index++
+      )
+        tasks.push(await submitTask(grant, request()));
+      expect(tasks.at(-1)?.state).toBe(TaskState.TASK_STATE_SUBMITTED);
+      await expect(submitTask(grant, request())).rejects.toThrow(
+        "Local task capacity reached",
+      );
+      await requestCancellation(grant, tasks[0].id);
+      const replacement = await submitTask(grant, request());
+      expect(replacement.state).toBe(TaskState.TASK_STATE_SUBMITTED);
+      expect(replacement.id).not.toBe(tasks[0].id);
+    } finally {
+      if (previous)
+        await db.systemSetting.update({
+          where: { key },
+          data: { value: previous.value },
+        });
+      else await db.systemSetting.deleteMany({ where: { key } });
+    }
+  });
   it("reflects persisted Agent descriptions and Agent-invocable Skills in the Card", async () => {
     const previousOrigin = process.env.NEXT_PUBLIC_APP_URL;
     const skillSlug = `a2a-card-${randomUUID()}`;
@@ -769,6 +833,20 @@ describe("local Agent authorization and legacy continuations", () => {
     await expect(
       executeLocalMcpTool(ordinary, "a2a_list_agents", {}),
     ).rejects.toThrow();
+    const other = await root();
+    const otherPayload = runtimeToken(other);
+    for (const invalid of [
+      { ...payload, a2aContextId: undefined },
+      { ...payload, a2aContextId: other.contextId },
+      { ...payload, sandboxId: sandboxes[0] },
+      { ...payload, sandboxId: otherPayload.sandboxId },
+      { ...payload, a2aLeaseToken: assertDefined(other.leaseToken) },
+    ]) {
+      await expect(assertLocalRuntimeToken(invalid)).rejects.toBeInstanceOf(
+        TaskNotFoundError,
+      );
+      expect(await isAgentRuntimeGrantCurrent(invalid)).toBe(false);
+    }
     const token = await createAgentRuntimeToken(payload);
     const req = new Request("https://toolplane.test/mcp", {
       method: "POST",
@@ -915,7 +993,7 @@ describe("local Agent authorization and legacy continuations", () => {
     const queued = await submitTask(grant, request());
     let release!: () => void;
     const lock = withSandboxExecutionLease(
-      sandboxes[0],
+      (await mapTaskSandbox(await getTaskRow(grant, queued.id))).sandboxId,
       () =>
         new Promise<void>((resolve) => {
           release = resolve;
@@ -1264,12 +1342,17 @@ describe("native tool approval decisions", () => {
     const conversation = await db.conversation.create({
       data: { agentId: agents[0], title: "Interactive approval" },
     });
-    const entry = await createEntryPolicy(db, grant, {
+    const accepted = await submitNativeEntry({
+      workspaceId: ws,
+      agentId: agents[0],
+      actorId: user,
       kind: "chat",
       sourceId: conversation.id,
+      messageId: randomUUID(),
+      text: "Interactive approval",
     });
-    grant = await createLocalEntryGrant(db, ws, agents[0], user, entry);
-    const row = await root();
+    grant = accepted.grant;
+    const row = assertDefined(await claimTask(accepted.row.id));
     const token = { ...runtimeToken(row), a2aApprovalRequired: true as const };
     await checkNativeToolApproval(token, { action: "ready" });
     const input = {
@@ -1778,7 +1861,6 @@ describe("unified native ingress mappings", () => {
   it.each(["chat", "control", "work"] as const)(
     "lets ordinary %s delegate, approve and complete with both switches off",
     async (kind) => {
-      const { submitNativeEntry } = await import("@/lib/a2a/ingress");
       const input = await entry(kind);
       await db.agent.updateMany({
         where: { id: { in: [agents[0], agents[1]] } },
@@ -1959,7 +2041,6 @@ describe("unified native ingress mappings", () => {
     ).rejects.toThrow();
   });
   it("does not expose ordinary chat tasks to explicit A2A even after opt-in", async () => {
-    const { submitNativeEntry } = await import("@/lib/a2a/ingress");
     const input = await entry();
     const accepted = await submitNativeEntry(input, vi.fn());
     await expect(getTask(grant, accepted.row.id)).rejects.toBeInstanceOf(
@@ -1974,7 +2055,6 @@ describe("unified native ingress mappings", () => {
     ).rejects.toBeInstanceOf(TaskNotFoundError);
   });
   it("executes a normal chat Task through the worker with A2A disabled", async () => {
-    const { submitNativeEntry } = await import("@/lib/a2a/ingress");
     const input = await entry();
     await db.agent.update({
       where: { id: agents[0] },
@@ -2081,7 +2161,6 @@ describe("unified native ingress mappings", () => {
     },
   );
   it("retries the initial message after acceptance without manufacturing different context identifiers", async () => {
-    const { submitNativeEntry } = await import("@/lib/a2a/ingress");
     const input = await entry();
     const first = await submitNativeEntry(input, vi.fn());
     const duplicate = await submitNativeEntry(input, vi.fn());
@@ -2111,10 +2190,9 @@ describe("unified native ingress mappings", () => {
       });
   });
   it("replays a pre-upgrade native entry without submitting a second task", async () => {
-    const { submitNativeEntry } = await import("@/lib/a2a/ingress");
     const input = await entry();
     const policy = await db.$transaction(async (tx) =>
-      (await import("@/lib/a2a/entry-policy")).createEntryPolicy(tx, grant, {
+      createEntryPolicy(tx, grant, {
         kind: input.kind,
         sourceId: input.sourceId,
       }),
@@ -2177,7 +2255,6 @@ describe("unified native ingress mappings", () => {
     ).rejects.toThrow("reused with different content");
   });
   it("creates a new terminal follow-up in the same context and preserves the original receipt", async () => {
-    const { submitNativeEntry } = await import("@/lib/a2a/ingress");
     const input = await entry();
     const first = await submitNativeEntry(input, vi.fn());
     const claimed = assertDefined(await claimTask(first.row.id));
@@ -2199,7 +2276,6 @@ describe("unified native ingress mappings", () => {
     expect((await getTask(first.grant, first.row.id)).status?.state).toBe(3);
   });
   it("continues a historical legacy INPUT_REQUIRED task with the same task and original deadline", async () => {
-    const { submitNativeEntry } = await import("@/lib/a2a/ingress");
     const input = await entry();
     const first = await submitNativeEntry(input, vi.fn());
     await db.a2ATask.update({
@@ -2221,7 +2297,6 @@ describe("unified native ingress mappings", () => {
     expect(next.row.deadlineAt).toEqual(first.row.deadlineAt);
   });
   it("does not accept another workspace, target, or an unrecorded Work operator", async () => {
-    const { submitNativeEntry } = await import("@/lib/a2a/ingress");
     const input = await entry("work");
     await expect(
       submitNativeEntry({ ...input, actorId: otherUser }, vi.fn()),
@@ -2239,7 +2314,6 @@ describe("unified native ingress mappings", () => {
     await expect(submitNativeEntry(input, vi.fn())).rejects.toThrow();
   });
   it("rechecks a Work cancellation for root and child tools rather than inheriting old authority", async () => {
-    const { submitNativeEntry } = await import("@/lib/a2a/ingress");
     const input = await entry("work");
     const accepted = await submitNativeEntry(input, vi.fn());
     const claimed = assertDefined(await claimTask(accepted.row.id));
@@ -2259,7 +2333,6 @@ describe("unified native ingress mappings", () => {
     ).rejects.toThrow();
   });
   it("separates different users on a shared conversation without borrowing their context", async () => {
-    const { submitNativeEntry } = await import("@/lib/a2a/ingress");
     const input = await entry();
     const first = await submitNativeEntry(input, vi.fn());
     const second = await submitNativeEntry(
@@ -2270,7 +2343,6 @@ describe("unified native ingress mappings", () => {
     await expect(getTask(second.grant, first.row.id)).rejects.toThrow();
   });
   it("binds channels to an explicit operator and revokes the whole delegated chain", async () => {
-    const { submitNativeEntry } = await import("@/lib/a2a/ingress");
     const channel = await db.agentChannelConnection.create({
       data: {
         workspaceId: ws,
@@ -2341,7 +2413,6 @@ describe("unified native ingress mappings", () => {
     ).rejects.toThrow();
   });
   it("rolls back bindings and receipts when native admission fails", async () => {
-    const { submitNativeEntry } = await import("@/lib/a2a/ingress");
     const input = await entry();
     const real = db.$transaction.bind(db);
     const spy = vi.spyOn(db, "$transaction");
@@ -2369,9 +2440,6 @@ describe("unified native ingress mappings", () => {
     ).toBe(0);
   });
   it("rejects silent attachment dropping and never reports a failed task as success", async () => {
-    const { latestEntryText, nativeEntryResult } = await import(
-      "@/lib/a2a/ingress"
-    );
     expect(() =>
       latestEntryText({
         role: "user",

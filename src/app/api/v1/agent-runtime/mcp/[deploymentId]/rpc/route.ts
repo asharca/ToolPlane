@@ -43,6 +43,7 @@ export const POST = withRequestLogging(
         workspaceId: true,
         mcpToolExposure: true,
         mcpAllowedTools: true,
+        sandbox: { select: { id: true } },
       },
     });
     if (!deployment)

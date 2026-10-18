@@ -2,6 +2,7 @@ import { startRuntimeOwner } from "@/lib/runtime/owner";
 import { runtimeCanOperate } from "@/lib/runtime/ownership-state";
 import { systemLog } from "@/lib/observability/system";
 import { maintainPiPackageSources } from "@/lib/market/pi-package-catalog";
+import { stopIdleAgentConversationSandboxes } from "@/lib/agents/conversation-sandbox";
 // Next.js startup hook. Runs once when the Node server boots to recover MCP
 // processes, channel runners, and sandbox data operations interrupted by a restart.
 export async function registerNode() {
@@ -274,6 +275,15 @@ async function registerNodeOwned() {
         }
       } catch (error) {
         systemLog("error", "[agent-api] idle runtime cleanup failed", error);
+      }
+      try {
+        await stopIdleAgentConversationSandboxes();
+      } catch (error) {
+        systemLog(
+          "error",
+          "[agent] conversation sandbox maintenance failed",
+          error,
+        );
       } finally {
         idleRunning = false;
       }

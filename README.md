@@ -73,7 +73,7 @@ pnpm dev
 
 `pnpm install` 自动安装仓库的 Git hooks；已有 checkout 可运行 `pnpm hooks:install`。安装器不覆盖其他 `core.hooksPath` 配置，无 `.git` 的镜像依赖层和发布归档跳过安装。
 
-- **pre-commit**：在临时目录中检查 Git index 的文件快照，使用 Biome 校验语法、lint 和格式；不自动修改工作区或暂存内容，支持部分暂存。
+- **pre-commit**：在临时目录中检查 Git index 的文件快照，并从 index 读取 `package.json`、`biome.json` 和 `.gitignore`，确保 React/Next 规则及忽略设置与待提交内容一致；使用 Biome 校验语法、lint 和格式，不自动修改工作区或暂存内容，支持部分暂存。
 - **pre-push**：要求推送当前 `HEAD` 且已跟踪文件无未提交变更，运行 `pnpm check`（`biome ci . --error-on-warnings`、Next 路由类型生成和 TypeScript 检查）。先执行 `pnpm db:generate` 准备 Prisma 类型；不连接数据库或运行迁移。
 - CI 复用 `pnpm check`，再运行完整测试和构建；只检查、不自动修复。hooks 不替代受保护分支的 CI。
 - lint 和 formatter 统一使用锁定版本的 Biome，不再运行 ESLint/Prettier。`biome.json` 使用推荐规则，不保留迁移期的 warning 降级；提交、推送和 CI 均阻断 error、warning、语法和格式问题。明确的框架约束或安全处理仅允许带原因的局部例外，不批量添加忽略注释。

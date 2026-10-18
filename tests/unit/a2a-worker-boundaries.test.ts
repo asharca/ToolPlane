@@ -21,6 +21,17 @@ const state = vi.hoisted(() => ({
   remoteWaits: vi.fn(),
   log: vi.fn(),
   execute: vi.fn(),
+  admit: vi.fn(),
+}));
+vi.mock("@/lib/agents/agent-execution-gate", () => ({
+  AgentExecutionBusyError: class AgentExecutionBusyError extends Error {},
+  withAgentExecutionLease: state.admit,
+}));
+vi.mock("@/lib/a2a/local-sandbox", () => ({
+  localTaskSandbox: () => state.target(),
+}));
+vi.mock("@/lib/agents/conversation-sandbox", () => ({
+  deleteAgentContextSandbox: vi.fn(),
 }));
 vi.mock("@/lib/db", () => ({
   db: {
@@ -85,7 +96,9 @@ vi.mock("@/lib/observability/a2a-log", () => ({
 }));
 import { db } from "@/lib/db";
 import { A2AQuotaError } from "@/lib/a2a/quotas";
+import { A2A_LIMITS } from "@/lib/a2a/model";
 import { PiRuntimeInterruptedError } from "@/lib/agents/pi-harness";
+import { AgentExecutionBusyError } from "@/lib/agents/agent-execution-gate";
 import {
   executeA2ATask,
   startA2AWorker,
@@ -120,6 +133,7 @@ function task(kind = "local", backend = "legacy", bound = false) {
 beforeEach(async () => {
   vi.useFakeTimers();
   vi.resetAllMocks();
+  state.admit.mockImplementation((_input, run) => run());
   state.rows.clear();
   state.messages.clear();
   state.owner = true;
@@ -161,6 +175,66 @@ afterEach(() => {
 });
 
 describe("A2A worker admission and recovery boundaries", () => {
+  it("keeps public and remote work pooled without capping local sandboxes", async () => {
+    const released = Promise.withResolvers<void>();
+    const running: Promise<void>[] = [];
+    function row(id: string, kind: string) {
+      const value = task(kind);
+      state.rows.delete(value.id);
+      value.id = id;
+      state.rows.set(id, value);
+      return value;
+    }
+    try {
+      for (let index = 0; index < A2A_LIMITS.workerConcurrency; index++) {
+        const held = row(`pooled-${index}`, index % 2 ? "remote" : "published");
+        const entered = Promise.withResolvers<void>();
+        const execution = executeA2ATask(held.id, async () => {
+          entered.resolve();
+          await released.promise;
+          return { state: TaskState.TASK_STATE_COMPLETED };
+        });
+        running.push(execution);
+        await Promise.race([
+          entered.promise,
+          execution.then(() => {
+            throw new Error("Expected available pooled capacity");
+          }),
+        ]);
+      }
+      const queued = row("pooled-waiting", "published");
+      const result = { state: TaskState.TASK_STATE_COMPLETED };
+      await executeA2ATask(queued.id, async () => result);
+      expect(queued.state).toBe(TaskState.TASK_STATE_SUBMITTED);
+      const local = row("local-running", "local");
+      await executeA2ATask(local.id, async () => result);
+      expect(local.state).toBe(TaskState.TASK_STATE_COMPLETED);
+      released.resolve();
+      await Promise.all(running);
+      await executeA2ATask(queued.id, async () => result);
+      expect(queued.state).toBe(TaskState.TASK_STATE_COMPLETED);
+    } finally {
+      released.resolve();
+      await Promise.all(running);
+    }
+  });
+  it.each([false, true])(
+    "keeps full-capacity roots queued and rejects children (child=%s)",
+    async (child) => {
+      const row = task();
+      row.grant = {
+        ...(row.grant as object),
+        ancestorTaskIds: child ? ["parent"] : [],
+      };
+      state.admit.mockRejectedValue(new AgentExecutionBusyError());
+      await executeA2ATask(row.id);
+      expect(row.state).toBe(
+        child ? TaskState.TASK_STATE_FAILED : TaskState.TASK_STATE_SUBMITTED,
+      );
+      expect(state.claim).not.toHaveBeenCalled();
+      expect(state.target).not.toHaveBeenCalled();
+    },
+  );
   it("does not execute duplicate concurrent claims or operate after owner loss", async () => {
     task();
     const ready = Promise.withResolvers<void>();
@@ -276,9 +350,18 @@ describe("A2A worker admission and recovery boundaries", () => {
       const row = task("local", "pi-harness", bound);
       state.assigned.mockResolvedValue([]);
       state.target.mockRejectedValue(new Error("private provider error"));
-      await executeA2ATask(row.id);
-      expect(row.state).toBe(TaskState.TASK_STATE_FAILED);
-      expect(state.messages.get(row.id)).toMatch(/^PI_TARGET_UNAVAILABLE:/);
+      if (bound) {
+        await expect(executeA2ATask(row.id)).rejects.toBeInstanceOf(
+          PiRuntimeInterruptedError,
+        );
+        expect(row.state).toBe(TaskState.TASK_STATE_SUBMITTED);
+        expect(state.finish).not.toHaveBeenCalled();
+        expect(state.claim).not.toHaveBeenCalled();
+      } else {
+        await executeA2ATask(row.id);
+        expect(row.state).toBe(TaskState.TASK_STATE_FAILED);
+        expect(state.messages.get(row.id)).toMatch(/^PI_TARGET_UNAVAILABLE:/);
+      }
       expect(state.execute).not.toHaveBeenCalled();
     },
   );

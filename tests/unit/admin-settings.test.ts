@@ -34,6 +34,8 @@ vi.mock("@/lib/db", () => {
 });
 
 import {
+  getAgentConcurrencySettings,
+  updateAgentConcurrencySettings,
   getHermesArchiveSettings,
   HERMES_ARCHIVE_MAX_UPLOAD_MIB_SETTING_KEY,
   MCP_STARTUP_TIMEOUTS_SETTING_KEY,
@@ -60,6 +62,42 @@ describe("system settings storage", () => {
     vi.unstubAllEnvs();
   });
 
+  it("reads saved concurrency limits and refuses invalid policy instead of widening it", async () => {
+    mocks.findUnique.mockResolvedValue({
+      value: JSON.stringify({ maxPerAgent: 4, maxTotal: 12 }),
+    });
+    await expect(getAgentConcurrencySettings()).resolves.toEqual({
+      maxPerAgent: 4,
+      maxTotal: 12,
+      source: "database",
+    });
+    mocks.findUnique.mockResolvedValue({
+      value: JSON.stringify({ maxPerAgent: 4, maxTotal: 2 }),
+    });
+    await expect(getAgentConcurrencySettings()).rejects.toThrow(
+      "Invalid Agent concurrency settings",
+    );
+    mocks.findUnique.mockRejectedValue(new Error("database unavailable"));
+    await expect(getAgentConcurrencySettings()).rejects.toThrow(
+      "database unavailable",
+    );
+  });
+
+  it.each([
+    [0, 16],
+    [33, 64],
+    [4, 3],
+    [1, 257],
+    [1.5, 16],
+  ])(
+    "rejects unsafe concurrency bounds %s / %s without persisting",
+    async (perAgent, total) => {
+      await expect(
+        updateAgentConcurrencySettings(perAgent, total, "admin"),
+      ).rejects.toThrow("Invalid Agent concurrency settings");
+      expect(mocks.upsert).not.toHaveBeenCalled();
+    },
+  );
   it("uses the safe archive default until the generic setting row exists", async () => {
     mocks.findUnique.mockResolvedValue(null);
 

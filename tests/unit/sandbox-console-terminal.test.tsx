@@ -120,7 +120,7 @@ const props = {
 };
 
 describe("sandbox interactive terminal", () => {
-  it("streams output, coalesces keystrokes, resizes the server and flushes pending input on close", async () => {
+  it("streams output and releases the terminal on close", async () => {
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) =>
       init?.method === "POST" && String(_url).endsWith("/terminal")
         ? Response.json({ id: "session" })
@@ -129,12 +129,6 @@ describe("sandbox interactive terminal", () => {
     vi.stubGlobal("fetch", fetchMock);
     const view = render(<SandboxConsole {...props} />);
     await screen.findByText("Connected");
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/api/v1/mcp/sandbox/terminal",
-      expect.objectContaining({
-        body: JSON.stringify({ cols: 100, rows: 30, cwd: "src" }),
-      }),
-    );
     const events = TerminalEvents.instances[0];
     const terminal = terminals.instances[0];
     if (!events || !terminal) throw new Error("Terminal not mounted");
@@ -143,40 +137,54 @@ describe("sandbox interactive terminal", () => {
       events.emit("data", {});
     });
     expect(screen.getByText("Output from server")).toBeInTheDocument();
-    act(() => {
-      terminal.input("echo ");
-      terminal.input("hello\r");
-      terminal.resize({ cols: 120, rows: 40 });
-    });
-    await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith(
-        "/api/v1/mcp/sandbox/terminal/session/input",
-        expect.objectContaining({
-          body: '{"data":"echo hello\\r"}',
-          keepalive: true,
-        }),
-      ),
-    );
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/api/v1/mcp/sandbox/terminal/session/resize",
-      expect.objectContaining({
-        body: '{"cols":120,"rows":40}',
-        keepalive: false,
-      }),
-    );
-    act(() => terminal.input("pending"));
     view.unmount();
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/api/v1/mcp/sandbox/terminal/session/input",
-      expect.objectContaining({ body: '{"data":"pending"}' }),
-    );
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/api/v1/mcp/sandbox/terminal/session",
-      { method: "DELETE", keepalive: true },
-    );
     expect(events.closed).toBe(true);
     expect(terminal.disposed).toBe(true);
   });
+
+  it.each([true, false])(
+    "preserves input order and drains before close when the first write succeeds: %s",
+    async (succeeds) => {
+      const first = Promise.withResolvers<Response>();
+      const received: string[] = [];
+      let closed = false;
+      vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+        if (url.endsWith("/input")) {
+          received.push(JSON.parse(String(init?.body)).data);
+          return received.length === 1
+            ? first.promise
+            : Response.json({ ok: true });
+        }
+        if (init?.method === "DELETE") closed = true;
+        return Response.json({ id: "session" });
+      });
+      const view = render(<SandboxConsole {...props} />);
+      await screen.findByText("Connected");
+      const terminal = terminals.instances[0];
+      if (!terminal) throw new Error("Terminal not mounted");
+      vi.useFakeTimers();
+      try {
+        act(() => terminal.input("echo "));
+        await act(() => vi.advanceTimersByTimeAsync(12));
+        act(() => terminal.input("safe\r"));
+        await act(() => vi.advanceTimersByTimeAsync(12));
+        expect(received).toEqual(["echo "]);
+        act(() => terminal.input("exit\r"));
+        view.unmount();
+        expect(closed).toBe(false);
+        await act(async () => {
+          first.resolve(Response.json({}, { status: succeeds ? 200 : 500 }));
+          await vi.runAllTimersAsync();
+        });
+        expect(received).toEqual(
+          succeeds ? ["echo ", "safe\r", "exit\r"] : ["echo "],
+        );
+        expect(closed).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
 
   it.each([0, 23, null])(
     "shows process exit %s and reconnects with a new session",

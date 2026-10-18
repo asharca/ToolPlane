@@ -549,6 +549,16 @@ export async function deleteWorkspace(
     await killWorkspaceProcesses(workspaceId);
     const deletedWorkspaceId = workspaceId;
     await db.$transaction(async (tx) => {
+      // Runtime teardown has completed; clear restrictive sandbox bindings only
+      // in the same transaction that removes their owning workspace.
+      await tx.conversation.updateMany({
+        where: { agent: { workspaceId: deletedWorkspaceId } },
+        data: { sandboxId: null },
+      });
+      await tx.a2AContext.updateMany({
+        where: { workspaceId: deletedWorkspaceId },
+        data: { sandboxId: null },
+      });
       await tx.workspace.delete({ where: { id: deletedWorkspaceId } });
       await writeAudit(tx, {
         actorId,

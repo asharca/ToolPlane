@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   fetch: vi.fn(),
   handleAnthropicMessages: vi.fn(),
   handleAnthropicCountTokens: vi.fn(),
+  findConversationSandbox: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => ({
@@ -18,6 +19,9 @@ vi.mock("@/lib/db", () => ({
     modelProvider: { findFirst: mocks.modelProviderFindFirst },
     deployment: { findFirst: mocks.deploymentFindFirst },
   },
+}));
+vi.mock("@/lib/agents/conversation-sandbox", () => ({
+  findAgentConversationSandbox: mocks.findConversationSandbox,
 }));
 vi.mock("@/lib/process/supervisor", () => ({ livePort: mocks.livePort }));
 vi.mock("@/lib/observability/log", () => ({ logRequest: mocks.logRequest }));
@@ -36,6 +40,10 @@ describe("Agent runtime proxy boundaries", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     process.env.AUTH_SECRET = "runtime-proxy-test-secret";
+    mocks.findConversationSandbox.mockResolvedValue({
+      sandboxId: "sandbox-1",
+      deploymentId: "mapped-deployment",
+    });
     mocks.agentFindFirst.mockResolvedValue({
       runtimeKind: "pi",
       servers: [{ deploymentId: "deployment-1" }],
@@ -72,6 +80,7 @@ describe("Agent runtime proxy boundaries", () => {
       workspaceId: "workspace-1",
       agentId: "agent-1",
       sandboxId: "sandbox-1",
+      conversationId: "conversation-1",
       providerId: "provider-1",
       deploymentIds: ["deployment-1"],
       exp: Math.floor(Date.now() / 1000) + 300,
@@ -353,4 +362,34 @@ describe("Agent runtime proxy boundaries", () => {
       }),
     );
   });
+  it.each([null, { sandboxId: "different-session-sandbox" }])(
+    "rejects absent or mismatched conversation mappings",
+    async (mapping) => {
+      mocks.findConversationSandbox.mockResolvedValue(mapping);
+      const response = await proxyModel(
+        new Request(
+          "http://toolplane.test/api/v1/agent-runtime/model/provider-1/chat/completions",
+          {
+            method: "POST",
+            headers: { authorization: `Bearer ${await token()}` },
+            body: "{}",
+          },
+        ),
+        {
+          params: Promise.resolve({
+            providerId: "provider-1",
+            path: ["chat", "completions"],
+          }),
+        },
+      );
+      expect(response.status).toBe(403);
+      expect(mocks.findConversationSandbox).toHaveBeenCalledWith({
+        workspaceId: "workspace-1",
+        agentId: "agent-1",
+        conversationId: "conversation-1",
+        contextId: undefined,
+      });
+      expect(mocks.fetch).not.toHaveBeenCalled();
+    },
+  );
 });

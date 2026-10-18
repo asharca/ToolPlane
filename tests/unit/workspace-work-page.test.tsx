@@ -14,8 +14,12 @@ const mocks = vi.hoisted(() => ({
   effectiveStatus: vi.fn(),
   surface: vi.fn(),
   cookies: vi.fn(),
+  workspaceSandbox: vi.fn(),
 }));
 
+vi.mock("@/lib/agents/conversation-workspace", () => ({
+  getConversationWorkspaceSandbox: mocks.workspaceSandbox,
+}));
 vi.mock("next/navigation", () => ({
   redirect: vi.fn(),
   notFound: () => {
@@ -65,6 +69,7 @@ import WorkspaceWorkPage from "@/app/app/[workspace]/work/page";
 describe("Workspace Work page", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.workspaceSandbox.mockResolvedValue(null);
     mocks.getCurrentUser.mockResolvedValue({ id: "user-1" });
     mocks.getWorkspaceForUser.mockResolvedValue({
       id: "workspace-1",

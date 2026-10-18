@@ -959,6 +959,7 @@ async function executeWork(workSessionId: string) {
     }
     if (
       work.runtimeKind !== "hermes" &&
+      !isDedicatedSandboxRuntimeKind(work.runtimeKind) &&
       effectiveStatus(
         work.sandbox.deploymentId,
         work.sandbox.deployment.status,
@@ -1255,7 +1256,7 @@ async function executeWork(workSessionId: string) {
         .join("\n\n---\n\n");
       response = await runDedicatedSandboxTurn({
         agent,
-        sandboxId: work.sandbox.id,
+        conversationId: work.conversationId,
         systemPrompt: system,
         messages: command ? runtimeMessages.slice(0, -1) : runtimeMessages,
         ...(command ? { command: commandText } : {}),

@@ -21,7 +21,7 @@ export const LOCAL_LIMITS = {
   depth: 3,
   tasksPerRoot: 16,
   resumes: 16,
-  activePerWorkspace: 16,
+  queuedPerWorkspace: 16,
   tasksPerOwner: 256,
   requestBytes: 65_536,
 } as const;

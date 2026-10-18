@@ -1345,6 +1345,14 @@ async function handleTerminal(req, res) {
   if (KIND === "connector") return proxyConnectorTerminal(req, res);
 
   const url = new URL(req.url || "/", "http://127.0.0.1");
+  if (req.method === "GET" && url.pathname === "/terminal/activity") {
+    sendJson(res, 200, {
+      active: [...terminalSessions.values()].filter(
+        (session) => session.exitCode === null,
+      ).length,
+    });
+    return true;
+  }
   if (req.method === "POST" && url.pathname === "/terminal/session") {
     const body = await readJson(req).catch(() => ({}));
     const session = createTerminal(body.cols, body.rows, body.cwd);

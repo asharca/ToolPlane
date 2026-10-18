@@ -5,18 +5,24 @@ const mocks = vi.hoisted(() => ({
   removeStaleHermesArchiveImportHelpers: vi.fn(),
   deploymentUpdateMany: vi.fn(),
   sandboxSnapshotUpdateMany: vi.fn(),
+  sandboxFindMany: vi.fn(),
+  deploymentUpdate: vi.fn(),
+  setDockerSandboxPaused: vi.fn(),
 }));
 
 vi.mock("@/lib/sandboxes/runtime", () => ({
   removeStaleDockerVolumeCopyHelpers: mocks.removeStaleDockerVolumeCopyHelpers,
   removeStaleHermesArchiveImportHelpers:
     mocks.removeStaleHermesArchiveImportHelpers,
+  setDockerSandboxPaused: mocks.setDockerSandboxPaused,
 }));
 
 vi.mock("@/lib/db", () => ({
   db: {
+    sandbox: { findMany: mocks.sandboxFindMany },
     deployment: {
       updateMany: mocks.deploymentUpdateMany,
+      update: mocks.deploymentUpdate,
     },
     sandboxSnapshot: {
       updateMany: mocks.sandboxSnapshotUpdateMany,
@@ -29,6 +35,8 @@ import { reconcileSandboxVolumeCopies } from "@/lib/sandboxes/reconcile";
 describe("reconcileSandboxVolumeCopies", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.sandboxFindMany.mockResolvedValue([]);
+    mocks.setDockerSandboxPaused.mockResolvedValue(undefined);
   });
 
   it("removes stale copy helpers before marking interrupted clones", async () => {
@@ -103,5 +111,28 @@ describe("reconcileSandboxVolumeCopies", () => {
 
     expect(mocks.deploymentUpdateMany).not.toHaveBeenCalled();
     expect(mocks.sandboxSnapshotUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("retains durable pause intent until source processes are resumed", async () => {
+    mocks.sandboxFindMany.mockResolvedValue([
+      {
+        id: "source",
+        deploymentId: "source-deployment",
+        deployment: {
+          installCfg: {
+            volumeName: "source-data",
+            agentConversationSnapshotPaused: true,
+          },
+        },
+      },
+    ]);
+    mocks.setDockerSandboxPaused.mockRejectedValueOnce(
+      new Error("unpause unavailable"),
+    );
+    await expect(reconcileSandboxVolumeCopies()).rejects.toThrow(
+      "unpause unavailable",
+    );
+    expect(mocks.setDockerSandboxPaused).toHaveBeenCalledWith("source", false);
+    expect(mocks.deploymentUpdate).not.toHaveBeenCalled();
   });
 });
