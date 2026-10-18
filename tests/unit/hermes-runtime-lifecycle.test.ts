@@ -1436,4 +1436,325 @@ describe("Hermes sandbox lifecycle isolation", () => {
     expect(mocks.getAgent).not.toHaveBeenCalled();
     expect(mocks.pullDockerImage).not.toHaveBeenCalled();
   });
+  it.each([null, { runtime: null }, { runtime: { kind: "pi" } }])(
+    "rejects readiness for an unconfigured runtime %j",
+    async (agent) => {
+      mocks.getAgent.mockResolvedValue(agent);
+      await expect(
+        ensureHermesRuntimeReady("workspace-1", "missing-runtime"),
+      ).resolves.toEqual({ error: "Hermes runtime is not configured." });
+      await expect(
+        ensureHermesDashboardReady("workspace-1", "missing-runtime"),
+      ).resolves.toEqual({ error: "Hermes runtime is not configured." });
+      expect(mocks.startProcess).not.toHaveBeenCalled();
+    },
+  );
+
+  it("refuses chat readiness without a configured model provider", async () => {
+    const agent = deletingAgent();
+    agent.runtime.sandbox.deployment.status = "running";
+    agent.modelProviders = [];
+    mocks.getAgent.mockResolvedValue(agent);
+    await expect(
+      ensureHermesRuntimeReady("workspace-1", agent.id),
+    ).resolves.toEqual({
+      error: "This Hermes agent has no model provider configured.",
+    });
+    expect(mocks.startProcess).not.toHaveBeenCalled();
+  });
+
+  it("records gateway exit detail when readiness expires", async () => {
+    vi.useFakeTimers();
+    try {
+      const agent = deletingAgent();
+      agent.id = "timed-out-agent";
+      agent.runtime.sandbox.deployment.status = "running";
+      mocks.getAgent.mockResolvedValue(agent);
+      mocks.livePort.mockReturnValue(49321);
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () =>
+          Response.json({
+            gateway_state: "crashed",
+            exit_reason: "missing credentials",
+            pid: 0,
+          }),
+        ),
+      );
+      const readiness = ensureHermesRuntimeReady("workspace-1", agent.id);
+      await vi.advanceTimersByTimeAsync(46_000);
+      await expect(readiness).resolves.toEqual({
+        error:
+          "Hermes gateway did not become healthy within 45 seconds (missing credentials).",
+      });
+      expect(mocks.agentRuntimeUpdateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            status: "error",
+            lastError: expect.stringContaining("missing credentials"),
+          }),
+        }),
+      );
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("aborts a health polling delay without marking the runtime failed", async () => {
+    vi.useFakeTimers();
+    try {
+      const agent = deletingAgent();
+      agent.id = "abort-poll-agent";
+      agent.runtime.sandbox.deployment.status = "running";
+      mocks.getAgent.mockResolvedValue(agent);
+      mocks.livePort.mockReturnValue(49322);
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => Response.json({ gateway_state: "starting" })),
+      );
+      const controller = new AbortController();
+      const readiness = ensureHermesRuntimeReady("workspace-1", agent.id, {
+        signal: controller.signal,
+      });
+      const rejected = expect(readiness).rejects.toThrow("cancelled by caller");
+      await vi.advanceTimersByTimeAsync(1);
+      controller.abort(new Error("cancelled by caller"));
+      await rejected;
+      expect(mocks.agentRuntimeUpdateMany).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("restarts once when the dashboard probe stays unavailable and records the failure", async () => {
+    vi.useFakeTimers();
+    try {
+      const agent = deletingAgent();
+      agent.id = "dashboard-timeout-agent";
+      agent.runtime.sandbox.deploymentId = "dashboard-timeout-deployment";
+      agent.runtime.sandbox.deployment.status = "running";
+      mocks.getAgent.mockResolvedValue(agent);
+      mocks.livePort.mockReturnValue(49323);
+      mocks.restartProcess.mockResolvedValue(undefined);
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => new Response(null, { status: 503 })),
+      );
+      const readiness = ensureHermesDashboardReady("workspace-1", agent.id);
+      await vi.advanceTimersByTimeAsync(91_000);
+      await expect(readiness).resolves.toEqual({
+        error: "Hermes dashboard did not become healthy within 45 seconds.",
+      });
+      expect(mocks.restartProcess).toHaveBeenCalledOnce();
+      expect(mocks.agentRuntimeUpdateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            lastError:
+              "Hermes dashboard did not become healthy within 45 seconds.",
+          }),
+        }),
+      );
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  });
+  it.each([
+    "agent-id",
+    "agent-workspace",
+    "runtime-id",
+    "runtime-kind",
+    "runtime-workspace",
+    "sandbox-id",
+    "sandbox-record-id",
+    "sandbox-workspace",
+    "deployment-workspace",
+    "deployment-source",
+  ])("rejects maintenance with mismatched %s ownership", async (mismatch) => {
+    const agent = volumeCopyAgent({
+      agentId: "owner",
+      runtimeId: "r",
+      sandboxId: "s",
+      deploymentId: "d",
+    });
+    if (mismatch === "agent-id") agent.id = "other";
+    if (mismatch === "agent-workspace") agent.workspaceId = "other";
+    if (mismatch === "runtime-id") agent.runtime.id = "";
+    if (mismatch === "runtime-kind") agent.runtime.kind = "pi";
+    if (mismatch === "runtime-workspace") agent.runtime.workspaceId = "other";
+    if (mismatch === "sandbox-id") agent.runtime.sandboxId = "other";
+    if (mismatch === "sandbox-record-id") agent.runtime.sandbox.id = "other";
+    if (mismatch === "sandbox-workspace")
+      agent.runtime.sandbox.workspaceId = "other";
+    if (mismatch === "deployment-workspace")
+      agent.runtime.sandbox.deployment.workspaceId = "other";
+    if (mismatch === "deployment-source")
+      agent.runtime.sandbox.deployment.source = "catalog";
+    mocks.getAgent.mockResolvedValue(agent);
+    const operation = vi.fn();
+    await expect(
+      runHermesRuntimeMaintenance("workspace-1", "owner", "s", {}, operation),
+    ).resolves.toEqual({ status: "error", error: "Hermes runtime not found." });
+    expect(operation).not.toHaveBeenCalled();
+    const lease = acquireHermesRuntimeWriteLease("workspace-1", "owner");
+    expect(lease).not.toBeNull();
+    lease?.release();
+  });
+
+  it.each(["running", "stopped", "restore_failed"])(
+    "preserves safe state after failed maintenance from %s",
+    async (deploymentStatus) => {
+      const agent = volumeCopyAgent({
+        agentId: `failed-${deploymentStatus}`,
+        runtimeId: "r",
+        sandboxId: "s",
+        deploymentId: "d",
+        deploymentStatus,
+      });
+      mocks.getAgent.mockResolvedValue(agent);
+      const result = await runHermesRuntimeMaintenance(
+        "workspace-1",
+        agent.id,
+        "s",
+        { quiesce: true, allowRestoreFailed: true },
+        async () => {
+          throw "snapshot failed";
+        },
+      );
+      expect(result).toEqual({ status: "error", error: "snapshot failed" });
+      expect(mocks.killProcess).toHaveBeenCalledWith("d", {
+        finalStatus: "copying",
+      });
+      if (deploymentStatus === "running")
+        expect(mocks.startProcess).toHaveBeenCalledOnce();
+      else
+        expect(mocks.deploymentUpdateMany).toHaveBeenLastCalledWith(
+          expect.objectContaining({ data: { status: deploymentStatus } }),
+        );
+    },
+  );
+
+  it.each([0, 1])(
+    "keeps a stopped runtime stopped after maintenance with %s providers",
+    async (providerCount) => {
+      const agent = volumeCopyAgent({
+        agentId: `stopped-${providerCount}`,
+        runtimeId: "r",
+        sandboxId: "s",
+        deploymentId: "d",
+        providerCount,
+      });
+      mocks.getAgent.mockResolvedValue(agent);
+      await expect(
+        runHermesRuntimeMaintenance(
+          "workspace-1",
+          agent.id,
+          "s",
+          { quiesce: true },
+          async (context) => {
+            expect(context).toMatchObject({
+              volumeName: "volume-s",
+              wasActive: false,
+              sandboxId: "s",
+            });
+            return 42;
+          },
+        ),
+      ).resolves.toEqual({ status: "completed", data: 42 });
+      expect(mocks.agentRuntimeUpdateMany).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          data: {
+            status: providerCount ? "stopped" : "setup_required",
+            lastError: null,
+          },
+        }),
+      );
+      expect(mocks.startProcess).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not resume a volume whose operation marks it unsafe", async () => {
+    const agent = volumeCopyAgent({
+      agentId: "unsafe-maintenance",
+      runtimeId: "r",
+      sandboxId: "s",
+      deploymentId: "d",
+      deploymentStatus: "running",
+    });
+    mocks.getAgent.mockResolvedValue(agent);
+    await expect(
+      runHermesRuntimeMaintenance(
+        "workspace-1",
+        agent.id,
+        "s",
+        { quiesce: true },
+        async (context) => {
+          context.preventResume();
+          throw new Error("unsafe volume");
+        },
+      ),
+    ).resolves.toEqual({ status: "error", error: "unsafe volume" });
+    expect(mocks.startProcess).not.toHaveBeenCalled();
+  });
+
+  it.each(["deployment", "runtime"])(
+    "does not operate on a lost %s maintenance claim",
+    async (claim) => {
+      const agent = volumeCopyAgent({
+        agentId: `lost-${claim}`,
+        runtimeId: "r",
+        sandboxId: "s",
+        deploymentId: "d",
+      });
+      mocks.getAgent.mockResolvedValue(agent);
+      if (claim === "deployment")
+        mocks.deploymentUpdateMany.mockResolvedValueOnce({ count: 0 });
+      else mocks.agentRuntimeUpdateMany.mockResolvedValueOnce({ count: 0 });
+      const operation = vi.fn();
+      await expect(
+        runHermesRuntimeMaintenance(
+          "workspace-1",
+          agent.id,
+          "s",
+          { quiesce: true },
+          operation,
+        ),
+      ).resolves.toMatchObject({
+        status: "error",
+        error: expect.stringContaining("changed before"),
+      });
+      expect(operation).not.toHaveBeenCalled();
+      expect(mocks.killProcess).not.toHaveBeenCalled();
+    },
+  );
+
+  it("persists restart failure without masking the runtime error", async () => {
+    const agent = volumeCopyAgent({
+      agentId: "resume-failure",
+      runtimeId: "r",
+      sandboxId: "s",
+      deploymentId: "d",
+      deploymentStatus: "running",
+    });
+    mocks.getAgent.mockResolvedValue(agent);
+    mocks.startProcess.mockRejectedValueOnce(new Error("launch failed"));
+    await expect(
+      runHermesRuntimeMaintenance(
+        "workspace-1",
+        agent.id,
+        "s",
+        { quiesce: true },
+        async () => true,
+      ),
+    ).resolves.toEqual({
+      status: "error",
+      error:
+        "The Hermes runtime could not be restarted after a volume operation: launch failed",
+    });
+    expect(mocks.deploymentUpdateMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({ data: { status: "error" } }),
+    );
+  });
 });

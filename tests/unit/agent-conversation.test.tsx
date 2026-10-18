@@ -997,4 +997,265 @@ describe("AgentConversation", () => {
       ),
     );
   });
+  it.each([
+    ["notFound", "Conversation not found."],
+    ["Forbidden command execution", "Forbidden command execution"],
+    [null, "The runtime command failed. The input has been kept."],
+  ])(
+    "restores the command draft when the server rejects %s",
+    async (error, message) => {
+      apiMocks.fetch.mockResolvedValueOnce(
+        Response.json({ error }, { status: 403 }),
+      );
+      const onConversationChanged = vi.fn();
+      renderConversation({ runtimeKind: "dsh", onConversationChanged });
+      const input = screen.getByPlaceholderText("Message this agent");
+      await userEvent.type(input, "/compact preserve files");
+      await userEvent.click(
+        screen.getByRole("button", { name: "Send prompt" }),
+      );
+      expect(await screen.findByText(message)).toBeInTheDocument();
+      await waitFor(() => expect(input).toHaveValue("/compact preserve files"));
+      expect(chatMocks.sendMessage).not.toHaveBeenCalled();
+      expect(onConversationChanged).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rejects unsupported runtime commands locally and keeps the draft", async () => {
+    renderConversation({ runtimeKind: "dsh" });
+    const input = screen.getByPlaceholderText("Message this agent");
+    await userEvent.type(input, "/clear");
+    await userEvent.click(screen.getByRole("button", { name: "Send prompt" }));
+    await screen.findByText(
+      "This command is not supported by the current runtime.",
+    );
+    await waitFor(() => expect(input).toHaveValue("/clear"));
+    expect(apiMocks.fetch).not.toHaveBeenCalled();
+    expect(chatMocks.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("retains a normal message when conversation creation fails and sends it on retry", async () => {
+    const ensureConversation = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Forbidden"))
+      .mockResolvedValueOnce("conv-new");
+    renderConversation({ activeConversationId: null, ensureConversation });
+    const input = screen.getByPlaceholderText("Message this agent");
+    await userEvent.type(input, "Keep this draft");
+    await userEvent.click(screen.getByRole("button", { name: "Send prompt" }));
+    await waitFor(() => expect(input).toHaveValue("Keep this draft"));
+    expect(chatMocks.sendMessage).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Send prompt" }));
+    await waitFor(() =>
+      expect(chatMocks.sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          parts: expect.arrayContaining([
+            expect.objectContaining({ type: "text", text: "Keep this draft" }),
+          ]),
+        }),
+        expect.objectContaining({
+          body: expect.objectContaining({ conversationId: "conv-new" }),
+        }),
+      ),
+    );
+  });
+
+  it("reports server cancellation denial without stopping the local observer", async () => {
+    chatMocks.useChat.mockReturnValue({
+      ...chatMocks.useChat(),
+      status: "streaming",
+    });
+    apiMocks.fetch.mockResolvedValueOnce(
+      new Response("data: [DONE]\n\n", {
+        headers: {
+          "content-type": "text/event-stream",
+          "X-Chat-Turn-Id": "turn-denied",
+        },
+      }),
+    );
+    renderConversation({
+      serverManaged: true,
+      apiPath: "/api/v1/chat/threads/conv-1/turns",
+      includeConversationIdInBody: false,
+    });
+    const { transport } = assertDefined(chatMocks.useChat.mock.calls.at(-1))[0];
+    const stream = await transport.sendMessages({
+      chatId: "conv-1",
+      trigger: "submit-message",
+      messages: [
+        {
+          id: "user-denied",
+          role: "user",
+          parts: [{ type: "text", text: "Continue" }],
+        },
+      ],
+      abortSignal: new AbortController().signal,
+    });
+    await stream.cancel();
+    apiMocks.fetch.mockResolvedValueOnce(
+      Response.json(
+        { error: "Not allowed to cancel this turn" },
+        { status: 403 },
+      ),
+    );
+    await userEvent.click(screen.getByRole("button", { name: /stop/i }));
+    await screen.findByText("Not allowed to cancel this turn");
+    expect(chatMocks.stop).not.toHaveBeenCalled();
+  });
+  it("enforces attachment count, lets users remove a file and accepts a replacement", async () => {
+    renderConversation({
+      attachmentUploadUrl: "/api/v1/workspaces/workspace/attachments",
+    });
+    await userEvent.click(screen.getByRole("button", { name: "Open tools" }));
+    await userEvent.click(
+      screen.getByRole("menuitem", { name: /Add attachment/ }),
+    );
+    const input = assertDefined(
+      document.querySelector<HTMLInputElement>('input[type="file"]'),
+    );
+    const files = Array.from(
+      { length: 6 },
+      (_, index) => new File(["data"], `file-${index}.txt`),
+    );
+    await userEvent.upload(input, files);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "You can attach up to 5 files.",
+    );
+    expect(screen.queryByText("file-5.txt")).not.toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Remove file-0.txt" }),
+    );
+    expect(screen.queryByText("file-0.txt")).not.toBeInTheDocument();
+    await userEvent.upload(input, new File(["replacement"], "replacement.txt"));
+    expect(await screen.findByText("replacement.txt")).toBeInTheDocument();
+    expect(apiMocks.fetch).not.toHaveBeenCalled();
+  });
+
+  it("uploads Hermes files as runtime-path context without attaching an external download URL", async () => {
+    apiMocks.fetch.mockResolvedValueOnce(
+      Response.json({
+        runtimePath: "/home/hermes/notes.txt",
+        name: "notes.txt",
+        size: 5,
+      }),
+    );
+    renderConversation({ runtimeKind: "hermes" });
+    await userEvent.click(screen.getByRole("button", { name: "Open tools" }));
+    await userEvent.click(
+      screen.getByRole("menuitem", { name: /Add attachment/ }),
+    );
+    const input = assertDefined(
+      document.querySelector<HTMLInputElement>('input[type="file"]'),
+    );
+    await userEvent.upload(
+      input,
+      new File(["notes"], "notes.txt", { type: "text/plain" }),
+    );
+    await userEvent.type(
+      screen.getByPlaceholderText("Message this agent"),
+      "Read this runtime file",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Send prompt" }));
+    await waitFor(() =>
+      expect(chatMocks.sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          parts: expect.arrayContaining([
+            expect.objectContaining({
+              type: "text",
+              text: expect.stringContaining("/home/hermes/notes.txt"),
+            }),
+          ]),
+        }),
+        expect.anything(),
+      ),
+    );
+    const parts = chatMocks.sendMessage.mock.calls.at(-1)?.[0]?.parts as Array<{
+      type: string;
+    }>;
+    expect(parts.some((part) => part.type === "file")).toBe(false);
+  });
+
+  it("retains attachments when runtime commands reject attached input locally", async () => {
+    renderConversation({
+      runtimeKind: "dsh",
+      attachmentUploadUrl: "/api/v1/workspaces/workspace/attachments",
+    });
+    await userEvent.click(screen.getByRole("button", { name: "Open tools" }));
+    await userEvent.click(
+      screen.getByRole("menuitem", { name: /Add attachment/ }),
+    );
+    await userEvent.upload(
+      assertDefined(
+        document.querySelector<HTMLInputElement>('input[type="file"]'),
+      ),
+      new File(["notes"], "notes.txt"),
+    );
+    await userEvent.type(
+      screen.getByPlaceholderText("Message this agent"),
+      "/compact",
+    );
+    apiMocks.fetch.mockResolvedValueOnce(
+      Response.json({ url: "/api/v1/attachments/notes" }),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Send prompt" }));
+    await screen.findByText(
+      "Send attachments and references in a regular message, separately from commands.",
+    );
+    await waitFor(() =>
+      expect(screen.getByPlaceholderText("Message this agent")).toHaveValue(
+        "/compact",
+      ),
+    );
+    expect(chatMocks.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it.each([true, false])(
+    "requires an explicit tool approval decision approved=%s",
+    async (approved) => {
+      const addToolApprovalResponse = vi.fn();
+      const messages = [
+        {
+          id: "approval-message",
+          role: "assistant",
+          parts: [
+            {
+              type: "tool-delete_file",
+              toolCallId: "delete-call",
+              state: "approval-requested",
+              input: { path: "important.md" },
+              approval: { id: "approval-id" },
+            },
+          ],
+        },
+      ] as HermesUIMessage[];
+      chatMocks.useChat.mockReturnValue({
+        ...chatMocks.useChat(),
+        messages,
+        addToolApprovalResponse,
+      });
+      renderConversation({ initialMessages: messages });
+      await userEvent.click(
+        screen.getByRole("button", { name: approved ? "Allow once" : "Deny" }),
+      );
+      await waitFor(() =>
+        expect(addToolApprovalResponse).toHaveBeenCalledWith(
+          expect.objectContaining({ id: "approval-id", approved }),
+        ),
+      );
+      expect(chatMocks.sendMessage).not.toHaveBeenCalled();
+    },
+  );
+
+  it("shows a regeneration creation error without losing persisted history", async () => {
+    renderConversation({
+      activeConversationId: null,
+      ensureConversation: vi.fn().mockRejectedValue(new Error("Forbidden")),
+    });
+    await userEvent.click(
+      screen.getByRole("button", { name: "Retry response" }),
+    );
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(screen.getByText("hello")).toBeInTheDocument();
+    expect(chatMocks.regenerate).not.toHaveBeenCalled();
+  });
 });

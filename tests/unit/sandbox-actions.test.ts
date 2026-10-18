@@ -2101,4 +2101,216 @@ describe("renameSandboxAction", () => {
       mocks.redirect.mock.invocationCallOrder[0],
     );
   });
+  it.each([
+    "copying",
+    "copy_failed",
+    "restoring",
+    "restore_failed",
+    "restore_cleanup_required",
+    "upgrading",
+    "deleting",
+  ])(
+    "does not mutate names, environment or sudo while sandbox is %s",
+    async (status) => {
+      mocks.sandboxFindFirst.mockResolvedValue(
+        hermesSandbox({ deployment: { id: "dep1", status } }),
+      );
+      const form = envForm("TOKEN=new-value");
+      form.set("allowSudo", "on");
+      await renameSandboxAction(renameForm("New name"));
+      await updateSandboxEnvAction(form);
+      await updateSandboxSudoAction(form);
+      expect(mocks.transaction).not.toHaveBeenCalled();
+      expect(mocks.setHermesRuntimeEnv).not.toHaveBeenCalled();
+      expect(mocks.syncHermesRuntime).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not project a Hermes environment when the agent binding is missing", async () => {
+    mocks.sandboxFindFirst.mockResolvedValue(hermesSandbox());
+    mocks.agentRuntimeFindFirst.mockResolvedValue(null);
+    await updateSandboxEnvAction(envForm("TOKEN=new-value"));
+    const sudo = renameForm("Ignored");
+    sudo.set("allowSudo", "on");
+    await updateSandboxSudoAction(sudo);
+    expect(mocks.transaction).not.toHaveBeenCalled();
+    expect(mocks.setHermesRuntimeEnv).not.toHaveBeenCalled();
+    expect(mocks.syncHermesRuntime).not.toHaveBeenCalled();
+  });
+
+  it("does not sync a Hermes environment when the owning mutation refuses the update", async () => {
+    mocks.sandboxFindFirst.mockResolvedValue(hermesSandbox());
+    mocks.agentRuntimeFindFirst.mockResolvedValue({ agentId: "agent-1" });
+    mocks.setHermesRuntimeEnv.mockResolvedValue(false);
+    await updateSandboxEnvAction(envForm("TOKEN=new-value"));
+    expect(mocks.syncHermesRuntime).not.toHaveBeenCalled();
+    expect(mocks.transaction).not.toHaveBeenCalled();
+  });
+
+  it.each(["env", "sudo"])(
+    "preserves saved %s changes and reports Hermes synchronization failure",
+    async (setting) => {
+      mocks.sandboxFindFirst.mockResolvedValue(hermesSandbox());
+      mocks.agentRuntimeFindFirst.mockResolvedValue({ agentId: "agent-1" });
+      mocks.syncHermesRuntime.mockResolvedValue({
+        error: "runtime unavailable",
+      });
+      const form = envForm("TOKEN=new-value");
+      form.set("allowSudo", "on");
+      await expect(
+        setting === "env"
+          ? updateSandboxEnvAction(form)
+          : updateSandboxSudoAction(form),
+      ).rejects.toThrow("Saved, but Hermes sync failed: runtime unavailable");
+      if (setting === "env")
+        expect(mocks.setHermesRuntimeEnv).toHaveBeenCalledWith(
+          "ws1",
+          "agent-1",
+          { TOKEN: "new-value" },
+        );
+      else expect(mocks.transaction).toHaveBeenCalledOnce();
+      expect(mocks.syncHermesRuntime).toHaveBeenCalledWith("ws1", "agent-1", {
+        force: true,
+      });
+    },
+  );
+
+  it.each(["running", "stopped"])(
+    "updates approved SSH launch environment while %s without touching Docker data",
+    async (status) => {
+      mocks.sandboxFindFirst.mockResolvedValue(
+        dockerSandbox({
+          kind: "ssh",
+          image: null,
+          config: { sshTargetId: "approved", env: { OLD: "value" } },
+        }),
+      );
+      mocks.effectiveStatus.mockReturnValue(status);
+      mocks.deploymentUpdate.mockResolvedValue({ id: "dep1" });
+      mocks.resolveSpawnSpec.mockReturnValue({ kind: "sandbox" });
+      await updateSandboxEnvAction(envForm("TOKEN=new-value"));
+      expect(mocks.deploymentUpdate).toHaveBeenCalledWith({
+        where: { id: "dep1" },
+        data: {
+          installCfg: expect.objectContaining({
+            kind: "ssh",
+            sshTargetId: "approved",
+            env: { TOKEN: "new-value" },
+          }),
+        },
+      });
+      if (status === "running")
+        expect(mocks.restartProcess).toHaveBeenCalledWith(
+          "dep1",
+          expect.anything(),
+          { awaitReady: false, workspaceId: "ws1" },
+        );
+      else expect(mocks.restartProcess).not.toHaveBeenCalled();
+      expect(mocks.killProcess).not.toHaveBeenCalled();
+      expect(mocks.removeDockerSandboxContainer).not.toHaveBeenCalled();
+    },
+  );
+  it.each([
+    cloneSandboxAction,
+    createSandboxSnapshotAction,
+    restoreSandboxSnapshotAction,
+    deleteSandboxSnapshotAction,
+    updateSandboxSudoAction,
+    updateSandboxEnvAction,
+    renameSandboxAction,
+    startSandboxAction,
+    stopSandboxAction,
+    restartSandboxAction,
+    generateConnectorCommandAction,
+    deleteSandboxAction,
+  ])("ignores missing sandbox selection", async (action) => {
+    const form = new FormData();
+    form.set("workspace", "mine");
+    await action(form);
+    expect(mocks.sandboxFindFirst).not.toHaveBeenCalled();
+    expect(mocks.transaction).not.toHaveBeenCalled();
+    expect(mocks.startProcess).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    createSandboxAction,
+    cloneSandboxAction,
+    createSandboxSnapshotAction,
+    restoreSandboxSnapshotAction,
+    deleteSandboxSnapshotAction,
+    updateSandboxSudoAction,
+    updateSandboxEnvAction,
+    renameSandboxAction,
+    startSandboxAction,
+    stopSandboxAction,
+    restartSandboxAction,
+    generateConnectorCommandAction,
+    deleteSandboxAction,
+  ])("does not mutate inaccessible workspace sandboxes", async (action) => {
+    mocks.getWorkspaceForUser.mockResolvedValue(null);
+    await action(renameForm("New sandbox"));
+    expect(mocks.sandboxFindFirst).not.toHaveBeenCalled();
+    expect(mocks.deploymentCreate).not.toHaveBeenCalled();
+    expect(mocks.transaction).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    null,
+    dockerSandbox(),
+    dockerSandbox({ kind: "connector", config: {} }),
+    dockerSandbox({
+      kind: "connector",
+      deployment: { id: "dep1", status: "deleting" },
+    }),
+  ])(
+    "does not issue connector credentials for unavailable, wrong-kind or blocked records",
+    async (sandbox) => {
+      mocks.sandboxFindFirst.mockResolvedValue(sandbox);
+      await generateConnectorCommandAction(renameForm("Ignored"));
+      expect(mocks.transaction).not.toHaveBeenCalled();
+      expect(mocks.setConnectorSetupTokenCookie).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["docker", "connector"])(
+    "creates a default-named %s sandbox with network isolation",
+    async (kind) => {
+      mocks.sandboxFindFirst.mockResolvedValue(null);
+      mocks.deploymentCreate.mockResolvedValue({ id: "dep-created" });
+      mocks.sandboxCreate.mockImplementation(async ({ data }) => ({
+        ...data,
+        id: "sb-created",
+      }));
+      mocks.deploymentUpdate.mockResolvedValue({ id: "dep-created" });
+      mocks.resolveSpawnSpec.mockReturnValue({ kind: "sandbox" });
+      const form = new FormData();
+      form.set("workspace", "mine");
+      form.set("kind", kind);
+      form.set("network", "invalid-network");
+      await createSandboxAction(form);
+      expect(mocks.sandboxCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          kind,
+          name: kind === "connector" ? "Connected computer" : "Linux sandbox",
+          network: "isolated",
+          image: kind === "connector" ? null : expect.any(String),
+        }),
+      });
+      expect(mocks.redirect).toHaveBeenCalledWith(
+        "/app/mine/sandboxes/sb-created",
+      );
+    },
+  );
+
+  it.each(["ssh", "connector"])(
+    "does not clone or snapshot non-volume %s sandboxes",
+    async (kind) => {
+      mocks.sandboxFindFirst.mockResolvedValue(dockerSandbox({ kind }));
+      await cloneSandboxAction(renameForm("Copy"));
+      await createSandboxSnapshotAction(renameForm("Snapshot"));
+      expect(mocks.copyDockerVolume).not.toHaveBeenCalled();
+      expect(mocks.sandboxSnapshotCreate).not.toHaveBeenCalled();
+      expect(mocks.deploymentCreate).not.toHaveBeenCalled();
+    },
+  );
 });

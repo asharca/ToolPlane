@@ -6,6 +6,7 @@ import {
   stopAgentChannelRunner,
   liveAgentChannelStatus,
   reconcileAgentChannelRunners,
+  shutdownAgentChannelRunners,
 } from "@/lib/agents/channel-runtime";
 import { getAgentChannelLogs } from "@/lib/agents/channel-runtime-logs";
 
@@ -18,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   sandbox: vi.fn(),
   run: vi.fn(),
   spawn: vi.fn(),
+  credentials: vi.fn(),
 }));
 vi.mock("node:child_process", () => ({ spawn: mocks.spawn }));
 vi.mock("@/lib/db", () => ({ db: { agentChannelConnection: mocks } }));
@@ -31,11 +33,7 @@ vi.mock("@/lib/agents/message-service", () => ({
   runAgentChannelMessage: mocks.run,
 }));
 vi.mock("@/lib/agents/channel-connections", () => ({
-  decryptChannelCredentials: () => ({
-    WEIXIN_TOKEN: "bot-secret",
-    WEIXIN_ACCOUNT_ID: "bot",
-    WEIXIN_ALLOWED_USERS: "sender",
-  }),
+  decryptChannelCredentials: mocks.credentials,
 }));
 
 function adapter() {
@@ -60,6 +58,11 @@ beforeEach(() => {
   globalThis.__toolplaneAgentChannelAdapters = undefined;
   globalThis.__toolplaneAgentChannelStarts = undefined;
   globalThis.__toolplaneAgentChannelLogs = undefined;
+  mocks.credentials.mockReturnValue({
+    WEIXIN_TOKEN: "bot-secret",
+    WEIXIN_ACCOUNT_ID: "bot",
+    WEIXIN_ALLOWED_USERS: "sender",
+  });
   mocks.findFirst.mockResolvedValue({
     id: "connection",
     workspaceId: "workspace",
@@ -180,5 +183,235 @@ describe("native channel lifecycle", () => {
     });
     expect(transport.disconnect).toHaveBeenCalledOnce();
     expect(liveAgentChannelStatus("connection")).toBe("stopped");
+  });
+
+  it("migrates stopped sandbox binding but rejects rebinding a live runner", async () => {
+    const transport = adapter();
+    mocks.create.mockResolvedValue(transport);
+    mocks.sandbox.mockResolvedValue({ id: "sandbox", agentId: "new-agent" });
+    expect(await startAgentChannelRunner("workspace", "connection")).toEqual(
+      {},
+    );
+    expect(mocks.update).toHaveBeenCalledWith({
+      where: { id: "connection" },
+      data: { agentId: "new-agent" },
+    });
+    mocks.sandbox.mockResolvedValue({ id: "sandbox", agentId: "third-agent" });
+    expect(
+      (await startAgentChannelRunner("workspace", "connection")).error,
+    ).toContain("Stop the channel");
+    expect(mocks.update).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects unbound agents, unsupported transports and missing start credentials", async () => {
+    mocks.findFirst.mockResolvedValueOnce({
+      id: "connection",
+      sandboxId: null,
+      agentId: null,
+      platform: "weixin",
+    });
+    expect(
+      (await startAgentChannelRunner("workspace", "connection")).error,
+    ).toContain("Bind an agent");
+    for (const platform of ["unknown", "whatsapp"]) {
+      mocks.findFirst.mockResolvedValueOnce({
+        id: "connection",
+        sandboxId: null,
+        agentId: "agent",
+        platform,
+      });
+      expect(
+        (await startAgentChannelRunner("workspace", "connection")).error,
+      ).toContain("no native");
+    }
+    mocks.credentials.mockReturnValue({});
+    expect(
+      (await startAgentChannelRunner("workspace", "connection")).error,
+    ).toContain("Missing required");
+    expect(mocks.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: "setup_required" }),
+      }),
+    );
+  });
+
+  it("keeps an already-running adapter and contains connection factory failures", async () => {
+    const transport = adapter();
+    mocks.create.mockResolvedValue(transport);
+    await startAgentChannelRunner("workspace", "connection");
+    expect(await startAgentChannelRunner("workspace", "connection")).toEqual(
+      {},
+    );
+    expect(mocks.create).toHaveBeenCalledOnce();
+    await stopAgentChannelRunner("workspace", "connection");
+    mocks.create.mockRejectedValueOnce("failure");
+    expect(await startAgentChannelRunner("workspace", "connection")).toEqual({
+      error: "Channel connection failed.",
+    });
+  });
+
+  it("serializes same-thread turns, permits other threads and caps queued turns", async () => {
+    const transport = adapter();
+    mocks.create.mockResolvedValue(transport);
+    let release!: () => void;
+    mocks.run.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve({ body: { delivery: "none" } });
+        }),
+    );
+    await startAgentChannelRunner("workspace", "connection");
+    for (let i = 0; i < 21; i++)
+      transport.emit("message", { ...event, conversationId: "thread" });
+    await vi.waitFor(() => expect(mocks.run).toHaveBeenCalledOnce());
+    expect(
+      getAgentChannelLogs("connection").some((entry) =>
+        entry.message.includes("queue is full"),
+      ),
+    ).toBe(true);
+    await stopAgentChannelRunner("workspace", "connection");
+    release();
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(mocks.run).toHaveBeenCalledOnce();
+  });
+
+  it("converts capped media into attachment parts and preserves command/thread reply semantics", async () => {
+    const transport = adapter();
+    transport.sendTypingIndicator.mockRejectedValue(new Error("no typing"));
+    mocks.create.mockResolvedValue(transport);
+    mocks.run.mockImplementation(async ({ onAccepted }) => {
+      await onAccepted("Accepted");
+      return { body: { delivery: "none" } };
+    });
+    await startAgentChannelRunner("workspace", "connection");
+    transport.emit("message", {
+      ...event,
+      text: " ",
+      conversationId: "thread",
+      replyInThread: true,
+      images: [{ data: "aQ==", media_type: "image/png" }],
+      files: Array.from({ length: 25 }, () => ({
+        data: "Zg==",
+        media_type: "text/plain",
+        filename: "x".repeat(300),
+        size: 1,
+      })),
+    });
+    await vi.waitFor(() =>
+      expect(transport.sendMessage).toHaveBeenCalledWith("sender", "Accepted", {
+        replyToMessageId: "1",
+        replyInThread: true,
+      }),
+    );
+    const request = mocks.run.mock.calls[0]?.[0];
+    expect(request.attachmentParts).toHaveLength(20);
+    expect(request.attachmentParts[0]).toEqual({
+      type: "file",
+      mediaType: "image/png",
+      url: "data:image/png;base64,aQ==",
+    });
+    expect(request.rawBody).toMatchObject({
+      message: "Attachment",
+      source: { threadId: "thread" },
+    });
+    expect(request.rawBody.attachments[1].name).toHaveLength(240);
+    for (const args of ["", "next"])
+      transport.emit("command", { ...event, command: "new", args });
+    await vi.waitFor(() => expect(mocks.run).toHaveBeenCalledTimes(3));
+    expect(mocks.run.mock.calls[1]?.[0].rawBody.message).toBe("/new");
+    expect(mocks.run.mock.calls[2]?.[0].rawBody.message).toBe("/new next");
+  });
+
+  it.each([
+    new Error("turn error"),
+    "untyped failure",
+    { body: { error: "provider rejected" } },
+  ])(
+    "logs turn failures without delivering an error as an agent answer: %j",
+    async (failure) => {
+      const transport = adapter();
+      mocks.create.mockResolvedValue(transport);
+      if (failure && typeof failure === "object" && "body" in failure)
+        mocks.run.mockResolvedValue(failure);
+      else mocks.run.mockRejectedValue(failure);
+      await startAgentChannelRunner("workspace", "connection");
+      transport.emit("message", event);
+      await vi.waitFor(() =>
+        expect(
+          getAgentChannelLogs("connection").some(
+            (entry) => entry.level === "error",
+          ),
+        ).toBe(true),
+      );
+      expect(transport.sendMessage).not.toHaveBeenCalled();
+    },
+  );
+
+  it("terminates fatal adapters and ignores their stale status/log/fatal events", async () => {
+    const transport = adapter();
+    mocks.create.mockResolvedValue(transport);
+    await startAgentChannelRunner("workspace", "connection");
+    transport.emit("statusChange", {
+      connected: false,
+      error: "bad bot-secret",
+    });
+    transport.emit("log", { level: "debug", message: "diagnostic" });
+    transport.emit("fatal", "fatal bot-secret");
+    await vi.waitFor(() =>
+      expect(mocks.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: {
+            status: "error",
+            runnerPid: null,
+            lastError: "fatal [REDACTED]",
+          },
+        }),
+      ),
+    );
+    expect(liveAgentChannelStatus("connection")).toBe("stopped");
+    const count = getAgentChannelLogs("connection").length;
+    transport.emit("fatal", "stale");
+    transport.emit("log", { level: "error", message: "stale" });
+    transport.emit("statusChange", { connected: true });
+    expect(getAgentChannelLogs("connection")).toHaveLength(count);
+    expect(transport.disconnect).toHaveBeenCalledOnce();
+  });
+
+  it("stops bindings moved by another operation and contains disconnect failures", async () => {
+    vi.useFakeTimers();
+    const transport = adapter();
+    transport.disconnect.mockRejectedValue(new Error("disconnect rejected"));
+    mocks.create.mockResolvedValue(transport);
+    await startAgentChannelRunner("workspace", "connection");
+    mocks.findFirst.mockResolvedValue(null);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(liveAgentChannelStatus("connection")).toBe("stopped");
+    expect(
+      getAgentChannelLogs("connection").some(
+        (entry) => entry.message === "Channel disconnect failed.",
+      ),
+    ).toBe(true);
+  });
+
+  it("times out a hung connection and releases resources", async () => {
+    vi.useFakeTimers();
+    const transport = adapter();
+    transport.connect.mockImplementation(() => new Promise(() => {}));
+    mocks.create.mockResolvedValue(transport);
+    const result = startAgentChannelRunner("workspace", "connection");
+    await vi.advanceTimersByTimeAsync(30000);
+    expect(await result).toEqual({ error: "Channel connection timed out." });
+    expect(transport.disconnect).toHaveBeenCalledOnce();
+  });
+
+  it("shuts down without overwriting persisted running status", async () => {
+    const transport = adapter();
+    mocks.create.mockResolvedValue(transport);
+    await startAgentChannelRunner("workspace", "connection");
+    const writes = mocks.updateMany.mock.calls.length;
+    await shutdownAgentChannelRunners();
+    expect(liveAgentChannelStatus("connection")).toBe("stopped");
+    expect(transport.disconnect).toHaveBeenCalledOnce();
+    expect(mocks.updateMany).toHaveBeenCalledTimes(writes);
   });
 });

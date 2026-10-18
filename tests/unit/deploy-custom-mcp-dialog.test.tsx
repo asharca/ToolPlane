@@ -1,6 +1,6 @@
 import { assertDefined } from "../assert-defined";
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { DeployCustomMcpDialog } from "@/components/dashboard/DeployCustomMcpDialog";
 
@@ -324,5 +324,60 @@ describe("DeployCustomMcpDialog", () => {
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText("test-token")).not.toBeInTheDocument();
+  });
+  it.each([
+    "",
+    "/etc/config",
+    "../secret",
+    "folder//config",
+    "folder/./config",
+    "folder\\config",
+    " config",
+    "config\u007f",
+  ])("rejects unsafe runtime file path %j before deployment", async (path) => {
+    render(<DeployCustomMcpDialog slug="acme" defaultOpen />);
+    fireEvent.change(screen.getByLabelText("MCP JSON config"), {
+      target: {
+        value: JSON.stringify({
+          test: { command: "npx", args: ["-y", "test-mcp"] },
+        }),
+      },
+    });
+    await userEvent.click(
+      screen.getByRole("button", { name: "Configuration files (optional)" }),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Add file" }));
+    fireEvent.change(screen.getByLabelText("Relative file path"), {
+      target: { value: path },
+    });
+    const event = new Event("submit", { bubbles: true, cancelable: true });
+    fireEvent(
+      assertDefined(screen.getByLabelText("MCP JSON config").closest("form")),
+      event,
+    );
+    expect(event.defaultPrevented).toBe(true);
+    expect(screen.getByRole("alert")).toBeVisible();
+  });
+
+  it("rejects duplicate runtime file paths before deployment", async () => {
+    render(<DeployCustomMcpDialog slug="acme" defaultOpen />);
+    fireEvent.change(screen.getByLabelText("MCP JSON config"), {
+      target: {
+        value: JSON.stringify({
+          test: { command: "npx", args: ["-y", "test-mcp"] },
+        }),
+      },
+    });
+    await userEvent.click(
+      screen.getByRole("button", { name: "Configuration files (optional)" }),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Add file" }));
+    await userEvent.click(screen.getByRole("button", { name: "Add file" }));
+    for (const input of screen.getAllByLabelText("Relative file path"))
+      fireEvent.change(input, { target: { value: "config.json" } });
+    fireEvent.submit(
+      assertDefined(screen.getByLabelText("MCP JSON config").closest("form")),
+    );
+    expect(screen.getByRole("alert")).toBeVisible();
   });
 });

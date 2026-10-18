@@ -15,6 +15,7 @@ const rfbMocks = vi.hoisted(() => ({
   disconnect: vi.fn(),
   focus: vi.fn(),
   sendKey: vi.fn(),
+  sendCredentials: vi.fn(),
 }));
 
 vi.mock("@novnc/novnc", () => ({
@@ -35,7 +36,9 @@ vi.mock("@novnc/novnc", () => ({
     sendKey(keysym: number, code?: string, down?: boolean) {
       rfbMocks.sendKey(keysym, code, down);
     }
-    sendCredentials() {}
+    sendCredentials(credentials: { password: string }) {
+      rfbMocks.sendCredentials(credentials);
+    }
   },
 }));
 
@@ -273,4 +276,99 @@ describe("sandbox screen workspace", () => {
       );
     },
   );
+  it("authenticates an RFB session without retaining the password", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          Response.json({ viewerUrl: "wss://example.test/session" }),
+        ),
+    );
+    render(
+      <SandboxScreen
+        workspace="acme"
+        sandboxId="box"
+        displays={[
+          { id: "main", label: "Desktop", transport: "rfb", control: false },
+        ]}
+        running
+      />,
+    );
+    await waitFor(() => expect(rfbMocks.construct).toHaveBeenCalledOnce());
+    const client = rfbMocks.construct.mock.calls[0]?.[2] as EventTarget;
+    act(() => client.dispatchEvent(new Event("credentialsrequired")));
+    const password = screen.getByLabelText(/password/i);
+    fireEvent.change(password, { target: { value: "secret" } });
+    fireEvent.click(screen.getByRole("button", { name: /^connect$/i }));
+    expect(rfbMocks.sendCredentials).toHaveBeenCalledWith({
+      password: "secret",
+    });
+    expect(screen.queryByLabelText(/password/i)).toBeNull();
+    act(() => client.dispatchEvent(new Event("credentialsrequired")));
+    expect(screen.getByLabelText(/password/i)).toHaveValue("");
+    expect(screen.queryByRole("checkbox")).toBeNull();
+  });
+
+  it.each(["http", "missing", "network"])(
+    "shows recoverable %s session setup failures",
+    async (failure) => {
+      vi.useFakeTimers();
+      const response = Promise.withResolvers<Response>();
+      const fetcher = vi.fn(() => response.promise);
+      vi.stubGlobal("fetch", fetcher);
+      render(
+        <SandboxScreen
+          workspace="acme"
+          sandboxId="box"
+          displays={[
+            { id: "main", label: "Desktop", transport: "rfb", control: false },
+          ]}
+          running
+        />,
+      );
+      await act(async () => vi.advanceTimersByTimeAsync(0));
+      await act(async () => {
+        if (failure === "network") response.reject(new Error("offline"));
+        else
+          response.resolve(
+            failure === "http"
+              ? new Response(null, { status: 503 })
+              : Response.json({}),
+          );
+      });
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "The screen is unavailable.",
+      );
+      expect(screen.getByRole("button", { name: "Try again" })).toBeEnabled();
+    },
+  );
+
+  it("handles snapshot errors and refresh while respecting stopped sandboxes", () => {
+    const props = {
+      workspace: "acme",
+      sandboxId: "box",
+      displays: [
+        {
+          id: "main",
+          label: "Phone",
+          transport: "snapshot" as const,
+          control: false,
+          width: 800,
+          height: 600,
+        },
+      ],
+    };
+    const view = render(<SandboxScreen {...props} running={false} />);
+    expect(screen.queryByRole("img")).toBeNull();
+    view.rerender(<SandboxScreen {...props} running />);
+    fireEvent.error(screen.getByRole("img"));
+    expect(screen.getByRole("alert")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: /refresh/i }));
+    expect(screen.queryByRole("alert")).toBeNull();
+    fireEvent.load(screen.getByRole("img"));
+    expect(screen.getByText("800×600")).toBeVisible();
+    view.rerender(<SandboxScreen {...props} displays={[]} running />);
+    expect(screen.queryByRole("img")).toBeNull();
+  });
 });

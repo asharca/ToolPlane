@@ -201,4 +201,123 @@ describe("SandboxCreateForm", () => {
     );
     expect(trigger).toHaveFocus();
   });
+  it.each(["missing", "empty", "untrusted", "oversize"])(
+    "rejects %s archives before upload",
+    async (invalid) => {
+      vi.stubGlobal("XMLHttpRequest", MockXmlHttpRequest);
+      render(
+        <SandboxCreateForm workspace="acme" hermesArchiveMaxUploadMiB={1} />,
+      );
+      await userEvent.click(
+        screen.getByRole("button", { name: "New sandbox" }),
+      );
+      await userEvent.click(
+        screen.getByRole("button", { name: /Import .hermes archive/ }),
+      );
+      if (invalid !== "missing") {
+        const file = new File(
+          [invalid === "empty" ? "" : "zip"],
+          "backup.zip",
+          { type: "application/zip" },
+        );
+        if (invalid === "oversize")
+          Object.defineProperty(file, "size", { value: 2 * 1024 * 1024 });
+        fireEvent.change(screen.getByLabelText("Hermes archive"), {
+          target: { files: [file] },
+        });
+      }
+      if (invalid !== "untrusted")
+        await userEvent.click(
+          screen.getByRole("checkbox", { name: /I trust this archive/ }),
+        );
+      fireEvent.submit(
+        assertDefined(
+          screen
+            .getByRole("button", { name: "Import and create Hermes sandbox" })
+            .closest("form"),
+        ),
+      );
+      expect(await screen.findByRole("alert")).toBeVisible();
+      expect(MockXmlHttpRequest.instances).toHaveLength(0);
+    },
+  );
+
+  it.each(["error", "abort", "malformed", "server", "missing-id"])(
+    "reports archive upload %s and enables retry",
+    async (failure) => {
+      class FailedRequest extends MockXmlHttpRequest {
+        send = vi.fn(() =>
+          queueMicrotask(() => {
+            if (failure === "malformed") {
+              this.status = 502;
+              this.responseText = "<html>proxy</html>";
+            }
+            if (failure === "server") {
+              this.status = 400;
+              this.responseText = JSON.stringify({
+                error: "Invalid archive layout",
+              });
+            }
+            if (failure === "missing-id") this.responseText = "{}";
+            this.upload.dispatchEvent(
+              new ProgressEvent("progress", {
+                loaded: 2,
+                total: 3,
+                lengthComputable: true,
+              }),
+            );
+            this.upload.dispatchEvent(
+              new ProgressEvent("progress", {
+                loaded: 3,
+                lengthComputable: false,
+              }),
+            );
+            this.dispatchEvent(
+              new Event(
+                failure === "error" || failure === "abort" ? failure : "load",
+              ),
+            );
+          }),
+        );
+      }
+      vi.stubGlobal("XMLHttpRequest", FailedRequest);
+      vi.stubGlobal("crypto", {});
+      render(<SandboxCreateForm workspace="acme" />);
+      await userEvent.click(
+        screen.getByRole("button", { name: "New sandbox" }),
+      );
+      await userEvent.click(
+        screen.getByRole("button", { name: /Import .hermes archive/ }),
+      );
+      fireEvent.change(screen.getByLabelText("Hermes archive"), {
+        target: { files: [new File(["zip"], "backup.zip")] },
+      });
+      await userEvent.click(
+        screen.getByRole("checkbox", { name: /I trust this archive/ }),
+      );
+      fireEvent.submit(
+        assertDefined(
+          screen
+            .getByRole("button", { name: "Import and create Hermes sandbox" })
+            .closest("form"),
+        ),
+      );
+      const alert = await screen.findByRole("alert");
+      expect(alert).toBeVisible();
+      expect(alert).not.toHaveTextContent("<html>");
+      if (failure === "server")
+        expect(alert).toHaveTextContent("Invalid archive layout");
+      expect(
+        screen.getByRole("button", {
+          name: "Import and create Hermes sandbox",
+        }),
+      ).toBeEnabled();
+      expect(
+        MockXmlHttpRequest.instances[0]?.setRequestHeader,
+      ).toHaveBeenCalledWith(
+        "x-toolplane-hermes-import-id",
+        expect.stringMatching(/^import-/),
+      );
+    },
+  );
 });

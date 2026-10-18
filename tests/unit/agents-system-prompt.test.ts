@@ -76,4 +76,22 @@ describe("assembleSystemPrompt", () => {
       "<description>Escapes &lt;/skill&gt; &amp; &apos;values&apos;.</description>",
     );
   });
+
+  it("adds authorized knowledge guidance without requiring a base prompt or skill catalog", () => {
+    const prompt = assembleSystemPrompt(undefined, [], true);
+    expect(prompt).toContain("Use knowledge_search");
+    expect(prompt).toContain("Cite the returned filenames and paths");
+    expect(prompt).not.toContain("available_skills");
+  });
+
+  it("falls back through optional skill metadata and encodes identifier paths", () => {
+    const prompt = assembleSystemPrompt(
+      " base ",
+      [{ skillId: null, skill: null, name: "A", slug: "a/b" }],
+      true,
+    );
+    expect(prompt).toContain("base\n\n---\n\n");
+    expect(prompt).toContain("<description></description>");
+    expect(prompt).toContain("toolplane://skills/a%2Fb/SKILL.md");
+  });
 });

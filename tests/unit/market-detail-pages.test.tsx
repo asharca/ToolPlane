@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   parseAssistantReleaseManifest: vi.fn(),
   parseMcpMarketManifest: vi.fn(),
   parseSkillReleaseManifest: vi.fn(),
+  parseToolkitMarketManifest: vi.fn(),
   sandboxFindFirst: vi.fn(),
   listSandboxes: vi.fn(),
   redirect: vi.fn((url: string) => {
@@ -48,7 +49,7 @@ vi.mock("@/lib/market/skill-manifest", () => ({
 }));
 vi.mock("@/lib/market/resources", () => ({
   parseMcpMarketManifest: mocks.parseMcpMarketManifest,
-  parseToolkitMarketManifest: vi.fn(),
+  parseToolkitMarketManifest: mocks.parseToolkitMarketManifest,
 }));
 vi.mock("@/lib/market/actions", () => ({
   ignoreMarketUpdateAction: vi.fn(),
@@ -580,5 +581,122 @@ describe("market detail pages", () => {
       }),
     ).rejects.toThrow("NEXT_NOT_FOUND");
     expect(mocks.redirect).not.toHaveBeenCalled();
+  });
+  it("shows the reviewed toolkit contents before offering installation", async () => {
+    mocks.getMarketListing.mockResolvedValue({
+      ...mcpListing,
+      kind: "toolkit",
+    });
+    mocks.parseToolkitMarketManifest.mockReturnValue({
+      mcps: [{ catalogSlug: "filesystem", name: "Filesystem server" }],
+      skills: [{ snapshot: { slug: "writer", name: "Writer snapshot" } }],
+    });
+    render(
+      await MarketItemPage({
+        params: Promise.resolve({
+          workspace: "acme team",
+          namespace: "acme-labs",
+          listingSlug: "catalog-search",
+        }),
+      }),
+    );
+    expect(screen.getByText("Filesystem server")).toBeInTheDocument();
+    expect(screen.getByText("Writer snapshot")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "toolkits" })).toHaveAttribute(
+      "href",
+      "/app/acme%20team/market/toolkits",
+    );
+    expect(
+      screen.getByRole("button", { name: "installToWorkspace" }),
+    ).toBeInTheDocument();
+  });
+
+  it("opens an installed toolkit in the current workspace instead of reinstalling", async () => {
+    mocks.getMarketListing.mockResolvedValue({
+      ...mcpListing,
+      kind: "toolkit",
+    });
+    mocks.parseToolkitMarketManifest.mockReturnValue({ mcps: [], skills: [] });
+    mocks.marketInstall.mockResolvedValue({
+      id: "install-1",
+      currentReleaseId: "release-mcp",
+      currentRelease: { version: 2 },
+      toolkit: {
+        id: "toolkit-1",
+        workspaceId: "workspace-1",
+        slug: "research toolkit",
+      },
+    });
+    render(
+      await MarketItemPage({
+        params: Promise.resolve({
+          workspace: "acme team",
+          namespace: "acme-labs",
+          listingSlug: "catalog-search",
+        }),
+      }),
+    );
+    expect(screen.getByText("alreadyAddedTitle")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "installToWorkspace" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen
+        .getAllByRole("link")
+        .some(
+          (link) =>
+            link.getAttribute("href") ===
+            "/app/acme%20team/toolkits/research%20toolkit",
+        ),
+    ).toBe(true);
+  });
+
+  it("never exposes a foreign workspace toolkit through an installation reference", async () => {
+    mocks.getMarketListing.mockResolvedValue({
+      ...mcpListing,
+      kind: "toolkit",
+    });
+    mocks.parseToolkitMarketManifest.mockReturnValue({ mcps: [], skills: [] });
+    mocks.marketInstall.mockResolvedValue({
+      id: "install-1",
+      currentReleaseId: "release-mcp",
+      currentRelease: { version: 2 },
+      toolkit: {
+        id: "toolkit-secret",
+        workspaceId: "foreign-workspace",
+        slug: "secret-toolkit",
+      },
+    });
+    render(
+      await MarketItemPage({
+        params: Promise.resolve({
+          workspace: "acme team",
+          namespace: "acme-labs",
+          listingSlug: "catalog-search",
+        }),
+      }),
+    );
+    expect(
+      screen
+        .getAllByRole("link")
+        .some((link) => link.getAttribute("href")?.includes("secret-toolkit")),
+    ).toBe(false);
+  });
+
+  it.each([
+    null,
+    { ...mcpListing, latestRelease: null },
+    { ...mcpListing, kind: "unknown" },
+  ])("returns notFound for unavailable market listings %j", async (listing) => {
+    mocks.getMarketListing.mockResolvedValue(listing);
+    await expect(
+      MarketItemPage({
+        params: Promise.resolve({
+          workspace: "acme team",
+          namespace: "acme-labs",
+          listingSlug: "catalog-search",
+        }),
+      }),
+    ).rejects.toThrow("NEXT_NOT_FOUND");
   });
 });

@@ -136,6 +136,31 @@ function stubMutationFetch(fetchMock: typeof fetch) {
   );
 }
 
+function dragResource(
+  sourceName: string,
+  targetName: string,
+  position: "before" | "after" | "inside",
+) {
+  const source = screen.getByRole("treeitem", { name: sourceName });
+  const target = screen.getByRole("treeitem", { name: targetName });
+  const dataTransfer = {
+    effectAllowed: "none",
+    dropEffect: "none",
+    setData: vi.fn(),
+  };
+  fireEvent.dragStart(source, { dataTransfer });
+  vi.spyOn(target, "getBoundingClientRect").mockReturnValue({
+    top: 0,
+    height: 100,
+  } as DOMRect);
+  const event = createEvent.dragOver(target, { dataTransfer });
+  Object.defineProperty(event, "clientY", {
+    value: position === "before" ? 1 : position === "after" ? 99 : 50,
+  });
+  fireEvent(target, event);
+  fireEvent.drop(target, { dataTransfer });
+}
+
 const sidebarAssistants: Parameters<
   typeof WorkspaceAssistantChat
 >[0]["assistants"] = [1, 2, 3].map((id) => ({
@@ -959,5 +984,363 @@ describe("WorkspaceAssistantChat", () => {
       block: "center",
     });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+  it.each(["Test active branch", "Test new branch"])(
+    "keeps the current conversation after %s is denied and permits retry",
+    async (action) => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(
+          Response.json(
+            { error: "Conversation access denied" },
+            { status: 403 },
+          ),
+        )
+        .mockResolvedValueOnce(
+          Response.json({ branch: { activated: true, activeMessageId: "a1" } }),
+        );
+      stubMutationFetch(fetchMock);
+      renderChat();
+      fireEvent.click(screen.getByRole("button", { name: action }));
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "Conversation access denied",
+      );
+      expect(screen.getByText("Chat surface")).toBeInTheDocument();
+      expect(mocks.refresh).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole("button", { name: action }));
+      await waitFor(() => expect(mocks.refresh).toHaveBeenCalled());
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    },
+  );
+
+  it.each(["New chat", "Pin"])(
+    "reports a denied %s from the assistant menu",
+    async (action) => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValue(
+          Response.json(
+            { error: "Workspace role cannot modify assistants" },
+            { status: 403 },
+          ),
+        );
+      stubMutationFetch(fetchMock);
+      renderChat();
+      await userEvent.click(
+        screen.getByRole("button", { name: "Actions for Helper" }),
+      );
+      await userEvent.click(screen.getByRole("button", { name: action }));
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "Workspace role cannot modify assistants",
+      );
+      expect(screen.getByText("Chat surface")).toBeInTheDocument();
+      expect(mocks.refresh).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not destroy an assistant after cancelled confirmation or rejected deletion", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(Response.json({}, { status: 403 }));
+    stubMutationFetch(fetchMock);
+    const confirm = vi
+      .spyOn(window, "confirm")
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(true);
+    renderChat();
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await userEvent.click(
+        screen.getByRole("button", { name: "Actions for Helper" }),
+      );
+      await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+      if (attempt === 0) expect(fetchMock).not.toHaveBeenCalled();
+    }
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("Chat surface")).toBeInTheDocument();
+    confirm.mockRestore();
+  });
+
+  it("preserves the last running state across authorization or network failures", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json({ runningThreadIds: ["thread-1"] }))
+      .mockResolvedValueOnce(
+        Response.json({ error: "Forbidden" }, { status: 403 }),
+      )
+      .mockRejectedValueOnce(new TypeError("offline"))
+      .mockResolvedValueOnce(Response.json({ runningThreadIds: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+    renderChat();
+    await screen.findByRole("status", { name: "Helper: Running" });
+    fireEvent(document, new Event("visibilitychange"));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(
+      screen.getByRole("status", { name: "Helper: Running" }),
+    ).toBeInTheDocument();
+    fireEvent(document, new Event("visibilitychange"));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    expect(
+      screen.getByRole("status", { name: "Helper: Running" }),
+    ).toBeInTheDocument();
+    fireEvent(document, new Event("visibilitychange"));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("status", { name: "Helper: Running" }),
+      ).not.toBeInTheDocument(),
+    );
+  });
+  it("creates, renames, collapses and deletes an assistant group without deleting its assistants", async () => {
+    const user = userEvent.setup();
+    renderChat();
+    await user.click(screen.getByRole("button", { name: "List options" }));
+    await user.click(screen.getByRole("button", { name: "New group" }));
+    await user.type(
+      screen.getByRole("textbox", { name: "Group name" }),
+      "Research",
+    );
+    await user.click(screen.getByRole("button", { name: "Create" }));
+    expect(
+      await screen.findByRole("treeitem", { name: "Research" }),
+    ).toBeInTheDocument();
+    const dragInto = (source: HTMLElement, target: HTMLElement) => {
+      const dataTransfer = {
+        effectAllowed: "none",
+        dropEffect: "none",
+        setData: vi.fn(),
+      };
+      fireEvent.dragStart(source, { dataTransfer });
+      vi.spyOn(target, "getBoundingClientRect").mockReturnValue({
+        top: 0,
+        height: 100,
+      } as DOMRect);
+      const event = createEvent.dragOver(target, { dataTransfer });
+      Object.defineProperty(event, "clientY", { value: 50 });
+      fireEvent(target, event);
+      fireEvent.drop(target, { dataTransfer });
+    };
+    dragInto(
+      screen.getByRole("treeitem", { name: "Helper" }),
+      screen.getByRole("treeitem", { name: "Research" }),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("treeitem", { name: "Helper" })).toHaveAttribute(
+        "aria-level",
+        "2",
+      ),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Actions for Research" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Rename group" }));
+    const name = screen.getByRole("textbox", { name: "Group name" });
+    await user.clear(name);
+    await user.type(name, "Writing");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByRole("treeitem", { name: "Writing" });
+    await user.click(screen.getByRole("button", { name: "List options" }));
+    await user.click(screen.getByRole("button", { name: "Collapse all" }));
+    expect(
+      screen.queryByRole("treeitem", { name: "Helper" }),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "List options" }));
+    await user.click(screen.getByRole("button", { name: "Expand all" }));
+    expect(
+      screen.getByRole("treeitem", { name: "Helper" }),
+    ).toBeInTheDocument();
+    const confirm = vi
+      .spyOn(window, "confirm")
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(true);
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await user.click(
+        screen.getByRole("button", { name: "Actions for Writing" }),
+      );
+      await user.click(screen.getByRole("button", { name: "Delete group" }));
+      if (attempt === 0)
+        expect(
+          screen.getByRole("treeitem", { name: "Writing" }),
+        ).toBeInTheDocument();
+    }
+    expect(
+      screen.queryByRole("treeitem", { name: "Writing" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("treeitem", { name: "Helper" })).toHaveAttribute(
+      "aria-level",
+      "1",
+    );
+    confirm.mockRestore();
+  });
+
+  it("persists thread order through resource moves without changing the selected conversation", async () => {
+    renderChat(undefined, false, undefined, null, [], sidebarAssistants);
+    const thread = screen.getByRole("treeitem", { name: "Find thread 3" });
+    fireEvent.keyDown(thread, { key: "ArrowUp", altKey: true, shiftKey: true });
+    await waitFor(() => {
+      const saved = JSON.parse(
+        window.localStorage.getItem(
+          "toolplane:assistant-chat-groups:workspace-1",
+        ) || "{}",
+      );
+      expect(saved.conversationOrder?.["assistant-1"]).toEqual([
+        "thread-1",
+        "thread-3",
+        "thread-2",
+      ]);
+    });
+    expect(mocks.push).not.toHaveBeenCalled();
+    expect(screen.getByText("Chat surface")).toBeInTheDocument();
+  });
+
+  it("does not archive a thread if confirmation is cancelled or the server denies deletion", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(Response.json({}, { status: 403 }));
+    stubMutationFetch(fetchMock);
+    const confirm = vi
+      .spyOn(window, "confirm")
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(true);
+    renderChat();
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await userEvent.click(
+        screen.getByRole("button", { name: "Actions for First thread" }),
+      );
+      await userEvent.click(
+        screen.getByRole("button", { name: "Delete chat" }),
+      );
+      if (attempt === 0) expect(fetchMock).not.toHaveBeenCalled();
+    }
+    await screen.findByRole("alert");
+    expect(
+      screen.getByRole("treeitem", { name: "First thread" }),
+    ).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith("/api/v1/chat/threads/thread-1", {
+      method: "DELETE",
+    });
+    confirm.mockRestore();
+  });
+  it.each(["before", "after"] as const)(
+    "persists assistant %s ordering without moving their conversations",
+    async (position) => {
+      renderChat(undefined, false, undefined, null, [], sidebarAssistants);
+      dragResource("Match Gamma", "Match Alpha", position);
+      await waitFor(() => {
+        const saved = JSON.parse(
+          window.localStorage.getItem(
+            "toolplane:assistant-chat-groups:workspace-1",
+          ) || "{}",
+        );
+        expect(saved.entityOrder).toEqual(
+          position === "before"
+            ? ["assistant-3", "assistant-1", "assistant-2"]
+            : ["assistant-1", "assistant-3", "assistant-2"],
+        );
+      });
+      expect(
+        screen.getByRole("treeitem", { name: "Find thread 1" }),
+      ).toBeInTheDocument();
+      expect(mocks.push).not.toHaveBeenCalled();
+    },
+  );
+
+  it("moves a thread to the end of its owning assistant without a server mutation", async () => {
+    const fetchMock = vi.fn();
+    stubMutationFetch(fetchMock);
+    renderChat(undefined, false, undefined, null, [], sidebarAssistants);
+    dragResource("Find thread 1", "Match Alpha", "inside");
+    await waitFor(() => {
+      const saved = JSON.parse(
+        window.localStorage.getItem(
+          "toolplane:assistant-chat-groups:workspace-1",
+        ) || "{}",
+      );
+      expect(saved.conversationOrder?.["assistant-1"]).toEqual([
+        "thread-2",
+        "thread-3",
+        "thread-1",
+      ]);
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])(
+    "moves a thread across assistants with denied=%s and preserves authorization boundaries",
+    async (denied) => {
+      const fetchMock = vi.fn(async () =>
+        denied
+          ? Response.json(
+              { error: "Cannot move this conversation" },
+              { status: 403 },
+            )
+          : Response.json({ ok: true }),
+      );
+      stubMutationFetch(fetchMock);
+      renderChat(undefined, false, undefined, null, [], sidebarAssistants);
+      dragResource("Find thread 1", "Match Gamma", "inside");
+      await waitFor(() =>
+        expect(fetchMock).toHaveBeenCalledWith(
+          "/api/v1/chat/threads/thread-1",
+          expect.objectContaining({ body: '{"assistantId":"assistant-3"}' }),
+        ),
+      );
+      if (denied) {
+        expect(await screen.findByRole("alert")).toHaveTextContent(
+          "Cannot move this conversation",
+        );
+        expect(mocks.push).not.toHaveBeenCalled();
+      } else {
+        await waitFor(() =>
+          expect(mocks.push).toHaveBeenCalledWith(
+            "/app/acme/chat?assistant=assistant-3&thread=thread-1",
+          ),
+        );
+      }
+    },
+  );
+
+  it("reorders groups, moves assistants back to ungrouped, and persists both changes", async () => {
+    renderChat(
+      undefined,
+      false,
+      undefined,
+      null,
+      [],
+      sidebarAssistants,
+      true,
+      {},
+      {
+        groups: [
+          { id: "a", name: "Alpha group" },
+          { id: "b", name: "Beta group" },
+        ],
+        assignments: { "assistant-1": "a" },
+        collapsed: {},
+      },
+    );
+    dragResource("Beta group", "Alpha group", "before");
+    await waitFor(() => {
+      const saved = JSON.parse(
+        window.localStorage.getItem(
+          "toolplane:assistant-chat-groups:workspace-1",
+        ) || "{}",
+      );
+      expect(saved.groups.map((group: { id: string }) => group.id)).toEqual([
+        "b",
+        "a",
+      ]);
+    });
+    dragResource("Match Alpha", "Ungrouped", "inside");
+    await waitFor(() => {
+      const saved = JSON.parse(
+        window.localStorage.getItem(
+          "toolplane:assistant-chat-groups:workspace-1",
+        ) || "{}",
+      );
+      expect(saved.assignments["assistant-1"]).toBeUndefined();
+    });
+    expect(
+      screen.getByRole("treeitem", { name: "Match Alpha" }),
+    ).toHaveAttribute("aria-level", "2");
   });
 });

@@ -366,4 +366,69 @@ describe("resolveAgentPiPackages", () => {
       resolveAgentPiPackages({ runtimeKind: "pi", workspaceId: "workspace-a" }),
     ).toEqual([]);
   });
+  it.each(["install-identity", "listing-identity", "too-many"])(
+    "rejects %s package bindings",
+    (kind) => {
+      const agent = sdkAgent();
+      if (kind === "install-identity")
+        agent.piPackages[0].marketInstall.id = "foreign";
+      if (kind === "listing-identity")
+        agent.piPackages[0].marketInstall.listing.id = "foreign";
+      if (kind === "too-many")
+        agent.piPackages = Array.from({ length: 17 }, () =>
+          structuredClone(agent.piPackages[0]),
+        );
+      expect(() => resolveAgentPiPackages(agent)).toThrow(
+        "PI_PACKAGE_UNAVAILABLE",
+      );
+    },
+  );
+
+  it("requires workspace identity for SDK tools and excludes nonselected sandboxes", () => {
+    expect(() =>
+      resolveAgentTools({
+        runtimeKind: "pi-sdk",
+        servers: [],
+        skills: [],
+        toolkits: [],
+        piPackages: [],
+      }),
+    ).toThrow("PI_PACKAGE_UNAVAILABLE");
+    const child = {
+      id: "child",
+      name: "Child",
+      slug: "child",
+      systemPrompt: "Instructions",
+      runtimeKind: "pi",
+    };
+    expect(
+      resolveAgentTools({
+        servers: [],
+        skills: [],
+        toolkits: [],
+        sandboxes: [
+          {
+            sandboxId: "other",
+            isDefault: true,
+            sandbox: { id: "other", deploymentId: "private" },
+          },
+        ],
+        subAgents: [{ child }, { child: { ...child, name: "Latest" } }],
+        knowledgeBases: [],
+      }),
+    ).toEqual({
+      deploymentIds: [],
+      sandboxDeploymentIds: [],
+      skills: [],
+      subAgents: [
+        {
+          id: "child",
+          name: "Latest",
+          slug: "child",
+          description: "Instructions",
+        },
+      ],
+      knowledgeBases: [],
+    });
+  });
 });
