@@ -10,6 +10,8 @@ export type AgentRuntimeTokenPayload = {
   workspaceId: string;
   agentId: string;
   sandboxId: string;
+  conversationId?: string;
+  a2aContextId?: string;
   providerId: string;
   deploymentIds: string[];
   exp: number;
@@ -48,6 +50,9 @@ export async function createAgentRuntimeToken(
 ): Promise<string> {
   const issuedAt = Math.floor(now / 1000);
   if (
+    (payload.conversationId !== undefined &&
+      !validId(payload.conversationId)) ||
+    (payload.a2aContextId !== undefined && !validId(payload.a2aContextId)) ||
     ((payload.a2aTaskId !== undefined || payload.a2aLeaseToken !== undefined) &&
       (!validId(payload.a2aTaskId) || !validId(payload.a2aLeaseToken))) ||
     (payload.a2aApprovalRequired !== undefined &&
@@ -74,6 +79,8 @@ export async function createAgentRuntimeToken(
     workspaceId: payload.workspaceId,
     agentId: payload.agentId,
     sandboxId: payload.sandboxId,
+    conversationId: payload.conversationId,
+    a2aContextId: payload.a2aContextId,
     providerId: payload.providerId,
     deploymentIds: [...new Set(payload.deploymentIds)],
     traceId: getLogContext()?.traceId,
@@ -102,6 +109,9 @@ export async function verifyAgentRuntimeToken(
     const issuedAt = payload.iat;
     const expiresAt = payload.exp;
     if (
+      (payload.conversationId !== undefined &&
+        !validId(payload.conversationId)) ||
+      (payload.a2aContextId !== undefined && !validId(payload.a2aContextId)) ||
       ((payload.a2aTaskId !== undefined ||
         payload.a2aLeaseToken !== undefined) &&
         (!validId(payload.a2aTaskId) || !validId(payload.a2aLeaseToken))) ||
@@ -138,6 +148,12 @@ export async function verifyAgentRuntimeToken(
       workspaceId: payload.workspaceId,
       agentId: payload.agentId,
       sandboxId: payload.sandboxId,
+      ...(typeof payload.conversationId === "string"
+        ? { conversationId: payload.conversationId }
+        : {}),
+      ...(typeof payload.a2aContextId === "string"
+        ? { a2aContextId: payload.a2aContextId }
+        : {}),
       providerId: payload.providerId,
       deploymentIds: [...new Set(payload.deploymentIds)],
       exp: expiresAt,

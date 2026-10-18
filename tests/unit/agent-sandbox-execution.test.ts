@@ -15,7 +15,25 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock("node:child_process", () => ({ spawn: mocks.spawn }));
 vi.mock("@/lib/db", () => ({
-  db: { agentSandbox: { findUnique: mocks.findSandbox } },
+  db: {
+    agentSandbox: { findUnique: mocks.findSandbox },
+    a2ATask: {
+      findFirst: vi.fn(async () => ({ context: { agentId: "agent-1" } })),
+    },
+    sandbox: {
+      findFirst: vi.fn(async () => ({
+        network: "bridge",
+        deploymentId: "sandbox-deployment",
+        deployment: { status: "running" },
+      })),
+    },
+  },
+}));
+vi.mock("@/lib/agents/conversation-sandbox", () => ({
+  findAgentConversationSandbox: vi.fn(async () => ({
+    sandboxId: "sandbox-1",
+    deploymentId: "sandbox-deployment",
+  })),
 }));
 vi.mock("@/lib/process/supervisor", () => ({
   effectiveStatus: (_id: string, status: string) => status,
@@ -782,7 +800,10 @@ describe("sandbox turn execution and presentation", () => {
       });
       const signal = AbortSignal.abort();
       await expect(
-        cancelPiHarnessOperation({ ...options, signal }, binding),
+        cancelPiHarnessOperation(
+          { ...options, signal, a2aContextId: binding.contextId },
+          binding,
+        ),
       ).resolves.toEqual({ status: "aborted", text: "Stopped" });
     });
 

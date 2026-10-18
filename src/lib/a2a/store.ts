@@ -22,6 +22,7 @@ import {
   UnsupportedOperationError,
 } from "@a2a-js/sdk/errors";
 import { db } from "@/lib/db";
+import { getAgentConcurrencySettings } from "@/lib/admin/settings";
 import { runtimeEnv } from "@/lib/runtime-env";
 import {
   ACTIVE,
@@ -314,6 +315,7 @@ export async function submitTaskInTransaction(
     : null;
   if (contextId && !context) throw notFound();
   if (isWorkspaceGrant(grant)) {
+    const limits = await getAgentConcurrencySettings(tx);
     const [active, retained, rootCount] = await Promise.all([
       tx.a2ATask.count({
         where: {
@@ -330,7 +332,7 @@ export async function submitTaskInTransaction(
         : 0,
     ]);
     if (
-      active >= LOCAL_LIMITS.activePerWorkspace ||
+      active >= limits.maxTotal + LOCAL_LIMITS.queuedPerWorkspace ||
       retained >= LOCAL_LIMITS.tasksPerOwner ||
       (!previous && rootCount >= LOCAL_LIMITS.tasksPerRoot)
     )

@@ -3304,6 +3304,8 @@
       "restoreBranchPanel": "Restore branch view"
     },
     "work": {
+      "conversationWorkspaceNotCreated": "This conversation’s workspace will be created on its first execution. Agent template files are not shown here.",
+      "conversationWorkspaceProvisioning": "Creating this conversation’s isolated workspace…",
       "title": "Work",
       "sessions": "Work sessions",
       "newWork": "New work",
@@ -4313,6 +4315,13 @@
     "restoreEnvironmentDefault": "Restore environment default",
     "runtimeSettingsSaved": "Upload settings saved.",
     "errorInvalidAttachmentLimit": "Enter a whole number from {min} to {max} MB.",
+    "agentConcurrency": "Agent conversation concurrency",
+    "agentConcurrencyDescription": "Limit simultaneous execution for Pi, Pi SDK, Claude Code, DSH and Hermes RPC. Each conversation uses an isolated sandbox; managed Hermes and public endpoints retain their own limits.",
+    "agentMaxConcurrent": "Maximum concurrent turns per Agent",
+    "agentMaxTotalConcurrent": "Maximum concurrent sandbox turns platform-wide",
+    "agentConcurrencyBehavior": "Different conversations can run in parallel; the same conversation remains serial. Excess work waits for capacity. Changes apply to new admissions without interrupting running tasks. Defaults: 1 per Agent, 16 platform-wide. Conversation files are independent and are not merged back into the Agent template.",
+    "errorAgentConcurrency": "Enter whole numbers: 1–{perAgent} per Agent and 1–{total} platform-wide. The platform limit must be at least the per-Agent limit.",
+    "restoreAgentConcurrencyDefaults": "Restore default limits",
     "mcpStartupTimeouts": "MCP startup timeouts",
     "mcpStartupTimeoutsDescription": "Control how long custom MCP deployments may remain quiet while their runtime starts.",
     "mcpStartupTimeoutsBehavior": "These limits apply to the next MCP start or restart. They do not interrupt an MCP that is already running.",

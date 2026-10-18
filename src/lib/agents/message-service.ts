@@ -47,6 +47,7 @@ import {
 import { activeConversationMessages } from "./conversation-context";
 import {
   acquireConversationOperation,
+  waitForConversationOperation,
   ConversationOperationError,
   operateConversation,
 } from "./conversation-operations";
@@ -415,9 +416,25 @@ async function runLoadedAgentMessage(params: {
       event.sessionKey = `channel:${params.connectionId}:${event.sessionKey}`;
     const operationKey = params.connectionId
       ? event.sessionKey
-      : body.conversationId;
+      : (body.conversationId ??
+        (isDedicatedSandboxRuntimeKind(runtimeKind)
+          ? `agent-message:${agent.id}:${event.sessionKey}`
+          : undefined));
     if (operationKey) {
-      releaseConversation = acquireConversationOperation(operationKey);
+      if (
+        body.conversationId &&
+        !(await db.conversation.count({
+          where: {
+            id: body.conversationId,
+            agentId: agent.id,
+            agent: { workspaceId: agent.workspaceId },
+          },
+        }))
+      )
+        return { status: 404, body: { error: "Conversation not found" } };
+      releaseConversation = isDedicatedSandboxRuntimeKind(runtimeKind)
+        ? await waitForConversationOperation(operationKey, params.signal)
+        : acquireConversationOperation(operationKey);
       if (!releaseConversation)
         return { status: 409, body: { error: "This conversation is busy." } };
     }
@@ -450,6 +467,20 @@ async function runLoadedAgentMessage(params: {
     const conversation = loadedConversation ?? createdConversation;
     if (!conversation)
       return { status: 404, body: { error: "Conversation not found" } };
+    if (
+      isDedicatedSandboxRuntimeKind(runtimeKind) &&
+      operationKey !== conversation.id
+    ) {
+      const releaseSession = await waitForConversationOperation(
+        conversation.id,
+        params.signal,
+      );
+      const releaseRouting = releaseConversation;
+      releaseConversation = () => {
+        releaseSession();
+        releaseRouting?.();
+      };
+    }
 
     const runtimeSession = isHermes
       ? await ensureConversationRuntimeSession(

@@ -2,14 +2,22 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  agentSandboxFindMany: vi.fn(),
+  ensureSandbox: vi.fn(),
+  updateWork: vi.fn(),
   createAgentRuntimeToken: vi.fn(),
   liveStatus: vi.fn(),
   runSandboxAgentTurn: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => ({
-  db: { agentSandbox: { findMany: mocks.agentSandboxFindMany } },
+  db: { workSession: { updateMany: mocks.updateWork } },
+}));
+vi.mock("@/lib/agents/conversation-sandbox", () => ({
+  ensureAgentConversationSandbox: mocks.ensureSandbox,
+}));
+vi.mock("@/lib/agents/agent-execution-gate", () => ({
+  withAgentExecutionLease: (_input: unknown, run: () => Promise<unknown>) =>
+    run(),
 }));
 vi.mock("@/lib/process/supervisor", () => ({ liveStatus: mocks.liveStatus }));
 vi.mock("@/lib/agents/runtime-access", () => ({
@@ -29,17 +37,10 @@ import { runDedicatedSandboxTurn } from "@/lib/agents/sandbox-turn";
 describe("dedicated sandbox Agent turn", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.agentSandboxFindMany.mockResolvedValue([
-      {
-        sandboxId: "sandbox-1",
-        isDefault: true,
-        sandbox: {
-          workspaceId: "workspace-1",
-          kind: "docker",
-          network: "isolated",
-        },
-      },
-    ]);
+    mocks.ensureSandbox.mockResolvedValue({
+      sandboxId: "conversation-sandbox",
+      deploymentId: "conversation-deployment",
+    });
     mocks.createAgentRuntimeToken.mockResolvedValue("runtime-token");
     mocks.runSandboxAgentTurn.mockResolvedValue("done");
   });
@@ -64,6 +65,7 @@ describe("dedicated sandbox Agent turn", () => {
         },
         model: "model-1",
       },
+      conversationId: "conversation-1",
       messages: [{ role: "user", parts: [{ type: "text", text: "hello" }] }],
       deploymentIds: ["deployment-running", "deployment-stopped"],
     });
@@ -71,6 +73,8 @@ describe("dedicated sandbox Agent turn", () => {
     expect(mocks.createAgentRuntimeToken).toHaveBeenCalledWith(
       expect.objectContaining({
         deploymentIds: ["deployment-running"],
+        sandboxId: "conversation-sandbox",
+        conversationId: "conversation-1",
       }),
     );
     expect(mocks.runSandboxAgentTurn).toHaveBeenCalledWith(
@@ -83,5 +87,30 @@ describe("dedicated sandbox Agent turn", () => {
         ],
       }),
     );
+  });
+  it("does not fall back to the template if allocation fails", async () => {
+    mocks.ensureSandbox.mockRejectedValue(new Error("copy failed"));
+    await expect(
+      runDedicatedSandboxTurn({
+        agent: {
+          id: "agent-1",
+          workspaceId: "workspace-1",
+          runtimeKind: "pi",
+          disabledBuiltinTools: [],
+          provider: {
+            id: "provider-1",
+            name: "Provider",
+            format: "openai",
+            baseUrl: "",
+            apiKey: "",
+          },
+          model: "model-1",
+        },
+        conversationId: "conversation-1",
+        messages: [],
+      }),
+    ).rejects.toThrow("copy failed");
+    expect(mocks.createAgentRuntimeToken).not.toHaveBeenCalled();
+    expect(mocks.runSandboxAgentTurn).not.toHaveBeenCalled();
   });
 });

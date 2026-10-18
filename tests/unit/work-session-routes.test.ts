@@ -14,8 +14,18 @@ const mocks = vi.hoisted(() => ({
   ensureHermesRuntimeReady: vi.fn(),
   prepareHermesConversationSelection: vi.fn(),
   isWorkSessionTitlePending: vi.fn(),
+  findConversationSandbox: vi.fn(),
+  conversationWorkspace: vi.fn(),
+  release: vi.fn(),
 }));
 
+vi.mock("@/lib/agents/conversation-sandbox", () => ({
+  findAgentConversationSandbox: mocks.findConversationSandbox,
+  beginAgentConversationSandboxAccess: () => mocks.release,
+}));
+vi.mock("@/lib/agents/conversation-workspace", () => ({
+  getConversationWorkspaceSandbox: mocks.conversationWorkspace,
+}));
 vi.mock("@/lib/auth/request-user", () => ({
   resolveRequestUser: mocks.resolveRequestUser,
 }));
@@ -58,6 +68,11 @@ describe("WorkSession API", () => {
     vi.clearAllMocks();
     mocks.resolveRequestUser.mockResolvedValue({ id: "user-1" });
     mocks.isWorkSessionTitlePending.mockReturnValue(false);
+    mocks.findConversationSandbox.mockResolvedValue({
+      sandboxId: "sandbox-1",
+      deploymentId: "deployment-1",
+    });
+    mocks.conversationWorkspace.mockResolvedValue(null);
     mocks.getAgentForRequest.mockResolvedValue({
       id: "agent-1",
       workspaceId: "workspace-1",
@@ -76,6 +91,7 @@ describe("WorkSession API", () => {
       workspaceId: "workspace-1",
       runtimeKind: "pi",
       sandboxId: "sandbox-1",
+      conversationId: "conversation-1",
       agent: {
         id: "agent-1",
         sandboxes: [{ sandboxId: "sandbox-1" }],
@@ -402,6 +418,50 @@ describe("WorkSession API", () => {
       "http://127.0.0.1:4312/terminal/session",
       expect.objectContaining({ method: "POST", body: "{}" }),
     );
+  });
+  it("rejects a Work sandbox that differs from the exact conversation mapping", async () => {
+    mocks.findConversationSandbox.mockResolvedValue({
+      sandboxId: "another-conversation",
+      deploymentId: "deployment-1",
+    });
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const response = await openWorkTerminal(
+      new Request("http://localhost/terminal", { method: "POST" }),
+      {
+        params: Promise.resolve({
+          workSessionId: "work-1",
+          path: ["terminal"],
+        }),
+      },
+    );
+    expect(response.status).toBe(404);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mocks.findConversationSandbox).toHaveBeenCalledWith({
+      workspaceId: "workspace-1",
+      agentId: "agent-1",
+      conversationId: "conversation-1",
+    });
+  });
+
+  it("does not expose template files before the first Work execution", async () => {
+    mocks.getWorkSessionForUser.mockResolvedValue({
+      id: "work-1",
+      workspaceId: "workspace-1",
+      agentId: "agent-1",
+      conversationId: "conversation-1",
+      runtimeKind: "pi",
+      conversation: { messages: [] },
+      sandbox: {
+        id: "template",
+        deploymentId: "template-deployment",
+        deployment: { status: "running" },
+      },
+    });
+    const response = await getWork(new Request("http://localhost/work"), {
+      params: Promise.resolve({ workSessionId: "work-1" }),
+    });
+    expect((await response.json()).sandbox).toBeNull();
   });
 
   it("opens the exact Hermes runtime sandbox and starts it on demand", async () => {

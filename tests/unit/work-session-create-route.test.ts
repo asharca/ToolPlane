@@ -12,6 +12,10 @@ const m = vi.hoisted(() => ({
   kick: vi.fn(),
   command: vi.fn(),
   commands: vi.fn(),
+  workspaceSandbox: vi.fn(),
+}));
+vi.mock("@/lib/agents/conversation-workspace", () => ({
+  getConversationWorkspaceSandbox: m.workspaceSandbox,
 }));
 vi.mock("@/lib/observability/http", () => ({
   withRequestLogging: (_path: string, handler: unknown) => handler,
@@ -78,6 +82,7 @@ const request = (body: unknown = base) =>
   });
 beforeEach(() => {
   vi.resetAllMocks();
+  m.workspaceSandbox.mockResolvedValue(null);
   m.user.mockResolvedValue({ id: "user" });
   m.agent.mockResolvedValue(agent);
   m.directory.mockReturnValue(".");
@@ -114,7 +119,9 @@ describe("work-session creation and listing boundaries", () => {
     const response = await GET(
       new Request("http://localhost?agentId=%20agent%20"),
     );
-    expect(await response.json()).toEqual([{ id: "work", status: "queued" }]);
+    expect(await response.json()).toEqual([
+      { id: "work", status: "queued", sandboxId: null, sandbox: null },
+    ]);
     expect(m.agent).toHaveBeenLastCalledWith("agent", "user");
     expect(m.list).toHaveBeenCalledWith("workspace", "agent");
   });

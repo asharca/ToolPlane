@@ -203,6 +203,8 @@ type ConversationSummary = {
   source: ParsedMessagingSession | null;
 };
 type ConversationDetail = ConversationSummary & {
+  sandbox?: WorkItem["sandbox"];
+  legacyWorkspace?: boolean;
   readOnly: boolean;
   messages: WorkMessage[];
   reasoningEffort?: ReasoningEffort | null;
@@ -1127,12 +1129,26 @@ export function WorkspaceWork({
     sandboxOptions.find((item) => item.id === activeSandboxId) ?? null;
   const controlAgent = selectedAgent ?? agent;
   const controlSandbox = conversation
-    ? (selectedAgent?.sandboxes.find((sandbox) => sandbox.isDefault) ??
-      selectedAgent?.sandboxes[0] ??
-      null)
-    : selected?.sandbox
-      ? { ...selected.sandbox, isDefault: false }
+    ? conversation.legacyWorkspace
+      ? (selectedAgent?.sandboxes.find((sandbox) => sandbox.isDefault) ??
+        selectedAgent?.sandboxes[0] ??
+        null)
+      : (conversation.sandbox ?? null)
+    : selected
+      ? selected.sandbox
       : activeSandbox;
+  const conversationWorkspace =
+    Boolean(conversation && !conversation.legacyWorkspace) ||
+    Boolean(selected && selected.runtimeKind !== "hermes");
+  const workspacePending =
+    controlSandbox &&
+    ["copying", "provisioning"].includes(controlSandbox.status ?? "");
+  const workspaceUnavailableLabel =
+    conversationWorkspace && !controlSandbox
+      ? t("conversationWorkspaceNotCreated")
+      : workspacePending
+        ? t("conversationWorkspaceProvisioning")
+        : t("noSandbox");
   const controlHermesSelection =
     controlAgent?.runtimeKind === "hermes"
       ? conversation
@@ -1167,18 +1183,26 @@ export function WorkspaceWork({
     commandRuntimeKind,
     selected?.messages ?? [],
   );
+  const conversationWorkspaceApiBase =
+    conversation && !conversation.legacyWorkspace
+      ? `/api/v1/agents/${conversation.agentId}/conversations/${conversation.id}/sandbox`
+      : undefined;
   const workspaceRpcApiBase = selected
     ? `/api/v1/work-sessions/${selected.id}/sandbox/rpc`
-    : controlSandbox
-      ? `/api/v1/mcp/${controlSandbox.deploymentId}/rpc`
-      : undefined;
+    : conversationWorkspaceApiBase
+      ? `${conversationWorkspaceApiBase}/rpc`
+      : controlSandbox
+        ? `/api/v1/mcp/${controlSandbox.deploymentId}/rpc`
+        : undefined;
   const workspaceTerminalApiBase = selected
     ? `/api/v1/work-sessions/${selected.id}/sandbox/terminal`
-    : controlAgent?.runtimeKind === "hermes"
-      ? `/api/v1/agents/${controlAgent.id}/terminal`
-      : controlSandbox
-        ? `/api/v1/mcp/${controlSandbox.deploymentId}/terminal`
-        : undefined;
+    : conversationWorkspaceApiBase
+      ? `${conversationWorkspaceApiBase}/terminal`
+      : controlAgent?.runtimeKind === "hermes"
+        ? `/api/v1/agents/${controlAgent.id}/terminal`
+        : controlSandbox
+          ? `/api/v1/mcp/${controlSandbox.deploymentId}/terminal`
+          : undefined;
   const controlModelLabel = controlHermesSelection
     ? `${controlHermesSelection.profile} · ${controlHermesSelection.model ?? tAgents("profileDefault")}`
     : controlAgent?.model || t("selectModel");
@@ -1197,15 +1221,19 @@ export function WorkspaceWork({
   const visibleError = error ?? selected?.error;
   const runtimeErrorCode = visibleError?.match(/\bPI_[A-Z_]+\b/)?.[0];
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: Changing runtimes must reset the provisioning poll even when the sandbox status remains provisioning.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Selection changes reset the existing provisioning poll.
   useEffect(() => {
-    if (selected || conversation || activeSandbox?.status !== "provisioning")
+    if (
+      selected ||
+      (!conversationBusy &&
+        !["copying", "provisioning"].includes(controlSandbox?.status ?? ""))
+    )
       return;
     const interval = window.setInterval(() => router.refresh(), 1_500);
     return () => window.clearInterval(interval);
   }, [
-    activeSandbox?.status,
-    agent?.runtimeKind,
+    controlSandbox?.status,
+    conversationBusy,
     router,
     selected,
     conversation,
@@ -1263,7 +1291,7 @@ export function WorkspaceWork({
       streamText,
     ],
   );
-  const workspacePanelOpen = Boolean(desktopPanel && controlSandbox);
+  const workspacePanelOpen = Boolean(desktopPanel);
 
   const activeAgentId = conversation?.agentId ?? selected?.agentId ?? agentId;
   const visibleAgents = useMemo<WorkSidebarAgent[]>(
@@ -2422,7 +2450,7 @@ export function WorkspaceWork({
                 </div>
               </div>
               <div className="flex shrink-0 items-center gap-1">
-                {controlSandbox ? (
+                {controlSandbox || conversationWorkspace ? (
                   <>
                     <Button
                       type="button"
@@ -2688,8 +2716,9 @@ export function WorkspaceWork({
 
         {workspacePanelOpen ? (
           <aside className="hidden w-96 shrink-0 min-h-0 overflow-hidden bg-background xl:block">
-            {controlSandbox ? (
+            {controlSandbox && !workspacePending ? (
               <SandboxConsole
+                key={`${conversation?.id ?? selected?.id ?? "new"}:${controlSandbox.id}`}
                 compact
                 filesOnly={desktopPanel === "files"}
                 terminalOnly={desktopPanel === "terminal"}
@@ -2706,7 +2735,7 @@ export function WorkspaceWork({
             ) : (
               <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
                 <Boxes className="mr-2 size-4" />
-                {t("noSandbox")}
+                {workspaceUnavailableLabel}
               </div>
             )}
           </aside>
@@ -2742,8 +2771,9 @@ export function WorkspaceWork({
               </span>
             </header>
             <div className="min-h-0 flex-1 overflow-hidden">
-              {controlSandbox ? (
+              {controlSandbox && !workspacePending ? (
                 <SandboxConsole
+                  key={`${conversation?.id ?? selected?.id ?? "new"}:${controlSandbox.id}`}
                   compact
                   filesOnly={mobilePanel === "files"}
                   terminalOnly={mobilePanel === "terminal"}
@@ -2760,7 +2790,7 @@ export function WorkspaceWork({
               ) : (
                 <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
                   <Boxes className="mr-2 size-4" />
-                  {t("noSandbox")}
+                  {workspaceUnavailableLabel}
                 </div>
               )}
             </div>

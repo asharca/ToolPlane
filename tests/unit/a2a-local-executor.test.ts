@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => ({
   count: vi.fn(),
   conversation: vi.fn(),
   work: vi.fn(),
+  ensureSandbox: vi.fn(),
+  findSandbox: vi.fn(),
 }));
 vi.mock("@/lib/a2a/principal", () => ({
   isLocalGrant: (g: { kind?: string }) => g.kind === "local",
@@ -25,8 +27,16 @@ vi.mock("@/lib/db", () => ({
     agentSandbox: { findMany: mocks.assignments },
     a2ATask: { count: mocks.count },
     conversation: { findFirst: mocks.conversation },
-    workSession: { findUniqueOrThrow: mocks.work },
+    workSession: {
+      findUniqueOrThrow: mocks.work,
+      findFirst: mocks.work,
+      updateMany: vi.fn(),
+    },
   },
+}));
+vi.mock("@/lib/agents/conversation-sandbox", () => ({
+  ensureAgentConversationSandbox: mocks.ensureSandbox,
+  findAgentConversationSandbox: mocks.findSandbox,
 }));
 vi.mock("@/lib/agents/queries", () => ({ getAgentForRun: mocks.agent }));
 vi.mock("@/lib/agents/resolve", async (importOriginal) => ({
@@ -108,6 +118,14 @@ const agent = {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.live.mockResolvedValue(undefined);
+  mocks.ensureSandbox.mockResolvedValue({
+    sandboxId: "sandbox",
+    deploymentId: "isolated-deployment",
+  });
+  mocks.findSandbox.mockResolvedValue({
+    sandboxId: "sandbox",
+    deploymentId: "isolated-deployment",
+  });
   mocks.target.mockResolvedValue({ binding: "binding", sandboxId: "sandbox" });
   mocks.context.mockResolvedValue({ id: "a2a-context" });
   mocks.agent.mockResolvedValue(agent);
@@ -291,30 +309,28 @@ describe("local task claim option boundaries", () => {
     },
   );
 
-  it.each([0, 2])(
-    "rejects cleanup after sandbox assignment cardinality changes to %s",
-    async (length) => {
-      mocks.assignments.mockResolvedValue(
-        Array.from({ length }, (_, i) => ({ sandboxId: `sandbox-${i}` })),
-      );
-      await expect(
-        localTaskOptions(
-          {
-            ...row(),
-            executionBackend: "pi-harness",
-            nativeOperationId: "operation",
-          },
-          new AbortController().signal,
-          "",
-          true,
-        ),
-      ).rejects.toThrow("sandbox assignment changed");
-      expect(mocks.token).not.toHaveBeenCalled();
-    },
-  );
+  it("rejects cleanup when its durable mapping is missing", async () => {
+    mocks.findSandbox.mockResolvedValue(null);
+    await expect(
+      localTaskOptions(
+        {
+          ...row(),
+          executionBackend: "pi-harness",
+          nativeOperationId: "operation",
+        },
+        new AbortController().signal,
+        "",
+        true,
+      ),
+    ).rejects.toThrow("Bound native sandbox unavailable");
+    expect(mocks.token).not.toHaveBeenCalled();
+  });
 
   it("projects cleanup without live-grant checks, MCP tools, or collaboration access", async () => {
-    mocks.assignments.mockResolvedValue([{ sandboxId: "cleanup-sandbox" }]);
+    mocks.findSandbox.mockResolvedValue({
+      sandboxId: "cleanup-sandbox",
+      deploymentId: "cleanup-deployment",
+    });
     mocks.count.mockResolvedValue(0);
     const options = await localTaskOptions(
       {
@@ -335,12 +351,16 @@ describe("local task claim option boundaries", () => {
       sessionRequired: false,
     });
     expect(mocks.live).not.toHaveBeenCalled();
+    expect(mocks.findSandbox).toHaveBeenCalledWith(
+      expect.objectContaining({ contextId: "a2a-context", cleanup: true }),
+    );
     expect(mocks.target).not.toHaveBeenCalled();
     expect(mocks.token.mock.calls[0][0].deploymentIds).toEqual([]);
   });
 
   it("restricts resumed work to snapshotted deployments and skills", async () => {
     mocks.work.mockResolvedValue({
+      conversationId: "work-conversation",
       runtimeSnapshot: {
         deploymentIds: ["stopped-mcp"],
         installedSkillIds: ["missing"],

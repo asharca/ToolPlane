@@ -46,7 +46,10 @@ import {
   compactedConversationSeed,
   needsCompactionSeed,
 } from "@/lib/agents/conversation-context";
-import { acquireConversationOperation } from "@/lib/agents/conversation-operations";
+import {
+  acquireConversationOperation,
+  waitForConversationOperation,
+} from "@/lib/agents/conversation-operations";
 import {
   AttachmentMessageError,
   attachmentIdsFromParts,
@@ -162,7 +165,9 @@ export const POST = withRequestLogging(
       }
       if (conversationId) enrichLogContext({ conversationId });
       if (conversationId) {
-        releaseConversation = acquireConversationOperation(conversationId);
+        releaseConversation = isDedicatedSandboxRuntimeKind(runtimeKind)
+          ? await waitForConversationOperation(conversationId, req.signal)
+          : acquireConversationOperation(conversationId);
         if (!releaseConversation)
           return new Response("This conversation is busy.", { status: 409 });
       }

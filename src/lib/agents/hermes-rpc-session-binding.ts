@@ -1,6 +1,7 @@
 import "server-only";
 import { createHash } from "node:crypto";
 import { db } from "@/lib/db";
+import { findAgentConversationSandbox } from "./conversation-sandbox";
 
 /** Independent platform binding; managed Hermes and channel session keys stay untouched. */
 export async function bindHermesRpcConversation(input: {
@@ -13,10 +14,21 @@ export async function bindHermesRpcConversation(input: {
   providerFormat: string;
   workingDirectory: string;
 }) {
+  const mapped = await findAgentConversationSandbox(input);
+  const sources = await db.agentSandbox.findMany({
+    where: {
+      agentId: input.agentId,
+      agent: { workspaceId: input.workspaceId },
+    },
+    select: { sandboxId: true },
+  });
+  if (mapped?.sandboxId !== input.sandboxId || sources.length !== 1)
+    throw new Error("Hermes RPC conversation sandbox binding changed.");
   const binding = `hermes-rpc:v1:${createHash("sha256")
     .update(
       JSON.stringify({
-        sandboxId: input.sandboxId,
+        // Keep the configured source identity: cloning preserves the native session.
+        sandboxId: sources[0].sandboxId,
         providerId: input.providerId,
         modelId: input.modelId,
         format: input.providerFormat,

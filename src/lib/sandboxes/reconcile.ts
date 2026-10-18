@@ -4,6 +4,7 @@ import { HERMES_ARCHIVE_IMPORT_TIMEOUT_MS } from "@/lib/agents/hermes/archive-li
 import {
   removeStaleDockerVolumeCopyHelpers,
   removeStaleHermesArchiveImportHelpers,
+  setDockerSandboxPaused,
 } from "./runtime";
 
 export async function reconcileSandboxVolumeCopies(
@@ -17,6 +18,28 @@ export async function reconcileSandboxVolumeCopies(
   snapshotsInterrupted: number;
 }> {
   const interruptedBefore = options.helpersCreatedBefore ?? new Date();
+  const pausedSources = await db.sandbox.findMany({
+    where: {
+      deployment: {
+        installCfg: { path: ["agentConversationSnapshotPaused"], equals: true },
+      },
+    },
+    include: { deployment: true },
+  });
+  for (const source of pausedSources) {
+    await setDockerSandboxPaused(source.id, false);
+    const cfg = {
+      ...(source.deployment.installCfg as Record<
+        string,
+        string | number | boolean | null
+      >),
+    };
+    delete cfg.agentConversationSnapshotPaused;
+    await db.deployment.update({
+      where: { id: source.deploymentId },
+      data: { installCfg: cfg },
+    });
+  }
   const helpersRemoved =
     await removeStaleDockerVolumeCopyHelpers(interruptedBefore);
   const hermesArchiveHelpersRemoved =

@@ -9,6 +9,7 @@ import {
   acquireConversationOperation,
   conversationOperationKey,
   operateConversation,
+  waitForConversationOperation,
 } from "@/lib/agents/conversation-operations";
 
 const mocks = vi.hoisted(() => ({
@@ -270,6 +271,47 @@ describe("conversation operation admission and compaction", () => {
     release?.();
     release?.();
     acquireConversationOperation("lock-test")?.();
+  });
+
+  it("queues turns in order, drops canceled waiters, and does not block other conversations", async () => {
+    const first = acquireConversationOperation("queued-conversation");
+    const canceled = new AbortController();
+    const waitingCanceled = waitForConversationOperation(
+      "queued-conversation",
+      canceled.signal,
+    );
+    const rejection = expect(waitingCanceled).rejects.toThrow("canceled");
+    const order: string[] = [];
+    const second = waitForConversationOperation("queued-conversation").then(
+      (release) => {
+        order.push("second");
+        return release;
+      },
+    );
+    const third = waitForConversationOperation("queued-conversation").then(
+      (release) => {
+        order.push("third");
+        return release;
+      },
+    );
+    const other = await waitForConversationOperation(
+      "independent-conversation",
+    );
+    other();
+    canceled.abort(new Error("canceled"));
+    await rejection;
+    expect(order).toEqual([]);
+    first?.();
+    const releaseSecond = await second;
+    expect(order).toEqual(["second"]);
+    expect(
+      acquireConversationOperation("queued-conversation", "compact"),
+    ).toBeNull();
+    releaseSecond();
+    const releaseThird = await third;
+    expect(order).toEqual(["second", "third"]);
+    releaseThird();
+    acquireConversationOperation("queued-conversation")?.();
   });
 
   it.each([

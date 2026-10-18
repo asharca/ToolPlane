@@ -43,6 +43,7 @@ it("blocks bad staged commits and type-invalid pushes without modifying user con
     writeFileSync(
       join(root, "package.json"),
       JSON.stringify({
+        dependencies: { react: "19.3.0", next: "16.2.9" },
         scripts: {
           "check:staged": "node scripts/check-staged.mjs",
           check:
@@ -50,10 +51,68 @@ it("blocks bad staged commits and type-invalid pushes without modifying user con
         },
       }),
     );
+    const format = (file: string) =>
+      execFileSync(
+        process.execPath,
+        [
+          resolve("node_modules/@biomejs/biome/bin/biome"),
+          "format",
+          "--write",
+          file,
+        ],
+        { cwd: root, env, stdio: "pipe" },
+      );
+    format("package.json");
     execFileSync(process.execPath, ["scripts/install-git-hooks.mjs"], {
       cwd: root,
       env,
     });
+    git("add", "--", "package.json", "biome.json");
+    git("commit", "-m", "record framework and lint context");
+    const manifest = git("show", "HEAD:package.json");
+    const frameworkSource = `export function Avatar() {
+  return (
+    // biome-ignore lint/performance/noImgElement: Render the original image URL without optimization.
+    <img src="/avatar.png" alt="Profile" />
+  );
+}
+`;
+    writeFileSync(join(root, "avatar.tsx"), frameworkSource);
+    format("avatar.tsx");
+    git("add", "--", "avatar.tsx");
+    const stagedFramework = git("show", ":avatar.tsx");
+    const partialFramework = "export const avatar = ;";
+    const partialManifest = JSON.stringify({
+      scripts: JSON.parse(manifest).scripts,
+    });
+    writeFileSync(join(root, "avatar.tsx"), partialFramework);
+    writeFileSync(join(root, "package.json"), partialManifest);
+    git("commit", "-m", "accept valid framework suppression from index");
+    expect(git("show", "HEAD:avatar.tsx")).toBe(stagedFramework);
+    expect(readFileSync(join(root, "avatar.tsx"), "utf8")).toBe(
+      partialFramework,
+    );
+    expect(readFileSync(join(root, "package.json"), "utf8")).toBe(
+      partialManifest,
+    );
+    writeFileSync(join(root, "package.json"), manifest);
+    writeFileSync(
+      join(root, "avatar.tsx"),
+      'export function Avatar() { return <img src="/avatar.png" alt="Profile" />; }',
+    );
+    format("avatar.tsx");
+    git("add", "--", "avatar.tsx");
+    const rejectedFramework = spawnSync(
+      "git",
+      ["commit", "-m", "reject unsuppressed framework diagnostic"],
+      { cwd: root, env, encoding: "utf8" },
+    );
+    expect(rejectedFramework.status).not.toBe(0);
+    expect(rejectedFramework.stdout + rejectedFramework.stderr).toContain(
+      "noImgElement",
+    );
+    writeFileSync(join(root, "avatar.tsx"), stagedFramework);
+    git("add", "--", "avatar.tsx");
     for (const [file, broken, fixed] of [
       [
         "syntax with spaces.ts",

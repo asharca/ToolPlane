@@ -14,12 +14,25 @@ import {
   type ConversationCompaction,
 } from "./conversation-context";
 
+type ConversationWaiter = {
+  operation: string;
+  signal?: AbortSignal;
+  resolve: (release: () => void) => void;
+  reject: (error: unknown) => void;
+  onAbort: () => void;
+};
 const operationsGlobal = globalThis as unknown as {
   __conversationOperations?: Map<string, string>;
+  __conversationOperationWaiters?: Map<string, ConversationWaiter[]>;
 };
 // ponytail: process-local admission matches the hosted runners; use shared leases with multiple coordinators.
 operationsGlobal.__conversationOperations ??= new Map<string, string>();
 const operations = operationsGlobal.__conversationOperations;
+operationsGlobal.__conversationOperationWaiters ??= new Map<
+  string,
+  ConversationWaiter[]
+>();
+const operationWaiters = operationsGlobal.__conversationOperationWaiters;
 
 export class ConversationOperationError extends Error {
   constructor(
@@ -50,13 +63,56 @@ export function acquireConversationOperation(
   operation = "chat",
 ): (() => void) | null {
   if (operations.has(key)) return null;
+  return reserveConversationOperation(key, operation);
+}
+
+function reserveConversationOperation(
+  key: string,
+  operation: string,
+): () => void {
   operations.set(key, operation);
   let released = false;
   return () => {
     if (released) return;
     released = true;
     operations.delete(key);
+    const queue = operationWaiters.get(key);
+    const next = queue?.shift();
+    if (!queue?.length) operationWaiters.delete(key);
+    if (next) {
+      next.signal?.removeEventListener("abort", next.onAbort);
+      next.resolve(reserveConversationOperation(key, next.operation));
+    }
   };
+}
+
+export async function waitForConversationOperation(
+  key: string,
+  signal?: AbortSignal,
+  operation = "chat",
+): Promise<() => void> {
+  signal?.throwIfAborted();
+  const release = acquireConversationOperation(key, operation);
+  if (release) return release;
+  return new Promise((resolve, reject) => {
+    const waiter: ConversationWaiter = {
+      operation,
+      signal,
+      resolve,
+      reject,
+      onAbort: () => {
+        const queue = operationWaiters.get(key);
+        const index = queue?.indexOf(waiter) ?? -1;
+        if (index !== -1) queue?.splice(index, 1);
+        if (!queue?.length) operationWaiters.delete(key);
+        reject(signal?.reason);
+      },
+    };
+    const queue = operationWaiters.get(key) ?? [];
+    queue.push(waiter);
+    operationWaiters.set(key, queue);
+    signal?.addEventListener("abort", waiter.onAbort, { once: true });
+  });
 }
 
 const summaryPrompt = `Summarize the supplied conversation for an agent continuing the work.

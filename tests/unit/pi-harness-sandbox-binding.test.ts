@@ -7,23 +7,30 @@ const state = vi.hoisted(() => ({
   files: new Map<string, string>(),
   events: [] as unknown[],
   exitCode: 0,
+  taskMatches: true,
   executions: [] as string[][],
 }));
 vi.mock("@/lib/db", () => ({
   db: {
-    agentSandbox: {
-      findUnique: vi.fn(async () => ({
-        agent: { workspaceId: "workspace" },
-        sandbox: {
-          workspaceId: "workspace",
-          kind: "docker",
-          network: "bridge",
-          deploymentId: "sandbox-deployment",
-          deployment: { status: "running" },
-        },
+    a2ATask: {
+      findFirst: vi.fn(async () =>
+        state.taskMatches ? { context: { agentId: "agent" } } : null,
+      ),
+    },
+    sandbox: {
+      findFirst: vi.fn(async () => ({
+        network: "bridge",
+        deploymentId: "sandbox-deployment",
+        deployment: { status: "running" },
       })),
     },
   },
+}));
+vi.mock("@/lib/agents/conversation-sandbox", () => ({
+  findAgentConversationSandbox: vi.fn(async () => ({
+    sandboxId: "sandbox",
+    deploymentId: "sandbox-deployment",
+  })),
 }));
 vi.mock("@/lib/process/supervisor", () => ({
   effectiveStatus: () => "running",
@@ -94,6 +101,7 @@ const options: RunSandboxAgentTurnOptions = {
   workspaceId: "workspace",
   agentId: "agent",
   sandboxId: "sandbox",
+  a2aContextId: "context",
   provider: { id: "provider", name: "Provider", format: "openai" },
   modelId: "model",
   contextWindow: 32000,
@@ -117,6 +125,7 @@ beforeEach(() => {
   state.events = [];
   state.exitCode = 0;
   state.executions = [];
+  state.taskMatches = true;
 });
 
 describe("Pi Harness sandbox binding", () => {
@@ -207,5 +216,13 @@ describe("Pi Harness sandbox binding", () => {
       )[1],
     );
     expect(config).toMatchObject({ action: "cancel", ...binding });
+  });
+
+  it("does not cancel a native operation whose durable task binding no longer matches", async () => {
+    state.taskMatches = false;
+    await expect(cancelPiHarnessOperation(options, binding)).rejects.toThrow(
+      "Native cleanup operation binding changed",
+    );
+    expect(state.executions).toEqual([]);
   });
 });

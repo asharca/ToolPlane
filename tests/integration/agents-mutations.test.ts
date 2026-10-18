@@ -11,6 +11,7 @@ import {
 } from "vitest";
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
+import { findAgentConversationSandbox } from "@/lib/agents/conversation-sandbox";
 import {
   cloneAgent,
   cloneHermesVolumeData,
@@ -125,6 +126,77 @@ async function createDockerSandbox(label: string) {
 }
 
 describe("agents mutations", () => {
+  it("keeps conversation mappings workspace-scoped and prevents template reassignment or data detachment", async () => {
+    const agent = await createAgent(workspaceId, "Isolated conversation", {
+      runtime: "pi",
+    });
+    const assigned = await db.agentSandbox.findFirstOrThrow({
+      where: { agentId: agent.id },
+    });
+    const isolated = await createDockerSandbox("Conversation files");
+    const replacement = await createDockerSandbox("Replacement template");
+    await db.sandbox.update({
+      where: { id: isolated.id },
+      data: {
+        config: {
+          managedBy: "agent-conversation",
+          agentId: agent.id,
+          sourceSandboxId: assigned.sandboxId,
+        },
+      },
+    });
+    const conversation = await db.conversation.create({
+      data: { agentId: agent.id, sandboxId: isolated.id },
+    });
+    const binding = {
+      workspaceId,
+      agentId: agent.id,
+      conversationId: conversation.id,
+    };
+    try {
+      await expect(findAgentConversationSandbox(binding)).resolves.toEqual({
+        sandboxId: isolated.id,
+        deploymentId: isolated.deploymentId,
+      });
+      await expect(
+        findAgentConversationSandbox({
+          ...binding,
+          workspaceId: "another-workspace",
+        }),
+      ).rejects.toThrow();
+      await expect(
+        findAgentConversationSandbox({ ...binding, agentId: "another-agent" }),
+      ).rejects.toThrow();
+      await expect(
+        setAgentTools(workspaceId, agent.id, {
+          deploymentIds: [],
+          installedSkillIds: [],
+          toolkitIds: [],
+          sandboxIds: [replacement.id],
+        }),
+      ).rejects.toThrow(/conversation/i);
+      expect(
+        (
+          await db.agentSandbox.findFirstOrThrow({
+            where: { agentId: agent.id },
+          })
+        ).sandboxId,
+      ).toBe(assigned.sandboxId);
+      await expect(
+        db.sandbox.delete({ where: { id: isolated.id } }),
+      ).rejects.toMatchObject({ code: "P2003" });
+      expect(
+        (
+          await db.conversation.findUniqueOrThrow({
+            where: { id: conversation.id },
+          })
+        ).sandboxId,
+      ).toBe(isolated.id);
+    } finally {
+      await db.conversation.delete({ where: { id: conversation.id } });
+    }
+  });
+
   it("creates an agent with a unique slug", async () => {
     const a = await createAgent(workspaceId, "My Agent", { runtime: "pi" });
     expect(a.slug).toBe("my-agent");

@@ -3,11 +3,12 @@ import { resolveRequestUser } from "@/lib/auth/request-user";
 import { db } from "@/lib/db";
 import { livePort } from "@/lib/process/supervisor";
 import { ensureHermesRuntimeReady } from "@/lib/agents/hermes/runtime";
+import { findAgentConversationSandbox } from "@/lib/agents/conversation-sandbox";
+import { proxyConversationWorkspace } from "@/lib/agents/conversation-workspace-proxy";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const MAX_BODY = 1_000_000;
 type Params = Promise<{ workSessionId: string; path?: string[] }>;
 
 async function resolveTarget(req: Request, workSessionId: string) {
@@ -26,10 +27,10 @@ async function resolveTarget(req: Request, workSessionId: string) {
       workspaceId: true,
       runtimeKind: true,
       sandboxId: true,
+      conversationId: true,
       agent: {
         select: {
           id: true,
-          sandboxes: { select: { sandboxId: true } },
           runtime: { select: { kind: true, sandboxId: true } },
         },
       },
@@ -37,9 +38,17 @@ async function resolveTarget(req: Request, workSessionId: string) {
     },
   });
   if (!work?.sandbox || !work.sandboxId) return null;
-  const genericSandbox = work.agent.sandboxes.some(
-    (link) => link.sandboxId === work.sandboxId,
-  );
+  const mapping =
+    work.runtimeKind !== "hermes"
+      ? await findAgentConversationSandbox({
+          workspaceId: work.workspaceId,
+          agentId: work.agent.id,
+          conversationId: work.conversationId,
+        })
+      : null;
+  const genericSandbox =
+    mapping?.sandboxId === work.sandboxId &&
+    mapping.deploymentId === work.sandbox.deploymentId;
   const hermesSandbox =
     work.runtimeKind === "hermes" &&
     work.agent.runtime?.kind === "hermes" &&
@@ -51,73 +60,14 @@ async function resolveTarget(req: Request, workSessionId: string) {
       (await ensureHermesRuntimeReady(work.workspaceId, work.agent.id)).port ??
       null;
   }
-  return port ? { port } : null;
-}
-
-function upstreamPath(path: string[]) {
-  if (path[0] === "rpc" && path.length === 1) return "/";
-  if (path[0] === "terminal") {
-    const suffix = path.slice(1).map(encodeURIComponent).join("/");
-    return `/terminal/session${suffix ? `/${suffix}` : ""}`;
-  }
-  return null;
+  return port ? { port, sandboxId: work.sandboxId } : null;
 }
 
 async function proxy(req: Request, params: Params) {
   const { workSessionId, path = [] } = await params;
-  const targetPath = upstreamPath(path);
-  if (!targetPath)
-    return Response.json({ error: "Not found" }, { status: 404 });
-  const target = await resolveTarget(req, workSessionId);
-  if (!target)
-    return Response.json(
-      { error: "Work sandbox is unavailable" },
-      { status: 404 },
-    );
-  const body = ["GET", "DELETE"].includes(req.method)
-    ? undefined
-    : await req.text();
-  if (body && Buffer.byteLength(body) > MAX_BODY)
-    return Response.json({ error: "Request too large" }, { status: 413 });
-  try {
-    const stream = req.method === "GET" && path.at(-1) === "stream";
-    const upstream = await fetch(
-      `http://127.0.0.1:${target.port}${targetPath}`,
-      {
-        method: req.method,
-        headers: {
-          accept: req.headers.get("accept") ?? "*/*",
-          ...(body !== undefined
-            ? {
-                "content-type":
-                  req.headers.get("content-type") ?? "application/json",
-              }
-            : {}),
-        },
-        body,
-        cache: "no-store",
-        signal: stream ? req.signal : AbortSignal.timeout(30_000),
-      },
-    );
-    return new Response(upstream.body, {
-      status: upstream.status,
-      headers: {
-        "content-type":
-          upstream.headers.get("content-type") ?? "application/json",
-        ...(stream
-          ? {
-              "cache-control": "no-cache, no-transform",
-              "x-accel-buffering": "no",
-            }
-          : {}),
-      },
-    });
-  } catch {
-    return Response.json(
-      { error: "Work sandbox is unreachable" },
-      { status: 502 },
-    );
-  }
+  return proxyConversationWorkspace(req, path, () =>
+    resolveTarget(req, workSessionId),
+  );
 }
 
 export const GET = withRequestLogging(

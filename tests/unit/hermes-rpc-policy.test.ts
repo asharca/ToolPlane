@@ -8,6 +8,12 @@ import {
 import type { HermesRpcIO } from "@/lib/agents/hermes-rpc";
 import type { RunSandboxAgentTurnOptions } from "@/lib/agents/sandbox-runtime";
 
+vi.mock("@/lib/db", () => ({
+  db: {
+    agentSandbox: { findMany: vi.fn(async () => [{ sandboxId: "sandbox" }]) },
+  },
+}));
+
 const config = {
   provider: { id: "provider", format: "openai", name: "provider" },
   modelId: "model",

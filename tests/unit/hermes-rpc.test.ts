@@ -17,6 +17,11 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { RunSandboxAgentTurnOptions } from "@/lib/agents/sandbox-runtime";
+vi.mock("@/lib/db", () => ({
+  db: {
+    agentSandbox: { findMany: vi.fn(async () => [{ sandboxId: "sandbox-1" }]) },
+  },
+}));
 
 const base = {
   provider: { id: "provider-1", format: "openai", name: "test" },

@@ -1,6 +1,7 @@
 import "server-only";
 import { createHash, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import { db } from "@/lib/db";
 import type {
   RunSandboxAgentTurnOptions,
   SandboxRuntimeActivity,
@@ -169,6 +170,15 @@ export async function runHermesRpcTurn(
     `${temporary}-approval.py`,
   ];
   try {
+    const sources = await db.agentSandbox.findMany({
+      where: {
+        agentId: options.agentId,
+        agent: { workspaceId: options.workspaceId },
+      },
+      select: { sandboxId: true },
+    });
+    if (sources.length !== 1)
+      throw new Error("Hermes RPC source sandbox assignment changed.");
     options.signal?.throwIfAborted();
     await io.write(
       context.container,
@@ -217,7 +227,7 @@ export async function runHermesRpcTurn(
       binding: createHash("sha256")
         .update(
           JSON.stringify({
-            sandboxId: options.sandboxId,
+            sandboxId: sources[0].sandboxId,
             agentId: options.agentId,
             providerId: options.provider.id,
             model: options.modelId,
