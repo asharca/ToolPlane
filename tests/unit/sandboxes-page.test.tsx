@@ -1,3 +1,4 @@
+import { Children } from "react";
 import type { ReactNode } from "react";
 import { cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -95,8 +96,8 @@ vi.mock("@/components/dashboard/sandboxes/SandboxBatchTable", () => ({
                 disabled={!row.batchEligible}
               />
             </td>
-            {row.cells.map((cell, index) => (
-              <td key={`${row.id}-${index}`}>{cell}</td>
+            {Children.map(row.cells, (cell) => (
+              <td>{cell}</td>
             ))}
           </tr>
         ))}
