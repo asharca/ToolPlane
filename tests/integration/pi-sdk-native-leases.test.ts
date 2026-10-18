@@ -27,6 +27,7 @@ import { httpFixture } from "../fixtures/pi-agent-communication";
 import { executeRuntimeCommand } from "@/lib/agents/runtime-command-service";
 import { RUNTIME_COMMANDS_PART } from "@/lib/agents/runtime-commands";
 import { textArtifact } from "@/lib/a2a/model";
+import { mapTaskSandbox, taskSandbox } from "./task-sandbox-fixture";
 
 const scheduler = vi.hoisted(() => ({ wake: () => {} }));
 vi.mock("@/lib/a2a/worker", async (original) => ({
@@ -201,16 +202,18 @@ it("refreshes real native task readiness on the same SDK host and rejects the pr
       const row = await claimTask(accepted.row.id);
       if (!row) throw new Error("Claim failed");
       expect(row.executionBackend).toBe("legacy");
+      await mapTaskSandbox(row);
       return row;
     }
     async function request(row: A2ATask) {
       const runtimeToken = await createAgentRuntimeToken({
         workspaceId: workspace.id,
         agentId: agent.id,
-        sandboxId: sandbox.id,
+        ...taskSandbox(row),
         providerId: provider.id,
         deploymentIds: [],
         a2aTaskId: row.id,
+        a2aContextId: row.contextId,
         a2aLeaseToken: assertDefined(row.leaseToken),
         a2aApprovalRequired: true,
         exp: Math.floor(Date.now() / 1000) + 300,
@@ -267,6 +270,7 @@ it("refreshes real native task readiness on the same SDK host and rejects the pr
     });
     const second = await claimTask(queued.id);
     if (!second) throw new Error("Second claim failed");
+    await mapTaskSandbox(second);
     expect(second.contextId).toBe(first.contextId);
     const output = await request(second);
     expect(output).toMatchObject({
@@ -316,6 +320,9 @@ it("refreshes real native task readiness on the same SDK host and rejects the pr
     }
     await platform.close();
     await db.a2AContext.deleteMany({ where: { workspaceId: workspace.id } });
+    await db.conversation.deleteMany({
+      where: { agent: { workspaceId: workspace.id } },
+    });
     await db.logEvent.deleteMany({ where: { workspaceId: workspace.id } });
     await db.auditEvent.deleteMany({ where: { workspaceId: workspace.id } });
     await db.workspace.delete({ where: { id: workspace.id } });

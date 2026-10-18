@@ -270,6 +270,8 @@ afterAll(async () => {
   if (ws) {
     await db.logEvent.deleteMany({ where: { workspaceId: ws } });
     await db.auditEvent.deleteMany({ where: { workspaceId: ws } });
+    await db.a2AContext.deleteMany({ where: { workspaceId: ws } });
+    await db.conversation.deleteMany({ where: { agent: { workspaceId: ws } } });
     await db.workspace.delete({ where: { id: ws } });
   }
   await db.user.deleteMany({
