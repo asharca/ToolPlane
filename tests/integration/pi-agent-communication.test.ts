@@ -36,10 +36,8 @@ import type {
 } from "../fixtures/pi-agent-communication";
 import { db } from "@/lib/db";
 import { createApiToken } from "@/lib/auth/tokens";
-import {
-  createAgentRuntimeToken,
-  type AgentRuntimeTokenPayload,
-} from "@/lib/agents/runtime-access";
+import { createAgentRuntimeToken } from "@/lib/agents/runtime-access";
+import type { AgentRuntimeTokenPayload } from "@/lib/agents/runtime-access";
 import { withSandboxExecutionLease } from "@/lib/agents/sandbox-execution-gate";
 import { handleLocalMcp } from "@/lib/a2a/local-mcp";
 import { handleRuntimeApprovals } from "@/lib/a2a/approval-http";
@@ -47,7 +45,7 @@ import { decideNativeToolApproval } from "@/lib/a2a/tool-approvals";
 import { LOCAL_LIMITS } from "@/lib/a2a/local-policy";
 import { submitNativeEntry } from "@/lib/a2a/ingress";
 import {
-  claimTask,
+  claimTask as claimStoredTask,
   finishTask,
   bindPiHarnessOperation,
   releasePiHarnessClaim,
@@ -67,6 +65,14 @@ import {
   remotePeerFixture,
   nativeHostsFixture,
 } from "../fixtures/pi-agent-communication";
+import {
+  assertMappedDeployment,
+  assertMappedVolume,
+  mapTaskSandbox,
+  taskSandbox,
+} from "./task-sandbox-fixture";
+import type * as SandboxRuntime from "@/lib/sandboxes/runtime";
+import type * as ProcessSupervisor from "@/lib/process/supervisor";
 
 const routing = vi.hoisted(() => ({ peerBase: "" }));
 // Only DNS/TLS routing is replaced: requests cross a real socket and both ends use official SDK codecs.
@@ -100,6 +106,26 @@ vi.mock("@/lib/a2a/worker", async (original) => ({
   ...(await original<typeof Worker>()),
   wakeA2AWorker: vi.fn(),
 }));
+// Only Docker provisioning is injected; native subprocesses, persisted mappings and authorization remain real.
+vi.mock("@/lib/sandboxes/runtime", async (original) => {
+  const runtime = await original<typeof SandboxRuntime>();
+  return {
+    ...runtime,
+    assertDockerVolumeExists: vi.fn(async (name: string) =>
+      assertMappedVolume(name, runtime.sandboxVolumeName),
+    ),
+  };
+});
+vi.mock("@/lib/process/supervisor", async (original) => ({
+  ...(await original<typeof ProcessSupervisor>()),
+  startProcess: vi.fn((id: string) => assertMappedDeployment(id)),
+}));
+
+async function claimTask(id: string) {
+  const row = await claimStoredTask(id);
+  if (row) await mapTaskSandbox(row);
+  return row;
+}
 
 let workspaceId: string,
   foreignWorkspaceId: string,
@@ -108,7 +134,7 @@ let workspaceId: string,
 let actorId: string, otherActorId: string, providerId: string, remoteId: string;
 let personalToken: string, otherPersonalToken: string, toolkitToken: string;
 const agents: string[] = [],
-  sandboxes: string[] = [],
+  templateSandboxes: string[] = [],
   tokens: string[] = [];
 const clients: Client[] = [];
 const closePerTest: Array<() => Promise<void>> = [];
@@ -182,10 +208,11 @@ function payload(row: A2ATask, index = 0): AgentRuntimeTokenPayload {
   return {
     workspaceId,
     agentId: agents[index],
-    sandboxId: sandboxes[index],
+    ...taskSandbox(row),
     providerId,
     deploymentIds: [],
     a2aTaskId: row.id,
+    a2aContextId: row.contextId,
     a2aLeaseToken: assertDefined(row.leaseToken),
     a2aApprovalRequired: true,
     exp: Math.floor(Date.now() / 1000) + 300,
@@ -418,7 +445,7 @@ beforeAll(async () => {
       },
     });
     agents.push(agent.id);
-    sandboxes.push(sandbox.id);
+    templateSandboxes.push(sandbox.id);
   }
   personalToken = (await createApiToken(actorId, "Communication test personal"))
     .token;
@@ -586,6 +613,14 @@ afterAll(async () => {
       where: {
         workspaceId: { in: [workspaceId, foreignWorkspaceId].filter(Boolean) },
       },
+    });
+    await db.a2AContext.deleteMany({
+      where: {
+        workspaceId: { in: [workspaceId, foreignWorkspaceId].filter(Boolean) },
+      },
+    });
+    await db.conversation.deleteMany({
+      where: { agentId: { in: agents } },
     });
     await db.workspace.deleteMany({
       where: { id: { in: [workspaceId, foreignWorkspaceId].filter(Boolean) } },
@@ -768,22 +803,43 @@ describe("native communication transport: real PostgreSQL and MCP SDK HTTP", () 
     );
   });
 
-  it("requires approval readiness, rejects forged workspace claims, and invalidates old credentials on a new lease", async () => {
+  it("requires approval readiness and exact runtime scope, rejects forged claims, and invalidates old credentials on a new lease", async () => {
     const parent = await root(),
       token = await credential(parent, 0, false);
     await expect(connect(parent, 0, token)).rejects.toThrow();
     await credential(parent);
     const client = await connect(parent, 0, token);
     await call(client, "pi_a2a_peers");
-    const forged = await createAgentRuntimeToken({
-      ...payload(parent),
-      workspaceId: foreignWorkspaceId,
-    });
-    tokens.push(forged);
-    await expect(connect(parent, 0, forged)).rejects.toThrow();
+    expect(taskSandbox(parent).sandboxId).not.toBe(templateSandboxes[0]);
+    for (const claims of [
+      { workspaceId: foreignWorkspaceId },
+      { sandboxId: templateSandboxes[0] },
+      { a2aContextId: undefined },
+      { a2aContextId: randomUUID() },
+    ]) {
+      const forged = await createAgentRuntimeToken({
+        ...payload(parent),
+        ...claims,
+      });
+      tokens.push(forged);
+      await expect(connect(parent, 0, forged)).rejects.toThrow();
+      const response = await fetch(
+        `${platform.base}/api/v1/agent-runtime/a2a/${parent.id}/approvals`,
+        {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${forged}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ action: "ready" }),
+        },
+      );
+      expect(response.status).toBe(404);
+    }
     await releasePiHarnessClaim(parent.id, assertDefined(parent.leaseToken));
     const next = assertDefined(await claimTask(parent.id));
     expect(next.leaseToken).not.toBe(parent.leaseToken);
+    expect(taskSandbox(next)).toEqual(taskSandbox(parent));
     await expect(
       client.callTool({ name: "pi_a2a_peers", arguments: {} }),
     ).rejects.toThrow();
@@ -800,7 +856,9 @@ describe("native communication transport: real PostgreSQL and MCP SDK HTTP", () 
     const executor = vi.fn(async () => {
       throw new Error("A busy child must not enter any executor");
     });
-    await withSandboxExecutionLease(sandboxes[1], async () => {
+    const child = await db.a2ATask.findUniqueOrThrow({ where: { id } });
+    await mapTaskSandbox(child);
+    await withSandboxExecutionLease(taskSandbox(child).sandboxId, async () => {
       await executeA2ATask(id, executor);
       expect(executor).not.toHaveBeenCalled();
       const result = await call(client, "pi_a2a_status", {
