@@ -487,4 +487,117 @@ describe("Chat and Work execution boundary", () => {
       "Saved concise context",
     );
   });
+  it.each([
+    "unauthorized",
+    "foreign",
+    "unsupported",
+    "model",
+    "provider",
+    "hermes-provider",
+    "copy",
+  ])(
+    "rejects unavailable execution before touching conversation state: %s",
+    async (reason) => {
+      const agent = await mocks.getAgentForRequest();
+      let status = 400;
+      if (reason === "unauthorized") {
+        mocks.resolveRequestUser.mockResolvedValue(null);
+        status = 401;
+      }
+      if (reason === "foreign") {
+        mocks.getAgentForRequest.mockResolvedValue(null);
+        status = 404;
+      }
+      if (reason === "unsupported") {
+        mocks.getAgentForRequest.mockResolvedValue({
+          ...agent,
+          runtimeKind: "unknown",
+        });
+        status = 409;
+      }
+      if (reason === "model")
+        mocks.getAgentForRequest.mockResolvedValue({ ...agent, model: null });
+      if (reason === "provider")
+        mocks.getAgentForRequest.mockResolvedValue({
+          ...agent,
+          provider: null,
+        });
+      if (reason === "hermes-provider")
+        mocks.getAgentForRequest.mockResolvedValue({
+          ...agent,
+          runtimeKind: "hermes",
+          modelProviders: [],
+        });
+      if (reason === "copy") {
+        mocks.getAgentForRequest.mockResolvedValue({
+          ...agent,
+          runtimeKind: "hermes",
+          modelProviders: [{ provider: { id: "provider" } }],
+        });
+        mocks.acquireHermesRuntimeWriteLease.mockReturnValue(null);
+        status = 503;
+      }
+      expect((await POST(request({ messages: [] }), context)).status).toBe(
+        status,
+      );
+      expect(mocks.conversationFindFirst).not.toHaveBeenCalled();
+      expect(mocks.writeHermesChatStream).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    "json",
+    "schema",
+    "work-request",
+    "foreign-conversation",
+    "work-conversation",
+    "public-conversation",
+    "channel-conversation",
+  ])("releases a Hermes volume lease when rejecting %s", async (reason) => {
+    const release = vi.fn();
+    const agent = await mocks.getAgentForRequest();
+    mocks.getAgentForRequest.mockResolvedValue({
+      ...agent,
+      runtimeKind: "hermes",
+      modelProviders: [{ provider: { id: "provider" } }],
+    });
+    mocks.acquireHermesRuntimeWriteLease.mockReturnValue({ release });
+    const conversation = {
+      id: "conversation",
+      title: null,
+      workSession: null,
+      publicApiConversation: null,
+    };
+    mocks.conversationFindFirst.mockResolvedValue(
+      reason === "foreign-conversation"
+        ? null
+        : {
+            ...conversation,
+            ...(reason === "work-conversation"
+              ? { workSession: { id: "work" } }
+              : {}),
+            ...(reason === "public-conversation"
+              ? { publicApiConversation: { id: "public" } }
+              : {}),
+            ...(reason === "channel-conversation"
+              ? { title: "msg:slack" }
+              : {}),
+          },
+    );
+    const req =
+      reason === "json"
+        ? new Request("http://localhost", { method: "POST", body: "{" })
+        : request(
+            reason === "schema"
+              ? { messages: "bad" }
+              : reason === "work-request"
+                ? { workSessionId: "work", messages: [] }
+                : { conversationId: "conversation", messages: [] },
+          );
+    expect((await POST(req, context)).status).toBe(
+      reason === "foreign-conversation" ? 404 : 400,
+    );
+    expect(release).toHaveBeenCalledTimes(1);
+    expect(mocks.writeHermesChatStream).not.toHaveBeenCalled();
+  });
 });

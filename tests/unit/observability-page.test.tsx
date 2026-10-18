@@ -1,352 +1,254 @@
-import { assertDefined } from "../assert-defined";
-import { render, screen, within } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createTranslator } from "next-intl";
-import messages from "../../messages/en.json";
-import type * as ObservabilityQueries from "@/lib/observability/queries";
-
-const mocks = vi.hoisted(() => ({
-  logs: vi.fn(),
-  refresh: vi.fn(),
-  redirect: vi.fn(),
+import { act, cleanup, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+const m = vi.hoisted(() => ({
+  user: vi.fn(),
+  workspace: vi.fn(),
+  data: vi.fn(),
+  plugin: vi.fn(),
+  resolve: vi.fn(),
   authorize: vi.fn(),
   events: vi.fn(),
   stats: vi.fn(),
 }));
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ refresh: mocks.refresh }),
-  redirect: mocks.redirect,
+  useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
+  redirect: (url: string) => {
+    throw new Error(`redirect:${url}`);
+  },
 }));
 vi.mock("next-intl/server", () => ({
   getLocale: async () => "en",
-  getTranslations: async (namespace: "console.observability" | "admin") =>
-    createTranslator({ locale: "en", messages, namespace }),
+  getTranslations:
+    async () => (key: string, values?: Record<string, unknown>) =>
+      values ? `${key}:${Object.values(values).join(",")}` : key,
 }));
-vi.mock("@/lib/auth/current-user", () => ({
-  getCurrentUser: async () => ({ id: "user-1" }),
-}));
+vi.mock("@/lib/auth/current-user", () => ({ getCurrentUser: m.user }));
 vi.mock("@/lib/workspace/queries", () => ({
-  getWorkspaceForUser: async () => ({ id: "workspace-1" }),
+  getWorkspaceForUser: m.workspace,
 }));
-vi.mock("@/lib/observability/log", () => ({ getObservability: mocks.logs }));
-vi.mock("@/lib/observability/queries", async (importOriginal) => ({
-  ...(await importOriginal<typeof ObservabilityQueries>()),
-  authorizeLogs: mocks.authorize,
-  listLogEvents: mocks.events,
-  aggregateLogs: mocks.stats,
-}));
+vi.mock("@/lib/observability/log", () => ({ getObservability: m.data }));
 vi.mock("@/lib/observability/plugin-telemetry", () => ({
-  getPluginTelemetry: vi.fn(),
+  getPluginTelemetry: m.plugin,
 }));
-vi.mock("@/lib/db", () => ({ db: {} }));
-import ObservabilityPage from "@/app/app/[workspace]/observability/page";
-
-const until = "2026-09-28T10:00:00.000Z";
-const cursor = Buffer.from(
-  JSON.stringify({ id: "last-log", at: until }),
-).toString("base64url");
-const data = {
-  series: [],
+vi.mock("@/lib/observability/queries", () => ({
+  aggregateLogs: m.stats,
+  authorizeLogs: m.authorize,
+  listLogEvents: m.events,
+  resolveLogFilters: m.resolve,
+  getA2aMetadata: (metadata: unknown) => metadata,
+  logFilterSchema: { safeParse: () => ({ success: true }) },
+}));
+vi.mock("@/components/dashboard/DashboardHeader", () => ({
+  DashboardHeader: () => null,
+}));
+import Observability from "@/app/app/[workspace]/observability/page";
+const page = (query = {}) =>
+  Observability({
+    params: Promise.resolve({ workspace: "acme" }),
+    searchParams: Promise.resolve(query),
+  });
+const data = () => ({
   total: 0,
   errors: 0,
   avgMs: 0,
   p95Ms: 0,
-  recent: [],
+  series: [],
+  deployments: [],
   deploymentUsage: [],
-  deployments: [{ id: "server-1", name: "Memory" }],
+  recent: [],
   selectedDeployment: null,
   nextCursor: null,
-  until,
-};
-
-describe("workspace observability page", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mocks.logs.mockResolvedValue(data);
-    mocks.authorize.mockResolvedValue(undefined);
-    mocks.stats.mockResolvedValue({
-      total: 2,
-      errors: 1,
-      avgMs: 12,
-      p95Ms: 24,
-    });
-    mocks.events.mockResolvedValue({ rows: [], nextCursor: null, until });
+  until: "2026-08-02T00:00:00.000Z",
+});
+beforeEach(() => {
+  vi.clearAllMocks();
+  m.user.mockResolvedValue({ id: "user", timeZone: "UTC" });
+  m.workspace.mockResolvedValue({ id: "ws" });
+  m.data.mockResolvedValue(data());
+  m.plugin.mockResolvedValue({
+    skill: { total: 0, byUser: 0, byAgent: 0, errors: 0, recent: [] },
+    sync: { applied: 0, failures: 0, recent: [] },
   });
-
-  it.each([undefined, "invalid", "audit"])(
-    "defaults %s to request logs and keeps an empty searchable toolbar",
-    async (tab) => {
-      render(
-        await ObservabilityPage({
-          params: Promise.resolve({ workspace: "acme" }),
-          searchParams: Promise.resolve({ tab }),
-        }),
-      );
-      expect(
-        within(screen.getByRole("navigation", { name: "Sections" })).getByRole(
-          "tab",
-          { name: "Request log" },
-        ),
-      ).toHaveAttribute("aria-current", "page");
-      expect(screen.getAllByRole("textbox")).toHaveLength(1);
-      expect(
-        screen.getByRole("button", { name: "Refresh" }),
-      ).toBeInTheDocument();
-      expect(screen.getByText("No requests recorded yet.")).toBeInTheDocument();
-      expect(mocks.logs).toHaveBeenCalledWith(
-        "workspace-1",
-        expect.any(String),
-        24,
-        undefined,
-        { userId: "user-1", q: undefined, cursor: undefined, until: undefined },
-      );
-    },
-  );
-
-  it("allows clearing a keyword without a selected server", async () => {
-    render(
-      await ObservabilityPage({
-        params: Promise.resolve({ workspace: "acme" }),
-        searchParams: Promise.resolve({ q: "echo" }),
-      }),
-    );
-    expect(screen.getByRole("textbox")).toHaveValue("echo");
+  m.resolve.mockImplementation((value) => value);
+  m.authorize.mockResolvedValue(undefined);
+  m.events.mockResolvedValue({
+    items: [],
+    until: "2026-08-02",
+    nextCursor: null,
+  });
+  m.stats.mockResolvedValue({ total: 0, errors: 0, p95Ms: 0 });
+});
+afterEach(cleanup);
+describe("workspace observability operational states", () => {
+  it("requires sign-in before reading telemetry", async () => {
+    m.user.mockResolvedValue(null);
+    await expect(page()).rejects.toThrow("redirect:/app/login");
+    expect(m.data).not.toHaveBeenCalled();
+  });
+  it("rejects inaccessible workspace telemetry", async () => {
+    m.workspace.mockResolvedValue(null);
+    await expect(page()).rejects.toThrow("redirect:/app");
+    expect(m.data).not.toHaveBeenCalled();
+  });
+  it("distinguishes no traffic from missing servers", async () => {
+    render(await page({ tab: "usage" }));
     expect(
-      screen.getByRole("link", {
-        name: messages.console.observability.clearFilter,
-      }),
-    ).toHaveAttribute("href", "/app/acme/observability?tab=audit");
-  });
-
-  it("preserves filters and window when paging but resets cursors on applying or changing tabs", async () => {
-    mocks.logs.mockResolvedValue({ ...data, nextCursor: cursor });
-    render(
-      await ObservabilityPage({
-        params: Promise.resolve({ workspace: "acme" }),
-        searchParams: Promise.resolve({
-          tab: "audit",
-          q: "echo",
-          deploymentId: "server-1",
-          cursor,
-          until,
-        }),
-      }),
-    );
-    const older = new URL(
-      assertDefined(
-        screen
-          .getByRole("link", { name: messages.console.observability.olderLogs })
-          .getAttribute("href"),
+      screen.getByText(
+        "noTrafficYetCallADeploymentsGatewayEndpointToSeeActivityHere",
       ),
-      "http://localhost",
-    );
-    expect(Object.fromEntries(older.searchParams)).toEqual({
-      tab: "audit",
-      q: "echo",
-      deploymentId: "server-1",
-      cursor,
-      until,
-    });
-    const form = assertDefined(screen.getByRole("textbox").closest("form"));
-    expect(Object.fromEntries(new FormData(form))).toEqual({
-      tab: "audit",
-      q: "echo",
-      deploymentId: "server-1",
-    });
-    const usage = new URL(
-      assertDefined(
-        screen.getByRole("tab", { name: "Usage" }).getAttribute("href"),
-      ),
-      "http://localhost",
-    );
-    expect(Object.fromEntries(usage.searchParams)).toEqual({
-      tab: "usage",
-      q: "echo",
-      deploymentId: "server-1",
-    });
-  });
-
-  it("scopes every A2A query before aggregation and excludes MCP data and bodies from the list", async () => {
-    mocks.events.mockResolvedValue({
-      rows: [
-        {
-          id: "event-1",
-          createdAt: new Date(until),
-          domain: "a2a",
-          outcome: "error",
-          eventName: "a2a.request",
-          rpcMethod: "GetTask",
-          durationMs: 12,
-          agentId: "agent-1",
-          detailState: "restricted",
-          message: "private request text",
-          attributes: {
-            data: {
-              a2a: {
-                direction: "inbound",
-                transport: "jsonrpc",
-                taskId: "task-1",
-              },
-            },
-          },
-        },
-      ],
-      nextCursor: null,
-      until,
-    });
-    const { container } = render(
-      await ObservabilityPage({
-        params: Promise.resolve({ workspace: "acme" }),
-        searchParams: Promise.resolve({
-          tab: "a2a",
-          direction: "inbound",
-          workspaceId: "untrusted-workspace",
-        }),
-      }),
-    );
-    expect(mocks.logs).not.toHaveBeenCalled();
-    expect(mocks.authorize).toHaveBeenCalledWith({
-      userId: "user-1",
-      workspaceId: "workspace-1",
-    });
-    expect(mocks.events).toHaveBeenCalledWith(
-      { userId: "user-1", workspaceId: "workspace-1" },
-      expect.objectContaining({
-        domain: "a2a",
-        eventName: "a2a.request",
-        direction: "inbound",
-        workspaceId: "workspace-1",
-      }),
-    );
-    expect(mocks.stats).toHaveBeenCalledWith(
-      expect.objectContaining({
-        domain: "a2a",
-        eventName: "a2a.request",
-        workspaceId: "workspace-1",
-      }),
-    );
-    expect(await screen.findByText("GetTask")).toBeInTheDocument();
-    expect(container.innerHTML).not.toContain("private request text");
-    const task = new URL(
-      assertDefined(
-        screen.getByRole("link", { name: "task-1" }).getAttribute("href"),
-      ),
-      "http://localhost",
-    );
-    expect(Object.fromEntries(task.searchParams)).toMatchObject({
-      tab: "a2a",
-      taskId: "task-1",
-    });
-    expect(task.searchParams.has("eventName")).toBe(false);
-  });
-
-  it("preserves the fixed time window and filters on pagination but clears cursor when filters change", async () => {
-    mocks.events.mockResolvedValue({
-      rows: [
-        {
-          id: "settled-1",
-          createdAt: new Date(until),
-          domain: "a2a",
-          outcome: "success",
-          eventName: "a2a.task.settled",
-          durationMs: 360000,
-          detailState: "unavailable",
-          attributes: {
-            data: {
-              a2a: {
-                direction: "internal",
-                transport: "entry",
-                taskId: "task-1",
-                rootTaskId: "root-1",
-                taskState: "TASK_STATE_COMPLETED",
-              },
-            },
-          },
-        },
-      ],
-      nextCursor: cursor,
-      until,
-    });
-    const { container } = render(
-      await ObservabilityPage({
-        params: Promise.resolve({ workspace: "acme" }),
-        searchParams: Promise.resolve({
-          tab: "a2a",
-          range: "168",
-          taskId: "task-1",
-          direction: "outbound",
-          cursor,
-          until,
-        }),
-      }),
-    );
-    const filters = mocks.events.mock.calls[0][1];
-    expect(filters.eventName).toBeUndefined();
-    expect(filters.until.toISOString()).toBe(until);
-    expect(screen.getByText("Events in filtered window")).toBeInTheDocument();
-    expect(
-      await screen.findByText("Task elapsed time: 360000 ms"),
     ).toBeInTheDocument();
-    const root = new URL(
-      assertDefined(
-        screen
-          .getByRole("link", { name: "Root task ID: root-1" })
-          .getAttribute("href"),
-      ),
-      "http://localhost",
-    );
-    expect(Object.fromEntries(root.searchParams)).toMatchObject({
-      tab: "a2a",
-      rootTaskId: "root-1",
-    });
-    expect(filters.since.toISOString()).toBe("2026-09-21T10:00:00.000Z");
-    const older = new URL(
-      assertDefined(
-        screen.getByRole("link", { name: "Older logs" }).getAttribute("href"),
-      ),
-      "http://localhost",
-    );
-    expect(Object.fromEntries(older.searchParams)).toMatchObject({
-      tab: "a2a",
-      range: "168",
-      taskId: "task-1",
-      direction: "outbound",
-      cursor,
-      until,
-    });
-    const form = new FormData(assertDefined(container.querySelector("form")));
-    expect(form.has("cursor")).toBe(false);
-    expect(form.has("until")).toBe(false);
-    expect(form.get("taskId")).toBe("task-1");
-    const range = new URL(
-      assertDefined(
-        screen.getByRole("link", { name: "1 hour" }).getAttribute("href"),
-      ),
-      "http://localhost",
-    );
-    expect(range.searchParams.get("taskId")).toBe("task-1");
-    expect(range.searchParams.has("cursor")).toBe(false);
-    expect(range.searchParams.has("until")).toBe(false);
-    const refresh = new FormData(
-      assertDefined(
-        screen.getByRole("button", { name: "Refresh" }).closest("form"),
-      ),
-    );
-    expect(refresh.get("taskId")).toBe("task-1");
-    expect(refresh.get("direction")).toBe("outbound");
-    expect(refresh.has("cursor")).toBe(false);
-    expect(refresh.has("until")).toBe(false);
+    expect(screen.getByText("noServersYet")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: "clearFilter" }),
+    ).not.toBeInTheDocument();
   });
-
-  it("never aggregates A2A events when workspace log authorization fails", async () => {
-    mocks.authorize.mockRejectedValue(new Error("Forbidden"));
+  it("derives aggregate and per-server error rates and links to the affected deployment", async () => {
+    m.data.mockResolvedValue({
+      ...data(),
+      total: 1500,
+      errors: 150,
+      avgMs: 40,
+      p95Ms: 90,
+      selectedDeployment: "Search server",
+      deployments: [{ id: "dep", name: "Search server" }],
+      series: [
+        { timestamp: "2026-08-01T00:00Z", hour: "00", total: 20, errors: 2 },
+        { timestamp: "2026-08-01T01:00Z", hour: "01", total: 0, errors: 0 },
+      ],
+      deploymentUsage: [
+        { id: "dep", name: "Search server", total: 20, errors: 2, avgMs: 40 },
+        { id: null, name: "Workspace API", total: 0, errors: 0, avgMs: 0 },
+      ],
+    });
+    await act(async () => {
+      render(await page({ tab: "usage", q: "search", deploymentId: " dep " }));
+    });
+    expect(screen.getByText("1.5k")).toBeInTheDocument();
+    expect(screen.getByText("10%")).toBeInTheDocument();
+    expect(screen.getByText("filteredTo:Search server")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Search server" })).toHaveAttribute(
+      "href",
+      "/app/acme/mcp/dep",
+    );
+    expect(screen.getByRole("link", { name: "clearFilter" })).toHaveAttribute(
+      "href",
+      "/app/acme/observability?tab=usage",
+    );
+  });
+  it("explains absent plugin invocations and synchronization history", async () => {
+    render(await page({ tab: "plugin" }));
+    expect(
+      screen.getByText(
+        "noSkillInvocationsYetInstallAToolkitAsAnAutosyncPluginAndRunOneOfItsSkills",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("noSyncsRecordedYet")).toBeInTheDocument();
+  });
+  it("distinguishes user/agent invocation failures and sync outcomes", async () => {
+    const date = new Date("2026-08-01");
+    m.plugin.mockResolvedValue({
+      skill: {
+        total: 2000,
+        byUser: 1500,
+        byAgent: 500,
+        errors: 1,
+        recent: [
+          {
+            id: "ok",
+            skillSlug: "writing",
+            source: "user",
+            outcome: "ok",
+            errorClass: null,
+            createdAt: date,
+          },
+          {
+            id: "error",
+            skillSlug: "research",
+            source: "agent",
+            outcome: "error",
+            errorClass: "TimeoutError",
+            createdAt: date,
+          },
+        ],
+      },
+      sync: {
+        applied: 3,
+        failures: 2,
+        recent: [
+          {
+            id: "success",
+            outcome: "applied",
+            added: 2,
+            updated: 1,
+            removed: 0,
+            createdAt: date,
+          },
+          {
+            id: "failure",
+            outcome: "failure",
+            reason: "Checksum mismatch",
+            added: 0,
+            updated: 0,
+            removed: 0,
+            createdAt: date,
+          },
+          {
+            id: "failure-empty",
+            outcome: "failure",
+            reason: null,
+            added: 0,
+            updated: 0,
+            removed: 0,
+            createdAt: date,
+          },
+        ],
+      },
+    });
+    await act(async () => {
+      render(await page({ tab: "plugin" }));
+    });
+    expect(screen.getByText("2.0k")).toBeInTheDocument();
+    expect(screen.getByText("error · TimeoutError")).toBeInTheDocument();
+    expect(screen.getByText("failure · Checksum mismatch")).toBeInTheDocument();
+    expect(screen.getByText("writing")).toBeInTheDocument();
+  });
+  it("preserves pinned time window and search when loading older audit events", async () => {
+    m.data.mockResolvedValue({ ...data(), nextCursor: "cursor-2" });
+    render(await page({ tab: "audit", q: "search", deploymentId: "dep" }));
+    const href = screen
+      .getByRole("link", { name: "olderLogs" })
+      .getAttribute("href");
+    const url = new URL(href ?? "", "https://example.com");
+    expect(url.searchParams.get("cursor")).toBe("cursor-2");
+    expect(url.searchParams.get("until")).toBe("2026-08-02T00:00:00.000Z");
+    expect(url.searchParams.get("q")).toBe("search");
+    expect(url.searchParams.get("deploymentId")).toBe("dep");
+  });
+  it("rejects unsupported A2A windows before querying events", async () => {
+    await expect(page({ tab: "a2a", range: "999" })).rejects.toThrow(
+      "redirect:/app/acme/observability?tab=a2a",
+    );
+    expect(m.events).not.toHaveBeenCalled();
+  });
+  it("propagates log authorization failures instead of rendering private A2A events", async () => {
+    m.authorize.mockRejectedValue(new Error("Forbidden log scope"));
     await expect(
-      ObservabilityPage({
-        params: Promise.resolve({ workspace: "acme" }),
-        searchParams: Promise.resolve({ tab: "a2a" }),
+      page({
+        tab: "a2a",
+        range: "1",
+        q: "search",
+        agentId: "agent",
+        taskId: "task",
+        direction: "inbound",
+        outcome: "error",
+        requestId: "request",
+        contextId: "context",
+        rootTaskId: "root",
+        parentTaskId: "parent",
+        until: "2026-08-02",
+        cursor: "cursor",
       }),
-    ).rejects.toThrow("Forbidden");
-    expect(mocks.stats).not.toHaveBeenCalled();
-    expect(mocks.events).not.toHaveBeenCalled();
+    ).rejects.toThrow("Forbidden log scope");
+    expect(m.events).not.toHaveBeenCalled();
   });
 });

@@ -12,6 +12,8 @@ const mocks = vi.hoisted(() => ({
   deploymentUpdate: vi.fn(),
   installedSkillFindMany: vi.fn(),
   installedSkillDeleteMany: vi.fn(),
+  installedSkillUpsert: vi.fn(),
+  skillFindFirst: vi.fn(),
   marketInstallUpdateMany: vi.fn(),
   serverFindUnique: vi.fn(),
   userFindUnique: vi.fn(),
@@ -52,7 +54,9 @@ vi.mock("@/lib/db", () => ({
       installedSkill: {
         findMany: mocks.installedSkillFindMany,
         deleteMany: mocks.installedSkillDeleteMany,
+        upsert: mocks.installedSkillUpsert,
       },
+      skill: { findFirst: mocks.skillFindFirst },
       server: {
         findUnique: mocks.serverFindUnique,
       },
@@ -122,6 +126,8 @@ import {
   rebuildDeploymentAction,
   updateMcpToolExposureAction,
   updateMcpJsonConfigAction,
+  stopDeploymentAction,
+  installSkillAction,
   uninstallSkillAction,
 } from "@/lib/workspace/actions";
 
@@ -2592,5 +2598,302 @@ describe("runMcpConsoleToolAction", () => {
     expect(mocks.logRequest).toHaveBeenCalledWith(
       expect.objectContaining({ statusCode: 502, responseBody: undefined }),
     );
+  });
+});
+
+describe("single deployment stop and curated skill installation", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    mocks.getCurrentUser.mockResolvedValue({ id: "user1" });
+    mocks.getWorkspaceForUser.mockResolvedValue({
+      id: "ws1",
+      ownerId: "user1",
+    });
+  });
+
+  it.each([false, true])(
+    "stops a deployment with missing credentials=%s in the appropriate durable state",
+    async (missing) => {
+      let status = "running";
+      mocks.deploymentFindFirst.mockResolvedValue({
+        id: "dep1",
+        installCfg: {
+          env: { TOKEN: missing ? "" : "secret" },
+          requiredEnv: ["TOKEN"],
+        },
+        server: null,
+      });
+      mocks.killProcess.mockImplementation(async (_id, options) => {
+        status = options.finalStatus;
+      });
+      mocks.stopProcess.mockImplementation(async () => {
+        status = "stopped";
+      });
+      await stopDeploymentAction(formData("dep1"));
+      expect(status).toBe(missing ? "setup_required" : "stopped");
+      expect(
+        missing ? mocks.stopProcess : mocks.killProcess,
+      ).not.toHaveBeenCalled();
+      expect(mocks.revalidatePath).toHaveBeenCalledWith("/app/mine/mcp/dep1");
+    },
+  );
+
+  it("does not stop a deployment outside the authorized workspace", async () => {
+    mocks.deploymentFindFirst.mockImplementation(async ({ where }) =>
+      where.workspaceId === "other" ? { id: "foreign" } : null,
+    );
+    await stopDeploymentAction(formData("foreign"));
+    expect(mocks.stopProcess).not.toHaveBeenCalled();
+    expect(mocks.killProcess).not.toHaveBeenCalled();
+  });
+
+  it.each(["anonymous", "foreign", "missing-fields"])(
+    "does not query a runtime for %s requests",
+    async (mode) => {
+      if (mode === "anonymous") mocks.getCurrentUser.mockResolvedValue(null);
+      if (mode === "foreign") mocks.getWorkspaceForUser.mockResolvedValue(null);
+      await stopDeploymentAction(
+        mode === "missing-fields" ? new FormData() : formData("dep1"),
+      );
+      expect(mocks.deploymentFindFirst).not.toHaveBeenCalled();
+      expect(mocks.stopProcess).not.toHaveBeenCalled();
+    },
+  );
+
+  it("installs a curated skill once without overwriting existing installation state", async () => {
+    const installs = new Map<
+      string,
+      { workspaceId: string; skillId: string; preference?: string }
+    >();
+    mocks.skillFindFirst.mockImplementation(async ({ where }) =>
+      where.id === "skill1" && where.curated ? { slug: "reviewer" } : null,
+    );
+    mocks.installedSkillUpsert.mockImplementation(
+      async ({ where, create, update }) => {
+        const key = `${where.workspaceId_skillId.workspaceId}:${where.workspaceId_skillId.skillId}`;
+        const value = installs.get(key);
+        installs.set(key, value ? { ...value, ...update } : create);
+      },
+    );
+    const input = formData("unused");
+    input.set("skillId", "skill1");
+    await installSkillAction(input);
+    expect(installs.get("ws1:skill1")).toEqual({
+      workspaceId: "ws1",
+      skillId: "skill1",
+    });
+    installs.set("ws1:skill1", {
+      workspaceId: "ws1",
+      skillId: "skill1",
+      preference: "preserved",
+    });
+    await installSkillAction(input);
+    expect([...installs.values()]).toEqual([
+      { workspaceId: "ws1", skillId: "skill1", preference: "preserved" },
+    ]);
+    expect(mocks.revalidatePath).toHaveBeenCalledWith(
+      "/app/mine/market/skills/reviewer",
+    );
+  });
+
+  it("rejects a hidden skill rather than installing a forged identifier", async () => {
+    mocks.skillFindFirst.mockResolvedValue(null);
+    const input = formData("unused");
+    input.set("skillId", "hidden");
+    await installSkillAction(input);
+    expect(mocks.installedSkillUpsert).not.toHaveBeenCalled();
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
+  });
+});
+
+describe("workspace action trust boundaries", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    mocks.getCurrentUser.mockResolvedValue({ id: "user1" });
+    mocks.getWorkspaceForUser.mockResolvedValue({
+      id: "ws1",
+      ownerId: "user1",
+    });
+  });
+
+  const mutations = [
+    deployServerAction,
+    deployCustomServerAction,
+    cloneDeploymentAction,
+    removeDeploymentAction,
+    removeDeploymentsAction,
+    renameDeploymentAction,
+    setDeploymentEnvAction,
+    startDeploymentAction,
+    startDeploymentsAction,
+    stopDeploymentAction,
+    stopDeploymentsAction,
+    restartDeploymentAction,
+    rebuildDeploymentAction,
+    installSkillAction,
+    uninstallSkillAction,
+    (fd: FormData) => updateMcpJsonConfigAction({}, fd),
+    (fd: FormData) => updateMcpToolExposureAction({}, fd),
+  ];
+  it.each(mutations)(
+    "rejects anonymous and inaccessible-workspace mutation %# before resource access",
+    async (action) => {
+      const fd = formData("dep1");
+      fd.set("serverId", "server1");
+      fd.set("skillId", "skill1");
+      fd.set("installId", "install1");
+      fd.set("name", "Changed");
+      fd.set("mode", "all");
+      fd.set("changes", "{}");
+      fd.set("config", '{"command":"npx","args":["server"]}');
+      mocks.getCurrentUser.mockResolvedValueOnce(null);
+      await action(fd);
+      mocks.getWorkspaceForUser.mockResolvedValueOnce(null);
+      await action(fd);
+      expect(mocks.deploymentFindFirst).not.toHaveBeenCalled();
+      expect(mocks.deploymentFindMany).not.toHaveBeenCalled();
+      expect(mocks.deploymentCreate).not.toHaveBeenCalled();
+      expect(mocks.deploymentUpdate).not.toHaveBeenCalled();
+      expect(mocks.serverFindUnique).not.toHaveBeenCalled();
+      expect(mocks.skillFindFirst).not.toHaveBeenCalled();
+      expect(mocks.installedSkillFindMany).not.toHaveBeenCalled();
+      expect(mocks.startProcess).not.toHaveBeenCalled();
+      expect(mocks.killProcess).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(mutations)(
+    "rejects incomplete forms without executing a mutation %#",
+    async (action) => {
+      await action(new FormData());
+      expect(mocks.getCurrentUser).not.toHaveBeenCalled();
+      expect(mocks.deploymentUpdate).not.toHaveBeenCalled();
+      expect(mocks.startProcess).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    "not-json",
+    "null",
+    "[]",
+    '{"set":[]}',
+    '{"remove":{}}',
+    '{"set":{"TOKEN":123}}',
+    '{"remove":[123]}',
+    '{"remove":["BAD-KEY"]}',
+    '{"set":{"BAD-KEY":"secret"}}',
+    JSON.stringify({ set: { TOKEN: "\0" } }),
+    JSON.stringify({ set: { TOKEN: "x".repeat(16_001) } }),
+    JSON.stringify({
+      set: Object.fromEntries(
+        Array.from({ length: 101 }, (_, i) => [`KEY_${i}`, "value"]),
+      ),
+    }),
+    JSON.stringify({
+      set: Object.fromEntries(
+        Array.from({ length: 5 }, (_, i) => [`KEY_${i}`, "x".repeat(16_000)]),
+      ),
+    }),
+  ])(
+    "rejects malformed or unbounded environment patch %# without reading secrets",
+    async (changes) => {
+      const fd = formData("dep1");
+      fd.set("changes", changes);
+      await setDeploymentEnvAction(fd);
+      expect(mocks.deploymentFindFirst).not.toHaveBeenCalled();
+      expect(mocks.deploymentUpdate).not.toHaveBeenCalled();
+      expect(mocks.killProcess).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    "null",
+    "{}",
+    "not-json",
+    JSON.stringify([{ key: "TOKEN", value: "\0" }]),
+  ])("rejects invalid legacy environment rows %#", async (env) => {
+    const fd = formData("dep1");
+    fd.set("env", env);
+    await setDeploymentEnvAction(fd);
+    expect(mocks.deploymentUpdate).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    null,
+    [],
+    { env: null },
+    { env: [] },
+    { env: { GOOD: "kept", BAD: 12, "BAD-KEY": "excluded" } },
+  ])(
+    "normalizes stored environment before applying a bounded patch %#",
+    async (installCfg) => {
+      const record = {
+        id: "dep1",
+        status: "stopped",
+        server: null,
+        installCfg,
+      };
+      mocks.deploymentFindFirst.mockResolvedValue(record);
+      mocks.deploymentUpdate.mockImplementation(async ({ data }) =>
+        Object.assign(record, data),
+      );
+      const fd = formData("dep1");
+      fd.set(
+        "changes",
+        JSON.stringify({
+          set: { ADDED: "new" },
+          remove: ["MISSING", "MISSING"],
+        }),
+      );
+      await setDeploymentEnvAction(fd);
+      expect(record.installCfg).toMatchObject({
+        env: {
+          ...(installCfg &&
+          !Array.isArray(installCfg) &&
+          installCfg.env &&
+          !Array.isArray(installCfg.env)
+            ? { GOOD: "kept" }
+            : {}),
+          ADDED: "new",
+        },
+      });
+      expect(JSON.stringify(record.installCfg)).not.toContain("excluded");
+    },
+  );
+
+  it.each(["all", "allowlist"])(
+    "disallows public invocation without a nonempty allowlist (%s)",
+    async (mode) => {
+      mocks.deploymentFindFirst.mockResolvedValue({
+        id: "dep1",
+        source: "npm",
+      });
+      const fd = formData("dep1");
+      fd.set("mode", mode);
+      fd.set("publicInvocable", "on");
+      expect(await updateMcpToolExposureAction({}, fd)).toEqual({
+        error: "invalidToolSelection",
+      });
+      expect(mocks.deploymentUpdate).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(
+    [
+      Array.from({ length: 501 }, (_, i) => `tool_${i}`),
+      Array.from({ length: 300 }, (_, i) => `${i}_${"x".repeat(240)}`),
+      [""],
+      ["x".repeat(257)],
+      ["bad\0tool"],
+    ].map((names) => ({ names })),
+  )("rejects an invalid exposure selection %#", async ({ names }) => {
+    mocks.deploymentFindFirst.mockResolvedValue({ id: "dep1", source: "npm" });
+    const fd = formData("dep1");
+    fd.set("mode", "allowlist");
+    for (const name of names) fd.append("toolName", name);
+    expect(await updateMcpToolExposureAction({}, fd)).toEqual({
+      error: "invalidToolSelection",
+    });
+    expect(mocks.deploymentUpdate).not.toHaveBeenCalled();
   });
 });

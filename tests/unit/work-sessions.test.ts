@@ -56,6 +56,12 @@ import {
   normalizeWorkDirectory,
   resumeWorkSession,
   transitionWorkSession,
+  startWorkSession,
+  failWorkSession,
+  waitForWorkSessionUser,
+  waitForWorkSessionApproval,
+  archiveWorkSession,
+  workSessionWorkingDirectory,
 } from "@/lib/work/sessions";
 import { canTransitionWorkSession } from "@/lib/work/state-machine";
 
@@ -462,5 +468,308 @@ describe("WorkSession coordinator", () => {
         cancelRequestedAt: null,
       },
     });
+  });
+  it.each([
+    "running",
+    "waiting_approval",
+    "queued",
+    "waiting_user",
+    "cancelling",
+    "cancelled",
+    "idle",
+    "archived",
+  ])("cancels only valid durable states from %s", async (initial) => {
+    const record = {
+      id: "work-1",
+      workspaceId: "workspace-1",
+      status: initial,
+      error: "old",
+      waitingQuestion: "old",
+    };
+    mocks.workFindFirst.mockImplementation(async ({ where }) =>
+      where.id === record.id && where.workspaceId === record.workspaceId
+        ? record
+        : null,
+    );
+    mocks.workUpdateMany.mockImplementation(async ({ where, data }) => {
+      if (
+        where.id !== record.id ||
+        where.workspaceId !== record.workspaceId ||
+        (typeof where.status === "string"
+          ? record.status !== where.status
+          : !where.status.in.includes(record.status))
+      )
+        return { count: 0 };
+      Object.assign(record, data);
+      return { count: 1 };
+    });
+    expect(await cancelWorkSession("other", "work-1")).toEqual({
+      ok: false,
+      reason: "not_found",
+    });
+    expect(record.status).toBe(initial);
+    const result = await cancelWorkSession("workspace-1", "work-1");
+    if (["running", "waiting_approval"].includes(initial)) {
+      expect(result).toEqual({ ok: true, changed: true, status: "cancelling" });
+      expect(mocks.approvalUpdateMany).toHaveBeenCalledOnce();
+      expect(await finalizeWorkSessionCancellation("other", "work-1")).toBe(
+        false,
+      );
+      expect(
+        await finalizeWorkSessionCancellation("workspace-1", "work-1"),
+      ).toBe(true);
+      expect(record).toMatchObject({
+        status: "idle",
+        error: null,
+        waitingQuestion: null,
+      });
+    } else if (["queued", "waiting_user"].includes(initial)) {
+      expect(result).toEqual({ ok: true, changed: true, status: "idle" });
+      expect(record).toMatchObject({
+        status: "idle",
+        error: null,
+        waitingQuestion: null,
+      });
+    } else if (["cancelling", "cancelled"].includes(initial)) {
+      expect(result).toEqual({ ok: true, changed: false, status: initial });
+    } else {
+      expect(result).toEqual({
+        ok: false,
+        reason: "invalid_transition",
+        status: initial,
+      });
+    }
+  });
+
+  it("runs start, user wait, resume, failure and archive transitions without leaking another owner's record", async () => {
+    const record = {
+      id: "work-1",
+      workspaceId: "workspace-1",
+      status: "queued",
+      error: "old",
+      waitingQuestion: "old",
+      result: "old",
+      cancelRequestedAt: new Date(),
+    };
+    mocks.workFindFirst.mockImplementation(async ({ where }) =>
+      where.workspaceId === record.workspaceId ? record : null,
+    );
+    mocks.workUpdateMany.mockImplementation(async ({ where, data }) => {
+      if (
+        where.workspaceId !== record.workspaceId ||
+        (typeof where.status === "string"
+          ? record.status !== where.status
+          : !where.status.in.includes(record.status))
+      )
+        return { count: 0 };
+      Object.assign(record, data);
+      return { count: 1 };
+    });
+    expect(await startWorkSession("workspace-1", "work-1")).toMatchObject({
+      ok: true,
+      changed: true,
+    });
+    expect(await startWorkSession("workspace-1", "work-1")).toMatchObject({
+      ok: true,
+      changed: false,
+    });
+    expect(
+      await waitForWorkSessionUser(
+        "workspace-1",
+        "work-1",
+        "  Which account?  ",
+      ),
+    ).toMatchObject({ ok: true });
+    expect(record.waitingQuestion).toBe("Which account?");
+    expect(
+      await waitForWorkSessionApproval("workspace-1", "work-1"),
+    ).toMatchObject({ ok: false, reason: "invalid_transition" });
+    expect(await resumeWorkSession("other", "work-1")).toEqual({
+      ok: false,
+      reason: "not_found",
+    });
+    expect(await resumeWorkSession("workspace-1", "work-1")).toMatchObject({
+      ok: false,
+      reason: "invalid_transition",
+    });
+    expect(await failWorkSession("workspace-1", "work-1", " ")).toMatchObject({
+      ok: true,
+    });
+    expect(record.error).toBe("Work failed.");
+    expect(
+      await resumeWorkSession("workspace-1", "work-1", "new-actor"),
+    ).toMatchObject({ ok: true });
+    expect(record).toMatchObject({
+      status: "queued",
+      error: null,
+      waitingQuestion: null,
+      result: null,
+      cancelRequestedAt: null,
+      a2aActorId: "new-actor",
+    });
+    await startWorkSession("workspace-1", "work-1");
+    await waitForWorkSessionApproval("workspace-1", "work-1");
+    await failWorkSession("workspace-1", "work-1", "x".repeat(600));
+    expect(record.error?.length).toBe(500);
+    expect(await archiveWorkSession("other", "work-1")).toBe(false);
+    expect(await archiveWorkSession("workspace-1", "work-1")).toBe(true);
+    expect(record.status).toBe("archived");
+  });
+
+  it.each(["", " ", "x".repeat(20_001)])(
+    "rejects unbounded or blank appended input %#",
+    async (input) => {
+      expect(
+        await appendWorkSessionInput("workspace-1", "work-1", input),
+      ).toEqual({ ok: false, reason: "invalid_input" });
+      expect(mocks.transaction).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rejects a concurrent append claim without creating duplicate messages", async () => {
+    mocks.workFindFirst.mockResolvedValue({
+      conversationId: "conversation-1",
+      status: "waiting_user",
+    });
+    mocks.workUpdateMany.mockResolvedValue({ count: 0 });
+    expect(
+      await appendWorkSessionInput("workspace-1", "work-1", "Answer"),
+    ).toEqual({
+      ok: false,
+      reason: "invalid_transition",
+      status: "waiting_user",
+    });
+    expect(mocks.messageCreate).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    null,
+    [],
+    "invalid",
+    { workingDirectory: "/etc" },
+    { workingDirectory: "../escape" },
+    { workingDirectory: "project" },
+  ])("normalizes persisted working-directory snapshots %#", (snapshot) => {
+    expect(workSessionWorkingDirectory(snapshot)).toBe(
+      snapshot &&
+        !Array.isArray(snapshot) &&
+        typeof snapshot === "object" &&
+        snapshot.workingDirectory === "project"
+        ? "project"
+        : ".",
+    );
+  });
+  it.each([
+    "wrong-sandbox",
+    "shared-runtime",
+    "wrong-kind",
+    "offline",
+    "multiple",
+    "unsupported",
+  ])(
+    "refuses unsafe dedicated sandbox assignment %s before persisting conversation state",
+    async (condition) => {
+      const agent = await mocks.agentFindFirst();
+      if (condition === "wrong-sandbox")
+        agent.sandboxes[0].sandboxId = "different";
+      if (condition === "shared-runtime")
+        agent.runtime = { sandboxId: "sandbox-1" };
+      if (condition === "wrong-kind")
+        agent.sandboxes[0].sandbox.kind = "hermes";
+      if (condition === "offline") agent.sandboxes[0].sandbox.network = "none";
+      if (condition === "multiple")
+        agent.sandboxes.push({ ...agent.sandboxes[0], sandboxId: "second" });
+      if (condition === "unsupported") agent.runtimeKind = "unknown";
+      mocks.agentFindFirst.mockResolvedValue(agent);
+      expect(
+        await createWorkSession({
+          workspaceId: "workspace-1",
+          agentId: "agent-1",
+          sandboxId: "sandbox-1",
+          task: "Build",
+        }),
+      ).toBeNull();
+      expect(mocks.conversationCreate).not.toHaveBeenCalled();
+      expect(mocks.messageCreate).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    "runtime-kind",
+    "workspace",
+    "sandbox-kind",
+    "offline",
+    "no-provider",
+  ])(
+    "refuses invalid Hermes ownership or runtime state: %s",
+    async (condition) => {
+      const agent = await mocks.agentFindFirst();
+      agent.runtimeKind = "hermes";
+      agent.modelProviders = [{ providerId: "provider-1" }];
+      agent.runtime = {
+        id: "runtime",
+        kind: "hermes",
+        sandboxId: "sandbox-hermes",
+        sandbox: {
+          workspaceId: "workspace-1",
+          kind: "hermes",
+          network: "isolated",
+        },
+      };
+      if (condition === "runtime-kind") agent.runtime.kind = "pi";
+      if (condition === "workspace")
+        agent.runtime.sandbox.workspaceId = "other";
+      if (condition === "sandbox-kind") agent.runtime.sandbox.kind = "docker";
+      if (condition === "offline") agent.runtime.sandbox.network = "none";
+      if (condition === "no-provider") agent.modelProviders = [];
+      mocks.agentFindFirst.mockResolvedValue(agent);
+      expect(
+        await createWorkSession({
+          workspaceId: "workspace-1",
+          agentId: "agent-1",
+          task: "Build",
+        }),
+      ).toBeNull();
+      expect(mocks.conversationCreate).not.toHaveBeenCalled();
+    },
+  );
+
+  it("snapshots a deduplicated union of direct and toolkit resources", async () => {
+    const agent = await mocks.agentFindFirst();
+    agent.servers = [{ deploymentId: "direct" }];
+    agent.skills = [{ installedSkillId: "direct-skill" }];
+    agent.toolkits = [
+      {
+        toolkit: {
+          servers: [{ deploymentId: "direct" }, { deploymentId: "toolkit" }],
+          skills: [
+            { installedSkillId: "direct-skill" },
+            { installedSkillId: "toolkit-skill" },
+          ],
+        },
+      },
+    ];
+    agent.knowledgeBases = [{ knowledgeBaseId: "knowledge" }];
+    mocks.agentFindFirst.mockResolvedValue(agent);
+    const work = await createWorkSession({
+      workspaceId: "workspace-1",
+      agentId: "agent-1",
+      task: "Build",
+      acceptanceCriteria: "  Tests pass  ",
+      workingDirectory: "/workspace/project",
+      reasoningEffort: "default",
+    });
+    expect(work).toMatchObject({
+      acceptanceCriteria: "Tests pass",
+      runtimeSnapshot: {
+        deploymentIds: ["direct", "toolkit"],
+        installedSkillIds: ["direct-skill", "toolkit-skill"],
+        knowledgeBaseIds: ["knowledge"],
+        workingDirectory: "project",
+      },
+    });
+    expect(mocks.conversationCreate.mock.calls[0][0].data).not.toHaveProperty(
+      "reasoningEffort",
+    );
   });
 });

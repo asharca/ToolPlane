@@ -83,6 +83,8 @@ import {
   reserveChatBranch,
   updateChatAssistant,
   updateChatThread,
+  deleteReservedChatBranch,
+  getChatHistoryForExecution,
 } from "@/lib/chat/service";
 
 describe("Chat turn admission", () => {
@@ -730,4 +732,182 @@ describe("Chat turn admission", () => {
     ).rejects.toMatchObject({ status: 409 });
     expect(mocks.turnCreate).not.toHaveBeenCalled();
   });
+  it.each([
+    null,
+    { id: "branch", role: "assistant", parts: [], children: [] },
+    { id: "branch", role: "user", parts: {}, children: [] },
+    {
+      id: "branch",
+      role: "user",
+      parts: [{ type: "text", text: "Sent" }],
+      children: [],
+    },
+    { id: "branch", role: "user", parts: [], children: [{ id: "response" }] },
+  ])(
+    "does not delete a consumed or invalid branch reservation %#",
+    async (message) => {
+      mocks.messageFindFirst.mockResolvedValue(message);
+      await expect(
+        deleteReservedChatBranch("user-1", "thread-1", "branch"),
+      ).rejects.toMatchObject({
+        status: 400,
+        message: "Only an empty branch can be deleted",
+      });
+      expect(mocks.messageDelete).not.toHaveBeenCalled();
+      expect(mocks.threadUpdate).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([true, false])(
+    "deletes empty reservations without switching an unrelated active path (active=%s)",
+    async (active) => {
+      const thread = {
+        id: "thread-1",
+        activeMessageId: active ? "branch" : "other-branch",
+      };
+      const messages = [
+        {
+          id: "branch",
+          parentId: "anchor",
+          role: "user",
+          parts: [],
+          children: [],
+        },
+      ];
+      mocks.threadFindUnique.mockResolvedValue(thread);
+      mocks.messageFindFirst.mockResolvedValue(messages[0]);
+      mocks.messageDelete.mockImplementation(async () => messages.pop());
+      mocks.threadUpdate.mockImplementation(async ({ data }) =>
+        Object.assign(thread, data),
+      );
+      expect(
+        await deleteReservedChatBranch("user-1", "thread-1", "branch"),
+      ).toEqual({ activeMessageId: active ? "anchor" : "other-branch" });
+      expect(messages).toEqual([]);
+      expect(thread.activeMessageId).toBe(active ? "anchor" : "other-branch");
+    },
+  );
+
+  it.each(["authorization", "deleted-after-lock"])(
+    "does not delete a branch after %s fails",
+    async (failure) => {
+      if (failure === "authorization")
+        mocks.threadFindFirst.mockResolvedValue(null);
+      else mocks.threadFindUnique.mockResolvedValue(null);
+      await expect(
+        deleteReservedChatBranch("user-1", "thread-1", "branch"),
+      ).rejects.toMatchObject({ status: 404 });
+      expect(mocks.messageDelete).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([null, { activeMessageId: null, workspaceId: "other" }])(
+    "does not create turn messages after locked workspace ownership changes %#",
+    async (thread) => {
+      mocks.threadFindUnique.mockResolvedValue(thread);
+      await expect(
+        beginChatTurn("thread-1", [{ type: "text", text: "hello" }], {
+          userId: "user-1",
+          workspaceId: "workspace-1",
+        }),
+      ).rejects.toMatchObject({ status: 404 });
+      expect(mocks.turnCreate).not.toHaveBeenCalled();
+      expect(mocks.messageCreate).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    null,
+    { id: "target", role: "system", parts: [] },
+    { id: "target", role: "assistant", parentId: null, parts: [] },
+  ])(
+    "rejects regeneration of a missing or non-regenerable target %#",
+    async (target) => {
+      mocks.messageFindFirst.mockResolvedValue(target);
+      await expect(
+        beginChatTurn(
+          "thread-1",
+          [],
+          { userId: "user-1", workspaceId: "workspace-1" },
+          { trigger: "regenerate-message", clientLastMessageId: "target" },
+        ),
+      ).rejects.toMatchObject({ status: target ? 400 : 404 });
+      expect(mocks.messageCreate).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([null, "existing-group"])(
+    "regenerates a user message into its existing assistant sibling group (%s)",
+    async (group) => {
+      mocks.messageFindFirst.mockResolvedValue({
+        id: "user-parent",
+        role: "user",
+        parts: [{ type: "text", text: "Question" }],
+      });
+      mocks.messageFindMany.mockResolvedValue([
+        { id: "previous-answer", siblingGroupId: group },
+      ]);
+      const result = await beginChatTurn(
+        "thread-1",
+        [],
+        { userId: "user-1", workspaceId: "workspace-1" },
+        { trigger: "regenerate-message", messageId: "user-parent" },
+      );
+      expect(result).toMatchObject({
+        assistantParentId: "user-parent",
+        historyLeafId: "user-parent",
+      });
+      expect(mocks.messageCreate).toHaveBeenCalledExactlyOnceWith({
+        data: expect.objectContaining({
+          role: "assistant",
+          parentId: "user-parent",
+          siblingGroupId: group ?? "turn-1",
+        }),
+      });
+      expect(mocks.messageUpdateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: { siblingGroupId: group ?? "turn-1" },
+        }),
+      );
+    },
+  );
+
+  it("rejects execution history when the requested leaf does not belong to the authorized thread", async () => {
+    mocks.threadFindFirst.mockResolvedValue({
+      messages: [
+        {
+          id: "own-message",
+          parentId: null,
+          role: "user",
+          parts: [],
+          createdAt: new Date(),
+        },
+      ],
+    });
+    await expect(
+      getChatHistoryForExecution("user-1", "thread-1", "foreign-message"),
+    ).rejects.toMatchObject({ status: 404, message: "Chat message not found" });
+  });
+
+  it.each(["complete", "fail"])(
+    "rejects stale assistant output while settling a %s turn",
+    async (operation) => {
+      mocks.turnUpdateMany.mockResolvedValue({ count: 1 });
+      mocks.messageUpdateMany.mockResolvedValue({ count: 0 });
+      await expect(
+        operation === "complete"
+          ? completeChatTurn("thread-1", "turn-1", "assistant-1", [])
+          : finishChatTurn(
+              "thread-1",
+              "turn-1",
+              "failed",
+              "failure",
+              "assistant-1",
+            ),
+      ).rejects.toMatchObject({
+        status: 409,
+        message: "Chat response is no longer pending",
+      });
+    },
+  );
 });

@@ -95,12 +95,14 @@ pnpm dev
 | `pnpm format` / `pnpm format:check` | 全仓格式化 / 只检查格式 |
 | `pnpm check:staged` / `pnpm check` | 暂存区检查 / 全量 Biome 与类型检查 |
 | `pnpm test` | 运行测试 |
-| `pnpm test:coverage` | 运行测试并生成覆盖率报告 |
+| `pnpm test:coverage` | 运行全量测试、生成覆盖率报告并检查四项 80% 门槛 |
 | `pnpm build` | 生产构建 |
 | `pnpm db:migrate` / `pnpm db:studio` | 开发数据库迁移与查看 |
 | `pnpm connector:dev` | 调试设备连接器 |
 
 覆盖率徽章展示 main 分支最近成功上传的 Vitest 报告，统计 src 与 packages/connector/bin 的 JS/TS 源码（包含未命中的文件），不代表外部容器或子进程内部代码的覆盖率。
+
+`vitest.config.ts` 对语句、分支、函数、行覆盖率分别设置全局 80% 下限；CI 执行 `pnpm test:coverage`，任一指标不足即失败。报告写入 `coverage/coverage-summary.json` 和 `coverage/lcov.info`。集成测试需要独立的 pgvector PostgreSQL 测试库；先生成 Prisma Client、应用数据库迁移，并构建 Pi 包捕获镜像（`docker build --target pi-package-capture -t toolplane-pi-package-capture:0.87.1 .`），不要使用业务数据库运行测试。
 
 ## 文档
 

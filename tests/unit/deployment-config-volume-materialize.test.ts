@@ -98,4 +98,92 @@ describe("deployment configuration volume materialization", () => {
     ).toEqual(["volume", "run"]);
     expect(inputs).toEqual([archive]);
   });
+  it("removes stale configuration when the final file was deleted", async () => {
+    mocks.findMany.mockResolvedValue([]);
+    mocks.spawn.mockImplementation(() => child());
+    await expect(
+      materializeDeploymentConfigVolume("deployment-empty"),
+    ).resolves.toEqual({ hasFiles: false, redactionValues: [] });
+    expect(mocks.spawn).toHaveBeenCalledWith(
+      "docker",
+      ["volume", "rm", "-f", "toolplane_mcp_config_deployment-empty"],
+      expect.any(Object),
+    );
+    expect(mocks.decryptSecretText).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["../escape", "text", 4, "unsafe file path"],
+    ["config", "before\0after", 12, "not valid text"],
+    ["config", "text", -1, "size does not match"],
+    ["config", "text", 4.5, "size does not match"],
+    ["config", "密码", 2, "size does not match"],
+    [
+      "config",
+      "x".repeat(512 * 1024 + 1),
+      512 * 1024 + 1,
+      "exceeds 524288 bytes",
+    ],
+  ])(
+    "rejects invalid decrypted files before creating resources",
+    async (path, content, size, message) => {
+      mocks.findMany.mockResolvedValue([
+        { id: "file", path, encryptedContent: {}, size },
+      ]);
+      mocks.decryptSecretText.mockReturnValue(content);
+      await expect(
+        materializeDeploymentConfigVolume("deployment-invalid"),
+      ).rejects.toThrow(message);
+      expect(mocks.spawn).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rejects portable path collisions", async () => {
+    mocks.findMany.mockResolvedValue(
+      ["Config.json", "config.json"].map((path) => ({
+        id: path,
+        path,
+        encryptedContent: {},
+        size: 4,
+      })),
+    );
+    mocks.decryptSecretText.mockReturnValue("text");
+    await expect(
+      materializeDeploymentConfigVolume("deployment-invalid"),
+    ).rejects.toThrow("duplicate file path");
+    expect(mocks.spawn).not.toHaveBeenCalled();
+  });
+
+  it.each([33, 5])(
+    "rejects excessive file counts or total bytes (%s files)",
+    async (count) => {
+      const content = "x".repeat(512 * 1024);
+      mocks.findMany.mockResolvedValue(
+        Array.from({ length: count }, (_, index) => ({
+          id: String(index),
+          path: `config-${index}`,
+          encryptedContent: {},
+          size: content.length,
+        })),
+      );
+      mocks.decryptSecretText.mockReturnValue(content);
+      await expect(
+        materializeDeploymentConfigVolume("deployment-invalid"),
+      ).rejects.toThrow(count === 33 ? "exceeds 32 files" : "bytes in total");
+      expect(mocks.spawn).not.toHaveBeenCalled();
+    },
+  );
+
+  it("propagates decryption failures before creating resources", async () => {
+    mocks.findMany.mockResolvedValue([
+      { id: "file", path: "config", encryptedContent: {}, size: 4 },
+    ]);
+    mocks.decryptSecretText.mockImplementation(() => {
+      throw new Error("ciphertext authentication failed");
+    });
+    await expect(
+      materializeDeploymentConfigVolume("deployment-invalid"),
+    ).rejects.toThrow("ciphertext authentication failed");
+    expect(mocks.spawn).not.toHaveBeenCalled();
+  });
 });

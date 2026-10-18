@@ -334,4 +334,128 @@ describe("SandboxConsole files", () => {
     ]);
     expect(calls.at(2)).toEqual({ name: "list_dir", path: "src" });
   });
+  it("cancels replacement without sending file data", () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(
+      <SandboxConsole
+        compact
+        filesOnly
+        deploymentId="deployment-1"
+        running
+        initialPath="."
+        initialEntries={[{ name: "existing.txt", type: "file", size: 4 }]}
+      />,
+    );
+    const input = assertDefined(document.querySelector('input[type="file"]'));
+    fireEvent.change(input, {
+      target: { files: [new File(["replacement"], "existing.txt")] },
+    });
+    expect(confirm).toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("treeitem", { name: "existing.txt" }),
+    ).toBeInTheDocument();
+    confirm.mockRestore();
+  });
+
+  it("continues a multi-file upload after one authorization failure and reports the rejected filename", async () => {
+    const fetchMock = vi.fn(async (url: string | URL | Request) => {
+      if (String(url).includes("/files/upload")) {
+        return String(url).includes("denied.txt")
+          ? Response.json({ error: "Write access denied" }, { status: 403 })
+          : Response.json({ ok: true });
+      }
+      return rpcResponse({
+        path: ".",
+        entries: [{ name: "allowed.txt", type: "file", size: 2 }],
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <SandboxConsole
+        compact
+        filesOnly
+        deploymentId="deployment-1"
+        running
+        initialPath="."
+        initialEntries={[{ name: "before.txt", type: "file", size: 1 }]}
+      />,
+    );
+    const input = assertDefined(document.querySelector('input[type="file"]'));
+    fireEvent.change(input, {
+      target: {
+        files: [
+          new File(["no"], "denied.txt"),
+          new File(["ok"], "allowed.txt"),
+        ],
+      },
+    });
+    expect(
+      await screen.findByText("denied.txt: Write access denied"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("treeitem", { name: "allowed.txt" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("treeitem", { name: "before.txt" }),
+    ).not.toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(screen.getByRole("button", { name: "Upload files" })).toBeEnabled();
+  });
+
+  it("keeps the preview and file when deletion is cancelled or forbidden, then removes them on retry", async () => {
+    let deleteAttempts = 0;
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as {
+        params: { name: string };
+      };
+      if (body.params.name === "read_file")
+        return rpcResponse({ content: "Private notes" });
+      if (body.params.name === "delete_file") {
+        deleteAttempts += 1;
+        if (deleteAttempts === 1)
+          return Response.json(
+            { error: "Delete permission denied" },
+            { status: 403 },
+          );
+        return rpcResponse({ ok: true });
+      }
+      return rpcResponse({ path: ".", entries: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const confirm = vi
+      .spyOn(window, "confirm")
+      .mockReturnValueOnce(false)
+      .mockReturnValue(true);
+    render(
+      <SandboxConsole
+        compact
+        filesOnly
+        deploymentId="deployment-1"
+        running
+        initialPath="."
+        initialEntries={[{ name: "private.txt", type: "file", size: 13 }]}
+      />,
+    );
+    fireEvent.click(screen.getByRole("treeitem", { name: "private.txt" }));
+    await screen.findByText("Private notes");
+    fireEvent.click(screen.getByRole("button", { name: "Delete file" }));
+    expect(deleteAttempts).toBe(0);
+    fireEvent.click(screen.getByRole("button", { name: "Delete file" }));
+    await screen.findByText("Delete permission denied");
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(
+      screen.getByRole("treeitem", { name: "private.txt" }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Delete file" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    expect(
+      screen.queryByRole("treeitem", { name: "private.txt" }),
+    ).not.toBeInTheDocument();
+    confirm.mockRestore();
+  });
 });

@@ -886,4 +886,179 @@ describe("Hermes dashboard separate-origin broker", () => {
       });
     });
   });
+  it.each([
+    ["/unrelated", 404],
+    ["/agent-runtimes/%XX/dashboard/broker-token/", 400],
+  ])("rejects malformed dashboard route %s", async (path, status) => {
+    const response = await fetch(`http://127.0.0.1:${brokerPort}${path}`);
+    expect(response.status).toBe(status);
+    await response.text();
+    expect(mocks.findRuntime).not.toHaveBeenCalled();
+  });
+
+  it("rejects a valid capability whose runtime no longer exists", async () => {
+    mocks.findRuntime.mockResolvedValue(null);
+    const response = await fetch(
+      `http://127.0.0.1:${brokerPort}/agent-runtimes/runtime-1/dashboard/broker-token/`,
+    );
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({
+      error: "Dashboard access is invalid or expired.",
+    });
+    expect(mocks.ensureReady).not.toHaveBeenCalled();
+  });
+
+  it.each(["dashboard stopped", undefined])(
+    "returns readiness error %s without contacting upstream",
+    async (error) => {
+      mocks.ensureReady.mockResolvedValue({ error });
+      const response = await fetch(
+        `http://127.0.0.1:${brokerPort}/agent-runtimes/runtime-1/dashboard/broker-token/`,
+      );
+      expect(response.status).toBe(503);
+      expect(await response.json()).toEqual({
+        error: error || "Hermes dashboard is unavailable.",
+      });
+      expect(lastUpstreamRequest).toBeNull();
+    },
+  );
+
+  it("releases the mutation lease when readiness fails", async () => {
+    mocks.runMutation.mockImplementation(
+      async (_workspace, _agent, _lease, operation) =>
+        operation({ error: "cannot start dashboard" }),
+    );
+    const response = await fetch(
+      `http://127.0.0.1:${brokerPort}/agent-runtimes/runtime-1/dashboard/broker-token/api/settings`,
+      { method: "POST", body: "{}" },
+    );
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: "cannot start dashboard" });
+    expect(mocks.releaseWriteLease).toHaveBeenCalledOnce();
+    expect(lastUpstreamRequest).toBeNull();
+  });
+
+  it("reports a maintenance refusal even when a lease was initially available", async () => {
+    mocks.runMutation.mockResolvedValue(undefined);
+    const response = await fetch(
+      `http://127.0.0.1:${brokerPort}/agent-runtimes/runtime-1/dashboard/broker-token/api/settings`,
+      { method: "POST" },
+    );
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      error: "Hermes maintenance in progress.",
+    });
+    expect(mocks.releaseWriteLease).toHaveBeenCalledOnce();
+  });
+
+  it("returns HEAD metadata without forwarding a response body", async () => {
+    upstreamHandler = (_req, res) => {
+      res.writeHead(200, {
+        "content-type": "application/octet-stream",
+        etag: "binary-v1",
+      });
+      res.end("binary data");
+    };
+    const response = await fetch(
+      `http://127.0.0.1:${brokerPort}/agent-runtimes/runtime-1/dashboard/broker-token/download`,
+      { method: "HEAD" },
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("etag")).toBe("binary-v1");
+    expect(await response.text()).toBe("");
+  });
+
+  it.each([
+    ["/missing", "broker-token", 404],
+    ["/agent-runtimes/%XX/dashboard/broker-token/api/ws", "broker-token", 404],
+    ["/agent-runtimes/runtime-1/dashboard/expired/api/ws", "expired", 401],
+  ])(
+    "rejects invalid WebSocket capability route %s",
+    async (path, _token, status) => {
+      await new Promise<void>((resolve, reject) => {
+        const websocket = new WebSocket(`ws://127.0.0.1:${brokerPort}${path}`, {
+          origin: `http://127.0.0.1:${brokerPort}`,
+        });
+        websocket.once("open", () =>
+          reject(new Error("Unauthorized WebSocket opened")),
+        );
+        websocket.once("error", () => undefined);
+        websocket.once("unexpected-response", (_request, response) => {
+          response.resume();
+          try {
+            expect(response.statusCode).toBe(status);
+            expect(mocks.findRuntime).not.toHaveBeenCalled();
+            resolve();
+          } catch (error) {
+            reject(error);
+          }
+        });
+      });
+    },
+  );
+  it.each([
+    ["/missing", 404],
+    ["/agent-runtimes/%XX/dashboard/broker-token/", 400],
+  ])("rejects malformed HTTP route %s", async (path, status) => {
+    const response = await fetch(`http://127.0.0.1:${brokerPort}${path}`);
+    expect(response.status).toBe(status);
+    expect(mocks.findRuntime).not.toHaveBeenCalled();
+  });
+
+  it.each([{}, { error: "dashboard stopped" }])(
+    "reports read readiness failures %j",
+    async (ready) => {
+      mocks.ensureReady.mockResolvedValue(ready);
+      const response = await fetch(
+        `http://127.0.0.1:${brokerPort}/agent-runtimes/runtime-1/dashboard/broker-token/`,
+      );
+      expect(response.status).toBe(503);
+      expect(await response.json()).toEqual({
+        error: ready.error ?? "Hermes dashboard is unavailable.",
+      });
+    },
+  );
+
+  it.each([
+    "<head></head>",
+    '<head><script>window.parent.postMessage("toolplane:close-agent-settings","*")</script></head>',
+  ])("injects the close bridge only once into HTML %s", async (html) => {
+    upstreamHandler = (_req, res) => {
+      res.writeHead(200, { "content-type": "text/html" });
+      res.end(html);
+    };
+    const response = await fetch(
+      `http://127.0.0.1:${brokerPort}/agent-runtimes/runtime-1/dashboard/broker-token/`,
+    );
+    expect(
+      (await response.text()).match(/toolplane:close-agent-settings/g),
+    ).toHaveLength(1);
+  });
+
+  it("preserves immutable JavaScript metadata when no preload rewrite is needed", async () => {
+    upstreamHandler = (_req, res) => {
+      res.writeHead(200, {
+        "content-type": "application/javascript",
+        etag: "stable",
+        "cache-control": "public",
+      });
+      res.end("export const x=1;");
+    };
+    const response = await fetch(
+      `http://127.0.0.1:${brokerPort}/agent-runtimes/runtime-1/dashboard/broker-token/assets/main.js`,
+    );
+    expect(response.headers.get("etag")).toBe("stable");
+    expect(await response.text()).toBe("export const x=1;");
+  });
+
+  it("releases its write lease when mutation throws and returns a safe server failure", async () => {
+    mocks.runMutation.mockRejectedValue(new Error("mutation unavailable"));
+    const response = await fetch(
+      `http://127.0.0.1:${brokerPort}/agent-runtimes/runtime-1/dashboard/broker-token/api/settings`,
+      { method: "PATCH", body: "{}" },
+    );
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ error: "mutation unavailable" });
+    expect(mocks.releaseWriteLease).toHaveBeenCalledOnce();
+  });
 });

@@ -19,6 +19,12 @@ const mocks = vi.hoisted(() => ({
   effectiveStatus: vi.fn(),
   releaseLease: vi.fn(),
   generateWorkSessionTitle: vi.fn(),
+  approvalCreate: vi.fn(),
+  approvalFindUnique: vi.fn(),
+  approvalUpdateMany: vi.fn(),
+  stopHermesWorkRun: vi.fn(),
+  runtimeSession: vi.fn(),
+  leaseAvailable: true,
 }));
 
 vi.mock("@/lib/observability/system", () => ({ systemLog: mocks.systemLog }));
@@ -33,7 +39,18 @@ vi.mock("@/lib/db", () => ({
     },
     deployment: { findMany: mocks.deploymentFindMany },
     message: { create: mocks.messageCreate },
-    workApproval: { findUnique: vi.fn() },
+    workApproval: {
+      findUnique: mocks.approvalFindUnique,
+      create: mocks.approvalCreate,
+    },
+    $transaction: async (fn: (tx: unknown) => unknown) =>
+      fn({
+        workSession: { updateMany: mocks.workUpdateMany },
+        workApproval: {
+          create: mocks.approvalCreate,
+          updateMany: mocks.approvalUpdateMany,
+        },
+      }),
   },
 }));
 vi.mock("@/lib/agents/queries", () => ({
@@ -43,10 +60,7 @@ vi.mock("@/lib/agents/conversation-naming", () => ({
   generateWorkSessionTitle: mocks.generateWorkSessionTitle,
 }));
 vi.mock("@/lib/agents/mutations", () => ({
-  ensureConversationRuntimeSession: vi.fn(async () => ({
-    runtimeSessionId: "conversation-1",
-    runtimeSessionKey: "agent:agent-1:console:conversation-1",
-  })),
+  ensureConversationRuntimeSession: mocks.runtimeSession,
 }));
 vi.mock("@/lib/agents/resolve", async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -74,10 +88,11 @@ vi.mock("@/lib/agents/sandbox-turn", () => ({
 }));
 vi.mock("@/lib/agents/hermes/work", () => ({
   runHermesWork: mocks.runHermesWork,
-  stopHermesWorkRun: vi.fn(),
+  stopHermesWorkRun: mocks.stopHermesWorkRun,
 }));
 vi.mock("@/lib/agents/hermes/runtime", () => ({
-  acquireHermesRuntimeWriteLease: () => ({ release: mocks.releaseLease }),
+  acquireHermesRuntimeWriteLease: () =>
+    mocks.leaseAvailable ? { release: mocks.releaseLease } : null,
   HERMES_RUNTIME_COPY_IN_PROGRESS_ERROR: "Hermes maintenance in progress.",
 }));
 vi.mock("@/lib/process/supervisor", () => ({
@@ -95,6 +110,11 @@ describe("Work coordinator", () => {
     vi.clearAllMocks();
     vi.resetModules();
     mocks.queued = true;
+    mocks.leaseAvailable = true;
+    mocks.runtimeSession.mockResolvedValue({
+      runtimeSessionId: "conversation-1",
+      runtimeSessionKey: "agent:agent-1:console:conversation-1",
+    });
     delete (globalThis as { __workCoordinator?: unknown }).__workCoordinator;
     delete (globalThis as { __workRunControllers?: unknown })
       .__workRunControllers;
@@ -649,5 +669,445 @@ describe("Work coordinator", () => {
     expect(mocks.runDedicatedSandboxTurn).toHaveBeenCalledWith(
       expect.objectContaining({ command: "/compact" }),
     );
+  });
+  it.each(["allowed", "denied", "expired", null])(
+    "resumes Hermes after approval decision %s without losing durable state",
+    async (decision) => {
+      let status = "queued";
+      const transitions: string[] = [];
+      mocks.workUpdateMany.mockImplementation(async ({ where, data }) => {
+        const matches =
+          typeof where.status === "string"
+            ? status === where.status
+            : (where.status?.in?.includes(status) ?? true);
+        if (!matches) return { count: 0 };
+        if (data.status) {
+          status = data.status;
+          transitions.push(status);
+          if (status === "running") mocks.queued = false;
+        }
+        return { count: 1 };
+      });
+      mocks.approvalCreate.mockResolvedValue({ id: "approval-1" });
+      mocks.approvalFindUnique.mockResolvedValue(
+        decision ? { status: decision } : null,
+      );
+      mocks.runHermesWork.mockImplementation(async (options) => {
+        expect(status).toBe("running");
+        const result = await options.onApproval({
+          runId: "run",
+          command: "rm temporary-file",
+          description: "Remove temporary output",
+          patternKeys: [],
+          choices: [],
+        });
+        expect(result).toBe(decision === "allowed" ? "allow" : "deny");
+        expect(status).toBe("running");
+        return { runId: "run", status: "completed", text: "Decision recorded" };
+      });
+      // Reset modules per case so each coordinator owns fresh global state.
+      const { kickWorkCoordinator } = await import("@/lib/work/coordinator");
+      kickWorkCoordinator();
+      await vi.waitFor(() => expect(status).toBe("idle"));
+      expect(transitions).toEqual([
+        "running",
+        "waiting_approval",
+        "running",
+        "idle",
+      ]);
+      expect(mocks.approvalCreate.mock.calls[0][0].data).toMatchObject({
+        workSessionId: "work-1",
+        toolName: "Hermes command",
+      });
+      expect(mocks.releaseLease).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each(["failed", "cancelled"])(
+    "persists failed Hermes runtime outcome %s and releases the lease",
+    async (status) => {
+      mocks.runHermesWork.mockResolvedValue({
+        runId: "run",
+        status,
+        text: "",
+        error: "upstream failed",
+      });
+      // Reset modules per case so each coordinator owns fresh global state.
+      const { kickWorkCoordinator } = await import("@/lib/work/coordinator");
+      kickWorkCoordinator();
+      await vi.waitFor(() =>
+        expect(mocks.workUpdateMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              status: "failed",
+              error:
+                status === "failed"
+                  ? "upstream failed"
+                  : "Hermes run was cancelled.",
+            }),
+          }),
+        ),
+      );
+      expect(mocks.releaseLease).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("correlates subagent activity and settles unfinished tool activity", async () => {
+    mocks.runHermesWork.mockImplementation(async (options) => {
+      options.onSubagent({
+        event: "subagent.start",
+        runId: "run",
+        childSessionId: "child",
+        goal: "Inspect",
+      });
+      options.onSubagent({
+        event: "subagent.complete",
+        runId: "run",
+        childSessionId: "child",
+        status: "failed",
+        summary: "Permission denied",
+      });
+      options.onSubagent({
+        event: "subagent.complete",
+        runId: "run",
+        taskIndex: 2,
+        status: "completed",
+        outputTail: "Recovered",
+      });
+      options.onToolStarted({ runId: "run", tool: "unfinished" });
+      options.onToolCompleted({
+        runId: "run",
+        tool: "orphan",
+        duration: 0,
+        error: true,
+      });
+      return { runId: "run", status: "completed", text: "Completed" };
+    });
+    // Reset modules per case so each coordinator owns fresh global state.
+    const { kickWorkCoordinator } = await import("@/lib/work/coordinator");
+    const { subscribeWorkOutput } = await import("@/lib/work/run-control");
+    kickWorkCoordinator();
+    await vi.waitFor(() => expect(mocks.messageCreate).toHaveBeenCalledOnce());
+    const { snapshot, unsubscribe } = subscribeWorkOutput(
+      "work-1",
+      () => undefined,
+    );
+    expect(snapshot.activities).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          toolName: "delegate_task",
+          status: "failed",
+          isError: true,
+        }),
+        expect.objectContaining({
+          toolName: "delegate_task",
+          status: "completed",
+        }),
+        expect.objectContaining({ toolName: "unfinished", status: "failed" }),
+        expect.objectContaining({ toolName: "orphan", status: "failed" }),
+      ]),
+    );
+    unsubscribe();
+  });
+
+  it.each([
+    [{ sandbox: null }, "Work sandbox is unavailable."],
+    [{ runtimeKind: "unsupported" }, "Unsupported Work runtime"],
+  ])(
+    "fails unavailable execution prerequisites without starting a runtime",
+    async (override, error) => {
+      const base = await mocks.workFindUnique();
+      mocks.workFindUnique.mockResolvedValue({ ...base, ...override });
+      // Reset modules per case so each coordinator owns fresh global state.
+      const { kickWorkCoordinator } = await import("@/lib/work/coordinator");
+      kickWorkCoordinator();
+      await vi.waitFor(() =>
+        expect(mocks.workUpdateMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              status: "failed",
+              error: expect.stringContaining(error),
+            }),
+          }),
+        ),
+      );
+      expect(mocks.runHermesWork).not.toHaveBeenCalled();
+    },
+  );
+  it("reconciles interrupted durable states once and stops only named Hermes runs", async () => {
+    mocks.queued = false;
+    const records = [
+      { status: "running" },
+      { status: "waiting_approval" },
+      { status: "cancelling" },
+      { status: "idle" },
+    ];
+    mocks.workFindMany.mockResolvedValue([
+      {
+        runtimeSnapshot: { hermesRunId: " interrupted-run " },
+        agent: { id: "agent-1" },
+      },
+      { runtimeSnapshot: null, agent: { id: "agent-2" } },
+      { runtimeSnapshot: [], agent: { id: "agent-3" } },
+    ]);
+    mocks.workUpdateMany.mockImplementation(async ({ where, data }) => {
+      let count = 0;
+      for (const record of records) {
+        if (
+          typeof where.status === "string"
+            ? record.status !== where.status
+            : !where.status.in.includes(record.status)
+        )
+          continue;
+        Object.assign(record, data);
+        count++;
+      }
+      return { count };
+    });
+    // Fresh module state is required to exercise startup reconciliation.
+    const { startWorkCoordinator, stopWorkCoordinator } = await import(
+      "@/lib/work/coordinator"
+    );
+    try {
+      await startWorkCoordinator();
+      await startWorkCoordinator();
+      expect(records.map(({ status }) => status)).toEqual([
+        "failed",
+        "failed",
+        "idle",
+        "idle",
+      ]);
+      expect(mocks.stopHermesWorkRun).toHaveBeenCalledExactlyOnceWith({
+        agent: { id: "agent-1" },
+        runId: "interrupted-run",
+      });
+      expect(mocks.approvalUpdateMany).toHaveBeenCalledOnce();
+      expect(mocks.approvalUpdateMany.mock.calls[0][0].data.status).toBe(
+        "expired",
+      );
+    } finally {
+      stopWorkCoordinator();
+    }
+  });
+  it.each([
+    ["changed-runtime", "The Agent runtime changed"],
+    ["changed-sandbox", "The Hermes runtime sandbox changed"],
+    ["changed-id", "The Hermes runtime sandbox changed"],
+    ["no-model-provider", "no configured model provider"],
+    ["no-conversation", "conversation no longer exists"],
+    ["maintenance", "maintenance in progress"],
+    ["stopped-sandbox", "sandbox is not running"],
+    ["no-model", "no configured model"],
+  ])(
+    "fails safely when runtime prerequisite %s changes",
+    async (change, message) => {
+      const work = await mocks.workFindUnique();
+      const agent = await mocks.getAgentForRun();
+      if (change === "changed-runtime") agent.runtimeKind = "pi";
+      if (change === "changed-sandbox") agent.runtime.sandboxId = "replacement";
+      if (change === "changed-id") agent.runtime.id = "replacement";
+      if (change === "no-model-provider") agent.modelProviders = [];
+      if (change === "no-conversation")
+        mocks.runtimeSession.mockResolvedValue(null);
+      if (change === "maintenance") mocks.leaseAvailable = false;
+      if (change === "stopped-sandbox" || change === "no-model") {
+        work.runtimeKind = "pi";
+        agent.runtimeKind = "pi";
+        if (change === "stopped-sandbox")
+          mocks.effectiveStatus.mockReturnValue("stopped");
+      }
+      mocks.workFindUnique.mockResolvedValue(work);
+      mocks.getAgentForRun.mockResolvedValue(agent);
+      // Fresh module state is required because the coordinator retains process globals.
+      const { kickWorkCoordinator } = await import("@/lib/work/coordinator");
+      kickWorkCoordinator();
+      await vi.waitFor(() =>
+        expect(mocks.workUpdateMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              status: "failed",
+              error: expect.stringContaining(message),
+            }),
+          }),
+        ),
+      );
+      expect(mocks.runHermesWork).not.toHaveBeenCalled();
+      expect(mocks.runDedicatedSandboxTurn).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([null, "idle", "cancelling"])(
+    "does not start a stale claimed session with current state %s",
+    async (status) => {
+      const work = await mocks.workFindUnique();
+      mocks.workFindUnique.mockResolvedValue(
+        status ? { ...work, status } : null,
+      );
+      // Fresh module state is required because the coordinator retains process globals.
+      const { kickWorkCoordinator } = await import("@/lib/work/coordinator");
+      kickWorkCoordinator();
+      // Match the freshly loaded coordinator's output registry after module reset.
+      const { subscribeWorkOutput } = await import("@/lib/work/run-control");
+      await vi.waitFor(() => {
+        const output = subscribeWorkOutput("work-1", () => undefined);
+        output.unsubscribe();
+        expect(output.snapshot.done).toBe(true);
+      });
+      expect(mocks.runHermesWork).not.toHaveBeenCalled();
+      if (status === "cancelling")
+        expect(mocks.workUpdateMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: {
+              id: "work-1",
+              workspaceId: "workspace-1",
+              status: "cancelling",
+            },
+            data: expect.objectContaining({ status: "idle" }),
+          }),
+        );
+    },
+  );
+
+  it("persists dedicated runtime metadata and bounded reasoning without duplicate trace entries", async () => {
+    const work = await mocks.workFindUnique();
+    work.runtimeKind = "claude-code";
+    work.conversation.messages[0].parts = [{ type: "text", text: "/clear" }];
+    mocks.workFindUnique.mockResolvedValue(work);
+    mocks.getAgentForRun.mockResolvedValue({
+      id: "agent-1",
+      runtimeKind: "claude-code",
+      provider: { format: "openai" },
+      model: "model",
+      skills: [],
+      piPackages: [],
+    });
+    mocks.runDedicatedSandboxTurn.mockImplementation(async (options) => {
+      options.onActivity({
+        type: "reasoning",
+        status: "completed",
+        delta: "Detached thought",
+      });
+      options.onActivity({
+        type: "reasoning",
+        status: "running",
+        delta: "x".repeat(40_001),
+      });
+      options.onActivity({ type: "reasoning", status: "completed" });
+      options.onActivity({ type: "tool", status: "running" });
+      options.onCommands([{ name: "clear", description: "Clear context" }]);
+      options.onUsage({ tokens: 10 });
+      options.onCommandResult({ command: "clear", text: "Cleared" });
+      options.onContextUsage({
+        usedTokens: 20,
+        maxTokens: 100,
+        modelName: "reported-model",
+      });
+      return "Cleared";
+    });
+    // Fresh module state is required because the coordinator retains process globals.
+    const { kickWorkCoordinator } = await import("@/lib/work/coordinator");
+    kickWorkCoordinator();
+    await vi.waitFor(() => expect(mocks.messageCreate).toHaveBeenCalledOnce());
+    const parts = mocks.messageCreate.mock.calls[0][0].data.parts;
+    expect(parts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "reasoning",
+          text: "Detached thought",
+        }),
+        expect.objectContaining({
+          type: "data-context-usage",
+          data: expect.objectContaining({ modelName: "reported-model" }),
+        }),
+        expect.objectContaining({
+          type: "data-work-timing",
+          data: expect.objectContaining({ modelName: "reported-model" }),
+        }),
+      ]),
+    );
+    const reasoning = parts.filter(
+      (part: { type: string }) => part.type === "reasoning",
+    );
+    expect(reasoning.map((part: { text: string }) => part.text.length)).toEqual(
+      [16, 40_000 - 16],
+    );
+    expect(
+      parts.some((part: { type: string }) => part.type === "work-tool"),
+    ).toBe(false);
+    expect(mocks.generateWorkSessionTitle).not.toHaveBeenCalled();
+  });
+
+  it("persists allowlisted resource provenance and excludes resources added after session creation", async () => {
+    const work = await mocks.workFindUnique();
+    work.runtimeSnapshot = {
+      ...work.runtimeSnapshot,
+      deploymentIds: ["mcp"],
+      installedSkillIds: ["skill"],
+      knowledgeBaseIds: ["kb"],
+    };
+    mocks.workFindUnique.mockResolvedValue(work);
+    mocks.resolveAgentTools.mockReturnValue({
+      deploymentIds: ["mcp", "new-mcp", "sandbox"],
+      sandboxDeploymentIds: ["sandbox"],
+      skills: [{ id: "skill" }, { id: "new-skill" }, {}],
+      knowledgeBases: [
+        { knowledgeBase: { id: "kb" } },
+        { knowledgeBase: { id: "new-kb" } },
+      ],
+      subAgents: [{ id: "child" }],
+    });
+    mocks.deploymentFindMany.mockResolvedValue([
+      { id: "mcp", name: "Approved MCP", source: "npm", sourceRef: "approved" },
+    ]);
+    mocks.runHermesWork.mockImplementation(async (options) => {
+      options.onToolStarted({
+        runId: "run",
+        tool: "mcp__read_file",
+        preview: "file",
+      });
+      options.onToolCompleted({
+        runId: "run",
+        tool: "mcp__read_file",
+        duration: 0.25,
+        error: false,
+      });
+      options.onToolStarted({ runId: "run", tool: "new-mcp__read_file" });
+      options.onToolCompleted({
+        runId: "run",
+        tool: "new-mcp__read_file",
+        duration: 0,
+        error: false,
+      });
+      options.onToolStarted({ runId: "run", tool: "mcp__" });
+      options.onToolCompleted({
+        runId: "run",
+        tool: "mcp__",
+        duration: 0,
+        error: false,
+      });
+      return { status: "completed", text: "Inspected" };
+    });
+    // Fresh module state is required because the coordinator retains process globals.
+    const { kickWorkCoordinator } = await import("@/lib/work/coordinator");
+    kickWorkCoordinator();
+    await vi.waitFor(() => expect(mocks.messageCreate).toHaveBeenCalledOnce());
+    const parts = mocks.messageCreate.mock.calls[0][0].data.parts;
+    expect(
+      parts.find(
+        (part: { toolName?: string }) => part.toolName === "mcp__read_file",
+      ),
+    ).toMatchObject({
+      deploymentName: "Approved MCP",
+      originalToolName: "read_file",
+      durationMs: 250,
+    });
+    expect(
+      parts.find(
+        (part: { toolName?: string }) => part.toolName === "new-mcp__read_file",
+      ),
+    ).not.toHaveProperty("deploymentName");
+    expect(
+      parts.find((part: { toolName?: string }) => part.toolName === "mcp__"),
+    ).not.toHaveProperty("originalToolName");
   });
 });

@@ -13,13 +13,19 @@ export default defineConfig({
     fileParallelism: false,
     coverage: {
       provider: "v8",
-      reporter: ["text-summary", "lcovonly"],
+      reporter: ["text-summary", "json-summary", "lcovonly"],
       reportsDirectory: "./coverage",
       include: [
         "src/**/*.{ts,tsx,js,jsx,mjs,cjs}",
         "packages/connector/bin/**/*.mjs",
       ],
       exclude: ["**/*.d.ts"],
+      thresholds: {
+        statements: 80,
+        branches: 80,
+        functions: 80,
+        lines: 80,
+      },
     },
   },
   resolve: {

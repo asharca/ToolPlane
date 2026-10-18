@@ -235,4 +235,68 @@ describe("server-owned assistant turns", () => {
     });
     expect((await GET(new Request(`${url}/stream`), params)).status).toBe(204);
   });
+  it("rejects unauthenticated, malformed and invalid submissions before creating a turn", async () => {
+    mocks.resolveUser.mockResolvedValueOnce(null);
+    expect((await POST(request(), params)).status).toBe(401);
+    expect(
+      (await POST(new Request(url, { method: "POST", body: "{" }), params))
+        .status,
+    ).toBe(400);
+    for (const body of [
+      {},
+      { messages: [] },
+      { messages: "invalid" },
+      { messages: [], reasoningEffort: "ultra" },
+    ]) {
+      const response = await POST(
+        new Request(url, { method: "POST", body: JSON.stringify(body) }),
+        params,
+      );
+      expect(response.status).toBe(400);
+    }
+    expect(mocks.begin).not.toHaveBeenCalled();
+    expect(mocks.runNative).not.toHaveBeenCalled();
+  });
+
+  it("conceals foreign threads and requires a configured model before starting execution", async () => {
+    const thread = await mocks.getThread();
+    mocks.getThread.mockResolvedValueOnce(null);
+    expect((await POST(request(), params)).status).toBe(404);
+    for (const assistant of [
+      { ...thread.assistant, modelProvider: null },
+      { ...thread.assistant, model: "" },
+    ]) {
+      mocks.getThread.mockResolvedValueOnce({ ...thread, assistant });
+      const response = await POST(request(), params);
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({
+        error: "This chat assistant has no model configured",
+      });
+    }
+    expect(mocks.begin).not.toHaveBeenCalled();
+  });
+
+  it("sanitizes unexpected admission errors and never invokes the provider", async () => {
+    mocks.begin.mockRejectedValueOnce(new Error("private persistence error"));
+    const response = await POST(request(), params);
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ error: "Chat request failed" });
+    expect(mocks.runNative).not.toHaveBeenCalled();
+  });
+
+  it("validates cancellation bodies without stopping unrelated work", async () => {
+    expect(
+      (await DELETE(new Request(url, { method: "DELETE", body: "{" }), params))
+        .status,
+    ).toBe(400);
+    for (const body of [null, "turn", {}, { turnId: 42 }, { turnId: "" }]) {
+      const response = await DELETE(
+        new Request(url, { method: "DELETE", body: JSON.stringify(body) }),
+        params,
+      );
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({ error: "A turn ID is required" });
+    }
+    expect(mocks.finish).not.toHaveBeenCalled();
+  });
 });

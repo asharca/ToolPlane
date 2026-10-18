@@ -91,4 +91,54 @@ describe("McpToolCatalog", () => {
     expect(container.querySelector("table")).not.toBeInTheDocument();
     expect(screen.queryByText("Search term")).not.toBeInTheDocument();
   });
+  it("explains union, enum and composition parameters without treating invalid schema values as objects", async () => {
+    render(
+      <McpToolCatalog
+        labels={{ ...labels, descriptionColumn: "Help" }}
+        tools={[
+          {
+            name: "complex",
+            title: "complex",
+            inputSchema: {
+              properties: {
+                union: { type: ["string", "null", 1], default: null },
+                enumeration: { enum: ["one", "two"] },
+                exclusive: { oneOf: [{ type: "string" }] },
+                inclusive: { anyOf: [{ type: "number" }] },
+                unknown: { type: [42] },
+                invalid: [],
+                described: { description: "Help text", default: { count: 1 } },
+              },
+              required: ["union", 42],
+            },
+          },
+        ]}
+      />,
+    );
+    expect(await screen.findByText("string | null")).toBeVisible();
+    for (const type of ["enum", "oneOf", "anyOf"])
+      expect(screen.getByText(type)).toBeVisible();
+    expect(screen.getAllByText("any")).toHaveLength(3);
+    expect(screen.getByTitle("Help text")).toBeVisible();
+    expect(screen.getByText('{"count":1}')).toBeVisible();
+    expect(screen.queryByRole("link")).toBeNull();
+  });
+
+  it("truncates compact instructions but leaves full instructions available in the expanded catalog", () => {
+    const description = "x".repeat(241);
+    render(
+      <McpToolCatalog
+        compact
+        labels={labels}
+        tools={[
+          { name: "long", title: "Long tool", description },
+          { name: "empty", title: "empty", description: " " },
+        ]}
+      />,
+    );
+    expect(screen.getByText(`${"x".repeat(240)}…`)).toBeVisible();
+    expect(screen.getByText("No description.")).toBeVisible();
+    expect(screen.getByText("Long tool")).toBeVisible();
+    expect(screen.queryByRole("link")).toBeNull();
+  });
 });
