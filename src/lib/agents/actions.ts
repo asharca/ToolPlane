@@ -17,6 +17,10 @@ import { generateConsoleConversationTitle } from "@/lib/agents/conversation-nami
 import { buildModel } from "@/lib/agents/model";
 import { providerPreset } from "@/lib/agents/provider-catalog";
 import {
+  AgentExecutionBusyError,
+  withAgentMaintenanceLease,
+} from "@/lib/agents/agent-execution-gate";
+import {
   hermesAgentsUsingProvider,
   refreshProviderModels,
   revalidateProviderViews,
@@ -1001,32 +1005,39 @@ export async function updateAgentAction(
   const maxSteps = agentMaxSteps(formData);
 
   try {
-    await updateAgent(ctx.ws.id, agentId, {
-      name: String(formData.get("name") ?? "").trim() || "New agent",
-      description:
-        String(formData.get("description") ?? "")
-          .trim()
-          .slice(0, 500) || null,
-      systemPrompt:
-        String(formData.get("systemPrompt") ?? "")
-          .trim()
-          .slice(0, 100_000) || null,
-      providerId,
-      providerIds,
-      model,
-      disabledBuiltinTools: formData.getAll("disabledBuiltinTool").map(String),
-      maxSteps,
-      piPackages: piPackagesFromForm(formData),
-    });
-    await setAgentTools(ctx.ws.id, agentId, {
-      deploymentIds: formData.getAll("deploymentId").map(String),
-      installedSkillIds: formData.getAll("installedSkillId").map(String),
-      toolkitIds: formData.getAll("toolkitId").map(String),
-      sandboxIds: formData.getAll("sandboxId").map(String),
-      defaultSandboxId: String(formData.get("defaultSandboxId") ?? "") || null,
-      subAgentIds: formData.getAll("subAgentId").map(String),
+    await withAgentMaintenanceLease(agentId, async () => {
+      await updateAgent(ctx.ws.id, agentId, {
+        name: String(formData.get("name") ?? "").trim() || "New agent",
+        description:
+          String(formData.get("description") ?? "")
+            .trim()
+            .slice(0, 500) || null,
+        systemPrompt:
+          String(formData.get("systemPrompt") ?? "")
+            .trim()
+            .slice(0, 100_000) || null,
+        providerId,
+        providerIds,
+        model,
+        disabledBuiltinTools: formData
+          .getAll("disabledBuiltinTool")
+          .map(String),
+        maxSteps,
+        piPackages: piPackagesFromForm(formData),
+      });
+      await setAgentTools(ctx.ws.id, agentId, {
+        deploymentIds: formData.getAll("deploymentId").map(String),
+        installedSkillIds: formData.getAll("installedSkillId").map(String),
+        toolkitIds: formData.getAll("toolkitId").map(String),
+        sandboxIds: formData.getAll("sandboxId").map(String),
+        defaultSandboxId:
+          String(formData.get("defaultSandboxId") ?? "") || null,
+        subAgentIds: formData.getAll("subAgentId").map(String),
+      });
     });
   } catch (error) {
+    if (error instanceof AgentExecutionBusyError)
+      return { error: error.message };
     if (error instanceof AgentConfigurationError) {
       if (
         /^(Unknown or inaccessible market install:|Market install is not a pi-package:|Listing is not published:|Market install is not ready:|Release not approved:)/.test(

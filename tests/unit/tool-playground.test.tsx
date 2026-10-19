@@ -332,4 +332,116 @@ describe("ToolPlayground", () => {
       screen.queryByRole("button", { name: /connect inspector/i }),
     ).not.toBeInTheDocument();
   });
+  it.each([
+    "sandboxRequired",
+    "sandboxNotRunning",
+    "sandboxNetworkDisabled",
+    "unsupportedTransport",
+    "credentialsRequired",
+    "authenticationFailed",
+    "unexpected",
+    "toolCallFailed",
+    "deploymentNotFound",
+  ])(
+    "reports inspector outcome %s without submitting another tool",
+    async (error) => {
+      mocks.runMcpInspectorToolAction.mockResolvedValue({ error });
+      render(
+        <ToolPlayground
+          workspace="acme"
+          deploymentId="dep1"
+          tools={tools}
+          sandboxes={[sandbox]}
+          connectedSandboxId="sandbox-1"
+        />,
+      );
+      await userEvent.click(screen.getByRole("button", { name: /run tool/i }));
+      expect(mocks.runMcpInspectorToolAction).toHaveBeenCalledOnce();
+      expect(await screen.findByRole("alert")).toBeVisible();
+    },
+  );
+
+  it.each(["null", "[]", "42", "bad json"])(
+    "rejects invalid argument object %s locally",
+    async (value) => {
+      render(
+        <ToolPlayground
+          workspace="acme"
+          deploymentId="dep1"
+          tools={tools}
+          defaultRuntime
+        />,
+      );
+      const editor = screen.getByRole("textbox");
+      await userEvent.clear(editor);
+      await userEvent.paste(value);
+      await userEvent.click(screen.getByRole("button", { name: /run tool/i }));
+      expect(await screen.findByRole("alert")).toBeVisible();
+      expect(mocks.runMcpConsoleToolAction).not.toHaveBeenCalled();
+    },
+  );
+
+  it("initializes all JSON schema argument types and renders structured results", async () => {
+    mocks.runMcpConsoleToolAction.mockResolvedValue({
+      result: { structuredContent: { found: true } },
+    });
+    render(
+      <ToolPlayground
+        workspace="acme"
+        deploymentId="dep1"
+        tools={[
+          {
+            name: "typed",
+            inputSchema: {
+              properties: {
+                count: { type: "integer" },
+                enabled: { type: "boolean" },
+                rows: { type: "array" },
+                filter: { type: "object" },
+              },
+            },
+          },
+        ]}
+        defaultRuntime
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: /run tool/i }));
+    expect(mocks.runMcpConsoleToolAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        arguments: { count: 0, enabled: false, rows: [], filter: {} },
+      }),
+    );
+    expect(
+      (await screen.findAllByText(/"structuredContent"/))[0],
+    ).toBeVisible();
+  });
+
+  it.each(["connect", "start", "run"])(
+    "recovers UI controls after a thrown %s action",
+    async (operation) => {
+      mocks.connectMcpInspectorAction.mockRejectedValue(new Error("offline"));
+      mocks.startSandboxAction.mockRejectedValue(new Error("offline"));
+      mocks.runMcpInspectorToolAction.mockRejectedValue(new Error("offline"));
+      render(
+        <ToolPlayground
+          workspace="acme"
+          deploymentId="dep1"
+          tools={tools}
+          sandboxes={[{ ...sandbox, running: operation !== "start" }]}
+          connectedSandboxId={operation === "run" ? sandbox.id : undefined}
+        />,
+      );
+      await userEvent.click(
+        screen.getByRole("button", {
+          name:
+            operation === "run"
+              ? /run tool/i
+              : operation === "start"
+                ? /start sandbox/i
+                : /connect inspector/i,
+        }),
+      );
+      expect(await screen.findByRole("alert")).toBeVisible();
+    },
+  );
 });

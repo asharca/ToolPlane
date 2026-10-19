@@ -204,7 +204,7 @@ async function postTerminal(
   action: "input" | "resize",
   body: unknown,
 ) {
-  await fetch(`${terminalApiBase}/${sessionId}/${action}`, {
+  return fetch(`${terminalApiBase}/${sessionId}/${action}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
@@ -253,6 +253,7 @@ export function SandboxConsole({
   const fitRef = useRef<XtermFitAddon | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const inputQueueRef = useRef("");
+  const inputWritesRef = useRef(Promise.resolve());
   const inputTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadedDirectoryRef = useRef(
     initialEntries.length ? `${rpcBase}:${normalizePath(initialPath)}` : "",
@@ -346,8 +347,18 @@ export function SandboxConsole({
     const data = inputQueueRef.current;
     if (!sessionId || !data) return;
     inputQueueRef.current = "";
-    void postTerminal(terminalBase, sessionId, "input", { data });
-  }, [terminalBase]);
+    const write = inputWritesRef.current.then(async () => {
+      const response = await postTerminal(terminalBase, sessionId, "input", {
+        data,
+      });
+      if (!response.ok) throw new Error(t("terminalError"));
+    });
+    inputWritesRef.current = write;
+    void write.catch(() => {
+      if (sessionIdRef.current === sessionId)
+        setTerminalStatus(t("terminalError"));
+    });
+  }, [terminalBase, t]);
 
   const queueInput = useCallback(
     (data: string) => {
@@ -443,6 +454,7 @@ export function SandboxConsole({
       }
       const session = (await sessionRes.json()) as TerminalSession;
       sessionIdRef.current = session.id;
+      inputWritesRef.current = Promise.resolve();
       setTerminalStatus(t("terminalConnected"));
 
       eventSource = new EventSource(`${terminalBase}/${session.id}/stream`);
@@ -495,10 +507,16 @@ export function SandboxConsole({
       resizeObserver?.disconnect();
       const sessionId = sessionIdRef.current;
       if (sessionId) {
-        void fetch(`${terminalBase}/${sessionId}`, {
-          method: "DELETE",
-          keepalive: true,
-        });
+        const closeSession = () =>
+          fetch(`${terminalBase}/${sessionId}`, {
+            method: "DELETE",
+            keepalive: true,
+          });
+        void inputWritesRef.current
+          .then(closeSession, closeSession)
+          .catch(() => {
+            // The view is gone; owner shutdown also releases its terminal processes.
+          });
       }
       sessionIdRef.current = null;
       fitRef.current = null;

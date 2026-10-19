@@ -21,7 +21,7 @@ import { A2A_LIMITS, textArtifact } from "@/lib/a2a/model";
 import { outputBucket } from "@/lib/a2a/quotas";
 import {
   bindPiHarnessOperation,
-  claimTask,
+  claimTask as claimStoredTask,
   finishTask,
   getTaskRow,
   releasePiHarnessClaim,
@@ -41,9 +41,39 @@ import {
 import { PiRuntimeInterruptedError } from "@/lib/agents/pi-harness";
 import type { AgentRuntimeTokenPayload } from "@/lib/agents/runtime-access";
 import { withSandboxExecutionLease } from "@/lib/agents/sandbox-execution-gate";
+import { withAgentExecutionLease } from "@/lib/agents/agent-execution-gate";
+import {
+  assertMappedDeployment,
+  assertMappedVolume,
+  mapTaskSandbox,
+  taskSandbox,
+} from "./task-sandbox-fixture";
+import type * as SandboxRuntime from "@/lib/sandboxes/runtime";
+import type * as ProcessSupervisor from "@/lib/process/supervisor";
 
-// Real PostgreSQL claims, receipts, approvals and worker control. Inject only the
-// TaskExecutor boundary; actual SQLite/process crash recovery has its own suite.
+// Only external runtime startup is replaced; mapping and authority use PostgreSQL.
+vi.mock("@/lib/sandboxes/runtime", async (original) => {
+  const runtime = await original<typeof SandboxRuntime>();
+  return {
+    ...runtime,
+    assertDockerVolumeExists: vi.fn(async (name: string) =>
+      assertMappedVolume(name, runtime.sandboxVolumeName),
+    ),
+  };
+});
+vi.mock("@/lib/process/supervisor", async (original) => ({
+  ...(await original<typeof ProcessSupervisor>()),
+  startProcess: vi.fn((id: string) => assertMappedDeployment(id)),
+}));
+
+async function claimTask(id: string) {
+  const row = await claimStoredTask(id);
+  if (row) await mapTaskSandbox(row);
+  return row;
+}
+
+// Real PostgreSQL claims, receipts, approvals and worker control; no Docker/model services.
+// Actual SQLite/process crash recovery has its own suite.
 let workspaceId: string, userId: string, providerId: string;
 const pi: Array<{ id: string; sandboxId: string }> = [];
 const legacy: Array<{ id: string; sandboxId: string }> = [];
@@ -57,7 +87,8 @@ const request = () =>
       parts: [{ text: "Worker control fixture" }],
     },
   });
-function execute(id: string, executor: TaskExecutor) {
+async function execute(id: string, executor: TaskExecutor) {
+  await mapTaskSandbox(await db.a2ATask.findUniqueOrThrow({ where: { id } }));
   const operation = executeA2ATask(id, executor);
   executions.push(operation);
   return operation;
@@ -98,11 +129,12 @@ function token(row: A2ATask): AgentRuntimeTokenPayload {
   return {
     workspaceId,
     agentId: pi[0].id,
-    sandboxId: pi[0].sandboxId,
+    ...taskSandbox(row),
     providerId,
     deploymentIds: [],
     exp: Math.floor(Date.now() / 1000) + 300,
     a2aTaskId: row.id,
+    a2aContextId: row.contextId,
     a2aLeaseToken: assertDefined(row.leaseToken),
     a2aApprovalRequired: true,
   };
@@ -516,6 +548,39 @@ describe("Pi worker recovery and terminal projection in PostgreSQL", () => {
     expect(await claimTask(initial.id)).toBeNull();
   });
 
+  it("retains a bound native operation when its saved sandbox mapping is invalid", async () => {
+    const row = await running();
+    const nativeOperationId = await bindPiHarnessOperation(
+      row.id,
+      assertDefined(row.leaseToken),
+      randomUUID(),
+    );
+    await releasePiHarnessClaim(row.id, assertDefined(row.leaseToken));
+    await db.sandbox.update({
+      where: { id: taskSandbox(row).sandboxId },
+      data: {
+        config: {
+          managedBy: "agent-conversation",
+          agentId: pi[1].id,
+          sourceSandboxId: pi[0].sandboxId,
+        },
+      },
+    });
+    const executor = vi.fn<TaskExecutor>(completed);
+    await expect(execute(row.id, executor)).rejects.toBeInstanceOf(
+      PiRuntimeInterruptedError,
+    );
+    expect(executor).not.toHaveBeenCalled();
+    expect(await getTaskRow(piGrants[0], row.id)).toMatchObject({
+      id: row.id,
+      contextId: row.contextId,
+      nativeOperationId,
+      state: TaskState.TASK_STATE_WORKING,
+      phase: "resumable",
+      leaseToken: null,
+    });
+  });
+
   it("fails an unavailable unbound target visibly without running the executor", async () => {
     const initial = await submitTask(piGrants[0], request());
     await db.sandbox.update({
@@ -600,100 +665,114 @@ describe("Pi worker recovery and terminal projection in PostgreSQL", () => {
   );
 });
 
-describe("Pi scheduling stays independent of legacy worker slots", () => {
-  it("runs more Pi tasks than the fixed legacy cap while all legacy slots are occupied", async () => {
-    const active: A2ATask[] = [];
-    for (const authority of [
-      ...legacyGrants.slice(0, A2A_LIMITS.workerConcurrency),
-      ...piGrants,
-    ]) {
-      const initial = await submitTask(authority, request());
-      const entered = Promise.withResolvers<A2ATask>();
-      const execution = execute(initial.id, async (row, signal) => {
-        if (row.executionBackend === "pi-harness")
-          await bindPiHarnessOperation(
-            row.id,
-            assertDefined(row.leaseToken),
-            randomUUID(),
-          );
-        entered.resolve(row);
-        throw await aborted(signal);
-      });
-      active.push(
-        await Promise.race([
-          entered.promise,
-          execution.then(() => {
-            throw new Error(
-              "A free sandbox was blocked by legacy concurrency.",
-            );
-          }),
-        ]),
-      );
-    }
-    const where = {
-      context: { workspaceId },
-      state: TaskState.TASK_STATE_WORKING,
-      phase: "executing",
-    };
-    expect(
-      await db.a2ATask.count({
-        where: { ...where, executionBackend: "legacy" },
-      }),
-    ).toBe(A2A_LIMITS.workerConcurrency);
-    expect(
-      await db.a2ATask.count({
-        where: { ...where, executionBackend: "pi-harness" },
-      }),
-    ).toBe(A2A_LIMITS.workerConcurrency + 1);
-    const queued = await submitTask(
-      legacyGrants[A2A_LIMITS.workerConcurrency],
-      request(),
-    );
-    const executor = vi.fn<TaskExecutor>(async () => ({
-      state: TaskState.TASK_STATE_COMPLETED,
-      artifact: textArtifact("Legacy result"),
-    }));
-    await execute(queued.id, executor);
-    expect(executor).not.toHaveBeenCalled();
-    expect(
-      await getTaskRow(legacyGrants[A2A_LIMITS.workerConcurrency], queued.id),
-    ).toMatchObject({
-      state: TaskState.TASK_STATE_SUBMITTED,
-      phase: "queued",
-      leaseToken: null,
+describe("Local scheduling uses administrator capacity across runtimes", () => {
+  it("admits non-Pi work beyond the remote pool cap and queues at the platform limit", async () => {
+    const key = "agents.concurrency";
+    const previous = await db.systemSetting.findUnique({ where: { key } });
+    const value = JSON.stringify({
+      maxPerAgent: 2,
+      maxTotal: legacyGrants.length + piGrants.length,
     });
-    stopA2AWorker();
-    await Promise.all(executions);
-    for (const row of active.filter(
-      (task) => task.executionBackend === "pi-harness",
-    )) {
-      expect(
-        await db.a2ATask.findUnique({ where: { id: row.id } }),
-      ).toMatchObject({
+    await db.systemSetting.upsert({
+      where: { key },
+      create: { key, value },
+      update: { value },
+    });
+    try {
+      const active: A2ATask[] = [];
+      for (const authority of [...legacyGrants, ...piGrants]) {
+        const initial = await submitTask(authority, request());
+        const entered = Promise.withResolvers<A2ATask>();
+        const execution = execute(initial.id, async (row, signal) => {
+          if (row.executionBackend === "pi-harness")
+            await bindPiHarnessOperation(
+              row.id,
+              assertDefined(row.leaseToken),
+              randomUUID(),
+            );
+          entered.resolve(row);
+          throw await aborted(signal);
+        });
+        active.push(
+          await Promise.race([
+            entered.promise,
+            execution.then(() => {
+              throw new Error(
+                "A free sandbox was blocked by legacy concurrency.",
+              );
+            }),
+          ]),
+        );
+      }
+      const where = {
+        context: { workspaceId },
         state: TaskState.TASK_STATE_WORKING,
-        phase: "resumable",
-        cancelRequestedAt: null,
+        phase: "executing",
+      };
+      expect(
+        await db.a2ATask.count({
+          where: { ...where, executionBackend: "legacy" },
+        }),
+      ).toBe(legacyGrants.length);
+      expect(
+        await db.a2ATask.count({
+          where: { ...where, executionBackend: "pi-harness" },
+        }),
+      ).toBe(piGrants.length);
+      const queued = await submitTask(legacyGrants[0], request());
+      const executor = vi.fn<TaskExecutor>(async () => ({
+        state: TaskState.TASK_STATE_COMPLETED,
+        artifact: textArtifact("Legacy result"),
+      }));
+      await execute(queued.id, executor);
+      expect(executor).not.toHaveBeenCalled();
+      expect(await getTaskRow(legacyGrants[0], queued.id)).toMatchObject({
+        state: TaskState.TASK_STATE_SUBMITTED,
+        phase: "queued",
+        leaseToken: null,
       });
+      stopA2AWorker();
+      await Promise.all(executions);
+      for (const row of active.filter(
+        (task) => task.executionBackend === "pi-harness",
+      )) {
+        expect(
+          await db.a2ATask.findUnique({ where: { id: row.id } }),
+        ).toMatchObject({
+          state: TaskState.TASK_STATE_WORKING,
+          phase: "resumable",
+          cancelRequestedAt: null,
+        });
+      }
+      await startWorker();
+      await execute(queued.id, executor);
+      expect(executor).toHaveBeenCalledTimes(1);
+      expect((await getTaskRow(legacyGrants[0], queued.id)).state).toBe(
+        TaskState.TASK_STATE_COMPLETED,
+      );
+    } finally {
+      if (previous)
+        await db.systemSetting.update({
+          where: { key },
+          data: { value: previous.value },
+        });
+      else await db.systemSetting.deleteMany({ where: { key } });
     }
-    await startWorker();
-    await execute(queued.id, executor);
-    expect(executor).toHaveBeenCalledTimes(1);
-    expect(
-      (await getTaskRow(legacyGrants[A2A_LIMITS.workerConcurrency], queued.id))
-        .state,
-    ).toBe(TaskState.TASK_STATE_COMPLETED);
   });
 
-  it("does not admit a second root through its parent executor inherited sandbox lease", async () => {
+  it("queues another isolated root at the default per-Agent limit without inheriting an executor lease", async () => {
     const parent = await submitTask(piGrants[0], request());
     const queued = await submitTask(piGrants[0], request());
     const nested = vi.fn<TaskExecutor>(completed);
     await execute(parent.id, (row) =>
-      withSandboxExecutionLease(pi[0].sandboxId, async () => {
+      withSandboxExecutionLease(taskSandbox(row).sandboxId, async () => {
         // Same-task host reentry is valid; another task must not inherit its writer lease.
         await execute(queued.id, nested);
         return completed(row);
       }),
+    );
+    expect(taskSandbox(parent).sandboxId).not.toBe(
+      taskSandbox(queued).sandboxId,
     );
     expect(nested).not.toHaveBeenCalled();
     expect((await getTaskRow(piGrants[0], parent.id)).state).toBe(
@@ -718,10 +797,15 @@ describe("Pi scheduling stays independent of legacy worker slots", () => {
     let child!: A2ATask;
     const root = await submitTask(piGrants[1], request());
     const unlocked = Promise.withResolvers<void>();
-    const lock = withSandboxExecutionLease(
-      pi[1].sandboxId,
-      () => unlocked.promise,
+    const locked = Promise.withResolvers<void>();
+    const lock = withAgentExecutionLease(
+      { agentId: pi[1].id, sessionId: root.contextId },
+      async () => {
+        locked.resolve();
+        await unlocked.promise;
+      },
     );
+    await locked.promise;
     const executor = vi.fn<TaskExecutor>(completed);
     try {
       await execute(parent.id, async (row) => {

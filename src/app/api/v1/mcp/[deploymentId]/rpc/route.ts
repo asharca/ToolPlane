@@ -38,6 +38,7 @@ export const POST = withRequestLogging(
         mcpAllowedTools: true,
         sandbox: {
           select: {
+            id: true,
             agentRuntime: { select: { agentId: true, kind: true } },
           },
         },

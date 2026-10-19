@@ -1,5 +1,7 @@
 # ToolPlane 项目介绍
 
+[![测试覆盖率](https://codecov.io/gh/asharca/ToolPlane/branch/main/graph/badge.svg)](https://app.codecov.io/gh/asharca/ToolPlane/tree/main)
+
 > 统一管理 MCP 和 Skill，同步到 AI 客户端，或在沙箱中直接运行 Agent。
 
 ToolPlane 是一个自托管的 AI 工具与 Agent 平台，以工作区组织工具、技能、模型和运行环境。实例凭据、工作区数据与托管运行时由部署者管理。
@@ -71,7 +73,7 @@ pnpm dev
 
 `pnpm install` 自动安装仓库的 Git hooks；已有 checkout 可运行 `pnpm hooks:install`。安装器不覆盖其他 `core.hooksPath` 配置，无 `.git` 的镜像依赖层和发布归档跳过安装。
 
-- **pre-commit**：在临时目录中检查 Git index 的文件快照，使用 Biome 校验语法、lint 和格式；不自动修改工作区或暂存内容，支持部分暂存。
+- **pre-commit**：在临时目录中检查 Git index 的文件快照，并从 index 读取 `package.json`、`biome.json` 和 `.gitignore`，确保 React/Next 规则及忽略设置与待提交内容一致；使用 Biome 校验语法、lint 和格式，不自动修改工作区或暂存内容，支持部分暂存。
 - **pre-push**：要求推送当前 `HEAD` 且已跟踪文件无未提交变更，运行 `pnpm check`（`biome ci . --error-on-warnings`、Next 路由类型生成和 TypeScript 检查）。先执行 `pnpm db:generate` 准备 Prisma 类型；不连接数据库或运行迁移。
 - CI 复用 `pnpm check`，再运行完整测试和构建；只检查、不自动修复。hooks 不替代受保护分支的 CI。
 - lint 和 formatter 统一使用锁定版本的 Biome，不再运行 ESLint/Prettier。`biome.json` 使用推荐规则，不保留迁移期的 warning 降级；提交、推送和 CI 均阻断 error、warning、语法和格式问题。明确的框架约束或安全处理仅允许带原因的局部例外，不批量添加忽略注释。
@@ -93,9 +95,14 @@ pnpm dev
 | `pnpm format` / `pnpm format:check` | 全仓格式化 / 只检查格式 |
 | `pnpm check:staged` / `pnpm check` | 暂存区检查 / 全量 Biome 与类型检查 |
 | `pnpm test` | 运行测试 |
+| `pnpm test:coverage` | 运行全量测试、生成覆盖率报告并检查四项 80% 门槛 |
 | `pnpm build` | 生产构建 |
 | `pnpm db:migrate` / `pnpm db:studio` | 开发数据库迁移与查看 |
 | `pnpm connector:dev` | 调试设备连接器 |
+
+覆盖率徽章展示 main 分支最近成功上传的 Vitest 报告，统计 src 与 packages/connector/bin 的 JS/TS 源码（包含未命中的文件），不代表外部容器或子进程内部代码的覆盖率。
+
+`vitest.config.ts` 对语句、分支、函数、行覆盖率分别设置全局 80% 下限；CI 执行 `pnpm test:coverage`，任一指标不足即失败。报告写入 `coverage/coverage-summary.json` 和 `coverage/lcov.info`。集成测试需要独立的 pgvector PostgreSQL 测试库；先生成 Prisma Client、应用数据库迁移，并构建 Pi 包捕获镜像（`docker build --target pi-package-capture -t toolplane-pi-package-capture:0.87.1 .`），不要使用业务数据库运行测试。
 
 ## 文档
 

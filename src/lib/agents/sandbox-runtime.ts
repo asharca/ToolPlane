@@ -4,6 +4,8 @@ import {
   claudeApprovalSettings,
 } from "./native-tool-approval";
 import { withSandboxExecutionLease } from "./sandbox-execution-gate";
+import { findAgentConversationSandbox } from "./conversation-sandbox";
+import { withAgentMaintenanceLease } from "./agent-execution-gate";
 import { runHermesRpcTurn } from "./hermes-rpc";
 import { PiRuntimeInterruptedError } from "./pi-harness";
 import {
@@ -171,6 +173,8 @@ export type RunSandboxAgentTurnOptions = {
   workspaceId: string;
   agentId: string;
   sandboxId: string;
+  conversationId?: string;
+  a2aContextId?: string;
   provider: SandboxRuntimeProvider;
   modelId: string;
   maxSteps?: number;
@@ -1826,9 +1830,41 @@ async function removeSandboxFiles(
 async function assertAssignedDockerSandbox(
   options: Pick<
     RunSandboxAgentTurnOptions,
-    "workspaceId" | "agentId" | "sandboxId"
+    "workspaceId" | "agentId" | "sandboxId" | "conversationId" | "a2aContextId"
   >,
+  cleanup = false,
 ): Promise<string> {
+  if (options.conversationId || options.a2aContextId) {
+    const mapped = await findAgentConversationSandbox({
+      workspaceId: options.workspaceId,
+      agentId: options.agentId,
+      conversationId: options.conversationId,
+      contextId: options.a2aContextId,
+      cleanup,
+    });
+    if (!mapped || mapped.sandboxId !== options.sandboxId)
+      throw new Error("The sandbox does not match this conversation/context.");
+    const sandbox = await db.sandbox.findFirst({
+      where: {
+        id: mapped.sandboxId,
+        workspaceId: options.workspaceId,
+        kind: "docker",
+      },
+      select: {
+        network: true,
+        deploymentId: true,
+        deployment: { select: { status: true } },
+      },
+    });
+    if (
+      !sandbox ||
+      !sandboxRuntimeCanReachProxy(sandbox.network) ||
+      effectiveStatus(sandbox.deploymentId, sandbox.deployment.status) !==
+        "running"
+    )
+      throw new Error("The conversation sandbox is not ready.");
+    return sandbox.deploymentId;
+  }
   const link = await db.agentSandbox.findUnique({
     where: {
       agentId_sandboxId: {
@@ -2086,23 +2122,25 @@ export async function getPiRuntimeVersion(
 ): Promise<PiRuntimeVersion> {
   assertRuntimeOwner();
   const sandboxId = await piManagementSandbox(workspaceId, agentId);
-  return withSandboxExecutionLease(sandboxId, async () => {
-    const container = sandboxContainerName(sandboxId);
-    const version = await readPiVersion(container, agentId);
-    const binary = `${piRuntimePackage(version).directory}/node_modules/.bin/pi`;
-    const installed = await runTrackedDockerExec({
-      container,
-      workdir: "/workspace",
-      executable: "node",
-      args: [
-        "-e",
-        "const fs = require('node:fs'); try { fs.accessSync(process.argv[1], fs.constants.X_OK); process.stdout.write('yes'); } catch (error) { if (error.code !== 'ENOENT') throw error; }",
-        binary,
-      ],
-      timeoutMs: 10_000,
-    });
-    return { version, installed: installed === "yes" };
-  });
+  return withAgentMaintenanceLease(agentId, () =>
+    withSandboxExecutionLease(sandboxId, async () => {
+      const container = sandboxContainerName(sandboxId);
+      const version = await readPiVersion(container, agentId);
+      const binary = `${piRuntimePackage(version).directory}/node_modules/.bin/pi`;
+      const installed = await runTrackedDockerExec({
+        container,
+        workdir: "/workspace",
+        executable: "node",
+        args: [
+          "-e",
+          "const fs = require('node:fs'); try { fs.accessSync(process.argv[1], fs.constants.X_OK); process.stdout.write('yes'); } catch (error) { if (error.code !== 'ENOENT') throw error; }",
+          binary,
+        ],
+        timeoutMs: 10_000,
+      });
+      return { version, installed: installed === "yes" };
+    }),
+  );
 }
 
 export async function updatePiRuntimeVersion(
@@ -2115,46 +2153,48 @@ export async function updatePiRuntimeVersion(
   if (!release) throw new Error("The workspace is being deleted.");
   try {
     const sandboxId = await piManagementSandbox(workspaceId, agentId);
-    return await withSandboxExecutionLease(sandboxId, async () => {
-      const container = sandboxContainerName(sandboxId);
-      const binary = await ensureRuntimeInstalled(
-        "pi",
-        container,
-        runtimeAbortSignal(),
-        version,
-      );
-      const reported = await runTrackedDockerExec({
-        container,
-        workdir: "/workspace",
-        executable: binary,
-        args: ["--version"],
-        timeoutMs: 30_000,
-        maxStdoutBytes: 1_024,
-      });
-      if (reported.trim() !== version)
-        throw new Error(
-          "The installed Pi executable did not report the requested version.",
-        );
-      // Commit only after validation; a failed install leaves the previous version and sessions intact.
-      await piManagementSandbox(workspaceId, agentId).then((current) => {
-        if (current !== sandboxId)
-          throw new Error("The assigned sandbox changed during the update.");
-      });
-      const marker = `${sandboxRuntimeStateRoot("pi", agentId)}/version`;
-      await runTrackedDockerExec({
-        container,
-        workdir: "/workspace",
-        executable: "node",
-        args: [
-          "-e",
-          "const fs = require('node:fs'); const path = require('node:path'); const [file, version] = process.argv.slice(1); fs.mkdirSync(path.dirname(file), { recursive: true }); const temp = file + '.tmp'; fs.writeFileSync(temp, version, { mode: 0o600 }); fs.renameSync(temp, file);",
-          marker,
+    return await withAgentMaintenanceLease(agentId, () =>
+      withSandboxExecutionLease(sandboxId, async () => {
+        const container = sandboxContainerName(sandboxId);
+        const binary = await ensureRuntimeInstalled(
+          "pi",
+          container,
+          runtimeAbortSignal(),
           version,
-        ],
-        timeoutMs: 10_000,
-      });
-      return { version, installed: true };
-    });
+        );
+        const reported = await runTrackedDockerExec({
+          container,
+          workdir: "/workspace",
+          executable: binary,
+          args: ["--version"],
+          timeoutMs: 30_000,
+          maxStdoutBytes: 1_024,
+        });
+        if (reported.trim() !== version)
+          throw new Error(
+            "The installed Pi executable did not report the requested version.",
+          );
+        // Commit only after validation; a failed install leaves the previous version and sessions intact.
+        await piManagementSandbox(workspaceId, agentId).then((current) => {
+          if (current !== sandboxId)
+            throw new Error("The assigned sandbox changed during the update.");
+        });
+        const marker = `${sandboxRuntimeStateRoot("pi", agentId)}/version`;
+        await runTrackedDockerExec({
+          container,
+          workdir: "/workspace",
+          executable: "node",
+          args: [
+            "-e",
+            "const fs = require('node:fs'); const path = require('node:path'); const [file, version] = process.argv.slice(1); fs.mkdirSync(path.dirname(file), { recursive: true }); const temp = file + '.tmp'; fs.writeFileSync(temp, version, { mode: 0o600 }); fs.renameSync(temp, file);",
+            marker,
+            version,
+          ],
+          timeoutMs: 10_000,
+        });
+        return { version, installed: true };
+      }),
+    );
   } finally {
     release();
   }
@@ -3476,7 +3516,27 @@ async function executePiHarnessOperation(
         throw new Error("Invalid Pi maxSteps.");
       if (options.nativeApprovalUrl)
         httpUrl(options.nativeApprovalUrl, "native approval URL");
-      const sandboxDeploymentId = await assertAssignedDockerSandbox(options);
+      if (action === "cancel") {
+        const task = await db.a2ATask.findFirst({
+          where: {
+            id: binding.taskId,
+            contextId: binding.contextId,
+            nativeOperationId: binding.operationId,
+            executionBackend: "pi-harness",
+            context: { workspaceId: options.workspaceId },
+          },
+          select: { context: { select: { agentId: true } } },
+        });
+        if (
+          task?.context.agentId !== options.agentId ||
+          options.a2aContextId !== binding.contextId
+        )
+          throw new Error("Native cleanup operation binding changed.");
+      }
+      const sandboxDeploymentId = await assertAssignedDockerSandbox(
+        options,
+        action === "cancel",
+      );
       const container = sandboxContainerName(options.sandboxId);
       if (uncertainPiSandboxes.has(container))
         throw new Error(

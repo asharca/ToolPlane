@@ -29,6 +29,7 @@ import {
 } from "./runtime-kind";
 import { runDedicatedSandboxTurn } from "./sandbox-turn";
 import type { RunDedicatedSandboxTurnInput } from "./sandbox-turn";
+import { createConversation } from "./mutations";
 
 export type AgentRunContext = {
   workspaceId: string;
@@ -216,6 +217,9 @@ export async function runAgentTurn(
           return `Sub-agent "${agent.name}" has an invalid model provider.`;
         if (!deps.runSandboxModel)
           return `Sub-agent runtime "${runtimeKind}" is not configured in this runner.`;
+        const conversation = await createConversation(ctx.workspaceId, agentId);
+        if (!conversation)
+          return `Sub-agent ${agentId} not found in this workspace.`;
         return await deps.runSandboxModel({
           agent: {
             ...agent,
@@ -224,6 +228,9 @@ export async function runAgentTurn(
             disabledBuiltinTools: agent.disabledBuiltinTools ?? [],
             provider: { ...agent.provider, id: agent.provider.id },
           },
+          conversationId: conversation.id,
+          runtimeSessionId: conversation.id,
+          wait: false,
           systemPrompt: agent.systemPrompt,
           messages: [{ role: "user", parts: [{ type: "text", text: prompt }] }],
           skills: resolved.skills,

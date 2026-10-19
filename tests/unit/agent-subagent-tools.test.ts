@@ -9,6 +9,9 @@ import {
 } from "@/lib/agents/run";
 import { AGENT_MAX_DEPTH } from "@/lib/agents/constants";
 import { getLogContext, withLogContext } from "@/lib/observability/context";
+vi.mock("@/lib/agents/mutations", () => ({
+  createConversation: vi.fn(async () => ({ id: "child-conversation" })),
+}));
 
 function fakeAgent(over: Partial<RunAgent> = {}): RunAgent {
   return {
@@ -109,6 +112,9 @@ describe("buildAgentToolSet", () => {
       expect(runSandboxModel).toHaveBeenCalledOnce();
       expect(runSandboxModel.mock.calls[0][0]).toMatchObject({
         agent: { runtimeKind, provider: { id: "provider-1" } },
+        conversationId: "child-conversation",
+        runtimeSessionId: "child-conversation",
+        wait: false,
         messages: [{ role: "user", parts: [{ type: "text", text: "do it" }] }],
       });
     },

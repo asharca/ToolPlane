@@ -4,6 +4,7 @@ import type { AgentRuntimeTokenPayload } from "./runtime-access";
 import { isDedicatedSandboxRuntimeKind } from "./runtime-kind";
 import { readAgentPiPackageMcpPolicy } from "./pi-package-mcp-access";
 import type { PiPackageMcpToolPolicy } from "./pi-package-mcp";
+import { findAgentConversationSandbox } from "./conversation-sandbox";
 
 export async function resolveAgentRuntimeGrant(
   token: AgentRuntimeTokenPayload,
@@ -43,6 +44,21 @@ export async function resolveAgentRuntimeGrant(
     },
   });
   const link = agent?.sandboxes[0];
+  let mappedSandboxId: string | undefined;
+  if (token.conversationId || token.a2aContextId) {
+    try {
+      mappedSandboxId = (
+        await findAgentConversationSandbox({
+          workspaceId: token.workspaceId,
+          agentId: token.agentId,
+          conversationId: token.conversationId,
+          contextId: token.a2aContextId,
+        })
+      )?.sandboxId;
+    } catch {
+      return null;
+    }
+  }
   const currentDeployments = new Set([
     ...(agent?.servers.map((server) => server.deploymentId) ?? []),
     ...(agent?.toolkits.flatMap((entry) =>
@@ -68,8 +84,8 @@ export async function resolveAgentRuntimeGrant(
   return agent &&
     isDedicatedSandboxRuntimeKind(agent.runtimeKind) &&
     agent.sandboxes.length === 1 &&
-    link?.sandboxId === token.sandboxId &&
-    link.sandbox.workspaceId === token.workspaceId &&
+    mappedSandboxId === token.sandboxId &&
+    link?.sandbox.workspaceId === token.workspaceId &&
     link.sandbox.kind === "docker" &&
     link.sandbox.network !== "none" &&
     token.deploymentIds.every((deploymentId) =>

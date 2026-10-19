@@ -18,6 +18,7 @@ import {
 } from "@/lib/process/supervisor";
 import { resolveSpawnSpec } from "@/lib/process/spawn-spec";
 import {
+  assertDockerVolumeExists,
   copyDockerVolume,
   DockerVolumeCopyCleanupError,
   removeDockerSandboxContainer,
@@ -26,7 +27,6 @@ import {
   removeDockerVolumeStrict,
   sandboxSnapshotVolumeName,
   sandboxVolumeName,
-  stopDockerSandboxContainer,
 } from "./runtime";
 import {
   parseSandboxEnvText,
@@ -54,6 +54,7 @@ import {
   syncHermesRuntime,
 } from "@/lib/agents/hermes/runtime";
 import { setHermesRuntimeEnv } from "@/lib/agents/mutations";
+import { enqueueSandboxOperation, quiesceDockerSandbox } from "./lifecycle";
 
 async function authorizedWorkspace(slug: string) {
   const user = await getCurrentUser();
@@ -97,6 +98,8 @@ async function sandboxInWorkspace(sandboxId: string, workspaceId: string) {
       deployment: true,
       snapshots: true,
       agentLinks: { select: { agentId: true } },
+      conversations: { select: { id: true } },
+      a2aContexts: { select: { id: true } },
     },
   });
 }
@@ -111,10 +114,6 @@ type QuiescedOperationControl = {
 
 type QuiescedVolumeOperationControl = QuiescedOperationControl & {
   volumeName: string;
-};
-
-const sandboxOperationGlobal = globalThis as typeof globalThis & {
-  __sandboxOperationQueues?: Map<string, Promise<void>>;
 };
 
 function scheduleRestoreHelperCleanup(
@@ -152,28 +151,6 @@ function scheduleRestoreHelperCleanup(
     Math.min(30_000, 1_000 * 2 ** (attempt - 1)),
   );
   retry.unref?.();
-}
-
-function enqueueSandboxOperation<T>(
-  workspaceId: string,
-  sandboxId: string,
-  operation: () => Promise<T>,
-): Promise<T | undefined> {
-  const releaseWorkspaceOperation = beginWorkspaceOperation(workspaceId);
-  if (!releaseWorkspaceOperation) return Promise.resolve(undefined);
-  sandboxOperationGlobal.__sandboxOperationQueues ??= new Map();
-  const queues = sandboxOperationGlobal.__sandboxOperationQueues;
-  const previous = queues.get(sandboxId) ?? Promise.resolve();
-  const result = previous.catch(() => undefined).then(operation);
-  const tail = result.then(
-    () => undefined,
-    () => undefined,
-  );
-  queues.set(sandboxId, tail);
-  return result.finally(() => {
-    if (queues.get(sandboxId) === tail) queues.delete(sandboxId);
-    releaseWorkspaceOperation();
-  });
 }
 
 function sandboxDataVolume(sandbox: AuthorizedSandbox): string {
@@ -217,49 +194,6 @@ function sandboxLifecycleBlocked(sandbox: AuthorizedSandbox): boolean {
     "upgrading",
     "deleting",
   ].includes(sandbox.deployment.status);
-}
-
-async function quiesceDockerSandbox<T>(
-  sandbox: AuthorizedSandbox,
-  operation: (control: QuiescedOperationControl) => Promise<T>,
-  options: { quiescedStatus?: string } = {},
-): Promise<T> {
-  const status = effectiveStatus(
-    sandbox.deploymentId,
-    sandbox.deployment.status,
-  );
-  if (RESTORE_BLOCKED_STATES.has(status)) {
-    throw new Error("Wait for the sandbox data operation to finish.");
-  }
-  const shouldResume = status === "running";
-  let resumeAllowed = true;
-
-  if (options.quiescedStatus) {
-    await killProcess(sandbox.deploymentId, {
-      finalStatus: options.quiescedStatus,
-    });
-  } else {
-    await killProcess(sandbox.deploymentId);
-  }
-  try {
-    await stopDockerSandboxContainer(sandbox.id);
-    return await operation({
-      preventResume: () => {
-        resumeAllowed = false;
-      },
-    });
-  } finally {
-    if (shouldResume && resumeAllowed) {
-      await startProcess(
-        sandbox.deploymentId,
-        resolveSpawnSpec(sandbox.deployment),
-        {
-          awaitReady: false,
-          workspaceId: sandbox.workspaceId,
-        },
-      );
-    }
-  }
 }
 
 async function hermesAgentIdForSandbox(
@@ -518,6 +452,15 @@ export async function cloneSandboxAction(formData: FormData) {
         const source = await sandboxInWorkspace(sandboxId, ctx.ws.id);
         if (source?.kind !== "docker" || sandboxDataOperationBlocked(source))
           return null;
+        if (
+          source.config &&
+          typeof source.config === "object" &&
+          !Array.isArray(source.config) &&
+          source.config.managedBy === "agent-conversation"
+        )
+          throw new Error(
+            "Conversation sandboxes cannot be cloned as standalone templates.",
+          );
         const name = requestedName || defaultName || `${source.name} copy`;
         const cloneSlug = await uniqueSlug(ctx.ws.id, name);
         let completedClone: Awaited<
@@ -1245,6 +1188,15 @@ function runSandboxLifecycle(
       ) {
         return result("skipped", "connector_unconfigured");
       }
+      if (
+        sandbox.conversations.length ||
+        sandbox.a2aContexts.length ||
+        (sandbox.config &&
+          typeof sandbox.config === "object" &&
+          !Array.isArray(sandbox.config) &&
+          sandbox.config.managedBy === "agent-conversation")
+      )
+        await assertDockerVolumeExists(sandboxDataVolume(sandbox));
       const lifecycle = operation === "start" ? startProcess : restartProcess;
       await lifecycle(
         sandbox.deploymentId,
@@ -1435,7 +1387,9 @@ export async function deleteSandboxAction(formData: FormData) {
         if (
           !sandbox ||
           sandbox.kind === "hermes" ||
-          sandbox.agentLinks.length > 0
+          sandbox.agentLinks.length > 0 ||
+          sandbox.conversations.length > 0 ||
+          sandbox.a2aContexts.length > 0
         )
           return false;
 

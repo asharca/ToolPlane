@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type * as Settings from "@/lib/admin/settings";
 
 const mocks = vi.hoisted(() => ({
   requireAdmin: vi.fn(),
@@ -9,6 +10,8 @@ const mocks = vi.hoisted(() => ({
   resetMcpStartupTimeoutSettings: vi.fn(),
   updateRemoteMcpPrivateHostsSettings: vi.fn(),
   resetRemoteMcpPrivateHostsSettings: vi.fn(),
+  updateAgentConcurrencySettings: vi.fn(),
+  resetAgentConcurrencySettings: vi.fn(),
   isValidMcpStartupTimeouts: vi.fn(
     (idleTimeoutMs: unknown, maxTimeoutMs: unknown) =>
       Number.isSafeInteger(idleTimeoutMs) &&
@@ -24,7 +27,13 @@ const mocks = vi.hoisted(() => ({
 vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidatePath }));
 vi.mock("next-intl/server", () => ({ getTranslations: mocks.getTranslations }));
 vi.mock("@/lib/auth/admin", () => ({ requireAdmin: mocks.requireAdmin }));
-vi.mock("@/lib/admin/settings", () => ({
+vi.mock("@/lib/admin/settings", async (original) => ({
+  isValidAgentConcurrency: (await original<typeof Settings>())
+    .isValidAgentConcurrency,
+  MAX_AGENT_CONCURRENCY: 32,
+  MAX_TOTAL_AGENT_CONCURRENCY: 256,
+  updateAgentConcurrencySettings: mocks.updateAgentConcurrencySettings,
+  resetAgentConcurrencySettings: mocks.resetAgentConcurrencySettings,
   updateHermesArchiveSettings: mocks.updateHermesArchiveSettings,
   updateSkillImportSettings: mocks.updateSkillImportSettings,
   updateMcpStartupTimeoutSettings: mocks.updateMcpStartupTimeoutSettings,
@@ -42,8 +51,12 @@ vi.mock("@/lib/agents/attachment-limits", () => ({
   resetAgentAttachmentLimit: vi.fn(),
   setAgentAttachmentLimitBytes: vi.fn(),
 }));
+vi.mock("@/lib/agents/agent-execution-gate", () => ({
+  refreshAgentExecutionLimits: vi.fn(),
+}));
 
 import {
+  updateAgentConcurrencySettingsAction,
   updateHermesArchiveUploadLimitAction,
   updateMcpStartupTimeoutSettingsAction,
   updateRemoteMcpPrivateHostsSettingsAction,
@@ -269,5 +282,56 @@ describe("updateRemoteMcpPrivateHostsSettingsAction", () => {
 
     expect(mocks.resetRemoteMcpPrivateHostsSettings).toHaveBeenCalledOnce();
     expect(mocks.updateRemoteMcpPrivateHostsSettings).not.toHaveBeenCalled();
+  });
+});
+
+describe("Agent concurrency administrator boundary", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.requireAdmin.mockResolvedValue({ id: "admin-1" });
+    mocks.getTranslations.mockResolvedValue((key: string) => key);
+  });
+  const form = (perAgent: string, total: string) => {
+    const data = new FormData();
+    data.set("agentMaxConcurrent", perAgent);
+    data.set("agentMaxTotalConcurrent", total);
+    return data;
+  };
+  it("requires administrator authority before saving or resetting limits", async () => {
+    mocks.requireAdmin.mockRejectedValue(new Error("Forbidden"));
+    await expect(
+      updateAgentConcurrencySettingsAction({}, form("4", "16")),
+    ).rejects.toThrow("Forbidden");
+    const reset = new FormData();
+    reset.set("intent", "reset");
+    await expect(
+      updateAgentConcurrencySettingsAction({}, reset),
+    ).rejects.toThrow("Forbidden");
+    expect(mocks.updateAgentConcurrencySettings).not.toHaveBeenCalled();
+    expect(mocks.resetAgentConcurrencySettings).not.toHaveBeenCalled();
+  });
+  it.each([
+    ["", "16"],
+    ["2.5", "16"],
+    ["-1", "16"],
+    ["4", "2"],
+  ])(
+    "rejects invalid request values %s / %s without saving",
+    async (perAgent, total) => {
+      await expect(
+        updateAgentConcurrencySettingsAction({}, form(perAgent, total)),
+      ).resolves.toEqual({ error: "errorAgentConcurrency" });
+      expect(mocks.updateAgentConcurrencySettings).not.toHaveBeenCalled();
+    },
+  );
+  it("attributes a successful change to the authenticated administrator", async () => {
+    await expect(
+      updateAgentConcurrencySettingsAction({}, form("4", "16")),
+    ).resolves.toEqual({ ok: true });
+    expect(mocks.updateAgentConcurrencySettings).toHaveBeenCalledWith(
+      4,
+      16,
+      "admin-1",
+    );
   });
 });

@@ -6,6 +6,7 @@ import {
   maxAgentAttachmentBytes,
 } from "@/lib/agents/attachment-limits";
 import { livePort } from "@/lib/process/supervisor";
+import { withDeploymentSandboxAccess } from "@/lib/process/deployment-gateway";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -68,7 +69,7 @@ export const POST = withRequestLogging(
           ],
         },
       },
-      select: { id: true },
+      select: { id: true, sandbox: { select: { id: true } } },
     });
     if (!deployment)
       return Response.json({ error: "Sandbox not found" }, { status: 404 });
@@ -116,39 +117,41 @@ export const POST = withRequestLogging(
 
     const upstreamUrl = new URL(`http://127.0.0.1:${port}/files/upload`);
     upstreamUrl.searchParams.set("path", path);
-    try {
-      const init: RequestInit & { duplex: "half" } = {
-        method: "POST",
-        headers: {
-          "content-type": "application/octet-stream",
-          "x-toolplane-max-upload-bytes": String(maxBytes),
-          ...(announcedSize !== null
-            ? { "content-length": String(announcedSize) }
-            : {}),
-        },
-        body: req.body,
-        duplex: "half",
-        cache: "no-store",
-        signal: AbortSignal.timeout(15 * 60_000),
-      };
-      const upstream = await fetch(upstreamUrl, init);
-      return new Response(upstream.body, {
-        status: upstream.status,
-        headers: {
-          "content-type":
-            upstream.headers.get("content-type") ?? "application/json",
-        },
-      });
-    } catch (error) {
-      return Response.json(
-        {
-          error:
-            error instanceof Error && error.name === "TimeoutError"
-              ? "File upload timed out."
-              : "Sandbox file storage is unreachable.",
-        },
-        { status: 502 },
-      );
-    }
+    return withDeploymentSandboxAccess(deployment.sandbox?.id, async () => {
+      try {
+        const init: RequestInit & { duplex: "half" } = {
+          method: "POST",
+          headers: {
+            "content-type": "application/octet-stream",
+            "x-toolplane-max-upload-bytes": String(maxBytes),
+            ...(announcedSize !== null
+              ? { "content-length": String(announcedSize) }
+              : {}),
+          },
+          body: req.body,
+          duplex: "half",
+          cache: "no-store",
+          signal: AbortSignal.timeout(15 * 60_000),
+        };
+        const upstream = await fetch(upstreamUrl, init);
+        return new Response(upstream.body, {
+          status: upstream.status,
+          headers: {
+            "content-type":
+              upstream.headers.get("content-type") ?? "application/json",
+          },
+        });
+      } catch (error) {
+        return Response.json(
+          {
+            error:
+              error instanceof Error && error.name === "TimeoutError"
+                ? "File upload timed out."
+                : "Sandbox file storage is unreachable.",
+          },
+          { status: 502 },
+        );
+      }
+    });
   },
 );

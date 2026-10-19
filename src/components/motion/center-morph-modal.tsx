@@ -223,9 +223,12 @@ export function CenterMorphModalContent({
   useEffect(() => {
     if (!mounted || !context.open) return;
     setBackgroundScrollLocked(true);
-    const [firstFocusable] = getFocusableElements(panelRef.current);
-    (firstFocusable ?? panelRef.current)?.focus({ preventScroll: true });
+    const focusFrame = requestAnimationFrame(() => {
+      const [firstFocusable] = getFocusableElements(panelRef.current);
+      (firstFocusable ?? panelRef.current)?.focus({ preventScroll: true });
+    });
     return () => {
+      cancelAnimationFrame(focusFrame);
       document
         .getElementById(context.triggerId)
         ?.focus({ preventScroll: true });

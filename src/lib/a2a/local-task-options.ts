@@ -21,10 +21,11 @@ import {
 import { liveStatus } from "@/lib/process/supervisor";
 import { db } from "@/lib/db";
 import { assertRuntimeOwner } from "@/lib/runtime/ownership-state";
-import { assertLiveGrant, isLocalGrant } from "./principal";
+import { isLocalGrant } from "./principal";
 import type { TaskGrant } from "./principal";
 import { localTarget } from "./local-policy";
 import { assertWorkPiPackageSnapshot } from "@/lib/work/sessions";
+import { localTaskSandbox } from "./local-sandbox";
 
 /** Mint new task-scoped credentials on every claim, never restore old tokens. */
 export async function localTaskOptions(
@@ -42,23 +43,10 @@ export async function localTaskOptions(
   )
     throw new Error("Native cleanup requires a bound Pi operation.");
   if (cleanup) assertRuntimeOwner();
-  else {
-    await assertLiveGrant(grant, "send");
-    signal.throwIfAborted();
-  }
-  const assigned = cleanup
-    ? await db.agentSandbox.findMany({
-        where: {
-          agentId: grant.agentId,
-          agent: { workspaceId: grant.workspaceId },
-          sandbox: { workspaceId: grant.workspaceId, kind: "docker" },
-        },
-      })
-    : [];
-  if (cleanup && assigned.length !== 1)
-    throw new Error("Native cleanup sandbox assignment changed.");
+  else signal.throwIfAborted();
+  const mapped = await localTaskSandbox(row, cleanup, signal);
   const target = cleanup
-    ? { sandboxId: assigned[0].sandboxId, binding: grant.targetBinding }
+    ? { sandboxId: mapped.sandboxId, binding: grant.targetBinding }
     : await localTarget(
         db,
         grant.workspaceId,
@@ -125,7 +113,9 @@ export async function localTaskOptions(
   const token = await createAgentRuntimeToken({
     workspaceId: grant.workspaceId,
     agentId: grant.agentId,
-    sandboxId: target.sandboxId,
+    sandboxId: mapped.sandboxId,
+    conversationId: mapped.conversationId,
+    a2aContextId: mapped.a2aContextId,
     providerId: agent.provider.id,
     deploymentIds,
     exp,
@@ -152,7 +142,9 @@ export async function localTaskOptions(
     runtimeKind: agent.runtimeKind as SandboxAgentRuntimeKind,
     workspaceId: grant.workspaceId,
     agentId: agent.id,
-    sandboxId: target.sandboxId,
+    sandboxId: mapped.sandboxId,
+    conversationId: mapped.conversationId,
+    a2aContextId: mapped.a2aContextId,
     provider: agent.provider,
     modelId: agent.model,
     maxSteps: agent.maxSteps,

@@ -1,6 +1,7 @@
 import "server-only";
 import { NextResponse } from "next/server";
 import { livePort } from "@/lib/process/supervisor";
+import { withDeploymentSandboxAccess } from "./deployment-gateway";
 import { mcpResponseOutcome } from "@/lib/observability/mcp-log-entry";
 import { logRequest } from "@/lib/observability/log";
 import {
@@ -14,9 +15,10 @@ export type McpGatewayDeployment = StoredMcpToolPolicy & {
   id: string;
   workspaceId: string;
   toolsOnly?: boolean;
+  sandbox?: { id: string } | null;
 };
 
-export async function proxyMcpRpcRequest(
+async function proxyRpcRequest(
   req: Request,
   deployment: McpGatewayDeployment,
 ): Promise<NextResponse> {
@@ -157,4 +159,13 @@ export async function proxyMcpRpcRequest(
   });
 
   return NextResponse.json(payload, { status: statusCode });
+}
+
+export function proxyMcpRpcRequest(
+  req: Request,
+  deployment: McpGatewayDeployment,
+): Promise<Response> {
+  return withDeploymentSandboxAccess(deployment.sandbox?.id, () =>
+    proxyRpcRequest(req, deployment),
+  );
 }

@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import type { AgentRuntimeTokenPayload } from "@/lib/agents/runtime-access";
 import { assertLiveGrant, isLocalGrant, type TaskGrant } from "./principal";
 import { localTarget } from "./local-policy";
+import { findAgentConversationSandbox } from "@/lib/agents/conversation-sandbox";
 
 /** Signed task and execution lease are required; a normal model/MCP runtime token cannot delegate. */
 export async function assertLocalRuntimeToken(
@@ -36,6 +37,13 @@ export async function assertLocalRuntimeToken(
   )
     throw new TaskNotFoundError();
   await assertLiveGrant(grant, "send");
+  if (token.a2aContextId !== row.contextId) throw new TaskNotFoundError();
+  const mapped = await findAgentConversationSandbox({
+    workspaceId: grant.workspaceId,
+    agentId: grant.agentId,
+    conversationId: token.conversationId,
+    contextId: row.contextId,
+  });
   const target = await localTarget(
     db,
     grant.workspaceId,
@@ -43,7 +51,7 @@ export async function assertLocalRuntimeToken(
     grant.ancestorTaskIds.length === 0 ? grant.entryPolicy : "delegation",
   );
   if (
-    target.sandboxId !== token.sandboxId ||
+    mapped?.sandboxId !== token.sandboxId ||
     target.providerId !== token.providerId
   )
     throw new TaskNotFoundError();

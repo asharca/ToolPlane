@@ -1,6 +1,7 @@
 import { assertDefined } from "../assert-defined";
 // @vitest-environment node
 import type { ChildProcess } from "node:child_process";
+import type * as ChildProcessModule from "node:child_process";
 import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -15,6 +16,8 @@ import {
   it,
   vi,
 } from "vitest";
+import { verifyHermesRuntimeToken } from "@/lib/agents/hermes/token";
+import type * as SupervisorModule from "@/lib/process/supervisor";
 
 const mocks = vi.hoisted(() => ({
   spawn: vi.fn(),
@@ -28,7 +31,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("node:child_process", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("node:child_process")>();
+  const actual = await importOriginal<typeof ChildProcessModule>();
   return { ...actual, spawn: mocks.spawn };
 });
 
@@ -37,6 +40,9 @@ vi.mock("@/lib/db", () => ({
     deployment: { update: mocks.updateDeployment },
     workspace: { findFirst: mocks.findWorkspace },
   },
+}));
+vi.mock("@/lib/observability/events", () => ({
+  recordEvent: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("@/lib/sandboxes/connector-broker", () => ({
@@ -63,7 +69,7 @@ vi.mock("@/lib/process/deployment-runtime-container", () => ({
   removeDeploymentContainer: mocks.removeDeploymentContainer,
 }));
 
-type Supervisor = typeof import("@/lib/process/supervisor");
+type Supervisor = typeof SupervisorModule;
 type FakeChild = ChildProcess & {
   stdout: EventEmitter;
   stderr: EventEmitter;
@@ -135,6 +141,7 @@ function resetSupervisorGlobals() {
 
 beforeAll(async () => {
   process.env.TOOLPLANE_SUPERVISOR_DIR = registryDir;
+  // Import after selecting the isolated registry: the module captures its path at load time.
   supervisor = await import("@/lib/process/supervisor");
 });
 
@@ -172,6 +179,7 @@ afterEach(() => {
   vi.clearAllTimers();
   vi.useRealTimers();
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
 });
 
 afterAll(() => {
@@ -1376,5 +1384,596 @@ describe("supervisor readiness races", () => {
       ["logs", "--timestamps", "--tail", "25", "toolplane-mcp-live-logs"],
       expect.objectContaining({ stdio: ["ignore", "pipe", "pipe"] }),
     );
+  });
+  it.each([
+    null,
+    [],
+    { deploymentId: "wrong" },
+    { deploymentId: "invalid-runtime", status: "error", phase: "error" },
+  ])("ignores invalid persisted runtime records", (record) => {
+    mkdirSync(registryDir, { recursive: true });
+    writeFileSync(
+      path.join(registryDir, "invalid-runtime.runtime.json"),
+      JSON.stringify(record),
+    );
+    expect(
+      supervisor.getDeploymentRuntimeSnapshot("invalid-runtime"),
+    ).toBeNull();
+    expect(
+      supervisor.getDeploymentRuntimeLogChunk("invalid-runtime", {
+        cursor: Number.NaN,
+        limit: Number.POSITIVE_INFINITY,
+      }),
+    ).toEqual({
+      generation: null,
+      cursor: 0,
+      nextCursor: 0,
+      reset: false,
+      text: "",
+    });
+  });
+
+  it("normalizes persisted cursors and resets clients outside the retained log window", () => {
+    mkdirSync(registryDir, { recursive: true });
+    writeFileSync(
+      path.join(registryDir, "retained.runtime.json"),
+      JSON.stringify({
+        deploymentId: "retained",
+        status: "error",
+        phase: "error",
+        generation: "generation",
+        pid: -1,
+        logStartCursor: 100.9,
+        logEndCursor: 106.8,
+        containerName: "container",
+        containerState: "exited",
+        imageState: "pulled",
+        startedAt: "start",
+        lastActivityAt: "last",
+        updatedAt: "updated",
+      }),
+    );
+    writeFileSync(path.join(registryDir, "retained.log"), "abcdef");
+    expect(supervisor.getDeploymentRuntimeSnapshot("retained")).toMatchObject({
+      status: "error",
+      containerName: "container",
+      containerState: "exited",
+      imageState: "pulled",
+    });
+    expect(
+      supervisor.getDeploymentRuntimeLogChunk("retained", {
+        cursor: 999,
+        limit: -1,
+      }),
+    ).toMatchObject({
+      cursor: 100,
+      nextCursor: 101,
+      text: "a",
+      reset: true,
+      truncated: true,
+    });
+    expect(
+      supervisor.getDeploymentRuntimeLogChunk("retained", {
+        cursor: 102,
+        limit: 2.9,
+      }),
+    ).toEqual({
+      generation: "generation",
+      cursor: 102,
+      nextCursor: 104,
+      text: "cd",
+      reset: false,
+    });
+    expect(
+      supervisor.getDeploymentRuntimeLogChunk("retained", {
+        generation: "old",
+        cursor: 104,
+        limit: Number.NaN,
+      }),
+    ).toMatchObject({
+      cursor: 100,
+      nextCursor: 106,
+      text: "abcdef",
+      reset: true,
+      truncated: true,
+    });
+    expect(
+      supervisor.getDeploymentRuntimeLogChunk("retained", {
+        cursor: 106,
+        limit: 999999,
+      }),
+    ).toMatchObject({ cursor: 106, nextCursor: 106, text: "", reset: false });
+  });
+
+  it.each(["error", "close", "timeout"])(
+    "falls back to captured output when Docker logs ends with %s",
+    async (failure) => {
+      mkdirSync(registryDir, { recursive: true });
+      writeFileSync(
+        path.join(registryDir, "fallback-log.log"),
+        "retained diagnostics\n",
+      );
+      const child = createChild();
+      mocks.spawn.mockReturnValue(child);
+      const reading = supervisor.getDeploymentContainerLogs("fallback-log", {
+        limit: 5000,
+      });
+      if (failure === "error")
+        child.emit("error", new Error("Docker unavailable"));
+      else if (failure === "close") {
+        child.stderr.emit("data", Buffer.from("container missing"));
+        child.emit("close", 1);
+      } else await vi.advanceTimersByTimeAsync(5000);
+      await expect(reading).resolves.toMatchObject({
+        containerName: "toolplane-mcp-fallback-log",
+        source: "captured",
+        text: "retained diagnostics\n",
+        error:
+          failure === "error"
+            ? "Docker unavailable"
+            : failure === "close"
+              ? "container missing"
+              : "docker logs timed out",
+      });
+      expect(mocks.spawn.mock.calls[0][1]).toEqual([
+        "logs",
+        "--timestamps",
+        "--tail",
+        "1000",
+        "toolplane-mcp-fallback-log",
+      ]);
+      if (failure === "timeout")
+        expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+    },
+  );
+
+  it("reports no log source when neither Docker nor captured output is available", async () => {
+    const child = createChild();
+    mocks.spawn.mockReturnValue(child);
+    const reading = supervisor.getDeploymentContainerLogs("no-log", {
+      limit: -10,
+    });
+    child.emit("close", 1);
+    await expect(reading).resolves.toEqual({
+      containerName: "toolplane-mcp-no-log",
+      text: "",
+      source: "none",
+      error: null,
+    });
+    expect(mocks.spawn.mock.calls[0][1]).toContain("1");
+  });
+  it.each([[0], [1, 0], [1, 1, 0], [1, 1, 1]])(
+    "recovers sandbox network with Docker exit sequence %j",
+    async (...codes) => {
+      const sequence = codes.flat() as number[];
+      mocks.spawn.mockImplementation(() => {
+        const child = createChild();
+        queueMicrotask(() => child.emit("exit", sequence.shift(), null));
+        return child;
+      });
+      const result = supervisor.ensureSandboxNetwork();
+      if (codes.flat().every((code) => code === 1))
+        await expect(result).rejects.toThrow("Sandbox network is unavailable.");
+      else await expect(result).resolves.toBeUndefined();
+      expect(mocks.spawn.mock.calls[0][1][0]).toBe("network");
+    },
+  );
+
+  it("rejects network recovery when Docker cannot spawn", async () => {
+    const child = createChild();
+    mocks.spawn.mockReturnValue(child);
+    const result = supervisor.ensureSandboxNetwork();
+    const rejected = expect(result).rejects.toThrow(
+      "Docker is unavailable during runtime recovery.",
+    );
+    child.emit("error", new Error("socket private path"));
+    await rejected;
+  });
+
+  it("times out network recovery and ignores late Docker completion", async () => {
+    const child = createChild([]);
+    mocks.spawn.mockReturnValue(child);
+    const result = expect(supervisor.ensureSandboxNetwork()).rejects.toThrow(
+      "Sandbox network setup timed out.",
+    );
+    await vi.advanceTimersByTimeAsync(30000);
+    await result;
+    expect(child.kill).toHaveBeenCalledWith("SIGKILL");
+    child.emit("exit", 0);
+    expect(mocks.spawn).toHaveBeenCalledOnce();
+  });
+
+  it.each(["running", "provisioning"])(
+    "uses legacy registry metadata for a cross-worker %s process",
+    (status) => {
+      mkdirSync(registryDir, { recursive: true });
+      writeFileSync(
+        path.join(registryDir, "legacy-runtime.json"),
+        JSON.stringify({
+          deploymentId: "legacy-runtime",
+          pid: 123456,
+          port: 4321,
+          status,
+          name: "Legacy",
+          containerName: "legacy-container",
+          containerState: "running",
+          imageState: "present",
+          startedAt: "start",
+          lastActivityAt: "activity",
+          updatedAt: "updated",
+        }),
+      );
+      expect(
+        supervisor.getDeploymentRuntimeSnapshot("legacy-runtime"),
+      ).toMatchObject({
+        generation: "legacy-123456",
+        phase: status === "running" ? "ready" : "initializing",
+        containerName: "legacy-container",
+        containerState: "running",
+        imageState: "present",
+        startedAt: "start",
+        lastActivityAt: "activity",
+        updatedAt: "updated",
+      });
+      expect(supervisor.livePort("legacy-runtime")).toBe(4321);
+      expect(supervisor.liveMcpRuntimeSnapshot("legacy-runtime")).toBeNull();
+      expect(supervisor.liveRedactionValues("legacy-runtime")).toBeNull();
+    },
+  );
+
+  it("redacts sensitive launch arguments and escaped values recursively from runtime diagnostics", async () => {
+    const child = createChild();
+    mocks.spawn.mockReturnValue(child);
+    const secrets = [
+      "argument-secret",
+      "inline-secret",
+      "environment-secret",
+      "url-password",
+      "url-user",
+      "query-secret",
+      "escaped\nvalue",
+    ];
+    await supervisor.startProcess(
+      "argv-redaction",
+      {
+        kind: "bridge",
+        name: "Args",
+        command: "custom-command",
+        args: [
+          "--token",
+          secrets[0],
+          `--api-key=${secrets[1]}`,
+          "-e",
+          `SOME_VALUE=${secrets[2]}`,
+          `https://user:${secrets[3]}@host.test`,
+          `https://${secrets[4]}@host.test`,
+          `https://host.test/?token=${secrets[5]}`,
+          "--env",
+          "NAME_ONLY",
+          "--password",
+        ],
+        env: { SECRET: secrets[6], SHORT: "abc" },
+      },
+      { awaitReady: false },
+    );
+    child.stderr.emit(
+      "data",
+      Buffer.from(
+        secrets.slice(0, 6).join(" ") +
+          " " +
+          JSON.stringify(secrets[6]) +
+          " visible\r\n",
+      ),
+    );
+    const output = supervisor.getDeploymentRuntimeLogChunk("argv-redaction", {
+      limit: 65536,
+    }).text;
+    for (const secret of secrets) expect(output).not.toContain(secret);
+    expect(output).toContain("visible");
+    expect(output).toContain("[REDACTED]");
+    expect(supervisor.liveRedactionValues("argv-redaction")).toEqual(
+      expect.arrayContaining(secrets),
+    );
+  });
+
+  it("bounds retained output while keeping absolute byte cursors for late clients", async () => {
+    const child = createChild();
+    mocks.spawn.mockReturnValue(child);
+    await supervisor.startProcess(
+      "bounded-log",
+      { kind: "builtin", name: "Bounded" },
+      { awaitReady: false },
+    );
+    for (let index = 0; index < 100; index++)
+      child.stderr.emit("data", Buffer.from(`${index}:${"x".repeat(12000)}\n`));
+    const chunk = supervisor.getDeploymentRuntimeLogChunk("bounded-log", {
+      cursor: 0,
+      limit: 128,
+    });
+    expect(chunk.cursor).toBeGreaterThan(0);
+    expect(chunk.truncated).toBe(true);
+    expect(chunk.reset).toBe(true);
+    expect(Buffer.byteLength(chunk.text)).toBeLessThanOrEqual(128);
+    expect(chunk.nextCursor).toBe(chunk.cursor + Buffer.byteLength(chunk.text));
+  });
+
+  it("normalizes malformed, blank and partial runtime events without exposing their launch token", async () => {
+    const child = createChild();
+    mocks.spawn.mockReturnValue(child);
+    await supervisor.startProcess(
+      "event-boundaries",
+      { kind: "bridge", name: "Events", command: "command", args: [], env: {} },
+      { awaitReady: false },
+    );
+    const token = mocks.spawn.mock.calls[0][2].env.MCP_RUNTIME_EVENT_TOKEN;
+    for (const event of [
+      { type: "other", token, phase: "ignored" },
+      { type: "phase", token, phase: " ", containerState: 42 },
+      { type: "phase", token, imageState: "available" },
+      { type: "phase", token, containerState: "created" },
+    ])
+      child.stderr.emit(
+        "data",
+        Buffer.from(`[toolplane-runtime] ${JSON.stringify(event)}\n`),
+      );
+    child.stderr.emit("data", Buffer.from("[toolplane-runtime] {bad-json\r\n"));
+    const snapshot =
+      supervisor.getDeploymentRuntimeSnapshot("event-boundaries");
+    expect(snapshot).toMatchObject({
+      imageState: "available",
+      containerState: "created",
+    });
+    expect(snapshot?.phase).not.toBe("ignored");
+    const output =
+      supervisor.getDeploymentRuntimeLogChunk("event-boundaries").text;
+    expect(output).not.toContain(token);
+    expect(output).toContain("phase=unknown");
+    expect(output).toContain("{bad-json");
+  });
+  it.each([false, true])(
+    "terminates cross-worker processes with force=%s and waits for disappearance",
+    async (force) => {
+      mkdirSync(registryDir, { recursive: true });
+      writeFileSync(
+        path.join(registryDir, "registered-stop.json"),
+        JSON.stringify({
+          deploymentId: "registered-stop",
+          pid: 123456,
+          status: "running",
+          port: 4321,
+        }),
+      );
+      let alive = true;
+      vi.mocked(process.kill).mockImplementation((pid, signal) => {
+        if (pid === 123456 && signal === 0 && !alive)
+          throw Object.assign(new Error("gone"), { code: "ESRCH" });
+        if (pid === 123456 && signal !== 0) alive = false;
+        return true;
+      });
+      await (force
+        ? supervisor.killProcess("registered-stop")
+        : supervisor.stopProcess("registered-stop"));
+      expect(process.kill).toHaveBeenCalledWith(
+        123456,
+        force ? "SIGKILL" : "SIGTERM",
+      );
+      expect(supervisor.liveStatus("registered-stop")).toBeNull();
+      expect(mocks.updateDeployment).toHaveBeenCalledWith({
+        where: { id: "registered-stop" },
+        data: { status: "stopped" },
+      });
+    },
+  );
+
+  it("escalates unresponsive registered processes and records a failed stop instead of removing their registry", async () => {
+    mkdirSync(registryDir, { recursive: true });
+    writeFileSync(
+      path.join(registryDir, "registered-stubborn.json"),
+      JSON.stringify({
+        deploymentId: "registered-stubborn",
+        pid: 123456,
+        status: "running",
+        port: 4321,
+      }),
+    );
+    const stopped = expect(
+      supervisor.stopProcess("registered-stubborn"),
+    ).rejects.toThrow("Registered process 123456 did not terminate.");
+    await vi.advanceTimersByTimeAsync(15000);
+    await stopped;
+    expect(process.kill).toHaveBeenCalledWith(123456, "SIGTERM");
+    expect(process.kill).toHaveBeenCalledWith(123456, "SIGKILL");
+    expect(existsSync(path.join(registryDir, "registered-stubborn.json"))).toBe(
+      true,
+    );
+    expect(mocks.updateDeployment).toHaveBeenCalledWith({
+      where: { id: "registered-stubborn" },
+      data: { status: "error" },
+    });
+  });
+
+  it("treats EPERM as alive and propagates denied signals rather than claiming a successful stop", async () => {
+    mkdirSync(registryDir, { recursive: true });
+    writeFileSync(
+      path.join(registryDir, "registered-denied.json"),
+      JSON.stringify({
+        deploymentId: "registered-denied",
+        pid: 123456,
+        status: "running",
+        port: 4321,
+      }),
+    );
+    vi.mocked(process.kill).mockImplementation(() => {
+      throw Object.assign(new Error("permission denied"), { code: "EPERM" });
+    });
+    await expect(supervisor.killProcess("registered-denied")).rejects.toThrow(
+      "permission denied",
+    );
+    expect(existsSync(path.join(registryDir, "registered-denied.json"))).toBe(
+      true,
+    );
+  });
+
+  it("recovers stale launch locks with invalid owners and refuses a live owner's lock", async () => {
+    mkdirSync(registryDir, { recursive: true });
+    const child = createChild();
+    mocks.spawn.mockReturnValue(child);
+    writeFileSync(
+      path.join(registryDir, "stale-lock.launch.lock"),
+      JSON.stringify({ pid: -1, createdAt: new Date().toISOString() }),
+    );
+    await supervisor.startProcess(
+      "stale-lock",
+      { kind: "builtin", name: "Recovered" },
+      { awaitReady: false },
+    );
+    expect(mocks.spawn).toHaveBeenCalledOnce();
+    writeFileSync(
+      path.join(registryDir, "live-lock.launch.lock"),
+      JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() }),
+    );
+    await supervisor.startProcess(
+      "live-lock",
+      { kind: "builtin", name: "Busy" },
+      { awaitReady: false },
+    );
+    expect(mocks.spawn).toHaveBeenCalledOnce();
+  });
+
+  it.each([false, true])(
+    "isolates connector launch credentials with Hermes runtime enabled=%s",
+    async (withRuntime) => {
+      vi.stubEnv("DATABASE_URL", "postgres://private-application-secret");
+      vi.stubEnv("AUTH_SECRET", "application-signing-secret");
+      vi.stubEnv("DOCKER_HOST", "unix:///private/docker.sock");
+      vi.stubEnv("TOOLPLANE_MAX_ATTACHMENT_BYTES", "4096");
+      const child = createChild();
+      mocks.spawn.mockReturnValue(child);
+      await supervisor.startProcess(
+        "connector-launch",
+        {
+          kind: "sandbox",
+          name: "Connector",
+          sandboxId: "sandbox-connector",
+          sandboxKind: "connector",
+          network: "isolated",
+          allowSudo: withRuntime,
+          env: { SANDBOX_PROJECT: "project-visible" },
+          connector: {
+            provider: "websocket",
+            protocolVersion: "2026-07-connector-ws-v2",
+            serverUrl: "https://toolplane.example",
+            remoteRoot: "/workspace/remote",
+            tokenHash: "hash",
+            tokenPrefix: "mcpcon_123",
+            packageName: "/api/v1/connectors/package.tgz",
+            createdAt: "2026-10-18T00:00:00.000Z",
+          },
+          ...(withRuntime
+            ? { runtimeId: "runtime-one", runtimeModelName: "custom-hermes" }
+            : {}),
+        },
+        { awaitReady: false },
+      );
+      const env = mocks.spawn.mock.calls[0][2].env as Record<string, string>;
+      expect(env).toMatchObject({
+        MCP_NAME: "Connector",
+        SANDBOX_ID: "sandbox-connector",
+        SANDBOX_KIND: "connector",
+        SANDBOX_NETWORK: "isolated",
+        SANDBOX_ALLOW_SUDO: String(withRuntime),
+        SANDBOX_CONNECTOR_BROKER_URL: "http://127.0.0.1:9322",
+        SANDBOX_CONNECTOR_BROKER_TOKEN: "internal-test-token",
+        SANDBOX_CONNECTOR_REMOTE_ROOT: "/workspace/remote",
+        SANDBOX_SSH_CONFIG: "",
+        DOCKER_HOST: "unix:///private/docker.sock",
+        TOOLPLANE_MAX_ATTACHMENT_BYTES: "4096",
+        HERMES_RUNTIME_MODEL_NAME: withRuntime
+          ? "custom-hermes"
+          : "hermes-agent",
+      });
+      expect(JSON.parse(env.SANDBOX_ENV_JSON)).toEqual({
+        SANDBOX_PROJECT: "project-visible",
+      });
+      expect(env).not.toHaveProperty("DATABASE_URL");
+      expect(env).not.toHaveProperty("AUTH_SECRET");
+      if (withRuntime) {
+        expect(
+          verifyHermesRuntimeToken(
+            "runtime-one",
+            "hermes-api",
+            env.HERMES_RUNTIME_API_KEY,
+          ),
+        ).toBe(true);
+        expect(
+          verifyHermesRuntimeToken(
+            "runtime-one",
+            "hermes-dashboard-api",
+            env.HERMES_RUNTIME_DASHBOARD_TOKEN,
+          ),
+        ).toBe(true);
+        expect(env.HERMES_RUNTIME_API_KEY).not.toBe(
+          env.HERMES_RUNTIME_DASHBOARD_TOKEN,
+        );
+      } else {
+        expect(env.HERMES_RUNTIME_API_KEY).toBe("");
+        expect(env.HERMES_RUNTIME_DASHBOARD_TOKEN).toBe("");
+      }
+      child.stdout.emit("data", Buffer.from("LISTENING 8123\n"));
+      expect(supervisor.liveStatus("connector-launch")).toBe("running");
+    },
+  );
+
+  it("authorizes the SSH target against the launching workspace before exposing mounted credentials", async () => {
+    mkdirSync(registryDir, { recursive: true });
+    const filename = path.join(registryDir, "ssh-targets.json");
+    writeFileSync(
+      filename,
+      JSON.stringify([
+        {
+          id: "server-one",
+          name: "Private SSH",
+          workspaceIds: ["workspace-active"],
+          host: "internal.example",
+          username: "toolplane",
+          root: "/srv/project",
+          identityFile: "/run/secrets/ssh-key",
+          knownHostsFile: "/run/secrets/known_hosts",
+        },
+      ]),
+    );
+    vi.stubEnv("TOOLPLANE_SSH_TARGETS_FILE", filename);
+    mocks.spawn.mockReturnValue(createChild());
+    const spec = {
+      kind: "sandbox" as const,
+      name: "SSH",
+      sandboxId: "ssh-one",
+      sandboxKind: "ssh" as const,
+      network: "isolated" as const,
+      sshTargetId: "server-one",
+      env: {},
+    };
+    await expect(
+      supervisor.startProcess("ssh-denied", spec, {
+        awaitReady: false,
+        workspaceId: "other-workspace",
+      }),
+    ).rejects.toThrow("not authorized");
+    expect(mocks.spawn).not.toHaveBeenCalled();
+    await supervisor.startProcess("ssh-approved", spec, {
+      awaitReady: false,
+      workspaceId: "workspace-active",
+    });
+    const env = mocks.spawn.mock.calls[0][2].env as Record<string, string>;
+    expect(JSON.parse(env.SANDBOX_SSH_CONFIG)).toEqual({
+      host: "internal.example",
+      port: 22,
+      username: "toolplane",
+      root: "/srv/project",
+      identityFile: "/run/secrets/ssh-key",
+      knownHostsFile: "/run/secrets/known_hosts",
+    });
+    expect(env.SANDBOX_CONNECTOR_BROKER_TOKEN).toBe("");
+    expect(mocks.ensureConnectorBroker).not.toHaveBeenCalled();
   });
 });

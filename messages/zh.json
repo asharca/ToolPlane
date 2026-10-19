@@ -3304,6 +3304,8 @@
       "restoreBranchPanel": "还原分支视图"
     },
     "work": {
+      "conversationWorkspaceNotCreated": "此会话将在首次执行时创建独立工作区。这里不会显示 Agent 模板文件。",
+      "conversationWorkspaceProvisioning": "正在创建此会话的独立工作区…",
       "title": "工作",
       "sessions": "工作会话",
       "newWork": "新建工作",
@@ -4313,6 +4315,13 @@
     "restoreEnvironmentDefault": "恢复环境变量默认值",
     "runtimeSettingsSaved": "上传设置已保存。",
     "errorInvalidAttachmentLimit": "请输入 {min} 到 {max} MB 之间的整数。",
+    "agentConcurrency": "智能体会话并发",
+    "agentConcurrencyDescription": "限制 Pi、Pi SDK、Claude Code、DSH 和 Hermes RPC 的同时执行数。每个会话使用独立沙箱；托管 Hermes 和公共端点仍沿用各自的限额。",
+    "agentMaxConcurrent": "每个智能体最大并发执行数",
+    "agentMaxTotalConcurrent": "平台沙箱任务最大并发执行总数",
+    "agentConcurrencyBehavior": "不同会话可并行，同一会话保持串行，超出限额的任务等待空位。修改对后续调度生效，不中断正在执行的任务。默认每个智能体 1 个、平台总计 16 个。各会话文件相互独立，不会自动合并回智能体模板。",
+    "errorAgentConcurrency": "请输入整数：每个智能体 1–{perAgent}，平台总计 1–{total}；平台总数不能小于单个智能体的上限。",
+    "restoreAgentConcurrencyDefaults": "恢复默认并发限额",
     "mcpStartupTimeouts": "MCP 启动超时",
     "mcpStartupTimeoutsDescription": "控制自定义 MCP 在运行时启动期间可保持无输出的时长。",
     "mcpStartupTimeoutsBehavior": "设置会在下一次启动或重启 MCP 时生效，不会中断当前正在运行的 MCP。",

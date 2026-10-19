@@ -148,7 +148,8 @@ export function AgentActivity({
   const contentType = items.length
     ? getContentType(items)
     : (initialContentType ?? "mixed");
-  const viewportHeight = Math.min(contentHeight, Math.max(0, maxHeight));
+  const cappedHeight = Math.min(contentHeight, Math.max(0, maxHeight));
+  const viewportHeight = working ? Math.max(0, maxHeight) : cappedHeight;
   const capped = contentHeight > maxHeight;
   const streamOffset = working
     ? Math.min(0, viewportHeight - contentHeight)

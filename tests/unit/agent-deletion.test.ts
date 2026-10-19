@@ -58,6 +58,15 @@ describe("deleteManagedAgent", () => {
     mocks.cleanupAgentEndpointRuntimesForSource.mockResolvedValue(true);
     mocks.isAgentEndpointRuntimeSandboxConfig.mockReturnValue(false);
     mocks.cleanupHermesRuntime.mockResolvedValue(true);
+    mocks.deleteAgent.mockImplementation(
+      async (
+        _workspaceId: string,
+        _agentId: string,
+        beforeDelete?: () => Promise<void>,
+      ) => {
+        await beforeDelete?.();
+      },
+    );
     mocks.getAgentDeleteTargets.mockResolvedValue({
       agentIds: ["agent-1"],
       sandboxes: [
@@ -106,6 +115,5 @@ describe("deleteManagedAgent", () => {
       "docker-sandbox",
       "docker-volume",
     );
-    expect(mocks.deleteAgent).toHaveBeenCalledWith("workspace-1", "agent-1");
   });
 });

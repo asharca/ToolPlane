@@ -118,4 +118,66 @@ describe("deployment configuration materializer crash recovery", () => {
       ["rm", id],
     ]);
   });
+  it("rejects an invalid recovery cutoff before invoking Docker", async () => {
+    await expect(
+      removeStaleDeploymentConfigMaterializerHelpers(new Date("invalid")),
+    ).rejects.toThrow("Invalid deployment configuration helper cutoff");
+    expect(mocks.spawn).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "not-a-date\texited",
+    "2026-01-01T00:00:00Z",
+    "2026-01-01T00:00:00Z\texited\textra",
+  ])("fails closed for malformed helper inspection %s", async (stdout) => {
+    mocks.spawn
+      .mockImplementationOnce(() => dockerChild({ stdout: "helper" }))
+      .mockImplementationOnce(() => dockerChild({ stdout }));
+    await expect(
+      removeStaleDeploymentConfigMaterializerHelpers(),
+    ).rejects.toThrow("invalid deployment configuration helper inspection");
+    expect(mocks.spawn.mock.calls.some(([, args]) => args[0] === "rm")).toBe(
+      false,
+    );
+  });
+
+  it.each(["inspect", "rm"])(
+    "tolerates a disappearing helper during %s",
+    async (stage) => {
+      mocks.spawn
+        .mockImplementationOnce(() => dockerChild({ stdout: "helper" }))
+        .mockImplementationOnce(() =>
+          stage === "inspect"
+            ? dockerChild({ stderr: "No such object", code: 1 })
+            : dockerChild({ stdout: "2020-01-01T00:00:00Z\texited" }),
+        );
+      if (stage === "rm")
+        mocks.spawn.mockImplementationOnce(() =>
+          dockerChild({ stderr: "No such container", code: 1 }),
+        );
+      await expect(
+        removeStaleDeploymentConfigMaterializerHelpers(),
+      ).resolves.toBe(0);
+    },
+  );
+
+  it.each(["inspect", "rm"])(
+    "preserves unexpected daemon failures during %s",
+    async (stage) => {
+      mocks.spawn
+        .mockImplementationOnce(() => dockerChild({ stdout: "helper" }))
+        .mockImplementationOnce(() =>
+          stage === "inspect"
+            ? dockerChild({ stderr: "permission denied", code: 1 })
+            : dockerChild({ stdout: "2020-01-01T00:00:00Z\texited" }),
+        );
+      if (stage === "rm")
+        mocks.spawn.mockImplementationOnce(() =>
+          dockerChild({ stderr: "permission denied", code: 1 }),
+        );
+      await expect(
+        removeStaleDeploymentConfigMaterializerHelpers(),
+      ).rejects.toThrow("permission denied");
+    },
+  );
 });

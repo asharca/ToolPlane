@@ -56,6 +56,8 @@ import {
   checkPiPackageUpdates,
   maintainPiPackageSources,
   publishPiPackageToRegistry,
+  listPiPackageTracking,
+  ignorePiPackageUpdate,
 } from "@/lib/market/pi-package-catalog";
 
 const access = { workspaceId: "workspace-a", userId: "owner-a" };
@@ -467,5 +469,239 @@ describe("Pi source authorization and publication", () => {
     expect(
       mocks.request.mock.calls.every(([, options]) => !options.method),
     ).toBe(true);
+  });
+});
+
+describe("tracking identity and upstream failures", () => {
+  it.each([
+    {
+      requested: "npm:fixture",
+      errorCode: null,
+      latestIdentity: null,
+      ignoredIdentity: null,
+      expected: "current",
+      mode: "subscribed",
+    },
+    {
+      requested: "npm:fixture@1.0.0",
+      errorCode: "upstream_update_available",
+      latestIdentity: "id",
+      ignoredIdentity: "id",
+      expected: "ignored",
+      mode: "fixed",
+    },
+    {
+      requested: "git:https://github.com/team/repo#main",
+      errorCode: "source_unavailable",
+      latestIdentity: null,
+      ignoredIdentity: null,
+      expected: "error",
+      mode: "subscribed",
+    },
+    {
+      requested: `git:https://github.com/team/repo#${"a".repeat(40)}`,
+      errorCode: "upstream_identity_replaced",
+      latestIdentity: "id",
+      ignoredIdentity: null,
+      expected: "suspicious",
+      mode: "fixed",
+    },
+  ])(
+    "projects $expected tracking status independently of pinning mode",
+    async ({ expected, mode, ...row }) => {
+      mocks.piPackageTracking.findMany.mockResolvedValue([
+        { id: "tracking", ...row },
+      ]);
+      expect((await listPiPackageTracking(access))[0]).toMatchObject({
+        status: expected,
+        mode,
+      });
+    },
+  );
+  it("ignores only the exact observed update identity", async () => {
+    await ignorePiPackageUpdate({
+      ...access,
+      listingId: "listing",
+      identity: "identity",
+    });
+    expect(mocks.piPackageTracking.updateMany).toHaveBeenCalledWith({
+      where: {
+        workspaceId: access.workspaceId,
+        listingId: "listing",
+        latestIdentity: "identity",
+        errorCode: "upstream_update_available",
+      },
+      data: { ignoredIdentity: "identity" },
+    });
+    mocks.piPackageTracking.updateMany.mockResolvedValueOnce({ count: 0 });
+    await expect(
+      ignorePiPackageUpdate({
+        ...access,
+        listingId: "listing",
+        identity: "stale",
+      }),
+    ).rejects.toMatchObject({ code: "tracking_conflict" });
+  });
+  it("rejects a requested tracking record that does not exist", async () => {
+    mocks.piPackageTracking.findMany.mockResolvedValue([]);
+    await expect(
+      checkPiPackageUpdates({ ...access, listingId: "missing" }),
+    ).rejects.toMatchObject({ code: "tracking_not_found" });
+  });
+  it.each([
+    { requested: "npm:different", response: {}, expected: "source_invalid" },
+    {
+      requested: "npm:fixture",
+      response: {},
+      expected: "source_response_invalid",
+    },
+    {
+      requested: "npm:fixture@missing",
+      response: { versions: {} },
+      expected: "source_ref_missing",
+    },
+    {
+      requested: "npm:fixture",
+      response: {
+        "dist-tags": { latest: "2.0.0" },
+        versions: {
+          "2.0.0": {
+            name: "wrong",
+            version: "2.0.0",
+            dist: { integrity: "sha512-new" },
+          },
+        },
+      },
+      expected: "source_ref_missing",
+    },
+  ])(
+    "persists sanitized metadata failure $expected",
+    async ({ requested, response, expected }) => {
+      const row = {
+        id: "tracking",
+        listingId: "listing",
+        source: null,
+        requested,
+        updatedAt: new Date(0),
+        listing: { releases: [releaseFixture()] },
+      };
+      mocks.piPackageTracking.findMany.mockResolvedValue([row]);
+      mocks.request.mockResolvedValue(Buffer.from(JSON.stringify(response)));
+      await checkPiPackageUpdates(access);
+      expect(mocks.piPackageTracking.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ errorCode: expected }),
+        }),
+      );
+    },
+  );
+  it("stores missing release errors and does not fetch upstream metadata", async () => {
+    mocks.piPackageTracking.findMany.mockResolvedValue([
+      {
+        id: "tracking",
+        source: null,
+        requested: "npm:fixture",
+        listing: { releases: [] },
+      },
+    ]);
+    await checkPiPackageUpdates(access);
+    expect(mocks.piPackageTracking.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ errorCode: "release_not_found" }),
+      }),
+    );
+    expect(mocks.request).not.toHaveBeenCalled();
+  });
+  it.each(["zzzz", "0003", "ffffoops", "0000"])(
+    "rejects malformed or missing git advertisements",
+    async (advertisement) => {
+      const release = releaseFixture();
+      const manifest = {
+        ...release.manifest,
+        package: {
+          ...release.manifest.package,
+          source: {
+            kind: "git",
+            requested: "git:https://github.com/team/repo#main",
+            url: "https://github.com/team/repo",
+            commit: "a".repeat(40),
+          },
+        },
+      };
+      mocks.piPackageTracking.findMany.mockResolvedValue([
+        {
+          id: "tracking",
+          source: null,
+          requested: "git:https://github.com/team/repo#main",
+          listing: {
+            releases: [
+              {
+                ...release,
+                manifest,
+                checksum: marketReleaseChecksum(manifest),
+              },
+            ],
+          },
+        },
+      ]);
+      mocks.request.mockResolvedValue(Buffer.from(advertisement));
+      await checkPiPackageUpdates(access);
+      expect(mocks.piPackageTracking.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            errorCode:
+              advertisement === "0000"
+                ? "source_ref_missing"
+                : "source_response_invalid",
+          }),
+        }),
+      );
+    },
+  );
+  it("resolves git branch advertisements without capturing package bytes", async () => {
+    const release = releaseFixture();
+    const commit = "b".repeat(40);
+    const manifest = {
+      ...release.manifest,
+      package: {
+        ...release.manifest.package,
+        source: {
+          kind: "git",
+          requested: "git:https://github.com/team/repo#main",
+          url: "https://github.com/team/repo",
+          commit: "a".repeat(40),
+        },
+      },
+    };
+    mocks.piPackageTracking.findMany.mockResolvedValue([
+      {
+        id: "tracking",
+        source: null,
+        requested: "git:https://github.com/team/repo#main",
+        listing: {
+          releases: [
+            { ...release, manifest, checksum: marketReleaseChecksum(manifest) },
+          ],
+        },
+      },
+    ]);
+    const line = `${commit} refs/heads/main\n`;
+    mocks.request.mockResolvedValue(
+      Buffer.from(
+        `${(Buffer.byteLength(line) + 4).toString(16).padStart(4, "0")}${line}0000`,
+      ),
+    );
+    await checkPiPackageUpdates(access);
+    expect(mocks.piPackageTracking.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          latestIdentity: commit,
+          errorCode: "upstream_update_available",
+        }),
+      }),
+    );
+    expect(mocks.request.mock.calls[0][0].pathname).toBe(
+      "/team/repo/info/refs",
+    );
   });
 });

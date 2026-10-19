@@ -155,15 +155,19 @@ format match. Children and tools treat delivered content as untrusted task data.
 
 A root allows at most 16 tasks and three delegation edges; a parent resumes at most
 16 times. Descendants inherit the root deadline (at most 840 seconds); added input
-cannot extend it. A workspace admits at most 16 active local tasks and an owner keeps
-at most 256 tasks; each Context permits 128 tasks. Native input/output/snapshot/history
+cannot extend it. Per-workspace outstanding local/remote tasks are bounded by the
+administrator's platform execution limit plus 16 queued tasks; this admission bound
+does not grant extra execution slots. An owner keeps at most 256 tasks; each Context
+permits 128 tasks. Native input/output/snapshot/history
 limits also apply. The account entry admits 120 requests/minute per workspace/user;
 the execution bridge has its own bounded request limit.
 
-A single runtime owner still manages at most four executor slots, preferring deeper
-tasks. Waiting parents release their slots. A sandbox write gate covers chat, Work
-and A2A; a busy sandbox leaves an A2A task queued rather than executing and retrying
-side effects. Different native sessions cannot rewrite the same sandbox concurrently.
+A single runtime owner schedules local sandbox execution using the administrator's
+per-Agent and platform limits. Each conversation/context has its own sandbox; the
+same conversation remains serial. The four-slot pool applies only to published and
+remote execution, not local Pi, Pi SDK, Claude Code, DSH or Hermes RPC tasks. Waiting
+parents release their execution slots. Busy roots remain queued before any side
+effects; nested children fail promptly instead of waiting on their parent.
 
 These are task, execution and time limits, not a precise token/currency budget.
 Large/binary input, automatic historical memory migration and distributed execution remain unsupported.

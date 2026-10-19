@@ -1,5 +1,5 @@
 import { assertDefined } from "../assert-defined";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({ fetchMetadata: vi.fn() }));
@@ -62,5 +62,87 @@ describe("ServerForm source metadata", () => {
       "sourceMetadataCanonicalUrl",
     ])
       expect(data.has(name)).toBe(false);
+  });
+  it("imports fetched package data and derives a valid slug without submitting the save action", async () => {
+    mocks.fetchMetadata.mockResolvedValueOnce({
+      metadata: {
+        source: "npm",
+        ref: "@acme/mcp",
+        canonicalSourceUrl: "https://www.npmjs.com/package/@acme/mcp",
+        name: "@Acme/MCP Server!",
+        author: "Acme",
+        description: "Package description",
+        stars: 42,
+        readme: "# Usage",
+      },
+    });
+    const save = vi.fn().mockResolvedValue({});
+    const { container } = render(
+      <ServerForm
+        action={save}
+        initial={{}}
+        categories={[]}
+        submitLabel="Create"
+      />,
+    );
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Package or GitHub repository" }),
+      { target: { value: "@acme/mcp" } },
+    );
+    const fetchButton = screen.getByRole("button", { name: "Fetch metadata" });
+    fireEvent(
+      assertDefined(fetchButton.closest("form")),
+      new SubmitEvent("submit", {
+        bubbles: true,
+        cancelable: true,
+        submitter: fetchButton,
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(
+        "@Acme/MCP Server!",
+      ),
+    );
+    const data = new FormData(assertDefined(container.querySelector("form")));
+    expect(data.get("slug")).toBe("acme-mcp-server");
+    expect(data.get("sourceMetadataCanonicalUrl")).toBe(
+      "https://www.npmjs.com/package/@acme/mcp",
+    );
+    expect(data.get("description")).toBe("Package description");
+    expect(data.get("readme")).toBe("# Usage");
+    expect(data.get("stars")).toBe("42");
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it("preserves editable values when metadata lookup fails and presents the failure", async () => {
+    mocks.fetchMetadata.mockResolvedValueOnce({
+      error: "Repository is private",
+    });
+    render(
+      <ServerForm
+        action={vi.fn()}
+        initial={{ name: "Existing name", description: "Keep this" }}
+        categories={[]}
+        submitLabel="Create"
+      />,
+    );
+    const fetchButton = screen.getByRole("button", { name: "Fetch metadata" });
+    fireEvent(
+      assertDefined(fetchButton.closest("form")),
+      new SubmitEvent("submit", {
+        bubbles: true,
+        cancelable: true,
+        submitter: fetchButton,
+      }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Repository is private",
+    );
+    expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(
+      "Existing name",
+    );
+    expect(screen.getByRole("textbox", { name: "Description" })).toHaveValue(
+      "Keep this",
+    );
   });
 });

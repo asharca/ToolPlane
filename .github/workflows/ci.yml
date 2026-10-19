@@ -1,6 +1,8 @@
 name: ci
 
 on:
+  push:
+    branches: [main]
   pull_request:
   pull_request_target:
     types: [opened, reopened, synchronize]
@@ -118,7 +120,7 @@ jobs:
         run: docker build --target pi-package-capture -t toolplane-pi-package-capture:0.87.1 .
 
       - name: Test
-        run: pnpm test
+        run: pnpm test:coverage
 
       - name: Build
         run: pnpm build
@@ -136,6 +138,18 @@ jobs:
           artifact_size=$(stat -c %s /tmp/toolplane-runtime-linux-amd64.tar.gz)
           printf 'Runtime archive: %s bytes; limit: %s bytes\n' "$artifact_size" "$((100 * 1024 * 1024))"
           test "$artifact_size" -le $((100 * 1024 * 1024))
+
+      - name: Upload coverage to Codecov
+        if: >-
+          github.repository == 'asharca/ToolPlane' &&
+          github.ref == 'refs/heads/main' &&
+          (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage/lcov.info
+          disable_search: true
+          fail_ci_if_error: true
 
   release-metadata:
     name: validate

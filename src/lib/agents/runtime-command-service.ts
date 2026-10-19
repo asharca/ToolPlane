@@ -281,7 +281,8 @@ export async function executeRuntimeCommand(input: {
     let nativeResult: PiHarnessOperationResult | undefined;
     const text = await runDedicatedSandboxTurn({
       agent,
-      sandboxId,
+      conversationId: conversation.id,
+      a2aContextId: nativeContextId ?? undefined,
       command: input.line,
       runtimeSessionId: conversation.id,
       ...(nativeContextId

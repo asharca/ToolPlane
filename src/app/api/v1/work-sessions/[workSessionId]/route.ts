@@ -8,6 +8,7 @@ import {
 import { effectiveStatus } from "@/lib/process/supervisor";
 import { normalizeReasoningEffort } from "@/lib/agents/constants";
 import { isWorkSessionTitlePending } from "@/lib/work/coordinator";
+import { getConversationWorkspaceSandbox } from "@/lib/agents/conversation-workspace";
 
 type Params = { params: Promise<{ workSessionId: string }> };
 
@@ -20,9 +21,18 @@ export const GET = withRequestLogging(
     const titlePending = isWorkSessionTitlePending(workSessionId);
     const work = await getWorkSessionForUser(user.id, workSessionId);
     if (!work) return Response.json({ error: "Not found" }, { status: 404 });
-    const { conversation, sandbox, ...view } = work;
+    const { conversation, sandbox: assignedSandbox, ...view } = work;
+    const sandbox =
+      work.runtimeKind === "hermes"
+        ? assignedSandbox
+        : await getConversationWorkspaceSandbox({
+            workspaceId: work.workspaceId,
+            agentId: work.agentId,
+            conversationId: work.conversationId,
+          });
     return Response.json({
       ...view,
+      sandboxId: sandbox?.id ?? null,
       titlePending,
       reasoningEffort:
         normalizeReasoningEffort(conversation.reasoningEffort) ?? null,
@@ -37,6 +47,7 @@ export const GET = withRequestLogging(
             name: sandbox.name,
             kind: sandbox.kind,
             deploymentId: sandbox.deploymentId,
+            status: sandbox.deployment.status,
             running:
               effectiveStatus(
                 sandbox.deploymentId,

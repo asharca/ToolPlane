@@ -168,6 +168,10 @@ Direct Work and terminal CLI/SDK sessions use that pin; agents without one retai
 the built-in default. A2A-managed Pi tasks use the separate fixed Harness bundle
 below. Workspace files, session files and previous packages are not deleted.
 An earlier CLI version does not guarantee backward-compatible session data.
+With conversation-isolated execution, this management action updates the Agent's
+template sandbox. New conversation snapshots inherit its pin and installed files;
+existing conversation sandboxes retain their independent filesystem snapshot and
+version pin. A template update does not overwrite existing conversation state.
 
 This changes the sandbox runtime, not ToolPlane’s host-side `pi-ai` dependency.
 A registry failure does not hide a successfully read current version. Installation

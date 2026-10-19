@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type * as SandboxRuntime from "@/lib/agents/sandbox-runtime";
 import type * as AgentQueries from "@/lib/agents/queries";
+import { AgentConfigurationError } from "@/lib/agents/mutations";
 
 const mocks = vi.hoisted(() => ({
   systemLog: vi.fn(),
@@ -46,6 +47,10 @@ const mocks = vi.hoisted(() => ({
   redirect: vi.fn(),
   getPiRuntimeVersion: vi.fn(),
   updatePiRuntimeVersion: vi.fn(),
+  publishAgentRelease: vi.fn(),
+  unpublishAgentListing: vi.fn(),
+  withdrawPendingAgentRelease: vi.fn(),
+  setHermesProfileDefaultModel: vi.fn(),
 }));
 
 vi.mock("@/lib/observability/system", () => ({ systemLog: mocks.systemLog }));
@@ -124,9 +129,9 @@ vi.mock("@/lib/agents/market", () => ({
     code = "install_failed";
   },
   materializeAgentRelease: mocks.materializeAgentRelease,
-  publishAgentRelease: vi.fn(),
-  unpublishAgentListing: vi.fn(),
-  withdrawPendingAgentRelease: vi.fn(),
+  publishAgentRelease: mocks.publishAgentRelease,
+  unpublishAgentListing: mocks.unpublishAgentListing,
+  withdrawPendingAgentRelease: mocks.withdrawPendingAgentRelease,
 }));
 vi.mock("@/lib/agents/hermes/runtime", () => ({
   cleanupHermesRuntime: vi.fn(),
@@ -159,7 +164,7 @@ vi.mock("@/lib/agents/hermes/profiles", () => ({
       .toLowerCase();
     return /^[a-z0-9][a-z0-9_-]{0,63}$/.test(profile) ? profile : null;
   },
-  setHermesProfileDefaultModel: vi.fn(),
+  setHermesProfileDefaultModel: mocks.setHermesProfileDefaultModel,
   supportsHermesProfileChat: mocks.supportsHermesProfileChat,
 }));
 
@@ -185,6 +190,10 @@ import {
   generateConversationTitleAction,
   renameConversationAction,
   deleteConversationAction,
+  publishAgentReleaseAction,
+  unpublishAgentListingAction,
+  withdrawPendingAgentReleaseAction,
+  updateHermesProfileDefaultModelAction,
 } from "@/lib/agents/actions";
 
 function upgradeForm(image = "nousresearch/hermes-agent:v2026.8.3") {
@@ -1390,5 +1399,523 @@ describe("createConversationAction", () => {
       "agent-1",
     );
     expect(mocks.revalidatePath).toHaveBeenCalledWith("/app/acme/work");
+  });
+});
+
+describe("agent publishing authorization and form boundaries", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAuthorizedAgent();
+    mocks.publishAgentRelease.mockReset().mockResolvedValue(undefined);
+    mocks.redirect.mockImplementation((path: string) => {
+      throw new Error(`redirect:${path}`);
+    });
+  });
+
+  it.each([
+    ["member", "owner_only"],
+    ["unconfirmed", "confirm_required"],
+    ["unnamed", "missing_fields"],
+  ])(
+    "rejects %s publication without exporting agent contents",
+    async (condition, error) => {
+      const form = runtimeForm();
+      form.set("confirmPublicContents", "yes");
+      form.set("name", "Agent");
+      form.set("summary", "Description");
+      if (condition === "member")
+        mocks.getWorkspaceForUser.mockResolvedValue({
+          id: "workspace-1",
+          ownerId: "other",
+        });
+      if (condition === "unconfirmed") form.delete("confirmPublicContents");
+      if (condition === "unnamed") form.set("name", "  ");
+      await expect(publishAgentReleaseAction(form)).rejects.toThrow(
+        `redirect:/app/acme/agents/agent-1/publish?error=${error}`,
+      );
+      expect(mocks.publishAgentRelease).not.toHaveBeenCalled();
+    },
+  );
+
+  it("normalizes public listing fields and de-duplicates bounded tags", async () => {
+    const form = runtimeForm();
+    form.set("confirmPublicContents", "yes");
+    form.set("name", `  ${"n".repeat(90)}  `);
+    form.set("summary", `  ${"s".repeat(370)}  `);
+    form.set(
+      "tags",
+      " alpha,alpha, , beta, gamma, delta, epsilon, zeta, seventh",
+    );
+    form.append("categoryIds", "category-1");
+    form.append("categoryIds", "");
+    await expect(publishAgentReleaseAction(form)).rejects.toThrow(
+      "?submitted=1",
+    );
+    expect(mocks.publishAgentRelease).toHaveBeenCalledWith({
+      workspaceId: "workspace-1",
+      agentId: "agent-1",
+      publishedById: "user-1",
+      listing: {
+        slug: undefined,
+        name: "n".repeat(80),
+        summary: "s".repeat(360),
+        iconUrl: null,
+        tags: ["alpha", "beta", "gamma", "delta", "epsilon", "zeta"],
+        categoryIds: ["category-1"],
+      },
+    });
+    expect(mocks.revalidatePath).toHaveBeenCalledWith(
+      "/app/acme/market/agents",
+    );
+  });
+
+  it("returns an installation error redirect when publishing fails", async () => {
+    const form = runtimeForm();
+    form.set("confirmPublicContents", "yes");
+    form.set("name", "Agent");
+    form.set("summary", "Description");
+    mocks.publishAgentRelease.mockRejectedValue(new Error("storage failed"));
+    await expect(publishAgentReleaseAction(form)).rejects.toThrow(
+      "?error=install_failed",
+    );
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [unpublishAgentListingAction, "unpublished", "unpublishAgentListing"],
+    [
+      withdrawPendingAgentReleaseAction,
+      "withdrawn",
+      "withdrawPendingAgentRelease",
+    ],
+  ] as const)(
+    "performs owner-only listing transition %s",
+    async (action, result, operation) => {
+      mocks.getWorkspaceForUser.mockResolvedValue({
+        id: "workspace-1",
+        ownerId: "other",
+      });
+      await action(runtimeForm());
+      expect(mocks[operation]).not.toHaveBeenCalled();
+      mockAuthorizedAgent();
+      await expect(action(runtimeForm())).rejects.toThrow(`?${result}=1`);
+      expect(mocks[operation]).toHaveBeenCalledWith({
+        workspaceId: "workspace-1",
+        agentId: "agent-1",
+        actorId: "user-1",
+      });
+    },
+  );
+
+  it("never publishes an endpoint-owned runtime", async () => {
+    mocks.agentFindFirst.mockResolvedValue({
+      publicRuntimeAllocation: { id: "allocation" },
+    });
+    await publishAgentReleaseAction(runtimeForm());
+    expect(mocks.publishAgentRelease).not.toHaveBeenCalled();
+    expect(mocks.redirect).not.toHaveBeenCalled();
+  });
+});
+
+describe("agent package selection validation", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAuthorizedAgent();
+    mocks.updateAgent.mockReset().mockResolvedValue(undefined);
+    mocks.syncHermesRuntime.mockResolvedValue({ status: "ready" });
+  });
+
+  it.each([
+    "not JSON",
+    "x".repeat(16001),
+    JSON.stringify([
+      { marketInstallId: "install", releaseId: "release", extra: "forbidden" },
+    ]),
+    JSON.stringify([
+      { marketInstallId: "install", releaseId: "one" },
+      { marketInstallId: "install", releaseId: "two" },
+    ]),
+    JSON.stringify(
+      Array.from({ length: 17 }, (_, index) => ({
+        marketInstallId: `install-${index}`,
+        releaseId: "release",
+      })),
+    ),
+  ])(
+    "rejects invalid package selection without changing agent tools",
+    async (selection) => {
+      const form = runtimeForm();
+      form.set("piPackages", selection);
+      await expect(updateAgentAction({}, form)).resolves.toEqual({
+        error: "pi_packages_invalid",
+      });
+      expect(mocks.updateAgent).not.toHaveBeenCalled();
+      expect(mocks.setAgentTools).not.toHaveBeenCalled();
+    },
+  );
+
+  it("saves an explicit empty package set rather than retaining installed packages", async () => {
+    const form = runtimeForm();
+    form.set("piPackages", "[]");
+    await expect(updateAgentAction({}, form)).resolves.toEqual({
+      savedAt: expect.any(Number),
+    });
+    expect(mocks.updateAgent).toHaveBeenCalledWith(
+      "workspace-1",
+      "agent-1",
+      expect.objectContaining({ piPackages: [] }),
+    );
+  });
+
+  it.each([
+    [
+      "Unknown or inaccessible market install: hidden",
+      "pi_package_unavailable",
+    ],
+    ["Duplicate marketInstallId: repeated", "pi_packages_invalid"],
+    ["Specific validation failure", "Specific validation failure"],
+  ])(
+    "maps package mutation failure %s to a safe form result",
+    async (message, error) => {
+      mocks.updateAgent.mockRejectedValue(new AgentConfigurationError(message));
+      await expect(updateAgentAction({}, runtimeForm())).resolves.toEqual({
+        error,
+      });
+      expect(mocks.setAgentTools).not.toHaveBeenCalled();
+    },
+  );
+});
+
+describe("Hermes profile default selection boundaries", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAuthorizedAgent();
+    mocks.listHermesProfiles
+      .mockReset()
+      .mockResolvedValue([{ name: "research" }]);
+  });
+
+  it("requires a complete valid profile/model pair before accessing the workspace", async () => {
+    await expect(
+      updateHermesProfileDefaultModelAction({}, runtimeForm()),
+    ).resolves.toEqual({ error: "Choose a valid Hermes profile and model." });
+    expect(mocks.getCurrentUser).not.toHaveBeenCalled();
+    expect(mocks.setHermesProfileDefaultModel).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "unauthorized",
+    "missing-agent",
+    "missing-profile",
+    "profile-query-failed",
+  ])(
+    "rejects %s profile change without changing runtime defaults",
+    async (condition) => {
+      const form = runtimeForm();
+      form.set("profile", "research");
+      form.set("provider", "provider-1");
+      form.set("model", "model-1");
+      let error = "Could not update the Hermes profile model.";
+      if (condition === "unauthorized") {
+        mocks.getCurrentUser.mockResolvedValue(null);
+        error = "Not authorized.";
+      } else if (condition === "missing-agent") {
+        mocks.agentFindFirst.mockResolvedValue(null);
+        error = "Hermes agent not found.";
+      } else if (condition === "missing-profile") {
+        mocks.listHermesProfiles.mockResolvedValue([]);
+        error = "The selected Hermes profile no longer exists.";
+      } else {
+        mocks.listHermesProfiles.mockRejectedValue(
+          new Error("transport failed"),
+        );
+      }
+      await expect(
+        updateHermesProfileDefaultModelAction({}, form),
+      ).resolves.toEqual({ error });
+      expect(mocks.setHermesProfileDefaultModel).not.toHaveBeenCalled();
+    },
+  );
+
+  it("returns a useful error when forced title generation produces no title", async () => {
+    const form = runtimeForm();
+    form.set("conversationId", "conversation-1");
+    form.set("force", "1");
+    mocks.generateConsoleConversationTitle.mockResolvedValue(null);
+    await expect(generateConversationTitleAction(form)).resolves.toEqual({
+      error: "Could not generate a title for this conversation.",
+    });
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it.each([new Error("Provider unavailable"), "non-error failure"])(
+    "handles title generation rejection %s",
+    async (failure) => {
+      const form = runtimeForm();
+      form.set("conversationId", "conversation-1");
+      mocks.generateConsoleConversationTitle.mockRejectedValue(failure);
+      await expect(generateConversationTitleAction(form)).resolves.toEqual({
+        error:
+          failure instanceof Error
+            ? failure.message
+            : "Could not generate a conversation title.",
+      });
+    },
+  );
+});
+
+describe("round two agent action safety boundaries", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    mockAuthorizedAgent();
+    mocks.syncHermesRuntime.mockResolvedValue({ status: "ready" });
+    mocks.redirect.mockImplementation((path: string) => {
+      throw new Error(`redirect:${path}`);
+    });
+  });
+
+  it.each([
+    updateAgentAction,
+    updateAgentModelAction,
+    updateAgentRuntimeEnvAction,
+    stopAgentRuntimeAction,
+    syncAgentRuntimeAction,
+    upgradeHermesRuntimeAction,
+  ])(
+    "rejects missing manageable agents before runtime mutations",
+    async (action) => {
+      mocks.agentFindFirst.mockResolvedValue(null);
+      await expect(action({}, runtimeForm())).resolves.toEqual({
+        error: "Agent not found.",
+      });
+      expect(mocks.updateAgent).not.toHaveBeenCalled();
+      expect(mocks.syncHermesRuntime).not.toHaveBeenCalled();
+      expect(mocks.stopHermesRuntime).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    deleteAgentAction,
+    cloneAgentAction,
+    createConversationAction,
+    deleteConversationAction,
+    renameConversationAction,
+  ])(
+    "does not change an inaccessible agent through form actions",
+    async (action) => {
+      const form = runtimeForm();
+      form.set("conversationId", "conversation");
+      form.set("title", "Title");
+      mocks.agentFindFirst.mockResolvedValue({
+        publicRuntimeAllocation: { id: "allocation" },
+      });
+      await action(form);
+      expect(mocks.deleteManagedAgent).not.toHaveBeenCalled();
+      expect(mocks.cloneAgent).not.toHaveBeenCalled();
+      expect(mocks.createConversation).not.toHaveBeenCalled();
+      expect(mocks.renameConsoleConversation).not.toHaveBeenCalled();
+      expect(mocks.deleteConsoleConversation).not.toHaveBeenCalled();
+      expect(mocks.redirect).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    updateAgentAction,
+    updateAgentModelAction,
+    updateAgentRuntimeEnvAction,
+    stopAgentRuntimeAction,
+    syncAgentRuntimeAction,
+    upgradeHermesRuntimeAction,
+  ])(
+    "rejects signed-out form mutations without querying agent data",
+    async (action) => {
+      mocks.getCurrentUser.mockResolvedValue(null);
+      await expect(action({}, runtimeForm())).resolves.toEqual({
+        error: "Not authorized.",
+      });
+      expect(mocks.agentFindFirst).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["deleted", "create-race", "rename-race", "delete-race"])(
+    "does not redirect or invalidate on failed persistence: %s",
+    async (condition) => {
+      const form = runtimeForm();
+      form.set("conversationId", "conversation");
+      form.set("title", "Title");
+      if (condition === "deleted") await deleteAgentAction(form);
+      if (condition === "create-race") await createConversationAction(form);
+      if (condition === "rename-race") await renameConversationAction(form);
+      if (condition === "delete-race") await deleteConversationAction(form);
+      expect(mocks.redirect).not.toHaveBeenCalled();
+      expect(mocks.revalidatePath).not.toHaveBeenCalled();
+    },
+  );
+
+  it("returns model domain errors while preserving unexpected failures for the error boundary", async () => {
+    mocks.updateAgentModelSelection.mockRejectedValueOnce(
+      new AgentConfigurationError("Unavailable model"),
+    );
+    await expect(updateAgentModelAction({}, runtimeForm())).resolves.toEqual({
+      error: "Unavailable model",
+    });
+    mocks.updateAgentModelSelection.mockRejectedValueOnce(
+      new Error("storage lost"),
+    );
+    await expect(updateAgentModelAction({}, runtimeForm())).rejects.toThrow(
+      "storage lost",
+    );
+    mocks.updateAgent.mockRejectedValueOnce(new Error("storage lost"));
+    await expect(updateAgentAction({}, runtimeForm())).rejects.toThrow(
+      "storage lost",
+    );
+  });
+
+  it("keeps saved agent changes when runtime projection fails", async () => {
+    mocks.syncHermesRuntime.mockResolvedValue({ error: "not healthy" });
+    await expect(updateAgentAction({}, runtimeForm())).resolves.toEqual({
+      savedAt: expect.any(Number),
+      warning: "Saved, but Hermes sync failed: not healthy",
+    });
+    expect(mocks.setAgentTools).toHaveBeenCalledOnce();
+  });
+
+  it("does not report a missing runtime environment projection as successfully saved", async () => {
+    const form = runtimeForm();
+    form.set("runtimeEnv", "CUSTOM=value");
+    mocks.setHermesRuntimeEnv.mockResolvedValue(false);
+    await expect(updateAgentRuntimeEnvAction({}, form)).resolves.toEqual({
+      error: "Hermes runtime not found.",
+    });
+    expect(mocks.syncHermesRuntime).not.toHaveBeenCalled();
+  });
+
+  it.each(["sync", "readiness"])(
+    "reports saved environment with a %s failure",
+    async (failure) => {
+      mocks.setHermesRuntimeEnv.mockResolvedValue(true);
+      if (failure === "sync")
+        mocks.syncHermesRuntime.mockResolvedValue({ error: "runtime failed" });
+      else {
+        mocks.syncHermesRuntime.mockResolvedValue({ status: "provisioning" });
+        mocks.ensureHermesRuntimeReady.mockResolvedValue({
+          error: "runtime failed",
+        });
+      }
+      await expect(
+        updateAgentRuntimeEnvAction({}, runtimeForm()),
+      ).resolves.toEqual({
+        error: "Saved, but Hermes sync failed: runtime failed",
+      });
+    },
+  );
+
+  it.each([new Error("cannot write"), "untyped failure"])(
+    "reports dedicated sandbox environment write failure %s",
+    async (error) => {
+      mocks.agentFindFirst.mockResolvedValue({
+        publicRuntimeAllocation: null,
+        runtimeKind: "pi",
+        sandboxes: [{ sandboxId: "sandbox" }],
+      });
+      mocks.updateSandboxEnvAction.mockRejectedValue(error);
+      await expect(
+        updateAgentRuntimeEnvAction({}, runtimeForm()),
+      ).resolves.toEqual({
+        error:
+          error instanceof Error
+            ? error.message
+            : "Could not save environment variables.",
+      });
+      expect(mocks.revalidatePath).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rejects invalid environment syntax rather than replacing valid stored variables", async () => {
+    const form = runtimeForm();
+    form.set("runtimeEnv", "not a variable");
+    expect(await updateAgentRuntimeEnvAction({}, form)).toHaveProperty("error");
+    expect(mocks.setHermesRuntimeEnv).not.toHaveBeenCalled();
+    expect(mocks.updateSandboxEnvAction).not.toHaveBeenCalled();
+  });
+
+  it("returns a saved timestamp when stopping succeeds and a safe fallback for unknown stop errors", async () => {
+    await expect(stopAgentRuntimeAction({}, runtimeForm())).resolves.toEqual({
+      savedAt: expect.any(Number),
+    });
+    mocks.stopHermesRuntime.mockRejectedValue("unknown");
+    await expect(stopAgentRuntimeAction({}, runtimeForm())).resolves.toEqual({
+      error: "Could not stop the Hermes runtime.",
+    });
+  });
+
+  it.each([
+    "/app/acme/market/agents",
+    "/app/acme/market/agents?tab=all",
+    "https://attacker.test/path",
+  ])(
+    "keeps installation errors on a safe return path: %s",
+    async (returnTo) => {
+      const form = runtimeForm();
+      form.set("releaseId", "release");
+      form.set("idempotencyKey", "key");
+      form.set("returnTo", returnTo);
+      mocks.materializeAgentRelease.mockRejectedValue(
+        new Error("private database detail"),
+      );
+      const safePath = returnTo.startsWith("/")
+        ? returnTo
+        : "/app/acme/market/agents";
+      await expect(installAgentFromMarketAction(form)).rejects.toThrow(
+        `redirect:${safePath}${safePath.includes("?") ? "&" : "?"}cloneError=install_failed`,
+      );
+      expect(mocks.startProcess).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not start a clone when the source disappears during cloning", async () => {
+    mocks.cloneAgent.mockResolvedValue(null);
+    await cloneAgentAction(runtimeForm());
+    expect(mocks.startProcess).not.toHaveBeenCalled();
+    expect(mocks.redirect).not.toHaveBeenCalled();
+  });
+
+  it("honors scoped-clone options and opens settings instead of starting after a failed volume copy", async () => {
+    const form = runtimeForm();
+    form.set("cloneOptions", "1");
+    form.set("copyMcp", "on");
+    form.set("copyHermesVolume", "on");
+    form.set("cloneName", " Named clone ");
+    mocks.cloneAgent.mockResolvedValue({ id: "cloned", runtimeKind: "hermes" });
+    mocks.copyHermesRuntimeVolume.mockImplementation(
+      async (_workspace, _source, _target, copy) => {
+        await copy();
+        return { status: "error" };
+      },
+    );
+    await expect(cloneAgentAction(form)).rejects.toThrow(
+      "redirect:/app/acme/agents/cloned?settings=agent",
+    );
+    expect(mocks.cloneAgent).toHaveBeenCalledWith(
+      "workspace-1",
+      "agent-1",
+      "Named clone",
+      {
+        copyMcp: true,
+        copySkills: false,
+        copyToolkits: false,
+        copySandboxes: false,
+        copySubAgents: false,
+        copyConversations: false,
+        copyHermesEnvironment: false,
+        copyHermesVolume: true,
+      },
+    );
+    expect(mocks.cloneHermesVolumeData).toHaveBeenCalledWith(
+      "workspace-1",
+      "agent-1",
+      "cloned",
+    );
+    expect(mocks.startProcess).not.toHaveBeenCalled();
   });
 });

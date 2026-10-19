@@ -9,6 +9,12 @@ const mocks = vi.hoisted(() => ({
   agent: vi.fn(),
   run: vi.fn(),
   token: vi.fn(),
+  assignments: vi.fn(),
+  count: vi.fn(),
+  conversation: vi.fn(),
+  work: vi.fn(),
+  ensureSandbox: vi.fn(),
+  findSandbox: vi.fn(),
 }));
 vi.mock("@/lib/a2a/principal", () => ({
   isLocalGrant: (g: { kind?: string }) => g.kind === "local",
@@ -16,7 +22,21 @@ vi.mock("@/lib/a2a/principal", () => ({
 }));
 vi.mock("@/lib/a2a/local-policy", () => ({ localTarget: mocks.target }));
 vi.mock("@/lib/db", () => ({
-  db: { a2AContext: { findFirst: mocks.context } },
+  db: {
+    a2AContext: { findFirst: mocks.context },
+    agentSandbox: { findMany: mocks.assignments },
+    a2ATask: { count: mocks.count },
+    conversation: { findFirst: mocks.conversation },
+    workSession: {
+      findUniqueOrThrow: mocks.work,
+      findFirst: mocks.work,
+      updateMany: vi.fn(),
+    },
+  },
+}));
+vi.mock("@/lib/agents/conversation-sandbox", () => ({
+  ensureAgentConversationSandbox: mocks.ensureSandbox,
+  findAgentConversationSandbox: mocks.findSandbox,
 }));
 vi.mock("@/lib/agents/queries", () => ({ getAgentForRun: mocks.agent }));
 vi.mock("@/lib/agents/resolve", async (importOriginal) => ({
@@ -46,6 +66,7 @@ import {
   executeLocalTask,
   LOCAL_COLLABORATION_INSTRUCTIONS,
 } from "@/lib/a2a/local-executor";
+import { localTaskOptions } from "@/lib/a2a/local-task-options";
 const grant = {
   kind: "local",
   workspaceId: "ws",
@@ -97,6 +118,14 @@ const agent = {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.live.mockResolvedValue(undefined);
+  mocks.ensureSandbox.mockResolvedValue({
+    sandboxId: "sandbox",
+    deploymentId: "isolated-deployment",
+  });
+  mocks.findSandbox.mockResolvedValue({
+    sandboxId: "sandbox",
+    deploymentId: "isolated-deployment",
+  });
   mocks.target.mockResolvedValue({ binding: "binding", sandboxId: "sandbox" });
   mocks.context.mockResolvedValue({ id: "a2a-context" });
   mocks.agent.mockResolvedValue(agent);
@@ -245,5 +274,145 @@ describe("historical local TaskExecutor runtime port", () => {
       ),
     ).rejects.toThrow("Unknown A2A execution backend");
     expect(mocks.run).not.toHaveBeenCalled();
+  });
+});
+
+describe("local task claim option boundaries", () => {
+  it.each([
+    null,
+    { ...agent, provider: null },
+    { ...agent, model: null },
+    { ...agent, publicRuntimeAllocation: { id: "public" } },
+  ])(
+    "rejects unavailable local agents %# before minting credentials",
+    async (value) => {
+      mocks.agent.mockResolvedValue(value);
+      await expect(
+        localTaskOptions(row(), new AbortController().signal, "Collaborate"),
+      ).rejects.toThrow("Local target unavailable");
+      expect(mocks.token).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["legacy", "pi-harness"])(
+    "rejects cleanup without a bound native operation for %s",
+    async (executionBackend) => {
+      await expect(
+        localTaskOptions(
+          { ...row(), executionBackend, nativeOperationId: null },
+          new AbortController().signal,
+          "",
+          true,
+        ),
+      ).rejects.toThrow("bound Pi operation");
+      expect(mocks.token).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rejects cleanup when its durable mapping is missing", async () => {
+    mocks.findSandbox.mockResolvedValue(null);
+    await expect(
+      localTaskOptions(
+        {
+          ...row(),
+          executionBackend: "pi-harness",
+          nativeOperationId: "operation",
+        },
+        new AbortController().signal,
+        "",
+        true,
+      ),
+    ).rejects.toThrow("Bound native sandbox unavailable");
+    expect(mocks.token).not.toHaveBeenCalled();
+  });
+
+  it("projects cleanup without live-grant checks, MCP tools, or collaboration access", async () => {
+    mocks.findSandbox.mockResolvedValue({
+      sandboxId: "cleanup-sandbox",
+      deploymentId: "cleanup-deployment",
+    });
+    mocks.count.mockResolvedValue(0);
+    const options = await localTaskOptions(
+      {
+        ...row(),
+        executionBackend: "pi-harness",
+        nativeOperationId: "operation",
+      },
+      new AbortController().signal,
+      "Collaborate",
+      true,
+    );
+    expect(options.sandboxId).toBe("cleanup-sandbox");
+    expect(options.mcpServers).toEqual([]);
+    expect(options.systemPrompt).toBe("Follow task policy");
+    expect(options.piHarness).toMatchObject({
+      communicationEnabled: false,
+      historyRequired: false,
+      sessionRequired: false,
+    });
+    expect(mocks.live).not.toHaveBeenCalled();
+    expect(mocks.findSandbox).toHaveBeenCalledWith(
+      expect.objectContaining({ contextId: "a2a-context", cleanup: true }),
+    );
+    expect(mocks.target).not.toHaveBeenCalled();
+    expect(mocks.token.mock.calls[0][0].deploymentIds).toEqual([]);
+  });
+
+  it("restricts resumed work to snapshotted deployments and skills", async () => {
+    mocks.work.mockResolvedValue({
+      conversationId: "work-conversation",
+      runtimeSnapshot: {
+        deploymentIds: ["stopped-mcp"],
+        installedSkillIds: ["missing"],
+        systemPrompt: "Frozen policy",
+      },
+    });
+    const task = {
+      ...row(),
+      grant: {
+        ...grant,
+        entryPolicy: {
+          kind: "work",
+          sourceId: "work",
+          workingDirectory: "project",
+        },
+      },
+    };
+    const options = await localTaskOptions(
+      task,
+      new AbortController().signal,
+      "Collaborate",
+    );
+    expect(options.skills).toEqual([]);
+    expect(options.workingDirectory).toBe("project");
+    expect(options.systemPrompt).toBe("Frozen policy\n\nCollaborate");
+    expect(mocks.token.mock.calls[0][0].deploymentIds).toEqual([]);
+    expect(options.mcpServers).toHaveLength(1);
+  });
+
+  it("restores explicit chat reasoning and native continuation requirements", async () => {
+    mocks.conversation.mockResolvedValue({ reasoningEffort: "high" });
+    mocks.count.mockResolvedValueOnce(1).mockResolvedValueOnce(2);
+    const options = await localTaskOptions(
+      {
+        ...row(),
+        executionBackend: "pi-harness",
+        grant: { ...grant, entryPolicy: { kind: "chat", sourceId: "chat" } },
+      },
+      new AbortController().signal,
+      "Collaborate",
+    );
+    expect(options.piHarness).toMatchObject({
+      thinkingLevel: "high",
+      historyRequired: true,
+      sessionRequired: true,
+      communicationEnabled: true,
+    });
+    expect(options.nativeApprovalUrl).toContain("/a2a/task/approvals");
+    expect(mocks.token.mock.calls[0][0]).toMatchObject({
+      a2aTaskId: "task",
+      a2aLeaseToken: "lease",
+      a2aApprovalRequired: true,
+    });
   });
 });

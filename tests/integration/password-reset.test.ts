@@ -66,6 +66,43 @@ describe("password reset requests", () => {
     expect(record.tokenHash).toBe(hashPasswordResetToken(String(token)));
     await db.passwordResetToken.deleteMany({ where: { userId } });
   });
+
+  it("removes an undelivered reset link and permits a subsequent request", async () => {
+    await db.passwordResetToken.deleteMany({ where: { userId } });
+    mail.send.mockRejectedValueOnce(new Error("SMTP unavailable"));
+    await requestPasswordReset(email);
+    expect(await db.passwordResetToken.count({ where: { userId } })).toBe(0);
+    await requestPasswordReset(email);
+    const sentToken = mail.send.mock.calls[1]?.[0]?.token;
+    const record = await db.passwordResetToken.findUniqueOrThrow({
+      where: { userId },
+    });
+    expect(record.tokenHash).toBe(hashPasswordResetToken(String(sentToken)));
+    await db.passwordResetToken.deleteMany({ where: { userId } });
+  });
+
+  it("replaces an old link only after the cooldown and invalidates the previous token", async () => {
+    const oldToken = generatePasswordResetToken();
+    await db.passwordResetToken.create({
+      data: {
+        userId,
+        tokenHash: hashPasswordResetToken(oldToken),
+        expiresAt: passwordResetExpiry(),
+        createdAt: new Date(Date.now() - 10 * 60_000),
+      },
+    });
+    await requestPasswordReset(email);
+    expect(
+      await resetPasswordWithToken(oldToken, "unused-password-value"),
+    ).toBe(false);
+    const record = await db.passwordResetToken.findUniqueOrThrow({
+      where: { userId },
+    });
+    expect(record.tokenHash).toBe(
+      hashPasswordResetToken(String(mail.send.mock.calls[0]?.[0]?.token)),
+    );
+    await db.passwordResetToken.deleteMany({ where: { userId } });
+  });
 });
 
 describe("password reset consumption", () => {
