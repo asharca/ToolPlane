@@ -7,6 +7,8 @@ environment. In this project a sandbox is exposed to agents as MCP tools and,
 for the browser console, as a PTY-backed terminal stream. The app does not
 mount arbitrary server host directories as sandboxes.
 
+The sandbox list renders each mode icon in the badge's dedicated icon slot, keeping it beside the mode label on one line, including within the horizontally scrollable mobile table.
+
 ## Runtime Shape
 
 ```txt

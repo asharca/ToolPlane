@@ -13,6 +13,8 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
   useEffect,
+  useLayoutEffect,
+  useRef,
 } from "react";
 import { createPortal } from "react-dom";
 import { Checkbox } from "@/components/motion/checkbox";
@@ -180,12 +182,20 @@ export function TableHeader<T>({
 }: TableHeaderProps<T>) {
   const hasColumnMenu = !!(onInsertColumn || onDeleteColumn);
   const activeIndex = columns.findIndex((c) => c.key === activeColumn);
+  const showSelection = selectionHeader !== undefined;
+  const selectionHadFocus = useRef(false);
+  const checkboxRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (!showSelection && selectionHadFocus.current) {
+      if (document.activeElement === document.body) {
+        checkboxRef.current?.querySelector("button")?.focus();
+      }
+      selectionHadFocus.current = false;
+    }
+  }, [showSelection]);
   return (
     <>
-      {selectionHeader === undefined &&
-      hasColumnMenu &&
-      activeColumn &&
-      activeIndex >= 0 ? (
+      {!showSelection && hasColumnMenu && activeColumn && activeIndex >= 0 ? (
         <ColumnHandle
           column={columns[activeIndex]}
           index={activeIndex}
@@ -203,7 +213,10 @@ export function TableHeader<T>({
               className="sticky top-0 z-10 border-border border-b bg-muted"
               style={{ width: CHECKBOX_PX, minWidth: CHECKBOX_PX }}
             >
-              <div className="flex items-center justify-center">
+              <div
+                ref={checkboxRef}
+                className="flex items-center justify-center"
+              >
                 <Checkbox
                   checked={allSelected}
                   indeterminate={!allSelected && someSelected}
@@ -213,164 +226,190 @@ export function TableHeader<T>({
               </div>
             </th>
           ) : null}
-          {selectionHeader !== undefined ? (
-            <th
-              colSpan={columns.length + 1}
-              className="sticky top-0 z-10 border-border border-b bg-muted px-4 text-left font-medium"
-            >
-              {selectionHeader}
-            </th>
-          ) : (
-            <>
-              {columns.map((column, index) => {
-                const active = sort?.key === column.key;
-                const isDragging = dragKey === column.key;
-                const isActive = activeColumn === column.key;
-                return (
-                  <th
-                    key={column.key}
-                    ref={(el) => {
-                      thRefs.current[column.key] = el;
-                    }}
-                    onPointerEnter={() => onColumnActivate?.(column.key)}
-                    onPointerLeave={() => onColumnDeactivate?.()}
-                    style={
-                      isActive ? { boxShadow: COLUMN_ACTIVE_SHADOW } : undefined
-                    }
-                    aria-sort={
-                      active
-                        ? sort?.direction === "asc"
-                          ? "ascending"
-                          : "descending"
-                        : undefined
-                    }
-                    data-drop={dragKey ? dropIndex === index : undefined}
-                    data-dropend={
-                      dragKey
-                        ? dropIndex === columns.length &&
-                          index === columns.length - 1
-                        : undefined
-                    }
-                    className={cn(
-                      "group sticky top-0 z-10 border-border border-b bg-muted p-0 font-medium text-muted-foreground",
-                      "data-[drop=true]:before:absolute data-[drop=true]:before:inset-y-0 data-[drop=true]:before:left-0 data-[drop=true]:before:w-0.5 data-[drop=true]:before:bg-primary",
-                      "data-[dropend=true]:after:absolute data-[dropend=true]:after:inset-y-0 data-[dropend=true]:after:right-0 data-[dropend=true]:after:w-0.5 data-[dropend=true]:after:bg-primary",
-                    )}
-                  >
-                    <motion.div
-                      className={cn(
-                        "flex h-full items-center",
-                        alignFlex(column.align),
-                      )}
-                      style={{ height: rowHeight }}
-                      animate={
-                        reduce
-                          ? { opacity: isDragging ? 0.5 : 1 }
-                          : {
-                              scale: isDragging ? 1.04 : 1,
-                              opacity: isDragging ? 0.5 : 1,
-                            }
-                      }
-                      transition={SPRING_PRESS}
-                    >
-                      {reorderable ? (
-                        <button
-                          type="button"
-                          aria-label={`Reorder ${column.key} column`}
-                          onPointerDown={(e) => onReorderStart(column.key, e)}
-                          onPointerMove={onReorderMove}
-                          onPointerUp={onReorderEnd}
-                          className={cn(
-                            "flex h-full w-6 cursor-grab touch-none items-center justify-center text-muted-foreground/60 transition-colors hover:text-foreground active:cursor-grabbing",
-                            // The grip owns the whole press, so iOS must not open its
-                            // callout out of the same one and cancel the drag.
-                            TOUCH_GESTURE_CLASS,
-                          )}
-                        >
-                          <GripVertical className="h-3.5 w-3.5" />
-                        </button>
-                      ) : null}
-                      {column.sortable ? (
-                        <button
-                          type="button"
-                          onClick={() => onToggleSort(column.key)}
-                          className={cn(
-                            "flex h-full min-w-0 flex-1 select-none items-center gap-1 px-4 transition-colors hover:text-foreground",
-                            alignFlex(column.align),
-                            active && "text-foreground",
-                          )}
-                        >
-                          <span className="truncate">{column.header}</span>
-                          <motion.span
-                            aria-hidden
-                            className="inline-flex shrink-0"
-                            animate={{
-                              rotate:
-                                active && sort?.direction === "desc" ? 180 : 0,
-                              opacity: active ? 1 : 0.35,
-                            }}
-                            transition={
-                              reduce
-                                ? { duration: 0 }
-                                : { duration: 0.18, ease: EASE_OUT }
-                            }
-                          >
-                            <ChevronUp className="h-3.5 w-3.5" />
-                          </motion.span>
-                        </button>
-                      ) : onColumnRename ? (
-                        <input
-                          value={
-                            typeof column.header === "string"
-                              ? column.header
-                              : ""
-                          }
-                          aria-label={`Rename ${column.key} column`}
-                          size={1}
-                          onChange={(e) =>
-                            onColumnRename(column.key, e.target.value)
-                          }
-                          className={cn(
-                            "min-w-0 flex-1 truncate appearance-none rounded-md border-0 bg-transparent px-4 font-medium text-muted-foreground outline-none transition-colors focus:bg-muted focus:text-foreground",
-                            alignText(column.align),
-                          )}
-                        />
-                      ) : (
-                        <span
-                          className={cn(
-                            "min-w-0 flex-1 truncate px-4",
-                            alignText(column.align),
-                          )}
-                        >
-                          {column.header}
-                        </span>
-                      )}
-                    </motion.div>
-                    {resizable ? (
-                      <button
-                        type="button"
-                        aria-label={`Resize ${column.key} column`}
-                        tabIndex={-1}
-                        onPointerDown={(e) => onResizeStart(column.key, e)}
-                        onPointerMove={onResizeMove}
-                        onPointerUp={onResizeEnd}
-                        className={cn(
-                          "absolute top-0 right-0 h-full w-1.5 cursor-col-resize touch-none bg-transparent transition-colors hover:bg-muted",
-                          // Same for the resize drag: the handle drives it end to end.
-                          TOUCH_GESTURE_CLASS,
-                        )}
-                      />
-                    ) : null}
-                  </th>
-                );
-              })}
+          {columns.map((column, index) => {
+            const active = sort?.key === column.key;
+            const isDragging = dragKey === column.key;
+            const isActive = !showSelection && activeColumn === column.key;
+            return (
               <th
-                aria-hidden
-                className="sticky top-0 z-10 border-border border-b bg-muted"
-              />
-            </>
-          )}
+                key={column.key}
+                ref={(el) => {
+                  thRefs.current[column.key] = el;
+                }}
+                onPointerEnter={
+                  showSelection
+                    ? undefined
+                    : () => onColumnActivate?.(column.key)
+                }
+                onPointerLeave={() => onColumnDeactivate?.()}
+                style={
+                  isActive ? { boxShadow: COLUMN_ACTIVE_SHADOW } : undefined
+                }
+                aria-sort={
+                  active
+                    ? sort?.direction === "asc"
+                      ? "ascending"
+                      : "descending"
+                    : undefined
+                }
+                data-drop={dragKey ? dropIndex === index : undefined}
+                data-dropend={
+                  dragKey
+                    ? dropIndex === columns.length &&
+                      index === columns.length - 1
+                    : undefined
+                }
+                className={cn(
+                  "group sticky top-0 z-10 border-border border-b bg-muted p-0 font-medium text-muted-foreground",
+                  "data-[drop=true]:before:absolute data-[drop=true]:before:inset-y-0 data-[drop=true]:before:left-0 data-[drop=true]:before:w-0.5 data-[drop=true]:before:bg-primary",
+                  "data-[dropend=true]:after:absolute data-[dropend=true]:after:inset-y-0 data-[dropend=true]:after:right-0 data-[dropend=true]:after:w-0.5 data-[dropend=true]:after:bg-primary",
+                )}
+              >
+                {showSelection ? (
+                  <span className="sr-only">{column.header}</span>
+                ) : null}
+                <motion.div
+                  inert={showSelection}
+                  className={cn(
+                    "flex h-full items-center",
+                    alignFlex(column.align),
+                  )}
+                  style={{
+                    height: rowHeight,
+                    visibility: showSelection ? "hidden" : undefined,
+                  }}
+                  animate={
+                    reduce
+                      ? { opacity: isDragging ? 0.5 : 1 }
+                      : {
+                          scale: isDragging ? 1.04 : 1,
+                          opacity: isDragging ? 0.5 : 1,
+                        }
+                  }
+                  transition={SPRING_PRESS}
+                >
+                  {reorderable ? (
+                    <button
+                      type="button"
+                      aria-label={`Reorder ${column.key} column`}
+                      onPointerDown={(e) => onReorderStart(column.key, e)}
+                      onPointerMove={onReorderMove}
+                      onPointerUp={onReorderEnd}
+                      className={cn(
+                        "flex h-full w-6 cursor-grab touch-none items-center justify-center text-muted-foreground/60 transition-colors hover:text-foreground active:cursor-grabbing",
+                        // The grip owns the whole press, so iOS must not open its
+                        // callout out of the same one and cancel the drag.
+                        TOUCH_GESTURE_CLASS,
+                      )}
+                    >
+                      <GripVertical className="h-3.5 w-3.5" />
+                    </button>
+                  ) : null}
+                  {column.sortable ? (
+                    <button
+                      type="button"
+                      onClick={() => onToggleSort(column.key)}
+                      className={cn(
+                        "flex h-full min-w-0 flex-1 select-none items-center gap-1 px-4 transition-colors hover:text-foreground",
+                        alignFlex(column.align),
+                        active && "text-foreground",
+                      )}
+                    >
+                      <span className="truncate">{column.header}</span>
+                      <motion.span
+                        aria-hidden
+                        className="inline-flex shrink-0"
+                        animate={{
+                          rotate:
+                            active && sort?.direction === "desc" ? 180 : 0,
+                          opacity: active ? 1 : 0.35,
+                        }}
+                        transition={
+                          reduce
+                            ? { duration: 0 }
+                            : { duration: 0.18, ease: EASE_OUT }
+                        }
+                      >
+                        <ChevronUp className="h-3.5 w-3.5" />
+                      </motion.span>
+                    </button>
+                  ) : onColumnRename ? (
+                    <input
+                      value={
+                        typeof column.header === "string" ? column.header : ""
+                      }
+                      aria-label={`Rename ${column.key} column`}
+                      size={1}
+                      onChange={(e) =>
+                        onColumnRename(column.key, e.target.value)
+                      }
+                      className={cn(
+                        "min-w-0 flex-1 truncate appearance-none rounded-md border-0 bg-transparent px-4 font-medium text-muted-foreground outline-none transition-colors focus:bg-muted focus:text-foreground",
+                        alignText(column.align),
+                      )}
+                    />
+                  ) : (
+                    <span
+                      className={cn(
+                        "min-w-0 flex-1 truncate px-4",
+                        alignText(column.align),
+                      )}
+                    >
+                      {column.header}
+                    </span>
+                  )}
+                </motion.div>
+                {resizable && !showSelection ? (
+                  <button
+                    type="button"
+                    aria-label={`Resize ${column.key} column`}
+                    tabIndex={-1}
+                    onPointerDown={(e) => onResizeStart(column.key, e)}
+                    onPointerMove={onResizeMove}
+                    onPointerUp={onResizeEnd}
+                    className={cn(
+                      "absolute top-0 right-0 h-full w-1.5 cursor-col-resize touch-none bg-transparent transition-colors hover:bg-muted",
+                      // Same for the resize drag: the handle drives it end to end.
+                      TOUCH_GESTURE_CLASS,
+                    )}
+                  />
+                ) : null}
+              </th>
+            );
+          })}
+          <th
+            aria-hidden
+            className="sticky top-0 z-10 border-border border-b bg-muted"
+          />
         </tr>
+        {showSelection ? (
+          <tr
+            className="absolute inset-y-0 right-0 z-20"
+            style={{ left: CHECKBOX_PX }}
+          >
+            <td
+              colSpan={columns.length + 1}
+              className="block h-full bg-muted p-0"
+            >
+              <motion.div
+                onFocusCapture={() => {
+                  selectionHadFocus.current = true;
+                }}
+                onBlurCapture={(event) => {
+                  selectionHadFocus.current = event.currentTarget.contains(
+                    event.relatedTarget,
+                  );
+                }}
+                initial={{ opacity: 0, y: reduce ? 0 : 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.16, ease: EASE_OUT }}
+                className="flex h-full items-center overflow-x-auto border-border border-b px-4 font-normal"
+              >
+                {selectionHeader}
+              </motion.div>
+            </td>
+          </tr>
+        ) : null}
       </thead>
     </>
   );

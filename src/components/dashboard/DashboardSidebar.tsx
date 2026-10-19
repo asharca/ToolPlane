@@ -105,15 +105,15 @@ export function DashboardSidebar({
         ]}
         footer={
           <div className="flex flex-col gap-1">
+            <NotificationBell
+              workspaceSlug={slug}
+              compact={!open && !isMobile}
+            />
             <WorkspaceSwitcher
               slug={slug}
               workspaceName={workspaceName}
               userLabel={userLabel}
               workspaces={workspaces}
-              compact={!open && !isMobile}
-            />
-            <NotificationBell
-              workspaceSlug={slug}
               compact={!open && !isMobile}
             />
             <AccountMenu

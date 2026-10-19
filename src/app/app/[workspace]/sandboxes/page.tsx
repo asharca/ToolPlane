@@ -454,8 +454,11 @@ export default async function SandboxesPage({
                         </div>
                       </div>,
                       <div key="mode" className="min-w-0">
-                        <AnimatedBadge status="neutral" size="sm">
-                          <Container className="size-3.5" />
+                        <AnimatedBadge
+                          status="neutral"
+                          size="sm"
+                          icon={<Container className="size-3.5" />}
+                        >
                           {t("hermes")}
                         </AnimatedBadge>
                       </div>,
@@ -615,12 +618,17 @@ export default async function SandboxesPage({
                       </Link>
                     </div>,
                     <div key="mode" className="min-w-0">
-                      <AnimatedBadge status="neutral" size="sm">
-                        {s.kind === "connector" ? (
-                          <Laptop className="size-3.5" />
-                        ) : (
-                          <Cpu className="size-3.5" />
-                        )}
+                      <AnimatedBadge
+                        status="neutral"
+                        size="sm"
+                        icon={
+                          s.kind === "connector" ? (
+                            <Laptop className="size-3.5" />
+                          ) : (
+                            <Cpu className="size-3.5" />
+                          )
+                        }
+                      >
                         {modeLabel(s.kind, t)}
                       </AnimatedBadge>
                     </div>,

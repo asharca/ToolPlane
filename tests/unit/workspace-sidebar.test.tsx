@@ -20,6 +20,48 @@ const groups = [
 afterEach(() => vi.restoreAllMocks());
 
 describe("workspace sidebar composition", () => {
+  it("expands the active child's parent and selects nested destinations without navigating the parent", () => {
+    const select = vi.fn();
+    render(
+      <AnimatedSidebarProvider>
+        <WorkspaceSidebar
+          activeId="providers"
+          onSelect={select}
+          groups={[
+            {
+              id: "settings",
+              title: "Settings",
+              items: [
+                {
+                  id: "manage",
+                  label: "Manage",
+                  href: "#manage",
+                  children: [
+                    { id: "providers", label: "Providers", href: "#providers" },
+                    { id: "tokens", label: "Tokens", disabled: true },
+                  ],
+                },
+              ],
+            },
+          ]}
+        />
+      </AnimatedSidebarProvider>,
+    );
+    const parent = screen.getByRole("button", { name: "Manage" });
+    expect(parent).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("link", { name: "Providers" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    fireEvent.click(screen.getByRole("link", { name: "Providers" }));
+    expect(select).toHaveBeenLastCalledWith("providers");
+    select.mockClear();
+    fireEvent.click(parent);
+    expect(parent).toHaveAttribute("aria-expanded", "false");
+    expect(select).not.toHaveBeenCalled();
+    fireEvent.click(parent);
+    expect(screen.getByRole("button", { name: "Tokens" })).toBeDisabled();
+  });
   it("retains keyboard focus in its footer when desktop navigation collapses", () => {
     const select = vi.fn();
     render(

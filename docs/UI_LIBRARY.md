@@ -18,6 +18,16 @@ ToolPlane may add only domain adapters required to preserve server actions, Form
 workspace ownership, streaming, or security boundaries. These adapters must not
 redefine beUI styling or create a second generic component library.
 
+The 2026-10-19 source sync targets upstream [`12a9c26`](https://github.com/asharca/ui/commit/12a9c26).
+Installed components include the persistent table-selection header, viewport-aware morph
+popovers, opt-in cursor-following tooltips, cancellable tabs, one-level workspace navigation,
+workspace tab interaction updates, and the activity-list viewport height. ToolPlane retains
+its localized actions, focus/exit hooks, input-method handling, and security adapters.
+Unused upstream components are not installed as part of a source sync.
+The sidebar footer orders notifications above the workspace switcher and account menu.
+Workspace/account triggers follow the upstream transparent/hover-muted treatment and
+bordered, shadowed `MorphPopoverContent` surfaces, keeping domain actions in ToolPlane.
+
 The public homepage combines Registry badges, tilt cards, buttons, inputs, tabs,
 and FAQ components. GitHub source links use `FaGithub` from `react-icons/fa`.
 Keep the header's Popover trigger and button in the same client component tree
