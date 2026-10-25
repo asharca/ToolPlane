@@ -120,9 +120,7 @@ function MarketPublishForm(props: MarketPublishFormProps) {
   } = props;
   const resource = "resource" in props ? props.resource : null;
   const t = useTranslations("console.market");
-  const [piSourceType, setPiSourceType] = useState<"npm" | "git" | "zip">(
-    "npm",
-  );
+  const [piSourceType, setPiSourceType] = useState<"git" | "zip">("git");
   const [publicListing, setPublicListing] = useState(
     "visibility" in props && props.visibility === "public",
   );
@@ -285,14 +283,13 @@ function MarketPublishForm(props: MarketPublishFormProps) {
                   value={piSourceType}
                   onChange={(event) => {
                     setPiSourceType(
-                      event.target.value as "npm" | "git" | "zip",
+                      event.target.value as "git" | "zip",
                     );
                     setSourceId("");
                     clearPreview();
                   }}
                   className="w-full rounded-md border border-border bg-background px-3 py-2"
                 >
-                  <option value="npm">{t("piSourceNpm")}</option>
                   <option value="git">{t("piSourceGit")}</option>
                   <option value="zip">{t("piSourceZip")}</option>
                 </select>
@@ -325,9 +322,7 @@ function MarketPublishForm(props: MarketPublishFormProps) {
                     maxLength={2048}
                     disabled={previewPending}
                     placeholder={
-                      piSourceType === "npm"
-                        ? "npm:package@version"
-                        : "https://github.com/org/repo.git#commit"
+                      "https://github.com/org/repo.git#40-hex-commit"
                     }
                     onChange={clearPreview}
                   />
