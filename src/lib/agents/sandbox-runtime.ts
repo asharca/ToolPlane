@@ -1792,7 +1792,7 @@ async function ensureRuntimeInstalled(
       executable: "node",
       args: [
         "-e",
-        "const fs=require('node:fs'); if(Number(process.versions.node.split('.')[0])!==24 || process.platform!=='linux') throw Error('package_platform_mismatch'); for(const name of ['@earendil-works/pi-coding-agent','@earendil-works/pi-ai']) if(JSON.parse(fs.readFileSync('node_modules/'+name+'/package.json')).version!=='0.87.1') throw Error('PI_SDK_VERSION_MISMATCH');",
+        "const fs=require('node:fs'); if(Number(process.versions.node.split('.')[0])!==26 || process.platform!=='linux') throw Error('package_platform_mismatch'); for(const name of ['@earendil-works/pi-coding-agent','@earendil-works/pi-ai']) if(JSON.parse(fs.readFileSync('node_modules/'+name+'/package.json')).version!=='0.87.1') throw Error('PI_SDK_VERSION_MISMATCH');",
       ],
       timeoutMs: 30_000,
     });
