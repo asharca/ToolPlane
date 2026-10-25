@@ -158,6 +158,13 @@ export async function publishMcpReleaseAction(
   }
 }
 
+const pinnedGithubSourcePattern =
+  /^https:\/\/github\.com\/[^/#?]+\/[^/#?]+(?:\.git)?#[0-9a-f]{40}$/i;
+
+function isPinnedGithubSource(value: string) {
+  return pinnedGithubSourcePattern.test(value.trim());
+}
+
 export type PiPackageSourcePreviewState = {
   ok?: boolean;
   error?: string;
@@ -173,9 +180,14 @@ export async function previewPiPackageSourceAction(
   try {
     const sourceType = formData.get("sourceType");
     const archive = formData.get("archive");
+    const source = String(formData.get("source") ?? "");
+    const sourceId = String(formData.get("sourceId") ?? "") || undefined;
+    if (sourceType !== "zip" && sourceType !== "git")
+      return { error: "source_invalid" };
     if (sourceType === "zip" && !(archive instanceof File))
       return { error: "source_invalid" };
-    if (sourceType === "release") return { error: "source_invalid" };
+    if (sourceType === "git" && !sourceId && !isPinnedGithubSource(source))
+      return { error: "source_invalid" };
     const preview = await previewPiPackageSource({
       workspaceId: ctx.workspace.id,
       publishedById: ctx.user.id,
@@ -187,8 +199,8 @@ export async function previewPiPackageSourceAction(
               formData.get("confirmExecutableCode") === "on",
           }
         : {
-            source: String(formData.get("source") ?? ""),
-            sourceId: String(formData.get("sourceId") ?? "") || undefined,
+            source,
+            sourceId,
           }),
     });
     return { ok: true, preview };
@@ -207,7 +219,13 @@ export async function publishPiPackageReleaseAction(
   try {
     const sourceType = formData.get("sourceType");
     const archive = formData.get("archive");
+    const source = String(formData.get("source") ?? "");
+    const sourceId = String(formData.get("sourceId") ?? "") || undefined;
+    if (sourceType !== "zip" && sourceType !== "git" && sourceType !== "release")
+      return { error: "source_invalid" };
     if (sourceType === "zip" && !(archive instanceof File))
+      return { error: "source_invalid" };
+    if (sourceType === "git" && !sourceId && !isPinnedGithubSource(source))
       return { error: "source_invalid" };
     const sourceDigest = String(formData.get("sourceDigest") ?? "");
     if (sourceType !== "release" && !/^[a-f0-9]{64}$/.test(sourceDigest))
@@ -225,8 +243,8 @@ export async function publishPiPackageReleaseAction(
               targetReleaseId: String(formData.get("targetReleaseId") ?? ""),
             }
           : {
-              source: String(formData.get("source") ?? ""),
-              sourceId: String(formData.get("sourceId") ?? "") || undefined,
+              source,
+              sourceId,
             }),
       visibility:
         formData.get("visibility") === "public" ? "public" : "private",
@@ -240,7 +258,7 @@ export async function publishPiPackageReleaseAction(
       },
       releaseNotes: String(formData.get("releaseNotes") ?? ""),
     });
-    revalidatePath(`/app/${workspaceSlug}/market/compose`);
+    revalidatePath(`/app/${workspaceSlug}/market/import`);
     return { ok: true, listingId: result.listing.id };
   } catch (error) {
     return { error: actionError(error) };
@@ -296,7 +314,7 @@ export async function publishAssembledPiPackageReleaseAction(
       },
       releaseNotes: String(formData.get("releaseNotes") ?? ""),
     });
-    revalidatePath(`/app/${workspaceSlug}/market/compose`);
+    revalidatePath(`/app/${workspaceSlug}/market/import`);
     return { ok: true, listingId: result.listing.id };
   } catch (error) {
     return { error: actionError(error) };
@@ -419,7 +437,7 @@ export async function withdrawMarketReleaseAction(formData: FormData) {
   });
   revalidatePath(`/app/${workspaceSlug}/market`, "layout");
   revalidatePath(`/app/${workspaceSlug}/market/publish`);
-  revalidatePath(`/app/${workspaceSlug}/market/compose`);
+  revalidatePath(`/app/${workspaceSlug}/market/import`);
 }
 
 export async function unpublishMarketListingAction(formData: FormData) {
@@ -434,7 +452,7 @@ export async function unpublishMarketListingAction(formData: FormData) {
   });
   revalidatePath(`/app/${workspaceSlug}/market`, "layout");
   revalidatePath(`/app/${workspaceSlug}/market/publish`);
-  revalidatePath(`/app/${workspaceSlug}/market/compose`);
+  revalidatePath(`/app/${workspaceSlug}/market/import`);
 }
 
 export async function removeAssistantMarketCopyAction(formData: FormData) {
