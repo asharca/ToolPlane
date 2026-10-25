@@ -171,7 +171,11 @@ export default async function MarketPublishPage({
         <p className="text-sm leading-6 text-muted-foreground">
           {t("packageImportOnly")}
         </p>
-        <ButtonLink href={`${base}/market/import`} variant="secondary" size="sm">
+        <ButtonLink
+          href={`${base}/market/import`}
+          variant="secondary"
+          size="sm"
+        >
           {t("intakePi")}
         </ButtonLink>
       </section>
