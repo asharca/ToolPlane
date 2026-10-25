@@ -66,7 +66,7 @@ pnpm account:reset-password -- user@example.com
 docker build --target pi-package-capture -t toolplane-pi-package-capture:0.87.1 .
 ```
 
-捕获固定 Pi SDK 0.87.1、Node 24 和 pnpm 10.14.0。容器无外网、非 root、只读根目录；公开 npm/Git HTTPS 下载通过应用的受控出口，拒绝私网及混合 DNS，TLS 验证保持开启。不会执行扩展 factory、安装脚本或 pnpmfile。一次捕获上限为 300 秒，运行域同时只接收一次；繁忙返回 `capture_busy`，缺少镜像返回 `capture_image_missing`。
+捕获固定 Pi SDK 0.87.1、Node 26 和 pnpm 10.14.0。容器无外网、非 root、只读根目录；公开 npm/Git HTTPS 下载通过应用的受控出口，拒绝私网及混合 DNS，TLS 验证保持开启。不会执行扩展 factory、安装脚本或 pnpmfile。一次捕获上限为 300 秒，运行域同时只接收一次；繁忙返回 `capture_busy`，缺少镜像返回 `capture_image_missing`。
 
 制品最多 20,000 条目、单文件 16 MiB、全部文件 64 MiB、JSON 96 MiB。超过上限或出现不安全路径/链接时返回 `package_capture_failed`，不降低校验、不回退宿主网络；例如 `pi-mcp-adapter@4.0.0` 的当前生产依赖含超过单文件上限的文件，因此不能捕获。发布者需提供可直接加载、无需安装构建脚本的产物。镜像仅复制可信捕获脚本，不包含项目 `.env`、数据库配置或用户文件。
 
