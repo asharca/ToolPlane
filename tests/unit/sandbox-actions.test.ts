@@ -96,7 +96,7 @@ vi.mock("@/lib/process/spawn-spec", () => ({
   resolveSpawnSpec: mocks.resolveSpawnSpec,
 }));
 vi.mock("@/lib/sandboxes/runtime", () => ({
-  DEFAULT_SANDBOX_IMAGE: "node:24-bookworm-slim",
+  DEFAULT_SANDBOX_IMAGE: "node:26-bookworm-slim",
   assertDockerVolumeExists: mocks.assertDockerVolumeExists,
   copyDockerVolume: mocks.copyDockerVolume,
   DockerVolumeCopyCleanupError: mocks.DockerVolumeCopyCleanupError,
@@ -169,7 +169,7 @@ function dockerSandbox(overrides: Record<string, unknown> = {}) {
     deploymentId: "dep1",
     name: "Source lab",
     kind: "docker",
-    image: "node:24-bookworm-slim",
+    image: "node:26-bookworm-slim",
     network: "isolated",
     config: { env: { A: "1" } },
     snapshots: [],
@@ -961,7 +961,7 @@ describe("renameSandboxAction", () => {
         workspaceId: "ws1",
         name: "Sandbox: Copied lab",
         source: "sandbox",
-        sourceRef: "node:24-bookworm-slim",
+        sourceRef: "node:26-bookworm-slim",
         status: "copying",
       }),
     });
@@ -1586,7 +1586,7 @@ describe("renameSandboxAction", () => {
       workspaceId: "ws1",
       deploymentId: "dep1",
       kind: "docker",
-      image: "node:24-bookworm-slim",
+      image: "node:26-bookworm-slim",
       network: "isolated",
       config: null,
       deployment: { id: "dep1", status: "running" },
