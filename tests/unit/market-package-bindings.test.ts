@@ -63,7 +63,7 @@ const manifest = {
     runtime: {
       kind: "pi-sdk",
       piVersion: "0.87.1",
-      nodeMajor: 24,
+      nodeMajor: 26,
       platform: "linux",
       arch: "arm64",
     },
