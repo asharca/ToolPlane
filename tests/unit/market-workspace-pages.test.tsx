@@ -222,7 +222,7 @@ describe("workspace market management pages", () => {
     ).toContain("/app/acme/mcp/mcp-legacy");
   });
 
-  it("links agent publishing and exposes the real skill release form", async () => {
+  it("links package intake and exposes the real publication controls", async () => {
     mocks.getInstalledSkills.mockResolvedValue([
       {
         id: "skill-1",
@@ -278,8 +278,8 @@ describe("workspace market management pages", () => {
     );
 
     expect(
-      screen.getByRole("link", { name: /publishToMarket/ }),
-    ).toHaveAttribute("href", "/app/acme/agents/agent-1/publish");
+      screen.getByRole("link", { name: "Pi package" }),
+    ).toHaveAttribute("href", "/app/acme/market/import");
     expect(screen.getByText("Publish new version")).toBeInTheDocument();
     expect(
       within(
