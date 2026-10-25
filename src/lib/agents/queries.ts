@@ -10,6 +10,8 @@ import {
   type AgentMarketSetupGuide,
 } from "@/lib/agents/market-setup";
 import { AGENT_ENDPOINT_RUNTIME_MANAGED_BY } from "@/lib/agents/public-api/tool-policy";
+import { AgentRevisionConfigSchema } from "./revision-types";
+import { AGENT_PI_PACKAGES_INCLUDE } from "./pi-package-includes";
 
 export type AgentResourceOption = {
   id: string;
@@ -25,33 +27,6 @@ export type AgentResourceOption = {
 const INSTALLED_SKILL_INCLUDE = {
   include: {
     skill: true,
-  },
-} as const;
-
-export const AGENT_PI_PACKAGES_INCLUDE = {
-  orderBy: { marketInstallId: "asc" },
-  select: {
-    marketInstallId: true,
-    releaseId: true,
-    marketInstall: {
-      select: {
-        id: true,
-        targetWorkspaceId: true,
-        listingId: true,
-        status: true,
-        resourceMap: true,
-        listing: { select: { id: true, kind: true, status: true } },
-      },
-    },
-    release: {
-      select: {
-        id: true,
-        listingId: true,
-        reviewStatus: true,
-        checksum: true,
-        manifest: true,
-      },
-    },
   },
 } as const;
 
@@ -558,7 +533,7 @@ export async function listConversations(
   workspaceId: string,
   agentIds: string[],
 ) {
-  return db.conversation.findMany({
+  const conversations = await db.conversation.findMany({
     where: {
       agentId: { in: agentIds },
       agent: { workspaceId },
@@ -566,6 +541,8 @@ export async function listConversations(
     },
     orderBy: { createdAt: "desc" },
     include: {
+      agent: { select: { runtimeKind: true, retiredAt: true } },
+      agentRevision: { select: { agentId: true } },
       publicApiConversation: { select: { id: true } },
       messages: {
         orderBy: { createdAt: "desc" },
@@ -574,18 +551,93 @@ export async function listConversations(
       },
     },
   });
+  return conversations.map((conversation) => ({
+    ...conversation,
+    readOnly:
+      conversation.agent.runtimeKind !== "pi-sdk" ||
+      Boolean(conversation.agent.retiredAt) ||
+      conversation.legacyRevisionUnresolved ||
+      !conversation.agentRevisionId ||
+      conversation.agentRevision?.agentId !== conversation.agentId,
+  }));
 }
 
 export async function getConversation(
   conversationId: string,
   workspaceId: string,
 ) {
-  return db.conversation.findFirst({
+  const conversation = await db.conversation.findFirst({
     where: { id: conversationId, agent: { workspaceId } },
     include: {
       messages: { orderBy: [{ createdAt: "asc" }, { id: "asc" }] },
       publicApiConversation: { select: { id: true } },
-      workSession: { select: { id: true } },
+      workSession: {
+        select: {
+          id: true,
+          agentRevisionId: true,
+          legacyRevisionUnresolved: true,
+        },
+      },
+      agentRevision: { select: { agentId: true, config: true } },
+      sandbox: {
+        select: {
+          id: true,
+          name: true,
+          kind: true,
+          deploymentId: true,
+          deployment: { select: { status: true } },
+        },
+      },
+      agent: {
+        select: {
+          runtimeKind: true,
+          retiredAt: true,
+          runtime: {
+            select: {
+              sandbox: {
+                select: {
+                  id: true,
+                  name: true,
+                  kind: true,
+                  deploymentId: true,
+                  deployment: { select: { status: true } },
+                },
+              },
+            },
+          },
+        },
+      },
     },
   });
+  if (!conversation) return null;
+  const parsed = AgentRevisionConfigSchema.safeParse(
+    conversation.agentRevision?.config,
+  );
+  const config = parsed.success ? parsed.data : null;
+  const work = conversation.workSession;
+  const readOnly =
+    conversation.agent.runtimeKind !== "pi-sdk" ||
+    Boolean(conversation.agent.retiredAt) ||
+    conversation.legacyRevisionUnresolved ||
+    !conversation.agentRevisionId ||
+    !config ||
+    conversation.agentRevision?.agentId !== conversation.agentId ||
+    Boolean(
+      work &&
+        (work.legacyRevisionUnresolved ||
+          work.agentRevisionId !== conversation.agentRevisionId),
+    );
+  return {
+    ...conversation,
+    readOnly,
+    runtimeKind: config?.runtimeKind ?? null,
+    modelName: config?.model ?? null,
+    contextWindow: null,
+    contextWindowEstimated: null,
+    boundSandbox:
+      conversation.sandbox ??
+      (conversation.agent.runtimeKind !== "pi-sdk"
+        ? (conversation.agent.runtime?.sandbox ?? null)
+        : null),
+  };
 }

@@ -1,73 +1,65 @@
 // @vitest-environment node
-import { assertDefined } from "../assert-defined";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
+import type { Prisma } from "@prisma/client";
 import {
+  afterAll,
   beforeAll,
   beforeEach,
-  afterAll,
   describe,
   expect,
   it,
   vi,
 } from "vitest";
 import {
+  Message,
+  SendMessageRequest,
   Task,
   TaskState,
-  SendMessageRequest,
   ListTasksRequest,
 } from "@a2a-js/sdk";
-import { z } from "zod";
-import {
-  TaskNotFoundError,
-  UnsupportedOperationError,
-  RequestMalformedError,
-} from "@a2a-js/sdk/errors";
+import { TaskNotFoundError } from "@a2a-js/sdk/errors";
+import { assertDefined } from "../assert-defined";
 import { db } from "@/lib/db";
 import { createAgentApiKey } from "@/lib/agents/public-api/auth";
 import {
-  resolveA2AGrant,
   assertLiveGrant,
+  resolveA2AGrant,
   type A2AGrant,
 } from "@/lib/a2a/principal";
 import {
-  submitTask,
+  claimTask,
+  eventsAfter,
+  finishTask,
   getTask,
   getTaskRow,
-  claimTask,
-  finishTask,
   interruptTask,
-  requestCancellation,
   listTasks,
-  eventsAfter,
+  requestCancellation,
+  submitTask,
 } from "@/lib/a2a/store";
 import {
-  outputBucket,
+  A2A_LIMITS,
+  jsonEvent,
+  taskEvent,
+  terminal,
+  textArtifact,
+} from "@/lib/a2a/model";
+import {
   A2AQuotaError,
   A2A_TASK_STORAGE_BYTES,
-  reserveNativeExecutionOutput,
+  outputBucket,
   refreshTaskStorage,
+  reserveNativeExecutionOutput,
 } from "@/lib/a2a/quotas";
-import { prepareAgentResponse } from "@/lib/agents/public-api/runs";
-import { A2A_LIMITS } from "@/lib/a2a/model";
-import { textArtifact } from "@/lib/a2a/model";
-import {
-  executeA2ATask,
-  startA2AWorker,
-  stopA2AWorker,
-} from "@/lib/a2a/worker";
+import { startA2AWorker, stopA2AWorker } from "@/lib/a2a/worker";
 
-// AgentApiClient/AgentEndpoint CHECK constraints floor dailyOutputCharacterLimit
-// at 200000, while the default per-task charge is 65536. Raise the per-task
-// charge via the env override so 'client limit < charge' scenarios stay expressible.
-// vi.hoisted runs before imports: A2A_LIMITS is resolved once at module load.
-const { OUTPUT_CHARGE } = vi.hoisted(() => {
-  const charge = 250_000;
-  process.env.TOOLPLANE_A2A_OUTPUT_CHARACTERS = String(charge);
-  return { OUTPUT_CHARGE: charge };
+const OUTPUT_CHARGE = vi.hoisted(() => {
+  // The retained client schema has a 200000-character minimum quota.
+  process.env.TOOLPLANE_A2A_OUTPUT_CHARACTERS = "250000";
+  return 250_000;
 });
 
-// The embedded local transport requires a single client. CI uses the real PostgreSQL
-// adapter unchanged, including the concurrent row-lock test below.
+// Exercise the alternate DB module-loading boundary without changing production pooling.
 vi.mock("@/lib/db", async (original) => {
   if (process.env.TOOLPLANE_TEST_PGLITE !== "1") return original();
   const { PrismaClient } = await import("@prisma/client");
@@ -89,66 +81,69 @@ let userId: string,
   publicId: string,
   clientId: string;
 let grant: A2AGrant, other: A2AGrant, token: string;
-const request = (
-  text = "Review this change",
-  extra: Record<string, unknown> = {},
-) =>
-  SendMessageRequest.fromJSON({
-    message: {
-      messageId: randomUUID(),
-      role: "ROLE_USER",
-      parts: [{ text }],
-      ...extra,
-    },
-    configuration: { returnImmediately: true },
-  });
 const credentialRequest = (value: string) =>
   new Request("https://toolplane.test/a2a", {
     headers: { authorization: `Bearer ${value}` },
   });
-const settledEvents = (taskId: string) =>
+const request = (extra: Record<string, unknown> = {}) =>
+  SendMessageRequest.fromJSON({
+    message: {
+      messageId: randomUUID(),
+      role: "ROLE_USER",
+      parts: [{ text: "Retained user input" }],
+      ...extra,
+    },
+    configuration: { returnImmediately: true },
+  });
+const json = (value: unknown) =>
+  JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+const settledEvents = (id: string) =>
   db.logEvent.findMany({
     where: {
       workspaceId,
       eventName: "a2a.task.settled",
-      attributes: { path: ["data", "a2a", "taskId"], equals: taskId },
+      attributes: { path: ["data", "a2a", "taskId"], equals: id },
     },
     include: { detail: true },
-    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    orderBy: { occurredAt: "asc" },
   });
-const settledDetail = z.object({
-  payload: z.object({ response: z.record(z.string(), z.unknown()) }),
-});
-const settledResponse = (data: unknown) =>
-  Task.fromJSON(settledDetail.parse(data).payload.response);
 
 beforeAll(async () => {
-  process.env.AUTH_SECRET =
-    "isolated-a2a-integration-test-secret-not-production";
+  process.env.AUTH_SECRET = "isolated-a2a-history-test-secret-not-production";
   const stamp = randomUUID();
-  const user = await db.user.create({
-    data: { email: `a2a-${stamp}@test.invalid`, passwordHash: "test-only" },
-  });
-  userId = user.id;
-  const workspace = await db.workspace.create({
-    data: { slug: `a2a-${stamp}`, name: "A2A test", ownerId: userId },
-  });
-  workspaceId = workspace.id;
-  const agent = await db.agent.create({
-    data: {
-      workspaceId,
-      slug: "native-test",
-      name: "Native A2A fixture",
-      runtimeKind: "hermes",
-    },
-  });
-  agentId = agent.id;
+  userId = (
+    await db.user.create({
+      data: {
+        email: `a2a-history-${stamp}@test.invalid`,
+        passwordHash: "test-only",
+      },
+    })
+  ).id;
+  workspaceId = (
+    await db.workspace.create({
+      data: {
+        slug: `a2a-history-${stamp}`,
+        name: "Retained A2A",
+        ownerId: userId,
+      },
+    })
+  ).id;
+  agentId = (
+    await db.agent.create({
+      data: {
+        workspaceId,
+        slug: "retained-service",
+        name: "Retained Hermes Agent",
+        runtimeKind: "hermes",
+      },
+    })
+  ).id;
   const endpoint = await db.agentEndpoint.create({
     data: {
       workspaceId,
       sourceAgentId: agentId,
       publicId: `agep_${stamp.replaceAll("-", "")}`,
-      name: "Native service",
+      name: "Retained service",
       status: "active",
       a2aEnabled: true,
       rpmLimit: 10000,
@@ -162,8 +157,8 @@ beforeAll(async () => {
     data: {
       endpointId,
       version: 1,
-      systemPrompt: "Fixture",
-      runtimeImage: "fixture-not-executed",
+      systemPrompt: "Retained definition",
+      runtimeImage: "legacy:retained",
       toolPolicy: {},
     },
   });
@@ -171,8 +166,8 @@ beforeAll(async () => {
     where: { id: endpointId },
     data: { currentRevisionId: revision.id },
   });
-  const makeClient = async (name: string) => {
-    const client = await db.agentApiClient.create({
+  const client = async (name: string) => {
+    const row = await db.agentApiClient.create({
       data: {
         endpointId,
         name,
@@ -183,24 +178,24 @@ beforeAll(async () => {
       },
     });
     const key = await createAgentApiKey({
-      clientId: client.id,
+      clientId: row.id,
       endpointPublicId: publicId,
       workspaceId,
       sourceAgentId: agentId,
       name,
     });
     return {
+      id: row.id,
+      token: key.token,
       grant: (await resolveA2AGrant(credentialRequest(key.token), publicId))
         .grant,
-      token: key.token,
-      id: client.id,
     };
   };
-  const main = await makeClient("main");
-  grant = main.grant;
-  token = main.token;
+  const main = await client("retained-owner");
   clientId = main.id;
-  other = (await makeClient("other")).grant;
+  token = main.token;
+  grant = main.grant;
+  other = (await client("other-owner")).grant;
 });
 beforeEach(async () => {
   await db.a2AContext.deleteMany({ where: { endpointId } });
@@ -208,7 +203,6 @@ beforeEach(async () => {
     where: { id: endpointId },
     data: {
       a2aEnabled: true,
-      maxConcurrent: 10,
       dailyOutputCharacterLimit: 100000000,
       maxStoredCharacters: 250000000,
     },
@@ -216,8 +210,8 @@ beforeEach(async () => {
   await db.agentApiClient.update({
     where: { id: clientId },
     data: {
-      scopes: ["a2a:send", "a2a:read", "a2a:cancel"],
       status: "active",
+      scopes: ["a2a:send", "a2a:read", "a2a:cancel"],
       dailyOutputCharacterLimit: 20000000,
       maxStoredCharacters: 50000000,
     },
@@ -250,317 +244,269 @@ afterAll(async () => {
   await db.$disconnect();
 });
 
-describe("durable native A2A task lifecycle", () => {
-  it("commits request, task and event together; retries cannot create duplicate execution", async () => {
-    const input = request();
-    const first = await submitTask(grant, input);
-    const replay = await submitTask(grant, input);
-    expect(replay.id).toBe(first.id);
-    expect(await db.a2ATask.count({ where: { context: { endpointId } } })).toBe(
-      1,
-    );
-    expect(await eventsAfter(grant, first.id, 0)).toHaveLength(1);
-    const changed = request("different", {
-      messageId: assertDefined(input.message).messageId,
+/** Import an already-recorded ledger row, never admit or dispatch a retired runtime. */
+async function history(
+  state: TaskState = TaskState.TASK_STATE_COMPLETED,
+  owner = grant,
+  statusAt = new Date(),
+) {
+  return db.$transaction(async (tx) => {
+    const context = await tx.a2AContext.create({
+      data: {
+        workspaceId,
+        targetKind: "published",
+        endpointId,
+        clientId: owner.clientId,
+        revisionId: owner.revisionId,
+        ownerKey: owner.ownerKey,
+        agentRevisionId: null,
+        legacyRevisionUnresolved: true,
+        expiresAt: new Date(Date.now() + 86_400_000),
+      },
     });
-    await expect(submitTask(grant, changed)).rejects.toBeInstanceOf(
-      RequestMalformedError,
-    );
-    expect(
-      JSON.stringify((await getTaskRow(grant, first.id)).grant),
-    ).not.toContain(token);
-  });
-  it.skipIf(process.env.TOOLPLANE_TEST_PGLITE === "1")(
-    "serializes genuinely concurrent admissions in PostgreSQL",
-    async () => {
-      const input = request();
-      const rows = await Promise.all([
-        submitTask(grant, input),
-        submitTask(grant, input),
-        submitTask(grant, input),
-      ]);
-      expect(new Set(rows.map((r) => r.id)).size).toBe(1);
-      expect(
-        await db.a2ARequest.count({ where: { ownerKey: grant.ownerKey } }),
-      ).toBe(1);
-    },
-  );
-  it("enforces client and context authorization on read, continuation, cancellation and deduplication", async () => {
+    const id = randomUUID();
     const input = request();
-    const first = await submitTask(grant, input);
-    await expect(getTask(other, first.id)).rejects.toBeInstanceOf(
-      TaskNotFoundError,
-    );
-    await expect(requestCancellation(other, first.id)).rejects.toBeInstanceOf(
-      TaskNotFoundError,
-    );
-    await expect(
-      submitTask(other, request("continue", { contextId: first.contextId })),
-    ).rejects.toBeInstanceOf(TaskNotFoundError);
-    const independentlyAccepted = await submitTask(other, input);
-    expect(independentlyAccepted.id).not.toBe(first.id);
-    await expect(
-      submitTask(
-        grant,
-        request("reference", { referenceTaskIds: [independentlyAccepted.id] }),
-      ),
-    ).rejects.toBeInstanceOf(TaskNotFoundError);
-  });
-  it("continues an input-required task but never revives a terminal one", async () => {
-    const first = await submitTask(grant, request());
-    const active = await claimTask(first.id);
-    await finishTask(
-      first.id,
-      assertDefined(assertDefined(active).leaseToken),
-      TaskState.TASK_STATE_INPUT_REQUIRED,
-      "Which target branch?",
-    );
-    const continued = await submitTask(
-      grant,
-      request("main", { taskId: first.id, contextId: first.contextId }),
-    );
-    expect(continued.id).toBe(first.id);
-    expect(continued.deadlineAt).toEqual(first.deadlineAt);
-    expect(Task.fromJSON(continued.snapshot).history).toHaveLength(3);
-    const again = await claimTask(first.id);
-    await finishTask(
-      first.id,
-      assertDefined(assertDefined(again).leaseToken),
-      3,
-      undefined,
-      textArtifact("review"),
-    );
-    await expect(
-      submitTask(grant, request("change", { taskId: first.id })),
-    ).rejects.toBeInstanceOf(UnsupportedOperationError);
-    const next = await submitTask(
-      grant,
-      request("new task", { contextId: first.contextId }),
-    );
-    expect(next.id).not.toBe(first.id);
-    expect(next.contextId).toBe(first.contextId);
-    const events = await settledEvents(first.id);
-    expect(events).toMatchObject([
-      {
-        outcome: "success",
-        attributes: {
-          data: { a2a: { taskState: "TASK_STATE_INPUT_REQUIRED" } },
+    const message = assertDefined(input.message);
+    const snapshot = Task.fromJSON({
+      id,
+      contextId: context.id,
+      history: [Message.toJSON(message)],
+      status: { state, timestamp: statusAt.toISOString() },
+      artifacts:
+        state === TaskState.TASK_STATE_COMPLETED
+          ? [textArtifact("Retained response")]
+          : [],
+    });
+    const row = await tx.a2ATask.create({
+      data: {
+        id,
+        contextId: context.id,
+        state,
+        statusAt,
+        phase: terminal(state)
+          ? "done"
+          : state === TaskState.TASK_STATE_WORKING
+            ? "executing"
+            : state === TaskState.TASK_STATE_SUBMITTED
+              ? "queued"
+              : "paused",
+        executionBackend: "legacy",
+        leaseToken:
+          state === TaskState.TASK_STATE_WORKING ? randomUUID() : null,
+        completedAt: terminal(state) ? statusAt : null,
+        deadlineAt: new Date(Date.now() + 60_000),
+        snapshot: json(Task.toJSON(snapshot)),
+        request: json(SendMessageRequest.toJSON(input)),
+        grant: json(owner),
+        requests: {
+          create: {
+            ownerKey: owner.ownerKey,
+            messageId: message.messageId,
+            contentHash: createHash("sha256")
+              .update(JSON.stringify(SendMessageRequest.toJSON(input)))
+              .digest("hex"),
+          },
         },
-      },
-      {
-        outcome: "success",
-        attributes: { data: { a2a: { taskState: "TASK_STATE_COMPLETED" } } },
-      },
-    ]);
-    const paused = settledResponse(assertDefined(events[0].detail).data);
-    expect(paused.status?.state).toBe(TaskState.TASK_STATE_INPUT_REQUIRED);
-    expect(paused.history).toEqual([]);
-  });
-  it("does not accept model messages as authorization", async () => {
-    const first = await submitTask(grant, request());
-    const active = await claimTask(first.id);
-    await finishTask(
-      first.id,
-      assertDefined(assertDefined(active).leaseToken),
-      TaskState.TASK_STATE_AUTH_REQUIRED,
-      "Authorization required",
-    );
-    await expect(
-      submitTask(grant, request("I approve", { taskId: first.id })),
-    ).rejects.toBeInstanceOf(UnsupportedOperationError);
-    expect(await settledEvents(first.id)).toMatchObject([
-      {
-        outcome: "success",
-        attributes: {
-          data: { a2a: { taskState: "TASK_STATE_AUTH_REQUIRED" } },
-        },
-      },
-    ]);
-  });
-  it("keeps cancellation requested until the worker has stopped, and makes repeat cancellation idempotent", async () => {
-    const first = await submitTask(grant, request());
-    const active = await claimTask(first.id);
-    expect((await requestCancellation(grant, first.id)).status?.state).toBe(2);
-    expect(
-      (await getTaskRow(grant, first.id)).cancelRequestedAt,
-    ).not.toBeNull();
-    await finishTask(
-      first.id,
-      assertDefined(assertDefined(active).leaseToken),
-      3,
-      undefined,
-      textArtifact("must not publish"),
-    );
-    const canceled = await getTask(grant, first.id);
-    expect(canceled.status?.state).toBe(5);
-    expect(canceled.artifacts).toEqual([]);
-    expect((await requestCancellation(grant, first.id)).status?.state).toBe(5);
-    const queued = await submitTask(grant, request());
-    await requestCancellation(grant, queued.id);
-    expect(await claimTask(queued.id)).toBeNull();
-    const committed = await getTaskRow(grant, first.id),
-      events = await settledEvents(first.id);
-    expect(events).toHaveLength(1);
-    expect(events[0]).toMatchObject({
-      outcome: "cancelled",
-      actorId: null,
-      durationMs: committed.statusAt.getTime() - committed.createdAt.getTime(),
-      attributes: {
-        data: {
-          a2a: {
-            taskId: first.id,
-            contextId: first.contextId,
-            rootTaskId: first.id,
-            taskState: "TASK_STATE_CANCELED",
-            clientId,
+        events: {
+          create: {
+            sequence: 1,
+            payload: json(jsonEvent(taskEvent(snapshot))),
           },
         },
       },
     });
-    expect(assertDefined(events[0].detail).data).not.toHaveProperty(
-      "payload.request",
+    await refreshTaskStorage(tx, id);
+    return row;
+  });
+}
+
+describe("retained published A2A history", () => {
+  it("rejects all new or continuation sends before inserting or mutating any ledger row", async () => {
+    const retained = await history(TaskState.TASK_STATE_INPUT_REQUIRED);
+    for (const input of [
+      request(),
+      request({ contextId: retained.contextId }),
+      request({ taskId: retained.id }),
+    ])
+      await expect(submitTask(grant, input)).rejects.toMatchObject({
+        status: 410,
+      });
+    expect(await db.a2ATask.count({ where: { context: { endpointId } } })).toBe(
+      1,
     );
-    const response = settledResponse(assertDefined(events[0].detail).data);
-    expect(response.status?.state).toBe(TaskState.TASK_STATE_CANCELED);
-    expect(response.artifacts).toEqual([]);
-    expect(response.history).toEqual([]);
-    expect(JSON.stringify(events)).not.toMatch(
-      /must not publish|Review this change|ownerKey|runtimeState/,
+    expect(await db.a2AContext.count({ where: { endpointId } })).toBe(1);
+    expect(await db.a2ARequest.count({ where: { taskId: retained.id } })).toBe(
+      1,
+    );
+    expect((await getTaskRow(grant, retained.id)).snapshot).toEqual(
+      retained.snapshot,
     );
   });
-  it("guards execution leases and rolls back both snapshot and events on oversize output", async () => {
-    const first = await submitTask(grant, request());
-    const active = await claimTask(first.id);
-    await finishTask(first.id, "wrong-lease", 3);
-    expect((await getTask(grant, first.id)).status?.state).toBe(2);
-    expect(await settledEvents(first.id)).toEqual([]);
+  it("retains protocol artifacts, owner authorization and explicitly unresolved Agent revisions", async () => {
+    const retained = await history();
+    expect(await getTask(grant, retained.id)).toMatchObject({
+      id: retained.id,
+      status: { state: TaskState.TASK_STATE_COMPLETED },
+      artifacts: Task.fromJSON(retained.snapshot).artifacts,
+    });
+    expect(await eventsAfter(grant, retained.id, 0)).toHaveLength(1);
+    expect(
+      await db.a2AContext.findUnique({ where: { id: retained.contextId } }),
+    ).toMatchObject({
+      agentRevisionId: null,
+      legacyRevisionUnresolved: true,
+      revisionId: grant.revisionId,
+    });
+    await expect(getTask(other, retained.id)).rejects.toBeInstanceOf(
+      TaskNotFoundError,
+    );
+    await expect(eventsAfter(other, retained.id, 0)).rejects.toBeInstanceOf(
+      TaskNotFoundError,
+    );
     await expect(
-      finishTask(
-        first.id,
-        assertDefined(assertDefined(active).leaseToken),
-        3,
-        undefined,
-        textArtifact("x".repeat(600000)),
-      ),
-    ).rejects.toThrow();
-    expect((await getTaskRow(grant, first.id)).sequence).toBe(
-      assertDefined(active).sequence,
+      requestCancellation(other, retained.id),
+    ).rejects.toBeInstanceOf(TaskNotFoundError);
+    expect(
+      JSON.stringify((await getTaskRow(grant, retained.id)).grant),
+    ).not.toContain(token);
+  });
+  it("never acquires a new execution lease for a queued retired task", async () => {
+    const retained = await history(TaskState.TASK_STATE_SUBMITTED);
+    await expect(claimTask(retained.id)).rejects.toMatchObject({ status: 410 });
+    expect(await getTaskRow(grant, retained.id)).toMatchObject({
+      leaseToken: null,
+      sequence: 1,
+      phase: "queued",
+    });
+  });
+  it("cancels queued history without allocating execution", async () => {
+    const retained = await history(TaskState.TASK_STATE_SUBMITTED);
+    const cancellations = await Promise.all([
+      requestCancellation(grant, retained.id),
+      requestCancellation(grant, retained.id),
+    ]);
+    expect(cancellations.map((task) => task.status?.state)).toEqual([
+      TaskState.TASK_STATE_CANCELED,
+      TaskState.TASK_STATE_CANCELED,
+    ]);
+    expect(await claimTask(retained.id)).toBeNull();
+    expect(await settledEvents(retained.id)).toHaveLength(1);
+  });
+  it("keeps cancellation pending until an existing execution lease settles and discards late output", async () => {
+    const retained = await history(TaskState.TASK_STATE_WORKING);
+    expect((await requestCancellation(grant, retained.id)).status?.state).toBe(
+      TaskState.TASK_STATE_WORKING,
     );
     expect(
-      await eventsAfter(grant, first.id, assertDefined(active).sequence),
-    ).toEqual([]);
-    expect(await settledEvents(first.id)).toEqual([]);
+      (await getTaskRow(grant, retained.id)).cancelRequestedAt,
+    ).not.toBeNull();
     await finishTask(
-      first.id,
-      assertDefined(assertDefined(active).leaseToken),
-      3,
+      retained.id,
+      assertDefined(retained.leaseToken),
+      TaskState.TASK_STATE_COMPLETED,
       undefined,
-      textArtifact("committed output"),
+      textArtifact("must not publish"),
+    );
+    expect(await getTask(grant, retained.id)).toMatchObject({
+      status: { state: TaskState.TASK_STATE_CANCELED },
+      artifacts: [],
+    });
+    const events = await settledEvents(retained.id);
+    expect(events).toHaveLength(1);
+    expect(events[0].outcome).toBe("cancelled");
+    expect(JSON.stringify(events)).not.toMatch(
+      /must not publish|Retained user input|ownerKey|runtimeState/,
+    );
+  });
+  it("fences existing leases and rolls back oversized journal updates atomically", async () => {
+    const retained = await history(TaskState.TASK_STATE_WORKING);
+    await finishTask(
+      retained.id,
+      "wrong-lease",
+      TaskState.TASK_STATE_COMPLETED,
+    );
+    expect((await getTaskRow(grant, retained.id)).sequence).toBe(1);
+    await expect(
+      finishTask(
+        retained.id,
+        assertDefined(retained.leaseToken),
+        TaskState.TASK_STATE_COMPLETED,
+        undefined,
+        textArtifact("x".repeat(A2A_LIMITS.outputCharacters + 1)),
+      ),
+    ).rejects.toBeInstanceOf(A2AQuotaError);
+    expect(await getTaskRow(grant, retained.id)).toMatchObject({
+      sequence: 1,
+      state: TaskState.TASK_STATE_WORKING,
+      leaseToken: retained.leaseToken,
+      snapshot: retained.snapshot,
+    });
+    expect(await eventsAfter(grant, retained.id, 1)).toEqual([]);
+    expect(await settledEvents(retained.id)).toEqual([]);
+    await finishTask(
+      retained.id,
+      assertDefined(retained.leaseToken),
+      TaskState.TASK_STATE_COMPLETED,
+      undefined,
+      textArtifact("Committed existing execution output"),
     );
     await finishTask(
-      first.id,
-      assertDefined(assertDefined(active).leaseToken),
-      3,
+      retained.id,
+      assertDefined(retained.leaseToken),
+      TaskState.TASK_STATE_COMPLETED,
       undefined,
       textArtifact("late duplicate"),
     );
-    const events = await settledEvents(first.id);
-    expect(events).toHaveLength(1);
-    expect(events[0]).toMatchObject({
-      outcome: "success",
-      attributes: { data: { a2a: { taskState: "TASK_STATE_COMPLETED" } } },
-    });
-    expect(JSON.stringify(assertDefined(events[0].detail).data)).toContain(
-      "committed output",
-    );
-    expect(JSON.stringify(assertDefined(events[0].detail).data)).not.toContain(
+    expect(await settledEvents(retained.id)).toHaveLength(1);
+    expect(JSON.stringify(await getTask(grant, retained.id))).not.toContain(
       "late duplicate",
     );
   });
-  it("records deadline failure rather than an executor-proposed completion", async () => {
-    const first = await submitTask(grant, request()),
-      active = assertDefined(await claimTask(first.id));
+  it("settles an expired existing execution as failure instead of accepting its proposed completion", async () => {
+    const retained = await history(TaskState.TASK_STATE_WORKING);
     await db.a2ATask.update({
-      where: { id: first.id },
+      where: { id: retained.id },
       data: { deadlineAt: new Date(0) },
     });
     await finishTask(
-      first.id,
-      assertDefined(active.leaseToken),
+      retained.id,
+      assertDefined(retained.leaseToken),
       TaskState.TASK_STATE_COMPLETED,
       undefined,
-      textArtifact("too late"),
+      textArtifact("late output"),
     );
-    const committed = await getTaskRow(grant, first.id),
-      events = await settledEvents(first.id);
-    expect(committed.state).toBe(TaskState.TASK_STATE_FAILED);
-    expect(events).toHaveLength(1);
-    expect(events[0]).toMatchObject({
-      outcome: "error",
-      durationMs: committed.statusAt.getTime() - committed.createdAt.getTime(),
-      attributes: { data: { a2a: { taskState: "TASK_STATE_FAILED" } } },
+    expect(await getTask(grant, retained.id)).toMatchObject({
+      status: { state: TaskState.TASK_STATE_FAILED },
+      artifacts: [],
     });
-    const response = settledResponse(assertDefined(events[0].detail).data);
-    expect(response.status?.state).toBe(TaskState.TASK_STATE_FAILED);
-    expect(response.artifacts).toEqual([]);
+    expect(await settledEvents(retained.id)).toHaveLength(1);
   });
-  it("pins context revision and preserves task isolation across configuration releases", async () => {
-    const first = await submitTask(grant, request());
-    const active = await claimTask(first.id);
-    await finishTask(
-      first.id,
-      assertDefined(assertDefined(active).leaseToken),
-      3,
+  it("uses signed owner- and filter-bound cursors for retained history", async () => {
+    const earlier = await history(
+      TaskState.TASK_STATE_COMPLETED,
+      grant,
+      new Date("2026-01-01T00:00:00Z"),
     );
-    const original = await db.a2AContext.findUniqueOrThrow({
-      where: { id: first.contextId },
-    });
-    const revision = await db.agentEndpointRevision.create({
-      data: {
-        endpointId,
-        version: 2,
-        systemPrompt: "New",
-        runtimeImage: "fixture",
-        toolPolicy: {},
-      },
-    });
-    await db.agentEndpoint.update({
-      where: { id: endpointId },
-      data: { currentRevisionId: revision.id },
-    });
-    const next = await submitTask(
-      { ...grant, revisionId: revision.id },
-      request("next", { contextId: first.contextId }),
-    );
-    expect(
-      (await db.a2AContext.findUniqueOrThrow({ where: { id: next.contextId } }))
-        .revisionId,
-    ).toBe(original.revisionId);
-  });
-  it("uses signed scope-bound keyset cursors in status timestamp order", async () => {
-    const one = await submitTask(grant, request("one"));
-    const two = await submitTask(grant, request("two"));
-    const active = await claimTask(one.id);
-    await finishTask(
-      one.id,
-      assertDefined(assertDefined(active).leaseToken),
-      3,
+    const later = await history(
+      TaskState.TASK_STATE_COMPLETED,
+      grant,
+      new Date("2026-01-02T00:00:00Z"),
     );
     const first = await listTasks(
       grant,
       ListTasksRequest.fromJSON({ pageSize: 1, historyLength: 0 }),
     );
-    expect(first.tasks[0].id).toBe(one.id);
+    expect(first.tasks.map((task) => task.id)).toEqual([later.id]);
     expect(first.tasks[0].history).toEqual([]);
-    expect(first.nextPageToken).not.toBe("");
     const second = await listTasks(
       grant,
       ListTasksRequest.fromJSON({
         pageSize: 1,
+        historyLength: 0,
         pageToken: first.nextPageToken,
       }),
     );
-    expect(second.tasks[0].id).toBe(two.id);
+    expect(second.tasks.map((task) => task.id)).toEqual([earlier.id]);
     expect(second.nextPageToken).toBe("");
     await expect(
       listTasks(
@@ -572,37 +518,57 @@ describe("durable native A2A task lifecycle", () => {
       listTasks(
         grant,
         ListTasksRequest.fromJSON({
-          pageToken: `${first.nextPageToken}.extra`,
+          pageToken: first.nextPageToken,
+          status: TaskState.TASK_STATE_FAILED,
         }),
       ),
     ).rejects.toThrow();
   });
-  it("rechecks credential scopes and revocation after admission", async () => {
-    await assertLiveGrant(grant, "send");
+  it("revalidates scopes and key revocation on retained reads", async () => {
+    const retained = await history();
+    await assertLiveGrant(grant, "read");
+    await db.agentApiClient.update({
+      where: { id: clientId },
+      data: { scopes: ["a2a:cancel"] },
+    });
+    await expect(getTask(grant, retained.id)).rejects.toBeInstanceOf(
+      TaskNotFoundError,
+    );
+    await expect(eventsAfter(grant, retained.id, 0)).rejects.toBeInstanceOf(
+      TaskNotFoundError,
+    );
+    await expect(
+      listTasks(grant, ListTasksRequest.fromJSON({})),
+    ).rejects.toBeInstanceOf(TaskNotFoundError);
     await db.agentApiClient.update({
       where: { id: clientId },
       data: { scopes: ["a2a:read"] },
     });
-    await expect(assertLiveGrant(grant, "send")).rejects.toBeInstanceOf(
+    const queued = await history(TaskState.TASK_STATE_SUBMITTED);
+    await expect(requestCancellation(grant, queued.id)).rejects.toBeInstanceOf(
       TaskNotFoundError,
     );
-    await assertLiveGrant(grant, "read");
+    expect((await getTaskRow(grant, queued.id)).state).toBe(
+      TaskState.TASK_STATE_SUBMITTED,
+    );
     await db.agentApiKey.updateMany({
       where: { clientId },
       data: { revokedAt: new Date() },
     });
-    await expect(assertLiveGrant(grant, "read")).rejects.toBeInstanceOf(
+    await expect(getTask(grant, retained.id)).rejects.toBeInstanceOf(
+      TaskNotFoundError,
+    );
+    await expect(eventsAfter(grant, retained.id, 0)).rejects.toBeInstanceOf(
+      TaskNotFoundError,
+    );
+    await expect(
+      listTasks(grant, ListTasksRequest.fromJSON({})),
+    ).rejects.toBeInstanceOf(TaskNotFoundError);
+    await expect(requestCancellation(grant, queued.id)).rejects.toBeInstanceOf(
       TaskNotFoundError,
     );
   });
-  it("requires opt-in service scopes and rejects cookies or browser origins", async () => {
-    await db.agentApiClient.update({
-      where: { id: clientId },
-      data: { scopes: ["responses:create", "responses:read"] },
-    });
-    await expect(
-      resolveA2AGrant(credentialRequest(token), publicId),
-    ).rejects.toMatchObject({ status: 403 });
+  it("rejects wildcard service scopes, cookies and browser-origin credentials", async () => {
     await db.agentApiClient.update({
       where: { id: clientId },
       data: { scopes: ["*"] },
@@ -624,191 +590,84 @@ describe("durable native A2A task lifecycle", () => {
       status: 403,
     });
   });
-  it("rejects expired contexts even through the duplicate-message ledger", async () => {
-    const input = request();
-    const first = await submitTask(grant, input);
-    await db.a2AContext.update({
-      where: { id: first.contextId },
-      data: { expiresAt: new Date(0) },
-    });
-    await expect(submitTask(grant, input)).rejects.toBeInstanceOf(
-      TaskNotFoundError,
-    );
-  });
-  it("honors service admission limits before creating any extra task", async () => {
-    await db.agentEndpoint.update({
-      where: { id: endpointId },
-      data: { maxConcurrent: 1 },
-    });
-    await submitTask(grant, request());
-    await expect(submitTask(other, request())).rejects.toBeInstanceOf(
-      UnsupportedOperationError,
-    );
-    expect(await db.a2ATask.count({ where: { context: { endpointId } } })).toBe(
-      1,
-    );
-  });
-  it("executes through the new worker port without the legacy Responses runner", async () => {
-    const first = await submitTask(grant, request());
-    let ran = false;
-    await executeA2ATask(first.id, async (_task, signal) => {
-      signal.throwIfAborted();
-      ran = true;
-      return { state: 3, artifact: textArtifact("fixture result") };
-    });
-    expect(ran).toBe(true);
-    const result = await getTask(grant, first.id);
-    expect(result.status?.state).toBe(3);
-    expect(result.artifacts[0].parts[0].content).toEqual({
-      $case: "text",
-      value: "fixture result",
-    });
-    expect(
-      (await eventsAfter(grant, first.id, 0)).map((event) => event.sequence),
-    ).toEqual([1, 2, 3, 4]);
-  });
-  it("recovers interrupted executions as failures, never blindly replaying side effects", async () => {
-    const first = await submitTask(grant, request());
-    await claimTask(first.id);
+  it("quarantines interrupted historical executions without replaying side effects", async () => {
+    const retained = await history(TaskState.TASK_STATE_WORKING);
     await startA2AWorker();
     stopA2AWorker();
-    expect((await getTask(grant, first.id)).status?.state).toBe(4);
-    await interruptTask(first.id, "Late duplicate interruption");
-    const events = await settledEvents(first.id);
-    expect(events).toHaveLength(1);
-    expect(events[0]).toMatchObject({
-      outcome: "error",
-      attributes: { data: { a2a: { taskState: "TASK_STATE_FAILED" } } },
-    });
+    expect((await getTask(grant, retained.id)).status?.state).toBe(
+      TaskState.TASK_STATE_FAILED,
+    );
+    await interruptTask(retained.id, "Late duplicate interruption");
+    expect(await settledEvents(retained.id)).toHaveLength(1);
   });
 });
 
-describe("native task resource accounting", () => {
-  it("persists payload charges with the task, request and event; duplicate messages do not reserve execution twice", async () => {
-    const input = request();
-    const task = await submitTask(grant, input);
-    expect((await getTaskRow(grant, task.id)).storageBytes).toBeGreaterThan(
-      512,
-    );
-    await submitTask(grant, input);
-    expect(
-      await db.agentApiUsageBucket.count({
-        where: { key: outputBucket("client", clientId) },
-      }),
-    ).toBe(0);
-    const claimed = await claimTask(task.id);
-    expect(claimed).not.toBeNull();
-    expect(await claimTask(task.id)).toBeNull();
-    const buckets = await db.agentApiUsageBucket.findMany({
-      where: { key: outputBucket("client", clientId) },
+describe("retained native journal and resource accounting", () => {
+  it("keeps UTF-8 payload accounting consistent with retained events", async () => {
+    const retained = await history();
+    const before = (await getTaskRow(grant, retained.id)).storageBytes;
+    await db.$transaction(async (tx) => {
+      await tx.a2AEvent.create({
+        data: {
+          taskId: retained.id,
+          sequence: 2,
+          payload: { text: "界".repeat(1000) },
+        },
+      });
+      await refreshTaskStorage(tx, retained.id);
     });
-    expect(buckets.length).toBeGreaterThan(0);
     expect(
-      buckets.every((bucket) => bucket.count === A2A_LIMITS.outputCharacters),
-    ).toBe(true);
-    await requestCancellation(grant, task.id);
-    await finishTask(
-      task.id,
-      assertDefined(assertDefined(claimed).leaseToken),
-      TaskState.TASK_STATE_CANCELED,
-    );
-    expect(
-      (
-        await db.agentApiUsageBucket.findFirstOrThrow({
-          where: { key: outputBucket("client", clientId) },
-        })
-      ).count,
-    ).toBe(A2A_LIMITS.outputCharacters);
+      (await getTaskRow(grant, retained.id)).storageBytes - before,
+    ).toBeGreaterThanOrEqual(3000);
   });
-  it("rejects insufficient retained space without leaving a task or request ledger row", async () => {
-    await db.agentApiClient.update({
-      where: { id: clientId },
-      data: { maxStoredCharacters: A2A_TASK_STORAGE_BYTES - 1 },
-    });
-    await expect(submitTask(grant, request())).rejects.toBeInstanceOf(
-      A2AQuotaError,
-    );
-    expect(await db.a2ATask.count({ where: { context: { endpointId } } })).toBe(
-      0,
-    );
-    expect(
-      await db.a2ARequest.count({ where: { ownerKey: grant.ownerKey } }),
-    ).toBe(0);
-  });
-  it("does not start an executor or partially charge other scopes when its output quota is exhausted", async () => {
-    const task = await submitTask(grant, request());
-    await db.agentApiClient.update({
-      where: { id: clientId },
-      data: { dailyOutputCharacterLimit: OUTPUT_CHARGE - 1 },
-    });
-    const executor = vi.fn();
-    await startA2AWorker();
-    try {
-      await executeA2ATask(task.id, executor);
-    } finally {
-      stopA2AWorker();
-    }
-    expect(executor).not.toHaveBeenCalled();
-    expect((await getTask(grant, task.id)).status?.state).toBe(
-      TaskState.TASK_STATE_FAILED,
-    );
-    expect(
-      await db.agentApiUsageBucket.count({
-        where: { key: outputBucket("workspace", workspaceId) },
-      }),
-    ).toBe(0);
-  });
-  it("keeps native reservations visible to the compatibility Responses admission", async () => {
-    const task = await submitTask(grant, request());
-    await claimTask(task.id);
-    await db.agentApiClient.update({
-      where: { id: clientId },
-      data: { dailyOutputCharacterLimit: 200_000 },
+  it("can settle a failed existing lease when successful output exceeds the journal cap", async () => {
+    const retained = await history(TaskState.TASK_STATE_WORKING);
+    await db.a2ATask.update({
+      where: { id: retained.id },
+      data: {
+        snapshot: {
+          ...(Task.toJSON(Task.fromJSON(retained.snapshot)) as object),
+          metadata: { retainedPayload: "x".repeat(A2A_TASK_STORAGE_BYTES) },
+        },
+      },
     });
     await expect(
-      prepareAgentResponse({
-        principal: {
-          credentialType: "api_key",
-          endpointId,
-          endpointPublicId: publicId,
-          workspaceId,
-          sourceAgentId: agentId,
-          revisionId: grant.revisionId,
-          clientId,
-          keyId: grant.keyId,
-          subjectHash: null,
-          origin: null,
-          scopes: ["responses:create"],
-          limits: {
-            rpm: 1000,
-            dailyRequests: 10000,
-            maxConcurrent: 10,
-            timeoutSeconds: 60,
-            retentionDays: 7,
-          },
-          rateBuckets: {
-            endpointRpm: 1000,
-            clientRpm: 1000,
-            endpointDaily: 10000,
-            clientDaily: 10000,
-          },
-        },
-        input: "legacy request",
-        endUser: "test",
-        stream: false,
-      }),
-    ).rejects.toMatchObject({ code: "resource_limit_exceeded", status: 429 });
-    expect(await db.agentRun.count({ where: { endpointId } })).toBe(0);
+      finishTask(
+        retained.id,
+        assertDefined(retained.leaseToken),
+        TaskState.TASK_STATE_COMPLETED,
+        undefined,
+        textArtifact("too much"),
+      ),
+    ).rejects.toBeInstanceOf(A2AQuotaError);
+    expect(await settledEvents(retained.id)).toEqual([]);
+    expect(
+      await db.a2ATask.findUnique({ where: { id: retained.id } }),
+    ).toMatchObject({
+      sequence: 1,
+      state: TaskState.TASK_STATE_WORKING,
+      leaseToken: retained.leaseToken,
+    });
+    expect(await eventsAfter(grant, retained.id, 1)).toEqual([]);
+    await finishTask(
+      retained.id,
+      assertDefined(retained.leaseToken),
+      TaskState.TASK_STATE_FAILED,
+      "Stopped at the configured quota.",
+    );
+    expect((await getTask(grant, retained.id)).status?.state).toBe(
+      TaskState.TASK_STATE_FAILED,
+    );
+    expect(await settledEvents(retained.id)).toHaveLength(1);
   });
-  it("reserves both UTC days for executions that can cross midnight", async () => {
-    const now = new Date("2030-01-01T23:59:55.000Z");
+  it("preserves conservative reservations on both UTC days of an existing cross-midnight execution", async () => {
     await db.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${workspaceId} FOR UPDATE`;
       await reserveNativeExecutionOutput(
         tx,
         grant,
         new Date("2030-01-02T00:01:00Z"),
-        now,
+        new Date("2030-01-01T23:59:55Z"),
       );
     });
     const buckets = await db.agentApiUsageBucket.findMany({
@@ -820,80 +679,49 @@ describe("native task resource accounting", () => {
       "2030-01-02T00:00:00.000Z",
     ]);
     expect(buckets.map((bucket) => bucket.count)).toEqual([
-      A2A_LIMITS.outputCharacters,
-      A2A_LIMITS.outputCharacters,
+      OUTPUT_CHARGE,
+      OUTPUT_CHARGE,
     ]);
   });
-  it("still settles a failed task when the successful payload would exceed its journal cap", async () => {
-    const task = await submitTask(grant, request());
-    const claimed = await claimTask(task.id);
-    await db.a2ATask.update({
-      where: { id: task.id },
-      data: { sequence: 128 },
-    });
-    await expect(
-      finishTask(
-        task.id,
-        assertDefined(assertDefined(claimed).leaseToken),
-        TaskState.TASK_STATE_COMPLETED,
-        undefined,
-        textArtifact("result"),
-      ),
-    ).rejects.toBeInstanceOf(A2AQuotaError);
-    expect((await getTask(grant, task.id)).artifacts).toHaveLength(0);
-    expect(await settledEvents(task.id)).toEqual([]);
-    await finishTask(
-      task.id,
-      assertDefined(assertDefined(claimed).leaseToken),
-      TaskState.TASK_STATE_FAILED,
-      "Stopped at the configured quota.",
-    );
-    expect((await getTask(grant, task.id)).status?.state).toBe(
-      TaskState.TASK_STATE_FAILED,
-    );
-    const events = await settledEvents(task.id);
-    expect(events).toHaveLength(1);
-    expect(events[0]).toMatchObject({
-      outcome: "error",
-      attributes: { data: { a2a: { taskState: "TASK_STATE_FAILED" } } },
-    });
-  });
-  it("accounts task payloads in UTF-8 bytes and bounds retained event history", async () => {
-    const task = await submitTask(grant, request());
-    const before = (await getTaskRow(grant, task.id)).storageBytes;
-    await db.$transaction(async (tx) => {
-      await tx.a2AEvent.create({
-        data: {
-          taskId: task.id,
-          sequence: 2,
-          payload: { text: "中".repeat(1000) },
-        },
-      });
-      await refreshTaskStorage(tx, task.id);
-    });
-    expect(
-      (await getTaskRow(grant, task.id)).storageBytes - before,
-    ).toBeGreaterThanOrEqual(3000);
-  });
   it.skipIf(process.env.TOOLPLANE_TEST_PGLITE === "1")(
-    "serializes competing task claims at the shared output ceiling in PostgreSQL",
+    "serializes existing-execution reservations without partially charging other scopes",
     async () => {
-      const one = await submitTask(grant, request());
-      const two = await submitTask(grant, request());
       await db.agentApiClient.update({
         where: { id: clientId },
         data: { dailyOutputCharacterLimit: OUTPUT_CHARGE },
       });
-      const results = await Promise.allSettled([
-        claimTask(one.id),
-        claimTask(two.id),
-      ]);
+      const reserve = () =>
+        db.$transaction(async (tx) => {
+          await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${workspaceId} FOR UPDATE`;
+          await reserveNativeExecutionOutput(
+            tx,
+            grant,
+            new Date("2030-01-01T12:01:00Z"),
+            new Date("2030-01-01T12:00:00Z"),
+          );
+        });
+      const results = await Promise.allSettled([reserve(), reserve()]);
       expect(
         results.filter((result) => result.status === "fulfilled"),
       ).toHaveLength(1);
       expect(
         results.filter((result) => result.status === "rejected"),
       ).toHaveLength(1);
+      const buckets = await db.agentApiUsageBucket.findMany({
+        where: {
+          key: {
+            in: [
+              outputBucket("workspace", workspaceId),
+              outputBucket("endpoint", endpointId),
+              outputBucket("client", clientId),
+            ],
+          },
+        },
+      });
+      expect(buckets).toHaveLength(3);
+      expect(buckets.every((bucket) => bucket.count === OUTPUT_CHARGE)).toBe(
+        true,
+      );
     },
   );
 });

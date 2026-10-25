@@ -11,7 +11,6 @@ import {
   deleteAdminAssistantTemplate,
   updateAdminMarketListing,
   updateAdminAssistantTemplate,
-  updateAdminPublicToolkit,
   type AdminMarketListingStatus,
 } from "@/lib/admin/market-catalog";
 import { requireAdmin } from "@/lib/auth/admin";
@@ -137,30 +136,6 @@ export async function updateMarketListingAdminAction(
         status: requestedStatus as AdminMarketListingStatus,
         curated: formData.get("curated") === "on",
         isFeatured: formData.get("isFeatured") === "on",
-        categoryIds: categoryIds(formData),
-      },
-      admin.id,
-    );
-  } catch (error) {
-    return { error: t(errorKey(error)) };
-  }
-  revalidateMarket();
-  return { ok: true };
-}
-
-export async function updatePublicToolkitAdminAction(
-  _previous: AdminActionState,
-  formData: FormData,
-): Promise<AdminActionState> {
-  const admin = await requireAdmin();
-  const t = await getTranslations("admin");
-  const id = value(formData, "toolkitId");
-  if (!id) return { error: t("errorMarketResourceNotFound") };
-  try {
-    await updateAdminPublicToolkit(
-      {
-        id,
-        enabled: formData.get("enabled") === "on",
         categoryIds: categoryIds(formData),
       },
       admin.id,

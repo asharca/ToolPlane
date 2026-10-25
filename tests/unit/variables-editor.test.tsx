@@ -1,9 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { VariablesEditor } from "@/components/dashboard/VariablesEditor";
+import { setDeploymentEnvAction } from "@/lib/workspace/actions";
 
 vi.mock("@/lib/workspace/actions", () => ({
   setDeploymentEnvAction: vi.fn(),
+  getMcpConnectionImpactAction: vi
+    .fn()
+    .mockResolvedValue({ agentIds: [], assistantIds: [] }),
 }));
 
 function formChanges(): unknown {
@@ -67,5 +71,31 @@ describe("VariablesEditor", () => {
       screen.getByText("This variable will be removed when you save."),
     ).toBeInTheDocument();
     expect(formChanges()).toEqual({ set: {}, remove: ["API_TOKEN"] });
+  });
+
+  it("surfaces a shared-change refusal instead of reporting a saved environment", async () => {
+    vi.mocked(setDeploymentEnvAction).mockResolvedValueOnce({
+      error: "sharedChangeConfirmationRequired",
+      impactedObjects: { agentIds: ["agent-shared"], assistantIds: [] },
+    });
+    render(
+      <VariablesEditor
+        slug="acme"
+        deploymentId="dep1"
+        initial={[{ key: "API_TOKEN", configured: true, required: true }]}
+      />,
+    );
+    const input = screen.getByPlaceholderText("Enter a replacement value");
+    fireEvent.change(input, { target: { value: "replacement-secret" } });
+    const form = input.closest("form");
+    if (!form) throw new Error("Expected environment form");
+    fireEvent.submit(form);
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(await screen.findByText("Agent · agent-shared")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox")).not.toBeChecked();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(
+      screen.getByPlaceholderText("Enter a replacement value"),
+    ).toHaveValue("replacement-secret");
   });
 });

@@ -21,7 +21,6 @@ const configuredCreateOptions = {
   defaultModel: { providerId: "provider-1", model: "gpt-4.1" },
   deployments: [],
   skills: [],
-  toolkits: [],
 };
 
 vi.mock("@/lib/agents/actions", () => actions);
@@ -63,7 +62,6 @@ describe("AgentsBrowser", () => {
           providers: [],
           deployments: [],
           skills: [],
-          toolkits: [],
         }}
       />,
     );
@@ -107,7 +105,6 @@ describe("AgentsBrowser", () => {
           ],
           deployments: [],
           skills: [],
-          toolkits: [],
         }}
       />,
     );
@@ -131,7 +128,6 @@ describe("AgentsBrowser", () => {
           providers: [],
           deployments: [],
           skills: [],
-          toolkits: [],
         }}
         marketAgents={[
           {
@@ -143,7 +139,7 @@ describe("AgentsBrowser", () => {
             iconUrl: null,
             publisher: "ToolPlane",
             tags: ["research"],
-            runtimes: ["hermes"],
+            runtimes: ["pi-sdk"],
             resourceCount: 3,
             sandboxCount: 1,
             installCount: 12,
@@ -195,7 +191,6 @@ describe("AgentsBrowser", () => {
           providers: [],
           deployments: [],
           skills: [],
-          toolkits: [],
         }}
       />,
     );
@@ -218,7 +213,6 @@ describe("AgentsBrowser", () => {
           providers: [],
           deployments: [],
           skills: [],
-          toolkits: [],
         }}
       />,
     );
@@ -236,7 +230,6 @@ describe("AgentsBrowser", () => {
           providers: [],
           deployments: [],
           skills: [],
-          toolkits: [],
         }}
       />,
     );
@@ -258,10 +251,9 @@ describe("AgentsBrowser", () => {
     );
 
     await openBlankCreate(user);
+    expect(screen.queryByRole("radio")).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("radio", {
-        name: /Claude Code|DeepSeek Harness|Hermes/,
-      }),
+      screen.queryByText("Toolkits", { exact: true }),
     ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Create draft agent" }),
@@ -278,12 +270,9 @@ describe("AgentsBrowser", () => {
     expect(screen.getByRole("button", { name: "Next" })).toBeEnabled();
     await advanceToCreate(user);
     expect(screen.getByRole("button", { name: "Create agent" })).toBeEnabled();
-    expect(
-      screen.getByText(/dedicated Docker sandbox is created automatically/i),
-    ).toBeInTheDocument();
   });
 
-  it("filters harness providers and provisions its sandbox automatically", async () => {
+  it("filters unsupported providers and provisions its sandbox automatically", async () => {
     const user = userEvent.setup();
     render(
       <AgentsBrowser
@@ -365,7 +354,6 @@ describe("AgentsBrowser", () => {
     );
 
     await openBlankCreate(user);
-    await user.click(screen.getByRole("radio", { name: "Pi" }));
     await user.type(screen.getByLabelText("Name"), "Research agent");
     await user.click(screen.getByRole("button", { name: "Next" }));
     await user.click(screen.getByRole("button", { name: "Next" }));
@@ -383,7 +371,6 @@ describe("AgentsBrowser", () => {
 
     expect(screen.queryByLabelText("Name")).not.toBeInTheDocument();
     await openBlankCreate(user);
-    await user.click(screen.getByRole("radio", { name: "Pi" }));
     expect(
       screen.getByRole("button", { name: "Model: gpt-4.1" }),
     ).toBeInTheDocument();
@@ -462,14 +449,17 @@ describe("AgentsBrowser", () => {
     );
     const formData = actions.createAgentAction.mock.calls[0]?.[0] as FormData;
     expect(formData.get("maxSteps")).toBe("42");
+    expect(formData.get("runtime")).toBe("pi-sdk");
+    expect(formData.getAll("toolkitId")).toEqual([]);
     finishCreate?.();
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Created" })).toBeEnabled(),
     );
   });
 
-  it("lets the backend provision a sandbox when creating a Pi agent", async () => {
+  it("ignores retired runtime queries and creates only a native Pi agent", async () => {
     const user = userEvent.setup();
+    navigation.search = "create=1&runtime=hermes";
     render(
       <AgentsBrowser
         slug="acme"
@@ -478,8 +468,6 @@ describe("AgentsBrowser", () => {
       />,
     );
 
-    await openBlankCreate(user);
-    await user.click(screen.getByRole("radio", { name: "Pi" }));
     await user.type(screen.getByLabelText("Name"), "Harness");
     await advanceToCreate(user);
     await user.click(screen.getByRole("button", { name: "Create agent" }));
@@ -488,7 +476,8 @@ describe("AgentsBrowser", () => {
       expect(actions.createAgentAction).toHaveBeenCalledOnce(),
     );
     const formData = actions.createAgentAction.mock.calls[0][0] as FormData;
-    expect(formData.get("runtime")).toBe("pi");
+    expect(formData.get("runtime")).toBe("pi-sdk");
+    expect(screen.queryByRole("radio")).not.toBeInTheDocument();
     expect(formData.getAll("sandboxId")).toEqual([]);
   });
 
@@ -503,7 +492,6 @@ describe("AgentsBrowser", () => {
     );
 
     await openBlankCreate(user);
-    await user.click(screen.getByRole("radio", { name: "Pi" }));
     await user.type(screen.getByLabelText("Name"), "Researcher");
     await user.click(screen.getByRole("button", { name: "Next" }));
     await user.type(
@@ -542,7 +530,6 @@ describe("AgentsBrowser", () => {
           providers: [],
           deployments: [],
           skills: [],
-          toolkits: [],
         }}
       />,
     );
@@ -590,7 +577,6 @@ describe("AgentsBrowser", () => {
           providers: [],
           deployments: [],
           skills: [],
-          toolkits: [],
         }}
       />,
     );
@@ -630,7 +616,6 @@ describe("AgentsBrowser", () => {
           providers: [],
           deployments: [],
           skills: [],
-          toolkits: [],
         }}
       />,
     );
@@ -650,7 +635,7 @@ describe("AgentsBrowser", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("requires a new sandbox instead of cloning a dedicated-runtime agent", async () => {
+  it("offers a fresh draft clone for native agents and preserves deletion controls", async () => {
     const user = userEvent.setup();
     render(
       <AgentsBrowser
@@ -664,7 +649,7 @@ describe("AgentsBrowser", () => {
             model: "gpt-4.1",
             toolCount: 2,
             subAgentCount: 1,
-            runtimeKind: "pi",
+            runtimeKind: "pi-sdk",
             runtimeStatus: null,
             sandboxReady: true,
           },
@@ -673,22 +658,17 @@ describe("AgentsBrowser", () => {
           providers: [],
           deployments: [],
           skills: [],
-          toolkits: [],
         }}
       />,
     );
 
     const settingsButton = screen.getByRole("link", { name: "Settings" });
     const cloneButton = screen.getByRole("button", {
-      name: "Create a new agent and select an unassigned sandbox",
+      name: "Clone agent",
     });
     const deleteButton = screen.getByRole("button", { name: "Delete agent" });
     expect(settingsButton).toHaveAttribute("title", "Settings");
-    expect(cloneButton).toBeDisabled();
-    expect(cloneButton).toHaveAttribute(
-      "title",
-      "Create a new agent and select an unassigned sandbox",
-    );
+    expect(cloneButton).toBeEnabled();
 
     await user.click(deleteButton);
     expect(
@@ -704,7 +684,7 @@ describe("AgentsBrowser", () => {
     ).toHaveFocus();
   });
 
-  it("offers Hermes state options and includes them in a complete clone", async () => {
+  it("copies only optional read-only history from a legacy Agent into a fresh draft", async () => {
     const user = userEvent.setup();
     render(
       <AgentsBrowser
@@ -727,45 +707,22 @@ describe("AgentsBrowser", () => {
           providers: [],
           deployments: [],
           skills: [],
-          toolkits: [],
         }}
       />,
     );
 
     await user.click(screen.getByRole("button", { name: "Clone agent" }));
     const cloneDialog = screen.getByRole("dialog", { name: "Clone agent" });
-    const environment = within(cloneDialog).getByRole("checkbox", {
-      name: /^Hermes environment variables/,
-    });
-    const volume = within(cloneDialog).getByRole("checkbox", {
-      name: /^Hermes persistent volume/,
-    });
-    const conversations = within(cloneDialog).getByRole("checkbox", {
-      name: /^Conversations and messages/,
-    });
-
-    expect(environment).not.toBeChecked();
-    expect(volume).not.toBeChecked();
+    const conversations = within(cloneDialog).getByRole("checkbox");
     expect(conversations).not.toBeChecked();
-    await user.click(conversations);
-    expect(volume).toBeChecked();
-    await user.click(volume);
-    expect(volume).not.toBeChecked();
-    expect(conversations).not.toBeChecked();
-    await user.click(volume);
-    expect(conversations).toBeChecked();
+    expect(within(cloneDialog).getAllByRole("checkbox")).toHaveLength(1);
     expect(
-      screen.getByText(
-        "Conversations are included to preserve attachment and Hermes session references.",
-      ),
-    ).toBeInTheDocument();
-    await user.click(
-      within(cloneDialog).getByRole("button", {
+      within(cloneDialog).queryByRole("button", {
         name: "Select complete clone",
       }),
-    );
-    expect(environment).toBeChecked();
-    expect(volume).toBeChecked();
+    ).not.toBeInTheDocument();
+    await user.click(conversations);
+    expect(conversations).toBeChecked();
 
     await user.click(
       within(cloneDialog).getByRole("button", { name: "Clone agent" }),
@@ -775,7 +732,22 @@ describe("AgentsBrowser", () => {
     );
     const formData = actions.cloneAgentAction.mock.calls[0][0] as FormData;
     expect(formData.get("copyConversations")).toBe("on");
-    expect(formData.get("copyHermesEnvironment")).toBe("on");
-    expect(formData.get("copyHermesVolume")).toBe("on");
+    expect(formData.get("workspace")).toBe("acme");
+    expect(formData.get("agentId")).toBe("agent-hermes");
+    for (const field of [
+      "copyMcp",
+      "copySkills",
+      "copyToolkits",
+      "copySandboxes",
+      "copySubAgents",
+      "copyHermesEnvironment",
+      "copyHermesVolume",
+      "providerId",
+      "sandboxId",
+      "piPackages",
+      "runtime",
+    ]) {
+      expect(formData.has(field)).toBe(false);
+    }
   });
 });

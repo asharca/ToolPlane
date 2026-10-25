@@ -1,5 +1,5 @@
 import { assertDefined } from "../assert-defined";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -8,7 +8,6 @@ const mocks = vi.hoisted(() => ({
   getWorkspaceForUser: vi.fn(),
   getDeployments: vi.fn(),
   getInstalledSkills: vi.fn(),
-  listToolkits: vi.fn(),
   listAgents: vi.fn(),
   listChatAssistants: vi.fn(),
   listWorkspaceMarketInstalls: vi.fn(),
@@ -22,12 +21,12 @@ const mocks = vi.hoisted(() => ({
   ignore: vi.fn(),
   remove: vi.fn(),
   removeAssistant: vi.fn(),
+  uninstallAgentCopy: vi.fn(),
   withdraw: vi.fn(),
   unpublish: vi.fn(),
   publishMcp: vi.fn(),
   publishSkill: vi.fn(),
   publishAssistant: vi.fn(),
-  publishToolkit: vi.fn(),
 }));
 
 vi.mock("next/navigation", () => ({ redirect: vi.fn() }));
@@ -42,8 +41,10 @@ vi.mock("@/lib/workspace/queries", () => ({
   getDeployments: mocks.getDeployments,
   getInstalledSkills: mocks.getInstalledSkills,
 }));
-vi.mock("@/lib/toolkits/queries", () => ({ listToolkits: mocks.listToolkits }));
 vi.mock("@/lib/agents/queries", () => ({ listAgents: mocks.listAgents }));
+vi.mock("@/lib/agents/actions", () => ({
+  uninstallAgentMarketCopyAction: mocks.uninstallAgentCopy,
+}));
 vi.mock("@/lib/chat/service", () => ({
   listChatAssistantsForWorkspace: mocks.listChatAssistants,
 }));
@@ -67,7 +68,6 @@ vi.mock("@/lib/market/actions", () => ({
   publishMcpReleaseAction: mocks.publishMcp,
   publishSkillReleaseAction: mocks.publishSkill,
   publishAssistantReleaseAction: mocks.publishAssistant,
-  publishToolkitReleaseAction: mocks.publishToolkit,
 }));
 vi.mock("@/lib/db", () => ({
   db: {
@@ -93,7 +93,6 @@ describe("workspace market management pages", () => {
     });
     mocks.getDeployments.mockResolvedValue([]);
     mocks.getInstalledSkills.mockResolvedValue([]);
-    mocks.listToolkits.mockResolvedValue([]);
     mocks.listAgents.mockResolvedValue([]);
     mocks.listChatAssistants.mockResolvedValue([]);
     mocks.listWorkspaceMarketInstalls.mockResolvedValue([]);
@@ -119,6 +118,7 @@ describe("workspace market management pages", () => {
         updatedAt: now,
         currentReleaseId: "release-1",
         currentRelease: { id: "release-1", version: 1 },
+        approvedReleases: [{ id: "release-1", version: 1, releaseNotes: null }],
         ignoredReleaseId: null,
         listing: {
           kind: "skill",
@@ -195,7 +195,10 @@ describe("workspace market management pages", () => {
     expect(screen.getByText("Writer")).toBeInTheDocument();
     expect(screen.getByText("Local MCP")).toBeInTheDocument();
     expect(screen.getAllByText("updateAvailable")).toHaveLength(2);
-    expect(screen.getByRole("button", { name: "update" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Switch to v2" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Review version changes · v2" }),
+    ).toBeEnabled();
     expect(
       screen.getByRole("button", { name: "ignoreThisVersion" }),
     ).toBeInTheDocument();
@@ -239,7 +242,7 @@ describe("workspace market management pages", () => {
         id: "agent-1",
         name: "Research agent",
         slug: "research-agent",
-        runtimeKind: "native",
+        runtimeKind: "pi-sdk",
         runtime: null,
         createdAt: now,
         updatedAt: now,
@@ -274,13 +277,14 @@ describe("workspace market management pages", () => {
       }),
     );
 
-    expect(screen.getByText("publicationPending")).toBeInTheDocument();
     expect(
       screen.getByRole("link", { name: /publishToMarket/ }),
     ).toHaveAttribute("href", "/app/acme/agents/agent-1/publish");
     expect(screen.getByText("Publish new version")).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "withdrawSubmission" }),
+      within(
+        screen.getByRole("region", { name: "publishManagement" }),
+      ).getByRole("button", { name: "withdrawSubmission" }),
     ).toBeInTheDocument();
   });
 
@@ -296,6 +300,7 @@ describe("workspace market management pages", () => {
         updatedAt: now,
         currentReleaseId: "release-1",
         currentRelease: { id: "release-1", version: 1 },
+        approvedReleases: [{ id: "release-1", version: 1, releaseNotes: null }],
         ignoredReleaseId: null,
         listing: {
           kind: "skill",
@@ -361,9 +366,13 @@ describe("workspace market management pages", () => {
       }),
     );
 
-    expect(screen.getByText("Market assistant")).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "unpublishListing" }),
+      screen.getByRole("heading", { name: "Market assistant" }),
+    ).toBeInTheDocument();
+    expect(
+      within(
+        screen.getByRole("region", { name: "publishManagement" }),
+      ).getByRole("button", { name: "unpublishListing" }),
     ).toBeInTheDocument();
     await userEvent.click(
       screen.getByRole("button", { name: "Publish new version" }),

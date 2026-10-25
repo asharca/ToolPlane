@@ -15,10 +15,6 @@ vi.mock("next/navigation", () => ({
 vi.mock("@/lib/agents/actions", () => ({
   deleteAgentAction: vi.fn(),
   pinAgentAction: vi.fn(),
-  updateAgentModelAction: vi.fn(),
-}));
-vi.mock("@/components/dashboard/agents/AgentModelDialog", () => ({
-  AgentModelDialog: ({ trigger }: { trigger: React.ReactNode }) => trigger,
 }));
 vi.mock("@/components/dashboard/ConversationMessage", () => ({
   AssistantMarkdown: ({ text }: { text: string }) => <div>{text}</div>,
@@ -28,15 +24,18 @@ vi.mock("@/components/dashboard/sandboxes/SandboxConsole", () => ({
     deploymentId,
     rpcApiBase,
     terminalApiBase,
+    readOnly,
   }: {
     deploymentId: string;
     rpcApiBase?: string;
     terminalApiBase?: string;
+    readOnly?: boolean;
   }) => (
     <div
       data-testid="selected-workspace"
       data-rpc={rpcApiBase}
       data-terminal={terminalApiBase}
+      data-read-only={readOnly}
     >
       {deploymentId}
     </div>
@@ -48,7 +47,7 @@ const agent = {
   pinned: false,
   supportsWork: true,
   ready: true,
-  runtimeKind: "pi",
+  runtimeKind: "pi-sdk",
   sandboxes: [
     {
       id: "sandbox",
@@ -83,7 +82,11 @@ const session: WorkSession = {
   title: "Release",
   task: "Ship report",
   acceptanceCriteria: null,
-  runtimeKind: "pi",
+  runtimeKind: "pi-sdk",
+  agentRevisionId: "worker-revision-1",
+  legacyRevisionUnresolved: false,
+  readOnly: false,
+  modelName: "pinned-model",
   status: "completed",
   waitingQuestion: null,
   result: null,
@@ -127,6 +130,10 @@ describe("conversation workspace selection", () => {
       agentId: agent.id,
       source: null,
       readOnly: true,
+      agentRevisionId: null,
+      legacyRevisionUnresolved: true,
+      runtimeKind: undefined,
+      modelName: null,
       messages: [],
       sandbox: {
         id: "isolated-one",
@@ -147,6 +154,11 @@ describe("conversation workspace selection", () => {
       "data-rpc",
       "/api/v1/agents/worker/conversations/conversation-one/sandbox/rpc",
     );
+    expect(screen.getByTestId("selected-workspace")).toHaveAttribute(
+      "data-read-only",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "Terminal" })).toBeDisabled();
     view.rerender(
       <WorkspaceWork
         {...props}
@@ -331,7 +343,6 @@ describe("Work attachment transaction failures", () => {
   });
 
   it.each([
-    ["/clear", "This command is not supported by the current runtime."],
     [
       `/compact ${"x".repeat(2000)}`,
       "Enter a valid command of at most 2,000 characters.",
@@ -353,6 +364,30 @@ describe("Work attachment transaction failures", () => {
       expect(fetchMock).not.toHaveBeenCalled();
     },
   );
+
+  it("forwards Pi extension commands and preserves the draft on runtime rejection", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        Response.json({ error: "Extension command rejected" }, { status: 400 }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    showSession();
+    const input = screen.getByRole("combobox", {
+      name: "What should the Agent accomplish?",
+    });
+    fireEvent.change(input, { target: { value: "/clear" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send prompt" }));
+    await screen.findByText("Extension command rejected");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/agents/worker/conversations/conversation/commands",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ line: "/clear" }),
+      }),
+    );
+    expect(input).toHaveValue("/clear");
+  });
 
   it.each([
     ["busy", "Wait for the current operation to finish."],
@@ -617,6 +652,9 @@ describe("Work attachment transaction failures", () => {
     (runtimeKind, label) => {
       showSession({
         runtimeKind,
+        readOnly: true,
+        agentRevisionId: null,
+        legacyRevisionUnresolved: true,
         messages: [
           {
             id: "cancelled",

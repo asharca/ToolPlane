@@ -6,6 +6,7 @@
 * add administrator-configurable per-Agent and platform execution limits, isolated persistent conversation sandboxes, cancellable admission, conversation-scoped files and nonblocking terminals with live access revalidation, and idle container cleanup with preserved volumes
 * add selected-sandbox batch start, stop and restart with disruptive-action confirmation, workspace-scoped lifecycle guards and per-sandbox results, including Hermes runtimes
 * add request-level A2A debugging across HTTP, MCP and native entries, with redacted 24-hour administrator-only bodies, committed task timelines, and workspace-scoped metadata views
+* add the workspace Resource Center for cross-type discovery and lifecycle views; inline Skill, Pi, and MCP intake with Skill ZIP-root preview, Pi npm/Git/ZIP source previews and workspace-trust/public-review paths, and MCP deploy/configure/test with explicit selected-Agent binding; add approved Pi release impact diffs, workspace update/rollback and explicit per-Agent version application; distinguish full Skill ZIP, Markdown, and Pi `.tgz` downloads
 
 ### Documentation
 * add an evidence-based repository lessons notebook, require coding agents to read and maintain it, and promote recurring lessons into durable guidance

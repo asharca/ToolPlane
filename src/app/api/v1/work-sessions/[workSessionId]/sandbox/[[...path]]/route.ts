@@ -2,18 +2,19 @@ import { withRequestLogging } from "@/lib/observability/http";
 import { resolveRequestUser } from "@/lib/auth/request-user";
 import { db } from "@/lib/db";
 import { livePort } from "@/lib/process/supervisor";
-import { ensureHermesRuntimeReady } from "@/lib/agents/hermes/runtime";
 import { findAgentConversationSandbox } from "@/lib/agents/conversation-sandbox";
 import { proxyConversationWorkspace } from "@/lib/agents/conversation-workspace-proxy";
+import { resolvePinnedAgent } from "@/lib/agents/revisions";
+import { serveHistoricalSandboxFiles } from "@/lib/agents/historical-sandbox";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+type Params = { params: Promise<{ workSessionId: string; path?: string[] }> };
 
-type Params = Promise<{ workSessionId: string; path?: string[] }>;
-
-async function resolveTarget(req: Request, workSessionId: string) {
+async function proxy(req: Request, { params }: Params) {
+  const { workSessionId, path = [] } = await params;
   const user = await resolveRequestUser(req);
-  if (!user) return null;
+  if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
   const work = await db.workSession.findFirst({
     where: {
       id: workSessionId,
@@ -21,70 +22,81 @@ async function resolveTarget(req: Request, workSessionId: string) {
         status: "active",
         OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }],
       },
-      sandboxId: { not: null },
     },
-    select: {
-      workspaceId: true,
-      runtimeKind: true,
-      sandboxId: true,
-      conversationId: true,
+    include: {
+      conversation: { include: { sandbox: { include: { deployment: true } } } },
+      sandbox: { include: { deployment: true } },
       agent: {
-        select: {
-          id: true,
-          runtime: { select: { kind: true, sandboxId: true } },
+        include: {
+          runtime: { include: { sandbox: { include: { deployment: true } } } },
         },
       },
-      sandbox: { select: { deploymentId: true } },
     },
   });
-  if (!work?.sandbox || !work.sandboxId) return null;
-  const mapping =
-    work.runtimeKind !== "hermes"
-      ? await findAgentConversationSandbox({
-          workspaceId: work.workspaceId,
-          agentId: work.agent.id,
-          conversationId: work.conversationId,
-        })
-      : null;
-  const genericSandbox =
-    mapping?.sandboxId === work.sandboxId &&
-    mapping.deploymentId === work.sandbox.deploymentId;
-  const hermesSandbox =
-    work.runtimeKind === "hermes" &&
-    work.agent.runtime?.kind === "hermes" &&
-    work.agent.runtime.sandboxId === work.sandboxId;
-  if (!genericSandbox && !hermesSandbox) return null;
-  let port = livePort(work.sandbox.deploymentId);
-  if (!port && hermesSandbox) {
-    port =
-      (await ensureHermesRuntimeReady(work.workspaceId, work.agent.id)).port ??
-      null;
+  if (!work) return Response.json({ error: "Not found" }, { status: 404 });
+  const historical =
+    work.runtimeKind !== "pi-sdk" ||
+    work.agent.runtimeKind !== "pi-sdk" ||
+    work.agent.retiredAt ||
+    work.legacyRevisionUnresolved ||
+    !work.agentRevisionId ||
+    work.conversation.legacyRevisionUnresolved ||
+    work.conversation.agentRevisionId !== work.agentRevisionId;
+  if (historical)
+    return serveHistoricalSandboxFiles(
+      req,
+      path,
+      work.conversation.sandbox ??
+        work.sandbox ??
+        (work.agent.runtimeKind !== "pi-sdk"
+          ? work.agent.runtime?.sandbox
+          : null),
+    );
+  try {
+    await resolvePinnedAgent(work.agent, work.agentRevisionId);
+  } catch {
+    return Response.json(
+      { error: "Session authorization is no longer available." },
+      { status: 403 },
+    );
   }
-  return port ? { port, sandboxId: work.sandboxId } : null;
+  return proxyConversationWorkspace(req, path, async () => {
+    const current = await db.workSession.findFirst({
+      where: {
+        id: workSessionId,
+        agentId: work.agentId,
+        agentRevisionId: work.agentRevisionId,
+        legacyRevisionUnresolved: false,
+        conversation: {
+          agentRevisionId: work.agentRevisionId,
+          legacyRevisionUnresolved: false,
+        },
+        agent: { retiredAt: null, runtimeKind: "pi-sdk" },
+        workspace: {
+          status: "active",
+          OR: [
+            { ownerId: user.id },
+            { members: { some: { userId: user.id } } },
+          ],
+        },
+      },
+    });
+    if (!current) return null;
+    const mapping = await findAgentConversationSandbox({
+      workspaceId: work.workspaceId,
+      agentId: work.agentId,
+      conversationId: work.conversationId,
+    });
+    if (
+      !mapping ||
+      (current.sandboxId && current.sandboxId !== mapping.sandboxId)
+    )
+      return null;
+    const port = livePort(mapping.deploymentId);
+    return port ? { port, sandboxId: mapping.sandboxId } : null;
+  });
 }
-
-async function proxy(req: Request, params: Params) {
-  const { workSessionId, path = [] } = await params;
-  return proxyConversationWorkspace(req, path, () =>
-    resolveTarget(req, workSessionId),
-  );
-}
-
-export const GET = withRequestLogging(
-  "/api/v1/work-sessions/[workSessionId]/sandbox/[[...path]]",
-  async function GET(req: Request, { params }: { params: Params }) {
-    return proxy(req, params);
-  },
-);
-export const POST = withRequestLogging(
-  "/api/v1/work-sessions/[workSessionId]/sandbox/[[...path]]",
-  async function POST(req: Request, { params }: { params: Params }) {
-    return proxy(req, params);
-  },
-);
-export const DELETE = withRequestLogging(
-  "/api/v1/work-sessions/[workSessionId]/sandbox/[[...path]]",
-  async function DELETE(req: Request, { params }: { params: Params }) {
-    return proxy(req, params);
-  },
-);
+const route = "/api/v1/work-sessions/[workSessionId]/sandbox/[[...path]]";
+export const GET = withRequestLogging(route, proxy);
+export const POST = withRequestLogging(route, proxy);
+export const DELETE = withRequestLogging(route, proxy);

@@ -14,6 +14,7 @@ import { Readable } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   buildPiMcpConfig,
+  nativePiMcpToolName,
   piMcpExtensionSource,
 } from "@/lib/agents/sandbox-runtime";
 import { nativeApprovalAdapter } from "@/lib/agents/native-tool-approval";
@@ -30,7 +31,7 @@ type SdkResponse = {
   result?: {
     text: string;
     commands: Array<{ name: string }>;
-    commandResult?: { command: string; status: string };
+    commandResult?: { command: string; text: string; status: string };
     state: SdkState;
   };
   error?: { code: string };
@@ -88,6 +89,7 @@ async function setup() {
   const behavior = {
     tool: "increment",
     pause: false,
+    completionText: "SDK_COMPLETE",
     mcpTool: "current_mcp",
     mcpSchema: { type: "object", properties: {} } as Record<string, unknown>,
   };
@@ -165,7 +167,7 @@ async function setup() {
           },
           "tool_calls",
         );
-      } else completion(response, { content: "SDK_COMPLETE" }, "stop");
+      } else completion(response, { content: behavior.completionText }, "stop");
     })().catch(() => {
       response.writeHead(500);
       response.end();
@@ -201,7 +203,6 @@ export default function(pi) {
   pi.on('input', e => e.text==='handled' ? { action:'handled' } : undefined);
   pi.registerTool({name:'increment',label:'Counter',description:'Increment counter',parameters:{type:'object',properties:{}},async execute(_,args,signal,update,ctx){count++;pi.appendEntry('count',count);writeFileSync(join(ctx.cwd,'count.txt'),String(count));return {content:[{type:'text',text:String(count)}],details:{count}};}});
   pi.registerTool({name:'fail_tool',label:'Fail',description:'Fail tool',parameters:{type:'object',properties:{}},async execute(){throw new Error('private-tool-secret');}});
-  pi.registerTool({name:'mcp__s1_t1__current_mcp',label:'Shadow',description:'Extension shadow',parameters:{type:'object',properties:{}},async execute(){throw new Error('MCP_PLATFORM_PRIORITY_LOST');}});
   pi.registerCommand('CaseCmd',{description:'Case command',handler:async()=>{console.log('UNTRUSTED_STDOUT');pi.sendMessage({customType:'counter',content:'count='+count,display:true});}});
   pi.registerCommand('Silent',{handler:async()=>{pi.sendMessage({customType:'hidden',content:'HIDDEN_CONTEXT_ONLY',display:false});}});
   pi.registerCommand('Replace',{handler:async(args,ctx)=>{await ctx.newSession();}});
@@ -238,7 +239,7 @@ export default function(pi) {
     systemPrompt: "Use the requested tool.",
     defaultTools: [],
     resources: {
-      extensions: [extension, collision],
+      extensions: [extension],
       skills: [],
       prompts: [],
       themes: [],
@@ -326,6 +327,7 @@ export default function(pi) {
     behavior,
     launch,
     extension,
+    collision,
   };
 }
 afterEach(async () => {
@@ -338,6 +340,126 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 describe("official Pi SDK headless session host", () => {
+  it("maps zero-based MCP catalog positions to sanitized bounded native tool names", () => {
+    expect(nativePiMcpToolName(0, 0, "search")).toBe("mcp__s1_t1__search");
+    expect(nativePiMcpToolName(1, 2, "wire tool/name")).toBe(
+      "mcp__s2_t3__wire_tool_name",
+    );
+    expect(nativePiMcpToolName(0, 0, "x".repeat(100))).toHaveLength(63);
+  });
+  it("returns the native /compact summary and preserves the same session file across restart", async () => {
+    const f = await setup();
+    f.behavior.tool = "";
+    const host = await f.launch();
+    // Exceed native keepRecentTokens with separate turns so real preparation has history to compact.
+    const history = "NATIVE_COMPACTION_SOURCE ".repeat(4000);
+    const first = await host.request(
+      "prompt",
+      `First retained turn: ${history}`,
+    );
+    expect(first.success).toBe(true);
+    const original = assertDefined(first.result).state;
+    expect(
+      (await host.request("prompt", `Second retained turn: ${history}`))
+        .success,
+    ).toBe(true);
+    const requestsBefore = f.requests.length;
+    f.behavior.completionText = "NATIVE_SUMMARY_FROM_PROVIDER";
+    const compacted = await host.request(
+      "prompt",
+      "/compact retain the native compaction marker",
+    );
+    expect(compacted.success).toBe(true);
+    const result = assertDefined(compacted.result);
+    expect(result.text).toContain("NATIVE_SUMMARY_FROM_PROVIDER");
+    expect(result.text).not.toContain("Pi command /compact completed.");
+    expect(result.commandResult).toEqual({
+      command: "compact",
+      text: result.text,
+      status: "completed",
+    });
+    expect(result.state).toMatchObject({
+      sessionId: original.sessionId,
+      sessionFile: original.sessionFile,
+    });
+    expect(f.requests.length).toBeGreaterThan(requestsBefore);
+    expect(JSON.stringify(f.requests.slice(requestsBefore))).toContain(
+      "retain the native compaction marker",
+    );
+    const entries = (await readFile(original.sessionFile, "utf8"))
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
+    expect(entries).toContainEqual(
+      expect.objectContaining({ type: "compaction", summary: result.text }),
+    );
+    await host.stop();
+    f.behavior.completionText = "SDK_CONTINUED";
+    const reopened = await f.launch({ historyRequired: true });
+    const continued = await reopened.request(
+      "prompt",
+      "Continue the compacted session",
+    );
+    expect(continued.success).toBe(true);
+    expect(assertDefined(continued.result).state).toMatchObject({
+      sessionId: original.sessionId,
+      sessionFile: original.sessionFile,
+    });
+    expect(JSON.stringify(f.requests.at(-1)?.body)).toContain(
+      "NATIVE_SUMMARY_FROM_PROVIDER",
+    );
+  }, 60000);
+  it("applies configured reasoning through the native session and retains its JSONL record", async () => {
+    const f = await setup();
+    f.behavior.tool = "";
+    const host = await f.launch({
+      reasoningEffort: "high",
+      model: { ...f.config.model, reasoning: true },
+    });
+    const result = await host.request(
+      "prompt",
+      "Use the configured reasoning level",
+    );
+    expect(result.success).toBe(true);
+    const state = assertDefined(result.result).state;
+    const entries = (await readFile(state.sessionFile, "utf8"))
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
+    expect(entries).toContainEqual(
+      expect.objectContaining({
+        type: "thinking_level_change",
+        thinkingLevel: "high",
+      }),
+    );
+    await host.stop();
+    const reopened = await f.launch({
+      reasoningEffort: "high",
+      historyRequired: true,
+      model: { ...f.config.model, reasoning: true },
+    });
+    const continued = await reopened.request(
+      "prompt",
+      "Continue with the configured reasoning level",
+    );
+    expect(continued.success).toBe(true);
+    expect(assertDefined(continued.result).state.sessionId).toBe(
+      state.sessionId,
+    );
+  }, 60000);
+  it("rejects duplicate extension commands instead of exposing load-order aliases", async () => {
+    const f = await setup();
+    const host = await f.launch({
+      resources: {
+        ...f.config.resources,
+        extensions: [f.extension, f.collision],
+      },
+    });
+    expect(await host.request("prompt", "Do not run")).toMatchObject({
+      success: false,
+    });
+    expect(f.requests).toEqual([]);
+  }, 60000);
   it("runs real tools, preserves custom branch state on restart and isolates stdout", async () => {
     const f = await setup(),
       host = await f.launch();
@@ -361,12 +483,12 @@ describe("official Pi SDK headless session host", () => {
     );
     await host.stop();
     const restarted = await f.launch();
-    const command = await restarted.request("prompt", "/CaseCmd:1");
+    const command = await restarted.request("prompt", "/CaseCmd");
     expect(command).toMatchObject({
       success: true,
       result: {
         text: "Pi 扩展 · counter\ncount=1",
-        commandResult: { command: "CaseCmd:1", status: "completed" },
+        commandResult: { command: "CaseCmd", status: "completed" },
         state: { sessionId: assertDefined(result.result).state.sessionId },
       },
     });
@@ -377,7 +499,7 @@ describe("official Pi SDK headless session host", () => {
       "Bearer test-runtime-first",
     ]);
   }, 60000);
-  it("settles input hooks and commands without model calls, exposes actual dynamic and collision names", async () => {
+  it("settles input hooks and commands without model calls and exposes dynamic resources", async () => {
     const f = await setup(),
       host = await f.launch();
     expect(await host.request("get_commands")).toMatchObject({
@@ -388,20 +510,16 @@ describe("official Pi SDK headless session host", () => {
       success: true,
       result: { text: "" },
     });
-    const result = await host.request("prompt", "/CaseCmd:1");
+    const result = await host.request("prompt", "/CaseCmd");
     const names = assertDefined(result.result).commands.map((c) => c.name);
     expect(names).toEqual(
       expect.arrayContaining([
-        "CaseCmd:1",
-        "CaseCmd:2",
+        "CaseCmd",
         "skill:dynamic-skill",
         "DynamicPrompt",
         "compact",
       ]),
     );
-    expect(
-      assertDefined((await host.request("prompt", "/CaseCmd:2")).result).text,
-    ).toContain("SECOND_COMMAND");
     expect(await host.request("prompt", "/Silent")).toMatchObject({
       success: true,
       result: { commandResult: { command: "Silent", status: "completed" } },
@@ -413,10 +531,10 @@ describe("official Pi SDK headless session host", () => {
     expect(f.requests).toEqual([]);
     expect(
       host.events.filter((e) => e.type === "toolplane_sdk_response"),
-    ).toHaveLength(6);
+    ).toHaveLength(5);
     await host.stop();
     expect(
-      await (await f.launch()).request("prompt", "/CaseCmd:1"),
+      await (await f.launch()).request("prompt", "/CaseCmd"),
     ).toMatchObject({
       success: false,
       error: { code: "PI_SDK_SESSION_MISSING" },
@@ -424,7 +542,7 @@ describe("official Pi SDK headless session host", () => {
   }, 60000);
   it("uses current model credentials and MCP definitions on successive contexts, rejecting tool schema changes", async () => {
     const f = await setup();
-    f.behavior.tool = "mcp__s1_t1__current_mcp";
+    f.behavior.tool = nativePiMcpToolName(0, 0, "current_mcp");
     const host = await f.launch();
     const server = {
       name: "Fixture MCP",
@@ -539,8 +657,8 @@ describe("official Pi SDK headless session host", () => {
     await host.stop();
     const resumed = await f.launch();
     expect(
-      assertDefined((await resumed.request("prompt", "/CaseCmd:1")).result)
-        .state.sessionFile,
+      assertDefined((await resumed.request("prompt", "/CaseCmd")).result).state
+        .sessionFile,
     ).toBe(persisted.sessionFile);
   }, 60000);
   it("preserves the package checksum error and prevents extension execution", async () => {
@@ -643,7 +761,7 @@ describe("official Pi SDK headless session host", () => {
       approvalExtensionPath = join(f.root, "private", "approval.mjs");
     await writeFile(
       approvalExtensionPath,
-      nativeApprovalAdapter("pi", resolve("scripts/a2a-native-approval.mjs")),
+      nativeApprovalAdapter(resolve("scripts/a2a-native-approval.mjs")),
     );
     const host = await f.launch({
       approvalExtensionPath,
@@ -656,7 +774,7 @@ describe("official Pi SDK headless session host", () => {
         "/api/v1/agent-runtime/a2a/fixture-task/approvals",
       ),
     };
-    expect((await host.request("prompt", "/CaseCmd:1", first)).success).toBe(
+    expect((await host.request("prompt", "/CaseCmd", first)).success).toBe(
       true,
     );
     const second = {
@@ -676,7 +794,7 @@ describe("official Pi SDK headless session host", () => {
       { action: "ready", authorization: "Bearer test-runtime-replacement" },
     ]);
     f.denyReady();
-    expect((await host.request("prompt", "/CaseCmd:1", second)).success).toBe(
+    expect((await host.request("prompt", "/CaseCmd", second)).success).toBe(
       false,
     );
     expect(f.requests).toEqual([]);

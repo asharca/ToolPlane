@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TaskNotFoundError } from "@a2a-js/sdk/errors";
 import { executeRuntimeCommand } from "@/lib/agents/runtime-command-service";
-import type { RunDedicatedSandboxTurnInput } from "@/lib/agents/sandbox-turn";
 import { localOwnerKey } from "@/lib/a2a/local-policy";
 import type * as LocalPolicy from "@/lib/a2a/local-policy";
 import type * as EntryPolicy from "@/lib/a2a/entry-policy";
@@ -16,16 +15,19 @@ const mocks = vi.hoisted(() => ({
   },
   agent: vi.fn(),
   turn: vi.fn(),
-  append: vi.fn(),
   work: vi.fn(),
   entry: vi.fn(),
-  operate: vi.fn(),
   lock: vi.fn(),
   release: vi.fn(),
   actorPolicy: vi.fn(),
   entryPolicy: vi.fn(),
+  resolvePinned: vi.fn(),
+  prompt: vi.fn(),
 }));
 vi.mock("@/lib/db", () => ({ db: mocks.db }));
+vi.mock("@/lib/agents/prompt-invocation", () => ({
+  persistAgentPromptInvocation: mocks.prompt,
+}));
 vi.mock("@/lib/a2a/local-policy", async (original) => ({
   ...(await original<typeof LocalPolicy>()),
   assertLocalActor: mocks.actorPolicy,
@@ -35,11 +37,11 @@ vi.mock("@/lib/a2a/entry-policy", async (original) => ({
   assertEntryPolicy: mocks.entryPolicy,
 }));
 vi.mock("@/lib/agents/queries", () => ({ getAgentForRun: mocks.agent }));
+vi.mock("@/lib/agents/revisions", () => ({
+  resolvePinnedAgent: mocks.resolvePinned,
+}));
 vi.mock("@/lib/agents/sandbox-turn", () => ({
   runDedicatedSandboxTurn: mocks.turn,
-}));
-vi.mock("@/lib/agents/mutations", () => ({
-  appendConversationTurn: mocks.append,
 }));
 vi.mock("@/lib/work/sessions", () => ({ appendWorkSessionInput: mocks.work }));
 vi.mock("@/lib/work/run-control", () => ({ startWorkOutput: vi.fn() }));
@@ -52,7 +54,6 @@ vi.mock("@/lib/a2a/ingress", () => ({
 vi.mock("@/lib/agents/conversation-operations", () => ({
   acquireConversationOperation: mocks.lock,
   conversationOperationKey: (row: { id: string }) => row.id,
-  operateConversation: mocks.operate,
 }));
 
 const input = {
@@ -61,7 +62,7 @@ const input = {
   conversationId: "conversation",
   line: "/compact",
 };
-function fixture(kind = "claude-code") {
+function fixture(kind = "pi-sdk") {
   const agent = {
     runtimeKind: kind,
     systemPrompt: "system",
@@ -78,6 +79,8 @@ function fixture(kind = "claude-code") {
   };
   const conversation = {
     id: "conversation",
+    agentRevisionId: "session-revision" as string | null,
+    legacyRevisionUnresolved: false,
     publicApiConversation: null as { id: string } | null,
     workSession: null as {
       id: string;
@@ -94,200 +97,133 @@ function fixture(kind = "claude-code") {
 }
 beforeEach(() => {
   vi.resetAllMocks();
+  mocks.resolvePinned.mockImplementation(async (agent, revisionId) => ({
+    ...agent,
+    agentRevisionId: revisionId,
+  }));
+  mocks.db.message.create.mockResolvedValue({ id: "command-user" });
   fixture();
   mocks.lock.mockReturnValue(mocks.release);
   mocks.turn.mockResolvedValue("output");
   mocks.db.a2AEntryBinding.findMany.mockResolvedValue([]);
 });
 
-describe("runtime command service admission", () => {
+describe("runtime command session admission", () => {
   it.each([
     "agent",
     "conversation",
     "public",
-    "runtime-changed",
+    "unresolved",
+    "missing-pin",
+    "legacy",
     "invalid",
     "long",
-    "unsupported",
     "locked",
-  ])("rejects %s before executing", async (kind) => {
-    const { conversation } = fixture();
-    let line = input.line;
-    if (kind === "agent") mocks.agent.mockResolvedValue(null);
-    if (kind === "conversation")
+  ])("rejects %s before execution", async (condition) => {
+    const { conversation } = fixture(
+      condition === "legacy" ? "hermes" : "pi-sdk",
+    );
+    if (condition === "agent") mocks.agent.mockResolvedValue(null);
+    if (condition === "conversation")
       mocks.db.conversation.findFirst.mockResolvedValue(null);
-    if (kind === "public")
+    if (condition === "public")
       conversation.publicApiConversation = { id: "public" };
-    if (kind === "runtime-changed")
-      conversation.workSession = {
-        id: "work",
-        runtimeKind: "pi",
-        status: "completed",
-      };
-    if (kind === "invalid") line = "ordinary message";
-    if (kind === "long") line = `/compact ${"x".repeat(2000)}`;
-    if (kind === "unsupported") line = "/unknown";
-    if (kind === "locked") mocks.lock.mockReturnValue(null);
+    if (condition === "unresolved")
+      conversation.legacyRevisionUnresolved = true;
+    if (condition === "missing-pin") conversation.agentRevisionId = null;
+    if (condition === "locked") mocks.lock.mockReturnValue(null);
+    const line =
+      condition === "invalid"
+        ? "ordinary message"
+        : condition === "long"
+          ? `/compact ${"x".repeat(2000)}`
+          : input.line;
     await expect(
-      executeRuntimeCommand({ ...input, line }),
+      executeRuntimeCommand({ ...input, actorId: "actor", line }),
     ).rejects.toMatchObject({
-      status: ["agent", "conversation", "public"].includes(kind)
+      status: ["agent", "conversation", "public"].includes(condition)
         ? 404
-        : ["runtime-changed", "locked"].includes(kind)
-          ? 409
-          : 400,
+        : ["invalid", "long"].includes(condition)
+          ? 400
+          : 409,
     });
-    expect(mocks.turn).not.toHaveBeenCalled();
+    expect(mocks.entry).not.toHaveBeenCalled();
+  });
+  it("resolves the persisted session revision rather than a current revision", async () => {
+    const { agent } = fixture();
+    mocks.entry.mockResolvedValue({ task: {}, path: "native" });
+    await expect(
+      executeRuntimeCommand({ ...input, actorId: "actor" }),
+    ).resolves.toEqual({ kind: "output", text: "native result" });
+    expect(mocks.resolvePinned).toHaveBeenCalledWith(agent, "session-revision");
+    expect(mocks.entry).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentId: "agent",
+        sourceId: "conversation",
+        actorId: "actor",
+        text: "/compact",
+      }),
+    );
+    expect(mocks.db.message.create).toHaveBeenCalledWith({
+      data: {
+        conversationId: "conversation",
+        role: "user",
+        parts: [{ type: "text", text: "/compact" }],
+      },
+    });
+    expect(mocks.db.message.create).toHaveBeenLastCalledWith({
+      data: {
+        conversationId: "conversation",
+        role: "assistant",
+        parts: [{ type: "text", text: "native result" }],
+      },
+    });
+    expect(mocks.release).toHaveBeenCalledOnce();
+  });
+  it("does not dispatch when live revision authorization has been revoked", async () => {
+    mocks.resolvePinned.mockRejectedValue(new Error("AGENT_GRANT_REVOKED"));
+    await expect(
+      executeRuntimeCommand({ ...input, actorId: "actor" }),
+    ).rejects.toThrow("AGENT_GRANT_REVOKED");
+    expect(mocks.entry).not.toHaveBeenCalled();
+    expect(mocks.lock).not.toHaveBeenCalled();
   });
   it.each(["queued", "running", "waiting_approval", "cancelling", "archived"])(
-    "blocks %s work and releases its command lease",
+    "blocks %s work",
     async (status) => {
       const { conversation } = fixture();
-      conversation.workSession = {
-        id: "work",
-        runtimeKind: "claude-code",
-        status,
-      };
-      await expect(executeRuntimeCommand(input)).rejects.toMatchObject({
-        message: "busy",
-        status: 409,
-      });
+      conversation.workSession = { id: "work", runtimeKind: "pi-sdk", status };
+      await expect(
+        executeRuntimeCommand({ ...input, actorId: "actor" }),
+      ).rejects.toMatchObject({ status: 409 });
+      expect(mocks.entry).not.toHaveBeenCalled();
       expect(mocks.release).toHaveBeenCalledOnce();
     },
   );
   it.each([true, false])(
-    "queues paused work only if the session accepts input: %s",
+    "queues waiting work only when it accepts the input: %s",
     async (ok) => {
       const { conversation } = fixture();
       conversation.workSession = {
         id: "work",
-        runtimeKind: "claude-code",
+        runtimeKind: "pi-sdk",
         status: "waiting_input",
       };
       mocks.work.mockResolvedValue({ ok });
+      const result = executeRuntimeCommand({ ...input, actorId: "actor" });
       if (ok)
-        expect(await executeRuntimeCommand(input)).toEqual({
+        await expect(result).resolves.toEqual({
           kind: "queued",
           workSessionId: "work",
         });
-      else
-        await expect(executeRuntimeCommand(input)).rejects.toMatchObject({
-          message: "busy",
-        });
-      expect(mocks.turn).not.toHaveBeenCalled();
+      else await expect(result).rejects.toMatchObject({ status: 409 });
+      expect(mocks.entry).not.toHaveBeenCalled();
       expect(mocks.release).toHaveBeenCalledOnce();
     },
   );
-  it("uses Hermes compaction without entering the dedicated command lane", async () => {
-    fixture("hermes");
-    mocks.operate.mockResolvedValue({
-      conversationId: "conversation",
-      compacted: false,
-    });
-    expect(
-      await executeRuntimeCommand({
-        ...input,
-        line: "/compact preserve facts",
-      }),
-    ).toEqual({
-      kind: "compact",
-      conversationId: "conversation",
-      compacted: false,
-    });
-    expect(mocks.operate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        action: "compact",
-        instructions: "preserve facts",
-      }),
-    );
-    expect(mocks.lock).not.toHaveBeenCalled();
-  });
-});
-
-describe("runtime command output and failure policies", () => {
-  it.each(["clear", "context", "usage", "compact"])(
-    "stores /%s as command metadata rather than user dialogue",
-    async (command) => {
-      mocks.turn.mockImplementation(
-        async (options: RunDedicatedSandboxTurnInput) => {
-          options.onCommands?.([{ name: "context" }]);
-          options.onUsage?.({
-            inputTokens: 10,
-            outputTokens: 1,
-            cacheReadTokens: 0,
-            cacheWriteTokens: 0,
-          });
-          return "output";
-        },
-      );
-      expect(
-        await executeRuntimeCommand({ ...input, line: `/${command}` }),
-      ).toEqual({ kind: "output", text: "output" });
-      expect(mocks.append).not.toHaveBeenCalled();
-      expect(mocks.db.message.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({
-          role: "assistant",
-          textCharacters: 6,
-          parts: expect.arrayContaining([
-            { type: "data-command-result", data: { command, text: "output" } },
-            {
-              type: "data-runtime-usage",
-              data: {
-                inputTokens: 10,
-                outputTokens: 1,
-                cacheReadTokens: 0,
-                cacheWriteTokens: 0,
-              },
-            },
-          ]),
-        }),
-      });
-      if (command === "clear")
-        expect(
-          mocks.db.message.create.mock.calls[0][0].data.parts,
-        ).toContainEqual(
-          expect.objectContaining({ type: "data-conversation-clear" }),
-        );
-    },
-  );
-  it.each(["", "pause", "clear", "build a website"])(
-    "distinguishes dsh goal control from conversational input %j",
-    async (args) => {
-      fixture("dsh");
-      await executeRuntimeCommand({ ...input, line: `/goal ${args}` });
-      expect(mocks.append).toHaveBeenCalledTimes(
-        args === "build a website" ? 1 : 0,
-      );
-      expect(mocks.db.message.create).toHaveBeenCalledTimes(
-        args === "build a website" ? 0 : 1,
-      );
-    },
-  );
-  it.each([
-    [new Error("PI_LANE_BUSY"), 409, "PI_LANE_BUSY"],
-    [new Error("sandbox is busy"), 409, "sandbox is busy"],
-    [new Error("offline"), 502, "offline"],
-    ["failure", 502, "The runtime command failed."],
-  ])("maps dedicated runtime failures", async (error, status, message) => {
-    mocks.turn.mockRejectedValue(error);
+  it("requires actor and channel message identities", async () => {
     await expect(executeRuntimeCommand(input)).rejects.toMatchObject({
-      status,
-      message,
-    });
-    expect(mocks.release).toHaveBeenCalledOnce();
-    expect(mocks.db.message.create).not.toHaveBeenCalled();
-  });
-  it("does not dispatch a fresh channel Pi session without native binding", async () => {
-    const { conversation } = fixture("pi");
-    conversation.runtimeSessionKey = "channel:connection:chat";
-    await expect(executeRuntimeCommand(input)).rejects.toMatchObject({
-      message: "unsupportedCommand",
-    });
-  });
-  it("requires SDK actor and channel message identities", async () => {
-    fixture("pi-sdk");
-    await expect(executeRuntimeCommand(input)).rejects.toMatchObject({
-      message: "notFound",
+      status: 404,
     });
     await expect(
       executeRuntimeCommand({
@@ -296,32 +232,60 @@ describe("runtime command output and failure policies", () => {
         entry: { kind: "channel", channelId: "channel" },
       }),
     ).rejects.toMatchObject({ message: "invalidCommand" });
+    expect(mocks.entry).not.toHaveBeenCalled();
   });
-  it.each(["success", "missing", "failure", "unknown"])(
-    "maps SDK native entry outcome %s",
+  it.each(["missing", "failure", "unknown"])(
+    "maps native failure %s",
     async (outcome) => {
-      fixture("pi-sdk");
-      if (outcome === "missing")
-        mocks.entry.mockRejectedValue(new TaskNotFoundError());
-      else if (outcome === "failure")
-        mocks.entry.mockRejectedValue(new Error("native failure"));
-      else if (outcome === "unknown") mocks.entry.mockRejectedValue("unknown");
-      else mocks.entry.mockResolvedValue({ task: {}, path: "native" });
-      const result = executeRuntimeCommand({ ...input, actorId: "actor" });
-      if (outcome === "success") {
-        expect(await result).toEqual({ kind: "output", text: "native result" });
-        expect(mocks.append).toHaveBeenCalledWith(
-          "conversation",
-          [{ type: "text", text: "/compact" }],
-          [{ type: "text", text: "native result" }],
-        );
-      } else
-        await expect(result).rejects.toMatchObject({
-          status: outcome === "missing" ? 404 : 502,
-        });
+      mocks.entry.mockRejectedValue(
+        outcome === "missing"
+          ? new TaskNotFoundError()
+          : outcome === "failure"
+            ? new Error("native failure")
+            : "unknown",
+      );
+      await expect(
+        executeRuntimeCommand({ ...input, actorId: "actor" }),
+      ).rejects.toMatchObject({ status: outcome === "missing" ? 404 : 502 });
+      expect(mocks.db.message.create).toHaveBeenCalledTimes(1);
       expect(mocks.release).toHaveBeenCalledOnce();
     },
   );
+  it("persists trusted Prompt metadata before a later native failure without expanding the text again", async () => {
+    const invocation = {
+      name: "review",
+      source: {
+        marketInstallId: "install",
+        releaseId: "release",
+        checksum: "checksum",
+        path: "prompts/review.md",
+      },
+      version: "release",
+      rawArguments: "src",
+      arguments: ["src"],
+      finalInput: "Review src",
+    };
+    mocks.entry.mockImplementation(async (options) => {
+      await options.onPromptInvocation(invocation);
+      throw new Error("provider unavailable after expansion");
+    });
+    await expect(
+      executeRuntimeCommand({
+        ...input,
+        line: "/review src",
+        actorId: "actor",
+      }),
+    ).rejects.toMatchObject({ status: 502 });
+    expect(mocks.prompt).toHaveBeenCalledWith({
+      conversationId: "conversation",
+      messageId: "command-user",
+      invocation,
+    });
+    expect(mocks.entry).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "/review src" }),
+    );
+    expect(mocks.db.message.create).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("runtime command native binding ownership", () => {
@@ -357,6 +321,7 @@ describe("runtime command native binding ownership", () => {
       kind: "local",
       workspaceId: "workspace",
       agentId: "agent",
+      agentRevisionId: "session-revision",
       actorId: "actor",
       targetBinding: "binding",
       ownerKey,

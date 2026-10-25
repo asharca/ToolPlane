@@ -6,7 +6,7 @@ import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { getWorkspaceForUser } from "@/lib/workspace/queries";
 import { killProcess, restartProcess } from "@/lib/process/supervisor";
-import { resolveSpawnSpec } from "@/lib/process/spawn-spec";
+import { resolveMcpConnectionSpawnSpec } from "@/lib/process/mcp-credentials";
 import { decryptSecretText, encryptSecretText } from "@/lib/security/secrets";
 import { EDITABLE_MCP_SOURCES } from "@/lib/workspace/custom-mcp";
 import {
@@ -19,6 +19,11 @@ import {
 } from "@/lib/workspace/runtime-files";
 import { missingDeploymentRequiredEnvironment } from "@/lib/workspace/server-recipe";
 import { runMcpDeploymentOperation } from "@/lib/workspace/mcp-operation";
+import {
+  connectionImpact,
+  confirmedConnectionImpact,
+} from "@/lib/workspace/mcp-connection-impact";
+import type { McpConnectionImpact } from "@/lib/workspace/mcp-connection-impact";
 
 export type RuntimeFileMetadata = {
   id: string;
@@ -34,12 +39,30 @@ export type RuntimeFilesActionState = {
     | "deploymentNotFound"
     | "fileNotFound"
     | "saveFailed"
-    | "restartFailed";
+    | "restartFailed"
+    | "sharedChangeConfirmationRequired";
+  impactedObjects?: McpConnectionImpact;
   savedAt?: number;
   file?: RuntimeFileMetadata;
 };
 
 class RuntimeFileLimitError extends Error {}
+
+function assertRuntimeFileCapacity(
+  current: Pick<DeploymentConfigFile, "pathKey" | "size">[],
+  pathKey: string,
+  size: number,
+): void {
+  const replacing = current.find((existing) => existing.pathKey === pathKey);
+  if (current.length + (replacing ? 0 : 1) > MAX_RUNTIME_TEXT_FILES)
+    throw new RuntimeFileLimitError("Too many runtime files.");
+  const totalBytes =
+    current.reduce((total, existing) => total + existing.size, 0) -
+    (replacing?.size ?? 0) +
+    size;
+  if (totalBytes > MAX_RUNTIME_TEXT_FILES_BYTES)
+    throw new RuntimeFileLimitError("Runtime files are too large.");
+}
 
 async function authorizedWorkspace(slug: string) {
   const user = await getCurrentUser();
@@ -152,77 +175,83 @@ export async function upsertDeploymentRuntimeFileAction(
   if (!file) return { error: "invalidFile" };
   const ctx = await authorizedWorkspace(workspace);
   if (!ctx) return { error: "notAuthorized" };
-  const deployment = await editableDeployment(deploymentId, ctx.ws.id);
-  if (!deployment) return { error: "deploymentNotFound" };
-
-  const pathKey = runtimeFilePathKey(file.path);
-  let stored: Pick<DeploymentConfigFile, "id" | "path" | "size" | "updatedAt">;
-  try {
-    stored = await db.$transaction(
-      async (tx) => {
-        const current = await tx.deploymentConfigFile.findMany({
-          where: { deploymentId: deployment.id },
-          select: { pathKey: true, size: true },
-        });
-        const replacing = current.find(
-          (existing) => existing.pathKey === pathKey,
-        );
-        if (current.length + (replacing ? 0 : 1) > MAX_RUNTIME_TEXT_FILES) {
-          throw new RuntimeFileLimitError("Too many runtime files.");
-        }
-        const totalBytes =
-          current.reduce((total, existing) => total + existing.size, 0) -
-          (replacing?.size ?? 0) +
-          file.size;
-        if (totalBytes > MAX_RUNTIME_TEXT_FILES_BYTES) {
-          throw new RuntimeFileLimitError("Runtime files are too large.");
-        }
-        return tx.deploymentConfigFile.upsert({
-          where: {
-            deploymentId_pathKey: { deploymentId: deployment.id, pathKey },
-          },
-          update: {
-            path: file.path,
-            encryptedContent: encryptSecretText(
-              file.content,
-            ) as Prisma.InputJsonValue,
-            size: file.size,
-          },
-          create: {
-            deploymentId: deployment.id,
-            path: file.path,
-            pathKey,
-            encryptedContent: encryptSecretText(
-              file.content,
-            ) as Prisma.InputJsonValue,
-            size: file.size,
-          },
-          select: { id: true, path: true, size: true, updatedAt: true },
-        });
-      },
-      { isolationLevel: "Serializable", maxWait: 10_000, timeout: 30_000 },
-    );
-  } catch (error) {
-    if (error instanceof RuntimeFileLimitError) return { error: "invalidFile" };
-    return { error: "saveFailed" };
-  }
-
   const operation = await runMcpDeploymentOperation(
     ctx.ws.id,
     deploymentId,
-    async () => {
-      const current = await editableDeployment(deploymentId, ctx.ws.id);
-      if (!current) return { error: "deploymentNotFound" } as const;
-      if (await requiresCatalogSetup(current)) {
-        return { savedAt: Date.now(), file: metadata(stored) };
-      }
+    async (): Promise<RuntimeFilesActionState> => {
+      const deployment = await editableDeployment(deploymentId, ctx.ws.id);
+      if (!deployment) return { error: "deploymentNotFound" };
+      const impactedObjects = await connectionImpact(ctx.ws.id, deploymentId);
+      if (!confirmedConnectionImpact(formData, impactedObjects))
+        return { error: "sharedChangeConfirmationRequired", impactedObjects };
+      const pathKey = runtimeFilePathKey(file.path);
+      let stored: Pick<
+        DeploymentConfigFile,
+        "id" | "path" | "size" | "updatedAt"
+      >;
+      let setupRequired: boolean;
       try {
-        await restartProcess(current.id, resolveSpawnSpec(current), {
+        // Avoid disrupting healthy sessions for a change already known to be
+        // invalid. The serializable transaction repeats this authoritative
+        // check after teardown, covering a concurrent change during cleanup.
+        const beforeStop = await db.deploymentConfigFile.findMany({
+          where: { deploymentId: deployment.id },
+          select: { pathKey: true, size: true },
+        });
+        assertRuntimeFileCapacity(beforeStop, pathKey, file.size);
+        // Fail closed before changing secret bytes if any associated sidecar
+        // or its private read-only projection cannot be removed.
+        setupRequired = await requiresCatalogSetup(deployment);
+        if (!setupRequired) await killProcess(deployment.id);
+        stored = await db.$transaction(
+          async (tx) => {
+            const current = await tx.deploymentConfigFile.findMany({
+              where: { deploymentId: deployment.id },
+              select: { pathKey: true, size: true },
+            });
+            assertRuntimeFileCapacity(current, pathKey, file.size);
+            return tx.deploymentConfigFile.upsert({
+              where: {
+                deploymentId_pathKey: { deploymentId: deployment.id, pathKey },
+              },
+              update: {
+                path: file.path,
+                encryptedContent: encryptSecretText(
+                  file.content,
+                ) as Prisma.InputJsonValue,
+                size: file.size,
+              },
+              create: {
+                deploymentId: deployment.id,
+                path: file.path,
+                pathKey,
+                encryptedContent: encryptSecretText(
+                  file.content,
+                ) as Prisma.InputJsonValue,
+                size: file.size,
+              },
+              select: { id: true, path: true, size: true, updatedAt: true },
+            });
+          },
+          { isolationLevel: "Serializable", maxWait: 10_000, timeout: 30_000 },
+        );
+      } catch (error) {
+        if (error instanceof RuntimeFileLimitError)
+          return { error: "invalidFile" };
+        return { error: "saveFailed" };
+      }
+      if (setupRequired) return { savedAt: Date.now(), file: metadata(stored) };
+      try {
+        const { spec } = await resolveMcpConnectionSpawnSpec({
+          workspaceId: ctx.ws.id,
+          deploymentId: deployment.id,
+        });
+        await restartProcess(deployment.id, spec, {
           awaitReady: false,
           workspaceId: ctx.ws.id,
         });
       } catch {
-        return { error: "restartFailed" } as const;
+        return { error: "restartFailed" };
       }
       return { savedAt: Date.now(), file: metadata(stored) };
     },
@@ -240,33 +269,39 @@ export async function deleteDeploymentRuntimeFileAction(
   if (!workspace || !deploymentId || !fileId) return { error: "fileNotFound" };
   const ctx = await authorizedWorkspace(workspace);
   if (!ctx) return { error: "notAuthorized" };
-  const deployment = await editableDeployment(deploymentId, ctx.ws.id);
-  if (!deployment) return { error: "deploymentNotFound" };
-
-  let removed: Prisma.BatchPayload;
-  try {
-    removed = await db.deploymentConfigFile.deleteMany({
-      where: { id: fileId, deploymentId: deployment.id },
-    });
-  } catch {
-    return { error: "saveFailed" };
-  }
-  if (!removed.count) return { error: "fileNotFound" };
-
   const operation = await runMcpDeploymentOperation(
     ctx.ws.id,
     deploymentId,
-    async () => {
-      const current = await editableDeployment(deploymentId, ctx.ws.id);
-      if (!current) return { error: "deploymentNotFound" } as const;
-      if (await requiresCatalogSetup(current)) return { savedAt: Date.now() };
+    async (): Promise<RuntimeFilesActionState> => {
+      const deployment = await editableDeployment(deploymentId, ctx.ws.id);
+      if (!deployment) return { error: "deploymentNotFound" };
+      const impactedObjects = await connectionImpact(ctx.ws.id, deploymentId);
+      if (!confirmedConnectionImpact(formData, impactedObjects))
+        return { error: "sharedChangeConfirmationRequired", impactedObjects };
+      let removed: Prisma.BatchPayload;
+      let setupRequired: boolean;
       try {
-        await restartProcess(current.id, resolveSpawnSpec(current), {
+        setupRequired = await requiresCatalogSetup(deployment);
+        if (!setupRequired) await killProcess(deployment.id);
+        removed = await db.deploymentConfigFile.deleteMany({
+          where: { id: fileId, deploymentId: deployment.id },
+        });
+      } catch {
+        return { error: "saveFailed" };
+      }
+      if (!removed.count) return { error: "fileNotFound" };
+      if (setupRequired) return { savedAt: Date.now() };
+      try {
+        const { spec } = await resolveMcpConnectionSpawnSpec({
+          workspaceId: ctx.ws.id,
+          deploymentId: deployment.id,
+        });
+        await restartProcess(deployment.id, spec, {
           awaitReady: false,
           workspaceId: ctx.ws.id,
         });
       } catch {
-        return { error: "restartFailed" } as const;
+        return { error: "restartFailed" };
       }
       return { savedAt: Date.now() };
     },

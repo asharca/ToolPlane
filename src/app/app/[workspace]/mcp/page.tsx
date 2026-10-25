@@ -36,7 +36,7 @@ export default async function McpServersPage({
   searchParams,
 }: {
   params: Promise<{ workspace: string }>;
-  searchParams: Promise<{ create?: string }>;
+  searchParams: Promise<{ create?: string; error?: string }>;
 }) {
   const [{ workspace: slug }, query] = await Promise.all([
     params,
@@ -93,6 +93,11 @@ export default async function McpServersPage({
             {t("deploymentCountSummary", { count: deploymentItems.length })}
           </p>
         </DashboardToolbar>
+        {query.error === "unsafeHttpConfirmationRequired" ? (
+          <p role="alert" className="text-sm text-destructive">
+            {t("unsafeHttpConsentDescription")}
+          </p>
+        ) : null}
 
         <McpDeploymentsBrowser slug={slug} deployments={deploymentItems} />
       </DashboardPage>

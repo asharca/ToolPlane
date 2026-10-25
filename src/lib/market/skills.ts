@@ -3,6 +3,9 @@ import { writeAudit } from "@/lib/observability/audit";
 
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
+import { ChatAssistantRevisionConfigSchema } from "@/lib/chat/revision-types";
+import { AgentRevisionConfigSchema } from "@/lib/agents/revision-types";
+import { removeAgentRevisionPackageInTransaction } from "@/lib/agents/revisions";
 import {
   ASSISTANT_MARKET_MANIFEST_VERSION,
   assistantReleaseChecksum,
@@ -40,6 +43,7 @@ export type MarketErrorCode =
   | "release_not_found"
   | "listing_unavailable"
   | "invalid_manifest"
+  | "unsupported_resource_kind"
   | "invalid_categories"
   | "idempotency_conflict"
   | "already_installed"
@@ -51,9 +55,11 @@ export type MarketErrorCode =
   | "package_capture_failed"
   | "package_platform_mismatch"
   | "pi_package_invalid_selection"
+  | "pi_package_executable_confirmation_required"
   | "pi_package_source_unavailable"
   | "pi_package_tools_unavailable"
   | "pi_package_invalid_bindings"
+  | "pi_package_mcp_binding_required"
   | "pi_package_agent_busy"
   | "source_unavailable"
   | "official_package_unavailable"
@@ -68,6 +74,7 @@ export type MarketErrorCode =
   | "source_kind_mismatch"
   | "source_scope_mismatch"
   | "source_changed"
+  | "source_preview_required"
   | "source_ref_missing"
   | "source_not_trackable"
   | "tracking_not_found"
@@ -151,17 +158,24 @@ const ASSISTANT_RELEASE_SELECT = {
   id: true,
   workspaceId: true,
   name: true,
-  systemPrompt: true,
-  model: true,
-  maxSteps: true,
-  modelProvider: { select: { format: true } },
+  currentRevisionVersion: true,
+  revisions: {
+    orderBy: { version: "desc" },
+    take: 1,
+    select: { version: true, config: true },
+  },
   mcpGrants: {
     orderBy: { createdAt: "asc" },
     select: {
+      deploymentId: true,
+      allowedToolNames: true,
       deployment: {
         select: {
           name: true,
           sourceRef: true,
+          serverId: true,
+          source: true,
+          installCfg: true,
           server: { select: { slug: true, name: true, verifiedAt: true } },
         },
       },
@@ -487,7 +501,27 @@ export async function publishAssistantRelease(input: PublishAssistantInput) {
           );
         }
 
-        const baseManifest = buildAssistantReleaseManifest(source);
+        const revision = source.revisions[0];
+        if (!revision || revision.version !== source.currentRevisionVersion)
+          throw new MarketError(
+            "invalid_manifest",
+            "Publish an immutable Assistant revision before publishing a template.",
+          );
+        const config = ChatAssistantRevisionConfigSchema.parse(revision.config);
+        const pinnedProvider = config.modelProviderId
+          ? await tx.modelProvider.findFirst({
+              where: {
+                id: config.modelProviderId,
+                workspaceId: input.workspaceId,
+              },
+              select: { format: true },
+            })
+          : null;
+        const baseManifest = buildAssistantReleaseManifest({
+          ...source,
+          config,
+          modelProvider: pinnedProvider,
+        });
         const existing = await tx.marketListing.findUnique({
           where: { sourceChatAssistantId: source.id },
         });
@@ -1046,15 +1080,6 @@ export async function updateSkillMarketInstall(input: {
               "No published update is available.",
             );
           }
-          if (
-            input.targetReleaseId &&
-            input.targetReleaseId !== install.listing.latestReleaseId
-          ) {
-            throw new MarketError(
-              "listing_conflict",
-              "A newer release is available. Refresh before updating.",
-            );
-          }
           const release = await tx.marketRelease.findFirst({
             where: {
               id: releaseId,
@@ -1174,7 +1199,6 @@ async function removableMarketInstall(
     where: { id: input.installId, targetWorkspaceId: input.targetWorkspaceId },
     include: {
       listing: { select: { kind: true } },
-      _count: { select: { agentPiPackages: true } },
       piPackageClientInstallations: {
         where: { status: "active" },
         select: { id: true, label: true },
@@ -1214,12 +1238,6 @@ async function removableMarketInstall(
       "install_not_found",
       "The market installation was not found.",
     );
-  if (install._count.agentPiPackages > 0) {
-    throw new MarketError(
-      "in_use",
-      "Remove this Pi package from agents before uninstalling it.",
-    );
-  }
   if (install.piPackageClientInstallations.length)
     throw new MarketError(
       "in_use",
@@ -1285,49 +1303,110 @@ function marketResourceIds(value: unknown, key: string): string[] {
 }
 
 async function removeMarketInstallDatabase(input: RemoveMarketInstallInput) {
-  return db.$transaction(async (tx) => {
-    const install = await removableMarketInstall(tx, input);
-    const ownedSkillIds = marketResourceIds(
-      install.resourceMap,
-      "ownedInstalledSkillIds",
-    );
-    const toolkitSkillIds = ownedSkillIds.length
-      ? ownedSkillIds
-      : marketResourceIds(install.resourceMap, "installedSkillIds");
-    await tx.piPackageClientInstallation.deleteMany({
-      where: {
-        marketInstallId: install.id,
-        workspaceId: input.targetWorkspaceId,
-        status: { not: "active" },
-      },
-    });
-    await tx.marketInstall.delete({ where: { id: install.id } });
-    if (install.listing.kind === "skill" && install.installedSkill) {
-      await tx.installedSkill.delete({
-        where: { id: install.installedSkill.id },
-      });
-    } else if (install.listing.kind === "mcp" && install.deployment) {
-      await tx.deployment.delete({ where: { id: install.deployment.id } });
-    } else if (install.listing.kind === "toolkit" && install.toolkit) {
-      await tx.toolkit.delete({ where: { id: install.toolkit.id } });
-      if (toolkitSkillIds.length) {
-        await tx.installedSkill.deleteMany({
+  return db.$transaction(
+    async (tx) => {
+      const install = await removableMarketInstall(tx, input);
+      if (install.listing.kind === "pi-package") {
+        const affectedAgents = await tx.agent.findMany({
           where: {
-            id: { in: toolkitSkillIds },
             workspaceId: input.targetWorkspaceId,
-            agentLinks: { none: {} },
-            toolkitLinks: { none: {} },
-            marketInstall: { is: null },
+            runtimeKind: "pi-sdk",
+            retiredAt: null,
+            currentRevisionVersion: { gt: 0 },
+            revisions: {
+              some: {
+                config: {
+                  path: ["packages"],
+                  array_contains: [{ marketInstallId: install.id }],
+                },
+              },
+            },
           },
+          select: { id: true, currentRevisionVersion: true },
+          orderBy: { id: "asc" },
         });
+        for (const agent of affectedAgents) {
+          const current = await tx.agentRevision.findUniqueOrThrow({
+            where: {
+              agentId_version: {
+                agentId: agent.id,
+                version: agent.currentRevisionVersion,
+              },
+            },
+          });
+          const config = AgentRevisionConfigSchema.parse(current.config);
+          if (
+            !config.packages.some((pin) => pin.marketInstallId === install.id)
+          )
+            continue;
+          // Narrow the applied revision only: unrelated unreviewed drafts stay unapplied.
+          await removeAgentRevisionPackageInTransaction(
+            tx,
+            input.targetWorkspaceId,
+            agent.id,
+            current.id,
+            install.id,
+          );
+        }
+        await tx.agentPiPackage.deleteMany({
+          where: { marketInstallId: install.id },
+        });
+        // Uninstall changes defaults only; session references retain code and live MCP grants.
+        // Package bindings point at shared deployments, never package-owned MCP resources.
+        await tx.marketInstall.update({
+          where: { id: install.id },
+          data: { status: "uninstalled" },
+        });
+        if (install.status !== "uninstalled")
+          await tx.marketListing.updateMany({
+            where: { id: install.listingId, installCount: { gt: 0 } },
+            data: { installCount: { decrement: 1 } },
+          });
+        return { id: install.id };
       }
-    }
-    await tx.marketListing.updateMany({
-      where: { id: install.listingId, installCount: { gt: 0 } },
-      data: { installCount: { decrement: 1 } },
-    });
-    return { id: install.id };
-  });
+      const ownedSkillIds = marketResourceIds(
+        install.resourceMap,
+        "ownedInstalledSkillIds",
+      );
+      const toolkitSkillIds = ownedSkillIds.length
+        ? ownedSkillIds
+        : marketResourceIds(install.resourceMap, "installedSkillIds");
+      await tx.piPackageClientInstallation.deleteMany({
+        where: {
+          marketInstallId: install.id,
+          workspaceId: input.targetWorkspaceId,
+          status: { not: "active" },
+        },
+      });
+      await tx.marketInstall.delete({ where: { id: install.id } });
+      if (install.listing.kind === "skill" && install.installedSkill) {
+        await tx.installedSkill.delete({
+          where: { id: install.installedSkill.id },
+        });
+      } else if (install.listing.kind === "mcp" && install.deployment) {
+        await tx.deployment.delete({ where: { id: install.deployment.id } });
+      } else if (install.listing.kind === "toolkit" && install.toolkit) {
+        await tx.toolkit.delete({ where: { id: install.toolkit.id } });
+        if (toolkitSkillIds.length) {
+          await tx.installedSkill.deleteMany({
+            where: {
+              id: { in: toolkitSkillIds },
+              workspaceId: input.targetWorkspaceId,
+              agentLinks: { none: {} },
+              toolkitLinks: { none: {} },
+              marketInstall: { is: null },
+            },
+          });
+        }
+      }
+      await tx.marketListing.updateMany({
+        where: { id: install.listingId, installCount: { gt: 0 } },
+        data: { installCount: { decrement: 1 } },
+      });
+      return { id: install.id };
+    },
+    { timeout: 120_000 },
+  );
 }
 
 export async function removeMarketInstall(input: RemoveMarketInstallInput) {
@@ -1450,6 +1529,16 @@ export async function listWorkspaceMarketInstalls(workspaceId: string) {
           status: true,
           visibility: true,
           publisherWorkspaceId: true,
+          releases: {
+            where: { reviewStatus: "approved" },
+            orderBy: { version: "desc" },
+            select: {
+              id: true,
+              version: true,
+              checksum: true,
+              releaseNotes: true,
+            },
+          },
           latestRelease: {
             select: { id: true, version: true, releaseNotes: true },
           },
@@ -1477,6 +1566,7 @@ export async function listWorkspaceMarketInstalls(workspaceId: string) {
     return {
       ...install,
       piPackage,
+      approvedReleases: install.listing.releases,
       currentRelease:
         install.listing.kind === "pi-package"
           ? {
@@ -1489,9 +1579,16 @@ export async function listWorkspaceMarketInstalls(workspaceId: string) {
                 typeof install.currentRelease.releaseSummary === "object" &&
                 !Array.isArray(install.currentRelease.releaseSummary) &&
                 install.currentRelease.releaseSummary.reviewPolicy ===
-                  "official-directory"
-                  ? "official-directory"
-                  : "manual",
+                  "workspace-owner-trust"
+                  ? "workspace-owner-trust"
+                  : install.currentRelease.releaseSummary &&
+                      typeof install.currentRelease.releaseSummary ===
+                        "object" &&
+                      !Array.isArray(install.currentRelease.releaseSummary) &&
+                      install.currentRelease.releaseSummary.reviewPolicy ===
+                        "official-directory"
+                    ? "official-directory"
+                    : "manual",
               piPackage,
             }
           : {
@@ -1584,11 +1681,18 @@ export function listPublishedMarketSkills(q = "") {
 
 export function listWorkspacePublishedResources(workspaceId: string) {
   return db.marketListing.findMany({
-    where: { publisherWorkspaceId: workspaceId },
+    where: { publisherWorkspaceId: workspaceId, kind: { not: "toolkit" } },
     orderBy: { updatedAt: "desc" },
     include: {
       categories: { select: { id: true } },
-      latestRelease: { select: { id: true, version: true, publishedAt: true } },
+      latestRelease: {
+        select: {
+          id: true,
+          version: true,
+          publishedAt: true,
+          releaseSummary: true,
+        },
+      },
       pendingRelease: {
         select: {
           id: true,

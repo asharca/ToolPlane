@@ -16,6 +16,7 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
 
+import { enforceNativeNamespaces } from "./pi-sdk-capabilities.mjs";
 const config = JSON.parse(readFileSync(process.argv[2], "utf8"));
 const sdkEntry = realpathSync(
   join(
@@ -43,6 +44,10 @@ const { createPiMcpTools } = await import(
 const sdkVersion = JSON.parse(
   readFileSync(join(dirname(sdkEntry), "..", "package.json"), "utf8"),
 ).version;
+const { parseCommandArgs } = await import(
+  pathToFileURL(join(dirname(sdkEntry), "core/prompt-templates.js")).href
+);
+let promptInvocation;
 const fail = (code) => {
   throw Object.assign(new Error(code), { code });
 };
@@ -141,6 +146,14 @@ modelRuntime.registerProvider("toolplane", {
   authHeader: true,
   models: [config.model],
 });
+const packageReferences = config.packages.map(
+  ({ marketInstallId, releaseId, checksum, mcpBindingsChecksum }) => ({
+    marketInstallId,
+    releaseId,
+    checksum,
+    ...(mcpBindingsChecksum ? { mcpBindingsChecksum } : {}),
+  }),
+);
 let saved;
 try {
   if (config.sdkVersion !== "0.87.1" || sdkVersion !== "0.87.1")
@@ -152,6 +165,12 @@ try {
     if (saved.runtimeKind !== "pi-sdk" || saved.sdkVersion !== "0.87.1")
       fail("PI_SDK_SESSION_MISSING");
     if (saved.packageSetChecksum !== config.packageSetChecksum)
+      fail("PI_SDK_PACKAGE_SET_CHANGED");
+    if (
+      saved.packageReferences &&
+      canonicalJson(saved.packageReferences) !==
+        canonicalJson(packageReferences)
+    )
       fail("PI_SDK_PACKAGE_SET_CHANGED");
     if (!saved.sessionPersisted) fail("PI_SDK_SESSION_MISSING");
     sessionPath(saved.sessionFile);
@@ -182,6 +201,7 @@ function persist() {
     sdkVersion: "0.87.1",
     ...state(),
     packageSetChecksum: config.packageSetChecksum,
+    packageReferences,
   };
   const temporary = `${config.statePath}.${process.pid}.tmp`;
   writeFileSync(temporary, JSON.stringify(value), { mode: 0o600 });
@@ -194,10 +214,17 @@ function diagnostics(services) {
     services.diagnostics.some((d) => d.type === "error") ||
     loader.getExtensions().errors.length ||
     [loader.getSkills(), loader.getPrompts(), loader.getThemes()].some((r) =>
-      r.diagnostics.some((d) => d.type === "error"),
+      r.diagnostics.some((d) => d.type === "error" || d.type === "collision"),
     )
   )
     fail("PI_EXTENSION_LOAD_FAILED");
+  enforceNativeNamespaces({
+    extensions: loader.getExtensions().extensions,
+    skills: loader.getSkills().skills,
+    prompts: loader.getPrompts().prompts,
+    toolNames: customTools.map((t) => t.name),
+    hostCommands: config.hostOnlyCommands ?? [],
+  });
 }
 function commands() {
   if (!runtime) return [];
@@ -247,6 +274,18 @@ function event(event) {
   }
   if (event.type === "message_end") {
     const message = event.message;
+    if (message.role === "user" && promptInvocation) {
+      const invocation = {
+        ...promptInvocation,
+        finalInput: contentText(message.content),
+      };
+      runtime.session.sessionManager.appendCustomEntry(
+        "toolplane.prompt-invocation",
+        invocation,
+      );
+      emit({ type: "prompt_invocation", invocation });
+      promptInvocation = undefined;
+    }
     if (message.role === "custom" && message.display !== false)
       texts.push(
         `Pi 扩展 · ${message.customType}\n${contentText(message.content)}`,
@@ -272,6 +311,14 @@ function event(event) {
       }
     }
   }
+}
+function applyConfiguredThinkingLevel(session) {
+  const level = config.reasoningEffort;
+  if (level === undefined || level === "default") return;
+  if (!["minimal", "low", "medium", "high", "xhigh", "max"].includes(level))
+    fail("PI_SDK_REASONING_INVALID");
+  // Pi 0.87.1 clamps to the current model and persists the change in this session only.
+  session.setThinkingLevel(level, { persist: false });
 }
 async function bindSession(session) {
   unsubscribe?.();
@@ -301,6 +348,7 @@ async function bindSession(session) {
   });
   diagnostics(runtime.services);
   if (turnError) fail(turnError);
+  applyConfiguredThinkingLevel(session);
   persist();
 }
 async function factory({ cwd: nextCwd, sessionManager, sessionStartEvent }) {
@@ -488,21 +536,46 @@ async function handle(request) {
       runtime.setRebindSession(bindSession);
       await bindSession(runtime.session);
     }
+    applyConfiguredThinkingLevel(runtime.session);
     let command;
+    let compaction;
     if (request.type === "compact") {
       command = "compact";
-      await runtime.session.compact(request.customInstructions);
+      compaction = await runtime.session.compact(request.customInstructions);
     } else {
       if (typeof request.message !== "string") fail("PI_SDK_REQUEST_INVALID");
       command = /^\/([^\s]+)(?:\s|$)/.exec(request.message)?.[1];
+      const template = runtime.session.promptTemplates.find(
+        (p) => p.name === command,
+      );
+      if (template) {
+        const source = config.packages.find((p) =>
+          within(p.root, template.filePath),
+        );
+        if (!source) fail("PI_PROMPT_SOURCE_REQUIRED");
+        const rawArguments = request.message.slice(command.length + 1).trim();
+        promptInvocation = {
+          name: template.name,
+          source: {
+            marketInstallId: source.marketInstallId,
+            releaseId: source.releaseId,
+            checksum: source.checksum,
+            path: relative(source.root, template.filePath),
+          },
+          version: source.releaseId,
+          rawArguments,
+          arguments: parseCommandArgs(rawArguments),
+        };
+      }
       if (command && !commands().some((c) => c.name === command))
         fail("PI_SDK_COMMAND_UNKNOWN");
       if (command === "compact")
-        await runtime.session.compact(
+        compaction = await runtime.session.compact(
           request.message.slice("/compact".length).trim() || undefined,
         );
       else await runtime.session.prompt(request.message);
     }
+    if (compaction) texts.push(compaction.summary);
     let current;
     do {
       current = runtime.session;
@@ -543,6 +616,7 @@ async function handle(request) {
   } finally {
     context = undefined;
     toolMap = new Map();
+    promptInvocation = undefined;
     delete process.env.TOOLPLANE_RUNTIME_TOKEN;
     delete process.env.TOOLPLANE_APPROVAL_URL;
     await modelRuntime.removeRuntimeApiKey("toolplane").catch(() => {});

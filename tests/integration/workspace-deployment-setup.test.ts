@@ -9,6 +9,11 @@ import {
   vi,
 } from "vitest";
 import { db } from "@/lib/db";
+import {
+  resolveMcpEnvironment,
+  sealMcpEnvironment,
+} from "@/lib/process/mcp-credentials";
+import type { Prisma } from "@prisma/client";
 
 const mocks = vi.hoisted(() => ({
   getCurrentUser: vi.fn(),
@@ -37,6 +42,7 @@ vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));
 import {
   cloneDeploymentAction,
   deployServerAction,
+  setDeploymentEnvAction,
 } from "@/lib/workspace/actions";
 
 const stamp = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -134,6 +140,10 @@ describe("catalog MCP deployment setup", () => {
     });
     expect(deployment.status).toBe("setup_required");
     expect(deployment.installCfg).toMatchObject({ env: { API_TOKEN: "" } });
+    expect(deployment.installCfg).toHaveProperty("credentialEnvelope");
+    expect(resolveMcpEnvironment(deployment.installCfg, workspaceId)).toEqual({
+      API_TOKEN: "",
+    });
     expect(mocks.startProcess).not.toHaveBeenCalled();
     expect(mocks.redirect).toHaveBeenCalledWith(
       `/app/${workspaceSlug}/mcp/${deployment.id}?tab=variables`,
@@ -183,9 +193,66 @@ describe("catalog MCP deployment setup", () => {
       env: { API_TOKEN: "" },
       requiredEnv: ["API_TOKEN"],
     });
+    expect(resolveMcpEnvironment(clone.installCfg, workspaceId)).toEqual({
+      API_TOKEN: "",
+    });
+    expect(clone.installCfg).not.toHaveProperty("credentialEnvelope");
     expect(mocks.startProcess).not.toHaveBeenCalled();
     expect(mocks.redirect).toHaveBeenCalledWith(
       `/app/${workspaceSlug}/mcp/${clone.id}?tab=variables`,
     );
+  });
+  it("stops a running encrypted connection before persisting a rotation and revocation", async () => {
+    const deployment = await db.deployment.create({
+      data: {
+        workspaceId,
+        source: "npm",
+        sourceRef: "optional-mcp",
+        status: "running",
+        installCfg: sealMcpEnvironment({}, workspaceId, {
+          TOKEN: "initial-secret",
+          KEEP: "retained-secret",
+        }) as Prisma.InputJsonObject,
+      },
+    });
+    for (const [oldValue, newValue] of [
+      ["initial-secret", "rotated-secret"],
+      ["rotated-secret", ""],
+    ]) {
+      mocks.stopProcess.mockImplementationOnce(async (id: string) => {
+        expect(id).toBe(deployment.id);
+        const before = await db.deployment.findUniqueOrThrow({ where: { id } });
+        expect(
+          resolveMcpEnvironment(before.installCfg, workspaceId).TOKEN,
+        ).toBe(oldValue);
+      });
+      const form = new FormData();
+      form.set("workspace", workspaceSlug);
+      form.set("deploymentId", deployment.id);
+      form.set(
+        "changes",
+        JSON.stringify({ set: { TOKEN: newValue }, remove: [] }),
+      );
+      expect(await setDeploymentEnvAction(form)).toMatchObject({
+        savedAt: expect.any(Number),
+        requiresSetup: false,
+      });
+      const stored = await db.deployment.findUniqueOrThrow({
+        where: { id: deployment.id },
+      });
+      expect(stored.status).toBe("stopped");
+      expect(resolveMcpEnvironment(stored.installCfg, workspaceId)).toEqual({
+        TOKEN: newValue,
+        KEEP: "retained-secret",
+      });
+      expect(stored.installCfg).toMatchObject({ env: { TOKEN: "", KEEP: "" } });
+      expect(JSON.stringify(stored.installCfg)).not.toContain(
+        "retained-secret",
+      );
+      if (newValue)
+        expect(JSON.stringify(stored.installCfg)).not.toContain(newValue);
+    }
+    expect(mocks.stopProcess).toHaveBeenCalledTimes(2);
+    expect(mocks.startProcess).not.toHaveBeenCalled();
   });
 });

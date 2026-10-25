@@ -12,7 +12,6 @@ const m = vi.hoisted(() => ({
   assistants: vi.fn(),
   installs: vi.fn(),
   materialize: vi.fn(),
-  sync: vi.fn(),
   assistant: vi.fn(),
   install: vi.fn(),
 }));
@@ -43,7 +42,6 @@ vi.mock("@/lib/market/skills", async (original) => ({
   listWorkspaceMarketInstalls: m.installs,
 }));
 vi.mock("@/lib/market/resources", () => ({ installMarketRelease: m.install }));
-vi.mock("@/lib/agents/hermes/runtime", () => ({ syncHermesRuntime: m.sync }));
 vi.mock("@/lib/observability/http", () => ({
   withRequestLogging: (_path: string, handler: unknown) => handler,
 }));
@@ -117,7 +115,7 @@ describe("market installation dispatch and output policies", () => {
     m.release.mockResolvedValueOnce({ listing: { kind: "unknown" } });
     expect((await POST(request(), ctx)).status).toBe(422);
   });
-  it.each(["skill", "mcp", "toolkit", "pi-package"])(
+  it.each(["skill", "mcp", "pi-package"])(
     "serializes %s installation identifiers and bindings",
     async (kind) => {
       m.release.mockResolvedValue({ listing: { kind } });
@@ -144,9 +142,7 @@ describe("market installation dispatch and output policies", () => {
           ? { installedSkillId: "resource" }
           : kind === "mcp"
             ? { deploymentId: "resource" }
-            : kind === "toolkit"
-              ? { toolkitId: "resource" }
-              : {}),
+            : {}),
         status: "ready",
         reused: true,
       });
@@ -159,8 +155,13 @@ describe("market installation dispatch and output policies", () => {
       });
     },
   );
+  it("rejects retired Toolkit execution without materializing resources", async () => {
+    m.release.mockResolvedValue({ listing: { kind: "toolkit" } });
+    expect((await POST(request(), ctx)).status).toBe(422);
+    expect(m.install).not.toHaveBeenCalled();
+  });
   it.each([false, true])(
-    "syncs materialized agent before returning reused=%s",
+    "returns fresh Pi materialization without activating a legacy runtime, reused=%s",
     async (reused) => {
       m.release.mockResolvedValue(null);
       m.agentRelease.mockResolvedValue({ id: "release" });
@@ -179,7 +180,6 @@ describe("market installation dispatch and output policies", () => {
         agentId: "agent",
         reused,
       });
-      expect(m.sync).toHaveBeenCalledWith("ws", "agent");
       expect(m.materialize).toHaveBeenCalledWith(
         expect.objectContaining({
           name: "Named",
@@ -189,7 +189,7 @@ describe("market installation dispatch and output policies", () => {
       );
     },
   );
-  it("normalizes assistant options and deduplicates selected deployments", async () => {
+  it("forwards explicitly reviewed Assistant tool grants", async () => {
     m.release.mockResolvedValue({ listing: { kind: "assistant" } });
     m.assistant.mockResolvedValue({ id: "assistant" });
     const response = await POST(
@@ -199,7 +199,13 @@ describe("market installation dispatch and output policies", () => {
         systemPrompt: null,
         modelProviderId: " provider ",
         model: null,
-        deploymentIds: ["dep", "dep"],
+        mcpGrants: [
+          {
+            deploymentId: "dep",
+            allowedToolNames: ["search"],
+            expectedDefinitionChecksum: "a".repeat(64),
+          },
+        ],
       }),
       ctx,
     );
@@ -212,7 +218,13 @@ describe("market installation dispatch and output policies", () => {
         systemPrompt: null,
         modelProviderId: "provider",
         model: null,
-        deploymentIds: ["dep"],
+        mcpGrants: [
+          {
+            deploymentId: "dep",
+            allowedToolNames: ["search"],
+            expectedDefinitionChecksum: "a".repeat(64),
+          },
+        ],
       }),
     );
   });

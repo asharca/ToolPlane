@@ -1,103 +1,44 @@
 // @vitest-environment node
 import { beforeEach, describe, expect, it, vi } from "vitest";
-
-const mocks = vi.hoisted(() => ({
-  resolveRequestUser: vi.fn(),
-  getAgentForRequest: vi.fn(),
-  listProviders: vi.fn(),
-  listHermesProfiles: vi.fn(),
+const mocks = vi.hoisted(() => ({ user: vi.fn(), agent: vi.fn() }));
+vi.mock("@/lib/auth/request-user", () => ({ resolveRequestUser: mocks.user }));
+vi.mock("@/lib/agents/queries", () => ({ getAgentForRequest: mocks.agent }));
+vi.mock("@/lib/observability/http", () => ({
+  withRequestLogging: (_path: string, handler: unknown) => handler,
 }));
-
-vi.mock("@/lib/auth/request-user", () => ({
-  resolveRequestUser: mocks.resolveRequestUser,
-}));
-vi.mock("@/lib/agents/queries", () => ({
-  getAgentForRequest: mocks.getAgentForRequest,
-  listProviders: mocks.listProviders,
-}));
-vi.mock("@/lib/agents/hermes/profiles", () => ({
-  HermesProfileError: class HermesProfileError extends Error {
-    constructor(
-      message: string,
-      readonly status = 400,
-    ) {
-      super(message);
-    }
-  },
-  listHermesProfiles: mocks.listHermesProfiles,
-  normalizeHermesProfile: (value: unknown) => {
-    const profile = String(value ?? "")
-      .trim()
-      .toLowerCase();
-    return /^[a-z0-9][a-z0-9_-]{0,63}$/.test(profile) ? profile : null;
-  },
-}));
-
-import { GET } from "@/app/api/v1/agents/[agentId]/hermes/models/route";
-
-describe("Hermes profile models route", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mocks.resolveRequestUser.mockResolvedValue({ id: "user-1" });
-    mocks.getAgentForRequest.mockResolvedValue({
-      id: "agent-1",
-      workspaceId: "workspace-1",
-      runtime: { id: "runtime-1", kind: "hermes" },
+import { GET as models } from "@/app/api/v1/agents/[agentId]/hermes/models/route";
+import { GET as profiles } from "@/app/api/v1/agents/[agentId]/hermes/profiles/route";
+const handlers = { models, profiles };
+const context = { params: Promise.resolve({ agentId: "agent" }) };
+describe.each(Object.entries(handlers))(
+  "retired Hermes %s API",
+  (_name, handler) => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+      mocks.user.mockResolvedValue({ id: "user" });
+      mocks.agent.mockResolvedValue({ id: "agent", runtimeKind: "hermes" });
     });
-    mocks.listProviders.mockResolvedValue([
-      {
-        id: "provider-1",
-        name: "ToolPlane Provider",
-        models: ["model-a"],
-        modelRecords: [
-          {
-            modelId: "model-a",
-            primaryType: "text",
-            capabilities: ["reasoning"],
-            inputModalities: ["text"],
-          },
-        ],
-      },
-    ]);
-  });
-
-  it("returns only ToolPlane workspace models and maps the current Hermes alias", async () => {
-    mocks.listHermesProfiles.mockResolvedValue([
-      {
-        name: "default",
-        isDefault: true,
-        provider: "custom:toolplane-provider-1",
-        model: "model-a",
-        description: "",
-      },
-    ]);
-
-    const response = await GET(
-      new Request(
-        "http://localhost/api/v1/agents/agent-1/hermes/models?profile=default",
-      ),
-      { params: Promise.resolve({ agentId: "agent-1" }) },
-    );
-
-    await expect(response.json()).resolves.toEqual({
-      profile: "default",
-      provider: "toolplane-provider-1",
-      model: "model-a",
-      providers: [
-        {
-          id: "toolplane-provider-1",
-          name: "ToolPlane Provider",
-          models: ["model-a"],
-          modelRecords: [
-            {
-              modelId: "model-a",
-              primaryType: "text",
-              capabilities: ["reasoning"],
-              inputModalities: ["text"],
-            },
-          ],
-        },
-      ],
+    it("requires authentication", async () => {
+      mocks.user.mockResolvedValue(null);
+      expect(
+        (await handler(new Request("http://toolplane.test/hermes"), context))
+          .status,
+      ).toBe(401);
+      expect(mocks.agent).not.toHaveBeenCalled();
     });
-  });
-});
+    it("does not expose an inaccessible Agent", async () => {
+      mocks.agent.mockResolvedValue(null);
+      expect(
+        (await handler(new Request("http://toolplane.test/hermes"), context))
+          .status,
+      ).toBe(404);
+    });
+    it("returns retirement without runtime projection, model rebinding, or boot", async () => {
+      expect(
+        (await handler(new Request("http://toolplane.test/hermes"), context))
+          .status,
+      ).toBe(410);
+      expect(mocks.agent).toHaveBeenCalledWith("agent", "user");
+    });
+  },
+);

@@ -24,9 +24,13 @@ function Composer({
   sandboxId = "sandbox-1",
   onSubmit = vi.fn(),
   runtimeKind,
+  conversationId = "conversation-1",
+  workSessionId = "work-1",
 }: {
   sandboxId?: string;
   runtimeKind?: string;
+  conversationId?: string;
+  workSessionId?: string;
   onSubmit?: (references: ComposerReference[]) => void;
 }) {
   const [draft, setDraft] = useState("");
@@ -40,8 +44,8 @@ function Composer({
         key={sandboxId}
         agentId="agent-1"
         sandboxId={sandboxId}
-        workSessionId="work-1"
-        conversationId="conversation-1"
+        workSessionId={workSessionId || undefined}
+        conversationId={conversationId || undefined}
         commands={runtimeKind ? runtimeCommands(runtimeKind) : []}
         runtimeKind={runtimeKind ?? ""}
         draft={draft}
@@ -80,7 +84,16 @@ async function customize(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("Work composer", () => {
-  it.each(["pi", "claude-code", "dsh", "hermes-rpc"])(
+  it("does not request current Agent capabilities before a session is pinned", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    render(<Composer conversationId="" workSessionId="" />);
+    await userEvent.click(screen.getByRole("button", { name: "Open tools" }));
+    for (const name of ["Skills", "MCP resources", "MCP prompts"])
+      expect(screen.getByRole("option", { name })).toBeDisabled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+  it.each(["pi-sdk"])(
     "offers only %s commands through /, completes without executing, and keeps + unchanged",
     async (runtimeKind) => {
       const user = userEvent.setup();
@@ -305,6 +318,17 @@ describe("Work composer", () => {
     expect(fetchMock.mock.calls[0][0]).toContain(
       "excludeConversationId=conversation-1",
     );
+    expect(fetchMock.mock.calls[0][0]).toContain(
+      "conversationId=conversation-1",
+    );
+    const resolveRequest = fetchMock.mock.calls.find(
+      ([, init]) => init?.method === "POST",
+    );
+    expect(JSON.parse(String(resolveRequest?.[1]?.body))).toMatchObject({
+      conversationId: "conversation-1",
+      workSessionId: "work-1",
+      sandboxId: "sandbox-1",
+    });
     const reference = {
       kind: "file",
       id: "src/plan.md",

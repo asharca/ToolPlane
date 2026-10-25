@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   recipes: vi.fn(),
   workspace: vi.fn(),
   workspaces: vi.fn(),
+  deployments: vi.fn(),
 }));
 vi.mock("@/lib/db", () => ({
   db: {
@@ -14,11 +15,13 @@ vi.mock("@/lib/db", () => ({
     marketListing: { findMany: mocks.market },
     $queryRaw: mocks.recipes,
     workspace: { findFirst: mocks.workspace, findMany: mocks.workspaces },
+    deployment: { findMany: mocks.deployments },
   },
 }));
 import {
   getBrowseServers,
   getDefaultWorkspace,
+  getDeployments,
   getMarketServer,
   getWorkspaceForUser,
   listWorkspacesForUser,
@@ -43,6 +46,42 @@ const base = {
 beforeEach(() => vi.resetAllMocks());
 
 describe("workspace query projections", () => {
+  it("projects connection lists without encrypted or plaintext credentials", async () => {
+    mocks.deployments.mockResolvedValue([
+      {
+        id: "connection",
+        installCfg: {
+          env: { TOKEN: "", EMPTY: "", LEGACY: "private-plaintext" },
+          requiredEnv: ["TOKEN", "EMPTY"],
+          credentialEnvelope: {
+            configuredKeys: ["TOKEN"],
+            encrypted: { data: "private-ciphertext" },
+          },
+          args: ["--token", "private-argument"],
+          toolCatalog: tools,
+        },
+      },
+    ]);
+    const projected = await getDeployments("workspace");
+    expect(projected).toEqual([
+      {
+        id: "connection",
+        installCfg: {
+          env: { TOKEN: "configured", EMPTY: "", LEGACY: "" },
+          requiredEnv: ["TOKEN", "EMPTY"],
+          toolCatalog: tools,
+        },
+      },
+    ]);
+    expect(JSON.stringify(projected)).not.toContain("private-");
+    expect(JSON.stringify(projected)).not.toContain("credentialEnvelope");
+    expect(mocks.deployments).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ workspaceId: "workspace" }),
+      }),
+    );
+  });
+
   it("does not expose inactive or unrelated workspaces and falls back from an inaccessible last slug", async () => {
     const records = [
       {

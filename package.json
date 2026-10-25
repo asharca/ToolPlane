@@ -94,6 +94,7 @@
     "telegram-markdown-v2": "0.0.4",
     "undici": "^7.28.0",
     "ws": "^8.21.0",
+    "yaml": "2.9.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {

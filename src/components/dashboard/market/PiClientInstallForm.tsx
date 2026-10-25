@@ -109,7 +109,12 @@ export function PiClientInstallForm({
   release: PiClientRelease;
   deployments: PiClientDeployment[];
   defaults: PiPackageBindings;
-  existing?: { id: string; client: string; bindings: PiPackageBindings };
+  existing?: {
+    id: string;
+    client: string;
+    bindings: PiPackageBindings;
+    configVersion: number;
+  };
   workspaceBindings?: boolean;
 }) {
   const t = useTranslations("console.market.piClients");
@@ -172,6 +177,11 @@ export function PiClientInstallForm({
         }
       />
       <input type="hidden" name="installationId" value={existing?.id ?? ""} />
+      <input
+        type="hidden"
+        name="expectedConfigVersion"
+        value={existing?.configVersion ?? ""}
+      />
       <input type="hidden" name="releaseId" value={release.id} />
       <input type="hidden" name="bindings" value={JSON.stringify(bindings)} />
       <fieldset disabled={pending} className="min-w-0 space-y-3">

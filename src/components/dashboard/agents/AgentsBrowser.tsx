@@ -1,9 +1,7 @@
 "use client";
 import { AnimatedBadge } from "@/components/motion/animated-badge";
 import { Button, ButtonLink } from "@/components/motion/button/base";
-import { RadioGroup, RadioGroupItem } from "@/components/motion/radio";
 import { Input } from "@/components/motion/input";
-import { FormSelect } from "@/components/ui/FormSelect";
 
 import { useTranslations } from "next-intl";
 import { useState } from "react";
@@ -11,7 +9,6 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
-  Blocks,
   Box,
   Bot,
   CheckCircle2,
@@ -27,7 +24,6 @@ import {
   Server,
   Settings2,
   Store,
-  Zap,
   Wrench,
   Users,
   X,
@@ -39,7 +35,6 @@ import {
 } from "@/components/dashboard/DashboardUI";
 import { AgentResourceSelect } from "@/components/dashboard/agents/AgentResourceSelect";
 import type { AgentResourceOption } from "@/components/dashboard/agents/AgentResourceSelect";
-import { HermesImageSelector } from "@/components/dashboard/agents/HermesImageSelector";
 import { ModelPicker } from "@/components/dashboard/models/ModelPicker";
 import type { ModelProviderOption } from "@/components/dashboard/models/ModelPicker";
 import { SubmitButton } from "@/components/dashboard/SubmitButton";
@@ -53,7 +48,6 @@ import {
   agentRuntimeSupportsProviderFormat,
   isDedicatedSandboxRuntimeKind,
 } from "@/lib/agents/runtime-kind";
-import type { AgentRuntimeKind } from "@/lib/agents/runtime-kind";
 import { AgentBuiltInTools } from "@/components/dashboard/agents/AgentBuiltInTools";
 import { AgentSystemPromptEditor } from "@/components/dashboard/agents/AgentSystemPromptEditor";
 
@@ -75,8 +69,6 @@ type CreateOptions = {
   defaultModel?: { providerId: string; model: string } | null;
   deployments: AgentResourceOption[];
   skills: AgentResourceOption[];
-  toolkits: AgentResourceOption[];
-  sandboxes?: AgentResourceOption[];
 };
 
 export type AgentMarketOption = {
@@ -94,13 +86,7 @@ export type AgentMarketOption = {
   installCount: number;
 };
 
-type CreateStep =
-  | "basic"
-  | "instructions"
-  | "builtInTools"
-  | "mcp"
-  | "skills"
-  | "toolkits";
+type CreateStep = "basic" | "instructions" | "builtInTools" | "mcp" | "skills";
 type CreateSource = "blank" | "market";
 
 function cx(...classes: Array<string | false | null | undefined>) {
@@ -144,7 +130,6 @@ export function AgentsBrowser({
   agentControlEndpoint,
   agents,
   createOptions,
-  hermesImages,
   marketAgents = [],
 }: {
   slug: string;
@@ -152,7 +137,6 @@ export function AgentsBrowser({
   agentControlEndpoint?: string;
   agents: AgentRow[];
   createOptions: CreateOptions;
-  hermesImages?: string[];
   marketAgents?: AgentMarketOption[];
 }) {
   const t = useTranslations("console.agents");
@@ -170,7 +154,7 @@ export function AgentsBrowser({
       (provider) =>
         provider.id === createOptions.defaultModel?.providerId &&
         provider.models.includes(createOptions.defaultModel.model) &&
-        agentRuntimeSupportsProviderFormat("pi", provider.format),
+        agentRuntimeSupportsProviderFormat("pi-sdk", provider.format),
     )
       ? createOptions.defaultModel
       : null;
@@ -179,7 +163,7 @@ export function AgentsBrowser({
     (() => {
       const provider = createOptions.providers.find(
         (option) =>
-          agentRuntimeSupportsProviderFormat("pi", option.format) &&
+          agentRuntimeSupportsProviderFormat("pi-sdk", option.format) &&
           option.models.length > 0,
       );
       const model = provider?.models[0];
@@ -193,57 +177,32 @@ export function AgentsBrowser({
   const [agentName, setAgentName] = useState("");
   const [agentDescription, setAgentDescription] = useState("");
   const [systemPrompt, setSystemPrompt] = useState("");
-  const [runtime, setRuntime] = useState<AgentRuntimeKind>(
-    createOnly && searchParams.get("runtime") === "pi-sdk" ? "pi-sdk" : "pi",
-  );
+  const runtime = "pi-sdk";
   const [providerId, setProviderId] = useState(
     defaultNativeModel?.providerId ?? "",
   );
   const [modelId, setModelId] = useState(defaultNativeModel?.model ?? "");
-  const [selectedProviderIds, setSelectedProviderIds] = useState<Set<string>>(
-    () =>
-      new Set(
-        createOptions.defaultModel?.providerId
-          ? [createOptions.defaultModel.providerId]
-          : [],
-      ),
-  );
   const [selectedDeploymentIds, setSelectedDeploymentIds] = useState<
     Set<string>
   >(() => new Set());
   const [selectedSkillIds, setSelectedSkillIds] = useState<Set<string>>(
     () => new Set(),
   );
-  const [selectedToolkitIds, setSelectedToolkitIds] = useState<Set<string>>(
-    () => new Set(),
-  );
-  const [sandboxId, setSandboxId] = useState("");
   const [disabledBuiltinTools, setDisabledBuiltinTools] = useState<Set<string>>(
     () => new Set(),
   );
   const setupCount = agents.filter((agent) => !isAgentReady(agent)).length;
   const hasProviders = createOptions.providers.length > 0;
-  const compatibleProviders = createOptions.providers.filter(
-    (provider) =>
-      !runtime || agentRuntimeSupportsProviderFormat(runtime, provider.format),
+  const compatibleProviders = createOptions.providers.filter((provider) =>
+    agentRuntimeSupportsProviderFormat(runtime, provider.format),
   );
   const selectedProvider =
     compatibleProviders.find((provider) => provider.id === providerId) ?? null;
   const createReady =
     Boolean(agentName.trim()) &&
-    (runtime === "hermes"
-      ? selectedProviderIds.size > 0
-      : Boolean(
-          selectedProvider &&
-            modelId &&
-            selectedProvider.models.includes(modelId),
-        ));
-  const providerOptions = createOptions.providers.map((provider) => ({
-    id: provider.id,
-    label: provider.name,
-    description: t("providerModelCount", { count: provider.models.length }),
-    keywords: provider.models,
-  }));
+    Boolean(
+      selectedProvider && modelId && selectedProvider.models.includes(modelId),
+    );
   const createSteps: Array<{
     id: CreateStep;
     label: string;
@@ -254,15 +213,11 @@ export function AgentsBrowser({
       label: t("basic"),
       description: t("generalSettingsDescription"),
     },
-    ...(runtime === "hermes"
-      ? []
-      : [
-          {
-            id: "instructions" as const,
-            label: t("instructions"),
-            description: t("instructionsSettingsDescription"),
-          },
-        ]),
+    {
+      id: "instructions",
+      label: t("instructions"),
+      description: t("instructionsSettingsDescription"),
+    },
     {
       id: "builtInTools",
       label: t("builtInTools"),
@@ -275,11 +230,6 @@ export function AgentsBrowser({
       id: "skills",
       label: t("skills"),
       description: t("skillsSettingsDescription"),
-    },
-    {
-      id: "toolkits",
-      label: t("toolkits"),
-      description: t("toolkitsSettingsDescription"),
     },
   ];
   const createStepIndex = Math.max(
@@ -295,20 +245,6 @@ export function AgentsBrowser({
   const marketReturnTo = `${pathname}?${marketReturnParams}`;
   const cloneError = searchParams.get("cloneError");
 
-  function selectRuntime(nextRuntime: AgentRuntimeKind) {
-    setRuntime(nextRuntime);
-    const selectedProvider = createOptions.providers.find(
-      (provider) => provider.id === providerId,
-    );
-    if (
-      selectedProvider &&
-      !agentRuntimeSupportsProviderFormat(nextRuntime, selectedProvider.format)
-    ) {
-      setProviderId("");
-      setModelId("");
-    }
-  }
-
   function closeCreateForm() {
     if (createOnly) {
       router.push(requestedReturnTo || `/app/${encodeURIComponent(slug)}/work`);
@@ -320,21 +256,11 @@ export function AgentsBrowser({
     setAgentName("");
     setAgentDescription("");
     setSystemPrompt("");
-    setRuntime("pi");
     setProviderId(defaultNativeModel?.providerId ?? "");
     setModelId(defaultNativeModel?.model ?? "");
-    setSelectedProviderIds(
-      new Set(
-        createOptions.defaultModel?.providerId
-          ? [createOptions.defaultModel.providerId]
-          : [],
-      ),
-    );
     setSelectedDeploymentIds(new Set());
     setSelectedSkillIds(new Set());
-    setSelectedToolkitIds(new Set());
     setDisabledBuiltinTools(new Set());
-    setSandboxId("");
   }
 
   return (
@@ -710,185 +636,62 @@ export function AgentsBrowser({
                   />
                 </label>
 
-                <fieldset>
-                  <legend className="mb-1.5 text-xs font-semibold text-foreground">
-                    {t("runtime")}
-                  </legend>
-                  <RadioGroup
-                    value={runtime}
-                    onValueChange={(next) =>
-                      selectRuntime(next as AgentRuntimeKind)
+                <input type="hidden" name="runtime" value={runtime} />
+                <div className="space-y-2 rounded-lg border border-border p-3 text-xs leading-5 text-muted-foreground">
+                  <p>{t("piPackageSecurity")}</p>
+                  <p>{t("piPackageHeadless")}</p>
+                  <p>{t("piSdkCreateHelp")}</p>
+                </div>
+                <div>
+                  <input type="hidden" name="providerId" value={providerId} />
+                  <input type="hidden" name="model" value={modelId} />
+                  <span className="mb-1.5 flex items-center gap-2 text-xs font-semibold text-foreground">
+                    <Cpu className="size-4 text-muted-foreground" />{" "}
+                    {t("model")}
+                  </span>
+                  <ModelPicker
+                    providers={compatibleProviders}
+                    value={
+                      providerId && modelId
+                        ? { providerId, model: modelId }
+                        : null
                     }
-                  >
-                    {[
-                      {
-                        value: "pi" as const,
-                        label: t("piRuntime"),
-                        description: t("piRuntimeDescription"),
-                        icon: Zap,
-                      },
-                      {
-                        value: "pi-sdk" as const,
-                        label: t("piSdkRuntime"),
-                        description: t("piSdkRuntimeDescription"),
-                        icon: PackageCheck,
-                      },
-                    ].map((option) => {
-                      const Icon = option.icon;
-                      const selected = runtime === option.value;
-                      return (
-                        <div
-                          key={option.value}
-                          className={cx(
-                            "relative flex min-h-16 cursor-pointer items-start gap-3 rounded-md border px-3.5 py-3 text-left transition-colors hover:bg-muted/40",
-                            selected
-                              ? "border-foreground/20 bg-muted/60"
-                              : "border-border",
-                          )}
-                        >
-                          <input
-                            type="radio"
-                            name="runtime"
-                            value={option.value}
-                            checked={selected}
-                            required
-                            onChange={() => selectRuntime(option.value)}
-                            className="sr-only"
-                            tabIndex={-1}
-                            aria-hidden="true"
-                            aria-label={option.label}
-                          />
-                          <RadioGroupItem
-                            value={option.value}
-                            label={option.label}
-                          />
-                          <Icon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-                          <span className="min-w-0 flex-1">
-                            <span className="mt-0.5 block text-xs leading-4 text-muted-foreground">
-                              {option.description}
-                            </span>
-                          </span>
-                          <CheckCircle2
-                            className={cx(
-                              "mt-0.5 size-4 shrink-0",
-                              selected ? "text-foreground" : "invisible",
-                            )}
-                          />
-                        </div>
+                    onSelect={(selection) => {
+                      setProviderId(selection.providerId);
+                      setModelId(selection.model);
+                    }}
+                    onConfigure={() => {
+                      window.location.assign(
+                        `/app/${encodeURIComponent(slug)}/providers`,
                       );
-                    })}
-                  </RadioGroup>
-                </fieldset>
-                {runtime === "pi-sdk" ? (
-                  <div className="space-y-2 rounded-lg border border-border p-3 text-xs leading-5 text-muted-foreground">
-                    <p>{t("piPackageSecurity")}</p>
-                    <p>{t("piPackageHeadless")}</p>
-                    <p>{t("piSdkCreateHelp")}</p>
-                    <p>{t("piSdkUnsupportedEntrypoints")}</p>
-                  </div>
-                ) : null}
-
-                {runtime === "hermes" ? (
-                  <HermesImageSelector
-                    id="create-hermes-version"
-                    images={hermesImages}
+                    }}
+                    trigger={
+                      <Button
+                        variant="secondary"
+                        type="button"
+                        aria-label={`${t("model")}: ${modelId || t("selectModel")}`}
+                        className="w-full text-left"
+                      >
+                        <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-semibold text-muted-foreground">
+                          {selectedProvider?.name.charAt(0).toUpperCase() ||
+                            "M"}
+                        </span>
+                        <span className="min-w-0 flex-1 truncate">
+                          {modelId || t("selectModel")}
+                        </span>
+                        <span className="hidden max-w-44 truncate text-xs text-muted-foreground sm:block">
+                          {selectedProvider?.name}
+                        </span>
+                        <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+                      </Button>
+                    }
                   />
-                ) : null}
+                </div>
 
-                {runtime === "hermes" ? (
-                  <div className="space-y-2">
-                    <AgentResourceSelect
-                      icon={Cpu}
-                      label={t("modelProviders")}
-                      name="providerId"
-                      options={providerOptions}
-                      selectedIds={selectedProviderIds}
-                      onSelectionChange={setSelectedProviderIds}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      {t("hermesProviderSelectionHelp")}
-                    </p>
-                  </div>
-                ) : runtime ? (
-                  <div>
-                    <input type="hidden" name="providerId" value={providerId} />
-                    <input type="hidden" name="model" value={modelId} />
-                    <span className="mb-1.5 flex items-center gap-2 text-xs font-semibold text-foreground">
-                      <Cpu className="size-4 text-muted-foreground" />{" "}
-                      {t("model")}
-                    </span>
-                    <ModelPicker
-                      providers={compatibleProviders}
-                      value={
-                        providerId && modelId
-                          ? { providerId, model: modelId }
-                          : null
-                      }
-                      onSelect={(selection) => {
-                        setProviderId(selection.providerId);
-                        setModelId(selection.model);
-                      }}
-                      onConfigure={() => {
-                        window.location.assign(
-                          `/app/${encodeURIComponent(slug)}/providers`,
-                        );
-                      }}
-                      trigger={
-                        <Button
-                          variant="secondary"
-                          type="button"
-                          aria-label={`${t("model")}: ${modelId || t("selectModel")}`}
-                          className="w-full text-left"
-                        >
-                          <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-semibold text-muted-foreground">
-                            {selectedProvider?.name.charAt(0).toUpperCase() ||
-                              "M"}
-                          </span>
-                          <span className="min-w-0 flex-1 truncate">
-                            {modelId || t("selectModel")}
-                          </span>
-                          <span className="hidden max-w-44 truncate text-xs text-muted-foreground sm:block">
-                            {selectedProvider?.name}
-                          </span>
-                          <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
-                        </Button>
-                      }
-                    />
-                  </div>
-                ) : null}
-
-                {runtime === "hermes-rpc" ? (
-                  <div className="block">
-                    <span className="mb-1.5 block text-xs font-semibold text-foreground">
-                      {t("hermesRpcSandbox")}
-                    </span>
-                    <FormSelect
-                      name={sandboxId ? "sandboxId" : undefined}
-                      value={sandboxId}
-                      label={t("hermesRpcSandbox")}
-                      options={[
-                        { value: "", label: t("hermesRpcNewSandbox") },
-                        (createOptions.sandboxes ?? []).map((sandbox) => ({
-                          value: sandbox.id,
-                          label: sandbox.label,
-                        })),
-                      ]
-                        .flat()
-                        .filter((option) => option != null)}
-                      onValueChange={(value) => setSandboxId(value)}
-                      className="w-full"
-                    />
-                    <span className="mt-1.5 block text-xs text-muted-foreground">
-                      {t("hermesRpcSandboxHelp")}
-                    </span>
-                  </div>
-                ) : null}
-                {runtime && runtime !== "hermes" && runtime !== "hermes-rpc" ? (
-                  <div className="flex items-start gap-2 text-xs leading-5 text-muted-foreground">
-                    <Box className="mt-0.5 size-4 shrink-0" />
-                    <p>{t("automaticSandboxHelp")}</p>
-                  </div>
-                ) : null}
+                <div className="flex items-start gap-2 text-xs leading-5 text-muted-foreground">
+                  <Box className="mt-0.5 size-4 shrink-0" />
+                  <p>{t("automaticSandboxHelp")}</p>
+                </div>
                 <div className="block max-w-48 text-xs font-medium text-muted-foreground">
                   <Input
                     label={t("maxToolSteps")}
@@ -1003,32 +806,6 @@ export function AgentsBrowser({
                   options={createOptions.skills}
                   selectedIds={selectedSkillIds}
                   onSelectionChange={setSelectedSkillIds}
-                />
-              </section>
-
-              <section
-                hidden={activeCreateStep !== "toolkits"}
-                aria-labelledby="agent-create-toolkits-title"
-                className="mx-auto max-w-3xl space-y-6 px-5 py-6 sm:px-8"
-              >
-                <div>
-                  <h3
-                    id="agent-create-toolkits-title"
-                    className="text-base font-semibold text-foreground"
-                  >
-                    {t("toolkits")}
-                  </h3>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {t("toolkitsSettingsDescription")}
-                  </p>
-                </div>
-                <AgentResourceSelect
-                  icon={Blocks}
-                  label={t("toolkits")}
-                  name="toolkitId"
-                  options={createOptions.toolkits}
-                  selectedIds={selectedToolkitIds}
-                  onSelectionChange={setSelectedToolkitIds}
                 />
               </section>
             </div>
@@ -1259,7 +1036,6 @@ export function AgentsBrowser({
                           slug={slug}
                           agentId={agent.id}
                           agentName={agent.name}
-                          runtimeKind={agent.runtimeKind}
                         />
                         <DeleteAgentButton slug={slug} agentId={agent.id} />
                       </div>

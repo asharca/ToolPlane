@@ -136,11 +136,18 @@ export async function getPiPackageDownload(input: {
           where: {
             targetWorkspaceId: workspace.id,
             listingId: release.listingId,
-            status: "ready",
             OR: [
-              { currentReleaseId: release.id },
-              { agentPiPackages: { some: { releaseId: release.id } } },
+              { status: "ready", currentReleaseId: release.id },
               {
+                status: "ready",
+                agentPiPackages: { some: { releaseId: release.id } },
+              },
+              {
+                status: { in: ["ready", "uninstalled"] },
+                piSessionPackages: { some: { releaseId: release.id } },
+              },
+              {
+                status: "ready",
                 piPackageClientInstallations: {
                   some: {
                     releaseId: release.id,
@@ -153,7 +160,41 @@ export async function getPiPackageDownload(input: {
           },
           select: { id: true },
         });
-        if (!install) throw new Error("listing_unavailable");
+        if (!install) {
+          const retained = await tx.marketRelease.count({
+            where: {
+              id: release.id,
+              OR: [
+                {
+                  agentRevisionReferences: {
+                    some: {
+                      revision: { agent: { workspaceId: workspace.id } },
+                    },
+                  },
+                },
+                {
+                  assistantRevisionReferences: {
+                    some: {
+                      revision: { assistant: { workspaceId: workspace.id } },
+                    },
+                  },
+                },
+                {
+                  selectionReferences: {
+                    some: {
+                      installation: {
+                        workspaceId: workspace.id,
+                        userId: input.userId,
+                        status: "active",
+                      },
+                    },
+                  },
+                },
+              ],
+            },
+          });
+          if (!retained) throw new Error("listing_unavailable");
+        }
       }
       const manifest = parsePiPackageReleaseManifest(
         release.manifest,

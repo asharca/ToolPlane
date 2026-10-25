@@ -17,6 +17,14 @@
 
 MCP 部署可以是内置子进程、远程 MCP（Streamable HTTP / SSE）或 Docker bridge 容器。网关转发真实请求，而不是返回市场演示数据。
 
+MCP 市场版本同时支持远程连接器与容器隔离的 stdio 服务。工作区配方无需预先存在目录条目，可通过现有审核流程发布；批准时执行真实握手并采集工具清单。程序配方必须固定 npm/PyPI 版本、完整 Git commit 或 Docker sha256 digest。JSON 配方保留 `command`（`npx`、`uvx`、`uv tool run` 或 `docker`）与 argv，不调用宿主 shell。版本只导出必填环境变量名，不包含已配置值，并拒绝携带凭据的 argv。安装/更新复用审核配方、Deployment 与 supervisor 生命周期：`setup_required` 表示配置缺失；安装记录的 `ready` 仅表示配置完整，不代表运行时已就绪。部署初始停止，需显式启动；握手与工具就绪由 supervisor 判断。MCP 安装/更新 API 请求格式不变。
+
+“配方固定版本”不等于不可变运行时制品：该版本格式未按字节锁定 npm/PyPI 的传递依赖与平台包装镜像，不能将安装标记为可复现或内容寻址制品。可移植 Git 配方仅允许固定提交的 HTTPS GitHub 仓库，并保留既有沙箱网络限制；可执行项之后的保留包运行器选项一律拒绝，即使位于分隔符后。
+
+已安装的市场 MCP 可通过显式 `targetReleaseId` 选择同一已发布条目中仍获批准的任意版本（含旧版本）；不传则选择最新版本。恢复使用所选版本的配方与审核工具快照，保留目标工作区环境变量值，不改变市场条目的最新版本，也不绕过本地修改或并发更新保护。
+
+资源发现从选中的已批准版本投影 `sourceKind` 与结构化 `runtimeCompatibility`，不返回可执行快照内容。`listMarketListings` 和 `GET /api/v1/market/listings` 支持 `sourceKind` 与 `runtime=pi-sdk|mcp`；过滤发生于分页和计数之前，保留公开/工作区私有鉴权边界。Pi 的 `toolplane` 来源表示组装，MCP 区分远程 Streamable HTTP/SSE 与容器 stdio；未知兼容性保持 null，不作推断。
+
 专题入口：
 
 | 主题 | 文档 |
@@ -207,6 +215,28 @@ tests/                         单元、集成测试及替身
 
 MCP 网关流程：鉴权 → 校验资源归属 → 定位实际进程、容器或远程地址 → 带超时转发 → 记录 `gateway.request`。HTTP 200 内的 JSON-RPC `error` 或 MCP `isError` 仍算业务失败。
 
+### 10.1 Assistant 修订、模板与持久回合
+
+Assistant 使用有界服务端会话执行器，不创建或调用 Agent，不加载 Skill、包扩展、shell 或本地项目目录。`ChatAssistantRevision` 是独立所有者的不可变配置；新线程固定 `assistantRevisionId`，旧线程不能改绑 Assistant 或历史修订。历史修订未解析的线程仍可读取消息和附件，但执行返回 409，须显式创建新线程。
+
+- `POST /api/v1/chat/assistants` 返回 `201 {assistant}`；初始配置与修订 1 在同一事务发布。`PATCH /api/v1/chat/assistants/[id]` 必须带整数 `expectedRevision`，成功返回 `{assistant}`，版本竞争返回 409。`POST .../[id]/copy` 接受 `{name, expectedRevision, mcpGrants?}`，返回独立副本 `201 {assistant}`；副本默认没有工具授权。
+- 创建/修改/复制的 MCP 输入为 `mcpGrants: [{deploymentId, allowedToolNames, expectedDefinitionChecksum?}]`，空列表不授权任何工具，不再接受 `deploymentIds`。新增授权、修改工具名单或重新批准连接时，必须提交发现阶段返回的 `expectedDefinitionChecksum`；服务端在连接操作锁内校验，不匹配返回 409 并要求重新发现和批准。完全未变的保留授权可以省略该字段，但必须保留原修订摘要，不能顺便刷新连接权限。修订另存服务端计算的 `definitionChecksum`；凭据值轮换不改权限，端点/传输/执行定义变化不能静默改变旧线程。每次调用取修订工具名单、实时 Assistant 授权与工作区策略的交集，在同一连接锁内重新检查并执行实际 HTTP/SSE 连接；stdio 网关、沙箱和内部 Agent/A2A 端点不可用。
+- 编辑器通过 `GET /api/v1/chat/assistants/resources?workspaceId=...` 获取 `{deployments:[{id,name,status,tools:[{name,description}],available,definitionChecksum}]}`；只列出实际远程连接，工具目录应用实时工作区策略，不返回连接配置或凭据。
+- Assistant 远程发现通过固定连接准备路径按需启动已停止的连接（包括凭据轮换后的重连），准备失败明确报错，不因旧进程状态静默删除工具。发现及调用前复查均读取完整分页目录，上限为 10 页、1,000 个工具、4 MB 累计响应和 15 秒；重复/无效游标、损坏或超限目录拒绝，不使用部分结果。平台自身执行网关（包括客户端登记 `/api/v1/pi-packages/installations/[id]/mcp`、沙箱及 Agent/Toolkit 网关）不能重新包装为 Assistant 远程来源。
+- 模板根路径为 `/api/v1/chat/assistants/[id]/templates`。`GET` 返回 `{revisionId, revision, templates}`；`POST` 导入、`PATCH /[name]` 显式替换接受 `{expectedRevision, source}`；`POST /[name]/clone` 接受 `{expectedRevision, name}`。这些操作发布新的不可变修订，不更新其他 Assistant。`source` 是 `{kind:"markdown", path, markdown}` 或 `{kind:"release", releaseId, path}`，仅静态读取选定已授权版本的实际 Prompt 文件，不安装包。
+- `POST /templates/preview` 和 `POST /templates/[name]/diff` 直接接受 `source`，返回 `{revision, before, after, changed, conflict}`；`GET /templates/[name]/export` 下载原始 Markdown，校验和在 `X-Toolplane-Prompt-Checksum`。导入检查文件/版本校验和、访问权、必需语义和命令冲突；需要 Agent 能力的模板不能用于 Assistant。
+- 会话选择模板须调用 `GET /api/v1/chat/threads/[id]/templates`，返回该线程固定版本的 `{revisionId,revision,templates}`，而不是 Assistant 当前模板。`POST .../templates/[name]/preview` 接受 `{args:string|string[]}`，返回 `{text,metadata:{promptTemplate:{assistantId,revisionId,name,sourceReleaseId,path,checksum,args}},revisionId,revision}`；只进行静态服务端预览，不调用模型或工具，提交仍传模板选择，不信任客户端展开正文。
+- `POST /api/v1/chat/threads/[id]/turns` 必须带 `idempotencyKey`，并接受现有 `messages`、`trigger`、`messageId`、`webSearchEnabled`、`reasoningEffort` 与可选 `template:{name,args:string|string[]}`。相同用户、相同键和相同请求获得同一 Run；不同内容重用键或同线程并发新请求返回 409。模板只在首次事务接纳时由服务端按线程固定修订展开；实际用户正文及 `data-prompt-template` 来源记录一起持久化，拒绝客户端伪造来源。重新生成是新 Run，不覆盖原回复。
+- 新执行提交若运行时 owner 尚未就绪，返回 `503 {error:"runtime_not_ready"}`，并携带 `Retry-After: 5` 与 `Cache-Control: no-store`；不会接纳 Run、执行模型或工具。客户端应保留请求内容及幂等键，说明运行时恢复中，待就绪后显式重试；不可绕过 owner 或自动批准工具。
+- 提交与订阅返回 AI SDK UI 消息流，响应头为 `X-Chat-Turn-Id`、`X-Chat-Run-Id`（同一 Run 身份）、`X-Chat-Cursor`、`X-Chat-Run-Status`。`GET .../turns/stream?runId=...&afterSequence=N` 仅重放 N 之后的持久事件，不启动执行；也可用整数 `Last-Event-ID`。每个持久事件后有临时 `data-chat-cursor`，内容 `{runId,sequence}`，供客户端按 Run + 序号去重。不存在 Run 返回 204，无效游标返回 400。
+- `GET .../turns/stream?state=1&runId=...` 返回 `{runId,turnId,status,phase,cursor,generation,stopRequested,error,messages,confirmations}`。`status` 为 `pending/completed/failed/cancelled`；`phase` 区分 `queued/generating/tool_calling/awaiting_user/stopping/interrupted/execution_unknown` 及终态。先恢复快照、确认项和游标，再订阅增量；Run ID、游标不是授权凭据。
+- `POST .../turns/confirmations` 接受 `{confirmationId,approved:boolean}`，仅原始用户在有效执行租约与实时访问权下可决定。确认与工具开始/结果均落库；离线不等于批准。`DELETE .../turns` 接受 `{turnId}`，返回 `{stopRequested,turnId}`，接受停止请求时为 202；这不是外部副作用已撤销的声明，实际状态从快照读取。
+- 工具确认获批不保证最终派发：真正的远程 `tools/call` 之前，连接、工具目录及实时授权仍会复查。共享工具构造器明确拒绝实时 AI 曝光、或传输层证实尚未派发的拒绝，均记为已知 `failed` 并记录完成时间，不要求外部副作用对账；不能仅凭返回对象带 `error` 就推断尚未派发。一旦可能已派发，连接异常或取消仍记为 `execution_unknown`，不可自动重试或删除未解决账本。
+- 删除线程或整个 Assistant 时，事务先取得与 Run 提交相同的线程行锁；删除 Assistant 还会锁定 Assistant 本身以串行化并发新线程创建。存在 `pending` Run 或 `executing/execution_unknown` 工具确认时返回 409，不物理级联删除消息、Run、事件或确认账本；请求停止并不等于副作用已结算，未知结果必须保留用于外部对账。
+
+执行租约有代次围栏；事件、部分消息快照与终态先提交再发布。关闭网页只取消订阅，多标签页观察同一 Run。订阅、执行心跳、确认和工具调用持续检查账户/工作区授权。提交和订阅会对账过期租约：不能恢复的供应商流保留部分回复并标记中断，用户显式新 Run 重试；未知结果的外部调用标记 `execution_unknown`，不会自动重放。
+
+
 ## 11. MCP 运行时（`lib/process`）
 
 `spawn-spec.ts` 解析 builtin、remote、bridge 等启动来源；bridge 在容器内运行命令，git 来源先准备源码。`supervisor.ts` 维护实际子进程状态、启动就绪、超时、脱敏值和日志；`reconcile.ts` 对账数据库状态与实际运行状态。
@@ -224,7 +254,7 @@ MCP 网关流程：鉴权 → 校验资源归属 → 定位实际进程、容器
 | `dsh` | 专属沙箱，DeepSeek Harness | `providerId` + `model` |
 | `hermes` | 专属 Hermes 容器与 `/opt/data` 卷 | `AgentModelProvider` 多选，Hermes 管理具体模型分工 |
 
-选择与能力判断见 [`runtime-kind.ts`](../src/lib/agents/runtime-kind.ts)，执行分流见 [`run.ts`](../src/lib/agents/run.ts) 和 [`sandbox-turn.ts`](../src/lib/agents/sandbox-turn.ts)。Pi、Claude Code、DSH 的 provider 格式限制为 `openai`、`openai-responses`、`anthropic`；不要据此推断 Hermes 采用相同配置接口。
+选择与能力判断见 [`runtime-kind.ts`](../src/lib/agents/runtime-kind.ts)，不可变修订准入见 [`revisions.ts`](../src/lib/agents/revisions.ts)，Pi 执行由 [`sandbox-turn.ts`](../src/lib/agents/sandbox-turn.ts) 承接。非 Pi 运行时的历史和文件保留只读；新执行必须创建新的 Pi Agent 并明确重新授权。
 
 内部 `native.ts` 使用 `@earendil-works/pi-ai`，不是公开 `native` runtime，也不是以 AI SDK `streamText` 驱动的旧运行时。UI 消息流与模型执行引擎是不同层，不应混为一谈。
 

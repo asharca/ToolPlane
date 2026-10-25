@@ -1,3 +1,4 @@
+import type * as McpCredentials from "@/lib/process/mcp-credentials";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -6,6 +7,8 @@ const mocks = vi.hoisted(() => ({
   deploymentFindFirst: vi.fn(),
   deploymentFindMany: vi.fn(),
   deploymentConfigFileFindMany: vi.fn(),
+  agentServerFindMany: vi.fn(async () => [] as { agentId: string }[]),
+  assistantGrantFindMany: vi.fn(async () => [] as { assistantId: string }[]),
   deploymentCreate: vi.fn(),
   deploymentUpsert: vi.fn(),
   deploymentDeleteMany: vi.fn(),
@@ -26,7 +29,7 @@ const mocks = vi.hoisted(() => ({
   listMcpTools: vi.fn(),
   mcpRpc: vi.fn(),
   logRequest: vi.fn(),
-  resolveSpawnSpec: vi.fn(),
+  resolveMcpConnectionSpawnSpec: vi.fn(),
   killProcess: vi.fn(),
   removeDeploymentContainer: vi.fn(),
   removeDeploymentConfigVolume: vi.fn(),
@@ -43,6 +46,8 @@ vi.mock("@/lib/workspace/queries", () => ({
 vi.mock("@/lib/db", () => ({
   db: (() => {
     const client = {
+      agentServer: { findMany: mocks.agentServerFindMany },
+      chatAssistantMcpGrant: { findMany: mocks.assistantGrantFindMany },
       deployment: {
         findFirst: mocks.deploymentFindFirst,
         findMany: mocks.deploymentFindMany,
@@ -93,8 +98,9 @@ vi.mock("@/lib/process/mcp-client", () => ({
   mcpRpc: mocks.mcpRpc,
 }));
 vi.mock("@/lib/observability/log", () => ({ logRequest: mocks.logRequest }));
-vi.mock("@/lib/process/spawn-spec", () => ({
-  resolveSpawnSpec: mocks.resolveSpawnSpec,
+vi.mock("@/lib/process/mcp-credentials", async (importOriginal) => ({
+  ...(await importOriginal<typeof McpCredentials>()),
+  resolveMcpConnectionSpawnSpec: mocks.resolveMcpConnectionSpawnSpec,
 }));
 vi.mock("@/lib/process/deployment-config-volume", () => ({
   removeDeploymentConfigVolume: mocks.removeDeploymentConfigVolume,
@@ -108,6 +114,11 @@ vi.mock("@/lib/workspace/teardown", () => ({
 vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidatePath }));
 vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));
 
+import {
+  resolveMcpEnvironment,
+  sealMcpEnvironment,
+} from "@/lib/process/mcp-credentials";
+import { decryptSecretText, encryptSecretText } from "@/lib/security/secrets";
 import { getLogContext, type LogContext } from "@/lib/observability/context";
 import {
   deployServerAction,
@@ -130,6 +141,59 @@ import {
   installSkillAction,
   uninstallSkillAction,
 } from "@/lib/workspace/actions";
+
+function sealedConfig(cfg: Record<string, unknown>) {
+  return sealMcpEnvironment(
+    cfg,
+    "ws1",
+    (cfg.env ?? {}) as Record<string, string>,
+  );
+}
+
+// Random IVs differ; compare authenticated payloads, never substitute plaintext
+// fixtures for persisted ciphertext or accept a missing envelope.
+expect.addEqualityTesters([
+  function encryptedPayloads(a, b) {
+    if (
+      a?.v !== 1 ||
+      a?.alg !== "aes-256-gcm" ||
+      typeof a.iv !== "string" ||
+      typeof a.tag !== "string" ||
+      typeof a.data !== "string" ||
+      b?.v !== 1 ||
+      b?.alg !== "aes-256-gcm" ||
+      typeof b.iv !== "string" ||
+      typeof b.tag !== "string" ||
+      typeof b.data !== "string"
+    )
+      return undefined;
+    const left = decryptSecretText(a);
+    const right = decryptSecretText(b);
+    if (left === right) return true;
+    try {
+      return this.equals(JSON.parse(left), JSON.parse(right));
+    } catch {
+      return false;
+    }
+  },
+]);
+
+describe("encrypted fixture equality", () => {
+  it("compares authenticated JSON and plaintext file payloads", () => {
+    expect(
+      encryptSecretText('{"workspaceId":"ws1","env":{"TOKEN":"secret"}}'),
+    ).toEqual(
+      encryptSecretText('{"env":{"TOKEN":"secret"},"workspaceId":"ws1"}'),
+    );
+    expect(encryptSecretText("[server]\nport=2222")).toEqual(
+      encryptSecretText("[server]\nport=2222"),
+    );
+    expect(encryptSecretText("[server]\nport=2222")).not.toEqual(
+      encryptSecretText("[server]\nport=2223"),
+    );
+    expect(encryptSecretText("secret")).not.toEqual({});
+  });
+});
 
 function formData(deploymentId: string): FormData {
   const fd = new FormData();
@@ -310,7 +374,7 @@ describe("deployServerAction", () => {
       name: null,
       source: "npm",
       sourceRef: "firecrawl-mcp",
-      installCfg: { env: { FIRECRAWL_API_KEY: "" } },
+      installCfg: sealedConfig({ env: { FIRECRAWL_API_KEY: "" } }),
       status: "setup_required",
     });
     mocks.deploymentFindFirst.mockResolvedValue({
@@ -320,10 +384,10 @@ describe("deployServerAction", () => {
       name: null,
       source: "npm",
       sourceRef: "firecrawl-mcp",
-      installCfg: {
+      installCfg: sealedConfig({
         env: { FIRECRAWL_API_KEY: "" },
         requiredEnv: ["FIRECRAWL_API_KEY"],
-      },
+      }),
       status: "setup_required",
       server: {
         name: "Firecrawl",
@@ -342,10 +406,10 @@ describe("deployServerAction", () => {
       expect.objectContaining({
         create: expect.objectContaining({
           status: "setup_required",
-          installCfg: {
+          installCfg: sealedConfig({
             env: { FIRECRAWL_API_KEY: "" },
             requiredEnv: ["FIRECRAWL_API_KEY"],
-          },
+          }),
         }),
       }),
     );
@@ -373,7 +437,7 @@ describe("deployServerAction", () => {
       name: null,
       source: "npm",
       sourceRef: "@modelcontextprotocol/server-memory",
-      installCfg: { env: {} },
+      installCfg: sealedConfig({ env: {} }),
       status: "provisioning",
     });
     mocks.deploymentFindFirst.mockResolvedValue({
@@ -383,7 +447,7 @@ describe("deployServerAction", () => {
       name: null,
       source: "npm",
       sourceRef: "@modelcontextprotocol/server-memory",
-      installCfg: { env: {} },
+      installCfg: sealedConfig({ env: {} }),
       status: "provisioning",
       server: {
         name: "Memory",
@@ -395,10 +459,13 @@ describe("deployServerAction", () => {
         },
       },
     });
-    mocks.resolveSpawnSpec.mockReturnValue({
-      kind: "bridge",
-      command: "docker",
-      args: [],
+    mocks.resolveMcpConnectionSpawnSpec.mockResolvedValue({
+      spec: {
+        kind: "bridge",
+        command: "docker",
+        args: [],
+      },
+      redactionValues: [],
     });
 
     await deployServerAction(deployFormData());
@@ -517,13 +584,16 @@ describe("removeDeploymentAction", () => {
       id: "dep1",
       workspaceId: "ws1",
     });
-    mocks.resolveSpawnSpec.mockReturnValue({ kind: "builtin" });
+    mocks.resolveMcpConnectionSpawnSpec.mockResolvedValue({
+      spec: { kind: "builtin" },
+      redactionValues: [],
+    });
 
     await startDeploymentAction(formData("dep1"));
 
-    expect(mocks.resolveSpawnSpec).toHaveBeenCalledWith({
-      id: "dep1",
+    expect(mocks.resolveMcpConnectionSpawnSpec).toHaveBeenCalledWith({
       workspaceId: "ws1",
+      deploymentId: "dep1",
     });
     expect(mocks.startProcess).toHaveBeenCalledWith(
       "dep1",
@@ -546,7 +616,10 @@ describe("removeDeploymentAction", () => {
       id: "dep1",
       workspaceId: "ws1",
     });
-    mocks.resolveSpawnSpec.mockReturnValue({ kind: "builtin" });
+    mocks.resolveMcpConnectionSpawnSpec.mockResolvedValue({
+      spec: { kind: "builtin" },
+      redactionValues: [],
+    });
 
     await restartDeploymentAction(formData("dep1"));
 
@@ -570,14 +643,18 @@ describe("removeDeploymentAction", () => {
       id: "dep1",
       workspaceId: "ws1",
     });
-    mocks.resolveSpawnSpec.mockReturnValue({ kind: "builtin" });
+    mocks.resolveMcpConnectionSpawnSpec.mockResolvedValue({
+      spec: { kind: "builtin" },
+      redactionValues: [],
+    });
 
     await rebuildDeploymentAction(formData("dep1"));
 
-    expect(mocks.resolveSpawnSpec).toHaveBeenCalledWith(
-      { id: "dep1", workspaceId: "ws1" },
-      true,
-    );
+    expect(mocks.resolveMcpConnectionSpawnSpec).toHaveBeenCalledWith({
+      workspaceId: "ws1",
+      deploymentId: "dep1",
+      rebuild: true,
+    });
     expect(mocks.restartProcess).toHaveBeenCalledWith(
       "dep1",
       { kind: "builtin" },
@@ -598,7 +675,7 @@ describe("removeDeploymentAction", () => {
     mocks.deploymentFindFirst.mockResolvedValue({
       id: "dep1",
       workspaceId: "ws1",
-      installCfg: { env: { API_TOKEN: "" } },
+      installCfg: sealedConfig({ env: { API_TOKEN: "" } }),
       server: {
         name: "Protected MCP",
         slug: "protected-mcp",
@@ -612,7 +689,7 @@ describe("removeDeploymentAction", () => {
       finalStatus: "setup_required",
     });
     expect(mocks.startProcess).not.toHaveBeenCalled();
-    expect(mocks.resolveSpawnSpec).not.toHaveBeenCalled();
+    expect(mocks.resolveMcpConnectionSpawnSpec).not.toHaveBeenCalled();
     expect(mocks.redirect).not.toHaveBeenCalled();
   });
 
@@ -621,7 +698,7 @@ describe("removeDeploymentAction", () => {
     mocks.deploymentFindFirst.mockResolvedValue({
       id: "dep1",
       workspaceId: "ws1",
-      installCfg: { env: { API_TOKEN: "" } },
+      installCfg: sealedConfig({ env: { API_TOKEN: "" } }),
       server: {
         name: "Protected MCP",
         slug: "protected-mcp",
@@ -635,7 +712,7 @@ describe("removeDeploymentAction", () => {
       finalStatus: "setup_required",
     });
     expect(mocks.restartProcess).not.toHaveBeenCalled();
-    expect(mocks.resolveSpawnSpec).not.toHaveBeenCalled();
+    expect(mocks.resolveMcpConnectionSpawnSpec).not.toHaveBeenCalled();
     expect(mocks.redirect).toHaveBeenCalledWith(
       "/app/mine/mcp/dep1?tab=variables",
     );
@@ -646,10 +723,10 @@ describe("removeDeploymentAction", () => {
     mocks.deploymentFindFirst.mockResolvedValue({
       id: "dep-copy",
       workspaceId: "ws1",
-      installCfg: {
+      installCfg: sealedConfig({
         env: { API_TOKEN: "" },
         requiredEnv: ["API_TOKEN"],
-      },
+      }),
       server: null,
     });
 
@@ -670,7 +747,10 @@ describe("batch deployment lifecycle actions", () => {
       id: "ws1",
       ownerId: "user1",
     });
-    mocks.resolveSpawnSpec.mockReturnValue({ kind: "builtin" });
+    mocks.resolveMcpConnectionSpawnSpec.mockResolvedValue({
+      spec: { kind: "builtin" },
+      redactionValues: [],
+    });
   });
 
   it("starts every valid selected deployment once", async () => {
@@ -858,10 +938,10 @@ describe("MCP deployment management actions", () => {
     name: null,
     source: "npm",
     sourceRef: "@example/mcp",
-    installCfg: {
+    installCfg: sealedConfig({
       env: { API_TOKEN: "secret-value" },
       network: "none",
-    },
+    }),
     status: "running",
     mcpToolExposure: "allowlist",
     mcpAllowedTools: ["search"],
@@ -925,10 +1005,13 @@ describe("MCP deployment management actions", () => {
       },
     ]);
     mocks.deploymentCreate.mockResolvedValue(clonedDeployment);
-    mocks.resolveSpawnSpec.mockReturnValue({
-      kind: "bridge",
-      command: "docker",
-      args: [],
+    mocks.resolveMcpConnectionSpawnSpec.mockResolvedValue({
+      spec: {
+        kind: "bridge",
+        command: "docker",
+        args: [],
+      },
+      redactionValues: [],
     });
 
     await cloneDeploymentAction(formData("dep1"));
@@ -940,10 +1023,10 @@ describe("MCP deployment management actions", () => {
         name: "Catalog MCP Copy",
         source: "npm",
         sourceRef: "@example/mcp",
-        installCfg: {
+        installCfg: sealedConfig({
           env: { API_TOKEN: "secret-value" },
           network: "none",
-        },
+        }),
         status: "provisioning",
         mcpToolExposure: "allowlist",
         mcpAllowedTools: ["search"],
@@ -972,7 +1055,10 @@ describe("MCP deployment management actions", () => {
         size: true,
       },
     });
-    expect(mocks.resolveSpawnSpec).toHaveBeenCalledWith(clonedDeployment);
+    expect(mocks.resolveMcpConnectionSpawnSpec).toHaveBeenCalledWith({
+      workspaceId: "ws1",
+      deploymentId: "dep-copy",
+    });
     expect(mocks.startProcess).toHaveBeenCalledWith(
       "dep-copy",
       { kind: "bridge", command: "docker", args: [] },
@@ -998,10 +1084,13 @@ describe("MCP deployment management actions", () => {
       .mockResolvedValueOnce(sourceDeployment)
       .mockResolvedValueOnce(clonedDeployment);
     mocks.deploymentCreate.mockResolvedValue(clonedDeployment);
-    mocks.resolveSpawnSpec.mockReturnValue({
-      kind: "bridge",
-      command: "docker",
-      args: [],
+    mocks.resolveMcpConnectionSpawnSpec.mockResolvedValue({
+      spec: {
+        kind: "bridge",
+        command: "docker",
+        args: [],
+      },
+      redactionValues: [],
     });
     const fd = formData("dep1");
     fd.set("name", "No secrets");
@@ -1062,7 +1151,7 @@ describe("MCP deployment management actions", () => {
       }),
     );
     expect(mocks.startProcess).not.toHaveBeenCalled();
-    expect(mocks.resolveSpawnSpec).not.toHaveBeenCalled();
+    expect(mocks.resolveMcpConnectionSpawnSpec).not.toHaveBeenCalled();
     expect(mocks.redirect).toHaveBeenCalledWith(
       "/app/mine/mcp/dep-copy?tab=variables",
     );
@@ -1080,10 +1169,13 @@ describe("MCP deployment management actions", () => {
       .mockResolvedValueOnce(sourceDeployment)
       .mockResolvedValueOnce(clonedDeployment);
     mocks.deploymentCreate.mockResolvedValue(clonedDeployment);
-    mocks.resolveSpawnSpec.mockReturnValue({
-      kind: "bridge",
-      command: "docker",
-      args: [],
+    mocks.resolveMcpConnectionSpawnSpec.mockResolvedValue({
+      spec: {
+        kind: "bridge",
+        command: "docker",
+        args: [],
+      },
+      redactionValues: [],
     });
     const fd = formData("dep1");
     fd.set("name", "No files");
@@ -1121,10 +1213,13 @@ describe("deployCustomServerAction", () => {
       id: "ws1",
       ownerId: "user1",
     });
-    mocks.resolveSpawnSpec.mockReturnValue({
-      kind: "bridge",
-      command: "docker",
-      args: [],
+    mocks.resolveMcpConnectionSpawnSpec.mockResolvedValue({
+      spec: {
+        kind: "bridge",
+        command: "docker",
+        args: [],
+      },
+      redactionValues: [],
     });
   });
 
@@ -1136,12 +1231,12 @@ describe("deployCustomServerAction", () => {
       name: "Offline MCP",
       source: "config",
       sourceRef: "npx",
-      installCfg: {
+      installCfg: sealedConfig({
         command: "npx",
         args: configArgs,
         env: {},
         network: "none",
-      },
+      }),
     };
     mocks.deploymentCreate.mockResolvedValue(deployment);
 
@@ -1167,26 +1262,19 @@ describe("deployCustomServerAction", () => {
         name: "Offline MCP",
         source: "config",
         sourceRef: "npx",
-        installCfg: {
+        installCfg: sealedConfig({
           command: "npx",
           args: configArgs,
           env: {},
           network: "none",
-        },
+        }),
         status: "provisioning",
       },
     });
-    expect(mocks.resolveSpawnSpec).toHaveBeenCalledWith(
-      expect.objectContaining({
-        source: "config",
-        installCfg: {
-          command: "npx",
-          args: configArgs,
-          env: {},
-          network: "none",
-        },
-      }),
-    );
+    expect(mocks.resolveMcpConnectionSpawnSpec).toHaveBeenCalledWith({
+      workspaceId: "ws1",
+      deploymentId: "dep-new",
+    });
     expect(mocks.startProcess).toHaveBeenCalledWith(
       "dep-new",
       { kind: "bridge", command: "docker", args: [] },
@@ -1200,13 +1288,14 @@ describe("deployCustomServerAction", () => {
 
   it("persists a standard remote HTTP MCP as a remote deployment", async () => {
     const token = "test-token";
-    const installCfg = {
+    const installCfg = sealedConfig({
       env: { MCP_BEARER_TOKEN: token },
       requiredEnv: ["MCP_BEARER_TOKEN"],
       transport: "streamable-http",
       authType: "bearer",
       bearerEnv: "MCP_BEARER_TOKEN",
-    };
+      allowUnsafeHttp: false,
+    });
     const deployment = {
       id: "dep-remote",
       serverId: null,
@@ -1224,7 +1313,10 @@ describe("deployCustomServerAction", () => {
       timeoutMs: 60_000,
     };
     mocks.deploymentCreate.mockResolvedValue(deployment);
-    mocks.resolveSpawnSpec.mockReturnValue(spec);
+    mocks.resolveMcpConnectionSpawnSpec.mockResolvedValue({
+      spec: spec,
+      redactionValues: [],
+    });
 
     await deployCustomServerAction(
       customMcpFormData({
@@ -1254,13 +1346,9 @@ describe("deployCustomServerAction", () => {
         status: "provisioning",
       },
     });
-    expect(mocks.resolveSpawnSpec).toHaveBeenCalledWith({
-      serverId: null,
-      server: null,
-      name: "Audit",
-      source: "remote",
-      sourceRef: "https://mcp.example.com/mcp",
-      installCfg,
+    expect(mocks.resolveMcpConnectionSpawnSpec).toHaveBeenCalledWith({
+      workspaceId: "ws1",
+      deploymentId: "dep-remote",
     });
     expect(mocks.startProcess).toHaveBeenCalledWith(
       "dep-remote",
@@ -1272,6 +1360,48 @@ describe("deployCustomServerAction", () => {
       }),
     );
   });
+
+  it.each([false, true])(
+    "requires operator HTTP approval (approved: %s)",
+    async (approved) => {
+      mocks.deploymentCreate.mockResolvedValue({
+        id: "dep-http",
+        source: "remote",
+        sourceRef: "http://mcp.example.com/mcp",
+        installCfg: sealedConfig({ env: {}, allowUnsafeHttp: true }),
+      });
+      await deployCustomServerAction(
+        customMcpFormData({
+          workspace: "mine",
+          allowUnsafeHttp: String(approved),
+          config: JSON.stringify({
+            mcpServers: {
+              Audit: {
+                type: "http",
+                url: "http://mcp.example.com/mcp",
+                // The author's declaration cannot substitute for operator consent.
+                allowUnsafeHttp: true,
+              },
+            },
+          }),
+        }),
+      );
+      if (approved) {
+        expect(mocks.deploymentCreate).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              source: "remote",
+              sourceRef: "http://mcp.example.com/mcp",
+              installCfg: expect.objectContaining({ allowUnsafeHttp: true }),
+            }),
+          }),
+        );
+      } else {
+        expect(mocks.deploymentCreate).not.toHaveBeenCalled();
+        expect(mocks.startProcess).not.toHaveBeenCalled();
+      }
+    },
+  );
 
   it("persists an mcpServers config runtime file as an encrypted nested create and starts its resolved spec", async () => {
     const runtimeFileContent = JSON.stringify(
@@ -1298,7 +1428,7 @@ describe("deployCustomServerAction", () => {
       name: "ssh-mcp-server",
       source: "config",
       sourceRef: "npx",
-      installCfg: { command: "npx", args: configArgs, env: {} },
+      installCfg: sealedConfig({ command: "npx", args: configArgs, env: {} }),
     };
     mocks.deploymentCreate.mockResolvedValue(deployment);
 
@@ -1328,7 +1458,11 @@ describe("deployCustomServerAction", () => {
           name: "ssh-mcp-server",
           source: "config",
           sourceRef: "npx",
-          installCfg: { command: "npx", args: configArgs, env: {} },
+          installCfg: sealedConfig({
+            command: "npx",
+            args: configArgs,
+            env: {},
+          }),
           status: "provisioning",
         }),
       }),
@@ -1349,19 +1483,18 @@ describe("deployCustomServerAction", () => {
         data: expect.any(String),
       },
     });
+    expect(decryptSecretText(storedFile?.encryptedContent)).toBe(
+      runtimeFileContent,
+    );
     expect(JSON.stringify(storedFile?.encryptedContent)).not.toContain(
       runtimeFileContent,
     );
     expect(JSON.stringify(storedFile?.encryptedContent)).not.toContain(
       "{abc=P100s0}",
     );
-    expect(mocks.resolveSpawnSpec).toHaveBeenCalledWith({
-      serverId: null,
-      server: null,
-      name: "ssh-mcp-server",
-      source: "config",
-      sourceRef: "npx",
-      installCfg: { command: "npx", args: configArgs, env: {} },
+    expect(mocks.resolveMcpConnectionSpawnSpec).toHaveBeenCalledWith({
+      workspaceId: "ws1",
+      deploymentId: "dep-ssh",
     });
     expect(mocks.startProcess).toHaveBeenCalledWith(
       "dep-ssh",
@@ -1391,7 +1524,11 @@ describe("deployCustomServerAction", () => {
       name: "Docker Config MCP",
       source: "config",
       sourceRef: "docker",
-      installCfg: { command: "docker", args: configArgs, env: {} },
+      installCfg: sealedConfig({
+        command: "docker",
+        args: configArgs,
+        env: {},
+      }),
     };
     mocks.deploymentCreate.mockResolvedValue(deployment);
 
@@ -1420,7 +1557,11 @@ describe("deployCustomServerAction", () => {
           name: "Docker Config MCP",
           source: "config",
           sourceRef: "docker",
-          installCfg: { command: "docker", args: configArgs, env: {} },
+          installCfg: sealedConfig({
+            command: "docker",
+            args: configArgs,
+            env: {},
+          }),
           status: "provisioning",
         }),
       }),
@@ -1441,16 +1582,15 @@ describe("deployCustomServerAction", () => {
         data: expect.any(String),
       },
     });
+    expect(decryptSecretText(storedFile?.encryptedContent)).toBe(
+      runtimeFileContent,
+    );
     expect(JSON.stringify(storedFile?.encryptedContent)).not.toContain(
       runtimeFileContent,
     );
-    expect(mocks.resolveSpawnSpec).toHaveBeenCalledWith({
-      serverId: null,
-      server: null,
-      name: "Docker Config MCP",
-      source: "config",
-      sourceRef: "docker",
-      installCfg: { command: "docker", args: configArgs, env: {} },
+    expect(mocks.resolveMcpConnectionSpawnSpec).toHaveBeenCalledWith({
+      workspaceId: "ws1",
+      deploymentId: "dep-docker-config",
     });
     expect(mocks.startProcess).toHaveBeenCalledWith(
       "dep-docker-config",
@@ -1505,11 +1645,11 @@ describe("revealMcpJsonConfigAction", () => {
     mocks.deploymentFindFirst.mockResolvedValue({
       source: "config",
       sourceRef: "npx",
-      installCfg: {
+      installCfg: sealedConfig({
         command: "npx",
         args: ["ssh-mcp-server", "--password", "secret"],
         env: { SSH_TOKEN: "token-value" },
-      },
+      }),
     });
 
     const result = await revealMcpJsonConfigAction({
@@ -1521,12 +1661,16 @@ describe("revealMcpJsonConfigAction", () => {
       where: {
         id: "dep1",
         workspaceId: "ws1",
-        source: { in: ["npm", "pypi", "github", "docker", "config"] },
+        source: { in: ["npm", "pypi", "github", "docker", "config", "remote"] },
       },
       select: { source: true, sourceRef: true, installCfg: true },
     });
-    expect(result.config).toContain("secret");
+    expect(JSON.parse(result.config ?? "")).toEqual({
+      command: "npx",
+      args: ["ssh-mcp-server", "--password", "********"],
+    });
     expect(result.config).not.toContain("token-value");
+    expect(result.config).not.toContain("secret");
   });
 
   it("does not reveal a config outside the current workspace", async () => {
@@ -1544,11 +1688,11 @@ describe("revealMcpJsonConfigAction", () => {
     mocks.deploymentFindFirst.mockResolvedValue({
       source: "docker",
       sourceRef: "mcp/filesystem",
-      installCfg: {
+      installCfg: sealedConfig({
         startCommand: "--token secret /tmp",
         env: { API_TOKEN: "secret" },
         network: "none",
-      },
+      }),
     });
 
     const result = await revealMcpJsonConfigAction({
@@ -1559,8 +1703,9 @@ describe("revealMcpJsonConfigAction", () => {
     expect(JSON.parse(result.config ?? "")).toEqual({
       source: "docker",
       ref: "mcp/filesystem",
-      startCommand: "--token secret /tmp",
+      startCommand: "********",
     });
+    expect(result.config).not.toContain("secret");
   });
 
   it("rejects unsupported sandbox or legacy deployments even if returned", async () => {
@@ -1589,6 +1734,66 @@ describe("updateMcpJsonConfigAction", () => {
     });
   });
 
+  it("requires confirmation of the current workspace-scoped shared impact", async () => {
+    const deployment = {
+      id: "dep1",
+      workspaceId: "ws1",
+      source: "config",
+      sourceRef: "npx",
+      installCfg: sealedConfig({
+        command: "npx",
+        args: ["old-package"],
+        env: {},
+      }),
+    };
+    mocks.deploymentFindFirst.mockResolvedValue(deployment);
+    mocks.deploymentUpdate.mockResolvedValue(deployment);
+    mocks.resolveMcpConnectionSpawnSpec.mockResolvedValue({
+      spec: { kind: "bridge", command: "docker", args: [] },
+      redactionValues: [],
+    });
+    const impactedObjects = {
+      agentIds: ["agent1"],
+      assistantIds: ["assistant1"],
+    };
+    const fd = configFormData("dep1", {
+      command: "npx",
+      args: ["new-package"],
+    });
+    for (const confirmation of [
+      null,
+      { agentIds: ["agent1"], assistantIds: [] },
+      impactedObjects,
+    ]) {
+      mocks.agentServerFindMany.mockResolvedValueOnce([{ agentId: "agent1" }]);
+      mocks.assistantGrantFindMany.mockResolvedValueOnce([
+        { assistantId: "assistant1" },
+      ]);
+      if (confirmation)
+        fd.set("confirmedImpactedObjects", JSON.stringify(confirmation));
+      const result = await updateMcpJsonConfigAction({}, fd);
+      if (confirmation !== impactedObjects) {
+        expect(result).toEqual({
+          error: "sharedChangeConfirmationRequired",
+          impactedObjects,
+        });
+        expect(mocks.deploymentUpdate).not.toHaveBeenCalled();
+        expect(mocks.restartProcess).not.toHaveBeenCalled();
+      } else {
+        expect(result.savedAt).toEqual(expect.any(Number));
+        expect(mocks.restartProcess).toHaveBeenCalledTimes(1);
+      }
+    }
+    expect(mocks.agentServerFindMany).toHaveBeenCalledWith({
+      where: { deploymentId: "dep1", agent: { workspaceId: "ws1" } },
+      select: { agentId: true },
+    });
+    expect(mocks.assistantGrantFindMany).toHaveBeenCalledWith({
+      where: { deploymentId: "dep1", assistant: { workspaceId: "ws1" } },
+      select: { assistantId: true },
+    });
+  });
+
   it("updates only a JSON deployment in the current workspace and rebuilds it", async () => {
     const deployment = {
       id: "dep1",
@@ -1598,29 +1803,32 @@ describe("updateMcpJsonConfigAction", () => {
       name: "Everything (editable JSON)",
       source: "config",
       sourceRef: "npx",
-      installCfg: {
+      installCfg: sealedConfig({
         command: "npx",
         args: ["old-package"],
         env: {},
         network: "none",
-      },
+      }),
     };
     const updated = {
       ...deployment,
       name: "Everything (editable JSON)",
-      installCfg: {
+      installCfg: sealedConfig({
         command: "npx",
         args: ["-y", "@fangjunjie/ssh-mcp-server", "--port", "2222"],
         env: { SSH_USER: "root" },
         network: "none",
-      },
+      }),
     };
     mocks.deploymentFindFirst.mockResolvedValue(deployment);
     mocks.deploymentUpdate.mockResolvedValue(updated);
-    mocks.resolveSpawnSpec.mockReturnValue({
-      kind: "bridge",
-      command: "docker",
-      args: [],
+    mocks.resolveMcpConnectionSpawnSpec.mockResolvedValue({
+      spec: {
+        kind: "bridge",
+        command: "docker",
+        args: [],
+      },
+      redactionValues: [],
     });
 
     const fd = configFormData("dep1", {
@@ -1636,7 +1844,7 @@ describe("updateMcpJsonConfigAction", () => {
       where: {
         id: "dep1",
         workspaceId: "ws1",
-        source: { in: ["npm", "pypi", "github", "docker", "config"] },
+        source: { in: ["npm", "pypi", "github", "docker", "config", "remote"] },
       },
     });
     expect(mocks.deploymentUpdate).toHaveBeenCalledWith({
@@ -1644,17 +1852,21 @@ describe("updateMcpJsonConfigAction", () => {
       data: {
         source: "config",
         sourceRef: "npx",
-        installCfg: {
+        installCfg: sealedConfig({
           command: "npx",
           args: ["-y", "@fangjunjie/ssh-mcp-server", "--port", "2222"],
           env: {},
           network: "none",
-        },
+        }),
         status: "provisioning",
       },
       include: { server: { select: { name: true } } },
     });
-    expect(mocks.resolveSpawnSpec).toHaveBeenCalledWith(updated, true);
+    expect(mocks.resolveMcpConnectionSpawnSpec).toHaveBeenCalledWith({
+      workspaceId: "ws1",
+      deploymentId: "dep1",
+      rebuild: true,
+    });
     expect(mocks.restartProcess).toHaveBeenCalledWith(
       "dep1",
       { kind: "bridge", command: "docker", args: [] },
@@ -1673,7 +1885,7 @@ describe("updateMcpJsonConfigAction", () => {
       config: { source: "npm", ref: "@modelcontextprotocol/server-memory" },
       network: "none",
       expectedRef: "@modelcontextprotocol/server-memory",
-      expectedInstallCfg: { env: {}, network: "none" },
+      expectedInstallCfg: sealedConfig({ env: {}, network: "none" }),
     },
     {
       source: "pypi",
@@ -1681,7 +1893,7 @@ describe("updateMcpJsonConfigAction", () => {
       config: { source: "pypi", ref: "mcp-server-fetch" },
       network: "none",
       expectedRef: "mcp-server-fetch",
-      expectedInstallCfg: { env: {}, network: "none" },
+      expectedInstallCfg: sealedConfig({ env: {}, network: "none" }),
     },
     {
       source: "github",
@@ -1692,7 +1904,7 @@ describe("updateMcpJsonConfigAction", () => {
       },
       network: "none",
       expectedRef: "https://github.com/modelcontextprotocol-servers/whois-mcp",
-      expectedInstallCfg: { env: {}, network: "none" },
+      expectedInstallCfg: sealedConfig({ env: {}, network: "none" }),
     },
     {
       source: "docker",
@@ -1704,7 +1916,11 @@ describe("updateMcpJsonConfigAction", () => {
       },
       network: "none",
       expectedRef: "mcp/filesystem",
-      expectedInstallCfg: { env: {}, startCommand: "/tmp", network: "none" },
+      expectedInstallCfg: sealedConfig({
+        env: {},
+        startCommand: "/tmp",
+        network: "none",
+      }),
     },
   ])(
     "updates and rebuilds a $source deployment",
@@ -1723,7 +1939,7 @@ describe("updateMcpJsonConfigAction", () => {
         name: "Editable MCP",
         source,
         sourceRef: currentRef,
-        installCfg: { env: {} },
+        installCfg: sealedConfig({ env: {} }),
       };
       const updated = {
         ...deployment,
@@ -1734,10 +1950,13 @@ describe("updateMcpJsonConfigAction", () => {
       };
       mocks.deploymentFindFirst.mockResolvedValue(deployment);
       mocks.deploymentUpdate.mockResolvedValue(updated);
-      mocks.resolveSpawnSpec.mockReturnValue({
-        kind: "bridge",
-        command: "docker",
-        args: [],
+      mocks.resolveMcpConnectionSpawnSpec.mockResolvedValue({
+        spec: {
+          kind: "bridge",
+          command: "docker",
+          args: [],
+        },
+        redactionValues: [],
       });
 
       const fd = configFormData("dep1", config);
@@ -1755,7 +1974,11 @@ describe("updateMcpJsonConfigAction", () => {
         },
         include: { server: { select: { name: true } } },
       });
-      expect(mocks.resolveSpawnSpec).toHaveBeenCalledWith(updated, true);
+      expect(mocks.resolveMcpConnectionSpawnSpec).toHaveBeenCalledWith({
+        workspaceId: "ws1",
+        deploymentId: "dep1",
+        rebuild: true,
+      });
       expect(mocks.restartProcess).toHaveBeenCalledWith(
         "dep1",
         { kind: "bridge", command: "docker", args: [] },
@@ -1776,20 +1999,26 @@ describe("updateMcpJsonConfigAction", () => {
       name: null,
       source: "npm",
       sourceRef: "@modelcontextprotocol/server-memory",
-      installCfg: { env: {} },
+      installCfg: sealedConfig({ env: {} }),
     };
     const updated = {
       ...deployment,
-      installCfg: { env: { MEMORY_PATH: "/tmp/memory.json" }, network: "none" },
+      installCfg: sealedConfig({
+        env: { MEMORY_PATH: "/tmp/memory.json" },
+        network: "none",
+      }),
       status: "provisioning",
       server: { name: "Catalog Memory" },
     };
     mocks.deploymentFindFirst.mockResolvedValue(deployment);
     mocks.deploymentUpdate.mockResolvedValue(updated);
-    mocks.resolveSpawnSpec.mockReturnValue({
-      kind: "bridge",
-      command: "docker",
-      args: [],
+    mocks.resolveMcpConnectionSpawnSpec.mockResolvedValue({
+      spec: {
+        kind: "bridge",
+        command: "docker",
+        args: [],
+      },
+      redactionValues: [],
     });
 
     const fd = configFormData("catalog-dep", {
@@ -1805,7 +2034,7 @@ describe("updateMcpJsonConfigAction", () => {
       data: {
         source: "npm",
         sourceRef: "@modelcontextprotocol/server-memory",
-        installCfg: { env: {}, network: "none" },
+        installCfg: sealedConfig({ env: {}, network: "none" }),
         status: "provisioning",
       },
       include: { server: { select: { name: true } } },
@@ -1826,7 +2055,7 @@ describe("updateMcpJsonConfigAction", () => {
       name: null,
       source: "npm",
       sourceRef: "protected-mcp",
-      installCfg: { env: { API_TOKEN: "old-secret" } },
+      installCfg: sealedConfig({ env: { API_TOKEN: "old-secret" } }),
     };
     mocks.deploymentFindFirst.mockResolvedValue(deployment);
     mocks.serverFindUnique.mockResolvedValue({
@@ -1834,7 +2063,7 @@ describe("updateMcpJsonConfigAction", () => {
     });
     mocks.deploymentUpdate.mockResolvedValue({
       ...deployment,
-      installCfg: { env: { API_TOKEN: "" } },
+      installCfg: sealedConfig({ env: { API_TOKEN: "" } }),
       status: "setup_required",
       server: { name: "Protected MCP" },
     });
@@ -1853,14 +2082,15 @@ describe("updateMcpJsonConfigAction", () => {
       expect.objectContaining({
         data: expect.objectContaining({
           installCfg: expect.objectContaining({
-            env: { API_TOKEN: "old-secret" },
+            env: { API_TOKEN: "" },
+            credentialEnvelope: deployment.installCfg.credentialEnvelope,
           }),
           status: "provisioning",
         }),
       }),
     );
     expect(mocks.restartProcess).toHaveBeenCalled();
-    expect(mocks.resolveSpawnSpec).toHaveBeenCalled();
+    expect(mocks.resolveMcpConnectionSpawnSpec).toHaveBeenCalled();
   });
 
   it("rejects environment fields in an existing deployment configuration edit", async () => {
@@ -1869,11 +2099,11 @@ describe("updateMcpJsonConfigAction", () => {
       workspaceId: "ws1",
       source: "config",
       sourceRef: "npx",
-      installCfg: {
+      installCfg: sealedConfig({
         command: "npx",
         args: ["mcp-server"],
         env: { TOKEN: "keep" },
-      },
+      }),
     });
 
     const result = await updateMcpJsonConfigAction(
@@ -1897,7 +2127,7 @@ describe("updateMcpJsonConfigAction", () => {
       name: null,
       source: "npm",
       sourceRef: "@modelcontextprotocol/server-memory",
-      installCfg: { env: {} },
+      installCfg: sealedConfig({ env: {} }),
     });
 
     const result = await updateMcpJsonConfigAction(
@@ -1922,21 +2152,32 @@ describe("updateMcpJsonConfigAction", () => {
       name: "Editable MCP",
       source: "config",
       sourceRef: "npx",
-      installCfg: { command: "npx", args: ["old-package"], env: {} },
+      installCfg: sealedConfig({
+        command: "npx",
+        args: ["old-package"],
+        env: {},
+      }),
     };
     const updated = {
       ...deployment,
-      installCfg: { command: "npx", args: ["new-package"], env: {} },
+      installCfg: sealedConfig({
+        command: "npx",
+        args: ["new-package"],
+        env: {},
+      }),
       status: "provisioning",
     };
     mocks.deploymentFindFirst.mockResolvedValue(deployment);
     mocks.deploymentUpdate
       .mockResolvedValueOnce(updated)
       .mockResolvedValueOnce({ ...updated, status: "error" });
-    mocks.resolveSpawnSpec.mockReturnValue({
-      kind: "bridge",
-      command: "docker",
-      args: [],
+    mocks.resolveMcpConnectionSpawnSpec.mockResolvedValue({
+      spec: {
+        kind: "bridge",
+        command: "docker",
+        args: [],
+      },
+      redactionValues: [],
     });
     mocks.restartProcess.mockRejectedValueOnce(new Error("spawn failed"));
 
@@ -1972,7 +2213,7 @@ describe("updateMcpJsonConfigAction", () => {
       where: {
         id: "foreign-dep",
         workspaceId: "ws1",
-        source: { in: ["npm", "pypi", "github", "docker", "config"] },
+        source: { in: ["npm", "pypi", "github", "docker", "config", "remote"] },
       },
     });
     expect(mocks.deploymentUpdate).not.toHaveBeenCalled();
@@ -2003,7 +2244,7 @@ describe("updateMcpJsonConfigAction", () => {
       workspaceId: "ws1",
       source: "npm",
       sourceRef: "old-package",
-      installCfg: { env: {} },
+      installCfg: sealedConfig({ env: {} }),
     });
 
     const result = await updateMcpJsonConfigAction(
@@ -2026,7 +2267,7 @@ describe("updateMcpJsonConfigAction", () => {
       serverId: null,
       source: "npm",
       sourceRef: "pkg",
-      installCfg: { env: {} },
+      installCfg: sealedConfig({ env: {} }),
     });
     const fd = configFormData("dep1", { source: "npm", ref: "pkg" });
     fd.set("network", "host");
@@ -2049,10 +2290,141 @@ describe("setDeploymentEnvAction", () => {
     });
   });
 
+  it.each(["replacement-secret", ""])(
+    "stops the old process before storing rotation or revocation %j",
+    async (value) => {
+      const original = sealedConfig({
+        env: { OPTIONAL_TOKEN: "old-secret", KEEP: "kept" },
+      });
+      mocks.deploymentFindFirst.mockResolvedValue({
+        id: "dep1",
+        status: "running",
+        installCfg: original,
+      });
+      let releaseStop!: () => void;
+      mocks.stopProcess.mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            releaseStop = resolve;
+          }),
+      );
+      const fd = formData("dep1");
+      fd.set(
+        "changes",
+        JSON.stringify({ set: { OPTIONAL_TOKEN: value }, remove: [] }),
+      );
+      const saving = setDeploymentEnvAction(fd);
+      await vi.waitFor(() =>
+        expect(mocks.stopProcess).toHaveBeenCalledWith("dep1"),
+      );
+      expect(mocks.deploymentUpdate).not.toHaveBeenCalled();
+      expect(resolveMcpEnvironment(original, "ws1").OPTIONAL_TOKEN).toBe(
+        "old-secret",
+      );
+      releaseStop();
+      await saving;
+      const stored = mocks.deploymentUpdate.mock.calls[0][0].data;
+      expect(stored.status).toBe("stopped");
+      expect(resolveMcpEnvironment(stored.installCfg, "ws1")).toEqual({
+        OPTIONAL_TOKEN: value,
+        KEEP: "kept",
+      });
+      expect(JSON.stringify(stored.installCfg)).not.toContain("old-secret");
+      if (value) expect(JSON.stringify(stored.installCfg)).not.toContain(value);
+      expect(mocks.stopProcess.mock.invocationCallOrder[0]).toBeLessThan(
+        mocks.deploymentUpdate.mock.invocationCallOrder[0],
+      );
+    },
+  );
+
+  it("does not store rotated credentials when stopping fails", async () => {
+    mocks.deploymentFindFirst.mockResolvedValue({
+      id: "dep1",
+      status: "running",
+      installCfg: sealedConfig({ env: { TOKEN: "old-secret" } }),
+    });
+    mocks.stopProcess.mockRejectedValueOnce(new Error("termination failed"));
+    const fd = formData("dep1");
+    fd.set(
+      "changes",
+      JSON.stringify({ set: { TOKEN: "replacement" }, remove: [] }),
+    );
+    await expect(setDeploymentEnvAction(fd)).rejects.toThrow(
+      "termination failed",
+    );
+    expect(mocks.deploymentUpdate).not.toHaveBeenCalled();
+  });
+
+  it("denies a foreign workspace before reading or modifying credentials", async () => {
+    mocks.getWorkspaceForUser.mockResolvedValueOnce(null);
+    const fd = formData("foreign-dep");
+    fd.set(
+      "changes",
+      JSON.stringify({ set: { TOKEN: "replacement" }, remove: [] }),
+    );
+    expect(await setDeploymentEnvAction(fd)).toEqual({
+      error: "notAuthorized",
+    });
+    expect(mocks.deploymentFindFirst).not.toHaveBeenCalled();
+    expect(mocks.stopProcess).not.toHaveBeenCalled();
+    expect(mocks.deploymentUpdate).not.toHaveBeenCalled();
+  });
+
+  it("denies a foreign deployment through a workspace-scoped lookup", async () => {
+    mocks.deploymentFindFirst.mockResolvedValueOnce(null);
+    const fd = formData("foreign-dep");
+    fd.set(
+      "changes",
+      JSON.stringify({ set: { TOKEN: "replacement" }, remove: [] }),
+    );
+    expect(await setDeploymentEnvAction(fd)).toEqual({
+      error: "deploymentNotFound",
+    });
+    expect(mocks.deploymentFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: "foreign-dep",
+          workspaceId: "ws1",
+        }),
+      }),
+    );
+    expect(mocks.stopProcess).not.toHaveBeenCalled();
+    expect(mocks.deploymentUpdate).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [{ env: { TOKEN: "legacy-secret" } }, "MCP_CREDENTIAL_MIGRATION_REQUIRED"],
+    [
+      sealMcpEnvironment({}, "foreign-workspace", { TOKEN: "foreign-secret" }),
+      "MCP_CREDENTIAL_SCOPE_INVALID",
+    ],
+    [
+      { env: { GOOD: "kept", BAD: 12, "BAD-KEY": "excluded" } },
+      "MCP_CREDENTIAL_INVALID",
+    ],
+  ])(
+    "rejects unreadable or foreign stored credentials before patching %#",
+    async (installCfg, error) => {
+      mocks.deploymentFindFirst.mockResolvedValueOnce({
+        id: "dep1",
+        status: "running",
+        installCfg,
+      });
+      const fd = formData("dep1");
+      fd.set(
+        "changes",
+        JSON.stringify({ set: { TOKEN: "replacement" }, remove: [] }),
+      );
+      await expect(setDeploymentEnvAction(fd)).rejects.toThrow(error as string);
+      expect(mocks.stopProcess).not.toHaveBeenCalled();
+      expect(mocks.deploymentUpdate).not.toHaveBeenCalled();
+    },
+  );
+
   it("updates environment variables without changing the selected network mode", async () => {
     mocks.deploymentFindFirst.mockResolvedValue({
       id: "dep1",
-      installCfg: { env: { OLD: "value" }, network: "none" },
+      installCfg: sealedConfig({ env: { OLD: "value" }, network: "none" }),
     });
     mocks.deploymentUpdate.mockResolvedValue({ id: "dep1" });
     const fd = formData("dep1");
@@ -2062,7 +2434,13 @@ describe("setDeploymentEnvAction", () => {
 
     expect(mocks.deploymentUpdate).toHaveBeenCalledWith({
       where: { id: "dep1" },
-      data: { installCfg: { env: { API_TOKEN: "secret" }, network: "none" } },
+      data: {
+        installCfg: sealedConfig({
+          env: { API_TOKEN: "secret" },
+          network: "none",
+        }),
+        status: "stopped",
+      },
     });
   });
 
@@ -2070,10 +2448,10 @@ describe("setDeploymentEnvAction", () => {
     mocks.deploymentFindFirst.mockResolvedValue({
       id: "dep1",
       status: "stopped",
-      installCfg: {
+      installCfg: sealedConfig({
         env: { API_TOKEN: "old-secret", KEEP_ME: "unchanged" },
         network: "none",
-      },
+      }),
     });
     const fd = formData("dep1");
     fd.set(
@@ -2086,10 +2464,11 @@ describe("setDeploymentEnvAction", () => {
     expect(mocks.deploymentUpdate).toHaveBeenCalledWith({
       where: { id: "dep1" },
       data: {
-        installCfg: {
+        installCfg: sealedConfig({
           env: { API_TOKEN: "replacement", KEEP_ME: "unchanged" },
           network: "none",
-        },
+        }),
+        status: "stopped",
       },
     });
   });
@@ -2098,7 +2477,9 @@ describe("setDeploymentEnvAction", () => {
     mocks.deploymentFindFirst.mockResolvedValue({
       id: "dep1",
       status: "stopped",
-      installCfg: { env: { API_TOKEN: "old-secret", OPTIONAL: "keep" } },
+      installCfg: sealedConfig({
+        env: { API_TOKEN: "old-secret", OPTIONAL: "keep" },
+      }),
     });
     const fd = formData("dep1");
     fd.set("changes", JSON.stringify({ set: {}, remove: ["API_TOKEN"] }));
@@ -2107,7 +2488,10 @@ describe("setDeploymentEnvAction", () => {
 
     expect(mocks.deploymentUpdate).toHaveBeenCalledWith({
       where: { id: "dep1" },
-      data: { installCfg: { env: { OPTIONAL: "keep" } } },
+      data: {
+        installCfg: sealedConfig({ env: { OPTIONAL: "keep" } }),
+        status: "stopped",
+      },
     });
   });
 
@@ -2116,7 +2500,7 @@ describe("setDeploymentEnvAction", () => {
     mocks.deploymentFindFirst.mockResolvedValue({
       id: "dep1",
       status: "setup_required",
-      installCfg: { env: { API_TOKEN: "" }, network: "none" },
+      installCfg: sealedConfig({ env: { API_TOKEN: "" }, network: "none" }),
       server: {
         installCfg: { source: "npm", ref: "protected-mcp", env: ["API_TOKEN"] },
       },
@@ -2129,7 +2513,10 @@ describe("setDeploymentEnvAction", () => {
     expect(mocks.deploymentUpdate).toHaveBeenCalledWith({
       where: { id: "dep1" },
       data: {
-        installCfg: { env: { API_TOKEN: "secret" }, network: "none" },
+        installCfg: sealedConfig({
+          env: { API_TOKEN: "secret" },
+          network: "none",
+        }),
         status: "stopped",
       },
     });
@@ -2139,7 +2526,10 @@ describe("setDeploymentEnvAction", () => {
     mocks.deploymentFindFirst.mockResolvedValue({
       id: "dep1",
       status: "running",
-      installCfg: { env: { API_TOKEN: "old-secret" }, network: "none" },
+      installCfg: sealedConfig({
+        env: { API_TOKEN: "old-secret" },
+        network: "none",
+      }),
       server: {
         installCfg: { source: "npm", ref: "protected-mcp", env: ["API_TOKEN"] },
       },
@@ -2155,11 +2545,14 @@ describe("setDeploymentEnvAction", () => {
     expect(mocks.deploymentUpdate).toHaveBeenCalledWith({
       where: { id: "dep1" },
       data: {
-        installCfg: { env: { API_TOKEN: "" }, network: "none" },
+        installCfg: sealedConfig({ env: { API_TOKEN: "" }, network: "none" }),
         status: "setup_required",
       },
     });
     expect(mocks.killProcess.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.deploymentUpdate.mock.invocationCallOrder[0],
+    );
+    expect(mocks.stopProcess.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.deploymentUpdate.mock.invocationCallOrder[0],
     );
   });
@@ -2171,7 +2564,7 @@ describe("setDeploymentEnvAction", () => {
       status: "running",
       source: "npm",
       sourceRef: "protected-mcp",
-      installCfg: { env: { API_TOKEN: "old-secret" } },
+      installCfg: sealedConfig({ env: { API_TOKEN: "old-secret" } }),
       server: {
         name: "Protected MCP",
         slug: "protected-mcp",
@@ -2208,7 +2601,9 @@ describe("setDeploymentEnvAction", () => {
     expect(mocks.killProcess).toHaveBeenCalledTimes(2);
     expect(mocks.startProcess).not.toHaveBeenCalled();
     expect(current.status).toBe("setup_required");
-    expect(current.installCfg.env.API_TOKEN).toBe("");
+    expect(resolveMcpEnvironment(current.installCfg, "ws1")).toEqual({
+      API_TOKEN: "",
+    });
   });
 });
 
@@ -2345,13 +2740,16 @@ describe("runMcpConsoleToolAction", () => {
     mocks.listMcpTools.mockResolvedValue([{ name: "read" }, { name: "write" }]);
     mocks.mcpRpc.mockResolvedValue({ content: [{ type: "text", text: "ok" }] });
     mocks.logRequest.mockResolvedValue(undefined);
-    mocks.resolveSpawnSpec.mockReturnValue({
-      kind: "remote",
-      name: "Remote",
-      url: "https://mcp.example.com/mcp",
-      transport: "streamable-http",
-      headers: {},
-      timeoutMs: 60_000,
+    mocks.resolveMcpConnectionSpawnSpec.mockResolvedValue({
+      spec: {
+        kind: "remote",
+        name: "Remote",
+        url: "https://mcp.example.com/mcp",
+        transport: "streamable-http",
+        headers: {},
+        timeoutMs: 60_000,
+      },
+      redactionValues: [],
     });
   });
 
@@ -2362,7 +2760,11 @@ describe("runMcpConsoleToolAction", () => {
       marketInstall: null,
       toolkitLinks: [],
       sourceRef: "https://mcp.example.com/mcp",
-      installCfg: { transport: "streamable-http", authType: "none", env: {} },
+      installCfg: sealedConfig({
+        transport: "streamable-http",
+        authType: "none",
+        env: {},
+      }),
     });
 
     const result = await runMcpConsoleToolAction({
@@ -2437,23 +2839,26 @@ describe("runMcpConsoleToolAction", () => {
       marketInstall: null,
       toolkitLinks: [],
       sourceRef: "https://mcp.example.com/mcp",
-      installCfg: {
+      installCfg: sealedConfig({
         transport: "streamable-http",
         authType: "bearer",
         bearerEnv: "MCP_BEARER_TOKEN",
         env: { MCP_BEARER_TOKEN: "token-example" },
-      },
+      }),
     });
     mocks.mcpRpc.mockResolvedValue({
       content: [{ type: "text", text: "Bearer token-example" }],
     });
-    mocks.resolveSpawnSpec.mockReturnValueOnce({
-      kind: "remote",
-      name: "Remote",
-      url: "https://mcp.example.com/mcp",
-      transport: "streamable-http",
-      headers: { authorization: "Bearer token-example" },
-      timeoutMs: 60_000,
+    mocks.resolveMcpConnectionSpawnSpec.mockResolvedValueOnce({
+      spec: {
+        kind: "remote",
+        name: "Remote",
+        url: "https://mcp.example.com/mcp",
+        transport: "streamable-http",
+        headers: { authorization: "Bearer token-example" },
+        timeoutMs: 60_000,
+      },
+      redactionValues: [],
     });
 
     await expect(
@@ -2477,7 +2882,7 @@ describe("runMcpConsoleToolAction", () => {
       source: "docker",
       marketInstall: null,
       toolkitLinks: [],
-      installCfg: { env: { MODE: "dev" } },
+      installCfg: sealedConfig({ env: { MODE: "dev" } }),
     });
     mocks.mcpRpc.mockResolvedValue({
       content: [{ type: "text", text: "development ready" }],
@@ -2617,10 +3022,10 @@ describe("single deployment stop and curated skill installation", () => {
       let status = "running";
       mocks.deploymentFindFirst.mockResolvedValue({
         id: "dep1",
-        installCfg: {
+        installCfg: sealedConfig({
           env: { TOKEN: missing ? "" : "secret" },
           requiredEnv: ["TOKEN"],
-        },
+        }),
         server: null,
       });
       mocks.killProcess.mockImplementation(async (_id, options) => {
@@ -2818,13 +3223,7 @@ describe("workspace action trust boundaries", () => {
     expect(mocks.deploymentUpdate).not.toHaveBeenCalled();
   });
 
-  it.each([
-    null,
-    [],
-    { env: null },
-    { env: [] },
-    { env: { GOOD: "kept", BAD: 12, "BAD-KEY": "excluded" } },
-  ])(
+  it.each([null, [], { env: null }, { env: [] }, { env: {} }])(
     "normalizes stored environment before applying a bounded patch %#",
     async (installCfg) => {
       const record = {
@@ -2846,17 +3245,10 @@ describe("workspace action trust boundaries", () => {
         }),
       );
       await setDeploymentEnvAction(fd);
-      expect(record.installCfg).toMatchObject({
-        env: {
-          ...(installCfg &&
-          !Array.isArray(installCfg) &&
-          installCfg.env &&
-          !Array.isArray(installCfg.env)
-            ? { GOOD: "kept" }
-            : {}),
-          ADDED: "new",
-        },
+      expect(resolveMcpEnvironment(record.installCfg, "ws1")).toEqual({
+        ADDED: "new",
       });
+      expect(record.installCfg).toMatchObject({ env: { ADDED: "" } });
       expect(JSON.stringify(record.installCfg)).not.toContain("excluded");
     },
   );

@@ -1,21 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 const io = vi.hoisted(() => ({
-  check: vi.fn(),
-  update: vi.fn(),
   reveal: vi.fn(),
   save: vi.fn(),
   remove: vi.fn(),
-}));
-vi.mock("@/lib/agents/actions", () => ({
-  checkPiRuntimesAction: io.check,
-  updatePiRuntimesAction: io.update,
+  impact: vi.fn(),
 }));
 vi.mock("@/lib/workspace/runtime-files-actions", () => ({
   revealDeploymentRuntimeFileAction: io.reveal,
   upsertDeploymentRuntimeFileAction: io.save,
   deleteDeploymentRuntimeFileAction: io.remove,
+}));
+vi.mock("@/lib/workspace/actions", () => ({
+  getMcpConnectionImpactAction: io.impact,
 }));
 vi.mock("next-intl", () => {
   const t = Object.assign(
@@ -25,32 +23,7 @@ vi.mock("next-intl", () => {
   );
   return { useTranslations: () => t, useLocale: () => "en" };
 });
-import { PiRuntimeManagement } from "@/components/dashboard/agents/PiRuntimeManagement";
 import { RuntimeFilesEditor } from "@/components/dashboard/RuntimeFilesEditor";
-const agents = [
-  {
-    agentId: "a",
-    name: "Alpha",
-    installed: true,
-    version: "1",
-    status: "ready",
-  },
-  {
-    agentId: "b",
-    name: "Beta",
-    installed: false,
-    version: "0.9",
-    status: "error",
-    error: "Broken installation",
-  },
-  {
-    agentId: "c",
-    name: "Gamma",
-    installed: false,
-    version: null,
-    status: "unchanged",
-  },
-];
 const file = {
   id: "f",
   path: "config.txt",
@@ -84,84 +57,10 @@ function saveDraft() {
   fireEvent.submit(form);
 }
 
-describe("Pi runtime fleet management", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    io.check.mockResolvedValue({ latestVersion: "2", agents });
-  });
-  it("loads, selects a batch and merges only updated agents", async () => {
-    const user = userEvent.setup();
-    io.update.mockResolvedValue({
-      targetVersion: "2",
-      finishedAt: "now",
-      agents: [
-        { ...agents[0], status: "updated", version: "2" },
-        { ...agents[1], status: "error" },
-        { ...agents[2], status: "unchanged" },
-      ],
-      warning: "Some unavailable",
-    });
-    render(<PiRuntimeManagement slug="space" />);
-    await screen.findByText("Alpha");
-    expect(screen.getByText("Broken installation")).toBeVisible();
-    expect(screen.getByText("piNotInstalled")).toBeVisible();
-    const checks = screen.getAllByRole("checkbox");
-    await user.click(checks[1]);
-    await user.click(screen.getByRole("button", { name: "piUpdateLatest" }));
-    await waitFor(() =>
-      expect(io.update).toHaveBeenCalledWith("space", "latest", ["a"]),
-    );
-    expect(await screen.findByRole("status")).toHaveTextContent('"updated":1');
-    expect(screen.getByText("Some unavailable")).toBeVisible();
-    expect(screen.getByText("Beta")).toBeVisible();
-    const version = screen.getByRole("textbox", { name: "piTargetVersion" });
-    await user.type(version, " 1.5 ");
-    await user.click(screen.getByRole("button", { name: "piInstallVersion" }));
-    await waitFor(() =>
-      expect(io.update).toHaveBeenLastCalledWith("space", "1.5", ["a"]),
-    );
-  });
-  it("disables latest updates only when all selected runtimes are current", async () => {
-    const user = userEvent.setup();
-    io.check.mockResolvedValue({ latestVersion: "1", agents });
-    render(<PiRuntimeManagement slug="space" />);
-    await screen.findByText("Alpha");
-    await user.click(screen.getAllByRole("checkbox")[1]);
-    expect(screen.getByRole("button", { name: "piUpToDate" })).toBeDisabled();
-    await user.click(screen.getAllByRole("checkbox")[2]);
-    expect(
-      screen.getByRole("button", { name: "piUpdateLatest" }),
-    ).toBeEnabled();
-    io.update.mockRejectedValue(new Error("offline"));
-    await user.click(screen.getByRole("button", { name: "piUpdateLatest" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "piManagementFailed",
-    );
-    expect(screen.getByText("Alpha")).toBeVisible();
-    io.check.mockResolvedValue({ agents: [], warning: "No runtimes" });
-    await user.click(screen.getByRole("button", { name: "piCheckUpdates" }));
-    expect(await screen.findByText("No runtimes")).toBeVisible();
-    expect(screen.queryByText("Alpha")).toBeNull();
-  });
-  it("shows initial failures and ignores an obsolete load after unmount", async () => {
-    io.check.mockRejectedValueOnce(new Error("denied"));
-    const view = render(<PiRuntimeManagement slug="space" />);
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "piManagementFailed",
-    );
-    view.unmount();
-    const { promise, resolve } = Promise.withResolvers<object>();
-    io.check.mockReturnValueOnce(promise);
-    const next = render(<PiRuntimeManagement slug="other" />);
-    expect(screen.getByRole("region")).toHaveAttribute("aria-busy", "true");
-    next.unmount();
-    resolve({ agents });
-  });
-});
-
 describe("deployment text file editor", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    io.impact.mockResolvedValue({ agentIds: [], assistantIds: [] });
     io.save.mockResolvedValue({
       savedAt: "now",
       file: { ...file, id: "new", path: "new.txt" },
@@ -238,6 +137,7 @@ describe("deployment text file editor", () => {
     ["fileNotFound", "runtimeFileNotFound"],
     ["saveFailed", "runtimeFileSaveFailed"],
     ["restartFailed", "runtimeFileRestartFailed"],
+    ["sharedChangeConfirmationRequired", "sharedChangeConfirmationRequired"],
     [undefined, "runtimeFileSaveFailed"],
   ])("retains a draft after %s save failures", async (error, message) => {
     io.save.mockResolvedValue({ error });
@@ -256,6 +156,7 @@ describe("deployment text file editor", () => {
     ["saveFailed", "runtimeFileRemoveFailed"],
     ["restartFailed", "runtimeFileRemoveRestartFailed"],
     ["notAuthorized", "runtimeFileNotAuthorized"],
+    ["sharedChangeConfirmationRequired", "sharedChangeConfirmationRequired"],
     [undefined, "runtimeFileRemoveFailed"],
   ])(
     "reports %s removal failures without losing metadata",
@@ -354,4 +255,80 @@ describe("deployment text file editor", () => {
         );
     },
   );
+  it("retains the complete draft and requires renewed confirmation when affected objects change", async () => {
+    const user = userEvent.setup();
+    io.impact.mockResolvedValue({
+      agentIds: ["agent-b", "agent-a"],
+      assistantIds: [],
+    });
+    io.save.mockResolvedValueOnce({
+      error: "sharedChangeConfirmationRequired",
+      impactedObjects: {
+        agentIds: ["agent-a", "agent-b"],
+        assistantIds: ["assistant-new"],
+      },
+    });
+    editor([]);
+    await newDraft();
+    await user.click(await screen.findByRole("checkbox"));
+    saveDraft();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "sharedChangeConfirmationRequired",
+    );
+    expect(screen.getByRole("textbox", { name: "filePath" })).toHaveValue(
+      "new.txt",
+    );
+    expect(screen.getByRole("textbox", { name: "textContent" })).toHaveValue(
+      "contents",
+    );
+    expect(screen.getByText("Assistant · assistant-new")).toBeVisible();
+    expect(screen.getByRole("checkbox")).not.toBeChecked();
+    expect(
+      document.querySelector('input[name="confirmedImpactedObjects"]'),
+    ).toBeNull();
+    expect(io.save).toHaveBeenCalledTimes(1);
+    expect(
+      JSON.parse(io.save.mock.calls[0][1].get("confirmedImpactedObjects")),
+    ).toEqual({ agentIds: ["agent-a", "agent-b"], assistantIds: [] });
+    await user.click(screen.getByRole("checkbox"));
+    saveDraft();
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "runtimeFileSaved",
+    );
+    expect(io.save).toHaveBeenCalledTimes(2);
+    const retry = io.save.mock.calls[1][1] as FormData;
+    expect(JSON.parse(String(retry.get("confirmedImpactedObjects")))).toEqual({
+      agentIds: ["agent-a", "agent-b"],
+      assistantIds: ["assistant-new"],
+    });
+    expect(retry.get("path")).toBe("new.txt");
+    expect(retry.get("content")).toBe("contents");
+  });
+
+  it("keeps file metadata after a shared deletion refusal and sends explicit confirmation on retry", async () => {
+    const user = userEvent.setup();
+    io.remove.mockResolvedValueOnce({
+      error: "sharedChangeConfirmationRequired",
+      impactedObjects: { agentIds: [], assistantIds: ["assistant-a"] },
+    });
+    editor();
+    await user.click(screen.getByRole("button", { name: "remove" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "sharedChangeConfirmationRequired",
+    );
+    expect(screen.getByText("config.txt", { selector: "code" })).toBeVisible();
+    expect(io.remove).toHaveBeenCalledTimes(1);
+    expect(io.remove.mock.calls[0][0].has("confirmedImpactedObjects")).toBe(
+      false,
+    );
+    await user.click(screen.getByRole("checkbox"));
+    await user.click(screen.getByRole("button", { name: "remove" }));
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "runtimeFileRemoved",
+    );
+    expect(
+      JSON.parse(io.remove.mock.calls[1][0].get("confirmedImpactedObjects")),
+    ).toEqual({ agentIds: [], assistantIds: ["assistant-a"] });
+    expect(screen.queryByText("config.txt", { selector: "code" })).toBeNull();
+  });
 });

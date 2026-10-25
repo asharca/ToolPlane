@@ -1,12 +1,7 @@
 import "server-only";
-import {
-  nativeApprovalAdapter,
-  claudeApprovalSettings,
-} from "./native-tool-approval";
+import { nativeApprovalAdapter } from "./native-tool-approval";
 import { withSandboxExecutionLease } from "./sandbox-execution-gate";
 import { findAgentConversationSandbox } from "./conversation-sandbox";
-import { withAgentMaintenanceLease } from "./agent-execution-gate";
-import { runHermesRpcTurn } from "./hermes-rpc";
 import { PiRuntimeInterruptedError } from "./pi-harness";
 import {
   assertRuntimeOwner,
@@ -14,18 +9,14 @@ import {
   runtimeAbortSignal,
   markRuntimeUncertain,
 } from "@/lib/runtime/ownership-state";
-import { beginWorkspaceOperation } from "@/lib/workspace/operation-gate";
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { posix } from "node:path";
 import { StringDecoder } from "node:string_decoder";
-import { readFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { db } from "@/lib/db";
-import {
-  estimateContextTokens,
-  parseContextUsage,
-  type ContextUsageSnapshot,
-} from "@/lib/context-usage";
+import type { ContextUsageSnapshot } from "@/lib/context-usage";
 import { effectiveStatus } from "@/lib/process/supervisor";
 import { sandboxContainerName } from "@/lib/sandboxes/runtime";
 import {
@@ -49,25 +40,8 @@ import { parsePiPackageReleaseManifest } from "@/lib/market/pi-package-manifest"
 import type { PiPackageManifestV1 } from "@/lib/market/pi-package-manifest";
 import { HOST_ONLY_COMMAND_NAMES } from "./runtime-commands";
 import type { RuntimeCommandResult } from "./runtime-commands";
-
-export const DEFAULT_PI_VERSION = "0.80.3";
-export type PiRuntimeVersion = { version: string; installed: boolean };
-
-// Harness storage format 4 is pre-stable: never follow the user's CLI pin.
-export const PI_HARNESS_RUNTIME = {
-  specs: [
-    "@earendil-works/pi-agent-core@0.87.1",
-    "@earendil-works/pi-session-backend-sqlite-node@0.87.1",
-    "@earendil-works/pi-coding-agent@0.87.1",
-    "@earendil-works/pi-ai@0.87.1",
-    "@modelcontextprotocol/sdk@1.30.0",
-    "@a2a-js/sdk@1.2.0",
-  ],
-  directory: "/workspace/.toolplane/runtime-packages/pi-harness-0.87.1",
-  binary: "pi",
-  ignoreScripts: true,
-  allowBuilds: [],
-} as const;
+import { z } from "zod";
+import type { ReasoningEffort } from "./constants";
 
 export const PI_SDK_RUNTIME = {
   specs: [
@@ -80,51 +54,6 @@ export const PI_SDK_RUNTIME = {
   allowBuilds: [],
 } as const;
 
-export function validatePiVersion(value: string): string {
-  if (
-    value.length > 80 ||
-    !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/.test(
-      value,
-    )
-  ) {
-    throw new Error("Enter an exact Pi version, for example 0.80.3.");
-  }
-  return value;
-}
-
-export const SANDBOX_RUNTIME_PACKAGES = {
-  pi: {
-    specs: [
-      `@earendil-works/pi-coding-agent@${DEFAULT_PI_VERSION}`,
-      `@earendil-works/pi-ai@${DEFAULT_PI_VERSION}`,
-    ],
-    directory: `/workspace/.toolplane/runtime-packages/pi-${DEFAULT_PI_VERSION}`,
-    binary: "pi",
-    ignoreScripts: true,
-    allowBuilds: [],
-  },
-  "claude-code": {
-    specs: ["@anthropic-ai/claude-code@2.1.245"],
-    directory: "/workspace/.toolplane/runtime-packages/claude-code-2.1.245",
-    binary: "claude",
-    ignoreScripts: false,
-    allowBuilds: ["@anthropic-ai/claude-code"],
-  },
-  dsh: {
-    specs: ["@deepseek-ai/dsh@0.1.1-rc.2"],
-    directory: "/workspace/.toolplane/runtime-packages/dsh-0.1.1-rc.2",
-    binary: "dsh",
-    ignoreScripts: false,
-    allowBuilds: [
-      "@deepseek-ai/dsh-subprocess-local",
-      "@google/genai",
-      "koffi",
-      "node-pty",
-      "protobufjs",
-    ],
-  },
-} as const;
-
 const PACKAGE_INSTALL_TIMEOUT_MS = 15 * 60_000;
 const TURN_TIMEOUT_MS = 30 * 60_000;
 const MAX_STDOUT_BYTES = 8 * 1024 * 1024;
@@ -132,7 +61,6 @@ const MAX_STDERR_BYTES = 64 * 1024;
 const RUNTIME_TEMP_ROOT = "/workspace/.toolplane/runtime-tmp";
 const NPM_CACHE = "/workspace/.toolplane/npm-cache";
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
-export const CLAUDE_RUNTIME_USER = "1000:1000";
 
 export type SandboxAgentRuntimeKind =
   | "pi"
@@ -167,6 +95,20 @@ export type SandboxRuntimeMessage = {
     providerMetadata?: unknown;
   }>;
 };
+/** Native Pi expands once; finalInput is observed from the actual user message. */
+export type AgentPromptInvocation = {
+  name: string;
+  source: {
+    marketInstallId: string;
+    releaseId: string;
+    checksum: string;
+    path: string;
+  };
+  version: string;
+  rawArguments: string;
+  arguments: string[];
+  finalInput: string;
+};
 
 export type RunSandboxAgentTurnOptions = {
   runtimeKind: SandboxAgentRuntimeKind;
@@ -184,6 +126,7 @@ export type RunSandboxAgentTurnOptions = {
   runtimeAccessToken: string;
   nativeApprovalUrl?: string;
   systemPrompt?: string | null;
+  piVersion?: string;
   disabledBuiltinTools?: readonly string[];
   messages: readonly SandboxRuntimeMessage[];
   skills?: readonly SkillForPrompt[];
@@ -198,12 +141,8 @@ export type RunSandboxAgentTurnOptions = {
   workingDirectory?: string | null;
   runtimeSessionId?: string;
   command?: string;
-  piHarness?: {
-    historyRequired?: boolean;
-    sessionRequired?: boolean;
-    communicationEnabled?: boolean;
-    thinkingLevel?: string;
-  };
+  historyRequired?: boolean;
+  reasoningEffort?: ReasoningEffort;
   signal?: AbortSignal;
   timeoutMs?: number;
   onTextDelta?: (text: string) => void | Promise<void>;
@@ -211,6 +150,9 @@ export type RunSandboxAgentTurnOptions = {
   onContextUsage?: (usage: ContextUsageSnapshot) => void | Promise<void>;
   onCommands?: (commands: RuntimeCommand[]) => void | Promise<void>;
   onUsage?: (usage: RuntimeUsage) => void | Promise<void>;
+  onPromptInvocation?: (
+    invocation: AgentPromptInvocation,
+  ) => void | Promise<void>;
   onCommandResult?: (result: RuntimeCommandResult) => void | Promise<void>;
 };
 
@@ -447,15 +389,6 @@ export function waitForSandboxRuntimeInstall<T>(
   });
 }
 
-export function dshProviderProtocol(format: string): string {
-  if (format === "anthropic") return "anthropic-messages";
-  if (format === "openai-responses") return "openai-responses";
-  if (format === "openai") return "openai-completions";
-  throw new Error(
-    `DeepSeek Harness does not support provider format: ${format}.`,
-  );
-}
-
 export function piProviderProtocol(format: string): string {
   if (format === "anthropic") return "anthropic-messages";
   if (format === "openai-responses") return "openai-responses";
@@ -479,10 +412,6 @@ function httpUrl(value: string, label: string): string {
     throw new Error(`Invalid ${label}.`);
   }
   return parsed.toString().replace(/\/$/, "");
-}
-
-function yamlString(value: string): string {
-  return JSON.stringify(value);
 }
 
 function mcpName(server: SandboxRuntimeMcpServer, index: number): string {
@@ -538,235 +467,6 @@ export function sandboxRuntimeExecWrapper(controlPrefix: string): string {
   return `pid_file=$1; shift; umask 077; printf '%s\\n' "$$" > "$pid_file"; trap 'rm -f -- "$pid_file"' EXIT; printf '${controlPrefix}%s\\n' "$$"; "$@"`;
 }
 
-export function buildDshPatch(options: {
-  provider: SandboxRuntimeProvider;
-  modelId: string;
-  modelProxyBase: string;
-  systemPrompt: string;
-  skillRoot: string;
-  mcpServers?: readonly SandboxRuntimeMcpServer[];
-  disabledBuiltinTools?: readonly string[];
-  eventPluginPath?: string;
-  driverPluginPath?: string;
-  approvalPluginPath?: string;
-}): string {
-  const protocol = dshProviderProtocol(options.provider.format);
-  const proxy = httpUrl(options.modelProxyBase, "model proxy URL");
-  const rows = [
-    "- id: skill-filesystem",
-    "  config:",
-    "    includeDefaultRoots: false",
-    "    customSkillDirs:",
-    `      - ${yamlString(options.skillRoot)}`,
-    "    watch: false",
-    "- id: llm-pi-ai",
-    "  config:",
-    "    providers:",
-    "      toolplane:",
-    `        displayName: ${yamlString(options.provider.name || "ToolPlane")}`,
-    "        apiKeyEnv: TOOLPLANE_RUNTIME_TOKEN",
-    `        api: ${protocol}`,
-    `        baseURL: ${yamlString(proxy)}`,
-    "        models:",
-    `          - id: ${yamlString(options.modelId)}`,
-    `            name: ${yamlString(options.modelId)}`,
-    "- id: agent-default-model",
-    "  config:",
-    "    provider: toolplane",
-    `    model: ${yamlString(options.modelId)}`,
-    "- id: system-prompt",
-    "  config:",
-    `    persona: ${yamlString(options.systemPrompt)}`,
-  ];
-  const dshRowsByTool: Record<string, string[]> = {
-    read: ["tool-fs"],
-    read_image: ["tool-fs"],
-    edit: ["tool-fs"],
-    write: ["tool-fs"],
-    str_replace_editor: ["tool-fs"],
-    glob: ["tool-fs-search"],
-    grep: ["tool-fs-search"],
-    web_search: ["tool-web"],
-    bash: ["tool-bash"],
-    job_output: ["tool-jobs"],
-    job_list: ["tool-jobs"],
-    job_kill: ["tool-jobs"],
-    todo_write: ["tool-todo"],
-    skill: ["tool-skill"],
-    get_goal: ["tool-goal"],
-    create_goal: ["tool-goal"],
-    update_goal: ["tool-goal"],
-    exit_plan_mode: ["plan-mode"],
-    subagent: ["tool-subagent"],
-    subagent_fork: ["tool-subagent-fork"],
-    send_message: ["tool-subagent-control"],
-    interrupt_agent: ["tool-subagent-control"],
-    list_agents: ["tool-subagent-list-agents"],
-    workflow: ["tool-workflow"],
-    ralph: ["tool-ralph"],
-  };
-  const disabledRows = new Set(
-    (options.disabledBuiltinTools ?? []).flatMap(
-      (tool) => dshRowsByTool[tool] ?? [],
-    ),
-  );
-  for (const row of disabledRows) {
-    rows.push(`- id: ${yamlString(row)}`, "  disabled: true");
-  }
-  const servers = options.mcpServers ?? [];
-  if (options.driverPluginPath)
-    rows.push("- id: headless-runner", "  disabled: true");
-  if (
-    options.approvalPluginPath ||
-    options.eventPluginPath ||
-    options.driverPluginPath ||
-    servers.length
-  ) {
-    rows.push("- insert:");
-    if (options.approvalPluginPath)
-      rows.push(
-        "    - id: toolplane-native-approval",
-        `      name: ${yamlString(`file://${options.approvalPluginPath}`)}`,
-      );
-    if (options.driverPluginPath)
-      rows.push(
-        "    - id: toolplane-driver",
-        `      name: ${yamlString(`file://${options.driverPluginPath}`)}`,
-      );
-    if (options.eventPluginPath) {
-      rows.push(
-        "    - id: toolplane-events",
-        `      name: ${yamlString(`file://${options.eventPluginPath}`)}`,
-      );
-    }
-    servers.forEach((server, index) => {
-      rows.push(
-        `    - id: ${yamlString(`toolplane-mcp-${index + 1}`)}`,
-        "      name: '@deepseek-ai/dsh-mcp-client'",
-        "      config:",
-        `        serverName: ${yamlString(mcpName(server, index))}`,
-        "        transport: streamable-http",
-        `        url: ${yamlString(httpUrl(server.url, "MCP proxy URL"))}`,
-        "        headers:",
-        "          Authorization: !!js process.env.TOOLPLANE_MCP_AUTH",
-        "        failOnStartupError: true",
-      );
-    });
-  }
-  return `${rows.join("\n")}\n`;
-}
-
-export function dshEventTapSource(prefix: string): string {
-  return `
-export const name = 'toolplane-events';
-const prefix = ${JSON.stringify(prefix)};
-const reasoning = new Set();
-function bounded(value) {
-  let text;
-  try { text = typeof value === 'string' ? value : JSON.stringify(value); }
-  catch { text = String(value); }
-  return text.length > 20000 ? text.slice(0, 20000) + '\\n[truncated]' : text;
-}
-function emit(value) { process.stdout.write(prefix + JSON.stringify(value) + '\\n'); }
-export function apply(ctx) {
-  ctx.on('session/event', (_session, event) => {
-    const data = event && event.data;
-    if (event?.type === 'assistant/chunk') {
-      const chunk = data?.chunk;
-      if (chunk?.type === 'text-delta' && typeof chunk.text === 'string') emit({ type: 'text', delta: chunk.text });
-      else if (chunk?.type === 'reasoning-delta' && typeof chunk.text === 'string') {
-        reasoning.add(chunk.index);
-        emit({ type: 'reasoning', status: 'running', delta: chunk.text });
-      } else if (chunk?.type === 'block-start' && chunk.blockType === 'reasoning') {
-        reasoning.add(chunk.index);
-        emit({ type: 'reasoning', status: 'running' });
-      } else if (chunk?.type === 'block-end' && (reasoning.delete(chunk.index) || chunk.block?.type === 'reasoning')) {
-        emit({ type: 'reasoning', status: 'completed' });
-      }
-      return;
-    }
-    if (event?.type === 'tool/call' && data?.callId && data?.name) {
-      emit({ type: 'tool', status: 'running', toolCallId: String(data.callId), toolName: String(data.name), input: bounded(data.arguments) });
-      return;
-    }
-    if (event?.type === 'tool/result') {
-      const block = data?.message?.content?.[0];
-      if (!block?.toolCallId) return;
-      const failed = data.error !== undefined || block.isError === true;
-      emit({ type: 'tool', status: failed ? 'failed' : 'completed', toolCallId: String(block.toolCallId), output: bounded(block.content), isError: failed });
-    }
-  });
-}
-`.trimStart();
-}
-
-export function buildClaudeMcpConfig(
-  servers: readonly SandboxRuntimeMcpServer[],
-  runtimeAccessToken: string,
-): string {
-  const mcpServers = Object.fromEntries(
-    servers.map((server, index) => [
-      mcpName(server, index),
-      {
-        type: "http",
-        url: httpUrl(server.url, "MCP proxy URL"),
-        headers: { Authorization: `Bearer ${runtimeAccessToken}` },
-      },
-    ]),
-  );
-  return JSON.stringify({ mcpServers });
-}
-
-export function buildClaudeSkillPluginManifest(): string {
-  return `${JSON.stringify(
-    {
-      name: "toolplane-agent",
-      version: "0.0.0",
-      description: "Skills selected for this ToolPlane agent.",
-      skills: "./skills/",
-    },
-    null,
-    2,
-  )}\n`;
-}
-
-export function buildClaudeRuntimeArgs(options: {
-  modelId: string;
-  runtimeSessionId?: string;
-  systemPrompt: string;
-  disabledBuiltinTools: readonly string[];
-  skillPluginRoot?: string;
-  approvalSettings?: string;
-}): string[] {
-  return [
-    ...(options.approvalSettings ? [] : ["--bare"]),
-    "--print",
-    "--verbose",
-    "--output-format",
-    "stream-json",
-    "--include-partial-messages",
-    ...(options.runtimeSessionId
-      ? ["--input-format", "stream-json"]
-      : ["--no-session-persistence"]),
-    "--setting-sources",
-    options.approvalSettings ? "" : "user",
-    ...(options.approvalSettings
-      ? ["--permission-mode", "dontAsk", "--settings", options.approvalSettings]
-      : ["--dangerously-skip-permissions"]),
-    "--model",
-    options.modelId,
-    ...(options.disabledBuiltinTools.length
-      ? ["--disallowedTools", ...options.disabledBuiltinTools]
-      : []),
-    ...(options.skillPluginRoot
-      ? ["--plugin-dir", options.skillPluginRoot]
-      : []),
-    ...(options.systemPrompt
-      ? ["--append-system-prompt", options.systemPrompt]
-      : []),
-  ];
-}
-
 export function buildPiModelsConfig(options: {
   provider: SandboxRuntimeProvider;
   modelId: string;
@@ -809,6 +509,16 @@ export function buildPiMcpConfig(
       url: httpUrl(server.url, "MCP proxy URL"),
     })),
   });
+}
+
+/** Native Pi names use zero-based server/catalog positions, not raw MCP wire names. */
+export function nativePiMcpToolName(
+  serverIndex: number,
+  toolIndex: number,
+  wireName: string,
+): string {
+  const suffix = String(wireName).replace(/[^A-Za-z0-9_-]/g, "_");
+  return `mcp__s${serverIndex + 1}_t${toolIndex + 1}__${suffix}`.slice(0, 63);
 }
 
 /** Loaded explicitly with --extension; it discovers and invokes ToolPlane MCP tools over JSON-RPC. */
@@ -885,10 +595,7 @@ async function rpc(server, method, params, signal) {
   return payload && payload.result ? payload.result : {};
 }
 
-function safeToolName(serverIndex, toolIndex, wireName) {
-  const suffix = String(wireName).replace(/[^A-Za-z0-9_-]/g, '_');
-  return ('mcp__s' + (serverIndex + 1) + '_t' + (toolIndex + 1) + '__' + suffix).slice(0, 63);
-}
+const nativePiMcpToolName = ${nativePiMcpToolName.toString()};
 
 function toolParameters(schema) {
   if (!schema || typeof schema !== 'object' || Array.isArray(schema)) {
@@ -938,7 +645,7 @@ export async function createPiMcpTools(config) {
       if (registeredTools >= MAX_REGISTERED_TOOLS) throw new Error('MCP tool catalog exceeded its limit');
       const wireName = tool.name;
       definitions.push({
-        name: safeToolName(serverIndex, toolIndex, wireName),
+        name: nativePiMcpToolName(serverIndex, toolIndex, wireName),
         label: wireName,
         description: short((tool.description || '') + '\nMCP server: ' + server.name),
         parameters: toolParameters(tool.inputSchema),
@@ -1709,6 +1416,131 @@ function runTrackedDockerExecOwned(
     child.stdin?.end(options.stdin ?? "");
   });
 }
+export type PiSdkCapabilityInventory = {
+  commands: string[];
+  tools: string[];
+  prompts: { name: string; path: string }[];
+  skills: string[];
+};
+
+/** Executes native factories only inside the credential-free, offline capture image. */
+export async function preflightPiSdkCapabilities(input: {
+  piPackages?: RunSandboxAgentTurnOptions["piPackages"];
+  skills?: readonly SkillForPrompt[];
+  toolNames?: readonly string[];
+  signal?: AbortSignal;
+}): Promise<PiSdkCapabilityInventory> {
+  return trackRuntimeOperation(async () => {
+    assertRuntimeOwner(true);
+    const ownerSignal = runtimeAbortSignal();
+    const signal = ownerSignal
+      ? input.signal
+        ? AbortSignal.any([ownerSignal, input.signal])
+        : ownerSignal
+      : input.signal;
+    const name = `toolplane-pi-preflight-${randomUUID()}`;
+    const directory = await mkdtemp(`${tmpdir()}/toolplane-pi-preflight-`);
+    const command = (args: string[], stdin?: string) =>
+      new Promise<string>((resolve, reject) => {
+        const child = execFile(
+          "docker",
+          args,
+          { env: dockerEnv(), timeout: 30_000, maxBuffer: 1024 * 1024, signal },
+          (error, stdout) =>
+            error
+              ? reject(
+                  new Error("PI_CAPABILITY_PREFLIGHT_FAILED", { cause: error }),
+                )
+              : resolve(stdout),
+        );
+        child.stdin?.end(stdin);
+      });
+    let created = false;
+    try {
+      const packages = (input.piPackages ?? []).map((item) => ({
+        ...item,
+        manifest: parsePiPackageReleaseManifest(item.manifest, item.checksum),
+      }));
+      await chmod(directory, 0o755);
+      for (const source of [
+        "pi-sdk-preflight.mjs",
+        "pi-sdk-capabilities.mjs",
+        "pi-sdk-package-files.mjs",
+      ]) {
+        await writeFile(
+          `${directory}/${source}`,
+          await readFile(`${process.cwd()}/scripts/${source}`),
+          { mode: 0o444 },
+        );
+      }
+      await command([
+        "create",
+        "--name",
+        name,
+        "-i",
+        "--network",
+        "none",
+        "--read-only",
+        "--cap-drop",
+        "ALL",
+        "--security-opt",
+        "no-new-privileges",
+        "--memory",
+        "512m",
+        "--cpus",
+        "1",
+        "--pids-limit",
+        "64",
+        "--tmpfs",
+        "/tmp:rw,nosuid,nodev,mode=1777,size=256m",
+        "--mount",
+        `type=bind,source=${directory},target=/opt/toolplane-preflight,readonly`,
+        "--entrypoint",
+        "/usr/bin/env",
+        "toolplane-pi-package-capture:0.87.1",
+        "-i",
+        "PATH=/usr/local/bin:/usr/bin:/bin",
+        "HOME=/tmp",
+        "node",
+        "/opt/toolplane-preflight/pi-sdk-preflight.mjs",
+      ]);
+      created = true;
+      const output = await command(
+        ["start", "-ai", name],
+        JSON.stringify({
+          packages,
+          skills: buildSandboxSkillBundles(input.skills ?? []),
+          toolNames: input.toolNames ?? [],
+          hostCommands: HOST_ONLY_COMMAND_NAMES,
+        }),
+      );
+      const result: unknown = JSON.parse(output);
+      const failure = z
+        .object({
+          error: z.enum(["PI_CAPABILITY_CONFLICT", "PI_EXTENSION_LOAD_FAILED"]),
+          detail: z.string().max(2048).optional(),
+        })
+        .safeParse(result);
+      if (failure.success)
+        throw new Error(failure.data.error, {
+          cause: failure.data.detail
+            ? new Error(failure.data.detail)
+            : undefined,
+        });
+      return z
+        .object({
+          commands: z.array(z.string()),
+          tools: z.array(z.string()),
+          skills: z.array(z.string()),
+          prompts: z.array(z.object({ name: z.string(), path: z.string() })),
+        })
+        .parse(result);
+    } finally {
+      if (created) await runDockerOnce(["rm", "-f", name]);
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+}
 
 async function writeSandboxFile(
   container: string,
@@ -1730,22 +1562,12 @@ async function writeSandboxFile(
 
 async function materializeSandboxSkills(
   container: string,
-  runtimeKind: SandboxAgentRuntimeKind,
   skillRoot: string,
   skills: readonly SkillForPrompt[],
   signal?: AbortSignal,
 ): Promise<void> {
-  const claudePlugin = runtimeKind === "claude-code";
-  const skillDirectory = claudePlugin ? `${skillRoot}/skills` : skillRoot;
   const bundles = buildSandboxSkillBundles(skills);
-  const pluginManifest = claudePlugin ? buildClaudeSkillPluginManifest() : "";
-  const digest = claudePlugin
-    ? createHash("sha256")
-        .update(pluginManifest)
-        .update("\0")
-        .update(sandboxSkillBundleDigest(bundles))
-        .digest("hex")
-    : sandboxSkillBundleDigest(bundles);
+  const digest = sandboxSkillBundleDigest(bundles);
   const marker = `${skillRoot}/.toolplane-skills.sha256`;
   const unchanged = await runTrackedDockerExec({
     container,
@@ -1782,7 +1604,7 @@ mkdir -p "$root"
     timeoutMs: 30_000,
   });
   for (const bundle of bundles) {
-    const directory = `${skillDirectory}/${bundle.directory}`;
+    const directory = `${skillRoot}/${bundle.directory}`;
     await writeSandboxFile(
       container,
       `${directory}/SKILL.md`,
@@ -1801,14 +1623,6 @@ mkdir -p "$root"
         signal,
       );
     }
-  }
-  if (claudePlugin) {
-    await writeSandboxFile(
-      container,
-      `${skillRoot}/.claude-plugin/plugin.json`,
-      pluginManifest,
-      signal,
-    );
   }
   await writeSandboxFile(container, marker, digest, signal);
 }
@@ -1914,20 +1728,11 @@ async function assertAssignedDockerSandbox(
 }
 
 async function ensureRuntimeInstalled(
-  runtimeKind: keyof typeof SANDBOX_RUNTIME_PACKAGES | "pi-harness" | "pi-sdk",
   container: string,
   signal?: AbortSignal,
-  piVersion = DEFAULT_PI_VERSION,
 ): Promise<string> {
   if (signal?.aborted) throw new Error("Sandbox runtime aborted.");
-  const runtime =
-    runtimeKind === "pi-harness"
-      ? PI_HARNESS_RUNTIME
-      : runtimeKind === "pi-sdk"
-        ? PI_SDK_RUNTIME
-        : runtimeKind === "pi"
-          ? piRuntimePackage(piVersion)
-          : SANDBOX_RUNTIME_PACKAGES[runtimeKind];
+  const runtime = PI_SDK_RUNTIME;
   const binary = `${runtime.directory}/node_modules/.bin/${runtime.binary}`;
   const cacheKey = `${container}:${runtime.directory}`;
   const existing = installs.get(cacheKey);
@@ -1955,9 +1760,7 @@ async function ensureRuntimeInstalled(
           "add",
           "--save-prod",
           "--ignore-workspace",
-          ...(runtimeKind === "pi-harness" || runtimeKind === "pi-sdk"
-            ? ["--save-exact"]
-            : []),
+          "--save-exact",
           ...(runtime.ignoreScripts ? ["--ignore-scripts"] : []),
           ...runtime.allowBuilds.map((name) => `--allow-build=${name}`),
           "--store-dir",
@@ -1983,79 +1786,16 @@ async function ensureRuntimeInstalled(
       args: ["-x", binary],
       timeoutMs: 10_000,
     });
-    if (runtimeKind === "pi-sdk")
-      await runTrackedDockerExec({
-        container,
-        workdir: runtime.directory,
-        executable: "node",
-        args: [
-          "-e",
-          "const fs=require('node:fs'); if(Number(process.versions.node.split('.')[0])!==24 || process.platform!=='linux') throw Error('package_platform_mismatch'); for(const name of ['@earendil-works/pi-coding-agent','@earendil-works/pi-ai']) if(JSON.parse(fs.readFileSync('node_modules/'+name+'/package.json')).version!=='0.87.1') throw Error('PI_SDK_VERSION_MISMATCH');",
-        ],
-        timeoutMs: 30_000,
-      });
-    if (runtimeKind === "pi-harness") {
-      await runTrackedDockerExec({
-        container,
-        workdir: runtime.directory,
-        executable: "node",
-        args: [
-          "--input-type=module",
-          "-e",
-          `
-          import { readFileSync } from 'node:fs';
-          import { DatabaseSync } from 'node:sqlite';
-          const [major, minor] = process.versions.node.split('.').map(Number);
-          if (major < 22 || (major === 22 && minor < 19)) throw new Error('PI_NODE_UNSUPPORTED: Node >=22.19.0 required');
-          if (!DatabaseSync) throw new Error('PI_SQLITE_UNAVAILABLE');
-          for (const [name, version] of ${JSON.stringify(PI_HARNESS_RUNTIME.specs.map((spec) => [spec.slice(0, spec.lastIndexOf("@")), spec.slice(spec.lastIndexOf("@") + 1)]))}) {
-            const info = JSON.parse(readFileSync(process.cwd() + '/node_modules/' + name + '/package.json', 'utf8'));
-            if (info.version !== version) throw new Error('PI_HARNESS_VERSION_MISMATCH: ' + name);
-          }
-        `,
-        ],
-        timeoutMs: 30_000,
-      });
-      const proofSource = await readFile(
-        `${process.cwd()}/scripts/pi-harness-recovery-check.mjs`,
-        "utf8",
-      );
-      const digest = createHash("sha256")
-        .update(proofSource)
-        .update(JSON.stringify(runtime.specs))
-        .digest("hex");
-      const marker = `${runtime.directory}/.recovery-verified`;
-      const verified = await runTrackedDockerExec({
-        container,
-        workdir: runtime.directory,
-        executable: "sh",
-        args: [
-          "-c",
-          'test -r "$1" && [ "$(cat "$1")" = "$2" ]',
-          "toolplane-pi-proof",
-          marker,
-          digest,
-        ],
-        timeoutMs: 10_000,
-      }).then(
-        () => true,
-        () => false,
-      );
-      if (!verified) {
-        const proofPath = `${runtime.directory}/pi-harness-recovery-check.mjs`;
-        await writeSandboxFile(container, proofPath, proofSource);
-        const proof = await runTrackedDockerExec({
-          container,
-          workdir: runtime.directory,
-          executable: "node",
-          args: [proofPath, "--self-test"],
-          timeoutMs: 60_000,
-        });
-        if (proof.trim() !== "PI_HARNESS_RECOVERY_VERIFIED")
-          throw new Error("PI_RECOVERY_CHECK_FAILED");
-        await writeSandboxFile(container, marker, digest);
-      }
-    }
+    await runTrackedDockerExec({
+      container,
+      workdir: runtime.directory,
+      executable: "node",
+      args: [
+        "-e",
+        "const fs=require('node:fs'); if(Number(process.versions.node.split('.')[0])!==24 || process.platform!=='linux') throw Error('package_platform_mismatch'); for(const name of ['@earendil-works/pi-coding-agent','@earendil-works/pi-ai']) if(JSON.parse(fs.readFileSync('node_modules/'+name+'/package.json')).version!=='0.87.1') throw Error('PI_SDK_VERSION_MISMATCH');",
+      ],
+      timeoutMs: 30_000,
+    });
     return binary;
   })();
   installs.set(cacheKey, install);
@@ -2064,140 +1804,6 @@ async function ensureRuntimeInstalled(
   };
   void install.then(cleanup, cleanup);
   return waitForSandboxRuntimeInstall(install, signal);
-}
-
-function piRuntimePackage(version: string) {
-  validatePiVersion(version);
-  return {
-    ...SANDBOX_RUNTIME_PACKAGES.pi,
-    specs: [
-      `@earendil-works/pi-coding-agent@${version}`,
-      `@earendil-works/pi-ai@${version}`,
-    ],
-    directory: `/workspace/.toolplane/runtime-packages/pi-${version}`,
-  };
-}
-
-async function readPiVersion(
-  container: string,
-  agentId: string,
-  signal?: AbortSignal,
-): Promise<string> {
-  const version = await runTrackedDockerExec({
-    container,
-    workdir: "/workspace",
-    executable: "node",
-    args: [
-      "-e",
-      "try { process.stdout.write(require('node:fs').readFileSync(process.argv[1], 'utf8')); } catch (error) { if (error.code !== 'ENOENT') throw error; }",
-      `${sandboxRuntimeStateRoot("pi", agentId)}/version`,
-    ],
-    signal,
-    timeoutMs: 10_000,
-    maxStdoutBytes: 100,
-  });
-  return version ? validatePiVersion(version.trim()) : DEFAULT_PI_VERSION;
-}
-
-async function piManagementSandbox(workspaceId: string, agentId: string) {
-  const agent = await db.agent.findFirst({
-    where: {
-      id: agentId,
-      workspaceId,
-      runtimeKind: "pi",
-      publicRuntimeAllocation: null,
-    },
-    select: { sandboxes: { select: { sandboxId: true } } },
-  });
-  if (agent?.sandboxes.length !== 1)
-    throw new Error("Pi requires exactly one assigned Docker sandbox.");
-  const sandboxId = agent.sandboxes[0].sandboxId;
-  await assertAssignedDockerSandbox({ workspaceId, agentId, sandboxId });
-  return sandboxId;
-}
-
-export async function getPiRuntimeVersion(
-  workspaceId: string,
-  agentId: string,
-): Promise<PiRuntimeVersion> {
-  assertRuntimeOwner();
-  const sandboxId = await piManagementSandbox(workspaceId, agentId);
-  return withAgentMaintenanceLease(agentId, () =>
-    withSandboxExecutionLease(sandboxId, async () => {
-      const container = sandboxContainerName(sandboxId);
-      const version = await readPiVersion(container, agentId);
-      const binary = `${piRuntimePackage(version).directory}/node_modules/.bin/pi`;
-      const installed = await runTrackedDockerExec({
-        container,
-        workdir: "/workspace",
-        executable: "node",
-        args: [
-          "-e",
-          "const fs = require('node:fs'); try { fs.accessSync(process.argv[1], fs.constants.X_OK); process.stdout.write('yes'); } catch (error) { if (error.code !== 'ENOENT') throw error; }",
-          binary,
-        ],
-        timeoutMs: 10_000,
-      });
-      return { version, installed: installed === "yes" };
-    }),
-  );
-}
-
-export async function updatePiRuntimeVersion(
-  workspaceId: string,
-  agentId: string,
-  version: string,
-) {
-  validatePiVersion(version);
-  const release = beginWorkspaceOperation(workspaceId);
-  if (!release) throw new Error("The workspace is being deleted.");
-  try {
-    const sandboxId = await piManagementSandbox(workspaceId, agentId);
-    return await withAgentMaintenanceLease(agentId, () =>
-      withSandboxExecutionLease(sandboxId, async () => {
-        const container = sandboxContainerName(sandboxId);
-        const binary = await ensureRuntimeInstalled(
-          "pi",
-          container,
-          runtimeAbortSignal(),
-          version,
-        );
-        const reported = await runTrackedDockerExec({
-          container,
-          workdir: "/workspace",
-          executable: binary,
-          args: ["--version"],
-          timeoutMs: 30_000,
-          maxStdoutBytes: 1_024,
-        });
-        if (reported.trim() !== version)
-          throw new Error(
-            "The installed Pi executable did not report the requested version.",
-          );
-        // Commit only after validation; a failed install leaves the previous version and sessions intact.
-        await piManagementSandbox(workspaceId, agentId).then((current) => {
-          if (current !== sandboxId)
-            throw new Error("The assigned sandbox changed during the update.");
-        });
-        const marker = `${sandboxRuntimeStateRoot("pi", agentId)}/version`;
-        await runTrackedDockerExec({
-          container,
-          workdir: "/workspace",
-          executable: "node",
-          args: [
-            "-e",
-            "const fs = require('node:fs'); const path = require('node:path'); const [file, version] = process.argv.slice(1); fs.mkdirSync(path.dirname(file), { recursive: true }); const temp = file + '.tmp'; fs.writeFileSync(temp, version, { mode: 0o600 }); fs.renameSync(temp, file);",
-            marker,
-            version,
-          ],
-          timeoutMs: 10_000,
-        });
-        return { version, installed: true };
-      }),
-    );
-  } finally {
-    release();
-  }
 }
 
 async function reportContextUsage(
@@ -2347,120 +1953,60 @@ export function parseClaudeRuntimeMetadata(line: string): {
   return {};
 }
 
-function nativeCommandResult(
-  line: string,
-): { text: string; isError?: boolean } | null {
-  try {
-    const event = JSON.parse(line);
-    return event.type === "toolplane_command_result" &&
-      typeof event.text === "string"
-      ? event
-      : null;
-  } catch {
-    return null;
-  }
-}
-
 async function runNativeSessionExec(
   options: RunSandboxAgentTurnOptions,
   exec: DockerExecOptions,
-  sdk?: { configPath: string; packageSetChecksum: string; mcpConfig: unknown },
+  sdk: { configPath: string; packageSetChecksum: string; mcpConfig: unknown },
 ) {
-  if (options.runtimeKind === "hermes-rpc")
-    throw new Error("Hermes RPC uses its own native protocol driver.");
-  if (!options.runtimeSessionId) return runTrackedDockerExec(exec);
+  if (!options.runtimeSessionId) throw new Error("PI_SDK_SESSION_MISSING");
   const id = randomUUID();
   const driverPath = `${RUNTIME_TEMP_ROOT}/${id}-session.mjs`;
   const inputPath = `${RUNTIME_TEMP_ROOT}/${id}-session.json`;
-  const history = options.command
-    ? options.messages
-    : options.messages.slice(0, -1);
-  await writeSandboxFile(
-    exec.container,
-    driverPath,
-    await readFile(
-      `${process.cwd()}/scripts/native-runtime-session.mjs`,
-      "utf8",
-    ),
-    options.signal,
-  );
-  await writeSandboxFile(
-    exec.container,
-    inputPath,
-    JSON.stringify({
-      kind: options.runtimeKind,
-      binary: exec.executable,
-      args: exec.args,
-      model: options.modelId,
-      api:
-        options.provider.format === "anthropic"
-          ? "anthropic-messages"
-          : options.provider.format === "openai-responses"
-            ? "openai-responses"
-            : "openai-completions",
-      packageRoot: sdk
-        ? PI_SDK_RUNTIME.directory
-        : posix.dirname(posix.dirname(posix.dirname(exec.executable))),
-      statePath: `${sandboxRuntimeStateRoot(options.runtimeKind, options.agentId)}/sessions/${options.runtimeSessionId}.json`,
-      signature: createHash("sha256")
-        .update(
-          JSON.stringify({
-            binary: exec.executable,
-            ...(sdk
-              ? {
-                  sdkVersion: "0.87.1",
-                  packageSetChecksum: sdk.packageSetChecksum,
-                  nativeApproval: Boolean(options.nativeApprovalUrl),
-                }
-              : {
-                  credentialGeneration: createHash("sha256")
-                    .update(options.runtimeAccessToken)
-                    .digest("hex"),
-                }),
-            args: exec.args,
-            workdir: exec.workdir,
-            model: options.modelId,
-            provider: options.provider,
-            system: options.systemPrompt,
-            ...(!sdk ? { mcp: options.mcpServers } : {}),
-            skills: options.skills,
-          }),
-        )
-        .digest("hex"),
-      ...(sdk
-        ? {
-            sdkConfigPath: sdk.configPath,
-            context: {
-              runtimeToken: options.runtimeAccessToken,
-              approvalUrl: options.nativeApprovalUrl,
-              mcpConfig: sdk.mcpConfig,
-            },
-          }
-        : {}),
-      command: options.command,
-      prompt: buildSandboxTranscript(options.messages),
-      message: buildSandboxTranscript(options.messages.slice(-1)),
-      history: history
-        .filter(
-          (message) => message.role === "user" || message.role === "assistant",
-        )
-        .map((message) => ({
-          role: message.role,
-          text: buildSandboxTranscript([message]),
-        })),
-    }),
-    options.signal,
-  );
-  if (exec.user)
-    await runTrackedDockerExec({
-      container: exec.container,
-      workdir: "/workspace",
-      executable: "chown",
-      args: [exec.user, driverPath, inputPath],
-      signal: options.signal,
-      timeoutMs: 10_000,
-    });
   try {
+    await writeSandboxFile(
+      exec.container,
+      driverPath,
+      await readFile(
+        `${process.cwd()}/scripts/native-runtime-session.mjs`,
+        "utf8",
+      ),
+      options.signal,
+    );
+    await writeSandboxFile(
+      exec.container,
+      inputPath,
+      JSON.stringify({
+        kind: "pi-sdk",
+        binary: exec.executable,
+        args: exec.args,
+        statePath: `${sandboxRuntimeStateRoot("pi-sdk", options.agentId)}/sessions/${options.runtimeSessionId}.json`,
+        signature: createHash("sha256")
+          .update(
+            JSON.stringify({
+              binary: exec.executable,
+              args: exec.args,
+              sdkVersion: "0.87.1",
+              packageSetChecksum: sdk.packageSetChecksum,
+              nativeApproval: Boolean(options.nativeApprovalUrl),
+              workdir: exec.workdir,
+              model: options.modelId,
+              provider: options.provider,
+              system: options.systemPrompt,
+              skills: options.skills,
+              reasoningEffort: options.reasoningEffort,
+            }),
+          )
+          .digest("hex"),
+        command: options.command,
+        message: buildSandboxTranscript(options.messages.slice(-1)),
+        context: {
+          runtimeToken: options.runtimeAccessToken,
+          approvalUrl: options.nativeApprovalUrl,
+          mcpConfig: sdk.mcpConfig,
+        },
+      }),
+      options.signal,
+    );
     return await runTrackedDockerExec({
       ...exec,
       executable: "node",
@@ -2470,6 +2016,81 @@ async function runNativeSessionExec(
   } finally {
     await removeSandboxFiles(exec.container, [driverPath, inputPath]);
   }
+}
+
+export const piSdkPackageReferencesSchema = z
+  .array(
+    z
+      .object({
+        marketInstallId: z.string().min(1),
+        releaseId: z.string().min(1),
+        checksum: z.string().regex(/^[a-f0-9]{64}$/),
+        mcpBindingsChecksum: z
+          .string()
+          .regex(/^[a-f0-9]{64}$/)
+          .optional(),
+      })
+      .strict(),
+  )
+  .max(16);
+
+export function recoverPiSdkPackageReferences(value: unknown) {
+  const proof = z
+    .object({
+      packageSetChecksum: z.string(),
+      packages: piSdkPackageReferencesSchema,
+    })
+    .safeParse(value);
+  if (
+    !proof.success ||
+    new Set(proof.data.packages.map((pkg) => pkg.marketInstallId)).size !==
+      proof.data.packages.length
+  )
+    throw new Error("PI_SDK_LEGACY_RECOVERY_REQUIRED");
+  const checksum = createHash("sha256")
+    .update(JSON.stringify(proof.data.packages))
+    .digest("hex");
+  if (checksum !== proof.data.packageSetChecksum)
+    throw new Error("PI_SDK_LEGACY_RECOVERY_REQUIRED");
+  return proof.data.packages;
+}
+
+/** Read before overwriting private config; a checksum alone cannot recover a preimage. */
+export async function readLegacyPiSdkPackageReferences(input: {
+  sandboxId: string;
+  agentId: string;
+  runtimeSessionId: string;
+}) {
+  const root = sandboxRuntimeStateRoot("pi-sdk", input.agentId);
+  const output = await runTrackedDockerExec({
+    container: sandboxContainerName(input.sandboxId),
+    workdir: "/workspace",
+    executable: "node",
+    args: [
+      "-e",
+      `
+      const fs = require('node:fs');
+      const [statePath, configPath] = process.argv.slice(1);
+      if (!fs.existsSync(statePath)) {
+        throw Error('PI_SDK_LEGACY_RECOVERY_REQUIRED');
+      } else {
+        const saved = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+        if (saved.runtimeKind !== 'pi-sdk' || saved.sdkVersion !== '0.87.1') throw Error('PI_SDK_LEGACY_RECOVERY_REQUIRED');
+        const config = saved.packageReferences ? null : JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        const refs = (saved.packageReferences ?? config.packages).map(({marketInstallId, releaseId, checksum, mcpBindingsChecksum}) => ({marketInstallId, releaseId, checksum, ...(mcpBindingsChecksum ? {mcpBindingsChecksum} : {})}));
+        process.stdout.write(JSON.stringify({ packageSetChecksum: saved.packageSetChecksum, packages: refs }));
+      }
+    `,
+      `${root}/sessions/${safeSegment(input.runtimeSessionId, "runtime session")}.json`,
+      `${root}/host/${safeSegment(input.runtimeSessionId, "runtime session")}.json`,
+    ],
+    timeoutMs: 10_000,
+    maxStdoutBytes: 32_000,
+  }).catch(() => {
+    throw new Error("PI_SDK_LEGACY_RECOVERY_REQUIRED");
+  });
+  const refs: unknown = JSON.parse(output);
+  return recoverPiSdkPackageReferences(refs);
 }
 
 async function runPiSdk(
@@ -2531,6 +2152,7 @@ async function runPiSdk(
   for (const [path, source] of [
     [hostPath, "pi-sdk-session.mjs"],
     [verifierPath, "pi-sdk-package-files.mjs"],
+    [`${privateRoot}/pi-sdk-capabilities.mjs`, "pi-sdk-capabilities.mjs"],
     [approvalHelperPath, "a2a-native-approval.mjs"],
   ]) {
     await writeSandboxFile(
@@ -2551,7 +2173,7 @@ async function runPiSdk(
     await writeSandboxFile(
       container,
       approvalExtensionPath,
-      nativeApprovalAdapter("pi", approvalHelperPath),
+      nativeApprovalAdapter(approvalHelperPath),
       options.signal,
     );
   }
@@ -2594,12 +2216,15 @@ async function runPiSdk(
       statePath: `${stateRoot}/sessions/${runtimeSessionId}.json`,
       packageSetChecksum,
       historyRequired: Boolean(
-        options.piHarness?.historyRequired ||
-          options.piHarness?.sessionRequired ||
+        options.historyRequired ||
           options.messages.some((message) => message.role === "assistant"),
       ),
+      reasoningEffort: options.reasoningEffort,
       model: {
         ...models.models[0],
+        ...(options.reasoningEffort && options.reasoningEffort !== "default"
+          ? { reasoning: true }
+          : {}),
         provider: "toolplane",
         api: models.api,
         baseUrl: models.baseUrl,
@@ -2628,6 +2253,12 @@ async function runPiSdk(
     terminal = false;
   const consume = async (line: string) => {
     const event = JSON.parse(line);
+    if (event.type === "prompt_invocation") {
+      await options.onPromptInvocation?.(
+        event.invocation as AgentPromptInvocation,
+      );
+      return;
+    }
     if (event.type === "toolplane_sdk_response") {
       terminal = true;
       if (!event.success) {
@@ -2705,547 +2336,32 @@ async function runPiSdk(
   return text;
 }
 
-async function installNativeApproval(
-  options: RunSandboxAgentTurnOptions,
-  container: string,
-  runtime: "pi" | "claude-code" | "dsh",
-  runId: string,
-) {
-  if (!options.nativeApprovalUrl) return null;
-  httpUrl(options.nativeApprovalUrl, "native approval URL");
-  const helper = `${RUNTIME_TEMP_ROOT}/${runId}-approval.mjs`;
-  const adapter = `${RUNTIME_TEMP_ROOT}/${runId}-approval-${runtime}.mjs`;
-  await writeSandboxFile(
-    container,
-    helper,
-    await readFile(`${process.cwd()}/scripts/a2a-native-approval.mjs`, "utf8"),
-    options.signal,
-  );
-  const source =
-    runtime === "claude-code"
-      ? claudeApprovalSettings(helper)
-      : nativeApprovalAdapter(runtime, helper);
-  if (runtime !== "claude-code")
-    await writeSandboxFile(container, adapter, source, options.signal);
-  if (runtime === "claude-code")
-    await runTrackedDockerExec({
-      container,
-      workdir: "/workspace",
-      executable: "chown",
-      args: [CLAUDE_RUNTIME_USER, helper],
-      signal: options.signal,
-      timeoutMs: 10_000,
-    });
-  return { helper, adapter, source };
-}
-
-async function runPi(
-  options: RunSandboxAgentTurnOptions,
-  container: string,
-  binary: string,
-  workdir: string,
-  systemPrompt: string,
-  prompt: string,
-  skillRoot: string,
-  mcpServers: readonly SandboxRuntimeMcpServer[],
-  disabledBuiltinTools: readonly string[],
-): Promise<string> {
-  const stateRoot = sandboxRuntimeStateRoot("pi", options.agentId);
-  const runId = options.runtimeSessionId ?? randomUUID();
-  const modelsPath = `${stateRoot}/models.json`;
-  const extensionPath = `${RUNTIME_TEMP_ROOT}/${runId}-pi-mcp.js`;
-  const mcpConfigPath = `${RUNTIME_TEMP_ROOT}/${runId}-pi-mcp.json`;
-  const systemPromptPath = `${RUNTIME_TEMP_ROOT}/${runId}-pi-system.txt`;
-  const tempPaths: string[] = [];
-  const approval = await installNativeApproval(options, container, "pi", runId);
-  if (approval) tempPaths.push(approval.helper, approval.adapter);
-  await writeSandboxFile(
-    container,
-    modelsPath,
-    buildPiModelsConfig({
-      provider: options.provider,
-      modelId: options.modelId,
-      modelProxyBase: options.modelProxyBase,
-    }),
-    options.signal,
-  );
-
-  const args = [
-    "--mode",
-    options.runtimeSessionId ? "rpc" : "json",
-    ...(options.runtimeSessionId ? [] : ["--no-session"]),
-    "--no-approve",
-    "--offline",
-    "--no-extensions",
-    "--no-skills",
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    "--skill",
-    skillRoot,
-    "--provider",
-    "toolplane",
-    "--model",
-    options.modelId,
-    ...(approval ? ["--extension", approval.adapter] : []),
-    ...(disabledBuiltinTools.length
-      ? ["--exclude-tools", disabledBuiltinTools.join(",")]
-      : []),
-  ];
-  let lineBuffer = "";
-  let streamed = "";
-  let assistantFallback = "";
-  let runtimeError = "";
-  let exactUsage = false;
-  const consumeLine = async (line: string) => {
-    const command = nativeCommandResult(line);
-    if (command?.isError)
-      runtimeError = redact(command.text, [options.runtimeAccessToken]);
-    else if (command)
-      assistantFallback = redact(command.text, [options.runtimeAccessToken]);
-    const parsed = parsePiStreamLine(line);
-    if (!parsed) return;
-    if (parsed.delta) {
-      const delta = redact(parsed.delta, [options.runtimeAccessToken]);
-      streamed += delta;
-      await options.onTextDelta?.(delta);
-    }
-    if (parsed.activities)
-      await reportActivities(options, parsed.activities, mcpServers);
-    if (parsed.assistantText)
-      assistantFallback = redact(parsed.assistantText, [
-        options.runtimeAccessToken,
-      ]);
-    if (parsed.contextTokens !== undefined) {
-      exactUsage = true;
-      await reportContextUsage(options, parsed.contextTokens, false);
-    }
-    if (parsed.isError)
-      runtimeError = redact(parsed.error || "Pi failed.", [
-        options.runtimeAccessToken,
-      ]);
-  };
-
-  try {
-    if (systemPrompt) {
-      tempPaths.push(systemPromptPath);
-      await writeSandboxFile(
-        container,
-        systemPromptPath,
-        systemPrompt,
-        options.signal,
-      );
-      args.push("--append-system-prompt", systemPromptPath);
-    }
-    if (mcpServers.length) {
-      tempPaths.push(extensionPath, mcpConfigPath);
-      await writeSandboxFile(
-        container,
-        extensionPath,
-        piMcpExtensionSource(),
-        options.signal,
-      );
-      await writeSandboxFile(
-        container,
-        mcpConfigPath,
-        buildPiMcpConfig(mcpServers),
-        options.signal,
-      );
-      args.push("--extension", extensionPath);
-    }
-    await runNativeSessionExec(options, {
-      container,
-      workdir,
-      executable: binary,
-      args,
-      stdin: prompt,
-      env: {
-        TOOLPLANE_RUNTIME_TOKEN: options.runtimeAccessToken,
-        ...(options.nativeApprovalUrl
-          ? { TOOLPLANE_APPROVAL_URL: options.nativeApprovalUrl }
-          : {}),
-        PI_CODING_AGENT_DIR: stateRoot,
-        PI_OFFLINE: "1",
-        PI_TELEMETRY: "0",
-        NO_COLOR: "1",
-        ...(mcpServers.length
-          ? { TOOLPLANE_PI_MCP_CONFIG: mcpConfigPath }
-          : {}),
-      },
-      signal: options.signal,
-      timeoutMs: options.timeoutMs ?? TURN_TIMEOUT_MS,
-      secrets: [options.runtimeAccessToken],
-      onStdout: async (chunk) => {
-        lineBuffer += chunk;
-        for (;;) {
-          const newline = lineBuffer.indexOf("\n");
-          if (newline < 0) break;
-          const line = lineBuffer.slice(0, newline).trim();
-          lineBuffer = lineBuffer.slice(newline + 1);
-          if (line) await consumeLine(line);
-        }
-      },
-    });
-    if (lineBuffer.trim()) await consumeLine(lineBuffer.trim());
-    if (runtimeError) throw new Error(runtimeError);
-    const text = streamed || assistantFallback;
-    if (!text) throw new Error("Pi returned no assistant text.");
-    if (!streamed) await options.onTextDelta?.(text);
-    if (!exactUsage && !options.command)
-      await reportContextUsage(
-        options,
-        estimateContextTokens([systemPrompt, prompt, text]),
-        true,
-      );
-    return text;
-  } finally {
-    if (!options.runtimeSessionId)
-      await removeSandboxFiles(container, tempPaths);
-  }
-}
-
-async function runClaudeCode(
-  options: RunSandboxAgentTurnOptions,
-  container: string,
-  binary: string,
-  workdir: string,
-  systemPrompt: string,
-  prompt: string,
-  mcpServers: readonly SandboxRuntimeMcpServer[],
-  disabledBuiltinTools: readonly string[],
-): Promise<string> {
-  const modelProxyBase = httpUrl(options.modelProxyBase, "model proxy URL");
-  const stateRoot = sandboxRuntimeStateRoot("claude-code", options.agentId);
-  const tempPath = `${RUNTIME_TEMP_ROOT}/${options.runtimeSessionId ?? randomUUID()}-claude-mcp.json`;
-  const approval = await installNativeApproval(
-    options,
-    container,
-    "claude-code",
-    options.runtimeSessionId ?? randomUUID(),
-  );
-  const args = buildClaudeRuntimeArgs({
-    ...(approval ? { approvalSettings: approval.source } : {}),
-    modelId: options.modelId,
-    runtimeSessionId: options.runtimeSessionId,
-    systemPrompt,
-    disabledBuiltinTools,
-    ...(options.skills?.length
-      ? {
-          skillPluginRoot: sandboxRuntimeSkillRoot(
-            "claude-code",
-            options.agentId,
-          ),
-        }
-      : {}),
-  });
-  if (mcpServers.length) {
-    await writeSandboxFile(
-      container,
-      tempPath,
-      buildClaudeMcpConfig(mcpServers, options.runtimeAccessToken),
-      options.signal,
-    );
-    args.push("--mcp-config", tempPath, "--strict-mcp-config");
-  }
-  await runTrackedDockerExec({
-    container,
-    workdir: "/workspace",
-    executable: "sh",
-    args: [
-      "-c",
-      'set -eu; mkdir -p "$1"; chown -R "$2" /workspace',
-      "toolplane-claude-user",
-      stateRoot,
-      CLAUDE_RUNTIME_USER,
-    ],
-    signal: options.signal,
-    timeoutMs: 2 * 60_000,
-  });
-  let lineBuffer = "";
-  let streamed = "";
-  let finalResult = "";
-  let assistantFallback = "";
-  let runtimeError = "";
-  let exactUsage = false;
-  const consumeLine = async (line: string) => {
-    const command = nativeCommandResult(line);
-    if (command?.isError)
-      runtimeError = redact(command.text, [options.runtimeAccessToken]);
-    else if (command)
-      finalResult = redact(command.text, [options.runtimeAccessToken]);
-    const metadata = parseClaudeRuntimeMetadata(line);
-    if (metadata.commands) await options.onCommands?.(metadata.commands);
-    if (metadata.usage) await options.onUsage?.(metadata.usage);
-    const parsed = parseClaudeStreamLine(line);
-    if (!parsed) return;
-    if (parsed.delta) {
-      const delta = redact(parsed.delta, [options.runtimeAccessToken]);
-      streamed += delta;
-      await options.onTextDelta?.(delta);
-    }
-    if (parsed.activities)
-      await reportActivities(options, parsed.activities, mcpServers);
-    if (parsed.result)
-      finalResult = redact(parsed.result, [options.runtimeAccessToken]);
-    if (parsed.assistantText)
-      assistantFallback = redact(parsed.assistantText, [
-        options.runtimeAccessToken,
-      ]);
-    if (parsed.contextTokens !== undefined) {
-      exactUsage = true;
-      await reportContextUsage(options, parsed.contextTokens, false);
-    }
-    if (parsed.isError) runtimeError = finalResult || "Claude Code failed.";
-  };
-  try {
-    await runNativeSessionExec(options, {
-      container,
-      workdir,
-      executable: binary,
-      user: CLAUDE_RUNTIME_USER,
-      args,
-      stdin: options.command ?? prompt,
-      env: {
-        ANTHROPIC_API_KEY: options.runtimeAccessToken,
-        ...(options.nativeApprovalUrl
-          ? {
-              TOOLPLANE_APPROVAL_URL: options.nativeApprovalUrl,
-              TOOLPLANE_RUNTIME_TOKEN: options.runtimeAccessToken,
-            }
-          : {}),
-        ANTHROPIC_AUTH_TOKEN: options.runtimeAccessToken,
-        ANTHROPIC_BASE_URL: modelProxyBase,
-        CLAUDE_CONFIG_DIR: stateRoot,
-        HOME: stateRoot,
-        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
-        DISABLE_AUTOUPDATER: "1",
-        DISABLE_ERROR_REPORTING: "1",
-        DISABLE_TELEMETRY: "1",
-        NO_COLOR: "1",
-      },
-      signal: options.signal,
-      timeoutMs: options.timeoutMs ?? TURN_TIMEOUT_MS,
-      secrets: [options.runtimeAccessToken],
-      onStdout: async (chunk) => {
-        lineBuffer += chunk;
-        for (;;) {
-          const newline = lineBuffer.indexOf("\n");
-          if (newline < 0) break;
-          const line = lineBuffer.slice(0, newline).trim();
-          lineBuffer = lineBuffer.slice(newline + 1);
-          if (line) await consumeLine(line);
-        }
-      },
-    });
-    if (lineBuffer.trim()) await consumeLine(lineBuffer.trim());
-    if (runtimeError) throw new Error(runtimeError);
-    const text =
-      streamed ||
-      finalResult ||
-      assistantFallback ||
-      (options.command ? "Command completed." : "");
-    if (!text) throw new Error("Claude Code returned no assistant text.");
-    if (!streamed && options.onTextDelta) await options.onTextDelta(text);
-    if (!exactUsage && !options.command)
-      await reportContextUsage(
-        options,
-        estimateContextTokens([systemPrompt, prompt, text]),
-        true,
-      );
-    return text;
-  } finally {
-    if (!options.runtimeSessionId)
-      await removeSandboxFiles(container, [
-        ...(mcpServers.length ? [tempPath] : []),
-        ...(approval ? [approval.helper] : []),
-      ]);
-  }
-}
-
-async function runDsh(
-  options: RunSandboxAgentTurnOptions,
-  container: string,
-  binary: string,
-  workdir: string,
-  systemPrompt: string,
-  prompt: string,
-  skillRoot: string,
-  mcpServers: readonly SandboxRuntimeMcpServer[],
-  disabledBuiltinTools: readonly string[],
-): Promise<string> {
-  const modelProxyBase = httpUrl(options.modelProxyBase, "model proxy URL");
-  const stateRoot = sandboxRuntimeStateRoot("dsh", options.agentId);
-  const runtimeSessionId = options.runtimeSessionId;
-  const runId = randomUUID();
-  const patchPath = `${RUNTIME_TEMP_ROOT}/${runId}-dsh.patch.yml`;
-  const promptPath = `${RUNTIME_TEMP_ROOT}/${runId}-dsh.prompt.txt`;
-  const eventPluginPath = `${RUNTIME_TEMP_ROOT}/${runId}-dsh-events.mjs`;
-  const driverPluginPath = runtimeSessionId
-    ? `${RUNTIME_TEMP_ROOT}/${runId}-dsh-driver.mjs`
-    : undefined;
-  const eventPrefix = `__TOOLPLANE_DSH_EVENT_${runId}__`;
-  const approval = await installNativeApproval(
-    options,
-    container,
-    "dsh",
-    runId,
-  );
-  const patch = buildDshPatch({
-    ...(approval ? { approvalPluginPath: approval.adapter } : {}),
-    provider: options.provider,
-    modelId: options.modelId,
-    modelProxyBase,
-    systemPrompt,
-    skillRoot,
-    mcpServers,
-    disabledBuiltinTools,
-    eventPluginPath,
-    driverPluginPath,
-  });
-  await writeSandboxFile(
-    container,
-    eventPluginPath,
-    dshEventTapSource(eventPrefix),
-    options.signal,
-  );
-  if (driverPluginPath)
-    await writeSandboxFile(
-      container,
-      driverPluginPath,
-      await readFile(`${process.cwd()}/scripts/dsh-runtime-driver.mjs`, "utf8"),
-      options.signal,
-    );
-  await writeSandboxFile(container, patchPath, patch, options.signal);
-  await writeSandboxFile(
-    container,
-    promptPath,
-    driverPluginPath
-      ? JSON.stringify({
-          packageRoot: SANDBOX_RUNTIME_PACKAGES.dsh.directory,
-          prefix: eventPrefix,
-          sessionId: `toolplane-${safeSegment(runtimeSessionId ?? "", "session")}`,
-          history: options.command
-            ? prompt
-            : buildSandboxTranscript(options.messages.slice(0, -1)),
-          message: buildSandboxTranscript(options.messages.slice(-1)),
-          command: options.command,
-        })
-      : prompt,
-    options.signal,
-  );
-  const promptWrapper =
-    'set -eu; prompt_file=$1; shift; prompt=$(cat "$prompt_file"); exec "$@" "$prompt"';
-  let lineBuffer = "";
-  let streamed = "";
-  let commandResult = "";
-  let commandError = "";
-  const consumeLine = async (line: string) => {
-    try {
-      const event = JSON.parse(line.slice(eventPrefix.length));
-      if (event.type === "commands") {
-        const commands = RuntimeCommandsSchema.safeParse(event.commands);
-        if (commands.success) await options.onCommands?.(commands.data);
-      }
-      if (event.type === "command" && typeof event.text === "string") {
-        commandResult = redact(event.text, [options.runtimeAccessToken]);
-        if (event.isError) commandError = commandResult;
-      }
-    } catch {
-      /* Non-metadata event lines use the existing stream parser. */
-    }
-    const parsed = parseDshEventLine(line, eventPrefix);
-    if (!parsed) return;
-    if (parsed.delta) {
-      const delta = redact(parsed.delta, [options.runtimeAccessToken]);
-      streamed += delta;
-      await options.onTextDelta?.(delta);
-    }
-    if (parsed.activities)
-      await reportActivities(options, parsed.activities, mcpServers);
-  };
-  try {
-    const output = await runTrackedDockerExec({
-      container,
-      workdir,
-      executable: "sh",
-      args: [
-        "-c",
-        promptWrapper,
-        "toolplane-dsh",
-        promptPath,
-        binary,
-        "--profile",
-        "headless",
-        "--patch",
-        patchPath,
-      ],
-      env: {
-        TOOLPLANE_RUNTIME_TOKEN: options.runtimeAccessToken,
-        ...(options.nativeApprovalUrl
-          ? { TOOLPLANE_APPROVAL_URL: options.nativeApprovalUrl }
-          : {}),
-        TOOLPLANE_MCP_AUTH: `Bearer ${options.runtimeAccessToken}`,
-        DSH_HOME: stateRoot,
-        DSH_PERMISSION_MODE: "danger-full-access",
-        DSH_TELEMETRY_DISABLED: "1",
-        DSH_TOOLS_MODE: "native",
-        ...(driverPluginPath ? { TOOLPLANE_DSH_INPUT: promptPath } : {}),
-        NO_COLOR: "1",
-      },
-      signal: options.signal,
-      timeoutMs: options.timeoutMs ?? TURN_TIMEOUT_MS,
-      secrets: [options.runtimeAccessToken],
-      onStdout: async (chunk) => {
-        lineBuffer += chunk;
-        for (;;) {
-          const newline = lineBuffer.indexOf("\n");
-          if (newline < 0) break;
-          const line = lineBuffer.slice(0, newline).replace(/\r$/, "");
-          lineBuffer = lineBuffer.slice(newline + 1);
-          if (line.startsWith(eventPrefix)) await consumeLine(line);
-        }
-      },
-    });
-    if (lineBuffer.startsWith(eventPrefix)) await consumeLine(lineBuffer);
-    if (commandError) throw new Error(commandError);
-    const fallback = output
-      .split(/\r?\n/)
-      .filter((line) => !line.startsWith(eventPrefix))
-      .join("\n")
-      .trim();
-    const text = [
-      streamed ||
-        (commandResult ? "" : redact(fallback, [options.runtimeAccessToken])),
-      commandResult,
-    ]
-      .filter(Boolean)
-      .join("\n\n");
-    if (!text) throw new Error("DeepSeek Harness returned no assistant text.");
-    if (!streamed) await options.onTextDelta?.(text);
-    else if (commandResult) await options.onTextDelta?.(`\n\n${commandResult}`);
-    await reportContextUsage(
-      options,
-      estimateContextTokens([systemPrompt, prompt, text]),
-      true,
-    );
-    return text;
-  } finally {
-    await removeSandboxFiles(container, [
-      patchPath,
-      promptPath,
-      eventPluginPath,
-      ...(driverPluginPath ? [driverPluginPath] : []),
-      ...(approval ? [approval.helper, approval.adapter] : []),
-    ]);
-  }
-}
-
 export async function runSandboxAgentTurn(
   options: RunSandboxAgentTurnOptions,
 ): Promise<string> {
-  return withSandboxExecutionLease(options.sandboxId, () =>
-    runExclusiveSandboxAgentTurn(options),
-  );
+  if (options.runtimeKind !== "pi-sdk")
+    throw new Error("AGENT_RUNTIME_RETIRED");
+  try {
+    return await withSandboxExecutionLease(options.sandboxId, () =>
+      runExclusiveSandboxAgentTurn(options),
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const safeMessage = redact(message, [options.runtimeAccessToken]);
+    const stack = error instanceof Error ? error.stack : undefined;
+    if (
+      safeMessage === message &&
+      (!stack || redact(stack, [options.runtimeAccessToken]) === stack)
+    )
+      throw error;
+    // Never retain a raw runtime cause/stack containing execution credentials.
+    const safeError =
+      error instanceof PiRuntimeInterruptedError
+        ? new PiRuntimeInterruptedError(safeMessage)
+        : new Error(safeMessage);
+    if (error instanceof Error) safeError.name = error.name;
+    throw safeError;
+  }
 }
 
 async function runExclusiveSandboxAgentTurn(
@@ -3279,11 +2395,6 @@ async function runExclusiveSandboxAgentTurn(
   const prompt = buildSandboxTranscript(options.messages);
   if (!prompt && !options.command)
     throw new Error("The sandbox runtime turn has no user-visible message.");
-  const systemPrompt = options.systemPrompt?.trim() ?? "";
-  const disabledBuiltinTools = normalizeDisabledBuiltinTools(
-    options.runtimeKind,
-    options.disabledBuiltinTools,
-  );
   const mcpServers = (options.mcpServers ?? []).filter(
     (server) => server.deploymentId !== sandboxDeploymentId,
   );
@@ -3291,110 +2402,16 @@ async function runExclusiveSandboxAgentTurn(
     options.runtimeKind,
     options.agentId,
   );
-  if (options.runtimeKind === "hermes-rpc") {
-    return runHermesRpcTurn(
-      options,
-      {
-        container,
-        workdir,
-        skillRoot,
-        stateRoot: sandboxRuntimeStateRoot("hermes-rpc", options.agentId),
-        mcpServers,
-        history: (options.command
-          ? options.messages
-          : options.messages.slice(0, -1)
-        )
-          .filter(
-            (message) =>
-              message.role === "user" || message.role === "assistant",
-          )
-          .map((message) => ({
-            role: message.role,
-            content: buildSandboxTranscript([message]),
-          })),
-        message: buildSandboxTranscript(options.messages.slice(-1)),
-      },
-      {
-        exec: runTrackedDockerExec,
-        write: writeSandboxFile,
-        remove: removeSandboxFiles,
-        prepareSkills: () =>
-          materializeSandboxSkills(
-            container,
-            "hermes-rpc",
-            skillRoot,
-            options.skills ?? [],
-            options.signal,
-          ),
-        activities: (activities) =>
-          reportActivities(options, activities, mcpServers),
-      },
-    );
-  }
-  if (options.runtimeKind === "pi-sdk") {
-    await ensureRuntimeInstalled("pi-sdk", container, options.signal);
-    await materializeSandboxSkills(
-      container,
-      "pi-sdk",
-      skillRoot,
-      options.skills ?? [],
-      options.signal,
-    );
-    return runPiSdk(options, container, workdir, skillRoot, mcpServers);
-  }
-  const piVersion =
-    options.runtimeKind === "pi"
-      ? await readPiVersion(container, options.agentId, options.signal)
-      : DEFAULT_PI_VERSION;
-  const binary = await ensureRuntimeInstalled(
-    options.runtimeKind,
-    container,
-    options.signal,
-    piVersion,
-  );
+  if (options.piVersion !== undefined && options.piVersion !== "0.87.1")
+    throw new Error("PI_SDK_VERSION_MISMATCH");
+  await ensureRuntimeInstalled(container, options.signal);
   await materializeSandboxSkills(
     container,
-    options.runtimeKind,
     skillRoot,
     options.skills ?? [],
     options.signal,
   );
-  if (options.runtimeKind === "pi") {
-    return runPi(
-      options,
-      container,
-      binary,
-      workdir,
-      systemPrompt,
-      prompt,
-      skillRoot,
-      mcpServers,
-      disabledBuiltinTools,
-    );
-  }
-  if (options.runtimeKind === "claude-code") {
-    return runClaudeCode(
-      options,
-      container,
-      binary,
-      workdir,
-      systemPrompt,
-      prompt,
-      mcpServers,
-      disabledBuiltinTools,
-    );
-  }
-  return runDsh(
-    options,
-    container,
-    binary,
-    workdir,
-    systemPrompt,
-    prompt,
-    skillRoot,
-    mcpServers,
-    disabledBuiltinTools,
-  );
+  return runPiSdk(options, container, workdir, skillRoot, mcpServers);
 }
 
 export type PiHarnessOperationResult = {
@@ -3409,391 +2426,77 @@ type PiHarnessBinding = {
   operationId: string;
 };
 
-export async function preparePiHarnessOperation(
-  options: RunSandboxAgentTurnOptions,
-  contextId: string,
-): Promise<string> {
-  const result = await executePiHarnessOperation(options, "prepare", {
-    contextId,
-  });
-  if (typeof result !== "string")
-    throw new Error(
-      "PI_PROTOCOL_ERROR: prepare did not return an operation ID.",
-    );
-  return result;
-}
-
-export async function runPiHarnessOperation(
-  options: RunSandboxAgentTurnOptions,
-  binding: PiHarnessBinding,
-): Promise<PiHarnessOperationResult> {
-  const result = await executePiHarnessOperation(options, "run", binding);
-  if (typeof result === "string")
-    throw new Error("PI_PROTOCOL_ERROR: run did not return a terminal result.");
-  return result;
-}
-
 export async function cancelPiHarnessOperation(
-  options: RunSandboxAgentTurnOptions,
+  options: {
+    workspaceId: string;
+    agentId: string;
+    sandboxId: string;
+    a2aContextId: string;
+    timeoutMs?: number;
+  },
   binding: PiHarnessBinding,
 ): Promise<PiHarnessOperationResult> {
-  // The caller awaits the stopped driver before handing off the same sandbox lease.
-  const result = await executePiHarnessOperation(
-    { ...options, signal: undefined },
-    "cancel",
-    binding,
-  );
-  if (typeof result === "string")
-    throw new Error(
-      "PI_PROTOCOL_ERROR: cancel did not return a terminal result.",
+  // Drain only an already-bound old operation; never prepare a session or install a runtime.
+  return withSandboxExecutionLease(options.sandboxId, async () => {
+    assertRuntimeOwner();
+    const task = await db.a2ATask.findFirst({
+      where: {
+        id: binding.taskId,
+        contextId: binding.contextId,
+        nativeOperationId: binding.operationId,
+        executionBackend: "pi-harness",
+        context: { workspaceId: options.workspaceId },
+      },
+      select: { context: { select: { agentId: true } } },
+    });
+    if (
+      task?.context.agentId !== options.agentId ||
+      options.a2aContextId !== binding.contextId ||
+      !/^[a-zA-Z0-9_-]{1,200}$/.test(binding.operationId)
+    )
+      throw new Error("Native cleanup operation binding changed.");
+    await assertAssignedDockerSandbox(options, true);
+    const container = sandboxContainerName(options.sandboxId);
+    const id = randomUUID();
+    const inputPath = `${RUNTIME_TEMP_ROOT}/${id}-cancel.json`;
+    const hostPath = `${RUNTIME_TEMP_ROOT}/${id}-drain.mjs`;
+    await writeSandboxFile(
+      container,
+      hostPath,
+      await readFile(`${process.cwd()}/scripts/pi-harness-drain.mjs`, "utf8"),
     );
-  return result;
-}
-
-export async function compactPiHarnessSession(
-  options: RunSandboxAgentTurnOptions,
-  contextId: string,
-  customInstructions: string,
-): Promise<PiHarnessOperationResult> {
-  const result = await executePiHarnessOperation(
-    { ...options, piHarness: { ...options.piHarness, sessionRequired: true } },
-    "compact",
-    { contextId, customInstructions },
-  );
-  if (typeof result === "string")
-    throw new Error(
-      "PI_PROTOCOL_ERROR: compact did not return a terminal result.",
-    );
-  return result;
-}
-
-async function executePiHarnessOperation(
-  options: RunSandboxAgentTurnOptions,
-  action: "prepare" | "run" | "cancel" | "compact",
-  binding: {
-    contextId: string;
-    operationId?: string;
-    taskId?: string;
-    customInstructions?: string;
-  },
-): Promise<string | PiHarnessOperationResult> {
-  const ownerSignal = runtimeAbortSignal();
-  try {
-    return await withSandboxExecutionLease(options.sandboxId, async () => {
-      assertRuntimeOwner();
-      if (options.runtimeKind !== "pi")
-        throw new Error("Pi Harness requires a Pi Agent.");
-      if (!/^[a-zA-Z0-9_-]{1,200}$/.test(binding.contextId))
-        throw new Error("Invalid Pi context ID.");
-      if (
-        action !== "prepare" &&
-        action !== "compact" &&
-        (!binding.taskId ||
-          !binding.operationId ||
-          !/^[a-zA-Z0-9_-]{1,200}$/.test(binding.operationId))
-      ) {
-        throw new Error("Invalid Pi task operation binding.");
-      }
-      if (
-        !options.runtimeAccessToken ||
-        options.runtimeAccessToken.length > 8_192 ||
-        /[\0\r\n]/.test(options.runtimeAccessToken)
-      ) {
-        throw new Error("Invalid sandbox runtime access token.");
-      }
-      if (
-        !options.modelId.trim() ||
-        options.modelId.length > 500 ||
-        options.modelId.includes("\0")
-      )
-        throw new Error("Invalid sandbox runtime model.");
-      if (!Number.isFinite(options.contextWindow) || options.contextWindow <= 0)
-        throw new Error("Invalid sandbox runtime context window.");
-      if (
-        options.maxSteps !== undefined &&
-        (!Number.isSafeInteger(options.maxSteps) || options.maxSteps < 1)
-      )
-        throw new Error("Invalid Pi maxSteps.");
-      if (options.nativeApprovalUrl)
-        httpUrl(options.nativeApprovalUrl, "native approval URL");
-      if (action === "cancel") {
-        const task = await db.a2ATask.findFirst({
-          where: {
-            id: binding.taskId,
-            contextId: binding.contextId,
-            nativeOperationId: binding.operationId,
-            executionBackend: "pi-harness",
-            context: { workspaceId: options.workspaceId },
-          },
-          select: { context: { select: { agentId: true } } },
-        });
-        if (
-          task?.context.agentId !== options.agentId ||
-          options.a2aContextId !== binding.contextId
-        )
-          throw new Error("Native cleanup operation binding changed.");
-      }
-      const sandboxDeploymentId = await assertAssignedDockerSandbox(
-        options,
-        action === "cancel",
-      );
-      const container = sandboxContainerName(options.sandboxId);
-      if (uncertainPiSandboxes.has(container))
-        throw new Error(
-          "PI_PROCESS_STOP_UNCONFIRMED: runtime owner recovery is required.",
-        );
-      const workdir = normalizeSandboxWorkingDirectory(
-        options.workingDirectory,
-      );
-      const stateRoot = sandboxRuntimeStateRoot("pi", options.agentId);
-      const skillRoot = sandboxRuntimeSkillRoot("pi", options.agentId);
-      const mcpServers = (options.mcpServers ?? []).filter(
-        (server) => server.deploymentId !== sandboxDeploymentId,
-      );
-      for (const server of mcpServers) httpUrl(server.url, "MCP server URL");
-      // Read the required host before touching persistent native Session storage.
-      const host = await readFile(
-        `${process.cwd()}/scripts/pi-harness-session.mjs`,
-        "utf8",
-      );
-      const approval = await readFile(
-        `${process.cwd()}/scripts/a2a-native-approval.mjs`,
-        "utf8",
-      );
-      await ensureRuntimeInstalled("pi-harness", container, options.signal);
-      const packageRoot = PI_HARNESS_RUNTIME.directory;
-      const hostPath = `${packageRoot}/pi-harness-session.mjs`;
-      await writeSandboxFile(container, hostPath, host, options.signal);
+    try {
       await writeSandboxFile(
         container,
-        `${packageRoot}/a2a-native-approval.mjs`,
-        approval,
-        options.signal,
+        inputPath,
+        JSON.stringify({ ...binding, agentId: options.agentId }),
       );
-      await materializeSandboxSkills(
+      const output = await runTrackedDockerExec({
         container,
-        "pi",
-        skillRoot,
-        options.skills ?? [],
-        options.signal,
-      );
-      const runId = randomUUID();
-      const inputPath = `${RUNTIME_TEMP_ROOT}/${runId}-pi-harness.json`;
-      const modelsPath = `${RUNTIME_TEMP_ROOT}/${runId}-pi-models.json`;
-      const modelConfig = JSON.parse(buildPiModelsConfig(options));
-      modelConfig.providers.toolplane.models[0].contextWindow =
-        options.contextWindow;
-      const skills = buildSandboxSkillBundles(options.skills ?? []).map(
-        (bundle, index) => ({
-          name: bundle.directory,
-          description:
-            options.skills?.[index].description ??
-            options.skills?.[index].skill?.description ??
-            "",
-          filePath: `${skillRoot}/${bundle.directory}/SKILL.md`,
-          baseDir: `${skillRoot}/${bundle.directory}`,
-          source: "toolplane",
-        }),
-      );
-      let prepared: string | undefined;
-      let result: PiHarnessOperationResult | undefined;
-      let hostError: Error | undefined;
-      let lineBuffer = "";
-      const consumeLine = async (line: string) => {
-        if (!line.trim()) return;
-        let event: {
-          type?: unknown;
-          operationId?: unknown;
-          status: PiHarnessOperationResult["status"];
-          text?: unknown;
-          code?: unknown;
-          message?: unknown;
-          delta?: unknown;
-          activity?: SandboxRuntimeActivity;
-          usage?: unknown;
-        } | null;
-        try {
-          event = JSON.parse(
-            redact(line, [
-              JSON.stringify(options.runtimeAccessToken).slice(1, -1),
-            ]),
-          );
-        } catch {
-          throw new Error("PI_PROTOCOL_ERROR: invalid host JSON.");
-        }
-        if (!event || typeof event !== "object")
-          throw new Error("PI_PROTOCOL_ERROR: invalid host event.");
-        switch (event.type) {
-          case "prepared":
-            if (
-              action !== "prepare" ||
-              prepared ||
-              typeof event.operationId !== "string" ||
-              !/^[a-zA-Z0-9_-]{1,200}$/.test(event.operationId)
-            ) {
-              throw new Error("PI_PROTOCOL_ERROR: invalid prepared operation.");
-            }
-            prepared = event.operationId;
-            break;
-          case "result":
-            if (
-              action === "prepare" ||
-              result ||
-              !["completed", "declined", "aborted", "failed"].includes(
-                event.status,
-              ) ||
-              typeof event.text !== "string"
-            ) {
-              throw new Error("PI_PROTOCOL_ERROR: invalid terminal result.");
-            }
-            result = {
-              status: event.status,
-              text: event.text,
-              ...(typeof event.operationId === "string"
-                ? { operationId: event.operationId }
-                : {}),
-            };
-            break;
-          case "error":
-            if (
-              typeof event.code !== "string" ||
-              typeof event.message !== "string"
-            )
-              throw new Error("PI_PROTOCOL_ERROR: invalid host error.");
-            hostError = Object.assign(
-              new Error(`${event.code}: ${event.message}`),
-              { code: event.code },
-            );
-            break;
-          case "text_delta":
-            if (typeof event.delta !== "string")
-              throw new Error("PI_PROTOCOL_ERROR: invalid text delta.");
-            await options.onTextDelta?.(event.delta);
-            break;
-          case "activity":
-            if (
-              !event.activity ||
-              !["reasoning", "tool"].includes(event.activity.type) ||
-              !["running", "completed", "failed"].includes(
-                event.activity.status,
-              )
-            ) {
-              throw new Error("PI_PROTOCOL_ERROR: invalid activity.");
-            }
-            await reportActivities(options, [event.activity], mcpServers);
-            break;
-          case "usage": {
-            const usage = parseRuntimeUsage(event.usage);
-            if (!usage) throw new Error("PI_PROTOCOL_ERROR: invalid usage.");
-            await options.onUsage?.(usage);
-            break;
-          }
-          case "context_usage": {
-            const usage = parseContextUsage(event.usage);
-            if (!usage)
-              throw new Error("PI_PROTOCOL_ERROR: invalid context usage.");
-            await options.onContextUsage?.(usage);
-            break;
-          }
-          default:
-            throw new Error("PI_PROTOCOL_ERROR: unknown host event.");
-        }
-      };
-      try {
-        await writeSandboxFile(
-          container,
-          modelsPath,
-          JSON.stringify(modelConfig),
-          options.signal,
-        );
-        await writeSandboxFile(
-          container,
-          inputPath,
-          JSON.stringify({
-            action,
-            packageRoot,
-            directory: `${stateRoot}/harness`,
-            ...binding,
-            modelsPath,
-            providerId: "toolplane",
-            modelId: options.modelId,
-            systemPrompt: options.systemPrompt?.trim() ?? "",
-            messages: options.messages,
-            skills,
-            disabledBuiltinTools: normalizeDisabledBuiltinTools(
-              "pi",
-              options.disabledBuiltinTools,
-            ),
-            maxSteps: options.maxSteps,
-            workingDirectory: workdir,
-            legacyStatePath: `${stateRoot}/sessions/${binding.contextId}.json`,
-            historyRequired: options.piHarness?.historyRequired === true,
-            communicationEnabled:
-              options.piHarness?.communicationEnabled === true,
-            sessionRequired: options.piHarness?.sessionRequired === true,
-            thinkingLevel: options.piHarness?.thinkingLevel,
-            mcpServers,
-            nativeApprovalUrl: options.nativeApprovalUrl,
-            runtimeAccessToken: options.runtimeAccessToken,
-          }),
-          options.signal,
-        );
-        let execError: unknown;
-        try {
-          await runTrackedDockerExec({
-            container,
-            workdir,
-            executable: "node",
-            args: [hostPath, inputPath],
-            piHarness: true,
-            signal: options.signal,
-            timeoutMs: options.timeoutMs ?? TURN_TIMEOUT_MS,
-            secrets: [options.runtimeAccessToken],
-            env: {
-              TOOLPLANE_RUNTIME_TOKEN: options.runtimeAccessToken,
-              PI_OFFLINE: "1",
-              PI_TELEMETRY: "0",
-              NO_COLOR: "1",
-              ...(options.nativeApprovalUrl
-                ? { TOOLPLANE_APPROVAL_URL: options.nativeApprovalUrl }
-                : {}),
-            },
-            onStdout: async (chunk) => {
-              lineBuffer += chunk;
-              for (;;) {
-                const newline = lineBuffer.indexOf("\n");
-                if (newline < 0) break;
-                const line = lineBuffer.slice(0, newline);
-                lineBuffer = lineBuffer.slice(newline + 1);
-                await consumeLine(line);
-              }
-            },
-          });
-        } catch (error) {
-          execError = error;
-        }
-        if (lineBuffer.trim()) await consumeLine(lineBuffer);
-        if (hostError) throw hostError;
-        if (execError) throw execError;
-        if (action === "prepare" && prepared) return prepared;
-        if (action !== "prepare" && result) return result;
-        throw new Error(
-          "PI_PROTOCOL_ERROR: host exited without an operation result.",
-        );
-      } finally {
-        await removeSandboxFiles(container, [inputPath, modelsPath]);
-      }
-    });
-  } catch (error) {
-    if (
-      ownerSignal?.aborted &&
-      !(error instanceof PiRuntimeInterruptedError) &&
-      !(error instanceof Error && "code" in error)
-    ) {
-      throw new PiRuntimeInterruptedError("Pi runtime owner stopped.", {
-        cause: error,
+        workdir: "/workspace",
+        executable: "node",
+        args: [hostPath, inputPath],
+        timeoutMs: options.timeoutMs ?? 15_000,
+        env: { PI_OFFLINE: "1", PI_TELEMETRY: "0", NO_COLOR: "1" },
       });
+      let result: PiHarnessOperationResult | undefined;
+      for (const line of output.split("\n").filter(Boolean)) {
+        const event = JSON.parse(line);
+        result = z
+          .object({
+            status: z.enum(["completed", "declined", "aborted", "failed"]),
+            text: z.string(),
+            operationId: z.string().optional(),
+          })
+          .parse(event);
+      }
+      if (!result)
+        throw new Error(
+          "PI_PROTOCOL_ERROR: cancellation did not return a terminal result.",
+        );
+      return result;
+    } finally {
+      await removeSandboxFiles(container, [inputPath, hostPath]);
     }
-    throw error;
-  }
+  });
 }

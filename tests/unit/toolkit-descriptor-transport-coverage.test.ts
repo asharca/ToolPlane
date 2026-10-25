@@ -1,17 +1,14 @@
 // @vitest-environment node
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { LabelInput } from "@/lib/workspace/deployment-label";
 import type { SkillLabelInput } from "@/lib/workspace/skill-label";
 const m = vi.hoisted(() => ({
-  principal: vi.fn(),
   user: vi.fn(),
   workspace: vi.fn(),
   toolkit: vi.fn(),
-  link: vi.fn(),
   log: vi.fn(),
 }));
 vi.mock("@/lib/auth/request-user", () => ({
-  resolveRequestPrincipal: m.principal,
   resolveRequestUser: m.user,
 }));
 vi.mock("@/lib/db", () => ({
@@ -20,9 +17,6 @@ vi.mock("@/lib/db", () => ({
     toolkit: { findFirst: m.toolkit },
   },
 }));
-vi.mock("@/lib/toolkits/install-link", () => ({
-  getOrCreateToolkitInstallLink: m.link,
-}));
 vi.mock("@/lib/process/supervisor", () => ({
   effectiveStatus: (_id: string, status: string) => status,
 }));
@@ -30,21 +24,13 @@ vi.mock("@/lib/observability/log", () => ({ logRequest: m.log }));
 vi.mock("@/lib/observability/http", () => ({
   withRequestLogging: (_path: string, handler: unknown) => handler,
 }));
-import { GET as install } from "@/app/api/v1/workspaces/[slug]/toolkits/[toolkitSlug]/install/route";
 import { GET as manifest } from "@/app/api/v1/workspaces/[slug]/toolkits/[toolkitSlug]/manifest/route";
 const ctx = { params: Promise.resolve({ slug: "team", toolkitSlug: "kit" }) };
 const req = new Request("https://test/api");
-describe("toolkit descriptor and bootstrap transport", () => {
-  afterEach(() => vi.unstubAllEnvs());
+describe("read-only historical toolkit descriptor transport", () => {
   beforeEach(() => {
     vi.resetAllMocks();
-    vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://test");
     m.user.mockResolvedValue({ id: "user" });
-    m.principal.mockResolvedValue({
-      user: { id: "user" },
-      token: { toolkitId: null },
-      credential: "personal-token",
-    });
     m.workspace.mockResolvedValue({ id: "ws", slug: "team", name: "Team" });
     m.toolkit.mockResolvedValue({
       id: "kit",
@@ -55,52 +41,7 @@ describe("toolkit descriptor and bootstrap transport", () => {
       servers: [],
       skills: [],
     });
-    m.link.mockResolvedValue({ id: "install-link" });
   });
-  it.each([null, { credential: "session" }, { credential: "toolkit-token" }])(
-    "requires personal token rather than %j",
-    async (principal) => {
-      m.principal.mockResolvedValue(principal);
-      const response = await install(req, ctx);
-      expect(response.status).toBe(401);
-      expect(response.headers.get("cache-control")).toBe("private, no-store");
-      expect(m.toolkit).not.toHaveBeenCalled();
-      expect(m.principal).toHaveBeenCalledWith(req, { allowSession: false });
-    },
-  );
-  it("hides a toolkit inaccessible to a personal token", async () => {
-    m.toolkit.mockResolvedValue(null);
-    expect((await install(req, ctx)).status).toBe(404);
-    expect(m.link).not.toHaveBeenCalled();
-  });
-  it.each(["codex", "opencode", "hermes", "unknown", ""])(
-    "returns a real bootstrap for client %s without embedding authorization",
-    async (client) => {
-      const response = await install(
-        new Request(`https://test/api?client=${client}`, {
-          headers: { authorization: "Bearer PERSONAL_SECRET" },
-        }),
-        ctx,
-      );
-      expect(response.status).toBe(200);
-      expect(response.headers.get("content-type")).toContain(
-        "text/x-shellscript",
-      );
-      const body = await response.text();
-      const encoded = body.match(/printf '%s' '([A-Za-z0-9+/=]+)'/);
-      expect(encoded).not.toBeNull();
-      const config = JSON.parse(
-        Buffer.from(encoded?.[1] ?? "", "base64").toString("utf8"),
-      );
-      expect(config).toMatchObject({
-        endpoint: "https://test/install/install-link",
-        client: client === "unknown" || !client ? "claude-code" : client,
-        uninstall: false,
-      });
-      expect(body).not.toContain("PERSONAL_SECRET");
-      expect(m.link).toHaveBeenCalledWith("kit", "user");
-    },
-  );
   it("requires account access before exporting a manifest", async () => {
     m.user.mockResolvedValue(null);
     expect((await manifest(req, ctx)).status).toBe(401);
@@ -188,12 +129,14 @@ describe("toolkit descriptor and bootstrap transport", () => {
       {
         name: "Skill",
         slug: "skill",
-        download: "/api/v1/skills/skill/download",
+        download: "/api/v1/skills/skill/download?format=markdown",
+        bundleDownload: "/api/v1/skills/skill/download",
       },
       {
         name: "Custom",
         slug: "custom",
-        download: "/api/v1/skills/custom-skill/download",
+        download: "/api/v1/skills/custom-skill/download?format=markdown",
+        bundleDownload: "/api/v1/skills/custom-skill/download",
       },
     ]);
     expect(response.headers.get("content-disposition")).toBe(

@@ -8,12 +8,8 @@ const mocks = vi.hoisted(() => ({
   listAssistants: vi.fn(),
   getThread: vi.fn(),
   listProviders: vi.fn(),
-  listDeployments: vi.fn(),
-  listAgents: vi.fn(),
-  listConversations: vi.fn(),
-  getConversation: vi.fn(),
+  listChatDeployments: vi.fn(),
   surface: vi.fn(),
-  agentSurface: vi.fn(),
   getAssistantMarketTemplate: vi.fn(),
   listAssistantMarketTemplates: vi.fn(),
   cookies: vi.fn(),
@@ -33,10 +29,9 @@ vi.mock("@/lib/workspace/queries", () => ({
 }));
 vi.mock("@/lib/agents/queries", () => ({
   listProviders: mocks.listProviders,
-  listAgentDeploymentOptions: mocks.listDeployments,
-  listAgents: mocks.listAgents,
-  listConversations: mocks.listConversations,
-  getConversation: mocks.getConversation,
+}));
+vi.mock("@/lib/chat/resources", () => ({
+  listChatDeploymentOptions: mocks.listChatDeployments,
 }));
 vi.mock("@/lib/chat/service", () => ({
   listChatAssistantsForWorkspace: mocks.listAssistants,
@@ -70,10 +65,16 @@ describe("Workspace chat page", () => {
     mocks.getCurrentUser.mockResolvedValue({ id: "user-1" });
     mocks.getWorkspaceForUser.mockResolvedValue({ id: "workspace-1" });
     mocks.listProviders.mockResolvedValue([]);
-    mocks.listDeployments.mockResolvedValue([]);
-    mocks.listAgents.mockResolvedValue([]);
-    mocks.listConversations.mockResolvedValue([]);
-    mocks.getConversation.mockResolvedValue(null);
+    mocks.listChatDeployments.mockResolvedValue([
+      {
+        id: "remote-search",
+        name: "Remote search",
+        status: "running",
+        available: true,
+        definitionChecksum: "a".repeat(64),
+        tools: [{ name: "search", description: "Search reviewed sources" }],
+      },
+    ]);
     mocks.getAssistantMarketTemplate.mockResolvedValue(null);
     mocks.listAssistantMarketTemplates.mockResolvedValue([]);
     mocks.cookies.mockResolvedValue({
@@ -84,15 +85,21 @@ describe("Workspace chat page", () => {
         id: "assistant-1",
         name: "Helper",
         pinned: true,
+        currentRevisionVersion: 3,
         systemPrompt: null,
         modelProviderId: null,
         model: null,
         maxSteps: 8,
         modelProvider: null,
-        mcpGrants: [],
+        mcpGrants: [
+          { deploymentId: "remote-search", allowedToolNames: ["search"] },
+        ],
         threads: [
           {
             id: "thread-recent",
+            assistantRevisionId: "revision-3",
+            assistantRevision: { version: 3 },
+            legacyRevisionUnresolved: false,
             title: "Recent",
             createdAt: new Date("2026-08-25T00:00:00.000Z"),
             messages: [],
@@ -103,6 +110,9 @@ describe("Workspace chat page", () => {
     mocks.getThread.mockResolvedValue({
       id: "thread-old",
       assistantId: "assistant-1",
+      assistantRevisionId: "revision-2",
+      assistantRevision: { version: 2 },
+      legacyRevisionUnresolved: false,
       title: "Older direct link",
       createdAt: new Date("2026-01-01T00:00:00.000Z"),
       messages: [
@@ -140,9 +150,93 @@ describe("Workspace chat page", () => {
         assistants: [
           expect.objectContaining({
             pinned: true,
+            revision: 3,
+            mcpGrants: [
+              { deploymentId: "remote-search", allowedToolNames: ["search"] },
+            ],
             threads: [
-              expect.objectContaining({ id: "thread-old" }),
-              expect.objectContaining({ id: "thread-recent" }),
+              expect.objectContaining({
+                id: "thread-old",
+                revisionId: "revision-2",
+                revision: 2,
+                legacyRevisionUnresolved: false,
+              }),
+              expect.objectContaining({
+                id: "thread-recent",
+                revisionId: "revision-3",
+                revision: 3,
+                legacyRevisionUnresolved: false,
+              }),
+            ],
+          }),
+        ],
+      }),
+    );
+    expect(mocks.listChatDeployments).toHaveBeenCalledWith(
+      "user-1",
+      "workspace-1",
+    );
+    expect(mocks.surface).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deployments: [
+          {
+            id: "remote-search",
+            name: "Remote search",
+            status: "running",
+            available: true,
+            definitionChecksum: "a".repeat(64),
+            tools: [{ name: "search", description: "Search reviewed sources" }],
+          },
+        ],
+      }),
+    );
+  });
+
+  it("preserves unresolved historical revision state instead of binding history to the current revision", async () => {
+    mocks.getThread.mockResolvedValue({
+      id: "thread-legacy",
+      assistantId: "assistant-1",
+      assistantRevisionId: null,
+      assistantRevision: null,
+      legacyRevisionUnresolved: true,
+      title: "Read-only history",
+      createdAt: new Date("2026-01-01T00:00:00.000Z"),
+      messages: [
+        {
+          id: "legacy-message",
+          role: "assistant",
+          parts: [{ type: "text", text: "Historical reply" }],
+          createdAt: new Date("2026-01-01T00:01:00.000Z"),
+        },
+      ],
+    });
+    render(
+      await WorkspaceChatPage({
+        params: Promise.resolve({ workspace: "acme" }),
+        searchParams: Promise.resolve({
+          assistant: "assistant-1",
+          thread: "thread-legacy",
+        }),
+      }),
+    );
+    expect(mocks.surface).toHaveBeenCalledWith(
+      expect.objectContaining({
+        initialMessages: [expect.objectContaining({ id: "legacy-message" })],
+        assistants: [
+          expect.objectContaining({
+            revision: 3,
+            threads: [
+              expect.objectContaining({
+                id: "thread-legacy",
+                revisionId: null,
+                revision: null,
+                legacyRevisionUnresolved: true,
+              }),
+              expect.objectContaining({
+                id: "thread-recent",
+                revisionId: "revision-3",
+                revision: 3,
+              }),
             ],
           }),
         ],
@@ -167,6 +261,7 @@ describe("Workspace chat page", () => {
         id: "assistant-1",
         name: "Helper",
         pinned: false,
+        currentRevisionVersion: 1,
         systemPrompt: null,
         modelProviderId: "provider-1",
         model: "gpt-5",
@@ -278,29 +373,24 @@ describe("Workspace chat page", () => {
     });
   });
 
-  it("resolves a market assistant template and matches portable resources", async () => {
+  it("resolves a market assistant template without implicitly authorizing matching resources", async () => {
     mocks.listProviders.mockResolvedValue([
       {
         id: "provider-1",
         name: "Anthropic",
         format: "anthropic",
         models: ["claude-sonnet"],
+        modelRecords: [],
       },
     ]);
-    mocks.listDeployments.mockResolvedValue([
+    mocks.listChatDeployments.mockResolvedValue([
       {
         id: "deployment-1",
-        label: "Catalog search",
-        catalogSlug: "web-search",
+        name: "Web Search",
         status: "running",
-        keywords: ["search"],
-      },
-      {
-        id: "deployment-decoy",
-        label: "Web Search",
-        catalogSlug: "different-server",
-        status: "running",
-        keywords: ["web-search"],
+        available: true,
+        definitionChecksum: "b".repeat(64),
+        tools: [{ name: "search", description: "Search" }],
       },
     ]);
     mocks.getAssistantMarketTemplate.mockResolvedValue({
@@ -337,7 +427,8 @@ describe("Workspace chat page", () => {
           releaseId: "release-1",
           providerFormat: "anthropic",
           model: "claude-sonnet",
-          deploymentIds: ["deployment-1"],
+          deploymentIds: [],
+          missingMcpNames: ["Web Search"],
         }),
         marketTemplates: [
           expect.objectContaining({
@@ -376,6 +467,6 @@ describe("Workspace chat page", () => {
       "/app/acme/work?agent=agent-hermes&c=conversation-1",
     );
     expect(mocks.listAssistants).not.toHaveBeenCalled();
-    expect(mocks.agentSurface).not.toHaveBeenCalled();
+    expect(mocks.listChatDeployments).not.toHaveBeenCalled();
   });
 });

@@ -9,7 +9,11 @@ export default async function toolplaneMcp(pi) {
   // A routing convention set by the trusted host, NOT an extension security boundary.
   const host = globalThis[Symbol.for('toolplane.pi.host-context.v1')];
   if (host?.kind === 'toolplane-sdk' && host.platformMcp === true) return;
-  const packageRoot = await realpath(join(dirname(fileURLToPath(import.meta.url)), '..'));
+  let packageRoot = await realpath(join(dirname(fileURLToPath(import.meta.url)), '..'));
+  for (let parent = dirname(packageRoot); parent !== dirname(parent); parent = dirname(parent)) {
+    const manifest = await readFile(join(parent, 'package.json'), 'utf8').then(JSON.parse).catch(() => null);
+    if (manifest?.toolplane?.schemaVersion === 1 && Array.isArray(manifest.toolplane.mcp)) packageRoot = parent;
+  }
   const root = join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'toolplane', 'pi-packages');
   const paths = process.env.TOOLPLANE_PI_CONFIG ? [process.env.TOOLPLANE_PI_CONFIG]
     : (await readdir(root).catch(() => [])).map(id => join(root, id, 'config.json'));

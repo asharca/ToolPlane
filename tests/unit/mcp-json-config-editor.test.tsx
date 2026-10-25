@@ -4,16 +4,24 @@ import { McpJsonConfigEditor } from "@/components/dashboard/McpJsonConfigEditor"
 
 const mocks = vi.hoisted(() => ({
   revealMcpJsonConfigAction: vi.fn(),
+  getMcpConnectionImpactAction: vi.fn(),
+  updateMcpJsonConfigAction: vi.fn(),
 }));
 
 vi.mock("@/lib/workspace/actions", () => ({
   revealMcpJsonConfigAction: mocks.revealMcpJsonConfigAction,
-  updateMcpJsonConfigAction: vi.fn(),
+  getMcpConnectionImpactAction: mocks.getMcpConnectionImpactAction,
+  updateMcpJsonConfigAction: mocks.updateMcpJsonConfigAction,
 }));
 
 describe("McpJsonConfigEditor", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getMcpConnectionImpactAction.mockResolvedValue({
+      agentIds: [],
+      assistantIds: [],
+    });
+    mocks.updateMcpJsonConfigAction.mockResolvedValue({ savedAt: 1 });
   });
 
   it("shows the stored config and a save-and-rebuild action", () => {
@@ -137,5 +145,91 @@ describe("McpJsonConfigEditor", () => {
     expect(
       screen.getByRole("button", { name: "Save and rebuild" }),
     ).toBeInTheDocument();
+  });
+
+  it("requires explicit confirmation of the actual sorted shared objects", async () => {
+    mocks.getMcpConnectionImpactAction.mockResolvedValue({
+      agentIds: ["agent-b", "agent-a"],
+      assistantIds: ["assistant-a"],
+    });
+    render(
+      <McpJsonConfigEditor
+        slug="acme"
+        deploymentId="dep1"
+        maskedConfig={'{"command":"npx","args":["mcp"]}'}
+        requiresReveal={false}
+        initialNetwork="isolated"
+        warnAboutPackageInstall={false}
+      />,
+    );
+    const confirmation = await screen.findByRole("checkbox");
+    expect(screen.getByText("Agent · agent-a")).toBeInTheDocument();
+    expect(screen.getByText("Assistant · assistant-a")).toBeInTheDocument();
+    const form = confirmation.closest("form");
+    expect(form).not.toBeNull();
+    if (!form) throw new Error("Expected connection configuration form");
+    expect(new FormData(form).has("confirmedImpactedObjects")).toBe(false);
+    expect(confirmation).toBeRequired();
+    fireEvent.click(confirmation);
+    expect(
+      JSON.parse(String(new FormData(form).get("confirmedImpactedObjects"))),
+    ).toEqual({
+      agentIds: ["agent-a", "agent-b"],
+      assistantIds: ["assistant-a"],
+    });
+  });
+
+  it("requires renewed confirmation when the backend reports a changed impact set", async () => {
+    mocks.getMcpConnectionImpactAction.mockResolvedValue({
+      agentIds: ["agent-a"],
+      assistantIds: [],
+    });
+    mocks.updateMcpJsonConfigAction.mockResolvedValue({
+      error: "sharedChangeConfirmationRequired",
+      impactedObjects: { agentIds: ["agent-a", "agent-b"], assistantIds: [] },
+    });
+    render(
+      <McpJsonConfigEditor
+        slug="acme"
+        deploymentId="dep1"
+        maskedConfig={'{"command":"npx","args":["mcp"]}'}
+        requiresReveal={false}
+        initialNetwork="isolated"
+        warnAboutPackageInstall={false}
+      />,
+    );
+    const confirmation = await screen.findByRole("checkbox");
+    fireEvent.click(confirmation);
+    const form = confirmation.closest("form");
+    if (!form) throw new Error("Expected connection configuration form");
+    fireEvent.submit(form);
+    await screen.findByText("Agent · agent-b");
+    expect(screen.getByRole("checkbox")).not.toBeChecked();
+    expect(new FormData(form).has("confirmedImpactedObjects")).toBe(false);
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+  });
+
+  it("offers separate unchecked HTTP consent without stdio network controls for remote editing", () => {
+    render(
+      <McpJsonConfigEditor
+        slug="acme"
+        deploymentId="dep1"
+        maskedConfig={
+          '{"type":"http","url":"http://mcp.example.com/mcp","allowUnsafeHttp":true}'
+        }
+        requiresReveal={false}
+        initialNetwork="isolated"
+        warnAboutPackageInstall={false}
+        remote
+      />,
+    );
+    const consent = screen.getByRole("checkbox");
+    expect(consent).not.toBeChecked();
+    expect(screen.queryByRole("radio")).not.toBeInTheDocument();
+    const form = consent.closest("form");
+    if (!form) throw new Error("Expected remote configuration form");
+    expect(new FormData(form).has("allowUnsafeHttp")).toBe(false);
+    fireEvent.click(consent);
+    expect(new FormData(form).get("allowUnsafeHttp")).toBe("true");
   });
 });

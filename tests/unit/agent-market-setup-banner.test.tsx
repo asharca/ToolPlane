@@ -16,6 +16,15 @@ describe("AgentMarketSetupBanner", () => {
             { deploymentId: "deployment-2", variable: "SECOND_API_KEY" },
           ],
           runtimes: [{ agentId: "runtime/agent", kind: "hermes" }],
+          legacyToolkitConversions: [
+            {
+              toolkitKey: "toolkit-1",
+              name: "Release tools",
+              agentIds: ["subagent/1"],
+              requiresPrivatePackageConversion: true,
+              requiresReauthorization: true,
+            },
+          ],
         }}
       />,
     );
@@ -35,11 +44,21 @@ describe("AgentMarketSetupBanner", () => {
       "href",
       "/app/acme%20team/mcp/deployment-2",
     );
+    expect(screen.getByRole("link", { name: "New agent" })).toHaveAttribute(
+      "href",
+      "/app/acme%20team/agents?create=1",
+    );
     expect(
-      screen.getByRole("link", { name: /Configure runtime/i }),
+      screen.queryByRole("link", { name: /Configure runtime/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/private package and explicitly authorized again/i),
+    ).toHaveTextContent("Release tools");
+    expect(
+      screen.getByRole("link", { name: "Review private packages" }),
     ).toHaveAttribute(
       "href",
-      "/app/acme%20team/agents/runtime%2Fagent?settings=hermes",
+      "/app/acme%20team/market/pi-packages?view=toolplane",
     );
   });
 });

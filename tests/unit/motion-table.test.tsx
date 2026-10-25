@@ -218,6 +218,37 @@ describe("table state transitions", () => {
 });
 
 describe("table loading and layout", () => {
+  it("keeps column geometry during selection and restores keyboard focus after clearing", () => {
+    render(
+      <Table
+        data={rows.map(({ row }) => row)}
+        columns={columns}
+        selectable
+        resizable
+        selectionActions={({ clearSelection }) => (
+          <button type="button" onClick={clearSelection}>
+            Clear selected
+          </button>
+        )}
+      />,
+    );
+    const nameHeader = screen.getByRole("columnheader", { name: /Name/ });
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select all rows" }));
+    expect(screen.getByRole("columnheader", { name: "Name" })).toBe(nameHeader);
+    expect(
+      screen.queryByRole("button", { name: /Resize/ }),
+    ).not.toBeInTheDocument();
+    const clear = screen.getByRole("button", { name: "Clear selected" });
+    act(() => clear.focus());
+    fireEvent.click(clear);
+    expect(
+      screen.getByRole("checkbox", { name: "Select all rows" }),
+    ).toHaveFocus();
+    expect(
+      screen.queryByRole("button", { name: "Clear selected" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: /Name/ })).toBe(nameHeader);
+  });
   it("switches from loading skeletons to its custom empty state and budgets absolute/input widths", () => {
     const layoutColumns: TableColumn<Row>[] = [
       { key: "name", header: "Name", width: "10rem" },

@@ -28,6 +28,7 @@ import { executeRuntimeCommand } from "@/lib/agents/runtime-command-service";
 import { RUNTIME_COMMANDS_PART } from "@/lib/agents/runtime-commands";
 import { textArtifact } from "@/lib/a2a/model";
 import { mapTaskSandbox, taskSandbox } from "./task-sandbox-fixture";
+import { AgentRevisionConfigSchema } from "@/lib/agents/revision-types";
 
 const scheduler = vi.hoisted(() => ({ wake: () => {} }));
 vi.mock("@/lib/a2a/worker", async (original) => ({
@@ -105,11 +106,56 @@ it("refreshes real native task readiness on the same SDK host and rejects the pr
         runtimeKind: "pi-sdk",
         providerId: provider.id,
         model: "controlled",
+        a2aInboundEnabled: true,
+        a2aOutboundEnabled: true,
         sandboxes: { create: { sandboxId: sandbox.id, isDefault: true } },
       },
     });
+    const revision = await db.agentRevision.create({
+      data: {
+        agentId: agent.id,
+        version: 1,
+        config: AgentRevisionConfigSchema.parse({
+          schemaVersion: 1,
+          runtimeKind: "pi-sdk",
+          systemPrompt: null,
+          providerId: provider.id,
+          model: "controlled",
+          modelProviderIds: [],
+          maxSteps: agent.maxSteps,
+          disabledBuiltinTools: [],
+          sandboxTemplateId: sandbox.id,
+          environment: {
+            kind: "docker",
+            image: `fixture@sha256:${"0".repeat(64)}`,
+            network: "isolated",
+            piVersion: "0.87.1",
+            initialSnapshot: null,
+            resourceLimits: { memoryBytes: 536870912, cpus: 1, pidsLimit: 64 },
+            credentialReferences: [],
+          },
+          skills: [],
+          knowledgeBaseIds: [],
+          packages: [],
+          mcpGrants: [],
+          a2a: {
+            inboundEnabled: true,
+            outboundEnabled: true,
+            policy: { schemaVersion: 1, targets: [] },
+          },
+        }),
+      },
+    });
+    await db.agent.update({
+      where: { id: agent.id },
+      data: { currentRevisionVersion: revision.version },
+    });
     const conversation = await db.conversation.create({
-      data: { agentId: agent.id },
+      data: {
+        agentId: agent.id,
+        agentRevisionId: revision.id,
+        legacyRevisionUnresolved: false,
+      },
     });
     const cwd = join(root, "workspace"),
       privateDir = join(root, "private"),
@@ -124,7 +170,7 @@ it("refreshes real native task readiness on the same SDK host and rejects the pr
     );
     await writeFile(
       approvalExtensionPath,
-      nativeApprovalAdapter("pi", approvalHelperPath),
+      nativeApprovalAdapter(approvalHelperPath),
     );
     const mcpFactoryPath = join(privateDir, "mcp.mjs");
     await writeFile(
@@ -201,7 +247,7 @@ it("refreshes real native task readiness on the same SDK host and rejects the pr
       );
       const row = await claimTask(accepted.row.id);
       if (!row) throw new Error("Claim failed");
-      expect(row.executionBackend).toBe("legacy");
+      expect(row.executionBackend).toBe("pi-sdk");
       await mapTaskSandbox(row);
       return row;
     }
@@ -209,6 +255,7 @@ it("refreshes real native task readiness on the same SDK host and rejects the pr
       const runtimeToken = await createAgentRuntimeToken({
         workspaceId: workspace.id,
         agentId: agent.id,
+        agentRevisionId: revision.id,
         ...taskSandbox(row),
         providerId: provider.id,
         deploymentIds: [],

@@ -4,47 +4,19 @@ const m = vi.hoisted(() => ({
   wrapper: vi.fn(),
   cursor: vi.fn(),
   messages: vi.fn(),
-  mark: vi.fn(),
-  deleteMessages: vi.fn(),
-  deleteConversation: vi.fn(),
-  busy: vi.fn(),
-  transaction: vi.fn(),
-  lock: vi.fn(),
-  runtime: vi.fn(),
-  lease: vi.fn(),
-  release: vi.fn(),
-  deleteSession: vi.fn(),
 }));
 vi.mock("@/lib/db", () => ({
   db: {
-    agentPublicConversation: { findFirst: m.wrapper, updateMany: m.mark },
+    agentPublicConversation: { findFirst: m.wrapper },
     message: {
       findFirst: m.cursor,
       findMany: m.messages,
-      deleteMany: m.deleteMessages,
     },
-    conversation: { deleteMany: m.deleteConversation },
-    agentRun: { count: m.busy },
-    $transaction: m.transaction,
-    $queryRaw: m.lock,
   },
 }));
-vi.mock("@/lib/agents/queries", () => ({
-  getAgentEndpointRuntimeForExecution: m.runtime,
-}));
-vi.mock("@/lib/agents/hermes/runtime", () => ({
-  acquireHermesRuntimeWriteLease: m.lease,
-}));
-vi.mock("@/lib/agents/hermes/client", () => ({
-  deleteHermesSession: m.deleteSession,
-}));
-import { db } from "@/lib/db";
 import type { AgentApiPrincipal } from "@/lib/agents/public-api/auth";
 import { AGENT_API_MAX_TRANSCRIPT_CHARACTERS as max } from "@/lib/agents/public-api/body";
-import {
-  getAgentConversationForPrincipal as read,
-  deleteAgentConversationForPrincipal as remove,
-} from "@/lib/agents/public-api/conversations";
+import { getAgentConversationForPrincipal as read } from "@/lib/agents/public-api/conversations";
 const principal: AgentApiPrincipal = {
   credentialType: "client_token",
   endpointId: "endpoint",
@@ -92,15 +64,6 @@ beforeEach(() => {
   m.wrapper.mockResolvedValue(wrapper);
   m.messages.mockResolvedValue([]);
   m.cursor.mockResolvedValue({ id: "previous" });
-  m.mark.mockResolvedValue({ count: 1 });
-  m.busy.mockResolvedValue(0);
-  m.transaction.mockImplementation(async (callback) => callback(db));
-  m.runtime.mockResolvedValue({
-    id: "runtime",
-    workspaceId: "workspace",
-    runtime: { kind: "hermes" },
-  });
-  m.lease.mockReturnValue({ release: m.release });
 });
 describe("public conversation transcript isolation", () => {
   it("conceals conversations outside the endpoint, client or browser subject", async () => {
@@ -266,98 +229,5 @@ describe("public conversation transcript isolation", () => {
         after: "previous",
       }),
     ).toMatchObject({ messages: [], has_more: true, next_cursor: "previous" });
-  });
-});
-describe("irreversible public conversation deletion", () => {
-  it("conceals foreign conversations and refuses to delete a busy transcript", async () => {
-    m.wrapper.mockResolvedValueOnce(null);
-    expect(await remove(principal, "foreign")).toBe(false);
-    expect(m.deleteMessages).not.toHaveBeenCalled();
-    m.busy.mockResolvedValueOnce(1);
-    await expect(
-      remove(principal, "conversation-public"),
-    ).rejects.toMatchObject({ status: 409 });
-    expect(m.mark).not.toHaveBeenCalled();
-  });
-  it("returns false when another deletion wins the tombstone race", async () => {
-    m.mark.mockResolvedValueOnce({ count: 0 });
-    expect(await remove(principal, "conversation-public")).toBe(false);
-    expect(m.deleteMessages).not.toHaveBeenCalled();
-    expect(m.deleteSession).not.toHaveBeenCalled();
-  });
-  it("deletes transcript before runtime cleanup and releases the write lease", async () => {
-    const signal = new AbortController().signal;
-    expect(await remove(principal, "conversation-public", signal)).toBe(true);
-    expect(m.deleteMessages).toHaveBeenCalledWith({
-      where: { conversationId: "conversation" },
-    });
-    expect(m.mark).toHaveBeenCalledWith({
-      where: { id: "wrapper", deletingAt: { not: null } },
-      data: { storedCharacters: 0 },
-    });
-    expect(m.runtime).toHaveBeenCalledWith(
-      "workspace",
-      "runtime",
-      "allocation",
-    );
-    expect(m.deleteSession).toHaveBeenCalledWith({
-      agent: expect.objectContaining({ id: "runtime" }),
-      sessionId: "session",
-      sessionKey: "key",
-      writeLease: { release: m.release },
-      signal,
-    });
-    expect(m.deleteConversation).toHaveBeenCalledWith({
-      where: { id: "conversation", agentId: "runtime" },
-    });
-    expect(m.release).toHaveBeenCalledTimes(1);
-  });
-  it("retries already tombstoned deletion without reopening the transcript", async () => {
-    m.wrapper.mockResolvedValue({ ...wrapper, deletingAt: date });
-    expect(await remove(principal, "conversation-public")).toBe(true);
-    expect(m.mark).not.toHaveBeenCalledWith(
-      expect.objectContaining({ data: { deletingAt: expect.any(Date) } }),
-    );
-    expect(m.deleteMessages).toHaveBeenCalledTimes(1);
-  });
-  it.each(["allocation", "runtime", "session", "key", "lease"])(
-    "keeps the tombstone when %s is unavailable",
-    async (missing) => {
-      if (missing === "allocation")
-        m.wrapper.mockResolvedValue({
-          ...wrapper,
-          runtimeAllocation: { id: "allocation", runtimeAgentId: null },
-        });
-      if (missing === "runtime") m.runtime.mockResolvedValue({ runtime: null });
-      if (missing === "session")
-        m.wrapper.mockResolvedValue({
-          ...wrapper,
-          conversation: { ...wrapper.conversation, runtimeSessionId: null },
-        });
-      if (missing === "key")
-        m.wrapper.mockResolvedValue({
-          ...wrapper,
-          conversation: { ...wrapper.conversation, runtimeSessionKey: null },
-        });
-      if (missing === "lease") m.lease.mockReturnValue(null);
-      expect(await remove(principal, "conversation-public")).toBe(true);
-      expect(m.deleteSession).not.toHaveBeenCalled();
-      expect(m.deleteMessages).toHaveBeenCalledTimes(1);
-      expect(m.mark).toHaveBeenLastCalledWith({
-        where: { id: "wrapper", deletingAt: { not: null } },
-        data: { updatedAt: expect.any(Date) },
-      });
-    },
-  );
-  it("does not resurrect user data when runtime cleanup and its retry marker fail", async () => {
-    m.deleteSession.mockRejectedValueOnce(new Error("runtime offline"));
-    m.mark
-      .mockResolvedValueOnce({ count: 1 })
-      .mockResolvedValueOnce({ count: 1 })
-      .mockRejectedValueOnce(new Error("database offline"));
-    expect(await remove(principal, "conversation-public")).toBe(true);
-    expect(m.deleteConversation).not.toHaveBeenCalled();
-    expect(m.release).toHaveBeenCalledTimes(1);
-    expect(m.deleteMessages).toHaveBeenCalledTimes(1);
   });
 });

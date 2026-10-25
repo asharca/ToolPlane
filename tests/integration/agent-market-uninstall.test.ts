@@ -162,6 +162,15 @@ describe.sequential("agent market uninstall", () => {
     });
     const rootId = installed.resourceMap.agents.root;
     const childId = installed.resourceMap.agents.child;
+    expect(installed.resourceMap.toolkits).toEqual({});
+    const historicalToolkit = await db.toolkit.create({
+      data: {
+        workspaceId,
+        name: "Read-only historical Toolkit",
+        slug: `historical-${stamp}`,
+        enabled: false,
+      },
+    });
     const external = await db.agent.create({
       data: {
         workspaceId,
@@ -169,6 +178,19 @@ describe.sequential("agent market uninstall", () => {
         slug: `external-${stamp}`,
         runtimeKind: "pi",
         subAgents: { create: { childId } },
+        // Explicit external references, not imported publisher authority, retain resources.
+        servers: {
+          create: {
+            deploymentId: installed.resourceMap.deployments.deployment_shared,
+            allowedToolNames: [],
+          },
+        },
+        skills: {
+          create: {
+            installedSkillId: installed.resourceMap.skills.skill_shared,
+          },
+        },
+        toolkits: { create: { toolkitId: historicalToolkit.id } },
       },
     });
     const outsider = await db.user.create({
@@ -210,7 +232,6 @@ describe.sequential("agent market uninstall", () => {
     for (const id of [
       installed.resourceMap.deployments.deployment_private,
       installed.resourceMap.skills.skill_private,
-      installed.resourceMap.toolkits.toolkit_private,
       installed.resourceMap.sandboxes.root,
       installed.resourceMap.sandboxDeployments.root,
     ]) {
@@ -235,11 +256,13 @@ describe.sequential("agent market uninstall", () => {
       }),
     ).resolves.toMatchObject({ id: installed.resourceMap.skills.skill_shared });
     await expect(
-      db.toolkit.findUnique({
-        where: { id: installed.resourceMap.toolkits.toolkit_shared },
-      }),
+      db.toolkit.findUnique({ where: { id: historicalToolkit.id } }),
+    ).resolves.toMatchObject({ id: historicalToolkit.id, enabled: false });
+    expect(await db.toolkit.count({ where: { workspaceId } })).toBe(1);
+    await expect(
+      db.agentRelease.findUnique({ where: { id: releaseId } }),
     ).resolves.toMatchObject({
-      id: installed.resourceMap.toolkits.toolkit_shared,
+      manifest: { toolkits: [toolkit("private"), toolkit("shared")] },
     });
     await expect(
       db.sandbox.findUnique({

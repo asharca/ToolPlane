@@ -1,13 +1,16 @@
 import { withRequestLogging } from "@/lib/observability/http";
 import { resolveRequestUser } from "@/lib/auth/request-user";
 import { db } from "@/lib/db";
-import { buildInstalledSkillMarkdown } from "@/lib/skills/artifact";
+import {
+  buildInstalledSkillMarkdown,
+  installedSkillExtraFiles,
+} from "@/lib/skills/artifact";
+import { writeZip } from "@/lib/archives/zip";
 import { skillLabel } from "@/lib/workspace/skill-label";
 import { logRequest } from "@/lib/observability/log";
 
-// Serve a real, downloadable SKILL.md for an installed skill. Auth via the
-// dashboard session or a Bearer API token; access is scoped to the caller's
-// workspaces.
+// Full portable bundle by default; ?format=markdown preserves the markdown API.
+// Both formats use the same workspace-scoped account authorization.
 export const GET = withRequestLogging(
   "/api/v1/skills/[installId]/download",
   async function GET(
@@ -65,6 +68,24 @@ export const GET = withRequestLogging(
 
     const markdown = buildInstalledSkillMarkdown(install);
     const slug = skillLabel(install).slug;
+    const format = new URL(req.url).searchParams.get("format") ?? "zip";
+    if (format !== "zip" && format !== "markdown")
+      return Response.json({ error: "invalid_format" }, { status: 400 });
+    const artifact =
+      format === "markdown"
+        ? markdown
+        : new Uint8Array(
+            writeZip([
+              { path: "SKILL.md", data: Buffer.from(markdown) },
+              ...installedSkillExtraFiles(install).map((file) => ({
+                path: file.path,
+                data: Buffer.from(
+                  file.content,
+                  file.encoding === "base64" ? "base64" : "utf8",
+                ),
+              })),
+            ]),
+          );
 
     await logRequest({
       workspaceId: install.workspace.id,
@@ -74,11 +95,14 @@ export const GET = withRequestLogging(
       durationMs: Date.now() - start,
     });
 
-    return new Response(markdown, {
+    return new Response(artifact, {
       status: 200,
       headers: {
-        "content-type": "text/markdown; charset=utf-8",
-        "content-disposition": `attachment; filename="${slug}.SKILL.md"`,
+        "content-type":
+          format === "markdown"
+            ? "text/markdown; charset=utf-8"
+            : "application/zip",
+        "content-disposition": `attachment; filename="${slug}.${format === "markdown" ? "SKILL.md" : "zip"}"`,
         "cache-control": "private, no-store",
         "x-content-type-options": "nosniff",
       },

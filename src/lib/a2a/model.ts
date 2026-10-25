@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   Artifact,
   Message,
@@ -154,6 +155,63 @@ export function textArtifact(text: string): Artifact {
     parts: [{ mediaType: "text/plain", text }],
   });
 }
+
+function canonicalArtifactValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalArtifactValue);
+  if (value && typeof value === "object")
+    return Object.fromEntries(
+      Object.entries(value)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([key, item]) => [key, canonicalArtifactValue(item)]),
+    );
+  return value;
+}
+export const artifactDigest = (value: Artifact) => {
+  const content = Artifact.toJSON(value) as Record<string, unknown>;
+  delete content.metadata;
+  return createHash("sha256")
+    .update(JSON.stringify(canonicalArtifactValue(content)))
+    .digest("hex");
+};
+
+/** Platform-owned provenance describes inline data, never an automatic download URL. */
+export function stampArtifactProvenance(
+  artifact: Artifact,
+  source: {
+    taskId: string;
+    contextId: string;
+    targetId: string;
+    targetKind: "local" | "remote" | "published";
+  },
+) {
+  const wire = Artifact.toJSON(artifact) as {
+    parts: Array<{ raw?: string; text?: string; data?: unknown }>;
+  };
+  const content = JSON.stringify(canonicalArtifactValue(wire.parts));
+  const sizeBytes = wire.parts.reduce(
+    (size, part) =>
+      size +
+      (part.raw !== undefined
+        ? Buffer.from(part.raw, "base64").length
+        : Buffer.byteLength(
+            part.text ??
+              JSON.stringify(canonicalArtifactValue(part.data ?? null)),
+            "utf8",
+          )),
+    0,
+  );
+  artifact.metadata = {
+    ...artifact.metadata,
+    "toolplane.dev/provenance": {
+      ...source,
+      sizeBytes,
+      digestAlgorithm: "sha256-canonical-parts-json",
+      digest: createHash("sha256").update(content).digest("hex"),
+    },
+  };
+  return artifact;
+}
+
 /** Database and wire payloads always go through official ProtoJSON serializers. */
 export function jsonTask(task: Task) {
   return Task.toJSON(task) as Record<string, unknown>;

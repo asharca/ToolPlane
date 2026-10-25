@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  act,
   createEvent,
   fireEvent,
   render,
@@ -8,11 +9,11 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { ReactNode } from "react";
 import {
   estimatePromptTokens,
   WorkspaceAssistantChat,
 } from "@/components/dashboard/chat/WorkspaceAssistantChat";
+import type * as AssistantConversationModule from "@/components/dashboard/chat/AssistantConversation";
 
 const mocks = vi.hoisted(() => ({
   conversation: vi.fn(),
@@ -24,18 +25,17 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: mocks.push, refresh: mocks.refresh }),
 }));
 
-vi.mock("@/components/dashboard/agents/AgentConversation", () => ({
-  AgentConversation: (props: unknown) => {
-    mocks.conversation(props);
+vi.mock("@/components/dashboard/chat/AssistantConversation", () => ({
+  AssistantConversation: (props: unknown) => {
+    const rendered = mocks.conversation(props);
+    if (rendered !== undefined) return rendered;
     const conversation = props as {
       onBranchChange?: (messageId: string) => void;
       onStartBranch?: (messageId: string) => void;
-      modelPicker?: ReactNode;
     };
     return (
       <div>
         Chat surface
-        {conversation.modelPicker}
         <div id="chat-message-a1">Active message</div>
         <button
           type="button"
@@ -82,6 +82,7 @@ function renderChat(
       id: "assistant-1",
       name: "Helper",
       pinned: false,
+      revision: 1,
       systemPrompt: null,
       modelProviderId: "provider-1",
       model: "model-1",
@@ -167,6 +168,7 @@ const sidebarAssistants: Parameters<
   id: `assistant-${id}`,
   name: ["Match Alpha", "Hidden assistant", "Match Gamma"][id - 1],
   pinned: false,
+  revision: 1,
   systemPrompt: null,
   modelProviderId: "provider-1",
   model: "model-1",
@@ -195,7 +197,593 @@ describe("WorkspaceAssistantChat", () => {
     document.cookie =
       "toolplane_assistant_chat_group_preferences_workspace-1=; Path=/; Max-Age=0";
   });
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    mocks.conversation.mockReset();
+  });
+
+  it("stops the newly admitted Run rather than the previous completed snapshot and reports a refused stop", async () => {
+    const { AssistantConversation } = await vi.importActual<
+      typeof AssistantConversationModule
+    >("@/components/dashboard/chat/AssistantConversation");
+    const stream: { controller?: ReadableStreamDefaultController<Uint8Array> } =
+      {};
+    const stopped: string[] = [];
+    let admitted = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/turns") && init?.method === "POST") {
+          admitted = true;
+          return new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                stream.controller = controller;
+                controller.enqueue(
+                  new TextEncoder().encode(
+                    'data: {"type":"start","messageId":"new-answer"}\n\ndata: {"type":"text-start","id":"text"}\n\ndata: {"type":"text-delta","id":"text","delta":"New Run is active"}\n\n',
+                  ),
+                );
+              },
+            }),
+            {
+              headers: {
+                "content-type": "text/event-stream",
+                "x-vercel-ai-ui-message-stream": "v1",
+                "X-Chat-Run-Id": "new-run",
+                "X-Chat-Cursor": "3",
+              },
+            },
+          );
+        }
+        if (url.endsWith("/turns") && init?.method === "DELETE") {
+          stopped.push(JSON.parse(String(init.body)).turnId);
+          return Response.json({
+            stopRequested: false,
+            turnId: stopped.at(-1),
+          });
+        }
+        if (url.includes("state=1"))
+          return Response.json({
+            runId: admitted ? "new-run" : "old-run",
+            cursor: 3,
+            status: admitted ? "pending" : "completed",
+            phase: admitted ? "generating" : "completed",
+            stopRequested: false,
+            confirmations: [],
+            messages: [
+              {
+                id: admitted ? "new-answer" : "old-answer",
+                role: "assistant",
+                parts: [
+                  {
+                    type: "text",
+                    text: admitted
+                      ? "New Run is active"
+                      : "Previous completed Run",
+                  },
+                ],
+              },
+            ],
+          });
+        return Response.json({ revision: 1, templates: [] });
+      }),
+    );
+    const view = render(
+      <AssistantConversation
+        threadId="thread-1"
+        revision={1}
+        revisionId="revision-1"
+        readOnly={false}
+        initialMessages={[]}
+        onConversationChanged={vi.fn()}
+        onBranchChange={vi.fn()}
+        onStartBranch={vi.fn()}
+      />,
+    );
+    try {
+      await screen.findByText("Previous completed Run");
+      await userEvent.type(
+        screen.getByRole("textbox", { name: "Send message" }),
+        "Next intentional turn",
+      );
+      await userEvent.click(
+        screen.getByRole("button", { name: "Send message" }),
+      );
+      await screen.findByText("New Run is active");
+      await userEvent.click(
+        screen.getByRole("button", { name: "Request stop" }),
+      );
+      await waitFor(() => expect(stopped).toEqual(["new-run"]));
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "did not accept a stop request",
+      );
+      expect(
+        screen.queryByText("Stop requested · awaiting confirmation"),
+      ).not.toBeInTheDocument();
+    } finally {
+      stream.controller?.close();
+      view.unmount();
+    }
+  });
+
+  it("stops another tab's pending Run restored by polling after this tab completed its own turn", async () => {
+    const { AssistantConversation } = await vi.importActual<
+      typeof AssistantConversationModule
+    >("@/components/dashboard/chat/AssistantConversation");
+    const intervals = vi.spyOn(globalThis, "setInterval");
+    let admitted = false;
+    let remotePending = false;
+    let stopRequested = false;
+    let acknowledged = false;
+    const stopped: string[] = [];
+    const submissions: string[] = [];
+    const requests = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/turns") && init?.method === "POST") {
+          admitted = true;
+          submissions.push(String(init.body));
+          const frames = [
+            { type: "start", messageId: "answer-A" },
+            { type: "text-start", id: "text" },
+            { type: "text-delta", id: "text", delta: "Local A completed" },
+            { type: "text-end", id: "text" },
+            { type: "finish", finishReason: "stop" },
+          ];
+          return new Response(
+            `${frames.map((frame) => `data: ${JSON.stringify(frame)}\n\n`).join("")}data: [DONE]\n\n`,
+            {
+              headers: {
+                "content-type": "text/event-stream",
+                "x-vercel-ai-ui-message-stream": "v1",
+                "X-Chat-Run-Id": "run-A",
+                "X-Chat-Cursor": "5",
+              },
+            },
+          );
+        }
+        if (url.endsWith("/turns") && init?.method === "DELETE") {
+          stopped.push(JSON.parse(String(init.body)).turnId);
+          stopRequested = true;
+          return Response.json({ stopRequested: true, turnId: stopped.at(-1) });
+        }
+        if (url.includes("state=1")) {
+          if (!admitted) return new Response(null, { status: 204 });
+          return Response.json({
+            runId: remotePending ? "run-B" : "run-A",
+            cursor: remotePending ? 8 : 5,
+            status: acknowledged
+              ? "cancelled"
+              : remotePending
+                ? "pending"
+                : "completed",
+            phase: acknowledged
+              ? "cancelled"
+              : remotePending
+                ? "generating"
+                : "completed",
+            stopRequested,
+            confirmations: [],
+            messages: [
+              {
+                id: remotePending ? "user-B" : "user-A",
+                role: "user",
+                parts: [
+                  {
+                    type: "text",
+                    text: remotePending
+                      ? "Another tab's intentional request"
+                      : "This tab's intentional request",
+                  },
+                ],
+              },
+              {
+                id: remotePending ? "answer-B" : "answer-A",
+                role: "assistant",
+                parts: [
+                  {
+                    type: "text",
+                    text: remotePending
+                      ? "Other tab B is generating"
+                      : "Local A completed",
+                  },
+                ],
+              },
+            ],
+          });
+        }
+        if (url.endsWith("/templates"))
+          return Response.json({ revision: 1, templates: [] });
+        throw new Error(`Unexpected cross-tab lifecycle request: ${url}`);
+      },
+    );
+    vi.stubGlobal("fetch", requests);
+    const view = render(
+      <AssistantConversation
+        threadId="thread-1"
+        revision={1}
+        revisionId="revision-1"
+        readOnly={false}
+        initialMessages={[]}
+        onConversationChanged={vi.fn()}
+        onBranchChange={vi.fn()}
+        onStartBranch={vi.fn()}
+      />,
+    );
+    try {
+      const send = screen.getByRole("button", { name: "Send message" });
+      await waitFor(() =>
+        expect(
+          screen.getByRole("textbox", { name: "Send message" }),
+        ).toBeEnabled(),
+      );
+      await userEvent.type(
+        screen.getByRole("textbox", { name: "Send message" }),
+        "This tab's intentional request",
+      );
+      await userEvent.click(send);
+      await screen.findByText("Local A completed");
+      await waitFor(() =>
+        expect(
+          screen.queryByRole("button", { name: "Request stop" }),
+        ).not.toBeInTheDocument(),
+      );
+      remotePending = true;
+      const poll = intervals.mock.calls.find(
+        ([, delay]) => delay === 2000,
+      )?.[0];
+      if (typeof poll !== "function")
+        throw new Error("Assistant snapshot polling was not registered");
+      await act(async () => {
+        poll();
+      });
+      await screen.findByText("Other tab B is generating");
+      await userEvent.click(
+        screen.getByRole("button", { name: "Request stop" }),
+      );
+      await waitFor(() => expect(stopped).toEqual(["run-B"]));
+      expect(
+        await screen.findByText(/Stop requested · awaiting confirmation/),
+      ).toBeInTheDocument();
+      expect(screen.getAllByText("Local A completed")).toHaveLength(1);
+      expect(screen.getAllByText("Other tab B is generating")).toHaveLength(1);
+      expect(submissions).toHaveLength(1);
+      expect(
+        requests.mock.calls.some(([url]) =>
+          String(url).includes("afterSequence="),
+        ),
+      ).toBe(false);
+      acknowledged = true;
+      await act(async () => {
+        poll();
+      });
+      await waitFor(() => {
+        expect(
+          screen.queryByText(/Stop requested · awaiting confirmation/),
+        ).not.toBeInTheDocument();
+        expect(
+          screen.queryByRole("button", { name: "Request stop" }),
+        ).not.toBeInTheDocument();
+      });
+    } finally {
+      view.unmount();
+      intervals.mockRestore();
+    }
+  });
+
+  it("reconciles one canonical turn without duplicating optimistic users or streamed assistant IDs", async () => {
+    const { reconcileAssistantMessages } = await vi.importActual<
+      typeof AssistantConversationModule
+    >("@/components/dashboard/chat/AssistantConversation");
+    const messages: Parameters<typeof reconcileAssistantMessages>[0] = [
+      {
+        id: "history",
+        role: "user",
+        parts: [{ type: "text", text: "Earlier turn" }],
+      },
+      {
+        id: "client-user",
+        role: "user",
+        parts: [{ type: "text", text: "Raw template args" }],
+      },
+      {
+        id: "server-assistant",
+        role: "assistant",
+        parts: [{ type: "text", text: "Before" }],
+      },
+      {
+        id: "server-assistant",
+        role: "assistant",
+        parts: [{ type: "text", text: "Before disconnect." }],
+      },
+    ];
+    const saved: Parameters<typeof reconcileAssistantMessages>[1] = [
+      {
+        id: "server-user",
+        role: "user",
+        parts: [{ type: "text", text: "Expanded server prompt" }],
+      },
+      {
+        id: "server-assistant",
+        role: "assistant",
+        parts: [{ type: "text", text: "Before" }],
+      },
+    ];
+    const visible = reconcileAssistantMessages(
+      messages,
+      saved,
+      "client-user",
+      true,
+    );
+    expect(visible.map((message) => message.id)).toEqual([
+      "history",
+      "server-user",
+      "server-assistant",
+    ]);
+    expect(visible[1].parts).toEqual([
+      { type: "text", text: "Expanded server prompt" },
+    ]);
+    expect(visible[2].parts).toEqual([
+      { type: "text", text: "Before disconnect." },
+    ]);
+    expect(
+      reconcileAssistantMessages(visible, saved, "client-user", true),
+    ).toEqual(visible);
+    expect(
+      reconcileAssistantMessages(visible, saved, "client-user")[2].parts,
+    ).toEqual(saved[1].parts);
+  });
+
+  it("never presents an empty thread as disconnected while restoring or after a no-run response", async () => {
+    const { AssistantConversation } = await vi.importActual<
+      typeof AssistantConversationModule
+    >("@/components/dashboard/chat/AssistantConversation");
+    const deferred: { resolve?: (response: Response) => void } = {};
+    const stateResponse = new Promise<Response>((resolve) => {
+      deferred.resolve = resolve;
+    });
+    const requests = vi.fn(async (input: RequestInfo | URL) =>
+      String(input).includes("state=1")
+        ? stateResponse
+        : Response.json({ revision: 1, templates: [] }),
+    );
+    vi.stubGlobal("fetch", requests);
+    render(
+      <AssistantConversation
+        threadId="thread-empty"
+        revision={1}
+        revisionId="revision-1"
+        readOnly={false}
+        initialMessages={[]}
+        onConversationChanged={vi.fn()}
+        onBranchChange={vi.fn()}
+        onStartBranch={vi.fn()}
+      />,
+    );
+    expect(screen.queryByText(/Disconnected/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Reconnect/ }),
+    ).not.toBeInTheDocument();
+    deferred.resolve?.(new Response(null, { status: 204 }));
+    await userEvent.type(
+      screen.getByRole("textbox", { name: "Send message" }),
+      "A new intentional turn",
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Send message" }),
+      ).toBeEnabled(),
+    );
+    expect(screen.queryByText(/Disconnected/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Reconnect/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      requests.mock.calls.every(([url]) => !String(url).endsWith("/turns")),
+    ).toBe(true);
+  });
+
+  it("offers reconnection only after a saved pending run loses its subscription", async () => {
+    const { AssistantConversation } = await vi.importActual<
+      typeof AssistantConversationModule
+    >("@/components/dashboard/chat/AssistantConversation");
+    const requests = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("state=1"))
+        return Response.json({
+          runId: "run-pending",
+          cursor: 7,
+          status: "pending",
+          phase: "running",
+          stopRequested: false,
+          messages: [],
+          confirmations: [],
+        });
+      if (url.includes("/turns/stream?"))
+        throw new Error("Subscription disconnected");
+      return Response.json({ revision: 1, templates: [] });
+    });
+    vi.stubGlobal("fetch", requests);
+    render(
+      <AssistantConversation
+        threadId="thread-pending"
+        revision={1}
+        revisionId="revision-1"
+        readOnly={false}
+        initialMessages={[]}
+        onConversationChanged={vi.fn()}
+        onBranchChange={vi.fn()}
+        onStartBranch={vi.fn()}
+      />,
+    );
+    expect(
+      await screen.findByRole("button", { name: /Reconnect/ }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Disconnected/)).toBeInTheDocument();
+    expect(requests).toHaveBeenCalledWith(
+      "/api/v1/chat/threads/thread-pending/turns/stream?runId=run-pending&afterSequence=7",
+      expect.objectContaining({ cache: "no-store" }),
+    );
+    expect(
+      requests.mock.calls.every(([url]) => !String(url).endsWith("/turns")),
+    ).toBe(true);
+  });
+
+  it("restores unknown tool outcomes and readable text without submitting execution", async () => {
+    const { AssistantConversation } = await vi.importActual<
+      typeof AssistantConversationModule
+    >("@/components/dashboard/chat/AssistantConversation");
+    const requests = vi.fn(async (input: RequestInfo | URL) =>
+      String(input).includes("state=1")
+        ? Response.json({
+            runId: "run-1",
+            cursor: 9,
+            status: "failed",
+            phase: "execution_unknown",
+            stopRequested: false,
+            messages: [
+              {
+                id: "answer",
+                role: "assistant",
+                parts: [
+                  {
+                    type: "data-prompt-template",
+                    data: { unrecognized: true },
+                  },
+                  { type: "text", text: "Saved readable answer" },
+                ],
+              },
+            ],
+            confirmations: [
+              {
+                id: "confirm-1",
+                toolName: "remote_write",
+                input: { value: 1 },
+                status: "execution_unknown",
+              },
+              {
+                id: "confirmed-success",
+                toolName: "remote_lookup",
+                input: { query: "saved" },
+                status: "succeeded",
+                result: {
+                  content: [
+                    {
+                      type: "text",
+                      text: "Durably committed result before output publication",
+                    },
+                  ],
+                },
+              },
+            ],
+          })
+        : Response.json({ revision: 1, templates: [] }),
+    );
+    vi.stubGlobal("fetch", requests);
+    render(
+      <AssistantConversation
+        threadId="thread-1"
+        revision={2}
+        revisionId="revision-1"
+        readOnly={false}
+        initialMessages={[]}
+        onConversationChanged={vi.fn()}
+        onBranchChange={vi.fn()}
+        onStartBranch={vi.fn()}
+      />,
+    );
+    expect(
+      await screen.findByText("Saved readable answer"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("Outcome unknown");
+    expect(
+      screen.getByText(/Durably committed result before output publication/),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Saved tool result")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Approve this tool call" }),
+    ).not.toBeInTheDocument();
+    expect(
+      requests.mock.calls.every(([url]) => !String(url).endsWith("/turns")),
+    ).toBe(true);
+  });
+
+  it.each(["ambiguous transport failure", "runtime_not_ready"])(
+    "reuses the exact admitted request and key after %s",
+    async (failure) => {
+      const { AssistantConversation } = await vi.importActual<
+        typeof AssistantConversationModule
+      >("@/components/dashboard/chat/AssistantConversation");
+      const bodies: string[] = [];
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+          if (String(input).endsWith("/turns") && init?.method === "POST") {
+            bodies.push(String(init.body));
+            return failure === "runtime_not_ready"
+              ? Response.json(
+                  { error: "runtime_not_ready" },
+                  { status: 503, headers: { "Retry-After": "5" } },
+                )
+              : new Response("Transport unavailable", { status: 503 });
+          }
+          if (String(input).includes("state=1"))
+            return new Response(null, { status: 204 });
+          return Response.json({ revision: 1, templates: [] });
+        }),
+      );
+      render(
+        <AssistantConversation
+          threadId="thread-1"
+          revision={1}
+          revisionId="revision-1"
+          readOnly={false}
+          initialMessages={[]}
+          onConversationChanged={vi.fn()}
+          onBranchChange={vi.fn()}
+          onStartBranch={vi.fn()}
+        />,
+      );
+      await waitFor(() =>
+        expect(
+          screen.getByRole("button", { name: "Send message" }),
+        ).toBeDisabled(),
+      );
+      await userEvent.type(
+        screen.getByRole("textbox", { name: "Send message" }),
+        "Only one intentional turn",
+      );
+      await waitFor(() =>
+        expect(
+          screen.getByRole("button", { name: "Send message" }),
+        ).toBeEnabled(),
+      );
+      await userEvent.click(
+        screen.getByRole("button", { name: "Send message" }),
+      );
+      const retryButton = await screen.findByRole("button", {
+        name: "Retry the same submission",
+      });
+      if (failure === "runtime_not_ready") {
+        expect(screen.getByRole("alert")).toHaveTextContent(
+          "platform runtime owner",
+        );
+        expect(screen.getByRole("alert")).toHaveTextContent(
+          "No new turn was started",
+        );
+        expect(
+          screen.queryByRole("button", { name: /Reconnect/ }),
+        ).not.toBeInTheDocument();
+      }
+      expect(bodies).toHaveLength(1);
+      await userEvent.click(retryButton);
+      await waitFor(() => expect(bodies).toHaveLength(2));
+      expect(bodies[1]).toBe(bodies[0]);
+      expect(JSON.parse(bodies[0]).idempotencyKey).toEqual(expect.any(String));
+    },
+  );
 
   it("shows running badges from server state and removes them when execution settles", async () => {
     const status = vi
@@ -322,18 +910,14 @@ describe("WorkspaceAssistantChat", () => {
     ).toBeInTheDocument();
   });
 
-  it("uses the API step limit and enables persisted branch regeneration", async () => {
+  it("keeps Assistant identity and pinned thread separate from Agent execution", async () => {
     renderChat();
-
     expect(mocks.conversation).toHaveBeenCalledWith(
       expect.objectContaining({
-        allowRegenerate: true,
-        attachmentUploadUrl: "/api/v1/workspaces/workspace-1/attachments",
-        supportsAttachments: true,
-        initialReasoningEffort: "default",
-        mcpResourceApiPath: "/api/v1/chat/threads/thread-1/composer",
-        onNewConversation: expect.any(Function),
-        reasoningAvailable: true,
+        threadId: "thread-1",
+        revision: 1,
+        onBranchChange: expect.any(Function),
+        onStartBranch: expect.any(Function),
       }),
     );
 
@@ -384,7 +968,7 @@ describe("WorkspaceAssistantChat", () => {
         {
           method: "PATCH",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ pinned: true }),
+          body: JSON.stringify({ pinned: true, expectedRevision: 1 }),
         },
       ),
     );
@@ -420,6 +1004,7 @@ describe("WorkspaceAssistantChat", () => {
           id: "assistant-1",
           name: "Helper",
           pinned: true,
+          revision: 1,
           systemPrompt: null,
           modelProviderId: "provider-1",
           model: "model-1",
@@ -442,13 +1027,13 @@ describe("WorkspaceAssistantChat", () => {
         {
           method: "PATCH",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ pinned: false }),
+          body: JSON.stringify({ pinned: false, expectedRevision: 1 }),
         },
       ),
     );
   });
 
-  it("offers only deletion in thread actions while preserving drag moves", async () => {
+  it("offers deletion but rejects cross-Assistant drag rebinding", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -469,6 +1054,7 @@ describe("WorkspaceAssistantChat", () => {
           id: "assistant-1",
           name: "Helper",
           pinned: false,
+          revision: 1,
           systemPrompt: null,
           modelProviderId: "provider-1",
           model: "model-1",
@@ -488,6 +1074,7 @@ describe("WorkspaceAssistantChat", () => {
           id: "assistant-2",
           name: "Writer",
           pinned: false,
+          revision: 1,
           systemPrompt: null,
           modelProviderId: "provider-1",
           model: "model-1",
@@ -535,16 +1122,8 @@ describe("WorkspaceAssistantChat", () => {
     fireEvent(target, over);
     fireEvent.drop(target, { dataTransfer });
 
-    await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/v1/chat/threads/thread-1", {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ assistantId: "assistant-2" }),
-      });
-      expect(mocks.push).toHaveBeenCalledWith(
-        "/app/acme/chat?assistant=assistant-2&thread=thread-1",
-      );
-    });
+    await waitFor(() => expect(fetchMock).not.toHaveBeenCalled());
+    expect(mocks.push).not.toHaveBeenCalled();
   });
 
   it("keeps editor values and shows the server error when saving fails", async () => {
@@ -700,6 +1279,7 @@ describe("WorkspaceAssistantChat", () => {
           method: "PATCH",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
+            expectedRevision: 1,
             name: "Helper",
             description: "Finds primary sources.",
             systemPrompt:
@@ -713,7 +1293,7 @@ describe("WorkspaceAssistantChat", () => {
               customParameters: [{ name: "top_k", type: "number", value: 40 }],
             },
             maxSteps: 8,
-            deploymentIds: [],
+            mcpGrants: [],
           }),
         },
       ),
@@ -824,7 +1404,7 @@ describe("WorkspaceAssistantChat", () => {
     );
     expect(
       within(dialog).getByRole("link", { name: "Browse MCP market" }),
-    ).toHaveAttribute("href", "/app/acme/market/mcp");
+    ).toHaveAttribute("href", "/app/acme/market?type=mcp&target=assistant");
   });
 
   it("selects a market template and prefills the assistant creator", async () => {
@@ -871,32 +1451,15 @@ describe("WorkspaceAssistantChat", () => {
     ).toHaveValue("Use primary sources.");
   });
 
-  it("switches the active assistant model from the shared picker", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ error: "Keep page mounted" }), {
-        status: 400,
-        headers: { "content-type": "application/json" },
-      }),
-    );
-    stubMutationFetch(fetchMock);
+  it("opens revision-scoped settings instead of mutating a pinned model in chat", async () => {
     renderChat();
-
+    expect(
+      screen.queryByRole("button", { name: "Model: model-1" }),
+    ).not.toBeInTheDocument();
     await userEvent.click(
-      screen.getByRole("button", { name: "Model: model-1" }),
+      screen.getByRole("button", { name: "Assistant settings: Helper" }),
     );
-    await userEvent.click(screen.getByRole("option", { name: "model-2" }));
-
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/api/v1/chat/assistants/assistant-1",
-      {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          modelProviderId: "provider-2",
-          model: "model-2",
-        }),
-      },
-    );
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 
   it("always exposes branches and creates one from an assistant message", async () => {
@@ -1264,40 +1827,14 @@ describe("WorkspaceAssistantChat", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it.each([false, true])(
-    "moves a thread across assistants with denied=%s and preserves authorization boundaries",
-    async (denied) => {
-      const fetchMock = vi.fn(async () =>
-        denied
-          ? Response.json(
-              { error: "Cannot move this conversation" },
-              { status: 403 },
-            )
-          : Response.json({ ok: true }),
-      );
-      stubMutationFetch(fetchMock);
-      renderChat(undefined, false, undefined, null, [], sidebarAssistants);
-      dragResource("Find thread 1", "Match Gamma", "inside");
-      await waitFor(() =>
-        expect(fetchMock).toHaveBeenCalledWith(
-          "/api/v1/chat/threads/thread-1",
-          expect.objectContaining({ body: '{"assistantId":"assistant-3"}' }),
-        ),
-      );
-      if (denied) {
-        expect(await screen.findByRole("alert")).toHaveTextContent(
-          "Cannot move this conversation",
-        );
-        expect(mocks.push).not.toHaveBeenCalled();
-      } else {
-        await waitFor(() =>
-          expect(mocks.push).toHaveBeenCalledWith(
-            "/app/acme/chat?assistant=assistant-3&thread=thread-1",
-          ),
-        );
-      }
-    },
-  );
+  it("never sends a thread rebind request on cross-Assistant drops", async () => {
+    const fetchMock = vi.fn();
+    stubMutationFetch(fetchMock);
+    renderChat(undefined, false, undefined, null, [], sidebarAssistants);
+    dragResource("Find thread 1", "Match Gamma", "inside");
+    await waitFor(() => expect(fetchMock).not.toHaveBeenCalled());
+    expect(mocks.push).not.toHaveBeenCalled();
+  });
 
   it("reorders groups, moves assistants back to ungrouped, and persists both changes", async () => {
     renderChat(

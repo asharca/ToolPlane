@@ -1,3 +1,4 @@
+import { ResourceEnablePanel } from "@/components/dashboard/market/ResourceEnablePanel";
 /* DashboardTable consumes cell arrays as indexed values. */
 
 import { AnimatedBadge } from "@/components/motion/animated-badge";
@@ -329,6 +330,12 @@ export default async function SkillInspectorPage({
             ? { workspace: slug, installId: install.id, content: markdown }
             : undefined
         }
+      />
+      <ResourceEnablePanel
+        workspace={slug}
+        workspaceId={ws.id}
+        kind="skill"
+        resourceId={install.id}
       />
 
       <BouncyAccordion

@@ -1,3 +1,5 @@
+import { McpConnectionCreateForm } from "@/components/dashboard/McpConnectionCreateForm";
+import { McpHttpConsent } from "@/components/dashboard/McpHttpConsent";
 import { AnimatedBadge } from "@/components/motion/animated-badge";
 
 import { Button, ButtonLink } from "@/components/motion/button";
@@ -119,7 +121,7 @@ function McpMarketplaceAction({
   }
 
   return (
-    <form
+    <McpConnectionCreateForm
       action={
         server.marketListing ? installMarketResourceAction : deployServerAction
       }
@@ -135,6 +137,7 @@ function McpMarketplaceAction({
       ) : (
         <input type="hidden" name="serverId" value={server.id} />
       )}
+      {!server.marketListing ? <McpHttpConsent /> : null}
       <SubmitButton
         flash={false}
         pendingLabel={t(
@@ -151,7 +154,7 @@ function McpMarketplaceAction({
             : "addToWorkspace",
         )}
       </SubmitButton>
-    </form>
+    </McpConnectionCreateForm>
   );
 }
 

@@ -111,9 +111,8 @@ export async function handleA2AConsole(
           parsed.reason === "too_large" ? 413 : 400,
           "Invalid A2A console request.",
         );
-      const result = await mutateA2AConsole(ctx, parsed.value);
-      // Do not let a failing follow-up read hide a successfully issued one-time credential.
-      return reply({ ok: true, ...result });
+      await mutateA2AConsole(ctx, parsed.value);
+      return reply({ ok: true });
     } catch (error) {
       return failure(error);
     }

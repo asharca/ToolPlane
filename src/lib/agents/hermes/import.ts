@@ -1,21 +1,13 @@
 import "server-only";
 
 import { db } from "@/lib/db";
-import { createAgent, deleteAgent } from "@/lib/agents/mutations";
+import { randomUUID } from "node:crypto";
+import { deleteAgent } from "@/lib/agents/mutations";
+import { sandboxVolumeName } from "@/lib/sandboxes/runtime";
 import { resolveHermesImage } from "./constants";
-import {
-  cleanupHermesRuntime,
-  copyHermesArchiveToVolume,
-  syncHermesRuntime,
-} from "./runtime";
-import {
-  HermesArchiveError,
-  acquireHermesArchiveImportLock,
-  stageHermesArchive,
-  type HermesArchiveUpload,
-  type StagedHermesArchive,
-} from "./archive";
-import { getHermesArchiveSettings } from "@/lib/admin/settings";
+import { cleanupHermesRuntime } from "./runtime";
+import { copyHermesArchiveToVolume } from "./archive-storage";
+import { HermesArchiveError, type StagedHermesArchive } from "./archive";
 import { beginWorkspaceOperation } from "@/lib/workspace/operation-gate";
 
 export { HermesArchiveError } from "./archive";
@@ -46,9 +38,8 @@ async function discardFailedImport(
   }
 }
 
-// A browser may lose the response after the server has already copied a large
-// archive. Persisting the client-generated ID only after the copy and initial
-// sync succeed lets a retry return that result instead of a second volume.
+// Request markers make archive storage idempotent even if the browser disconnects.
+// Imported Agents are retired history; no runtime projection or execution occurs.
 export async function findHermesArchiveImport(
   workspaceId: string,
   importId: string,
@@ -108,9 +99,8 @@ export async function findHermesArchiveImport(
     : null;
 }
 
-// An imported Hermes home deliberately becomes an Agent-owned sandbox. A bare
-// Sandbox(kind=hermes) cannot be supervised or exposed safely: its runtime
-// token, dashboard, terminal, and cleanup lifecycle are AgentRuntime-scoped.
+// Keep legacy archive files accessible under their historical identity without
+// creating an executable Hermes Agent or pretending its sessions are resumable.
 export async function importStagedHermesArchive(params: {
   workspaceId: string;
   name: string;
@@ -145,15 +135,69 @@ export async function importStagedHermesArchive(params: {
       }
     }
     const image = resolveHermesImage(params.image);
-    const createdAgent = await createAgent(
-      params.workspaceId,
-      importedName(params.name),
-      {
-        runtime: "hermes",
-        hermesImage: image,
-        ...(params.allowSudo ? { allowSudo: true } : {}),
-      },
-    );
+    const createdAgent = await db.$transaction(async (tx) => {
+      const slug = `hermes-history-${randomUUID()}`;
+      const historical = await tx.agent.create({
+        data: {
+          workspaceId: params.workspaceId,
+          name: importedName(params.name),
+          slug,
+          runtimeKind: "hermes",
+          retiredAt: new Date(),
+        },
+      });
+      const deployment = await tx.deployment.create({
+        data: {
+          workspaceId: params.workspaceId,
+          name: `Historical archive: ${historical.name}`,
+          source: "sandbox",
+          sourceRef: image,
+          status: "stopped",
+        },
+      });
+      const sandbox = await tx.sandbox.create({
+        data: {
+          workspaceId: params.workspaceId,
+          deploymentId: deployment.id,
+          name: `${historical.name} Archive`,
+          slug,
+          kind: "hermes",
+          image,
+          network: "none",
+          config: {
+            managedBy: "historical-archive",
+            importSource: "hermes-archive",
+            readOnly: true,
+          },
+        },
+      });
+      const runtime = await tx.agentRuntime.create({
+        data: {
+          workspaceId: params.workspaceId,
+          agentId: historical.id,
+          sandboxId: sandbox.id,
+          kind: "hermes",
+          image,
+          status: "stopped",
+        },
+      });
+      await tx.deployment.update({
+        where: { id: deployment.id },
+        data: {
+          installCfg: {
+            sandboxId: sandbox.id,
+            runtimeId: runtime.id,
+            kind: "hermes",
+            image,
+            network: "none",
+            volumeName: sandboxVolumeName(sandbox.id),
+            env: {},
+            readOnly: true,
+          },
+        },
+      });
+      return historical;
+    });
     agent = createdAgent;
     const runtime = await db.agentRuntime.findFirst({
       where: {
@@ -171,9 +215,9 @@ export async function importStagedHermesArchive(params: {
       where: { id: sandboxId, workspaceId: params.workspaceId, kind: "hermes" },
       data: {
         config: {
-          managedBy: "agent-runtime",
+          managedBy: "historical-archive",
           importSource: "hermes-archive",
-          ...(params.allowSudo ? { allowSudo: true } : {}),
+          readOnly: true,
           ...(params.importId
             ? { [HERMES_ARCHIVE_IMPORT_REQUEST_CONFIG_KEY]: params.importId }
             : {}),
@@ -213,18 +257,8 @@ export async function importStagedHermesArchive(params: {
         workspaceId: params.workspaceId,
         kind: "hermes",
       },
-      data: { status: "setup_required", lastError: null },
+      data: { status: "stopped", lastError: null },
     });
-    const syncResult = await syncHermesRuntime(
-      params.workspaceId,
-      createdAgent.id,
-      { start: false },
-    );
-    if (syncResult.error) {
-      throw new HermesArchiveError(
-        "Could not prepare the imported Hermes sandbox.",
-      );
-    }
 
     if (params.importId) {
       await db.sandbox.updateMany({
@@ -235,8 +269,9 @@ export async function importStagedHermesArchive(params: {
         },
         data: {
           config: {
-            managedBy: "agent-runtime",
+            managedBy: "historical-archive",
             importSource: "hermes-archive",
+            readOnly: true,
             [HERMES_ARCHIVE_IMPORT_REQUEST_CONFIG_KEY]: params.importId,
             [HERMES_ARCHIVE_IMPORT_COMPLETED_CONFIG_KEY]: params.importId,
           },
@@ -261,46 +296,5 @@ export async function importStagedHermesArchive(params: {
   } finally {
     releaseWorkspaceOperation();
     await params.staged.cleanup();
-  }
-}
-
-// This compatibility entry point remains for internal callers and focused
-// tests. Its HermesArchiveUpload type is streaming-only; browser imports use
-// the raw-body route and hold the same cross-process staging lock.
-export async function importHermesArchive(params: {
-  workspaceId: string;
-  name: string;
-  archive: HermesArchiveUpload;
-  image?: string;
-}): Promise<HermesArchiveImportResult> {
-  const settings = await getHermesArchiveSettings();
-  const importLock = await acquireHermesArchiveImportLock();
-  if (!importLock) {
-    throw new HermesArchiveError(
-      "Another Hermes archive import is in progress. Try again after it finishes.",
-      409,
-    );
-  }
-  let staged: StagedHermesArchive | null = null;
-  try {
-    await importLock.assertHeld();
-    staged = await stageHermesArchive(params.archive, {
-      maxUploadMiB: settings.hermesArchiveMaxUploadMiB,
-      ...(importLock.stagingToken
-        ? { stagingToken: importLock.stagingToken }
-        : {}),
-    });
-    await importLock.assertHeld();
-    const stagedForImport = staged;
-    staged = null;
-    return await importStagedHermesArchive({
-      workspaceId: params.workspaceId,
-      name: params.name,
-      staged: stagedForImport,
-      image: params.image,
-    });
-  } finally {
-    if (staged) await staged.cleanup().catch(() => undefined);
-    await importLock.release().catch(() => undefined);
   }
 }

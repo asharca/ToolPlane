@@ -13,6 +13,7 @@ import { getAgentChannelLogs } from "@/lib/agents/channel-runtime-logs";
 const mocks = vi.hoisted(() => ({
   create: vi.fn(),
   findFirst: vi.fn(),
+  agentFindFirst: vi.fn(),
   findMany: vi.fn(),
   update: vi.fn(),
   updateMany: vi.fn(),
@@ -22,7 +23,12 @@ const mocks = vi.hoisted(() => ({
   credentials: vi.fn(),
 }));
 vi.mock("node:child_process", () => ({ spawn: mocks.spawn }));
-vi.mock("@/lib/db", () => ({ db: { agentChannelConnection: mocks } }));
+vi.mock("@/lib/db", () => ({
+  db: {
+    agentChannelConnection: mocks,
+    agent: { findFirst: mocks.agentFindFirst },
+  },
+}));
 vi.mock("@/lib/agents/channels/create-adapter", () => ({
   createChannelAdapter: mocks.create,
 }));
@@ -71,6 +77,17 @@ beforeEach(() => {
     platform: "weixin",
     credentials: {},
   });
+  mocks.agentFindFirst.mockImplementation(async ({ where }) =>
+    where.workspaceId === "workspace" &&
+    ["agent", "new-agent", "third-agent"].includes(where.id)
+      ? {
+          id: where.id,
+          workspaceId: "workspace",
+          runtimeKind: "pi-sdk",
+          currentRevisionVersion: 1,
+        }
+      : null,
+  );
   mocks.sandbox.mockResolvedValue({ id: "sandbox", agentId: "agent" });
   mocks.update.mockResolvedValue({});
   mocks.updateMany.mockResolvedValue({ count: 1 });
@@ -87,6 +104,25 @@ afterEach(async () => {
 });
 
 describe("native channel lifecycle", () => {
+  it.each([
+    null,
+    { runtimeKind: "hermes", currentRevisionVersion: 1 },
+    { runtimeKind: "pi-sdk", currentRevisionVersion: null },
+  ])("denies missing, historical, or unpublished Agents: %j", async (agent) => {
+    mocks.agentFindFirst.mockResolvedValueOnce(agent);
+    expect(await startAgentChannelRunner("workspace", "connection")).toEqual({
+      error: expect.stringContaining("Historical Agents are read-only"),
+    });
+    expect(mocks.agentFindFirst).toHaveBeenCalledWith({
+      where: { id: "agent", workspaceId: "workspace" },
+      select: { runtimeKind: true, currentRevisionVersion: true },
+    });
+    expect(mocks.credentials).not.toHaveBeenCalled();
+    expect(mocks.create).not.toHaveBeenCalled();
+    expect(mocks.run).not.toHaveBeenCalled();
+    expect(liveAgentChannelStatus("connection")).toBe("stopped");
+  });
+
   it("restores active channels without spawning Hermes or Python", async () => {
     mocks.findMany.mockResolvedValue([
       { id: "missing", workspaceId: "workspace", platform: "weixin" },

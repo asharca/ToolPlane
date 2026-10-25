@@ -5,6 +5,9 @@ import { McpToolExposureEditor } from "@/components/dashboard/McpToolExposureEdi
 
 vi.mock("@/lib/workspace/actions", () => ({
   updateMcpToolExposureAction: vi.fn(),
+  getMcpConnectionImpactAction: vi
+    .fn()
+    .mockResolvedValue({ agentIds: [], assistantIds: [] }),
 }));
 
 const tools = [

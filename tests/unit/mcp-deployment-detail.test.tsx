@@ -67,6 +67,8 @@ vi.mock("@/lib/db", () => ({
   db: {
     deployment: { findFirst: mocks.deployment },
     sandbox: { findFirst: mocks.sandboxFindFirst },
+    agent: { findMany: vi.fn().mockResolvedValue([]) },
+    chatAssistant: { findMany: vi.fn().mockResolvedValue([]) },
   },
 }));
 vi.mock("@/lib/process/supervisor", () => ({
@@ -98,6 +100,17 @@ vi.mock("@/lib/workspace/actions", () => ({
   removeDeploymentAction: vi.fn(),
   renameDeploymentAction: vi.fn(),
   cloneDeploymentAction: vi.fn(),
+  getMcpConnectionImpactAction: vi
+    .fn()
+    .mockResolvedValue({ agentIds: [], assistantIds: [] }),
+  approveUnsafeRemoteMcpHttpAction: vi.fn(),
+}));
+vi.mock("@/components/dashboard/McpConnectionFlow", () => ({
+  McpConnectionFlow: ({ targets }: { targets: unknown[] }) => (
+    <section aria-label="Connection authorization">
+      {targets.length} eligible targets
+    </section>
+  ),
 }));
 vi.mock("@/components/dashboard/StatusBadge", () => ({
   StatusBadge: ({ status }: { status: string }) => <span>{status}</span>,

@@ -59,7 +59,8 @@ export type A2AConsoleView = {
     mine: boolean;
   }>;
   canManage: boolean;
-  local: { enabled: boolean; supported: boolean; ready: boolean };
+  collaboration: { inboundEnabled: boolean; outboundEnabled: boolean };
+  local: { supported: boolean; ready: boolean };
   endpoint: null | {
     id: string;
     enabled: boolean;

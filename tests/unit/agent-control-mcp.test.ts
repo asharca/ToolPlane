@@ -132,7 +132,7 @@ describe("Agent Control MCP protocol", () => {
     const response = await POST(
       call("create_agent", {
         name: "Researcher",
-        runtime: "pi",
+        runtime: "pi-sdk",
         providerId: "provider-1",
         model: "gpt-test",
       }),
@@ -141,7 +141,7 @@ describe("Agent Control MCP protocol", () => {
 
     expect(mocks.createAgent).toHaveBeenCalledWith("workspace-1", "acme", {
       name: "Researcher",
-      runtime: "pi",
+      runtime: "pi-sdk",
       systemPrompt: undefined,
       providerId: "provider-1",
       providerIds: [],
@@ -161,6 +161,28 @@ describe("Agent Control MCP protocol", () => {
       },
     });
   });
+
+  it.each([undefined, "pi", "hermes", "claude-code", "dsh", "hermes-rpc"])(
+    "rejects missing or retired creation runtime %s without dispatching",
+    async (runtime) => {
+      const response = await POST(
+        call("create_agent", {
+          name: "Researcher",
+          ...(runtime === undefined ? {} : { runtime }),
+          providerId: "provider-1",
+          model: "gpt-test",
+        }),
+        routeParams,
+      );
+      await expect(response.json()).resolves.toMatchObject({
+        result: {
+          isError: true,
+          structuredContent: { error: { code: "invalid_arguments" } },
+        },
+      });
+      expect(mocks.createAgent).not.toHaveBeenCalled();
+    },
+  );
 
   it("returns recoverable tool errors for invalid input and domain failures", async () => {
     const invalid = await POST(

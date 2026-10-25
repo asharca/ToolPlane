@@ -8,6 +8,8 @@ import {
 
 const mocks = vi.hoisted(() => ({
   conversationFindFirst: vi.fn(),
+  agent: vi.fn(),
+  pinned: vi.fn(),
   conversationUpdateMany: vi.fn(),
   workSessionUpdateMany: vi.fn(),
   transaction: vi.fn(),
@@ -38,9 +40,29 @@ vi.mock("@/lib/agents/native", () => ({
   runNativeAgent: mocks.runNativeAgent,
   uiMessagesToPi: mocks.uiMessagesToPi,
 }));
+vi.mock("@/lib/agents/queries", () => ({ getAgentForRun: mocks.agent }));
+vi.mock("@/lib/agents/revisions", () => ({ resolvePinnedAgent: mocks.pinned }));
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.agent.mockResolvedValue({
+    id: "agent-1",
+    workspaceId: "workspace-1",
+    runtimeKind: "pi-sdk",
+    retiredAt: null,
+    model: "mutated-current-model",
+  });
+  mocks.pinned.mockResolvedValue({
+    model: "gpt-5",
+    provider: {
+      id: "provider-pinned",
+      name: "Pinned",
+      format: "openai",
+      baseUrl: "https://api.example.com",
+      apiKey: "secret",
+      models: ["gpt-5"],
+    },
+  });
   mocks.transaction.mockImplementation(async (callback) =>
     callback({
       conversation: { updateMany: mocks.conversationUpdateMany },
@@ -52,6 +74,8 @@ beforeEach(() => {
     title: "Plan our launch",
     publicApiConversation: null,
     workSession: null,
+    agentRevisionId: "session-revision",
+    legacyRevisionUnresolved: false,
     agent: {
       model: "gpt-5",
       provider: {
@@ -138,38 +162,36 @@ describe("conversationTitleFromParts", () => {
     );
   });
 
-  it("prefers the workspace title model over the default and Agent models", async () => {
+  it("ignores mutable workspace and Agent model fallbacks in favor of the persisted session pin", async () => {
     const conversation = await mocks.conversationFindFirst();
     mocks.conversationFindFirst.mockResolvedValueOnce({
       ...conversation,
       agent: {
         ...conversation.agent,
+        model: "mutated-model",
         workspace: {
-          defaultModelProviderId: "provider-default",
-          defaultModel: "gpt-default",
-          titleModelProviderId: "provider-title",
-          titleModel: "gpt-title",
+          titleModelProviderId: "different-provider",
+          titleModel: "different-model",
         },
       },
     });
-    mocks.modelProviderFindFirst.mockResolvedValueOnce({
-      ...conversation.agent.provider,
-      id: "provider-title",
-      models: ["gpt-title"],
-    });
-
     await generateConsoleConversationTitle(
       "workspace-1",
       "agent-1",
       "conversation-1",
     );
-
-    expect(mocks.modelProviderFindFirst).toHaveBeenCalledWith({
-      where: { id: "provider-title", workspaceId: "workspace-1" },
-    });
-    expect(mocks.runNativeAgent).toHaveBeenCalledWith(
-      expect.objectContaining({ modelId: "gpt-title" }),
+    expect(mocks.pinned).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "mutated-current-model" }),
+      "session-revision",
     );
+    expect(mocks.runNativeAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modelId: "gpt-5",
+        provider: expect.objectContaining({ id: "provider-pinned" }),
+        tools: {},
+      }),
+    );
+    expect(mocks.modelProviderFindFirst).not.toHaveBeenCalled();
   });
 
   it("renames a Work session and its conversation after the first exchange", async () => {
@@ -209,37 +231,23 @@ describe("conversationTitleFromParts", () => {
     });
   });
 
-  it("falls back from an unavailable title model to the workspace default model", async () => {
+  it("does not fall back to mutable configuration for an unpinned historical session", async () => {
     const conversation = await mocks.conversationFindFirst();
     mocks.conversationFindFirst.mockResolvedValueOnce({
       ...conversation,
-      agent: {
-        ...conversation.agent,
-        workspace: {
-          defaultModelProviderId: "provider-default",
-          defaultModel: "gpt-default",
-          titleModelProviderId: "provider-missing",
-          titleModel: "gpt-missing",
-        },
-      },
+      agentRevisionId: null,
+      legacyRevisionUnresolved: true,
     });
-    mocks.modelProviderFindFirst
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({
-        ...conversation.agent.provider,
-        id: "provider-default",
-        models: ["gpt-default"],
-      });
-
-    await generateConsoleConversationTitle(
-      "workspace-1",
-      "agent-1",
-      "conversation-1",
-    );
-
-    expect(mocks.runNativeAgent).toHaveBeenCalledWith(
-      expect.objectContaining({ modelId: "gpt-default" }),
-    );
+    await expect(
+      generateConsoleConversationTitle(
+        "workspace-1",
+        "agent-1",
+        "conversation-1",
+      ),
+    ).resolves.toBeNull();
+    expect(mocks.pinned).not.toHaveBeenCalled();
+    expect(mocks.runNativeAgent).not.toHaveBeenCalled();
+    expect(mocks.conversationUpdateMany).not.toHaveBeenCalled();
   });
 
   it("does not overwrite a title that was manually changed", async () => {

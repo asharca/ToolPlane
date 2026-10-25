@@ -96,6 +96,16 @@ describe("Pi catalog action security and transitions", () => {
       expect(m.create).not.toHaveBeenCalled();
     },
   );
+  it("requires executable-code acknowledgement before official installation side effects", async () => {
+    expect(
+      await piCatalogAction(
+        {},
+        form({ operation: "install-official", name: "pkg", version: "1.2.3" }),
+      ),
+    ).toEqual({ error: "pi_package_executable_confirmation_required" });
+    expect(m.install).not.toHaveBeenCalled();
+    expect(m.refresh).not.toHaveBeenCalled();
+  });
   it("allows ordinary members to install an official package without source-administration rights", async () => {
     m.workspace.mockResolvedValue({ id: "w", slug: "team", ownerId: "other" });
     expect(
@@ -103,6 +113,7 @@ describe("Pi catalog action security and transitions", () => {
         {},
         form({
           operation: "install-official",
+          confirmExecutableCode: "on",
           name: " pkg ",
           version: " 1.2.3 ",
         }),
@@ -117,8 +128,8 @@ describe("Pi catalog action security and transitions", () => {
     expect(m.member).not.toHaveBeenCalled();
     expect(m.refresh.mock.calls.map(([path]) => path)).toEqual([
       "/app/team/market/pi-packages",
-      "/app/team/toolkits/pi-packages",
-      "/app/team/toolkits/pi-packages/sources",
+      "/app/team/market/compose",
+      "/app/team/market/sources",
       "/app/team/market/installed",
     ]);
   });
@@ -293,6 +304,7 @@ describe("Pi catalog action security and transitions", () => {
         name: "Package",
         slug: "package",
         summary: "Summary",
+        sourceDigest: "a".repeat(64),
       });
       data.append("categoryIds", "c1");
       data.append("categoryIds", "c2");
@@ -300,21 +312,24 @@ describe("Pi catalog action security and transitions", () => {
         ok: true,
         listingId: "l",
       });
-      expect(m.publish).toHaveBeenCalledWith({
-        workspaceId: "w",
-        publishedById: "u",
-        source: "npm:pkg",
-        sourceId: sourceId || undefined,
-        listingId: undefined,
-        visibility: "private",
-        listing: {
-          name: "Package",
-          slug: "package",
-          summary: "Summary",
-          tags: [],
-        },
-        categoryIds: ["c1", "c2"],
-      });
+      expect(m.publish).toHaveBeenCalledWith(
+        expect.objectContaining({
+          workspaceId: "w",
+          publishedById: "u",
+          source: "npm:pkg",
+          sourceId: sourceId || undefined,
+          listingId: undefined,
+          visibility: "private",
+          confirmExecutableCode: false,
+          listing: {
+            name: "Package",
+            slug: "package",
+            summary: "Summary",
+            tags: [],
+          },
+          categoryIds: ["c1", "c2"],
+        }),
+      );
     },
   );
   it.each([
@@ -342,24 +357,28 @@ describe("Pi catalog action security and transitions", () => {
             listingId: "existing",
             source: "npm:attacker",
             name: "Attacker",
+            sourceDigest: "b".repeat(64),
           }),
         ),
       ).toMatchObject({ ok: true, listingId: "l" });
-      expect(m.publish).toHaveBeenCalledWith({
-        workspaceId: "w",
-        publishedById: "u",
-        source: "npm:original",
-        sourceId: sourceId ?? undefined,
-        listingId: "existing",
-        visibility: visibility === "public" ? "public" : "private",
-        listing: {
-          name: "Original",
-          slug: "original",
-          summary: summary ?? "",
-          tags: ["tag"],
-        },
-        categoryIds: ["c"],
-      });
+      expect(m.publish).toHaveBeenCalledWith(
+        expect.objectContaining({
+          workspaceId: "w",
+          publishedById: "u",
+          source: "npm:original",
+          sourceId: sourceId ?? undefined,
+          listingId: "existing",
+          visibility: visibility === "public" ? "public" : "private",
+          confirmExecutableCode: false,
+          listing: {
+            name: "Original",
+            slug: "original",
+            summary: summary ?? "",
+            tags: ["tag"],
+          },
+          categoryIds: ["c"],
+        }),
+      );
     },
   );
   it("rejects captures without an owned listing or tracking record", async () => {
@@ -381,7 +400,10 @@ describe("Pi catalog action security and transitions", () => {
   ])("exposes only bounded machine-readable errors", async (error) => {
     m.install.mockRejectedValue(error);
     expect(
-      await piCatalogAction({}, form({ operation: "install-official" })),
+      await piCatalogAction(
+        {},
+        form({ operation: "install-official", confirmExecutableCode: "on" }),
+      ),
     ).toEqual({
       error:
         error instanceof MarketError && error.code === "source_not_found"

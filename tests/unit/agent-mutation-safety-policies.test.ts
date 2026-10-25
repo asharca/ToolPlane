@@ -5,13 +5,9 @@ import {
   updateProviderModel,
   deleteProviderModel,
   updateAgentModelSelection,
-  bindHermesAgentModelProvider,
-  setHermesRuntimeEnv,
-  setHermesConversationSelection,
   updateAgent,
 } from "@/lib/agents/mutations";
 import { defaultProviderModel } from "@/lib/agents/model-catalog";
-import { hermesProviderName } from "@/lib/agents/hermes/config";
 import type { AgentConfig } from "@/lib/agents/mutations";
 
 const tx = vi.hoisted(() => ({
@@ -68,11 +64,6 @@ const provider = {
   baseUrl: "https://models.test/v1",
   models: ["model", "other"],
 };
-const selection = {
-  profile: "research",
-  provider: "custom:provider",
-  model: "model",
-};
 
 describe("round two agent mutation safety policies", () => {
   beforeEach(() => {
@@ -81,8 +72,8 @@ describe("round two agent mutation safety policies", () => {
     tx.modelProvider.findUnique.mockResolvedValue(provider);
     tx.agent.findFirst.mockResolvedValue({
       id: "agent",
-      runtimeKind: "pi",
-      modelProviders: [],
+      runtimeKind: "pi-sdk",
+      retiredAt: null,
     });
     tx.sandbox.updateMany.mockResolvedValue({ count: 1 });
     tx.deployment.updateMany.mockResolvedValue({ count: 1 });
@@ -181,21 +172,18 @@ describe("round two agent mutation safety policies", () => {
     },
   );
 
-  it.each([
-    "agent",
-    "chatAssistant",
-    "knowledgeBase",
-    "workspace",
-    "conversation",
-  ] as const)("protects model references held by %s", async (resource) => {
-    tx[resource].findFirst.mockResolvedValue(null);
-    tx.agent.findFirst.mockResolvedValue(null);
-    tx[resource].findFirst.mockResolvedValue({ id: "in-use" });
-    await expect(
-      deleteProviderModel("workspace", "provider", "model"),
-    ).rejects.toThrow("in use");
-    expect(tx.providerModel.deleteMany).not.toHaveBeenCalled();
-  });
+  it.each(["agent", "chatAssistant", "knowledgeBase", "workspace"] as const)(
+    "protects model references held by %s",
+    async (resource) => {
+      tx[resource].findFirst.mockResolvedValue(null);
+      tx.agent.findFirst.mockResolvedValue(null);
+      tx[resource].findFirst.mockResolvedValue({ id: "in-use" });
+      await expect(
+        deleteProviderModel("workspace", "provider", "model"),
+      ).rejects.toThrow("in use");
+      expect(tx.providerModel.deleteMany).not.toHaveBeenCalled();
+    },
+  );
 
   it("deletes an unused model and removes only its catalog identifier", async () => {
     tx.agent.findFirst.mockResolvedValue(null);
@@ -223,12 +211,16 @@ describe("round two agent mutation safety policies", () => {
   });
 
   it.each([
-    ["pi", "missing", "openai", "Unknown or unavailable model"],
-    ["claude-code", "model", "unsupported-format", "does not support"],
+    ["pi-sdk", "missing", "openai", "Unknown or unavailable model"],
+    ["pi-sdk", "model", "unsupported-format", "does not support"],
   ])(
     "rejects incompatible model/runtime %s/%s/%s",
     async (runtimeKind, model, format, error) => {
-      tx.agent.findFirst.mockResolvedValue({ id: "agent", runtimeKind });
+      tx.agent.findFirst.mockResolvedValue({
+        id: "agent",
+        runtimeKind,
+        retiredAt: null,
+      });
       tx.$queryRaw.mockResolvedValue([{ ...provider, format }]);
       await expect(
         updateAgentModelSelection("workspace", "agent", ["provider"], model),
@@ -245,305 +237,43 @@ describe("round two agent mutation safety policies", () => {
     expect(tx.$queryRaw).not.toHaveBeenCalled();
   });
 
-  it("replaces Hermes providers with unique accessible bindings and clears conversations tied to removals", async () => {
+  it.each(["hermes", "pi", "claude-code", "dsh", "hermes-rpc"])(
+    "rejects model/config changes for historical runtime %s without changing history",
+    async (runtimeKind) => {
+      tx.agent.findFirst.mockResolvedValue({
+        id: "agent",
+        runtimeKind,
+        retiredAt: null,
+      });
+      await expect(
+        updateAgentModelSelection("workspace", "agent", ["provider"], "model"),
+      ).rejects.toThrow("Historical Agents are read-only");
+      await expect(
+        updateAgent("workspace", "agent", {
+          name: "Changed",
+          systemPrompt: null,
+          providerId: null,
+          model: null,
+          maxSteps: 8,
+        }),
+      ).rejects.toThrow("Historical Agents are read-only");
+      expect(tx.agent.updateMany).not.toHaveBeenCalled();
+      expect(tx.conversation.updateMany).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rejects configuration changes for a retired native Agent", async () => {
     tx.agent.findFirst.mockResolvedValue({
       id: "agent",
-      runtimeKind: "hermes",
-      modelProviders: [{ providerId: "old" }, { providerId: "provider" }],
-    });
-    tx.$queryRaw.mockImplementation(async (_sql, id) =>
-      id === "foreign" ? [] : [provider],
-    );
-    await expect(
-      updateAgentModelSelection(
-        "workspace",
-        "agent",
-        ["provider", "", "provider", "foreign"],
-        "ignored",
-      ),
-    ).resolves.toBe("hermes");
-    expect(tx.agentModelProvider.createMany).toHaveBeenCalledWith({
-      data: [{ agentId: "agent", providerId: "provider" }],
-    });
-    expect(tx.conversation.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: { hermesProvider: null, hermesModel: null },
-      }),
-    );
-  });
-
-  it("does not reset conversations when Hermes provider bindings are retained", async () => {
-    tx.agent.findFirst.mockResolvedValue({
-      id: "agent",
-      runtimeKind: "hermes",
-      modelProviders: [{ providerId: "provider" }],
-    });
-    await updateAgentModelSelection("workspace", "agent", ["provider"], null);
-    expect(tx.conversation.updateMany).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    "missing-agent",
-    "missing-alias",
-    "provider-deleted",
-    "model-removed",
-  ])("rejects a stale Hermes model binding: %s", async (condition) => {
-    tx.modelProvider.findMany.mockResolvedValue([{ id: "provider" }]);
-    tx.modelProvider.findFirst.mockResolvedValue({ id: "provider" });
-    if (condition === "missing-agent")
-      tx.agent.findFirst.mockResolvedValue(null);
-    if (condition === "missing-alias")
-      tx.modelProvider.findMany.mockResolvedValue([]);
-    if (condition === "provider-deleted") tx.$queryRaw.mockResolvedValue([]);
-    if (condition === "model-removed")
-      tx.modelProvider.findFirst.mockResolvedValue(null);
-    await expect(
-      bindHermesAgentModelProvider(
-        "workspace",
-        "agent",
-        `custom:${hermesProviderName("provider")}`,
-        "model",
-      ),
-    ).rejects.toThrow(
-      condition === "missing-agent"
-        ? "Hermes agent not found"
-        : "not available",
-    );
-    expect(tx.agentModelProvider.createMany).not.toHaveBeenCalled();
-  });
-
-  it("binds a valid bare Hermes provider alias without duplicating existing links", async () => {
-    tx.modelProvider.findMany.mockResolvedValue([{ id: "provider" }]);
-    tx.modelProvider.findFirst.mockResolvedValue({ id: "provider" });
-    await expect(
-      bindHermesAgentModelProvider(
-        "workspace",
-        "agent",
-        hermesProviderName("provider"),
-        "model",
-      ),
-    ).resolves.toBe(hermesProviderName("provider"));
-    expect(tx.agentModelProvider.createMany).toHaveBeenCalledWith({
-      data: [{ agentId: "agent", providerId: "provider" }],
-      skipDuplicates: true,
-    });
-  });
-
-  it.each([null, { sandbox: { workspaceId: "foreign" } }])(
-    "does not project environment into missing or foreign runtime %j",
-    async (runtime) => {
-      tx.agentRuntime.findFirst.mockResolvedValue(runtime);
-      await expect(
-        setHermesRuntimeEnv("workspace", "agent", { CUSTOM: "value" }),
-      ).resolves.toBe(false);
-      expect(tx.sandbox.updateMany).not.toHaveBeenCalled();
-    },
-  );
-
-  it.each([null, [], "invalid", { custom: true }])(
-    "projects environment while preserving only object install config %j",
-    async (installCfg) => {
-      tx.agentRuntime.findFirst.mockResolvedValue({
-        sandbox: {
-          id: "sandbox",
-          workspaceId: "workspace",
-          deploymentId: "deployment",
-          config: { owner: "agent", env: { OLD: "old" } },
-          deployment: { installCfg },
-        },
-      });
-      await expect(
-        setHermesRuntimeEnv("workspace", "agent", { CUSTOM: "new" }),
-      ).resolves.toBe(true);
-      expect(tx.deployment.updateMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: {
-            installCfg: {
-              ...(installCfg &&
-              typeof installCfg === "object" &&
-              !Array.isArray(installCfg)
-                ? installCfg
-                : {}),
-              env: { CUSTOM: "new" },
-            },
-          },
-        }),
-      );
-    },
-  );
-
-  it.each(["sandbox", "deployment"] as const)(
-    "rejects incomplete environment projection into %s",
-    async (resource) => {
-      tx.agentRuntime.findFirst.mockResolvedValue({
-        sandbox: {
-          id: "sandbox",
-          workspaceId: "workspace",
-          deploymentId: "deployment",
-          config: {},
-          deployment: { installCfg: {} },
-        },
-      });
-      tx[resource].updateMany.mockResolvedValue({ count: 0 });
-      await expect(
-        setHermesRuntimeEnv("workspace", "agent", {}),
-      ).rejects.toThrow("environment projection");
-    },
-  );
-
-  it.each([
-    { profile: "../escape" },
-    { provider: null },
-    { model: null },
-    { provider: "" },
-    { provider: "x".repeat(129) },
-    { model: "" },
-    { model: "x".repeat(513) },
-  ])(
-    "rejects invalid Hermes selection %j before accessing the database",
-    async (override) => {
-      await expect(
-        setHermesConversationSelection("workspace", "agent", null, {
-          ...selection,
-          ...override,
-        }),
-      ).resolves.toBeNull();
-      expect(tx.agent.findFirst).not.toHaveBeenCalled();
-    },
-  );
-
-  it.each([
-    null,
-    { id: "agent", publicRuntimeAllocation: { id: "allocation" } },
-  ])(
-    "does not edit selection for a missing or endpoint-owned agent %j",
-    async (agent) => {
-      tx.agent.findFirst.mockResolvedValue(agent);
-      await expect(
-        setHermesConversationSelection("workspace", "agent", null, selection),
-      ).resolves.toBeNull();
-      expect(tx.conversation.create).not.toHaveBeenCalled();
-    },
-  );
-
-  it.each([
-    null,
-    { title: "msg:telegram" },
-    { publicApiConversation: { id: "api" } },
-    { workSession: { status: "running" } },
-  ])("protects non-console or running conversations %j", async (override) => {
-    tx.conversation.findFirst.mockResolvedValue(
-      override && {
-        id: "conversation",
-        title: null,
-        _count: { messages: 0 },
-        ...override,
-      },
-    );
-    await expect(
-      setHermesConversationSelection(
-        "workspace",
-        "agent",
-        "conversation",
-        selection,
-      ),
-    ).resolves.toBeNull();
-    expect(tx.conversation.update).not.toHaveBeenCalled();
-  });
-
-  it("forks a populated conversation when its profile changes", async () => {
-    tx.conversation.findFirst.mockResolvedValue({
-      id: "conversation",
-      hermesProfile: null,
-      _count: { messages: 1 },
+      runtimeKind: "pi-sdk",
+      retiredAt: new Date(),
     });
     await expect(
-      setHermesConversationSelection(
-        "workspace",
-        "agent",
-        "conversation",
-        selection,
-      ),
-    ).resolves.toEqual({ conversationId: "new-conversation", created: true });
-    expect(tx.conversation.update).toHaveBeenCalledWith({
-      where: { id: "new-conversation" },
-      data: {
-        runtimeSessionId: "new-conversation",
-        runtimeSessionKey: "agent:agent:console:new-conversation",
-      },
-    });
+      updateAgentModelSelection("workspace", "agent", ["provider"], "model"),
+    ).rejects.toThrow("Historical Agents are read-only");
+    expect(tx.agent.updateMany).not.toHaveBeenCalled();
   });
 
-  it.each(["idle", "waiting_user", "completed", "failed"])(
-    "updates editable work conversation in place for status %s",
-    async (status) => {
-      tx.conversation.findFirst.mockResolvedValue({
-        id: "conversation",
-        hermesProfile: null,
-        _count: { messages: 9 },
-        workSession: { status },
-      });
-      await expect(
-        setHermesConversationSelection(
-          "workspace",
-          "agent",
-          "conversation",
-          selection,
-        ),
-      ).resolves.toEqual({ conversationId: "conversation", created: false });
-      expect(tx.conversation.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
-            hermesProfile: "research",
-            runtimeSessionId: "conversation",
-          }),
-        }),
-      );
-      expect(tx.conversation.create).not.toHaveBeenCalled();
-    },
-  );
-
-  it("preserves session identity when only the model selection changes", async () => {
-    tx.conversation.findFirst.mockResolvedValue({
-      id: "conversation",
-      hermesProfile: "research",
-      _count: { messages: 9 },
-    });
-    await expect(
-      setHermesConversationSelection(
-        "workspace",
-        "agent",
-        "conversation",
-        selection,
-      ),
-    ).resolves.toEqual({ conversationId: "conversation", created: false });
-    expect(tx.conversation.update).toHaveBeenCalledWith({
-      where: { id: "conversation" },
-      data: {
-        hermesProfile: "research",
-        hermesProvider: "custom:provider",
-        hermesModel: "model",
-      },
-    });
-  });
-
-  it("creates a default-profile conversation with null native overrides", async () => {
-    await expect(
-      setHermesConversationSelection("workspace", "agent", null, {
-        profile: "default",
-        provider: null,
-        model: null,
-      }),
-    ).resolves.toEqual({ conversationId: "new-conversation", created: true });
-    expect(tx.conversation.create).toHaveBeenCalledWith({
-      data: {
-        agentId: "agent",
-        hermesProfile: null,
-        hermesProvider: null,
-        hermesModel: null,
-      },
-    });
-  });
   describe("package binding transitions", () => {
     const cfg: AgentConfig = {
       name: "Agent",
@@ -557,7 +287,7 @@ describe("round two agent mutation safety policies", () => {
       tx.agent.findFirst.mockResolvedValue({
         id: "agent",
         runtimeKind: "pi-sdk",
-        modelProviders: [],
+        retiredAt: null,
       });
       tx.marketInstall.findFirst.mockResolvedValue({
         id: "install",
@@ -599,14 +329,14 @@ describe("round two agent mutation safety policies", () => {
       },
     );
 
-    it("refuses Pi packages on a runtime without package support", async () => {
+    it("refuses package edits on a historical runtime", async () => {
       tx.agent.findFirst.mockResolvedValue({
         id: "agent",
         runtimeKind: "pi",
-        modelProviders: [],
+        retiredAt: null,
       });
       await expect(updateAgent("workspace", "agent", cfg)).rejects.toThrow(
-        "pi_packages_runtime_unsupported",
+        "Historical Agents are read-only",
       );
     });
 
@@ -675,14 +405,16 @@ describe("round two agent mutation safety policies", () => {
       },
     );
 
-    it("requires first-time package bindings to use the current approved release", async () => {
-      await expect(
-        updateAgent("workspace", "agent", {
-          ...cfg,
-          piPackages: [{ marketInstallId: "install", releaseId: "older" }],
-        }),
-      ).rejects.toThrow("pi_package_release_not_current");
-      expect(tx.agentPiPackage.deleteMany).not.toHaveBeenCalled();
+    it("accepts an explicitly selected approved historical default", async () => {
+      await updateAgent("workspace", "agent", {
+        ...cfg,
+        piPackages: [{ marketInstallId: "install", releaseId: "older" }],
+      });
+      expect(tx.agentPiPackage.createMany).toHaveBeenCalledWith({
+        data: [
+          { agentId: "agent", marketInstallId: "install", releaseId: "older" },
+        ],
+      });
     });
 
     it("retains an already-bound approved historical release without rewriting it", async () => {

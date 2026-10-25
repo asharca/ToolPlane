@@ -71,7 +71,7 @@ describe("remote MCP spawn configuration security", () => {
         headerEnv: { "x-header": "TOKEN" },
         env: { TOKEN: "value\r\ninjected: yes" },
       },
-      "invalid value",
+      "Remote MCP credential has an invalid header value.",
     ],
     [
       {
@@ -79,7 +79,7 @@ describe("remote MCP spawn configuration security", () => {
         headerEnv: { "x-header": "TOKEN" },
         env: { TOKEN: "x".repeat(8193) },
       },
-      "invalid value",
+      "Remote MCP credential has an invalid header value.",
     ],
   ])(
     "rejects invalid remote credentials before launch",
@@ -99,6 +99,18 @@ describe("remote MCP spawn configuration security", () => {
   ])("rejects unsafe remote endpoint %s", (sourceRef) => {
     expect(() => resolveSpawnSpec({ ...deployment, sourceRef })).toThrow();
   });
+  it.each([undefined, false, "true", 1])(
+    "rejects plaintext HTTP without boolean approval (%s)",
+    (allowUnsafeHttp) => {
+      expect(() =>
+        resolveSpawnSpec({
+          ...deployment,
+          sourceRef: "http://mcp.example.test/mcp",
+          installCfg: { allowUnsafeHttp },
+        }),
+      ).toThrow("Remote MCP HTTP requires explicit plaintext-risk approval.");
+    },
+  );
   it("supports boundary timeouts and keeps remote credentials out of the endpoint", () => {
     for (const timeoutMs of [1000, 600000]) {
       expect(
@@ -119,6 +131,7 @@ describe("remote MCP spawn configuration security", () => {
         transport: "sse",
         timeoutMs,
         headers: { "X-API-Key": "private-value" },
+        allowUnsafeHttp: false,
       });
     }
   });

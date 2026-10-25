@@ -104,7 +104,11 @@ export function AgentA2ATaskMonitor({
         if (root) notify.current(root.state);
         done =
           value.nodes.length > 0 &&
-          value.nodes.every((node) => terminal(node.state));
+          value.nodes.every(
+            (node) =>
+              node.remoteOutcome !== "unknown" &&
+              terminal(node.remoteState ?? node.state),
+          );
       } catch {
         if (!stopped && (!controller.signal.aborted || timedOut)) {
           failures++;
@@ -195,6 +199,17 @@ export function AgentA2ATaskMonitor({
           {t("restrictedTasks")}
         </div>
       ) : null}
+      {tree?.nodes.some(
+        (node) =>
+          node.remoteOutcome === "unknown" ||
+          (node.remoteOutcome === "observed" &&
+            node.cancelRequested &&
+            !terminal(node.remoteState ?? node.state)),
+      ) ? (
+        <p role="status" className="text-sm text-muted-foreground">
+          {t("remoteMayContinue")}
+        </p>
+      ) : null}
       {!tree && !failed ? <p role="status">{t("loading")}</p> : null}
       <ul className="space-y-2">
         {tree?.nodes.map((node) => (
@@ -219,7 +234,21 @@ export function AgentA2ATaskMonitor({
                 </code>
               </span>
               <span className="flex flex-wrap items-center gap-2 text-xs">
-                <AnimatedBadge>{node.state}</AnimatedBadge>
+                <AnimatedBadge>
+                  {node.remoteOutcome === "unknown"
+                    ? t("remoteOutcomeUnknown")
+                    : (node.remoteState ?? node.state)}
+                </AnimatedBadge>
+                {node.authorizedReservation ? (
+                  <span>
+                    {t("authorizedReservation", {
+                      currency: node.authorizedReservation.currency,
+                      reserved:
+                        node.authorizedReservation.reservedMicros / 1_000_000,
+                      limit: node.authorizedReservation.limitMicros / 1_000_000,
+                    })}
+                  </span>
+                ) : null}
                 {node.pendingApprovals ? (
                   <AnimatedBadge>
                     {t("approvals.pending", { count: node.pendingApprovals })}
@@ -233,7 +262,10 @@ export function AgentA2ATaskMonitor({
                       : `phase_${node.phase}`,
                   )}
                 </span>
-                {node.cancelRequested ? (
+                {node.remoteOutcome === "unknown" && node.cancelRequested ? (
+                  <span>{t("cancellationUnknown")}</span>
+                ) : node.cancelRequested &&
+                  !terminal(node.remoteState ?? node.state) ? (
                   <span>{t("cancellationPending")}</span>
                 ) : null}
               </span>

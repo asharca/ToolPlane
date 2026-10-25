@@ -5,10 +5,9 @@ import {
   MarketListingManagement,
 } from "@/components/admin/MarketCatalogManagement";
 
-const mutations = vi.hoisted(() => ({ listing: vi.fn(), toolkit: vi.fn() }));
+const mutations = vi.hoisted(() => ({ listing: vi.fn() }));
 vi.mock("@/lib/admin/market-catalog-actions", () => ({
   updateMarketListingAdminAction: mutations.listing,
-  updatePublicToolkitAdminAction: mutations.toolkit,
 }));
 vi.mock("@/components/dashboard/SubmitButton", () => ({
   SubmitButton: ({ children }: { children: React.ReactNode }) => (
@@ -129,10 +128,7 @@ describe("market catalog administration", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("surfaces a rejected public toolkit moderation action", async () => {
-    mutations.toolkit.mockResolvedValueOnce({
-      error: "Toolkit no longer public",
-    });
+  it("keeps historical Toolkit records read-only with audit access", () => {
     render(
       <MarketCatalogManagement
         categories={[]}
@@ -158,10 +154,44 @@ describe("market catalog administration", () => {
       />,
     );
     fireEvent.click(screen.getByText("Legacy toolkit"));
-    fireEvent.click(screen.getByRole("checkbox", { name: "Enabled" }));
-    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Toolkit no longer public",
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Save changes" }),
+    ).not.toBeInTheDocument();
+    const audit = screen.getByRole("link", { name: "Change audit" });
+    const url = new URL(
+      audit.getAttribute("href") ?? "",
+      "https://console.example",
     );
+    expect(url.searchParams.get("targetId")).toBe("toolkit");
+    expect(url.searchParams.get("targetType")).toBe("toolkit");
+  });
+
+  it("does not expose mutation or publication controls for historical Toolkit listings", () => {
+    render(
+      <MarketListingManagement
+        categories={[]}
+        listings={[{ ...listing, kind: "toolkit" }]}
+        page={1}
+        pageSize={10}
+        total={1}
+        q=""
+      />,
+    );
+    fireEvent.click(screen.getByText("Research"));
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Save changes" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: /awaits review/i }),
+    ).not.toBeInTheDocument();
+    const audit = screen.getByRole("link", { name: "Change audit" });
+    expect(
+      new URL(
+        audit.getAttribute("href") ?? "",
+        "https://console.example",
+      ).searchParams.get("targetId"),
+    ).toBe("listing-1");
   });
 });

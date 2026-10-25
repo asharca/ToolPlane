@@ -17,7 +17,8 @@ import {
   publishMcpRelease,
   publishPiPackageRelease,
   publishAssembledPiPackageRelease,
-  publishToolkitRelease,
+  previewPiPackageSource,
+  type PiPackageSourcePreview,
   updateMarketInstall,
 } from "@/lib/market/resources";
 import {
@@ -25,6 +26,14 @@ import {
   withdrawMarketRelease,
 } from "@/lib/market/publisher-management";
 import { getWorkspaceForUser } from "@/lib/workspace/queries";
+import { readPiAssemblyFormData } from "@/lib/market/pi-package-assembly";
+import { previewAssembledPiPackage } from "@/lib/market/resources";
+import type { PiAssemblyPreview } from "@/lib/market/resources";
+export type PiAssemblyPreviewState = {
+  preview?: PiAssemblyPreview;
+  error?: string;
+  message?: string;
+};
 
 export type MarketActionState = {
   ok?: boolean;
@@ -149,31 +158,40 @@ export async function publishMcpReleaseAction(
   }
 }
 
-export async function publishToolkitReleaseAction(
-  _previous: MarketActionState,
+export type PiPackageSourcePreviewState = {
+  ok?: boolean;
+  error?: string;
+  preview?: PiPackageSourcePreview;
+};
+
+export async function previewPiPackageSourceAction(
+  _previous: PiPackageSourcePreviewState,
   formData: FormData,
-): Promise<MarketActionState> {
-  const workspaceSlug = String(formData.get("workspace") ?? "");
-  const toolkitId = String(formData.get("toolkitId") ?? "");
-  const ctx = await actionContext(workspaceSlug);
-  if (!ctx || !toolkitId) return { error: "not_authorized" };
+): Promise<PiPackageSourcePreviewState> {
+  const ctx = await actionContext(String(formData.get("workspace") ?? ""));
+  if (!ctx) return { error: "not_authorized" };
   try {
-    const result = await publishToolkitRelease({
+    const sourceType = formData.get("sourceType");
+    const archive = formData.get("archive");
+    if (sourceType === "zip" && !(archive instanceof File))
+      return { error: "source_invalid" };
+    if (sourceType === "release") return { error: "source_invalid" };
+    const preview = await previewPiPackageSource({
       workspaceId: ctx.workspace.id,
-      toolkitId,
       publishedById: ctx.user.id,
-      categoryIds: categoryIds(formData),
-      listing: {
-        slug: String(formData.get("slug") ?? ""),
-        name: String(formData.get("name") ?? ""),
-        summary: String(formData.get("summary") ?? ""),
-        tags: tags(formData.get("tags")),
-      },
-      releaseNotes: String(formData.get("releaseNotes") ?? ""),
+      ...(sourceType === "zip" && archive instanceof File
+        ? {
+            sourceType: "zip" as const,
+            archive,
+            confirmExecutableCode:
+              formData.get("confirmExecutableCode") === "on",
+          }
+        : {
+            source: String(formData.get("source") ?? ""),
+            sourceId: String(formData.get("sourceId") ?? "") || undefined,
+          }),
     });
-    revalidatePath(`/app/${workspaceSlug}/market/publish`);
-    revalidatePath(`/app/${workspaceSlug}/toolkits`);
-    return { ok: true, listingId: result.listing.id };
+    return { ok: true, preview };
   } catch (error) {
     return { error: actionError(error) };
   }
@@ -187,11 +205,29 @@ export async function publishPiPackageReleaseAction(
   const ctx = await actionContext(workspaceSlug);
   if (!ctx) return { error: "not_authorized" };
   try {
+    const sourceType = formData.get("sourceType");
+    const archive = formData.get("archive");
+    if (sourceType === "zip" && !(archive instanceof File))
+      return { error: "source_invalid" };
+    const sourceDigest = String(formData.get("sourceDigest") ?? "");
+    if (sourceType !== "release" && !/^[a-f0-9]{64}$/.test(sourceDigest))
+      return { error: "source_preview_required" };
     const result = await publishPiPackageRelease({
       workspaceId: ctx.workspace.id,
       publishedById: ctx.user.id,
-      source: String(formData.get("source") ?? ""),
-      sourceId: String(formData.get("sourceId") ?? "") || undefined,
+      confirmExecutableCode: formData.get("confirmExecutableCode") === "on",
+      sourceDigest: sourceType === "release" ? undefined : sourceDigest,
+      ...(sourceType === "zip" && archive instanceof File
+        ? { sourceType: "zip" as const, archive }
+        : sourceType === "release"
+          ? {
+              sourceType: "release" as const,
+              targetReleaseId: String(formData.get("targetReleaseId") ?? ""),
+            }
+          : {
+              source: String(formData.get("source") ?? ""),
+              sourceId: String(formData.get("sourceId") ?? "") || undefined,
+            }),
       visibility:
         formData.get("visibility") === "public" ? "public" : "private",
       listingId: String(formData.get("listingId") ?? "") || undefined,
@@ -204,10 +240,31 @@ export async function publishPiPackageReleaseAction(
       },
       releaseNotes: String(formData.get("releaseNotes") ?? ""),
     });
-    revalidatePath(`/app/${workspaceSlug}/toolkits/pi-packages`);
+    revalidatePath(`/app/${workspaceSlug}/market/compose`);
     return { ok: true, listingId: result.listing.id };
   } catch (error) {
     return { error: actionError(error) };
+  }
+}
+
+export async function previewAssembledPiPackageAction(
+  formData: FormData,
+): Promise<PiAssemblyPreviewState> {
+  const ctx = await actionContext(String(formData.get("workspace") ?? ""));
+  if (!ctx) return { error: "not_authorized" };
+  try {
+    return {
+      preview: await previewAssembledPiPackage({
+        ...readPiAssemblyFormData(formData),
+        workspaceId: ctx.workspace.id,
+        publishedById: ctx.user.id,
+      }),
+    };
+  } catch (error) {
+    return {
+      error: actionError(error),
+      message: error instanceof MarketError ? error.message : undefined,
+    };
   }
 }
 
@@ -219,27 +276,14 @@ export async function publishAssembledPiPackageReleaseAction(
   const ctx = await actionContext(workspaceSlug);
   if (!ctx) return { error: "not_authorized" };
   try {
-    const selectedTools = formData
-      .getAll("mcpTools")
-      .map((value) => JSON.parse(String(value)) as unknown);
-    const mcps = new Map<string, string[]>();
-    for (const value of selectedTools) {
-      if (
-        !Array.isArray(value) ||
-        value.length !== 2 ||
-        value.some((part) => typeof part !== "string")
-      )
-        return { error: "invalid_manifest" };
-      const [deploymentId, tool] = value as [string, string];
-      mcps.set(deploymentId, [...(mcps.get(deploymentId) ?? []), tool]);
-    }
+    if (!formData.get("sourceDigest"))
+      return { error: "source_preview_required" };
     const result = await publishAssembledPiPackageRelease({
       workspaceId: ctx.workspace.id,
       publishedById: ctx.user.id,
-      name: String(formData.get("packageName") ?? ""),
-      version: String(formData.get("packageVersion") ?? ""),
-      installedSkillIds: formData.getAll("installedSkillIds").map(String),
-      mcps: [...mcps].map(([deploymentId, tools]) => ({ deploymentId, tools })),
+      ...readPiAssemblyFormData(formData),
+      sourceDigest: String(formData.get("sourceDigest")),
+      confirmExecutableCode: formData.get("confirmExecutableCode") === "on",
       visibility:
         formData.get("visibility") === "public" ? "public" : "private",
       listingId: String(formData.get("listingId") ?? "") || undefined,
@@ -252,7 +296,7 @@ export async function publishAssembledPiPackageReleaseAction(
       },
       releaseNotes: String(formData.get("releaseNotes") ?? ""),
     });
-    revalidatePath(`/app/${workspaceSlug}/toolkits/pi-packages`);
+    revalidatePath(`/app/${workspaceSlug}/market/compose`);
     return { ok: true, listingId: result.listing.id };
   } catch (error) {
     return { error: actionError(error) };
@@ -294,16 +338,6 @@ export async function installMarketResourceAction(formData: FormData) {
         result.resource.status === "setup_required" ? "?tab=variables" : ""
       }`,
     );
-  }
-  if (result.kind === "toolkit") {
-    if (!("slug" in result.resource)) {
-      throw new MarketError(
-        "listing_conflict",
-        "The toolkit installation is inconsistent.",
-      );
-    }
-    revalidatePath(`/app/${workspaceSlug}/toolkits`);
-    redirect(`/app/${workspaceSlug}/toolkits/${result.resource.slug}`);
   }
 }
 
@@ -385,7 +419,7 @@ export async function withdrawMarketReleaseAction(formData: FormData) {
   });
   revalidatePath(`/app/${workspaceSlug}/market`, "layout");
   revalidatePath(`/app/${workspaceSlug}/market/publish`);
-  revalidatePath(`/app/${workspaceSlug}/toolkits/pi-packages`);
+  revalidatePath(`/app/${workspaceSlug}/market/compose`);
 }
 
 export async function unpublishMarketListingAction(formData: FormData) {
@@ -400,7 +434,7 @@ export async function unpublishMarketListingAction(formData: FormData) {
   });
   revalidatePath(`/app/${workspaceSlug}/market`, "layout");
   revalidatePath(`/app/${workspaceSlug}/market/publish`);
-  revalidatePath(`/app/${workspaceSlug}/toolkits/pi-packages`);
+  revalidatePath(`/app/${workspaceSlug}/market/compose`);
 }
 
 export async function removeAssistantMarketCopyAction(formData: FormData) {

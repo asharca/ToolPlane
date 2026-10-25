@@ -22,8 +22,7 @@ export type WorkRuntimeKind = DedicatedSandboxRuntimeKind | "hermes";
 // Explicit public capability inventory. Entry-point subsets are intentional:
 // console support does not automatically grant creation through Control MCP.
 export const AGENT_CONTROL_RUNTIME_KINDS = [
-  "pi",
-  "hermes",
+  "pi-sdk",
 ] as const satisfies readonly AgentRuntimeKind[];
 export const AGENT_RUNTIME_CAPABILITIES = {
   pi: {

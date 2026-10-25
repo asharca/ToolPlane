@@ -10,6 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { db } from "@/lib/db";
 import { decryptSecretText } from "@/lib/security/secrets";
+import { mcpRuntimeFilesIdentity } from "./mcp-definition";
 import {
   MAX_RUNTIME_TEXT_FILE_BYTES,
   MAX_RUNTIME_TEXT_FILES,
@@ -503,13 +504,20 @@ async function writeStagedConfigFiles(
  */
 export async function materializeDeploymentConfigVolume(
   deploymentId: string,
+  sourceDeploymentId = deploymentId,
+  expectedConfigChecksum?: string,
 ): Promise<DeploymentConfigVolumeMaterialization> {
   const volumeName = configVolumeName(deploymentId);
   const rows = await deploymentConfigFileDelegate().findMany({
-    where: { deploymentId },
+    where: { deploymentId: sourceDeploymentId },
     select: { id: true, path: true, encryptedContent: true, size: true },
     orderBy: [{ path: "asc" }, { id: "asc" }],
   });
+  if (
+    expectedConfigChecksum !== undefined &&
+    mcpRuntimeFilesIdentity(rows) !== expectedConfigChecksum
+  )
+    throw new Error("MCP_RUNTIME_FILES_CHANGED");
   if (rows.length === 0) {
     // A deleted final file must not leave a stale secret volume behind.
     await removeDeploymentConfigVolume(deploymentId);

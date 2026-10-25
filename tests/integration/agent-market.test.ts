@@ -2,6 +2,11 @@
 import { assertDefined } from "../assert-defined";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { db } from "@/lib/db";
+import {
+  sealMcpEnvironment,
+  resolveMcpEnvironment,
+} from "@/lib/process/mcp-credentials";
+import type { Prisma } from "@prisma/client";
 import { approvePendingAgentRelease } from "@/lib/admin/agent-market";
 import {
   agentReleaseChecksum,
@@ -18,6 +23,7 @@ import {
   DEFAULT_SANDBOX_IMAGE,
   sandboxVolumeName,
 } from "@/lib/sandboxes/runtime";
+import { updateAgent } from "@/lib/agents/mutations";
 
 const stamp = `${process.pid}-${Date.now()}`;
 
@@ -50,7 +56,6 @@ let targetWorkspaceId = "";
 let foreignWorkspaceId = "";
 let sourceAgentId = "";
 let sourceProviderId = "";
-let targetProviderId = "";
 let catalogServerId = "";
 let catalogServerSlug = "";
 let sourceDeploymentId = "";
@@ -73,7 +78,7 @@ function manifestOf(value: unknown): AgentReleaseManifestV1 {
 
 async function createAgent(name: string, slug: string) {
   return db.agent.create({
-    data: { workspaceId: sourceWorkspaceId, name, slug, runtimeKind: "pi" },
+    data: { workspaceId: sourceWorkspaceId, name, slug, runtimeKind: "pi-sdk" },
   });
 }
 
@@ -147,7 +152,7 @@ describe.sequential("agent marketplace releases and installs", () => {
     categoryId = category.id;
     updateCategoryId = updateCategory.id;
 
-    const [sourceProvider, targetProvider] = await Promise.all([
+    const [sourceProvider] = await Promise.all([
       db.modelProvider.create({
         data: {
           workspaceId: sourceWorkspace.id,
@@ -170,7 +175,6 @@ describe.sequential("agent marketplace releases and installs", () => {
       }),
     ]);
     sourceProviderId = sourceProvider.id;
-    targetProviderId = targetProvider.id;
 
     catalogServerSlug = `agent-market-catalog-${stamp}`;
     const catalogServer = await db.server.create({
@@ -196,12 +200,10 @@ describe.sequential("agent marketplace releases and installs", () => {
         status: "running",
         source: "npm",
         sourceRef: "@modelcontextprotocol/server-memory",
-        installCfg: {
-          env: {
-            [REQUIRED_ENV]: DEPLOYMENT_ENV_CANARY,
-            MARKET_PUBLIC_MODE: "source-overridden",
-          },
-        },
+        installCfg: sealMcpEnvironment({}, sourceWorkspace.id, {
+          [REQUIRED_ENV]: DEPLOYMENT_ENV_CANARY,
+          MARKET_PUBLIC_MODE: "source-overridden",
+        }) as Prisma.InputJsonObject,
         mcpToolExposure: "allowlist",
         mcpAllowedTools: ["read_graph", ENCODED_DEPLOYMENT_ENV_CANARY],
       },
@@ -214,9 +216,10 @@ describe.sequential("agent marketplace releases and installs", () => {
         status: "stopped",
         source: "npm",
         sourceRef: "outdated-market-fixture",
-        installCfg: {
-          env: { [REQUIRED_ENV]: "", STALE_PUBLIC_VALUE: "remove-me" },
-        },
+        installCfg: sealMcpEnvironment({}, targetWorkspace.id, {
+          [REQUIRED_ENV]: "",
+          STALE_PUBLIC_VALUE: "remove-me",
+        }) as Prisma.InputJsonObject,
         mcpToolExposure: "all",
         mcpAllowedTools: [],
       },
@@ -260,7 +263,7 @@ describe.sequential("agent marketplace releases and installs", () => {
         workspaceId: sourceWorkspace.id,
         name: "Portable Research Agent",
         slug: `portable-research-${stamp}`,
-        runtimeKind: "pi",
+        runtimeKind: "pi-sdk",
         systemPrompt: ORIGINAL_PROMPT,
         providerId: sourceProvider.id,
         model: MODEL_ID,
@@ -485,9 +488,16 @@ describe.sequential("agent marketplace releases and installs", () => {
           effort: "high",
         }),
       ],
-      toolkits: [expect.objectContaining({ name: "Research Toolkit" })],
+      toolkits: [],
     });
     expect(firstReleaseManifest.agents[0].runtime).toEqual({ kind: "pi" });
+    expect(firstReleaseManifest.agents[0].toolkitKeys).toEqual([]);
+    expect(firstReleaseManifest.agents[0].deploymentKeys).toEqual(
+      firstReleaseManifest.deployments.map(({ key }) => key),
+    );
+    expect(firstReleaseManifest.agents[0].skillKeys).toEqual(
+      firstReleaseManifest.skills.map(({ key }) => key),
+    );
     expect(serialized).not.toContain(sourceProviderId);
     expect(serialized).not.toContain(sourceDeploymentId);
     expect(serialized).not.toContain(ENCODED_DEPLOYMENT_ENV_CANARY);
@@ -567,9 +577,9 @@ describe.sequential("agent marketplace releases and installs", () => {
       db.deployment.update({
         where: { id: sourceDeploymentId },
         data: {
-          installCfg: {
-            env: { [REQUIRED_ENV]: `updated-${DEPLOYMENT_ENV_CANARY}` },
-          },
+          installCfg: sealMcpEnvironment({}, sourceWorkspaceId, {
+            [REQUIRED_ENV]: `updated-${DEPLOYMENT_ENV_CANARY}`,
+          }) as Prisma.InputJsonObject,
         },
       }),
       db.installedSkill.update({
@@ -716,8 +726,7 @@ describe.sequential("agent marketplace releases and installs", () => {
       expect.objectContaining({
         format: "openai",
         model: MODEL_ID,
-        satisfied: true,
-        providerId: targetProviderId,
+        satisfied: false,
       }),
     ]);
     expect(first.requirements.environment).toEqual([
@@ -728,6 +737,9 @@ describe.sequential("agent marketplace releases and installs", () => {
       where: { id: first.agent.id },
       include: {
         provider: true,
+        modelProviders: true,
+        subAgents: true,
+        runtime: true,
         servers: { include: { deployment: true } },
         skills: { include: { installedSkill: true } },
         toolkits: {
@@ -750,15 +762,19 @@ describe.sequential("agent marketplace releases and installs", () => {
     expect(installedAgent).toMatchObject({
       workspaceId: targetWorkspaceId,
       name: "Installed Research Agent",
-      runtimeKind: "pi",
+      runtimeKind: "pi-sdk",
+      currentRevisionVersion: 0,
       systemPrompt: ORIGINAL_PROMPT,
-      providerId: targetProviderId,
-      model: MODEL_ID,
+      providerId: null,
+      model: null,
       maxSteps: 17,
     });
-    expect(installedAgent.provider?.workspaceId).toBe(targetWorkspaceId);
-    expect(installedAgent.provider?.id).not.toBe(sourceProviderId);
-    expect(installedAgent.provider?.apiKey).toBe(TARGET_PROVIDER_KEY);
+    expect(installedAgent.provider).toBeNull();
+    expect(installedAgent.modelProviders).toEqual([]);
+    expect(installedAgent.subAgents).toEqual([]);
+    expect(installedAgent.runtime).toBeNull();
+    expect(installedAgent.a2aInboundEnabled).toBe(false);
+    expect(installedAgent.a2aOutboundEnabled).toBe(false);
     expect(installedAgent.conversations).toHaveLength(0);
     expect(installedAgent.channels).toHaveLength(0);
     expect(installedAgent.attachments).toHaveLength(0);
@@ -794,8 +810,12 @@ describe.sequential("agent marketplace releases and installs", () => {
       allowSudo: false,
     });
 
-    expect(installedAgent.servers).toHaveLength(1);
-    const installedDeployment = installedAgent.servers[0].deployment;
+    expect(installedAgent.servers).toEqual([]);
+    const installedDeployment = await db.deployment.findUniqueOrThrow({
+      where: {
+        id: assertDefined(Object.values(first.resourceMap.deployments)[0]),
+      },
+    });
     expect(installedDeployment).toMatchObject({
       workspaceId: targetWorkspaceId,
       serverId: null,
@@ -803,16 +823,17 @@ describe.sequential("agent marketplace releases and installs", () => {
       source: "npm",
       sourceRef: "@modelcontextprotocol/server-memory",
       mcpToolExposure: "allowlist",
-      mcpAllowedTools: ["read_graph"],
+      mcpAllowedTools: [],
     });
     expect(installedDeployment.id).not.toBe(sourceDeploymentId);
     expect(installedDeployment.id).not.toBe(targetDeploymentId);
-    expect(installedDeployment.installCfg).toEqual({
-      env: {
-        MARKET_PUBLIC_MODE: "1",
-        [REQUIRED_ENV]: "",
-      },
+    expect(installedDeployment.installCfg).toMatchObject({
+      env: { MARKET_PUBLIC_MODE: "", [REQUIRED_ENV]: "" },
+      credentialEnvelope: expect.any(Object),
     });
+    expect(
+      resolveMcpEnvironment(installedDeployment.installCfg, targetWorkspaceId),
+    ).toEqual({ MARKET_PUBLIC_MODE: "1", [REQUIRED_ENV]: "" });
     expect(JSON.stringify(installedDeployment.installCfg)).not.toContain(
       DEPLOYMENT_ENV_CANARY,
     );
@@ -821,13 +842,22 @@ describe.sequential("agent marketplace releases and installs", () => {
     ).resolves.toMatchObject({
       sourceRef: "outdated-market-fixture",
       mcpToolExposure: "all",
-      installCfg: {
-        env: { [REQUIRED_ENV]: "", STALE_PUBLIC_VALUE: "remove-me" },
-      },
+      installCfg: expect.objectContaining({
+        env: { [REQUIRED_ENV]: "", STALE_PUBLIC_VALUE: "" },
+        credentialEnvelope: expect.any(Object),
+      }),
     });
+    const untouchedTarget = await db.deployment.findUniqueOrThrow({
+      where: { id: targetDeploymentId },
+    });
+    expect(
+      resolveMcpEnvironment(untouchedTarget.installCfg, targetWorkspaceId),
+    ).toEqual({ [REQUIRED_ENV]: "", STALE_PUBLIC_VALUE: "remove-me" });
 
-    expect(installedAgent.skills).toHaveLength(1);
-    const installedSkill = installedAgent.skills[0].installedSkill;
+    expect(installedAgent.skills).toEqual([]);
+    const installedSkill = await db.installedSkill.findUniqueOrThrow({
+      where: { id: assertDefined(Object.values(first.resourceMap.skills)[0]) },
+    });
     const releasedSkill = firstReleaseManifest.skills[0];
     expect(installedSkill.workspaceId).toBe(targetWorkspaceId);
     expect(installedSkill.id).not.toBe(sourceCustomSkillId);
@@ -836,26 +866,8 @@ describe.sequential("agent marketplace releases and installs", () => {
     expect(installedSkill.content).toBe(releasedSkill.content);
     expect(installedSkill.files).toEqual(releasedSkill.files);
 
-    expect(installedAgent.toolkits).toHaveLength(1);
-    const installedToolkit = installedAgent.toolkits[0].toolkit;
-    expect(installedToolkit).toMatchObject({
-      workspaceId: targetWorkspaceId,
-      visibility: "private",
-      enabled: true,
-    });
-    expect(installedToolkit.id).not.toBe(sourceToolkitId);
-    expect(
-      installedToolkit.servers.map(({ deploymentId }) => deploymentId),
-    ).toEqual([installedDeployment.id]);
-    expect(
-      installedToolkit.skills.map(({ installedSkillId }) => installedSkillId),
-    ).toEqual([installedSkill.id]);
-    expect(installedToolkit.servers[0].deployment.workspaceId).toBe(
-      targetWorkspaceId,
-    );
-    expect(installedToolkit.skills[0].installedSkill.workspaceId).toBe(
-      targetWorkspaceId,
-    );
+    expect(installedAgent.toolkits).toEqual([]);
+    expect(first.requirements.legacyToolkitConversions).toEqual([]);
 
     expect(first.resourceMap.agents[firstReleaseManifest.rootAgentKey]).toBe(
       installedAgent.id,
@@ -866,9 +878,7 @@ describe.sequential("agent marketplace releases and installs", () => {
     expect(Object.values(first.resourceMap.skills)).toEqual([
       installedSkill.id,
     ]);
-    expect(Object.values(first.resourceMap.toolkits)).toEqual([
-      installedToolkit.id,
-    ]);
+    expect(first.resourceMap.toolkits).toEqual({});
 
     const serializedTargetGraph = JSON.stringify(installedAgent);
     for (const sourceId of [
@@ -892,7 +902,7 @@ describe.sequential("agent marketplace releases and installs", () => {
     expect(listing.installCount).toBe(1);
   });
 
-  it("publishes and materializes an isolated Hermes runtime without its private state", async () => {
+  it("converts explicitly published legacy configuration into a fresh native draft without runtime or authority", async () => {
     const hermesAgent = await db.agent.create({
       data: {
         workspaceId: sourceWorkspaceId,
@@ -1003,54 +1013,57 @@ describe.sequential("agent marketplace releases and installs", () => {
       include: {
         runtime: { include: { sandbox: { include: { deployment: true } } } },
         modelProviders: { include: { provider: true } },
+        sandboxes: { include: { sandbox: { include: { deployment: true } } } },
       },
     });
 
     expect(first.install.status).toBe("needs_setup");
-    expect(first.requirements.runtimes).toEqual([
-      { agentKey: manifest.rootAgentKey, kind: "hermes", setupRequired: true },
-    ]);
+    expect(first.requirements.runtimes).toEqual([]);
     expect(second.reused).toBe(true);
     expect(second.agent.id).toBe(first.agent.id);
     expect(installed).toMatchObject({
       workspaceId: targetWorkspaceId,
       name: "Installed Hermes Agent",
-      runtimeKind: "hermes",
+      runtimeKind: "pi-sdk",
+      currentRevisionVersion: 0,
       systemPrompt: null,
       providerId: null,
       model: null,
       maxSteps: 13,
     });
-    expect(
-      installed.modelProviders.map(({ providerId }) => providerId),
-    ).toEqual([targetProviderId]);
-    expect(installed.modelProviders[0]?.provider.workspaceId).toBe(
-      targetWorkspaceId,
-    );
-    expect(installed.runtime).toMatchObject({
+    expect(installed.modelProviders).toEqual([]);
+    expect(installed.runtime).toBeNull();
+    expect(installed.sandboxes).toHaveLength(1);
+    expect(installed.sandboxes[0].sandbox).toMatchObject({
       workspaceId: targetWorkspaceId,
-      kind: "hermes",
-      image: HERMES_IMAGE,
-      status: "setup_required",
-      sandbox: {
-        workspaceId: targetWorkspaceId,
-        kind: "hermes",
-        image: HERMES_IMAGE,
-        network: "isolated",
-        config: { managedBy: "agent-runtime" },
-        deployment: {
-          workspaceId: targetWorkspaceId,
-          source: "sandbox",
-          sourceRef: HERMES_IMAGE,
-          status: "stopped",
-        },
-      },
+      kind: "docker",
+      image: DEFAULT_SANDBOX_IMAGE,
+      network: "isolated",
+      deployment: { status: "stopped", source: "sandbox" },
     });
-    expect(installed.runtime?.id).not.toBe(hermesRuntime.id);
-    expect(installed.runtime?.sandboxId).not.toBe(hermesSandbox.id);
-    expect(installed.runtime?.sandbox.deploymentId).not.toBe(
-      hermesDeployment.id,
-    );
+    expect(installed.sandboxes[0].sandboxId).not.toBe(hermesSandbox.id);
+    await expect(
+      updateAgent(sourceWorkspaceId, hermesAgent.id, {
+        name: hermesAgent.name,
+        systemPrompt: null,
+        providerId: null,
+        model: null,
+        maxSteps: 13,
+      }),
+    ).rejects.toThrow("Historical Agents are read-only");
+    await expect(
+      db.agentRuntime.findUniqueOrThrow({ where: { id: hermesRuntime.id } }),
+    ).resolves.toMatchObject({
+      status: "running",
+      sandboxId: hermesSandbox.id,
+      configHash: `private-runtime-hash-${stamp}`,
+    });
+    await expect(
+      db.agent.findUniqueOrThrow({ where: { id: hermesAgent.id } }),
+    ).resolves.toMatchObject({
+      runtimeKind: "hermes",
+      systemPrompt: HERMES_PROMPT_CANARY,
+    });
     const serializedTarget = JSON.stringify(installed);
     for (const privateValue of [
       SOURCE_PROVIDER_KEY,
@@ -1336,7 +1349,10 @@ describe.sequential("agent marketplace releases and installs", () => {
     const deployment = await db.deployment.findUniqueOrThrow({
       where: { id: deploymentId },
     });
-    expect(deployment.mcpAllowedTools).toEqual(["read_graph"]);
+    expect(deployment.mcpAllowedTools).toEqual([]);
+    await expect(
+      db.agentServer.count({ where: { agentId: installed.agent.id } }),
+    ).resolves.toBe(0);
     expect(JSON.stringify(deployment)).not.toContain(canary);
   });
 

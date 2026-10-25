@@ -9,14 +9,12 @@ import {
   MessageSquare,
   Plug,
   Upload,
-  Wrench,
 } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { listAgents } from "@/lib/agents/queries";
 import { listChatAssistantsForWorkspace } from "@/lib/chat/service";
 import { db } from "@/lib/db";
 import { listWorkspacePublishedResources } from "@/lib/market/skills";
-import { listToolkits } from "@/lib/toolkits/queries";
 import {
   getDeployments,
   getInstalledSkills,
@@ -34,7 +32,6 @@ import {
   AssistantPublishForm,
   McpPublishForm,
   SkillPublishForm,
-  ToolkitPublishForm,
 } from "@/components/dashboard/market/SkillPublishForm";
 
 export const dynamic = "force-dynamic";
@@ -78,7 +75,6 @@ export default async function MarketPublishPage({
   const [
     deployments,
     skills,
-    toolkits,
     agents,
     assistants,
     listings,
@@ -87,7 +83,6 @@ export default async function MarketPublishPage({
   ] = await Promise.all([
     getDeployments(workspace.id),
     getInstalledSkills(workspace.id),
-    listToolkits(workspace.id),
     listAgents(workspace.id),
     listChatAssistantsForWorkspace(workspace.id),
     listWorkspacePublishedResources(workspace.id),
@@ -133,11 +128,6 @@ export default async function MarketPublishPage({
       item.sourceInstalledSkillId ? [[item.sourceInstalledSkillId, item]] : [],
     ),
   );
-  const listingByToolkit = new Map(
-    listings.flatMap((item) =>
-      item.sourceToolkitId ? [[item.sourceToolkitId, item]] : [],
-    ),
-  );
   const listingByAssistant = new Map(
     listings.flatMap((item) =>
       item.sourceChatAssistantId ? [[item.sourceChatAssistantId, item]] : [],
@@ -149,11 +139,7 @@ export default async function MarketPublishPage({
     ),
   );
   const total =
-    deployments.length +
-    skills.length +
-    toolkits.length +
-    agents.length +
-    assistants.length;
+    deployments.length + skills.length + agents.length + assistants.length;
 
   const publicationLabel = (listing: ListingStatus | undefined) => {
     if (listing?.pendingRelease?.reviewStatus === "pending") {
@@ -178,22 +164,114 @@ export default async function MarketPublishPage({
     unpublishConfirm: t("unpublishListingConfirm"),
     cancel: common("cancel"),
   };
+  const visibleListings = listings.filter(
+    (listing) => listing.kind !== "toolkit",
+  );
 
   return (
     <DashboardPage className="space-y-6">
       <div>
         <h1 className="text-xl font-semibold text-foreground">
-          {t("publishTitle")}
+          {t("ownedPublications")}
         </h1>
         <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">
           {t("publishDescription")}
         </p>
+        <ButtonLink
+          href={`${base}/market/compose`}
+          variant="secondary"
+          size="sm"
+          className="mt-3"
+        >
+          {t("piComposeTitle")}
+        </ButtonLink>
         {!canPublish ? (
           <p className="mt-2 text-xs text-(--color-warning) dark:text-(--color-warning)">
             {t("publishRequiresManager")}
           </p>
         ) : null}
       </div>
+
+      <section aria-label={t("ownedPublications")} className="space-y-3">
+        {visibleListings.length ? (
+          visibleListings.map((listing) => {
+            const summary = listing.latestRelease?.releaseSummary;
+            const policy =
+              summary && typeof summary === "object" && !Array.isArray(summary)
+                ? summary.reviewPolicy
+                : null;
+            return (
+              <article
+                key={listing.id}
+                className="space-y-3 rounded-lg border border-border p-4"
+              >
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <h2 className="break-words font-semibold">
+                      {listing.name}
+                    </h2>
+                    <p className="text-xs text-muted-foreground">
+                      {listing.namespace}/{listing.slug} ·{" "}
+                      {t(
+                        listing.visibility === "private"
+                          ? "privateResource"
+                          : "publicResource",
+                      )}
+                    </p>
+                    <p className="mt-1 text-sm">{publicationLabel(listing)}</p>
+                    {policy ? (
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {t(
+                          policy === "workspace-owner-trust"
+                            ? "piWorkspaceOwnerTrusted"
+                            : policy === "official-directory"
+                              ? "piOfficialValidated"
+                              : "piReviewApproved",
+                        )}
+                      </p>
+                    ) : null}
+                  </div>
+                  {listing.latestRelease ? (
+                    <ButtonLink
+                      href={`${base}/market/items/${encodeURIComponent(listing.namespace)}/${encodeURIComponent(listing.slug)}`}
+                      variant="secondary"
+                      size="sm"
+                    >
+                      {t("viewDetails")}
+                    </ButtonLink>
+                  ) : null}
+                  {canPublish && listing.kind === "pi-package" ? (
+                    <ButtonLink
+                      href={`${base}/market/import?type=pi&listingId=${encodeURIComponent(listing.id)}`}
+                      variant="secondary"
+                      size="sm"
+                    >
+                      {t("submitNewVersion")}
+                    </ButtonLink>
+                  ) : null}
+                </div>
+                {listing.pendingRelease?.reviewNote ? (
+                  <p className="text-sm text-muted-foreground">
+                    {listing.pendingRelease.reviewNote}
+                  </p>
+                ) : null}
+                <PublisherControls
+                  listing={listing}
+                  workspace={workspace.slug}
+                  canPublish={canPublish}
+                  labels={publisherControlLabels}
+                />
+              </article>
+            );
+          })
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            {t("noOwnedPublications")}
+          </p>
+        )}
+      </section>
+
+      <h2 className="text-lg font-semibold">{t("publishLocalResources")}</h2>
 
       {total === 0 ? (
         <DashboardEmptyState
@@ -388,20 +466,14 @@ export default async function MarketPublishPage({
                   />
                   {publicationLabel(listing)}
                 </span>
-                {agent.runtimeKind === "pi-sdk" ? (
-                  <span className="text-xs text-muted-foreground">
-                    {t("piTemplateUnsupported")}
-                  </span>
-                ) : (
-                  <ButtonLink
-                    href={`${base}/agents/${agent.id}/publish`}
-                    variant="secondary"
-                    size="sm"
-                  >
-                    {listing ? t("manageListing") : t("publishToMarket")}{" "}
-                    <ArrowUpRight className="size-3.5" />
-                  </ButtonLink>
-                )}
+                <ButtonLink
+                  href={`${base}/agents/${agent.id}/publish`}
+                  variant="secondary"
+                  size="sm"
+                >
+                  {listing ? t("manageListing") : t("publishToMarket")}{" "}
+                  <ArrowUpRight className="size-3.5" />
+                </ButtonLink>
               </article>
             );
           })}
@@ -450,74 +522,6 @@ export default async function MarketPublishPage({
                     slug: resourceSlug(assistant.name),
                     description:
                       assistant.systemPrompt?.slice(0, 4_000) ?? null,
-                  }}
-                  listing={
-                    listing
-                      ? {
-                          name: listing.name,
-                          slug: listing.slug,
-                          summary: listing.summary,
-                          tags: listing.tags,
-                          categoryIds: listing.categories.map(({ id }) => id),
-                        }
-                      : undefined
-                  }
-                  canPublish={canPublish}
-                  categories={marketCategories}
-                />
-                <PublisherControls
-                  listing={listing}
-                  workspace={workspace.slug}
-                  canPublish={canPublish}
-                  labels={publisherControlLabels}
-                />
-              </article>
-            );
-          })}
-
-          {toolkits.map((toolkit) => {
-            const listing = listingByToolkit.get(toolkit.id);
-            return (
-              <article
-                key={`toolkit-${toolkit.id}`}
-                className="grid gap-3 rounded-lg px-3 py-3 transition-colors hover:bg-muted/45 sm:grid-cols-[minmax(15rem,1.5fr)_8rem_minmax(12rem,1fr)_auto] sm:items-center"
-              >
-                <div className="flex min-w-0 items-center gap-3">
-                  <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted">
-                    <Wrench className="size-4" />
-                  </span>
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium text-foreground">
-                      {toolkit.name}
-                    </p>
-                    <p className="truncate text-xs text-muted-foreground">
-                      {t("sourceWorkspace")}
-                    </p>
-                  </div>
-                </div>
-                <span className="text-xs text-muted-foreground">
-                  {t("toolkits")}
-                </span>
-                <span className="inline-flex items-center gap-2 text-xs text-muted-foreground">
-                  <span
-                    className={`size-1.5 rounded-full ${publicationTone(listing)}`}
-                  />
-                  {publicationLabel(listing)}
-                </span>
-                <ButtonLink
-                  href={`${base}/toolkits/${toolkit.slug}`}
-                  variant="ghost"
-                  size="sm"
-                >
-                  {t("manage")} <ArrowUpRight className="size-3.5" />
-                </ButtonLink>
-                <ToolkitPublishForm
-                  workspace={workspace.slug}
-                  toolkit={{
-                    id: toolkit.id,
-                    name: toolkit.name,
-                    slug: toolkit.slug,
-                    description: null,
                   }}
                   listing={
                     listing

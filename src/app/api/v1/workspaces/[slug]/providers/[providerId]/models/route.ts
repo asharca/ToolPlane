@@ -3,10 +3,8 @@ import { getWorkspaceForUser } from "@/lib/workspace/queries";
 import { getProvider } from "@/lib/agents/queries";
 import { withRequestLogging } from "@/lib/observability/http";
 import {
-  hermesAgentsUsingProvider,
   refreshProviderModels,
   revalidateProviderViews,
-  syncHermesAgents,
 } from "@/lib/agents/provider-model-refresh";
 
 export const runtime = "nodejs";
@@ -30,18 +28,15 @@ export const POST = withRequestLogging(
     if (!provider)
       return Response.json({ error: "Provider not found" }, { status: 404 });
     try {
-      const agents = await hermesAgentsUsingProvider(workspace.id, providerId);
       const error = await refreshProviderModels(
         workspace.id,
         providerId,
         provider,
       );
       if (error) return Response.json({ error }, { status: 502 });
-      const warning = await syncHermesAgents(workspace.id, agents);
       revalidateProviderViews(slug);
       return Response.json({
         savedAt: Date.now(),
-        ...(warning ? { warning } : {}),
       });
     } catch {
       return Response.json(

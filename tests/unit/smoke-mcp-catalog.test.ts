@@ -1,5 +1,161 @@
-import { describe, expect, it } from "vitest";
-import { mcpSeeds } from "../../scripts/smoke-seed";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { mcpSeeds, seedSmokeWorkspace } from "../../scripts/smoke-seed";
+
+const seedDatabase = vi.hoisted(() => {
+  const writes: Array<{ model: string; data: Record<string, unknown> }> = [];
+  let sequence = 0;
+  const tables = Object.fromEntries(
+    [
+      "category",
+      "user",
+      "workspace",
+      "membership",
+      "server",
+      "skill",
+      "deployment",
+      "installedSkill",
+      "toolkit",
+      "toolkitServer",
+      "toolkitSkill",
+      "chatAssistant",
+      "marketListing",
+      "marketRelease",
+      "logEvent",
+      "skillInvocation",
+      "syncEvent",
+      "agent",
+      "sandbox",
+      "agentRuntime",
+      "agentListing",
+      "agentRelease",
+      "apiToken",
+      "agentRevision",
+      "agentServer",
+      "agentModelProvider",
+      "agentSkill",
+      "agentToolkit",
+      "chatAssistantMcpGrant",
+    ].map((model) => [
+      model,
+      {
+        create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
+          writes.push({ model, data });
+          return { id: `${model}-${++sequence}`, latestVersion: 0, ...data };
+        }),
+        createMany: vi.fn(
+          async ({ data }: { data: Record<string, unknown>[] }) => {
+            writes.push(...data.map((row) => ({ model, data: row })));
+            return { count: data.length };
+          },
+        ),
+        upsert: vi.fn(
+          async ({ create }: { create: Record<string, unknown> }) => {
+            writes.push({ model, data: create });
+            return { id: `${model}-${++sequence}`, ...create };
+          },
+        ),
+        update: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
+          writes.push({ model, data });
+          return data;
+        }),
+        findMany: vi.fn().mockResolvedValue([]),
+        findUnique: vi.fn().mockResolvedValue(null),
+        findFirst: vi.fn().mockResolvedValue(null),
+        deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+      },
+    ]),
+  );
+  return { tables, writes, disconnect: vi.fn() };
+});
+
+vi.mock("@/lib/db", () => ({
+  db: {
+    ...seedDatabase.tables,
+    $transaction: async (
+      callback: (tx: typeof seedDatabase.tables) => Promise<unknown>,
+    ) => callback(seedDatabase.tables),
+    $disconnect: seedDatabase.disconnect,
+  },
+}));
+vi.mock("@/lib/auth/password", () => ({
+  hashPassword: vi.fn().mockResolvedValue("fixture-password-hash"),
+}));
+
+afterEach(() => vi.restoreAllMocks());
+
+it("seeds ungranted native drafts and read-only history without issuing client tokens", async () => {
+  const output = vi.spyOn(console, "log").mockImplementation(() => {});
+  await seedSmokeWorkspace();
+  const agents = seedDatabase.writes.filter(({ model }) => model === "agent");
+  expect(agents).toHaveLength(4);
+  const drafts = agents.filter(({ data }) => data.runtimeKind === "pi-sdk");
+  expect(drafts).toHaveLength(3);
+  for (const { data } of drafts) {
+    expect(data.currentRevisionVersion).toBe(0);
+    for (const authority of [
+      "servers",
+      "skills",
+      "toolkits",
+      "modelProviders",
+      "providerId",
+      "a2aAgents",
+    ]) {
+      expect(data).not.toHaveProperty(authority);
+    }
+  }
+  const historical = agents.find(({ data }) => data.runtimeKind === "hermes");
+  expect(historical?.data.retiredAt).toBeInstanceOf(Date);
+  expect(historical?.data.name).toContain("read-only");
+  expect(
+    seedDatabase.writes.filter(({ model }) =>
+      [
+        "apiToken",
+        "agentRevision",
+        "agentServer",
+        "agentModelProvider",
+        "agentSkill",
+        "agentToolkit",
+        "chatAssistantMcpGrant",
+      ].includes(model),
+    ),
+  ).toEqual([]);
+  for (const { data } of seedDatabase.writes.filter(
+    ({ model }) => model === "chatAssistant",
+  )) {
+    expect(data).not.toHaveProperty("mcpGrants");
+  }
+  for (const { data } of seedDatabase.writes.filter(
+    ({ model }) => model === "toolkit",
+  )) {
+    expect(data).toMatchObject({ enabled: false, visibility: "private" });
+    expect(data.name).toContain("read-only");
+  }
+  for (const { data } of seedDatabase.writes.filter(
+    ({ model, data }) => model === "deployment" && "status" in data,
+  )) {
+    expect(data.status).toBe("stopped");
+    if (data.source !== "sandbox") {
+      expect(data).toMatchObject({
+        mcpToolExposure: "allowlist",
+        mcpAllowedTools: [],
+      });
+    }
+  }
+  const runtimes = seedDatabase.writes.filter(
+    ({ model }) => model === "agentRuntime",
+  );
+  expect(runtimes).toHaveLength(1);
+  expect(runtimes[0].data).toMatchObject({ kind: "hermes", status: "stopped" });
+  const templates = seedDatabase.writes.filter(
+    ({ model }) => model === "agentRelease",
+  );
+  expect(templates).toHaveLength(3);
+  for (const { data } of templates) {
+    expect(record(data.manifest).toolkits).toEqual([]);
+  }
+  expect(output.mock.calls.flat().join(" ")).not.toMatch(/TOKEN=/);
+  expect(output.mock.calls.flat().join(" ")).toContain("Prepare/review/Apply");
+});
 
 function record(value: unknown): Record<string, unknown> {
   expect(value).toBeTruthy();

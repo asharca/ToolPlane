@@ -234,6 +234,54 @@ function sdkAgent() {
 }
 
 describe("resolveAgentPiPackages", () => {
+  it.each([
+    {
+      label: "all reviewed package and direct tools",
+      approved: ["search", "write", "direct"],
+    },
+    { label: "a partially revoked live grant", approved: ["search"] },
+    { label: "an empty live grant", approved: [] },
+  ])(
+    "preserves $label when two packages share one MCP deployment",
+    ({ approved }) => {
+      const agent = {
+        ...sdkAgent(),
+        agentRevisionId: "revision-pinned",
+        servers: [{ deploymentId: "shared-mcp" }],
+        skills: [],
+        toolkits: [],
+        mcpToolPolicy: { "shared-mcp": [...approved] },
+      };
+      agent.piPackages.push(structuredClone(agent.piPackages[0]));
+      for (const [index, binding] of agent.piPackages.entries()) {
+        const key = `capability-${index}`;
+        const tools = index === 0 ? ["search"] : ["write"];
+        binding.marketInstallId = binding.marketInstall.id = `install-${index}`;
+        binding.releaseId = binding.release.id = `release-${index}`;
+        binding.marketInstall.listingId =
+          binding.marketInstall.listing.id =
+          binding.release.listingId =
+            `listing-${index}`;
+        binding.release.manifest.package.toolplane = {
+          schemaVersion: 1,
+          mcp: [{ key, name: key, tools }],
+        };
+        binding.release.checksum = marketReleaseChecksum(
+          binding.release.manifest,
+        );
+        binding.marketInstall.resourceMap = {
+          kind: "pi-package",
+          mcpBindings: { [key]: { deploymentId: "shared-mcp", tools } },
+        };
+      }
+
+      const resolved = resolveAgentTools(agent);
+      expect(resolved.deploymentIds).toEqual(["shared-mcp"]);
+      expect(resolved.mcpToolPolicy).toEqual({ "shared-mcp": approved });
+      expect(agent.mcpToolPolicy).toEqual({ "shared-mcp": approved });
+    },
+  );
+
   it("adds composed MCP bindings without granting unrequested tools or narrowing explicit servers", () => {
     const agent = {
       ...sdkAgent(),

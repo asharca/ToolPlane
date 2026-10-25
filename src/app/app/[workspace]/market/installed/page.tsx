@@ -1,6 +1,7 @@
 import { AnimatedBadge } from "@/components/motion/animated-badge";
 
 import { ButtonLink } from "@/components/motion/button";
+import { MarketVersionChangeForm } from "@/components/dashboard/market/MarketVersionChangeForm";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getTranslations } from "next-intl/server";
@@ -14,7 +15,6 @@ import {
   Puzzle,
   RotateCw,
   Trash2,
-  Wrench,
 } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { listAgents } from "@/lib/agents/queries";
@@ -27,7 +27,6 @@ import {
 } from "@/lib/market/actions";
 import { listWorkspaceMarketCopies } from "@/lib/market/copy-updates";
 import { listWorkspaceMarketInstalls } from "@/lib/market/skills";
-import { listToolkits } from "@/lib/toolkits/queries";
 import {
   getDeployments,
   getInstalledSkills,
@@ -47,13 +46,7 @@ import { listPiPackageClientInstallations } from "@/lib/pi-packages/installation
 
 export const dynamic = "force-dynamic";
 
-type ResourceKind =
-  | "mcp"
-  | "skill"
-  | "agent"
-  | "assistant"
-  | "toolkit"
-  | "pi-package";
+type ResourceKind = "mcp" | "skill" | "agent" | "assistant" | "pi-package";
 
 type InstalledResource = {
   key: string;
@@ -64,11 +57,12 @@ type InstalledResource = {
   status: string;
   href: string;
   updatedAt: Date;
+  downloadHref?: string;
   piPackage?: {
     snapshot: PiPackageSummary;
     checksum: string;
     available: boolean;
-    automaticReview: boolean;
+    reviewPolicy?: string;
     bindings: Array<{
       agentId: string;
       name: string;
@@ -84,6 +78,11 @@ type InstalledResource = {
     latestVersion: number | null;
     latestReleaseId: string | null;
     currentReleaseId: string;
+    approvedReleases: Array<{
+      id: string;
+      version: number;
+      releaseNotes: string | null;
+    }>;
     updateAvailable: boolean;
     updateIgnored: boolean;
     releaseNotes: string | null;
@@ -120,7 +119,10 @@ export default async function InstalledMarketPage({
   searchParams = Promise.resolve({}),
 }: {
   params: Promise<{ workspace: string }>;
-  searchParams?: Promise<{ error?: string | string[] }>;
+  searchParams?: Promise<{
+    error?: string | string[];
+    updates?: string | string[];
+  }>;
 }) {
   const [{ workspace: slug }, query, t, common, user] = await Promise.all([
     params,
@@ -141,7 +143,6 @@ export default async function InstalledMarketPage({
     copies,
     deployments,
     skills,
-    toolkits,
     agents,
     clientInstallations,
   ] = await Promise.all([
@@ -149,7 +150,6 @@ export default async function InstalledMarketPage({
     listWorkspaceMarketCopies(workspace.id),
     getDeployments(workspace.id),
     getInstalledSkills(workspace.id),
-    listToolkits(workspace.id),
     listAgents(workspace.id),
     listPiPackageClientInstallations({
       workspaceId: workspace.id,
@@ -168,78 +168,78 @@ export default async function InstalledMarketPage({
         item.installedSkillId ? [item.installedSkillId] : [],
       ),
     ),
-    toolkits: new Set(
-      marketInstalls.flatMap((item) =>
-        item.toolkitId ? [item.toolkitId] : [],
-      ),
-    ),
     agents: new Set([
       ...marketInstalls.flatMap((item) => (item.agentId ? [item.agentId] : [])),
       ...copies.agents.map((item) => item.resourceId),
     ]),
   };
 
-  const resources: InstalledResource[] = marketInstalls.map((install) => {
-    const kind = install.listing.kind as ResourceKind;
-    const href =
-      kind === "pi-package"
-        ? `${base}/market/items/${encodeURIComponent(install.listing.namespace)}/${encodeURIComponent(install.listing.slug)}`
-        : install.deploymentId
-          ? `${base}/mcp/${encodeURIComponent(install.deploymentId)}`
-          : install.installedSkillId
-            ? `${base}/skills/${encodeURIComponent(install.installedSkillId)}`
-            : install.toolkitId
-              ? `${base}/toolkits`
+  const resources: InstalledResource[] = marketInstalls
+    .filter((install) => install.listing.kind !== "toolkit")
+    .map((install) => {
+      const kind = install.listing.kind as ResourceKind;
+      const href =
+        kind === "pi-package"
+          ? `${base}/market/items/${encodeURIComponent(install.listing.namespace)}/${encodeURIComponent(install.listing.slug)}`
+          : install.deploymentId
+            ? `${base}/mcp/${encodeURIComponent(install.deploymentId)}`
+            : install.installedSkillId
+              ? `${base}/skills/${encodeURIComponent(install.installedSkillId)}`
               : install.agentId
                 ? `${base}/agents/${encodeURIComponent(install.agentId)}`
                 : `${base}/market/installed`;
-    const latest = install.listing.latestRelease;
-    const hasNewerRelease = Boolean(
-      latest && latest.id !== install.currentReleaseId,
-    );
-    return {
-      key: `market-${install.id}`,
-      name: install.listing.name,
-      kind,
-      source: "market",
-      sourceDetail: `${install.listing.namespace}/${install.listing.slug}`,
-      status: install.status,
-      href,
-      updatedAt: install.updatedAt,
-      ...(install.piPackage
-        ? {
-            piPackage: {
-              snapshot: install.piPackage,
-              checksum: install.currentRelease.checksum ?? "",
-              available:
-                install.listing.status === "published" &&
-                install.currentRelease.reviewStatus === "approved",
-              automaticReview:
-                install.currentRelease.reviewPolicy === "official-directory",
-              bindings: install.agentPiPackages.map((binding) => ({
-                agentId: binding.agentId,
-                name: binding.agent.name,
-                version: binding.release.version,
-                releaseId: binding.releaseId,
-                reviewStatus: binding.release.reviewStatus,
-                checksum: binding.release.checksum,
-              })),
-            },
-          }
-        : {}),
-      market: {
-        installId: install.id,
-        currentVersion: install.currentRelease.version,
-        latestVersion: latest?.version ?? null,
-        latestReleaseId: latest?.id ?? null,
-        currentReleaseId: install.currentReleaseId,
-        updateAvailable: install.updateAvailable,
-        updateIgnored: hasNewerRelease && !install.updateAvailable,
-        releaseNotes: latest?.releaseNotes ?? null,
-        detailHref: `${base}/market/items/${encodeURIComponent(install.listing.namespace)}/${encodeURIComponent(install.listing.slug)}`,
-      },
-    };
-  });
+      const latest = install.listing.latestRelease;
+      const hasNewerRelease = Boolean(
+        latest && latest.id !== install.currentReleaseId,
+      );
+      return {
+        key: `market-${install.id}`,
+        name: install.listing.name,
+        kind,
+        source: "market",
+        sourceDetail: `${install.listing.namespace}/${install.listing.slug}`,
+        status: install.status,
+        href,
+        updatedAt: install.updatedAt,
+        ...(install.installedSkillId
+          ? {
+              downloadHref: `/api/v1/skills/${encodeURIComponent(install.installedSkillId)}/download`,
+            }
+          : {}),
+        ...(install.piPackage
+          ? {
+              piPackage: {
+                snapshot: install.piPackage,
+                checksum: install.currentRelease.checksum ?? "",
+                available:
+                  install.listing.status === "published" &&
+                  install.currentRelease.reviewStatus === "approved",
+                reviewPolicy: install.currentRelease.reviewPolicy,
+                bindings: install.agentPiPackages.map((binding) => ({
+                  agentId: binding.agentId,
+                  name: binding.agent.name,
+                  version: binding.release.version,
+                  releaseId: binding.releaseId,
+                  reviewStatus: binding.release.reviewStatus,
+                  checksum: binding.release.checksum,
+                })),
+              },
+            }
+          : {}),
+        market: {
+          installId: install.id,
+          currentVersion: install.currentRelease.version,
+          latestVersion: latest?.version ?? null,
+          latestReleaseId: latest?.id ?? null,
+          currentReleaseId: install.currentReleaseId,
+          approvedReleases: install.approvedReleases,
+          updateAvailable: install.updateAvailable,
+          updateIgnored: hasNewerRelease && !install.updateAvailable,
+          releaseNotes: latest?.releaseNotes ?? null,
+          detailHref: `${base}/market/items/${encodeURIComponent(install.listing.namespace)}/${encodeURIComponent(install.listing.slug)}`,
+        },
+      };
+    });
 
   for (const copy of [...copies.agents, ...copies.assistants]) {
     const isAgent = copy.kind === "agent";
@@ -296,18 +296,7 @@ export default async function InstalledMarketPage({
       status: skill.status,
       href: `${base}/skills/${encodeURIComponent(skill.id)}`,
       updatedAt: skill.createdAt,
-    });
-  }
-  for (const toolkit of toolkits) {
-    if (tracked.toolkits.has(toolkit.id)) continue;
-    resources.push({
-      key: `toolkit-${toolkit.id}`,
-      name: toolkit.name,
-      kind: "toolkit",
-      source: "workspace",
-      status: toolkit.enabled ? "enabled" : "disabled",
-      href: `${base}/toolkits/${encodeURIComponent(toolkit.slug)}`,
-      updatedAt: toolkit.createdAt,
+      downloadHref: `/api/v1/skills/${encodeURIComponent(skill.id)}/download`,
     });
   }
   for (const agent of agents) {
@@ -323,14 +312,20 @@ export default async function InstalledMarketPage({
       updatedAt: agent.updatedAt,
     });
   }
+  const updatesOnly =
+    (Array.isArray(query.updates) ? query.updates[0] : query.updates) === "1";
+  if (updatesOnly) {
+    const available = resources.filter(
+      (item) => item.market?.updateAvailable || item.copy?.updateAvailable,
+    );
+    resources.splice(0, resources.length, ...available);
+  }
   resources.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
-
   const kindLabels: Record<ResourceKind, string> = {
     mcp: t("mcp"),
     skill: t("skills"),
     agent: t("agents"),
     assistant: t("kindAssistant"),
-    toolkit: t("toolkits"),
     "pi-package": t("kindPiPackage"),
   };
   const kindIcons = {
@@ -338,7 +333,6 @@ export default async function InstalledMarketPage({
     skill: Brain,
     agent: Bot,
     assistant: MessageSquare,
-    toolkit: Wrench,
     "pi-package": Puzzle,
   };
   const sourceLabels: Record<string, string> = {
@@ -388,11 +382,22 @@ export default async function InstalledMarketPage({
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-xl font-semibold text-foreground">
-            {t("installedTitle")}
+            {updatesOnly ? t("updates") : t("installedTitle")}
           </h1>
           <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">
-            {t("installedDescription")}
+            {updatesOnly
+              ? t("updatesAvailable", { count: updates })
+              : t("installedDescription")}
           </p>
+          {updatesOnly ? (
+            <ButtonLink
+              href={`${base}/market/installed`}
+              variant="ghost"
+              size="sm"
+            >
+              {t("installedResources")}
+            </ButtonLink>
+          ) : null}
         </div>
         {updates > 0 ? (
           <AnimatedBadge status="warning" size="sm">
@@ -444,6 +449,16 @@ export default async function InstalledMarketPage({
                   ? item.market.latestReleaseId !== item.market.currentReleaseId
                   : item.copy?.updateAvailable),
             );
+            const market = item.market;
+            const rollbackSupported = ["mcp", "skill", "pi-package"].includes(
+              item.kind,
+            );
+            const approvedReleases =
+              market && rollbackSupported
+                ? market.approvedReleases.filter(
+                    (release) => release.id !== market.currentReleaseId,
+                  )
+                : [];
             return (
               <article
                 key={item.key}
@@ -505,6 +520,15 @@ export default async function InstalledMarketPage({
                   ) : null}
                 </div>
                 <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                  {item.downloadHref ? (
+                    <ButtonLink
+                      href={item.downloadHref}
+                      variant="ghost"
+                      size="sm"
+                    >
+                      {t("downloadSkillBundle")}
+                    </ButtonLink>
+                  ) : null}
                   {item.market?.updateAvailable ||
                   item.copy?.updateAvailable ? (
                     <span className="text-xs font-medium text-(--color-warning) dark:text-(--color-warning)">
@@ -515,42 +539,95 @@ export default async function InstalledMarketPage({
                       {t("updateIgnored")}
                     </span>
                   ) : null}
-                  {latestIsNewer &&
-                  item.market &&
-                  item.status !== "modified" ? (
-                    <form action={updateMarketInstallAction}>
-                      <input
-                        type="hidden"
-                        name="workspace"
-                        value={workspace.slug}
+                  {latestIsNewer && market && item.status !== "modified" ? (
+                    rollbackSupported ? (
+                      <MarketVersionChangeForm
+                        workspace={workspace.slug}
+                        installId={market.installId}
+                        currentReleaseId={market.currentReleaseId}
+                        targetReleaseId={market.latestReleaseId ?? ""}
+                        targetVersion={
+                          market.latestVersion ?? market.currentVersion
+                        }
+                        kind={item.kind}
                       />
-                      <input
-                        type="hidden"
-                        name="installId"
-                        value={item.market.installId}
-                      />
+                    ) : (
+                      <form action={updateMarketInstallAction}>
+                        <input
+                          type="hidden"
+                          name="workspace"
+                          value={workspace.slug}
+                        />
+                        <input
+                          type="hidden"
+                          name="installId"
+                          value={market.installId}
+                        />
+                        {item.piPackage ? (
+                          <input type="hidden" name="kind" value="pi-package" />
+                        ) : null}
+                        <input
+                          type="hidden"
+                          name="targetReleaseId"
+                          value={market.latestReleaseId ?? ""}
+                        />
+                        <input
+                          type="hidden"
+                          name="currentReleaseId"
+                          value={market.currentReleaseId}
+                        />
+                        <ConfirmSubmitButton
+                          triggerLabel={t("update")}
+                          triggerAriaLabel={`${t("update")}: ${item.name}`}
+                          prompt={
+                            item.piPackage
+                              ? t("piVersionImpact")
+                              : item.kind === "mcp"
+                                ? t("mcpVersionImpact")
+                                : t("versionUpdateImpact")
+                          }
+                          confirmLabel={t("update")}
+                          pendingLabel={t("updating")}
+                          cancelLabel={common("cancel")}
+                        />
+                      </form>
+                    )
+                  ) : null}
+                  {market && approvedReleases.length ? (
+                    <details className="w-full rounded-lg border border-border p-3 sm:col-span-5">
+                      <summary className="cursor-pointer text-sm font-medium">
+                        {t("approvedVersions")}
+                      </summary>
                       {item.piPackage ? (
-                        <input type="hidden" name="kind" value="pi-package" />
+                        <p className="mt-2 text-xs text-muted-foreground">
+                          {t("piVersionImpact")}
+                        </p>
+                      ) : item.kind === "mcp" ? (
+                        <p className="mt-2 text-xs text-muted-foreground">
+                          {t("mcpVersionImpact")}
+                        </p>
                       ) : null}
-                      <input
-                        type="hidden"
-                        name="targetReleaseId"
-                        value={item.market.latestReleaseId ?? ""}
-                      />
-                      <input
-                        type="hidden"
-                        name="currentReleaseId"
-                        value={item.market.currentReleaseId}
-                      />
-                      <SubmitButton
-                        flash={false}
-                        pendingLabel={t("updating")}
-                        variant="primary"
-                        size="sm"
-                      >
-                        {t("update")}
-                      </SubmitButton>
-                    </form>
+                      <div className="mt-3 grid gap-2">
+                        {approvedReleases.map((release) => (
+                          <div key={release.id} className="space-y-2">
+                            {release.releaseNotes ? (
+                              <p className="text-xs text-muted-foreground">
+                                {release.releaseNotes}
+                              </p>
+                            ) : null}
+                            <MarketVersionChangeForm
+                              workspace={workspace.slug}
+                              installId={market.installId}
+                              currentReleaseId={market.currentReleaseId}
+                              targetReleaseId={release.id}
+                              targetVersion={release.version}
+                              kind={item.kind}
+                              modified={item.status === "modified"}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    </details>
                   ) : null}
                   {item.copy?.updateAvailable ? (
                     <ButtonLink
@@ -703,9 +780,15 @@ export default async function InstalledMarketPage({
                       {t(
                         !item.piPackage.available
                           ? "piUnavailable"
-                          : item.piPackage.automaticReview
-                            ? "piOfficialValidated"
-                            : "piReviewApproved",
+                          : item.piPackage.reviewPolicy ===
+                              "workspace-owner-trust"
+                            ? "piWorkspaceOwnerTrusted"
+                            : item.piPackage.reviewPolicy ===
+                                "official-directory"
+                              ? "piOfficialValidated"
+                              : item.piPackage.reviewPolicy === "manual"
+                                ? "piReviewApproved"
+                                : "piVersionAuthorized",
                       )}
                     </p>
                     <p>{t("piExecutionWarning")}</p>
@@ -783,7 +866,7 @@ export default async function InstalledMarketPage({
                             <p>
                               {t(
                                 binding.reviewStatus === "approved"
-                                  ? "piReviewApproved"
+                                  ? "piVersionAuthorized"
                                   : "piUnavailable",
                               )}
                               {binding.releaseId !==

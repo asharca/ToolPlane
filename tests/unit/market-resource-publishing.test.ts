@@ -55,9 +55,9 @@ import {
   parseToolkitMarketManifest,
   projectPublicResourceMarketManifest,
   publishMcpRelease,
-  publishToolkitRelease,
 } from "@/lib/market/resources";
 import { marketReleaseChecksum } from "@/lib/market/artifact";
+import { sealMcpEnvironment } from "@/lib/process/mcp-credentials";
 const input = {
   workspaceId: "w",
   deploymentId: "d",
@@ -80,13 +80,17 @@ const deployment = {
   serverId: null,
   name: "Custom MCP",
   source: "npm",
-  sourceRef: "@team/pkg",
-  installCfg: {
-    env: { TOKEN: "private-value" },
-    requiredEnv: ["OTHER"],
-    startCommand: " npm start ",
-    network: "none",
-  },
+  sourceRef: "@team/pkg@1.2.3",
+  installCfg: sealMcpEnvironment(
+    {
+      env: { TOKEN: "" },
+      requiredEnv: ["OTHER"],
+      startCommand: " npm start ",
+      network: "none",
+    },
+    "w",
+    { TOKEN: "private-value" },
+  ),
   mcpToolExposure: "allowlist",
   mcpAllowedTools: ["untrusted"],
   server: null,
@@ -109,7 +113,7 @@ const manifest = {
     author: null,
     iconUrl: null,
     readme: null,
-    recipe: { source: "npm", ref: "@team/pkg", env: [] },
+    recipe: { source: "npm", ref: "@team/pkg@1.2.3", env: [] },
     toolExposure: "all",
     allowedTools: [],
   },
@@ -163,7 +167,7 @@ describe("portable resource publication", () => {
     });
     expect(result.manifest.mcp.recipe).toEqual({
       source: "npm",
-      ref: "@team/pkg",
+      ref: "@team/pkg@1.2.3",
       env: ["OTHER", "TOKEN"],
       startCommand: "npm start",
       network: "none",
@@ -171,6 +175,8 @@ describe("portable resource publication", () => {
     expect(result.manifest.mcp.allowedTools).toEqual([]);
     expect(result.manifest.mcp).not.toHaveProperty("toolCatalog");
     expect(JSON.stringify(result.manifest)).not.toContain("private-value");
+    expect(JSON.stringify(result.manifest)).not.toContain("credentialEnvelope");
+    expect(JSON.stringify(result.manifest)).not.toContain("encrypted");
     expect(result.manifest.listing).toMatchObject({
       name: "Listing",
       tags: ["tools"],
@@ -187,6 +193,54 @@ describe("portable resource publication", () => {
       data: { latestVersion: 4, pendingReleaseId: "release", status: "draft" },
     });
   });
+  it("rejects unmigrated plaintext instead of silently publishing it", async () => {
+    mocks.deployment.mockResolvedValue({
+      ...deployment,
+      installCfg: { env: { TOKEN: "legacy-private-value" } },
+    });
+    await expect(publishMcpRelease(input)).rejects.toThrow(
+      "MCP_CREDENTIAL_MIGRATION_REQUIRED",
+    );
+    expect(mocks.createRelease).not.toHaveBeenCalled();
+  });
+
+  it("rejects configured credentials embedded in exported metadata", async () => {
+    mocks.deployment.mockResolvedValue({
+      ...deployment,
+      name: "MCP private-value",
+    });
+    await expect(publishMcpRelease(input)).rejects.toMatchObject({
+      code: "invalid_manifest",
+    });
+    expect(mocks.createRelease).not.toHaveBeenCalled();
+  });
+
+  it("rejects an envelope bound to another workspace", async () => {
+    mocks.deployment.mockResolvedValue({
+      ...deployment,
+      installCfg: sealMcpEnvironment(
+        { env: { TOKEN: "" } },
+        "another-workspace",
+        { TOKEN: "private-value" },
+      ),
+    });
+    await expect(publishMcpRelease(input)).rejects.toThrow(
+      "MCP_CREDENTIAL_SCOPE_INVALID",
+    );
+    expect(mocks.createRelease).not.toHaveBeenCalled();
+  });
+  it.each([
+    { listing: { summary: "Description with private-value" } },
+    { releaseNotes: "Release includes private-value" },
+  ])(
+    "rejects configured credentials anywhere in release content %j",
+    async (fields) => {
+      await expect(
+        publishMcpRelease({ ...input, ...fields }),
+      ).rejects.toMatchObject({ code: "invalid_manifest" });
+      expect(mocks.createRelease).not.toHaveBeenCalled();
+    },
+  );
   it("supersedes pending releases without changing published metadata or slug", async () => {
     const existing = {
       ...listing,
@@ -253,7 +307,7 @@ describe("portable resource publication", () => {
   });
   it("rejects nonexistent categories and unauthorized publishers", async () => {
     mocks.categories.mockResolvedValue(0);
-    await expect(publishToolkitRelease(input)).rejects.toMatchObject({
+    await expect(publishMcpRelease(input)).rejects.toMatchObject({
       code: "invalid_categories",
     });
     mocks.workspace.mockResolvedValue(null);
@@ -262,7 +316,7 @@ describe("portable resource publication", () => {
     });
     expect(mocks.createRelease).not.toHaveBeenCalled();
   });
-  it.each([publishMcpRelease, publishToolkitRelease])(
+  it.each([publishMcpRelease])(
     "requires a source owned by the publisher",
     async (publish) => {
       mocks.deployment.mockResolvedValue(null);
@@ -273,7 +327,7 @@ describe("portable resource publication", () => {
       expect(mocks.createRelease).not.toHaveBeenCalled();
     },
   );
-  it.each([publishMcpRelease, publishToolkitRelease])(
+  it.each([publishMcpRelease])(
     "rejects a listing belonging to another workspace",
     async (publish) => {
       mocks.listing.mockResolvedValue({
@@ -305,17 +359,84 @@ describe("portable resource publication", () => {
     });
     expect(mocks.createRelease).not.toHaveBeenCalled();
   });
+  it("publishes pinned JSON argv with environment names only", async () => {
+    mocks.deployment.mockResolvedValue({
+      ...deployment,
+      source: "config",
+      sourceRef: "npx",
+      installCfg: sealMcpEnvironment(
+        {
+          command: "npx",
+          args: ["-y", "@team/pkg@1.2.3", "two words"],
+          env: { TOKEN: "" },
+        },
+        "w",
+        { TOKEN: "private-value" },
+      ),
+    });
+    const result = await publishMcpRelease(input);
+    expect(result.manifest.mcp.recipe).toMatchObject({
+      source: "config",
+      ref: "npx",
+      command: "npx",
+      args: ["-y", "@team/pkg@1.2.3", "two words"],
+      env: ["TOKEN"],
+    });
+    expect(JSON.stringify(result.manifest)).not.toContain("private-value");
+  });
+  it.each([
+    ["--token", "credential"],
+    ["--label", "private-value"],
+  ])("rejects credential-bearing JSON argv %j", async (flag, value) => {
+    mocks.deployment.mockResolvedValue({
+      ...deployment,
+      source: "config",
+      sourceRef: "npx",
+      installCfg: sealMcpEnvironment(
+        {
+          command: "npx",
+          args: ["-y", "@team/pkg@1.2.3", flag, value],
+          env: { TOKEN: "" },
+        },
+        "w",
+        { TOKEN: "private-value" },
+      ),
+    });
+    await expect(publishMcpRelease(input)).rejects.toMatchObject({
+      code: "invalid_manifest",
+    });
+    expect(mocks.createRelease).not.toHaveBeenCalled();
+  });
+  it("publishes the edited deployment version rather than its previously approved catalog recipe", async () => {
+    mocks.listing.mockResolvedValue(listing);
+    mocks.deployment.mockResolvedValue({
+      ...deployment,
+      sourceRef: "@team/pkg@2.0.0",
+      serverId: "catalog",
+      server: {
+        name: "MCP",
+        slug: "mcp",
+        installCfg: { source: "npm", ref: "@team/pkg@1.0.0", env: [] },
+      },
+    });
+    const result = await publishMcpRelease(input);
+    expect(result.manifest.mcp.recipe.ref).toBe("@team/pkg@2.0.0");
+  });
   it("reconstructs remote authentication requirements without secret values", async () => {
     mocks.deployment.mockResolvedValue({
       ...deployment,
       source: "remote",
       sourceRef: "https://mcp.example.com/",
-      installCfg: {
-        env: { TOKEN: "private-value" },
-        transport: "sse",
-        authType: "bearer",
-        bearerEnv: "TOKEN",
-      },
+      installCfg: sealMcpEnvironment(
+        {
+          env: { TOKEN: "" },
+          transport: "sse",
+          authType: "bearer",
+          bearerEnv: "TOKEN",
+        },
+        "w",
+        { TOKEN: "private-value" },
+      ),
     });
     const result = await publishMcpRelease(input);
     expect(result.manifest.mcp.recipe).toEqual({
@@ -336,46 +457,10 @@ describe("portable resource publication", () => {
     ).rejects.toMatchObject({ code: "invalid_manifest" });
     expect(mocks.createListing).not.toHaveBeenCalled();
   });
-  it("publishes empty toolkits as reviewable immutable snapshots", async () => {
-    const result = await publishToolkitRelease({
-      ...input,
-      listing: {
-        name: " Collection ",
-        summary: " Summary ",
-        iconUrl: "https://example.com/icon.png",
-        tags: ["One", "ONE"],
-      },
-    });
-    expect(result.manifest).toMatchObject({
-      kind: "toolkit",
-      toolkit: { name: "Toolkit", slug: "toolkit" },
-      mcps: [],
-      skills: [],
-      listing: { name: "Collection", summary: "Summary", tags: ["one"] },
-    });
-    expect(result.release.releaseSummary).toEqual({
-      mcpCount: 0,
-      skillCount: 0,
-      toolCount: 0,
-    });
-  });
-  it("rejects unverified catalog connectors inside a toolkit", async () => {
-    mocks.toolkit.mockResolvedValue({
-      id: "t",
-      name: "Toolkit",
-      slug: "toolkit",
-      servers: [{ deployment }],
-      skills: [],
-    });
-    await expect(publishToolkitRelease(input)).rejects.toMatchObject({
-      code: "invalid_manifest",
-    });
-    expect(mocks.createRelease).not.toHaveBeenCalled();
-  });
   it.each(["P2002", "P2034"])(
     "maps concurrent %s publication failures to a conflict",
     async (code) => {
-      for (const publish of [publishMcpRelease, publishToolkitRelease]) {
+      for (const publish of [publishMcpRelease]) {
         mocks.transaction.mockRejectedValueOnce({ code });
         await expect(publish(input)).rejects.toMatchObject({
           code: "listing_conflict",
@@ -450,7 +535,17 @@ describe("resource manifest trust boundary", () => {
 });
 
 describe("verified catalog composition", () => {
-  it("uses catalog recipes and validated tools instead of local runtime configuration", async () => {
+  it("rejects creating a duplicate listing for an existing catalog MCP", async () => {
+    mocks.deployment.mockResolvedValue({ ...deployment, serverId: "catalog" });
+    await expect(publishMcpRelease(input)).rejects.toMatchObject({
+      code: "listing_conflict",
+      message: "Catalog MCPs are already represented in the market.",
+    });
+    expect(mocks.createListing).not.toHaveBeenCalled();
+    expect(mocks.createRelease).not.toHaveBeenCalled();
+  });
+  it("uses catalog recipes for existing catalog-backed listings without a deployment recipe and exports only validated tools", async () => {
+    mocks.listing.mockResolvedValue(listing);
     const toolCatalog = [
       {
         name: "search",
@@ -479,41 +574,16 @@ describe("verified catalog composition", () => {
         toolCatalog,
       },
     };
-    mocks.toolkit.mockResolvedValue({
-      id: "t",
-      name: "Toolkit",
-      slug: "toolkit",
-      servers: [
-        {
-          deployment: {
-            ...deployment,
-            serverId: "catalog",
-            server,
-            mcpAllowedTools: ["search", "unverified", "search"],
-          },
-        },
-      ],
-      skills: [
-        {
-          installedSkill: {
-            skillId: null,
-            name: "Helper",
-            slug: "helper",
-            description: "Helper skill",
-            content: "# Helper",
-            files: [],
-            source: "custom",
-            sourceRef: null,
-            userInvocable: true,
-            agentInvocable: true,
-            effort: "default",
-            skill: null,
-          },
-        },
-      ],
+    mocks.deployment.mockResolvedValue({
+      ...deployment,
+      source: null,
+      sourceRef: null,
+      serverId: "catalog",
+      server,
+      mcpAllowedTools: ["search", "unverified", "search"],
     });
-    const result = await publishToolkitRelease(input);
-    expect(result.manifest.mcps[0]).toMatchObject({
+    const result = await publishMcpRelease(input);
+    expect(result.manifest.mcp).toMatchObject({
       catalogSlug: "catalog",
       name: "Catalog MCP",
       author: "Catalog Author",
@@ -529,43 +599,6 @@ describe("verified catalog composition", () => {
         headerEnv: { "X-Api-Key": "TOKEN" },
       },
     });
-    expect(result.manifest.mcps[0].recipe).not.toHaveProperty("envValues");
-    expect(result.manifest.skills[0].snapshot).toMatchObject({
-      name: "Helper",
-      source: { type: "custom" },
-    });
-    expect(result.release.releaseSummary).toEqual({
-      mcpCount: 1,
-      skillCount: 1,
-      toolCount: 2,
-    });
-  });
-  it("preserves approved toolkit metadata while queueing a replacement release", async () => {
-    const existing = {
-      ...listing,
-      latestReleaseId: "approved",
-      pendingReleaseId: "pending",
-      status: "disabled",
-    };
-    mocks.listing.mockResolvedValue(existing);
-    mocks.updateListing.mockResolvedValue(existing);
-    const result = await publishToolkitRelease({
-      ...input,
-      listing: { slug: "replacement", name: "New name" },
-    });
-    expect(result.manifest.listing.slug).toBe("published-slug");
-    expect(mocks.updateListing).toHaveBeenNthCalledWith(1, {
-      where: { id: "listing" },
-      data: { publishedById: "u" },
-    });
-    expect(mocks.updateListing).toHaveBeenLastCalledWith({
-      where: { id: "listing" },
-      data: {
-        latestVersion: 4,
-        pendingReleaseId: "release",
-        status: "disabled",
-      },
-    });
-    expect(mocks.rejectRelease).toHaveBeenCalledOnce();
+    expect(result.manifest.mcp.recipe).not.toHaveProperty("envValues");
   });
 });

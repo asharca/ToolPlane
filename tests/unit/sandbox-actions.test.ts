@@ -6,6 +6,8 @@ const mocks = vi.hoisted(() => ({
   sandboxFindFirst: vi.fn(),
   sandboxCreate: vi.fn(),
   sandboxUpdate: vi.fn(),
+  agentFindFirst: vi.fn(),
+  assertDockerVolumeExists: vi.fn(),
   agentRuntimeFindFirst: vi.fn(),
   agentRuntimeUpdateMany: vi.fn(),
   sandboxSnapshotFindFirst: vi.fn(),
@@ -43,11 +45,8 @@ const mocks = vi.hoisted(() => ({
   redirect: vi.fn(),
   disconnectConnector: vi.fn(),
   setConnectorSetupTokenCookie: vi.fn(),
-  runHermesRuntimeMaintenance: vi.fn(),
-  ensureHermesRuntimeReady: vi.fn(),
   stopHermesRuntime: vi.fn(),
-  setHermesRuntimeEnv: vi.fn(),
-  syncHermesRuntime: vi.fn(),
+  stopAgentSandboxSessionMcp: vi.fn(),
   headers: vi.fn(),
 }));
 
@@ -60,6 +59,7 @@ vi.mock("@/lib/workspace/queries", () => ({
 vi.mock("@/lib/db", () => ({
   db: {
     $transaction: mocks.transaction,
+    agent: { findFirst: mocks.agentFindFirst },
     sandbox: {
       findFirst: mocks.sandboxFindFirst,
       create: mocks.sandboxCreate,
@@ -97,6 +97,7 @@ vi.mock("@/lib/process/spawn-spec", () => ({
 }));
 vi.mock("@/lib/sandboxes/runtime", () => ({
   DEFAULT_SANDBOX_IMAGE: "node:24-bookworm-slim",
+  assertDockerVolumeExists: mocks.assertDockerVolumeExists,
   copyDockerVolume: mocks.copyDockerVolume,
   DockerVolumeCopyCleanupError: mocks.DockerVolumeCopyCleanupError,
   removeDockerSandboxContainer: mocks.removeDockerSandboxContainer,
@@ -117,13 +118,10 @@ vi.mock("@/lib/sandboxes/connector-setup-token", () => ({
   setConnectorSetupTokenCookie: mocks.setConnectorSetupTokenCookie,
 }));
 vi.mock("@/lib/agents/hermes/runtime", () => ({
-  ensureHermesRuntimeReady: mocks.ensureHermesRuntimeReady,
-  runHermesRuntimeMaintenance: mocks.runHermesRuntimeMaintenance,
   stopHermesRuntime: mocks.stopHermesRuntime,
-  syncHermesRuntime: mocks.syncHermesRuntime,
 }));
-vi.mock("@/lib/agents/mutations", () => ({
-  setHermesRuntimeEnv: mocks.setHermesRuntimeEnv,
+vi.mock("@/lib/agents/conversation-sandbox", () => ({
+  stopAgentSandboxSessionMcp: mocks.stopAgentSandboxSessionMcp,
 }));
 
 import {
@@ -140,7 +138,6 @@ import {
   startSandboxAction,
   stopSandboxAction,
   updateSandboxEnvAction,
-  updateSandboxSudoAction,
 } from "@/lib/sandboxes/actions";
 import { closeWorkspaceOperations } from "@/lib/workspace/operation-gate";
 import { ownership } from "@/lib/runtime/ownership-state";
@@ -196,37 +193,11 @@ function hermesSandbox(overrides: Record<string, unknown> = {}) {
   });
 }
 
-function completeHermesMaintenance() {
-  mocks.runHermesRuntimeMaintenance.mockImplementation(
-    async (...args: unknown[]) => {
-      const operation = args[4] as (context: {
-        agentId: string;
-        runtimeId: string;
-        sandboxId: string;
-        deploymentId: string;
-        volumeName: string;
-        wasActive: boolean;
-        preventResume: () => void;
-      }) => Promise<unknown>;
-      return {
-        status: "completed",
-        data: await operation({
-          agentId: "agent-1",
-          runtimeId: "runtime-1",
-          sandboxId: "sb1",
-          deploymentId: "dep1",
-          volumeName: "source-volume",
-          wasActive: false,
-          preventResume: vi.fn(),
-        }),
-      };
-    },
-  );
-}
-
 describe("renameSandboxAction", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    mocks.agentFindFirst.mockResolvedValue(null);
+    mocks.agentRuntimeFindFirst.mockResolvedValue(null);
     mocks.getCurrentUser.mockResolvedValue({ id: "user1" });
     mocks.getWorkspaceForUser.mockResolvedValue({
       id: "ws1",
@@ -236,16 +207,62 @@ describe("renameSandboxAction", () => {
     mocks.effectiveStatus.mockReturnValue("stopped");
     mocks.killProcess.mockResolvedValue(undefined);
     mocks.removeDockerVolumeCopyHelper.mockResolvedValue(undefined);
-    mocks.setHermesRuntimeEnv.mockResolvedValue(true);
-    mocks.ensureHermesRuntimeReady.mockResolvedValue({ port: 8642 });
     mocks.stopHermesRuntime.mockResolvedValue(undefined);
-    mocks.syncHermesRuntime.mockResolvedValue({ status: "provisioning" });
     mocks.headers.mockResolvedValue(
       new Headers({
         "x-forwarded-host": "connect.example.com",
         "x-forwarded-proto": "https",
       }),
     );
+  });
+
+  it.each([
+    startSandboxAction,
+    restartSandboxAction,
+    updateSandboxEnvAction,
+    createSandboxSnapshotAction,
+    restoreSandboxSnapshotAction,
+    cloneSandboxAction,
+  ])(
+    "never executes historical Hermes through generic controls",
+    async (action) => {
+      mocks.sandboxFindFirst.mockResolvedValue(hermesSandbox());
+      await action(envForm("TOKEN=changed"));
+      expect(mocks.startProcess).not.toHaveBeenCalled();
+      expect(mocks.restartProcess).not.toHaveBeenCalled();
+      expect(mocks.copyDockerVolume).not.toHaveBeenCalled();
+      expect(mocks.transaction).not.toHaveBeenCalled();
+    },
+  );
+  it.each(["legacy-link", "session-volume"])(
+    "denies generic runtime mutation for %s Docker volumes",
+    async (condition) => {
+      mocks.sandboxFindFirst.mockResolvedValue(
+        dockerSandbox(
+          condition === "session-volume"
+            ? { conversations: [{ id: "conversation" }] }
+            : {},
+        ),
+      );
+      if (condition === "legacy-link")
+        mocks.agentFindFirst.mockResolvedValue({ id: "legacy-agent" });
+      await startSandboxAction(renameForm("Ignored"));
+      await updateSandboxEnvAction(envForm("TOKEN=changed"));
+      expect(mocks.startProcess).not.toHaveBeenCalled();
+      expect(mocks.transaction).not.toHaveBeenCalled();
+    },
+  );
+  it("stops persisted session MCP sidecars before a bound sandbox, preserving volumes", async () => {
+    mocks.sandboxFindFirst.mockResolvedValue(
+      dockerSandbox({ conversations: [{ id: "conversation" }] }),
+    );
+    await stopSandboxAction(renameForm("Ignored"));
+    expect(mocks.stopAgentSandboxSessionMcp).toHaveBeenCalledWith("sb1", "ws1");
+    expect(mocks.stopProcess).toHaveBeenCalledWith("dep1");
+    expect(
+      mocks.stopAgentSandboxSessionMcp.mock.invocationCallOrder[0],
+    ).toBeLessThan(mocks.stopProcess.mock.invocationCallOrder[0]);
+    expect(mocks.removeDockerVolumeStrict).not.toHaveBeenCalled();
   });
 
   afterEach(() => {
@@ -560,23 +577,6 @@ describe("renameSandboxAction", () => {
     expect(mocks.startProcess).toHaveBeenCalledTimes(2);
   });
 
-  it("starts an agent-managed Hermes sandbox through its runtime", async () => {
-    mocks.sandboxFindFirst.mockResolvedValue(hermesSandbox());
-    mocks.agentRuntimeFindFirst.mockResolvedValue({ agentId: "agent-1" });
-
-    await startSandboxAction(renameForm("Ignored"));
-
-    expect(mocks.ensureHermesRuntimeReady).toHaveBeenCalledWith(
-      "ws1",
-      "agent-1",
-    );
-    expect(mocks.startProcess).not.toHaveBeenCalled();
-    expect(mocks.revalidatePath).toHaveBeenCalledWith(
-      "/app/mine/agents/agent-1",
-    );
-    expect(mocks.revalidatePath).toHaveBeenCalledWith("/app/mine/work");
-  });
-
   it("stops an agent-managed Hermes sandbox through its runtime", async () => {
     mocks.sandboxFindFirst.mockResolvedValue(hermesSandbox());
     mocks.agentRuntimeFindFirst.mockResolvedValue({ agentId: "agent-1" });
@@ -738,7 +738,6 @@ describe("renameSandboxAction", () => {
       ]);
       expect(mocks.sandboxFindFirst).not.toHaveBeenCalled();
       expect(mocks.stopProcess).not.toHaveBeenCalled();
-      expect(mocks.runHermesRuntimeMaintenance).not.toHaveBeenCalled();
     });
 
     it("does not access foreign sandbox names or runtimes, while continuing authorized items", async () => {
@@ -773,7 +772,12 @@ describe("renameSandboxAction", () => {
         expect.anything(),
         expect.anything(),
       );
-      expect(mocks.agentRuntimeFindFirst).not.toHaveBeenCalled();
+      for (const [query] of mocks.agentRuntimeFindFirst.mock.calls) {
+        expect(query.where).toMatchObject({
+          workspaceId: "ws1",
+          sandboxId: "sb1",
+        });
+      }
       expect(mocks.deploymentUpdateMany).not.toHaveBeenCalled();
     });
 
@@ -858,137 +862,6 @@ describe("renameSandboxAction", () => {
       expect(mocks.sandboxFindFirst).not.toHaveBeenCalled();
       expect(mocks.startProcess).not.toHaveBeenCalled();
     });
-
-    it.each(["stop", "restart"] as const)(
-      "uses Hermes maintenance ownership for batch %s",
-      async (operation) => {
-        mocks.sandboxFindFirst.mockResolvedValue(hermesSandbox());
-        mocks.effectiveStatus.mockReturnValue("running");
-        mocks.agentRuntimeFindFirst.mockResolvedValue({ agentId: "agent-1" });
-        if (operation === "stop") {
-          mocks.deploymentUpdateMany.mockResolvedValueOnce({ count: 1 });
-          mocks.agentRuntimeUpdateMany.mockResolvedValueOnce({ count: 1 });
-        }
-        const preventResume = vi.fn();
-        mocks.runHermesRuntimeMaintenance.mockImplementationOnce(
-          async (...args: unknown[]) => {
-            const callback = args[4] as (control: {
-              wasActive: boolean;
-              deploymentId: string;
-              runtimeId: string;
-              preventResume: () => void;
-            }) => Promise<boolean>;
-            return {
-              status: "completed",
-              data: await callback({
-                wasActive: true,
-                deploymentId: "dep1",
-                runtimeId: "runtime-1",
-                preventResume,
-              }),
-            };
-          },
-        );
-
-        expect(
-          await batchSandboxLifecycleAction("mine", operation, ["sb1"]),
-        ).toEqual([
-          { sandboxId: "sb1", outcome: "success", message: "accepted" },
-        ]);
-        expect(mocks.runHermesRuntimeMaintenance).toHaveBeenCalledWith(
-          "ws1",
-          "agent-1",
-          "sb1",
-          { quiesce: true },
-          expect.any(Function),
-        );
-        expect(mocks.startProcess).not.toHaveBeenCalled();
-        expect(mocks.stopProcess).not.toHaveBeenCalled();
-        expect(mocks.restartProcess).not.toHaveBeenCalled();
-        if (operation === "stop") {
-          expect(preventResume).toHaveBeenCalledOnce();
-          expect(mocks.agentRuntimeUpdateMany).toHaveBeenCalledWith({
-            where: {
-              id: "runtime-1",
-              workspaceId: "ws1",
-              agentId: "agent-1",
-              sandboxId: "sb1",
-              kind: "hermes",
-            },
-            data: { status: "stopped", lastError: null },
-          });
-        } else {
-          expect(preventResume).not.toHaveBeenCalled();
-          expect(mocks.agentRuntimeUpdateMany).not.toHaveBeenCalled();
-        }
-      },
-    );
-    it("routes single Hermes restart through the same maintenance lifecycle", async () => {
-      mocks.sandboxFindFirst.mockResolvedValue(hermesSandbox());
-      mocks.agentRuntimeFindFirst.mockResolvedValue({ agentId: "agent-1" });
-      mocks.runHermesRuntimeMaintenance.mockResolvedValueOnce({
-        status: "completed",
-        data: true,
-      });
-
-      await restartSandboxAction(renameForm("Ignored"));
-
-      expect(mocks.runHermesRuntimeMaintenance).toHaveBeenCalledWith(
-        "ws1",
-        "agent-1",
-        "sb1",
-        { quiesce: true },
-        expect.any(Function),
-      );
-      expect(mocks.restartProcess).not.toHaveBeenCalled();
-    });
-
-    it.each([
-      [
-        "The Hermes sandbox has a pending lifecycle operation.",
-        "skipped",
-        "runtime_busy",
-      ],
-      ["secret maintenance failure token=private", "error", "operation_failed"],
-    ] as const)(
-      "safely reports Hermes maintenance failure",
-      async (error, outcome, message) => {
-        mocks.sandboxFindFirst.mockResolvedValue(hermesSandbox());
-        mocks.effectiveStatus.mockReturnValue("running");
-        mocks.agentRuntimeFindFirst.mockResolvedValue({ agentId: "agent-1" });
-        mocks.runHermesRuntimeMaintenance.mockResolvedValueOnce({
-          status: "error",
-          error,
-        });
-
-        expect(
-          await batchSandboxLifecycleAction("mine", "restart", ["sb1"]),
-        ).toEqual([{ sandboxId: "sb1", outcome, message }]);
-        expect(mocks.deploymentUpdateMany).not.toHaveBeenCalled();
-        expect(mocks.agentRuntimeUpdateMany).not.toHaveBeenCalled();
-      },
-    );
-
-    it.each([
-      [
-        "The Hermes sandbox has a pending lifecycle operation.",
-        "skipped",
-        "runtime_busy",
-      ],
-      ["secret runtime failure token=private", "error", "operation_failed"],
-    ] as const)(
-      "safely reports Hermes runtime errors",
-      async (error, outcome, message) => {
-        mocks.sandboxFindFirst.mockResolvedValue(hermesSandbox());
-        mocks.agentRuntimeFindFirst.mockResolvedValue({ agentId: "agent-1" });
-        mocks.ensureHermesRuntimeReady.mockResolvedValueOnce({ error });
-
-        expect(
-          await batchSandboxLifecycleAction("mine", "start", ["sb1"]),
-        ).toEqual([{ sandboxId: "sb1", outcome, message }]);
-        expect(mocks.startProcess).not.toHaveBeenCalled();
-      },
-    );
   });
 
   it("creates the connector without collecting connection settings or exposing a token", async () => {
@@ -1035,9 +908,7 @@ describe("renameSandboxAction", () => {
       }),
     );
 
-    await expect(cloneSandboxAction(renameForm("Copy"))).rejects.toThrow(
-      "Conversation sandboxes cannot be cloned as standalone templates.",
-    );
+    await cloneSandboxAction(renameForm("Copy"));
 
     expect(mocks.deploymentCreate).not.toHaveBeenCalled();
     expect(mocks.sandboxCreate).not.toHaveBeenCalled();
@@ -1272,34 +1143,6 @@ describe("renameSandboxAction", () => {
     );
   });
 
-  it("creates a Hermes snapshot through agent runtime maintenance", async () => {
-    mocks.sandboxFindFirst.mockResolvedValue(hermesSandbox());
-    mocks.agentRuntimeFindFirst.mockResolvedValue({ agentId: "agent-1" });
-    mocks.sandboxSnapshotCreate.mockImplementation(async ({ data }) => data);
-    completeHermesMaintenance();
-
-    await createSandboxSnapshotAction(renameForm("Hermes checkpoint"));
-
-    const snapshotData = mocks.sandboxSnapshotCreate.mock.calls[0][0].data;
-    expect(mocks.runHermesRuntimeMaintenance).toHaveBeenCalledWith(
-      "ws1",
-      "agent-1",
-      "sb1",
-      expect.objectContaining({ quiesce: true, operationStatus: "copying" }),
-      expect.any(Function),
-    );
-    expect(mocks.copyDockerVolume).toHaveBeenCalledWith(
-      "source-volume",
-      snapshotData.volumeName,
-    );
-    expect(mocks.sandboxSnapshotUpdate).toHaveBeenCalledWith({
-      where: { id: snapshotData.id },
-      data: { status: "ready", error: null },
-    });
-    expect(mocks.killProcess).not.toHaveBeenCalled();
-    expect(mocks.stopDockerSandboxContainer).not.toHaveBeenCalled();
-  });
-
   it("restores a ready snapshot and removes the rollback volume", async () => {
     mocks.sandboxFindFirst.mockResolvedValue(dockerSandbox());
     mocks.sandboxSnapshotFindFirst.mockResolvedValue({
@@ -1372,46 +1215,6 @@ describe("renameSandboxAction", () => {
       where: { id: "snap1" },
       data: { error: null },
     });
-  });
-
-  it("restores a Hermes snapshot through maintenance and leaves reprojection to the runtime", async () => {
-    mocks.sandboxFindFirst.mockResolvedValue(hermesSandbox());
-    mocks.agentRuntimeFindFirst.mockResolvedValue({ agentId: "agent-1" });
-    mocks.sandboxSnapshotFindFirst.mockResolvedValue({
-      id: "snap1",
-      sandboxId: "sb1",
-      name: "Hermes checkpoint",
-      volumeName: "snapshot-volume",
-      status: "ready",
-    });
-    completeHermesMaintenance();
-
-    await restoreSandboxSnapshotAction(snapshotForm());
-
-    expect(mocks.runHermesRuntimeMaintenance).toHaveBeenCalledWith(
-      "ws1",
-      "agent-1",
-      "sb1",
-      expect.objectContaining({
-        quiesce: true,
-        operationStatus: "restoring",
-        reprojectAfter: true,
-      }),
-      expect.any(Function),
-    );
-    expect(mocks.copyDockerVolume).toHaveBeenNthCalledWith(
-      2,
-      "snapshot-volume",
-      "source-volume",
-      { replace: true },
-    );
-    expect(mocks.deploymentUpdateMany).toHaveBeenCalledWith({
-      where: { id: "dep1", workspaceId: "ws1", source: "sandbox" },
-      data: { status: "restoring" },
-    });
-    expect(mocks.deploymentUpdateMany).not.toHaveBeenCalledWith(
-      expect.objectContaining({ data: { status: "stopped" } }),
-    );
   });
 
   it("rolls the Docker volume back when snapshot restoration fails", async () => {
@@ -1664,34 +1467,6 @@ describe("renameSandboxAction", () => {
     ).toBeLessThan(mocks.sandboxSnapshotDeleteMany.mock.invocationCallOrder[0]);
   });
 
-  it("deletes a Hermes snapshot through the maintenance queue without quiescing it", async () => {
-    mocks.sandboxFindFirst.mockResolvedValue(hermesSandbox());
-    mocks.agentRuntimeFindFirst.mockResolvedValue({ agentId: "agent-1" });
-    mocks.sandboxSnapshotFindFirst.mockResolvedValue({
-      id: "snap1",
-      sandboxId: "sb1",
-      volumeName: "snapshot-volume",
-      status: "ready",
-    });
-    completeHermesMaintenance();
-
-    await deleteSandboxSnapshotAction(snapshotForm());
-
-    expect(mocks.runHermesRuntimeMaintenance).toHaveBeenCalledWith(
-      "ws1",
-      "agent-1",
-      "sb1",
-      expect.objectContaining({ quiesce: false }),
-      expect.any(Function),
-    );
-    expect(mocks.removeDockerVolumeStrict).toHaveBeenCalledWith(
-      "snapshot-volume",
-    );
-    expect(mocks.sandboxSnapshotDeleteMany).toHaveBeenCalledWith({
-      where: { id: "snap1", sandboxId: "sb1" },
-    });
-  });
-
   it("marks snapshot deletion as retryable when the database delete fails", async () => {
     mocks.sandboxFindFirst.mockResolvedValue(dockerSandbox());
     mocks.sandboxSnapshotFindFirst.mockResolvedValue({
@@ -1848,161 +1623,6 @@ describe("renameSandboxAction", () => {
       { kind: "sandbox", env: { A: "1" } },
       { awaitReady: false, workspaceId: "ws1" },
     );
-  });
-
-  it("updates a Hermes environment through the managed runtime projection", async () => {
-    mocks.sandboxFindFirst.mockResolvedValue(
-      hermesSandbox({
-        config: { managedBy: "agent-runtime", env: { EXISTING: "value" } },
-        deployment: {
-          id: "dep1",
-          status: "running",
-          installCfg: { runtimeId: "runtime-1" },
-        },
-      }),
-    );
-    mocks.agentRuntimeFindFirst.mockResolvedValue({
-      id: "runtime-1",
-      agentId: "agent-1",
-    });
-
-    await updateSandboxEnvAction(envForm("API_KEY=secret"));
-
-    expect(mocks.agentRuntimeFindFirst).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          workspaceId: "ws1",
-          sandboxId: "sb1",
-          kind: "hermes",
-        }),
-      }),
-    );
-    expect(mocks.setHermesRuntimeEnv).toHaveBeenCalledWith("ws1", "agent-1", {
-      API_KEY: "secret",
-    });
-    expect(mocks.syncHermesRuntime).toHaveBeenCalledWith("ws1", "agent-1", {
-      force: true,
-    });
-    expect(mocks.sandboxUpdate).not.toHaveBeenCalled();
-    expect(mocks.deploymentUpdate).not.toHaveBeenCalled();
-    expect(mocks.removeDockerSandboxContainer).not.toHaveBeenCalled();
-  });
-
-  it("enables the Hermes sudo opt-in on config, installCfg, and forces a runtime resync", async () => {
-    const sudoForm = renameForm("Ignored");
-    sudoForm.set("allowSudo", "on");
-    mocks.sandboxFindFirst.mockResolvedValue(
-      hermesSandbox({
-        config: { managedBy: "agent-runtime" },
-        deployment: {
-          id: "dep1",
-          status: "running",
-          installCfg: { runtimeId: "runtime-1" },
-        },
-      }),
-    );
-    mocks.agentRuntimeFindFirst.mockResolvedValue({
-      id: "runtime-1",
-      agentId: "agent-1",
-    });
-
-    await updateSandboxSudoAction(sudoForm);
-
-    expect(mocks.sandboxUpdate).toHaveBeenCalledWith({
-      where: { id: "sb1" },
-      data: { config: { managedBy: "agent-runtime", allowSudo: true } },
-    });
-    expect(mocks.deploymentUpdate).toHaveBeenCalledWith({
-      where: { id: "dep1" },
-      data: {
-        installCfg: expect.objectContaining({
-          runtimeId: "runtime-1",
-          allowSudo: true,
-        }),
-      },
-    });
-    expect(mocks.syncHermesRuntime).toHaveBeenCalledWith("ws1", "agent-1", {
-      force: true,
-    });
-    expect(mocks.killProcess).not.toHaveBeenCalled();
-    expect(mocks.removeDockerSandboxContainer).not.toHaveBeenCalled();
-  });
-
-  it("skips the Hermes sudo opt-in change when the setting is unchanged", async () => {
-    const sudoForm = new FormData();
-    sudoForm.set("workspace", "mine");
-    sudoForm.set("sandboxId", "sb1");
-    sudoForm.set("allowSudo", "on");
-    mocks.sandboxFindFirst.mockResolvedValue(
-      hermesSandbox({
-        config: { managedBy: "agent-runtime", allowSudo: true },
-        deployment: {
-          id: "dep1",
-          status: "running",
-          installCfg: { runtimeId: "runtime-1", allowSudo: true },
-        },
-      }),
-    );
-
-    await updateSandboxSudoAction(sudoForm);
-
-    expect(mocks.sandboxUpdate).not.toHaveBeenCalled();
-    expect(mocks.deploymentUpdate).not.toHaveBeenCalled();
-    expect(mocks.syncHermesRuntime).not.toHaveBeenCalled();
-  });
-
-  it("disables the Hermes sudo opt-in and drops the key from both records", async () => {
-    const sudoForm = new FormData();
-    sudoForm.set("workspace", "mine");
-    sudoForm.set("sandboxId", "sb1");
-    mocks.sandboxFindFirst.mockResolvedValue(
-      hermesSandbox({
-        config: { managedBy: "agent-runtime", allowSudo: true },
-        deployment: {
-          id: "dep1",
-          status: "running",
-          installCfg: { runtimeId: "runtime-1", allowSudo: true },
-        },
-      }),
-    );
-    mocks.agentRuntimeFindFirst.mockResolvedValue({
-      id: "runtime-1",
-      agentId: "agent-1",
-    });
-
-    await updateSandboxSudoAction(sudoForm);
-
-    expect(mocks.sandboxUpdate).toHaveBeenCalledWith({
-      where: { id: "sb1" },
-      data: { config: { managedBy: "agent-runtime" } },
-    });
-    expect(mocks.deploymentUpdate).toHaveBeenCalledWith({
-      where: { id: "dep1" },
-      data: {
-        installCfg: expect.objectContaining({ runtimeId: "runtime-1" }),
-      },
-    });
-    expect(
-      (
-        mocks.deploymentUpdate.mock.calls[0][0].data.installCfg as Record<
-          string,
-          unknown
-        >
-      ).allowSudo,
-    ).toBeUndefined();
-    expect(mocks.syncHermesRuntime).toHaveBeenCalledWith("ws1", "agent-1", {
-      force: true,
-    });
-  });
-
-  it("ignores the sudo opt-in for non-Hermes sandboxes", async () => {
-    const sudoForm = renameForm("Ignored");
-    sudoForm.set("allowSudo", "on");
-
-    await updateSandboxSudoAction(sudoForm);
-
-    expect(mocks.sandboxUpdate).not.toHaveBeenCalled();
-    expect(mocks.syncHermesRuntime).not.toHaveBeenCalled();
   });
 
   it("deletes every Docker snapshot volume before removing the sandbox runtime", async () => {
@@ -2184,68 +1804,15 @@ describe("renameSandboxAction", () => {
     "upgrading",
     "deleting",
   ])(
-    "does not mutate names, environment or sudo while sandbox is %s",
+    "does not mutate names or environment while sandbox is %s",
     async (status) => {
       mocks.sandboxFindFirst.mockResolvedValue(
         hermesSandbox({ deployment: { id: "dep1", status } }),
       );
       const form = envForm("TOKEN=new-value");
-      form.set("allowSudo", "on");
       await renameSandboxAction(renameForm("New name"));
       await updateSandboxEnvAction(form);
-      await updateSandboxSudoAction(form);
       expect(mocks.transaction).not.toHaveBeenCalled();
-      expect(mocks.setHermesRuntimeEnv).not.toHaveBeenCalled();
-      expect(mocks.syncHermesRuntime).not.toHaveBeenCalled();
-    },
-  );
-
-  it("does not project a Hermes environment when the agent binding is missing", async () => {
-    mocks.sandboxFindFirst.mockResolvedValue(hermesSandbox());
-    mocks.agentRuntimeFindFirst.mockResolvedValue(null);
-    await updateSandboxEnvAction(envForm("TOKEN=new-value"));
-    const sudo = renameForm("Ignored");
-    sudo.set("allowSudo", "on");
-    await updateSandboxSudoAction(sudo);
-    expect(mocks.transaction).not.toHaveBeenCalled();
-    expect(mocks.setHermesRuntimeEnv).not.toHaveBeenCalled();
-    expect(mocks.syncHermesRuntime).not.toHaveBeenCalled();
-  });
-
-  it("does not sync a Hermes environment when the owning mutation refuses the update", async () => {
-    mocks.sandboxFindFirst.mockResolvedValue(hermesSandbox());
-    mocks.agentRuntimeFindFirst.mockResolvedValue({ agentId: "agent-1" });
-    mocks.setHermesRuntimeEnv.mockResolvedValue(false);
-    await updateSandboxEnvAction(envForm("TOKEN=new-value"));
-    expect(mocks.syncHermesRuntime).not.toHaveBeenCalled();
-    expect(mocks.transaction).not.toHaveBeenCalled();
-  });
-
-  it.each(["env", "sudo"])(
-    "preserves saved %s changes and reports Hermes synchronization failure",
-    async (setting) => {
-      mocks.sandboxFindFirst.mockResolvedValue(hermesSandbox());
-      mocks.agentRuntimeFindFirst.mockResolvedValue({ agentId: "agent-1" });
-      mocks.syncHermesRuntime.mockResolvedValue({
-        error: "runtime unavailable",
-      });
-      const form = envForm("TOKEN=new-value");
-      form.set("allowSudo", "on");
-      await expect(
-        setting === "env"
-          ? updateSandboxEnvAction(form)
-          : updateSandboxSudoAction(form),
-      ).rejects.toThrow("Saved, but Hermes sync failed: runtime unavailable");
-      if (setting === "env")
-        expect(mocks.setHermesRuntimeEnv).toHaveBeenCalledWith(
-          "ws1",
-          "agent-1",
-          { TOKEN: "new-value" },
-        );
-      else expect(mocks.transaction).toHaveBeenCalledOnce();
-      expect(mocks.syncHermesRuntime).toHaveBeenCalledWith("ws1", "agent-1", {
-        force: true,
-      });
     },
   );
 
@@ -2289,7 +1856,6 @@ describe("renameSandboxAction", () => {
     createSandboxSnapshotAction,
     restoreSandboxSnapshotAction,
     deleteSandboxSnapshotAction,
-    updateSandboxSudoAction,
     updateSandboxEnvAction,
     renameSandboxAction,
     startSandboxAction,
@@ -2312,7 +1878,6 @@ describe("renameSandboxAction", () => {
     createSandboxSnapshotAction,
     restoreSandboxSnapshotAction,
     deleteSandboxSnapshotAction,
-    updateSandboxSudoAction,
     updateSandboxEnvAction,
     renameSandboxAction,
     startSandboxAction,

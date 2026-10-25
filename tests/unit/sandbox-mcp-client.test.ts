@@ -17,6 +17,7 @@ const remote = {
   transport: "streamable-http" as const,
   headers: { authorization: "Bearer top-secret" },
   timeoutMs: 30_000,
+  allowUnsafeHttp: false,
 };
 
 function execution(result: unknown) {

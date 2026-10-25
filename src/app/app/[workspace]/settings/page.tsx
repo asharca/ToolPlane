@@ -20,6 +20,8 @@ import { toAgentChannelConnectionClientView } from "@/lib/agents/channel-connect
 import { AgentMessagingPanel } from "@/components/dashboard/agents/AgentMessagingPanel";
 import { ModalSidebarLayout } from "@/components/dashboard/ModalSidebarLayout";
 import { Radio, Settings } from "lucide-react";
+import { ButtonLink } from "@/components/motion/button";
+import { adminGate } from "@/lib/auth/admin-policy";
 
 export const dynamic = "force-dynamic";
 
@@ -80,6 +82,22 @@ export default async function SettingsPage({
     isOwner ? listAgentChannelConnections(ws.id) : Promise.resolve([]),
   ]);
   const query = await searchParams;
+  const base = `/app/${encodeURIComponent(slug)}`;
+  const settingsLinks = [
+    { href: `${base}/members`, label: t("members") },
+    { href: `${base}/mcp`, label: t("sharedConnections") },
+    ...(isOwner
+      ? [{ href: `${base}/providers`, label: t("providersAndCredentials") }]
+      : []),
+    {
+      href: `${base}/market/sources`,
+      label: t("resourceSources"),
+    },
+    { href: `${base}/toolkits`, label: t("toolkitHistory") },
+    ...(adminGate(user) === "ok"
+      ? [{ href: "/admin/settings", label: t("platformLimits") }]
+      : []),
+  ];
   const modelSelection = (providerId: string | null, model: string | null) =>
     providerId &&
     model &&
@@ -96,6 +114,27 @@ export default async function SettingsPage({
       icon: <Settings className="size-4" />,
       content: (
         <div className="space-y-6 p-5 sm:p-6 lg:p-8">
+          <DashboardPanel
+            title={t("workspaceManagement")}
+            description={t("workspaceManagementDesc")}
+          >
+            <nav
+              aria-label={t("workspaceManagement")}
+              className="flex min-w-0 flex-wrap gap-2"
+            >
+              {settingsLinks.map((link) => (
+                <ButtonLink
+                  key={link.href}
+                  href={link.href}
+                  variant="secondary"
+                  size="sm"
+                  className="h-auto min-h-8 max-w-full whitespace-normal text-left"
+                >
+                  {link.label}
+                </ButtonLink>
+              ))}
+            </nav>
+          </DashboardPanel>
           <DashboardPanel
             title={t("general")}
             description={management("sharedHint")}

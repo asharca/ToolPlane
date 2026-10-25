@@ -4,6 +4,7 @@ import {
   revokePiPackageClientInstallation,
   piPackageBindingsSchema,
 } from "@/lib/pi-packages/installations";
+import { piClientSelectionsSchema } from "@/lib/pi-packages/selections";
 import {
   piInstallationAccountContext,
   piInstallationErrorResponse,
@@ -12,8 +13,10 @@ import { privateJson, readSandboxJson } from "@/lib/sandboxes/http-body";
 export const runtime = "nodejs";
 const updateSchema = z
   .object({
-    releaseId: z.string().min(1).max(100),
-    bindings: piPackageBindingsSchema,
+    releaseId: z.string().min(1).max(100).optional(),
+    selections: piClientSelectionsSchema.optional(),
+    expectedConfigVersion: z.number().int().nonnegative(),
+    bindings: piPackageBindingsSchema.default({}),
     confirmExpandedPrivileges: z.boolean().optional(),
   })
   .strict();

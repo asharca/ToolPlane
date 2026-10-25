@@ -1,11 +1,10 @@
 /** Runtime-side pre-execution gate. No shell evaluation, redirects or credential logging. */
 import { randomUUID } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
-import { pathToFileURL } from "node:url";
 const DENIED =
   "Tool execution was not approved. Review the request in the ToolPlane console.";
 const MAX_INPUT = 16_384;
-const WAIT_MS = 290_000; // Below platform expiry and the CLI's enclosing hook timeout.
+const WAIT_MS = 290_000; // Below platform expiry and the enclosing native turn timeout.
 function settings() {
   const url = new URL(process.env.TOOLPLANE_APPROVAL_URL || "invalid:");
   const token = process.env.TOOLPLANE_RUNTIME_TOKEN;
@@ -15,7 +14,8 @@ function settings() {
     url.password ||
     url.search ||
     url.hash ||
-    !/^\/api\/v1\/agent-runtime\/a2a\/[^/]+\/approvals$/.test(url.pathname) ||
+    (!/^\/api\/v1\/agent-runtime\/a2a\/[^/]+\/approvals$/.test(url.pathname) &&
+      url.pathname !== "/api/v1/agent-runtime/sessions/approvals") ||
     !token
   )
     throw new Error(DENIED);
@@ -102,39 +102,3 @@ export function freezeArguments(value) {
   }
   return value;
 }
-async function main() {
-  if (process.argv[2] === "--ready") {
-    await approvalReady();
-    return;
-  }
-  if (process.argv[2] !== "--claude") throw new Error(DENIED);
-  let text = "";
-  for await (const chunk of process.stdin) {
-    text += chunk.toString();
-    if (Buffer.byteLength(text) > 64 * 1024) throw new Error(DENIED);
-  }
-  const event = JSON.parse(text);
-  if (event.hook_event_name !== "PreToolUse") throw new Error(DENIED);
-  const allowed = await approveNativeTool(
-    event.tool_name,
-    event.tool_input,
-    event.tool_use_id,
-  );
-  process.stdout.write(
-    `${JSON.stringify({
-      hookSpecificOutput: {
-        hookEventName: "PreToolUse",
-        permissionDecision: allowed ? "allow" : "deny",
-        permissionDecisionReason: allowed
-          ? "This exact call was approved in ToolPlane."
-          : DENIED,
-      },
-    })}\n`,
-  );
-  if (!allowed) process.exitCode = 2;
-}
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
-  main().catch(() => {
-    process.stderr.write(`${DENIED}\n`);
-    process.exitCode = 2;
-  });

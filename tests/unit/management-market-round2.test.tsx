@@ -2,12 +2,20 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-const io = vi.hoisted(() => ({ catalog: vi.fn(), client: vi.fn() }));
+const io = vi.hoisted(() => ({
+  catalog: vi.fn(),
+  client: vi.fn(),
+  preview: vi.fn(),
+}));
 vi.mock("@/lib/market/pi-catalog-actions", () => ({
   piCatalogAction: io.catalog,
 }));
 vi.mock("@/lib/market/pi-client-actions", () => ({
   managePiPackageClientAction: io.client,
+}));
+vi.mock("@/lib/market/actions", () => ({
+  previewPiPackageSourceAction: io.preview,
+  previewAssembledPiPackageAction: vi.fn(),
 }));
 vi.mock("next-intl", () => {
   const t = Object.assign((key: string) => key, {
@@ -77,6 +85,9 @@ describe("Pi catalog management forms", () => {
     vi.clearAllMocks();
     io.catalog.mockResolvedValue({ ok: true });
     io.client.mockResolvedValue({ ok: true });
+    io.preview.mockResolvedValue({
+      preview: { sourceDigest: "frozen-source" },
+    });
   });
   it.each([
     ["install-official", true, "officialInstalled"],
@@ -100,6 +111,14 @@ describe("Pi catalog management forms", () => {
       fireEvent.change(screen.getByLabelText("draft"), {
         target: { value: "edited" },
       });
+      if (operation === "import") {
+        fireEvent.click(
+          screen.getByRole("button", { name: "piPreviewAction" }),
+        );
+        await waitFor(() =>
+          expect(screen.getByRole("button", { name: "Go" })).toBeEnabled(),
+        );
+      }
       io.catalog.mockResolvedValueOnce({ error: "unknown" });
       submit("Go");
       expect(await screen.findByRole("alert")).toHaveTextContent(
@@ -122,12 +141,36 @@ describe("Pi catalog management forms", () => {
       );
       expect(
         screen.getByRole("link", { name: "workspacePackages" }),
-      ).toHaveAttribute(
-        "href",
-        "/app/a%20b/toolkits/pi-packages#package-p%20%2F",
-      );
+      ).toHaveAttribute("href", "/app/a%20b/market/compose#package-p%20%2F");
     },
   );
+  it("requires source preview and invalidates its digest when source bytes are reselected", async () => {
+    render(
+      <PiCatalogActionForm workspace="space" operation="import" label="Import">
+        <input aria-label="Source" name="source" defaultValue="npm:pkg@1.0.0" />
+      </PiCatalogActionForm>,
+    );
+    expect(screen.getByRole("button", { name: "Import" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "piPreviewAction" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Import" })).toBeEnabled(),
+    );
+    fireEvent.change(screen.getByLabelText("Source"), {
+      target: { value: "npm:pkg@2.0.0" },
+    });
+    expect(screen.getByRole("button", { name: "Import" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "piPreviewAction" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Import" })).toBeEnabled(),
+    );
+    submit("Import");
+    await waitFor(() => expect(io.catalog).toHaveBeenCalled());
+    expect(data(io.catalog).get("sourceDigest")).toBe("frozen-source");
+    expect(data(io.catalog).get("source")).toBe("npm:pkg@2.0.0");
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Import" })).toBeDisabled(),
+    );
+  });
   it("retains fields on known action errors and prevents unsolicited resets", async () => {
     io.catalog.mockResolvedValue({ error: "not_authorized" });
     render(
@@ -282,6 +325,7 @@ describe("Pi client installation bindings", () => {
         id: "device",
         client: "hermes",
         bindings: { search: { deploymentId: "dep", tools: ["query"] } },
+        configVersion: 0,
       },
     });
     expect(screen.queryByLabelText("deviceLabel")).toBeNull();
@@ -301,8 +345,17 @@ describe("Pi client installation bindings", () => {
     "surfaces %s update errors",
     async (error) => {
       io.client.mockResolvedValue({ error });
-      client({ existing: { id: "device", client: "pi", bindings: defaults } });
+      client({
+        existing: {
+          id: "device",
+          client: "pi",
+          bindings: defaults,
+          configVersion: 3,
+        },
+      });
       submit("applyUpdate");
+      await waitFor(() => expect(io.client).toHaveBeenCalled());
+      expect(data(io.client).get("expectedConfigVersion")).toBe("3");
       expect(await screen.findByRole("alert")).toHaveTextContent(
         error === "unknown"
           ? "errors.pi_client_action_failed"

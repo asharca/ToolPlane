@@ -1,3 +1,9 @@
+import { McpHttpApprovalForm } from "@/components/dashboard/McpHttpConsent";
+import {
+  McpConnectionFlow,
+  type McpConnectionTarget,
+} from "@/components/dashboard/McpConnectionFlow";
+import { isRemoteMcpDeployment } from "@/lib/remote-mcp/classification";
 import { AnimatedBadge } from "@/components/motion/animated-badge";
 
 import { ButtonLink } from "@/components/motion/button";
@@ -27,6 +33,7 @@ import {
   getDeploymentRuntimeSnapshot,
 } from "@/lib/process/supervisor";
 import { listMcpTools } from "@/lib/process/mcp-client";
+import { parsePendingToolChanges } from "@/lib/process/mcp-tool-signature";
 import {
   hasMcpToolCatalog,
   readMcpToolCatalog,
@@ -67,6 +74,7 @@ import {
   parseServerRecipe,
   storedRequiredEnvironment,
 } from "@/lib/workspace/server-recipe";
+import { mcpEnvironmentState } from "@/lib/workspace/mcp-environment";
 import {
   DashboardEmptyState,
   DashboardPage,
@@ -153,6 +161,71 @@ export default async function DeploymentInspectorPage({
     },
   });
   if (!dep) notFound();
+  const [connectionAgents, connectionAssistants] = await Promise.all([
+    db.agent.findMany({
+      where: {
+        workspaceId: ws.id,
+        runtimeKind: "pi-sdk",
+        retiredAt: null,
+        publicRuntimeAllocation: null,
+      },
+      select: {
+        id: true,
+        name: true,
+        currentRevisionVersion: true,
+        servers: {
+          where: { deploymentId },
+          select: { pendingToolChanges: true },
+        },
+      },
+      orderBy: { name: "asc" },
+    }),
+    isRemoteMcpDeployment(dep)
+      ? db.chatAssistant.findMany({
+          where: { workspaceId: ws.id },
+          select: {
+            id: true,
+            name: true,
+            currentRevisionVersion: true,
+            mcpGrants: {
+              select: {
+                deploymentId: true,
+                allowedToolNames: true,
+                pendingToolChanges: true,
+              },
+            },
+          },
+          orderBy: { name: "asc" },
+        })
+      : [],
+  ]);
+  const connectionTargets: McpConnectionTarget[] = [
+    ...connectionAgents.map(
+      (agent): McpConnectionTarget => ({
+        kind: "agent",
+        id: agent.id,
+        name: agent.name,
+        published: agent.currentRevisionVersion > 0,
+        pendingToolChanges: parsePendingToolChanges(
+          agent.servers[0]?.pendingToolChanges,
+        ),
+      }),
+    ),
+    ...connectionAssistants.map(
+      (assistant): McpConnectionTarget => ({
+        kind: "assistant",
+        id: assistant.id,
+        name: assistant.name,
+        revision: assistant.currentRevisionVersion,
+        grants: assistant.mcpGrants,
+        pendingToolChanges: parsePendingToolChanges(
+          assistant.mcpGrants.find(
+            (grant) => grant.deploymentId === deploymentId,
+          )?.pendingToolChanges,
+        ),
+      }),
+    ),
+  ];
 
   const editableConfiguration = isEditableMcpSource(dep.source);
   const baseTabs = [
@@ -174,19 +247,19 @@ export default async function DeploymentInspectorPage({
     name: label.name.slice(0, 75).trimEnd(),
   });
   const envCfg = (dep.installCfg ?? {}) as {
-    env?: Record<string, string>;
     network?: string;
     command?: string;
   };
+  const environmentState = mcpEnvironmentState(dep.installCfg);
   const declaredEnvironment =
     parseServerRecipe(dep.server?.installCfg)?.env ??
     storedRequiredEnvironment(dep.installCfg);
   const variableKeys = [
-    ...new Set([...declaredEnvironment, ...Object.keys(envCfg.env ?? {})]),
+    ...new Set([...declaredEnvironment, ...Object.keys(environmentState)]),
   ].sort((left, right) => left.localeCompare(right));
   const envRows = variableKeys.map((key) => ({
     key,
-    configured: Boolean(envCfg.env?.[key]?.trim()),
+    configured: Boolean(environmentState[key]),
     required: declaredEnvironment.includes(key),
   }));
   const missingRequiredVariables = envRows.filter(
@@ -197,12 +270,6 @@ export default async function DeploymentInspectorPage({
   // editable runtime config focused on commands, references, and networking.
   const serializedConfig = editableConfiguration
     ? serializeMcpDeploymentConfig(dep, { includeEnv: false })
-    : "";
-  const maskedConfig = editableConfiguration
-    ? serializeMcpDeploymentConfig(dep, {
-        maskSecrets: true,
-        includeEnv: false,
-      })
     : "";
 
   const status = effectiveStatus(deploymentId, dep.status);
@@ -294,6 +361,16 @@ export default async function DeploymentInspectorPage({
         initialStatus={status}
       />
       <DashboardPage className="min-w-0 space-y-6 [overflow-wrap:anywhere]">
+        {dep.source === "remote" &&
+        dep.sourceRef?.startsWith("http:") &&
+        (dep.installCfg as { allowUnsafeHttp?: boolean } | null)
+          ?.allowUnsafeHttp !== true ? (
+          <McpHttpApprovalForm
+            workspace={slug}
+            deploymentId={deploymentId}
+            url={dep.sourceRef}
+          />
+        ) : null}
         <section className="rounded-xl border border-border bg-card overflow-hidden">
           <div className="flex flex-wrap items-start justify-between gap-3 px-5 py-3">
             <div className="flex min-w-0 items-start gap-3">
@@ -434,6 +511,11 @@ export default async function DeploymentInspectorPage({
           </p>
         ) : null}
 
+        <McpConnectionFlow
+          workspace={slug}
+          deploymentId={deploymentId}
+          targets={connectionTargets}
+        />
         <div className="-mx-4 overflow-hidden px-4 sm:mx-0 sm:px-0">
           <TabBar tabs={tabs} current={current} basePath={base} />
         </div>
@@ -551,26 +633,29 @@ export default async function DeploymentInspectorPage({
             <McpJsonConfigEditor
               slug={slug}
               deploymentId={deploymentId}
-              maskedConfig={maskedConfig}
-              requiresReveal={serializedConfig !== maskedConfig}
+              remote={dep.source === "remote"}
+              maskedConfig={serializedConfig}
+              requiresReveal={false}
               initialNetwork={envCfg.network === "none" ? "none" : "isolated"}
               warnAboutPackageInstall={dep.source !== "docker"}
               variablesHref={`${base}?tab=variables`}
               configuredVariables={configuredVariables}
             />
-            <RuntimeFilesEditor
-              workspace={slug}
-              deploymentId={deploymentId}
-              relativePathArgumentsWork={
-                dep.source === "config" && envCfg.command !== "docker"
-              }
-              initialFiles={dep.configFiles.map((file) => ({
-                id: file.id,
-                path: file.path,
-                size: file.size,
-                updatedAt: file.updatedAt.toISOString(),
-              }))}
-            />
+            {dep.source !== "remote" ? (
+              <RuntimeFilesEditor
+                workspace={slug}
+                deploymentId={deploymentId}
+                relativePathArgumentsWork={
+                  dep.source === "config" && envCfg.command !== "docker"
+                }
+                initialFiles={dep.configFiles.map((file) => ({
+                  id: file.id,
+                  path: file.path,
+                  size: file.size,
+                  updatedAt: file.updatedAt.toISOString(),
+                }))}
+              />
+            ) : null}
           </div>
         ) : null}
 

@@ -38,6 +38,8 @@ import { GET as manifestRoute } from "@/app/api/v1/pi-packages/installations/[id
 import { GET as artifactRoute } from "@/app/api/v1/pi-packages/installations/[id]/artifact/route";
 import { POST as gatewayRoute } from "@/app/api/v1/pi-packages/installations/[id]/mcp/route";
 import { DELETE as revokeRoute } from "@/app/api/v1/pi-packages/installations/[id]/revoke/route";
+import { getPiPackageClientArtifact } from "@/lib/pi-packages/client-artifact";
+import { revokeDangerousMarketRelease } from "@/lib/market/revocation";
 
 // Only supervisor process discovery is substituted. Database auth, MCP transport,
 // tool persistence, device endpoints, installer, and official Pi loader are real.
@@ -345,8 +347,16 @@ afterAll(async () => {
   await db.marketInstall.deleteMany({
     where: { targetWorkspaceId: workspaceId },
   });
-  await db.marketRelease.deleteMany({ where: { listingId } });
-  await db.marketListing.deleteMany({ where: { id: listingId } });
+  await db.marketListing.updateMany({
+    where: { publisherWorkspaceId: workspaceId },
+    data: { latestReleaseId: null, pendingReleaseId: null },
+  });
+  await db.marketRelease.deleteMany({
+    where: { listing: { publisherWorkspaceId: workspaceId } },
+  });
+  await db.marketListing.deleteMany({
+    where: { publisherWorkspaceId: workspaceId },
+  });
   await db.workspace.deleteMany({
     where: { id: { in: [workspaceId, foreignWorkspaceId] } },
   });
@@ -418,6 +428,69 @@ describe.sequential("Pi package external device boundary", () => {
       (await rpc(first.installation.id, first.token, "tools/list")).status,
     ).toBe(401);
   });
+  it("keeps reviewed configuration CAS independent of authentication traffic and rejects concurrent stale edits", async () => {
+    const current = await device();
+    const input = {
+      workspaceId,
+      userId,
+      installationId: current.installation.id,
+      expectedConfigVersion: current.installation.configVersion,
+      bindings: { fixture: { deploymentId, tools: ["echo"] } },
+    };
+    await authenticatePiPackageInstallation(
+      current.installation.id,
+      `Bearer ${current.token}`,
+    );
+    await authenticatePiPackageInstallation(
+      current.installation.id,
+      `Bearer ${current.token}`,
+    );
+    const used = await db.piPackageClientInstallation.findUniqueOrThrow({
+      where: { id: current.installation.id },
+    });
+    expect(used.lastUsedAt).toBeInstanceOf(Date);
+    expect(used.configVersion).toBe(input.expectedConfigVersion);
+    const concurrent = await Promise.allSettled([
+      updatePiPackageClientInstallation(input),
+      updatePiPackageClientInstallation(input),
+    ]);
+    expect(
+      concurrent.filter((result) => result.status === "fulfilled"),
+    ).toHaveLength(1);
+    const rejected = concurrent.find((result) => result.status === "rejected");
+    expect(rejected).toMatchObject({
+      status: "rejected",
+      reason: { code: "pi_installation_conflict" },
+    });
+    const edited = await db.piPackageClientInstallation.findUniqueOrThrow({
+      where: { id: current.installation.id },
+    });
+    expect(edited.configVersion).toBe(input.expectedConfigVersion + 1);
+    const [updated] = await Promise.all([
+      updatePiPackageClientInstallation({
+        ...input,
+        expectedConfigVersion: edited.configVersion,
+      }),
+      authenticatePiPackageInstallation(
+        current.installation.id,
+        `Bearer ${current.token}`,
+      ),
+      authenticatePiPackageInstallation(
+        current.installation.id,
+        `Bearer ${current.token}`,
+      ),
+    ]);
+    expect(updated.configVersion).toBe(edited.configVersion + 1);
+    expect(
+      (
+        await authenticatePiPackageInstallation(
+          current.installation.id,
+          `Bearer ${current.token}`,
+        )
+      ).bindings,
+    ).toEqual(input.bindings);
+  });
+
   it("denies downloads and execution after workspace disablement or listing withdrawal", async () => {
     const current = await device();
     await db.workspace.update({
@@ -533,13 +606,14 @@ describe.sequential("Pi package external device boundary", () => {
           current.installation.id,
           `Bearer ${current.token}`,
         )
-      ).release.id,
+      ).release?.id,
     ).toBe(releaseId);
     const input = {
       workspaceId,
       userId,
       installationId: current.installation.id,
       releaseId: next.id,
+      expectedConfigVersion: current.installation.configVersion,
       bindings: { fixture: { deploymentId, tools: ["echo", "write"] } },
     };
     await expect(
@@ -557,7 +631,7 @@ describe.sequential("Pi package external device boundary", () => {
           current.installation.id,
           `Bearer ${current.token}`,
         )
-      ).release.id,
+      ).release?.id,
     ).toBe(next.id);
     await db.marketRelease.update({
       where: { id: next.id },
@@ -674,6 +748,7 @@ describe.sequential("Pi package external device boundary", () => {
         userId,
         installationId: current.installation.id,
         releaseId: updatedRelease.id,
+        expectedConfigVersion: current.installation.configVersion,
         bindings: { fixture: { deploymentId, tools: ["echo"] } },
       });
       await execute("update");
@@ -757,4 +832,207 @@ if(!tool)throw new Error('missing adapter tool');const called=await tool.definit
     },
     120000,
   );
+  it("registers fixed standalone Skill and MCP releases without a publishable combo and enforces CAS, scope, retention and revocation", async () => {
+    const listing = await db.marketListing.create({
+      data: {
+        kind: "skill",
+        namespace: `pi-device-${stamp}`,
+        slug: "standalone-skill",
+        name: "Standalone Skill",
+        status: "published",
+        visibility: "private",
+        publisherWorkspaceId: workspaceId,
+        metadata: {},
+      },
+    });
+    const value = {
+      schemaVersion: 1,
+      kind: "skill",
+      skill: {
+        name: "Standalone",
+        slug: "standalone",
+        description: null,
+        content:
+          "---\nname: standalone\ndescription: Standalone method\n---\nRead the file.",
+        files: [
+          {
+            path: "assets/data.bin",
+            content: Buffer.from([255, 0, 128]).toString("base64"),
+            encoding: "base64",
+          },
+        ],
+        userInvocable: true,
+        agentInvocable: true,
+        effort: "default",
+        source: { type: "custom" },
+      },
+    };
+    const release = await db.marketRelease.create({
+      data: {
+        listingId: listing.id,
+        version: 1,
+        checksum: marketReleaseChecksum(value),
+        manifest: value,
+        reviewStatus: "approved",
+        releaseSummary: {},
+      },
+    });
+    const mcpListing = await db.marketListing.create({
+      data: {
+        kind: "mcp",
+        namespace: `pi-device-${stamp}`,
+        slug: "standalone-mcp",
+        name: "Standalone MCP",
+        status: "published",
+        visibility: "private",
+        publisherWorkspaceId: workspaceId,
+        metadata: {},
+      },
+    });
+    const mcpValue = {
+      schemaVersion: 1,
+      kind: "mcp",
+      listing: {
+        slug: "standalone-mcp",
+        name: "Standalone MCP",
+        summary: null,
+        iconUrl: null,
+        tags: [],
+        author: "Fixture",
+      },
+      mcp: {
+        slug: "standalone-mcp",
+        name: "Standalone MCP",
+        description: null,
+        author: null,
+        iconUrl: null,
+        readme: null,
+        recipe: {
+          source: "remote",
+          ref: "https://mcp.example.test",
+          env: [],
+          transport: "streamable-http",
+          authType: "none",
+        },
+        toolExposure: "allowlist",
+        allowedTools: ["echo"],
+        toolCatalog: [
+          { name: "echo", inputSchema: { type: "object", properties: {} } },
+        ],
+      },
+    };
+    const mcpRelease = await db.marketRelease.create({
+      data: {
+        listingId: mcpListing.id,
+        version: 1,
+        checksum: marketReleaseChecksum(mcpValue),
+        manifest: mcpValue,
+        reviewStatus: "approved",
+        releaseSummary: {},
+      },
+    });
+    const key = `mcp-${createHash("sha256").update(mcpRelease.id).digest("hex").slice(0, 20)}`;
+    const selections = [
+      {
+        releaseId: release.id,
+        checksum: release.checksum,
+        kind: "skill" as const,
+      },
+      {
+        releaseId: mcpRelease.id,
+        checksum: mcpRelease.checksum,
+        kind: "mcp" as const,
+      },
+    ];
+    const input = {
+      workspaceId,
+      userId,
+      selections,
+      client: "codex" as const,
+      label: "Standalone versions",
+      bindings: { [key]: { deploymentId, tools: ["echo"] } },
+    };
+    await expect(
+      createPiPackageClientInstallation({ ...input, userId: outsiderId }),
+    ).rejects.toMatchObject({ status: 403 });
+    await expect(
+      createPiPackageClientInstallation({
+        ...input,
+        selections: [{ ...selections[0], checksum: "0".repeat(64) }],
+      }),
+    ).rejects.toMatchObject({ status: 404 });
+    const current = await createPiPackageClientInstallation(input);
+    expect(current.installation).toMatchObject({
+      marketInstallId: null,
+      releaseId: null,
+      selections,
+    });
+    expect(
+      await db.marketListing.count({
+        where: {
+          publisherWorkspaceId: workspaceId,
+          kind: "pi-package",
+          slug: "client-selection",
+        },
+      }),
+    ).toBe(0);
+    expect(
+      await db.piPackageClientSelection.count({
+        where: { installationId: current.installation.id },
+      }),
+    ).toBe(2);
+    await expect(
+      db.marketRelease.delete({ where: { id: release.id } }),
+    ).rejects.toThrow();
+    const artifact = JSON.parse(
+      (
+        await getPiPackageClientArtifact(
+          current.installation.id,
+          `Bearer ${current.token}`,
+        )
+      ).body,
+    );
+    expect(artifact.releaseId).toBeNull();
+    expect(artifact.selections).toEqual(selections);
+    expect(
+      artifact.skills.some(
+        (skill: { files: Array<{ path: string; content: string }> }) =>
+          skill.files.some(
+            (file) =>
+              file.path === "assets/data.bin" &&
+              Buffer.from(file.content, "base64").equals(
+                Buffer.from([255, 0, 128]),
+              ),
+          ),
+      ),
+    ).toBe(true);
+    expect(
+      (await rpc(current.installation.id, current.token, "tools/list")).body
+        .result.tools,
+    ).toHaveLength(1);
+    await expect(
+      updatePiPackageClientInstallation({
+        workspaceId,
+        userId,
+        installationId: current.installation.id,
+        expectedConfigVersion: current.installation.configVersion + 1,
+        bindings: input.bindings,
+      }),
+    ).rejects.toMatchObject({ code: "pi_installation_conflict" });
+    await revokeDangerousMarketRelease({
+      workspaceId,
+      userId,
+      releaseId: release.id,
+      reason: "Unsafe release",
+    });
+    await expect(
+      authenticatePiPackageInstallation(
+        current.installation.id,
+        `Bearer ${current.token}`,
+      ),
+    ).rejects.toMatchObject({ status: 401 });
+    expect(
+      await db.marketRelease.findUnique({ where: { id: release.id } }),
+    ).not.toBeNull();
+  });
 });

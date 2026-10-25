@@ -1,26 +1,41 @@
 import { describe, expect, it } from "vitest";
+import { ZodError } from "zod";
 import {
   assistantReleaseChecksum,
   buildAssistantReleaseManifest,
   parseAssistantReleaseManifest,
+  type AssistantReleaseSource,
 } from "@/lib/market/assistant-manifest";
 import { scanMarketArtifact } from "@/lib/market/secret-scan";
+import { mcpDefinitionChecksum } from "@/lib/process/mcp-definition";
 
-const source = {
+const deployment = {
+  name: "Web search",
+  serverId: "catalog",
+  source: "remote",
+  sourceRef: "https://example.com/mcp",
+  installCfg: {},
+  server: { slug: "web-search", name: "Web search" },
+};
+const source: AssistantReleaseSource = {
   name: "Research assistant",
-  systemPrompt: "Summarize sources with citations.",
-  model: "gpt-5.6",
-  maxSteps: 8,
-  modelProvider: { format: "openai-compatible" },
-  mcpGrants: [
-    {
-      deployment: {
-        name: "Web search",
-        sourceRef: null,
-        server: { slug: "web-search", name: "Web search" },
+  config: {
+    schemaVersion: 1,
+    systemPrompt: "Summarize sources with citations.",
+    modelProviderId: "provider",
+    model: "gpt-5.6",
+    modelParameters: { temperature: 0.2 },
+    maxSteps: 8,
+    mcpGrants: [
+      {
+        deploymentId: "search",
+        allowedToolNames: ["search"],
+        definitionChecksum: mcpDefinitionChecksum(deployment),
       },
-    },
-  ],
+    ],
+  },
+  modelProvider: { format: "openai-compatible" },
+  mcpGrants: [{ deploymentId: "search", deployment }],
 };
 
 describe("assistant market manifests", () => {
@@ -34,7 +49,14 @@ describe("assistant market manifests", () => {
         providerFormat: "openai-compatible",
         model: "gpt-5.6",
       },
-      mcpRequirements: [{ catalogSlug: "web-search", name: "Web search" }],
+      modelParameters: { temperature: 0.2 },
+      mcpRequirements: [
+        {
+          catalogSlug: "web-search",
+          name: "Web search",
+          allowedToolNames: ["search"],
+        },
+      ],
     });
     expect(assistantReleaseChecksum({ ...manifest })).toBe(checksum);
   });
@@ -61,14 +83,22 @@ describe("assistant market manifests", () => {
 
   it("uses the shared agent tool-loop bounds", () => {
     expect(
-      buildAssistantReleaseManifest({ ...source, maxSteps: 1_000 }).assistant
-        .maxSteps,
+      buildAssistantReleaseManifest({
+        ...source,
+        config: { ...source.config, maxSteps: 1_000 },
+      }).assistant.maxSteps,
     ).toBe(1_000);
     expect(() =>
-      buildAssistantReleaseManifest({ ...source, maxSteps: 0 }),
-    ).toThrow("invalid");
+      buildAssistantReleaseManifest({
+        ...source,
+        config: { ...source.config, maxSteps: 0 },
+      }),
+    ).toThrow(ZodError);
     expect(() =>
-      buildAssistantReleaseManifest({ ...source, maxSteps: 1_001 }),
-    ).toThrow("invalid");
+      buildAssistantReleaseManifest({
+        ...source,
+        config: { ...source.config, maxSteps: 1_001 },
+      }),
+    ).toThrow(ZodError);
   });
 });

@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { beforeEach, expect, it, vi } from "vitest";
+import type * as AgentRevisions from "@/lib/agents/revisions";
 const mocks = vi.hoisted(() => ({
   principal: vi.fn(),
   workspace: vi.fn(),
@@ -8,6 +9,12 @@ const mocks = vi.hoisted(() => ({
   check: vi.fn(),
   list: vi.fn(),
   decide: vi.fn(),
+  transaction: vi.fn(),
+  context: vi.fn(),
+  local: vi.fn(),
+  revision: vi.fn(),
+  agent: vi.fn(),
+  pinned: vi.fn(),
 }));
 vi.mock("@/lib/auth/request-user", () => ({
   resolveRequestPrincipal: mocks.principal,
@@ -15,12 +22,23 @@ vi.mock("@/lib/auth/request-user", () => ({
 vi.mock("@/lib/workspace/queries", () => ({
   getWorkspaceForUser: mocks.workspace,
 }));
-vi.mock("@/lib/db", () => ({ db: { user: { count: mocks.active } } }));
+vi.mock("@/lib/db", () => ({
+  db: { user: { count: mocks.active }, $transaction: mocks.transaction },
+}));
 vi.mock("@/lib/observability/context", () => ({
   withLogContext: (_c: unknown, f: () => unknown) => f(),
 }));
 vi.mock("@/lib/agents/runtime-access", () => ({
   agentRuntimeTokenFromRequest: mocks.token,
+}));
+vi.mock("@/lib/a2a/local-runtime", () => ({
+  assertLocalRuntimeToken: mocks.local,
+}));
+vi.mock("@/lib/agents/queries", () => ({ getAgentForRun: mocks.agent }));
+vi.mock("@/lib/agents/revisions", async (original) => ({
+  ...(await original<typeof AgentRevisions>()),
+  requireAgentRevision: mocks.revision,
+  resolvePinnedAgent: mocks.pinned,
 }));
 vi.mock("@/lib/a2a/tool-approvals", async (original) => ({
   ...(await original<typeof import("@/lib/a2a/tool-approvals")>()),
@@ -32,6 +50,7 @@ import {
   handleRuntimeApprovals,
   handleConsoleApprovals,
 } from "@/lib/a2a/approval-http";
+import { AgentRevisionError } from "@/lib/agents/revisions";
 const decision = {
   rootTaskId: "root",
   taskId: "child",
@@ -64,6 +83,9 @@ beforeEach(() => {
   });
   mocks.active.mockResolvedValue(1);
   mocks.token.mockResolvedValue({
+    workspaceId: "workspace",
+    agentId: "agent",
+    agentRevisionId: "revision",
     a2aTaskId: "child",
     a2aLeaseToken: "lease",
     a2aApprovalRequired: true,
@@ -71,6 +93,26 @@ beforeEach(() => {
   mocks.check.mockResolvedValue({ status: "pending" });
   mocks.list.mockResolvedValue([]);
   mocks.decide.mockResolvedValue({ status: "approved" });
+  mocks.context.mockResolvedValue({ agentRevisionId: "revision" });
+  mocks.transaction.mockImplementation(async (run) =>
+    run({ a2AContext: { findFirst: mocks.context } }),
+  );
+  mocks.local.mockResolvedValue({
+    row: { contextId: "context", executionBackend: "pi-sdk" },
+    grant: {
+      kind: "local",
+      workspaceId: "workspace",
+      agentId: "agent",
+      agentRevisionId: "revision",
+    },
+  });
+  mocks.revision.mockResolvedValue({ id: "revision" });
+  mocks.agent.mockResolvedValue({
+    id: "agent",
+    workspaceId: "workspace",
+    runtimeKind: "pi-sdk",
+  });
+  mocks.pinned.mockResolvedValue({ disabledBuiltinTools: [] });
 });
 it("binds the human decision to the verified session actor and exact hash", async () => {
   const result = await handleConsoleApprovals(
@@ -214,4 +256,48 @@ it("bounds request bodies and sanitizes upstream failures", async () => {
   const r = await handleRuntimeApprovals(req({ action: "ready" }), "child");
   expect(r.status).toBe(500);
   expect(await r.text()).not.toContain("private key");
+});
+it.each([null, { agentRevisionId: "foreign-revision" }])(
+  "rejects unresolved or mismatched native context pins before checking approvals",
+  async (context) => {
+    mocks.context.mockResolvedValue(context);
+    const response = await handleRuntimeApprovals(
+      req({ action: "ready" }),
+      "child",
+    );
+    expect(response.status).toBe(404);
+    expect(mocks.revision).not.toHaveBeenCalled();
+    expect(mocks.check).not.toHaveBeenCalled();
+  },
+);
+it("revalidates release execution and live grants before admitting even a native approval check", async () => {
+  mocks.revision.mockRejectedValue(
+    new AgentRevisionError("PI_PACKAGE_UNAVAILABLE"),
+  );
+  expect(
+    (
+      await handleRuntimeApprovals(
+        req({ action: "check", callId: "call", toolName: "bash", input: {} }),
+        "child",
+      )
+    ).status,
+  ).toBe(403);
+  expect(mocks.revision).toHaveBeenCalledWith(
+    expect.anything(),
+    "agent",
+    "revision",
+  );
+  expect(mocks.check).not.toHaveBeenCalled();
+});
+it("denies a builtin disabled by the pinned definition before the approval broker", async () => {
+  mocks.pinned.mockResolvedValue({ disabledBuiltinTools: ["bash"] });
+  expect(
+    (
+      await handleRuntimeApprovals(
+        req({ action: "check", callId: "call", toolName: "bash", input: {} }),
+        "child",
+      )
+    ).status,
+  ).toBe(409);
+  expect(mocks.check).not.toHaveBeenCalled();
 });

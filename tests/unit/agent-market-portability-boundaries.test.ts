@@ -2,6 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({ findAgent: vi.fn() }));
+vi.mock("server-only", () => ({}));
 vi.mock("@/lib/db", () => ({
   db: {
     $transaction: (operation: (tx: unknown) => unknown) =>
@@ -9,6 +10,7 @@ vi.mock("@/lib/db", () => ({
   },
 }));
 import { assessAgentPortability } from "@/lib/agents/market";
+import { sealMcpEnvironment } from "@/lib/process/mcp-credentials";
 
 function agent(id = "root") {
   return {
@@ -291,7 +293,9 @@ describe("market portable graph trust boundaries", () => {
         {
           deployment: {
             ...deployment,
-            installCfg: { env: { REQUIRED_KEY: "private-deployment-secret" } },
+            installCfg: sealMcpEnvironment({}, "workspace-1", {
+              REQUIRED_KEY: "private-deployment-secret",
+            }),
           },
         },
         { deployment },
@@ -313,7 +317,7 @@ describe("market portable graph trust boundaries", () => {
       expect(JSON.stringify(result)).not.toContain("private-deployment-secret");
     });
 
-    it("deduplicates shared skills and MCPs reached both directly and through toolkits", async () => {
+    it("flattens toolkit resources and deduplicates shared skills and MCPs", async () => {
       const root = agent();
       root.skills = [
         { installedSkill: skill },
@@ -372,12 +376,17 @@ describe("market portable graph trust boundaries", () => {
               effort: "high",
             }),
           ],
-          toolkits: [
+          toolkits: [],
+          deployments: [
+            expect.objectContaining({ key: "deployment_1" }),
+            expect.objectContaining({ key: "deployment_2" }),
+          ],
+          agents: [
             expect.objectContaining({
               deploymentKeys: ["deployment_1", "deployment_2"],
               skillKeys: ["skill_1", "skill_2"],
+              toolkitKeys: [],
             }),
-            expect.objectContaining({ enabled: false }),
           ],
         },
       });

@@ -55,6 +55,10 @@ beforeEach(() => {
     id: "work",
     workspaceId: "workspace",
     status: "waiting_approval",
+    runtimeKind: "pi-sdk",
+    readOnly: false,
+    agentRevisionId: "revision-1",
+    legacyRevisionUnresolved: false,
     approvals: [{ id: "approval" }],
   });
   m.cancel.mockResolvedValue({ ok: true, status: "cancelling" });
@@ -122,6 +126,52 @@ describe("work control authorization and state transitions", () => {
     expect(m.finish).toHaveBeenCalledWith("work");
     expect(m.finalize).not.toHaveBeenCalled();
   });
+  it("allows cancellation of an actual active historical bound run without replaying it", async () => {
+    m.work.mockResolvedValue({
+      id: "work",
+      workspaceId: "workspace",
+      status: "running",
+      runtimeKind: "hermes",
+      readOnly: true,
+      agentRevisionId: null,
+      legacyRevisionUnresolved: true,
+      runtimeSnapshot: { hermesRunId: "retained-bound-run" },
+    });
+    m.abort.mockReturnValue(true);
+    const response = await cancel(request(), context);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ status: "cancelling" });
+    expect(m.cancel).toHaveBeenCalledWith("workspace", "work");
+    expect(m.abort).toHaveBeenCalledWith("work");
+    expect(m.finalize).not.toHaveBeenCalled();
+    expect(m.finish).not.toHaveBeenCalled();
+    expect(m.start).not.toHaveBeenCalled();
+    expect(m.kick).not.toHaveBeenCalled();
+  });
+  it.each(["resume", "approve"])(
+    "does not replay read-only history through %s",
+    async (operation) => {
+      m.work.mockResolvedValue({
+        id: "work",
+        workspaceId: "workspace",
+        status: "waiting_approval",
+        readOnly: true,
+        agentRevisionId: null,
+        legacyRevisionUnresolved: true,
+        approvals: [{ id: "approval" }],
+      });
+      const response = await (operation === "resume" ? resume : approve)(
+        request(),
+        context,
+      );
+      expect(response.status).toBe(410);
+      expect(m.resume).not.toHaveBeenCalled();
+      expect(m.approval).not.toHaveBeenCalled();
+      expect(m.update).not.toHaveBeenCalled();
+      expect(m.start).not.toHaveBeenCalled();
+      expect(m.kick).not.toHaveBeenCalled();
+    },
+  );
   it("restarts output and enqueues authorized resumed work", async () => {
     const response = await resume(request(), context);
     expect(response.status).toBe(202);

@@ -13,8 +13,13 @@ import userEvent from "@testing-library/user-event";
 import { WorkspaceKnowledge } from "@/components/dashboard/knowledge/WorkspaceKnowledge";
 import { WorkspaceWork } from "@/components/dashboard/work/WorkspaceWork";
 
+const pinnedSession = {
+  agentRevisionId: "revision-1",
+  legacyRevisionUnresolved: false,
+  readOnly: false,
+} as const;
+
 const surfaceMocks = vi.hoisted(() => ({
-  modelDialog: vi.fn(),
   pinAgentAction: vi.fn(),
   routerPush: vi.fn(),
   routerRefresh: vi.fn(),
@@ -34,13 +39,6 @@ vi.mock("@/lib/agents/actions", () => ({
 
 vi.mock("@/components/dashboard/agents/AgentConversation", () => ({
   AgentConversation: () => <div>Conversation surface</div>,
-}));
-
-vi.mock("@/components/dashboard/agents/AgentModelDialog", () => ({
-  AgentModelDialog: (props: { trigger: React.ReactNode }) => {
-    surfaceMocks.modelDialog(props);
-    return props.trigger;
-  },
 }));
 
 vi.mock("@/components/dashboard/sandboxes/SandboxConsole", () => ({
@@ -90,6 +88,67 @@ afterEach(() => {
 });
 
 describe("Chat, Work, and Knowledge surfaces", () => {
+  it("links an unapplied draft directly to revision review and enables published Pi without starting its template", async () => {
+    const user = userEvent.setup();
+    const agent = {
+      id: "agent-1",
+      name: "Builder",
+      pinned: false,
+      supportsWork: true,
+      ready: false,
+      runtimeKind: "pi-sdk",
+      currentRevisionVersion: 0,
+      sandboxes: [
+        {
+          id: "template-1",
+          name: "Template",
+          kind: "docker",
+          deploymentId: "template-deployment-1",
+          status: "stopped",
+          running: false,
+          isDefault: true,
+        },
+      ],
+    };
+    const props = {
+      slug: "acme",
+      workspaceId: "workspace-1",
+      sessions: [],
+      selectedWorkSessionId: null,
+      requestedAgentId: agent.id,
+    };
+    const { rerender } = render(<WorkspaceWork {...props} agents={[agent]} />);
+    expect(screen.getByText("Draft — no applied revision")).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Review and apply revision" }),
+    ).toHaveAttribute(
+      "href",
+      expect.stringContaining("/agents/agent-1?settings=agent&returnTo="),
+    );
+    expect(
+      screen.getByRole("combobox", {
+        name: "What should the Agent accomplish?",
+      }),
+    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Send prompt" })).toBeDisabled();
+    expect(screen.queryByText("Pi SDK")).not.toBeInTheDocument();
+    rerender(
+      <WorkspaceWork
+        {...props}
+        agents={[{ ...agent, currentRevisionVersion: 1, ready: true }]}
+      />,
+    );
+    expect(
+      screen.queryByText("Draft — no applied revision"),
+    ).not.toBeInTheDocument();
+    const input = screen.getByRole("combobox", {
+      name: "What should the Agent accomplish?",
+    });
+    expect(input).toBeEnabled();
+    await user.type(input, "Inspect the project");
+    expect(screen.getByRole("button", { name: "Send prompt" })).toBeEnabled();
+  });
+
   it("persists the Work sidebar visibility preference", async () => {
     const user = userEvent.setup();
     const agent = {
@@ -98,7 +157,7 @@ describe("Chat, Work, and Knowledge surfaces", () => {
       pinned: false,
       supportsWork: true,
       ready: true,
-      runtimeKind: "pi",
+      runtimeKind: "pi-sdk",
       sandboxes: [],
     };
     const firstRender = render(
@@ -143,7 +202,7 @@ describe("Chat, Work, and Knowledge surfaces", () => {
       pinned: false,
       supportsWork: true,
       ready: true,
-      runtimeKind: "pi",
+      runtimeKind: "pi-sdk",
       sandboxes: [],
     };
     const settingUpAgent = {
@@ -190,7 +249,8 @@ describe("Chat, Work, and Knowledge surfaces", () => {
       title: id,
       task: id,
       acceptanceCriteria: null,
-      runtimeKind: "pi",
+      runtimeKind: "pi-sdk",
+      ...pinnedSession,
       status,
       waitingQuestion: null,
       result: null,
@@ -327,85 +387,94 @@ describe("Chat, Work, and Knowledge surfaces", () => {
       }),
     ).toBeInTheDocument();
   });
-  it("renders native and legacy command output as ordinary copyable assistant replies, without a command accordion", async () => {
-    const user = userEvent.setup();
-    const agent = {
-      id: "agent-1",
-      name: "Builder",
-      pinned: false,
-      supportsWork: true,
-      ready: true,
-      runtimeKind: "claude-code",
-      sandboxes: [],
-    };
-    const session = {
-      id: "work-1",
-      agentId: agent.id,
-      title: "Task",
-      task: "Task",
-      acceptanceCriteria: null,
-      runtimeKind: "claude-code",
-      status: "completed",
-      waitingQuestion: null,
-      result: null,
-      error: null,
-      artifacts: [],
-      conversationId: "conversation-1",
-      sandbox: null,
-      approvals: [],
-      messages: [
-        {
-          id: "usage",
-          role: "assistant",
-          parts: [
-            { type: "text", text: "Total cost: $0.03" },
-            {
-              type: "data-command-result",
-              data: { command: "usage", text: "Total cost: $0.03" },
-            },
-          ],
-        },
-        {
-          id: "legacy-context",
-          role: "system",
-          parts: [
-            {
-              type: "data-command-result",
-              data: { command: "context", text: "Context Usage: 123 tokens" },
-            },
-          ],
-        },
-      ],
-    };
-    const { container } = render(
-      <WorkspaceWork
-        slug="acme"
-        workspaceId="workspace-1"
-        agents={[agent]}
-        sessions={[session]}
-        selectedWorkSessionId={session.id}
-      />,
-    );
-    for (const output of ["Total cost: $0.03", "Context Usage: 123 tokens"]) {
-      const text = screen.getByText(output);
-      expect(text.closest("details")).toBeNull();
-      const reply = within(text.closest("[data-message-id]") as HTMLElement);
-      await user.click(reply.getByRole("button", { name: "Copy response" }));
-      expect(await navigator.clipboard.readText()).toBe(output);
-    }
-    expect(
-      container.querySelector('[data-ui="conversation.command"]'),
-    ).toBeNull();
-    const helpful = within(
-      screen
-        .getByText("Context Usage: 123 tokens")
-        .closest("[data-message-id]") as HTMLElement,
-    ).getByRole("button", { name: "Helpful" });
-    await user.click(helpful);
-    expect(helpful).toHaveAttribute("aria-pressed", "true");
-    await user.click(helpful);
-    expect(helpful).toHaveAttribute("aria-pressed", "false");
-  });
+  it.each(["claude-code", "pi-sdk"])(
+    "renders readonly %s command history as ordinary copyable replies without a command accordion",
+    async (runtimeKind) => {
+      const user = userEvent.setup();
+      const agent = {
+        id: "agent-1",
+        name: "Builder",
+        pinned: false,
+        supportsWork: true,
+        ready: true,
+        runtimeKind,
+        sandboxes: [],
+      };
+      const session = {
+        id: "work-1",
+        agentId: agent.id,
+        title: "Task",
+        task: "Task",
+        acceptanceCriteria: null,
+        runtimeKind,
+        agentRevisionId: null,
+        legacyRevisionUnresolved: true,
+        readOnly: true,
+        status: "completed",
+        waitingQuestion: null,
+        result: null,
+        error: null,
+        artifacts: [],
+        conversationId: "conversation-1",
+        sandbox: null,
+        approvals: [],
+        messages: [
+          {
+            id: "usage",
+            role: "assistant",
+            parts: [
+              { type: "text", text: "Total cost: $0.03" },
+              {
+                type: "data-command-result",
+                data: { command: "usage", text: "Total cost: $0.03" },
+              },
+            ],
+          },
+          {
+            id: "legacy-context",
+            role: "system",
+            parts: [
+              {
+                type: "data-command-result",
+                data: { command: "context", text: "Context Usage: 123 tokens" },
+              },
+            ],
+          },
+        ],
+      };
+      const { container } = render(
+        <WorkspaceWork
+          slug="acme"
+          workspaceId="workspace-1"
+          agents={[agent]}
+          sessions={[session]}
+          selectedWorkSessionId={session.id}
+        />,
+      );
+      expect(
+        container.querySelector('[data-ui="chat.composer"]'),
+      ).not.toBeInTheDocument();
+      for (const output of ["Total cost: $0.03", "Context Usage: 123 tokens"]) {
+        const text = screen.getByText(output);
+        expect(text.closest("details")).toBeNull();
+        const reply = within(text.closest("[data-message-id]") as HTMLElement);
+        await user.click(reply.getByRole("button", { name: "Copy response" }));
+        expect(await navigator.clipboard.readText()).toBe(output);
+      }
+      expect(
+        container.querySelector('[data-ui="conversation.command"]'),
+      ).toBeNull();
+      const helpful = within(
+        screen
+          .getByText("Context Usage: 123 tokens")
+          .closest("[data-message-id]") as HTMLElement,
+      ).getByRole("button", { name: "Helpful" });
+      await user.click(helpful);
+      expect(helpful).toHaveAttribute("aria-pressed", "true");
+      await user.click(helpful);
+      expect(helpful).toHaveAttribute("aria-pressed", "false");
+    },
+  );
 
   it("shares tools between / and + without New task, reserves /new for channels, and retains explicit compaction", async () => {
     const user = userEvent.setup();
@@ -415,7 +484,7 @@ describe("Chat, Work, and Knowledge surfaces", () => {
       pinned: false,
       supportsWork: true,
       ready: true,
-      runtimeKind: "dsh",
+      runtimeKind: "pi-sdk",
       sandboxes: [],
     };
     const session = {
@@ -424,7 +493,8 @@ describe("Chat, Work, and Knowledge surfaces", () => {
       title: "Task",
       task: "Task",
       acceptanceCriteria: null,
-      runtimeKind: "dsh",
+      runtimeKind: "pi-sdk",
+      ...pinnedSession,
       status: "completed",
       waitingQuestion: null,
       result: null,
@@ -518,7 +588,7 @@ describe("Chat, Work, and Knowledge surfaces", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("keeps slash suggestions out of paths, selections and busy turns, and never sends an empty compaction to the model", async () => {
+  it("keeps slash suggestions out of paths, selections and busy turns without executing suggestion selection", async () => {
     const user = userEvent.setup();
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
@@ -529,7 +599,7 @@ describe("Chat, Work, and Knowledge surfaces", () => {
       pinned: false,
       supportsWork: true,
       ready: true,
-      runtimeKind: "dsh",
+      runtimeKind: "pi-sdk",
       sandboxes: [
         {
           id: "sandbox-1",
@@ -569,11 +639,6 @@ describe("Chat, Work, and Knowledge surfaces", () => {
     await user.keyboard("{Enter}");
     expect(input).toHaveValue("/compact ");
     expect(fetchMock).not.toHaveBeenCalled();
-    await user.keyboard("{Enter}");
-    expect(
-      screen.getByText("Start a task before running this command."),
-    ).toBeInTheDocument();
-    expect(fetchMock).not.toHaveBeenCalled();
     await user.clear(input);
     await user.type(input, "/n");
     await user.keyboard("{Shift>}{ArrowLeft}{/Shift}");
@@ -593,7 +658,8 @@ describe("Chat, Work, and Knowledge surfaces", () => {
       title: "Task",
       task: "Task",
       acceptanceCriteria: null,
-      runtimeKind: "dsh",
+      runtimeKind: "pi-sdk",
+      ...pinnedSession,
       status: "running",
       waitingQuestion: null,
       result: null,
@@ -639,7 +705,7 @@ describe("Chat, Work, and Knowledge surfaces", () => {
         pinned: false,
         supportsWork: true,
         ready: true,
-        runtimeKind: "dsh",
+        runtimeKind: "pi-sdk",
         sandboxes: [sandbox],
       };
       const session = {
@@ -648,7 +714,8 @@ describe("Chat, Work, and Knowledge surfaces", () => {
         title: "Task",
         task: "Task",
         acceptanceCriteria: null,
-        runtimeKind: "dsh",
+        runtimeKind: "pi-sdk",
+        ...pinnedSession,
         status,
         waitingQuestion: null,
         result: null,
@@ -718,7 +785,7 @@ describe("Chat, Work, and Knowledge surfaces", () => {
       pinned: false,
       supportsWork: true,
       ready: false,
-      runtimeKind: "dsh",
+      runtimeKind: "pi-sdk",
       sandboxes: [],
     };
     const props = {
@@ -769,7 +836,7 @@ describe("Chat, Work, and Knowledge surfaces", () => {
       pinned: false,
       supportsWork: true,
       ready: true,
-      runtimeKind: "dsh",
+      runtimeKind: "pi-sdk",
       sandboxes: [
         {
           id: "sandbox-1",
@@ -787,7 +854,8 @@ describe("Chat, Work, and Knowledge surfaces", () => {
       title: "Task history",
       task: "Task history",
       acceptanceCriteria: null,
-      runtimeKind: "dsh",
+      runtimeKind: "pi-sdk",
+      ...pinnedSession,
       status: "completed",
       waitingQuestion: null,
       result: null,
@@ -888,8 +956,8 @@ describe("Chat, Work, and Knowledge surfaces", () => {
       container.querySelector('[data-ui="chat.composer"]'),
     ).toBeInTheDocument();
   });
-  it.each(["pi", "hermes"] as const)(
-    "refreshes a newly created %s Agent until its runtime leaves provisioning",
+  it.each(["pi-sdk"] as const)(
+    "refreshes a pinned %s conversation until its isolated workspace leaves provisioning",
     (runtimeKind) => {
       vi.useFakeTimers();
       const agent = {
@@ -911,11 +979,23 @@ describe("Chat, Work, and Knowledge surfaces", () => {
           },
         ],
       };
+      const conversation = {
+        id: "conversation-1",
+        agentId: agent.id,
+        source: null,
+        runtimeKind,
+        agentRevisionId: "revision-1",
+        legacyRevisionUnresolved: false,
+        readOnly: false,
+        sandbox: assertDefined(agent.sandboxes[0]),
+        messages: [],
+      };
       const props = {
         slug: "acme",
         workspaceId: "workspace-1",
         sessions: [],
         selectedWorkSessionId: null,
+        selectedConversation: conversation,
       };
       const { rerender, unmount } = render(
         <WorkspaceWork {...props} agents={[agent]} />,
@@ -927,14 +1007,15 @@ describe("Chat, Work, and Knowledge surfaces", () => {
       rerender(
         <WorkspaceWork
           {...props}
-          agents={[
-            {
-              ...agent,
-              sandboxes: [
-                { ...agent.sandboxes[0], status: "running", running: true },
-              ],
+          agents={[agent]}
+          selectedConversation={{
+            ...conversation,
+            sandbox: {
+              ...conversation.sandbox,
+              status: "running",
+              running: true,
             },
-          ]}
+          }}
         />,
       );
       act(() => vi.advanceTimersByTime(3_000));
@@ -956,7 +1037,7 @@ describe("Chat, Work, and Knowledge surfaces", () => {
             pinned: false,
             supportsWork: true,
             ready: true,
-            runtimeKind: "pi",
+            runtimeKind: "pi-sdk",
             sandboxes: [
               {
                 id: "sandbox-1",
@@ -1065,7 +1146,7 @@ describe("Chat, Work, and Knowledge surfaces", () => {
       pinned: false,
       supportsWork: true,
       ready: true,
-      runtimeKind: "pi",
+      runtimeKind: "pi-sdk",
       sandboxes: [],
     };
     render(
@@ -1141,7 +1222,7 @@ describe("Chat, Work, and Knowledge surfaces", () => {
       pinned: false,
       supportsWork: true,
       ready: true,
-      runtimeKind: "pi",
+      runtimeKind: "pi-sdk",
       sandboxes: [],
     };
     const agents = [
@@ -1188,7 +1269,7 @@ describe("Chat, Work, and Knowledge surfaces", () => {
       pinned: false,
       supportsWork: true,
       ready: true,
-      runtimeKind: "pi",
+      runtimeKind: "pi-sdk",
       sandboxes: [],
     };
     const session = (id: string, title: string) => ({
@@ -1197,7 +1278,8 @@ describe("Chat, Work, and Knowledge surfaces", () => {
       title,
       task: title,
       acceptanceCriteria: null,
-      runtimeKind: "pi",
+      runtimeKind: "pi-sdk",
+      ...pinnedSession,
       status: "completed",
       waitingQuestion: null,
       result: null,
@@ -1254,189 +1336,6 @@ describe("Chat, Work, and Knowledge surfaces", () => {
     ).toEqual(["Builder", "Hidden task", "Visible second", "Visible first"]);
   });
 
-  it("selects thinking effort for Hermes Work", async () => {
-    render(
-      <WorkspaceWork
-        slug="acme"
-        workspaceId="workspace-1"
-        agents={[
-          {
-            id: "agent-hermes",
-            name: "Hermes researcher",
-            pinned: false,
-            supportsWork: true,
-            ready: true,
-            runtimeKind: "hermes",
-            providerIds: ["provider-hermes"],
-            providerLabel: "OpenAI",
-            sandboxes: [
-              {
-                id: "sandbox-hermes",
-                name: "Hermes runtime",
-                kind: "hermes",
-                deploymentId: "deployment-hermes",
-                running: true,
-                isDefault: true,
-              },
-            ],
-          },
-        ]}
-        sessions={[]}
-        selectedWorkSessionId={null}
-      />,
-    );
-
-    const effort = screen.getByRole("button", { name: /Thinking effort/ });
-    await userEvent.click(effort);
-    const slider = screen.getByRole("slider", { name: "Thinking effort" });
-    slider.focus();
-    await userEvent.keyboard("{End}{ArrowLeft}");
-    expect(slider).toHaveAttribute("aria-valuetext", "Extra high");
-    await userEvent.keyboard("{Escape}");
-    expect(effort).toHaveAccessibleName("Thinking effort: Extra high");
-  });
-
-  it("sends a draft Hermes model with the first Work task", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValue(
-        Response.json({ error: "stop after capture" }, { status: 400 }),
-      );
-    vi.stubGlobal("fetch", fetchMock);
-    render(
-      <WorkspaceWork
-        slug="acme"
-        workspaceId="workspace-1"
-        agents={[
-          {
-            id: "agent-hermes",
-            name: "Hermes researcher",
-            pinned: false,
-            supportsWork: true,
-            ready: false,
-            runtimeKind: "hermes",
-            providerIds: [],
-            providerLabel: "OpenAI",
-            sandboxes: [
-              {
-                id: "sandbox-hermes",
-                name: "Hermes runtime",
-                kind: "hermes",
-                deploymentId: "deployment-hermes",
-                running: true,
-                isDefault: true,
-              },
-            ],
-          },
-        ]}
-        sessions={[]}
-        selectedWorkSessionId={null}
-      />,
-    );
-    const dialogProps = surfaceMocks.modelDialog.mock.calls.at(-1)?.[0] as {
-      hermesConversation: { id: string | null; editable: boolean };
-      onHermesDraftChange: (selection: {
-        profile: string;
-        provider: string | null;
-        model: string | null;
-      }) => void;
-    };
-    expect(dialogProps.hermesConversation).toMatchObject({
-      id: null,
-      editable: true,
-    });
-    fireEvent.change(
-      screen.getByRole("combobox", {
-        name: "What should the Agent accomplish?",
-      }),
-      { target: { value: "Research it" } },
-    );
-    expect(screen.getByRole("button", { name: "Send prompt" })).toBeDisabled();
-    act(() =>
-      dialogProps.onHermesDraftChange({
-        profile: "research",
-        provider: "openrouter",
-        model: "model-b",
-      }),
-    );
-    expect(screen.getByRole("button", { name: "Send prompt" })).toBeEnabled();
-
-    fireEvent.click(screen.getByRole("button", { name: "Send prompt" }));
-    await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith(
-        "/api/v1/work-sessions",
-        expect.objectContaining({ method: "POST" }),
-      ),
-    );
-    const request = fetchMock.mock.calls.find(
-      ([url]) => url === "/api/v1/work-sessions",
-    )?.[1] as RequestInit;
-    expect(JSON.parse(String(request.body))).toMatchObject({
-      hermesProfile: "research",
-      hermesProvider: "openrouter",
-      hermesModel: "model-b",
-    });
-  });
-
-  it("keeps legacy Hermes Work creation unchanged until a model is explicitly selected", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValue(
-        Response.json({ error: "stop after capture" }, { status: 400 }),
-      );
-    vi.stubGlobal("fetch", fetchMock);
-    render(
-      <WorkspaceWork
-        slug="acme"
-        workspaceId="workspace-1"
-        agents={[
-          {
-            id: "agent-hermes",
-            name: "Hermes researcher",
-            pinned: false,
-            supportsWork: true,
-            ready: true,
-            runtimeKind: "hermes",
-            providerIds: ["provider-hermes"],
-            sandboxes: [
-              {
-                id: "sandbox-hermes",
-                name: "Hermes runtime",
-                kind: "hermes",
-                deploymentId: "deployment-hermes",
-                running: true,
-                isDefault: true,
-              },
-            ],
-          },
-        ]}
-        sessions={[]}
-        selectedWorkSessionId={null}
-      />,
-    );
-
-    fireEvent.change(
-      screen.getByRole("combobox", {
-        name: "What should the Agent accomplish?",
-      }),
-      { target: { value: "Run it" } },
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Send prompt" }));
-    await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith(
-        "/api/v1/work-sessions",
-        expect.anything(),
-      ),
-    );
-    const request = fetchMock.mock.calls.find(
-      ([url]) => url === "/api/v1/work-sessions",
-    )?.[1] as RequestInit;
-    const body = JSON.parse(String(request.body));
-    expect(body).not.toHaveProperty("hermesProfile");
-    expect(body).not.toHaveProperty("hermesProvider");
-    expect(body).not.toHaveProperty("hermesModel");
-  });
-
   it("inserts an attached MCP prompt into the Work composer", async () => {
     const fetchMock = vi
       .fn()
@@ -1485,7 +1384,7 @@ describe("Chat, Work, and Knowledge surfaces", () => {
             pinned: false,
             supportsWork: true,
             ready: true,
-            runtimeKind: "pi",
+            runtimeKind: "pi-sdk",
             sandboxes: [
               {
                 id: "sandbox-1",
@@ -1498,8 +1397,33 @@ describe("Chat, Work, and Knowledge surfaces", () => {
             ],
           },
         ]}
-        sessions={[]}
-        selectedWorkSessionId={null}
+        sessions={[
+          {
+            id: "work-1",
+            agentId: "agent-1",
+            title: "Task",
+            task: "Task",
+            acceptanceCriteria: null,
+            runtimeKind: "pi-sdk",
+            ...pinnedSession,
+            status: "idle",
+            waitingQuestion: null,
+            result: null,
+            error: null,
+            artifacts: [],
+            conversationId: "conversation-1",
+            sandbox: {
+              id: "isolated-1",
+              name: "Session workspace",
+              kind: "docker",
+              deploymentId: "isolated-deployment-1",
+              running: true,
+            },
+            messages: [],
+            approvals: [],
+          },
+        ]}
+        selectedWorkSessionId="work-1"
       />,
     );
 
@@ -1522,12 +1446,12 @@ describe("Chat, Work, and Knowledge surfaces", () => {
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
-      "/api/v1/agents/agent-1/prompts",
+      "/api/v1/agents/agent-1/prompts?conversationId=conversation-1&workSessionId=work-1",
       expect.objectContaining({ cache: "no-store" }),
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
-      "/api/v1/agents/agent-1/prompts",
+      "/api/v1/agents/agent-1/prompts?conversationId=conversation-1&workSessionId=work-1",
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({
@@ -1551,8 +1475,17 @@ describe("Chat, Work, and Knowledge surfaces", () => {
             pinned: false,
             supportsWork: true,
             ready: true,
-            runtimeKind: "pi",
-            sandboxes: [],
+            runtimeKind: "pi-sdk",
+            sandboxes: [
+              {
+                id: "template-sandbox",
+                name: "Agent template",
+                kind: "docker",
+                deploymentId: "template-deployment",
+                running: true,
+                isDefault: true,
+              },
+            ],
           },
         ]}
         sessions={[
@@ -1562,7 +1495,8 @@ describe("Chat, Work, and Knowledge surfaces", () => {
             title: "Ship release",
             task: "Ship release",
             acceptanceCriteria: "Release is live",
-            runtimeKind: "pi",
+            runtimeKind: "pi-sdk",
+            ...pinnedSession,
             status: "completed",
             waitingQuestion: null,
             result: null,
@@ -1616,6 +1550,10 @@ describe("Chat, Work, and Knowledge surfaces", () => {
       expect.objectContaining({
         filesOnly: true,
         terminalOnly: false,
+        readOnly: false,
+        deploymentId: "deployment-1",
+        rpcApiBase: "/api/v1/work-sessions/work-1/sandbox/rpc",
+        terminalApiBase: "/api/v1/work-sessions/work-1/sandbox/terminal",
       }),
     );
     fireEvent.click(screen.getByRole("button", { name: "Close workspace" }));
@@ -1627,6 +1565,10 @@ describe("Chat, Work, and Knowledge surfaces", () => {
       expect.objectContaining({
         filesOnly: false,
         terminalOnly: true,
+        readOnly: false,
+        deploymentId: "deployment-1",
+        rpcApiBase: "/api/v1/work-sessions/work-1/sandbox/rpc",
+        terminalApiBase: "/api/v1/work-sessions/work-1/sandbox/terminal",
       }),
     );
 
@@ -1658,7 +1600,8 @@ describe("Chat, Work, and Knowledge surfaces", () => {
       title: "Streaming response test",
       task: "Stream reply",
       acceptanceCriteria: null,
-      runtimeKind: "pi",
+      runtimeKind: "pi-sdk",
+      ...pinnedSession,
       status: "idle",
       waitingQuestion: null,
       result: null,
@@ -1695,7 +1638,7 @@ describe("Chat, Work, and Knowledge surfaces", () => {
                 startedAt: 1_700_000_000_000,
                 completedAt: 1_700_000_029_000,
                 durationMs: 29_000,
-                runtimeKind: "pi",
+                runtimeKind: "pi-sdk",
                 modelName: "model-a",
               },
             },
@@ -1730,7 +1673,7 @@ describe("Chat, Work, and Knowledge surfaces", () => {
             pinned: false,
             supportsWork: true,
             ready: true,
-            runtimeKind: "pi",
+            runtimeKind: "pi-sdk",
             sandboxes: [],
           },
         ]}
@@ -1837,7 +1780,8 @@ describe("Chat, Work, and Knowledge surfaces", () => {
       title: "Repeated replies",
       task: "Reply again",
       acceptanceCriteria: null,
-      runtimeKind: "dsh",
+      runtimeKind: "pi-sdk",
+      ...pinnedSession,
       status: "running",
       waitingQuestion: null,
       result: null,
@@ -1862,7 +1806,7 @@ describe("Chat, Work, and Knowledge surfaces", () => {
           pinned: false,
           supportsWork: true,
           ready: true,
-          runtimeKind: "dsh",
+          runtimeKind: "pi-sdk",
           sandboxes: [],
         },
       ],
@@ -1908,7 +1852,8 @@ describe("Chat, Work, and Knowledge surfaces", () => {
       task: "Reply slowly",
       titlePending: true,
       acceptanceCriteria: null,
-      runtimeKind: "dsh",
+      runtimeKind: "pi-sdk",
+      ...pinnedSession,
       status: "idle",
       waitingQuestion: null,
       result: null,
@@ -1946,7 +1891,7 @@ describe("Chat, Work, and Knowledge surfaces", () => {
             pinned: false,
             supportsWork: true,
             ready: true,
-            runtimeKind: "dsh",
+            runtimeKind: "pi-sdk",
             sandboxes: [],
           },
         ]}
@@ -1990,7 +1935,7 @@ describe("Chat, Work, and Knowledge surfaces", () => {
             pinned: false,
             supportsWork: true,
             ready: true,
-            runtimeKind: "pi",
+            runtimeKind: "pi-sdk",
             sandboxes: [],
           },
         ]}
@@ -2001,7 +1946,8 @@ describe("Chat, Work, and Knowledge surfaces", () => {
             title: "Text reply",
             task: "Say hello",
             acceptanceCriteria: null,
-            runtimeKind: "pi",
+            runtimeKind: "pi-sdk",
+            ...pinnedSession,
             status: "idle",
             startedAt: "2026-09-03T01:00:00.000Z",
             completedAt: "2026-09-03T01:00:29.041Z",
@@ -2024,7 +1970,7 @@ describe("Chat, Work, and Knowledge surfaces", () => {
                 parts: [
                   {
                     type: "work-runtime",
-                    runtimeKind: "pi",
+                    runtimeKind: "pi-sdk",
                     status: "completed" as const,
                   },
                   { type: "text", text: "Hi" },
@@ -2067,7 +2013,7 @@ describe("Chat, Work, and Knowledge surfaces", () => {
             pinned: false,
             supportsWork: true,
             ready: true,
-            runtimeKind: "pi",
+            runtimeKind: "pi-sdk",
             sandboxes: [],
           },
         ]}
@@ -2078,7 +2024,8 @@ describe("Chat, Work, and Knowledge surfaces", () => {
             title: "Live order",
             task: "Trace order",
             acceptanceCriteria: null,
-            runtimeKind: "claude-code",
+            runtimeKind: "pi-sdk",
+            ...pinnedSession,
             status: "running",
             waitingQuestion: null,
             result: null,
@@ -2115,7 +2062,7 @@ describe("Chat, Work, and Knowledge surfaces", () => {
             id: "runtime",
             type: "runtime",
             status: "running",
-            runtimeKind: "claude-code",
+            runtimeKind: "pi-sdk",
           },
           {
             id: "reasoning:1",
@@ -2135,7 +2082,7 @@ describe("Chat, Work, and Knowledge surfaces", () => {
             id: "runtime:final",
             type: "runtime",
             status: "failed",
-            runtimeKind: "claude-code",
+            runtimeKind: "pi-sdk",
           },
         ],
       }),
@@ -2145,7 +2092,7 @@ describe("Chat, Work, and Knowledge surfaces", () => {
       document.querySelector('[data-ui="work.transcript"]')?.textContent ?? "";
     const thought = content.indexOf("thought before");
     const tool = content.indexOf("live_tool");
-    const terminalRuntime = content.indexOf("Claude Code");
+    const terminalRuntime = content.indexOf("Pi");
     expect(
       [thought, tool, terminalRuntime].every((position) => position >= 0),
     ).toBe(true);
@@ -2166,7 +2113,7 @@ describe("Chat, Work, and Knowledge surfaces", () => {
             pinned: false,
             supportsWork: true,
             ready: true,
-            runtimeKind: "pi",
+            runtimeKind: "pi-sdk",
             sandboxes: [],
           },
         ]}
@@ -2177,7 +2124,8 @@ describe("Chat, Work, and Knowledge surfaces", () => {
             title: "Trace order",
             task: "Trace order",
             acceptanceCriteria: null,
-            runtimeKind: "pi",
+            runtimeKind: "pi-sdk",
+            ...pinnedSession,
             status: "failed",
             waitingQuestion: null,
             result: null,
@@ -2204,7 +2152,7 @@ describe("Chat, Work, and Knowledge surfaces", () => {
                   },
                   {
                     type: "work-runtime",
-                    runtimeKind: "claude-code",
+                    runtimeKind: "pi-sdk",
                     status: "failed" as const,
                   },
                   { type: "reasoning", text: "plan-after" },
@@ -2237,7 +2185,7 @@ describe("Chat, Work, and Knowledge surfaces", () => {
     const positions = [
       "plan-before",
       "first_tool",
-      "Claude Code",
+      "Pi",
       "plan-after",
       "second_tool",
     ].map((marker) => content.indexOf(marker));
@@ -2254,7 +2202,8 @@ describe("Chat, Work, and Knowledge surfaces", () => {
       title: "Scroll reply",
       task: "Scroll reply",
       acceptanceCriteria: null,
-      runtimeKind: "pi",
+      runtimeKind: "pi-sdk",
+      ...pinnedSession,
       status: "idle",
       waitingQuestion: null,
       result: null,
@@ -2292,7 +2241,7 @@ describe("Chat, Work, and Knowledge surfaces", () => {
           pinned: false,
           supportsWork: true,
           ready: true,
-          runtimeKind: "pi",
+          runtimeKind: "pi-sdk",
           sandboxes: [],
         },
       ],

@@ -1,6 +1,9 @@
 // @vitest-environment node
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { Prisma } from "@prisma/client";
+import { ChatAssistantRevisionConfigSchema } from "@/lib/chat/revision-types";
+import { mcpDefinitionChecksum } from "@/lib/process/mcp-definition";
 const state = vi.hoisted(() => ({
   assistants: [] as Array<{
     id: string;
@@ -16,9 +19,21 @@ const state = vi.hoisted(() => ({
   deployments: [] as Array<{
     id: string;
     workspaceId: string;
+    sourceRef?: string;
     server: { slug: string; verifiedAt?: Date | null } | null;
   }>,
-  grants: [] as Array<{ assistantId: string; deploymentId: string }>,
+  grants: [] as Array<{
+    assistantId: string;
+    deploymentId: string;
+    allowedToolNames: string[];
+  }>,
+  revisions: [] as Array<{
+    id: string;
+    assistantId: string;
+    version: number;
+    config: unknown;
+  }>,
+  blockingRun: null as { id: string } | null,
   installs: 0,
   published: true,
   template: vi.fn(),
@@ -51,20 +66,35 @@ vi.mock("@/lib/db", () => {
     },
     deployment: {
       findMany: vi.fn(async ({ where }) =>
-        state.deployments.filter(
-          (d) =>
-            d.workspaceId === where.workspaceId &&
-            (!where.id || where.id.in.includes(d.id)) &&
-            (!where.server ||
-              (d.server?.verifiedAt &&
-                where.server.is.slug.in.includes(d.server.slug))),
-        ),
+        state.deployments
+          .filter(
+            (d) =>
+              d.workspaceId === where.workspaceId &&
+              (!where.id || where.id.in.includes(d.id)) &&
+              (!where.server ||
+                (d.server?.verifiedAt &&
+                  where.server.is.slug.in.includes(d.server.slug))),
+          )
+          .map((deployment) => ({
+            ...deployment,
+            ...deploymentRecipe(deployment.sourceRef),
+          })),
       ),
     },
     chatAssistant: {
       create: vi.fn(async ({ data }) => {
+        if (data.currentRevisionVersion)
+          throw new Error(
+            "An Assistant must be inserted before publishing a revision",
+          );
         const record = {
           ...data,
+          currentRevisionVersion: data.currentRevisionVersion ?? 0,
+          mcpGrants: data.mcpGrants.create,
+          modelParameters:
+            data.modelParameters === Prisma.DbNull
+              ? null
+              : data.modelParameters,
           id: `assistant-${state.assistants.length + 1}`,
         };
         state.assistants.push(record);
@@ -76,19 +106,72 @@ vi.mock("@/lib/db", () => {
         );
         return record;
       }),
-      findFirst: vi.fn(async ({ where }) =>
-        where.workspace?.OR[0].ownerId === "owner"
-          ? (state.assistants.find((a) => a.id === where.id) ?? null)
-          : null,
-      ),
+      findFirst: vi.fn(async ({ where }) => {
+        const record =
+          where.workspace?.OR[0].ownerId === "owner"
+            ? state.assistants.find(
+                (a) =>
+                  a.id === where.id &&
+                  (where.currentRevisionVersion === undefined ||
+                    a.currentRevisionVersion === where.currentRevisionVersion),
+              )
+            : null;
+        return record
+          ? {
+              ...record,
+              mcpGrants: state.grants.filter(
+                (g) => g.assistantId === record.id,
+              ),
+              revisions: state.revisions
+                .filter((r) => r.assistantId === record.id)
+                .sort((a, b) => b.version - a.version),
+            }
+          : null;
+      }),
+      updateMany: vi.fn(async ({ where, data }) => {
+        const record = state.assistants.find(
+          (a) =>
+            a.id === where.id &&
+            a.currentRevisionVersion === where.currentRevisionVersion,
+        );
+        if (!record) return { count: 0 };
+        Object.assign(record, data);
+        return { count: 1 };
+      }),
       update: vi.fn(async ({ where, data }) => {
         const record = state.assistants.find((a) => a.id === where.id);
         if (!record) throw new Error("Missing assistant");
+        if (
+          data.currentRevisionVersion &&
+          !state.revisions.some(
+            (revision) =>
+              revision.assistantId === record.id &&
+              revision.version === data.currentRevisionVersion,
+          )
+        )
+          throw new Error(
+            "Cannot publish a revision before its snapshot exists",
+          );
         Object.assign(record, data);
-        return record;
+        if (data.modelParameters === Prisma.DbNull)
+          record.modelParameters = null;
+        return {
+          ...record,
+          mcpGrants: state.grants.filter((g) => g.assistantId === record.id),
+        };
       }),
       delete: vi.fn(async ({ where }) => {
         state.assistants = state.assistants.filter((a) => a.id !== where.id);
+      }),
+    },
+    chatAssistantRevision: {
+      create: vi.fn(async ({ data }) => {
+        const record = {
+          ...data,
+          id: `revision-${state.revisions.length + 1}`,
+        };
+        state.revisions.push(record);
+        return record;
       }),
     },
     chatAssistantMcpGrant: {
@@ -101,6 +184,8 @@ vi.mock("@/lib/db", () => {
         state.grants.push(...data);
       }),
     },
+    chatTurn: { findFirst: vi.fn(async () => state.blockingRun) },
+    $queryRaw: vi.fn(async () => []),
     marketListing: {
       updateMany: vi.fn(async ({ data }) => {
         if (!state.published) return { count: 0 };
@@ -124,6 +209,7 @@ vi.mock("@/lib/db", () => {
         const before = {
           assistants: state.assistants.map((a) => ({ ...a })),
           grants: [...state.grants],
+          revisions: [...state.revisions],
           installs: state.installs,
         };
         try {
@@ -139,6 +225,7 @@ vi.mock("@/lib/db", () => {
 import { db } from "@/lib/db";
 import {
   createChatAssistant,
+  copyChatAssistant,
   createChatThread,
   deleteChatAssistant,
   getChatPromptGenerationModel,
@@ -164,10 +251,35 @@ function template(requireModel = true, requireMcp = true) {
     },
   };
 }
+function deploymentRecipe(sourceRef = "https://mcp.example.com/mcp") {
+  return {
+    name: "Search",
+    source: "remote",
+    sourceRef,
+    serverId: null,
+    installCfg: { transport: "streamable-http", authType: "none", env: {} },
+  };
+}
+function reviewedGrant(deploymentId = "mcp", allowedToolNames = ["search"]) {
+  const deployment = state.deployments.find(
+    (entry) => entry.id === deploymentId,
+  );
+  if (!deployment)
+    throw new Error(`Missing deployment fixture: ${deploymentId}`);
+  return {
+    deploymentId,
+    allowedToolNames,
+    expectedDefinitionChecksum: mcpDefinitionChecksum(
+      deploymentRecipe(deployment.sourceRef),
+    ),
+  };
+}
 beforeEach(() => {
   vi.clearAllMocks();
   state.assistants = [];
   state.grants = [];
+  state.revisions = [];
+  state.blockingRun = null;
   state.providers = [
     { id: "provider", workspaceId: "ws", format: "openai", models: ["model"] },
   ];
@@ -203,6 +315,7 @@ describe("assistant market installation resource policy", () => {
       server: { slug: "search", verifiedAt: new Date() },
     });
     const created = await installAssistantMarketRelease("owner", {
+      mcpGrants: [reviewedGrant()],
       workspaceId: "ws",
       releaseId: "release",
       name: " Custom ",
@@ -216,7 +329,11 @@ describe("assistant market installation resource policy", () => {
       marketTemplateReleaseId: "release",
     });
     expect(state.grants).toEqual([
-      { assistantId: created.id, deploymentId: "mcp" },
+      {
+        assistantId: created.id,
+        deploymentId: "mcp",
+        allowedToolNames: ["search"],
+      },
     ]);
     expect(state.installs).toBe(1);
   });
@@ -237,6 +354,7 @@ describe("assistant market installation resource policy", () => {
     state.providers = providers;
     await expect(
       installAssistantMarketRelease("owner", {
+        mcpGrants: [reviewedGrant()],
         workspaceId: "ws",
         releaseId: "release",
       }),
@@ -263,6 +381,7 @@ describe("assistant market installation resource policy", () => {
     state.providers = [provider];
     await expect(
       installAssistantMarketRelease("owner", {
+        mcpGrants: [reviewedGrant()],
         workspaceId: "ws",
         releaseId: "release",
         modelProviderId: "provider",
@@ -276,13 +395,13 @@ describe("assistant market installation resource policy", () => {
       { id: "override", workspaceId: "ws", format: "anthropic", models: [] },
     ];
     const assistant = await installAssistantMarketRelease("owner", {
+      mcpGrants: [reviewedGrant()],
       workspaceId: "ws",
       releaseId: "release",
       modelProviderId: "override",
       model: "chosen",
       systemPrompt: "",
       maxSteps: 3,
-      deploymentIds: ["mcp"],
       name: " ",
     });
     expect(assistant).toMatchObject({
@@ -297,6 +416,7 @@ describe("assistant market installation resource policy", () => {
   it("accepts model-less templates without fabricating provider bindings", async () => {
     state.template.mockResolvedValue(template(false, false));
     const assistant = await installAssistantMarketRelease("owner", {
+      mcpGrants: [],
       workspaceId: "ws",
       releaseId: "release",
     });
@@ -304,6 +424,7 @@ describe("assistant market installation resource policy", () => {
     expect(state.grants).toEqual([]);
     await expect(
       installAssistantMarketRelease("owner", {
+        mcpGrants: [reviewedGrant()],
         workspaceId: "ws",
         releaseId: "release",
         model: "orphan",
@@ -327,7 +448,7 @@ describe("assistant market installation resource policy", () => {
           workspaceId: "ws",
           name: "Missing requirements",
           marketTemplateReleaseId: "release",
-          deploymentIds: ["mcp"],
+          mcpGrants: [reviewedGrant()],
         }),
       ).rejects.toMatchObject({
         status: 400,
@@ -341,6 +462,7 @@ describe("assistant market installation resource policy", () => {
     state.published = false;
     await expect(
       installAssistantMarketRelease("owner", {
+        mcpGrants: [reviewedGrant()],
         workspaceId: "ws",
         releaseId: "release",
       }),
@@ -348,6 +470,7 @@ describe("assistant market installation resource policy", () => {
     expect(state.assistants).toEqual([]);
     expect(state.grants).toEqual([]);
     expect(state.installs).toBe(0);
+    expect(state.revisions).toEqual([]);
   });
 
   it.each(["create", "install"])(
@@ -362,6 +485,7 @@ describe("assistant market installation resource policy", () => {
               marketTemplateReleaseId: "release",
             })
           : installAssistantMarketRelease("owner", {
+              mcpGrants: [reviewedGrant()],
               workspaceId: "ws",
               releaseId: "release",
             }),
@@ -379,17 +503,18 @@ describe("assistant mutations preserve ownership and optional settings", () => {
       description: "Keep",
       modelProviderId: "provider",
       model: "model",
-      deploymentIds: ["mcp"],
+      mcpGrants: [reviewedGrant()],
       modelParameters: { temperature: 0.2 },
     });
     await updateChatAssistant("owner", assistant.id, {
+      expectedRevision: 1,
       name: "Changed",
       pinned: true,
       systemPrompt: "New policy",
       modelProviderId: null,
       modelParameters: null,
       maxSteps: 9,
-      deploymentIds: [],
+      mcpGrants: [],
     });
     expect(state.assistants[0]).toMatchObject({
       name: "Changed",
@@ -402,7 +527,8 @@ describe("assistant mutations preserve ownership and optional settings", () => {
     });
     expect(state.grants).toEqual([]);
     await updateChatAssistant("owner", assistant.id, {
-      deploymentIds: ["mcp"],
+      expectedRevision: 2,
+      mcpGrants: [reviewedGrant()],
       modelProviderId: "provider",
       model: "explicit",
       description: null,
@@ -414,7 +540,11 @@ describe("assistant mutations preserve ownership and optional settings", () => {
       modelParameters: { topP: 0.5 },
     });
     expect(state.grants).toEqual([
-      { assistantId: assistant.id, deploymentId: "mcp" },
+      {
+        assistantId: assistant.id,
+        deploymentId: "mcp",
+        allowedToolNames: ["search"],
+      },
     ]);
   });
 
@@ -428,9 +558,16 @@ describe("assistant mutations preserve ownership and optional settings", () => {
       const input =
         resource === "provider"
           ? { modelProviderId: "foreign" }
-          : { deploymentIds: ["foreign"] };
+          : {
+              mcpGrants: [
+                { deploymentId: "foreign", allowedToolNames: ["search"] },
+              ],
+            };
       await expect(
-        updateChatAssistant("owner", "assistant-1", input),
+        updateChatAssistant("owner", "assistant-1", {
+          expectedRevision: 1,
+          ...input,
+        }),
       ).rejects.toMatchObject({ status: 400 });
       expect(state.assistants[0].name).toBe("Original");
       expect(state.grants).toEqual([]);
@@ -439,6 +576,7 @@ describe("assistant mutations preserve ownership and optional settings", () => {
 
   it("deletes template attribution once without affecting standalone assistant counts", async () => {
     const installed = await installAssistantMarketRelease("owner", {
+      mcpGrants: [reviewedGrant()],
       workspaceId: "ws",
       releaseId: "release",
     });
@@ -454,6 +592,40 @@ describe("assistant mutations preserve ownership and optional settings", () => {
     await deleteChatAssistant("owner", ordinary.id);
     expect(state.assistants).toEqual([]);
     expect(state.installs).toBe(0);
+  });
+
+  it("locks Assistant creation and all existing threads before checking deletion safety", async () => {
+    const assistant = await createChatAssistant("owner", {
+      workspaceId: "ws",
+      name: "Deletion lock fixture",
+    });
+    vi.mocked(db.$queryRaw).mockClear();
+    state.blockingRun = { id: "unresolved-effect" };
+    await expect(
+      deleteChatAssistant("owner", assistant.id),
+    ).rejects.toMatchObject({ status: 409 });
+    expect(state.assistants).toHaveLength(1);
+    expect(db.chatAssistant.delete).not.toHaveBeenCalled();
+    const locks = vi
+      .mocked(db.$queryRaw)
+      .mock.calls.map(([query]) => query as Prisma.Sql);
+    expect(locks[0]?.sql).toContain('FROM "ChatAssistant"');
+    expect(locks[1]?.sql).toContain('FROM "ChatThread"');
+    expect(locks[1]?.sql).toContain('ORDER BY "id" FOR UPDATE');
+    expect(db.chatTurn.findFirst).toHaveBeenCalledWith({
+      where: {
+        thread: { assistantId: assistant.id },
+        OR: [
+          { status: "pending" },
+          {
+            confirmations: {
+              some: { status: { in: ["executing", "execution_unknown"] } },
+            },
+          },
+        ],
+      },
+      select: { id: true },
+    });
   });
 
   it("authorizes thread creation and prompt model selection", async () => {
@@ -490,12 +662,329 @@ describe("assistant mutations preserve ownership and optional settings", () => {
       deleteChatAssistant("other", assistant.id),
     ).rejects.toMatchObject({ status: 404 });
     await expect(
-      updateChatAssistant("other", assistant.id, { name: "Stolen" }),
+      updateChatAssistant("other", assistant.id, {
+        expectedRevision: 1,
+        name: "Stolen",
+      }),
     ).rejects.toMatchObject({ status: 404 });
     await expect(
       createChatAssistant("other", { workspaceId: "ws", name: "Stolen" }),
     ).rejects.toMatchObject({ status: 404 });
     expect(vi.mocked(db.chatThread.create)).toHaveBeenCalledTimes(2);
     expect(state.assistants[0].name).toBe("Assistant");
+  });
+
+  it("publishes immutable snapshots and pins new threads without changing old threads", async () => {
+    const assistant = await createChatAssistant("owner", {
+      workspaceId: "ws",
+      name: "Assistant",
+      systemPrompt: "Original",
+      mcpGrants: [reviewedGrant()],
+    });
+    const oldThread = await createChatThread("owner", assistant.id, {});
+    await updateChatAssistant("owner", assistant.id, {
+      expectedRevision: 1,
+      systemPrompt: "Changed",
+      mcpGrants: [],
+    });
+    const newThread = await createChatThread("owner", assistant.id, {});
+    expect(oldThread).toMatchObject({
+      assistantRevisionId: "revision-1",
+      legacyRevisionUnresolved: false,
+    });
+    expect(newThread).toMatchObject({
+      assistantRevisionId: "revision-2",
+      legacyRevisionUnresolved: false,
+    });
+    expect(state.revisions[0]).toMatchObject({
+      version: 1,
+      config: {
+        systemPrompt: "Original",
+        mcpGrants: [
+          {
+            deploymentId: "mcp",
+            allowedToolNames: ["search"],
+            definitionChecksum: expect.stringMatching(/^[a-f0-9]{64}$/),
+          },
+        ],
+      },
+    });
+    expect(state.revisions[1]).toMatchObject({
+      version: 2,
+      config: { systemPrompt: "Changed", mcpGrants: [] },
+    });
+    await expect(
+      updateChatAssistant("owner", assistant.id, {
+        expectedRevision: 1,
+        name: "Stale",
+      }),
+    ).rejects.toMatchObject({ status: 409 });
+    expect(state.assistants[0].name).toBe("Assistant");
+    expect(state.revisions).toHaveLength(2);
+  });
+
+  it("refuses new threads without a published revision", async () => {
+    state.assistants.push({
+      id: "legacy",
+      workspaceId: "ws",
+      currentRevisionVersion: 0,
+    });
+    await expect(createChatThread("owner", "legacy", {})).rejects.toMatchObject(
+      { status: 409 },
+    );
+    expect(db.chatThread.create).not.toHaveBeenCalled();
+  });
+
+  it("rolls back grant edits and CAS when snapshot publication fails", async () => {
+    const assistant = await createChatAssistant("owner", {
+      workspaceId: "ws",
+      name: "Original",
+    });
+    vi.mocked(db.chatAssistantRevision.create).mockRejectedValueOnce(
+      new Error("publication failed"),
+    );
+    await expect(
+      updateChatAssistant("owner", assistant.id, {
+        expectedRevision: 1,
+        name: "Changed",
+        mcpGrants: [reviewedGrant()],
+      }),
+    ).rejects.toThrow("publication failed");
+    expect(state.assistants[0]).toMatchObject({
+      name: "Original",
+      currentRevisionVersion: 1,
+    });
+    expect(state.grants).toEqual([]);
+    expect(state.revisions).toHaveLength(1);
+  });
+
+  it("copies configuration into an independent revision without inheriting grants", async () => {
+    const source = await createChatAssistant("owner", {
+      workspaceId: "ws",
+      name: "Source",
+      systemPrompt: "Policy",
+      mcpGrants: [reviewedGrant()],
+    });
+    const copy = await copyChatAssistant("owner", source.id, {
+      name: "Copy",
+      expectedRevision: 1,
+      mcpGrants: [],
+    });
+    expect(copy.id).not.toBe(source.id);
+    expect(copy).toMatchObject({
+      name: "Copy",
+      currentRevisionVersion: 1,
+      systemPrompt: "Policy",
+      mcpGrants: [],
+    });
+    expect(state.revisions[1]).toMatchObject({
+      assistantId: copy.id,
+      version: 1,
+      config: { systemPrompt: "Policy", mcpGrants: [] },
+    });
+    await updateChatAssistant("owner", source.id, {
+      expectedRevision: 1,
+      systemPrompt: "Changed",
+    });
+    expect(state.revisions[1]).toMatchObject({
+      config: { systemPrompt: "Policy" },
+    });
+    await expect(
+      copyChatAssistant("owner", source.id, {
+        name: "Stale",
+        expectedRevision: 1,
+        mcpGrants: [],
+      }),
+    ).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("rolls back creation when the initial revision cannot be published", async () => {
+    vi.mocked(db.chatAssistantRevision.create).mockRejectedValueOnce(
+      new Error("publication failed"),
+    );
+    await expect(
+      createChatAssistant("owner", {
+        workspaceId: "ws",
+        name: "Unpublished",
+        mcpGrants: [reviewedGrant()],
+      }),
+    ).rejects.toThrow("publication failed");
+    expect(state.assistants).toEqual([]);
+    expect(state.grants).toEqual([]);
+    expect(state.revisions).toEqual([]);
+  });
+
+  it("preserves retained MCP pins on unrelated edits and requires fresh review to reauthorize or copy", async () => {
+    const source = await createChatAssistant("owner", {
+      workspaceId: "ws",
+      name: "Source",
+      mcpGrants: [reviewedGrant()],
+    });
+    const original = ChatAssistantRevisionConfigSchema.parse(
+      state.revisions[0]?.config,
+    );
+    expect(original.mcpGrants[0]?.definitionChecksum).toBe(
+      reviewedGrant().expectedDefinitionChecksum,
+    );
+    const deployment = state.deployments[0];
+    if (!deployment) throw new Error("Missing deployment fixture");
+    deployment.sourceRef = "https://mcp.example.com/updated";
+    await updateChatAssistant("owner", source.id, {
+      expectedRevision: 1,
+      name: "Edited",
+    });
+    const edited = ChatAssistantRevisionConfigSchema.parse(
+      state.revisions[1]?.config,
+    );
+    expect(edited.mcpGrants).toEqual(original.mcpGrants);
+    await updateChatAssistant("owner", source.id, {
+      expectedRevision: 2,
+      mcpGrants: [{ deploymentId: "mcp", allowedToolNames: ["search"] }],
+    });
+    expect(
+      ChatAssistantRevisionConfigSchema.parse(state.revisions[2]?.config)
+        .mcpGrants,
+    ).toEqual(original.mcpGrants);
+    await updateChatAssistant("owner", source.id, {
+      expectedRevision: 3,
+      mcpGrants: [reviewedGrant()],
+    });
+    const reauthorized = ChatAssistantRevisionConfigSchema.parse(
+      state.revisions[3]?.config,
+    );
+    expect(reauthorized.mcpGrants[0]?.definitionChecksum).toBe(
+      reviewedGrant().expectedDefinitionChecksum,
+    );
+    expect(reauthorized.mcpGrants[0]?.definitionChecksum).not.toBe(
+      original.mcpGrants[0]?.definitionChecksum,
+    );
+    expect(
+      ChatAssistantRevisionConfigSchema.parse(state.revisions[0]?.config),
+    ).toEqual(original);
+    deployment.sourceRef = "https://mcp.example.com/copied";
+    const copy = await copyChatAssistant("owner", source.id, {
+      name: "Copy",
+      expectedRevision: 4,
+      mcpGrants: [reviewedGrant()],
+    });
+    const copied = ChatAssistantRevisionConfigSchema.parse(
+      state.revisions[4]?.config,
+    );
+    expect(state.revisions[4]?.assistantId).toBe(copy.id);
+    expect(copied.mcpGrants[0]?.definitionChecksum).toBe(
+      reviewedGrant().expectedDefinitionChecksum,
+    );
+    expect(copied.mcpGrants[0]?.definitionChecksum).not.toBe(
+      reauthorized.mcpGrants[0]?.definitionChecksum,
+    );
+    expect(state.grants).toEqual([
+      {
+        assistantId: source.id,
+        deploymentId: "mcp",
+        allowedToolNames: ["search"],
+      },
+      {
+        assistantId: copy.id,
+        deploymentId: "mcp",
+        allowedToolNames: ["search"],
+      },
+    ]);
+  });
+
+  it.each([
+    ["create", "missing"],
+    ["create", "stale"],
+    ["update", "missing"],
+    ["update", "stale"],
+    ["copy", "missing"],
+    ["copy", "stale"],
+  ] as const)(
+    "rejects %s with %s MCP discovery approval without publishing or granting",
+    async (operation, approval) => {
+      const source = await createChatAssistant("owner", {
+        workspaceId: "ws",
+        name: "Source",
+        mcpGrants: [],
+      });
+      const reviewed = reviewedGrant();
+      const deployment = state.deployments[0];
+      if (!deployment) throw new Error("Missing deployment fixture");
+      deployment.sourceRef = "https://mcp.example.com/changed-after-review";
+      const grant =
+        approval === "missing"
+          ? { deploymentId: "mcp", allowedToolNames: ["search"] }
+          : reviewed;
+      await expect(
+        operation === "create"
+          ? createChatAssistant("owner", {
+              workspaceId: "ws",
+              name: "New",
+              mcpGrants: [grant],
+            })
+          : operation === "copy"
+            ? copyChatAssistant("owner", source.id, {
+                name: "Copy",
+                expectedRevision: 1,
+                mcpGrants: [grant],
+              })
+            : updateChatAssistant("owner", source.id, {
+                expectedRevision: 1,
+                mcpGrants: [grant],
+              }),
+      ).rejects.toMatchObject({ status: approval === "missing" ? 400 : 409 });
+      expect(state.assistants).toHaveLength(1);
+      expect(state.assistants[0]).toMatchObject({
+        name: "Source",
+        currentRevisionVersion: 1,
+      });
+      expect(state.revisions).toHaveLength(1);
+      expect(state.grants).toEqual([]);
+    },
+  );
+
+  it("requires fresh recipe approval when changing a retained tool allowlist", async () => {
+    const source = await createChatAssistant("owner", {
+      workspaceId: "ws",
+      name: "Source",
+      mcpGrants: [reviewedGrant()],
+    });
+    await expect(
+      updateChatAssistant("owner", source.id, {
+        expectedRevision: 1,
+        mcpGrants: [{ deploymentId: "mcp", allowedToolNames: ["read"] }],
+      }),
+    ).rejects.toMatchObject({ status: 400 });
+    const stale = reviewedGrant("mcp", ["read"]);
+    const deployment = state.deployments[0];
+    if (!deployment) throw new Error("Missing deployment fixture");
+    deployment.sourceRef = "https://mcp.example.com/changed-after-review";
+    await expect(
+      updateChatAssistant("owner", source.id, {
+        expectedRevision: 1,
+        mcpGrants: [stale],
+      }),
+    ).rejects.toMatchObject({ status: 409 });
+    expect(state.revisions).toHaveLength(1);
+    await updateChatAssistant("owner", source.id, {
+      expectedRevision: 1,
+      mcpGrants: [reviewedGrant("mcp", ["read"])],
+    });
+    expect(
+      ChatAssistantRevisionConfigSchema.parse(state.revisions[1]?.config)
+        .mcpGrants,
+    ).toEqual([
+      {
+        deploymentId: "mcp",
+        allowedToolNames: ["read"],
+        definitionChecksum: reviewedGrant().expectedDefinitionChecksum,
+      },
+    ]);
+    expect(state.grants).toEqual([
+      {
+        assistantId: source.id,
+        deploymentId: "mcp",
+        allowedToolNames: ["read"],
+      },
+    ]);
   });
 });

@@ -119,7 +119,10 @@ describe("runNativeAgent", () => {
     expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({
       reasoning_effort: "high",
     });
-    expect(execute).toHaveBeenCalledWith({ value: "hi" });
+    expect(execute).toHaveBeenCalledWith(
+      { value: "hi" },
+      { toolCallId: "call-1" },
+    );
     expect(onContextUsage).toHaveBeenLastCalledWith({
       usedTokens: 150,
       maxTokens: 128_000,

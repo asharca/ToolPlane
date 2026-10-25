@@ -18,7 +18,8 @@ import { AgentMessagingPanel } from "@/components/dashboard/agents/AgentMessagin
 const fetcher = vi.fn();
 const baseView: A2AConsoleView = {
   canManage: true,
-  local: { enabled: false, ready: false, supported: false },
+  local: { ready: false, supported: false },
+  collaboration: { inboundEnabled: false, outboundEnabled: false },
   endpoint: {
     id: "endpoint",
     enabled: true,
@@ -60,49 +61,35 @@ describe("agent A2A management", () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     fetcher.mockResolvedValue(reply(baseView));
   });
-  it("loads public connection details, switches credentials, creates and hides a one-time key despite refresh failure", async () => {
+  it("reads historical public connection details without issuing new credentials", async () => {
     const user = userEvent.setup();
     render(<AgentA2APanel slug="a b" agentId="agent/1" runtimeKind="hermes" />);
-    await screen.findByText("https://example.test/public");
+    await screen.findByText("https://example.test/local");
     expect(fetcher.mock.calls[0][0]).toContain("a%20b/agents/agent%2F1");
-    await user.click(screen.getByRole("button", { name: "localTitle" }));
-    expect(screen.getByText("https://example.test/local")).toBeVisible();
-    expect(screen.getByText("accountCredential")).toBeVisible();
-    await user.type(
-      screen.getByRole("textbox", { name: "clientName" }),
-      "Laptop",
+    await user.click(screen.getByRole("button", { name: "publicTitle" }));
+    expect(screen.getByText("https://example.test/public")).toBeVisible();
+    expect(screen.getByText("serviceCredential")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "createClient" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "createKey" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "enablePublic" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "disablePublic" })).toBeNull();
+    expect(fetcher.mock.calls.some((call) => call[1]?.method === "POST")).toBe(
+      false,
     );
-    fetcher
-      .mockResolvedValueOnce(reply({ token: "once-secret" }))
-      .mockResolvedValueOnce(reply({}, false));
-    await user.click(screen.getByRole("button", { name: "createClient" }));
-    expect(await screen.findByText("once-secret")).toBeVisible();
-    expect(screen.getByText("refreshFailed")).toBeVisible();
-    expect(screen.getByRole("button", { name: "createClient" })).toBeDisabled();
-    expect(
-      JSON.parse(
-        fetcher.mock.calls.find((call) => call[1]?.method === "POST")?.[1].body,
-      ),
-    ).toEqual({ action: "create-client", name: "Laptop" });
-    await user.click(screen.getByRole("button", { name: "hideKey" }));
-    expect(screen.queryByText("once-secret")).toBeNull();
   });
-  it("confirms public toggles and surfaces rejected mutations", async () => {
+  it("surfaces rejected directional mutations without submitting public enablement", async () => {
     const user = userEvent.setup();
-    render(<AgentA2APanel slug="space" agentId="a" runtimeKind="hermes" />);
-    await screen.findByRole("button", { name: "disablePublic" });
-    vi.mocked(window.confirm).mockReturnValueOnce(false);
-    await user.click(screen.getByRole("button", { name: "disablePublic" }));
-    expect(fetcher).toHaveBeenCalledTimes(1);
+    render(<AgentA2APanel slug="space" agentId="a" runtimeKind="pi-sdk" />);
+    const button = await screen.findByRole("button", { name: "enableInbound" });
     fetcher.mockResolvedValueOnce(reply({}, false));
-    await user.click(screen.getByRole("button", { name: "disablePublic" }));
+    await user.click(button);
     expect(await screen.findByText("operationFailed")).toBeVisible();
     expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({
-      action: "set-public",
-      enabled: false,
+      action: "set-inbound",
+      enabled: true,
     });
   });
-  it("renders revoked, expired and active keys and submits scoped rotation and revocation", async () => {
+  it("renders revoked, expired and active historical keys and submits only scoped revocation", async () => {
     const user = userEvent.setup();
     const keys = [
       {
@@ -148,16 +135,7 @@ describe("agent A2A management", () => {
     expect(screen.getByText("expired")).toBeVisible();
     expect(screen.getByText("revoked")).toBeVisible();
     expect(screen.getAllByRole("button", { name: "revoke" })[2]).toBeDisabled();
-    await user.click(screen.getByRole("button", { name: "createKey" }));
-    await waitFor(() =>
-      expect(
-        fetcher.mock.calls.some(
-          (call) =>
-            call[1]?.body ===
-            JSON.stringify({ action: "create-key", clientId: "client" }),
-        ),
-      ).toBe(true),
-    );
+    expect(screen.queryByRole("button", { name: "createKey" })).toBeNull();
     await user.click(screen.getAllByRole("button", { name: "revoke" })[0]);
     await waitFor(() =>
       expect(
@@ -187,19 +165,15 @@ describe("agent A2A management", () => {
       expect(screen.getByText("invalidOrigin")).toBeVisible();
       expect(screen.getByText("connectionUnavailable")).toBeVisible();
       expect(
-        screen.getByRole("button", { name: "enableLocal" }),
+        screen.getByRole("button", { name: "enableInbound" }),
       ).toBeDisabled();
-      if (runtimeKind === "hermes") {
-        expect(
-          screen.getByRole("button", { name: "enablePublic" }),
-        ).toBeDisabled();
-        expect(
-          screen.getByRole("link", { name: "openPublication" }),
-        ).toHaveAttribute("href", "?settings=api");
-      } else
-        expect(
-          screen.queryByRole("button", { name: "enablePublic" }),
-        ).toBeNull();
+      expect(
+        screen.getByRole("button", { name: "enableOutbound" }),
+      ).toBeDisabled();
+      expect(screen.queryByRole("button", { name: "enablePublic" })).toBeNull();
+      expect(
+        screen.queryByRole("link", { name: "openPublication" }),
+      ).toBeNull();
     },
   );
   it("reports failed initial loads, recovers on refresh and ignores unmounted responses", async () => {
@@ -224,12 +198,13 @@ describe("agent A2A management", () => {
     deferred.resolve(reply(baseView));
   });
   it.each([false, true])(
-    "confirms local access and channel operators when enabled=%s",
+    "keeps inbound/outbound policy mutations independent from channel operators when enabled=%s",
     async (enabled) => {
       const user = userEvent.setup();
       const view = {
         ...baseView,
-        local: { enabled, supported: true, ready: true },
+        local: { supported: true, ready: true },
+        collaboration: { inboundEnabled: enabled, outboundEnabled: enabled },
         channels: [
           {
             id: "channel",
@@ -245,9 +220,9 @@ describe("agent A2A management", () => {
           url.endsWith("/remotes") ? { canManage: true, agents: [] } : view,
         ),
       );
-      render(<AgentA2APanel slug="space" agentId="a" runtimeKind="native" />);
+      render(<AgentA2APanel slug="space" agentId="a" runtimeKind="pi-sdk" />);
       const toggle = await screen.findByRole("button", {
-        name: enabled ? "disableLocal" : "enableLocal",
+        name: enabled ? "disableInbound" : "enableInbound",
       });
       await user.click(toggle);
       await waitFor(() =>
@@ -255,7 +230,24 @@ describe("agent A2A management", () => {
           fetcher.mock.calls.some(
             (call) =>
               call[1]?.body ===
-              JSON.stringify({ action: "set-local", enabled: !enabled }),
+              JSON.stringify({ action: "set-inbound", enabled: !enabled }),
+          ),
+        ).toBe(true),
+      );
+      const outbound = screen.getByRole("button", {
+        name: enabled ? "disableOutbound" : "enableOutbound",
+      });
+      await waitFor(() => expect(outbound).toBeEnabled());
+      await user.click(outbound);
+      await waitFor(() =>
+        expect(
+          fetcher.mock.calls.some(
+            (call) =>
+              call[1]?.body ===
+              JSON.stringify({
+                action: "set-outbound",
+                enabled: !enabled,
+              }),
           ),
         ).toBe(true),
       );
@@ -289,13 +281,16 @@ describe("agent A2A management", () => {
           ? { canManage: false, agents: [] }
           : {
               ...baseView,
-              local: { enabled: false, supported: true, ready: false },
+              local: { supported: true, ready: false },
             },
       ),
     );
     render(<AgentA2APanel slug="space" agentId="a" runtimeKind="pi-sdk" />);
     expect(await screen.findByText("localNotReady")).toBeVisible();
-    expect(screen.getByRole("button", { name: "enableLocal" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "enableInbound" })).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: "enableOutbound" }),
+    ).toBeEnabled();
   });
 });
 

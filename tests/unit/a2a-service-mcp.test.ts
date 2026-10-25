@@ -113,7 +113,7 @@ beforeEach(() => {
   });
 });
 afterEach(() => vi.restoreAllMocks());
-describe("MCP facade delegates to the native A2A core", () => {
+describe("retained published MCP history and cancellation", () => {
   it("uses the unmodified official MCP client and HTTP transport", async () => {
     const client = new Client({ name: "interop", version: "1" });
     const transport = new StreamableHTTPClientTransport(new URL(url), {
@@ -125,20 +125,16 @@ describe("MCP facade delegates to the native A2A core", () => {
     });
     try {
       await client.connect(transport);
-      expect((await client.listTools()).tools).toHaveLength(4);
-      const accepted = await client.callTool({
-        name: "a2a_send_message",
-        arguments: { message },
-      });
-      expect(accepted.isError).toBe(false);
-      expect(JSON.stringify(accepted)).toContain("native-task");
-      expect(mocks.submit).toHaveBeenCalledWith(
-        grant,
-        expect.objectContaining({
-          configuration: expect.objectContaining({ returnImmediately: true }),
-        }),
+      expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual(
+        ["a2a_get_task", "a2a_list_tasks", "a2a_cancel_task"],
       );
-      expect(mocks.get).not.toHaveBeenCalled();
+      const retained = await client.callTool({
+        name: "a2a_get_task",
+        arguments: { id: task.id },
+      });
+      expect(retained.isError).toBe(false);
+      expect(JSON.stringify(retained)).toContain("native-task");
+      expect(mocks.submit).not.toHaveBeenCalled();
     } finally {
       await client.close();
     }
@@ -178,11 +174,11 @@ describe("MCP facade delegates to the native A2A core", () => {
     expect(permits({ scopes: ["responses:create"] }, "send")).toBe(false);
     expect(permits({ scopes: ["a2a:cancel"] }, "cancel")).toBe(false);
     await expect(
-      executeServiceMcpTool({ ...grant, scopes: ["*"] }, "a2a_send_message", {
-        message,
+      executeServiceMcpTool({ ...grant, scopes: ["*"] }, "a2a_get_task", {
+        id: task.id,
       }),
     ).rejects.toMatchObject({ status: 403 });
-    expect(mocks.submit).not.toHaveBeenCalled();
+    expect(mocks.get).not.toHaveBeenCalled();
   });
   it("filters discovery and reauthorizes tool calls", async () => {
     mocks.resolve.mockResolvedValue({
@@ -215,25 +211,22 @@ describe("MCP facade delegates to the native A2A core", () => {
       body: JSON.stringify({
         jsonrpc: "2.0",
         method: "tools/call",
-        params: { name: "a2a_send_message", arguments: { message } },
+        params: { name: "a2a_get_task", arguments: { id: task.id } },
       }),
     });
     expect((await handleServiceMcp(request, "agep_1")).status).toBe(202);
-    expect(mocks.submit).not.toHaveBeenCalled();
+    expect(mocks.get).not.toHaveBeenCalled();
   });
-  it.each([
-    { ...message, parts: [{ text: "x", url: "http://metadata" }] },
-    { ...message, role: "user" },
-  ])("keeps standard validation before decoding", async (bad) => {
+  it("does not expose the retired send operation even to previously send-authorized credentials", async () => {
     await expect(
-      executeServiceMcpTool(grant, "a2a_send_message", { message: bad }),
-    ).rejects.toThrow();
+      executeServiceMcpTool(grant, "a2a_send_message", { message }),
+    ).rejects.toMatchObject({ status: 403 });
     expect(mocks.submit).not.toHaveBeenCalled();
   });
   it("rejects tenant changes and unauthorized tasks, with safe errors", async () => {
     await expect(
-      executeServiceMcpTool(grant, "a2a_send_message", {
-        message,
+      executeServiceMcpTool(grant, "a2a_get_task", {
+        id: task.id,
         tenant: "other-endpoint",
       }),
     ).rejects.toBeInstanceOf(TaskNotFoundError);
@@ -247,14 +240,25 @@ describe("MCP facade delegates to the native A2A core", () => {
     expect(JSON.stringify(out)).not.toContain("never-leak");
   });
   it("persists authorized redacted request/result without a capture window or fake HTTP status", async () => {
+    mocks.cancel.mockResolvedValue(
+      Task.fromJSON({
+        id: task.id,
+        contextId: task.contextId,
+        status: { state: "TASK_STATE_WORKING" },
+        history: [
+          {
+            ...message,
+            parts: [{ text: "visible output password=fixture-result-private" }],
+          },
+        ],
+      }),
+    );
     const response = await handleServiceMcp(
       req("tools/call", {
-        name: "a2a_send_message",
+        name: "a2a_cancel_task",
         arguments: {
-          message: {
-            ...message,
-            parts: [{ text: "visible input password=fixture-private" }],
-          },
+          id: task.id,
+          metadata: { note: "visible input", password: "fixture-private" },
         },
       }),
       "agep_1",
@@ -279,12 +283,23 @@ describe("MCP facade delegates to the native A2A core", () => {
       },
     });
     expect(event.httpStatus).toBeUndefined();
-    expect(event.detail.create.data.payload.response).toEqual(body.result);
+    expect(event.detail.create.data.payload.response).toMatchObject({
+      isError: false,
+      content: [
+        { type: "text", text: expect.stringContaining("visible output") },
+      ],
+    });
+    expect(JSON.stringify(body.result)).toContain("fixture-result-private");
     expect(JSON.stringify(event.detail.create.data.payload.request)).toContain(
       "visible input",
     );
     expect(JSON.stringify(event)).not.toContain("fixture-private");
+    expect(JSON.stringify(event)).not.toContain("fixture-result-private");
+    expect(JSON.stringify(event)).toContain("[REDACTED]");
     expect(JSON.stringify(event.attributes)).not.toContain("visible input");
+    expect(JSON.stringify(event.attributes)).not.toContain("visible output");
+    expect(mocks.cancel).toHaveBeenCalledWith(grant, task.id);
+    expect(mocks.submit).not.toHaveBeenCalled();
     expect(event.detail.create.expiresAt.getTime()).toBeLessThanOrEqual(
       Date.now() + 86400_000,
     );
@@ -304,14 +319,15 @@ describe("MCP facade delegates to the native A2A core", () => {
     expect(event.attributes.data.a2a.taskId).toBeUndefined();
     expect(event.detail.create.data.payload.request).toEqual({ id: "foreign" });
   });
-  it("does not turn logging failure into failed accepted work", async () => {
+  it("does not turn logging failure into failed retained-history reads", async () => {
     mocks.create.mockRejectedValue(new Error("logging unavailable"));
     const response = await handleServiceMcp(
-      req("tools/call", { name: "a2a_send_message", arguments: { message } }),
+      req("tools/call", { name: "a2a_get_task", arguments: { id: task.id } }),
       "agep_1",
     );
     expect((await response.json()).result.isError).toBe(false);
-    expect(mocks.submit).toHaveBeenCalledOnce();
+    expect(mocks.get).toHaveBeenCalledOnce();
+    expect(mocks.submit).not.toHaveBeenCalled();
   });
   it("returns authentication failures without cookie fallback", async () => {
     mocks.resolve.mockRejectedValue(new A2AHttpError(401, "Invalid"));

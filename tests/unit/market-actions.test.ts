@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   getWorkspaceForUser: vi.fn(),
   installMarketRelease: vi.fn(),
   publish: vi.fn(),
+  preview: vi.fn(),
   update: vi.fn(),
   ignore: vi.fn(),
   remove: vi.fn(),
@@ -44,9 +45,9 @@ vi.mock("@/lib/market/skills", () => ({
 vi.mock("@/lib/market/resources", () => ({
   installMarketRelease: mocks.installMarketRelease,
   publishMcpRelease: mocks.publish,
-  publishToolkitRelease: mocks.publish,
   publishPiPackageRelease: mocks.publish,
   publishAssembledPiPackageRelease: mocks.publish,
+  previewPiPackageSource: mocks.preview,
   updateMarketInstall: mocks.update,
 }));
 vi.mock("@/lib/market/publisher-management", () => ({
@@ -88,7 +89,11 @@ describe("market install action", () => {
 
 function marketForm(values: Record<string, string> = {}) {
   const data = new FormData();
-  for (const [key, value] of Object.entries({ workspace: "acme", ...values }))
+  for (const [key, value] of Object.entries({
+    workspace: "acme",
+    sourceDigest: "a".repeat(64),
+    ...values,
+  }))
     data.set(key, value);
   return data;
 }
@@ -112,7 +117,6 @@ describe("market publishing and lifecycle boundaries", () => {
     ],
     [actions.publishAssistantReleaseAction, "assistantId", "/app/acme/chat"],
     [actions.publishMcpReleaseAction, "deploymentId", "/app/acme/mcp/resource"],
-    [actions.publishToolkitReleaseAction, "toolkitId", "/app/acme/toolkits"],
   ] as const)(
     "validates source selection and normalizes publication metadata",
     async (action, field, path) => {
@@ -159,6 +163,74 @@ describe("market publishing and lifecycle boundaries", () => {
     },
   );
 
+  it("previews real source inputs without publication and requires its digest for interactive publication", async () => {
+    const preview = { sourceDigest: "b".repeat(64), name: "Captured name" };
+    mocks.preview.mockResolvedValue(preview);
+    const form = marketForm({ source: "npm:fixture", sourceId: "registry" });
+    expect(await actions.previewPiPackageSourceAction({}, form)).toEqual({
+      ok: true,
+      preview,
+    });
+    expect(mocks.preview).toHaveBeenCalledWith({
+      workspaceId: "workspace-1",
+      publishedById: "user-1",
+      source: "npm:fixture",
+      sourceId: "registry",
+    });
+    expect(mocks.publish).not.toHaveBeenCalled();
+    form.delete("sourceDigest");
+    expect(await actions.publishPiPackageReleaseAction({}, form)).toEqual({
+      error: "source_preview_required",
+    });
+    form.set("sourceDigest", preview.sourceDigest);
+    await actions.publishPiPackageReleaseAction({}, form);
+    expect(mocks.publish).toHaveBeenCalledWith(
+      expect.objectContaining({ sourceDigest: preview.sourceDigest }),
+    );
+    mocks.preview.mockRejectedValueOnce(
+      new MarketError("source_changed", "hidden"),
+    );
+    expect(await actions.previewPiPackageSourceAction({}, form)).toEqual({
+      error: "source_changed",
+    });
+  });
+  it("passes ZIP files and only explicit checked consent, and supports private artifact resubmission", async () => {
+    const form = marketForm({ sourceType: "zip" });
+    expect(await actions.publishPiPackageReleaseAction({}, form)).toEqual({
+      error: "source_invalid",
+    });
+    expect(mocks.publish).not.toHaveBeenCalled();
+    form.set("archive", new File(["zip"], "package.zip"));
+    await actions.publishPiPackageReleaseAction({}, form);
+    expect(mocks.publish).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        sourceType: "zip",
+        archive: expect.any(File),
+        confirmExecutableCode: false,
+        visibility: "private",
+      }),
+    );
+    form.set("confirmExecutableCode", "on");
+    await actions.publishPiPackageReleaseAction({}, form);
+    expect(mocks.publish).toHaveBeenLastCalledWith(
+      expect.objectContaining({ confirmExecutableCode: true }),
+    );
+    await actions.publishPiPackageReleaseAction(
+      {},
+      marketForm({
+        sourceType: "release",
+        targetReleaseId: "private-release",
+        visibility: "public",
+      }),
+    );
+    expect(mocks.publish).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        sourceType: "release",
+        targetReleaseId: "private-release",
+        visibility: "public",
+      }),
+    );
+  });
   it("keeps package publication private unless public visibility is explicit", async () => {
     expect(
       await actions.publishPiPackageReleaseAction(
@@ -191,7 +263,7 @@ describe("market publishing and lifecycle boundaries", () => {
       }),
     );
     expect(mocks.revalidatePath).toHaveBeenCalledWith(
-      "/app/acme/toolkits/pi-packages",
+      "/app/acme/market/compose",
     );
   });
 
@@ -242,7 +314,7 @@ describe("market publishing and lifecycle boundaries", () => {
     data.append("mcpTools", "invalid JSON");
     expect(
       await actions.publishAssembledPiPackageReleaseAction({}, data),
-    ).toEqual({ error: "action_failed" });
+    ).toEqual({ error: "invalid_manifest" });
     mocks.publish.mockRejectedValueOnce(
       new MarketError("source_invalid", "bad source"),
     );
@@ -253,7 +325,6 @@ describe("market publishing and lifecycle boundaries", () => {
 
   it.each([
     ["skill", { id: "skill" }, "/app/acme/skills/skill"],
-    ["toolkit", { id: "kit", slug: "tools" }, "/app/acme/toolkits/tools"],
     ["pi-package", {}, "/app/acme/market/installed#install-install"],
   ])(
     "routes installed %s resources to their consumer surface",
@@ -276,14 +347,7 @@ describe("market publishing and lifecycle boundaries", () => {
       });
     },
   );
-  it("rejects inconsistent toolkit installation and does not swallow non-package failures", async () => {
-    mocks.installMarketRelease.mockResolvedValueOnce({
-      kind: "toolkit",
-      resource: { id: "kit" },
-    });
-    await expect(
-      actions.installMarketResourceAction(marketForm({ releaseId: "release" })),
-    ).rejects.toMatchObject({ code: "listing_conflict" });
+  it("does not swallow non-package installation failures", async () => {
     mocks.installMarketRelease.mockRejectedValueOnce(new Error("failed"));
     await expect(
       actions.installMarketResourceAction(marketForm({ releaseId: "release" })),
@@ -385,7 +449,7 @@ describe("market publishing and lifecycle boundaries", () => {
         "/app/acme/market/publish",
       );
       expect(mocks.revalidatePath).toHaveBeenCalledWith(
-        "/app/acme/toolkits/pi-packages",
+        "/app/acme/market/compose",
       );
     },
   );

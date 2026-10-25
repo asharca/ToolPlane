@@ -17,11 +17,11 @@ Conversation. Published contexts retain their revision and client isolation. Pub
 credentials cannot enter the local API, and the public Hermes executor does not gain
 access to private Agents through this feature.
 
-Pi, Claude Code, DSH and Hermes RPC use their configured exclusive Docker sandboxes,
-models, MCPs, Skills and Toolkits. Context.id identifies a separate native session,
-**not a fresh filesystem**. Tasks for the same Agent may see that Agent's existing
-sandbox files and native memory. Enable this only for workspace users authorized to
-use those resources. Managed `hermes` stays on its public execution port.
+Pi, Claude Code, DSH and Hermes RPC use their configured Docker sandbox as a
+template. Each collaboration Context resolves a separate persistent conversation
+and writable sandbox through `localTaskSandbox`; tasks within that Context are serial.
+The parent conversation's writable volume is not mounted into the child. Managed
+`hermes` stays on its public execution port.
 
 The runtime port does not call runAgentTurn, the old collaboration Worker,
 Responses execution or runDedicatedSandboxTurn. Supported classic chat, Work,
@@ -35,15 +35,17 @@ Configure models, connected Docker sandboxes and tools for the caller and target
 Use the caller's existing Sub-agent settings to select allowed directed targets.
 An edge does not authorize access to the entire workspace.
 
-For internal delegation from authenticated chat, Work or control, selecting the
-target sub-agents is sufficient: neither caller nor target needs the A2A switch.
-The account-token root API below remains separately opt-in. A workspace owner or
-administrator enables each Agent they want to expose through that entry:
+Inbound access (`a2aInboundEnabled`) and outbound collaboration
+(`a2aOutboundEnabled`) are independent and default to false. The account-token
+root entry additionally requires its existing `a2aInternalEnabled` switch. An
+administrator enables inbound access for a target and approves outbound policy for
+the caller; a Sub-agent edge alone is no longer sufficient. Authenticated ordinary
+chat/Work/control entry does not require inbound A2A access for the source itself.
 
 ```bash
 curl -X PUT "$TOOLPLANE_URL/api/v1/workspaces/$WORKSPACE/agents/$AGENT_ID/a2a/local" \
   -H "Authorization: Bearer $ACCOUNT_TOKEN" \
-  -H 'Content-Type: application/json' -d '{"enabled":true}'
+  -H 'Content-Type: application/json' -d '{"enabled":true,"inboundEnabled":true}'
 ```
 
 GET on the same URL returns the standard protected Agent Card; POST accepts the same
@@ -51,6 +53,60 @@ A2A 1.0 JSON-RPC methods as the public interface. Members may invoke enabled Age
 but cannot enable them. Writes recheck administrator authority in the transaction
 and record an audit. Cookies, Toolkit tokens, public credentials, runtime tokens and
 browser Origin requests cannot authenticate this entry.
+
+The same administrator-only PUT accepts `outboundEnabled` and a strict `policy`:
+
+```json
+{
+  "enabled": true,
+  "outboundEnabled": true,
+  "policy": {
+    "schemaVersion": 1,
+    "targets": [{
+      "kind": "local",
+      "targetId": "workspace-target-agent-id",
+      "capabilityIds": [],
+      "maxCalls": 4,
+      "maxDepth": 2,
+      "maxConcurrent": 2,
+      "timeoutSeconds": 120,
+      "maxInputBytes": 8192,
+      "dataAllowance": "text_only",
+      "budget": {
+        "currency": "USD",
+        "maxAuthorizedCostMicros": 1000000,
+        "authorizedCostPerCallMicros": 250000
+      }
+    }]
+  }
+}
+```
+
+Null/malformed policy, duplicate target entries, missing directed edge, disabled
+inbound/outbound access or capability expansion deny dispatch. Local capability IDs
+are attached installed Skill IDs; remote IDs are the Card's service capability IDs,
+not installable ToolPlane Skills. Because this profile does not selectively execute
+a peer's skill, **every** exposed target capability must fit the approved list.
+Target tools still come only from the target's own configuration, never the parent.
+
+Admission takes the workspace lock before counting root/target request receipts.
+`maxCalls` and optional monetary reservations include new tasks and continuations,
+including failed or unknown outcomes; identical message retries do not consume twice.
+The budget is an **authorized reservation**, not measured provider charges or a
+remote billing guarantee. Measured billing caps and token caps are not accepted by
+the strict policy schema. Counts are conservative across callers to the same target
+within one root. Existing platform task, concurrency, depth and deadline limits can
+only narrow policy limits. Policy edits/revocation invalidate existing bindings;
+they do not silently authorize resuming historical work with expanded permissions.
+
+Out-of-policy requests create no child and export no data. Runtime communication
+tools persist a user-input question and return `approvalRequired: true`; the Agent
+must end its turn. The prompt explains that a reply cannot grant permissions: a
+workspace administrator must approve policy changes, then start a new task/revision.
+Confirmation within already approved bounds may continue the same isolated context;
+input-required continuation never enlarges authority. Native continuation binds a
+new operation after the previous operation has ended, never replays the old one.
+
 
 Following [A2A 1.0 AgentCard semantics](https://a2a-protocol.org/v1.0.0/specification/#441-agentcard),
 the Card's `description` uses the Agent's configured description, with surrounding
@@ -84,7 +140,7 @@ native A2A core, not another task database or a nonstandard A2A wire binding.
 
 | Tool | Purpose |
 | --- | --- |
-| a2a_list_agents | Discover linked and configured targets by ID and name; no internal switch is required |
+| a2a_list_agents | Discover linked, inbound-enabled and outbound-policy-approved targets by ID and name |
 | a2a_send_message | Send agentId plus a standard A2A SendMessageRequest; return the accepted Task immediately |
 | a2a_get_task | Read a direct child Task, including its question and artifacts |
 | a2a_cancel_task | Request cancellation of a child and its descendants |
@@ -151,6 +207,14 @@ the task. A task's lease must still be executing, authorized, uncanceled and not
 publish a JSON artifact; final prose is not guessed into JSON or returned as a successful
 format match. Children and tools treat delivered content as untrusted task data.
 
+Published local and final results include platform-owned `toolplane.dev/provenance`
+metadata: source task/context, target kind/identity, decoded/UTF-8 `sizeBytes`, and
+a SHA-256 digest of canonical standard-ProtoJSON `parts` (sorted object keys,
+preserved array order; algorithm `sha256-canonical-parts-json`). Access remains scoped
+to the Task grant; the digest is integrity evidence, not a new permission or proof
+that the producer is trustworthy. Retrying existing artifacts remains idempotent
+even when the older artifact predates provenance metadata.
+
 ## Capacity and operations
 
 A root allows at most 16 tasks and three delegation edges; a parent resumes at most
@@ -169,8 +233,9 @@ remote execution, not local Pi, Pi SDK, Claude Code, DSH or Hermes RPC tasks. Wa
 parents release their execution slots. Busy roots remain queued before any side
 effects; nested children fail promptly instead of waiting on their parent.
 
-These are task, execution and time limits, not a precise token/currency budget.
-Large/binary input, automatic historical memory migration and distributed execution remain unsupported.
+Optional monetary budgets reserve administrator-approved per-call amounts; they do
+not measure token usage or actual billing. Large/binary input, automatic historical
+memory migration and distributed execution remain unsupported.
 Native approval constraints are documented in [unified ingress](A2A_INGRESS_APPROVALS.md). Aggregate
 admission accounting is documented in [resource limits](A2A_RESOURCE_LIMITS.md).
 

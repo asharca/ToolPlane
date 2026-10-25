@@ -1,23 +1,12 @@
 import { assertDefined } from "../assert-defined";
 // @vitest-environment node
 import { describe, expect, it, vi } from "vitest";
-import {
-  existsSync,
-  readdirSync,
-  readFileSync,
-  mkdtempSync,
-  writeFileSync,
-  rmSync,
-} from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
-import os from "node:os";
-import { spawnSync } from "node:child_process";
 import {
   AGENT_CONTROL_RUNTIME_KINDS,
   agentRuntimeCapabilities,
 } from "@/lib/agents/runtime-kind";
-import { installationName } from "@/lib/plugin/installation-identity";
-import { SYNC_CLIENT_SOURCE } from "@/lib/plugin/sync-client";
 
 const control = vi.hoisted(() => ({
   create: vi.fn(async () => ({ id: "example-agent" })),
@@ -56,7 +45,7 @@ describe("production capabilities and bilingual documentation contracts", () => 
       expect(request).toMatchObject({
         jsonrpc: "2.0",
         method: "tools/call",
-        params: { name: "create_agent", arguments: { runtime: "pi" } },
+        params: { name: "create_agent", arguments: { runtime: "pi-sdk" } },
       });
       await expect(
         executeAgentControlTool(
@@ -68,11 +57,11 @@ describe("production capabilities and bilingual documentation contracts", () => 
       expect(control.create).toHaveBeenLastCalledWith(
         "ws",
         "acme",
-        expect.objectContaining({ runtime: "pi" }),
+        expect.objectContaining({ runtime: "pi-sdk" }),
       );
     },
   );
-  it.each(["native", "claude-code", "dsh", "hermes-rpc"])(
+  it.each(["native", "pi", "hermes", "claude-code", "dsh", "hermes-rpc"])(
     "keeps unsupported Control MCP creation runtime %s rejected",
     async (runtime) => {
       control.create.mockClear();
@@ -93,6 +82,7 @@ describe("production capabilities and bilingual documentation contracts", () => 
     expect(create.inputSchema.properties.runtime.enum).toEqual(
       AGENT_CONTROL_RUNTIME_KINDS,
     );
+    expect(AGENT_CONTROL_RUNTIME_KINDS).toEqual(["pi-sdk"]);
     expect(agentRuntimeCapabilities("native")).toBeNull();
     expect(agentRuntimeCapabilities("hermes")).toMatchObject({
       attachments: true,
@@ -104,57 +94,6 @@ describe("production capabilities and bilingual documentation contracts", () => 
         providerBinding: "single",
       });
   });
-  it.each(["TOOLKIT_SYNC.md", "TOOLKIT_SYNC.en.md"])(
-    "applies the documented full snapshot in %s using the actual sync client",
-    (file) => {
-      const examples = [
-        ...read(file).matchAll(/```json\n([\s\S]*?)\n```/g),
-      ].map((m) => JSON.parse(m[1]));
-      const value = examples.find((v) => v.data?.snapshotComplete === true);
-      expect(value).toBeDefined();
-      const config = {
-        base: "https://example.test",
-        workspaceId: "workspace-id",
-        toolkitId: "toolkit-id",
-        workspaceSlug: "acme",
-        toolkitSlug: "devtools",
-        client: "codex",
-      };
-      const name = installationName(config);
-      const dir = mkdtempSync(
-        path.join(os.tmpdir(), "toolplane-doc-contract-"),
-      );
-      try {
-        writeFileSync(path.join(dir, "snapshot.json"), JSON.stringify(value));
-        writeFileSync(
-          path.join(dir, "config.json"),
-          JSON.stringify({ ...config, installation: name }),
-        );
-        writeFileSync(path.join(dir, "sync.cjs"), SYNC_CLIENT_SOURCE);
-        const result = spawnSync(
-          process.execPath,
-          [
-            path.join(dir, "sync.cjs"),
-            path.join(dir, "config.json"),
-            path.join(dir, "snapshot.json"),
-            path.join(dir, "skills"),
-            `${name}-`,
-          ],
-          { encoding: "utf8", timeout: 5000 },
-        );
-        expect(result.stderr).toBe("");
-        expect(result.status).toBe(0);
-        expect(
-          readFileSync(
-            path.join(dir, "skills", `${name}-pdf`, "SKILL.md"),
-            "utf8",
-          ),
-        ).toContain("name: pdf");
-      } finally {
-        rmSync(dir, { recursive: true, force: true });
-      }
-    },
-  );
   it("keeps every topic bilingual, top-linked and registered in both indexes", () => {
     const names = readdirSync(docs).filter(
       (name) => /^[A-Z_]+\.md$/.test(name) && name !== "README.md",

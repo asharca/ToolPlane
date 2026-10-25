@@ -11,19 +11,17 @@ Settings retain access controls, authorization, connection URLs and credential m
 
 ## Internal collaboration
 
-Configure Pi, Claude Code, DSH or Hermes RPC with a model and an exclusive,
-networked Docker sandbox. Select allowed sub-agents in the caller's delegate
-settings. Internal delegation from authenticated chat, Work and control needs no
-additional A2A switch on the caller or selected targets. Selection authorizes only
-those directed edges, not the whole workspace. Managed Hermes is not an internal
-execution target.
+Configure the target's model and isolated session sandbox. Select the directed
+delegate edge, enable the caller's **outbound** A2A, enable the target's **inbound**
+A2A, and approve the caller's versioned target/capability/budget/data policy.
+Both direction switches default off; selecting a sub-agent alone grants no dispatch.
+The separate account-token root entry still requires `a2aInternalEnabled`.
+Authenticated chat/Work/control entry does not require inbound A2A on the source.
 
-A separate Context is not a separate filesystem: tasks can use the target sandbox's
-files, memory and configured tools. Removing an allowed edge invalidates affected
-grants when authority is rechecked; completed side effects do not roll back.
-The separate **External A2A & channel access** switch still requires an owner or
-administrator's confirmation. It governs external calls, account-token A2A root
-invocation and channel execution authorization, not selected internal delegates.
+Each new delegated Context has an independent writable volume and native context;
+it does not share the parent's writable directory. Resumption stays in that context.
+Removing authorization invalidates affected grants on recheck; completed external
+side effects do not roll back. See [scoped policy](A2A_LOCAL_COLLABORATION.md#opt-in-and-root-invocation).
 
 Open an owned root task link to inspect the bounded parent/child monitor and, for a root tool requiring a human decision, its approval controls. Settings no longer offer task submission, task-list or continuation controls; use the existing chat/Work surfaces or the documented A2A API. Current actor, target configuration and every delegation edge are rechecked. Knowing another user's task ID does not confer access; inaccessible subtrees are withheld.
 
@@ -34,6 +32,10 @@ explicit pause/resume/refresh controls. A request times out after 15 seconds; ne
 failures back off and stop after three consecutive failures. Reads never resubmit work.
 This is state polling, not a token stream. Leaving the page does not cancel accepted work.
 Cancellation may return WORKING until execution stops. Terminal tasks cannot reopen.
+Remote cancellation is confirmed only by the peer's CANCELED state. The monitor
+distinguishes a pending request, an observed completed/failed outcome, and an unknown
+outcome where the remote may still run. Monetary figures are authorized reservations,
+not measured charges; the UI labels their currency and per-call reserved upper amount.
 
 Text and JSON artifacts are rendered as escaped text. Small inline files require an
 explicit download and are forced to attachment data, never active HTML previews. File

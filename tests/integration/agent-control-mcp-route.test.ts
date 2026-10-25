@@ -8,6 +8,8 @@ vi.mock("next/headers", () => ({
 import { db } from "@/lib/db";
 import { createApiToken } from "@/lib/auth/tokens";
 import { POST } from "@/app/api/v1/workspaces/[slug]/agents/mcp/route";
+import { createAgent, updateAgent } from "@/lib/agents/mutations";
+import { publishFixtureAgentRevision } from "./agent-revision-fixture";
 
 const stamp = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 const appOrigin = new URL(process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost")
@@ -23,28 +25,10 @@ let otherAgentConversationId = "";
 let foreignWorkspaceId = "";
 let foreignProviderId = "";
 let foreignAgentId = "";
-let createAgentSandboxId = "";
-let invalidProviderSandboxId = "";
 let ownerToken = "";
 let memberToken = "";
 let outsiderToken = "";
 let toolkitToken = "";
-
-async function createDockerSandbox(workspaceId: string, label: string) {
-  const deployment = await db.deployment.create({
-    data: { workspaceId, name: label, source: "sandbox", status: "stopped" },
-  });
-  return db.sandbox.create({
-    data: {
-      workspaceId,
-      deploymentId: deployment.id,
-      name: label,
-      slug: `${label.toLowerCase().replaceAll(" ", "-")}-${stamp}`,
-      kind: "docker",
-      network: "isolated",
-    },
-  });
-}
 
 beforeAll(async () => {
   const owner = await db.user.create({
@@ -72,30 +56,20 @@ beforeAll(async () => {
     },
   });
   providerId = provider.id;
-  createAgentSandboxId = (
-    await createDockerSandbox(workspaceId, "Route agent sandbox")
-  ).id;
-  invalidProviderSandboxId = (
-    await createDockerSandbox(workspaceId, "Invalid provider sandbox")
-  ).id;
-  const messageAgent = await db.agent.create({
-    data: {
-      workspaceId,
-      name: "Message target",
-      slug: `message-target-${stamp}`,
-      runtimeKind: "pi",
-      providerId,
-      model: "route-model",
-    },
+  const messageAgent = await createAgent(workspaceId, "Message target", {
+    runtime: "pi-sdk",
   });
+  await updateAgent(workspaceId, messageAgent.id, {
+    name: messageAgent.name,
+    systemPrompt: null,
+    providerId,
+    model: "route-model",
+    maxSteps: 8,
+  });
+  await publishFixtureAgentRevision(workspaceId, messageAgent.id);
   messageAgentId = messageAgent.id;
-  const otherAgent = await db.agent.create({
-    data: {
-      workspaceId,
-      name: "Other message agent",
-      slug: `other-message-${stamp}`,
-      runtimeKind: "pi",
-    },
+  const otherAgent = await createAgent(workspaceId, "Other message agent", {
+    runtime: "pi-sdk",
   });
   const otherConversation = await db.conversation.create({
     data: { agentId: otherAgent.id },
@@ -147,14 +121,11 @@ beforeAll(async () => {
     },
   });
   foreignProviderId = foreignProvider.id;
-  const foreignAgent = await db.agent.create({
-    data: {
-      workspaceId: foreignWorkspaceId,
-      name: "Foreign route agent",
-      slug: `foreign-route-agent-${stamp}`,
-      runtimeKind: "pi",
-    },
-  });
+  const foreignAgent = await createAgent(
+    foreignWorkspaceId,
+    "Foreign route agent",
+    { runtime: "pi-sdk" },
+  );
   foreignAgentId = foreignAgent.id;
   outsiderToken = (await createApiToken(outsiderId, "Outsider")).token;
 });
@@ -236,11 +207,10 @@ describe("Agent Control MCP route authorization and creation", () => {
     const response = await invoke(
       call(ownerToken, "create_agent", {
         name: "Route-created agent",
-        runtime: "pi",
+        runtime: "pi-sdk",
         providerId,
         model: "route-model",
         systemPrompt: "Be concise.",
-        sandboxIds: [createAgentSandboxId],
       }),
     );
     const body = await response.json();
@@ -248,7 +218,24 @@ describe("Agent Control MCP route authorization and creation", () => {
     expect(body.result.structuredContent.result.agent).toMatchObject({
       name: "Route-created agent",
       configured: true,
-      ready: true,
+      ready: false,
+    });
+    const createdAgentId = body.result.structuredContent.result.agent.id;
+    const draft = await db.agent.findUniqueOrThrow({
+      where: { id: createdAgentId },
+      include: { sandboxes: true },
+    });
+    expect(draft.runtimeKind).toBe("pi-sdk");
+    expect(draft.currentRevisionVersion).toBe(0);
+    expect(draft.sandboxes).toHaveLength(1);
+    await publishFixtureAgentRevision(workspaceId, createdAgentId);
+    const published = await invoke(
+      call(ownerToken, "get_agent", { agentId: createdAgentId }),
+    );
+    await expect(published.json()).resolves.toMatchObject({
+      result: {
+        structuredContent: { result: { ready: true, readOnly: false } },
+      },
     });
     expect(JSON.stringify(body)).not.toContain("ROUTE_SECRET_API_KEY");
     expect(JSON.stringify(body)).not.toContain("route.invalid");
@@ -259,15 +246,32 @@ describe("Agent Control MCP route authorization and creation", () => {
     ).resolves.toBe(1);
   });
 
+  it("rejects legacy execution runtimes without creating an Agent", async () => {
+    const before = await db.agent.count({ where: { workspaceId } });
+    for (const runtime of ["pi", "hermes"]) {
+      const response = await invoke(
+        call(ownerToken, "create_agent", { name: "Retired runtime", runtime }),
+      );
+      await expect(response.json()).resolves.toMatchObject({
+        result: {
+          isError: true,
+          structuredContent: { error: { code: "invalid_arguments" } },
+        },
+      });
+    }
+    await expect(db.agent.count({ where: { workspaceId } })).resolves.toBe(
+      before,
+    );
+  });
+
   it("rejects a provider from another workspace and leaves no partial agent", async () => {
     const before = await db.agent.count({ where: { workspaceId } });
     const response = await invoke(
       call(ownerToken, "create_agent", {
         name: "Must not persist",
-        runtime: "pi",
+        runtime: "pi-sdk",
         providerId: foreignProviderId,
         model: "foreign-model",
-        sandboxIds: [invalidProviderSandboxId],
       }),
     );
     const body = await response.json();

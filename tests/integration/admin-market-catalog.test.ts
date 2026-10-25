@@ -9,9 +9,7 @@ import {
   listAdminMarketListings,
   updateAdminAssistantTemplate,
   updateAdminMarketListing,
-  updateAdminPublicToolkit,
 } from "@/lib/admin/market-catalog";
-import { getBrowseToolkits } from "@/lib/toolkits/queries";
 import { getBrowseServers } from "@/lib/workspace/queries";
 import { listMarketListings } from "@/lib/market/listings";
 import { getAssistantMarketTemplate } from "@/lib/market/skills";
@@ -120,28 +118,6 @@ describe.sequential("admin marketplace catalog management", () => {
         categoryIds: [],
       }),
     ).rejects.toMatchObject({ code: "release_required" });
-  });
-
-  it("updates only existing public toolkits with valid categories", async () => {
-    await updateAdminPublicToolkit({
-      id: toolkitId,
-      enabled: false,
-      categoryIds: [categoryId],
-    });
-    const toolkit = await db.toolkit.findUnique({
-      where: { id: toolkitId },
-      include: { categories: true },
-    });
-    expect(toolkit?.enabled).toBe(false);
-    expect(toolkit?.categories.map(({ id }) => id)).toEqual([categoryId]);
-
-    await expect(
-      updateAdminPublicToolkit({
-        id: toolkitId,
-        enabled: true,
-        categoryIds: ["missing"],
-      }),
-    ).rejects.toMatchObject({ code: "invalid_categories" });
   });
 
   it("creates a real approved assistant template and immediately reflects admin changes", async () => {
@@ -272,7 +248,7 @@ describe.sequential("admin marketplace catalog management", () => {
     await db.server.delete({ where: { id: server.id } });
   });
 
-  it("cascades unified MCP and toolkit status and categories to their user-facing sources", async () => {
+  it("cascades MCP status/categories while retaining read-only Toolkit history outside discovery", async () => {
     await db.toolkit.update({
       where: { id: toolkitId },
       data: {
@@ -422,11 +398,7 @@ describe.sequential("admin marketplace catalog management", () => {
     expect(
       (await getBrowseServers(1, server.slug)).all.map(({ id }) => id),
     ).toContain(server.id);
-    expect(
-      (
-        await getBrowseToolkits("outside-workspace", 1, "Catalog Toolkit")
-      ).items.map(({ id }) => id),
-    ).toContain(toolkitId);
+    expect((await listMarketListings({ kind: "toolkit" })).items).toEqual([]);
     await Promise.all([
       updateAdminMarketListing({
         id: mcpListing.id,
@@ -435,37 +407,37 @@ describe.sequential("admin marketplace catalog management", () => {
         isFeatured: false,
         categoryIds: [secondCategoryId],
       }),
-      updateAdminMarketListing({
-        id: toolkitListing.id,
-        status: "disabled",
-        curated: false,
-        isFeatured: false,
-        categoryIds: [secondCategoryId],
-      }),
+      expect(
+        updateAdminMarketListing({
+          id: toolkitListing.id,
+          status: "published",
+          curated: false,
+          isFeatured: false,
+          categoryIds: [secondCategoryId],
+        }),
+      ).rejects.toMatchObject({ code: "invalid_config" }),
     ]);
-    const [updatedServer, updatedToolkit, browsedServers, browsedToolkits] =
-      await Promise.all([
-        db.server.findUniqueOrThrow({
-          where: { id: server.id },
-          include: { categories: true },
-        }),
-        db.toolkit.findUniqueOrThrow({
-          where: { id: toolkitId },
-          include: { categories: true },
-        }),
-        getBrowseServers(1, server.slug),
-        getBrowseToolkits("outside-workspace", 1, "Catalog Toolkit"),
-      ]);
+    const [updatedServer, updatedToolkit, browsedServers] = await Promise.all([
+      db.server.findUniqueOrThrow({
+        where: { id: server.id },
+        include: { categories: true },
+      }),
+      db.toolkit.findUniqueOrThrow({
+        where: { id: toolkitId },
+        include: { categories: true },
+      }),
+      getBrowseServers(1, server.slug),
+    ]);
     expect(updatedServer.verifiedAt).not.toBeNull();
     expect(updatedServer.categories.map(({ id }) => id)).toEqual([
       secondCategoryId,
     ]);
-    expect(updatedToolkit.enabled).toBe(false);
-    expect(updatedToolkit.categories.map(({ id }) => id)).toEqual([
-      secondCategoryId,
-    ]);
+    expect(updatedToolkit.enabled).toBe(true);
+    expect(updatedToolkit.categories.map(({ id }) => id)).toEqual([categoryId]);
+    expect(
+      await db.marketRelease.findUnique({ where: { id: toolkitRelease.id } }),
+    ).not.toBeNull();
     expect(browsedServers.all.map(({ id }) => id)).not.toContain(server.id);
-    expect(browsedToolkits.items.map(({ id }) => id)).not.toContain(toolkitId);
 
     await db.marketListing.deleteMany({
       where: { id: { in: [mcpListing.id, toolkitListing.id] } },

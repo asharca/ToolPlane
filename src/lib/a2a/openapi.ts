@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { AgentA2APolicySchema } from "@/lib/agents/revision-types";
 import {
   A2ASendSchema,
   A2AGetSchema,
@@ -31,6 +32,16 @@ const documentedSendSchema = A2ASendSchema.extend({
 });
 
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
+const localSettingsSchema = {
+  type: "object",
+  additionalProperties: false,
+  minProperties: 1,
+  properties: {
+    inboundEnabled: { type: "boolean" },
+    outboundEnabled: { type: "boolean" },
+    policy: ref("AgentA2APolicy"),
+  },
+};
 const taskId = { id: "REPLACE_WITH_TASK_ID" };
 const message = {
   messageId: "REPLACE_WITH_UNIQUE_MESSAGE_ID",
@@ -192,6 +203,7 @@ export const a2aOpenApi = {
     },
   },
   schemas: {
+    AgentA2APolicy: z.toJSONSchema(AgentA2APolicySchema),
     A2ASendParams: {
       ...z.toJSONSchema(documentedSendSchema),
       description:
@@ -387,26 +399,18 @@ export const a2aOpenApi = {
       put: {
         tags: ["A2A · Account"],
         operationId: "configureLocalA2A",
-        summary: "Enable or disable external account-token access",
+        summary: "Configure inbound, outbound and collaboration authorization",
         description:
-          "Requires workspace owner or administrator. Does not control selected internal sub-agent delegation.",
+          "Requires workspace owner or administrator. Publishes directional settings and policy as a new immutable Agent revision using revision compare-and-swap. Inbound authorization controls account-token and channel admission and delegated target access; outbound authorization and selected policy authorize delegation. Ordinary chat, control and Work entry do not require collaboration opt-in. The retired enabled alias is rejected.",
         security: localSecurity,
         requestBody: {
           required: true,
-          content: jsonContent({
-            type: "object",
-            additionalProperties: false,
-            required: ["enabled"],
-            properties: { enabled: { type: "boolean" } },
-          }),
+          content: jsonContent(localSettingsSchema),
         },
         responses: {
           "200": {
-            description: "Updated access state.",
-            content: jsonContent({
-              type: "object",
-              properties: { enabled: { type: "boolean" } },
-            }),
+            description: "Accepted directional settings and policy changes.",
+            content: jsonContent(localSettingsSchema),
           },
           default: {
             description:

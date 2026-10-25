@@ -1,9 +1,6 @@
 import { withRequestLogging } from "@/lib/observability/http";
 import { resolveAgentApiPrincipal } from "@/lib/agents/public-api/auth";
-import {
-  deleteAgentConversationForPrincipal,
-  getAgentConversationForPrincipal,
-} from "@/lib/agents/public-api/conversations";
+import { getAgentConversationForPrincipal } from "@/lib/agents/public-api/conversations";
 import {
   AgentApiError,
   asAgentApiError,
@@ -95,43 +92,13 @@ export const GET = withRequestLogging(
 
 export const DELETE = withRequestLogging(
   "/api/v1/agent-endpoints/[endpointId]/conversations/[conversationId]",
-  async function DELETE(request: Request, context: RouteContext) {
-    const { endpointId, conversationId } = await context.params;
-    const requestId = createAgentRequestId();
-    let headers = new Headers({ "x-request-id": requestId });
-    try {
-      const principal = await resolveAgentApiPrincipal(
-        request,
-        endpointId,
-        "conversations:delete",
-      );
-      if (!principal)
-        throw new AgentApiError(
-          "invalid_api_key",
-          publicErrorMessage("invalid_api_key"),
-          401,
-        );
-      const rate = await takeAgentApiPrincipalRateLimit(principal);
-      headers = await agentApiHeaders(request, endpointId);
-      headers.set("x-request-id", requestId);
-      rate.headers.forEach((value, name) => {
-        headers.set(name, value);
-      });
-      const deleted = await deleteAgentConversationForPrincipal(
-        principal,
-        conversationId,
-        request.signal,
-      );
-      if (!deleted) {
-        throw new AgentApiError(
-          "conversation_not_found",
-          publicErrorMessage("conversation_not_found"),
-          404,
-        );
-      }
-      return new Response(null, { status: 204, headers });
-    } catch (error) {
-      return errorResponse(asAgentApiError(error), requestId, headers);
-    }
-  },
+  async () =>
+    errorResponse(
+      new AgentApiError(
+        "runtime_unavailable",
+        "Historical Agent conversations are read-only.",
+        410,
+      ),
+      createAgentRequestId(),
+    ),
 );

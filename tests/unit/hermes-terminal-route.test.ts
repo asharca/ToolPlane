@@ -1,148 +1,63 @@
 // @vitest-environment node
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
-const mocks = vi.hoisted(() => ({
-  resolveUser: vi.fn(),
-  getTerminal: vi.fn(),
-  ensureReady: vi.fn(),
-  livePort: vi.fn(),
+import { beforeEach, describe, expect, it, vi } from "vitest";
+const mocks = vi.hoisted(() => ({ user: vi.fn(), agent: vi.fn() }));
+vi.mock("@/lib/auth/request-user", () => ({ resolveRequestUser: mocks.user }));
+vi.mock("@/lib/agents/queries", () => ({ getAgentForRequest: mocks.agent }));
+vi.mock("@/lib/observability/http", () => ({
+  withRequestLogging: (_path: string, handler: unknown) => handler,
 }));
-
-vi.mock("@/lib/auth/request-user", () => ({
-  resolveRequestUser: mocks.resolveUser,
-}));
-vi.mock("@/lib/agents/queries", () => ({
-  getHermesTerminalForRequest: mocks.getTerminal,
-}));
-vi.mock("@/lib/agents/hermes/runtime", () => ({
-  ensureHermesDashboardReady: mocks.ensureReady,
-}));
-vi.mock("@/lib/process/supervisor", () => ({ livePort: mocks.livePort }));
-vi.mock("@/lib/workspace/access-stream", () => ({
-  workspaceAccessStream: (body: ReadableStream) => body,
-}));
-
 import {
-  DELETE,
   GET,
   POST,
+  DELETE,
 } from "@/app/api/v1/agents/[agentId]/terminal/[[...path]]/route";
-
-describe("Hermes Agent terminal API", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mocks.resolveUser.mockResolvedValue({ id: "user-1" });
-    mocks.getTerminal.mockResolvedValue({
-      id: "agent-1",
-      workspaceId: "workspace-1",
-      runtime: { id: "runtime-1", sandbox: { deploymentId: "deployment-1" } },
+const handlers = { GET, POST, DELETE };
+const context = { params: Promise.resolve({ agentId: "agent" }) };
+describe.each(Object.entries(handlers))(
+  "retired Agent-level terminal %s",
+  (method, handler) => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+      mocks.user.mockResolvedValue({ id: "user" });
+      mocks.agent.mockResolvedValue({ id: "agent", runtimeKind: "hermes" });
     });
-    mocks.livePort.mockReturnValue(4312);
-    mocks.ensureReady.mockResolvedValue({ port: 4312 });
-  });
-
-  afterEach(() => vi.unstubAllGlobals());
-
-  it("rejects unauthenticated requests before resolving an Agent", async () => {
-    mocks.resolveUser.mockResolvedValue(null);
-    const response = await POST(
-      new Request("http://toolplane.test/terminal", {
-        method: "POST",
-        body: "{}",
-      }),
-      { params: Promise.resolve({ agentId: "agent-1" }) },
-    );
-
-    expect(response.status).toBe(401);
-    expect(mocks.getTerminal).not.toHaveBeenCalled();
-  });
-
-  it("creates a terminal only through the URL Agent runtime", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response('{"id":"terminal-1"}', {
-        status: 201,
-        headers: { "content-type": "application/json" },
-      }),
-    );
-    vi.stubGlobal("fetch", fetchMock);
-
-    const response = await POST(
-      new Request("http://toolplane.test/terminal", {
-        method: "POST",
-        headers: {
-          authorization: "Bearer user-token",
-          cookie: "mcp_session=user-session",
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({ cols: 100, rows: 30 }),
-      }),
-      { params: Promise.resolve({ agentId: "agent-1" }) },
-    );
-
-    expect(response.status).toBe(201);
-    expect(mocks.getTerminal).toHaveBeenCalledWith("agent-1", "user-1");
-    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe("http://127.0.0.1:4312/terminal/session");
-    expect(init.body).toBe('{"cols":100,"rows":30}');
-    const headers = new Headers(init.headers);
-    expect(headers.get("authorization")).toBeNull();
-    expect(headers.get("cookie")).toBeNull();
-  });
-
-  it("starts a stopped Hermes runtime before opening its terminal", async () => {
-    mocks.livePort.mockReturnValue(null);
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(
-        new Response('{"id":"terminal-1"}', {
-          status: 201,
-        }),
-      ),
-    );
-
-    const response = await POST(
-      new Request("http://toolplane.test/terminal", {
-        method: "POST",
-        body: "{}",
-      }),
-      { params: Promise.resolve({ agentId: "agent-1" }) },
-    );
-
-    expect(response.status).toBe(201);
-    expect(mocks.ensureReady).toHaveBeenCalledWith("workspace-1", "agent-1");
-  });
-
-  it("streams terminal events and closes only a validated session id", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(
-        new Response("event: ready\ndata: {}\n\n", {
-          status: 200,
-          headers: { "content-type": "text/event-stream" },
-        }),
-      ),
-    );
-
-    const stream = await GET(
-      new Request("http://toolplane.test/terminal/terminal-1/stream"),
-      {
-        params: Promise.resolve({
-          agentId: "agent-1",
-          path: ["terminal-1", "stream"],
-        }),
+    it("requires authenticated Agent access", async () => {
+      mocks.user.mockResolvedValue(null);
+      expect(
+        (
+          await handler(
+            new Request("http://toolplane.test/terminal", { method }),
+            context,
+          )
+        ).status,
+      ).toBe(401);
+      expect(mocks.agent).not.toHaveBeenCalled();
+    });
+    it("hides inaccessible Agents", async () => {
+      mocks.agent.mockResolvedValue(null);
+      expect(
+        (
+          await handler(
+            new Request("http://toolplane.test/terminal", { method }),
+            context,
+          )
+        ).status,
+      ).toBe(404);
+    });
+    it.each(["hermes", "pi-sdk"])(
+      "requires a pinned conversation instead of executing an Agent-level %s terminal",
+      async (runtimeKind) => {
+        mocks.agent.mockResolvedValue({ id: "agent", runtimeKind });
+        const response = await handler(
+          new Request("http://toolplane.test/terminal", { method }),
+          context,
+        );
+        expect(response.status).toBe(410);
+        expect(await response.json()).toEqual({
+          error: expect.stringContaining("pinned conversation"),
+        });
+        expect(mocks.agent).toHaveBeenCalledWith("agent", "user");
       },
     );
-    expect(stream.status).toBe(200);
-    expect(stream.headers.get("content-type")).toContain("text/event-stream");
-
-    const invalid = await DELETE(
-      new Request("http://toolplane.test/terminal/not_valid", {
-        method: "DELETE",
-      }),
-      {
-        params: Promise.resolve({ agentId: "agent-1", path: ["not_valid"] }),
-      },
-    );
-    expect(invalid.status).toBe(404);
-  });
-});
+  },
+);

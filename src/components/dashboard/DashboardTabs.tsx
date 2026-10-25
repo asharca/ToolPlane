@@ -21,13 +21,11 @@ import {
   Brain,
   Cpu,
   MessageSquare,
-  TerminalSquare,
   LibraryBig,
   Plug,
   Settings,
   Store,
   Users,
-  Wrench,
   type LucideIcon,
 } from "lucide-react";
 import { WorkspaceTabBar } from "@/components/workspace/workspace-tab-bar";
@@ -70,11 +68,11 @@ const TAB_DEFINITIONS: TabDefinition[] = [
   { segment: "market", labelKey: "market", icon: Store },
   { segment: "mcp", labelKey: "mcpServers", icon: Plug },
   { segment: "skills", labelKey: "skills", icon: Brain },
-  { segment: "toolkits", labelKey: "toolkits", icon: Wrench },
+  { segment: "toolkits", labelKey: "market", icon: Store },
   { segment: "sandboxes", labelKey: "sandboxes", icon: Boxes },
   { segment: "providers", labelKey: "modelProviders", icon: Cpu },
   defaultTab,
-  { segment: "work", labelKey: "work", icon: TerminalSquare },
+  { segment: "work", labelKey: "agents", icon: Bot },
   { segment: "knowledge", labelKey: "knowledge", icon: LibraryBig },
   { segment: "agents", labelKey: "agents", icon: Bot },
   { segment: "observability", labelKey: "observability", icon: BarChart3 },
@@ -621,7 +619,7 @@ export function DashboardTabBar({
 
 export function DashboardTabContent({ children }: { children?: ReactNode }) {
   return (
-    <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-auto overscroll-contain">
+    <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-auto overscroll-contain [scrollbar-width:thin] [scrollbar-color:color-mix(in_srgb,var(--foreground)_18%,transparent)_transparent] [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-foreground/20">
       {children}
     </main>
   );

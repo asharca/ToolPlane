@@ -8,6 +8,14 @@ import {
 import { agentRuntimeTokenFromRequest } from "@/lib/agents/runtime-access";
 import { parseJson } from "@/lib/agents/public-api/body";
 import { withLogContext } from "@/lib/observability/context";
+import { db } from "@/lib/db";
+import { getAgentForRun } from "@/lib/agents/queries";
+import {
+  requireAgentRevision,
+  resolvePinnedAgent,
+} from "@/lib/agents/revisions";
+import { assertLocalRuntimeToken } from "./local-runtime";
+import { AgentRevisionError } from "@/lib/agents/revisions";
 import { sessionActor } from "./console-http";
 import { A2AHttpError } from "./principal";
 import { WindowLimiter } from "./transport-limits";
@@ -34,11 +42,13 @@ function failure(error: unknown) {
       ? error.status
       : error instanceof TaskNotFoundError
         ? 404
-        : error instanceof RequestMalformedError
-          ? 400
-          : error instanceof UnsupportedOperationError
-            ? 409
-            : 500;
+        : error instanceof AgentRevisionError
+          ? 403
+          : error instanceof RequestMalformedError
+            ? 400
+            : error instanceof UnsupportedOperationError
+              ? 409
+              : 500;
   return reply(
     {
       error:
@@ -68,6 +78,39 @@ export async function handleRuntimeApprovals(req: Request, taskId: string) {
         return reply(
           { error: "Invalid approval request." },
           parsed.reason === "too_large" ? 413 : 400,
+        );
+      const { row, grant } = await assertLocalRuntimeToken(token, true);
+      const revisionId = await db.$transaction(async (tx) => {
+        const context = await tx.a2AContext.findFirst({
+          where: {
+            id: row.contextId,
+            workspaceId: grant.workspaceId,
+            agentId: grant.agentId,
+            targetKind: "local",
+            legacyRevisionUnresolved: false,
+          },
+          select: { agentRevisionId: true },
+        });
+        if (
+          !context?.agentRevisionId ||
+          context.agentRevisionId !== grant.agentRevisionId
+        )
+          throw new TaskNotFoundError();
+        return (
+          await requireAgentRevision(tx, grant.agentId, context.agentRevisionId)
+        ).id;
+      });
+      const liveAgent = await getAgentForRun(grant.agentId, grant.workspaceId);
+      if (!liveAgent) throw new TaskNotFoundError();
+      const agent = await resolvePinnedAgent(liveAgent, revisionId, {
+        workspaceId: grant.workspaceId,
+      });
+      if (
+        parsed.value.action === "check" &&
+        agent.disabledBuiltinTools.includes(parsed.value.toolName)
+      )
+        throw new UnsupportedOperationError(
+          "Tool is disabled by the pinned revision.",
         );
       return reply(await checkNativeToolApproval(token, parsed.value));
     } catch (error) {

@@ -1,6 +1,7 @@
 import { assertDefined } from "../assert-defined";
 import { fireEvent, render, screen } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   getCurrentUser: vi.fn(),
@@ -11,9 +12,15 @@ const mocks = vi.hoisted(() => ({
   parseAssistantReleaseManifest: vi.fn(),
   parseMcpMarketManifest: vi.fn(),
   parseSkillReleaseManifest: vi.fn(),
-  parseToolkitMarketManifest: vi.fn(),
   sandboxFindFirst: vi.fn(),
   listSandboxes: vi.fn(),
+  chatAssistants: vi.fn(),
+  agents: vi.fn(),
+  sandboxes: vi.fn(),
+  marketRelease: vi.fn(),
+  listMarketListings: vi.fn(),
+  getDeployments: vi.fn(),
+  fetch: vi.fn(),
   redirect: vi.fn((url: string) => {
     throw new Error(`NEXT_REDIRECT:${url}`);
   }),
@@ -29,17 +36,22 @@ vi.mock("next-intl/server", () => ({
   getLocale: vi.fn().mockResolvedValue("en"),
   getTranslations: vi.fn().mockResolvedValue((key: string) => key),
 }));
+vi.mock("next-intl", () => ({
+  useTranslations: () => (key: string) => key,
+}));
 vi.mock("@/lib/auth/current-user", () => ({
   getCurrentUser: mocks.getCurrentUser,
 }));
 vi.mock("@/lib/workspace/queries", () => ({
   getWorkspaceForUser: mocks.getWorkspaceForUser,
+  getDeployments: mocks.getDeployments,
 }));
 vi.mock("@/lib/sandboxes/queries", () => ({
   listSandboxes: mocks.listSandboxes,
 }));
 vi.mock("@/lib/market/listings", () => ({
   getMarketListing: mocks.getMarketListing,
+  listMarketListings: mocks.listMarketListings,
 }));
 vi.mock("@/lib/market/assistant-manifest", () => ({
   parseAssistantReleaseManifest: mocks.parseAssistantReleaseManifest,
@@ -49,7 +61,6 @@ vi.mock("@/lib/market/skill-manifest", () => ({
 }));
 vi.mock("@/lib/market/resources", () => ({
   parseMcpMarketManifest: mocks.parseMcpMarketManifest,
-  parseToolkitMarketManifest: mocks.parseToolkitMarketManifest,
 }));
 vi.mock("@/lib/market/actions", () => ({
   ignoreMarketUpdateAction: vi.fn(),
@@ -57,11 +68,17 @@ vi.mock("@/lib/market/actions", () => ({
   installMarketSkillAction: vi.fn(),
   updateMarketInstallAction: vi.fn(),
 }));
+vi.mock("@/lib/market/pi-package-setup-action", () => ({
+  configurePiPackageAction: vi.fn(),
+}));
 vi.mock("@/lib/db", () => ({
   db: {
     marketInstall: { findUnique: mocks.marketInstall },
     marketListing: { findUnique: mocks.marketListingFindUnique },
-    sandbox: { findFirst: mocks.sandboxFindFirst },
+    sandbox: { findFirst: mocks.sandboxFindFirst, findMany: mocks.sandboxes },
+    agent: { findMany: mocks.agents },
+    chatAssistant: { findMany: mocks.chatAssistants },
+    marketRelease: { findFirst: mocks.marketRelease },
   },
 }));
 vi.mock("@/lib/process/supervisor", () => ({
@@ -139,8 +156,42 @@ const connectorManifest = {
 };
 
 describe("market detail pages", () => {
+  afterEach(() => vi.unstubAllGlobals());
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.agents.mockResolvedValue([]);
+    mocks.chatAssistants.mockResolvedValue([
+      { id: "assistant-1", name: "Research Assistant" },
+    ]);
+    mocks.sandboxes.mockResolvedValue([]);
+    mocks.marketRelease.mockResolvedValue(null);
+    mocks.listMarketListings.mockResolvedValue({ items: [] });
+    mocks.getDeployments.mockResolvedValue([]);
+    vi.stubGlobal("fetch", mocks.fetch);
+    mocks.fetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        from: { releaseId: "release-old", version: 1 },
+        to: { releaseId: "release-mcp", version: 2 },
+        files: {
+          items: [{ path: "SKILL.md", status: "changed" }],
+          total: 1,
+          page: 1,
+          pageSize: 50,
+          counts: { added: 0, removed: 0, changed: 1 },
+        },
+        permissions: {
+          before: {
+            requirements: [],
+            requiredEnvironment: [],
+            transport: null,
+          },
+          after: { requirements: [], requiredEnvironment: [], transport: null },
+        },
+        compatibility: { before: null, after: null },
+        configurationChanged: false,
+      }),
+    });
     mocks.getCurrentUser.mockResolvedValue({ id: "user-1" });
     mocks.getWorkspaceForUser.mockResolvedValue({
       id: "workspace-1",
@@ -452,7 +503,20 @@ describe("market detail pages", () => {
         }),
       }),
     );
-    expect(screen.getByRole("button", { name: "update" })).toBeInTheDocument();
+    const user = userEvent.setup();
+    const update = screen.getByRole("button", { name: "switchToVersion" });
+    expect(update).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: /compareRelease/ }));
+    await screen.findByText("SKILL.md");
+    expect(mocks.fetch).toHaveBeenCalledWith(
+      "/api/v1/workspaces/acme%20team/market/installs/install-1/diff?targetReleaseId=release-mcp&page=1&pageSize=50",
+      { cache: "no-store" },
+    );
+    expect(update).toBeDisabled();
+    await user.click(
+      screen.getByRole("checkbox", { name: "comparisonAcknowledgement" }),
+    );
+    expect(update).toBeEnabled();
     expect(
       screen.getByRole("button", { name: "ignoreThisVersion" }),
     ).toBeInTheDocument();
@@ -498,15 +562,29 @@ describe("market detail pages", () => {
         "href",
         "/app/acme/skills/skill-1",
       );
-      const form = assertDefined(
-        screen.getByRole("button", { name: "update" }).closest("form"),
-      );
+      const user = userEvent.setup();
+      const update = screen.getByRole("button", { name: "switchToVersion" });
+      expect(update).toBeDisabled();
+      const form = assertDefined(update.closest("form"));
       expect(Object.fromEntries(new FormData(form))).toEqual({
         workspace: "acme",
         installId: "install-1",
+        kind: "skill",
         targetReleaseId: "release-mcp",
         currentReleaseId: "release-old",
       });
+      await user.click(screen.getByRole("button", { name: /compareRelease/ }));
+      await screen.findByText("SKILL.md");
+      expect(mocks.fetch).toHaveBeenCalledWith(
+        "/api/v1/workspaces/acme/market/installs/install-1/diff?targetReleaseId=release-mcp&page=1&pageSize=50",
+        { cache: "no-store" },
+      );
+      expect(update).toBeDisabled();
+      expect(form.checkValidity()).toBe(false);
+      await user.click(
+        screen.getByRole("checkbox", { name: "comparisonAcknowledgement" }),
+      );
+      expect(update).toBeEnabled();
       if (status === "modified") {
         const confirmation = screen.getByRole("checkbox", {
           name: "overwriteLocalChangesConfirmation",
@@ -582,111 +660,12 @@ describe("market detail pages", () => {
     ).rejects.toThrow("NEXT_NOT_FOUND");
     expect(mocks.redirect).not.toHaveBeenCalled();
   });
-  it("shows the reviewed toolkit contents before offering installation", async () => {
-    mocks.getMarketListing.mockResolvedValue({
-      ...mcpListing,
-      kind: "toolkit",
-    });
-    mocks.parseToolkitMarketManifest.mockReturnValue({
-      mcps: [{ catalogSlug: "filesystem", name: "Filesystem server" }],
-      skills: [{ snapshot: { slug: "writer", name: "Writer snapshot" } }],
-    });
-    render(
-      await MarketItemPage({
-        params: Promise.resolve({
-          workspace: "acme team",
-          namespace: "acme-labs",
-          listingSlug: "catalog-search",
-        }),
-      }),
-    );
-    expect(screen.getByText("Filesystem server")).toBeInTheDocument();
-    expect(screen.getByText("Writer snapshot")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "toolkits" })).toHaveAttribute(
-      "href",
-      "/app/acme%20team/market/toolkits",
-    );
-    expect(
-      screen.getByRole("button", { name: "installToWorkspace" }),
-    ).toBeInTheDocument();
-  });
-
-  it("opens an installed toolkit in the current workspace instead of reinstalling", async () => {
-    mocks.getMarketListing.mockResolvedValue({
-      ...mcpListing,
-      kind: "toolkit",
-    });
-    mocks.parseToolkitMarketManifest.mockReturnValue({ mcps: [], skills: [] });
-    mocks.marketInstall.mockResolvedValue({
-      id: "install-1",
-      currentReleaseId: "release-mcp",
-      currentRelease: { version: 2 },
-      toolkit: {
-        id: "toolkit-1",
-        workspaceId: "workspace-1",
-        slug: "research toolkit",
-      },
-    });
-    render(
-      await MarketItemPage({
-        params: Promise.resolve({
-          workspace: "acme team",
-          namespace: "acme-labs",
-          listingSlug: "catalog-search",
-        }),
-      }),
-    );
-    expect(screen.getByText("alreadyAddedTitle")).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "installToWorkspace" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen
-        .getAllByRole("link")
-        .some(
-          (link) =>
-            link.getAttribute("href") ===
-            "/app/acme%20team/toolkits/research%20toolkit",
-        ),
-    ).toBe(true);
-  });
-
-  it("never exposes a foreign workspace toolkit through an installation reference", async () => {
-    mocks.getMarketListing.mockResolvedValue({
-      ...mcpListing,
-      kind: "toolkit",
-    });
-    mocks.parseToolkitMarketManifest.mockReturnValue({ mcps: [], skills: [] });
-    mocks.marketInstall.mockResolvedValue({
-      id: "install-1",
-      currentReleaseId: "release-mcp",
-      currentRelease: { version: 2 },
-      toolkit: {
-        id: "toolkit-secret",
-        workspaceId: "foreign-workspace",
-        slug: "secret-toolkit",
-      },
-    });
-    render(
-      await MarketItemPage({
-        params: Promise.resolve({
-          workspace: "acme team",
-          namespace: "acme-labs",
-          listingSlug: "catalog-search",
-        }),
-      }),
-    );
-    expect(
-      screen
-        .getAllByRole("link")
-        .some((link) => link.getAttribute("href")?.includes("secret-toolkit")),
-    ).toBe(false);
-  });
 
   it.each([
     null,
     { ...mcpListing, latestRelease: null },
     { ...mcpListing, kind: "unknown" },
+    { ...mcpListing, kind: "toolkit" },
   ])("returns notFound for unavailable market listings %j", async (listing) => {
     mocks.getMarketListing.mockResolvedValue(listing);
     await expect(

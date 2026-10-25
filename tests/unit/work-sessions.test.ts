@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   workUpdateMany: vi.fn(),
   approvalUpdateMany: vi.fn(),
   workFindFirst: vi.fn(),
+  pin: vi.fn(),
 }));
 
 const tx = {
@@ -26,6 +27,7 @@ const tx = {
     findFirst: mocks.workFindFirst,
   },
   workApproval: { updateMany: mocks.approvalUpdateMany },
+  piSessionPackageSet: { create: vi.fn() },
 };
 
 vi.mock("@/lib/db", () => ({
@@ -47,6 +49,9 @@ vi.mock("@/lib/agents/mutations", () => ({
     runtimeSessionKey: `agent:${agentId}:console:${conversationId}`,
   }),
 }));
+vi.mock("@/lib/agents/revisions", () => ({
+  pinCurrentAgentRevision: mocks.pin,
+}));
 
 import {
   appendWorkSessionInput,
@@ -64,6 +69,51 @@ import {
   workSessionWorkingDirectory,
 } from "@/lib/work/sessions";
 import { canTransitionWorkSession } from "@/lib/work/state-machine";
+const revisionConfig = {
+  schemaVersion: 1,
+  runtimeKind: "pi-sdk",
+  systemPrompt: "Frozen instructions",
+  providerId: "provider-1",
+  model: "model-1",
+  modelProviderIds: [],
+  maxSteps: 8,
+  disabledBuiltinTools: [],
+  sandboxTemplateId: "sandbox-1",
+  environment: {
+    kind: "docker",
+    image: `fixture@sha256:${"a".repeat(64)}`,
+    network: "isolated",
+    piVersion: "0.87.1",
+    initialSnapshot: null,
+    resourceLimits: { memoryBytes: 536870912, cpus: 1, pidsLimit: 128 },
+    credentialReferences: [],
+  },
+  packages: [],
+  mcpGrants: [],
+  skills: [],
+  knowledgeBaseIds: [],
+  a2a: {
+    inboundEnabled: false,
+    outboundEnabled: false,
+    policy: { schemaVersion: 1, targets: [] },
+  },
+};
+function workRevisionIdentity() {
+  return {
+    agentId: "agent-1",
+    agent: { runtimeKind: "pi-sdk", retiredAt: null },
+    agentRevision: {
+      id: "revision-1",
+      agentId: "agent-1",
+      config: revisionConfig,
+    },
+    conversation: {
+      agentRevisionId: "revision-1",
+      legacyRevisionUnresolved: false,
+    },
+    runtimeSnapshot: { providerId: "provider-1", model: "model-1" },
+  };
+}
 
 describe("WorkSession coordinator", () => {
   beforeEach(() => {
@@ -73,7 +123,7 @@ describe("WorkSession coordinator", () => {
       id: "agent-1",
       providerId: "provider-1",
       model: "model-1",
-      runtimeKind: "pi",
+      runtimeKind: "pi-sdk",
       systemPrompt: null,
       maxSteps: 8,
       modelProviders: [],
@@ -83,6 +133,7 @@ describe("WorkSession coordinator", () => {
       toolkits: [],
       subAgents: [],
       knowledgeBases: [],
+      piPackages: [],
       sandboxes: [
         {
           sandboxId: "sandbox-1",
@@ -99,6 +150,15 @@ describe("WorkSession coordinator", () => {
       ...data,
     }));
     mocks.approvalUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.pin.mockResolvedValue({ id: "revision-1", config: revisionConfig });
+    mocks.workFindFirst.mockResolvedValue({
+      ...workRevisionIdentity(),
+      conversationId: "conversation-1",
+      status: "failed",
+      runtimeKind: "pi-sdk",
+      agentRevisionId: "revision-1",
+      legacyRevisionUnresolved: false,
+    });
   });
 
   it("creates queued work and its first user message in one transaction", async () => {
@@ -113,6 +173,8 @@ describe("WorkSession coordinator", () => {
       id: "work-1",
       status: "queued",
       task: "Build and test it",
+      agentRevisionId: "revision-1",
+      legacyRevisionUnresolved: false,
     });
     expect(mocks.messageCreate).toHaveBeenCalledWith({
       data: {
@@ -128,80 +190,35 @@ describe("WorkSession coordinator", () => {
     expect(mocks.workCreate).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
-          runtimeKind: "pi",
+          runtimeKind: "pi-sdk",
           runtimeSnapshot: expect.objectContaining({ workingDirectory: "." }),
         }),
       }),
     );
-  });
-
-  it("creates Hermes Work on its managed runtime sandbox", async () => {
-    mocks.agentFindFirst.mockResolvedValueOnce({
-      id: "agent-1",
-      providerId: null,
-      model: null,
-      runtimeKind: "hermes",
-      systemPrompt: null,
-      maxSteps: 8,
-      modelProviders: [{ providerId: "provider-1" }],
-      runtime: {
-        id: "runtime-1",
-        kind: "hermes",
-        sandboxId: "sandbox-hermes",
-        sandbox: {
-          id: "sandbox-hermes",
-          workspaceId: "workspace-1",
-          kind: "hermes",
-          network: "isolated",
-        },
-      },
-      servers: [],
-      skills: [],
-      toolkits: [],
-      knowledgeBases: [],
-      sandboxes: [],
-    });
-
-    await expect(
-      createWorkSession({
-        workspaceId: "workspace-1",
-        agentId: "agent-1",
-        sandboxId: "sandbox-hermes",
-        task: "Build it",
-        reasoningEffort: "high",
-        hermesSelection: {
-          profile: "research",
-          provider: "openrouter",
-          model: "model-b",
-        },
-      }),
-    ).resolves.toMatchObject({
-      sandboxId: "sandbox-hermes",
-      runtimeKind: "hermes",
-      status: "queued",
-    });
-    expect(mocks.workCreate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({
-          sandboxId: "sandbox-hermes",
-          runtimeSnapshot: expect.objectContaining({
-            runtimeId: "runtime-1",
-            sandboxId: "sandbox-hermes",
-          }),
-        }),
-      }),
-    );
     expect(mocks.conversationCreate).toHaveBeenCalledWith({
-      data: {
-        agentId: "agent-1",
-        title: "Build it",
-        reasoningEffort: "high",
-        hermesProfile: "research",
-        hermesProvider: "openrouter",
-        hermesModel: "model-b",
-      },
+      data: expect.objectContaining({
+        agentRevisionId: "revision-1",
+        legacyRevisionUnresolved: false,
+      }),
     });
   });
+
+  it.each(["pi", "hermes", "claude-code", "dsh", "hermes-rpc"])(
+    "rejects retired %s execution before creating a Conversation",
+    async (runtimeKind) => {
+      const agent = await mocks.agentFindFirst();
+      mocks.agentFindFirst.mockResolvedValue({ ...agent, runtimeKind });
+      await expect(
+        createWorkSession({
+          workspaceId: "workspace-1",
+          agentId: "agent-1",
+          task: "Build",
+        }),
+      ).resolves.toBeNull();
+      expect(mocks.pin).not.toHaveBeenCalled();
+      expect(mocks.conversationCreate).not.toHaveBeenCalled();
+    },
+  );
 
   it("rejects a sandbox that is not the Hermes Agent runtime sandbox", async () => {
     mocks.agentFindFirst.mockResolvedValueOnce({
@@ -308,6 +325,10 @@ describe("WorkSession coordinator", () => {
     mocks.workFindFirst.mockResolvedValueOnce({
       conversationId: "conversation-1",
       status: "waiting_user",
+      ...workRevisionIdentity(),
+      runtimeKind: "pi-sdk",
+      agentRevisionId: "revision-1",
+      legacyRevisionUnresolved: false,
     });
     mocks.workUpdateMany.mockResolvedValueOnce({ count: 1 });
 
@@ -350,6 +371,10 @@ describe("WorkSession coordinator", () => {
     mocks.workFindFirst.mockResolvedValueOnce({
       conversationId: "conversation-1",
       status: "idle",
+      ...workRevisionIdentity(),
+      runtimeKind: "pi-sdk",
+      agentRevisionId: "revision-1",
+      legacyRevisionUnresolved: false,
     });
     mocks.workUpdateMany.mockResolvedValueOnce({ count: 1 });
 
@@ -371,11 +396,15 @@ describe("WorkSession coordinator", () => {
   });
 
   it.each(["completed", "failed"] as const)(
-    "accepts a new turn from legacy %s work",
+    "accepts a new turn from pinned %s work",
     async (status) => {
       mocks.workFindFirst.mockResolvedValueOnce({
         conversationId: "conversation-1",
         status,
+        ...workRevisionIdentity(),
+        runtimeKind: "pi-sdk",
+        agentRevisionId: "revision-1",
+        legacyRevisionUnresolved: false,
       });
       mocks.workUpdateMany.mockResolvedValueOnce({ count: 1 });
 
@@ -458,7 +487,19 @@ describe("WorkSession coordinator", () => {
       status: "queued",
     });
     expect(mocks.workUpdateMany).toHaveBeenCalledWith({
-      where: { id: "work-1", workspaceId: "workspace-1", status: "failed" },
+      where: {
+        id: "work-1",
+        workspaceId: "workspace-1",
+        status: "failed",
+        runtimeKind: "pi-sdk",
+        agentRevisionId: "revision-1",
+        legacyRevisionUnresolved: false,
+        agent: { runtimeKind: "pi-sdk", retiredAt: null },
+        conversation: {
+          agentRevisionId: "revision-1",
+          legacyRevisionUnresolved: false,
+        },
+      },
       data: {
         status: "queued",
         result: null,
@@ -546,6 +587,10 @@ describe("WorkSession coordinator", () => {
       id: "work-1",
       workspaceId: "workspace-1",
       status: "queued",
+      ...workRevisionIdentity(),
+      runtimeKind: "pi-sdk",
+      agentRevisionId: "revision-1",
+      legacyRevisionUnresolved: false,
       error: "old",
       waitingQuestion: "old",
       result: "old",
@@ -630,6 +675,10 @@ describe("WorkSession coordinator", () => {
     mocks.workFindFirst.mockResolvedValue({
       conversationId: "conversation-1",
       status: "waiting_user",
+      ...workRevisionIdentity(),
+      runtimeKind: "pi-sdk",
+      agentRevisionId: "revision-1",
+      legacyRevisionUnresolved: false,
     });
     mocks.workUpdateMany.mockResolvedValue({ count: 0 });
     expect(
@@ -694,47 +743,29 @@ describe("WorkSession coordinator", () => {
     },
   );
 
-  it.each([
-    "runtime-kind",
-    "workspace",
-    "sandbox-kind",
-    "offline",
-    "no-provider",
-  ])(
-    "refuses invalid Hermes ownership or runtime state: %s",
-    async (condition) => {
-      const agent = await mocks.agentFindFirst();
-      agent.runtimeKind = "hermes";
-      agent.modelProviders = [{ providerId: "provider-1" }];
-      agent.runtime = {
-        id: "runtime",
-        kind: "hermes",
-        sandboxId: "sandbox-hermes",
-        sandbox: {
-          workspaceId: "workspace-1",
-          kind: "hermes",
-          network: "isolated",
-        },
-      };
-      if (condition === "runtime-kind") agent.runtime.kind = "pi";
-      if (condition === "workspace")
-        agent.runtime.sandbox.workspaceId = "other";
-      if (condition === "sandbox-kind") agent.runtime.sandbox.kind = "docker";
-      if (condition === "offline") agent.runtime.sandbox.network = "none";
-      if (condition === "no-provider") agent.modelProviders = [];
-      mocks.agentFindFirst.mockResolvedValue(agent);
-      expect(
-        await createWorkSession({
-          workspaceId: "workspace-1",
-          agentId: "agent-1",
-          task: "Build",
-        }),
-      ).toBeNull();
-      expect(mocks.conversationCreate).not.toHaveBeenCalled();
+  it.each([null, "revision-1"])(
+    "keeps unresolved historical input read-only (%s)",
+    async (agentRevisionId) => {
+      mocks.workFindFirst.mockResolvedValue({
+        conversationId: "history",
+        status: "completed",
+        runtimeKind: "pi-sdk",
+        agentRevisionId,
+        legacyRevisionUnresolved: true,
+      });
+      await expect(
+        appendWorkSessionInput("workspace-1", "work-1", "Resume history"),
+      ).resolves.toEqual({
+        ok: false,
+        reason: "invalid_transition",
+        status: "completed",
+      });
+      expect(mocks.messageCreate).not.toHaveBeenCalled();
+      expect(mocks.pin).not.toHaveBeenCalled();
     },
   );
 
-  it("snapshots a deduplicated union of direct and toolkit resources", async () => {
+  it("snapshots only the published revision resources, not newly attached Toolkit resources", async () => {
     const agent = await mocks.agentFindFirst();
     agent.servers = [{ deploymentId: "direct" }];
     agent.skills = [{ installedSkillId: "direct-skill" }];
@@ -751,6 +782,16 @@ describe("WorkSession coordinator", () => {
     ];
     agent.knowledgeBases = [{ knowledgeBaseId: "knowledge" }];
     mocks.agentFindFirst.mockResolvedValue(agent);
+    const revision = await mocks.pin();
+    mocks.pin.mockResolvedValue({
+      ...revision,
+      config: {
+        ...revision.config,
+        mcpGrants: [{ deploymentId: "direct" }],
+        skills: [{ installedSkillId: "direct-skill" }],
+        knowledgeBaseIds: ["knowledge"],
+      },
+    });
     const work = await createWorkSession({
       workspaceId: "workspace-1",
       agentId: "agent-1",
@@ -762,8 +803,8 @@ describe("WorkSession coordinator", () => {
     expect(work).toMatchObject({
       acceptanceCriteria: "Tests pass",
       runtimeSnapshot: {
-        deploymentIds: ["direct", "toolkit"],
-        installedSkillIds: ["direct-skill", "toolkit-skill"],
+        deploymentIds: ["direct"],
+        installedSkillIds: ["direct-skill"],
         knowledgeBaseIds: ["knowledge"],
         workingDirectory: "project",
       },

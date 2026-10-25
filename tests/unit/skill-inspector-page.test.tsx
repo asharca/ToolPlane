@@ -1,4 +1,10 @@
-import type { ReactNode } from "react";
+import {
+  Children,
+  cloneElement,
+  isValidElement,
+  type ComponentProps,
+  type ReactNode,
+} from "react";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -6,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   user: vi.fn(),
   workspace: vi.fn(),
   install: vi.fn(),
+  agents: vi.fn(),
 }));
 vi.mock("next/navigation", () => ({
   redirect: (path: string) => {
@@ -19,16 +26,26 @@ vi.mock("next-intl/server", () => ({
   getLocale: async () => "en",
   getTranslations: async () => (key: string) => key,
 }));
+vi.mock("next-intl", () => ({
+  useTranslations: () => (key: string) => key,
+}));
 vi.mock("@/lib/auth/current-user", () => ({ getCurrentUser: mocks.user }));
 vi.mock("@/lib/workspace/queries", () => ({
   getWorkspaceForUser: mocks.workspace,
 }));
 vi.mock("@/lib/db", () => ({
-  db: { installedSkill: { findFirst: mocks.install } },
+  db: {
+    installedSkill: { findFirst: mocks.install },
+    agent: { findMany: mocks.agents },
+  },
 }));
 vi.mock("@/lib/skills/actions", () => ({
   deleteCustomSkillAction: vi.fn(),
   updateSkillAttributesAction: vi.fn(),
+}));
+vi.mock("@/lib/agents/actions", () => ({
+  enableAgentResourceAction: vi.fn(),
+  previewAgentResourceAction: vi.fn(),
 }));
 vi.mock("@/components/motion/bouncy-accordion", () => ({
   BouncyAccordion: ({
@@ -80,10 +97,23 @@ vi.mock("@/components/dashboard/ConfirmSubmitButton", () => ({
 }));
 
 import SkillInspectorPage from "@/app/app/[workspace]/skills/[installId]/page";
-const page = () =>
-  SkillInspectorPage({
+import { ResourceEnablePanel } from "@/components/dashboard/market/ResourceEnablePanel";
+
+const page = async () => {
+  const element = await SkillInspectorPage({
     params: Promise.resolve({ workspace: "acme", installId: "install-1" }),
   });
+  // Resolve the nested server component before crossing into the DOM renderer.
+  const children = await Promise.all(
+    Children.toArray(element.props.children).map((child) =>
+      isValidElement<ComponentProps<typeof ResourceEnablePanel>>(child) &&
+      child.type === ResourceEnablePanel
+        ? ResourceEnablePanel(child.props)
+        : child,
+    ),
+  );
+  return cloneElement(element, {}, children);
+};
 const base = () => ({
   id: "install-1",
   name: "Writer",
@@ -108,6 +138,9 @@ beforeEach(() => {
   mocks.user.mockResolvedValue({ id: "user-1", timeZone: "UTC" });
   mocks.workspace.mockResolvedValue({ id: "ws-1" });
   mocks.install.mockResolvedValue(base());
+  mocks.agents.mockResolvedValue([
+    { id: "agent-1", name: "Writing agent", currentRevisionVersion: 1 },
+  ]);
 });
 afterEach(cleanup);
 
@@ -149,6 +182,22 @@ describe("installed skill inspector", () => {
     expect(
       screen.getByText("noBundledFilesThisSkillSyncsAsASingleSkillmdFile"),
     ).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Writing agent" })).toHaveValue(
+      "agent-1",
+    );
+    expect(mocks.agents).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          workspaceId: "ws-1",
+          runtimeKind: "pi-sdk",
+          retiredAt: null,
+          publicRuntimeAllocation: null,
+        },
+      }),
+    );
+    expect(
+      screen.getByRole("button", { name: "resourceApplyRevision" }),
+    ).toBeDisabled();
   });
   it("uses catalog identity and hides custom mutation controls", async () => {
     mocks.install.mockResolvedValue({

@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import userEvent from "@testing-library/user-event";
 
 const mocks = vi.hoisted(() => ({
   user: vi.fn(),
@@ -55,6 +56,7 @@ vi.mock("@/components/dashboard/SubmitButton", () => ({
 }));
 
 import AgentPublishPage from "@/app/app/[workspace]/agents/[agentId]/publish/page";
+import { publishAgentReleaseAction } from "@/lib/agents/actions";
 
 const page = (searchParams = {}) =>
   AgentPublishPage({
@@ -70,7 +72,7 @@ beforeEach(() => {
     id: "agent-1",
     name: "Researcher",
     slug: "researcher",
-    runtimeKind: "hermes",
+    runtimeKind: "pi-sdk",
   });
   mocks.listing.mockResolvedValue(null);
   mocks.assessment.mockResolvedValue({
@@ -99,20 +101,41 @@ describe("agent publishing page access and review states", () => {
     mocks.agent.mockResolvedValue(null);
     await expect(page()).rejects.toThrow("notFound");
   });
-  it("explains unsupported pi-sdk templates without exposing a publication form", async () => {
-    mocks.agent.mockResolvedValue({ name: "SDK agent", runtimeKind: "pi-sdk" });
-    render(await page());
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "piSdkTemplateUnsupported",
-    );
-    expect(
-      screen.queryByRole("button", { name: "submitForReview" }),
-    ).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "SDK agent" })).toHaveAttribute(
-      "href",
-      "/app/acme/agents/agent-1",
-    );
-  });
+  it.each(["pi-sdk", "pi"])(
+    "submits a reviewed %s Agent template through the real publication form",
+    async (runtimeKind) => {
+      const user = userEvent.setup();
+      mocks.agent.mockResolvedValue({
+        id: "agent-1",
+        name: "SDK agent",
+        slug: "sdk-agent",
+        runtimeKind,
+      });
+      render(await page());
+      expect(
+        screen.getByText("templatePublicationAuthorization"),
+      ).toBeInTheDocument();
+      await user.type(
+        screen.getByLabelText("publicSummary"),
+        "Portable research instructions",
+      );
+      await user.click(screen.getByRole("checkbox", { name: "Research" }));
+      await user.click(
+        screen.getByRole("checkbox", { name: "confirmPublicContents" }),
+      );
+      await user.click(screen.getByRole("button", { name: "submitForReview" }));
+      await waitFor(() => expect(publishAgentReleaseAction).toHaveBeenCalled());
+      const submitted = vi
+        .mocked(publishAgentReleaseAction)
+        .mock.calls.at(-1)?.[0];
+      expect(submitted?.get("workspace")).toBe("acme");
+      expect(submitted?.get("agentId")).toBe("agent-1");
+      expect(submitted?.get("listingSlug")).toBe("sdk-agent");
+      expect(submitted?.get("summary")).toBe("Portable research instructions");
+      expect(submitted?.getAll("categoryIds")).toEqual(["cat-1"]);
+      expect(submitted?.get("confirmPublicContents")).toBe("yes");
+    },
+  );
   it("starts an owner draft from agent identity and shows portable resource counts", async () => {
     render(await page());
     expect(screen.getByLabelText("publicName")).toHaveValue("Researcher");

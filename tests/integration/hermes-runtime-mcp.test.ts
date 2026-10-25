@@ -1,128 +1,140 @@
 // @vitest-environment node
+import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { db } from "@/lib/db";
-import { createAgent, deleteAgent } from "@/lib/agents/mutations";
-import { deriveHermesRuntimeToken } from "@/lib/agents/hermes/token";
 import { POST } from "@/app/api/v1/agent-runtimes/[runtimeId]/mcp/route";
-
 let userId = "";
 let workspaceId = "";
 let agentId = "";
 let runtimeId = "";
+let conversationId = "";
+let sandboxId = "";
 let deploymentId = "";
-
 beforeAll(async () => {
+  const suffix = randomUUID();
   const user = await db.user.create({
-    data: { email: `hermes-mcp-${Date.now()}@test.dev`, passwordHash: "x" },
+    data: { email: `retired-mcp-${suffix}@test.dev`, passwordHash: "x" },
   });
   userId = user.id;
   const workspace = await db.workspace.create({
     data: {
-      slug: `hermes-mcp-${Date.now()}`,
-      name: "Hermes MCP",
+      slug: `retired-mcp-${suffix}`,
+      name: "Retained Hermes MCP history",
       ownerId: user.id,
-      members: { create: { userId: user.id, role: "owner" } },
     },
   });
   workspaceId = workspace.id;
-  const agent = await createAgent(workspace.id, "Hermes MCP", {
-    runtime: "hermes",
+  // Seed retained pre-cutover data directly: the creation API intentionally rejects Hermes.
+  const agent = await db.agent.create({
+    data: {
+      workspaceId,
+      name: "Retained Agent",
+      slug: "retained-agent",
+      runtimeKind: "hermes",
+      retiredAt: new Date(),
+    },
   });
   agentId = agent.id;
-  runtimeId = (
-    await db.agentRuntime.findUniqueOrThrow({ where: { agentId: agent.id } })
-  ).id;
   const deployment = await db.deployment.create({
     data: {
-      workspaceId: workspace.id,
-      name: "Restricted MCP",
-      source: "npm",
-      sourceRef: "restricted-mcp",
+      workspaceId,
+      name: "Retained storage",
+      source: "sandbox",
+      sourceRef: "nousresearch/hermes-agent:retained",
       status: "stopped",
-      mcpToolExposure: "allowlist",
-      mcpAllowedTools: ["allowed"],
     },
   });
   deploymentId = deployment.id;
-  await db.agentServer.create({ data: { agentId: agent.id, deploymentId } });
+  const sandbox = await db.sandbox.create({
+    data: {
+      workspaceId,
+      deploymentId,
+      name: "Retained files",
+      slug: "retained-files",
+      kind: "hermes",
+      image: "nousresearch/hermes-agent:retained",
+      network: "none",
+    },
+  });
+  sandboxId = sandbox.id;
+  const runtime = await db.agentRuntime.create({
+    data: {
+      workspaceId,
+      agentId,
+      sandboxId,
+      kind: "hermes",
+      image: "nousresearch/hermes-agent:retained",
+      status: "stopped",
+    },
+  });
+  runtimeId = runtime.id;
+  const conversation = await db.conversation.create({
+    data: {
+      agentId,
+      sandboxId,
+      title: "Retained history",
+      legacyRevisionUnresolved: true,
+      messages: {
+        create: {
+          role: "user",
+          parts: [{ type: "text", text: "Historical message" }],
+        },
+      },
+    },
+  });
+  conversationId = conversation.id;
 });
-
 afterAll(async () => {
-  await deleteAgent(workspaceId, agentId);
-  await db.workspace.delete({ where: { id: workspaceId } });
-  await db.user.delete({ where: { id: userId } });
+  if (agentId) await db.conversation.deleteMany({ where: { agentId } });
+  if (workspaceId) await db.workspace.delete({ where: { id: workspaceId } });
+  if (userId) await db.user.delete({ where: { id: userId } });
   await db.$disconnect();
 });
-
-function request(
-  token: string,
-  method = "initialize",
-  params: Record<string, unknown> = {},
-) {
-  return new Request(
-    `http://localhost/api/v1/agent-runtimes/${runtimeId}/mcp`,
-    {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${token}`,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+describe("retired Hermes runtime MCP with real retained data", () => {
+  it.each(["initialize", "tools/list", "tools/call"])(
+    "rejects %s without resuming or deleting the retained session",
+    async (method) => {
+      const response = await POST(
+        new Request(`http://localhost/api/v1/agent-runtimes/${runtimeId}/mcp`, {
+          method: "POST",
+          headers: {
+            authorization: "Bearer revoked-legacy-client",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            method,
+            params: {
+              name: "retained__shell",
+              arguments: { command: "must not execute" },
+            },
+          }),
+        }),
+      );
+      expect(response.status).toBe(410);
+      expect(
+        await db.agentRuntime.findUnique({ where: { id: runtimeId } }),
+      ).toMatchObject({ agentId, sandboxId, status: "stopped" });
+      expect(
+        await db.deployment.findUnique({ where: { id: deploymentId } }),
+      ).toMatchObject({ status: "stopped" });
+      expect(
+        await db.conversation.findUnique({
+          where: { id: conversationId },
+          include: { messages: true },
+        }),
+      ).toMatchObject({
+        agentId,
+        sandboxId,
+        legacyRevisionUnresolved: true,
+        messages: [
+          {
+            role: "user",
+            parts: [{ type: "text", text: "Historical message" }],
+          },
+        ],
+      });
     },
   );
-}
-
-describe("Hermes runtime MCP boundary", () => {
-  it("rejects tokens that were not derived for this runtime and purpose", async () => {
-    const response = await POST(
-      request(deriveHermesRuntimeToken(runtimeId, "hermes-api")),
-      {
-        params: Promise.resolve({ runtimeId }),
-      },
-    );
-    expect(response.status).toBe(401);
-  });
-
-  it("serves an authenticated, agent-scoped MCP endpoint", async () => {
-    const token = deriveHermesRuntimeToken(runtimeId, "toolplane-mcp");
-    const initialized = await POST(request(token), {
-      params: Promise.resolve({ runtimeId }),
-    });
-    expect(initialized.status).toBe(200);
-    await expect(initialized.json()).resolves.toMatchObject({
-      result: { serverInfo: { name: "ToolPlane: Hermes MCP" } },
-    });
-
-    const listed = await POST(request(token, "tools/list"), {
-      params: Promise.resolve({ runtimeId }),
-    });
-    await expect(listed.json()).resolves.toMatchObject({
-      result: { tools: [] },
-    });
-  });
-
-  it("rejects cached or guessed tool names outside the deployment allowlist", async () => {
-    const token = deriveHermesRuntimeToken(runtimeId, "toolplane-mcp");
-    const hidden = await POST(
-      request(token, "tools/call", {
-        name: `${deploymentId}__hidden`,
-        arguments: {},
-      }),
-      { params: Promise.resolve({ runtimeId }) },
-    );
-    await expect(hidden.json()).resolves.toMatchObject({
-      error: { code: -32602, message: expect.stringContaining("Unknown tool") },
-    });
-
-    const allowed = await POST(
-      request(token, "tools/call", {
-        name: `${deploymentId}__allowed`,
-        arguments: {},
-      }),
-      { params: Promise.resolve({ runtimeId }) },
-    );
-    await expect(allowed.json()).resolves.toMatchObject({
-      error: { code: -32000, message: "tool deployment is not running" },
-    });
-  });
 });

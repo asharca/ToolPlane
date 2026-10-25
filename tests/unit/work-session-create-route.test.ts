@@ -6,7 +6,6 @@ const m = vi.hoisted(() => ({
   list: vi.fn(),
   create: vi.fn(),
   directory: vi.fn(),
-  selection: vi.fn(),
   attachments: vi.fn(),
   start: vi.fn(),
   kick: vi.fn(),
@@ -22,22 +21,6 @@ vi.mock("@/lib/observability/http", () => ({
 }));
 vi.mock("@/lib/auth/request-user", () => ({ resolveRequestUser: m.user }));
 vi.mock("@/lib/agents/queries", () => ({ getAgentForRequest: m.agent }));
-vi.mock("@/lib/agents/mutations", () => ({
-  AgentConfigurationError: class extends Error {},
-}));
-vi.mock("@/lib/agents/hermes/conversation-selection", () => ({
-  prepareHermesConversationSelection: m.selection,
-}));
-vi.mock("@/lib/agents/hermes/profiles", () => ({
-  HermesProfileError: class extends Error {
-    constructor(
-      message: string,
-      public status: number,
-    ) {
-      super(message);
-    }
-  },
-}));
 vi.mock("@/lib/work/sessions", () => ({
   createWorkSession: m.create,
   listWorkSessions: m.list,
@@ -60,20 +43,14 @@ vi.mock("@/lib/attachments/work", () => ({
     }
   },
 }));
-import { AgentConfigurationError } from "@/lib/agents/mutations";
-import { HermesProfileError } from "@/lib/agents/hermes/profiles";
 import { WorkAttachmentError } from "@/lib/attachments/work";
 import { GET, POST } from "@/app/api/v1/work-sessions/route";
 const base = { agentId: "agent", task: "Review project" };
 const agent = {
   id: "agent",
   workspaceId: "workspace",
-  runtimeKind: "hermes",
-  runtime: {
-    kind: "hermes",
-    sandboxId: "sandbox",
-    sandbox: { workspaceId: "workspace", kind: "hermes", network: "bridge" },
-  },
+  runtimeKind: "pi-sdk",
+  retiredAt: null,
 };
 const request = (body: unknown = base) =>
   new Request("http://localhost/api/v1/work-sessions", {
@@ -95,11 +72,6 @@ beforeEach(() => {
     status: "queued",
   });
   m.list.mockResolvedValue([{ id: "work", status: "queued" }]);
-  m.selection.mockResolvedValue({
-    profile: "default",
-    provider: null,
-    model: null,
-  });
 });
 describe("work-session creation and listing boundaries", () => {
   it("requires authentication for listing and creation", async () => {
@@ -156,11 +128,11 @@ describe("work-session creation and listing boundaries", () => {
     expect((await POST(request())).status).toBe(404);
     expect(m.attachments).not.toHaveBeenCalled();
   });
-  it.each(["unsupported", "long", "attachments"])(
+  it.each(["long", "attachments"])(
     "rejects unsafe runtime command input: %s",
     async (reason) => {
       m.command.mockReturnValue({
-        name: reason === "unsupported" ? "unknown" : "reset",
+        name: "reset",
       });
       const body = {
         ...base,
@@ -171,90 +143,40 @@ describe("work-session creation and listing boundaries", () => {
       expect(m.create).not.toHaveBeenCalled();
     },
   );
-  it.each([
-    "runtime-kind",
-    "runtime",
-    "workspace",
-    "sandbox-kind",
-    "network",
-    "sandbox-id",
-    "profile",
-    "provider-type",
-    "model-type",
-    "provider-missing",
-    "model-missing",
-  ])(
-    "validates Hermes selection against runtime ownership: %s",
-    async (reason) => {
-      const body: Record<string, unknown> = {
-        ...base,
-        hermesProfile: "default",
-      };
-      if (reason === "runtime-kind")
-        m.agent.mockResolvedValue({ ...agent, runtimeKind: "pi-sdk" });
-      if (reason === "runtime")
-        m.agent.mockResolvedValue({
-          ...agent,
-          runtime: { ...agent.runtime, kind: "other" },
-        });
-      if (["workspace", "sandbox-kind", "network"].includes(reason))
-        m.agent.mockResolvedValue({
-          ...agent,
-          runtime: {
-            ...agent.runtime,
-            sandbox: {
-              ...agent.runtime.sandbox,
-              ...(reason === "workspace"
-                ? { workspaceId: "foreign" }
-                : reason === "sandbox-kind"
-                  ? { kind: "other" }
-                  : { network: "none" }),
-            },
-          },
-        });
-      if (reason === "sandbox-id") body.sandboxId = "foreign";
-      if (reason === "profile") body.hermesProfile = 1;
-      if (reason === "provider-type") body.hermesProvider = 1;
-      if (reason === "model-type") body.hermesModel = {};
-      if (reason === "provider-missing") body.hermesModel = "model";
-      if (reason === "model-missing") body.hermesProvider = "provider";
-      const response = await POST(request(body));
-      expect(response.status).toBe(400);
-      expect(await response.json()).toEqual({
-        error: "Invalid Hermes profile or model",
+  it.each(["hermes", "pi", "dsh", "retired-pi-sdk"])(
+    "rejects %s history before attachments or Work admission",
+    async (kind) => {
+      m.agent.mockResolvedValue({
+        ...agent,
+        runtimeKind: kind === "retired-pi-sdk" ? "pi-sdk" : kind,
+        retiredAt: kind === "retired-pi-sdk" ? new Date() : null,
       });
-      expect(m.selection).not.toHaveBeenCalled();
+      const response = await POST(request());
+      expect(response.status).toBe(410);
+      expect(await response.json()).toEqual({
+        error: "Retired Agent history is read-only.",
+      });
+      expect(m.attachments).not.toHaveBeenCalled();
+      expect(m.create).not.toHaveBeenCalled();
+      expect(m.start).not.toHaveBeenCalled();
     },
   );
+  it("allows native SDK commands to be resolved by pinned package capabilities rather than a legacy command catalog", async () => {
+    m.command.mockReturnValue({ name: "package-command" });
+    m.commands.mockReturnValue([]);
+    expect(
+      (await POST(request({ ...base, task: "/package-command" }))).status,
+    ).toBe(202);
+    expect(m.create).toHaveBeenCalledWith(
+      expect.objectContaining({ task: "/package-command" }),
+    );
+  });
   it("requires a sandbox for attachments", async () => {
     const response = await POST(request({ ...base, attachmentIds: ["file"] }));
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({
       error: "sandboxId is required for Work attachments",
     });
-  });
-  it.each([
-    new HermesProfileError("missing profile", 404),
-    new AgentConfigurationError("bad model"),
-    new Error("private details"),
-  ])("returns safe selection preparation failures", async (error) => {
-    m.selection.mockRejectedValue(error);
-    const response = await POST(request({ ...base, hermesProfile: "default" }));
-    expect(response.status).toBe(
-      error instanceof HermesProfileError
-        ? 404
-        : error instanceof AgentConfigurationError
-          ? 400
-          : 502,
-    );
-    expect(await response.json()).toEqual({
-      error:
-        error instanceof HermesProfileError ||
-        error instanceof AgentConfigurationError
-          ? error.message
-          : "Could not prepare the Hermes model",
-    });
-    expect(m.create).not.toHaveBeenCalled();
   });
   it.each(["copy", "create"])(
     "maps attachment failures at %s stage without starting a worker",
@@ -285,7 +207,7 @@ describe("work-session creation and listing boundaries", () => {
     expect((await POST(request())).status).toBe(400);
     expect(m.start).not.toHaveBeenCalled();
   });
-  it("creates work with prepared attachments and explicit Hermes selection before starting coordinator", async () => {
+  it("creates SDK Work with prepared attachments and scoped runtime preferences before starting the coordinator", async () => {
     const attachments = [
       {
         id: "file",
@@ -295,13 +217,11 @@ describe("work-session creation and listing boundaries", () => {
       },
     ];
     m.attachments.mockResolvedValue(attachments);
+    m.directory.mockReturnValue("project");
     const response = await POST(
       request({
         ...base,
         sandboxId: "sandbox",
-        hermesProfile: "default",
-        hermesProvider: " provider ",
-        hermesModel: " model ",
         reasoningEffort: "high",
         acceptanceCriteria: "All tests pass",
         workingDirectory: "project",
@@ -314,11 +234,6 @@ describe("work-session creation and listing boundaries", () => {
       conversationId: "conversation",
       status: "queued",
     });
-    expect(m.selection).toHaveBeenCalledWith(agent, {
-      profile: "default",
-      provider: "provider",
-      model: "model",
-    });
     expect(m.create).toHaveBeenCalledWith(
       expect.objectContaining({
         a2aActorId: "user",
@@ -327,14 +242,14 @@ describe("work-session creation and listing boundaries", () => {
         uploadedById: "user",
         reasoningEffort: "high",
         acceptanceCriteria: "All tests pass",
+        workingDirectory: "project",
       }),
     );
     expect(m.start).toHaveBeenCalledWith("work");
     expect(m.kick).toHaveBeenCalledTimes(1);
   });
-  it("accepts a normal task without profile or attachments", async () => {
+  it("accepts a normal pinned SDK task without attachments", async () => {
     expect((await POST(request())).status).toBe(202);
-    expect(m.selection).not.toHaveBeenCalled();
     expect(m.create).toHaveBeenCalledWith({
       a2aActorId: "user",
       workspaceId: "workspace",

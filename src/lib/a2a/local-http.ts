@@ -17,6 +17,11 @@ import { A2A_PROTOCOL_VERSION } from "./model";
 import { handleA2ARpc } from "./http";
 import { WindowLimiter } from "./transport-limits";
 import { a2aDeploymentOrigin } from "./connection-info";
+import { AgentA2APolicySchema } from "@/lib/agents/revision-types";
+import {
+  publishAgentRevisionInTransaction,
+  requireAgentRevision,
+} from "@/lib/agents/revisions";
 const CARD_SKILL_SELECT = {
   select: {
     id: true,
@@ -51,7 +56,13 @@ async function account(req: Request, slug: string) {
   return { user, workspace };
 }
 export async function localAgentCard(grant: LocalA2AGrant) {
-  const target = await localTarget(db, grant.workspaceId, grant.agentId);
+  const target = await localTarget(
+    db,
+    grant.workspaceId,
+    grant.agentId,
+    grant.ancestorTaskIds.length ? "delegation" : grant.entryPolicy,
+    grant.agentRevisionId,
+  );
   const agent = await db.agent.findFirstOrThrow({
     where: {
       ...ORDINARY_AGENT_FILTER,
@@ -79,7 +90,11 @@ export async function localAgentCard(grant: LocalA2AGrant) {
         toolkit.skills.map(({ installedSkill }) => installedSkill),
       ),
     ]
-      .filter((skill) => skill.agentInvocable !== false)
+      .filter(
+        (skill) =>
+          skill.agentInvocable !== false &&
+          target.capabilityIds.includes(skill.id),
+      )
       .map((skill) => [skill.id, skill]),
   );
   const workspace = await db.workspace.findUniqueOrThrow({
@@ -180,8 +195,15 @@ export async function handleLocalA2A(
         throw new A2AHttpError(415, "Expected JSON.");
       const parsed = await parseJson(
         req,
-        z.object({ enabled: z.boolean() }).strict(),
-        4096,
+        z
+          .object({
+            inboundEnabled: z.boolean().optional(),
+            outboundEnabled: z.boolean().optional(),
+            policy: AgentA2APolicySchema.optional(),
+          })
+          .strict()
+          .refine((value) => Object.keys(value).length > 0),
+        65_536,
       );
       if (!parsed.ok)
         throw new A2AHttpError(400, "Invalid local Agent configuration.");
@@ -214,25 +236,74 @@ export async function handleLocalA2A(
             403,
             "Workspace administrator authority changed.",
           );
+        const agent = await tx.agent.findFirst({
+          where: {
+            ...ORDINARY_AGENT_FILTER,
+            id: agentId,
+            workspaceId: workspace.id,
+          },
+          select: { id: true, runtimeKind: true, currentRevisionVersion: true },
+        });
+        if (!agent) throw new A2AHttpError(404, "Agent unavailable.");
+        if (
+          agent.runtimeKind !== "pi-sdk" &&
+          (parsed.value.inboundEnabled ||
+            parsed.value.outboundEnabled ||
+            parsed.value.policy)
+        )
+          throw new A2AHttpError(409, "Retired Agent execution is read-only.");
         const changed = await tx.agent.updateMany({
           where: {
             ...ORDINARY_AGENT_FILTER,
             id: agentId,
             workspaceId: workspace.id,
           },
-          data: { a2aInternalEnabled: parsed.value.enabled },
+          data: {
+            ...(parsed.value.inboundEnabled !== undefined
+              ? { a2aInboundEnabled: parsed.value.inboundEnabled }
+              : {}),
+            ...(parsed.value.outboundEnabled !== undefined
+              ? { a2aOutboundEnabled: parsed.value.outboundEnabled }
+              : {}),
+            ...(parsed.value.policy ? { a2aPolicy: parsed.value.policy } : {}),
+          },
         });
         if (!changed.count) throw new A2AHttpError(404, "Agent unavailable.");
+        if (
+          agent.runtimeKind === "pi-sdk" &&
+          agent.currentRevisionVersion > 0 &&
+          (parsed.value.inboundEnabled !== undefined ||
+            parsed.value.outboundEnabled !== undefined ||
+            parsed.value.policy)
+        ) {
+          const revision = await requireAgentRevision(tx, agentId);
+          await publishAgentRevisionInTransaction(tx, workspace.id, agentId, {
+            expectedRevisionId: revision.id,
+            config: {
+              ...revision.config,
+              a2a: {
+                ...revision.config.a2a,
+                ...(parsed.value.inboundEnabled !== undefined
+                  ? { inboundEnabled: parsed.value.inboundEnabled }
+                  : {}),
+                ...(parsed.value.outboundEnabled !== undefined
+                  ? { outboundEnabled: parsed.value.outboundEnabled }
+                  : {}),
+                ...(parsed.value.policy ? { policy: parsed.value.policy } : {}),
+              },
+            },
+          });
+        }
         await writeAudit(tx, {
           actorId: user.id,
           workspaceId: workspace.id,
           action: "agent.a2a.local.configure",
           targetType: "Agent",
           targetId: agentId,
-          changes: { enabled: parsed.value.enabled },
+          changes: parsed.value,
         });
       });
-      return reply({ enabled: parsed.value.enabled });
+      return reply(parsed.value);
     } catch (error) {
       return reply(
         {

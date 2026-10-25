@@ -117,6 +117,15 @@ async function start(
   }
   if (!row.agentId)
     return { error: "Bind an agent before starting the channel." };
+  const agent = await db.agent.findFirst({
+    where: { id: row.agentId, workspaceId },
+    select: { runtimeKind: true, currentRevisionVersion: true },
+  });
+  if (agent?.runtimeKind !== "pi-sdk" || !agent.currentRevisionVersion)
+    return {
+      error:
+        "Historical Agents are read-only. Bind a newly authorized Pi Agent.",
+    };
   if (runners().has(connectionId)) return {};
   const platform = getMessagingPlatform(row.platform);
   if (!platform || !hostedRunnerSpec(row.platform))

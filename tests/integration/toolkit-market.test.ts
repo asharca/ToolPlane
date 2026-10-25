@@ -1,256 +1,284 @@
 // @vitest-environment node
-import { assertDefined } from "../assert-defined";
-import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { db } from "@/lib/db";
+import { cutoverToolkitToPrivatePackage } from "@/lib/toolkits/cutover";
+import { createApiToken, verifyApiTokenContext } from "@/lib/auth/tokens";
+import { parsePiPackageReleaseManifest } from "@/lib/market/pi-package-manifest";
+import { toolkitAccessWhere } from "@/lib/auth/toolkit-scope";
 
-const mocks = vi.hoisted(() => ({
-  getCurrentUser: vi.fn(),
-  revalidatePath: vi.fn(),
-  redirect: vi.fn(),
-}));
-
-vi.mock("@/lib/auth/current-user", () => ({
-  getCurrentUser: mocks.getCurrentUser,
-}));
-vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidatePath }));
-vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));
-
-import { clonePublicToolkitAction } from "@/lib/toolkits/actions";
-
-const stamp = Date.now();
-const sourceEmail = `tk-market-source-${stamp}@test.dev`;
-const targetEmail = `tk-market-target-${stamp}@test.dev`;
-const sourceSlug = `tk-market-source-${stamp}`;
-const targetSlug = `tk-market-target-${stamp}`;
-const serverSlug = `tk-market-server-${stamp}`;
-const automaticServerSlug = `tk-market-automatic-server-${stamp}`;
-const skillSlug = `tk-market-skill-${stamp}`;
-
-function formData(toolkitId: string): FormData {
-  const fd = new FormData();
-  fd.set("workspace", targetSlug);
-  fd.set("toolkitId", toolkitId);
-  return fd;
-}
-
-describe("toolkit market import", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
+const stamp = `${process.pid}-${Date.now()}`;
+let workspaceId = "",
+  ownerId = "",
+  memberId = "",
+  outsiderId = "",
+  toolkitId = "",
+  skillId = "";
+let sequence = 0;
+describe.sequential("controlled Toolkit private-package cutover", () => {
+  beforeAll(async () => {
+    const users = await Promise.all(
+      ["owner", "member", "outsider"].map((role) =>
+        db.user.create({
+          data: {
+            email: `cutover-${role}-${stamp}@test.dev`,
+            passwordHash: "x",
+          },
+        }),
+      ),
+    );
+    [ownerId, memberId, outsiderId] = users.map((user) => user.id);
+    const workspace = await db.workspace.create({
+      data: {
+        slug: `cutover-${stamp}`,
+        name: "Private source",
+        ownerId,
+        members: {
+          create: [
+            { userId: ownerId, role: "owner" },
+            { userId: memberId, role: "member" },
+          ],
+        },
+      },
+    });
+    workspaceId = workspace.id;
+    const skill = await db.installedSkill.create({
+      data: {
+        workspaceId,
+        name: "Review",
+        slug: "review",
+        source: "custom",
+        content:
+          "---\nname: review\ndescription: Review changes\n---\nReview the change.",
+        files: [
+          {
+            path: "assets/nested.bin",
+            content: Buffer.from([0, 255, 7, 128]).toString("base64"),
+            encoding: "base64",
+          },
+        ],
+      },
+    });
+    skillId = skill.id;
+    toolkitId = (
+      await db.toolkit.create({
+        data: {
+          workspaceId,
+          name: "Private historical toolkit",
+          slug: "historical",
+          visibility: "public",
+          skills: { create: { installedSkillId: skillId } },
+        },
+      })
+    ).id;
   });
-
   afterAll(async () => {
-    await db.workspace.deleteMany({
-      where: { slug: { in: [sourceSlug, targetSlug] } },
+    await db.marketListing.updateMany({
+      where: { publisherWorkspaceId: workspaceId },
+      data: { latestReleaseId: null, pendingReleaseId: null },
     });
+    await db.marketRelease.deleteMany({
+      where: { listing: { publisherWorkspaceId: workspaceId } },
+    });
+    await db.marketListing.deleteMany({
+      where: { publisherWorkspaceId: workspaceId },
+    });
+    await db.workspace.deleteMany({ where: { id: workspaceId } });
     await db.user.deleteMany({
-      where: { email: { in: [sourceEmail, targetEmail] } },
-    });
-    await db.skill.deleteMany({ where: { slug: skillSlug } });
-    await db.server.deleteMany({
-      where: { slug: { in: [serverSlug, automaticServerSlug] } },
+      where: { id: { in: [ownerId, memberId, outsiderId] } },
     });
     await db.$disconnect();
   });
-
-  it("clones public toolkits without leaking source deployment env values", async () => {
-    const [sourceUser, targetUser] = await Promise.all([
-      db.user.create({ data: { email: sourceEmail, passwordHash: "x" } }),
-      db.user.create({ data: { email: targetEmail, passwordHash: "x" } }),
-    ]);
-    mocks.getCurrentUser.mockResolvedValue({
-      id: targetUser.id,
-      email: targetUser.email,
-    });
-
-    const [sourceWs, targetWs] = await Promise.all([
-      db.workspace.create({
-        data: {
-          slug: sourceSlug,
-          name: "Source",
-          ownerId: sourceUser.id,
-          members: { create: { userId: sourceUser.id, role: "owner" } },
-        },
-      }),
-      db.workspace.create({
-        data: {
-          slug: targetSlug,
-          name: "Target",
-          ownerId: targetUser.id,
-          members: { create: { userId: targetUser.id, role: "owner" } },
-        },
-      }),
-    ]);
-
-    const server = await db.server.create({
-      data: {
-        slug: serverSlug,
-        name: "Market MCP",
-        curated: true,
-        verifiedAt: new Date(),
-        installCfg: {
-          source: "npm",
-          ref: "@modelcontextprotocol/server-memory",
-          env: ["SECRET_KEY"],
-          envValues: { PUBLIC_MODE: "1" },
-        },
-      },
-    });
-    const automaticServer = await db.server.create({
-      data: {
-        slug: automaticServerSlug,
-        name: "Automatic MCP",
-        curated: true,
-        verifiedAt: new Date(),
-        installCfg: {
-          source: "npm",
-          ref: "@modelcontextprotocol/server-filesystem",
-          env: ["BUILTIN_MODE"],
-          envValues: { BUILTIN_MODE: "safe-default" },
-        },
-      },
-    });
-    const skill = await db.skill.create({
-      data: {
-        slug: skillSlug,
-        name: "Market Skill",
-        curated: true,
-        content: "---\nname: market-skill\n---\n# Market Skill",
-      },
-    });
-
-    const [catalogDep, automaticDep, customDep, catalogSkill, customSkill] =
-      await Promise.all([
-        db.deployment.create({
-          data: {
-            workspaceId: sourceWs.id,
-            serverId: server.id,
-            status: "running",
-            source: "npm",
-            sourceRef: "@modelcontextprotocol/server-memory",
-            installCfg: {
-              env: {
-                SECRET_KEY: "source-secret",
-                PUBLIC_MODE: "source-overridden",
-              },
-            },
-          },
+  it("rejects ordinary members, foreign users, and cross-workspace source IDs", async () => {
+    for (const userId of [memberId, outsiderId])
+      await expect(
+        cutoverToolkitToPrivatePackage({
+          workspaceId,
+          userId,
+          toolkitId,
+          mode: "dry-run",
         }),
-        db.deployment.create({
-          data: {
-            workspaceId: sourceWs.id,
-            serverId: automaticServer.id,
-            status: "running",
-            source: "npm",
-            sourceRef: "@modelcontextprotocol/server-filesystem",
-            installCfg: { env: {} },
-          },
-        }),
-        db.deployment.create({
-          data: {
-            workspaceId: sourceWs.id,
-            serverId: null,
-            name: "Private MCP",
-            status: "running",
-            source: "npm",
-            sourceRef: "private-mcp",
-            installCfg: { env: { PRIVATE_TOKEN: "do-not-copy" } },
-          },
-        }),
-        db.installedSkill.create({
-          data: { workspaceId: sourceWs.id, skillId: skill.id },
-        }),
-        db.installedSkill.create({
-          data: {
-            workspaceId: sourceWs.id,
-            name: "Custom Skill",
-            slug: "custom-skill",
-            description: "Copied custom skill",
-            content: "# Custom Skill",
-            files: [{ path: "reference.md", content: "reference" }],
-          },
-        }),
-      ]);
-
-    const sourceToolkit = await db.toolkit.create({
-      data: {
-        workspaceId: sourceWs.id,
-        name: "Research Kit",
-        slug: "research-kit",
-        visibility: "public",
-        servers: {
-          create: [
-            { deploymentId: catalogDep.id },
-            { deploymentId: automaticDep.id },
-            { deploymentId: customDep.id },
-          ],
-        },
-        skills: {
-          create: [
-            { installedSkillId: catalogSkill.id },
-            { installedSkillId: customSkill.id },
-          ],
-        },
-      },
-    });
-
-    await Promise.all([
-      clonePublicToolkitAction(formData(sourceToolkit.id)),
-      clonePublicToolkitAction(formData(sourceToolkit.id)),
-    ]);
-
-    expect(mocks.redirect).toHaveBeenCalledWith(
-      `/app/${targetSlug}/toolkits/research-kit`,
-    );
-    expect(mocks.redirect).toHaveBeenCalledWith(
-      `/app/${targetSlug}/toolkits/research-kit-1`,
-    );
+      ).rejects.toMatchObject({ code: "not_authorized" });
     await expect(
-      db.toolkit.count({ where: { workspaceId: targetWs.id } }),
-    ).resolves.toBe(2);
-    const targetToolkit = await db.toolkit.findFirst({
-      where: { workspaceId: targetWs.id, slug: "research-kit" },
-      include: {
-        servers: { include: { deployment: true } },
-        skills: { include: { installedSkill: true } },
+      cutoverToolkitToPrivatePackage({
+        workspaceId,
+        userId: ownerId,
+        toolkitId: "foreign",
+        mode: "dry-run",
+      }),
+    ).rejects.toMatchObject({ code: "source_not_found" });
+  });
+  it("dry-runs exact bytes without mutations and blocks apply until every legacy task drains", async () => {
+    const agent = await db.agent.create({
+      data: {
+        workspaceId,
+        slug: `legacy-${++sequence}`,
+        name: "Legacy",
+        runtimeKind: "hermes",
+        toolkits: { create: { toolkitId } },
       },
     });
-
-    expect(targetToolkit).not.toBeNull();
-    expect(targetToolkit?.visibility).toBe("private");
-    expect(targetToolkit?.servers).toHaveLength(2);
-    const targetDeployment = assertDefined(
-      assertDefined(targetToolkit).servers.find(
-        ({ deployment }) => deployment.serverId === server.id,
-      ),
-    ).deployment;
-    expect(targetDeployment.serverId).toBe(server.id);
-    expect(targetDeployment.status).toBe("setup_required");
-    expect(targetDeployment.installCfg).toMatchObject({
-      env: {
-        SECRET_KEY: "",
-        PUBLIC_MODE: "1",
+    const conversation = await db.conversation.create({
+      data: { agentId: agent.id, title: "Historical task" },
+    });
+    const task = await db.workSession.create({
+      data: {
+        workspaceId,
+        agentId: agent.id,
+        conversationId: conversation.id,
+        runtimeKind: "hermes",
+        status: "running",
       },
-      requiredEnv: ["SECRET_KEY"],
     });
-    const automaticDeployment = assertDefined(
-      assertDefined(targetToolkit).servers.find(
-        ({ deployment }) => deployment.serverId === automaticServer.id,
-      ),
-    ).deployment;
-    expect(automaticDeployment.status).toBe("stopped");
-    expect(automaticDeployment.installCfg).toMatchObject({
-      env: { BUILTIN_MODE: "safe-default" },
-      requiredEnv: ["BUILTIN_MODE"],
+    const preview = await cutoverToolkitToPrivatePackage({
+      workspaceId,
+      userId: ownerId,
+      toolkitId,
+      mode: "dry-run",
     });
-
-    expect(targetToolkit?.skills).toHaveLength(2);
+    expect(preview).toMatchObject({
+      status: "blocked",
+      blockers: ["active_legacy_tasks"],
+      requiresReauthorization: true,
+    });
     expect(
-      targetToolkit?.skills.some((s) => s.installedSkill.skillId === skill.id),
-    ).toBe(true);
+      await db.marketListing.count({ where: { sourceToolkitId: toolkitId } }),
+    ).toBe(0);
     expect(
-      targetToolkit?.skills.some(
-        (s) => s.installedSkill.content === "# Custom Skill",
+      await db.toolkit.findUniqueOrThrow({ where: { id: toolkitId } }),
+    ).toMatchObject({ enabled: true });
+    await expect(
+      cutoverToolkitToPrivatePackage({
+        workspaceId,
+        userId: ownerId,
+        toolkitId,
+        mode: "apply",
+        expectedDigest: preview.digest ?? "",
+        confirmReauthorization: true,
+      }),
+    ).rejects.toMatchObject({ code: "in_use" });
+    await db.workSession.update({
+      where: { id: task.id },
+      data: { status: "completed", completedAt: new Date() },
+    });
+  });
+  it("rejects stale preview then freezes a PRIVATE artifact, revokes tokens, preserves history, and applies idempotently", async () => {
+    const scoped = await createApiToken(ownerId, "Historical scoped key", {
+      toolkitId,
+    });
+    await db.toolkitInstallLink.create({
+      data: { id: `legacy-link-${stamp}`, userId: ownerId, toolkitId },
+    });
+    const legacy = await createApiToken(
+      ownerId,
+      "MCPmarket plugin - historical (Claude Code)",
+    );
+    const unrelated = await createApiToken(ownerId, "Unrelated personal key");
+    const preview = await cutoverToolkitToPrivatePackage({
+      workspaceId,
+      userId: ownerId,
+      toolkitId,
+      mode: "dry-run",
+    });
+    expect(preview.status).toBe("ready");
+    await db.installedSkill.update({
+      where: { id: skillId },
+      data: {
+        content:
+          "---\nname: review\ndescription: Review changes\n---\nChanged since preview.",
+      },
+    });
+    await expect(
+      cutoverToolkitToPrivatePackage({
+        workspaceId,
+        userId: ownerId,
+        toolkitId,
+        mode: "apply",
+        expectedDigest: preview.digest ?? "",
+        confirmReauthorization: true,
+      }),
+    ).rejects.toMatchObject({ code: "source_changed" });
+    const current = await cutoverToolkitToPrivatePackage({
+      workspaceId,
+      userId: ownerId,
+      toolkitId,
+      mode: "dry-run",
+    });
+    const result = await cutoverToolkitToPrivatePackage({
+      workspaceId,
+      userId: ownerId,
+      toolkitId,
+      mode: "apply",
+      expectedDigest: current.digest ?? "",
+      confirmReauthorization: true,
+    });
+    expect(result.status).toBe("applied");
+    if (!("releaseId" in result) || !result.releaseId)
+      throw new Error("Missing frozen release");
+    const release = await db.marketRelease.findUniqueOrThrow({
+      where: { id: result.releaseId },
+      include: { listing: true },
+    });
+    expect(release.listing).toMatchObject({
+      kind: "pi-package",
+      visibility: "private",
+      sourceToolkitId: toolkitId,
+    });
+    const manifest = parsePiPackageReleaseManifest(
+      release.manifest,
+      release.checksum,
+    );
+    expect(
+      manifest.package.entries.some(
+        (entry) =>
+          entry.type === "file" &&
+          entry.path.endsWith("/assets/nested.bin") &&
+          Buffer.from(entry.content, "base64").equals(
+            Buffer.from([0, 255, 7, 128]),
+          ),
       ),
     ).toBe(true);
+    expect(JSON.stringify(manifest)).not.toContain(workspaceId);
+    expect(JSON.stringify(manifest)).not.toContain(toolkitId);
+    expect(await verifyApiTokenContext(`Bearer ${scoped.token}`)).toBeNull();
+    expect(await verifyApiTokenContext(`Bearer ${legacy.token}`)).toBeNull();
+    expect(
+      await verifyApiTokenContext(`Bearer ${unrelated.token}`),
+    ).not.toBeNull();
+    expect(
+      await db.toolkit.findUniqueOrThrow({ where: { id: toolkitId } }),
+    ).toMatchObject({ enabled: false, visibility: "private" });
+    expect(
+      await db.toolkit.findFirst({
+        where: toolkitAccessWhere(
+          { user: { id: ownerId }, token: null },
+          `cutover-${stamp}`,
+          "historical",
+        ),
+      }),
+    ).toBeNull();
+    expect(await db.workSession.count({ where: { workspaceId } })).toBe(1);
+    expect(
+      await db.agentPiPackage.count({
+        where: { marketInstall: { listingId: release.listingId } },
+      }),
+    ).toBe(0);
+    expect(
+      await cutoverToolkitToPrivatePackage({
+        workspaceId,
+        userId: ownerId,
+        toolkitId,
+        mode: "apply",
+        expectedDigest: current.digest ?? "",
+        confirmReauthorization: true,
+      }),
+    ).toMatchObject({ status: "already-applied", releaseId: release.id });
+    expect(
+      await db.auditEvent.count({
+        where: {
+          action: "toolkit.cutover.private-freeze",
+          targetId: toolkitId,
+        },
+      }),
+    ).toBe(1);
   });
 });

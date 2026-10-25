@@ -57,6 +57,37 @@ describe("beUI form participation", () => {
     });
   });
 
+  it("toggles required consent exactly once by Space without submitting", async () => {
+    const action = vi.fn();
+    const { container } = render(
+      <form action={action}>
+        <FormCheckbox
+          name="consent"
+          value="yes"
+          label="Executable code consent"
+          required
+        />
+        <button type="submit">Submit consent</button>
+      </form>,
+    );
+    const user = userEvent.setup();
+    await user.tab();
+    const checkbox = screen.getByRole("checkbox", {
+      name: "Executable code consent",
+    });
+    expect(checkbox).toHaveFocus();
+    await user.keyboard(" ");
+    expect(checkbox).toBeChecked();
+    expect(
+      new FormData(assertDefined(container.querySelector("form"))).get(
+        "consent",
+      ),
+    ).toBe("yes");
+    await user.keyboard(" ");
+    expect(checkbox).not.toBeChecked();
+    expect(action).not.toHaveBeenCalled();
+  });
+
   it("resets uncontrolled choices to their initial values and respects a cancelled reset", async () => {
     let cancelReset = false;
     const { container } = render(

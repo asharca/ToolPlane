@@ -9,7 +9,6 @@ import {
   AlertTriangle,
   ArrowLeft,
   Bot,
-  Boxes,
   CheckCircle2,
   Eye,
   FileLock2,
@@ -91,22 +90,6 @@ export default async function AgentPublishPage({
     }),
   ]);
   if (!agent) notFound();
-  if (agent.runtimeKind === "pi-sdk")
-    return (
-      <DashboardPage className="mx-auto max-w-5xl space-y-5">
-        <ButtonLink
-          href={`/app/${workspaceSlug}/agents/${agentId}`}
-          variant="ghost"
-        >
-          <ArrowLeft className="size-3.5" />
-          {agent.name}
-        </ButtonLink>
-        <h1 className="text-2xl font-semibold">{t("marketListing")}</h1>
-        <p role="status" className="text-sm text-muted-foreground">
-          {t("piSdkTemplateUnsupported")}
-        </p>
-      </DashboardPage>
-    );
 
   const isOwner = workspace.ownerId === user.id;
   const currentListing = listing;
@@ -206,6 +189,10 @@ export default async function AgentPublishPage({
           {formError}
         </p>
       ) : null}
+
+      <p className="text-sm leading-6 text-muted-foreground">
+        {t("templatePublicationAuthorization")}
+      </p>
       {!isOwner ? (
         <p role="alert" className="text-sm text-destructive">
           {t("ownerOnlyPublish")}
@@ -334,7 +321,6 @@ export default async function AgentPublishPage({
                   [Bot, t("agentDefinitions"), manifest.agents.length],
                   [Server, t("verifiedMcps"), manifest.deployments.length],
                   [PackageCheck, t("skillSnapshots"), manifest.skills.length],
-                  [Boxes, t("privateToolkits"), manifest.toolkits.length],
                   [
                     Network,
                     t("subAgents"),

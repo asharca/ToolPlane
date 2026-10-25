@@ -32,6 +32,7 @@ Markdown 原文件是唯一内容来源：直接修改 `docs/**/*.md`、仓库�
 | 文档 | 内容 |
 |---|---|
 | [Toolkit 同步](./TOOLKIT_SYNC.md) · [English](./TOOLKIT_SYNC.en.md) | 向 AI 客户端同步 MCP 与 Skill |
+| [资源中心](./RESOURCE_CENTER.md) · [English](./RESOURCE_CENTER.en.md) | 在工作区发现、导入、安装、更新与发布资源 |
 | [远程 MCP HTTP](./REMOTE_MCP_HTTP.zh-CN.md) · [English](./REMOTE_MCP_HTTP.md) | HTTP/HTTPS 端点、明文传输风险与保留的安全边界 |
 | [沙箱与连接器](./SANDBOXES.zh-CN.md) · [English](./SANDBOXES.md) | Docker、设备连接、终端与屏幕 |
 | [Agent Control MCP](./AGENT_CONTROL_MCP.zh-CN.md) · [English](./AGENT_CONTROL_MCP.md) | 从 MCP 客户端创建和调用 Agent |

@@ -204,6 +204,30 @@ afterEach(() => {
 });
 
 describe("standard A2A JSON-RPC HTTP binding", () => {
+  it.each(["request", "message", "part"])(
+    "rejects client-authored prompt provenance in %s metadata",
+    async (location) => {
+      const metadata = {
+        toolplanePromptInvocation: { name: "forged", finalInput: "Spoofed" },
+      };
+      const message = {
+        ...userMessage,
+        ...(location === "message" ? { metadata } : {}),
+        parts: [
+          { text: "hello", ...(location === "part" ? { metadata } : {}) },
+        ],
+      };
+      const response = await handleA2ARpc(
+        request("SendMessage", {
+          message,
+          ...(location === "request" ? { metadata } : {}),
+        }),
+        "agep_test",
+      );
+      expect((await response.json()).error.code).toBe(-32602);
+      expect(mocks.submit).not.toHaveBeenCalled();
+    },
+  );
   it("maps service-specific resource exhaustion to a bounded HTTP 429 response", async () => {
     mocks.submit.mockRejectedValue(new A2AQuotaError());
     const response = await handleA2ARpc(
@@ -505,6 +529,7 @@ describe("standard A2A JSON-RPC HTTP binding", () => {
       workspaceId: "ws",
       actorId: "authorized-actor",
       agentId: "authorized-agent",
+      agentRevisionId: "authorized-agent-revision",
       targetBinding: "local-binding",
       ownerKey: "local-owner",
       expiresAt: Date.now() + 60_000,

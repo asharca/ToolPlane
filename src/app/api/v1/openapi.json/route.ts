@@ -7,7 +7,7 @@ export function GET() {
   return Response.json(
     {
       ...agentPublicApiOpenApi,
-      tags: [...a2aOpenApi.tags, ...agentPublicApiOpenApi.tags],
+      tags: a2aOpenApi.tags,
       components: {
         ...agentPublicApiOpenApi.components,
         securitySchemes: {
@@ -15,7 +15,6 @@ export function GET() {
           ...a2aOpenApi.securitySchemes,
         },
         schemas: {
-          ...agentPublicApiOpenApi.components.schemas,
           ...a2aOpenApi.schemas,
         },
       },

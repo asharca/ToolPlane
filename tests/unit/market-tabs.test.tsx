@@ -2,78 +2,66 @@ import { render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MarketTabs } from "@/components/dashboard/MarketTabs";
 
-const mocks = vi.hoisted(() => ({ pathname: "/app/acme/market/installed" }));
-
+const mocks = vi.hoisted(() => ({
+  pathname: "/app/acme/market/installed",
+  search: "",
+}));
 vi.mock("next/navigation", () => ({
   usePathname: () => mocks.pathname,
+  useSearchParams: () => new URLSearchParams(mocks.search),
 }));
 
-describe("MarketTabs", () => {
+describe("Resource Center lifecycle navigation", () => {
   beforeEach(() => {
     mocks.pathname = "/app/acme/market/installed";
+    mocks.search = "";
   });
 
-  it("uses resource types as primary tabs and keeps management separate", () => {
+  it("has four lifecycle tabs rather than a second resource type navigation layer", () => {
     render(<MarketTabs slug="acme" />);
-
     const tabs = within(
-      screen.getByRole("navigation", { name: "Market sections" }),
+      screen.getByRole("navigation", { name: "Resource Center sections" }),
     );
-    expect(tabs.getByRole("link", { name: "MCP" })).toHaveAttribute(
-      "href",
-      "/app/acme/market/mcp",
-    );
-    expect(tabs.getByRole("link", { name: "Skills" })).toHaveAttribute(
-      "href",
-      "/app/acme/market/skills",
-    );
-    expect(tabs.getByRole("link", { name: "Agents" })).toHaveAttribute(
-      "href",
-      "/app/acme/market/agents",
-    );
-    expect(tabs.getByRole("link", { name: "Assistants" })).toHaveAttribute(
-      "href",
-      "/app/acme/market/assistants",
-    );
-    expect(tabs.getByRole("link", { name: "Toolkits" })).toHaveAttribute(
-      "href",
-      "/app/acme/market/toolkits",
-    );
-    expect(tabs.getByRole("link", { name: /^Pi\b/ })).toHaveAttribute(
-      "href",
-      "/app/acme/market/pi-packages",
-    );
-    expect(screen.getByRole("link", { name: "Installed" })).toHaveAttribute(
-      "href",
-      "/app/acme/market/installed",
-    );
-    expect(screen.getByRole("link", { name: "Installed" })).toHaveAttribute(
-      "aria-current",
-      "page",
-    );
+    const entries = [
+      ["Discover", "/app/acme/market"],
+      ["Workspace resources", "/app/acme/market/installed"],
+      ["Updates", "/app/acme/market/installed?updates=1"],
+      ["My publications", "/app/acme/market/publish"],
+    ];
+    for (const [name, href] of entries) {
+      expect(tabs.getByRole("link", { name })).toHaveAttribute("href", href);
+    }
+    expect(tabs.getAllByRole("link")).toHaveLength(4);
+    expect(
+      screen.queryByRole("link", { name: "Toolkits" }),
+    ).not.toBeInTheDocument();
   });
 
-  it("keeps resource detail routes inside their resource tab", () => {
-    mocks.pathname = "/app/acme/market/assistants/acme/research";
+  it.each([
+    ["/market/items/acme/research", "Discover"],
+    ["/market/installed/install/clients", "Workspace resources"],
+    ["/market/sources", "Workspace resources"],
+    ["/market/compose", "My publications"],
+    ["/market/publish", "My publications"],
+  ])("maps nested %s to %s", (route, name) => {
+    mocks.pathname = `/app/acme${route}`;
     render(<MarketTabs slug="acme" />);
-
-    expect(screen.getByRole("link", { name: "Assistants" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name })).toHaveAttribute(
       "aria-current",
       "page",
     );
-    expect(screen.getByRole("link", { name: "MCP" })).not.toHaveAttribute(
-      "aria-current",
-    );
-    expect(screen.getByRole("link", { name: "Installed" })).not.toHaveAttribute(
-      "aria-current",
-    );
+    expect(document.querySelectorAll('[aria-current="page"]')).toHaveLength(1);
   });
 
-  it("shows pending updates on the installed tab", () => {
+  it("shows update counts on the active Updates tab", () => {
+    mocks.search = "updates=1";
     render(<MarketTabs slug="acme" updateCount={2} />);
-
-    expect(screen.getByLabelText("2 update(s) available")).toHaveTextContent(
-      "2",
+    expect(screen.getByRole("link", { name: "Updates 2" })).toHaveAttribute(
+      "aria-current",
+      "page",
     );
+    expect(
+      screen.getByRole("link", { name: "Workspace resources" }),
+    ).not.toHaveAttribute("aria-current");
   });
 });

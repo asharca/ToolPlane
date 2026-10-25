@@ -2,15 +2,15 @@
 
 > **中文**：[RUNTIME_OPERATIONS.zh-CN.md](./RUNTIME_OPERATIONS.zh-CN.md)
 
-This guide is for operators upgrading the single-owner ToolPlane deployment. It covers the architecture-hardening migration, runtime recovery, installation credentials and ordinary Hermes attachment quotas. It does not introduce active-active execution.
+This guide is for operators upgrading the single-owner ToolPlane deployment. It covers runtime recovery, reviewed Pi capabilities, scoped client registrations and read-only historical storage. It does not introduce active-active execution or authorize a production migration.
 
 ## Upgrade sequence
 
 1. Back up Postgres and managed runtime volumes. Record the deployed version and retain its restore procedure; database and volume restores are separate operations.
 2. Stop the old app and confirm its child processes and external copy/import/delete operations have ended. Do not overlap old and new application instances against the same runtime domain.
-3. Apply migration `20260917000000_architecture_hardening` using the existing deployment migrator or `pnpm exec prisma migrate deploy` against the explicitly confirmed target database. Generate the Prisma client and build the new application. The migration adds installation records, Token registration/expiry fields and attachment reservations; it does not delete old tokens or attachment metadata.
+3. Review the repository migrations for the intended release and apply them only to the explicitly confirmed target database using the existing deployment migrator. Generate the matching Prisma client and build the application. Retained messages, files and audit/provenance records are not disposable migration data.
 4. Start one application process using `pnpm start` or the production image. Wait for `/api/v1/readiness` to return HTTP 200 before admitting runtime traffic. `/api/v1/health` is a liveness check, not proof that recovery is complete.
-5. Re-register client installations using their generated commands. Verify scopes, sync and device registrations before explicitly revoking old credentials or removing legacy local directories. Legacy scoped tokens remain confined to their Toolkit; callers that used them as account tokens must switch to personal tokens for account operations.
+5. Drain all active legacy tasks before controlled cutover. Convertible Toolkit content is frozen into private packages; old client credentials are revoked and clients must register again for explicitly selected releases and scopes. Do not automatically republish public versions or restore old runtime execution. Historical messages and files remain read-only. See [Toolkit cutover](./TOOLKIT_SYNC.en.md).
 
 Do not roll back only the application while newer operations are active. Stop the owner first and use a tested database/volume restore or compatible roll-forward plan. Keep all production backups and credentials out of test artifacts.
 
@@ -23,6 +23,62 @@ Docker/Coolify health checks must use `/api/v1/readiness`, not `/api/v1/health`,
 The Docker build and runtime stages share `python-runtime-base` so Prisma assembly detects the same OpenSSL ABI used at startup. Keep these system libraries aligned; otherwise the image can bundle an OpenSSL 1.1 engine while production needs OpenSSL 3 and attempts a network download. Verify the final image's `prisma migrate deploy` against an isolated backup database without outbound network access before rollout.
 
 The managed launcher loads `abort-signal.cjs` before Next. It briefly adds/removes an abort listener on each native `AbortSignal.any()` result to start weak source following: Node 24.21 otherwise retains nested timeout composites after expiry, eventually failing MCP/channel requests with `Set maximum size exceeded`. Keep this file beside the embedded `server.cjs` when assembling a release. Verify a future Node upgrade with `pnpm vitest run tests/unit/abort-signal.test.ts` before removing the workaround. An already exhausted process needs a controlled restart; restarting only an MCP bridge does not clear the app's signal registry.
+
+## Shared MCP credential cutover
+
+Shared MCP deployment environment values are encrypted with `AUTH_SECRET` in a
+workspace-bound `credentialEnvelope`. Stored `env` entries contain empty strings;
+public serializers and deployment lists expose only environment names and masked
+empty/`configured` state. Neither plaintext nor the ciphertext envelope belongs in
+API responses or exports. Live runtime access explicitly decrypts credentials only
+after workspace ownership checks. Legacy nonempty plaintext values fail closed at
+runtime until explicitly migrated. Keep the same `AUTH_SECRET` when restoring the
+database; changing it does not rotate credentials.
+
+Back up the database, stop the application/runtime owner, and independently confirm
+all MCP children/containers are stopped before this controlled cutover. The script
+does not stop services or reconcile external processes. It refuses any deployment
+in the selected workspace unless its persisted status is `stopped`, `error`, or
+`setup_required`; a stale idle status is not proof that a process has exited.
+Confirm `DATABASE_URL` and `AUTH_SECRET` refer to the intended environment, then run
+once per workspace using its database ID (not its slug):
+
+```bash
+# Read-only dry-run is the default; output contains counts only.
+pnpm exec node --conditions=react-server --import tsx scripts/migrate-mcp-credentials.ts --workspace WORKSPACE_ID
+# Explicitly apply only after reviewing the dry-run and confirming shutdown.
+pnpm exec node --conditions=react-server --import tsx scripts/migrate-mcp-credentials.ts --workspace WORKSPACE_ID --apply
+```
+
+Each invocation runs in one serializable transaction. Updates compare the original
+workspace, status, timestamp and configuration; concurrent changes or invalid/mixed
+plaintext/encrypted configurations abort the entire batch. Already migrated rows
+are validated and left unchanged, so reruns are idempotent. No secret values,
+ciphertext, hashes or database errors are printed. Investigate failures privately;
+do not paste database configs into logs or support artifacts. Restart one owner
+only after every required workspace has migrated and readiness succeeds.
+
+Rotate or revoke an MCP value through its authenticated deployment environment
+settings, not by editing envelope metadata. Rotation/revocation stops the old
+process before storing the newly sealed values; do not bypass a failed stop.
+New runtime connections resolve current workspace-owned credentials through the
+explicit private resolver; metadata is never a credential source. This migration
+only converts shared MCP deployment environment values, not catalog recipes or
+Agent-owned credential references. Focused regression entrypoint (isolated test DB):
+`pnpm vitest run tests/integration/mcp-environment-credentials.test.ts`.
+
+Docker-backed MCPs receive configured environment values through a runtime-only
+stdin bootstrap, not Docker environment flags, image/build layers or secret files.
+The bootstrap consumes one private line, then execs the original image entrypoint
+and command with the remaining stdin reserved for MCP JSON-RPC. Images receiving
+environment values (including package cache settings) must provide POSIX `/bin/sh`
+with built-in `read`, `printf`, `eval` and `export`; shell-less images fail closed.
+Docker recipes with no environment projection retain their native entrypoint and
+do not require the bootstrap. Do not add `--env` or `--env-file` to bypass this rule.
+Runtime diagnostics redact values from both the configured environment and the
+container-only environment projection, regardless of whether their keys look
+secret-related. A value that appears only in the container projection must not
+be exposed by captured stderr or runtime log responses.
 
 ## One runtime owner
 
@@ -37,9 +93,11 @@ SIGTERM/SIGINT on the production launcher stops accepting HTTP traffic, stops ma
 ## Frozen Pi extension packages
 
 `pi-package` releases are immutable Pi resources and optional executable extensions.
-They support the independent `pi-sdk` runtime and registered external clients, without
-migrating Toolkit or existing Pi Harness agents. Apply `20261001000000_pi_sdk_packages`
-and `20261002000000_pi_package_ecosystem`, generate Prisma, and restart before use.
+All new executable Agents use the fixed Pi SDK path; other runtime records retain
+read-only history/files, not execution compatibility. Create fresh Pi objects and
+review/authorize capabilities explicitly. Apply only the reviewed release migrations
+under the controlled upgrade procedure above; do not migrate a live shared runtime
+merely to enable a package.
 
 Build the trusted capture image explicitly; publication never builds it implicitly:
 
@@ -53,31 +111,101 @@ files. Its bounded TLS CONNECT broker rejects private, mixed-DNS and redirected
 private destinations. Public or explicitly credentialed npm/Git production dependencies are frozen without
 executing factories, lifecycle scripts, hooks or pnpmfile. Packages requiring a
 build must supply runnable artifacts; files over 16 MiB are rejected, not skipped.
+Uploaded Pi ZIPs use the same isolated capture, dependency freezing, inventory and
+review pipeline for native extensions, Skills, prompts and themes. Submit
+`sourceType=zip` with an `archive` File and explicitly checked
+`confirmExecutableCode=on`; the server records the upload SHA-256 in immutable
+source provenance. ZIP limits are 32 MiB compressed, 64 MiB expanded, 16 MiB per
+file, 20,000 entries and a 1,000:1 per-file compression ratio. Only stored/deflated
+regular files and directories are accepted; traversal, links, special files,
+case/Unicode collisions, malformed headers and CRC mismatches fail capture.
+Archives may contain a package root directly or one enclosing directory.
+Rebuild the capture image after updating these trusted scripts.
+Npm/Git/ZIP publication first calls `previewPiPackageSourceAction` with the same
+source fields (ZIP preview also requires explicit code consent). This is a real
+isolated capture, not URL-derived labels: it returns typed resource/file metadata,
+platform/runtime, MCP requirements, the resolved source pin and `sourceDigest`,
+never file contents or credentials. Pass that digest to
+`publishPiPackageReleaseAction`; publication captures again and compares the entire
+validated snapshot, including dependencies. Missing previews fail with
+`source_preview_required`; changed uploads, moved refs or dependency drift fail
+with `source_changed`, requiring a fresh preview. Assembly also requires its
+reviewed frozen digest. Catalog/service callers have no digest bypass. An explicit
+`sourceType=release` instead selects an exact owned immutable release; it reuses
+validated frozen bytes without fetching upstream. Preview creates no market records
+and installs no code; it requires the same owner/admin and runtime ownership as capture.
 
 Approval revalidates paths, links, decoded secret scans, file hashes and the whole
 release checksum. Installation creates only a ready `MarketInstall`; it does not
 execute code. Workspace updates change both install release pointers, while each
 Agent retains its explicitly enabled release. Apply updates explicitly, after
-active tasks/Work/leases finish; bound installations cannot be uninstalled.
+active tasks/Work/leases finish. Uninstall atomically publishes each affected active
+Agent's applied revision with only that package removed, then removes draft bindings.
+It never applies unrelated draft edits. Revision CAS/validation failure rolls back
+the whole uninstall; repeated concurrent uninstalls do not duplicate revision changes.
+New sessions use the narrowed default; existing session revisions, referenced
+artifacts and shared MCP deployments remain intact.
+This removal-only publication does not require unrelated already-revoked grants
+to become valid again; their live restrictions remain enforced at execution.
 Public details expose a small summary and the original checksum, never base64 or
-dependency files. SDK package resolution fails closed on revoked/downlisted releases.
+dependency files. Dangerous-release revocation blocks new execution immediately,
+including retained pins. Ordinary uninstall or listing withdrawal does not revoke
+an exact approved artifact already retained by the same Agent revision; current
+MCP, provider and credential grants are still revalidated. Package MCP tools must
+remain inside both the immutable revision grant and the live Agent connection's
+explicit allowlist; removing the connection or narrowing away a required tool
+denies restoration rather than recovering permission from package/session files.
+Use the authenticated owner/admin endpoint
+`POST /api/v1/pi-packages/releases/{releaseId}/revoke` with
+`{"workspace":"<workspace-slug>","reason":"<reviewed reason>"}` for a dangerous
+release, not ordinary unpublish/uninstall. It records explicit `revoked` status,
+revokes dependent client registrations and retains readable release/revision history.
 Approval accepts arbitrary Node/file/network side effects inside the Agent sandbox;
 tool approval is not an arbitrary-code isolation boundary.
 
-Create **Pi SDK** from the Agent runtime selector, then enable installed packages
-under **Settings → Pi extensions**. The SDK is pinned to 0.87.1 on Linux/Node 24;
-captured package architecture must match the Docker daemon. TP-assembled packages
-declare portable `any/any` resources; this does not waive the SDK version/Node requirement. Ordinary Pi agents retain their
-Harness sessions and existing version management. Control MCP creation, public
-Agent endpoints and Agent template publishing do not accept this runtime; existing
-authorized messages and tools do.
+Create a fresh **Pi Agent**, select installed packages in its draft, then follow
+**Save draft → Prepare → Review → Apply**. There is no alternative Pi SDK runtime
+selector or old Harness execution fallback. Draft edits do not activate packages
+or change existing sessions. The SDK is pinned to 0.87.1 on Linux/Node 24; captured
+package architecture must match the Docker daemon. TP-assembled packages declare
+portable `any/any` resources; this does not waive the SDK version/Node requirement.
 The sandbox installer uses `pnpm add --save-prod` for trusted runtime packages
 (compatible with pnpm 10 and 12); reviewed extension dependencies are never installed at turn time.
 
-SDK sessions use official JSONL files, not Harness checkpoints. Changing the package
-set requires a new conversation or Work (`PI_SDK_PACKAGE_SET_CHANGED`). A missing
-persisted file or lost unpersisted host fails with `PI_SDK_SESSION_MISSING`; history
-is not replayed to fake recovery. Interrupted native tasks fail rather than replay.
+SDK sessions use official JSONL files, not Harness checkpoints. Conversations,
+A2A contexts and Work pin an immutable Agent revision and exact package artifacts;
+workspace updates do not change those pins. Publishing or rolling back creates a
+new default revision and never rewrites an existing session.
+The guided installer creates workspace resources and, with explicit Review + Apply
+confirmation, publishes the selected Agent's current applied revision with only the
+reviewed package and MCP grants merged in. Unrelated draft edits remain unapplied;
+existing session pins stay unchanged. A target without an applied revision must
+first prepare, review and apply its configuration from the Agent page; setup refuses
+before installing resources. Revision CAS failure retains the previous default.
+An unshared MCP created by the same authenticated setup operation may be configured
+again after a partial failure. Existing/shared connections are never silently
+reconfigured: use real connection settings with impacted-object review, or create
+a new connection. Executable-code and MCP privilege confirmations remain required.
+Failed later steps report actual completed deployment/install IDs and partial
+results, not fictitious rollback or successful enablement. Version updates may
+explicitly supply reviewed target `mcpBindings` atomically; missing new tool grants
+fail with `pi_package_mcp_binding_required`. Live revocation cannot be undone by a pin.
+Before switching, authenticated account clients can GET
+`/api/v1/workspaces/{slug}/market/installs/{installId}/diff?targetReleaseId={id}&page=1&pageSize=50`.
+Only approved same-listing Pi/Skill/MCP releases can be compared; both artifact checksums
+and current workspace access are revalidated. The response contains paginated changed
+paths (maximum 100 per page), permission/tool and environment names, transport/runtime
+compatibility and a configuration-change flag—never file bytes, recipe args or credentials.
+Work pins at admission, before its independent volume is allocated. Uninstall removes
+defaults but retains referenced artifacts and shared MCP deployments. Release approval
+and live workspace/Agent/MCP access are revalidated; revoked grants are not snapshotted.
+`PI_SDK_PACKAGE_SET_CHANGED` remains a fail-closed integrity check for mismatched state.
+A missing persisted file or lost unpersisted host fails with `PI_SDK_SESSION_MISSING`;
+history is not replayed to fake recovery. Interrupted native tasks fail rather than replay.
+Legacy or unresolved revision/package state fails with `AGENT_REVISION_UNRESOLVED`.
+Do not infer a revision from current defaults, overwrite checksums or replay old
+messages to manufacture recovery. Retain the historical state read-only and create
+a fresh authorized Pi object/session when a valid immutable pin is unavailable.
 Modified snapshot bytes/links fail with `PI_PACKAGE_CHECKSUM_MISMATCH`, and selected
 extension load failures fail with `PI_EXTENSION_LOAD_FAILED`.
 
@@ -91,11 +219,23 @@ command-only results are explicit completion receipts, not model answers.
 [official Pi catalog](https://pi.dev/packages). Members can install a selected exact
 version without human review. The server verifies live directory membership and
 public npm version/integrity, then captures and validates the immutable artifact.
+The interactive official installer requires `confirmExecutableCode=on`; explanatory warning text alone does not authorize executable package intake.
 The release records `reviewPolicy: 'official-directory'`, with no human reviewer;
 this is not a security endorsement or proof of Web compatibility. Installation
-does not execute code or change Agent pins. Custom sources and assembled packages
-retain human review. Workspace owners/admins manage HTTPS catalog, npm registry,
-or Git sources under **Toolkits → Pi packages → Workspace Pi sources**.
+does not execute code or change Agent pins. Public custom sources and assembled
+packages retain human review. For private npm/Git/ZIP or assembled packages, an
+owner/admin may explicitly authorize executable code (`confirmExecutableCode=on`)
+for workspace-only use. The release records `reviewPolicy: 'workspace-owner-trust'`
+and the authorizer/time, not a human public reviewer or official-directory approval.
+Private releases remain unavailable to public discovery and other workspaces.
+A listing with workspace-trusted history cannot be flipped public: submit a new
+public listing from its frozen artifact with `sourceType=release` and
+`targetReleaseId=<private-release-id>` using the same publication action. The
+server verifies workspace ownership, revalidates the snapshot and queues human
+review without re-fetching upstream bytes. The new public artifact removes private
+source origins and workspace IDs; private history is never made public. Owners/admins
+manage HTTPS catalog, npm registry or Git sources under **Resources → Sources**
+(`/app/{workspace}/market/sources`).
 Credentials are encrypted and write-only; only the configured authority/path receives them.
 Catalog credentials never propagate to discovered package origins. Private repositories on
 public HTTPS hosts are supported; LAN/loopback/link-local/mixed-DNS destinations and redirects
@@ -105,32 +245,39 @@ A custom catalog responds to `GET <configured-url>?query=<text>&page=<1-based>` 
 `{schemaVersion:1,entries:[{name,source,description?,version?}],hasMore:boolean}` (at most 50
 entries and 2 MiB). `source` is a supported npm/Git identifier; no package code runs during discovery.
 
-**Toolkits → Pi packages → New Pi package** freezes selected installed Skill files and generates a
-real Pi MCP extension for explicitly selected deployment tools. New packages are workspace-private
-unless the publisher explicitly chooses public. MCP requirements contain logical keys and allowed
-tool names, not credentials or publisher deployment IDs. Same-workspace installs receive private
-defaults; other workspaces must bind their own deployments. Agent binding edits are blocked while
-tasks, Work, or execution leases are active. Skill/Prompt/Theme-only packages need no dummy extension.
-Choose **Package existing Toolkit** to prefill its Skills and currently exposed
-MCP tools, then edit the selection and publish an independent Pi package. This
-does not modify the original Toolkit or its Agent bindings. Source imports,
-version publication, withdrawal and upstream tracking live on this authoring page;
-the Pi market contains discovery and installation, not publication forms.
+**Resources → Compose** (`/app/{workspace}/market/compose`) freezes selected installed
+Skill files and generates a real Pi MCP extension for explicitly selected tools.
+Packages default to private; public publication is explicit and separately reviewed.
+MCP requirements contain logical keys/tool names, not credentials or publisher
+deployment IDs. Other workspaces bind their own connections; no selected resource
+grants execution authority until the target Agent draft is reviewed and Applied.
+Skill/Prompt/Theme-only packages need no dummy extension. Review the frozen assembly
+before committing; changed input requires a fresh preview. Imports and tracked-source
+recapture use **Resources → Import** and the same preview/commit contract, not an
+automatic capture-to-publication shortcut. Toolkit history is read-only; controlled
+conversion is a separate drained, authorized dry-run/apply operation, not an editor
+or execution product. Existing published versions are never automatically republished.
 
 Approved artifact downloads are deterministic npm-compatible tarballs. Registry publication requires
 owner/admin authorization, a configured npm source, and explicit confirmation; it never overwrites an
 existing version. It does not automatically register a package in the official catalog.
 
-**Installed → Client installations** creates an exact-release registration for Pi, Claude Code,
-Codex, OpenCode, or Hermes. Download the installer and one-time private configuration, protect it
-with `chmod 600`, then run `node pi-package-install.mjs install --config <private-config.json>`.
-Use `update` or `uninstall` with the same config. Pi receives native package resources; other clients
-receive supported Skills and MCP configuration, not arbitrary Pi code. Installation is user-global,
-not project-scoped. MCP runs through ToolPlane, so connectivity to this instance is required.
+**Resources → Registrations** uses the existing Pi package client mechanism for
+fixed package releases or standalone Skill/MCP release selections; a registration
+is not a separately publishable combination. Pi receives native package resources;
+Claude Code, Codex, OpenCode and Hermes receive only supported Skills/MCP, never Pi
+extensions, prompts or themes. Download the installer and one-time private config,
+protect it with `chmod 600`, then run `node pi-package-install.mjs install --config
+<private-config.json>`; `update` and `uninstall` use the same config. Installation is
+user-global, not project-scoped. MCP requires connectivity to this instance.
 
-Each device has an independent hashed token; ordinary account/Toolkit tokens are not accepted by
-device endpoints. Membership, release status, deployment scope, and currently exposed tools are
-checked on requests. Added tools never expand grants automatically. Local updates refuse modified
+Each registration has an independent hashed revocable token and fixed exact-release
+selection. Ordinary account/Toolkit tokens are not accepted by device endpoints.
+Account updates require owner scope, integer `expectedConfigVersion` and explicit
+review of expanded privileges. Reviewed configuration changes increment the version;
+ordinary authentication only updates `lastUsedAt` and cannot invalidate an open review.
+Membership, release status, deployment scope and exposed tools are checked on requests.
+Added tools never expand grants automatically. Local updates refuse modified
 managed files and symlink escapes. Uninstall acknowledges self-revocation before deleting unchanged
 managed files; web revocation alone does not delete local files. Active device registrations block
 workspace uninstall. Never log, commit, or screenshot private configuration contents.
@@ -143,206 +290,216 @@ Capture and approve a new release, then update the workspace and individual Agen
 expanded device privileges require confirmation. TP compositions are republished explicitly from
 selected workspace resources, not silently regenerated.
 
-## Pi version management
+## Immutable Pi SDK revisions
 
-Open **Agents → List options → Agent management** to manage all ordinary Pi agents
-in the current workspace. Check the agents you want to update, then choose
-**Update selected agents to latest** or install an exact target version. Nothing
-is selected by default; **Select all** enables a full-workspace batch. Empty
-selections cannot update anything. The server validates every selected ID against
-the authorized ordinary Pi collection before any updates; unavailable IDs reject
-the request, and public endpoint runtimes and other workspaces are excluded.
-The release is resolved once per batch. Unselected agents stay visible and are not
-updated; the summary counts only the current batch. A failure does not stop later
-selected agents, and agents already on target are skipped.
-Assigned Docker sandboxes must be running with network access and the runtime owner
-must be ready. Existing execution leases reject updates to busy sandboxes without
-interrupting their chat, Work or A2A turns.
+All executable Agents use **Pi SDK 0.87.1**. Chat, channels, control, Work and local
+A2A use the same pinned native SDK path; there is no direct Pi CLI, host Agent loop,
+Hermes or Harness execution fallback. Other Pi versions are rejected rather than
+installed into a live Agent or substituted for the selected version. Native extension
+preflight requires the fixed isolated image `toolplane-pi-package-capture:0.87.1`.
+The preflight container mounts only staged public helper scripts read-only and uses
+a separate writable `/tmp`; it never copies scripts into its read-only root filesystem.
+Loader namespace collisions retain the typed `PI_CAPABILITY_CONFLICT` classification.
+`PI_EXTENSION_LOAD_FAILED` retains a bounded stage-specific diagnostic cause; inspect it
+before treating the failure as an extension factory problem. Native npm snapshots must
+match the execution platform and architecture; do not relabel or transplant their bytes.
+Control MCP creates native `pi-sdk` drafts only. Creation is not execution authority:
+explicitly configure, authorize, and publish the immutable revision before running it.
 
-Updates install matching `@earendil-works/pi-coding-agent` and `@earendil-works/pi-ai`
-versions in separate `/workspace/.toolplane/runtime-packages/pi-<version>` directories
-with lifecycle scripts disabled. Only after `pi --version` succeeds and matches
-the requested version is the per-agent
-`/workspace/.toolplane/runtimes/pi/agents/<agent-id>/version` pin atomically replaced.
-Direct Work and terminal CLI/SDK sessions use that pin; agents without one retain
-the built-in default. A2A-managed Pi tasks use the separate fixed Harness bundle
-below. Workspace files, session files and previous packages are not deleted.
-An earlier CLI version does not guarantee backward-compatible session data.
-With conversation-isolated execution, this management action updates the Agent's
-template sandbox. New conversation snapshots inherit its pin and installed files;
-existing conversation sandboxes retain their independent filesystem snapshot and
-version pin. A template update does not overwrite existing conversation state.
+Runtime changes follow **Save draft → Prepare → review → Apply**:
 
-This changes the sandbox runtime, not ToolPlane’s host-side `pi-ai` dependency.
-A registry failure does not hide a successfully read current version. Installation
-or executable verification failure leaves the previous pin active; after a lost
-request or uncertain outcome, check the selected version before retrying. Executable
-verification is not a compatibility certification for every upstream release.
+1. Save configuration changes as a draft. Saving does not change the published
+   default or any existing session.
+2. Prepare the revision. Dependency capture/build and native capability preflight
+   happen outside the publication transaction. The prepared config freezes the
+   digest-pinned environment image, Pi version, network/resource limits, optional
+   checksum-verified initial snapshot, credential references, model and instructions,
+   Skill/package content and MCP/A2A grants. Secrets are not copied into the config.
+3. Review that exact prepared config, including capability and permission changes.
+   Apply submits it with the expected current revision ID. Publication revalidates
+   permissions, artifacts, source digests and native preflight, then atomically
+   compares and changes the default. A stale expected revision or failed validation
+   leaves the previous published default unchanged; prepare and review again.
+4. Rollback publishes a **new** revision from a same-Agent historical revision using
+   `rollbackAgentRevision(...)` and the expected current revision ID. It revalidates
+   retained artifacts and current authority; it does not rewrite history, restore a
+   revoked permission, or mutate an existing session. Retained historical package
+   pins can survive uninstall/withdrawal, but dangerous release, MCP and credential
+   revocations still block execution.
 
-## Pi Harness managed tasks
+Uninstall removes only that package from a new default revision using CAS; it preserves
+the other applied fields exactly and does not require unrelated revoked scopes to become
+publishable again. This removal-only operation grants or executes nothing and never
+restores revoked permissions; historical sessions still enforce their live intersections.
 
-New local Pi tasks admitted through the native A2A entrypoint use the official
-Harness and SQLite Session backend. Chat, messaging and control keep their existing
-task receipts; direct Work and terminal execution are not migrated by this change.
-The model exposes `a2a_peers`, `a2a_call`, `a2a_status` and `a2a_cancel`, with
-`agent:<id>` / `remote:<id>` targets. Explicit workspace grants, cycle/depth limits,
-root-task human approvals and remote credential isolation still apply. Internal child tools are authorized by the live parent delegation; per-call receipts, revocation and lease checks remain enforced.
+Do not edit runtime version files, install a newer upstream release in an active
+sandbox, or update a mutable template to migrate sessions. New Conversation, Work
+and local A2A sessions persist their selected `agentRevisionId`. Existing sessions
+continue with that revision, intersected with live provider, credential, package,
+MCP and directional collaboration permissions. A missing, mismatched or unresolved
+pin fails closed; current Agent configuration is never a recovery fallback.
 
-The managed directory is `/workspace/.toolplane/runtime-packages/pi-harness-0.87.1`.
-`pi-agent-core`, `pi-session-backend-sqlite-node`, `pi-coding-agent` and `pi-ai`
-are pinned to **0.87.1**; the transport uses the existing MCP **1.30.0** and A2A
-**1.2.0** SDKs. Node **22.19.0 or later**, `node:sqlite`, Docker and persistent
-sandbox storage are required. **Harness storage format 4 is pre-stable**: do not
-automatically upgrade this bundle or assume migrations/backward compatibility.
-Installation validates pins and runs a real child-process crash/recovery self-check
-before execution. Failure blocks execution; there is no memory or legacy fallback.
+### Reviewed individual Skills and MCP connections
 
-For rollout, stop new managed Pi admissions in a maintenance window. Let existing
-legacy tasks finish, or have their operator explicitly cancel them; never resend
-them automatically. Back up Postgres and sandbox volumes, apply
-`20260927181819_pi_harness_task_binding` using the deployment migrator or
-`pnpm exec prisma migrate deploy`, run `pnpm db:generate`, and restart the app.
-The migration adds `executionBackend` (existing rows stay `legacy`) and
-`nativeOperationId`; it does not relabel historical work or create another task table.
+Single-resource Enable is a review-and-publication flow, not a draft attachment. Select
+a published native Agent, then call `previewAgentResourceAction` to review its full Skill
+artifact or perform a controlled MCP `tools/list` handshake. Unpublished targets fail
+with `revisionPreparationRequired` before probes, grants or installations. Inspection
+does not invoke tools, mount Agent work volumes, or require a shared stdio process to run.
 
-Before live verification, confirm both binding columns exist in the database used
-by the running service; deployed source and a configured provider do not prove the
-migration was applied. Do not migrate a shared database merely to run a smoke test.
-The advertised `NEXT_PUBLIC_APP_URL` must use HTTPS, except for HTTP loopback URLs.
-An HTTP LAN address is rejected even when the client connects through loopback:
-Card discovery returns 400, and RPC initialization cannot build its Agent Card.
-SSH-only verification can use a deliberately configured loopback advertised URL;
-keep the sandbox runtime origin reachable from Docker and obtain approval before
-changing or restarting a shared service.
+The preview returns a user/workspace/Agent/resource/current-revision-scoped signed
+`reviewReceipt`, `sourceChecksum`, and 15-minute `expiresAt`. This proof is not authority
+by itself. MCP Apply requires an explicit `allowedToolNames` selection; omitted tools
+never mean all tools. `enableAgentResourceAction` checks the receipt and
+`expectedRevisionId`, revalidates source/definition/files/discovery and live authority,
+then publishes only that reviewed addition over the applied configuration using native
+preflight. Unrelated drafts and existing conversation pins remain untouched. Changed
+sources or stale/expired reviews require a new preview; failed publication rolls back
+the grant and default revision together. Success includes the actual new `revisionId`.
 
-Postgres owns identity, authorization, receipts, claims, approvals and protocol
-projections. Pi owns model/tool checkpoints under
-`/workspace/.toolplane/runtimes/pi/agents/<agent-id>/harness/`, with the existing
-A2A context ID as Session ID and lane `main`. A saved operation ID is reused after
-interruption; platform snapshots are never replay instructions. Initial legacy
-JSONL history is imported atomically without executing it or deleting the source.
-`PI_SESSION_MISSING` / `PI_SESSION_CORRUPT` require investigation or volume restore,
-not an empty replacement database—even when preparing a later task in that context.
+## Native sessions and historical runtime boundaries
 
-Owner shutdown stops the driver, not the task. Recovery requires the existing
-owner/dirty-marker protocol and confirmation that the previous tracked process
-has stopped before a new writer opens SQLite. User cancellation, revocation and
-deadline cleanup request native abort; native settlement determines the terminal
-result. Unsafe or unknown tools are never blindly replayed; an uncertain side
-effect remains visible. Remote sends with unknown acknowledgement are not resent,
-and no remote exactly-once guarantee is made. No Redis, additional workflow service
-or cross-host SQLite writer coordination is introduced.
+Before SDK session initialization or model requests, the native host checks its approval
+broker's readiness. The helper accepts only `/api/v1/agent-runtime/sessions/approvals`
+for ordinary sessions or `/api/v1/agent-runtime/a2a/<task-id>/approvals` for delegated
+tasks. Both retain HTTP(S)-only, no embedded credentials/query/fragment, no redirect,
+bounded response and runtime-token requirements. A readiness refusal prevents model
+execution; it is not a reason to bypass approval or replay the turn.
 
-In the authenticated conversation command UI, or a Pi message channel bound to that
-conversation, send `/compact` or `/compact <custom instructions>`. For a Harness-bound
-conversation this compacts its existing native Session and `main` lane, not the old
-JSONL. The caller must own the conversation binding; an active context task or held
-conversation/sandbox lock returns busy rather than opening another writer. Wait for
-the persisted command result and usage metadata before treating compaction as complete.
-Failures do not fall back to CLI compaction. Unbound legacy conversations, direct Work
-and terminal paths retain their existing behavior. The communication smoke below
-does not exercise `/compact`; verify it separately on an owned, idle conversation.
+Each session lazily receives its own persistent sandbox from its pinned environment,
+not the Agent's current template. Native SDK state is scoped under
+`/workspace/.toolplane/runtimes/pi-sdk/agents/<agent-id>/`; local A2A state uses its
+persisted context ID. The database owns identity, revision/sandbox bindings, task
+receipts and authorization; the native session file owns the SDK conversation state.
+Retained contexts must reopen their existing session. Missing state requires
+investigation or volume restore, never fabricated history or an empty replacement.
 
-The settings page separates internal authorization, external connection and
-authenticated inbound integration. Card URL plus optional remote token registers,
-enables and authorizes one remote connection; ambiguous endpoints need the advanced
-RPC override. Internal collaboration requires only selecting allowed sub-agents:
-neither caller nor target needs `a2aInternalEnabled`. Authenticated chat, Work and
-control retain workspace, actor, selected-edge, cycle/depth, lease and approval checks.
-The existing `set-local` / `a2aInternalEnabled` opt-in is presented separately as
-**External A2A & channel access**. It still gates external outbound calls, personal-token
-A2A ingress and channel authorization; remote targets and channel operators retain
-their separate permissions. Changing it requires manager rights and confirmation,
-and selecting sub-agents never enables it. Personal Bearer tokens belong only in
-operator-controlled services, never third-party Agent prompts or browser code.
-Hermes published services and their isolated keys are unchanged.
+Same-session serialization, native/session-MCP leases and existing Agent/platform
+concurrency limits remain enforced. Stop and cancellation stop the bound processes
+and session MCP sidecars without deleting work volumes. Generic runtime ownership,
+dirty-marker and recovery rules elsewhere in this guide still apply. Unknown tool
+side effects and remote acknowledgements remain unknown; do not replay them to
+manufacture completion or claim remote exactly-once delivery.
+Busy session or sandbox admission leaves an unclaimed delegated task queued, without
+executing or replaying it. Admission resumes only after the normal lease becomes available.
+An authorized pinned MCP recipe is not removed because its shared deployment is stopped:
+the session broker validates its pinned image/recipe and current grants, then lazily starts
+the isolated session sidecar. It never borrows the shared deployment process.
 
-Run `pnpm vitest run --no-file-parallelism tests/integration/pi-harness-recovery.test.ts tests/integration/pi-harness-host.test.ts tests/integration/pi-harness-binding.test.ts tests/integration/pi-harness-worker.test.ts tests/integration/pi-agent-communication.test.ts`
-against a disposable real PostgreSQL database; never run another suite against that
-database concurrently or use PGlite for lock/process-recovery evidence.
-`node scripts/pi-harness-recovery-check.mjs --self-test` exercises the installed official
-backend without a paid model. This does not prove live provider or Docker integration.
+`/compact` or `/compact <custom instructions>` on an owned idle Pi SDK conversation
+executes native `session.compact()` against that same retained session. Wait for the
+persisted native command result; busy bindings reject another writer and failure
+does not fall back to host summarization or CLI compaction. Verify compaction
+separately; the communication smoke below does not cover it.
+Authenticated conversation-command requests generate native receipt IDs. Commands arriving
+through an external channel transport must instead supply its stable message ID for deduplication.
 
-To check the retained direct Pi CLI separately, install its existing pinned default
-bundle in a disposable Docker container and run
-`TOOLPLANE_NATIVE_COMMAND_SANDBOX=<container> TOOLPLANE_NATIVE_COMMAND_KIND=pi pnpm vitest run tests/integration/native-runtime-session.test.ts`.
-This exercises prompt, compact, reconnect and missing-history rejection against a local
-controlled model endpoint, not a paid provider. The fixture uses Docker Desktop host DNS
-on macOS/Windows and the container network gateway on Linux.
+Collaboration uses independent inbound/outbound permissions and explicit bounded
+target grants. Selecting a target does not silently enable either direction.
+Workspace/actor scope, live grants, cycle/depth limits, task leases and approval
+policy still apply. The old `set-local` / `a2aInternalEnabled` control is removed.
+Every edge's pinned/live policy intersection is checked against the final chain depth,
+including a remote leaf. A broad child-to-remote policy cannot enlarge an ancestor's
+approved depth. Current child authorization is also required before continuation output
+is incorporated; revocation cannot leave a parent waiting forever on an unauthorized child.
+Keep personal Bearer tokens only in operator-controlled services, not prompts,
+browser code or third-party Agents.
 
-Run `node scripts/pi-agent-communication-smoke.mjs --help`, then configure exactly these
-five required inputs: `TOOLPLANE_SMOKE_BASE_URL`, `TOOLPLANE_SMOKE_WORKSPACE_SLUG`,
-`TOOLPLANE_SMOKE_AGENT_A_ID`, `TOOLPLANE_SMOKE_AGENT_B_ID`, and
-`TOOLPLANE_SMOKE_PERSONAL_TOKEN`. The base URL is an origin; use HTTPS except for
-loopback HTTP. Keep the token in the local environment, never in command arguments,
-prompts or third-party services. The runner sends it only to the selected workspace's
-public Agent MCP and the two local A2A endpoints, not the session-only console BFF;
-redirects are rejected. Console links are for the operator's separate signed-in browser.
+Non-Pi and unresolved historical sessions are read-only. Old Hermes public execution,
+runtime MCP/dashboard, terminal, upload, model and profile endpoints are retired
+with HTTP **410**; they are not mapped to a new executor. Retained transcript,
+response and bound-file reads, plus real already-bound cancellation/drain, remain.
+The old `pi-harness` task tag is only for bound cleanup, not new admissions or replay.
+Conversion creates a fresh Pi draft requiring new authorization; it does not resume
+the old runtime state.
+Active conversation terminal streams reauthorize the same current authenticated
+identity, workspace membership, pinned revision, sandbox mapping and bridge every
+15 seconds. Credential, identity or execution-authorization revocation closes the
+stream; a previously opened connection is not permanent authority.
+Reusing a genuinely running session also revalidates its revision, volume, and credentials,
+but does not restart the bridge or require closing an active terminal. Disruptive lifecycle
+operations remain excluded while file or terminal access is active.
 
-Use an isolated test app/runtime-owner and two configured Pi Agents whose name or slug
-starts `pi-smoke-disposable-`, each with one distinct running Docker sandbox and explicit
-A → B collaboration permission. Enable the required tools; root tasks retain human approvals and B's internal child calls use parent-delegated authorization.
-With a live provider, Docker, PostgreSQL, an interactive terminal and
-`TOOLPLANE_SMOKE_ALLOW_PROCESS_KILL=1`, run `node scripts/pi-agent-communication-smoke.mjs`.
-Console links are for root-task approvals: approve A's delegation call and the separate
-cancellation/restart-counter tasks; B's delegated counter needs no human approval. **Deny** the separate denied-write task. Type the exact confirmations
-requested by the runner only after the actual decision. It never grants approval.
-Missing prerequisites, approvals or an observed crash boundary are failures, not skips.
-Without a configured live provider this paid-model smoke is unavailable; neither this
-documentation nor the backend self-test supplies evidence that it passed.
+### Native SDK verification
 
-The runner requires committed tool settlement with counter **1** and an unfinished
-`assistant.effect_pending` boundary before SIGKILL. It checks the exact tracked wrapper
-arguments, PID-file ownership, wrapper/child start times and ancestry, host/config paths,
-Agent directory, task, context and operation immediately before targeting that child.
-Native inspection uses read-only SQLite transactions, never another SessionRepo writer.
-Recovery must finish the same child operation with count **1**, and its owned result
-must appear in the parent's result. Cancellation additionally requires native `aborted`,
-no driver and a stopped counter; denial requires native refusal/`aborted` and zero writes.
+Use an approved isolated PostgreSQL/Docker environment and the fixed capture image.
+Run the current native host, capability, lease and communication suites serially:
 
-For platform restart the runner creates a separate counted task. At
-`OPERATOR_STOP_REQUIRED`, stop **only your isolated test app/runtime-owner**, leaving
-Docker and this runner running. Do not restart until instructed: it must observe API
-downtime, the tracked driver gone and the original native operation still unfinished.
-Confirm `STOPPED <taskId>`, then start the same app normally at `OPERATOR_START_REQUIRED`;
-never force owner takeover or resubmit the prompt. The runner polls the existing task
-and requires the same task/context/operation, native completion and count **1**, then
-requests `RESTARTED <taskId>` and the actual approval confirmation. Canceled/denied tasks
-must remain natively aborted after this restart. Each wait is bounded to five minutes;
-if the model completes before the stop is observed, the scenario fails rather than
-claiming restart evidence. The runner never stops a shared server or restarts containers.
+```sh
+pnpm test --no-file-parallelism tests/integration/pi-sdk-host.test.ts tests/integration/pi-sdk-capabilities.test.ts tests/integration/pi-sdk-native-leases.test.ts tests/integration/pi-agent-communication.test.ts
+```
 
-Fixtures/configuration are retained; failure cleanup requests cancellation only for
-receipts created in this run, and reports unconfirmed cleanup for operator action.
+Do not run another suite against the same database concurrently or use PGlite as
+evidence for independent-session locking. Deleted Harness host/recovery/binding
+suites and `pi-harness-recovery-check.mjs` are not rollout checks. Unit/parser results
+do not establish live provider, Docker or cross-account acceptance.
+
+### Paid-model communication smoke
+
+Read `node scripts/pi-agent-communication-smoke.mjs --help`, then supply all six
+required environment variables:
+
+| Variable | Required scope |
+|---|---|
+| `TOOLPLANE_SMOKE_BASE_URL` | Local isolated app origin on `localhost`, `127.0.0.1` or `[::1]`; HTTPS or loopback HTTP, without credentials/path/query/fragment |
+| `TOOLPLANE_SMOKE_WORKSPACE_SLUG` | Authorized disposable test workspace |
+| `TOOLPLANE_SMOKE_AGENT_A_ID` | Existing published `pi-smoke-disposable-*` Pi Agent |
+| `TOOLPLANE_SMOKE_AGENT_B_ID` | A distinct existing published `pi-smoke-disposable-*` Pi Agent |
+| `TOOLPLANE_SMOKE_PERSONAL_TOKEN` | Operator token authorized for those local A2A endpoints; environment only |
+| `TOOLPLANE_SMOKE_DATABASE_URL` | Explicit local isolated PostgreSQL database whose name contains `test`, `acceptance` or `disposable` |
+
+Both Agents must already have active published Pi SDK 0.87.1 revisions, digest-pinned
+environment images, configured live models, inbound authorization and native `bash`
+permission. A must have both published and live outbound permission for a bounded,
+text-only A → B grant. The app/runtime owner and Docker must be ready. Do not alter
+configuration or grants during the run to force an acceptance result.
+
+With an approved live provider, run `node scripts/pi-agent-communication-smoke.mjs`.
+Its explicit inspection database connection is forced read-only; it does **not**
+use that connection to configure Agents or write runtime ledgers. The authenticated
+application still creates tasks and the delegated native tool writes a uniquely
+named smoke file. Token-bearing requests are limited to the two selected local A2A
+endpoints and reject redirects; the token is not sent to the console BFF or third
+parties.
+
+The smoke checks idempotent message admission, one actual completed child task,
+native tool settlement and file contents, distinct revision-bound context sandboxes,
+then a new task in the same retained context/session with no further delegation.
+It inspects the ledger-bound container and native session read-only and verifies
+that published defaults did not change. It installs nothing, mutates no runtime
+configuration, kills no processes and performs no crash/restart replay probe.
+It does not request interactive kill/restart or approval confirmations. Missing
+prerequisites, input-required tasks, timeouts and unknown outcomes fail rather than
+being skipped or fabricated. Failure cleanup cancels only submitted receipts that
+are still active and reports unconfirmed cleanup; artifacts remain for inspection.
+
+This is paid-model acceptance, not a prerequisite checker or proof of crash recovery.
 Remote HTTPS peers, other-account authorization and `/compact` remain separate live
-checks; no remote exactly-once guarantee is made.
-`node scripts/a2a-e2e-preflight.mjs` reports prerequisites, not E2E acceptance.
+checks; `a2a-e2e-preflight.mjs` only reports prerequisites. Never target production or
+an ordinary shared development runtime, and do not change ownership/recovery ACKs,
+migrate a shared database or restart services merely to run this smoke.
 
+## Historical Hermes attachments
 
-## Ordinary Hermes attachments
+Historical attachment metadata, archives and bound workspace files are retained.
+Use the scoped read-only session file endpoint, including offline volume reads;
+reading history must not start the old runtime. Legacy upload/reservation execution
+and its automatic Hermes cleanup worker are removed. Do not delete reservation
+rows or claim that an upgrade purged retained bytes. Explicit authorized deletion
+owns physical destruction; ordinary stop preserves volumes.
 
-All size settings pass through one resolver. The per-file default remains **1,000,000,000 bytes**. The absolute hard maximum is **2,000,000,000 bytes**, compatible with the current `AgentAttachment.size` Prisma Int; `TOOLPLANE_ATTACHMENT_HARD_MAX_BYTES` may lower it. A database setting takes precedence over `TOOLPLANE_MAX_ATTACHMENT_BYTES`, then the default. The hard maximum applies to every source. Invalid values fail rather than silently widen access; if the DB cannot be read, a warm process can use its last valid value (shown as cached), while a cold process refuses a new upload.
-
-Default quota settings:
-
-| Environment variable | Default | Scope |
-|---|---:|---|
-| `TOOLPLANE_ATTACHMENT_WORKSPACE_BYTES` | 20,000,000,000 | Committed ordinary Agent attachments plus pending reservations in one workspace |
-| `TOOLPLANE_ATTACHMENT_AGENT_BYTES` | 5,000,000,000 | The same accounting for one Agent |
-| `TOOLPLANE_ATTACHMENT_CONCURRENT_UPLOADS` | 2 | Active ordinary Agent uploads per workspace |
-
-A short workspace-locked DB transaction reserves quota before upload. No database transaction remains open for the byte stream. Unknown Content-Length reserves the full per-file limit; actual streamed bytes may not exceed the reservation even with a false header. Success writes attachment metadata and removes the reservation atomically. Failures remain charged until physical cleanup is confirmed.
-
-Reservations expire after 30 minutes, longer than the bounded upload. The owner retries a bounded cleanup every minute, deleting only the reservation's known final and temporary paths through the owning Hermes sandbox. Missing/unreachable runtimes and failed cleanup remain charged; investigate rather than deleting reservation rows to manufacture free quota. The runtime/workspace deletion workflow owns destruction of its volumes.
-
-These are **ordinary Hermes Agent attachment** quotas, not whole-Docker disk quotas. Workspace/Work uploads, Hermes archive imports, snapshots and files produced directly inside a runtime have separate lifecycles; they are not silently included here. Connector files remain on the user's machine and are never reclaimed by this quota manager. Operators still need physical disk monitoring and filesystem limits. Existing stored bytes count toward admission and are not purged on upgrade; a deployment already over a new quota must deliberately raise it or remove data through its supported lifecycle.
+Fresh Pi session files and Workspace/Work attachments use their current scoped file
+and attachment lifecycles, not the removed Hermes quota/reservation flow. Historical
+archive import copies files into stopped storage only. Connector files stay on the
+user's machine. Continue monitoring physical disk usage and filesystem limits;
+read-only retention is not automatic reclamation.
 
 ## Installation and diagnostic changes
 
-See [Toolkit sync](./TOOLKIT_SYNC.en.md) for stable names, per-device credentials, five-minute rotation grace, recoverable local updates and exact-ownership uninstall. Previewing an install link no longer issues a token. Installation links remain sensitive capabilities and should be rotated after exposure.
+See [Toolkit cutover](./TOOLKIT_SYNC.en.md) for drained dry-run/apply conversion and retained read-only history. Legacy Toolkit bootstrap, sync, executable install links and old scoped tokens are not accepted. New clients use reviewed Resource Center registrations; protect their one-time configuration and explicitly revoke exposed registration tokens.
 
 See [Logging and Audit](./OBSERVABILITY.md) for explicit Agent-content capture. Normal diagnostics do not enable it; opt-in capture is bounded, audited and retained for at most 24 hours. Public Endpoint suppression cannot be overridden.
 
 ## Verification boundaries
 
-`tests/unit/runtime-owner.test.ts` tests the ownership state machine and lease failure paths. `tests/integration/runtime-owner-lease.test.ts` requires real independent PostgreSQL sessions and verifies lock contention and connection loss. `tests/integration/attachment-reservations.test.ts` tests quota admission and transactional settlement. `TOOLPLANE_TEST_PGLITE=1` is only for isolated embedded-database smoke runs and skips unsupported multi-session cases; never set it in CI or production. Docker lifecycle and real-client acceptance checks still require their respective runtimes and are not established merely by a parser or mock test.
+`tests/unit/runtime-owner.test.ts` tests the ownership state machine and lease failure paths. `tests/integration/runtime-owner-lease.test.ts` requires real independent PostgreSQL sessions and verifies lock contention and connection loss. `tests/integration/hermes-runtime-mcp.test.ts` covers retired endpoint behavior and retained history; it does not execute Hermes. The native SDK suites above cover their own host/capability/lease boundaries. `TOOLPLANE_TEST_PGLITE=1` is only for isolated embedded-database smoke runs and skips unsupported multi-session cases; never set it in CI or production. Docker lifecycle and real-client acceptance checks still require their respective runtimes and are not established merely by a parser or mock test.

@@ -24,8 +24,6 @@ const mocks = vi.hoisted(() => ({
   updateProvider: vi.fn(),
   deleteProvider: vi.fn(),
   refresh: vi.fn(),
-  affected: vi.fn(),
-  sync: vi.fn(),
   invalidate: vi.fn(),
   complete: vi.fn(),
   workspaceUpdate: vi.fn(),
@@ -53,10 +51,8 @@ vi.mock("@/lib/agents/mutations", () => ({
   deleteProvider: mocks.deleteProvider,
 }));
 vi.mock("@/lib/agents/provider-model-refresh", () => ({
-  hermesAgentsUsingProvider: mocks.affected,
   refreshProviderModels: mocks.refresh,
   revalidateProviderViews: mocks.invalidate,
-  syncHermesAgents: mocks.sync,
 }));
 vi.mock("@/lib/agents/model", () => ({
   buildModel: () => ({
@@ -67,7 +63,6 @@ vi.mock("@/lib/agents/model", () => ({
 vi.mock("@/lib/agents/channel-connections", () => ({}));
 vi.mock("@/lib/agents/channel-pairing", () => ({}));
 vi.mock("@/lib/agents/hermes/runtime", () => ({}));
-vi.mock("@/lib/agents/hermes/profiles", () => ({}));
 vi.mock("@/lib/agents/market", () => ({}));
 vi.mock("@/lib/agents/sandbox-runtime", () => ({}));
 vi.mock("@/lib/sandboxes/actions", () => ({}));
@@ -103,7 +98,6 @@ describe("round two provider configuration policies", () => {
       models: ["test-model"],
     });
     mocks.createProvider.mockResolvedValue({ id: "created" });
-    mocks.affected.mockResolvedValue([]);
     mocks.complete.mockResolvedValue({ stopReason: "stop" });
   });
 
@@ -290,11 +284,9 @@ describe("round two provider configuration policies", () => {
   });
 
   it.each([addProviderModelAction, deleteProviderModelAction])(
-    "preserves a successful edit while warning that dependent runtimes did not sync",
+    "saves model metadata without a dependent runtime synchronization phase",
     async (action) => {
-      mocks.sync.mockResolvedValue("Hermes unavailable");
       await expect(action({}, form())).resolves.toEqual({
-        warning: "Hermes unavailable",
         savedAt: expect.any(Number),
       });
     },
@@ -390,13 +382,12 @@ describe("round two provider configuration policies", () => {
     },
   );
 
-  it("combines model-refresh and dependent runtime warnings after a credential rotation", async () => {
+  it("reports catalog refresh warnings after a credential rotation without projecting runtimes", async () => {
     mocks.refresh.mockResolvedValue("catalog offline");
-    mocks.sync.mockResolvedValue("runtime offline");
     await expect(updateProviderAction({}, form())).resolves.toEqual({
       savedAt: expect.any(Number),
       warning:
-        "Provider updated, but models were not refreshed: catalog offline runtime offline",
+        "Provider updated, but models were not refreshed: catalog offline",
     });
   });
 
@@ -438,15 +429,14 @@ describe("round two provider configuration policies", () => {
     expect(mocks.updateProvider).not.toHaveBeenCalled();
   });
 
-  it("surfaces post-delete runtime synchronization errors after invalidating provider views", async () => {
-    mocks.deleteProvider.mockResolvedValue(["agent"]);
-    mocks.sync.mockResolvedValue("cannot synchronize");
-    await expect(deleteProviderAction(form())).rejects.toThrow(
-      "cannot synchronize",
+  it("deletes the provider and invalidates views without a runtime synchronization phase", async () => {
+    await expect(deleteProviderAction(form())).resolves.toBeUndefined();
+    expect(mocks.deleteProvider).toHaveBeenCalledWith(
+      "workspace",
+      "provider",
+      "owner",
     );
     expect(mocks.invalidate).toHaveBeenCalledWith("acme");
-    mocks.sync.mockResolvedValue(undefined);
-    await expect(deleteProviderAction(form())).resolves.toBeUndefined();
   });
 
   it.each(["default", "title"])(

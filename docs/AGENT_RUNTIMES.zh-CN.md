@@ -1,221 +1,122 @@
-# Agent 运行时实现：Pi、Claude Code 与 DSH
+# Agent 运行时实现：原生 Pi SDK
 
 > **English**: [AGENT_RUNTIMES.md](./AGENT_RUNTIMES.md)
 
-本文面向维护 ToolPlane、接入新运行时或排查 Agent 执行问题的开发者，说明 Pi、Claude Code（CC）和 DeepSeek Harness（DSH）的实际调用链、配置、原生会话和安全边界。这里讲的是 **ToolPlane 在沙箱中运行 Agent**，不是把 Toolkit 安装到用户电脑上的客户端；后者见 [Toolkit 同步](./TOOLKIT_SYNC.md)。
+本文说明 ToolPlane 唯一的可执行 Agent 架构：在专属 Docker 沙箱中使用官方 `AgentSession` 的 **Pi SDK 0.87.1**。这不是用户电脑上的 Toolkit 安装指南；后者见 [Toolkit 同步](./TOOLKIT_SYNC.md)。所有权、恢复和受控切换流程见[运行时运维](./RUNTIME_OPERATIONS.zh-CN.md)。
 
-核对基线：`35c308e83e75228f1b42e7660ceefdc1e459d04f`（2026-09-17）。包版本和能力允许值以链接的源码为准，不以文档中的产品名称推断上游 CLI 的所有功能都已接入。系统全貌见[架构](./ARCHITECTURE.md)，Hermes 的独立实现见 [Hermes 运行时](./HERMES_AGENT_RUNTIME.md)。
+可执行路径只有一条。普通 Pi CLI、Claude Code、DSH、Hermes 和旧 Harness 都不是可选执行器或恢复降级方案。非 Pi 历史消息和绑定文件只读；只保留真正已绑定操作的取消/排空。转换创建需要显式授权的全新 Pi 草稿，不恢复旧会话。
 
-独立的 Hermes RPC 沙箱适配器见 [Hermes RPC](./HERMES_RPC_RUNTIME.zh-CN.md)；本文仍聚焦 Pi、Claude Code 和 DSH。
+## 1. 配置不等于执行授权
 
-## 1. 先分清四个概念
+**Agent** 管理工作区内的配置与资源关系；可编辑**草稿**与不可变的已应用**修订**分离。**Conversation**、Work 准入或本地 A2A context 固定修订；对应的**会话沙箱**提供独立持久文件系统和原生进程状态。
 
-**Agent** 是工作区内的配置与资源关系；**runtime kind** 决定执行适配器；**Sandbox** 提供进程、文件系统和网络；**Conversation** 保存平台消息，并可作为原生会话的定位键。原生会话是否复用，还取决于调用方有没有传入 `runtimeSessionId`，不是只看数据库里有没有 Conversation。
+产品创建 Pi Agent，内部可执行 runtime kind 是 `pi-sdk`，没有第二个 SDK 选择器或可选 CLI 模式。创建 Agent 或沙箱记录不代表运行时就绪，也不构成执行授权。
 
-[`runtime-kind.ts`](../src/lib/agents/runtime-kind.ts) 是公开种类、能力和内置工具分组的入口：
+### 保存草稿 → Prepare → 审阅 → Apply
 
-| 能力 | Pi | Claude Code | DSH |
-|---|---|---|---|
-| 持久化的 runtime kind | `pi` | `claude-code` | `dsh` |
-| 模型绑定 | 单个 `providerId + model` | 单个 `providerId + model` | 单个 `providerId + model` |
-| 执行环境 | 恰好一个可联网的 Docker 沙箱 | 同左 | 同左 |
-| 控制台 / Work 执行 | 支持 | 支持 | 支持 |
-| Control MCP 的 `create_agent` | 支持 | 未开放 | 未开放 |
-| Hermes 专用附件上传能力 | 不支持 | 不支持 | 不支持 |
-| 发布为公共 Agent Endpoint | 未开放 | 未开放 | 未开放 |
+1. **保存草稿**只修改可编辑配置，不改变已发布默认修订或任何现有会话。
+2. **Prepare** 在发布事务外完成依赖捕获/构建与原生能力预检。准备结果冻结 digest 镜像、Pi 版本、网络/资源限制、可选的校验和验证初始快照、凭据引用、模型与指令、Skill/包制品及 MCP/A2A 授权；凭据明文不进入配置。
+3. **审阅**准确的准备结果与能力/权限变化。**Apply** 同时提交预期当前修订 ID，重新验证实时权限、制品、源摘要与原生预检，再原子比较并切换默认修订（CAS）。预期版本过期或校验失败时保留旧默认，须重新 Prepare 和审阅。
+4. **回滚**以同一 Agent 保留的历史修订发布一个新版本，仍须预期当前修订检查和实时验证。不改写历史、不恢复撤销授权，也不移动现有会话固定引用。
 
-三者接受的 provider format 为 `openai`、`openai-responses`、`anthropic`，但走的适配路径不同，见第 4 节。附件能力为 false 不等于 Agent 不能读取沙箱文件；已有文件引用与 Hermes 专用上传接口不是同一个能力。
+实现见 [`revisions.ts`](../src/lib/agents/revisions.ts) 和 [`revision-types.ts`](../src/lib/agents/revision-types.ts)。工作区安装包不等于为 Agent 启用。单项 Enable 和引导安装只将明确审阅的改动合入已应用修订，不发布无关草稿。卸载通过 CAS 发布仅移除该包的新默认，同时保留会话引用制品和共享 MCP deployment。
 
-`native.ts` 是平台内部模型循环辅助模块，不是可提交给创建接口的 `native` 运行时。不要把 Pi CLI、平台使用的 `pi-ai` 库和前端 AI SDK UI message stream 当作同一层，也不要用根 `package.json` 的 `pi-ai` 版本推断沙箱内 Pi CLI 的版本。
-
-## 2. 共用执行链路
+## 2. 固定执行链路
 
 ```text
-控制台消息 / 消息渠道 / Work / 子 Agent 调用
-  → 入口鉴权、工作区与会话归属校验
-  → resolveAgentTools：汇总所选 MCP、Toolkit、Skill
-  → runDedicatedSandboxTurn：模型、唯一沙箱、短期运行授权
-  → runSandboxAgentTurn：检查运行状态、准备包与 Skill 文件
-  → runPi / runClaudeCode / runDsh
-  → 沙箱内原生 CLI；模型与 MCP 请求回调 ToolPlane
-  → 解析原生事件，输出文本 / 工具活动 / 用量 / 命令目录
-  → 调用方负责 UI 流、Work 状态和平台消息持久化
+Chat / 消息渠道 / Work / 本地 A2A
+  → 鉴权，校验工作区、Agent 与会话准入
+  → 固定不可变修订 ∩ 当前实时权限
+  → 获取会话/沙箱租约并执行并发限制
+  → 获取该会话独立持久沙箱
+  → sandbox-turn.ts / sandbox-runtime.ts
+  → native-runtime-session.mjs 守护进程
+  → pi-sdk-session.mjs：官方 Pi SDK 0.87.1 AgentSession
+  → 受控模型 / 审批 / MCP / 协作 broker
+  → 原生事件与完成回执
+  → 调用方负责 UI 流、Work 状态与平台消息持久化
 ```
 
-创建与更新入口见 [`actions.ts`](../src/lib/agents/actions.ts) 和 [`mutations.ts`](../src/lib/agents/mutations.ts)。配置事务校验模型和资源是否属于同一工作区；未选择沙箱时可以创建专属沙箱记录。**记录创建成功不代表运行时已就绪**，执行时仍要检查沙箱关联、网络和实际运行状态。
+SDK 要求 Linux、Node 24，原生包架构须匹配 Docker daemon。可信运行时安装与冻结扩展制品落盘是不同操作；每轮不重新下载或安装审核过的扩展依赖。不得通过在活跃沙箱安装新版上游 Pi 或修改版本文件来升级。
 
-[`runDedicatedSandboxTurn()`](../src/lib/agents/sandbox-turn.ts) 要求有效模型、恰好一个属于该 Agent 工作区的 Docker 沙箱，拒绝 `network=none` 或不匹配的显式 `sandboxId`。它去重并筛选运行中的 MCP deployment，为这一执行上下文签发运行时 Token，然后调用低层执行器。
-
-[`sandbox-runtime.ts`](../src/lib/agents/sandbox-runtime.ts) 再次验证关联和 deployment 的有效运行状态，将工作目录限制在 `/workspace` 下，排除沙箱自身的 MCP deployment，准备运行时包与所选 Skill，再按种类分流。底层 Docker 操作接入运行时所有权与取消信号；不存在“沙箱不可用就改为宿主机执行”的降级路径。
+沙箱不可用、固定引用无效、broker 拒绝或原生加载失败均停止执行，不选择宿主模型循环、普通 CLI、其他运行时、当前可变默认值，也不重放历史消息。
 
 ## 3. 源码导航
 
-| 要理解或修改的行为 | 主要入口 |
+| 职责 | 源码 |
 |---|---|
-| runtime kind、能力、工具禁用分组 | [`runtime-kind.ts`](../src/lib/agents/runtime-kind.ts) |
-| 已保存消息、渠道调用 | [`message-service.ts`](../src/lib/agents/message-service.ts) |
-| 直接聊天的 UI 流 | [`chat/route.ts`](../src/app/api/v1/agents/%5BagentId%5D/chat/route.ts)、[`ui-stream.ts`](../src/lib/agents/ui-stream.ts) |
-| Work 调度、工作目录、事件与取消 | [`work/coordinator.ts`](../src/lib/work/coordinator.ts) |
-| 平台子 Agent 委派 | [`run.ts`](../src/lib/agents/run.ts) |
-| 执行上下文与 Docker 适配 | [`sandbox-turn.ts`](../src/lib/agents/sandbox-turn.ts)、[`sandbox-runtime.ts`](../src/lib/agents/sandbox-runtime.ts) |
-| Pi / CC 原生会话进程 | [`native-runtime-session.mjs`](../scripts/native-runtime-session.mjs) |
-| DSH 原生会话与命令插件 | [`dsh-runtime-driver.mjs`](../scripts/dsh-runtime-driver.mjs) |
-| 运行授权与当前资源绑定复核 | [`runtime-access.ts`](../src/lib/agents/runtime-access.ts)、[`runtime-grant.ts`](../src/lib/agents/runtime-grant.ts) |
-| 原生命令与平台会话操作 | [`runtime-commands.ts`](../src/lib/agents/runtime-commands.ts)、[`runtime-command-service.ts`](../src/lib/agents/runtime-command-service.ts)、[`conversation-operations.ts`](../src/lib/agents/conversation-operations.ts) |
+| 运行时能力分类 | [`runtime-kind.ts`](../src/lib/agents/runtime-kind.ts) |
+| 不可变准备、发布与实时权限交集 | [`revisions.ts`](../src/lib/agents/revisions.ts) |
+| 会话沙箱分配与保留绑定 | [`conversation-sandbox.ts`](../src/lib/agents/conversation-sandbox.ts) |
+| 专属 turn 与 Docker 执行 | [`sandbox-turn.ts`](../src/lib/agents/sandbox-turn.ts)、[`sandbox-runtime.ts`](../src/lib/agents/sandbox-runtime.ts) |
+| 持久守护进程与 SDK 宿主 | [`native-runtime-session.mjs`](../scripts/native-runtime-session.mjs)、[`pi-sdk-session.mjs`](../scripts/pi-sdk-session.mjs) |
+| 原生能力预检与命名空间 | [`pi-sdk-preflight.mjs`](../scripts/pi-sdk-preflight.mjs)、[`pi-sdk-capabilities.mjs`](../scripts/pi-sdk-capabilities.mjs) |
+| 快照字节与链接验证 | [`pi-sdk-package-files.mjs`](../scripts/pi-sdk-package-files.mjs) |
+| 准确包会话固定引用 | [`pi-session-packages.ts`](../src/lib/agents/pi-session-packages.ts) |
+| 运行时授权 | [`runtime-access.ts`](../src/lib/agents/runtime-access.ts)、[`runtime-grant.ts`](../src/lib/agents/runtime-grant.ts) |
+| 原生工具审批钩子 | [`native-tool-approval.ts`](../src/lib/agents/native-tool-approval.ts) |
+| 命令与会话操作 | [`runtime-commands.ts`](../src/lib/agents/runtime-commands.ts)、[`runtime-command-service.ts`](../src/lib/agents/runtime-command-service.ts)、[`conversation-operations.ts`](../src/lib/agents/conversation-operations.ts) |
+| 消息、Work 与 A2A 调用方 | [`message-service.ts`](../src/lib/agents/message-service.ts)、[`work/coordinator.ts`](../src/lib/work/coordinator.ts)、[`local-executor.ts`](../src/lib/a2a/local-executor.ts) |
+| UI 投影 | [`ui-stream.ts`](../src/lib/agents/ui-stream.ts) |
 
-## 4. 模型代理和凭据边界
+保留的历史事件 parser 用于解释已存数据，不意味着旧适配器仍可执行。
 
-三者的模型地址不是直接拼接真实 provider key 的上游地址，而是 ToolPlane 的 `/api/v1/agent-runtime/model/{providerId}`。MCP 地址为 `/api/v1/agent-runtime/mcp/{deploymentId}/rpc`。
+## 4. 会话固定引用与独立工作卷
 
-[`runtime-access.ts`](../src/lib/agents/runtime-access.ts) 用平台签名 Token 绑定 `workspaceId`、`agentId`、`sandboxId`、`providerId` 和 deployment 允许清单。当前 turn 签发 55 分钟有效期，验证器限制最大 TTL 为 60 分钟；这是运行授权，不是用户 API Token 或 Toolkit 安装 Token，也不是按单个模型 ID 绑定的凭据。
+新 Conversation、Work 和本地 A2A context 持久化 `agentRevisionId`；Work 在分配卷前的准入阶段固定修订。每个会话按固定环境懒创建持久沙箱，不读取 Agent 当前可变模板。并发会话不共享可写沙箱，会话文件不自动合并回模板。同会话内 turn 串行，Agent/平台并发限制及原生/session-MCP 租约继续生效。
 
-[模型代理](../src/app/api/v1/agent-runtime/model/%5BproviderId%5D/%5B%5B...path%5D%5D/route.ts)与 [MCP 代理](../src/app/api/v1/agent-runtime/mcp/%5BdeploymentId%5D/rpc/route.ts)校验授权及当前资源关系。模型代理移除客户端凭据和 Cookie 等头，再从平台侧配置添加上游认证。不要把运行 Token、真实 provider key 或数据库凭据写入用户可见的输出和诊断材料。
+`PiSessionPackageSet` 记录准确包 release/checksum 和 MCP 绑定。工作区包更新、新应用默认和回滚只影响新会话。普通卸载或下架保留已引用的批准制品；危险 release 撤销和当前 provider、凭据、包、MCP、方向性协作限制仍阻止执行。固定引用不是不可撤销权限快照。
 
-| 原生调用方 | 模型协议适配 |
-|---|---|
-| Pi | `buildPiModelsConfig()` 将 provider format 映射到 `openai-completions`、`openai-responses` 或 `anthropic-messages` |
-| Claude Code | CLI 使用 Anthropic 形式的请求；当配置的 provider 不是 Anthropic 时，ToolPlane 的 [`anthropic-gateway.ts`](../src/lib/agents/anthropic-gateway.ts) 适配 `/v1/messages` 和 `/v1/messages/count_tokens` |
-| DSH | `buildDshPatch()` 配置 `llm-pi-ai`、默认 provider/model 和上述协议映射 |
+数据库管理身份、修订/沙箱绑定、授权与任务回执；官方 SDK JSONL 文件管理原生对话状态。状态限定在 `/workspace/.toolplane/runtimes/pi-sdk/agents/<agent-id>/`；本地 A2A 复用持久化 context ID。私有宿主状态跟踪 new/fork/switch 后实际选中的 SDK 会话，与旧 Harness 检查点无关。
 
-CC 的兼容网关不是“完整实现所有 Anthropic API”的承诺；兼容范围以当前请求 schema、事件转换和测试为准。其 `count_tokens` 兼容响应使用估算，不能当作上游提供的精确计费数据。
+保留 context 必须重新打开原生会话。持久历史丢失，或宿主在首次会话文件落盘前丢失，返回 `PI_SDK_SESSION_MISSING`。历史修订/包固定引用未解决返回 `AGENT_REVISION_UNRESOLVED`；包集合不匹配返回 `PI_SDK_PACKAGE_SET_CHANGED`。应排查或恢复匹配工作卷，不得从当前默认猜测固定引用、修改 checksum、重放消息，或新建空会话冒充恢复。
 
-回调地址由 `sandboxRuntimeOrigin()` 解析。排障首先检查 `TOOLPLANE_RUNTIME_ORIGIN` 和容器到平台的实际连通性；本地 loopback 会转换为 `host.docker.internal`。该函数返回 URL 的 origin，不保留配置 URL 的路径前缀，因此不能假设在这里加子路径就能配置带前缀的回调路由。
+## 5. 原生守护进程与请求 context
 
-## 5. Pi：显式配置、MCP 扩展与 RPC 会话
+[`native-runtime-session.mjs`](../scripts/native-runtime-session.mjs) 只接受 `pi-sdk`，按私有状态路径哈希生成沙箱内 Unix socket，同一时间只允许一个请求，其他请求返回 `PI_SDK_BUSY`。它跨 turn 保留 SDK 子进程，处理停机、socket 断开和配置签名变化。守护进程重启不等于允许重放中断任务。
 
-`runPi()` 生成专属 `models.json`，通过 `PI_CODING_AGENT_DIR` 定位 Agent 状态目录，以 `TOOLPLANE_RUNTIME_TOKEN` 访问模型代理。启动时关闭默认 extensions、skills、prompt templates、themes 和 context files 的自动发现，再显式加载本次所选 Skill 目录与 ToolPlane MCP 扩展。
+[`pi-sdk-session.mjs`](../scripts/pi-sdk-session.mjs) 加载固定 SDK，使用明确资源构建官方会话服务，关闭默认扩展、Skill、prompt、theme 和 context file 的自动发现。模型凭据仅在请求期间保存在内存；每次请求刷新 runtime token 和 MCP context，在初始化会话/模型执行前检查审批 readiness，结束后清理请求凭据。缺少 context 返回 `PI_SDK_CONTEXT_REQUIRED`；原生工具定义或审批模式变化返回 `PI_SDK_TOOLSET_CHANGED`，不静默改变保留会话。
 
-- 有 `runtimeSessionId` 时使用 `--mode rpc`，交给原生会话驱动保持 CLI；没有时使用 `--mode json --no-session`，输入本次构造的 transcript。
-- `piMcpExtensionSource()` 是显式 `--extension` 加载的桥接代码，发现 MCP 工具、注册名称、调用 JSON-RPC，并对请求、响应、schema 大小和注册数量做限制。
-- 内置工具禁用项经 `normalizeDisabledBuiltinTools()` 校验后传给 `--exclude-tools`。这与远端 MCP 工具的授权策略是不同层。
-- `parsePiStreamLine()` 提取文本、推理活动、工具调用、错误和上下文用量；原生 `/compact [focus]` 被会话驱动转换为 Pi 的 `compact` RPC。
+结构化事件走专用文件描述符。扩展 stdout/stderr 不是可信协议通道，不能伪造 broker 结果。数据库消息持久化和 UI/Work 生命周期由调用方负责，不由低层执行器代办。
 
-[`native-runtime-session.mjs`](../scripts/native-runtime-session.mjs) 为 Pi 使用 `SessionManager` 进行首次历史导入，随后由 CLI 维护 JSONL 会话。原生压缩后不重新导入完整平台历史。`--offline` / `PI_OFFLINE` 不意味着无需网络：首次包安装以及模型、MCP 代理请求仍需要可达的网络路径。
+## 6. 受控 broker 与隔离边界
 
-### 独立 Pi SDK 宿主
+模型请求走 ToolPlane 的凭据化模型代理 `/api/v1/agent-runtime/model/{providerId}`，不把真实上游密钥交给扩展配置。运行时 grant 是范围受限的凭据，不是个人 API Token 或桌面安装 Token。代理重新校验当前资源关系，上游凭据由平台管理。不要将 runtime token、provider key 或数据库凭据暴露到提示词、日志或 issue 附件。
 
-`pi-sdk` 通过 [`pi-sdk-session.mjs`](../scripts/pi-sdk-session.mjs) 使用官方
-0.87.1 AgentSession，不替换已有 Pi Harness 或旧 CLI 协议。审核快照包含运行依赖，
-启动不安装市场包。执行和 reload 前复核完整字节及链接；篡改返回
-`PI_PACKAGE_CHECKSUM_MISMATCH`，本轮不继续执行。
+审批 readiness 对普通会话只允许 `/api/v1/agent-runtime/sessions/approvals`，对委派任务只允许 `/api/v1/agent-runtime/a2a/<task-id>/approvals`。辅助代码要求运行时鉴权、HTTP(S)、无内嵌凭据/query/fragment、不重定向以及有界响应。readiness 拒绝会阻止执行；不能用活动日志推断审批替代原生执行前钩子，也不能在 broker 失败后绕过审批。
 
-SDK JSONL 会话独立于 Harness 检查点；私有状态文件跟踪 new/fork/switch 后的真实
-会话文件。已持久化文件丢失，或尚未落盘的活宿主丢失，返回
-`PI_SDK_SESSION_MISSING`；包集合变化要求新建会话。命令保留上游大小写和冲突后缀，
-终端 UI 不映射成 Web UI。扩展可在 Agent 沙箱内直接使用 Node、文件和网络，
-工具审批不等于任意代码隔离。
+MCP 工具必须同时位于不可变修订授权和当前显式工具 allowlist 内。会话 broker 校验固定镜像/recipe 和实时授权后懒启动隔离 sidecar；共享 deployment 停止不意味着可以丢弃有效固定 recipe，也不能借用共享进程。协作同样取固定/实时入站出站权限交集，并执行明确有界目标授权、工作区/操作者范围及循环/深度限制。
 
-## 6. Claude Code：stream-json、Skill 插件与会话恢复
+**工具审批不等于任意代码隔离。**已批准扩展可在沙箱内直接使用 Node、文件与网络。内置工具禁用项和 broker scope 不替代容器、挂载、网络边界。附件元数据也不能证明字节已挂载；可读路径提示必须来自有效沙箱 `runtimePath`。
 
-`runClaudeCode()` 使用 `buildClaudeRuntimeArgs()` 生成 `--bare --print --verbose --output-format stream-json` 等参数；持久会话还启用 `--input-format stream-json`，无会话模式则使用 `--no-session-persistence`。系统提示词使用 `--append-system-prompt`，所选 Skill 使用显式 `--plugin-dir`。
+回调连通性先检查 `TOOLPLANE_RUNTIME_ORIGIN` 和容器到平台实际网络。`sandboxRuntimeOrigin()` 将 loopback 转换为 `host.docker.internal`，取 URL origin，不保留配置中的子路径。
 
-MCP 配置由 `buildClaudeMcpConfig()` 生成，在存在所选 MCP 时以 `--mcp-config` 和 `--strict-mcp-config` 传入；认证头里是短期运行 Token，不是真实模型密钥。`ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN` 在这个适配器里同样承载运行 Token，`ANTHROPIC_BASE_URL` 指向平台代理。
+## 7. 原生预检、包与命令
 
-CLI 以 `CLAUDE_RUNTIME_USER`（当前 `1000:1000`）运行。准备步骤会对 `/workspace` 执行递归所有权调整，因此不能将其视为对任意宿主机挂载都无副作用的通用脚本。`HOME` 和 `CLAUDE_CONFIG_DIR` 指向 Agent 的独立状态目录。
+Prepare/发布在固定隔离捕获镜像 `toolplane-pi-package-capture:0.87.1` 中使用真实 SDK loader，不靠扩展工厂源码文本猜测能力。原生命名空间检查覆盖工具、命令、Skill、prompt 及保留的生成 MCP 名称。冲突保留类型化 `PI_CAPABILITY_CONFLICT`；所选扩展加载失败保留 `PI_EXTENSION_LOAD_FAILED` 和有界阶段诊断。不静默丢弃冲突扩展或替换版本。
 
-持久模式复用与 Pi 相同的 socket 驱动，但协议不同：输入和输出是 CC 的 stream-json；新会话用 `--session-id`，已有会话用 `--resume`。首次旧历史导入依赖所固定 CLI 版本的 resume 文件格式，升级时必须单独验证，不能假定所有版本兼容。
+冻结快照包含依赖，执行和 reload 前完整验证字节与链接；篡改在 turn 执行前返回 `PI_PACKAGE_CHECKSUM_MISMATCH`。原生快照必须匹配执行平台/架构。启动不安装市场包、不执行包管理器 hooks，也不将发现任意用户配置作为降级方案。
 
-`parseClaudeRuntimeMetadata()` 从 `system/init`、`commands_changed` 读取运行中的命令目录，从 `result` 提取 usage；`parseClaudeStreamLine()` 处理 partial messages、文本、工具和错误。`/clear`、`/compact [focus]`、`/context`、`/usage` 由原生 CLI 执行，不用同名宿主机逻辑模拟。
+命令保留原生调用大小写和 `:1` 等冲突后缀。未知命令报错，不转成模型提示词。纯命令完成回执不伪造成模型回答；终端扩展 UI 不渲染成 Web UI。
 
-## 7. DSH：headless profile、插件驱动与持久化状态
+在自己拥有且空闲的会话发送 `/compact` 或 `/compact <自定义指令>`，对同一保留会话调用原生 `session.compact()`，须等待持久化的原生结果。绑定忙碌时拒绝第二个 writer；失败不回退宿主摘要或 CLI 压缩。渠道命令要求稳定 transport 消息 ID 去重；已鉴权会话命令生成原生回执 ID。Work 命令仍由 coordinator 管理。
 
-`runDsh()` 每次准备 patch、输入文件和带随机前缀的事件插件，再运行 `dsh --profile headless --patch ...`。`buildDshPatch()` 配置模型、system prompt、Skill 根目录，以及 `@deepseek-ai/dsh-mcp-client` 的 streamable-http 连接。
+## 8. 取消、排空与历史策略
 
-有 `runtimeSessionId` 时，patch 关闭默认 `headless-runner` 并加载 [`dsh-runtime-driver.mjs`](../scripts/dsh-runtime-driver.mjs)。驱动等待依赖就绪，按 `toolplane-<runtimeSessionId>` 查找会话，通过 `agents.resume()` 或 `agents.create()` 建立 Agent，只在首次创建时导入历史。随后它执行注册命令或发送 followup，等待 idle，检查 `turn/end` 是否正常完成，最后在 `finally` 中 flush 会话。
+取消停止绑定原生进程和会话 MCP sidecar，不删除持久工作卷。Docker 操作接入运行时所有权与取消跟踪。终止是有界清理，不是任意工具副作用的回滚。未知副作用和远端 ACK 保持未知，不能重放任务制造完成结果，也不承诺远端 exactly-once。会话/沙箱忙碌时，未领取的委派工作保持排队，直到正常租约重新可用。
 
-**DSH 这里不是 Pi/CC 那种跨轮次驻留的 socket CLI。**原生进程可以退出，下次通过 `DSH_HOME` 下的持久化数据恢复会话和 goal；未传会话 ID 时保留普通 headless 路径。
+单一 runtime owner 完成恢复后才接受执行。所有权丢失停止新工作；停机停止 coordinator/broker，排空或中止跟踪操作，最后释放所有权。不确定清理保留 dirty marker。HTTP liveness 不等于 readiness，换数据库/domain 或删除恢复标记不是接管流程。遵循[运行时运维](./RUNTIME_OPERATIONS.zh-CN.md)，包括准确且仅用于一次重启的恢复 ACK 要求。
 
-事件插件输出带本次随机前缀的 JSON 行，`parseDshEventLine()` 只解析匹配的活动事件；命令目录和命令结果使用同一前缀通道。适配器的上下文用量当前为估算，不应当作精确计费数据。
+**非 Pi 和未解决固定引用的历史会话只读。**保留历史消息、response、绑定文件读取、历史解析/归档访问及真正已绑定操作的取消/排空。不得启动、恢复、重放旧运行时，也不向其上传或开启执行终端。退役 Hermes 执行/model/profile/runtime MCP/dashboard/terminal/upload 端点返回 HTTP **410**，不是通向 Pi 的兼容路由。旧 `pi-harness` 任务标签只识别绑定清理。受控转换须排空旧任务，创建全新 Pi 草稿并重新审阅授权，不恢复旧运行时状态、不自动重新发布公开包。
 
-DSH 的内置工具禁用映射到插件行：例如多个文件工具共用 `tool-fs`，禁用其中一个映射项可能禁用整组插件能力。修改 UI 或策略时要保持这个实际粒度，不要承诺逐工具隔离。`/goal` 及其参数由原生命令注册表解释。
+排障优先使用关联 ID、状态、耗时与失败类型。Agent 内容采集须显式限时授权，见[可观测性](./OBSERVABILITY.zh-CN.md)。不要将完整原生输出、提示词或私有配置贴到公开 issue。
 
-## 8. 会话复用取决于入口
+## 9. 回归源码与证据边界
 
-以下是本次核对到的调用参数，不是对所有未来入口的统一假设：
+保留的 [`native-runtime-session.test.ts`](../tests/integration/native-runtime-session.test.ts) 是无条件运行的原生 SDK daemon 回归，不是环境变量开启的真实 CLI/容器矩阵，不能证明真实 provider 或 Docker 验收。
 
-| 调用方 | 传给 dedicated runner 的 `runtimeSessionId` | 行为 |
-|---|---|---|
-| `message-service.ts` | `conversation.id` | 使用对应原生会话 |
-| `work/coordinator.ts` | `work.conversationId` | 使用对应原生会话；传入 Work 工作目录 |
-| `runtime-command-service.ts` 的普通会话命令 | `conversation.id` | 对该原生会话执行命令；Work 命令则入队交给 coordinator |
-| `agents/[agentId]/chat/route.ts` 的 dedicated 分支 | 未传 | 使用无显式原生会话 ID 的执行路径 |
-| `run.ts` 的 dedicated 子 Agent 分支 | 未传 | 单次委派，不复用父对话的原生会话 |
+[`pi-sdk-host.test.ts`](../tests/integration/pi-sdk-host.test.ts) 使用仓库已安装的 `@earendil-works/pi-coding-agent` 依赖，配合临时目录和受控本地 HTTP 模型/MCP/审批 fixture 启动真实 SDK 宿主。需要固定依赖、兼容 Node、子进程及本地 socket/文件访问；它不是付费 provider 测试，也不要求预装 CLI 的沙箱。[`pi-sdk-capabilities.test.ts`](../tests/integration/pi-sdk-capabilities.test.ts) 在 Vitest 模块转换之外调用已安装的原生 extension/Skill loader 和命名空间检查。
 
-因此，数据库中的平台消息、Hermes 的运行会话字段和这里的原生会话键不能混用。特别是直接 `/chat` 路径，即使保存了平台消息，也不能据此推断后续原生命令与聊天共享了同一个 CLI 状态。
+涉及数据库/Docker 的租约与通信套件只在已批准隔离环境、固定捕获镜像下串行运行；前提以[运行时运维](./RUNTIME_OPERATIONS.zh-CN.md#原生-sdk-验证)和各测试源码为准。不要使用生产 Agent 沙箱、并发操作同一测试数据库，也不要将 parser/unit/受控宿主结果当作真实 provider 验收。原生压缩须单独验证，通信 smoke 不覆盖它。
 
-Pi/CC 驱动按 `statePath` 的哈希生成沙箱内 Unix socket。一个 socket 同时只接一个请求；配置签名变化或进程达到复用年龄时，在下一次请求重启并恢复；空闲时也会退出。状态通过临时文件加 rename 保存。已经导入过的原生历史丢失时，驱动会报错，不能靠重放完整平台历史掩盖丢失，否则可能撤销先前的压缩语义。
-
-[`runtime-commands.ts`](../src/lib/agents/runtime-commands.ts) 提供最小命令目录，并只为 CC/DSH 合并当前 runtime/session 上报的动态目录；`new`、`help` 等宿主命令不混入其中。[命令服务](../src/lib/agents/runtime-command-service.ts) 检查工作区、Agent、Conversation、运行时是否变化以及忙碌状态；未知命令不会悄悄变成普通模型提示词。
-
-## 9. 包、Skill 和 MCP 的文件布局
-
-下面是概念布局；具体文件名由执行器生成，不能把含凭据的文件整体复制到 issue 或日志中：
-
-```text
-/workspace/.toolplane/
-  runtime-packages/<runtime-and-version>/  # 固定版本的 CLI 与依赖
-  npm-cache/pnpm-store/                    # 安装缓存
-  runtime-tmp/                            # 每轮或会话使用的桥接配置和输入
-  runtimes/<kind>/agents/<agentId>/        # Agent 状态根目录
-    skills/                               # Pi/DSH 的所选 Skill 根目录
-    sessions/                             # Pi/CC 驱动状态；其他原生数据由 CLI 管理
-```
-
-CC 的 Skill 根目录自身是插件目录，包含 `.claude-plugin/plugin.json` 和 `skills/<skill>/SKILL.md`，因此会出现额外一层 `skills/`。`materializeSandboxSkills()` 使用摘要跳过未变化内容，重建时写入 Markdown 与附加文件；它不是用户电脑上 `plugin/sync-client.ts` 的可恢复 Toolkit 同步事务，不能把两者的恢复保证混为一谈。
-
-运行时版本、安装目录和可执行文件统一定义在 [`SANDBOX_RUNTIME_PACKAGES`](../src/lib/agents/sandbox-runtime.ts)。`ensureRuntimeInstalled()` 在目标容器里检查二进制并使用固定版本 `pnpm add`，控制安装脚本允许清单，并在同一应用进程内合并并发安装等待。沙箱镜像需要具备执行器要求的 Node、pnpm 和系统能力；升级根项目依赖不会自动升级已有沙箱里的 CLI。
-
-所选 Skill 来自平台资源解析，额外文件路径经过安全路径处理；三者均通过自己的文件/执行工具消费 Skill。`buildAgentToolSet()` 中的宿主工具、知识库工具、平台子 Agent 包装器不会仅因创建了 dedicated runner 就自动注入原生 CLI；原生 CLI 自带的子 Agent 能力也不等于 ToolPlane 的子 Agent 关系。
-
-附件只在提供有效沙箱 `runtimePath` 时转成可读取路径提示；没有路径时 transcript 会说明字节未挂载。不要将“消息带 file/image part”误认为文件已经进入该 Docker 沙箱。
-
-## 10. 事件、用量和持久化责任
-
-执行器统一回调 `onTextDelta`、`onActivity`、`onContextUsage`、`onCommands`、`onUsage`，但不是每个运行时都会提供每一类精确数据。工具活动补充 deployment 与原始工具名称映射，便于区分原生内置工具和远端 MCP。
-
-[`ui-stream.ts`](../src/lib/agents/ui-stream.ts) 将活动转成前端的 text/reasoning/tool 消息块；Work 则由 coordinator 发布输出和保存状态。命令目录、命令结果和 runtime usage 使用 `runtime-commands.ts` 定义的消息 part。**前端流格式统一不代表底层执行引擎相同，也不代表低层执行器负责数据库消息落库。**
-
-Pi/CC 在收到可用原生统计时使用它，否则相关路径会回退估算；DSH 当前回调估算值。上游兼容网关本身的估算、上下文窗口估算与计费 usage 也要分别理解，不要仅凭显示的 token 数推导账单。
-
-## 11. 安全、取消与故障排查
-
-这些 CLI 在专属沙箱中采用非交互执行：Pi 使用 `--no-approve`，CC 使用 `--dangerously-skip-permissions`，DSH 设置 `DSH_PERMISSION_MODE=danger-full-access`。这些是现有实现的边界，不是推荐在宿主机照抄的启动命令。**原生工具禁用和 MCP scope 不能替代容器、挂载及网络隔离，也不能假定每个 CLI 内置工具调用都会经过平台逐项审批。**
-
-`runTrackedDockerExec()` 记录容器内 PID、串行处理输出回调，并组合请求取消与 owner 取消信号。超时、取消或输出超限时尝试终止容器内进程树并清理 Docker exec；这是有界清理机制，不是对任意外部副作用的事务回滚保证。Pi/CC 驱动还处理 socket 断开与原生子进程退出。运行时单所有者、readiness、非正常退出后的人工恢复见[运行时运维](./RUNTIME_OPERATIONS.zh-CN.md)，不要绕过恢复标记来抢占仍在运行的旧实例。
-
-| 症状 | 优先检查 |
-|---|---|
-| 提示必须分配一个沙箱 / 沙箱未运行 | AgentSandbox 数量、工作区归属、Docker 类型、network 和有效 deployment 状态 |
-| 首次启动失败 | `SANDBOX_RUNTIME_PACKAGES`、容器 Node/pnpm、包源连通性、安装脚本和文件权限 |
-| 模型或 MCP 返回 401/403 | Token 是否过期、provider/deployment 是否仍属于当前授权、Agent 与沙箱绑定是否变化；不要直接改用个人 Token |
-| 原生会话 busy 或历史丢失 | 调用入口实际传入的 session ID、工作目录、原生状态目录、同一会话是否仍在执行；必要时恢复匹配的沙箱数据或新建对话 |
-| `/compact` / `/goal` 不可用或参数错误 | 当前 runtime 的命令目录、持久模式是否启用、原生注册表和 CLI 参数要求 |
-| Skill 或文件不可见 | 所选资源是否被解析、插件目录层级、摘要、文件是否实际挂载，而不是只存在平台附件记录 |
-| 有 HTTP 响应但执行被阻止 | runtime readiness 与单所有者状态；进程存活不等于已完成运行时恢复 |
-
-日志采集策略见[可观测性](./OBSERVABILITY.zh-CN.md)。日常优先检查关联 ID、状态、耗时与失败类型；采集 Agent 内容需显式、限时授权，不要把原生 stdout、提示词或私有配置全量贴到公开 issue。
-
-## 12. 验证和演进约束
-
-无需启动真实 CLI 的重点回归入口：
-
-```bash
-pnpm vitest run tests/unit/agent-sandbox-runtime.test.ts tests/unit/agent-sandbox-turn.test.ts
-pnpm vitest run tests/unit/agent-runtime-access.test.ts tests/unit/agent-runtime-proxy.test.ts tests/unit/agent-anthropic-gateway.test.ts
-pnpm vitest run tests/unit/documentation-contracts.test.ts
-```
-
-真实原生会话测试是显式开启的。需要可丢弃、已安装对应固定版本运行时的测试容器，以及容器到测试进程的网络连通性；不要指向生产 Agent 沙箱。下面的容器名是示例，测试不会为你创建或准备该容器：
-
-```bash
-TOOLPLANE_NATIVE_COMMAND_SANDBOX=toolplane-runtime-test \
-TOOLPLANE_NATIVE_COMMAND_KIND=pi \
-  pnpm vitest run tests/integration/native-runtime-session.test.ts
-
-TOOLPLANE_COMMAND_SANDBOX_TEST=toolplane-runtime-test \
-  pnpm vitest run tests/integration/dsh-command-driver.test.ts
-```
-
-第一条可将 kind 改为 `claude-code` 或 `dsh`。测试实现见[原生会话测试](../tests/integration/native-runtime-session.test.ts)与 [DSH 命令测试](../tests/integration/dsh-command-driver.test.ts)；未设置环境变量时它们会跳过，不能把普通 CI 成功说成真实 CLI 会话已验收。
-
-升级运行时或新增适配器时，在同一 PR 检查能力注册表、包定义、provider 映射、事件解析、Skill/MCP 投影、首次历史导入与恢复、原生命令和取消路径。先补针对性测试，再更新本页两个语言版本；不要为复用外观把三种原生会话协议强行当成一个实现。
+SDK 变更须同步维护修订 Prepare/CAS、原生预检、冻结制品、实时 broker 权限、会话固定引用、独立工作卷、命令与取消边界。两种语言文档随实现更新，不得为满足旧调用方或测试而恢复已退役执行别名。

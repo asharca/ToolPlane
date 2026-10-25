@@ -41,6 +41,8 @@ export async function piCatalogAction(
     let listingId: string | undefined;
     let installId: string | undefined;
     if (operation === "install-official") {
+      if (field("confirmExecutableCode") !== "on")
+        return { error: "pi_package_executable_confirmation_required" };
       const result = await installOfficialPiPackage({
         ...context,
         name: field("name"),
@@ -183,6 +185,8 @@ export async function piCatalogAction(
           sourceId,
           listingId,
           visibility,
+          confirmExecutableCode: field("confirmExecutableCode") === "on",
+          sourceDigest: field("sourceDigest"),
           listing,
           categoryIds,
         });
@@ -190,8 +194,8 @@ export async function piCatalogAction(
       } else return { error: "action_failed" };
     }
     revalidatePath(`/app/${workspace.slug}/market/pi-packages`);
-    revalidatePath(`/app/${workspace.slug}/toolkits/pi-packages`);
-    revalidatePath(`/app/${workspace.slug}/toolkits/pi-packages/sources`);
+    revalidatePath(`/app/${workspace.slug}/market/compose`);
+    revalidatePath(`/app/${workspace.slug}/market/sources`);
     revalidatePath(`/app/${workspace.slug}/market/installed`);
     return { ok: true, listingId, installId };
   } catch (error) {

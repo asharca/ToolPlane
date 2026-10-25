@@ -29,11 +29,12 @@ import { localTaskSandbox } from "@/lib/a2a/local-sandbox";
 const task = (kind = "chat", child = false) =>
   ({
     contextId: "context",
-    executionBackend: "pi-harness",
-    nativeOperationId: "operation",
+    executionBackend: "pi-sdk",
+    nativeOperationId: null,
     grant: {
       kind: "local",
       workspaceId: "workspace",
+      agentRevisionId: "revision",
       agentId: "agent",
       ancestorTaskIds: child ? ["parent"] : [],
       entryPolicy: { kind, sourceId: "source" },
@@ -103,7 +104,16 @@ it("denies revoked authorization before allocating, without template fallback", 
 });
 it("permits owner-only cleanup of an already-bound operation without regranting execution", async () => {
   mocks.live.mockRejectedValue(new Error("revoked"));
-  await expect(localTaskSandbox(task(), true)).resolves.toMatchObject({
+  await expect(
+    localTaskSandbox(
+      {
+        ...task(),
+        executionBackend: "pi-harness",
+        nativeOperationId: "operation",
+      },
+      true,
+    ),
+  ).resolves.toMatchObject({
     sandboxId: "bound",
   });
   expect(mocks.owner).toHaveBeenCalled();
@@ -120,6 +130,15 @@ it("denies cleanup without ownership or bound operation", async () => {
   mocks.owner.mockImplementation(() => {
     throw new Error("not owner");
   });
-  await expect(localTaskSandbox(task(), true)).rejects.toThrow("not owner");
+  await expect(
+    localTaskSandbox(
+      {
+        ...task(),
+        executionBackend: "pi-harness",
+        nativeOperationId: "operation",
+      },
+      true,
+    ),
+  ).rejects.toThrow("not owner");
   expect(mocks.find).not.toHaveBeenCalled();
 });

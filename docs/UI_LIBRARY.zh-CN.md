@@ -15,6 +15,11 @@ Registry 源码不添加主题或组件外观覆盖。更新时从原版目录�
 ToolPlane 只允许添加为保留 Server Action、FormData、工作区权限、流式输出或安全边界
 所需的领域适配器；不得重新定义 beUI 样式或建立第二套通用组件库。
 
+2026-10-19 源码同步基于上游 [`12a9c26`](https://github.com/asharca/ui/commit/12a9c26)：
+同步表格选中工具栏的稳定表头、视口感知 Morph Popover、可选跟随光标的 Tooltip、
+可取消激活的 Tabs、工作区一级子导航、页签交互及活动列表视口高度。
+保留本项目的本地化操作、焦点/退出回调、输入法处理与安全适配；不安装尚未使用的上游组件。
+
 公开首页组合 Registry 的徽章、倾斜卡片、按钮、输入框、标签页与 FAQ 组件。
 GitHub 源码链接统一使用 `react-icons/fa` 的 `FaGithub`。导航栏的 Popover
 触发器和按钮须位于同一客户端组件树，确保克隆触发器的事件在 hydration 后仍生效。

@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { db } from "@/lib/db";
-import { setAgentTools } from "@/lib/agents/mutations";
+import { createAgent, setAgentTools } from "@/lib/agents/mutations";
 
 let userId = "";
 let otherUserId = "";
@@ -10,7 +10,6 @@ let otherWorkspaceId = "";
 let parentId = "";
 let childId = "";
 let crossId = "";
-let parentSandboxId = "";
 
 const stamp = Date.now();
 const noTools = { deploymentIds: [], installedSkillIds: [], toolkitIds: [] };
@@ -44,40 +43,12 @@ beforeAll(async () => {
   });
   otherWorkspaceId = otherWs.id;
 
-  const sandboxDeployment = await db.deployment.create({
-    data: {
-      workspaceId,
-      name: "Parent sandbox",
-      source: "sandbox",
-      status: "stopped",
-    },
+  const parent = await createAgent(workspaceId, "Parent", {
+    runtime: "pi-sdk",
   });
-  parentSandboxId = (
-    await db.sandbox.create({
-      data: {
-        workspaceId,
-        deploymentId: sandboxDeployment.id,
-        name: "Parent sandbox",
-        slug: `parent-sandbox-${stamp}`,
-        kind: "docker",
-        network: "isolated",
-      },
-    })
-  ).id;
-
-  const parent = await db.agent.create({
-    data: { workspaceId, name: "Parent", slug: "parent", runtimeKind: "pi" },
-  });
-  const child = await db.agent.create({
-    data: { workspaceId, name: "Child", slug: "child", runtimeKind: "pi" },
-  });
-  const cross = await db.agent.create({
-    data: {
-      workspaceId: otherWorkspaceId,
-      name: "Cross",
-      slug: "cross",
-      runtimeKind: "pi",
-    },
+  const child = await createAgent(workspaceId, "Child", { runtime: "pi-sdk" });
+  const cross = await createAgent(otherWorkspaceId, "Cross", {
+    runtime: "pi-sdk",
   });
   parentId = parent.id;
   childId = child.id;
@@ -96,7 +67,6 @@ describe("setAgentTools sub-agents", () => {
   it("persists same-workspace links and drops self + cross-workspace", async () => {
     await setAgentTools(workspaceId, parentId, {
       ...noTools,
-      sandboxIds: [parentSandboxId],
       subAgentIds: [childId, parentId, crossId],
     });
     const links = await db.agentSubAgent.findMany({ where: { parentId } });
@@ -106,7 +76,13 @@ describe("setAgentTools sub-agents", () => {
   it("replaces links on re-save (empty clears)", async () => {
     await setAgentTools(workspaceId, parentId, {
       ...noTools,
-      sandboxIds: [parentSandboxId],
+      subAgentIds: [childId],
+    });
+    await expect(
+      db.agentSubAgent.findMany({ where: { parentId } }),
+    ).resolves.toMatchObject([{ childId }]);
+    await setAgentTools(workspaceId, parentId, {
+      ...noTools,
       subAgentIds: [],
     });
     const links = await db.agentSubAgent.findMany({ where: { parentId } });

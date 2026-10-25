@@ -79,22 +79,6 @@ describe("DashboardHeaderControls (command palette)", () => {
     expect(pushMock).toHaveBeenCalledWith("/app/acme/market/mcp");
   });
 
-  it("includes the toolkit market in quick navigation", async () => {
-    render(<DashboardHeaderControls />);
-    await userEvent.click(
-      screen.getByRole("button", { name: /quick navigation/i }),
-    );
-    await userEvent.type(
-      screen.getByPlaceholderText(/search navigation items/i),
-      "Browse toolkits",
-    );
-    await userEvent.click(
-      screen.getByRole("option", { name: /^Browse toolkits/ }),
-    );
-
-    expect(pushMock).toHaveBeenCalledWith("/app/acme/market/toolkits");
-  });
-
   it("preserves the return route when opening settings", async () => {
     render(<DashboardHeaderControls />);
     await userEvent.click(

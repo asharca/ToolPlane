@@ -15,22 +15,24 @@ import {
 } from "@/lib/process/supervisor";
 import { resolveSpawnSpec } from "@/lib/process/spawn-spec";
 import { enqueueSandboxOperation } from "@/lib/sandboxes/lifecycle";
-import { beginWorkspaceOperation } from "@/lib/workspace/operation-gate";
 import {
   assertDockerVolumeExists,
   copyDockerVolume,
+  createDockerVolume,
+  digestDockerVolume,
   removeDockerSandboxRuntimeStrict,
   removeDockerVolumeStrict,
   sandboxVolumeName,
-  setDockerSandboxPaused,
   stopDockerSandboxContainer,
 } from "@/lib/sandboxes/runtime";
-import { readSandboxAllowSudo, readSandboxEnv } from "@/lib/sandboxes/env";
 import {
   agentExecutionBusy,
   withAgentMaintenanceLease,
 } from "./agent-execution-gate";
 import { sandboxExecutionBusy } from "./sandbox-execution-gate";
+import { requireAgentRevision } from "./revisions";
+import { resolveAgentEnvironmentCredentials } from "./environment-credentials";
+import { stopSessionMcp } from "@/lib/process/session-mcp";
 
 export type AgentConversationSandboxInput = {
   workspaceId: string;
@@ -70,26 +72,13 @@ function managed(config: Prisma.JsonValue | null): ManagedConfig | null {
 async function binding(
   tx: Prisma.TransactionClient,
   input: AgentConversationSandboxInput,
-  cleanup = false,
 ) {
   if (!input.conversationId && !input.contextId)
     throw new Error("Conversation or native context is required.");
   const agent = await tx.agent.findFirst({
     where: { id: input.agentId, workspaceId: input.workspaceId },
-    include: {
-      sandboxes: { include: { sandbox: { include: { deployment: true } } } },
-    },
   });
   if (!agent) throw new Error("Agent not found in workspace.");
-  const source =
-    agent.sandboxes.length === 1 ? agent.sandboxes[0].sandbox : null;
-  if (
-    !cleanup &&
-    (!source ||
-      source.workspaceId !== input.workspaceId ||
-      source.kind !== "docker")
-  )
-    throw new Error("Agent requires exactly one assigned Docker sandbox.");
   const conversation = input.conversationId
     ? await tx.conversation.findFirst({
         where: {
@@ -150,21 +139,17 @@ async function binding(
     : null;
   if (ids.length) {
     const config = sandbox && managed(sandbox.config);
-    if (
-      sandbox?.kind !== "docker" ||
-      config?.agentId !== input.agentId ||
-      (!cleanup && config.sourceSandboxId !== source?.id)
-    )
+    if (sandbox?.kind !== "docker" || config?.agentId !== input.agentId)
       throw new Error("Conversation sandbox binding is invalid.");
   }
-  return { conversation, context, source, sandbox };
+  return { conversation, context, sandbox };
 }
 
 export async function findAgentConversationSandbox(
   input: AgentConversationSandboxInput & { cleanup?: boolean },
 ): Promise<AgentConversationSandbox | null> {
   if (input.cleanup) assertRuntimeOwner();
-  const found = await binding(db, input, input.cleanup);
+  const found = await binding(db, input);
   return found.sandbox
     ? { sandboxId: found.sandbox.id, deploymentId: found.sandbox.deploymentId }
     : null;
@@ -176,209 +161,221 @@ export async function ensureAgentConversationSandbox(
   assertRuntimeOwner();
   input.signal?.throwIfAborted();
   const initial = await binding(db, input);
-  if (!initial.source) throw new Error("Agent sandbox source is unavailable.");
-  const sourceId = initial.source.id;
-  const prepare = async () => {
-    input.signal?.throwIfAborted();
-    if (!initial.sandbox) {
-      const cfg = initial.source?.deployment.installCfg as {
-        volumeName?: string;
-      } | null;
-      await assertDockerVolumeExists(
-        cfg?.volumeName || sandboxVolumeName(sourceId),
-      );
+  const session = initial.conversation ?? initial.context;
+  if (!session?.agentRevisionId || session.legacyRevisionUnresolved)
+    throw new Error("Historical Agent sessions are read-only.");
+  const revision = await requireAgentRevision(
+    db,
+    input.agentId,
+    session.agentRevisionId,
+  );
+  const environment = revision.config.environment;
+  const allocated = await db.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "Agent" WHERE id = ${input.agentId} AND "workspaceId" = ${input.workspaceId} FOR UPDATE`;
+    const current = await binding(tx, input);
+    if (
+      (current.conversation ?? current.context)?.agentRevisionId !== revision.id
+    )
+      throw new Error("Session revision changed.");
+    if (current.sandbox) {
+      const config = current.sandbox.config as Record<string, unknown> | null;
+      if (config?.agentRevisionId !== revision.id)
+        throw new Error("Session sandbox revision does not match.");
+      return { sandbox: current.sandbox, created: false };
     }
-    const allocated = await db.$transaction(async (tx) => {
-      await tx.$queryRaw`SELECT "id" FROM "Agent" WHERE "id" = ${input.agentId} AND "workspaceId" = ${input.workspaceId} FOR UPDATE`;
-      const current = await binding(tx, input);
-      if (!current.source || current.source.id !== sourceId)
-        throw new Error("Agent sandbox assignment changed.");
-      if (
-        !current.sandbox &&
-        [
-          "provisioning",
-          "copying",
-          "copy_failed",
-          "restoring",
-          "restore_failed",
-          "restore_cleanup_required",
-          "upgrading",
-          "deleting",
-        ].includes(current.source.deployment.status)
-      )
-        throw new Error("Agent sandbox source requires recovery.");
-      if (current.sandbox) {
-        if (current.conversation && !current.conversation.sandboxId)
-          await tx.conversation.update({
-            where: { id: current.conversation.id },
-            data: { sandboxId: current.sandbox.id },
-          });
-        if (current.context && !current.context.sandboxId)
-          await tx.a2AContext.update({
-            where: { id: current.context.id },
-            data: { sandboxId: current.sandbox.id },
-          });
-        return {
-          sandbox: current.sandbox,
-          source: current.source,
-          created: false,
-        };
-      }
-      const id = randomUUID();
-      const sourceConfig =
-        current.source.config &&
-        typeof current.source.config === "object" &&
-        !Array.isArray(current.source.config)
-          ? current.source.config
-          : {};
-      const config = {
-        ...sourceConfig,
-        managedBy: "agent-conversation",
-        agentId: input.agentId,
-        sourceSandboxId: current.source.id,
-      };
-      const deployment = await tx.deployment.create({
-        data: {
-          workspaceId: input.workspaceId,
-          name: `Conversation sandbox: ${input.agentId}`,
-          source: "sandbox",
-          sourceRef: current.source.image,
-          status: "copying",
-          installCfg: {
-            sandboxId: id,
-            kind: "docker",
-            image: current.source.image,
-            network: current.source.network,
-            volumeName: sandboxVolumeName(id),
-            env: readSandboxEnv(config),
-            allowSudo: readSandboxAllowSudo(config),
-          },
-        },
-      });
-      const sandbox = await tx.sandbox.create({
-        data: {
-          id,
-          workspaceId: input.workspaceId,
-          deploymentId: deployment.id,
-          name: `Conversation ${input.conversationId ?? input.contextId}`,
-          slug: `conversation-${id}`,
+    const id = randomUUID();
+    const config = {
+      managedBy: "agent-conversation",
+      agentId: input.agentId,
+      sourceSandboxId: revision.config.sandboxTemplateId ?? "revision",
+      agentRevisionId: revision.id,
+    };
+    const deployment = await tx.deployment.create({
+      data: {
+        workspaceId: input.workspaceId,
+        name: `Conversation sandbox: ${input.agentId}`,
+        source: "sandbox",
+        sourceRef: environment.image,
+        status: "copying",
+        installCfg: {
+          sandboxId: id,
           kind: "docker",
-          image: current.source.image,
-          network: current.source.network,
-          config,
+          image: environment.image,
+          network: environment.network,
+          volumeName: sandboxVolumeName(id),
+          resourceLimits: environment.resourceLimits,
+          piVersion: environment.piVersion,
         },
-        include: { deployment: true },
-      });
-      if (current.conversation)
-        await tx.conversation.update({
-          where: { id: current.conversation.id },
-          data: { sandboxId: id },
-        });
-      if (current.context)
-        await tx.a2AContext.update({
-          where: { id: current.context.id },
-          data: { sandboxId: id },
-        });
-      return { sandbox, source: current.source, created: true };
+      },
     });
-    const { sandbox, source, created } = allocated;
-    if (created) {
-      try {
-        if (accesses.get(source.id)?.active)
-          throw new Error("Source sandbox has active file or terminal access.");
-        const cfg =
-          source.deployment.installCfg &&
-          typeof source.deployment.installCfg === "object" &&
-          !Array.isArray(source.deployment.installCfg)
-            ? source.deployment.installCfg
-            : {};
-        // Persist intent before freezing: owner recovery must unpause even when
-        // the copying process dies before its finally block can run.
-        await db.deployment.update({
-          where: { id: source.deploymentId },
-          data: {
-            installCfg: { ...cfg, agentConversationSnapshotPaused: true },
-          },
-        });
+    const sandbox = await tx.sandbox.create({
+      data: {
+        id,
+        workspaceId: input.workspaceId,
+        deploymentId: deployment.id,
+        name: `Conversation ${input.conversationId ?? input.contextId}`,
+        slug: `conversation-${id}`,
+        kind: "docker",
+        image: environment.image,
+        network: environment.network,
+        config,
+      },
+      include: { deployment: true },
+    });
+    if (current.conversation)
+      await tx.conversation.update({
+        where: { id: current.conversation.id },
+        data: { sandboxId: id },
+      });
+    if (current.context)
+      await tx.a2AContext.update({
+        where: { id: current.context.id },
+        data: { sandboxId: id },
+      });
+    return { sandbox, created: true };
+  });
+  const { sandbox, created } = allocated;
+  const authorizeAccess = async () => {
+    input.signal?.throwIfAborted();
+    await assertDockerVolumeExists(sandboxVolumeName(sandbox.id));
+    return resolveAgentEnvironmentCredentials({
+      ...input,
+      agentRevisionId: revision.id,
+    });
+  };
+  // Reuse is not a lifecycle mutation: an open PTY must not prevent it.
+  // Still reauthorize the pinned session and credentials before returning it.
+  if (
+    !created &&
+    sandbox.deployment.status === "running" &&
+    liveStatus(sandbox.deploymentId) === "running"
+  ) {
+    const release = beginAgentConversationSandboxAccess(sandbox.id);
+    try {
+      await authorizeAccess();
+      input.signal?.throwIfAborted();
+      if (liveStatus(sandbox.deploymentId) === "running")
+        return { sandboxId: sandbox.id, deploymentId: sandbox.deploymentId };
+    } finally {
+      release();
+    }
+  }
+  const result = await enqueueSandboxOperation(
+    input.workspaceId,
+    sandbox.id,
+    async () => {
+      if (created) {
         try {
-          await setDockerSandboxPaused(source.id, true);
-          await copyDockerVolume(
-            typeof cfg.volumeName === "string"
-              ? cfg.volumeName
-              : sandboxVolumeName(source.id),
-            sandboxVolumeName(sandbox.id),
-          );
+          const snapshot = environment.initialSnapshot;
+          if (snapshot) {
+            const frozen = await db.sandboxSnapshot.findFirst({
+              where: {
+                id: snapshot.snapshotId,
+                volumeName: snapshot.volumeName,
+                status: "ready",
+                sandboxId: revision.config.sandboxTemplateId ?? "",
+                sandbox: { workspaceId: input.workspaceId },
+              },
+            });
+            if (
+              !frozen ||
+              (await digestDockerVolume(snapshot.volumeName)) !==
+                snapshot.checksum
+            )
+              throw new Error(
+                "Pinned environment snapshot is unavailable or its digest changed.",
+              );
+            await copyDockerVolume(
+              snapshot.volumeName,
+              sandboxVolumeName(sandbox.id),
+            );
+            if (
+              (await digestDockerVolume(sandboxVolumeName(sandbox.id))) !==
+              snapshot.checksum
+            )
+              throw new Error(
+                "Session snapshot copy failed integrity verification.",
+              );
+          } else await createDockerVolume(sandboxVolumeName(sandbox.id));
           await db.deployment.update({
             where: { id: sandbox.deploymentId },
             data: { status: "provisioning" },
           });
-        } finally {
-          await setDockerSandboxPaused(source.id, false);
+        } catch (error) {
           await db.deployment.update({
-            where: { id: source.deploymentId },
-            data: { installCfg: cfg as Prisma.InputJsonObject },
+            where: { id: sandbox.deploymentId },
+            data: { status: "copy_failed" },
           });
+          throw error;
         }
-      } catch (error) {
-        await db.deployment.update({
+      } else if (
+        [
+          "copying",
+          "copy_failed",
+          "deleting",
+          "restoring",
+          "restore_failed",
+          "restore_cleanup_required",
+        ].includes(sandbox.deployment.status)
+      ) {
+        throw new Error(
+          "Conversation sandbox requires recovery; its saved mapping was retained.",
+        );
+      }
+      const environmentVariables = await authorizeAccess();
+      if (liveStatus(sandbox.deploymentId) !== "running") {
+        const deployment = await db.deployment.findUniqueOrThrow({
           where: { id: sandbox.deploymentId },
-          data: { status: "copy_failed" },
         });
-        throw error;
+        const spec = resolveSpawnSpec(deployment);
+        if (spec.kind !== "sandbox")
+          throw new Error("Invalid session sandbox deployment.");
+        spec.env = environmentVariables;
+        allowProcessRestart(deployment.id);
+        await startProcess(deployment.id, spec, {
+          awaitReady: true,
+          workspaceId: input.workspaceId,
+        });
       }
-    } else if (
-      [
-        "copying",
-        "copy_failed",
-        "deleting",
-        "restoring",
-        "restore_failed",
-        "restore_cleanup_required",
-      ].includes(sandbox.deployment.status)
-    ) {
-      throw new Error(
-        "Conversation sandbox requires recovery; its saved mapping was retained.",
-      );
-    }
-    input.signal?.throwIfAborted();
-    if (
-      sandbox.deployment.status === "running" &&
-      liveStatus(sandbox.deploymentId) === "running"
-    ) {
-      const finish = beginWorkspaceOperation(input.workspaceId);
-      if (!finish) throw new Error("Workspace is being deleted.");
-      let release: (() => void) | undefined;
-      try {
-        release = beginAgentConversationSandboxAccess(sandbox.id);
-        await assertDockerVolumeExists(sandboxVolumeName(sandbox.id));
-        return { sandboxId: sandbox.id, deploymentId: sandbox.deploymentId };
-      } finally {
-        release?.();
-        finish();
-      }
-    }
-    await enqueueSandboxOperation(input.workspaceId, sandbox.id, async () => {
-      await assertDockerVolumeExists(sandboxVolumeName(sandbox.id));
-      const deployment = await db.deployment.findUniqueOrThrow({
-        where: { id: sandbox.deploymentId },
-      });
-      allowProcessRestart(deployment.id);
-      await startProcess(deployment.id, resolveSpawnSpec(deployment), {
-        awaitReady: true,
-        workspaceId: input.workspaceId,
-      });
       accesses.set(sandbox.id, {
         active: accesses.get(sandbox.id)?.active ?? 0,
         usedAt: Date.now(),
       });
-    });
-    return { sandboxId: sandbox.id, deploymentId: sandbox.deploymentId };
-  };
-  const result = initial.sandbox
-    ? await prepare()
-    : await enqueueSandboxOperation(input.workspaceId, sourceId, prepare);
+      return { sandboxId: sandbox.id, deploymentId: sandbox.deploymentId };
+    },
+  );
   if (!result) throw new Error("Workspace is being deleted.");
   return result;
+}
+export async function stopAgentSandboxSessionMcp(
+  sandboxId: string,
+  workspaceId: string,
+): Promise<void> {
+  assertRuntimeOwner();
+  const [conversations, contexts] = await Promise.all([
+    db.conversation.findMany({ where: { sandboxId, agent: { workspaceId } } }),
+    db.a2AContext.findMany({
+      where: { sandboxId, workspaceId, targetKind: "local" },
+    }),
+  ]);
+  for (const session of conversations) {
+    if (session.agentRevisionId)
+      await stopSessionMcp({
+        workspaceId,
+        agentId: session.agentId,
+        agentRevisionId: session.agentRevisionId,
+        conversationId: session.id,
+      });
+  }
+  for (const session of contexts) {
+    if (session.agentRevisionId && session.agentId)
+      await stopSessionMcp({
+        workspaceId: session.workspaceId,
+        agentId: session.agentId,
+        agentRevisionId: session.agentRevisionId,
+        a2aContextId: session.id,
+      });
+  }
 }
 
 async function removeManagedSandbox(
@@ -422,6 +419,7 @@ async function removeManagedSandbox(
         where: { id: sandbox.deploymentId },
         data: { status: "deleting" },
       });
+      await stopAgentSandboxSessionMcp(sandbox.id, workspaceId);
       await killProcess(sandbox.deploymentId, {
         preventRestart: true,
         finalStatus: "deleting",
@@ -584,6 +582,7 @@ export async function stopIdleAgentConversationSandboxes(): Promise<void> {
               where: { id: sandbox.deploymentId },
               data: { status: "stopping" },
             });
+            await stopAgentSandboxSessionMcp(sandbox.id, sandbox.workspaceId);
             await killProcess(sandbox.deploymentId, {
               finalStatus: "stopping",
             });

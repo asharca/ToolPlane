@@ -22,7 +22,7 @@ vi.mock("@/components/dashboard/agents/AgentA2APanel", () => ({
 
 const settings = {
   name: "Release copilot",
-  runtimeKind: "pi",
+  runtimeKind: "pi-sdk",
   systemPrompt: "",
   providerId: "provider-1",
   providerIds: [],
@@ -33,7 +33,6 @@ const settings = {
   ],
   deployments: [],
   skills: [],
-  toolkits: [],
   sandboxes: [],
   subAgents: [],
 };
@@ -71,24 +70,42 @@ describe("AgentSettings", () => {
     expect(screen.queryByText("New chat")).not.toBeInTheDocument();
   });
 
-  it.each(["pi", "hermes"])(
-    "keeps channels inside the %s settings navigation",
-    async (runtimeKind) => {
-      render(
-        <AgentSettings
-          slug="acme"
-          agentId="agent-1"
-          settings={{ ...settings, runtimeKind }}
-          channelSettings={{ connections: [] }}
-          ready
-          agentName="Release copilot"
-        />,
-      );
+  it("keeps channels inside native Pi settings navigation", async () => {
+    render(
+      <AgentSettings
+        slug="acme"
+        agentId="agent-1"
+        settings={settings}
+        channelSettings={{ connections: [] }}
+        ready
+        agentName="Release copilot"
+      />,
+    );
 
-      fireEvent.click(screen.getByRole("button", { name: "Channels" }));
-      expect(await screen.findByText("channel-settings")).toBeInTheDocument();
-    },
-  );
+    fireEvent.click(screen.getByRole("button", { name: "Channels" }));
+    expect(await screen.findByText("channel-settings")).toBeInTheDocument();
+  });
+  it("does not offer retired runtime channel or terminal mutations", () => {
+    render(
+      <AgentSettings
+        slug="acme"
+        agentId="legacy"
+        settings={{ ...settings, runtimeKind: "hermes" }}
+        channelSettings={{ connections: [] }}
+        ready={false}
+        agentName="Historical Agent"
+      />,
+    );
+    expect(
+      screen.queryByRole("button", { name: "Channels" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Terminal" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("option", { name: "Channels" }),
+    ).not.toBeInTheDocument();
+  });
 });
 
 it("opens A2A from its deep-linked settings tab", async () => {

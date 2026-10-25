@@ -380,4 +380,30 @@ describe("DeployCustomMcpDialog", () => {
     );
     expect(screen.getByRole("alert")).toBeVisible();
   });
+
+  it("does not treat an imported HTTP recipe flag as installer consent", async () => {
+    render(<DeployCustomMcpDialog slug="acme" inline />);
+    fireEvent.change(screen.getByLabelText("MCP JSON config"), {
+      target: {
+        value: JSON.stringify({
+          mcpServers: {
+            remote: {
+              type: "http",
+              url: "http://mcp.example.com/mcp",
+              allowUnsafeHttp: true,
+            },
+          },
+        }),
+      },
+    });
+    const consent = screen.getByRole("checkbox");
+    expect(consent).not.toBeChecked();
+    const form = screen.getByLabelText("MCP JSON config").closest("form");
+    if (!form) throw new Error("Expected MCP creation form");
+    expect(new FormData(form).has("allowUnsafeHttp")).toBe(false);
+    fireEvent.submit(form);
+    expect(screen.getByText(/HTTP is unencrypted/i)).toBeInTheDocument();
+    fireEvent.click(consent);
+    expect(new FormData(form).get("allowUnsafeHttp")).toBe("true");
+  });
 });

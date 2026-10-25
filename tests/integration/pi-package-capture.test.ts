@@ -9,12 +9,13 @@ import { db } from "@/lib/db";
 import {
   approveResourceMarketRelease,
   installMarketRelease,
+  previewPiPackageSource,
   publishPiPackageRelease,
   updateMarketInstall,
 } from "@/lib/market/resources";
 import { createAgent, updateAgent } from "@/lib/agents/mutations";
 import { resolveAgentPiPackages } from "@/lib/agents/resolve";
-import { AGENT_PI_PACKAGES_INCLUDE } from "@/lib/agents/queries";
+import { AGENT_PI_PACKAGES_INCLUDE } from "@/lib/agents/pi-package-includes";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -636,11 +637,16 @@ it("discovers private catalogs, explicitly publishes an approved npm artifact, a
       listPiPackageSourceEntries({ ...access, sourceId: wrongCredentials.id }),
     ).rejects.toMatchObject({ code: "source_auth_failed" });
 
-    const published = await publishPiPackageRelease({
+    const source = {
       workspaceId: workspace.id,
       publishedById: user.id,
       sourceId: registry.id,
       source: `npm:${name}@latest`,
+    };
+    const preview = await previewPiPackageSource(source);
+    const published = await publishPiPackageRelease({
+      ...source,
+      sourceDigest: preview.sourceDigest,
       categoryIds: [category.id],
       listing: { slug: "private-prompt", name: "Private prompt" },
     });
@@ -791,6 +797,58 @@ it("discovers private catalogs, explicitly publishes an approved npm artifact, a
     await db.category.delete({ where: { id: category.id } });
     await db.user.deleteMany({ where: { id: { in: [user.id, outsider.id] } } });
   }
+}, 310_000);
+
+it("captures uploaded ZIP native resources and dependencies through the same non-executing isolate", async () => {
+  const filename = join(directory, "uploaded.zip");
+  const records = {
+    "bundle/package.json": JSON.stringify({
+      name: "uploaded-pi",
+      version: "1.0.0",
+      pi: {
+        extensions: ["index.ts"],
+        skills: ["skills"],
+        prompts: ["prompts"],
+        themes: ["themes"],
+      },
+      dependencies: { [dependencyName]: "1.0.0" },
+      scripts: { postinstall: "touch UNREVIEWED_SCRIPT_RAN" },
+    }),
+    "bundle/index.ts":
+      'import {writeFileSync} from "node:fs"; export default function() { writeFileSync("UNREVIEWED_FACTORY_RAN", "bad"); }',
+    "bundle/skills/example/SKILL.md":
+      "---\nname: example\ndescription: Example skill\n---\nUse carefully.\n",
+    "bundle/prompts/example.md": "Explain the current code.\n",
+    "bundle/themes/example.json": '{"name":"example","colors":{}}',
+  };
+  await exec("python3", [
+    "-c",
+    "import json,sys,zipfile\nwith zipfile.ZipFile(sys.argv[1], 'w', zipfile.ZIP_DEFLATED) as z:\n for name,data in json.loads(sys.argv[2]).items(): z.writestr(name,data)",
+    filename,
+    JSON.stringify(records),
+  ]);
+  const archive = await readFile(filename);
+  const snapshot = await capturePiPackage("", { archive });
+  expect(snapshot.source).toEqual({
+    kind: "zip",
+    requested: `zip:sha256:${createHash("sha256").update(archive).digest("hex")}`,
+    sha256: createHash("sha256").update(archive).digest("hex"),
+  });
+  expect(snapshot.resources.extensions).toContain("package/index.ts");
+  expect(snapshot.resources.skills).toContain(
+    "package/skills/example/SKILL.md",
+  );
+  expect(snapshot.resources.prompts).toContain("package/prompts/example.md");
+  expect(snapshot.resources.themes).toContain("package/themes/example.json");
+  expect(
+    snapshot.entries.some((entry) => /UNREVIEWED_.*_RAN/.test(entry.path)),
+  ).toBe(false);
+  expect(
+    snapshot.entries.some(
+      (entry) =>
+        entry.path === `package/node_modules/${dependencyName}/index.js`,
+    ),
+  ).toBe(true);
 }, 310_000);
 
 it("uses real pnpm and frozen dependency bytes without executing source factories, lifecycle scripts or pnpmfile", async () => {
@@ -1047,10 +1105,15 @@ it("runs approved immutable V1 in Linux SDK, reconnects, and requires explicit A
       },
       { "index.ts": extension },
     );
-    const published = await publishPiPackageRelease({
+    const source = {
       workspaceId: workspace.id,
       publishedById: user.id,
       source: `npm:${name}@1.0.0`,
+    };
+    const preview = await previewPiPackageSource(source);
+    const published = await publishPiPackageRelease({
+      ...source,
+      sourceDigest: preview.sourceDigest,
       categoryIds: [category.id],
       listing: { slug: "runtime", name: "Frozen runtime" },
     });
@@ -1093,7 +1156,11 @@ it("runs approved immutable V1 in Linux SDK, reconnects, and requires explicit A
       "toolplane-pi-package-capture:0.87.1",
       "infinity",
     ]);
-    for (const file of ["pi-sdk-session.mjs", "pi-sdk-package-files.mjs"])
+    for (const file of [
+      "pi-sdk-session.mjs",
+      "pi-sdk-capabilities.mjs",
+      "pi-sdk-package-files.mjs",
+    ])
       await exec("docker", [
         "cp",
         `scripts/${file}`,
@@ -1207,8 +1274,20 @@ it("runs approved immutable V1 in Linux SDK, reconnects, and requires explicit A
       };
       error?: { code: string };
     };
-    const pending = new Map<string, (response: Response) => void>();
+    const pending = new Map<
+      string,
+      { resolve: (response: Response) => void; reject: (error: Error) => void }
+    >();
+    let hostFailure: Error | undefined;
+    let hostStderr = "";
+    const rejectPending = (error: Error) => {
+      hostFailure = error;
+      for (const request of pending.values()) request.reject(error);
+      pending.clear();
+    };
     function launch() {
+      hostFailure = undefined;
+      hostStderr = "";
       host = spawn(
         "docker",
         [
@@ -1217,37 +1296,99 @@ it("runs approved immutable V1 in Linux SDK, reconnects, and requires explicit A
           container,
           "node",
           "-e",
-          `const c=require('child_process').spawn('node',['/tmp/pi-sdk-session.mjs','/tmp/private/config.json'],{stdio:['pipe','ignore','inherit','pipe']});process.stdin.pipe(c.stdin);c.stdio[3].pipe(process.stdout);process.stdin.on('end',()=>c.kill());process.on('SIGTERM',()=>c.kill());`,
+          `const c=require('child_process').spawn('node',['/tmp/pi-sdk-session.mjs','/tmp/private/config.json'],{stdio:['pipe','ignore','inherit','pipe']});process.stdin.pipe(c.stdin);c.stdio[3].pipe(process.stdout,{end:false});c.once('error',e=>{console.error(e);process.exit(1)});c.once('close',code=>{process.stdin.destroy();process.stdout.end(()=>process.exit(code??1))});c.stdin.on('error',()=>{});process.stdin.on('end',()=>c.kill());process.on('SIGTERM',()=>c.kill());`,
         ],
         { stdio: ["pipe", "pipe", "pipe"] },
       );
+      host.stderr?.on("data", (chunk: Buffer) => {
+        hostStderr = (hostStderr + chunk.toString()).slice(-16_384);
+      });
+      host.once("error", rejectPending);
+      host.stdin?.on("error", rejectPending);
+      host.once("close", (code, signal) => {
+        rejectPending(
+          new Error(
+            `Native SDK host closed (${signal ?? code}): ${hostStderr}`,
+          ),
+        );
+      });
       createInterface({ input: assertDefined(host.stdout) }).on(
         "line",
         (line) => {
-          const event = JSON.parse(line);
-          if (event.type === "toolplane_sdk_response")
-            pending.get(event.id)?.(event);
+          try {
+            const event = JSON.parse(line);
+            if (event.type === "toolplane_sdk_response")
+              pending.get(event.id)?.resolve(event);
+          } catch (error) {
+            rejectPending(
+              new Error("Invalid native SDK response", { cause: error }),
+            );
+          }
         },
       );
     }
     async function prompt(message: string) {
-      const id = randomUUID(),
-        result = new Promise<Response>((done) => pending.set(id, done));
-      assertDefined(assertDefined(host).stdin).write(
-        `${JSON.stringify({
-          id,
-          type: "prompt",
-          message,
-          context: { runtimeToken: "fixture-only", mcpConfig: { servers: [] } },
-        })}\n`,
-      );
-      return result;
+      if (hostFailure) throw hostFailure;
+      const child = assertDefined(host);
+      if (child.exitCode !== null || child.signalCode !== null)
+        throw new Error(`Native SDK host is not running: ${hostStderr}`);
+      const id = randomUUID();
+      let timer: NodeJS.Timeout | undefined;
+      const result = new Promise<Response>((resolve, reject) => {
+        pending.set(id, { resolve, reject });
+        // A real Docker/SDK process cannot use fake time; this is a failure
+        // deadline, not a sleep. Successful requests settle on their response.
+        timer = setTimeout(
+          () =>
+            reject(
+              new Error(
+                `Native SDK prompt ${JSON.stringify(message)} did not respond: ${hostStderr}`,
+              ),
+            ),
+          60_000,
+        );
+      });
+      try {
+        assertDefined(child.stdin).write(
+          `${JSON.stringify({
+            id,
+            type: "prompt",
+            message,
+            context: {
+              runtimeToken: "fixture-only",
+              mcpConfig: { servers: [] },
+            },
+          })}\n`,
+        );
+        return await result;
+      } finally {
+        clearTimeout(timer);
+        pending.delete(id);
+      }
     }
     async function stop() {
-      if (host && host.exitCode === null) {
-        const ended = once(host, "close");
-        assertDefined(host.stdin).end();
-        await ended;
+      if (host && host.exitCode === null && host.signalCode === null) {
+        const child = host;
+        let timer: NodeJS.Timeout | undefined;
+        const ended = once(child, "close");
+        assertDefined(child.stdin).end();
+        try {
+          await Promise.race([
+            ended,
+            // Bound an external process that fails to acknowledge EOF; normal
+            // shutdown is driven by close, without a fixed delay.
+            new Promise<never>((_resolve, reject) => {
+              timer = setTimeout(() => {
+                child.kill("SIGKILL");
+                reject(
+                  new Error(`Native SDK host did not stop: ${hostStderr}`),
+                );
+              }, 5_000);
+            }),
+          ]);
+        } finally {
+          clearTimeout(timer);
+        }
       }
     }
     await configure("original");
@@ -1277,10 +1418,11 @@ it("runs approved immutable V1 in Linux SDK, reconnects, and requires explicit A
       { name: dependencyName, version: "1.0.0", main: "index.js" },
       { "index.js": "exports.value='DEPENDENCY_V2';" },
     );
+    const updatedPreview = await previewPiPackageSource(source);
+    expect(updatedPreview.sourceDigest).not.toBe(preview.sourceDigest);
     const v2 = await publishPiPackageRelease({
-      workspaceId: workspace.id,
-      publishedById: user.id,
-      source: `npm:${name}@1.0.0`,
+      ...source,
+      sourceDigest: updatedPreview.sourceDigest,
       listingId: published.listing.id,
       categoryIds: [category.id],
       listing: { slug: "runtime", name: "Frozen runtime" },
@@ -1337,6 +1479,9 @@ it("runs approved immutable V1 in Linux SDK, reconnects, and requires explicit A
       }),
     );
   } finally {
+    host?.stdin?.end();
+    if (host && host.exitCode === null && host.signalCode === null)
+      host.kill("SIGKILL");
     await exec("docker", ["rm", "-f", container]).catch(() => {});
     model.closeAllConnections();
     await new Promise<void>((done) => model.close(() => done()));

@@ -13,6 +13,9 @@ const mocks = vi.hoisted(() => ({
   rpc: vi.fn(),
   slug: vi.fn(),
   agent: vi.fn(),
+  readAgent: vi.fn(),
+  revision: vi.fn(),
+  publish: vi.fn(),
 }));
 vi.mock("@/lib/auth/request-user", () => ({
   resolveAgentControlRequestUser: mocks.user,
@@ -32,6 +35,10 @@ vi.mock("@/lib/a2a/local-policy", () => ({
   localTarget: mocks.target,
 }));
 vi.mock("@/lib/a2a/http", () => ({ handleA2ARpc: mocks.rpc }));
+vi.mock("@/lib/agents/revisions", () => ({
+  requireAgentRevision: mocks.revision,
+  publishAgentRevisionInTransaction: mocks.publish,
+}));
 vi.mock("@/lib/db", () => ({
   db: {
     membership: { count: mocks.member },
@@ -42,14 +49,14 @@ vi.mock("@/lib/db", () => ({
         $queryRaw: vi.fn(),
         workspace: { count: mocks.admin },
         user: { count: mocks.activeUser },
-        agent: { updateMany: mocks.update },
+        agent: { updateMany: mocks.update, findFirst: mocks.readAgent },
       }),
   },
 }));
 import { handleLocalA2A } from "@/lib/a2a/local-http";
 const request = (
   method = "PUT",
-  body: unknown = { enabled: true },
+  body: unknown = { inboundEnabled: true },
   headers: Record<string, string> = {},
 ) =>
   new Request("https://toolplane.test/local", {
@@ -75,9 +82,26 @@ beforeEach(() => {
   mocks.admin.mockResolvedValue(1);
   mocks.activeUser.mockResolvedValue(1);
   mocks.update.mockResolvedValue({ count: 1 });
+  mocks.readAgent.mockResolvedValue({
+    id: "agent",
+    runtimeKind: "pi-sdk",
+    currentRevisionVersion: 1,
+  });
+  mocks.revision.mockResolvedValue({
+    id: "revision-1",
+    config: {
+      a2a: {
+        inboundEnabled: true,
+        outboundEnabled: false,
+        policy: { schemaVersion: 1, targets: [] },
+      },
+    },
+  });
+  mocks.publish.mockResolvedValue({ id: "revision-2", version: 2 });
   mocks.target.mockResolvedValue({
     name: "Reviewer",
     binding: "configuration-hash",
+    capabilityIds: [],
   });
   mocks.slug.mockResolvedValue({ slug: "acme" });
   mocks.agent.mockResolvedValue({
@@ -90,6 +114,8 @@ beforeEach(() => {
     workspaceId: "ws",
     actorId: "actor",
     agentId: "agent",
+    agentRevisionId: "revision-1",
+    ancestorTaskIds: [],
     ownerKey: "owner",
   });
 });
@@ -136,21 +162,126 @@ describe("native workspace A2A entry and opt-in", () => {
         workspaceId: "ws",
         publicRuntimeAllocation: { is: null },
       },
-      data: { a2aInternalEnabled: true },
+      data: { a2aInboundEnabled: true },
+    });
+    expect(mocks.update.mock.calls[0][0].data).toEqual({
+      a2aInboundEnabled: true,
     });
     expect(mocks.update.mock.calls[0][0].where.NOT).toBeDefined();
     expect(mocks.audit.mock.calls[0][1]).toMatchObject({
       actorId: "actor",
       workspaceId: "ws",
       targetId: "agent",
-      changes: { enabled: true },
+      changes: { inboundEnabled: true },
     });
   });
+  it("publishes independent direction and reservation-policy updates with revision CAS", async () => {
+    const policy = {
+      schemaVersion: 1,
+      targets: [
+        {
+          kind: "remote",
+          targetId: "registered-peer",
+          capabilityIds: ["review"],
+          maxCalls: 2,
+          maxDepth: 1,
+          maxConcurrent: 1,
+          timeoutSeconds: 30,
+          maxInputBytes: 1024,
+          dataAllowance: "text_only",
+          budget: {
+            currency: "USD",
+            maxAuthorizedCostMicros: 100,
+            authorizedCostPerCallMicros: 50,
+          },
+        },
+      ],
+    };
+    const response = await handleLocalA2A(
+      request("PUT", {
+        inboundEnabled: false,
+        outboundEnabled: true,
+        policy,
+      }),
+      "acme",
+      "agent",
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      inboundEnabled: false,
+      outboundEnabled: true,
+      policy,
+    });
+    expect(mocks.publish).toHaveBeenCalledWith(
+      expect.anything(),
+      "ws",
+      "agent",
+      {
+        expectedRevisionId: "revision-1",
+        config: {
+          a2a: { inboundEnabled: false, outboundEnabled: true, policy },
+        },
+      },
+    );
+    expect(mocks.update.mock.calls[0][0].data).toEqual({
+      a2aInboundEnabled: false,
+      a2aOutboundEnabled: true,
+      a2aPolicy: policy,
+    });
+  });
+  it("rejects an empty configuration update", async () => {
+    const response = await handleLocalA2A(request("PUT", {}), "acme", "agent");
+    expect(response.status).toBe(400);
+  });
+  it.each([{ enabled: true }, { inboundEnabled: true, enabled: false }])(
+    "rejects the retired enabled alias without mutating authorization: %j",
+    async (body) => {
+      const response = await handleLocalA2A(
+        request("PUT", body),
+        "acme",
+        "agent",
+      );
+      expect(response.status).toBe(400);
+      expect(mocks.update).not.toHaveBeenCalled();
+      expect(mocks.publish).not.toHaveBeenCalled();
+      expect(mocks.audit).not.toHaveBeenCalled();
+    },
+  );
+  it.each(["maxMeasuredCostMicros", "maxTokens"])(
+    "rejects unsupported %s guarantees rather than ignoring them",
+    async (unsupported) => {
+      const response = await handleLocalA2A(
+        request("PUT", {
+          policy: {
+            schemaVersion: 1,
+            targets: [
+              {
+                kind: "remote",
+                targetId: "registered-peer",
+                capabilityIds: [],
+                maxCalls: 1,
+                maxDepth: 1,
+                maxConcurrent: 1,
+                timeoutSeconds: 30,
+                maxInputBytes: 1024,
+                dataAllowance: "text_only",
+                [unsupported]: 100,
+              },
+            ],
+          },
+        }),
+        "acme",
+        "agent",
+      );
+      expect(response.status).toBe(400);
+      expect(mocks.update).not.toHaveBeenCalled();
+    },
+  );
   it("rejects arbitrary prompt/tool overrides and unavailable target IDs", async () => {
     expect(
       (
         await handleLocalA2A(
-          request("PUT", { enabled: true, systemPrompt: "override" }),
+          request("PUT", { inboundEnabled: true, systemPrompt: "override" }),
           "acme",
           "agent",
         )
@@ -216,7 +347,7 @@ describe("native workspace A2A entry and opt-in", () => {
     expect(JSON.stringify(card)).not.toContain("private instructions");
     expect(JSON.stringify(card)).not.toContain("private key");
   });
-  it("declares deduplicated Agent-invocable Skills attached directly or through Toolkits", async () => {
+  it("declares only pinned, still-granted Agent-invocable Skills", async () => {
     const review = {
       id: "installed-review",
       skillId: "catalog-review",
@@ -248,6 +379,11 @@ describe("native workspace A2A entry and opt-in", () => {
       agentInvocable: false,
       skill: null,
     };
+    mocks.target.mockResolvedValue({
+      name: "Reviewer",
+      binding: "configuration-hash",
+      capabilityIds: [review.id],
+    });
     mocks.agent.mockResolvedValue({
       description: null,
       skills: [{ installedSkill: review }, { installedSkill: disabled }],
@@ -267,12 +403,6 @@ describe("native workspace A2A entry and opt-in", () => {
         name: "Code Review",
         description: "Find correctness and security issues.",
         tags: ["code-review"],
-      },
-      {
-        id: "installed-custom",
-        name: "Release notes",
-        description: "Prepare release notes.",
-        tags: ["release-notes"],
       },
     ]);
   });

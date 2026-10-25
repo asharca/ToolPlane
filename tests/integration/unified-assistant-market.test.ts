@@ -7,6 +7,7 @@ import {
   updateChatAssistant,
 } from "@/lib/chat/service";
 import { db } from "@/lib/db";
+import { mcpDefinitionChecksum } from "@/lib/process/mcp-definition";
 import { getMarketListing } from "@/lib/market/listings";
 import {
   approveMarketRelease,
@@ -26,6 +27,7 @@ let targetWorkspaceId = "";
 let sourceAssistantId = "";
 let serverId = "";
 let targetDeploymentId = "";
+let targetDefinitionChecksum = "";
 let categoryId = "";
 let listingId = "";
 let releaseId = "";
@@ -93,9 +95,10 @@ describe.sequential("unified assistant market", () => {
           name: "Assistant search",
           verifiedAt: new Date(),
           installCfg: {
-            source: "npm",
-            ref: "@modelcontextprotocol/server-memory",
-            env: [],
+            source: "remote",
+            ref: "https://mcp.example.test/search",
+            transport: "streamable-http",
+            authType: "none",
           },
         },
       }),
@@ -121,6 +124,11 @@ describe.sequential("unified assistant market", () => {
           workspaceId: sourceWorkspace.id,
           serverId: server.id,
           name: "Search",
+          source: "remote",
+          sourceRef: "https://mcp.example.test/search",
+          installCfg: { transport: "streamable-http", authType: "none" },
+          mcpToolExposure: "allowlist",
+          mcpAllowedTools: ["search"],
           status: "stopped",
         },
       }),
@@ -129,21 +137,31 @@ describe.sequential("unified assistant market", () => {
           workspaceId: targetWorkspace.id,
           serverId: server.id,
           name: "Search",
+          source: "remote",
+          sourceRef: "https://mcp.example.test/search",
+          installCfg: { transport: "streamable-http", authType: "none" },
+          mcpToolExposure: "allowlist",
+          mcpAllowedTools: ["search"],
           status: "stopped",
         },
       }),
     ]);
     targetDeploymentId = targetDeployment.id;
-    const assistant = await db.chatAssistant.create({
-      data: {
-        workspaceId: sourceWorkspace.id,
-        name: "Research helper",
-        systemPrompt: "Research and cite the result.",
-        modelProviderId: provider.id,
-        model: "gpt-test",
-        maxSteps: 6,
-        mcpGrants: { create: { deploymentId: deployment.id } },
-      },
+    targetDefinitionChecksum = mcpDefinitionChecksum(targetDeployment);
+    const assistant = await createChatAssistant(sourceUserId, {
+      workspaceId: sourceWorkspace.id,
+      name: "Research helper",
+      systemPrompt: "Research and cite the result.",
+      modelProviderId: provider.id,
+      model: "gpt-test",
+      maxSteps: 6,
+      mcpGrants: [
+        {
+          deploymentId: deployment.id,
+          allowedToolNames: ["search"],
+          expectedDefinitionChecksum: mcpDefinitionChecksum(deployment),
+        },
+      ],
     });
     sourceAssistantId = assistant.id;
   });
@@ -238,6 +256,13 @@ describe.sequential("unified assistant market", () => {
       releaseId,
       name: "My research helper",
       systemPrompt: "Customized instructions.",
+      mcpGrants: [
+        {
+          deploymentId: targetDeploymentId,
+          allowedToolNames: ["search"],
+          expectedDefinitionChecksum: targetDefinitionChecksum,
+        },
+      ],
     });
     expect(assistant.marketTemplateReleaseId).toBe(releaseId);
     expect(assistant.modelProvider?.name).toBe("Target provider");
@@ -262,7 +287,11 @@ describe.sequential("unified assistant market", () => {
         data: {
           workspaceId: targetWorkspaceId,
           name: "Custom MCP",
-          source: "pypi",
+          source: "remote",
+          sourceRef: "https://mcp.example.test/custom",
+          installCfg: { transport: "streamable-http", authType: "none" },
+          mcpToolExposure: "allowlist",
+          mcpAllowedTools: ["search"],
           status: "stopped",
         },
       }),
@@ -278,7 +307,11 @@ describe.sequential("unified assistant market", () => {
         data: {
           workspaceId: sourceWorkspaceId,
           name: "Foreign MCP",
-          source: "npm",
+          source: "remote",
+          sourceRef: "https://mcp.example.test/foreign",
+          installCfg: { transport: "streamable-http", authType: "none" },
+          mcpToolExposure: "allowlist",
+          mcpAllowedTools: ["search"],
           status: "stopped",
         },
       }),
@@ -286,35 +319,54 @@ describe.sequential("unified assistant market", () => {
     const assistant = await createChatAssistant(targetUserId, {
       workspaceId: targetWorkspaceId,
       name: "Custom MCP helper",
-      deploymentIds: [custom.id],
+      mcpGrants: [
+        {
+          deploymentId: custom.id,
+          allowedToolNames: ["search"],
+          expectedDefinitionChecksum: mcpDefinitionChecksum(custom),
+        },
+      ],
     });
 
     await expect(
       updateChatAssistant(targetUserId, assistant.id, {
-        deploymentIds: [custom.id],
+        expectedRevision: 1,
+        mcpGrants: [{ deploymentId: custom.id, allowedToolNames: ["search"] }],
       }),
     ).resolves.toMatchObject({
       mcpGrants: [expect.objectContaining({ deploymentId: custom.id })],
     });
     await expect(
       updateChatAssistant(targetUserId, assistant.id, {
-        deploymentIds: [foreign.id],
+        expectedRevision: 2,
+        mcpGrants: [
+          {
+            deploymentId: foreign.id,
+            allowedToolNames: ["search"],
+            expectedDefinitionChecksum: mcpDefinitionChecksum(foreign),
+          },
+        ],
       }),
     ).rejects.toMatchObject({ status: 400 });
     await expect(
       updateChatAssistant(targetUserId, assistant.id, {
-        deploymentIds: [sandbox.id],
+        expectedRevision: 2,
+        mcpGrants: [
+          {
+            deploymentId: sandbox.id,
+            allowedToolNames: ["search"],
+            expectedDefinitionChecksum: mcpDefinitionChecksum(sandbox),
+          },
+        ],
       }),
     ).rejects.toMatchObject({ status: 400 });
   });
 
   it("blocks assistant releases that contain credentials", async () => {
-    const unsafe = await db.chatAssistant.create({
-      data: {
-        workspaceId: sourceWorkspaceId,
-        name: "Unsafe helper",
-        systemPrompt: `Use sk-proj-${"a".repeat(24)}`,
-      },
+    const unsafe = await createChatAssistant(sourceUserId, {
+      workspaceId: sourceWorkspaceId,
+      name: "Unsafe helper",
+      systemPrompt: `Use sk-proj-${"a".repeat(24)}`,
     });
     await expect(
       publishAssistantRelease({
@@ -333,7 +385,7 @@ describe.sequential("unified assistant market", () => {
     ).toBeNull();
   });
 
-  it("blocks assistants that depend on custom or unverified MCPs", async () => {
+  it("rejects new Assistant grants to local executable MCPs", async () => {
     const customDeployment = await db.deployment.create({
       data: {
         workspaceId: sourceWorkspaceId,
@@ -343,27 +395,18 @@ describe.sequential("unified assistant market", () => {
         status: "stopped",
       },
     });
-    const assistant = await db.chatAssistant.create({
-      data: {
+    await expect(
+      createChatAssistant(sourceUserId, {
         workspaceId: sourceWorkspaceId,
         name: "Nonportable helper",
-        mcpGrants: { create: { deploymentId: customDeployment.id } },
-      },
-    });
-    await expect(
-      publishAssistantRelease({
-        workspaceId: sourceWorkspaceId,
-        assistantId: assistant.id,
-        publishedById: sourceUserId,
-        categoryIds: [categoryId],
+        mcpGrants: [
+          {
+            deploymentId: customDeployment.id,
+            allowedToolNames: ["search"],
+            expectedDefinitionChecksum: mcpDefinitionChecksum(customDeployment),
+          },
+        ],
       }),
-    ).rejects.toMatchObject({
-      code: "invalid_manifest",
-    } satisfies Partial<MarketError>);
-    expect(
-      await db.marketListing.findUnique({
-        where: { sourceChatAssistantId: assistant.id },
-      }),
-    ).toBeNull();
+    ).rejects.toMatchObject({ status: 400 });
   });
 });

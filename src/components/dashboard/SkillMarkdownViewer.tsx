@@ -77,10 +77,20 @@ export function SkillMarkdownViewer({
           </div>
           <CopyButton text={draft} label={t("copy")} />
           {downloadHref ? (
-            <ButtonLink href={downloadHref} variant="secondary" size="md">
-              <Download className="size-4" />
-              {t("downloadSkillmd")}
-            </ButtonLink>
+            <>
+              <ButtonLink href={downloadHref} variant="secondary" size="md">
+                <Download className="size-4" />
+                {t("downloadSkillBundle")}
+              </ButtonLink>
+              <ButtonLink
+                href={`${downloadHref}?format=markdown`}
+                variant="ghost"
+                size="md"
+              >
+                <Download className="size-4" />
+                {t("downloadSkillmd")}
+              </ButtonLink>
+            </>
           ) : null}
         </div>
       </div>

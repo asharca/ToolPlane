@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { useTranslations } from "next-intl";
 import {
@@ -44,6 +45,9 @@ type McpOption = {
   name: string;
   status: string;
   keywords?: string[];
+  available?: boolean;
+  definitionChecksum?: string;
+  tools?: Array<{ name: string; description: string }>;
 };
 type AssistantCreateStep =
   | "basic"
@@ -74,6 +78,72 @@ function hasValidJson(value: string): boolean {
   }
 }
 
+function PendingToolChangesPanel({
+  assistantId,
+  deploymentId,
+  pendingToolChanges,
+  onApproved,
+}: {
+  assistantId: string;
+  deploymentId: string;
+  pendingToolChanges: NonNullable<
+    ChatAssistantItem["mcpGrants"]
+  >[number]["pendingToolChanges"];
+  onApproved: () => void;
+}) {
+  const t = useTranslations("console.chatAssistants");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const names = Object.keys(pendingToolChanges ?? {});
+  if (!names.length) return null;
+  const approve = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const response = await fetch(
+        `/api/v1/chat/assistants/${encodeURIComponent(assistantId)}/mcp/${encodeURIComponent(deploymentId)}/approve-tool-changes`,
+        { method: "POST", headers: { "content-type": "application/json" } },
+      );
+      if (!response.ok) throw new Error(t("mcpToolChangeApproveError"));
+      onApproved();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div
+      role="alert"
+      className="mt-2 space-y-2 rounded-lg border border-warning/40 bg-warning/5 p-2 text-xs"
+    >
+      <p className="font-medium text-warning">
+        {t("mcpToolChangedPaused", { count: names.length })}
+      </p>
+      <ul className="space-y-1">
+        {names.map((name) => {
+          const change = pendingToolChanges?.[name];
+          return (
+            <li key={name} className="break-words text-muted-foreground">
+              <span className="font-mono">{name}</span>
+              {change?.previous.description !== change?.current.description ? (
+                <span className="block">
+                  <s>{change?.previous.description ?? ""}</s> →{" "}
+                  {change?.current.description ?? ""}
+                </span>
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
+      {error ? <p className="text-destructive">{error}</p> : null}
+      <Button type="button" disabled={busy} onClick={approve}>
+        {busy ? t("mcpToolChangeApproving") : t("mcpToolChangeApprove")}
+      </Button>
+    </div>
+  );
+}
+
 export function AssistantEditor({
   assistant,
   deployments,
@@ -102,6 +172,7 @@ export function AssistantEditor({
   workspaceId: string;
 }) {
   const t = useTranslations("console.chatAssistants");
+  const router = useRouter();
   const common = useTranslations("common");
   const creating = !assistant;
   const [closing, setClosing] = useState(false);
@@ -223,7 +294,33 @@ export function AssistantEditor({
     setSaving(true);
     setError(null);
     try {
-      const deploymentIds = formData.getAll("deploymentIds").map(String);
+      const mcpGrants = deployments.flatMap((deployment) => {
+        const allowedToolNames = formData
+          .getAll(`tools:${deployment.id}`)
+          .map(String);
+        const previous = assistant?.mcpGrants?.find(
+          (grant) => grant.deploymentId === deployment.id,
+        );
+        const unchanged =
+          previous &&
+          previous.allowedToolNames.length === allowedToolNames.length &&
+          allowedToolNames.every((name) =>
+            previous.allowedToolNames.includes(name),
+          );
+        return allowedToolNames.length
+          ? [
+              {
+                deploymentId: deployment.id,
+                allowedToolNames,
+                ...(!unchanged
+                  ? {
+                      expectedDefinitionChecksum: deployment.definitionChecksum,
+                    }
+                  : {}),
+              },
+            ]
+          : [];
+      });
       const selectedCustomParameters = customParameters
         .filter((parameter) => parameter.name.trim())
         .map(({ name, type, value }) => ({ name: name.trim(), type, value }));
@@ -252,6 +349,7 @@ export function AssistantEditor({
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             ...(!assistant ? { workspaceId } : {}),
+            ...(assistant ? { expectedRevision: assistant.revision } : {}),
             name: String(formData.get("name") ?? "").trim(),
             description: description.trim() || null,
             systemPrompt: systemPrompt.trim() || null,
@@ -263,7 +361,7 @@ export function AssistantEditor({
             maxSteps: Number(
               formData.get("maxSteps") ?? AGENT_STEP_BOUNDS.default,
             ),
-            deploymentIds,
+            mcpGrants,
             ...(!assistant && marketTemplate
               ? { marketTemplateReleaseId: marketTemplate.releaseId }
               : {}),
@@ -986,7 +1084,7 @@ export function AssistantEditor({
                         names: marketTemplate.missingMcpNames.join(", "),
                       })}{" "}
                       <Link
-                        href={`/app/${encodeURIComponent(slug)}/market/mcp`}
+                        href={`/app/${encodeURIComponent(slug)}/market?type=mcp&target=assistant`}
                         className="font-medium underline"
                       >
                         {t("browseMcpMarket")}
@@ -1000,19 +1098,77 @@ export function AssistantEditor({
                           key={deployment.id}
                           className="flex min-h-10 items-center gap-3 py-2 text-sm"
                         >
-                          <FormCheckbox
-                            name="deploymentIds"
-                            value={deployment.id}
-                            defaultChecked={
-                              assistant?.deploymentIds.includes(
-                                deployment.id,
-                              ) ||
-                              marketTemplate?.deploymentIds.includes(
-                                deployment.id,
+                          <fieldset className="min-w-0 flex-1">
+                            <legend>{deployment.name}</legend>
+                            {deployment.definitionChecksum && (
+                              <p className="break-all text-[11px] text-muted-foreground">
+                                SHA-256 {deployment.definitionChecksum}
+                              </p>
+                            )}
+                            {assistant?.mcpGrants?.some(
+                              (grant) =>
+                                grant.deploymentId === deployment.id &&
+                                Object.keys(grant.pendingToolChanges ?? {})
+                                  .length,
+                            ) ? (
+                              <PendingToolChangesPanel
+                                assistantId={assistant.id}
+                                deploymentId={deployment.id}
+                                pendingToolChanges={
+                                  assistant.mcpGrants?.find(
+                                    (grant) =>
+                                      grant.deploymentId === deployment.id,
+                                  )?.pendingToolChanges
+                                }
+                                onApproved={() => router.refresh()}
+                              />
+                            ) : null}
+                            {[
+                              ...(deployment.tools ?? []),
+                              ...(
+                                assistant?.mcpGrants?.find(
+                                  (grant) =>
+                                    grant.deploymentId === deployment.id,
+                                )?.allowedToolNames ?? []
                               )
-                            }
-                            label={deployment.name}
-                          />
+                                .filter(
+                                  (name) =>
+                                    !deployment.tools?.some(
+                                      (tool) => tool.name === name,
+                                    ),
+                                )
+                                .map((name) => ({
+                                  name,
+                                  description: deployment.status,
+                                })),
+                            ].map((tool) => (
+                              <FormCheckbox
+                                key={tool.name}
+                                name={`tools:${deployment.id}`}
+                                value={tool.name}
+                                disabled={
+                                  !deployment.available &&
+                                  !assistant?.mcpGrants?.some(
+                                    (grant) =>
+                                      grant.deploymentId === deployment.id &&
+                                      grant.allowedToolNames.includes(
+                                        tool.name,
+                                      ),
+                                  )
+                                }
+                                defaultChecked={
+                                  assistant?.mcpGrants?.some(
+                                    (grant) =>
+                                      grant.deploymentId === deployment.id &&
+                                      grant.allowedToolNames.includes(
+                                        tool.name,
+                                      ),
+                                  ) ?? false
+                                }
+                                label={`${tool.name} — ${tool.description}`}
+                              />
+                            ))}
+                          </fieldset>
 
                           <span
                             className={cx(

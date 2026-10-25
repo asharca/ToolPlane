@@ -14,6 +14,16 @@ export async function mapTaskSandbox(row: A2ATask) {
     where: { id: row.contextId },
   });
   const grant = row.grant as unknown as LocalA2AGrant;
+  if (
+    !context.agentRevisionId ||
+    context.legacyRevisionUnresolved ||
+    context.agentRevisionId !== grant.agentRevisionId ||
+    context.agentId !== grant.agentId ||
+    context.workspaceId !== grant.workspaceId
+  )
+    throw new Error(
+      "Fixture context must retain its authorized native revision.",
+    );
   const entry = !grant.ancestorTaskIds.length ? grant.entryPolicy : undefined;
   const conversationId =
     entry?.kind === "work"
@@ -59,6 +69,7 @@ export async function mapTaskSandbox(row: A2ATask) {
           managedBy: "agent-conversation",
           agentId: grant.agentId,
           sourceSandboxId: source.sandboxId,
+          agentRevisionId: context.agentRevisionId,
         },
       },
     });

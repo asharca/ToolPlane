@@ -1,153 +1,20 @@
 import { withRequestLogging } from "@/lib/observability/http";
-import {
-  ensureHermesDashboardBroker,
-  hermesDashboardBrokerPublicUrl,
-} from "@/lib/agents/hermes/dashboard-broker";
-import {
-  createHermesDashboardBrokerAccessToken,
-  verifyHermesDashboardAccessToken,
-} from "@/lib/agents/hermes/token";
-import { db } from "@/lib/db";
-import { isAgentEndpointRuntimeSandboxConfig } from "@/lib/agents/public-api/tool-policy";
 
 export const runtime = "nodejs";
-
-type RouteParams = Promise<{
-  runtimeId: string;
-  accessToken: string;
-  path?: string[];
-}>;
-
-function errorResponse(message: string, status: number): Response {
-  return Response.json(
-    { error: message },
-    {
-      status,
-      headers: {
-        "cache-control": "no-store",
-        "referrer-policy": "no-referrer",
-        "x-content-type-options": "nosniff",
-      },
-    },
-  );
-}
-
-function firstHeaderValue(value: string | null): string | null {
-  return value?.split(",")[0]?.trim() || null;
-}
-
-function dashboardParentOrigin(req: Request): string {
-  const requestUrl = new URL(req.url);
-  const host =
-    firstHeaderValue(req.headers.get("x-forwarded-host")) ??
-    firstHeaderValue(req.headers.get("host")) ??
-    requestUrl.host;
-  const forwardedProto = firstHeaderValue(
-    req.headers.get("x-forwarded-proto"),
-  )?.toLowerCase();
-  const protocol =
-    forwardedProto === "http" || forwardedProto === "https"
-      ? `${forwardedProto}:`
-      : requestUrl.protocol;
-  return new URL(`${protocol}//${host}`).origin;
-}
-
-async function redirectToDashboardBroker(
-  req: Request,
-  params: RouteParams,
-): Promise<Response> {
-  const { runtimeId, accessToken, path = [] } = await params;
-  if (!verifyHermesDashboardAccessToken(runtimeId, accessToken)) {
-    return errorResponse("Dashboard access is invalid or expired.", 401);
-  }
-  const runtime = await db.agentRuntime.findFirst({
-    where: {
-      id: runtimeId,
-      kind: "hermes",
-      agent: { publicRuntimeAllocation: { is: null } },
-    },
-    select: { sandbox: { select: { config: true } } },
-  });
-  if (!runtime || isAgentEndpointRuntimeSandboxConfig(runtime.sandbox.config)) {
-    return errorResponse("Dashboard access is invalid or expired.", 401);
-  }
-
-  try {
-    const broker = await ensureHermesDashboardBroker();
-    const parentOrigin = dashboardParentOrigin(req);
-    const publicRequestUrl = new URL(req.url);
-    const parentUrl = new URL(parentOrigin);
-    publicRequestUrl.protocol = parentUrl.protocol;
-    publicRequestUrl.hostname = parentUrl.hostname;
-    publicRequestUrl.port = parentUrl.port;
-    const brokerToken = createHermesDashboardBrokerAccessToken(
-      runtimeId,
-      parentOrigin,
-    );
-    const location = hermesDashboardBrokerPublicUrl(
-      publicRequestUrl.toString(),
-      runtimeId,
-      brokerToken,
-      path,
-      broker.port,
-    );
-    return new Response(null, {
-      status: 307,
-      headers: {
-        location,
-        "cache-control": "no-store",
-        "referrer-policy": "no-referrer",
-        "x-content-type-options": "nosniff",
-      },
-    });
-  } catch (error) {
-    return errorResponse(
-      error instanceof Error
-        ? error.message
-        : "Hermes dashboard broker is unavailable.",
-      503,
-    );
-  }
-}
-
 export const GET = withRequestLogging(
   "/api/v1/agent-runtimes/[runtimeId]/dashboard/[accessToken]/[[...path]]",
-  async function GET(req: Request, { params }: { params: RouteParams }) {
-    return redirectToDashboardBroker(req, params);
-  },
+  async () =>
+    Response.json(
+      {
+        error:
+          "Legacy Agent dashboards are retired. Historical files remain available through the read-only session workspace.",
+      },
+      { status: 410 },
+    ),
 );
-
-export const HEAD = withRequestLogging(
-  "/api/v1/agent-runtimes/[runtimeId]/dashboard/[accessToken]/[[...path]]",
-  async function HEAD(req: Request, { params }: { params: RouteParams }) {
-    return redirectToDashboardBroker(req, params);
-  },
-);
-
-export const POST = withRequestLogging(
-  "/api/v1/agent-runtimes/[runtimeId]/dashboard/[accessToken]/[[...path]]",
-  async function POST(req: Request, { params }: { params: RouteParams }) {
-    return redirectToDashboardBroker(req, params);
-  },
-);
-
-export const PUT = withRequestLogging(
-  "/api/v1/agent-runtimes/[runtimeId]/dashboard/[accessToken]/[[...path]]",
-  async function PUT(req: Request, { params }: { params: RouteParams }) {
-    return redirectToDashboardBroker(req, params);
-  },
-);
-
-export const PATCH = withRequestLogging(
-  "/api/v1/agent-runtimes/[runtimeId]/dashboard/[accessToken]/[[...path]]",
-  async function PATCH(req: Request, { params }: { params: RouteParams }) {
-    return redirectToDashboardBroker(req, params);
-  },
-);
-
-export const DELETE = withRequestLogging(
-  "/api/v1/agent-runtimes/[runtimeId]/dashboard/[accessToken]/[[...path]]",
-  async function DELETE(req: Request, { params }: { params: RouteParams }) {
-    return redirectToDashboardBroker(req, params);
-  },
-);
+export const HEAD = GET;
+export const POST = GET;
+export const PUT = GET;
+export const PATCH = GET;
+export const DELETE = GET;
+export const OPTIONS = GET;

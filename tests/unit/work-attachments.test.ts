@@ -6,7 +6,6 @@ const mocks = vi.hoisted(() => ({
   attachmentFindMany: vi.fn(),
   copy: vi.fn(),
   attachmentUpdateMany: vi.fn(),
-  releaseLease: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => ({
@@ -24,13 +23,6 @@ vi.mock("@/lib/attachments/storage", () => ({
 
 vi.mock("@/lib/sandboxes/runtime", () => ({
   sandboxVolumeName: (id: string) => `volume-${id}`,
-}));
-
-vi.mock("@/lib/agents/hermes/runtime", () => ({
-  acquireHermesRuntimeWriteLease: vi.fn(() => ({
-    release: mocks.releaseLease,
-  })),
-  HERMES_RUNTIME_COPY_IN_PROGRESS_ERROR: "Hermes maintenance in progress.",
 }));
 
 import {
@@ -58,14 +50,13 @@ describe("Work attachments", () => {
     ]);
   });
 
-  it("copies into the Hermes workspace inside its dedicated volume", async () => {
+  it("rejects historical Hermes workspace writes without copying files", async () => {
     mocks.sandboxFindFirst.mockResolvedValue({
       id: "sandbox-hermes",
       kind: "hermes",
       agentRuntime: { agentId: "agent-hermes" },
       deployment: { installCfg: { volumeName: "hermes-volume" } },
     });
-
     await expect(
       prepareWorkAttachments({
         workspaceId: "workspace-1",
@@ -74,20 +65,8 @@ describe("Work attachments", () => {
         workingDirectory: "projects/app",
         attachmentIds: ["attachment-1"],
       }),
-    ).resolves.toEqual([
-      expect.objectContaining({
-        runtimePath:
-          "/opt/data/workspace/projects/app/.toolplane/attachments/attachment-1/notes.txt",
-      }),
-    ]);
-    expect(mocks.copy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        destinationVolume: "hermes-volume",
-        destinationPath:
-          "workspace/projects/app/.toolplane/attachments/attachment-1/notes.txt",
-      }),
-    );
-    expect(mocks.releaseLease).toHaveBeenCalledOnce();
+    ).rejects.toMatchObject({ status: 409 });
+    expect(mocks.copy).not.toHaveBeenCalled();
   });
 
   it("copies a caller-owned draft into the selected sandbox directory", async () => {

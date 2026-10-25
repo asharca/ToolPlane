@@ -4,7 +4,6 @@ import {
   screen,
   waitFor,
   cleanup,
-  within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentA2APanel } from "@/components/dashboard/agents/AgentA2APanel";
@@ -21,7 +20,8 @@ vi.mock("@/components/dashboard/CopyButton", () => ({
 }));
 const view: A2AConsoleView = {
   canManage: true,
-  local: { enabled: true, supported: true, ready: true },
+  local: { supported: true, ready: true },
+  collaboration: { inboundEnabled: true, outboundEnabled: true },
   endpoint: {
     id: "agep_test",
     enabled: true,
@@ -55,7 +55,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
-const show = async (runtimeKind = "pi") => {
+const show = async (runtimeKind = "pi-sdk") => {
   const rendered = render(
     <AgentA2APanel slug="team" agentId="agent" runtimeKind={runtimeKind} />,
   );
@@ -69,7 +69,7 @@ const posts = () =>
 
 describe("Agent A2A console panel", () => {
   it("opens ingress task history without requiring external A2A or submitting work", async () => {
-    current.local.enabled = false;
+    current.collaboration = { inboundEnabled: false, outboundEnabled: false };
     fetchMock.mockImplementation((url) =>
       String(url).includes("/tasks?")
         ? json({
@@ -101,7 +101,7 @@ describe("Agent A2A console panel", () => {
       <AgentA2APanel
         slug="team"
         agentId="agent"
-        runtimeKind="pi"
+        runtimeKind="pi-sdk"
         initialTaskId="entry-task"
       />,
     );
@@ -151,7 +151,7 @@ describe("Agent A2A console panel", () => {
       <AgentA2APanel
         slug="team"
         agentId="agent"
-        runtimeKind="pi"
+        runtimeKind="pi-sdk"
         initialTaskId="entry-task"
       />,
     );
@@ -182,7 +182,7 @@ describe("Agent A2A console panel", () => {
     ];
     await show();
     expect(
-      screen.getByRole("heading", { name: "Internal collaboration" }),
+      screen.getAllByRole("heading", { name: "Internal collaboration" })[0],
     ).toBeInTheDocument();
     expect(
       screen.getByRole("heading", { name: "Connect an external Agent" }),
@@ -218,68 +218,55 @@ describe("Agent A2A console panel", () => {
       }),
     ).not.toBeInTheDocument();
     expect(
-      within(
-        screen.getByRole("region", { name: "External A2A & channel access" }),
-      ).getByRole("heading", { name: "Channel execution operator" }),
+      screen.getByRole("heading", { name: "Channel execution operator" }),
     ).toBeInTheDocument();
   });
-  it("allows configuring internal delegates with external access disabled and no enablement prerequisite", async () => {
-    current.local.enabled = false;
+  it("keeps delegate configuration separate from independent default-deny policies", async () => {
+    current.collaboration = { inboundEnabled: false, outboundEnabled: false };
     await show();
-    const internal = screen.getByRole("region", {
-      name: "Internal collaboration",
-    });
     expect(
-      within(internal).getByText(
-        /Select sub-agents to allow internal delegation/,
-      ),
-    ).toHaveTextContent(
-      "Neither this Agent nor the selected targets need an A2A switch enabled.",
-    );
-    expect(
-      within(internal).getByRole("link", {
-        name: "Configure allowed delegates",
-      }),
+      screen.getByRole("link", { name: "Configure allowed delegates" }),
     ).toHaveAttribute("href", "?settings=subAgents");
-    expect(within(internal).queryByRole("button")).not.toBeInTheDocument();
-    expect(within(internal).queryByText("Disabled")).not.toBeInTheDocument();
     expect(
-      within(
-        screen.getByRole("region", { name: "External A2A & channel access" }),
-      ).getByRole("button", { name: "Enable external & channel access" }),
+      screen.getByRole("button", { name: "Enable inbound collaboration" }),
     ).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: "Enable outbound collaboration" }),
+    ).toBeEnabled();
+    expect(
+      screen.getByText(/Inbound access is independent/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Outbound access is independent/),
+    ).toBeInTheDocument();
     expect(posts()).toHaveLength(0);
   });
-  it("retains Hermes publication and dedicated service credentials", async () => {
+  it("retains historical publication metadata without enabling or issuing credentials", async () => {
     await show("hermes");
     expect(
       screen.getByRole("heading", { name: "Published service" }),
     ).toBeInTheDocument();
+    expect(screen.getByText("Published revision: 1")).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Disable external A2A" }),
-    ).toBeEnabled();
+      screen.queryByRole("button", { name: "Disable external A2A" }),
+    ).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Create client & key" }),
-    ).toBeInTheDocument();
+      screen.queryByRole("button", { name: "Create client & key" }),
+    ).not.toBeInTheDocument();
     expect(
-      screen.getByText(/Use a dedicated A2A service key/),
-    ).toBeInTheDocument();
+      screen.queryByRole("button", { name: "Add replacement key" }),
+    ).not.toBeInTheDocument();
     expect(
-      screen.getByText("https://tp.example/a2a", { selector: "code" }),
-    ).toBeInTheDocument();
-    fireEvent.click(
-      screen.getByRole("button", { name: "External A2A & channel access" }),
-    );
-    expect(
-      screen.getByText(/Never give your account token to third parties/),
-    ).toBeInTheDocument();
+      screen.queryByRole("textbox", { name: "Client name" }),
+    ).not.toBeInTheDocument();
+    expect(posts()).toHaveLength(0);
   });
   it("disables admin controls for members while keeping integration documentation readable", async () => {
     current.canManage = false;
     current.connections = null;
     await show();
     expect(
-      screen.getByRole("button", { name: "Disable external & channel access" }),
+      screen.getByRole("button", { name: "Disable inbound collaboration" }),
     ).toBeDisabled();
     expect(
       screen.queryByRole("button", { name: "Create client & key" }),
@@ -287,59 +274,70 @@ describe("Agent A2A console panel", () => {
     expect(posts()).toHaveLength(0);
   });
   it.each([false, true])(
-    "requires confirmation to change external access when enabled=%s",
+    "changes each collaboration direction independently when enabled=%s",
     async (enabled) => {
-      current.local.enabled = enabled;
+      current.collaboration = {
+        inboundEnabled: enabled,
+        outboundEnabled: enabled,
+      };
       await show();
-      vi.mocked(window.confirm).mockReturnValue(false);
-      const button = screen.getByRole("button", {
-        name: enabled
-          ? "Disable external & channel access"
-          : "Enable external & channel access",
-      });
-      fireEvent.click(button);
-      expect(posts()).toHaveLength(0);
-      vi.mocked(window.confirm).mockReturnValue(true);
-      fireEvent.click(button);
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: enabled
+            ? "Disable inbound collaboration"
+            : "Enable inbound collaboration",
+        }),
+      );
       await waitFor(() => expect(posts()).toHaveLength(1));
       expect(JSON.parse(posts()[0][1].body)).toEqual({
-        action: "set-local",
+        action: "set-inbound",
+        enabled: !enabled,
+      });
+      await waitFor(() =>
+        expect(
+          screen.getByRole("button", {
+            name: enabled
+              ? "Disable outbound collaboration"
+              : "Enable outbound collaboration",
+          }),
+        ).toBeEnabled(),
+      );
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: enabled
+            ? "Disable outbound collaboration"
+            : "Enable outbound collaboration",
+        }),
+      );
+      await waitFor(() => expect(posts()).toHaveLength(2));
+      expect(JSON.parse(posts()[1][1].body)).toEqual({
+        action: "set-outbound",
         enabled: !enabled,
       });
     },
   );
-  it("preserves the one-time credential when a subsequent list refresh fails; no automatic retry", async () => {
-    await show("hermes");
+  it("reports a committed policy change with failed refresh without retrying the mutation", async () => {
+    await show();
     fetchMock.mockImplementation((_url, init) =>
-      init?.method === "POST"
-        ? json({ ok: true, token: "tp_agent_ONE_TIME_FIXTURE" })
-        : json({}, 500),
+      init?.method === "POST" ? json({ ok: true }) : json({}, 500),
     );
-    fireEvent.change(screen.getByLabelText("Client name"), {
-      target: { value: "integration" },
-    });
     fireEvent.click(
-      screen.getByRole("button", { name: "Create client & key" }),
+      screen.getByRole("button", { name: "Disable inbound collaboration" }),
     );
-    expect(
-      await screen.findByText("tp_agent_ONE_TIME_FIXTURE"),
-    ).toBeInTheDocument();
-    expect(
-      await screen.findByText(/change succeeded, but refreshing/),
-    ).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Configuration saved.",
+    );
     expect(posts()).toHaveLength(1);
-    expect(
-      screen.getByRole("button", { name: "Create client & key" }),
-    ).toBeDisabled();
     expect(localStorage.length).toBe(0);
     expect(sessionStorage.length).toBe(0);
-    fireEvent.click(screen.getByRole("button", { name: "Saved — hide key" }));
-    expect(
-      screen.queryByText("tp_agent_ONE_TIME_FIXTURE"),
-    ).not.toBeInTheDocument();
   });
   it("switches connection URLs without submitting tasks or exposing credentials in docs", async () => {
     await show("hermes");
+    expect(
+      screen.getAllByText("https://tp.example/local", { selector: "code" }),
+    ).toHaveLength(2);
+    fireEvent.click(screen.getByRole("button", { name: "Published service" }));
     expect(
       screen.getByText("https://tp.example/a2a", { selector: "code" }),
     ).toBeVisible();

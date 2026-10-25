@@ -1,6 +1,5 @@
 import {
   sandboxFlags,
-  envFlags,
   WRAP_IMAGE,
   CACHE_ENV,
   type McpNetwork,
@@ -13,6 +12,13 @@ import {
 } from "@/lib/sandboxes/connector";
 import { isValidRemoteMcpUrl } from "@/lib/remote-mcp/url";
 import { parseDockerJsonArgs } from "@/lib/workspace/docker-json-command";
+import { isAllowedRemoteMcpHeaderName } from "@/lib/remote-mcp/header-policy";
+
+export type SandboxResourceLimits = {
+  memoryBytes: number;
+  cpus: number;
+  pidsLimit: number;
+};
 
 export type SpawnSpec =
   | { kind: "builtin"; name: string }
@@ -23,6 +29,7 @@ export type SpawnSpec =
       transport: "streamable-http" | "sse";
       headers: Record<string, string>;
       timeoutMs: number;
+      allowUnsafeHttp: boolean;
     }
   | {
       kind: "bridge";
@@ -31,9 +38,7 @@ export type SpawnSpec =
       args: string[];
       env: Record<string, string>;
       containerEnv?: Record<string, string>;
-      // Kept separately from the docker argv so the supervisor can expose the
-      // image lifecycle without ever recording a command line that may contain
-      // `-e KEY=value` secrets.
+      // Runtime-only projection: never pass these values via Docker --env.
       image?: string;
       // JSON-configured npx/uvx/uv MCPs may use relative config file arguments.
       // When runtime files are attached, the supervisor supplies the managed
@@ -44,15 +49,14 @@ export type SpawnSpec =
       kind: "sandbox";
       name: string;
       sandboxId: string;
-      sandboxKind: "docker" | "connector" | "hermes" | "ssh";
+      sandboxKind: "docker" | "connector" | "ssh";
       sshTargetId?: string;
       image?: string;
       volumeName?: string;
+      resourceLimits?: SandboxResourceLimits;
       network: McpNetwork;
       env: Record<string, string>;
       connector?: SandboxConnectorConfig;
-      runtimeId?: string;
-      runtimeModelName?: string;
       allowSudo?: boolean;
     };
 
@@ -75,20 +79,6 @@ export type DockerSpawnSpec = {
 function splitArgs(s: string | undefined): string[] {
   return s ? s.split(/\s+/).filter(Boolean) : [];
 }
-
-const REMOTE_HEADER_NAME_RE = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
-const REMOTE_BLOCKED_HEADERS = new Set([
-  "connection",
-  "content-length",
-  "constructor",
-  "host",
-  "mcp-protocol-version",
-  "mcp-session-id",
-  "prototype",
-  "transfer-encoding",
-  "upgrade",
-  "__proto__",
-]);
 
 function readRemoteCfg(
   sourceRef: string | null,
@@ -119,6 +109,11 @@ function readRemoteCfg(
     throw new Error("Remote MCP configuration is invalid.");
   }
   const cfg = installCfg as Record<string, unknown>;
+  if (url.protocol === "http:" && cfg.allowUnsafeHttp !== true) {
+    throw new Error(
+      "Remote MCP HTTP requires explicit plaintext-risk approval.",
+    );
+  }
   const transport = cfg.transport ?? "streamable-http";
   if (transport !== "streamable-http" && transport !== "sse") {
     throw new Error("Remote MCP transport must be streamable-http or sse.");
@@ -149,6 +144,9 @@ function readRemoteCfg(
     if (typeof value !== "string" || value.length === 0) {
       throw new Error(`Remote MCP credential ${key} is not configured.`);
     }
+    if (value.length > 8_185 || /[\r\n\0]/.test(value)) {
+      throw new Error("Remote MCP credential has an invalid header value.");
+    }
     return value;
   };
 
@@ -172,11 +170,7 @@ function readRemoteCfg(
     const seen = new Set<string>();
     for (const [rawName, envKey] of entries) {
       const name = rawName.toLowerCase();
-      if (
-        !REMOTE_HEADER_NAME_RE.test(rawName) ||
-        REMOTE_BLOCKED_HEADERS.has(name) ||
-        seen.has(name)
-      ) {
+      if (!isAllowedRemoteMcpHeaderName(rawName) || seen.has(name)) {
         throw new Error("A remote MCP header is not allowed.");
       }
       const value = envValue(envKey);
@@ -193,14 +187,13 @@ function readRemoteCfg(
     transport,
     headers,
     timeoutMs: Number(timeoutMs),
+    allowUnsafeHttp: cfg.allowUnsafeHttp === true,
   };
 }
 
 // Every custom MCP runs in its own hardened, throwaway container (see
-// ./sandbox.ts) — npm/GitHub wrapped in Node, PyPI in the uv image, docker as
-// its own image. `env` is the MCP's OWN env (installCfg.env) and is the only
-// environment that enters the container: argv holds only `-e KEY`; values are
-// supplied separately to the bridge's Docker child.
+// ./sandbox.ts). Container environment is delivered by the stdio bridge's
+// stdin bootstrap, never Docker Config.Env, argv, image layers or host files.
 //
 // `rebuild = true` re-fetches instead of using cache (npm revalidates the
 // registry, uv refreshes, docker re-pulls). `network` picks the sandbox network
@@ -225,7 +218,7 @@ export function buildSpawnSpec(
       const containerEnv = { ...CACHE_ENV.npm, ...env };
       return {
         command: "docker",
-        args: [...run, ...envFlags(containerEnv), image, ...inner],
+        args: [...run, image, ...inner],
         image,
         env: containerEnv,
       };
@@ -235,7 +228,7 @@ export function buildSpawnSpec(
       const containerEnv = { ...CACHE_ENV.pypi, ...env };
       return {
         command: "docker",
-        args: [...run, ...envFlags(containerEnv), WRAP_IMAGE.pypi, ...inner],
+        args: [...run, WRAP_IMAGE.pypi, ...inner],
         image: WRAP_IMAGE.pypi,
         env: containerEnv,
       };
@@ -244,13 +237,7 @@ export function buildSpawnSpec(
       const pull = rebuild ? ["--pull", "always"] : [];
       return {
         command: "docker",
-        args: [
-          ...run,
-          ...pull,
-          ...envFlags(env),
-          ref,
-          ...splitArgs(startCommand),
-        ],
+        args: [...run, ...pull, ref, ...splitArgs(startCommand)],
         image: ref,
         env,
       };
@@ -276,14 +263,7 @@ export function buildStdioConfigSpawnSpec(
     const containerEnv = { ...CACHE_ENV.npm, ...env };
     return {
       command: "docker",
-      args: [
-        ...run,
-        ...envFlags(containerEnv),
-        image,
-        "npx",
-        ...refresh,
-        ...commandArgs,
-      ],
+      args: [...run, image, "npx", ...refresh, ...commandArgs],
       image,
       env: containerEnv,
     };
@@ -296,14 +276,7 @@ export function buildStdioConfigSpawnSpec(
     const containerEnv = { ...CACHE_ENV.pypi, ...env };
     return {
       command: "docker",
-      args: [
-        ...run,
-        ...envFlags(containerEnv),
-        image,
-        command,
-        ...refresh,
-        ...commandArgs,
-      ],
+      args: [...run, image, command, ...refresh, ...commandArgs],
       image,
       env: containerEnv,
     };
@@ -314,7 +287,7 @@ export function buildStdioConfigSpawnSpec(
     const pull = rebuild ? ["--pull", "always"] : [];
     return {
       command: "docker",
-      args: [...run, ...pull, ...envFlags(env), image, ...containerArgs],
+      args: [...run, ...pull, image, ...containerArgs],
       image,
       env,
     };
@@ -347,15 +320,14 @@ function readCfg(installCfg: unknown): {
 
 function readSandboxCfg(installCfg: unknown): {
   sandboxId: string;
-  kind: "docker" | "connector" | "hermes" | "ssh";
+  kind: "docker" | "connector" | "ssh";
   sshTargetId?: string;
   image?: string;
   volumeName?: string;
+  resourceLimits?: SandboxResourceLimits;
   network: McpNetwork;
   env: Record<string, string>;
   connector?: SandboxConnectorConfig;
-  runtimeId?: string;
-  runtimeModelName?: string;
   allowSudo: boolean;
 } {
   const c = (installCfg ?? {}) as {
@@ -363,12 +335,12 @@ function readSandboxCfg(installCfg: unknown): {
     kind?: string;
     image?: string;
     volumeName?: string;
+    resourceLimits?: SandboxResourceLimits;
     network?: string;
     env?: Record<string, string>;
-    runtimeId?: string;
-    runtimeModelName?: string;
     allowSudo?: boolean;
   };
+  if (c.kind === "hermes") throw new Error("AGENT_RUNTIME_RETIRED");
   const connector = connectorFromConfig(installCfg);
   const sshTargetId = sshTargetIdFromConfig(installCfg);
   if (c.kind === "ssh" && !sshTargetId)
@@ -378,22 +350,19 @@ function readSandboxCfg(installCfg: unknown): {
   const kind =
     c.kind === "ssh" && sshTargetId
       ? "ssh"
-      : c.kind === "hermes" && c.runtimeId
-        ? "hermes"
-        : c.kind === "connector" && connector
-          ? "connector"
-          : "docker";
+      : c.kind === "connector" && connector
+        ? "connector"
+        : "docker";
   return {
     sandboxId: c.sandboxId ?? "",
     kind,
     ...(sshTargetId ? { sshTargetId } : {}),
     image: c.image,
     volumeName: c.volumeName,
+    resourceLimits: c.resourceLimits,
     network: c.network === "none" ? "none" : "isolated",
     env: c.env ?? {},
     connector: connector ?? undefined,
-    runtimeId: c.runtimeId,
-    runtimeModelName: c.runtimeModelName,
     allowSudo: c.allowSudo === true,
   };
 }
@@ -414,11 +383,8 @@ export function resolveSpawnSpec(
       env: cfg.env,
       ...(cfg.image ? { image: cfg.image } : {}),
       ...(cfg.volumeName ? { volumeName: cfg.volumeName } : {}),
+      ...(cfg.resourceLimits ? { resourceLimits: cfg.resourceLimits } : {}),
       ...(cfg.connector ? { connector: cfg.connector } : {}),
-      ...(cfg.runtimeId ? { runtimeId: cfg.runtimeId } : {}),
-      ...(cfg.runtimeModelName
-        ? { runtimeModelName: cfg.runtimeModelName }
-        : {}),
       ...(cfg.allowSudo ? { allowSudo: true } : {}),
     };
   }

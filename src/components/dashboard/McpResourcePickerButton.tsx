@@ -31,6 +31,8 @@ export function McpResourcePickerButton({
   onInsert,
   open: controlledOpen,
   onOpenChange,
+  conversationId,
+  workSessionId,
 }: {
   apiPath?: string;
   disabled: boolean;
@@ -39,6 +41,8 @@ export function McpResourcePickerButton({
   onInsert: (text: string) => void;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  conversationId?: string;
+  workSessionId?: string;
 }) {
   const t = useTranslations("console.agents");
   const common = useTranslations("common");
@@ -129,6 +133,8 @@ export function McpResourcePickerButton({
             kind: "resource",
             id: resource.id,
             deploymentId: resource.deploymentId,
+            ...(conversationId ? { conversationId } : {}),
+            ...(workSessionId ? { workSessionId } : {}),
           }),
         });
         const body = (await response.json().catch(() => ({}))) as {
@@ -153,7 +159,16 @@ export function McpResourcePickerButton({
         if (!controller.signal.aborted) setResolving(false);
       }
     },
-    [apiPath, onError, onInsert, resolving, setDialogOpen, t],
+    [
+      apiPath,
+      conversationId,
+      workSessionId,
+      onError,
+      onInsert,
+      resolving,
+      setDialogOpen,
+      t,
+    ],
   );
 
   if (!apiPath) return null;

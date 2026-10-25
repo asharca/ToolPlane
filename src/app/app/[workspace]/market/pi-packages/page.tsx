@@ -80,7 +80,7 @@ export default async function PiPackageMarketPage({
   const q = firstParam(query.q).trim().slice(0, 200);
   const view = firstParam(query.view);
   if (view === "workspace")
-    redirect(`/app/${encodeURIComponent(slug)}/toolkits/pi-packages`);
+    redirect(`/app/${encodeURIComponent(slug)}/market/compose`);
   if (view !== "toolplane")
     return <PiCatalogView workspace={workspace} query={q} page={page} />;
   const category = firstParam(query.category).trim().toLocaleLowerCase();
@@ -183,7 +183,7 @@ export default async function PiPackageMarketPage({
               description={t(hasFilters ? "piNoMatches" : "piEmptyDescription")}
               actions={
                 <ButtonLink
-                  href={`/app/${encodeURIComponent(slug)}/toolkits/pi-packages`}
+                  href={`/app/${encodeURIComponent(slug)}/market/compose`}
                   variant="secondary"
                   size="sm"
                 >

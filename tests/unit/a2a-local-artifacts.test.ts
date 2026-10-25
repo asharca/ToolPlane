@@ -2,12 +2,43 @@
 import { describe, expect, it } from "vitest";
 import { Artifact } from "@a2a-js/sdk";
 import { parseLocalArtifact } from "@/lib/a2a/local-artifacts";
+import { artifactDigest, stampArtifactProvenance } from "@/lib/a2a/model";
 const input = (part: unknown, name = "report.txt") => ({
   artifactId: "report-1",
   name,
   parts: [part],
 });
 describe("bounded standard A2A Artifact validation", () => {
+  it("stamps stable canonical content integrity without changing replay identity", () => {
+    const artifact = parseLocalArtifact(input({ data: { z: 1, a: "中" } }));
+    const identity = artifactDigest(artifact);
+    const source = {
+      taskId: "task",
+      contextId: "context",
+      targetId: "agent",
+      targetKind: "local" as const,
+    };
+    stampArtifactProvenance(artifact, source);
+    const provenance = artifact.metadata?.["toolplane.dev/provenance"];
+    expect(provenance).toMatchObject({
+      ...source,
+      sizeBytes: Buffer.byteLength(JSON.stringify({ a: "中", z: 1 })),
+      digest: expect.stringMatching(/^[a-f0-9]{64}$/),
+    });
+    expect(artifactDigest(artifact)).toBe(identity);
+    const same = stampArtifactProvenance(
+      parseLocalArtifact(input({ data: { a: "中", z: 1 } })),
+      source,
+    );
+    expect(same.metadata?.["toolplane.dev/provenance"]).toEqual(provenance);
+    const changed = stampArtifactProvenance(
+      parseLocalArtifact(input({ data: { a: "changed", z: 1 } })),
+      source,
+    );
+    expect(changed.metadata?.["toolplane.dev/provenance"]).not.toEqual(
+      provenance,
+    );
+  });
   it("uses official data/raw/text Part encodings", () => {
     expect(
       Artifact.toJSON(parseLocalArtifact(input({ data: { ok: true } }))),

@@ -61,7 +61,8 @@ Writes are not automatically retried. Refresh to establish their outcome after a
 
 ## Delegate from a native local task
 
-Enable the caller's internal A2A and start a root through the task playground or native local API.
+Enable the caller's outbound collaboration and approve the registered target in its
+versioned policy as well as its remote-connection allowlist, then start a native local task.
 The scoped runtime MCP bridge adds:
 
 | Tool | Purpose |
@@ -90,6 +91,10 @@ Runtime-tool argument example, not a new A2A wire method:
 Text leaves ToolPlane. Do not send private files, memory or credentials without authorization. Only the
 explicit message text is forwarded, not account/model/runtime credentials, authority metadata or local
 task IDs. A peer tenant comes from the approved Card, not a model-selected address or credential.
+Returned content remains untrusted text. Final inline result provenance identifies
+the local Task/context and registered peer, with size and canonical-content digest;
+it does not attest the peer's implementation, tool use or billing. Artifact URLs
+are not followed or automatically downloaded.
 
 ToolPlane and remote task IDs are distinct. Use the returned **ToolPlane child taskId** for lookup and
 INPUT_REQUIRED continuation with a fresh messageId; the platform maps remote identities privately.

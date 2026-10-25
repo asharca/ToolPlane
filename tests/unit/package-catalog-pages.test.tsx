@@ -8,7 +8,6 @@ const m = vi.hoisted(() => ({
   tracking: vi.fn(),
   sources: vi.fn(),
   entries: vi.fn(),
-  toolkit: vi.fn(),
   skills: vi.fn(),
   deployments: vi.fn(),
   browse: vi.fn(),
@@ -37,11 +36,6 @@ vi.mock("@/lib/workspace/queries", () => ({
   getInstalledSkills: m.skills,
   getDeployments: m.deployments,
 }));
-vi.mock("@/lib/toolkits/queries", () => ({
-  getToolkitBySlug: m.toolkit,
-  listToolkits: async () => [{ id: "tk", name: "Research", slug: "research" }],
-  getBrowseToolkits: m.browse,
-}));
 vi.mock("@/lib/market/skills", () => ({
   listWorkspacePublishedResources: m.listings,
 }));
@@ -49,6 +43,7 @@ vi.mock("@/lib/market/pi-package-catalog", () => ({
   listPiPackageTracking: m.tracking,
   listPiPackageSources: m.sources,
   listPiPackageSourceEntries: m.entries,
+  listPrivateApprovedPiReleases: async () => [],
 }));
 vi.mock("@/lib/market/listings", () => ({
   listMarketListingCategories: m.categories,
@@ -67,7 +62,8 @@ vi.mock("@/lib/market/actions", () => ({
   publishAssistantReleaseAction: vi.fn(),
   publishMcpReleaseAction: vi.fn(),
   publishSkillReleaseAction: vi.fn(),
-  publishToolkitReleaseAction: vi.fn(),
+  previewPiPackageSourceAction: vi.fn(),
+  previewAssembledPiPackageAction: vi.fn(),
   unpublishMarketListingAction: vi.fn(),
   withdrawMarketReleaseAction: vi.fn(),
   installMarketResourceAction: vi.fn(),
@@ -75,15 +71,12 @@ vi.mock("@/lib/market/actions", () => ({
 vi.mock("@/lib/market/pi-catalog-actions", () => ({
   piCatalogAction: vi.fn(),
 }));
-vi.mock("@/lib/toolkits/actions", () => ({
-  clonePublicToolkitAction: vi.fn(),
-}));
 vi.mock("@/components/dashboard/market/PiCatalogView", () => ({
   PiCatalogView: () => null,
   PiCatalogNavigation: () => null,
 }));
-import Packages from "@/app/app/[workspace]/toolkits/pi-packages/page";
-import Sources from "@/app/app/[workspace]/toolkits/pi-packages/sources/page";
+import Packages from "@/app/app/[workspace]/market/compose/page";
+import Sources from "@/app/app/[workspace]/market/sources/page";
 import Market from "@/app/app/[workspace]/market/pi-packages/page";
 import Toolkits from "@/app/app/[workspace]/market/toolkits/page";
 const props = (query = {}) => ({
@@ -124,7 +117,6 @@ beforeEach(() => {
   m.tracking.mockResolvedValue([]);
   m.sources.mockResolvedValue([]);
   m.entries.mockResolvedValue({ entries: [], hasMore: false });
-  m.toolkit.mockResolvedValue(null);
   m.skills.mockResolvedValue([]);
   m.deployments.mockResolvedValue([]);
   m.categories.mockResolvedValue([]);
@@ -138,7 +130,7 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 describe("package workspace and source pages", () => {
-  it.each([Packages, Sources, Market, Toolkits])(
+  it.each([Packages, Sources, Market])(
     "requires authentication before retrieving workspace data",
     async (page) => {
       m.user.mockResolvedValue(null);
@@ -146,24 +138,26 @@ describe("package workspace and source pages", () => {
       expect(m.workspace).not.toHaveBeenCalled();
     },
   );
-  it.each([Packages, Sources, Market, Toolkits])(
+  it.each([Packages, Sources, Market])(
     "redirects inaccessible workspaces",
     async (page) => {
       m.workspace.mockResolvedValue(null);
       await expect(page(props())).rejects.toThrow("redirect:/app");
     },
   );
-  it("rejects unknown selected toolkits instead of silently composing a new package", async () => {
-    await expect(Packages(props({ toolkit: "missing" }))).rejects.toThrow(
-      "notFound",
-    );
+  it("does not offer historical Toolkit conversion in normal package assembly", async () => {
+    render(await Packages(props()));
+    expect(
+      screen.queryByRole("combobox", { name: "packageExistingToolkit" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("piComposeDescription")).toBeInTheDocument();
   });
   it("describes an empty package workspace and provides source and market navigation", async () => {
     render(await Packages(props()));
     expect(screen.getByText("workspaceEmptyHelp")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "sourcesTitle" })).toHaveAttribute(
       "href",
-      "/app/acme/toolkits/pi-packages/sources",
+      "/app/acme/market/sources",
     );
   });
   it.each([
@@ -253,7 +247,7 @@ describe("package workspace and source pages", () => {
       render(await Packages(props()));
       expect(screen.getByText(/npm:@acme\/research/)).toBeInTheDocument();
       expect(
-        screen.getByRole("button", { name: "captureNew" }),
+        screen.getByRole("link", { name: "captureNew" }),
       ).toBeInTheDocument();
       if (status === "error" || status === "suspicious")
         expect(screen.getByRole("alert")).toHaveTextContent(
@@ -279,7 +273,7 @@ describe("package workspace and source pages", () => {
     ]);
     render(await Packages(props()));
     expect(
-      screen.queryByRole("button", { name: "captureNew" }),
+      screen.queryByRole("link", { name: "captureNew" }),
     ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "dismissVersion" }),
@@ -339,11 +333,11 @@ describe("package workspace and source pages", () => {
       ).toHaveAttribute("aria-current", "page");
       expect(screen.getByRole("link", { name: "previous" })).toHaveAttribute(
         "href",
-        "/app/acme/toolkits/pi-packages/sources?source=source-1&q=research&page=1",
+        "/app/acme/market/sources?source=source-1&q=research&page=1",
       );
       expect(screen.getByRole("link", { name: "next" })).toHaveAttribute(
         "href",
-        "/app/acme/toolkits/pi-packages/sources?source=source-1&q=research&page=3",
+        "/app/acme/market/sources?source=source-1&q=research&page=3",
       );
       expect(
         screen.getByText(
@@ -368,10 +362,10 @@ describe("package workspace and source pages", () => {
 describe("market packages and toolkits", () => {
   it("redirects the legacy workspace package view to management", async () => {
     await expect(Market(props({ view: "workspace" }))).rejects.toThrow(
-      "redirect:/app/acme/toolkits/pi-packages",
+      "redirect:/app/acme/market/compose",
     );
   });
-  it.each([Market, Toolkits])(
+  it.each([Market])(
     "drops unknown category filters while retaining search and sort",
     async (page) => {
       await expect(
@@ -386,7 +380,7 @@ describe("market packages and toolkits", () => {
       ).rejects.toThrow(/redirect:.*q=research.*sort=name/);
     },
   );
-  it.each([Market, Toolkits])(
+  it.each([Market])(
     "clamps out-of-range pagination without discarding category filters",
     async (page) => {
       m.categories.mockResolvedValue([
@@ -421,7 +415,7 @@ describe("market packages and toolkits", () => {
       expect(screen.getByText(text)).toBeInTheDocument();
       expect(
         screen.getByRole("link", { name: "piPublishTitle" }),
-      ).toHaveAttribute("href", "/app/acme/toolkits/pi-packages");
+      ).toHaveAttribute("href", "/app/acme/market/compose");
     },
   );
   it("renders released market packages only and preserves encoded details links", async () => {
@@ -445,103 +439,11 @@ describe("market packages and toolkits", () => {
     expect(screen.getByText("noDescription")).toBeInTheDocument();
     expect(screen.queryByText("Unreleased package")).not.toBeInTheDocument();
   });
-  it.each([
-    [{}, "noPublicToolkitsYet"],
-    [{ q: "missing" }, "noPublicToolkitsMatch:missing"],
-  ])(
-    "distinguishes empty toolkit markets from filtered misses",
-    async (query, text) => {
-      render(await Toolkits(props(query)));
-      expect(screen.getByText(text)).toBeInTheDocument();
-    },
-  );
-  it("distinguishes cloning public toolkits from importing immutable marketplace releases", async () => {
-    const base = {
-      workspaceName: "Acme",
-      createdAt: new Date("2026-08-01"),
-      toolCount: 2,
-      serverCount: 1,
-      skillCount: 1,
-      serverNames: ["Search MCP"],
-      skillNames: ["Research skill"],
-      customServerCount: 1,
-      categories: [{ slug: "research", name: "Research" }],
-    };
-    m.browse.mockResolvedValue({
-      items: [
-        { ...base, id: "public", name: "Public toolkit", marketListing: null },
-        {
-          ...base,
-          id: "market",
-          name: "Verified toolkit",
-          serverNames: [],
-          skillNames: [],
-          customServerCount: 0,
-          categories: [],
-          marketListing: {
-            namespace: "acme",
-            slug: "verified",
-            releaseId: "immutable-release",
-          },
-        },
-      ],
-      total: 25,
-      availableTotal: 25,
-      pageSize: 24,
-      categories: [{ slug: "research", name: "Research", count: 25 }],
-    });
-    render(
-      await Toolkits(
-        props({ category: "research", sort: "name", q: "toolkit" }),
-      ),
-    );
-    expect(
-      screen.getByRole("link", { name: "Verified toolkit" }),
-    ).toHaveAttribute("href", "/app/acme/market/items/acme/verified");
-    expect(
-      screen.getByRole("heading", { name: "Public toolkit" }),
-    ).toBeInTheDocument();
-    expect(screen.getByText("Search MCP")).toBeInTheDocument();
-    expect(screen.getByText("Research skill")).toBeInTheDocument();
-    expect(screen.getByText("noMcp")).toBeInTheDocument();
-    expect(screen.getByText("noSkills")).toBeInTheDocument();
-    expect(screen.getByText("customSetupSummary:1")).toBeInTheDocument();
-    const publicForm = screen
-      .getByRole("heading", { name: "Public toolkit" })
-      .closest("article")
-      ?.querySelector("form");
-    const marketForm = screen
-      .getByRole("link", { name: "Verified toolkit" })
-      .closest("article")
-      ?.querySelector("form");
-    expect(publicForm).not.toBeNull();
-    expect(marketForm).not.toBeNull();
-    expect(new FormData(publicForm ?? undefined).get("toolkitId")).toBe(
-      "public",
-    );
-    expect(new FormData(marketForm ?? undefined).get("releaseId")).toBe(
-      "immutable-release",
-    );
-    expect(screen.getByRole("link", { name: "next" })).toHaveAttribute(
-      "href",
-      "/app/acme/market/toolkits?q=toolkit&category=research&sort=name&page=2",
-    );
-  });
-  it("retains the selected toolkit without changing its original resources", async () => {
-    m.toolkit.mockResolvedValue({
-      id: "tk",
-      slug: "research",
-      name: "Research",
-      skills: [],
-      servers: [],
-    });
-    render(await Packages(props({ toolkit: "research" })));
-    expect(
-      screen.getByRole("combobox", { name: "packageExistingToolkit" }),
-    ).toHaveValue("research");
-    expect(
-      screen.getByText("packageToolkitUnchanged:Research"),
-    ).toBeInTheDocument();
+  it("redirects retired Toolkit discovery to package discovery without execution", async () => {
+    await expect(
+      Toolkits({ params: Promise.resolve({ workspace: "acme" }) }),
+    ).rejects.toThrow("redirect:/app/acme/market?type=pi-package");
+    expect(m.browse).not.toHaveBeenCalled();
   });
   it("allows workspace administrators to act on detected upstream updates", async () => {
     m.workspace.mockResolvedValue({ id: "ws", ownerId: "other" });
@@ -561,7 +463,7 @@ describe("market packages and toolkits", () => {
       screen.getByRole("button", { name: "dismissVersion" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "captureNew" }),
+      screen.getByRole("link", { name: "captureNew" }),
     ).toBeInTheDocument();
   });
 });

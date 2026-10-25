@@ -24,13 +24,22 @@ import type { PublicResourceMarketManifest } from "@/lib/market/resources";
 const LISTING_KINDS = new Set([
   "mcp",
   "skill",
-  "toolkit",
   "agent",
   "assistant",
   "pi-package",
 ]);
 
 export type MarketViewer = { workspaceId: string; userId: string };
+
+export type MarketRuntimeCompatibility =
+  | {
+      runtime: "pi-sdk";
+      piVersion: string;
+      nodeMajor: number;
+      platform: string;
+      arch: string;
+    }
+  | { runtime: "mcp"; transport: "stdio" | "streamable-http" | "sse" };
 
 async function visibleListings(
   viewer?: MarketViewer,
@@ -60,9 +69,12 @@ async function visibleListings(
 export async function listMarketListings(
   input: {
     kind?: string;
+    target?: "agent" | "assistant";
     q?: string;
     tag?: string;
     category?: string;
+    sourceKind?: string;
+    runtime?: "pi-sdk" | "mcp";
     sort?: "popular" | "newest" | "name";
     page?: number;
     pageSize?: number;
@@ -71,6 +83,11 @@ export async function listMarketListings(
 ) {
   const kind = LISTING_KINDS.has(input.kind ?? "") ? input.kind : undefined;
   const term = input.q?.trim().slice(0, 200) ?? "";
+  const sourceKind = input.sourceKind?.trim().slice(0, 40);
+  const runtime =
+    input.runtime === "pi-sdk" || input.runtime === "mcp"
+      ? input.runtime
+      : undefined;
   const tag = input.tag?.trim().toLocaleLowerCase().slice(0, 40) ?? "";
   const category =
     input.category?.trim().toLocaleLowerCase().slice(0, 120) ?? "";
@@ -88,7 +105,13 @@ export async function listMarketListings(
     input.pageSize > 0
       ? Math.min(50, input.pageSize)
       : 24;
+  if (input.kind === "toolkit")
+    return { items: [], total: 0, availableTotal: 0, page, pageSize };
+  if (input.target === "assistant" && kind === "agent")
+    return { items: [], total: 0, availableTotal: 0, page, pageSize };
   if (kind === "agent") {
+    if (sourceKind || runtime)
+      return { items: [], total: 0, availableTotal: 0, page, pageSize };
     const { listAgentMarketListings } = await import("@/lib/agents/market");
     const result = await listAgentMarketListings({
       q: term || tag,
@@ -113,6 +136,9 @@ export async function listMarketListings(
         isFeatured: item.isFeatured,
         installCount: item.installCount,
         publishedAt: item.publishedAt,
+        sourceKind: null,
+        requiredEnvironment: [] as string[],
+        runtimeCompatibility: null as MarketRuntimeCompatibility | null,
         latestRelease: {
           id: item.latestReleaseId,
           version: item.latestVersion,
@@ -122,10 +148,102 @@ export async function listMarketListings(
     };
   }
   const baseWhere: Prisma.MarketListingWhereInput = {
-    AND: [await visibleListings(input.viewer)],
+    AND: [
+      await visibleListings(input.viewer),
+      ...(input.target === "assistant"
+        ? [
+            {
+              OR: [
+                { kind: "assistant" },
+                {
+                  kind: "mcp",
+                  latestRelease: {
+                    is: {
+                      AND: [
+                        {
+                          manifest: {
+                            path: ["mcp", "recipe", "source"],
+                            equals: "remote",
+                          },
+                        },
+                        {
+                          OR: [
+                            {
+                              manifest: {
+                                path: ["mcp", "recipe", "transport"],
+                                equals: "streamable-http",
+                              },
+                            },
+                            {
+                              manifest: {
+                                path: ["mcp", "recipe", "transport"],
+                                equals: "sse",
+                              },
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                },
+              ],
+            },
+          ]
+        : [
+            {
+              kind: {
+                in: [
+                  "mcp",
+                  "skill",
+                  "pi-package",
+                  ...(input.target === "agent" ? [] : ["assistant"]),
+                ],
+              },
+            },
+          ]),
+    ],
     status: "published",
     latestReleaseId: { not: null },
-    latestRelease: { is: { reviewStatus: "approved" } },
+    latestRelease: {
+      is: {
+        reviewStatus: "approved",
+        AND: [
+          ...(sourceKind
+            ? [
+                {
+                  OR: [
+                    {
+                      manifest: {
+                        path: ["package", "source", "kind"],
+                        equals: sourceKind,
+                      },
+                    },
+                    {
+                      manifest: {
+                        path: ["mcp", "recipe", "source"],
+                        equals: sourceKind,
+                      },
+                    },
+                  ],
+                },
+              ]
+            : []),
+          ...(runtime
+            ? [
+                {
+                  manifest: {
+                    path:
+                      runtime === "pi-sdk"
+                        ? ["package", "runtime", "kind"]
+                        : ["kind"],
+                    equals: runtime === "pi-sdk" ? "pi-sdk" : "mcp",
+                  },
+                },
+              ]
+            : []),
+        ],
+      },
+    },
     ...(kind ? { kind } : {}),
     ...(term
       ? {
@@ -191,7 +309,81 @@ export async function listMarketListings(
       },
     }),
   ]);
-  return { items, total, availableTotal, page, pageSize };
+  const releaseIds = items.flatMap((item) =>
+    item.latestRelease ? [item.latestRelease.id] : [],
+  );
+  const metadata = releaseIds.length
+    ? await db.$queryRaw<
+        Array<{
+          id: string;
+          sourceKind: string | null;
+          piVersion: string | null;
+          nodeMajor: string | null;
+          platform: string | null;
+          arch: string | null;
+          mcpSource: string | null;
+          transport: string | null;
+          requiredEnvironment: unknown;
+        }>
+      >`
+    SELECT id, manifest #>> '{package,source,kind}' AS "sourceKind",
+      manifest #>> '{package,runtime,piVersion}' AS "piVersion", manifest #>> '{package,runtime,nodeMajor}' AS "nodeMajor",
+      manifest #>> '{package,runtime,platform}' AS platform, manifest #>> '{package,runtime,arch}' AS arch,
+      manifest #>> '{mcp,recipe,source}' AS "mcpSource", manifest #>> '{mcp,recipe,transport}' AS transport,
+      manifest #> '{mcp,recipe,env}' AS "requiredEnvironment"
+    FROM "MarketRelease" WHERE id = ANY(${releaseIds}::text[]) AND "reviewStatus" = 'approved'
+  `
+    : [];
+  const byRelease = new Map(metadata.map((row) => [row.id, row]));
+  return {
+    items: items.map((item) => {
+      const row = item.latestRelease
+        ? byRelease.get(item.latestRelease.id)
+        : undefined;
+      let runtimeCompatibility: MarketRuntimeCompatibility | null = null;
+      if (
+        item.kind === "pi-package" &&
+        row?.piVersion &&
+        row.nodeMajor &&
+        row.platform &&
+        row.arch
+      ) {
+        runtimeCompatibility = {
+          runtime: "pi-sdk",
+          piVersion: row.piVersion,
+          nodeMajor: Number(row.nodeMajor),
+          platform: row.platform,
+          arch: row.arch,
+        };
+      } else if (item.kind === "mcp" && row?.mcpSource) {
+        runtimeCompatibility = {
+          runtime: "mcp",
+          transport:
+            row.mcpSource === "remote"
+              ? row.transport === "sse"
+                ? "sse"
+                : "streamable-http"
+              : "stdio",
+        };
+      }
+      return {
+        ...item,
+        sourceKind: row?.sourceKind ?? row?.mcpSource ?? null,
+        requiredEnvironment: Array.isArray(row?.requiredEnvironment)
+          ? row.requiredEnvironment.filter(
+              (name): name is string =>
+                typeof name === "string" &&
+                /^[A-Za-z_][A-Za-z0-9_]*$/.test(name),
+            )
+          : [],
+        runtimeCompatibility,
+      };
+    }),
+    total,
+    availableTotal,
+    page,
+    pageSize,
+  };
 }
 
 export async function listMarketListingCategories(

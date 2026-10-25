@@ -1,6 +1,3 @@
-import { readFileSync } from "node:fs";
-import { spawnSync } from "node:child_process";
-import path from "node:path";
 import { describe, it, expect } from "vitest";
 import { sandboxFlags, envFlags, MCP_NETWORK } from "@/lib/process/sandbox";
 import {
@@ -87,26 +84,6 @@ describe("sandbox env config", () => {
       managedBy: "agent-runtime",
     });
     expect(sandboxConfigWithAllowSudo(null, true)).toEqual({ allowSudo: true });
-  });
-});
-
-describe("persistent Docker sandbox runtime", () => {
-  it("keeps the interactive Hermes terminal wrapper valid Bash", () => {
-    const source = readFileSync(
-      path.join(process.cwd(), "scripts/sandbox-mcp-server.mjs"),
-      "utf8",
-    );
-    const wrapper =
-      /const HERMES_TERMINAL_SHELL = String\.raw`([\s\S]*?)`\.trim\(\);/.exec(
-        source,
-      )?.[1];
-    expect(wrapper).toBeTruthy();
-
-    const parsed = spawnSync("bash", ["-n"], {
-      input: wrapper,
-      encoding: "utf8",
-    });
-    expect(parsed.status, parsed.stderr).toBe(0);
   });
 });
 

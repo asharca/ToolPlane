@@ -8,7 +8,7 @@ import {
 import {
   acquireConversationOperation,
   conversationOperationKey,
-  operateConversation,
+  rotateChannelConversation,
   waitForConversationOperation,
 } from "@/lib/agents/conversation-operations";
 
@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   run: vi.fn(),
   create: vi.fn(),
   agent: vi.fn(),
+  pinned: vi.fn(),
 }));
 vi.mock("@/lib/db", () => ({ db: mocks.db }));
 vi.mock("@/lib/agents/native", async (original) => ({
@@ -32,6 +33,7 @@ vi.mock("@/lib/agents/native", async (original) => ({
 }));
 vi.mock("@/lib/agents/mutations", () => ({ createConversation: mocks.create }));
 vi.mock("@/lib/agents/queries", () => ({ getAgentForRun: mocks.agent }));
+vi.mock("@/lib/agents/revisions", () => ({ resolvePinnedAgent: mocks.pinned }));
 
 const provider = {
   id: "provider",
@@ -45,7 +47,9 @@ function conversation() {
   return {
     id: "conversation",
     title: "First question" as string | null,
-    runtimeSessionKey: null as string | null,
+    agentRevisionId: "session-revision",
+    legacyRevisionUnresolved: false,
+    runtimeSessionKey: "channel:connection:chat" as string | null,
     publicApiConversation: null as { id: string } | null,
     workSession: null as {
       id: string;
@@ -68,17 +72,16 @@ function conversation() {
 const parts = (text: string) => [{ type: "text", text }];
 const callTitle = (force = false) =>
   generateConsoleConversationTitle("workspace", "agent", "conversation", force);
-const callOperation = (action: "compact" | "new" = "compact", extra = {}) =>
-  operateConversation({
+const callOperation = () =>
+  rotateChannelConversation({
     workspaceId: "workspace",
     agentId: "agent",
     conversationId: "conversation",
-    action,
-    ...extra,
   });
 
 beforeEach(() => {
   vi.resetAllMocks();
+  mocks.pinned.mockImplementation(async (agent) => agent);
   mocks.db.conversation.findFirst.mockResolvedValue(conversation());
   mocks.db.message.findFirst.mockResolvedValue({
     parts: parts("First question"),
@@ -95,10 +98,13 @@ beforeEach(() => {
   );
   mocks.run.mockResolvedValue("Generated title");
   mocks.agent.mockResolvedValue({
+    id: "agent",
+    workspaceId: "workspace",
+    retiredAt: null,
     provider,
     model: "model",
     modelProviders: [],
-    runtimeKind: "pi",
+    runtimeKind: "pi-sdk",
   });
 });
 
@@ -185,34 +191,23 @@ describe("conversation title input and concurrent updates", () => {
     ]);
   });
 
-  it("uses valid workspace title models ahead of agent providers", async () => {
-    const row = conversation();
-    Object.assign(row.agent.workspace, {
-      titleModelProviderId: "title",
-      titleModel: "missing",
-      defaultModelProviderId: "default",
-      defaultModel: "model",
-    });
-    mocks.db.conversation.findFirst.mockResolvedValue(row);
-    mocks.db.modelProvider.findFirst
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce(provider);
-    expect(await callTitle()).toBe("Generated title");
-    expect(mocks.db.modelProvider.findFirst).toHaveBeenCalledTimes(2);
+  it("fails closed on revoked pinned model grants without using workspace defaults", async () => {
+    mocks.pinned.mockRejectedValueOnce(new Error("Pinned provider revoked"));
+    await expect(callTitle()).rejects.toThrow("Pinned provider revoked");
+    expect(mocks.run).not.toHaveBeenCalled();
+    expect(mocks.db.modelProvider.findFirst).not.toHaveBeenCalled();
   });
 
-  it("falls back to linked providers and rejects missing models", async () => {
-    const row = conversation();
-    row.agent.provider = null;
-    row.agent.model = null;
-    row.agent.modelProviders = [
-      { provider: { ...provider, models: [] } },
-      { provider },
-    ];
-    mocks.db.conversation.findFirst.mockResolvedValue(row);
-    expect(await callTitle()).toBe("Generated title");
-    row.agent.modelProviders = [];
-    await expect(callTitle()).rejects.toThrow("No model is configured");
+  it("rejects a missing pinned model rather than using linked providers", async () => {
+    mocks.pinned.mockResolvedValueOnce({
+      provider: null,
+      model: null,
+      modelProviders: [{ provider }],
+    });
+    await expect(callTitle()).rejects.toThrow(
+      "No model is configured in the pinned revision",
+    );
+    expect(mocks.run).not.toHaveBeenCalled();
   });
 
   it("does not write empty model titles or overwrite concurrent console renames", async () => {
@@ -256,7 +251,7 @@ describe("conversation title input and concurrent updates", () => {
   });
 });
 
-describe("conversation operation admission and compaction", () => {
+describe("conversation admission and channel session rotation", () => {
   it("shares channel locks, keeps ordinary sessions separate and releases idempotently", () => {
     expect(
       conversationOperationKey({ id: "a", runtimeSessionKey: "channel:x" }),
@@ -326,7 +321,7 @@ describe("conversation operation admission and compaction", () => {
   });
 
   it("rejects a competing operation without releasing its lock", async () => {
-    const release = acquireConversationOperation("conversation");
+    const release = acquireConversationOperation("channel:connection:chat");
     try {
       await expect(callOperation()).rejects.toMatchObject({ code: "busy" });
     } finally {
@@ -343,14 +338,18 @@ describe("conversation operation admission and compaction", () => {
       });
       mocks.db.workSession.findUnique.mockResolvedValue({ status });
       await expect(callOperation()).rejects.toMatchObject({ code: "busy" });
-      const release = acquireConversationOperation("conversation");
+      const release = acquireConversationOperation("channel:connection:chat");
       expect(release).not.toBeNull();
       release?.();
     },
   );
 
   it("only creates new sessions for existing channel connections", async () => {
-    await expect(callOperation("new")).rejects.toMatchObject({
+    mocks.db.conversation.findFirst.mockResolvedValueOnce({
+      ...conversation(),
+      runtimeSessionKey: null,
+    });
+    await expect(callOperation()).rejects.toMatchObject({
       code: "notChannel",
       status: 400,
     });
@@ -360,7 +359,7 @@ describe("conversation operation admission and compaction", () => {
       runtimeSessionKey: "channel:connection:chat",
     });
     mocks.db.agentChannelConnection.findFirst.mockResolvedValue(null);
-    await expect(callOperation("new")).rejects.toMatchObject({
+    await expect(callOperation()).rejects.toMatchObject({
       code: "notFound",
     });
     mocks.db.agentChannelConnection.findFirst.mockResolvedValue({
@@ -369,10 +368,10 @@ describe("conversation operation admission and compaction", () => {
     mocks.create
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce({ id: "new" });
-    await expect(callOperation("new")).rejects.toMatchObject({
+    await expect(callOperation()).rejects.toMatchObject({
       code: "notFound",
     });
-    expect(await callOperation("new")).toEqual({
+    expect(await callOperation()).toEqual({
       conversationId: "new",
       compacted: false,
     });
@@ -384,101 +383,29 @@ describe("conversation operation admission and compaction", () => {
     );
   });
 
-  it.each([
-    { messages: [] },
-    { messages: [{ id: "u", role: "user", parts: parts("hello") }] },
-  ])("does not compact an incomplete exchange", async ({ messages }) => {
-    mocks.db.message.findMany.mockResolvedValue(messages);
-    expect(await callOperation()).toEqual({
-      conversationId: "conversation",
-      compacted: false,
-    });
-    expect(mocks.run).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    "missing-agent",
-    "missing-model",
-    "empty-summary",
-    "larger-summary",
-    "changed",
-    "success",
-    "hermes",
-    "aborted",
-  ])("compaction outcome: %s", async (kind) => {
-    const messages = [
-      { id: "u1", role: "user", parts: parts("Question ".repeat(300)) },
-      { id: "a1", role: "assistant", parts: parts("Answer ".repeat(300)) },
-      { id: "u2", role: "user", parts: parts("Keep this last exchange") },
-    ];
-    mocks.db.message.findMany.mockResolvedValue(messages);
-    mocks.db.message.findFirst.mockResolvedValue({
-      id: kind === "changed" ? "newer" : "u2",
-    });
-    mocks.run.mockResolvedValue(
-      kind === "empty-summary"
-        ? "  "
-        : kind === "larger-summary"
-          ? "expanded ".repeat(4000)
-          : "summary",
-    );
-    if (kind === "missing-agent") mocks.agent.mockResolvedValue(null);
-    if (kind === "missing-model")
-      mocks.agent.mockResolvedValue({
-        provider: null,
-        model: null,
-        modelProviders: [],
+  it.each(["legacy", "missing-pin", "unresolved", "retired"])(
+    "never rotates historical %s sessions into executable state",
+    async (condition) => {
+      mocks.db.conversation.findFirst.mockResolvedValue({
+        ...conversation(),
+        ...(condition === "missing-pin" ? { agentRevisionId: null } : {}),
+        ...(condition === "unresolved"
+          ? { legacyRevisionUnresolved: true }
+          : {}),
       });
-    if (kind === "hermes")
-      mocks.agent.mockResolvedValue({
-        provider: null,
-        model: null,
-        modelProviders: [{ provider }],
-        runtimeKind: "hermes",
+      if (condition === "legacy")
+        mocks.agent.mockResolvedValue({ runtimeKind: "hermes" });
+      if (condition === "retired")
+        mocks.agent.mockResolvedValue({
+          runtimeKind: "pi-sdk",
+          retiredAt: new Date(),
+        });
+      await expect(callOperation()).rejects.toMatchObject({
+        code: "readOnly",
+        status: 409,
       });
-    const controller = new AbortController();
-    if (kind === "aborted") controller.abort();
-    const result = callOperation("compact", {
-      signal: controller.signal,
-      instructions: "retain decisions",
-    });
-    if (kind === "missing-agent")
-      await expect(result).rejects.toMatchObject({ code: "notFound" });
-    else if (kind === "missing-model")
-      await expect(result).rejects.toMatchObject({ code: "noModel" });
-    else if (kind === "empty-summary")
-      await expect(result).rejects.toThrow("empty compaction summary");
-    else if (kind === "changed")
-      await expect(result).rejects.toMatchObject({ code: "changed" });
-    else if (kind === "aborted")
-      await expect(result).rejects.toMatchObject({ name: "AbortError" });
-    else {
-      expect(await result).toMatchObject({
-        compacted: kind !== "larger-summary",
-      });
-      if (kind !== "larger-summary") {
-        expect(mocks.db.message.create).toHaveBeenCalledWith(
-          expect.objectContaining({
-            data: expect.objectContaining({
-              role: "system",
-              parts: expect.arrayContaining([
-                expect.objectContaining({
-                  data: expect.objectContaining({
-                    boundaryId: "a1",
-                    summary: "summary",
-                  }),
-                }),
-              ]),
-            }),
-          }),
-        );
-        expect(mocks.db.conversation.update).toHaveBeenCalledTimes(
-          kind === "hermes" ? 1 : 0,
-        );
-      }
-    }
-    const release = acquireConversationOperation("conversation");
-    expect(release).not.toBeNull();
-    release?.();
-  });
+      expect(mocks.create).not.toHaveBeenCalled();
+      expect(mocks.run).not.toHaveBeenCalled();
+    },
+  );
 });

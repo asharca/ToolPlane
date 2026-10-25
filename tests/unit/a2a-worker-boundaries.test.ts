@@ -76,7 +76,7 @@ vi.mock("@/lib/a2a/principal", () => ({
   isLocalGrant: (grant: { kind?: string }) => grant.kind === "local",
   isRemoteGrant: (grant: { kind?: string }) => grant.kind === "remote",
   isWorkspaceGrant: (grant: { kind?: string }) =>
-    grant.kind === "local" || grant.kind === "published",
+    grant.kind === "local" || grant.kind === "remote",
 }));
 vi.mock("@/lib/a2a/local-policy", () => ({ localTarget: state.target }));
 vi.mock("@/lib/a2a/local-continuation", () => ({
@@ -108,7 +108,11 @@ import {
 } from "@/lib/a2a/worker";
 import { withSandboxExecutionLease } from "@/lib/agents/sandbox-execution-gate";
 
-function task(kind = "local", backend = "legacy", bound = false) {
+function task(
+  kind = "local",
+  backend = kind === "local" ? "pi-sdk" : "legacy",
+  bound = false,
+) {
   const row = {
     id: "task",
     contextId: "context",
@@ -122,6 +126,9 @@ function task(kind = "local", backend = "legacy", bound = false) {
       kind,
       workspaceId: "workspace",
       agentId: "agent",
+      agentRevisionId: "revision-1",
+      sourceAgentId: "agent",
+      remoteAgentId: "remote",
       ownerKey: "owner",
       ancestorTaskIds: [],
       entryPolicy: "delegation",
@@ -175,7 +182,7 @@ afterEach(() => {
 });
 
 describe("A2A worker admission and recovery boundaries", () => {
-  it("keeps public and remote work pooled without capping local sandboxes", async () => {
+  it("keeps remote observations pooled without capping local SDK sandboxes", async () => {
     const released = Promise.withResolvers<void>();
     const running: Promise<void>[] = [];
     function row(id: string, kind: string) {
@@ -187,7 +194,7 @@ describe("A2A worker admission and recovery boundaries", () => {
     }
     try {
       for (let index = 0; index < A2A_LIMITS.workerConcurrency; index++) {
-        const held = row(`pooled-${index}`, index % 2 ? "remote" : "published");
+        const held = row(`pooled-${index}`, "remote");
         const entered = Promise.withResolvers<void>();
         const execution = executeA2ATask(held.id, async () => {
           entered.resolve();
@@ -202,7 +209,7 @@ describe("A2A worker admission and recovery boundaries", () => {
           }),
         ]);
       }
-      const queued = row("pooled-waiting", "published");
+      const queued = row("pooled-waiting", "remote");
       const result = { state: TaskState.TASK_STATE_COMPLETED };
       await executeA2ATask(queued.id, async () => result);
       expect(queued.state).toBe(TaskState.TASK_STATE_SUBMITTED);
@@ -219,20 +226,53 @@ describe("A2A worker admission and recovery boundaries", () => {
     }
   });
   it.each([false, true])(
-    "keeps full-capacity roots queued and rejects children (child=%s)",
+    "keeps full-capacity tasks unclaimed and resumes after admission (child=%s)",
     async (child) => {
       const row = task();
+      row.leaseToken = null;
       row.grant = {
         ...(row.grant as object),
         ancestorTaskIds: child ? ["parent"] : [],
       };
       state.admit.mockRejectedValue(new AgentExecutionBusyError());
       await executeA2ATask(row.id);
-      expect(row.state).toBe(
-        child ? TaskState.TASK_STATE_FAILED : TaskState.TASK_STATE_SUBMITTED,
-      );
+      expect(row).toMatchObject({
+        state: TaskState.TASK_STATE_SUBMITTED,
+        phase: "queued",
+        leaseToken: null,
+      });
       expect(state.claim).not.toHaveBeenCalled();
       expect(state.target).not.toHaveBeenCalled();
+      expect(state.execute).not.toHaveBeenCalled();
+      expect(state.finish).not.toHaveBeenCalled();
+      expect(state.interrupt).not.toHaveBeenCalled();
+      expect(state.releaseClaim).not.toHaveBeenCalled();
+      expect(state.release).not.toHaveBeenCalled();
+
+      state.admit.mockImplementation((_input, run) => run());
+      state.claim.mockImplementationOnce(async () => {
+        row.leaseToken = "resumed-lease";
+        return row;
+      });
+      state.execute.mockResolvedValue({
+        state: TaskState.TASK_STATE_COMPLETED,
+      });
+      await executeA2ATask(row.id);
+      expect(state.claim).toHaveBeenCalledExactlyOnceWith(row.id);
+      expect(state.execute).toHaveBeenCalledOnce();
+      expect(state.finish).toHaveBeenCalledWith(
+        row.id,
+        "resumed-lease",
+        TaskState.TASK_STATE_COMPLETED,
+        undefined,
+        undefined,
+        undefined,
+      );
+      expect(row).toMatchObject({
+        state: TaskState.TASK_STATE_COMPLETED,
+        leaseToken: null,
+      });
+      expect(state.release).toHaveBeenCalledOnce();
     },
   );
   it("does not execute duplicate concurrent claims or operate after owner loss", async () => {
@@ -255,7 +295,7 @@ describe("A2A worker admission and recovery boundaries", () => {
     expect(executor).toHaveBeenCalledOnce();
   });
 
-  it.each(["legacy", "pi-harness"])(
+  it.each(["pi-sdk", "pi-harness"])(
     "quota exhaustion does not replay a %s operation",
     async (backend) => {
       const row = task("local", backend, backend === "pi-harness");
@@ -272,7 +312,7 @@ describe("A2A worker admission and recovery boundaries", () => {
     },
   );
 
-  it.each(["remote", "published"])(
+  it.each(["remote", "local"])(
     "settles unavailable execution for a %s target without disclosing errors",
     async (kind) => {
       const row = task(kind);
@@ -303,7 +343,7 @@ describe("A2A worker admission and recovery boundaries", () => {
   );
 
   it.each([TaskState.TASK_STATE_WORKING, TaskState.TASK_STATE_CANCELED])(
-    "rejects invalid legacy terminal state %s",
+    "rejects invalid SDK terminal state %s",
     async (terminal) => {
       const row = task();
       await executeA2ATask(row.id, async () => ({ state: terminal }));
@@ -316,22 +356,25 @@ describe("A2A worker admission and recovery boundaries", () => {
     "PI_MODEL_UNAVAILABLE",
     "unexpected secret",
     17,
-  ])("sanitizes native failure %# to fixed error codes", async (message) => {
-    const row = task("local", "pi-harness", true);
-    await executeA2ATask(row.id, async () => {
-      throw typeof message === "string" ? new Error(message) : message;
-    });
-    expect(row.state).toBe(TaskState.TASK_STATE_FAILED);
-    expect(state.messages.get(row.id)).toMatch(
-      /^(PI_SESSION_MISSING|PI_MODEL_UNAVAILABLE|PI_EXECUTION_FAILED):/,
-    );
-    expect(state.messages.get(row.id)).not.toContain("secret");
-    expect(state.finish.mock.calls[0][5]).toEqual({
-      nativeOperationId: "operation",
-    });
-  });
+  ])(
+    "sanitizes retired drain failure %# to fixed error codes",
+    async (message) => {
+      const row = task("local", "pi-harness", true);
+      await executeA2ATask(row.id, async () => {
+        throw typeof message === "string" ? new Error(message) : message;
+      });
+      expect(row.state).toBe(TaskState.TASK_STATE_FAILED);
+      expect(state.messages.get(row.id)).toMatch(
+        /^(PI_SESSION_MISSING|PI_MODEL_UNAVAILABLE|PI_EXECUTION_FAILED):/,
+      );
+      expect(state.messages.get(row.id)).not.toContain("secret");
+      expect(state.finish.mock.calls[0][5]).toEqual({
+        nativeOperationId: "operation",
+      });
+    },
+  );
 
-  it("releases an interrupted native claim for recovery without recording task failure", async () => {
+  it("releases an interrupted retired bound-operation drain without recording task failure", async () => {
     const row = task("local", "pi-harness", true);
     await executeA2ATask(row.id, async () => {
       throw new PiRuntimeInterruptedError("owner lost");
@@ -367,22 +410,43 @@ describe("A2A worker admission and recovery boundaries", () => {
   );
 
   it.each([false, true])(
-    "queues busy roots but fails busy child work promptly (child=%s)",
+    "keeps sandbox-busy tasks unclaimed and resumes after release (child=%s)",
     async (child) => {
       const row = task();
+      row.leaseToken = null;
       if (child)
         row.grant = {
-          kind: "local",
-          workspaceId: "workspace",
-          agentId: "agent",
+          ...(row.grant as object),
           ancestorTaskIds: ["parent"],
         };
       await withSandboxExecutionLease("sandbox", () => executeA2ATask(row.id));
-      expect(row.state).toBe(
-        child ? TaskState.TASK_STATE_FAILED : TaskState.TASK_STATE_SUBMITTED,
-      );
+      expect(row).toMatchObject({
+        state: TaskState.TASK_STATE_SUBMITTED,
+        phase: "queued",
+        leaseToken: null,
+      });
       expect(state.execute).not.toHaveBeenCalled();
       expect(state.claim).not.toHaveBeenCalled();
+      expect(state.finish).not.toHaveBeenCalled();
+      expect(state.interrupt).not.toHaveBeenCalled();
+      expect(state.releaseClaim).not.toHaveBeenCalled();
+      expect(state.release).not.toHaveBeenCalled();
+
+      state.claim.mockImplementationOnce(async () => {
+        row.leaseToken = "resumed-lease";
+        return row;
+      });
+      state.execute.mockResolvedValue({
+        state: TaskState.TASK_STATE_COMPLETED,
+      });
+      await executeA2ATask(row.id);
+      expect(state.claim).toHaveBeenCalledExactlyOnceWith(row.id);
+      expect(state.execute).toHaveBeenCalledOnce();
+      expect(row).toMatchObject({
+        state: TaskState.TASK_STATE_COMPLETED,
+        leaseToken: null,
+      });
+      expect(state.release).toHaveBeenCalledOnce();
     },
   );
 

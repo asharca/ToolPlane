@@ -16,7 +16,6 @@ import {
   it,
   vi,
 } from "vitest";
-import { verifyHermesRuntimeToken } from "@/lib/agents/hermes/token";
 import type * as SupervisorModule from "@/lib/process/supervisor";
 
 const mocks = vi.hoisted(() => ({
@@ -26,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   ensureConnectorBroker: vi.fn(),
   materializeDeploymentConfigVolume: vi.fn(),
   removeDeploymentContainer: vi.fn(),
+  removeStaleSessionMcpCaptures: vi.fn(),
   resolveMcpStartupTimeoutSettings: vi.fn(),
   resolveRemoteMcpPrivateHostsSettings: vi.fn(),
 }));
@@ -67,6 +67,9 @@ vi.mock("@/lib/process/deployment-runtime-container", () => ({
   deploymentContainerName: (deploymentId: string) =>
     `toolplane-mcp-${deploymentId}`,
   removeDeploymentContainer: mocks.removeDeploymentContainer,
+}));
+vi.mock("@/lib/process/mcp-runtime-image", () => ({
+  removeStaleSessionMcpCaptures: mocks.removeStaleSessionMcpCaptures,
 }));
 
 type Supervisor = typeof SupervisorModule;
@@ -160,6 +163,7 @@ beforeEach(() => {
     redactionValues: [],
   });
   mocks.removeDeploymentContainer.mockReset().mockResolvedValue(undefined);
+  mocks.removeStaleSessionMcpCaptures.mockReset().mockResolvedValue(undefined);
   mocks.resolveMcpStartupTimeoutSettings.mockReset().mockResolvedValue({
     idleTimeoutMs: 300_000,
     maxTimeoutMs: 900_000,
@@ -193,6 +197,74 @@ afterAll(() => {
 });
 
 describe("supervisor readiness races", () => {
+  it("compares every launch credential with a process-private canonical identity", () => {
+    const spec = {
+      kind: "bridge" as const,
+      name: "Scoped",
+      command: "docker",
+      args: ["run", "image"],
+      env: { OPTIONAL_TOKEN: "old", TOKEN: "secret" },
+    };
+    const identity = supervisor.mcpRuntimeCredentialIdentity(spec);
+    expect(
+      supervisor.mcpRuntimeCredentialIdentity({
+        ...spec,
+        env: { TOKEN: "secret", OPTIONAL_TOKEN: "old" },
+      }),
+    ).toBe(identity);
+    expect(
+      supervisor.mcpRuntimeCredentialIdentity({
+        ...spec,
+        env: { OPTIONAL_TOKEN: "new", TOKEN: "secret" },
+      }),
+    ).not.toBe(identity);
+    expect(
+      supervisor.mcpRuntimeCredentialIdentity({
+        ...spec,
+        env: { TOKEN: "secret" },
+      }),
+    ).not.toBe(identity);
+    expect(
+      supervisor.mcpRuntimeCredentialIdentity({
+        ...spec,
+        containerEnv: { TOKEN: "rotated" },
+      }),
+    ).not.toBe(identity);
+    expect(identity).not.toContain("secret");
+  });
+
+  it("retains the credential identity actually launched across idempotent starts", async () => {
+    const child = createChild();
+    mocks.spawn.mockReturnValue(child);
+    const spec = {
+      kind: "bridge" as const,
+      name: "Scoped",
+      command: "docker",
+      args: ["run", "image"],
+      env: { OPTIONAL_TOKEN: "old" },
+      image: "image",
+    };
+    await supervisor.startProcess("credential-launch", spec, {
+      awaitReady: false,
+    });
+    child.stdout.emit("data", Buffer.from("LISTENING 4321\n"));
+    const original = supervisor.liveMcpRuntimeSnapshot("credential-launch");
+    expect(original?.credentialIdentity).toBe(
+      supervisor.mcpRuntimeCredentialIdentity(spec),
+    );
+    const rotated = { ...spec, env: { OPTIONAL_TOKEN: "new" } };
+    await supervisor.startProcess("credential-launch", rotated, {
+      awaitReady: false,
+    });
+    expect(
+      supervisor.liveMcpRuntimeSnapshot("credential-launch")
+        ?.credentialIdentity,
+    ).toBe(original?.credentialIdentity);
+    expect(original?.credentialIdentity).not.toBe(
+      supervisor.mcpRuntimeCredentialIdentity(rotated),
+    );
+  });
+
   it("does not require Docker cleanup for a builtin launch", async () => {
     const child = createChild();
     mocks.spawn.mockReturnValue(child);
@@ -220,6 +292,7 @@ describe("supervisor readiness races", () => {
         transport: "streamable-http",
         headers: {},
         timeoutMs: 60_000,
+        allowUnsafeHttp: false,
       },
       { awaitReady: false },
     );
@@ -748,7 +821,7 @@ describe("supervisor readiness races", () => {
         kind: "bridge",
         name: "Named bridge",
         command: "docker",
-        args: ["run", "--rm", "-e", "MCP_TOKEN", "example/mcp"],
+        args: ["run", "--rm", "example/mcp"],
         env: { MCP_TOKEN: "bridge-secret" },
       },
       { awaitReady: false },
@@ -764,7 +837,9 @@ describe("supervisor readiness races", () => {
       "toolplane-mcp-named-bridge",
       "--rm",
     ]);
-    expect(args).toContain("MCP_TOKEN");
+    expect(args).not.toContain("MCP_TOKEN");
+    expect(args).not.toContain("-e");
+    expect(args).not.toContain("--env");
     expect(JSON.stringify(args)).not.toContain("bridge-secret");
     expect(JSON.parse(options.env?.MCP_CHILD_ENV ?? "{}")).toMatchObject({
       MCP_TOKEN: "bridge-secret",
@@ -793,6 +868,8 @@ describe("supervisor readiness races", () => {
     );
     expect(mocks.materializeDeploymentConfigVolume).toHaveBeenCalledWith(
       "stale-bridge",
+      undefined,
+      undefined,
     );
     expect(
       mocks.removeDeploymentContainer.mock.invocationCallOrder[0],
@@ -867,6 +944,8 @@ describe("supervisor readiness races", () => {
 
     expect(mocks.materializeDeploymentConfigVolume).toHaveBeenCalledWith(
       "ssh-config-bridge",
+      undefined,
+      undefined,
     );
     const options = mocks.spawn.mock.calls[0]?.[2] as {
       env?: Record<string, string>;
@@ -969,6 +1048,11 @@ describe("supervisor readiness races", () => {
           "ssh://git:url-password@example.test/repo",
         ],
         env: { MCP_TOKEN: "super-secret-value", GITHUB_TOOLSETS: "all" },
+        containerEnv: {
+          MCP_TOKEN: "super-secret-value",
+          GITHUB_TOOLSETS: "all",
+          CONTAINER_ONLY_TOKEN: "container-only-secret",
+        },
         image: "node:24-bookworm-slim",
       },
       { awaitReady: false },
@@ -979,11 +1063,10 @@ describe("supervisor readiness races", () => {
         "super-secret-value",
         "argv-password",
         "url-password",
+        "container-only-secret",
       ]),
     );
-    expect(supervisor.liveRedactionValues("runtime-progress")).not.toContain(
-      "all",
-    );
+    expect(supervisor.liveRedactionValues("runtime-progress")).toContain("all");
 
     const options = mocks.spawn.mock.calls[0]?.[2] as {
       env?: Record<string, string>;
@@ -1051,7 +1134,7 @@ describe("supervisor readiness races", () => {
     child.stderr.emit(
       "data",
       Buffer.from(
-        "ret-value Authorization: Bearer another-secret argv-password url-password\n",
+        "ret-value Authorization: Bearer another-secret argv-password url-password container-only-secret\n",
       ),
     );
     const log = supervisor.getDeploymentRuntimeLogChunk("runtime-progress", {
@@ -1060,6 +1143,7 @@ describe("supervisor readiness races", () => {
     expect(log.generation).toBe(starting?.generation);
     expect(log.text).toContain("[REDACTED]");
     expect(log.text).not.toContain("super-secret-value");
+    expect(log.text).not.toContain("container-only-secret");
     expect(log.text).not.toContain("super-sec");
     expect(log.text).not.toContain("ret-value");
     expect(log.text).not.toContain("another-secret");
@@ -1080,6 +1164,8 @@ describe("supervisor readiness races", () => {
     expect(supervisor.liveMcpRuntimeSnapshot("runtime-progress")).toEqual({
       port: 4580,
       generation: starting?.generation,
+      credentialIdentity: expect.stringMatching(/^[a-f0-9]{64}$/),
+      remoteConnectionIdentity: undefined,
       redactionValues: expect.arrayContaining([
         "super-secret-value",
         "argv-password",
@@ -1555,6 +1641,9 @@ describe("supervisor readiness races", () => {
       if (codes.flat().every((code) => code === 1))
         await expect(result).rejects.toThrow("Sandbox network is unavailable.");
       else await expect(result).resolves.toBeUndefined();
+      expect(mocks.removeStaleSessionMcpCaptures).toHaveBeenCalledTimes(
+        codes.flat().every((code) => code === 1) ? 0 : 1,
+      );
       expect(mocks.spawn.mock.calls[0][1][0]).toBe("network");
     },
   );
@@ -1841,8 +1930,8 @@ describe("supervisor readiness races", () => {
   });
 
   it.each([false, true])(
-    "isolates connector launch credentials with Hermes runtime enabled=%s",
-    async (withRuntime) => {
+    "isolates generic connector launch credentials (sudo=%s) without legacy runtime tokens",
+    async (allowSudo) => {
       vi.stubEnv("DATABASE_URL", "postgres://private-application-secret");
       vi.stubEnv("AUTH_SECRET", "application-signing-secret");
       vi.stubEnv("DOCKER_HOST", "unix:///private/docker.sock");
@@ -1857,7 +1946,7 @@ describe("supervisor readiness races", () => {
           sandboxId: "sandbox-connector",
           sandboxKind: "connector",
           network: "isolated",
-          allowSudo: withRuntime,
+          allowSudo,
           env: { SANDBOX_PROJECT: "project-visible" },
           connector: {
             provider: "websocket",
@@ -1869,9 +1958,6 @@ describe("supervisor readiness races", () => {
             packageName: "/api/v1/connectors/package.tgz",
             createdAt: "2026-10-18T00:00:00.000Z",
           },
-          ...(withRuntime
-            ? { runtimeId: "runtime-one", runtimeModelName: "custom-hermes" }
-            : {}),
         },
         { awaitReady: false },
       );
@@ -1881,44 +1967,23 @@ describe("supervisor readiness races", () => {
         SANDBOX_ID: "sandbox-connector",
         SANDBOX_KIND: "connector",
         SANDBOX_NETWORK: "isolated",
-        SANDBOX_ALLOW_SUDO: String(withRuntime),
+        SANDBOX_ALLOW_SUDO: String(allowSudo),
         SANDBOX_CONNECTOR_BROKER_URL: "http://127.0.0.1:9322",
         SANDBOX_CONNECTOR_BROKER_TOKEN: "internal-test-token",
         SANDBOX_CONNECTOR_REMOTE_ROOT: "/workspace/remote",
         SANDBOX_SSH_CONFIG: "",
         DOCKER_HOST: "unix:///private/docker.sock",
         TOOLPLANE_MAX_ATTACHMENT_BYTES: "4096",
-        HERMES_RUNTIME_MODEL_NAME: withRuntime
-          ? "custom-hermes"
-          : "hermes-agent",
       });
       expect(JSON.parse(env.SANDBOX_ENV_JSON)).toEqual({
         SANDBOX_PROJECT: "project-visible",
       });
       expect(env).not.toHaveProperty("DATABASE_URL");
       expect(env).not.toHaveProperty("AUTH_SECRET");
-      if (withRuntime) {
-        expect(
-          verifyHermesRuntimeToken(
-            "runtime-one",
-            "hermes-api",
-            env.HERMES_RUNTIME_API_KEY,
-          ),
-        ).toBe(true);
-        expect(
-          verifyHermesRuntimeToken(
-            "runtime-one",
-            "hermes-dashboard-api",
-            env.HERMES_RUNTIME_DASHBOARD_TOKEN,
-          ),
-        ).toBe(true);
-        expect(env.HERMES_RUNTIME_API_KEY).not.toBe(
-          env.HERMES_RUNTIME_DASHBOARD_TOKEN,
-        );
-      } else {
-        expect(env.HERMES_RUNTIME_API_KEY).toBe("");
-        expect(env.HERMES_RUNTIME_DASHBOARD_TOKEN).toBe("");
-      }
+      expect(env).not.toHaveProperty("HERMES_RUNTIME_ID");
+      expect(env).not.toHaveProperty("HERMES_RUNTIME_API_KEY");
+      expect(env).not.toHaveProperty("HERMES_RUNTIME_DASHBOARD_TOKEN");
+      expect(env).not.toHaveProperty("HERMES_RUNTIME_MODEL_NAME");
       child.stdout.emit("data", Buffer.from("LISTENING 8123\n"));
       expect(supervisor.liveStatus("connector-launch")).toBe("running");
     },

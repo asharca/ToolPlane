@@ -32,6 +32,11 @@ export const POST = withRequestLogging(
     if (!work?.approvals.some((approval) => approval.id === approvalId)) {
       return Response.json({ error: "Not found" }, { status: 404 });
     }
+    if (work.readOnly)
+      return Response.json(
+        { error: "Historical Agent sessions are read-only." },
+        { status: 410 },
+      );
     if (work.status !== "waiting_approval") {
       return Response.json(
         { error: `Cannot approve ${work.status} work` },

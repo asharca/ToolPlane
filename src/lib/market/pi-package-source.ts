@@ -8,6 +8,7 @@ import { assertRuntimeOwner } from "@/lib/runtime/ownership-state";
 import { publicRemoteAddress } from "@/lib/a2a/remote-network";
 import { sandboxFlags } from "@/lib/process/sandbox";
 import { MarketError } from "@/lib/market/skills";
+import { readZip } from "@/lib/archives/zip";
 import {
   parsePiPackageReleaseManifest,
   scanPiPackageReleaseManifest,
@@ -24,6 +25,7 @@ export type PiPackageCaptureOptions = {
   authentication?: PiSourceAuthentication;
   sourceId?: string;
   sourceUpdatedAt?: Date;
+  archive?: Buffer;
 };
 
 const IMAGE = "toolplane-pi-package-capture:0.87.1";
@@ -186,7 +188,29 @@ export async function capturePiPackage(
   capturing = true;
   const started = Date.now();
   try {
-    const validated = validatePiPackageSource(source);
+    if (
+      options.archive &&
+      (!options.archive.length || options.archive.length > 32 * 1024 * 1024)
+    )
+      throw failed();
+    if (options.archive) {
+      try {
+        readZip(options.archive, {
+          maxArchiveBytes: 32 * 1024 * 1024,
+          maxBytes: 32 * 1024 * 1024,
+          maxFileBytes: 8 * 1024 * 1024,
+          maxFiles: 4096,
+        });
+      } catch {
+        throw new MarketError(
+          "package_capture_failed",
+          "The package archive failed validation.",
+        );
+      }
+    }
+    const validated = options.archive
+      ? `zip:sha256:${createHash("sha256").update(options.archive).digest("hex")}`
+      : validatePiPackageSource(source);
     if (options.registry) piSourceUrl(options.registry);
     if (options.authentication)
       sourceAuthorization(
@@ -449,6 +473,12 @@ async function runCapture(
       });
       if (manifest.package.source.requested !== source) throw failed();
       if (
+        options.archive &&
+        (manifest.package.source.kind !== "zip" ||
+          manifest.package.source.sha256 !== source.slice("zip:sha256:".length))
+      )
+        throw failed();
+      if (
         manifest.package.source.kind === "npm" &&
         (manifest.package.source.registry ?? "https://registry.npmjs.org/") !==
           new URL(
@@ -529,6 +559,16 @@ async function runCapture(
       registry: options.registry ?? "https://registry.npmjs.org/",
       authentication: options.authentication ?? null,
     });
+    if (options.archive) {
+      for (let offset = 0; offset < options.archive.length; offset += BLOCK)
+        await send({
+          type: "upload_chunk",
+          data: options.archive
+            .subarray(offset, offset + BLOCK)
+            .toString("base64"),
+        });
+      await send({ type: "upload_end" });
+    }
     return await Promise.race([consume(), failure]);
   } catch (error) {
     if (error instanceof MarketError && error.code === "pi_extensions_missing")

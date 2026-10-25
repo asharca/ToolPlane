@@ -127,6 +127,93 @@ describe("read-only A2A task monitoring", () => {
     expect(screen.getByText("Ready to resume")).toBeInTheDocument();
     expect(screen.queryByText("Recovering")).toBeNull();
   });
+  it("distinguishes unknown remote cancellation from a confirmed local failure", async () => {
+    const value = tree("TASK_STATE_FAILED");
+    value.nodes[0].cancelRequested = true;
+    value.nodes[0].remoteOutcome = "unknown";
+    fetcher.mockImplementation(async () => Response.json(value));
+    show();
+    await flush();
+    expect(screen.getByText("Remote outcome unknown")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Cancellation unconfirmed; the remote service may still be running",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Cancellation requested")).toBeNull();
+    expect(screen.queryByText("TASK_STATE_FAILED")).toBeNull();
+    expect(
+      screen.getByText(/Remote work may still be running;/),
+    ).toBeInTheDocument();
+    await flush(2500);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    for (const [, init] of fetcher.mock.calls) {
+      expect(init.method).toBeUndefined();
+    }
+  });
+  it("shows the actual remote state and removes pending cancellation after completion", async () => {
+    const value = tree("TASK_STATE_COMPLETED");
+    value.nodes[0].cancelRequested = true;
+    value.nodes[0].remoteOutcome = "observed";
+    value.nodes[0].remoteState = "TASK_STATE_COMPLETED";
+    fetcher.mockImplementation(async () => Response.json(value));
+    show();
+    await flush();
+    expect(screen.queryByText("Cancellation requested")).toBeNull();
+    expect(screen.queryByText("Remote outcome unknown")).toBeNull();
+  });
+  it("keeps observing a remote cancellation request even when the local task is canceled", async () => {
+    const value = tree("TASK_STATE_CANCELED");
+    value.nodes[0].cancelRequested = true;
+    value.nodes[0].remoteOutcome = "observed";
+    value.nodes[0].remoteState = "TASK_STATE_WORKING";
+    fetcher.mockImplementation(async () => Response.json(value));
+    show();
+    await flush();
+    expect(screen.getByText("TASK_STATE_WORKING")).toBeInTheDocument();
+    expect(screen.queryByText("TASK_STATE_CANCELED")).toBeNull();
+    expect(screen.getByText("Cancellation requested")).toBeInTheDocument();
+    expect(
+      screen.getByText(/Remote work may still be running;/),
+    ).toBeInTheDocument();
+    await flush(2500);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+
+    value.nodes[0].remoteState = "TASK_STATE_CANCELED";
+    await flush(2500);
+    expect(screen.getByText("TASK_STATE_CANCELED")).toBeInTheDocument();
+    expect(screen.queryByText("Cancellation requested")).toBeNull();
+    expect(screen.queryByText(/Remote work may still be running;/)).toBeNull();
+    const reads = fetcher.mock.calls.length;
+    await flush(30_000);
+    expect(fetcher).toHaveBeenCalledTimes(reads);
+  });
+
+  it("does not label a pending local cancellation as remote work", async () => {
+    const value = tree();
+    value.nodes[0].cancelRequested = true;
+    fetcher.mockImplementation(async () => Response.json(value));
+    show();
+    await flush();
+    expect(screen.getByText("Cancellation requested")).toBeInTheDocument();
+    expect(screen.queryByText(/Remote work may still be running;/)).toBeNull();
+  });
+  it("labels the authorized reservation separately from measured billing", async () => {
+    const value = tree();
+    value.nodes[0].authorizedReservation = {
+      currency: "USD",
+      reservedMicros: 100_000,
+      limitMicros: 1_000_000,
+    };
+    fetcher.mockImplementation(async () => Response.json(value));
+    show();
+    await flush();
+    expect(
+      screen.getByText(
+        "Authorized reservation: 0.1 / 1 USD (not measured charges)",
+      ),
+    ).toBeInTheDocument();
+  });
   it("stops automatic reads when every node is terminal", async () => {
     fetcher.mockImplementation(
       async () => new Response(JSON.stringify(tree("TASK_STATE_COMPLETED"))),

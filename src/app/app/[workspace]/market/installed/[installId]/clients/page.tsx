@@ -57,7 +57,11 @@ export default async function PiPackageClientsPage({
   );
   const pinnedReleases = await db.marketRelease.findMany({
     where: {
-      id: { in: installations.map((item) => item.releaseId) },
+      id: {
+        in: installations
+          .map((item) => item.releaseId)
+          .filter((releaseId): releaseId is string => releaseId !== null),
+      },
       listingId: install.listingId,
     },
     select: { id: true, version: true, checksum: true, reviewStatus: true },
@@ -247,6 +251,7 @@ export default async function PiPackageClientsPage({
                             id: installation.id,
                             client: installation.client,
                             bindings: bindings.data,
+                            configVersion: installation.configVersion,
                           }}
                         />
                       </div>

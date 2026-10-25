@@ -74,6 +74,20 @@ function withEntries(entries: PiPackageEntryV1[]): PiPackageManifestV1 {
 }
 
 describe("immutable Pi package manifests", () => {
+  it("accepts upload digest provenance and rejects mismatched requested identity", () => {
+    const manifest = fixture();
+    const sha256 = "a".repeat(64);
+    manifest.package.source = {
+      kind: "zip",
+      requested: `zip:sha256:${sha256}`,
+      sha256,
+    };
+    expect(parsePiPackageReleaseManifest(manifest)).toEqual(manifest);
+    manifest.package.source.requested = `zip:sha256:${"b".repeat(64)}`;
+    expect(() => parsePiPackageReleaseManifest(manifest)).toThrow(
+      "pi_package_invalid_source",
+    );
+  });
   it("accepts resource-only portable ToolPlane packages without executable placeholders", () => {
     const manifest = fixture();
     manifest.package.source = {

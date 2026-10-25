@@ -1,6 +1,12 @@
 // @vitest-environment node
 import { assertDefined } from "../assert-defined";
 import { randomUUID } from "node:crypto";
+import type { Prisma } from "@prisma/client";
+import { SendMessageRequest, Message, Task, TaskState } from "@a2a-js/sdk";
+import type { A2AGrant } from "@/lib/a2a/principal";
+import { resolveA2AGrant } from "@/lib/a2a/principal";
+import { finishTask } from "@/lib/a2a/store";
+import { refreshTaskStorage } from "@/lib/a2a/quotas";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { db } from "@/lib/db";
 import { createAgentApiKey } from "@/lib/agents/public-api/auth";
@@ -9,10 +15,7 @@ import {
   LOG_SETTINGS_KEY,
   invalidateLogSettings,
 } from "@/lib/observability/settings";
-import type * as WorkerModule from "@/lib/a2a/worker";
-import { executeA2ATask } from "@/lib/a2a/worker";
-import { textArtifact } from "@/lib/a2a/model";
-import { withLogContext } from "@/lib/observability/context";
+import { jsonEvent, taskEvent, textArtifact, terminal } from "@/lib/a2a/model";
 import {
   getLogEvent,
   getLogTrace,
@@ -25,11 +28,6 @@ import { createApiToken } from "@/lib/auth/tokens";
 import { GET as exportLogs } from "@/app/api/v1/admin/logs/export/route";
 import * as auditModule from "@/lib/observability/audit";
 
-// Keep admission real; execution is explicitly driven by deterministic fixtures below.
-vi.mock("@/lib/a2a/worker", async (original) => ({
-  ...(await original<typeof WorkerModule>()),
-  wakeA2AWorker: vi.fn(),
-}));
 const stamp = randomUUID();
 let userId: string,
   adminId: string,
@@ -38,6 +36,9 @@ let userId: string,
   foreignWorkspaceId: string,
   agentId: string;
 let endpointId: string, publicId: string, clientId: string, token: string;
+let historicalGrant: A2AGrant;
+let retainedTaskId: string;
+const retainedCallerInput = "Retained caller input";
 let previousSetting: string | null;
 const requestIds: string[] = [];
 beforeAll(async () => {
@@ -140,6 +141,15 @@ beforeAll(async () => {
       name: "Logging key",
     })
   ).token;
+  historicalGrant = (
+    await resolveA2AGrant(
+      new Request(`http://localhost/api/v1/agent-endpoints/${publicId}/a2a`, {
+        headers: { authorization: `Bearer ${token}` },
+      }),
+      publicId,
+    )
+  ).grant;
+  retainedTaskId = (await retainedHistory()).id;
   previousSetting =
     (await db.systemSetting.findUnique({ where: { key: LOG_SETTINGS_KEY } }))
       ?.value ?? null;
@@ -198,41 +208,99 @@ async function call(body: unknown, credential = token) {
   expect(events).toHaveLength(1);
   return { response, result, event: events[0] };
 }
-const send = () => ({
+const readTaskRequest = () => ({
   jsonrpc: "2.0",
   id: 1,
-  method: "SendMessage",
-  params: {
-    message: {
-      messageId: randomUUID(),
-      role: "ROLE_USER",
-      parts: [{ text: "日志验收-hello password=fixture-private" }],
-    },
-    configuration: { returnImmediately: true },
-  },
+  method: "GetTask",
+  params: { id: retainedTaskId },
 });
 
-describe("real authorized A2A protocol logging", () => {
-  it("captures one redacted inbound request per access without capture settings or duplicate task execution", async () => {
+/** Already-recorded history is imported directly; retired runtimes are never admitted or dispatched. */
+async function retainedHistory(
+  state: TaskState = TaskState.TASK_STATE_COMPLETED,
+) {
+  const json = (value: unknown) =>
+    JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+  return db.$transaction(async (tx) => {
+    const context = await tx.a2AContext.create({
+      data: {
+        workspaceId,
+        targetKind: "published",
+        endpointId,
+        clientId,
+        revisionId: historicalGrant.revisionId,
+        ownerKey: historicalGrant.ownerKey,
+        agentRevisionId: null,
+        legacyRevisionUnresolved: true,
+        expiresAt: new Date(Date.now() + 86_400_000),
+      },
+    });
+    const id = randomUUID(),
+      at = new Date();
+    const input = SendMessageRequest.fromJSON({
+      message: {
+        messageId: randomUUID(),
+        role: "ROLE_USER",
+        parts: [{ text: retainedCallerInput }],
+      },
+    });
+    const snapshot = Task.fromJSON({
+      id,
+      contextId: context.id,
+      history: [Message.toJSON(assertDefined(input.message))],
+      status: { state, timestamp: at.toISOString() },
+      artifacts:
+        state === TaskState.TASK_STATE_COMPLETED
+          ? [textArtifact("日志验收-hello password=fixture-private")]
+          : [],
+    });
+    const row = await tx.a2ATask.create({
+      data: {
+        id,
+        contextId: context.id,
+        state,
+        statusAt: at,
+        phase: terminal(state) ? "done" : "executing",
+        executionBackend: "legacy",
+        leaseToken:
+          state === TaskState.TASK_STATE_WORKING ? randomUUID() : null,
+        completedAt: terminal(state) ? at : null,
+        deadlineAt: new Date(Date.now() + 60_000),
+        snapshot: json(Task.toJSON(snapshot)),
+        request: json(SendMessageRequest.toJSON(input)),
+        grant: json(historicalGrant),
+        events: {
+          create: {
+            sequence: 1,
+            payload: json(jsonEvent(taskEvent(snapshot))),
+          },
+        },
+      },
+    });
+    await refreshTaskStorage(tx, id);
+    return row;
+  });
+}
+
+describe("real authorized retained A2A protocol logging", () => {
+  it("captures one redacted history read per access without capture settings or any new execution", async () => {
     const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
     try {
-      const input = send();
+      const input = readTaskRequest();
       const first = await call(input);
       expect(first.response.status).toBe(200);
-      expect(first.result.result.task.status.state).toBe(
-        "TASK_STATE_SUBMITTED",
-      );
+      expect(first.result.result.status.state).toBe("TASK_STATE_COMPLETED");
       expect(first.event).toMatchObject({
         workspaceId,
         actorId: null,
         outcome: "success",
-        rpcMethod: "SendMessage",
+        rpcMethod: "GetTask",
         attributes: {
           data: {
             a2a: {
               clientId,
-              taskId: first.result.result.task.id,
-              rootTaskId: first.result.result.task.id,
+              taskId: first.result.result.id,
+              rootTaskId: first.result.result.id,
             },
           },
         },
@@ -240,8 +308,8 @@ describe("real authorized A2A protocol logging", () => {
       expect(first.event.traceId).toBeTruthy();
       expect(first.event.detail).not.toBeNull();
       const payload = JSON.stringify(assertDefined(first.event.detail).data);
-      expect(payload).toContain("日志验收-hello");
-      expect(payload).toContain("TASK_STATE_SUBMITTED");
+      expect(payload).toContain(retainedCallerInput);
+      expect(payload).toContain("TASK_STATE_COMPLETED");
       expect(payload).not.toContain("fixture-private");
       expect(payload).not.toContain(token);
       expect(
@@ -249,10 +317,12 @@ describe("real authorized A2A protocol logging", () => {
       ).toBeLessThanOrEqual(Date.now() + 86_400_000);
       expect(
         JSON.stringify({ ...first.event, detail: undefined }),
-      ).not.toContain("日志验收-hello");
-      expect(JSON.stringify(stderr.mock.calls)).not.toContain("日志验收-hello");
+      ).not.toContain(retainedCallerInput);
+      expect(JSON.stringify(stderr.mock.calls)).not.toContain(
+        retainedCallerInput,
+      );
       const replay = await call(input);
-      expect(replay.result.result.task.id).toBe(first.result.result.task.id);
+      expect(replay.result.result.id).toBe(first.result.result.id);
       expect(
         await db.a2ATask.count({ where: { context: { endpointId } } }),
       ).toBe(1);
@@ -289,7 +359,7 @@ describe("real authorized A2A protocol logging", () => {
     }
   });
   it("does not collect rejected credentials or scope-denied request bodies", async () => {
-    const invalid = await call(send(), "invalid-key");
+    const invalid = await call(readTaskRequest(), "invalid-key");
     expect(invalid.response.status).toBe(401);
     expect(invalid.event).toMatchObject({
       outcome: "denied",
@@ -298,10 +368,10 @@ describe("real authorized A2A protocol logging", () => {
     });
     await db.agentApiClient.update({
       where: { id: clientId },
-      data: { scopes: ["a2a:read"] },
+      data: { scopes: ["a2a:send"] },
     });
     try {
-      const denied = await call(send());
+      const denied = await call(readTaskRequest());
       expect(denied.response.status).toBe(403);
       expect(denied.event.outcome).toBe("denied");
       expect(denied.event.detail).toBeNull();
@@ -312,8 +382,14 @@ describe("real authorized A2A protocol logging", () => {
       });
     }
   });
-  it("records stream disconnection once without canceling accepted work", async () => {
-    const input = { ...send(), method: "SendStreamingMessage" };
+  it("records history stream disconnection once without canceling retained work", async () => {
+    const retained = await retainedHistory(TaskState.TASK_STATE_WORKING);
+    const input = {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "SubscribeToTask",
+      params: { id: retained.id },
+    };
     const response = await POST(
       new Request(`http://localhost/api/v1/agent-endpoints/${publicId}/a2a`, {
         method: "POST",
@@ -355,92 +431,65 @@ describe("real authorized A2A protocol logging", () => {
     });
     expect(
       await db.a2ATask.findUniqueOrThrow({ where: { id: taskId } }),
-    ).toMatchObject({ state: 1, cancelRequestedAt: null });
+    ).toMatchObject({
+      state: TaskState.TASK_STATE_WORKING,
+      cancelRequestedAt: null,
+    });
   });
-  it("keeps asynchronous execution on a new trace and retains only the committed public result", async () => {
-    const submitted = await call(send());
-    const taskId = submitted.result.result.task.id;
-    await withLogContext(
-      {
-        requestId: "unrelated-wakeup",
-        traceId: "unrelated-trace",
-        actorId: foreignId,
-      },
-      () =>
-        executeA2ATask(taskId, async () => ({
-          state: 3,
-          artifact: textArtifact("日志验收-result password=fixture-private"),
-        })),
+  it("records an existing lease settlement without replaying retired execution and retains only the committed public result", async () => {
+    const retained = await retainedHistory(TaskState.TASK_STATE_WORKING);
+    const priorRead = await call({
+      ...readTaskRequest(),
+      params: { id: retained.id },
+    });
+    await finishTask(
+      retained.id,
+      assertDefined(retained.leaseToken),
+      TaskState.TASK_STATE_COMPLETED,
+      undefined,
+      textArtifact("日志验收-result password=fixture-private"),
     );
     const rows = await db.logEvent.findMany({
       where: {
         workspaceId,
         domain: "a2a",
-        attributes: { path: ["data", "a2a", "taskId"], equals: taskId },
+        attributes: { path: ["data", "a2a", "taskId"], equals: retained.id },
         eventName: { in: ["a2a.task.started", "a2a.task.settled"] },
       },
       include: { detail: true },
-      orderBy: { createdAt: "asc" },
     });
-    expect(rows).toHaveLength(2);
+    expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
-      eventName: "a2a.task.started",
-      actorId: null,
-      requestId: null,
-      durationMs: null,
-      detail: null,
-    });
-    expect(rows[0].traceId).not.toBe("unrelated-trace");
-    expect(rows[0].traceId).not.toBe(submitted.event.traceId);
-    expect(rows[1]).toMatchObject({
       eventName: "a2a.task.settled",
       outcome: "success",
+      actorId: null,
       requestId: null,
       attributes: {
         data: {
-          a2a: { taskState: "TASK_STATE_COMPLETED", rootTaskId: taskId },
+          a2a: { taskState: "TASK_STATE_COMPLETED", rootTaskId: retained.id },
         },
       },
     });
-    expect(rows[1].traceId).toBe(rows[0].traceId);
-    expect(rows[1].durationMs).toBeGreaterThanOrEqual(0);
-    expect(JSON.stringify(assertDefined(rows[1].detail).data)).toContain(
-      "日志验收-result",
-    );
-    expect(JSON.stringify(assertDefined(rows[1].detail).data)).not.toContain(
-      "fixture-private",
-    );
-    expect(JSON.stringify(assertDefined(rows[1].detail).data)).not.toContain(
-      "ownerKey",
-    );
-    expect(JSON.stringify(assertDefined(rows[1].detail).data)).not.toContain(
-      "日志验收-hello",
-    );
+    expect(rows[0].traceId).not.toBe(priorRead.event.traceId);
+    const detail = JSON.stringify(assertDefined(rows[0].detail).data);
+    expect(detail).toContain("日志验收-result");
+    expect(detail).not.toContain("fixture-private");
+    expect(detail).not.toContain("ownerKey");
+    expect(detail).not.toContain(retainedCallerInput);
     const fetched = await call({
-      jsonrpc: "2.0",
-      id: 4,
-      method: "GetTask",
-      params: { id: taskId },
+      ...readTaskRequest(),
+      params: { id: retained.id },
     });
     expect(JSON.stringify(assertDefined(fetched.event.detail).data)).toContain(
       "日志验收-result",
     );
-    expect(
-      await db.logEvent.count({
-        where: {
-          workspaceId,
-          eventName: "a2a.request",
-          rpcMethod: "SendMessage",
-          attributes: { path: ["data", "a2a", "taskId"], equals: taskId },
-        },
-      }),
-    ).toBe(1);
+    expect(await db.a2ATask.count({ where: { id: retained.id } })).toBe(1);
   });
 });
 
 describe("A2A query scope and audited disclosure", () => {
   it("audits administrator and workspace body views and denies disclosure on audit failure or expiry", async () => {
-    const request = await call(send());
+    const request = await call(readTaskRequest());
     const id = request.event.id;
     const admin = await getLogEvent({ adminId }, id);
     expect(admin).toMatchObject({ detailState: "available" });
@@ -452,7 +501,7 @@ describe("A2A query scope and audited disclosure", () => {
     ).toBe(1);
     const member = await getLogEvent({ userId, workspaceId }, id);
     expect(member).toMatchObject({ detailState: "available" });
-    expect(JSON.stringify(member?.detail)).toContain("日志验收-hello");
+    expect(JSON.stringify(member?.detail)).toContain(retainedCallerInput);
     expect(JSON.stringify(member?.detail)).not.toContain("fixture-private");
     const stored = assertDefined(request.event.detail).data;
     expect(member?.detail?.data).toEqual({
@@ -724,7 +773,7 @@ describe("A2A query scope and audited disclosure", () => {
       (
         await listLogEvents(
           { userId, workspaceId },
-          { ...input, q: "日志验收-hello" },
+          { ...input, q: retainedCallerInput },
         )
       ).rows,
     ).toEqual([]);
@@ -817,6 +866,6 @@ describe("A2A query scope and audited disclosure", () => {
           !("response" in row),
       ),
     ).toBe(true);
-    expect(JSON.stringify(rows)).not.toContain("日志验收-hello");
+    expect(JSON.stringify(rows)).not.toContain(retainedCallerInput);
   });
 });

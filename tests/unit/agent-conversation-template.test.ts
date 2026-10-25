@@ -31,7 +31,8 @@ describe("conversation template assignment safety", () => {
     mocks.maintenance.mockImplementation((_agent, fn) => fn());
     mocks.agent.mockResolvedValue({
       id: "agent",
-      runtimeKind: "pi",
+      runtimeKind: "pi-sdk",
+      retiredAt: null,
       sandboxes: [{ sandboxId: "original" }],
     });
     mocks.sandbox.mockResolvedValue({ id: "saved-conversation-sandbox" });

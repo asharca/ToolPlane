@@ -28,9 +28,6 @@ vi.mock("@/lib/agents/channel-connections", () => ({
 vi.mock("@/lib/agents/public-api/queries", () => ({
   getAgentEndpointForManagement: vi.fn(),
 }));
-vi.mock("@/lib/agents/hermes/token", () => ({
-  createHermesDashboardPath: vi.fn(),
-}));
 vi.mock("@/lib/db", () => ({ db: {} }));
 vi.mock("@/components/dashboard/agents/AgentSettings", () => ({
   AgentSettings: () => null,

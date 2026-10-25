@@ -144,6 +144,38 @@ export async function listPiPackageSources(input: Access) {
     hasCredentials: Boolean(credentialsEnc),
   }));
 }
+
+export async function listPrivateApprovedPiReleases(input: Access) {
+  await authorize(input, true);
+  const releases = await db.marketRelease.findMany({
+    where: {
+      reviewStatus: "approved",
+      listing: {
+        kind: "pi-package",
+        visibility: "private",
+        status: "published",
+        publisherWorkspaceId: input.workspaceId,
+      },
+    },
+    orderBy: [{ createdAt: "desc" }, { version: "desc" }],
+    select: {
+      id: true,
+      version: true,
+      checksum: true,
+      listing: {
+        select: {
+          id: true,
+          slug: true,
+          name: true,
+          summary: true,
+          iconUrl: true,
+          tags: true,
+        },
+      },
+    },
+  });
+  return releases.map(({ id, ...release }) => ({ releaseId: id, ...release }));
+}
 export async function createPiPackageSource(
   input: Access & {
     name: string;
@@ -628,7 +660,7 @@ export async function checkPiPackageUpdates(
         release.manifest,
         release.checksum,
       ).package.source;
-      if (approved.kind === "toolplane")
+      if (approved.kind === "toolplane" || approved.kind === "zip")
         throw sourceError("source_not_trackable");
       const options = row.source ? captureOptions(row.source) : {};
       if (approved.kind === "npm") {

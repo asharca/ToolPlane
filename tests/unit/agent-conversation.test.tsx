@@ -69,7 +69,7 @@ function renderConversation(overrides: Partial<ConversationProps> = {}) {
     ensureConversation,
     initialMessages,
     ready: true,
-    runtimeKind: null,
+    runtimeKind: "pi-sdk",
     ...overrides,
   };
   return {
@@ -120,6 +120,46 @@ describe("AgentConversation", () => {
     vi.unstubAllGlobals();
   });
 
+  it("shows native prompt source and arguments without replacing authored input", async () => {
+    const messages = [
+      {
+        id: "prompt-user",
+        role: "user",
+        parts: [
+          { type: "text", text: '/review "some file"' },
+          {
+            type: "data-agent-prompt-invocation",
+            data: {
+              name: "review",
+              version: "1.2.3",
+              rawArguments: '"some file"',
+              arguments: ["some file"],
+              source: {
+                marketInstallId: "install-1",
+                releaseId: "release-1",
+                checksum: "sha256:trusted",
+                path: "prompts/review.md",
+              },
+              finalInput:
+                "Expanded native instructions must not replace authored input",
+            },
+          },
+        ],
+      },
+    ] as HermesUIMessage[];
+    chatMocks.useChat.mockReturnValue({ ...chatMocks.useChat(), messages });
+    renderConversation({ initialMessages: messages });
+    expect(screen.getByText('/review "some file"')).toBeInTheDocument();
+    await userEvent.click(screen.getByText(/Prompt source and arguments/));
+    expect(screen.getByText(/prompts\/review.md/)).toBeVisible();
+    expect(screen.getByText('"some file"')).toBeVisible();
+    expect(
+      screen.queryByText(
+        "Expanded native instructions must not replace authored input",
+      ),
+    ).not.toBeInTheDocument();
+    expect(chatMocks.sendMessage).not.toHaveBeenCalled();
+  });
   it("explicitly stops the server turn without treating unmount as cancellation", async () => {
     chatMocks.useChat.mockReturnValue({
       ...chatMocks.useChat(),
@@ -421,7 +461,7 @@ describe("AgentConversation", () => {
     });
   });
 
-  it("enables attachments for stored native uploads and Hermes", async () => {
+  it("enables attachments only for configured native uploads", async () => {
     const { props, rerender } = renderConversation();
 
     const toolsButton = screen.getByRole("button", { name: "Open tools" });
@@ -446,12 +486,6 @@ describe("AgentConversation", () => {
     expect(
       screen.getByRole("menuitem", { name: /Add attachment/ }),
     ).toBeEnabled();
-
-    rerender(<AgentConversation {...props} runtimeKind="hermes" />);
-
-    expect(
-      screen.getByRole("menuitem", { name: /Add attachment/ }),
-    ).toBeEnabled();
   });
 
   it("uploads a native attachment as an internal file part", async () => {
@@ -472,7 +506,7 @@ describe("AgentConversation", () => {
     );
     renderConversation({
       attachmentUploadUrl: "/api/v1/workspaces/workspace-1/attachments",
-      runtimeKind: "pi",
+      runtimeKind: "pi-sdk",
     });
 
     await userEvent.click(screen.getByRole("button", { name: "Open tools" }));
@@ -510,16 +544,16 @@ describe("AgentConversation", () => {
             }),
           ]),
         }),
-        expect.objectContaining({ body: { conversationId: "conv-new" } }),
+        expect.objectContaining({ body: { conversationId: "conv-1" } }),
       ),
     );
   });
 
-  it("restores the composer when a Hermes attachment upload fails", async () => {
+  it("restores the composer when a native attachment upload fails", async () => {
     apiMocks.fetch.mockResolvedValueOnce(
       new Response(
         JSON.stringify({
-          error: "Hermes storage is unavailable.",
+          error: "Attachment storage is unavailable.",
         }),
         {
           status: 503,
@@ -527,7 +561,9 @@ describe("AgentConversation", () => {
         },
       ),
     );
-    renderConversation({ runtimeKind: "hermes" });
+    renderConversation({
+      attachmentUploadUrl: "/api/v1/workspaces/workspace-1/attachments",
+    });
 
     await userEvent.click(screen.getByRole("button", { name: "Open tools" }));
     await userEvent.click(
@@ -545,7 +581,7 @@ describe("AgentConversation", () => {
     await userEvent.click(screen.getByRole("button", { name: "Send prompt" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Hermes storage is unavailable.",
+      "Attachment storage is unavailable.",
     );
     expect(composer).toHaveValue("Keep the file and text");
     expect(screen.getByText("one.txt")).toBeInTheDocument();
@@ -817,7 +853,9 @@ describe("AgentConversation", () => {
   it("pins MCP resources in the toolbar and inserts the selected resource", async () => {
     const user = userEvent.setup();
     apiMocks.fetch.mockImplementation(async (input, init) => {
-      if (String(input) === "/composer?section=resources") {
+      if (
+        String(input) === "/composer?conversationId=conv-1&section=resources"
+      ) {
         return Response.json({
           items: [
             {
@@ -830,7 +868,10 @@ describe("AgentConversation", () => {
           ],
         });
       }
-      if (String(input) === "/composer" && init?.method === "POST") {
+      if (
+        String(input) === "/composer?conversationId=conv-1" &&
+        init?.method === "POST"
+      ) {
         return Response.json({
           text: "Reference material (resource): Project plan\ndocs://plan\nShip it.",
         });
@@ -895,6 +936,18 @@ describe("AgentConversation", () => {
         ).value,
       ).toContain("docs://plan"),
     );
+    expect(apiMocks.fetch).toHaveBeenCalledWith(
+      "/composer?conversationId=conv-1",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          kind: "resource",
+          id: "docs://plan",
+          deploymentId: "dep-1",
+          conversationId: "conv-1",
+        }),
+      }),
+    );
 
     await user.click(screen.getByRole("button", { name: "Open tools" }));
     await user.click(
@@ -921,16 +974,13 @@ describe("AgentConversation", () => {
   it("offers runtime slash commands and sends them through the command endpoint", async () => {
     const user = userEvent.setup();
     const onConversationChanged = vi.fn();
-    renderConversation({ runtimeKind: "dsh", onConversationChanged });
+    renderConversation({ runtimeKind: "pi-sdk", onConversationChanged });
 
     const input = screen.getByPlaceholderText("Message this agent");
     await user.type(input, "/");
     const menu = await screen.findByRole("menu", { name: "Tools" });
     expect(
       within(menu).getByRole("menuitem", { name: /compact/ }),
-    ).toBeInTheDocument();
-    expect(
-      within(menu).getByRole("menuitem", { name: /goal/ }),
     ).toBeInTheDocument();
     await user.click(within(menu).getByRole("menuitem", { name: /compact/ }));
     expect(input).toHaveValue("/compact ");
@@ -940,7 +990,7 @@ describe("AgentConversation", () => {
 
     await waitFor(() =>
       expect(apiMocks.fetch).toHaveBeenCalledWith(
-        "/api/v1/agents/agent-1/conversations/conv-new/commands",
+        "/api/v1/agents/agent-1/conversations/conv-1/commands",
         expect.objectContaining({ body: '{"line":"/compact preserve paths"}' }),
       ),
     );
@@ -1008,7 +1058,7 @@ describe("AgentConversation", () => {
         Response.json({ error }, { status: 403 }),
       );
       const onConversationChanged = vi.fn();
-      renderConversation({ runtimeKind: "dsh", onConversationChanged });
+      renderConversation({ runtimeKind: "pi-sdk", onConversationChanged });
       const input = screen.getByPlaceholderText("Message this agent");
       await userEvent.type(input, "/compact preserve files");
       await userEvent.click(
@@ -1021,18 +1071,19 @@ describe("AgentConversation", () => {
     },
   );
 
-  it("rejects unsupported runtime commands locally and keeps the draft", async () => {
-    renderConversation({ runtimeKind: "dsh" });
-    const input = screen.getByPlaceholderText("Message this agent");
-    await userEvent.type(input, "/clear");
-    await userEvent.click(screen.getByRole("button", { name: "Send prompt" }));
-    await screen.findByText(
-      "This command is not supported by the current runtime.",
-    );
-    await waitFor(() => expect(input).toHaveValue("/clear"));
-    expect(apiMocks.fetch).not.toHaveBeenCalled();
-    expect(chatMocks.sendMessage).not.toHaveBeenCalled();
-  });
+  it.each(["hermes", "dsh", "pi", "claude-code", null])(
+    "keeps retired %s history read-only",
+    async (runtimeKind) => {
+      renderConversation({ runtimeKind });
+      expect(screen.getByText("hello")).toBeInTheDocument();
+      expect(screen.getByPlaceholderText("Message this agent")).toBeDisabled();
+      await userEvent.click(
+        screen.getByRole("button", { name: "Send prompt" }),
+      );
+      expect(apiMocks.fetch).not.toHaveBeenCalled();
+      expect(chatMocks.sendMessage).not.toHaveBeenCalled();
+    },
+  );
 
   it("retains a normal message when conversation creation fails and sends it on retry", async () => {
     const ensureConversation = vi
@@ -1131,53 +1182,18 @@ describe("AgentConversation", () => {
     expect(apiMocks.fetch).not.toHaveBeenCalled();
   });
 
-  it("uploads Hermes files as runtime-path context without attaching an external download URL", async () => {
-    apiMocks.fetch.mockResolvedValueOnce(
-      Response.json({
-        runtimePath: "/home/hermes/notes.txt",
-        name: "notes.txt",
-        size: 5,
-      }),
-    );
-    renderConversation({ runtimeKind: "hermes" });
-    await userEvent.click(screen.getByRole("button", { name: "Open tools" }));
-    await userEvent.click(
-      screen.getByRole("menuitem", { name: /Add attachment/ }),
-    );
-    const input = assertDefined(
-      document.querySelector<HTMLInputElement>('input[type="file"]'),
-    );
-    await userEvent.upload(
-      input,
-      new File(["notes"], "notes.txt", { type: "text/plain" }),
-    );
-    await userEvent.type(
-      screen.getByPlaceholderText("Message this agent"),
-      "Read this runtime file",
-    );
+  it("keeps an unresolved native session read-only", async () => {
+    renderConversation({ readOnly: true, runtimeKind: "pi-sdk" });
+    expect(screen.getByText("hello")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Message this agent")).toBeDisabled();
     await userEvent.click(screen.getByRole("button", { name: "Send prompt" }));
-    await waitFor(() =>
-      expect(chatMocks.sendMessage).toHaveBeenCalledWith(
-        expect.objectContaining({
-          parts: expect.arrayContaining([
-            expect.objectContaining({
-              type: "text",
-              text: expect.stringContaining("/home/hermes/notes.txt"),
-            }),
-          ]),
-        }),
-        expect.anything(),
-      ),
-    );
-    const parts = chatMocks.sendMessage.mock.calls.at(-1)?.[0]?.parts as Array<{
-      type: string;
-    }>;
-    expect(parts.some((part) => part.type === "file")).toBe(false);
+    expect(apiMocks.fetch).not.toHaveBeenCalled();
+    expect(chatMocks.sendMessage).not.toHaveBeenCalled();
   });
 
   it("retains attachments when runtime commands reject attached input locally", async () => {
     renderConversation({
-      runtimeKind: "dsh",
+      runtimeKind: "pi-sdk",
       attachmentUploadUrl: "/api/v1/workspaces/workspace/attachments",
     });
     await userEvent.click(screen.getByRole("button", { name: "Open tools" }));

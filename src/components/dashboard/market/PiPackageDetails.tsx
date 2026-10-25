@@ -20,11 +20,17 @@ export async function PiPackageDetails({
               ? `npm:${source.name}@${source.version}`
               : source.kind === "git"
                 ? source.url
-                : t("piCatalog.toolplaneSource"),
+                : source.kind === "zip"
+                  ? t("sourceZip")
+                  : t("piCatalog.toolplaneSource"),
           ],
           [
-            t("piSourceVersion"),
-            source.kind === "git" ? source.commit : source.version,
+            source.kind === "zip" ? "SHA-256" : t("piSourceVersion"),
+            source.kind === "git"
+              ? source.commit
+              : source.kind === "zip"
+                ? source.sha256
+                : source.version,
           ],
           [
             t("piPackageName"),
@@ -61,7 +67,6 @@ export async function PiPackageDetails({
           [
             ["extensions", "piExtensions"],
             ["skills", "skills"],
-            ["prompts", "piPrompts"],
             ["themes", "piThemes"],
           ] as const
         ).map(([kind, label]) => (

@@ -33,7 +33,8 @@ export async function assertLocalRuntimeToken(
   if (
     !isLocalGrant(grant) ||
     grant.workspaceId !== token.workspaceId ||
-    grant.agentId !== token.agentId
+    grant.agentId !== token.agentId ||
+    grant.agentRevisionId !== token.agentRevisionId
   )
     throw new TaskNotFoundError();
   await assertLiveGrant(grant, "send");
@@ -49,6 +50,7 @@ export async function assertLocalRuntimeToken(
     grant.workspaceId,
     grant.agentId,
     grant.ancestorTaskIds.length === 0 ? grant.entryPolicy : "delegation",
+    grant.agentRevisionId,
   );
   if (
     mapped?.sandboxId !== token.sandboxId ||

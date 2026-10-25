@@ -374,10 +374,8 @@ export function executeA2ATask(
       )
         return;
       if (
-        (error instanceof SandboxExecutionBusyError ||
-          error instanceof AgentExecutionBusyError) &&
-        (!grant.ancestorTaskIds.length ||
-          (active.native && queued.nativeOperationId))
+        error instanceof SandboxExecutionBusyError ||
+        error instanceof AgentExecutionBusyError
       )
         return;
       const failure =
@@ -431,15 +429,15 @@ export async function tickA2AWorker() {
       { state: TaskState.TASK_STATE_SUBMITTED },
       { state: TaskState.TASK_STATE_WORKING, phase: "resumable" },
     ];
-    // Separate pages prevent pooled public/remote work from hiding local admission
-    // or native cleanup. Local execution is bounded by the administrator limits.
+    // Separate pages keep remote observations from hiding SDK admission or bound cleanup.
+    // Retired published queues never acquire a new execution lease.
     const queues = await Promise.all(
       [
         { executionBackend: "pi-harness" },
-        { executionBackend: "legacy", context: { targetKind: "local" } },
+        { executionBackend: "pi-sdk", context: { targetKind: "local" } },
         {
           executionBackend: "legacy",
-          context: { targetKind: { not: "local" } },
+          context: { targetKind: "remote" },
         },
       ].map((scope) =>
         db.a2ATask.findMany({

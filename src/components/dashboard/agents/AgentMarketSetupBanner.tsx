@@ -87,6 +87,27 @@ export function AgentMarketSetupBanner({
             </ButtonLink>
           </li>
         ))}
+        {setup.legacyToolkitConversions.map((conversion) => (
+          <li
+            key={conversion.toolkitKey}
+            className="grid gap-2 px-4 py-3 sm:grid-cols-[1.25rem_minmax(0,1fr)_auto] sm:items-center"
+          >
+            <KeyRound className="size-4 text-muted-foreground" />
+            <span className="min-w-0 break-words text-xs leading-5">
+              {t("marketSetupToolkitConversionRequirement", {
+                name: conversion.name,
+              })}
+            </span>
+            <ButtonLink
+              href={`/app/${encodeURIComponent(slug)}/market/pi-packages?view=toolplane`}
+              variant="ghost"
+              size="sm"
+            >
+              {t("marketSetupReviewPackages")}
+              <ArrowRight className="size-3.5" />
+            </ButtonLink>
+          </li>
+        ))}
         {setup.runtimes.map((runtime) => (
           <li
             key={`${runtime.agentId}:${runtime.kind}`}
@@ -94,14 +115,16 @@ export function AgentMarketSetupBanner({
           >
             <Container className="size-4 text-muted-foreground text-muted-foreground" />
             <span className="min-w-0 text-xs leading-5">
-              {t("marketSetupRuntimeRequirement", { runtime: runtime.kind })}
+              {t("marketSetupLegacyRuntimeRequirement", {
+                runtime: runtime.kind,
+              })}
             </span>
             <ButtonLink
-              href={`/app/${encodeURIComponent(slug)}/agents/${encodeURIComponent(runtime.agentId)}?settings=hermes`}
+              href={`/app/${encodeURIComponent(slug)}/agents?create=1`}
               variant="ghost"
               size="sm"
             >
-              {t("marketSetupConfigureRuntime")}
+              {t("newAgent")}
               <ArrowRight className="size-3.5" />
             </ButtonLink>
           </li>

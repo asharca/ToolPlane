@@ -4,10 +4,6 @@ import type { ComposerReference } from "@/lib/work/composer-types";
 import { db } from "@/lib/db";
 import { sandboxVolumeName } from "@/lib/sandboxes/runtime";
 import {
-  acquireHermesRuntimeWriteLease,
-  HERMES_RUNTIME_COPY_IN_PROGRESS_ERROR,
-} from "@/lib/agents/hermes/runtime";
-import {
   copyWorkspaceAttachmentToDockerVolume,
   safeAttachmentFilename,
 } from "./storage";
@@ -96,18 +92,16 @@ export async function prepareWorkAttachments(input: {
     }),
   ]);
   if (!sandbox) throw new WorkAttachmentError(404, "Sandbox not found.");
-  if (sandbox.kind !== "docker" && sandbox.kind !== "hermes") {
+  if (sandbox.kind === "hermes" || sandbox.agentRuntime)
+    throw new WorkAttachmentError(
+      409,
+      "Historical Agent workspaces are read-only.",
+    );
+  if (sandbox.kind !== "docker")
     throw new WorkAttachmentError(
       400,
       "Work attachments require a Docker-backed sandbox.",
     );
-  }
-  if (sandbox.kind === "hermes" && !sandbox.agentRuntime) {
-    throw new WorkAttachmentError(
-      409,
-      "Hermes runtime sandbox is not attached to an Agent.",
-    );
-  }
   if (records.length !== ids.length) {
     throw new WorkAttachmentError(
       409,
@@ -124,47 +118,31 @@ export async function prepareWorkAttachments(input: {
       : sandboxVolumeName(sandbox.id);
   const byId = new Map(records.map((record) => [record.id, record]));
   const prepared: PreparedWorkAttachment[] = [];
-  const writeLease = sandbox.agentRuntime
-    ? acquireHermesRuntimeWriteLease(
-        input.workspaceId,
-        sandbox.agentRuntime.agentId,
-      )
-    : undefined;
-  if (sandbox.agentRuntime && !writeLease) {
-    throw new WorkAttachmentError(503, HERMES_RUNTIME_COPY_IN_PROGRESS_ERROR);
-  }
-  try {
-    for (const id of ids) {
-      const record = byId.get(id);
-      if (!record) {
-        throw new WorkAttachmentError(
-          409,
-          "One or more attachments are unavailable or already in use.",
-        );
-      }
-      const path = destinationPath(
-        input.workingDirectory,
-        record.id,
-        record.name,
+  for (const id of ids) {
+    const record = byId.get(id);
+    if (!record) {
+      throw new WorkAttachmentError(
+        409,
+        "One or more attachments are unavailable or already in use.",
       );
-      await copyWorkspaceAttachmentToDockerVolume({
-        workspaceId: input.workspaceId,
-        storagePath: record.storagePath,
-        destinationVolume: volumeName,
-        destinationPath: sandbox.kind === "hermes" ? `workspace/${path}` : path,
-      });
-      prepared.push({
-        id: record.id,
-        name: record.name,
-        mimeType: record.mimeType,
-        runtimePath:
-          sandbox.kind === "hermes"
-            ? `/opt/data/workspace/${path}`
-            : `/workspace/${path}`,
-      });
     }
-  } finally {
-    writeLease?.release();
+    const path = destinationPath(
+      input.workingDirectory,
+      record.id,
+      record.name,
+    );
+    await copyWorkspaceAttachmentToDockerVolume({
+      workspaceId: input.workspaceId,
+      storagePath: record.storagePath,
+      destinationVolume: volumeName,
+      destinationPath: path,
+    });
+    prepared.push({
+      id: record.id,
+      name: record.name,
+      mimeType: record.mimeType,
+      runtimePath: `/workspace/${path}`,
+    });
   }
   return prepared;
 }

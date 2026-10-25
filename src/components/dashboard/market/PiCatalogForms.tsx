@@ -3,7 +3,7 @@
 import { useActionState, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useTranslations } from "next-intl";
-import { ButtonLink } from "@/components/motion/button";
+import { Button, ButtonLink } from "@/components/motion/button";
 import { Input } from "@/components/motion/input";
 import { FormSelect } from "@/components/ui/FormSelect";
 import { FormCheckbox } from "@/components/ui/FormCheckbox";
@@ -11,6 +11,12 @@ import { SubmitButton } from "@/components/dashboard/SubmitButton";
 import { piCatalogAction } from "@/lib/market/pi-catalog-actions";
 import type { PiCatalogActionState } from "@/lib/market/pi-catalog-actions";
 
+import {
+  previewAssembledPiPackageAction,
+  previewPiPackageSourceAction,
+  type PiPackageSourcePreviewState,
+  type PiAssemblyPreviewState,
+} from "@/lib/market/actions";
 export function PiCatalogActionForm({
   workspace,
   operation,
@@ -28,12 +34,27 @@ export function PiCatalogActionForm({
 }) {
   const t = useTranslations("console.market.piCatalog");
   const resetAllowed = useRef(false);
+  const market = useTranslations("console.market");
+  const formRef = useRef<HTMLFormElement>(null);
+  const previewRevision = useRef(0);
+  const [sourcePreview, setSourcePreview] =
+    useState<PiPackageSourcePreviewState | null>(null);
+  const [previewing, setPreviewing] = useState(false);
+  const needsSourcePreview = operation === "import" || operation === "capture";
   const [state, action, pending] = useActionState<
     PiCatalogActionState,
     FormData
   >(async (previous, data) => {
     const result = await piCatalogAction(previous, data);
     resetAllowed.current = result.ok === true;
+    if (
+      (needsSourcePreview && result.ok) ||
+      result.error === "source_changed" ||
+      result.error === "source_preview_required"
+    ) {
+      previewRevision.current += 1;
+      setSourcePreview(null);
+    }
     return result;
   }, {});
   const errorKey =
@@ -43,6 +64,24 @@ export function PiCatalogActionForm({
   return (
     <form
       action={action}
+      ref={formRef}
+      onChange={(event) => {
+        if (!needsSourcePreview) return;
+        const target = event.target;
+        if (
+          !(
+            target instanceof HTMLInputElement ||
+            target instanceof HTMLSelectElement
+          )
+        )
+          return;
+        if (
+          !["source", "sourceId", "sourceType", "archive"].includes(target.name)
+        )
+          return;
+        previewRevision.current += 1;
+        setSourcePreview(null);
+      }}
       onReset={(event) => {
         if (!resetAllowed.current) event.preventDefault();
       }}
@@ -55,11 +94,61 @@ export function PiCatalogActionForm({
       ))}
       <fieldset disabled={pending} className="min-w-0 space-y-3">
         {children}
+        {needsSourcePreview ? (
+          <div className="space-y-2">
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              disabled={previewing}
+              onClick={async () => {
+                if (!formRef.current) return;
+                const revision = ++previewRevision.current;
+                setPreviewing(true);
+                setSourcePreview(null);
+                try {
+                  const preview = await previewPiPackageSourceAction(
+                    {},
+                    new FormData(formRef.current),
+                  );
+                  if (revision === previewRevision.current)
+                    setSourcePreview(preview);
+                } finally {
+                  setPreviewing(false);
+                }
+              }}
+            >
+              {market(previewing ? "piPreviewWorking" : "piPreviewAction")}
+            </Button>
+            {sourcePreview?.preview ? (
+              <>
+                <input
+                  type="hidden"
+                  name="sourceDigest"
+                  value={sourcePreview.preview.sourceDigest}
+                />
+                <p className="break-all text-xs text-muted-foreground">
+                  {market("piPreviewHeading")}:{" "}
+                  {sourcePreview.preview.sourceDigest}
+                </p>
+              </>
+            ) : null}
+            {sourcePreview?.error ? (
+              <p role="alert" className="text-sm text-destructive">
+                {market("piCaptureFailed")}
+              </p>
+            ) : null}
+            <p className="text-xs text-muted-foreground">
+              {market("piPreviewRequired")}
+            </p>
+          </div>
+        ) : null}
         <SubmitButton
           pendingLabel={t(capture ? "capturing" : "working")}
           flash={false}
           variant="secondary"
           size="sm"
+          disabled={needsSourcePreview && !sourcePreview?.preview}
         >
           {label}
         </SubmitButton>
@@ -95,7 +184,7 @@ export function PiCatalogActionForm({
             <ButtonLink
               variant="ghost"
               size="sm"
-              href={`/app/${encodeURIComponent(workspace)}/toolkits/pi-packages#package-${encodeURIComponent(state.listingId)}`}
+              href={`/app/${encodeURIComponent(workspace)}/market/compose#package-${encodeURIComponent(state.listingId)}`}
             >
               {t("workspacePackages")}
             </ButtonLink>
@@ -131,9 +220,12 @@ export function PiOfficialInstallForm({
       <p className="text-xs leading-5 text-muted-foreground">
         {t("officialInstallHelp")}
       </p>
-      <p className="text-xs leading-5 text-muted-foreground">
-        {t("executionWarning")}
-      </p>
+      <FormCheckbox
+        name="confirmExecutableCode"
+        value="on"
+        required
+        label={t("executionWarning")}
+      />
     </PiCatalogActionForm>
   );
 }
@@ -216,9 +308,12 @@ export function PiCatalogImportForm({
               })),
             ]}
           />
-          <p className="text-xs leading-5 text-muted-foreground">
-            {t("executionWarning")}
-          </p>
+          <FormCheckbox
+            name="confirmExecutableCode"
+            value="on"
+            required
+            label={t("executionWarning")}
+          />
         </PiCatalogActionForm>
       </div>
     </details>
@@ -390,5 +485,139 @@ export function PiRegistryPublishForm({
       <p className="text-sm text-muted-foreground">{t("registryHelp")}</p>
       <FormCheckbox name="confirm" required label={t("registryConfirm")} />
     </PiCatalogActionForm>
+  );
+}
+
+/** Immutable package releases and standalone source files; no execution during selection. */
+export function PiAssemblyResourceInputs({
+  packages = [],
+}: {
+  packages?: Array<{ id: string; name: string }>;
+}) {
+  const [themes, setThemes] = useState<
+    Array<{ name: string; content: string }>
+  >([]);
+  const [error, setError] = useState("");
+  const [preview, setPreview] = useState<PiAssemblyPreviewState | null>(null);
+  const [previewing, setPreviewing] = useState(false);
+  return (
+    <div className="space-y-3 sm:col-span-2" onChange={() => setPreview(null)}>
+      <fieldset className="space-y-2">
+        <legend className="text-sm font-medium">
+          Existing package releases
+        </legend>
+        {packages.map((release) => (
+          <FormCheckbox
+            key={release.id}
+            name="packageReleaseIds"
+            value={release.id}
+            label={release.name}
+          />
+        ))}
+      </fieldset>
+      <p className="text-xs text-muted-foreground">
+        Resources are flattened with their frozen source trees and origin
+        metadata. Conflicting versions or native names must be resolved before
+        publishing.
+      </p>
+      <label className="block space-y-1 text-sm">
+        <span>Standalone Theme JSON files</span>
+        <input
+          type="file"
+          multiple
+          accept=".json"
+          onChange={async (event) => {
+            const files = Array.from(event.target.files ?? []);
+            setError("");
+            if (
+              files.length > 64 ||
+              files.some((file) => file.size > 1024 * 1024)
+            ) {
+              setError("Select at most 64 files, each no larger than 1 MiB.");
+              setThemes([]);
+              return;
+            }
+            const values = await Promise.all(
+              files.map(async (file) => ({
+                name: file.name.replace(/\.json$/, ""),
+                content: await file.text(),
+              })),
+            );
+            setThemes(values);
+          }}
+        />
+      </label>
+      <input
+        type="hidden"
+        name="standaloneThemes"
+        value={JSON.stringify(themes)}
+      />
+      {error ? <p role="alert">{error}</p> : null}
+      <button
+        type="button"
+        disabled={previewing}
+        className="rounded-md border border-border px-3 py-2 text-sm"
+        onClick={async (event) => {
+          const form = event.currentTarget.closest("form");
+          if (!form) return;
+          setPreviewing(true);
+          try {
+            setPreview(
+              await previewAssembledPiPackageAction(new FormData(form)),
+            );
+          } finally {
+            setPreviewing(false);
+          }
+        }}
+      >
+        {previewing ? "Inspecting package…" : "Preview assembled package"}
+      </button>
+      {preview?.error ? (
+        <p role="alert">{preview.message ?? preview.error}</p>
+      ) : null}
+      {preview?.preview ? (
+        <div className="space-y-2 text-xs">
+          <input
+            type="hidden"
+            name="sourceDigest"
+            value={preview.preview.sourceDigest}
+          />
+          <p>Frozen candidate: {preview.preview.sourceDigest}</p>
+          <ul>
+            {Object.entries(preview.preview.resources).map(([kind, paths]) => (
+              <li key={kind}>
+                {kind}: {paths.length}
+              </li>
+            ))}
+          </ul>
+          <ul>
+            {preview.preview.origins.map((origin) => (
+              <li key={origin.path}>
+                {origin.kind}:{" "}
+                {origin.sources
+                  .map(
+                    (source) =>
+                      `${source.name}@${source.version ?? "content"}:${source.path}`,
+                  )
+                  .join(", ")}
+              </li>
+            ))}
+          </ul>
+          <ul>
+            {preview.preview.reproducibility.map((warning) => (
+              <li key={warning}>{warning}</li>
+            ))}
+          </ul>
+          <details>
+            <summary>Exported files</summary>
+            <ul>
+              {preview.preview.files.map((path) => (
+                <li key={path}>{path}</li>
+              ))}
+            </ul>
+          </details>
+        </div>
+      ) : null}
+    </div>
   );
 }

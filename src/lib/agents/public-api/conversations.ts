@@ -1,13 +1,7 @@
 import "server-only";
 import type { AgentApiPrincipal } from "@/lib/agents/public-api/auth";
 import { db } from "@/lib/db";
-import { getAgentEndpointRuntimeForExecution } from "@/lib/agents/queries";
-import { acquireHermesRuntimeWriteLease } from "@/lib/agents/hermes/runtime";
-import { deleteHermesSession } from "@/lib/agents/hermes/client";
-import {
-  AgentApiError,
-  publicErrorMessage,
-} from "@/lib/agents/public-api/errors";
+import { AgentApiError } from "@/lib/agents/public-api/errors";
 import { AGENT_API_MAX_TRANSCRIPT_CHARACTERS } from "@/lib/agents/public-api/body";
 
 export const AGENT_API_DEFAULT_TRANSCRIPT_PAGE_SIZE = 20;
@@ -27,32 +21,19 @@ function textFromParts(value: unknown): string {
     .join("");
 }
 
-function conversationWhere(principal: AgentApiPrincipal, publicId: string) {
-  return {
-    ...conversationScopeWhere(principal, publicId),
-    deletingAt: null,
-  };
-}
-
-function conversationScopeWhere(
-  principal: AgentApiPrincipal,
-  publicId: string,
-) {
-  return {
-    publicId,
-    endpointId: principal.endpointId,
-    clientId: principal.clientId,
-    ...(principal.subjectHash ? { subjectHash: principal.subjectHash } : {}),
-  };
-}
-
 export async function getAgentConversationForPrincipal(
   principal: AgentApiPrincipal,
   publicId: string,
   options: { limit?: number; after?: string | null } = {},
 ) {
   const wrapper = await db.agentPublicConversation.findFirst({
-    where: conversationWhere(principal, publicId),
+    where: {
+      publicId,
+      endpointId: principal.endpointId,
+      clientId: principal.clientId,
+      ...(principal.subjectHash ? { subjectHash: principal.subjectHash } : {}),
+      deletingAt: null,
+    },
     select: {
       publicId: true,
       createdAt: true,
@@ -137,116 +118,4 @@ export async function getAgentConversationForPrincipal(
     has_more: hasMore,
     next_cursor: hasMore ? (messages.at(-1)?.id ?? after) : null,
   };
-}
-
-/**
- * The tombstone is irreversible: the transcript is deleted transactionally
- * before best-effort Hermes cleanup. A broken/stopped runtime can delay volume
- * cleanup, but it can never make user-deleted or expired data public again.
- */
-export async function deleteAgentConversationForPrincipal(
-  principal: AgentApiPrincipal,
-  publicId: string,
-  signal?: AbortSignal,
-): Promise<boolean> {
-  const locked = await db.$transaction(
-    async (tx) => {
-      const wrapper = await tx.agentPublicConversation.findFirst({
-        where: conversationScopeWhere(principal, publicId),
-        include: {
-          endpoint: { select: { workspaceId: true } },
-          runtimeAllocation: true,
-          conversation: {
-            select: {
-              id: true,
-              runtimeSessionId: true,
-              runtimeSessionKey: true,
-            },
-          },
-        },
-      });
-      if (!wrapper) return null;
-      await tx.$queryRaw`SELECT "id" FROM "AgentPublicConversation" WHERE "id" = ${wrapper.id} FOR UPDATE`;
-      const busy = await tx.agentRun.count({
-        where: {
-          publicConversationId: wrapper.id,
-          status: { in: ["provisioning", "running"] },
-        },
-      });
-      if (busy)
-        throw new AgentApiError(
-          "conversation_busy",
-          publicErrorMessage("conversation_busy"),
-          409,
-          1,
-        );
-      if (!wrapper.deletingAt) {
-        const marked = await tx.agentPublicConversation.updateMany({
-          where: { id: wrapper.id, deletingAt: null },
-          data: { deletingAt: new Date() },
-        });
-        if (marked.count !== 1) return null;
-      }
-      await tx.message.deleteMany({
-        where: { conversationId: wrapper.conversation.id },
-      });
-      await tx.agentPublicConversation.updateMany({
-        where: { id: wrapper.id, deletingAt: { not: null } },
-        data: { storedCharacters: 0 },
-      });
-      return wrapper;
-    },
-    { isolationLevel: "Serializable" },
-  );
-  if (!locked) return false;
-
-  const runtimeAgentId = locked.runtimeAllocation.runtimeAgentId;
-  const agent = runtimeAgentId
-    ? await getAgentEndpointRuntimeForExecution(
-        locked.endpoint.workspaceId,
-        runtimeAgentId,
-        locked.runtimeAllocation.id,
-      )
-    : null;
-  const sessionId = locked.conversation.runtimeSessionId;
-  const sessionKey = locked.conversation.runtimeSessionKey;
-  if (!agent?.runtime || !sessionId || !sessionKey) {
-    await db.agentPublicConversation.updateMany({
-      where: { id: locked.id, deletingAt: { not: null } },
-      data: { updatedAt: new Date() },
-    });
-    return true;
-  }
-
-  const lease = acquireHermesRuntimeWriteLease(agent.workspaceId, agent.id);
-  if (!lease) {
-    await db.agentPublicConversation.updateMany({
-      where: { id: locked.id, deletingAt: { not: null } },
-      data: { updatedAt: new Date() },
-    });
-    return true;
-  }
-  try {
-    await deleteHermesSession({
-      agent,
-      sessionId,
-      sessionKey,
-      writeLease: lease,
-      signal,
-    });
-    await db.conversation.deleteMany({
-      where: { id: locked.conversation.id, agentId: agent.id },
-    });
-    return true;
-  } catch {
-    await db.agentPublicConversation
-      .updateMany({
-        where: { id: locked.id, deletingAt: { not: null } },
-        data: { updatedAt: new Date() },
-      })
-      .catch(() => undefined);
-    return true;
-  } finally {
-    lease.release();
-  }
 }

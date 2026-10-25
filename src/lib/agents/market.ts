@@ -16,10 +16,6 @@ import {
 import { createAgentRecords } from "@/lib/agents/mutations";
 import { MAX_AGENT_MARKET_ENV_REQUIREMENTS } from "@/lib/agents/market-limits";
 import {
-  DEFAULT_SANDBOX_IMAGE,
-  sandboxVolumeName,
-} from "@/lib/sandboxes/runtime";
-import {
   buildInstalledSkillMarkdown,
   buildSkillMarkdown,
   installedSkillExtraFiles,
@@ -27,6 +23,11 @@ import {
 import { parseServerRecipe } from "@/lib/workspace/server-recipe";
 import { scanAgentReleaseManifest } from "@/lib/market/secret-scan";
 import { readMcpToolCatalog } from "@/lib/process/mcp-tool-catalog";
+import { assertPortableMcpRecipe } from "@/lib/market/mcp-portable-recipe";
+import {
+  resolveMcpEnvironment,
+  sealMcpEnvironment,
+} from "@/lib/process/mcp-credentials";
 
 export const AGENT_MARKET_MANIFEST_VERSION = 1 as const;
 
@@ -126,7 +127,7 @@ const portableDeploymentSchema = z
     key: z.string().min(1).max(80),
     name: z.string().min(1).max(240),
     catalogSlug: z.string().min(1).max(240),
-    source: z.enum(["npm", "pypi", "github", "docker", "remote"]),
+    source: z.enum(["npm", "pypi", "github", "docker", "remote", "config"]),
     sourceRef: z.string().min(1).max(2000),
     requiredEnv: z.array(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/)).max(256),
     publicEnv: z.record(
@@ -134,6 +135,8 @@ const portableDeploymentSchema = z
       z.string().max(50_000),
     ),
     startCommand: z.string().min(1).max(4000).optional(),
+    command: z.enum(["npx", "uvx", "uv", "docker"]).optional(),
+    args: z.array(z.string().max(4000)).max(100).optional(),
     network: z.literal("none").optional(),
     transport: z.enum(["streamable-http", "sse"]).optional(),
     authType: z.enum(["none", "bearer", "headers"]).optional(),
@@ -150,7 +153,27 @@ const portableDeploymentSchema = z
     mcpToolExposure: z.enum(["all", "allowlist"]),
     mcpAllowedTools: z.array(z.string().min(1).max(240)).max(1000),
   })
-  .strict();
+  .strict()
+  .superRefine((definition, ctx) => {
+    if (definition.source !== "config") return;
+    const recipe = parseServerRecipe({
+      ...definition,
+      ref: definition.sourceRef,
+      env: definition.requiredEnv,
+    });
+    try {
+      if (!recipe) throw new Error("Invalid portable MCP command recipe.");
+      assertPortableMcpRecipe(recipe);
+    } catch (error) {
+      ctx.addIssue({
+        code: "custom",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Invalid portable MCP recipe.",
+      });
+    }
+  });
 
 const skillFileSchema = z
   .object({
@@ -260,6 +283,20 @@ const agentInstallRequirementsSchema = z
           })
           .strict(),
       )
+      .default([]),
+    legacyToolkitConversions: z
+      .array(
+        z
+          .object({
+            toolkitKey: z.string().min(1).max(80),
+            name: z.string().min(1).max(240),
+            agentKeys: z.array(z.string().min(1).max(80)).max(MAX_GRAPH_AGENTS),
+            requiresPrivatePackageConversion: z.literal(true),
+            requiresReauthorization: z.literal(true),
+          })
+          .strict(),
+      )
+      .max(MAX_GRAPH_RESOURCES)
       .default([]),
   })
   .strict();
@@ -444,6 +481,7 @@ const MARKET_DEPLOYMENT_SELECT = {
   id: true,
   workspaceId: true,
   serverId: true,
+  installCfg: true,
   name: true,
   mcpToolExposure: true,
   mcpAllowedTools: true,
@@ -557,6 +595,7 @@ type CollectorState = {
   issueKeys: Set<string>;
   agentKeys: Map<string, string>;
   deploymentKeys: Map<string, string | null>;
+  deploymentEnvironments: Map<string, Record<string, string>>;
   skillKeys: Map<string, string | null>;
   toolkitKeys: Map<string, string | null>;
   agents: PortableAgentDefinition[];
@@ -618,13 +657,6 @@ function sortedRecord(
 
 export function agentReleaseChecksum(manifest: AgentReleaseManifestV1): string {
   return calculateAgentReleaseChecksum(manifest);
-}
-
-function portableAgentRuntimeKind(
-  agent: PortableAgentDefinition,
-): "pi" | "hermes" {
-  // Legacy v1 manifests omitted runtime to mean the in-process harness.
-  return agent.runtime?.kind ?? "pi";
 }
 
 export function parseAgentReleaseManifest(
@@ -813,6 +845,9 @@ export async function buildCatalogAgentManifest(
         catalogSlug: server.slug,
         source: recipe.source,
         sourceRef: recipe.ref,
+        ...(recipe.command
+          ? { command: recipe.command, args: recipe.args }
+          : {}),
         requiredEnv: sortedUnique(recipe.env).filter(
           (name) => !(name in publicEnv),
         ),
@@ -948,6 +983,10 @@ function collectDeployment(
   }
 
   const key = nextKey("deployment", state.deployments.length);
+  state.deploymentEnvironments.set(
+    key,
+    resolveMcpEnvironment(deployment.installCfg, state.workspaceId),
+  );
   const publicEnv = sortedRecord(recipe.envValues);
   const requiredEnv = sortedUnique(recipe.env).filter(
     (name) => !(name in publicEnv),
@@ -962,6 +1001,7 @@ function collectDeployment(
     catalogSlug: deployment.server.slug,
     source: recipe.source,
     sourceRef: recipe.ref,
+    ...(recipe.command ? { command: recipe.command, args: recipe.args } : {}),
     requiredEnv,
     publicEnv,
     ...(recipe.startCommand ? { startCommand: recipe.startCommand } : {}),
@@ -1109,6 +1149,7 @@ async function collectPortableManifest(
     issueKeys: new Set(),
     agentKeys: new Map([[rootAgentId, "agent_1"]]),
     deploymentKeys: new Map(),
+    deploymentEnvironments: new Map(),
     skillKeys: new Map(),
     toolkitKeys: new Map(),
     agents: [],
@@ -1151,7 +1192,7 @@ async function collectPortableManifest(
       continue;
     }
     const isHermes = agent.runtimeKind === HERMES_RUNTIME_KIND;
-    const isPi = agent.runtimeKind === "pi";
+    const isPi = agent.runtimeKind === "pi-sdk" || agent.runtimeKind === "pi";
     if (!isHermes && !isPi) {
       pushIssue(state, {
         code: "unsupported_runtime",
@@ -1266,6 +1307,15 @@ async function collectPortableManifest(
       .sort((a, b) => a.toolkit.id.localeCompare(b.toolkit.id))
       .map(({ toolkit }) => collectToolkit(state, toolkit, `${path}.toolkits`))
       .filter((value): value is string => Boolean(value));
+    // Toolkit composition is source-only. New releases contain flat portable
+    // Skill/MCP requirements, never an executable Toolkit composite.
+    const toolkitDefinitions = state.toolkits.filter(({ key }) =>
+      toolkitKeys.includes(key),
+    );
+    for (const toolkit of toolkitDefinitions) {
+      deploymentKeys.push(...toolkit.deploymentKeys);
+      skillKeys.push(...toolkit.skillKeys);
+    }
 
     const subAgentKeys: string[] = [];
     for (const { child } of agent.subAgents
@@ -1328,7 +1378,7 @@ async function collectPortableManifest(
       ...(modelProviderRequirements ? { modelProviderRequirements } : {}),
       deploymentKeys: sortedUnique(deploymentKeys),
       skillKeys: sortedUnique(skillKeys),
-      toolkitKeys: sortedUnique(toolkitKeys),
+      toolkitKeys: [],
       subAgentKeys: sortedUnique(subAgentKeys),
     });
   }
@@ -1340,7 +1390,7 @@ async function collectPortableManifest(
     agents: state.agents,
     deployments: state.deployments,
     skills: state.skills,
-    toolkits: state.toolkits,
+    toolkits: [],
   });
   if (!parsedManifest.success) {
     return {
@@ -1353,6 +1403,38 @@ async function collectPortableManifest(
     };
   }
   const manifest = parsedManifest.data;
+  // Resolve only within the authorized workspace export transaction. Neither
+  // credentials nor their envelopes or value hashes belong in the artifact.
+  const content = JSON.stringify(manifest);
+  for (const [key, environment] of state.deploymentEnvironments) {
+    const definition = manifest.deployments.find(
+      (deployment) => deployment.key === key,
+    );
+    for (const [name, value] of Object.entries(environment)) {
+      if (!value || definition?.publicEnv[name] === value) continue;
+      if (
+        [
+          value,
+          encodeURIComponent(value),
+          Buffer.from(value).toString("base64"),
+        ].some((secret) =>
+          content.includes(JSON.stringify(secret).slice(1, -1)),
+        )
+      ) {
+        return {
+          portable: false,
+          issues: [
+            {
+              code: "invalid_definition",
+              path: "manifest",
+              message:
+                "Portable agent content cannot embed configured MCP environment values.",
+            },
+          ],
+        };
+      }
+    }
+  }
   if (
     Buffer.byteLength(JSON.stringify(manifest), "utf8") > MAX_MANIFEST_BYTES
   ) {
@@ -2250,34 +2332,6 @@ async function uniqueSandboxSlugForInstall(
   );
 }
 
-async function uniqueToolkitSlugForInstall(
-  tx: Prisma.TransactionClient,
-  workspaceId: string,
-  desired: string,
-  reserved: Set<string>,
-): Promise<string> {
-  const base =
-    slugify(desired, "toolkit") === "me"
-      ? "market-toolkit"
-      : slugify(desired, "toolkit");
-  for (let suffix = 0; suffix < 10_000; suffix += 1) {
-    const candidate = suffix === 0 ? base : `${base}-${suffix}`;
-    if (reserved.has(candidate)) continue;
-    const exists = await tx.toolkit.findFirst({
-      where: { workspaceId, slug: candidate },
-      select: { id: true },
-    });
-    if (!exists) {
-      reserved.add(candidate);
-      return candidate;
-    }
-  }
-  throw new AgentMarketError(
-    "install_failed",
-    "Could not allocate a unique toolkit slug.",
-  );
-}
-
 function parseInstallRequirements(raw: unknown): AgentInstallRequirements {
   const parsed = agentInstallRequirementsSchema.safeParse(raw);
   if (!parsed.success) {
@@ -2429,62 +2483,15 @@ async function materializeAgentReleaseTransaction(
   );
   validateManifestReferences(manifest);
 
-  const uniqueModelRequirements = new Map<string, AgentModelRequirement>();
-  for (const agent of manifest.agents) {
-    if (!agent.modelRequirement) continue;
-    uniqueModelRequirements.set(
-      `${agent.modelRequirement.format}\0${agent.modelRequirement.model}`,
-      agent.modelRequirement,
-    );
-  }
-  const hermesProviderFormats = sortedUnique(
-    manifest.agents.flatMap((agent) =>
-      portableAgentRuntimeKind(agent) === HERMES_RUNTIME_KIND
-        ? (agent.modelProviderRequirements ?? []).map(({ format }) => format)
-        : [],
-    ),
-  );
-  const providerClauses: Prisma.ModelProviderWhereInput[] = [
-    ...[...uniqueModelRequirements.values()].map((requirement) => ({
-      format: requirement.format,
-      models: { has: requirement.model },
-    })),
-    ...hermesProviderFormats.map((format) => ({ format })),
-  ];
-  const providers = providerClauses.length
-    ? await tx.modelProvider.findMany({
-        where: { workspaceId: input.targetWorkspaceId, OR: providerClauses },
-        orderBy: { createdAt: "asc" },
-        select: { id: true, format: true, models: true },
-      })
-    : [];
-  const providerByRequirement = new Map<string, { id: string }>();
-  for (const requirement of uniqueModelRequirements.values()) {
-    const provider = providers.find(
-      (candidate) =>
-        candidate.format === requirement.format &&
-        candidate.models.includes(requirement.model),
-    );
-    if (provider) {
-      providerByRequirement.set(
-        `${requirement.format}\0${requirement.model}`,
-        provider,
-      );
-    }
-  }
-  const providerByFormat = new Map<string, { id: string }>();
-  for (const format of hermesProviderFormats) {
-    const provider = providers.find((candidate) => candidate.format === format);
-    if (provider) providerByFormat.set(format, provider);
-  }
-
   const deploymentMap: Record<string, string> = {};
-  const deploymentConfigByKey = new Map<string, unknown>();
   for (const definition of manifest.deployments) {
     const env: Record<string, string> = { ...definition.publicEnv };
     for (const name of definition.requiredEnv) env[name] = "";
     const installCfg = {
       env,
+      ...(definition.command
+        ? { command: definition.command, args: definition.args }
+        : {}),
       ...(definition.startCommand
         ? { startCommand: definition.startCommand }
         : {}),
@@ -2501,15 +2508,18 @@ async function materializeAgentReleaseTransaction(
         name: definition.name,
         source: definition.source,
         sourceRef: definition.sourceRef,
-        installCfg: installCfg as Prisma.InputJsonValue,
+        installCfg: sealMcpEnvironment(
+          installCfg,
+          input.targetWorkspaceId,
+          env,
+        ) as Prisma.InputJsonValue,
         status: "stopped",
-        mcpToolExposure: definition.mcpToolExposure,
-        mcpAllowedTools: definition.mcpAllowedTools,
+        mcpToolExposure: "allowlist",
+        mcpAllowedTools: [],
       },
       select: { id: true, installCfg: true },
     });
     deploymentMap[definition.key] = deployment.id;
-    deploymentConfigByKey.set(definition.key, deployment.installCfg);
   }
 
   const skillMap: Record<string, string> = {};
@@ -2536,40 +2546,6 @@ async function materializeAgentReleaseTransaction(
   }
 
   const toolkitMap: Record<string, string> = {};
-  const reservedToolkitSlugs = new Set<string>();
-  for (const definition of manifest.toolkits) {
-    const toolkitSlug = await uniqueToolkitSlugForInstall(
-      tx,
-      input.targetWorkspaceId,
-      definition.slug,
-      reservedToolkitSlugs,
-    );
-    const toolkit = await tx.toolkit.create({
-      data: {
-        workspaceId: input.targetWorkspaceId,
-        name: definition.name,
-        slug: toolkitSlug,
-        visibility: "private",
-        enabled: definition.enabled,
-      },
-      select: { id: true },
-    });
-    toolkitMap[definition.key] = toolkit.id;
-    await Promise.all([
-      tx.toolkitServer.createMany({
-        data: definition.deploymentKeys.map((key) => ({
-          toolkitId: toolkit.id,
-          deploymentId: deploymentMap[key],
-        })),
-      }),
-      tx.toolkitSkill.createMany({
-        data: definition.skillKeys.map((key) => ({
-          toolkitId: toolkit.id,
-          installedSkillId: skillMap[key],
-        })),
-      }),
-    ]);
-  }
 
   const agentMap: Record<string, string> = {};
   const sandboxMap: Record<string, string> = {};
@@ -2596,136 +2572,32 @@ async function materializeAgentReleaseTransaction(
       desiredSlug,
       reservedAgentSlugs,
     );
-    const requirement = definition.modelRequirement;
-    const provider = requirement
-      ? providerByRequirement.get(`${requirement.format}\0${requirement.model}`)
-      : undefined;
-    const runtimeKind = portableAgentRuntimeKind(definition);
-    const isHermes = runtimeKind === HERMES_RUNTIME_KIND;
-    const hermesProviderIds = isHermes
-      ? [
-          ...new Set(
-            (definition.modelProviderRequirements ?? [])
-              .map(({ format }) => providerByFormat.get(format)?.id)
-              .filter((providerId): providerId is string =>
-                Boolean(providerId),
-              ),
-          ),
-        ]
-      : [];
-    const agent = isHermes
-      ? await createAgentRecords(
-          tx,
-          input.targetWorkspaceId,
-          requestedName,
-          agentSlug,
-          {
-            runtime: HERMES_RUNTIME_KIND,
-            hermesImage:
-              definition.runtime?.kind === HERMES_RUNTIME_KIND
-                ? definition.runtime.image
-                : undefined,
-          },
-          await uniqueSandboxSlugForInstall(
-            tx,
-            input.targetWorkspaceId,
-            agentSlug,
-            reservedSandboxSlugs,
-          ),
-        )
-      : await tx.agent.create({
-          data: {
-            workspaceId: input.targetWorkspaceId,
-            name: requestedName,
-            slug: agentSlug,
-            runtimeKind,
-            systemPrompt: definition.systemPrompt,
-            providerId: provider?.id ?? null,
-            model: provider && requirement ? requirement.model : null,
-            maxSteps: definition.maxSteps,
-          },
-          select: { id: true, name: true, slug: true },
-        });
-    if (isHermes) {
-      const runtime = await tx.agentRuntime.findUniqueOrThrow({
-        where: { agentId: agent.id },
-        select: {
-          sandboxId: true,
-          sandbox: { select: { deploymentId: true } },
-        },
-      });
-      sandboxMap[definition.key] = runtime.sandboxId;
-      sandboxDeploymentMap[definition.key] = runtime.sandbox.deploymentId;
-    }
-    if (!isHermes) {
-      const deployment = await tx.deployment.create({
-        data: {
-          workspaceId: input.targetWorkspaceId,
-          serverId: null,
-          name: `Sandbox: ${requestedName}`,
-          source: "sandbox",
-          sourceRef: DEFAULT_SANDBOX_IMAGE,
-          status: "stopped",
-        },
-      });
-      const sandbox = await tx.sandbox.create({
-        data: {
-          workspaceId: input.targetWorkspaceId,
-          deploymentId: deployment.id,
-          name: `${requestedName} Workspace`,
-          slug: await uniqueSandboxSlugForInstall(
-            tx,
-            input.targetWorkspaceId,
-            agentSlug,
-            reservedSandboxSlugs,
-          ),
-          kind: "docker",
-          image: DEFAULT_SANDBOX_IMAGE,
-          network: "isolated",
-          config: {},
-        },
-      });
-      sandboxMap[definition.key] = sandbox.id;
-      sandboxDeploymentMap[definition.key] = deployment.id;
-      await Promise.all([
-        tx.deployment.update({
-          where: { id: deployment.id },
-          data: {
-            installCfg: {
-              sandboxId: sandbox.id,
-              kind: "docker",
-              image: DEFAULT_SANDBOX_IMAGE,
-              network: "isolated",
-              volumeName: sandboxVolumeName(sandbox.id),
-              env: {},
-              allowSudo: false,
-            },
-          },
-        }),
-        tx.agentSandbox.create({
-          data: { agentId: agent.id, sandboxId: sandbox.id, isDefault: true },
-        }),
-      ]);
-    }
-    if (isHermes) {
-      await Promise.all([
-        tx.agent.update({
-          where: { id: agent.id },
-          data: {
-            systemPrompt: null,
-            providerId: null,
-            model: null,
-            maxSteps: definition.maxSteps,
-          },
-        }),
-        tx.agentModelProvider.createMany({
-          data: hermesProviderIds.map((providerId) => ({
-            agentId: agent.id,
-            providerId,
-          })),
-        }),
-      ]);
-    }
+    const agent = await createAgentRecords(
+      tx,
+      input.targetWorkspaceId,
+      requestedName,
+      agentSlug,
+      { runtime: "pi-sdk" },
+      await uniqueSandboxSlugForInstall(
+        tx,
+        input.targetWorkspaceId,
+        agentSlug,
+        reservedSandboxSlugs,
+      ),
+    );
+    await tx.agent.update({
+      where: { id: agent.id },
+      data: {
+        systemPrompt: definition.systemPrompt,
+        maxSteps: definition.maxSteps,
+      },
+    });
+    const template = await tx.agentSandbox.findFirstOrThrow({
+      where: { agentId: agent.id, isDefault: true },
+      select: { sandboxId: true, sandbox: { select: { deploymentId: true } } },
+    });
+    sandboxMap[definition.key] = template.sandboxId;
+    sandboxDeploymentMap[definition.key] = template.sandbox.deploymentId;
     agentMap[definition.key] = agent.id;
     createdAgents.set(definition.key, {
       id: agent.id,
@@ -2734,49 +2606,15 @@ async function materializeAgentReleaseTransaction(
     });
   }
 
-  for (const definition of manifest.agents) {
-    const agentId = agentMap[definition.key];
-    await Promise.all([
-      tx.agentServer.createMany({
-        data: definition.deploymentKeys.map((key) => ({
-          agentId,
-          deploymentId: deploymentMap[key],
-        })),
-      }),
-      tx.agentSkill.createMany({
-        data: definition.skillKeys.map((key) => ({
-          agentId,
-          installedSkillId: skillMap[key],
-        })),
-      }),
-      tx.agentToolkit.createMany({
-        data: definition.toolkitKeys.map((key) => ({
-          agentId,
-          toolkitId: toolkitMap[key],
-        })),
-      }),
-      tx.agentSubAgent.createMany({
-        data: definition.subAgentKeys.map((key) => ({
-          parentId: agentId,
-          childId: agentMap[key],
-        })),
-      }),
-    ]);
-  }
-
   const requirements: AgentInstallRequirements = {
     providers: manifest.agents.flatMap((definition) => {
       if (!definition.modelRequirement) return [];
-      const provider = providerByRequirement.get(
-        `${definition.modelRequirement.format}\0${definition.modelRequirement.model}`,
-      );
       return [
         {
           agentKey: definition.key,
           format: definition.modelRequirement.format,
           model: definition.modelRequirement.model,
-          satisfied: Boolean(provider),
-          ...(provider ? { providerId: provider.id } : {}),
+          satisfied: false,
         },
       ];
     }),
@@ -2790,17 +2628,17 @@ async function materializeAgentReleaseTransaction(
         required: true as const,
       })),
     ),
-    runtimes: manifest.agents.flatMap((definition) =>
-      portableAgentRuntimeKind(definition) === HERMES_RUNTIME_KIND
-        ? [
-            {
-              agentKey: definition.key,
-              kind: HERMES_RUNTIME_KIND,
-              setupRequired: true as const,
-            },
-          ]
-        : [],
-    ),
+    // Legacy runtime declarations are source metadata, never executable installs.
+    runtimes: [],
+    legacyToolkitConversions: manifest.toolkits.map((toolkit) => ({
+      toolkitKey: toolkit.key,
+      name: toolkit.name,
+      agentKeys: manifest.agents
+        .filter((agent) => agent.toolkitKeys.includes(toolkit.key))
+        .map((agent) => agent.key),
+      requiresPrivatePackageConversion: true,
+      requiresReauthorization: true,
+    })),
   };
   const resourceMap: AgentInstallResourceMap = {
     agents: agentMap,
@@ -2810,24 +2648,9 @@ async function materializeAgentReleaseTransaction(
     sandboxes: sandboxMap,
     sandboxDeployments: sandboxDeploymentMap,
   };
-  const hasMissingEnvironment = manifest.deployments.some((definition) => {
-    const rawConfig = deploymentConfigByKey.get(definition.key);
-    const config =
-      rawConfig && typeof rawConfig === "object" && !Array.isArray(rawConfig)
-        ? (rawConfig as Record<string, unknown>)
-        : {};
-    const env =
-      config.env && typeof config.env === "object" && !Array.isArray(config.env)
-        ? (config.env as Record<string, unknown>)
-        : {};
-    return definition.requiredEnv.some(
-      (variable) => typeof env[variable] !== "string" || !env[variable].trim(),
-    );
-  });
-  const needsSetup =
-    hasMissingEnvironment ||
-    requirements.providers.some(({ satisfied }) => !satisfied) ||
-    requirements.runtimes.length > 0;
+  // Templates install as drafts. Capabilities and model access must be explicitly
+  // authorized by the consuming workspace before preparing a revision.
+  const needsSetup = true;
   const rootAgent = createdAgents.get(manifest.rootAgentKey);
   if (!rootAgent)
     throw new AgentMarketError(

@@ -8,7 +8,6 @@ import { normalizeAdminPage } from "@/lib/admin/pagination";
 import {
   ASSISTANT_MARKET_MANIFEST_VERSION,
   assistantReleaseChecksum,
-  buildAssistantReleaseManifest,
   parseAssistantReleaseManifest,
 } from "@/lib/market/assistant-manifest";
 import { scanMarketArtifact } from "@/lib/market/secret-scan";
@@ -215,24 +214,25 @@ export async function createAdminAssistantTemplate(
           throw new AdminMarketCatalogError("invalid_config");
 
         const tags = cleanTags(input.tags);
-        const manifest = buildAssistantReleaseManifest(
-          {
+        const manifest = parseAssistantReleaseManifest({
+          schemaVersion: ASSISTANT_MARKET_MANIFEST_VERSION,
+          kind: "assistant",
+          assistant: {
             name: input.name,
             systemPrompt: input.systemPrompt,
             maxSteps: input.maxSteps,
-            model: input.model,
-            modelProvider: input.modelFormat
-              ? { format: input.modelFormat }
+            modelRequirement: input.modelFormat
+              ? { providerFormat: input.modelFormat, model: input.model }
               : null,
-            mcpGrants: servers.map((server) => ({
-              deployment: {
-                name: server.name,
-                sourceRef: null,
-                server: { slug: server.slug, name: server.name },
-              },
+            modelParameters: null,
+            // Catalog identities are requirements, not fabricated deployment grants.
+            mcpRequirements: servers.map((server) => ({
+              catalogSlug: server.slug,
+              name: server.name,
+              allowedToolNames: [],
             })),
           },
-          {
+          listing: {
             slug: input.slug,
             name: input.name,
             summary: input.summary,
@@ -240,7 +240,7 @@ export async function createAdminAssistantTemplate(
             tags,
             author: input.author,
           },
-        );
+        });
         const scanResult = scanMarketArtifact(manifest);
         if (scanResult.status === "blocked")
           throw new AdminMarketCatalogError("invalid_manifest");
@@ -390,24 +390,25 @@ export async function updateAdminAssistantTemplate(
         throw new AdminMarketCatalogError("invalid_config");
 
       const tags = cleanTags(input.tags);
-      const manifest = buildAssistantReleaseManifest(
-        {
+      const manifest = parseAssistantReleaseManifest({
+        schemaVersion: ASSISTANT_MARKET_MANIFEST_VERSION,
+        kind: "assistant",
+        assistant: {
           name: input.name,
           systemPrompt: input.systemPrompt,
           maxSteps: input.maxSteps,
-          model: input.model,
-          modelProvider: input.modelFormat
-            ? { format: input.modelFormat }
+          modelRequirement: input.modelFormat
+            ? { providerFormat: input.modelFormat, model: input.model }
             : null,
-          mcpGrants: servers.map((server) => ({
-            deployment: {
-              name: server.name,
-              sourceRef: null,
-              server: { slug: server.slug, name: server.name },
-            },
+          modelParameters: null,
+          // Catalog identities are requirements, not fabricated deployment grants.
+          mcpRequirements: servers.map((server) => ({
+            catalogSlug: server.slug,
+            name: server.name,
+            allowedToolNames: [],
           })),
         },
-        {
+        listing: {
           slug: listing.slug,
           name: input.name,
           summary: input.summary,
@@ -415,7 +416,7 @@ export async function updateAdminAssistantTemplate(
           tags,
           author: input.author,
         },
-      );
+      });
       const scanResult = scanMarketArtifact(manifest);
       if (scanResult.status === "blocked")
         throw new AdminMarketCatalogError("invalid_manifest");
@@ -545,6 +546,8 @@ export async function updateAdminMarketListing(
       },
     });
     if (!listing) throw new AdminMarketCatalogError("not_found");
+    if (listing.kind === "toolkit")
+      throw new AdminMarketCatalogError("invalid_config");
     if (
       input.status === "published" &&
       listing.latestRelease?.reviewStatus !== "approved"
@@ -576,15 +579,6 @@ export async function updateAdminMarketListing(
         },
       });
     }
-    if (listing.kind === "toolkit" && listing.sourceToolkitId) {
-      await tx.toolkit.update({
-        where: { id: listing.sourceToolkitId },
-        data: {
-          enabled: input.status === "published",
-          categories: { set: categoryIds.map((id) => ({ id })) },
-        },
-      });
-    }
     await writeAudit(tx, {
       actorId,
       action: "market.listing.updated",
@@ -596,51 +590,6 @@ export async function updateAdminMarketListing(
           curated: listing.curated,
           isFeatured: listing.isFeatured,
           categoryIds: listing.categories.map(({ id }) => id),
-        },
-        after: input,
-      },
-    });
-    return updated;
-  });
-}
-
-export async function updateAdminPublicToolkit(
-  input: {
-    id: string;
-    enabled: boolean;
-    categoryIds: string[];
-  },
-  actorId = "system",
-) {
-  return db.$transaction(async (tx) => {
-    const toolkit = await tx.toolkit.findFirst({
-      where: { id: input.id, visibility: "public" },
-      select: {
-        id: true,
-        enabled: true,
-        workspaceId: true,
-        categories: { select: { id: true } },
-      },
-    });
-    if (!toolkit) throw new AdminMarketCatalogError("not_found");
-    const categoryIds = await assertCategories(tx, input.categoryIds);
-    const updated = await tx.toolkit.update({
-      where: { id: toolkit.id },
-      data: {
-        enabled: input.enabled,
-        categories: { set: categoryIds.map((id) => ({ id })) },
-      },
-    });
-    await writeAudit(tx, {
-      actorId,
-      workspaceId: toolkit.workspaceId,
-      action: "market.toolkit.updated",
-      targetType: "toolkit",
-      targetId: input.id,
-      changes: {
-        before: {
-          enabled: toolkit.enabled,
-          categoryIds: toolkit.categories.map(({ id }) => id),
         },
         after: input,
       },

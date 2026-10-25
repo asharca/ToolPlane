@@ -12,7 +12,17 @@ vi.mock("@/lib/observability/http", () => ({
   withRequestLogging: (_path: string, handler: unknown) => handler,
 }));
 vi.mock("@/lib/auth/request-user", () => ({ resolveRequestUser: m.user }));
-vi.mock("@/lib/chat/service", () => ({ getChatThreadForExecution: m.thread }));
+vi.mock("@/lib/chat/service", () => ({
+  getChatThreadForExecution: m.thread,
+  ChatServiceError: class extends Error {
+    constructor(
+      public status: number,
+      message: string,
+    ) {
+      super(message);
+    }
+  },
+}));
 vi.mock("@/lib/process/mcp-prompts", () => ({
   getMcpPromptSources: m.sources,
   McpPromptRequestError: class extends Error {
@@ -30,6 +40,7 @@ vi.mock("@/lib/process/mcp-resources", () => ({
 }));
 vi.mock("@/lib/process/supervisor", () => ({ liveStatus: m.status }));
 import { McpPromptRequestError } from "@/lib/process/mcp-prompts";
+import { ChatServiceError } from "@/lib/chat/service";
 import { GET, POST } from "@/app/api/v1/chat/threads/[threadId]/composer/route";
 const context = { params: Promise.resolve({ threadId: "thread" }) };
 const get = (query: string) =>
@@ -49,7 +60,12 @@ beforeEach(() => {
   m.user.mockResolvedValue({ id: "user" });
   m.thread.mockResolvedValue({
     workspaceId: "workspace",
-    assistant: { mcpGrants: [{ deploymentId: "attached" }] },
+    assistantRevisionId: "revision-1",
+    assistant: {
+      mcpGrants: [
+        { deploymentId: "attached", allowedToolNames: ["read_notes"] },
+      ],
+    },
   });
   m.sources.mockResolvedValue([
     { deploymentId: "attached", serverName: "Files" },
@@ -91,6 +107,25 @@ describe("chat composer resource access", () => {
     expect(m.read).not.toHaveBeenCalled();
     expect(m.resources).not.toHaveBeenCalled();
   });
+  it.each([403, 409])(
+    "preserves execution-admission status %s without loading or reading MCP resources",
+    async (status) => {
+      const error = new ChatServiceError(
+        status,
+        "Historical configuration is unresolved; create a new thread",
+      );
+      m.thread.mockRejectedValue(error);
+      const listed = await GET(get("section=resources"), context);
+      const resolved = await POST(post(resource), context);
+      for (const response of [listed, resolved]) {
+        expect(response.status).toBe(status);
+        expect(await response.json()).toEqual({ error: error.message });
+      }
+      expect(m.sources).not.toHaveBeenCalled();
+      expect(m.resources).not.toHaveBeenCalled();
+      expect(m.read).not.toHaveBeenCalled();
+    },
+  );
   it.each(["", "section=other", "section=mcp&extra=value"])(
     "rejects invalid strict list input: %s",
     async (query) => {

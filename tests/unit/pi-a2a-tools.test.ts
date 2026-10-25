@@ -2,6 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentRuntimeTokenPayload } from "@/lib/agents/runtime-access";
 import { Task } from "@a2a-js/sdk";
+import type * as CollaborationPolicy from "@/lib/a2a/collaboration-policy";
 const mocks = vi.hoisted(() => ({
   runtime: vi.fn(),
   enabled: vi.fn(),
@@ -13,6 +14,8 @@ const mocks = vi.hoisted(() => ({
   get: vi.fn(),
   cancel: vi.fn(),
   submit: vi.fn(),
+  policy: vi.fn(),
+  input: vi.fn(),
 }));
 vi.mock("@/lib/a2a/local-runtime", () => ({
   assertLocalRuntimeToken: mocks.runtime,
@@ -33,6 +36,10 @@ vi.mock("@/lib/a2a/remote-policy", () => ({
   remoteChildGrant: mocks.remoteGrant,
   remoteTarget: vi.fn(),
 }));
+vi.mock("@/lib/a2a/collaboration-policy", async (original) => ({
+  ...(await original<typeof CollaborationPolicy>()),
+  collaborationPolicy: mocks.policy,
+}));
 vi.mock("@/lib/a2a/store", () => ({
   submitTask: mocks.submit,
   getTask: mocks.get,
@@ -44,10 +51,11 @@ vi.mock("@/lib/a2a/local-artifacts", () => ({
   publishLocalArtifact: vi.fn(),
 }));
 vi.mock("@/lib/a2a/local-continuation", () => ({
-  requestLocalInput: vi.fn(),
+  requestLocalInput: mocks.input,
   requestLocalWait: vi.fn(),
 }));
 import { executePiCommunicationTool } from "@/lib/a2a/pi-tools";
+import { CollaborationApprovalRequiredError } from "@/lib/a2a/collaboration-policy";
 const token = {} as AgentRuntimeTokenPayload;
 const working = () =>
   Task.fromJSON({
@@ -59,18 +67,32 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.runtime.mockResolvedValue({
     row: { id: "parent", rootTaskId: "root", leaseToken: "lease" },
-    grant: { agentId: "source", workspaceId: "workspace" },
+    grant: {
+      agentId: "source",
+      workspaceId: "workspace",
+      agentRevisionId: "source-revision",
+    },
     target: { targets: [] },
   });
   mocks.enabled.mockResolvedValue(1);
+  mocks.policy.mockResolvedValue({ capabilityIds: [] });
+  mocks.input.mockResolvedValue({
+    accepted: true,
+    instruction: "End this turn normally.",
+  });
   mocks.localTarget.mockResolvedValue({
     id: "allowed",
     name: "Local reviewer",
+    capabilityIds: [],
   });
   mocks.remotes.mockResolvedValue([
     { id: "external", name: "External reviewer" },
   ]);
-  mocks.localGrant.mockResolvedValue({ kind: "local", agentId: "allowed" });
+  mocks.localGrant.mockResolvedValue({
+    kind: "local",
+    agentId: "allowed",
+    agentRevisionId: "target-revision",
+  });
   mocks.child.mockResolvedValue({
     grant: { kind: "remote" },
     context: {
@@ -87,6 +109,24 @@ beforeEach(() => {
   mocks.cancel.mockResolvedValue(working());
 });
 describe("Pi communication trust boundary", () => {
+  it("returns a waiting-user result rather than an invented task ID for policy confirmation", async () => {
+    mocks.remoteGrant.mockRejectedValueOnce(
+      new CollaborationApprovalRequiredError("Approved budget exceeded."),
+    );
+    const result = await executePiCommunicationTool(token, "pi_a2a_submit", {
+      target: "remote:allowed",
+      message: "hello",
+      messageId: "budget-denied",
+    });
+    expect(result).toMatchObject({ accepted: true, approvalRequired: true });
+    expect(result).not.toHaveProperty("taskId");
+    expect(mocks.input).toHaveBeenCalledWith(
+      "parent",
+      "lease",
+      expect.stringContaining("A reply cannot grant permissions"),
+    );
+    expect(mocks.submit).not.toHaveBeenCalled();
+  });
   it.each([
     "agent:",
     "remote:",
@@ -120,45 +160,6 @@ describe("Pi communication trust boundary", () => {
       }),
     ).rejects.toThrow();
     expect(mocks.get).not.toHaveBeenCalled();
-  });
-  it("lists local peers and delegates and reads local tasks without external opt-in", async () => {
-    mocks.enabled.mockResolvedValue(0);
-    mocks.runtime.mockResolvedValue({
-      row: { id: "parent", rootTaskId: "root", leaseToken: "lease" },
-      grant: { agentId: "source", workspaceId: "workspace" },
-      target: { targets: ["allowed"] },
-    });
-    mocks.child.mockResolvedValue({
-      grant: { kind: "local" },
-      context: { agentId: "allowed", remoteAgentId: null },
-    });
-    mocks.submit.mockResolvedValue({ snapshot: Task.toJSON(working()) });
-    expect(await executePiCommunicationTool(token, "pi_a2a_peers", {})).toEqual(
-      { peers: [{ target: "agent:allowed", name: "Local reviewer" }] },
-    );
-    expect(
-      await executePiCommunicationTool(token, "pi_a2a_submit", {
-        target: "agent:allowed",
-        message: "Review this",
-        messageId: "invocation-1",
-      }),
-    ).toMatchObject({ taskId: "public-child" });
-    expect(
-      await executePiCommunicationTool(token, "pi_a2a_status", {
-        target: "agent:allowed",
-        taskId: "public-child",
-      }),
-    ).toMatchObject({
-      task: { id: "public-child", status: { state: "TASK_STATE_WORKING" } },
-    });
-    await expect(
-      executePiCommunicationTool(token, "pi_a2a_submit", {
-        target: "remote:external",
-        message: "Must stay local",
-        messageId: "invocation-2",
-      }),
-    ).rejects.toThrow("collaboration is disabled");
-    expect(mocks.submit).toHaveBeenCalledTimes(1);
   });
   it.each([
     ["pi_a2a_status", "agent:allowed"],

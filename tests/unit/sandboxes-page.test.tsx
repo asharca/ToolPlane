@@ -35,12 +35,6 @@ vi.mock("@/lib/process/supervisor", () => ({
 vi.mock("@/lib/sandboxes/runtime", () => ({
   sandboxVolumeName: (id: string) => `toolplane-sandbox-${id}`,
 }));
-vi.mock("@/lib/agents/hermes/token", () => ({
-  createHermesDashboardPath: (id: string) => `/hermes/${id}`,
-}));
-vi.mock("@/lib/admin/settings", () => ({
-  getHermesArchiveSettings: async () => ({ hermesArchiveMaxUploadMiB: 1024 }),
-}));
 vi.mock("@/lib/sandboxes/actions", () => ({
   deleteSandboxAction: vi.fn(),
   restartSandboxAction: vi.fn(),
@@ -68,11 +62,6 @@ vi.mock("@/components/dashboard/sandboxes/SandboxCreateForm", () => ({
 }));
 vi.mock("@/components/dashboard/sandboxes/SandboxConnectorStatus", () => ({
   SandboxConnectorStatus: () => null,
-}));
-vi.mock("@/components/dashboard/agents/HermesRuntimeDialog", () => ({
-  HermesRuntimeDialogLauncher: ({ runtime }: { runtime: { name: string } }) => (
-    <button type="button">Manage {runtime.name}</button>
-  ),
 }));
 vi.mock("@/components/dashboard/sandboxes/SandboxBatchTable", () => ({
   SandboxBatchTable: ({
@@ -303,24 +292,34 @@ describe("sandbox list ownership and scope", () => {
         "href",
         "/app/acme/agents/agent-1",
       );
-      expect(row.getByRole("link", { name: "channels" })).toHaveAttribute(
-        "href",
-        "/app/acme/agents/agent-1?settings=channels",
-      );
+      expect(
+        row.queryByRole("link", { name: "channels" }),
+      ).not.toBeInTheDocument();
+      expect(
+        row.queryByRole("link", { name: /terminal|dashboard/i }),
+      ).not.toBeInTheDocument();
+      expect(
+        row.queryByRole("button", { name: "start" }),
+      ).not.toBeInTheDocument();
+      expect(
+        row.queryByRole("button", { name: "restart" }),
+      ).not.toBeInTheDocument();
+      expect(
+        row.queryByRole("button", { name: /Manage/ }),
+      ).not.toBeInTheDocument();
       expect(row.getByText(/importedHermesArchiveLabel/)).toBeInTheDocument();
       expect(
         row.queryByRole("button", { name: "delete" }),
       ).not.toBeInTheDocument();
       if (status === "error")
         expect(row.getByText("Runtime image unavailable")).toBeInTheDocument();
-      if (status === "copying")
-        expect(row.getByRole("checkbox")).toBeDisabled();
+      expect(row.getByRole("checkbox")).toBeDisabled();
+      if (status === "running")
+        expect(row.getByRole("button", { name: "stop" })).toBeInTheDocument();
       else
         expect(
-          row.getByRole("button", {
-            name: status === "running" ? "stop" : "start",
-          }),
-        ).toBeInTheDocument();
+          row.queryByRole("button", { name: "stop" }),
+        ).not.toBeInTheDocument();
     },
   );
 });

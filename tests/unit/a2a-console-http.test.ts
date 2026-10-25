@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type * as ConsoleServiceModule from "@/lib/a2a/console-service";
 const mocks = vi.hoisted(() => ({
   principal: vi.fn(),
   workspace: vi.fn(),
@@ -21,7 +22,7 @@ vi.mock("@/lib/observability/context", () => ({
   withLogContext: (_ctx: unknown, fn: () => unknown) => fn(),
 }));
 vi.mock("@/lib/a2a/console-service", async (original) => ({
-  ...(await original<typeof import("@/lib/a2a/console-service")>()),
+  ...(await original<typeof ConsoleServiceModule>()),
   getA2AConsoleView: mocks.view,
   mutateA2AConsole: mocks.mutate,
 }));
@@ -61,11 +62,12 @@ beforeEach(() => {
   mocks.workspace.mockResolvedValue({ id: "w", slug: "ws", status: "active" });
   mocks.active.mockResolvedValue(1);
   mocks.view.mockResolvedValue({ canManage: true });
-  mocks.mutate.mockResolvedValue({ token: "one-time-fixture" });
+  mocks.mutate.mockResolvedValue({});
   mocks.grant.mockResolvedValue({
     kind: "local",
     workspaceId: "w",
     agentId: "a",
+    agentRevisionId: "revision-a",
     actorId: "u",
   });
   mocks.rpc.mockImplementation(async (request, id, resolve) =>
@@ -125,7 +127,7 @@ describe("same-origin A2A console boundary", () => {
           "content-type": "application/json",
           ...(origin ? { origin } : {}),
         },
-        body: JSON.stringify({ action: "set-local", enabled: false }),
+        body: JSON.stringify({ action: "set-inbound", enabled: false }),
       });
       const response = await handleA2AConsole(request, "ws", "a");
       expect(response.status).toBe(status);
@@ -163,7 +165,7 @@ describe("same-origin A2A console boundary", () => {
     expect(
       (
         await handleA2AConsole(
-          req("POST", { action: "set-local", enabled: true }, { origin }),
+          req("POST", { action: "set-inbound", enabled: true }, { origin }),
           "ws",
           "a",
         )
@@ -172,7 +174,7 @@ describe("same-origin A2A console boundary", () => {
     expect(mocks.mutate).not.toHaveBeenCalled();
   });
   it("rejects missing Origin and malicious forwarded host", async () => {
-    const request = req("POST", { action: "set-local", enabled: false });
+    const request = req("POST", { action: "set-inbound", enabled: false });
     request.headers.delete("origin");
     request.headers.set("x-forwarded-host", "evil.example");
     expect((await handleA2AConsole(request, "ws", "a")).status).toBe(403);
@@ -199,8 +201,8 @@ describe("same-origin A2A console boundary", () => {
   it("does not allow caller-supplied workspace, user, scopes or target", async () => {
     const response = await handleA2AConsole(
       req("POST", {
-        action: "create-client",
-        name: "integration",
+        action: "set-outbound",
+        enabled: true,
         scopes: ["*"],
         actorId: "owner",
       }),
@@ -210,27 +212,38 @@ describe("same-origin A2A console boundary", () => {
     expect(response.status).toBe(400);
     expect(mocks.mutate).not.toHaveBeenCalled();
   });
-  it("returns the one-time key without a fallible configuration reload", async () => {
+  it("returns directional mutation success without a fallible configuration reload", async () => {
     mocks.view.mockRejectedValue(new Error("database unavailable"));
     const response = await handleA2AConsole(
-      req("POST", { action: "create-client", name: "integration" }),
+      req("POST", { action: "set-outbound", enabled: true }),
       "ws",
       "a",
     );
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({
-      ok: true,
-      token: "one-time-fixture",
-    });
+    expect(await response.json()).toEqual({ ok: true });
     expect(mocks.view).not.toHaveBeenCalled();
   });
+  it.each([
+    { action: "set-local", enabled: true },
+    { action: "set-public", enabled: true },
+    { action: "create-client", name: "Retired" },
+    { action: "create-key", clientId: "old-client" },
+  ])(
+    "rejects removed console mutation $action before dispatch",
+    async (input) => {
+      expect(
+        (await handleA2AConsole(req("POST", input), "ws", "a")).status,
+      ).toBe(400);
+      expect(mocks.mutate).not.toHaveBeenCalled();
+    },
+  );
   it("limits request bodies and sanitizes unexpected failures", async () => {
     expect(
       (
         await handleA2AConsole(
           req(
             "POST",
-            { action: "set-local", enabled: true },
+            { action: "set-inbound", enabled: true },
             { "content-length": "5000" },
           ),
           "ws",
@@ -240,7 +253,7 @@ describe("same-origin A2A console boundary", () => {
     ).toBe(413);
     mocks.mutate.mockRejectedValue(new Error("fixture secret upstream stack"));
     const response = await handleA2AConsole(
-      req("POST", { action: "set-local", enabled: true }),
+      req("POST", { action: "set-inbound", enabled: true }),
       "ws",
       "a",
     );

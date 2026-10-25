@@ -32,16 +32,25 @@ export async function createEntryPolicy(
         agentId: grant.agentId,
         a2aActorId: grant.actorId,
       },
-      select: { runtimeSnapshot: true, cancelRequestedAt: true, status: true },
+      select: {
+        runtimeSnapshot: true,
+        cancelRequestedAt: true,
+        status: true,
+        agentRevisionId: true,
+        legacyRevisionUnresolved: true,
+        runtimeKind: true,
+      },
     });
     if (
-      !work ||
+      !work?.agentRevisionId ||
+      work.legacyRevisionUnresolved ||
+      work.runtimeKind !== "pi-sdk" ||
       work.cancelRequestedAt ||
       ["archived", "cancelling", "cancelled"].includes(work.status)
     )
       throw missing();
     workingDirectory = workSessionWorkingDirectory(work.runtimeSnapshot);
-    authorization = [work.runtimeSnapshot, grant.actorId];
+    authorization = [work.agentRevisionId, work.runtimeSnapshot, grant.actorId];
   } else {
     const conversation = await tx.conversation.findFirst({
       where: {
@@ -51,12 +60,15 @@ export async function createEntryPolicy(
       },
       select: {
         runtimeSessionKey: true,
+        agentRevisionId: true,
+        legacyRevisionUnresolved: true,
         workSession: { select: { id: true } },
         publicApiConversation: { select: { id: true } },
       },
     });
     if (
-      !conversation ||
+      !conversation?.agentRevisionId ||
+      conversation.legacyRevisionUnresolved ||
       conversation.workSession ||
       conversation.publicApiConversation
     )
@@ -92,11 +104,19 @@ export async function createEntryPolicy(
           "An administrator must explicitly authorize a native channel operator in A2A settings.",
         );
       // Store a digest, not a secret-bearing configuration snapshot.
-      authorization = [channel, conversation.runtimeSessionKey];
+      authorization = [
+        conversation.agentRevisionId,
+        channel,
+        conversation.runtimeSessionKey,
+      ];
     } else {
       if (conversation.runtimeSessionKey?.startsWith("channel:"))
         throw missing();
-      authorization = [conversation.runtimeSessionKey, grant.actorId];
+      authorization = [
+        conversation.agentRevisionId,
+        conversation.runtimeSessionKey,
+        grant.actorId,
+      ];
     }
   }
   return {

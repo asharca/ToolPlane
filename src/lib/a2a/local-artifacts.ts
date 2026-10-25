@@ -1,5 +1,4 @@
 import "server-only";
-import { createHash } from "node:crypto";
 import { z } from "zod";
 import {
   Artifact,
@@ -14,7 +13,12 @@ import {
   UnsupportedOperationError,
 } from "@a2a-js/sdk/errors";
 import { db } from "@/lib/db";
-import { A2A_LIMITS, acceptsOutput } from "./model";
+import {
+  A2A_LIMITS,
+  acceptsOutput,
+  artifactDigest,
+  stampArtifactProvenance,
+} from "./model";
 import { isLocalGrant, type TaskGrant } from "./principal";
 import { assertLocalGrant } from "./local-policy";
 import { lockTask, persist } from "./store";
@@ -93,20 +97,6 @@ export function parseLocalArtifact(raw: unknown): Artifact {
     throw new UnsupportedOperationError("Artifact content exceeds 32 KiB.");
   return Artifact.fromJSON(value);
 }
-function canonical(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonical);
-  if (value && typeof value === "object")
-    return Object.fromEntries(
-      Object.entries(value)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([k, v]) => [k, canonical(v)]),
-    );
-  return value;
-}
-const artifactDigest = (value: Artifact) =>
-  createHash("sha256")
-    .update(JSON.stringify(canonical(Artifact.toJSON(value))))
-    .digest("hex");
 
 /** Publish a standard, bounded Artifact to the caller-owned native task, never an arbitrary path or URL. */
 export async function publishLocalArtifact(
@@ -142,6 +132,12 @@ export async function publishLocalArtifact(
       throw new UnsupportedOperationError(
         "Artifact mediaType was not accepted by the caller.",
       );
+    stampArtifactProvenance(artifact, {
+      taskId: task.id,
+      contextId: task.contextId,
+      targetId: grant.agentId,
+      targetKind: "local",
+    });
     const previous = task.artifacts.find(
       (item) => item.artifactId === artifact.artifactId,
     );

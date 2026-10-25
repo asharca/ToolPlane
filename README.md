@@ -69,7 +69,7 @@ pnpm db:migrate
 pnpm dev
 ```
 
-访问 `http://localhost:3000`。可选执行 `pnpm db:seed` 创建本地演示账户 `smoke@example.com` / `password123`；不要在生产数据库运行演示种子。
+访问 `http://localhost:3000`。可选执行 `pnpm db:seed` 创建本地演示账户 `smoke@example.com` / `password123`；不要在生产数据库运行演示种子。Agent 示例均为未授权、未发布的原生 Pi 草稿，需配置并重新授权后显式 Prepare／审阅／Apply；Hermes／Toolkit 示例仅供只读历史展示。种子只写停止状态的资源记录，不启动运行时，也不创建或输出 API token。
 
 `pnpm install` 自动安装仓库的 Git hooks；已有 checkout 可运行 `pnpm hooks:install`。安装器不覆盖其他 `core.hooksPath` 配置，无 `.git` 的镜像依赖层和发布归档跳过安装。
 

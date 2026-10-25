@@ -72,7 +72,7 @@ describe("SkillMarkdownViewer", () => {
     expect(screen.getByText("Unsaved", { exact: true })).toBeInTheDocument();
     expect(
       screen.getByRole("link", { name: "Download SKILL.md" }),
-    ).toHaveAttribute("href", "/saved");
+    ).toHaveAttribute("href", "/saved?format=markdown");
   });
 
   it("shows saved feedback when existing content uses multipart CRLF line endings", async () => {

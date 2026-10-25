@@ -150,6 +150,19 @@ export function validateSend(
     throw new RequestMalformedError(
       "A user message with messageId and parts is required.",
     );
+  if (
+    [
+      request.metadata,
+      message.metadata,
+      ...message.parts.map((part) => part.metadata),
+    ].some(
+      (metadata) =>
+        metadata && Object.hasOwn(metadata, "toolplanePromptInvocation"),
+    )
+  )
+    throw new RequestMalformedError(
+      "Native prompt invocation metadata is server-owned.",
+    );
   if (request.configuration?.taskPushNotificationConfig)
     throw new PushNotificationNotSupportedError();
   if (message.extensions.length)

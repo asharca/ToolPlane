@@ -32,6 +32,7 @@ The official Fumadocs MDX Next.js plugin compiles the allowlisted `.md` files as
 | Document | Covers |
 |---|---|
 | [Toolkit sync](./TOOLKIT_SYNC.en.md) · [中文](./TOOLKIT_SYNC.md) | Syncing MCP and Skills to AI clients |
+| [Resource Center](./RESOURCE_CENTER.en.md) · [中文](./RESOURCE_CENTER.md) | Discover, import, install, update, and publish workspace resources |
 | [Remote MCP HTTP](./REMOTE_MCP_HTTP.md) · [中文](./REMOTE_MCP_HTTP.zh-CN.md) | HTTP/HTTPS endpoints, plaintext risks, and preserved security boundaries |
 | [Sandboxes and connectors](./SANDBOXES.md) · [中文](./SANDBOXES.zh-CN.md) | Docker, device connections, terminals, and screens |
 | [Agent Control MCP](./AGENT_CONTROL_MCP.md) · [中文](./AGENT_CONTROL_MCP.zh-CN.md) | Creating and invoking Agents from MCP clients |

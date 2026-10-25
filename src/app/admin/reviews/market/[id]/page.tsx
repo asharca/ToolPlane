@@ -610,6 +610,13 @@ export default async function AdminMarketReviewPage({
                             <dd>{piManifest.package.source.commit}</dd>
                           </div>
                         </>
+                      ) : piManifest.package.source.kind === "zip" ? (
+                        <div>
+                          <dt className="text-muted-foreground">
+                            {t("marketPiPackageZipSource")}
+                          </dt>
+                          <dd>SHA-256 {piManifest.package.source.sha256}</dd>
+                        </div>
                       ) : (
                         <div>
                           <dt className="text-muted-foreground">ToolPlane</dt>

@@ -13,7 +13,6 @@ import {
   Cpu,
   HardDrive,
   Laptop,
-  Radio,
   Terminal,
 } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth/current-user";
@@ -37,12 +36,6 @@ import {
   findSandboxImageOption,
 } from "@/lib/sandboxes/images";
 import { sandboxVolumeName } from "@/lib/sandboxes/runtime";
-import {
-  readSandboxAllowSudo,
-  readSandboxEnv,
-  sandboxEnvToText,
-} from "@/lib/sandboxes/env";
-import { createHermesDashboardPath } from "@/lib/agents/hermes/token";
 import { effectiveStatus } from "@/lib/process/supervisor";
 import { DashboardHeader } from "@/components/dashboard/DashboardHeader";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
@@ -52,7 +45,6 @@ import { SshSandboxCreate } from "@/components/dashboard/sandboxes/SshSandboxCre
 import { SandboxCreateForm } from "@/components/dashboard/sandboxes/SandboxCreateForm";
 import { SandboxConnectorStatus } from "@/components/dashboard/sandboxes/SandboxConnectorStatus";
 import { SandboxBatchTable } from "@/components/dashboard/sandboxes/SandboxBatchTable";
-import { HermesRuntimeDialogLauncher } from "@/components/dashboard/agents/HermesRuntimeDialog";
 import {
   DashboardEmptyState,
   DashboardPage,
@@ -62,11 +54,6 @@ import {
 import { SubmitButton } from "@/components/dashboard/SubmitButton";
 import { ConfirmSubmitButton } from "@/components/dashboard/ConfirmSubmitButton";
 import { formatInTimeZone, resolveUserTimeZone } from "@/lib/timezone";
-import { getHermesArchiveSettings } from "@/lib/admin/settings";
-import {
-  HERMES_IMAGE_OPTIONS,
-  resolveHermesImage,
-} from "@/lib/agents/hermes/constants";
 
 export const dynamic = "force-dynamic";
 
@@ -195,17 +182,12 @@ export default async function SandboxesPage({
   const timeZone = resolveUserTimeZone(user);
   const ws = await getWorkspaceForUser(slug, user.id);
   if (!ws) redirect("/app");
-  const hermesImages = [resolveHermesImage(undefined), ...HERMES_IMAGE_OPTIONS];
 
-  const [sandboxes, rawManagedRuntimes, systemSettings] = await Promise.all([
+  const [sandboxes, rawManagedRuntimes] = await Promise.all([
     listSandboxes(ws.id),
     listManagedAgentRuntimes(ws.id),
-    getHermesArchiveSettings(),
   ]);
-  const managedRuntimes = rawManagedRuntimes.map((runtime) => ({
-    ...runtime,
-    dashboardUrl: createHermesDashboardPath(runtime.id),
-  }));
+  const managedRuntimes = rawManagedRuntimes;
   const managedStatus = (runtime: (typeof managedRuntimes)[number]) =>
     runtime.status === "error" || runtime.status === "setup_required"
       ? runtime.status
@@ -213,41 +195,6 @@ export default async function SandboxesPage({
           runtime.sandbox.deploymentId,
           runtime.sandbox.deployment.status,
         );
-  const managedRuntimeDialogData = (
-    runtime: (typeof managedRuntimes)[number],
-    status: string,
-  ) => ({
-    name: runtime.sandbox.name,
-    agentId: runtime.agent.id,
-    deploymentId: runtime.sandbox.deploymentId,
-    dashboardUrl: runtime.dashboardUrl,
-    management: {
-      workspace: slug,
-      sandboxId: runtime.sandbox.id,
-      sandboxName: runtime.sandbox.name,
-      environment: sandboxEnvToText(readSandboxEnv(runtime.sandbox.config)),
-      allowSudo: readSandboxAllowSudo(runtime.sandbox.config),
-      status,
-      snapshots: runtime.sandbox.snapshots.map((snapshot) => ({
-        id: snapshot.id,
-        name: snapshot.name,
-        status: snapshot.status,
-        error: snapshot.error ? "error" : null,
-        createdAt: formatInTimeZone(
-          snapshot.createdAt,
-          timeZone,
-          {
-            month: "short",
-            day: "numeric",
-            year: "numeric",
-            hour: "numeric",
-            minute: "2-digit",
-          },
-          locale,
-        ),
-      })),
-    },
-  });
   const anyProvisioning =
     sandboxes.some((s) => {
       const status = effectiveStatus(s.deploymentId, s.deployment.status);
@@ -331,13 +278,7 @@ export default async function SandboxesPage({
           actions={
             <div className="flex flex-wrap items-start gap-2">
               <SshSandboxCreate workspaceId={ws.id} />
-              <SandboxCreateForm
-                workspace={slug}
-                hermesArchiveMaxUploadMiB={
-                  systemSettings.hermesArchiveMaxUploadMiB
-                }
-                hermesImages={hermesImages}
-              />
+              <SandboxCreateForm workspace={slug} />
             </div>
           }
         >
@@ -432,8 +373,7 @@ export default async function SandboxesPage({
                   return {
                     id: runtime.sandbox.id,
                     name: runtime.sandbox.name,
-                    batchEligible:
-                      !lifecycleBlocked && status !== "provisioning",
+                    batchEligible: false,
                     cells: [
                       <div key="name" className="min-w-0">
                         <div className="flex items-center gap-2.5">
@@ -454,8 +394,11 @@ export default async function SandboxesPage({
                         </div>
                       </div>,
                       <div key="mode" className="min-w-0">
-                        <AnimatedBadge status="neutral" size="sm">
-                          <Container className="size-3.5" />
+                        <AnimatedBadge
+                          status="neutral"
+                          size="sm"
+                          icon={<Container className="size-3.5" />}
+                        >
                           {t("hermes")}
                         </AnimatedBadge>
                       </div>,
@@ -504,63 +447,27 @@ export default async function SandboxesPage({
                       </div>,
                       <div key="actions" className="min-w-0">
                         <div className="flex items-center justify-end gap-3">
-                          <HermesRuntimeDialogLauncher
-                            compact
-                            runtime={managedRuntimeDialogData(runtime, status)}
-                          />
-                          <ButtonLink
-                            href={`/app/${slug}/agents/${runtime.agent.id}?settings=channels`}
-                            title={t("channels")}
-                            aria-label={t("channels")}
-                            variant="ghost"
-                            size="icon"
-                          >
-                            <Radio className="size-4" />
-                          </ButtonLink>
-                          {!lifecycleBlocked ? (
-                            running ? (
-                              <form action={stopSandboxAction}>
-                                <input
-                                  type="hidden"
-                                  name="workspace"
-                                  value={slug}
-                                />
-                                <input
-                                  type="hidden"
-                                  name="sandboxId"
-                                  value={runtime.sandbox.id}
-                                />
-                                <SubmitButton
-                                  flash={false}
-                                  pendingLabel={t("stopping")}
-                                  variant="ghost"
-                                  size="sm"
-                                >
-                                  {t("stop")}
-                                </SubmitButton>
-                              </form>
-                            ) : (
-                              <form action={startSandboxAction}>
-                                <input
-                                  type="hidden"
-                                  name="workspace"
-                                  value={slug}
-                                />
-                                <input
-                                  type="hidden"
-                                  name="sandboxId"
-                                  value={runtime.sandbox.id}
-                                />
-                                <SubmitButton
-                                  flash={false}
-                                  pendingLabel={t("starting")}
-                                  variant="ghost"
-                                  size="sm"
-                                >
-                                  {t("start")}
-                                </SubmitButton>
-                              </form>
-                            )
+                          {!lifecycleBlocked && running ? (
+                            <form action={stopSandboxAction}>
+                              <input
+                                type="hidden"
+                                name="workspace"
+                                value={slug}
+                              />
+                              <input
+                                type="hidden"
+                                name="sandboxId"
+                                value={runtime.sandbox.id}
+                              />
+                              <SubmitButton
+                                flash={false}
+                                pendingLabel={t("stopping")}
+                                variant="ghost"
+                                size="sm"
+                              >
+                                {t("stop")}
+                              </SubmitButton>
+                            </form>
                           ) : null}
                         </div>
                       </div>,
@@ -615,12 +522,17 @@ export default async function SandboxesPage({
                       </Link>
                     </div>,
                     <div key="mode" className="min-w-0">
-                      <AnimatedBadge status="neutral" size="sm">
-                        {s.kind === "connector" ? (
-                          <Laptop className="size-3.5" />
-                        ) : (
-                          <Cpu className="size-3.5" />
-                        )}
+                      <AnimatedBadge
+                        status="neutral"
+                        size="sm"
+                        icon={
+                          s.kind === "connector" ? (
+                            <Laptop className="size-3.5" />
+                          ) : (
+                            <Cpu className="size-3.5" />
+                          )
+                        }
+                      >
                         {modeLabel(s.kind, t)}
                       </AnimatedBadge>
                     </div>,

@@ -142,6 +142,42 @@ describe("skill market update concurrency", () => {
       lastError: null,
     });
   });
+  it("selects an approved previous version without bypassing local edit guards", async () => {
+    const manifest = buildSkillReleaseManifest({
+      skillId: null,
+      name: "Previous",
+      slug: "previous",
+      description: null,
+      content: "# Previous",
+      files: [],
+      source: "custom",
+      sourceRef: null,
+      skill: null,
+      userInvocable: true,
+      agentInvocable: true,
+      effort: "default",
+    });
+    mocks.release.mockResolvedValue({
+      id: "prior",
+      version: 1,
+      manifest,
+      checksum: skillReleaseChecksum(manifest),
+    });
+    await expect(
+      updateSkillMarketInstall({
+        ...input,
+        currentReleaseId: "old",
+        targetReleaseId: "prior",
+      }),
+    ).resolves.toMatchObject({ currentReleaseId: "prior" });
+    expect(mocks.release).toHaveBeenCalledWith({
+      where: { id: "prior", listingId: "listing", reviewStatus: "approved" },
+    });
+    mocks.find.mockResolvedValue({ ...install, status: "modified" });
+    await expect(
+      updateSkillMarketInstall({ ...input, targetReleaseId: "prior" }),
+    ).rejects.toMatchObject({ code: "local_changes" });
+  });
   it("treats a completed optimistic update as idempotent but rejects a different revision", async () => {
     mocks.find.mockResolvedValue({ ...install, currentReleaseId: "new" });
     expect(
@@ -189,10 +225,11 @@ describe("skill market update concurrency", () => {
       code: "listing_unavailable",
     });
   });
-  it("rejects a stale selected release and corrupt release snapshot", async () => {
+  it("rejects an unavailable selected release and corrupt release snapshot", async () => {
+    mocks.release.mockResolvedValue(null);
     await expect(
       updateSkillMarketInstall({ ...input, targetReleaseId: "stale" }),
-    ).rejects.toMatchObject({ code: "listing_conflict" });
+    ).rejects.toMatchObject({ code: "release_not_found" });
     mocks.release.mockResolvedValue({
       id: "new",
       manifest: {},
@@ -290,7 +327,6 @@ describe("skill market update concurrency", () => {
 
 describe("market uninstall reference boundaries", () => {
   it.each([
-    { _count: { agentPiPackages: 1 } },
     { piPackageClientInstallations: [{ label: "Laptop" }] },
     {
       installedSkill: {

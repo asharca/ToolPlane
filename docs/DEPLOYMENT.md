@@ -84,6 +84,6 @@ docker build --target pi-package-capture -t toolplane-pi-package-capture:0.87.1 
 
 本地开发叠加 `docker-compose.dev.yml`，将 Postgres 暴露在 `127.0.0.1:5433`；宿主机上的开发应用使用 `http://localhost:3000`，不要沿用 Compose 的 `10030` 公网地址。
 
-`pnpm db:seed` 仅用于本地演示：创建演示账户、停止状态的调试 MCP、Skill 和 Toolkit，不拉取外部 Skill 或启动 MCP。消息渠道使用原生 Node 传输，本地调试不需要 Hermes Checkout 或 Python 渠道运行器；接入方式见[消息渠道](./AGENT_MESSAGING_PLATFORMS.zh-CN.md)。
+`pnpm db:seed` 仅用于已确认隔离的本地演示数据库：创建演示账户、停止状态且默认拒绝工具的 MCP 记录、未绑定 Skill、原生 Pi Agent 草稿及未授权的 Chat Assistant 草稿。不拉取外部 Skill，不创建容器／卷，不启动 MCP 或 Agent，也不创建或输出 API token。Agent 草稿没有已发布的不可变修订；须显式配置和授权，再执行 Prepare／审阅／Apply 后才能创建可执行会话。保留的 Hermes 示例已退休，其存储记录为停止状态；Toolkit 示例禁用且私有，均明确标注只读历史，不生成旧运行时公开模板或执行权限。种子中的原生 Agent 模板只声明可移植要求，不附带 Toolkit 组合或发布者权限。消息渠道使用原生 Node 传输，本地调试不需要 Hermes Checkout 或 Python 渠道运行器；接入方式见[消息渠道](./AGENT_MESSAGING_PLATFORMS.zh-CN.md)。
 
 完整 CI 在 PR 或手动触发时运行，合并到 `main` 后不重复运行。建议保护 `main`，要求 PR 保持最新，并要求 `validate`、`connector (ubuntu-latest)`、`connector (macos-latest)`、`connector (windows-latest)` 检查，管理员也不例外。共享 UI 从原版 beUI Registry 源码安装，流程见[共享 UI](./UI_LIBRARY.zh-CN.md)。

@@ -9,6 +9,11 @@ import {
   it,
   vi,
 } from "vitest";
+import type { Prisma } from "@prisma/client";
+import {
+  sealMcpEnvironment,
+  resolveMcpEnvironment,
+} from "@/lib/process/mcp-credentials";
 
 const runtimeMocks = vi.hoisted(() => ({
   stopProcess: vi.fn(),
@@ -31,22 +36,29 @@ vi.mock("@/lib/process/deployment-config-volume", () => ({
 vi.mock("@/lib/admin/recipe-validate", () => ({
   validateServerRecipe: runtimeMocks.validateServerRecipe,
 }));
+// Runtime lifecycle is mocked in this database suite; owner-lease coordination
+// belongs to the dedicated operation-gate/supervisor tests.
+vi.mock("@/lib/workspace/mcp-operation", () => ({
+  runMcpDeploymentOperation: async (
+    _workspaceId: string,
+    _deploymentId: string,
+    operation: () => Promise<unknown>,
+  ) => ({ accepted: true, value: await operation() }),
+}));
 import { db } from "@/lib/db";
 import {
   approveResourceMarketRelease,
   installMcpRelease,
-  installToolkitRelease,
   parseMcpMarketManifest,
   publishMcpRelease,
-  publishToolkitRelease,
   updateMarketInstall,
 } from "@/lib/market/resources";
 import { marketReleaseChecksum } from "@/lib/market/artifact";
 import { getMarketListing } from "@/lib/market/listings";
 import { type MarketError, removeMarketInstall } from "@/lib/market/skills";
-import { getBrowseToolkits } from "@/lib/toolkits/queries";
 import { getBrowseServers } from "@/lib/workspace/queries";
 import { GET as getPublicMarketListing } from "@/app/api/v1/market/listings/[namespace]/[slug]/route";
+import { cutoverToolkitToPrivatePackage } from "@/lib/toolkits/cutover";
 
 const stamp = `${process.pid}-${Date.now()}`;
 const namespace = `resource-market-source-${stamp}`;
@@ -63,11 +75,10 @@ let targetWorkspaceId = "";
 let categoryId = "";
 let secondCategoryId = "";
 let sourceMcpId = "";
-let sourceToolkitId = "";
-let sourceToolkitSkillId = "";
 let toolkitServerId = "";
 let approvedMcpServerId = "";
 let legacyServerId = "";
+let historicalMcpServerId = "";
 
 describe.sequential("unified MCP and toolkit market", () => {
   beforeEach(() => {
@@ -152,7 +163,7 @@ describe.sequential("unified MCP and toolkit market", () => {
           verifiedTools: 0,
           installCfg: {
             source: "npm",
-            ref: "@modelcontextprotocol/server-filesystem",
+            ref: "@modelcontextprotocol/server-filesystem@1.0.0",
             env: ["TOOLKIT_TOKEN"],
             toolCatalog: [],
           },
@@ -172,25 +183,28 @@ describe.sequential("unified MCP and toolkit market", () => {
           name: "Portable Connector",
           source: "remote",
           sourceRef: "https://connector.example.test/mcp",
-          installCfg: {
-            env: { MCP_TOKEN: sourceMcpSecret },
-            requiredEnv: ["MCP_TOKEN"],
-            transport: "streamable-http",
-            authType: "bearer",
-            bearerEnv: "MCP_TOKEN",
-            toolCatalog: [
-              {
-                name: "search_v1",
-                description: `Search the portable index. ${encodedSourceMcpSecret}`,
-                inputSchema: {
-                  type: "object",
-                  properties: { query: { type: "string" } },
-                  required: ["query"],
+          installCfg: sealMcpEnvironment(
+            {
+              requiredEnv: ["MCP_TOKEN"],
+              transport: "streamable-http",
+              authType: "bearer",
+              bearerEnv: "MCP_TOKEN",
+              toolCatalog: [
+                {
+                  name: "search_v1",
+                  description: `Search the portable index. ${encodedSourceMcpSecret}`,
+                  inputSchema: {
+                    type: "object",
+                    properties: { query: { type: "string" } },
+                    required: ["query"],
+                  },
+                  annotations: { readOnlyHint: true },
                 },
-                annotations: { readOnlyHint: true },
-              },
-            ],
-          },
+              ],
+            },
+            sourceWorkspace.id,
+            { MCP_TOKEN: sourceMcpSecret },
+          ) as Prisma.InputJsonObject,
           status: "stopped",
           mcpToolExposure: "allowlist",
           mcpAllowedTools: ["search_v1", encodedSourceMcpSecret],
@@ -201,8 +215,10 @@ describe.sequential("unified MCP and toolkit market", () => {
           workspaceId: sourceWorkspace.id,
           serverId: toolkitServer.id,
           source: "npm",
-          sourceRef: "@modelcontextprotocol/server-filesystem",
-          installCfg: { env: { TOOLKIT_TOKEN: sourceToolkitSecret } },
+          sourceRef: "@modelcontextprotocol/server-filesystem@1.0.0",
+          installCfg: sealMcpEnvironment({}, sourceWorkspace.id, {
+            TOOLKIT_TOKEN: sourceToolkitSecret,
+          }) as Prisma.InputJsonObject,
           status: "stopped",
         },
       }),
@@ -219,8 +235,7 @@ describe.sequential("unified MCP and toolkit market", () => {
       }),
     ]);
     sourceMcpId = sourceMcp.id;
-    sourceToolkitSkillId = toolkitSkill.id;
-    const toolkit = await db.toolkit.create({
+    await db.toolkit.create({
       data: {
         workspaceId: sourceWorkspace.id,
         name: "Portable toolkit",
@@ -229,7 +244,6 @@ describe.sequential("unified MCP and toolkit market", () => {
         skills: { create: { installedSkillId: toolkitSkill.id } },
       },
     });
-    sourceToolkitId = toolkit.id;
   });
 
   afterAll(async () => {
@@ -242,9 +256,12 @@ describe.sequential("unified MCP and toolkit market", () => {
     await db.server.deleteMany({
       where: {
         id: {
-          in: [toolkitServerId, approvedMcpServerId, legacyServerId].filter(
-            Boolean,
-          ),
+          in: [
+            toolkitServerId,
+            approvedMcpServerId,
+            legacyServerId,
+            historicalMcpServerId,
+          ].filter(Boolean),
         },
       },
     });
@@ -265,7 +282,7 @@ describe.sequential("unified MCP and toolkit market", () => {
         workspaceId: sourceWorkspaceId,
         name: "Missing catalog MCP",
         source: "npm",
-        sourceRef: "@modelcontextprotocol/server-memory",
+        sourceRef: "@modelcontextprotocol/server-memory@1.0.0",
         installCfg: { env: {} },
         status: "stopped",
       },
@@ -330,6 +347,7 @@ describe.sequential("unified MCP and toolkit market", () => {
     expect(first.manifest.mcp.toolCatalog).toBeUndefined();
     expect(first.manifest.mcp.allowedTools).toEqual([]);
     expect(JSON.stringify(first.manifest)).not.toContain(sourceMcpSecret);
+    expect(JSON.stringify(first.manifest)).not.toContain("credentialEnvelope");
     expect(JSON.stringify(first.manifest)).not.toContain(
       encodedSourceMcpSecret,
     );
@@ -444,10 +462,11 @@ describe.sequential("unified MCP and toolkit market", () => {
     await db.deployment.update({
       where: { id: installed.resource.id },
       data: {
-        installCfg: {
-          env: { MCP_TOKEN: "target-only-value" },
-          requiredEnv: ["MCP_TOKEN"],
-        },
+        installCfg: sealMcpEnvironment(
+          installed.resource.installCfg,
+          targetWorkspaceId,
+          { MCP_TOKEN: "target-only-value" },
+        ) as Prisma.InputJsonObject,
       },
     });
     await db.deployment.update({
@@ -464,6 +483,7 @@ describe.sequential("unified MCP and toolkit market", () => {
     expect(second.release.version).toBe(2);
     expect(second.manifest.mcp.allowedTools).toEqual([]);
     expect(JSON.stringify(second.manifest)).not.toContain(sourceMcpSecret);
+    expect(JSON.stringify(second.manifest)).not.toContain("credentialEnvelope");
     expect(
       (
         await db.marketListing.findUniqueOrThrow({
@@ -513,8 +533,15 @@ describe.sequential("unified MCP and toolkit market", () => {
       where: { id: installed.resource.id },
     });
     expect(updatedDeployment.installCfg).toMatchObject({
-      env: { MCP_TOKEN: "target-only-value" },
+      env: { MCP_TOKEN: "" },
+      credentialEnvelope: expect.any(Object),
     });
+    expect(
+      resolveMcpEnvironment(updatedDeployment.installCfg, targetWorkspaceId),
+    ).toEqual({ MCP_TOKEN: "target-only-value" });
+    expect(JSON.stringify(updatedDeployment.installCfg)).not.toContain(
+      "target-only-value",
+    );
     expect(updatedDeployment.mcpAllowedTools).toEqual([]);
     expect(updatedDeployment.status).toBe("stopped");
     expect(runtimeMocks.stopProcess).toHaveBeenCalledWith(
@@ -554,172 +581,7 @@ describe.sequential("unified MCP and toolkit market", () => {
     );
   });
 
-  it("keeps shared toolkit members when an updated toolkit is removed", async () => {
-    const first = await publishToolkitRelease({
-      workspaceId: sourceWorkspaceId,
-      toolkitId: sourceToolkitId,
-      publishedById: sourceUserId,
-      categoryIds: [categoryId],
-      releaseNotes: "Initial toolkit release.",
-    });
-    expect(JSON.stringify(first.manifest)).not.toContain(sourceToolkitSecret);
-    await approveResourceMarketRelease({
-      listingId: first.listing.id,
-      releaseId: first.release.id,
-      reviewedById: adminUserId,
-      categoryIds: [categoryId],
-    });
-    const publicResponse = await getPublicMarketListing(
-      new Request(
-        `http://toolplane.test/api/v1/market/listings/${namespace}/${first.listing.slug}`,
-      ),
-      { params: Promise.resolve({ namespace, slug: first.listing.slug }) },
-    );
-    const publicPayload = await publicResponse.json();
-    expect(publicPayload.latestRelease.manifest.mcps).toEqual(
-      expect.arrayContaining([expect.objectContaining({ allowedTools: [] })]),
-    );
-    expect(
-      publicPayload.latestRelease.manifest.mcps.every(
-        (mcp: Record<string, unknown>) => !("toolCatalog" in mcp),
-      ),
-    ).toBe(true);
-    await db.toolkit.update({
-      where: { id: sourceToolkitId },
-      data: { name: "Mutable toolkit source name" },
-    });
-    const approvedToolkitBrowse = await getBrowseToolkits(
-      targetWorkspaceId,
-      1,
-      first.listing.slug,
-    );
-    expect(approvedToolkitBrowse.items).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          name: first.manifest.listing.name,
-          marketListing: expect.objectContaining({
-            releaseId: first.release.id,
-          }),
-          skillNames: expect.arrayContaining(["Toolkit notes"]),
-        }),
-      ]),
-    );
-    const installed = await installToolkitRelease({
-      releaseId: first.release.id,
-      targetWorkspaceId,
-      installedById: targetUserId,
-      idempotencyKey: `toolkit-${stamp}`,
-    });
-    expect(
-      (
-        await db.marketListing.findUniqueOrThrow({
-          where: { id: first.listing.id },
-        })
-      ).installCount,
-    ).toBe(1);
-
-    await db.installedSkill.update({
-      where: { id: sourceToolkitSkillId },
-      data: { content: "# Toolkit notes\n\nVersion two." },
-    });
-    const second = await publishToolkitRelease({
-      workspaceId: sourceWorkspaceId,
-      toolkitId: sourceToolkitId,
-      publishedById: sourceUserId,
-      categoryIds: [categoryId],
-      releaseNotes: "Updated bundled skill.",
-    });
-    await approveResourceMarketRelease({
-      listingId: first.listing.id,
-      releaseId: second.release.id,
-      reviewedById: adminUserId,
-      categoryIds: [categoryId],
-    });
-    await db.marketInstall.update({
-      where: { id: installed.install.id },
-      data: { status: "modified" },
-    });
-    await expect(
-      updateMarketInstall({
-        installId: installed.install.id,
-        targetWorkspaceId,
-        actorId: targetUserId,
-        currentReleaseId: first.release.id,
-        targetReleaseId: second.release.id,
-      }),
-    ).rejects.toMatchObject({
-      code: "local_changes",
-    } satisfies Partial<MarketError>);
-    await updateMarketInstall({
-      installId: installed.install.id,
-      targetWorkspaceId,
-      actorId: targetUserId,
-      currentReleaseId: first.release.id,
-      targetReleaseId: second.release.id,
-      force: true,
-    });
-    const updatedToolkit = await db.toolkit.findUniqueOrThrow({
-      where: { id: installed.resource.id },
-      include: {
-        servers: { select: { deploymentId: true } },
-        skills: {
-          select: {
-            installedSkillId: true,
-            installedSkill: { select: { content: true } },
-          },
-        },
-      },
-    });
-    expect(updatedToolkit.skills[0].installedSkill.content).toContain(
-      "Version two",
-    );
-    expect(
-      await db.installedSkill.count({
-        where: {
-          workspaceId: targetWorkspaceId,
-          sourceRef: { startsWith: `${namespace}/${first.listing.slug}@` },
-        },
-      }),
-    ).toBe(1);
-    const sharedDeploymentId = updatedToolkit.servers[0].deploymentId;
-    const sharedSkillId = updatedToolkit.skills[0].installedSkillId;
-    const keeper = await db.toolkit.create({
-      data: {
-        workspaceId: targetWorkspaceId,
-        name: "Shared member keeper",
-        slug: `shared-member-keeper-${stamp}`,
-        servers: { create: { deploymentId: sharedDeploymentId } },
-        skills: { create: { installedSkillId: sharedSkillId } },
-      },
-    });
-
-    await removeMarketInstall({
-      installId: installed.install.id,
-      targetWorkspaceId,
-      actorId: targetUserId,
-    });
-    expect(
-      await db.toolkit.findUnique({ where: { id: installed.resource.id } }),
-    ).toBeNull();
-    expect(
-      await db.toolkit.findUnique({ where: { id: keeper.id } }),
-    ).not.toBeNull();
-    expect(
-      await db.deployment.findUnique({ where: { id: sharedDeploymentId } }),
-    ).not.toBeNull();
-    expect(
-      await db.installedSkill.findUnique({ where: { id: sharedSkillId } }),
-    ).not.toBeNull();
-    expect(
-      (
-        await db.marketListing.findUniqueOrThrow({
-          where: { id: first.listing.id },
-        })
-      ).installCount,
-    ).toBe(0);
-  });
-
-  it("projects a legacy approved MCP catalog and allowlist through the current verified server", async () => {
+  it("installs reviewed legacy stdio recipes and filters allowlists through trusted tool snapshots", async () => {
     const canary = `credential-${stamp}`;
     const slug = `legacy-allowlist-${stamp}`;
     const sourceDeployment = await db.deployment.create({
@@ -727,7 +589,7 @@ describe.sequential("unified MCP and toolkit market", () => {
         workspaceId: sourceWorkspaceId,
         name: "Legacy allowlist MCP",
         source: "npm",
-        sourceRef: "@modelcontextprotocol/server-memory",
+        sourceRef: "@modelcontextprotocol/server-memory@1.0.0",
         installCfg: { env: {} },
         status: "stopped",
       },
@@ -752,7 +614,7 @@ describe.sequential("unified MCP and toolkit market", () => {
         readme: null,
         recipe: {
           source: "npm" as const,
-          ref: "@modelcontextprotocol/server-memory",
+          ref: "@modelcontextprotocol/server-memory@1.0.0",
           env: [],
         },
         toolExposure: "allowlist" as const,
@@ -849,7 +711,7 @@ describe.sequential("unified MCP and toolkit market", () => {
       data: {
         installCfg: {
           source: "npm",
-          ref: "@modelcontextprotocol/server-memory",
+          ref: "@modelcontextprotocol/server-memory@1.0.0",
           env: [],
           toolCatalog: [
             {
@@ -885,26 +747,24 @@ describe.sequential("unified MCP and toolkit market", () => {
       "toolCatalog",
     );
 
-    await expect(
-      installMcpRelease({
-        releaseId: release.id,
-        targetWorkspaceId,
-        installedById: targetUserId,
-        idempotencyKey: `legacy-allowlist-${stamp}`,
-      }),
-    ).rejects.toMatchObject({
-      code: "listing_unavailable",
-    } satisfies Partial<MarketError>);
-    expect(
-      await db.marketInstall.findFirst({
-        where: { targetWorkspaceId, listingId: listing.id },
-      }),
-    ).toBeNull();
-
-    const legacyDeployment = await db.deployment.create({
+    const firstInstall = await installMcpRelease({
+      releaseId: release.id,
+      targetWorkspaceId,
+      installedById: targetUserId,
+      idempotencyKey: `legacy-allowlist-${stamp}`,
+    });
+    expect(firstInstall.resource).toMatchObject({
+      source: "npm",
+      sourceRef: "@modelcontextprotocol/server-memory@1.0.0",
+      status: "stopped",
+      mcpAllowedTools: [],
+    });
+    expect(firstInstall.resource.installCfg).toMatchObject({ toolCatalog: [] });
+    expect(JSON.stringify(firstInstall.resource)).not.toContain(canary);
+    const legacyInstall = firstInstall.install;
+    const legacyDeployment = await db.deployment.update({
+      where: { id: firstInstall.resource.id },
       data: {
-        workspaceId: targetWorkspaceId,
-        serverId: legacyServerId,
         name: "Previously installed Connector",
         source: "remote",
         sourceRef: "https://connector.example.test/mcp",
@@ -912,30 +772,17 @@ describe.sequential("unified MCP and toolkit market", () => {
         status: "stopped",
       },
     });
-    const legacyInstall = await db.marketInstall.create({
-      data: {
-        listingId: listing.id,
-        currentReleaseId: release.id,
-        requestedReleaseId: release.id,
-        targetWorkspaceId,
-        installedById: targetUserId,
-        deploymentId: legacyDeployment.id,
-        idempotencyKey: `legacy-update-${stamp}`,
-        status: "ready",
-        requirements: {},
-        resourceMap: { deploymentId: legacyDeployment.id },
-      },
+    const reused = await installMcpRelease({
+      releaseId: release.id,
+      targetWorkspaceId,
+      installedById: targetUserId,
+      idempotencyKey: legacyInstall.idempotencyKey,
     });
-    await expect(
-      installMcpRelease({
-        releaseId: release.id,
-        targetWorkspaceId,
-        installedById: targetUserId,
-        idempotencyKey: legacyInstall.idempotencyKey,
-      }),
-    ).rejects.toMatchObject({
-      code: "listing_unavailable",
-    } satisfies Partial<MarketError>);
+    expect(reused).toMatchObject({
+      reused: true,
+      install: { id: legacyInstall.id },
+      resource: { id: legacyDeployment.id },
+    });
     const serverRelease = await db.marketRelease.create({
       data: {
         listingId: listing.id,
@@ -955,28 +802,194 @@ describe.sequential("unified MCP and toolkit market", () => {
       data: { latestVersion: 2, latestReleaseId: serverRelease.id },
     });
 
-    await expect(
-      updateMarketInstall({
-        installId: legacyInstall.id,
-        targetWorkspaceId,
-        actorId: targetUserId,
-        currentReleaseId: release.id,
-        targetReleaseId: serverRelease.id,
-      }),
-    ).rejects.toMatchObject({
-      code: "listing_unavailable",
-    } satisfies Partial<MarketError>);
-    expect(runtimeMocks.stopProcess).not.toHaveBeenCalled();
-    expect(runtimeMocks.removeDeploymentContainer).not.toHaveBeenCalled();
-    expect(runtimeMocks.removeDeploymentConfigVolume).not.toHaveBeenCalled();
+    await updateMarketInstall({
+      installId: legacyInstall.id,
+      targetWorkspaceId,
+      actorId: targetUserId,
+      currentReleaseId: release.id,
+      targetReleaseId: serverRelease.id,
+    });
+    expect(runtimeMocks.stopProcess).toHaveBeenCalledWith(legacyDeployment.id);
+    expect(runtimeMocks.removeDeploymentContainer).toHaveBeenCalledWith(
+      legacyDeployment.id,
+    );
+    const updatedDeployment = await db.deployment.findUniqueOrThrow({
+      where: { id: legacyDeployment.id },
+    });
+    expect(updatedDeployment).toMatchObject({
+      source: "npm",
+      sourceRef: "@modelcontextprotocol/server-memory@1.0.0",
+      status: "stopped",
+      mcpAllowedTools: ["safe_tool"],
+    });
+    expect(JSON.stringify(updatedDeployment)).not.toContain(canary);
     expect(
       await db.marketInstall.findUniqueOrThrow({
         where: { id: legacyInstall.id },
       }),
     ).toMatchObject({
-      currentReleaseId: release.id,
+      currentReleaseId: serverRelease.id,
       deploymentId: legacyDeployment.id,
     });
+  });
+
+  it("restores an explicitly selected approved MCP recipe and tools while preserving target secrets", async () => {
+    const source = await db.deployment.create({
+      data: {
+        workspaceId: sourceWorkspaceId,
+        name: `Historical MCP ${stamp}`,
+        source: "config",
+        sourceRef: "npx",
+        installCfg: sealMcpEnvironment(
+          { command: "npx", args: ["-y", "@team/mcp@1.0.0"] },
+          sourceWorkspaceId,
+          { TOKEN: "source-only-secret" },
+        ) as Prisma.InputJsonObject,
+        status: "stopped",
+        mcpToolExposure: "all",
+      },
+    });
+    const first = await publishMcpRelease({
+      workspaceId: sourceWorkspaceId,
+      deploymentId: source.id,
+      publishedById: sourceUserId,
+      categoryIds: [categoryId],
+    });
+    await approveResourceMarketRelease({
+      listingId: first.listing.id,
+      releaseId: first.release.id,
+      reviewedById: adminUserId,
+    });
+    const listing = await db.marketListing.findUniqueOrThrow({
+      where: { id: first.listing.id },
+    });
+    historicalMcpServerId = assertDefined(listing.sourceServerId);
+    const installed = await installMcpRelease({
+      releaseId: first.release.id,
+      targetWorkspaceId,
+      installedById: targetUserId,
+      idempotencyKey: `historical-mcp-${stamp}`,
+    });
+    await db.deployment.update({
+      where: { id: installed.resource.id },
+      data: {
+        installCfg: sealMcpEnvironment(
+          {
+            command: "npx",
+            args: ["-y", "@team/mcp@1.0.0"],
+            requiredEnv: ["TOKEN"],
+          },
+          targetWorkspaceId,
+          { TOKEN: "target-only-secret", EXTRA: "target-extra" },
+        ) as Prisma.InputJsonObject,
+        status: "stopped",
+      },
+    });
+    await db.deployment.update({
+      where: { id: source.id },
+      data: {
+        installCfg: sealMcpEnvironment(
+          { command: "npx", args: ["-y", "@team/mcp@2.0.0"] },
+          sourceWorkspaceId,
+          { TOKEN: "source-only-secret" },
+        ) as Prisma.InputJsonObject,
+      },
+    });
+    const second = await publishMcpRelease({
+      workspaceId: sourceWorkspaceId,
+      deploymentId: source.id,
+      publishedById: sourceUserId,
+      categoryIds: [categoryId],
+    });
+    runtimeMocks.validateServerRecipe.mockResolvedValueOnce({
+      ok: true,
+      toolCount: 1,
+      tools: ["search_v2"],
+      toolCatalog: [{ name: "search_v2", inputSchema: { type: "object" } }],
+    });
+    await approveResourceMarketRelease({
+      listingId: first.listing.id,
+      releaseId: second.release.id,
+      reviewedById: adminUserId,
+    });
+    await updateMarketInstall({
+      installId: installed.install.id,
+      targetWorkspaceId,
+      actorId: targetUserId,
+      currentReleaseId: first.release.id,
+    });
+    const updated = await db.deployment.findUniqueOrThrow({
+      where: { id: installed.resource.id },
+    });
+    expect(updated.installCfg).toMatchObject({
+      args: ["-y", "@team/mcp@2.0.0"],
+      env: { TOKEN: "", EXTRA: "" },
+      credentialEnvelope: expect.any(Object),
+      toolCatalog: [{ name: "search_v2" }],
+    });
+    expect(
+      resolveMcpEnvironment(updated.installCfg, targetWorkspaceId),
+    ).toEqual({ TOKEN: "target-only-secret", EXTRA: "target-extra" });
+    expect(JSON.stringify(updated.installCfg)).not.toContain(
+      "target-only-secret",
+    );
+    await updateMarketInstall({
+      installId: installed.install.id,
+      targetWorkspaceId,
+      actorId: targetUserId,
+      currentReleaseId: second.release.id,
+      targetReleaseId: first.release.id,
+    });
+    const restored = await db.deployment.findUniqueOrThrow({
+      where: { id: installed.resource.id },
+    });
+    expect(restored).toMatchObject({
+      source: "config",
+      sourceRef: "npx",
+      status: "stopped",
+    });
+    expect(restored.installCfg).toMatchObject({
+      command: "npx",
+      args: ["-y", "@team/mcp@1.0.0"],
+      env: { TOKEN: "", EXTRA: "" },
+      credentialEnvelope: expect.any(Object),
+      toolCatalog: [{ name: "search_v1" }],
+    });
+    expect(
+      resolveMcpEnvironment(restored.installCfg, targetWorkspaceId),
+    ).toEqual({ TOKEN: "target-only-secret", EXTRA: "target-extra" });
+    expect(JSON.stringify(restored.installCfg)).not.toContain(
+      "target-only-secret",
+    );
+    expect(JSON.stringify(restored.installCfg)).not.toContain("search_v2");
+    expect(JSON.stringify(restored.installCfg)).not.toContain(
+      "source-only-secret",
+    );
+    expect(
+      await db.marketInstall.findUniqueOrThrow({
+        where: { id: installed.install.id },
+      }),
+    ).toMatchObject({
+      currentReleaseId: first.release.id,
+      requestedReleaseId: first.release.id,
+      status: "ready",
+    });
+    expect(
+      await db.marketListing.findUniqueOrThrow({
+        where: { id: first.listing.id },
+      }),
+    ).toMatchObject({ latestReleaseId: second.release.id });
+    await updateMarketInstall({
+      installId: installed.install.id,
+      targetWorkspaceId,
+      actorId: targetUserId,
+      currentReleaseId: first.release.id,
+    });
+    expect(
+      await db.marketInstall.findUniqueOrThrow({
+        where: { id: installed.install.id },
+      }),
+    ).toMatchObject({ currentReleaseId: second.release.id });
   });
 
   it("scans decoded base64 files embedded in toolkit skills", async () => {
@@ -1007,11 +1020,11 @@ describe.sequential("unified MCP and toolkit market", () => {
       },
     });
     await expect(
-      publishToolkitRelease({
+      cutoverToolkitToPrivatePackage({
         workspaceId: sourceWorkspaceId,
         toolkitId: unsafeToolkit.id,
-        publishedById: sourceUserId,
-        categoryIds: [categoryId],
+        userId: sourceUserId,
+        mode: "dry-run",
       }),
     ).rejects.toMatchObject({
       code: "invalid_manifest",

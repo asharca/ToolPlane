@@ -189,8 +189,14 @@ describe("admin market release review", () => {
           providerFormat: "openai-compatible",
           model: "gpt-5.6",
         },
+        modelParameters: null,
+        promptTemplates: [],
         mcpRequirements: [
-          { catalogSlug: "filesystem", name: "Filesystem MCP" },
+          {
+            catalogSlug: "filesystem",
+            name: "Filesystem MCP",
+            allowedToolNames: [],
+          },
         ],
       },
     };

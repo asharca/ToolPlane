@@ -1,4 +1,8 @@
-import { describe, expect, it } from "vitest";
+// @vitest-environment node
+import { describe, expect, it, vi } from "vitest";
+vi.mock("server-only", () => ({}));
+vi.mock("@/lib/db", () => ({ db: {} }));
+import { sealMcpEnvironment } from "@/lib/process/mcp-credentials";
 import {
   parseAgentMarketSetupGuide,
   type AgentMarketSetupCurrentState,
@@ -71,12 +75,10 @@ function current(): AgentMarketSetupCurrentState {
     deployments: [
       {
         id: "deployment-target-1",
-        installCfg: {
-          env: {
-            CONFIGURED_API_KEY: "live-secret-value",
-            MISSING_API_KEY: "   ",
-          },
-        },
+        installCfg: sealMcpEnvironment({}, "workspace-1", {
+          CONFIGURED_API_KEY: "configured-private-key",
+          MISSING_API_KEY: "",
+        }),
       },
     ],
   };
@@ -101,8 +103,9 @@ describe("parseAgentMarketSetupGuide", () => {
         },
       ],
       runtimes: [],
+      legacyToolkitConversions: [],
     });
-    expect(JSON.stringify(guide)).not.toContain("live-secret-value");
+    expect(JSON.stringify(guide)).not.toContain("configured-private-key");
     expect(JSON.stringify(guide)).not.toContain("provider-private-id");
     expect(JSON.stringify(guide)).not.toContain("CONFIGURED_API_KEY");
     expect(JSON.stringify(guide)).not.toContain("skill-target");
@@ -117,12 +120,14 @@ describe("parseAgentMarketSetupGuide", () => {
       model: "claude-sonnet",
       provider: { format: "anthropic" },
     };
-    configured.deployments[0].installCfg = {
-      env: {
-        CONFIGURED_API_KEY: "configured-secret",
-        MISSING_API_KEY: "also-configured-secret",
+    configured.deployments[0].installCfg = sealMcpEnvironment(
+      {},
+      "workspace-1",
+      {
+        CONFIGURED_API_KEY: "configured-private-key",
+        MISSING_API_KEY: "second-private-key",
       },
-    };
+    );
     expect(parseAgentMarketSetupGuide(readyInstall, configured)).toBeNull();
 
     configured.agents[1] = {
@@ -130,9 +135,13 @@ describe("parseAgentMarketSetupGuide", () => {
       model: null,
       provider: null,
     };
-    configured.deployments[0].installCfg = {
-      env: { CONFIGURED_API_KEY: "configured-secret" },
-    };
+    configured.deployments[0].installCfg = sealMcpEnvironment(
+      {},
+      "workspace-1",
+      {
+        CONFIGURED_API_KEY: "configured-private-key",
+      },
+    );
     expect(parseAgentMarketSetupGuide(readyInstall, configured)).toEqual({
       missingProviders: [
         {
@@ -148,7 +157,24 @@ describe("parseAgentMarketSetupGuide", () => {
         },
       ],
       runtimes: [],
+      legacyToolkitConversions: [],
     });
+  });
+
+  it("never treats unmigrated plaintext values as configured credentials", () => {
+    const state = current();
+    state.deployments[0].installCfg = {
+      env: {
+        CONFIGURED_API_KEY: "legacy-secret",
+        MISSING_API_KEY: "legacy-secret",
+      },
+    };
+    const guide = parseAgentMarketSetupGuide(install(), state);
+    expect(guide?.environment.map(({ variable }) => variable)).toEqual([
+      "CONFIGURED_API_KEY",
+      "MISSING_API_KEY",
+    ]);
+    expect(JSON.stringify(guide)).not.toContain("legacy-secret");
   });
 
   it("fails closed for extra fields, malformed variable names, and broken references", () => {

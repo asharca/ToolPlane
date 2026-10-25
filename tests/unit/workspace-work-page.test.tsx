@@ -89,6 +89,7 @@ describe("Workspace Work page", () => {
         id: "agent-hermes",
         name: "Hermes researcher",
         runtimeKind: "hermes",
+        retiredAt: new Date("2026-10-23T00:00:00Z"),
         pinned: true,
         providerId: null,
         model: null,
@@ -115,7 +116,9 @@ describe("Workspace Work page", () => {
       {
         id: "agent-pi",
         name: "Pi worker",
-        runtimeKind: "pi",
+        runtimeKind: "pi-sdk",
+        retiredAt: null,
+        currentRevisionVersion: 0,
         pinned: false,
         providerId: null,
         model: null,
@@ -141,23 +144,17 @@ describe("Workspace Work page", () => {
           expect.objectContaining({
             id: "agent-hermes",
             pinned: true,
-            supportsWork: true,
-            ready: true,
-            providerIds: ["provider-1"],
-            sandboxes: [
-              expect.objectContaining({
-                id: "sandbox-hermes",
-                kind: "hermes",
-                status: "provisioning",
-                running: false,
-                isDefault: true,
-              }),
-            ],
+            supportsWork: false,
+            ready: false,
+            providerIds: [],
+            sandboxes: [],
           }),
           expect.objectContaining({
             id: "agent-pi",
             pinned: false,
             supportsWork: true,
+            currentRevisionVersion: 0,
+            ready: false,
           }),
         ],
       }),
@@ -287,6 +284,14 @@ describe("Workspace Work page", () => {
       workSession: null,
       publicApiConversation: null,
       reasoningEffort: null,
+      readOnly: true,
+      agentRevisionId: null,
+      legacyRevisionUnresolved: true,
+      runtimeKind: null,
+      modelName: null,
+      contextWindow: null,
+      contextWindowEstimated: null,
+      boundSandbox: null,
       messages: [
         {
           id: "reply",
@@ -317,6 +322,8 @@ describe("Workspace Work page", () => {
           id: "wechat-history",
           agentId: "agent-pi",
           readOnly: true,
+          agentRevisionId: null,
+          legacyRevisionUnresolved: true,
           source: { platform: "weixin", chatType: "dm", chatId: "contact" },
           messages: [
             expect.objectContaining({
@@ -327,6 +334,47 @@ describe("Workspace Work page", () => {
         }),
       }),
     );
+  });
+
+  it("passes a Pi conversation's pinned revision and model without borrowing current Agent settings", async () => {
+    mocks.getConversation.mockResolvedValue({
+      id: "pinned-history",
+      agentId: "agent-pi",
+      title: "Pinned conversation",
+      workSession: null,
+      publicApiConversation: null,
+      reasoningEffort: null,
+      agentRevisionId: "pi-revision-1",
+      legacyRevisionUnresolved: false,
+      readOnly: false,
+      runtimeKind: "pi-sdk",
+      modelName: "pinned-model",
+      contextWindow: 64000,
+      contextWindowEstimated: false,
+      boundSandbox: null,
+      messages: [],
+    });
+    render(
+      await WorkspaceWorkPage({
+        params: Promise.resolve({ workspace: "acme" }),
+        searchParams: Promise.resolve({ c: "pinned-history" }),
+      }),
+    );
+    expect(mocks.surface).toHaveBeenCalledWith(
+      expect.objectContaining({
+        selectedConversation: expect.objectContaining({
+          id: "pinned-history",
+          agentRevisionId: "pi-revision-1",
+          legacyRevisionUnresolved: false,
+          readOnly: false,
+          runtimeKind: "pi-sdk",
+          modelName: "pinned-model",
+          contextWindow: 64000,
+          contextWindowEstimated: false,
+        }),
+      }),
+    );
+    expect(mocks.workspaceSandbox).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -360,13 +408,21 @@ describe("Workspace Work page", () => {
     expect(redirect).toHaveBeenCalledWith("/app/acme/work?w=work-1");
   });
 
-  it("preserves ordinary Hermes chat selection inside Work", async () => {
+  it("preserves Hermes history as read-only without borrowing its current runtime", async () => {
     mocks.getConversation.mockResolvedValue({
       id: "history",
       agentId: "agent-hermes",
       title: "Notes",
       workSession: null,
       publicApiConversation: null,
+      readOnly: true,
+      agentRevisionId: null,
+      legacyRevisionUnresolved: true,
+      runtimeKind: null,
+      modelName: null,
+      contextWindow: null,
+      contextWindowEstimated: null,
+      boundSandbox: null,
       hermesProfile: "research",
       hermesProvider: "provider-1",
       hermesModel: "model-1",
@@ -383,13 +439,16 @@ describe("Workspace Work page", () => {
         selectedConversation: expect.objectContaining({
           id: "history",
           agentId: "agent-hermes",
-          readOnly: false,
+          readOnly: true,
+          modelName: null,
+          sandbox: null,
           hermesProfile: "research",
           hermesProvider: "provider-1",
           hermesModel: "model-1",
         }),
       }),
     );
+    expect(mocks.workspaceSandbox).not.toHaveBeenCalled();
   });
 });
 

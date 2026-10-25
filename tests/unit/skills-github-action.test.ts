@@ -154,7 +154,7 @@ describe("importSkillFromGithubAction", () => {
     expect(mocks.revalidatePath).toHaveBeenCalledWith("/app/acme/skills");
   });
 
-  it("returns a useful GitHub error without creating partial records", async () => {
+  it("returns a localized import error without creating partial records", async () => {
     mocks.fetchBundles.mockRejectedValue(
       new Error("GitHub request failed (403): API rate limit exceeded."),
     );
@@ -162,7 +162,7 @@ describe("importSkillFromGithubAction", () => {
     await expect(
       importSkillFromGithubAction({}, githubForm()),
     ).resolves.toEqual({
-      error: "GitHub request failed (403): API rate limit exceeded.",
+      error: "invalidUpload",
     });
     expect(mocks.create).not.toHaveBeenCalled();
     expect(mocks.transaction).not.toHaveBeenCalled();

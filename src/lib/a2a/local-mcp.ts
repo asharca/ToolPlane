@@ -19,11 +19,8 @@ import {
 import { assertLocalRuntimeToken } from "./local-runtime";
 import { LOCAL_LIMITS } from "./local-policy";
 import { Rpc } from "./validation";
-import {
-  executeLocalMcpTool,
-  localCommunicationCatalog,
-} from "./local-mcp-tools";
-import { executePiCommunicationTool, piCommunicationCatalog } from "./pi-tools";
+import { executePiCommunicationTool } from "./pi-tools";
+import { piCommunicationCatalog } from "./pi-tool-catalog";
 import { A2AHttpError } from "./principal";
 
 const requests = new Map<string, { until: number; count: number }>();
@@ -92,19 +89,19 @@ export async function handleLocalMcp(req: Request, taskId: string) {
         { error: "Credentials are not task content" },
         { status: 400, headers },
       );
-    const native = authority.row.executionBackend === "pi-harness";
+    if (authority.row.executionBackend !== "pi-sdk")
+      return Response.json(
+        { error: "Retired local execution is read-only." },
+        { status: 410, headers },
+      );
     const enabled = await db.agent.count({
       where: {
         id: authority.grant.agentId,
         workspaceId: authority.grant.workspaceId,
-        OR: [{ a2aInternalEnabled: true }, { subAgents: { some: {} } }],
+        a2aOutboundEnabled: true,
       },
     });
-    const tools = enabled
-      ? native
-        ? piCommunicationCatalog
-        : localCommunicationCatalog
-      : [];
+    const tools = enabled ? piCommunicationCatalog : [];
     const server = new Server(
       { name: "toolplane-native-a2a", version: "1.0.0" },
       { capabilities: { tools: {} } },
@@ -132,10 +129,11 @@ export async function handleLocalMcp(req: Request, taskId: string) {
         : undefined;
       try {
         if (!known) throw new Error("Unknown collaboration tool");
-        const execute = native
-          ? executePiCommunicationTool
-          : executeLocalMcpTool;
-        const result = await execute(token, request.params.name, args);
+        const result = await executePiCommunicationTool(
+          token,
+          request.params.name,
+          args,
+        );
         const response = {
           content: [{ type: "text" as const, text: JSON.stringify(result) }],
           isError: false,

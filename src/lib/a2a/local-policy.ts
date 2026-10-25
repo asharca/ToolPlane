@@ -7,15 +7,18 @@ import {
   UnsupportedOperationError,
 } from "@a2a-js/sdk/errors";
 import { db } from "@/lib/db";
-import { isDedicatedSandboxRuntimeKind } from "@/lib/agents/runtime-kind";
+import { requireAgentRevision } from "@/lib/agents/revisions";
 import { ORDINARY_AGENT_FILTER } from "@/lib/agents/queries";
-import { readAgentPiPackageMcpPolicy } from "@/lib/agents/pi-package-mcp-access";
 import {
   A2A_SCOPES,
   isLocalGrant,
   type LocalA2AGrant,
   type TaskGrant,
 } from "./principal";
+import {
+  collaborationPolicy,
+  CollaborationApprovalRequiredError,
+} from "./collaboration-policy";
 
 export const LOCAL_LIMITS = {
   depth: 3,
@@ -76,6 +79,7 @@ export async function localTarget(
   workspaceId: string,
   agentId: string,
   entry?: LocalA2AGrant["entryPolicy"] | "delegation",
+  revisionId?: string,
 ) {
   if (entry && entry !== "delegation" && entry.sourceAgentId !== agentId)
     throw missing();
@@ -84,21 +88,18 @@ export async function localTarget(
       ...ORDINARY_AGENT_FILTER,
       id: agentId,
       workspaceId,
-      ...(!entry || (entry !== "delegation" && entry.kind === "channel")
-        ? { a2aInternalEnabled: true }
+      ...(!entry || entry === "delegation" || entry.kind === "channel"
+        ? { a2aInboundEnabled: true }
         : {}),
     },
     select: {
       id: true,
       name: true,
       runtimeKind: true,
-      systemPrompt: true,
-      model: true,
-      maxSteps: true,
-      disabledBuiltinTools: true,
-      provider: {
-        select: { id: true, format: true, baseUrl: true, apiKey: true },
-      },
+      a2aInboundEnabled: true,
+      a2aOutboundEnabled: true,
+      providerId: true,
+      modelProviders: { select: { providerId: true } },
       sandboxes: {
         select: {
           sandboxId: true,
@@ -107,143 +108,81 @@ export async function localTarget(
               workspaceId: true,
               kind: true,
               network: true,
-              image: true,
-              config: true,
             },
           },
         },
-      },
-      servers: {
-        orderBy: { deploymentId: "asc" },
-        select: { deploymentId: true },
       },
       skills: {
         orderBy: { installedSkillId: "asc" },
         select: { installedSkillId: true },
       },
-      toolkits: {
-        orderBy: { toolkitId: "asc" },
-        select: {
-          toolkit: {
-            select: {
-              servers: {
-                orderBy: { deploymentId: "asc" },
-                select: { deploymentId: true },
-              },
-              skills: {
-                orderBy: { installedSkillId: "asc" },
-                select: { installedSkillId: true },
-              },
-            },
-          },
-        },
-      },
       subAgents: { orderBy: { childId: "asc" }, select: { childId: true } },
-      piPackages: {
-        orderBy: { marketInstallId: "asc" },
-        select: {
-          marketInstallId: true,
-          releaseId: true,
-          release: { select: { checksum: true } },
-        },
-      },
     },
   });
   if (
-    !agent ||
-    !isDedicatedSandboxRuntimeKind(agent.runtimeKind) ||
-    !agent.provider ||
-    !agent.model ||
+    agent?.runtimeKind !== "pi-sdk" ||
     agent.sandboxes.length !== 1 ||
     agent.sandboxes[0].sandbox.workspaceId !== workspaceId ||
     agent.sandboxes[0].sandbox.kind !== "docker" ||
     agent.sandboxes[0].sandbox.network === "none"
   )
     throw missing();
-  const packagePolicy =
-    agent.runtimeKind === "pi-sdk" && agent.piPackages.length
-      ? await readAgentPiPackageMcpPolicy(tx, workspaceId, agentId)
-      : {};
-  const deployments = [
-    ...new Set([
-      ...[
-        ...agent.servers,
-        ...agent.toolkits.flatMap((t) => t.toolkit.servers),
-      ].map((r) => r.deploymentId),
-      ...Object.keys(packagePolicy),
-    ]),
-  ].sort();
-  const skills = [
-    ...new Set(
-      [...agent.skills, ...agent.toolkits.flatMap((t) => t.toolkit.skills)].map(
-        (r) => r.installedSkillId,
-      ),
-    ),
-  ].sort();
-  // Database-side digests avoid materializing potentially large secret-bearing bundles.
-  const dependencies = await tx.$queryRaw<
-    Array<{ kind: string; id: string; hash: string }>
-  >`
-    SELECT 'deployment' AS kind, d.id, encode(sha256(convert_to(jsonb_build_array(d.source, d."sourceRef", d."installCfg", d."mcpToolExposure", d."mcpAllowedTools",
-      (SELECT jsonb_agg(to_jsonb(f) ORDER BY f.id) FROM "DeploymentConfigFile" f WHERE f."deploymentId"=d.id))::text, 'UTF8')), 'hex') AS hash
-      FROM "Deployment" d WHERE d."workspaceId"=${workspaceId} AND d.id = ANY(${deployments}::text[])
-    UNION ALL
-    SELECT 'skill' AS kind, s.id, encode(sha256(convert_to(jsonb_build_array(to_jsonb(s), to_jsonb(k))::text, 'UTF8')), 'hex') AS hash
-      FROM "InstalledSkill" s LEFT JOIN "Skill" k ON k.id=s."skillId"
-      WHERE s."workspaceId"=${workspaceId} AND s.id = ANY(${skills}::text[])
-    ORDER BY kind, id`;
-  if (dependencies.length !== deployments.length + skills.length)
+  const revision = await requireAgentRevision(tx, agentId, revisionId);
+  const config = revision.config;
+  if (
+    (!entry || entry === "delegation" || entry.kind === "channel") &&
+    !config.a2a.inboundEnabled
+  )
     throw missing();
-  // Preserve the exact pre-SDK serialization for persisted grants of every old runtime.
-  const { piPackages, ...legacyAgent } = agent;
-  const fingerprintAgent =
-    agent.runtimeKind === "pi-sdk"
-      ? {
-          ...legacyAgent,
-          sdkVersion: "0.87.1",
-          ...(Object.keys(packagePolicy).length
-            ? {
-                packageMcpPolicy: Object.fromEntries(
-                  Object.entries(packagePolicy).sort(([a], [b]) =>
-                    a.localeCompare(b),
-                  ),
-                ),
-              }
-            : {}),
-          piPackages: piPackages
-            .map((binding) => ({
-              marketInstallId: binding.marketInstallId,
-              releaseId: binding.releaseId,
-              checksum: binding.release.checksum,
-            }))
-            .sort((a, b) =>
-              a.marketInstallId < b.marketInstallId
-                ? -1
-                : a.marketInstallId > b.marketInstallId
-                  ? 1
-                  : 0,
-            ),
-        }
-      : legacyAgent;
+  const sandbox = agent.sandboxes[0];
+  if (
+    sandbox.sandboxId !== config.sandboxTemplateId ||
+    !config.providerId ||
+    !config.model ||
+    (agent.providerId !== config.providerId &&
+      !agent.modelProviders.some(
+        (link) => link.providerId === config.providerId,
+      ))
+  )
+    throw missing();
+  const skills = config.skills
+    .filter((skill) =>
+      agent.skills.some(
+        (link) => link.installedSkillId === skill.installedSkillId,
+      ),
+    )
+    .map((skill) => skill.installedSkillId);
   const binding = createHash("sha256")
-    .update(JSON.stringify({ agent: fingerprintAgent, dependencies }))
+    .update(JSON.stringify([agent.id, revision.id]))
     .digest("hex");
   return {
     id: agent.id,
     name: agent.name,
     binding,
+    agentRevisionId: revision.id,
     sandboxId: agent.sandboxes[0].sandboxId,
-    providerId: agent.provider.id,
-    targets: agent.subAgents.map((s) => s.childId),
+    providerId: config.providerId,
+    targets:
+      config.a2a.outboundEnabled && agent.a2aOutboundEnabled
+        ? config.a2a.policy.targets
+            .filter((target) => target.kind === "local")
+            .map((target) => target.targetId)
+            .filter((id) => agent.subAgents.some((link) => link.childId === id))
+        : [],
+    capabilityIds: skills,
   };
 }
+/** Recheck ancestor policies against final depth, including any remote leaf. */
 export async function assertLocalGrant(
   grant: LocalA2AGrant,
   tx: Database = db,
+  delegationDepth = grant.ancestorTaskIds.length,
 ) {
   if (
     grant.expiresAt <= Date.now() ||
-    grant.ancestorTaskIds.length > LOCAL_LIMITS.depth ||
+    !Number.isSafeInteger(delegationDepth) ||
+    delegationDepth < grant.ancestorTaskIds.length ||
+    delegationDepth > LOCAL_LIMITS.depth ||
     grant.ancestorTaskIds.length !== grant.ancestorAgentIds.length
   )
     throw missing();
@@ -262,13 +201,21 @@ export async function assertLocalGrant(
   )
     throw missing();
   await assertLocalActor(tx, grant.workspaceId, grant.actorId);
+  if (!grant.agentRevisionId) throw missing();
   if (grant.entryPolicy)
     await (await import("./entry-policy")).assertEntryPolicy(tx, grant);
   const entry =
     grant.ancestorTaskIds.length === 0 ? grant.entryPolicy : "delegation";
   if (
-    (await localTarget(tx, grant.workspaceId, grant.agentId, entry)).binding !==
-    grant.targetBinding
+    (
+      await localTarget(
+        tx,
+        grant.workspaceId,
+        grant.agentId,
+        entry,
+        grant.agentRevisionId,
+      )
+    ).binding !== grant.targetBinding
   )
     throw missing();
   for (let index = 0; index < grant.ancestorTaskIds.length; index++) {
@@ -301,8 +248,18 @@ export async function assertLocalGrant(
       authority.ancestorTaskIds.length === 0
         ? authority.entryPolicy
         : "delegation",
+      authority.agentRevisionId,
     );
     const next = grant.ancestorAgentIds[index + 1] ?? grant.agentId;
+    const policy = await collaborationPolicy(
+      tx,
+      grant.workspaceId,
+      authority.agentId,
+      "local",
+      next,
+      ancestor.id,
+    );
+    if (delegationDepth > policy.maxDepth) throw missing();
     if (
       current.binding !== authority.targetBinding ||
       !current.targets.includes(next)
@@ -322,6 +279,7 @@ export async function createLocalRootGrant(
     workspaceId,
     agentId,
     actorId,
+    agentRevisionId: target.agentRevisionId,
     targetBinding: target.binding,
     ownerKey: localOwnerKey(workspaceId, agentId, actorId),
     expiresAt: Date.now() + 840_000,
@@ -342,12 +300,31 @@ export async function createLocalEntryGrant(
   entry: NonNullable<LocalA2AGrant["entryPolicy"]>,
 ): Promise<LocalA2AGrant> {
   await assertLocalActor(tx, workspaceId, actorId);
-  const target = await localTarget(tx, workspaceId, agentId, entry);
+  const owner =
+    entry.kind === "work"
+      ? await tx.workSession.findFirst({
+          where: { id: entry.sourceId, agentId, workspaceId },
+          select: { agentRevisionId: true, legacyRevisionUnresolved: true },
+        })
+      : await tx.conversation.findFirst({
+          where: { id: entry.sourceId, agentId, agent: { workspaceId } },
+          select: { agentRevisionId: true, legacyRevisionUnresolved: true },
+        });
+  if (!owner?.agentRevisionId || owner.legacyRevisionUnresolved)
+    throw missing();
+  const target = await localTarget(
+    tx,
+    workspaceId,
+    agentId,
+    entry,
+    owner.agentRevisionId,
+  );
   return {
     kind: "local",
     workspaceId,
     agentId,
     actorId,
+    agentRevisionId: target.agentRevisionId,
     entryPolicy: entry,
     targetBinding: target.binding,
     ownerKey: localEntryOwnerKey(workspaceId, agentId, actorId, entry),
@@ -387,17 +364,38 @@ export async function childGrant(
     authority.ancestorTaskIds.length === 0
       ? authority.entryPolicy
       : "delegation",
+    authority.agentRevisionId,
   );
   if (!caller.targets.includes(targetId)) throw missing();
+  const policy = await collaborationPolicy(
+    db,
+    authority.workspaceId,
+    authority.agentId,
+    "local",
+    targetId,
+    parent.id,
+  );
+  if (chain.length > policy.maxDepth)
+    throw new CollaborationApprovalRequiredError(
+      "Approved delegation depth exceeded.",
+    );
   const target = await localTarget(
     db,
     authority.workspaceId,
     targetId,
     "delegation",
   );
+  const capabilities = [...new Set(target.capabilityIds)];
+  if (capabilities.some((id) => !policy.capabilityIds.includes(id)))
+    throw new CollaborationApprovalRequiredError(
+      "Target capabilities exceed the approved policy.",
+    );
   return {
     ...authority,
     agentId: targetId,
+    agentRevisionId: target.agentRevisionId,
+    timeoutSeconds: Math.min(authority.timeoutSeconds, policy.timeoutSeconds),
+    maxConcurrent: Math.min(authority.maxConcurrent, policy.maxConcurrent),
     targetBinding: target.binding,
     parentTaskId: parentId,
     rootTaskId: parent.rootTaskId ?? parent.id,

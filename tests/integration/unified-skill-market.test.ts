@@ -284,9 +284,7 @@ describe.sequential("unified skill market", () => {
         targetReleaseId: firstReleaseId,
         currentReleaseId: firstReleaseId,
       }),
-    ).rejects.toMatchObject({
-      code: "listing_conflict",
-    } satisfies Partial<MarketError>);
+    ).resolves.toMatchObject({ currentReleaseId: firstReleaseId });
 
     await ignoreMarketUpdate({
       installId,

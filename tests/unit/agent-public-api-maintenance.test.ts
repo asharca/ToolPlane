@@ -24,8 +24,6 @@ const m = vi.hoisted(() => ({
   stop: vi.fn(),
   deleteAgent: vi.fn(),
   abort: vi.fn(),
-  deletePublic: vi.fn(),
-  prune: vi.fn(),
 }));
 vi.mock("@/lib/db", () => {
   const db = {
@@ -63,17 +61,10 @@ vi.mock("@/lib/agents/mutations", () => ({ deleteAgent: m.deleteAgent }));
 vi.mock("@/lib/agents/public-api/run-control", () => ({
   abortAgentApiRun: m.abort,
 }));
-vi.mock("@/lib/agents/public-api/conversations", () => ({
-  deleteAgentConversationForPrincipal: m.deletePublic,
-}));
-vi.mock("@/lib/agents/public-api/rate-limit", () => ({
-  pruneAgentApiUsageBuckets: m.prune,
-}));
 import {
   cleanupAgentEndpointRuntimeIfUnused as cleanup,
   stopAgentEndpointRuntimeIfIdle as stop,
   cleanupAgentEndpointRuntimesForSource as source,
-  runAgentApiMaintenance as maintenance,
   runAgentApiIdleRuntimeMaintenance as idle,
 } from "@/lib/agents/public-api/maintenance";
 const now = new Date("2026-10-18T10:00:00Z");
@@ -112,8 +103,6 @@ beforeEach(() => {
   m.deleteRuns.mockResolvedValue({ count: 2 });
   m.stopped.mockResolvedValue({ id: "runtime" });
   m.cleanup.mockResolvedValue(true);
-  m.prune.mockResolvedValue(7);
-  m.deletePublic.mockResolvedValue(true);
 });
 afterEach(() => vi.useRealTimers());
 describe("unused public runtime cleanup", () => {
@@ -364,105 +353,10 @@ describe("source-agent deletion drain", () => {
     },
   );
 });
-describe("cross-worker maintenance leases", () => {
-  it("does nothing when another worker owns retention or idle maintenance", async () => {
-    expect(await maintenance(now)).toEqual({
-      conversations: 0,
-      runs: 0,
-      runtimes: 0,
-      usageBuckets: 0,
-    });
+describe("idle maintenance leases", () => {
+  it("does nothing while another worker owns idle maintenance", async () => {
     expect(await idle(now)).toBe(0);
     expect(m.list).not.toHaveBeenCalled();
-    expect(m.prune).not.toHaveBeenCalled();
-  });
-  it("prunes expired transcripts and runs, aborts timed-out workers and reclaims deduplicated allocations", async () => {
-    m.raw
-      .mockResolvedValueOnce([{ name: "retention" }])
-      .mockResolvedValueOnce([{ id: "stale", publicId: "stale-public" }])
-      .mockResolvedValueOnce([{ id: "conversation" }])
-      .mockResolvedValueOnce([{ id: "run" }]);
-    const endpoint = {
-      id: "endpoint",
-      publicId: "public",
-      workspaceId: "workspace",
-      sourceAgentId: "source",
-      currentRevisionId: null,
-      rpmLimit: 10,
-      dailyRequestLimit: 20,
-      maxConcurrent: 1,
-      timeoutSeconds: 60,
-      retentionDays: 30,
-    };
-    m.conversations.mockResolvedValue([
-      {
-        id: "conversation",
-        publicId: "public-conversation",
-        clientId: "client",
-        runtimeAllocationId: "allocation",
-        endpoint,
-      },
-    ]);
-    m.list.mockResolvedValue([{ id: "allocation" }]);
-    expect(await maintenance(now)).toEqual({
-      conversations: 1,
-      runs: 2,
-      runtimes: 1,
-      usageBuckets: 7,
-    });
-    expect(m.abort).toHaveBeenCalledWith("stale-public");
-    expect(m.deletePublic).toHaveBeenCalledWith(
-      expect.objectContaining({
-        workspaceId: "workspace",
-        clientId: "client",
-        revisionId: "",
-        scopes: [],
-      }),
-      "public-conversation",
-    );
-    expect(m.cleanup).toHaveBeenCalledTimes(1);
-    expect(m.release).toHaveBeenCalledWith({
-      where: { name: "retention", ownerId: expect.any(String) },
-    });
-  });
-  it.each([false, "error"])(
-    "continues retention after incomplete conversation deletion: %s",
-    async (outcome) => {
-      m.raw
-        .mockResolvedValueOnce([{ name: "retention" }])
-        .mockResolvedValue([]);
-      m.conversations.mockResolvedValue([
-        {
-          id: "conversation",
-          publicId: "public",
-          clientId: "client",
-          runtimeAllocationId: "allocation",
-          endpoint: { id: "endpoint", currentRevisionId: "revision" },
-        },
-      ]);
-      if (outcome === false) m.deletePublic.mockResolvedValue(false);
-      else {
-        m.deletePublic.mockRejectedValue(new Error("busy"));
-        m.touch.mockRejectedValue(new Error("retry later"));
-      }
-      expect(await maintenance(now)).toMatchObject({
-        conversations: 0,
-        runs: 0,
-        runtimes: 1,
-      });
-      if (outcome === "error")
-        expect(m.touch).toHaveBeenCalledWith({
-          where: { id: "conversation" },
-          data: { updatedAt: now },
-        });
-    },
-  );
-  it("releases a lease even if pruning fails and release itself fails", async () => {
-    m.raw.mockResolvedValueOnce([{ name: "retention" }]).mockResolvedValue([]);
-    m.prune.mockRejectedValue(new Error("usage unavailable"));
-    m.release.mockRejectedValue(new Error("lease unavailable"));
-    await expect(maintenance(now)).rejects.toThrow("usage unavailable");
-    expect(m.release).toHaveBeenCalled();
   });
   it("counts only stopped idle runtimes and releases its lease", async () => {
     m.raw

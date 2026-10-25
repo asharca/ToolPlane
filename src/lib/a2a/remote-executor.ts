@@ -35,7 +35,7 @@ import {
   interruptTask,
   recordTaskSettled,
 } from "./store";
-import { terminal, settled, taskEvent } from "./model";
+import { terminal, settled, taskEvent, stampArtifactProvenance } from "./model";
 import type { TaskExecutor } from "./executor";
 
 async function clientFor(row: A2ATask, cancellation = false) {
@@ -99,6 +99,17 @@ async function recordObservation(
     )
       throw new RemoteA2AError("Remote task binding changed.");
     const task = Task.fromJSON(row.snapshot);
+    const previousRemote = task.metadata?.toolplaneRemote as
+      | { state?: string }
+      | undefined;
+    // Keep the peer's actual state separate from the local scheduling projection.
+    task.metadata = {
+      ...task.metadata,
+      toolplaneRemote: {
+        state: TaskState[observation.state],
+        outcome: "observed",
+      },
+    };
     const state =
       observation.state === TaskState.TASK_STATE_SUBMITTED
         ? TaskState.TASK_STATE_WORKING
@@ -109,6 +120,7 @@ async function recordObservation(
     const nextPhase = terminal(state) ? "done" : "remote-waiting";
     if (!task.status) throw new RemoteA2AError();
     const changed =
+      previousRemote?.state !== TaskState[observation.state] ||
       task.status?.state !== state ||
       task.status?.message?.parts
         .map((part) => part.content?.value)
@@ -138,7 +150,14 @@ async function recordObservation(
       };
     }
     if (state === TaskState.TASK_STATE_COMPLETED && observation.text) {
-      task.artifacts.push(textArtifact(observation.text));
+      task.artifacts.push(
+        stampArtifactProvenance(textArtifact(observation.text), {
+          taskId: id,
+          contextId: task.contextId,
+          targetId: grant.remoteAgentId,
+          targetKind: "remote",
+        }),
+      );
     }
     const fields = {
       remoteTaskId: observation.taskId,

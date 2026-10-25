@@ -36,7 +36,7 @@ export async function PiCatalogNavigation({
         </ButtonLink>
       ))}
       <ButtonLink
-        href={`/app/${encodeURIComponent(workspace)}/toolkits/pi-packages`}
+        href={`/app/${encodeURIComponent(workspace)}/market/compose`}
         variant="secondary"
         size="sm"
       >

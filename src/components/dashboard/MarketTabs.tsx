@@ -1,26 +1,15 @@
 "use client";
 import { ButtonLink } from "@/components/motion/button";
 
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
-import {
-  Bot,
-  Brain,
-  MessageCircle,
-  PackageCheck,
-  Plug,
-  Puzzle,
-  Upload,
-  Wrench,
-} from "lucide-react";
+import { PackageCheck, Store, Upload } from "lucide-react";
 
-const TABS = [
-  { key: "mcp", labelKey: "mcp", icon: Plug },
-  { key: "skills", labelKey: "skills", icon: Brain },
-  { key: "agents", labelKey: "agents", icon: Bot },
-  { key: "assistants", labelKey: "assistants", icon: MessageCircle },
-  { key: "toolkits", labelKey: "toolkits", icon: Wrench },
-  { key: "pi-packages", labelKey: "piPackages", icon: Puzzle },
+const LIFECYCLE_TABS = [
+  { key: "discover", labelKey: "discover", icon: Store },
+  { key: "installed", labelKey: "installedResources", icon: PackageCheck },
+  { key: "updates", labelKey: "updates", icon: PackageCheck },
+  { key: "publish", labelKey: "publishManagement", icon: Upload },
 ] as const;
 
 export function MarketTabs({
@@ -32,72 +21,66 @@ export function MarketTabs({
 }) {
   const pathname = usePathname() ?? "";
   const t = useTranslations("console.market");
+  const searchParams = useSearchParams();
   const base = `/app/${encodeURIComponent(slug)}/market`;
+  const workspaceResources =
+    pathname === `${base}/installed` ||
+    pathname.startsWith(`${base}/installed/`) ||
+    pathname === `${base}/sources`;
+  const publications =
+    pathname === `${base}/publish` ||
+    pathname.startsWith(`${base}/publish/`) ||
+    pathname === `${base}/compose`;
 
   return (
-    <div className="flex min-w-0 items-center justify-between gap-2">
+    <div className="min-w-0 max-w-full">
       <nav
         aria-label={t("navigation")}
-        className="flex min-w-0 flex-1 overflow-x-auto lg:grid lg:grid-cols-6"
+        className="flex min-w-0 max-w-full gap-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        style={{ overflowX: "auto", overflowY: "hidden" }}
       >
-        {TABS.map((tab) => {
-          const href = `${base}/${tab.key}`;
-          const active = pathname === href || pathname.startsWith(`${href}/`);
+        {LIFECYCLE_TABS.map((tab) => {
+          const href =
+            tab.key === "discover"
+              ? base
+              : tab.key === "updates"
+                ? `${base}/installed?updates=1`
+                : `${base}/${tab.key}`;
+          const active =
+            tab.key === "discover"
+              ? (pathname === base || pathname.startsWith(`${base}/`)) &&
+                !workspaceResources &&
+                !publications
+              : tab.key === "updates"
+                ? pathname === `${base}/installed` &&
+                  searchParams.get("updates") === "1"
+                : tab.key === "installed"
+                  ? workspaceResources && searchParams.get("updates") !== "1"
+                  : publications;
           const Icon = tab.icon;
           return (
             <ButtonLink
               key={tab.key}
               href={href}
               aria-current={active ? "page" : undefined}
-              title={t(tab.labelKey)}
+              aria-label={
+                tab.key === "updates" && updateCount > 0
+                  ? `${t(tab.labelKey)} ${updateCount}`
+                  : undefined
+              }
               variant={active ? "secondary" : "ghost"}
               className="shrink-0 justify-start border-0"
             >
               <Icon className="size-4 shrink-0" />
-              <span className="truncate">{t(tab.labelKey)}</span>
+              <span>{t(tab.labelKey)}</span>
+              {tab.key === "updates" && updateCount > 0 ? (
+                <span className="rounded-full bg-(--color-warning) px-1.5 text-xs">
+                  {updateCount}
+                </span>
+              ) : null}
             </ButtonLink>
           );
         })}
-      </nav>
-
-      <nav
-        aria-label={t("managementNavigation")}
-        className="flex shrink-0 items-center gap-1"
-      >
-        <ButtonLink
-          href={`${base}/installed`}
-          aria-current={
-            pathname.startsWith(`${base}/installed`) ? "page" : undefined
-          }
-          title={t("installedResources")}
-          variant="ghost"
-          size="icon"
-          className="relative"
-        >
-          <PackageCheck className="size-4" />
-          <span className="sr-only">{t("installedResources")}</span>
-          {updateCount > 0 ? (
-            <span
-              role="img"
-              aria-label={t("updatesAvailable", { count: updateCount })}
-              className="absolute -right-1 -top-1 inline-flex min-w-4 items-center justify-center rounded-full bg-(--color-warning) px-1 text-[10px] font-semibold leading-4 text-foreground"
-            >
-              {updateCount}
-            </span>
-          ) : null}
-        </ButtonLink>
-        <ButtonLink
-          href={`${base}/publish`}
-          aria-current={
-            pathname.startsWith(`${base}/publish`) ? "page" : undefined
-          }
-          title={t("publishManagement")}
-          variant="ghost"
-          size="icon"
-        >
-          <Upload className="size-4" />
-          <span className="sr-only">{t("publishManagement")}</span>
-        </ButtonLink>
       </nav>
     </div>
   );

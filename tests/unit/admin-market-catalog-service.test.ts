@@ -40,7 +40,6 @@ import {
   getAdminAssistantTemplate,
   deleteAdminAssistantTemplate,
   updateAdminMarketListing,
-  updateAdminPublicToolkit,
 } from "@/lib/admin/market-catalog";
 const input: AdminAssistantTemplateInput = {
   slug: "helper",
@@ -171,7 +170,11 @@ describe("administrator assistant immutable releases", () => {
     );
     expect(m.release.mock.calls[0][0].data.manifest.assistant).toMatchObject({
       modelRequirement: { providerFormat: "openai", model: "gpt" },
-      mcpRequirements: [{ catalogSlug: "search", name: "Search" }],
+      modelParameters: null,
+      promptTemplates: [],
+      mcpRequirements: [
+        { catalogSlug: "search", name: "Search", allowedToolNames: [] },
+      ],
     });
   });
   it("translates only unique conflicts while preserving unknown failures", async () => {
@@ -355,51 +358,18 @@ describe("market listing moderation propagation", () => {
     );
   });
   it.each(["published", "disabled"] as const)(
-    "synchronizes source toolkit enabled state to %s",
+    "keeps retired Toolkit history immutable for %s requests",
     async (status) => {
       m.find.mockResolvedValue({
         ...listing,
         kind: "toolkit",
         sourceToolkitId: "t",
       });
-      await updateAdminMarketListing({ ...moderation, status });
-      expect(m.toolkitUpdate).toHaveBeenCalledWith({
-        where: { id: "t" },
-        data: {
-          enabled: status === "published",
-          categories: { set: [{ id: "c" }] },
-        },
-      });
+      await expect(
+        updateAdminMarketListing({ ...moderation, status }),
+      ).rejects.toMatchObject({ code: "invalid_config" });
+      expect(m.toolkitUpdate).not.toHaveBeenCalled();
+      expect(m.update).not.toHaveBeenCalled();
     },
   );
-  it("updates only existing public toolkits with audited previous categories", async () => {
-    m.toolkit.mockResolvedValueOnce(null).mockResolvedValueOnce({
-      id: "t",
-      enabled: true,
-      workspaceId: "w",
-      categories: [{ id: "old" }],
-    });
-    await expect(
-      updateAdminPublicToolkit({ id: "t", enabled: false, categoryIds: ["c"] }),
-    ).rejects.toMatchObject({ code: "not_found" });
-    await updateAdminPublicToolkit(
-      { id: "t", enabled: false, categoryIds: ["c"] },
-      "admin",
-    );
-    expect(m.toolkitUpdate).toHaveBeenCalledWith({
-      where: { id: "t" },
-      data: { enabled: false, categories: { set: [{ id: "c" }] } },
-    });
-    expect(m.audit).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        workspaceId: "w",
-        action: "market.toolkit.updated",
-        changes: {
-          before: { enabled: true, categoryIds: ["old"] },
-          after: { id: "t", enabled: false, categoryIds: ["c"] },
-        },
-      }),
-    );
-  });
 });

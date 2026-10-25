@@ -48,7 +48,7 @@ it("renders successive assistant text deltas before the response finishes", asyn
       ensureConversation={async () => "stream-test"}
       initialMessages={[]}
       ready
-      runtimeKind={null}
+      runtimeKind="pi-sdk"
       onStartBranch={vi.fn()}
     />,
   );
@@ -187,8 +187,9 @@ it("does not invent a duration for restored reasoning without timing data", asyn
           ],
         },
       ]}
-      ready
+      ready={false}
       runtimeKind={null}
+      readOnly
     />,
   );
   const activity = assertDefined(

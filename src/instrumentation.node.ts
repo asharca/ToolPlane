@@ -16,9 +16,7 @@ async function registerNodeOwned() {
   const g = globalThis as unknown as {
     __toolplaneStopTimers?: () => void;
     __mcpReconciled?: boolean;
-    __agentApiMaintenanceTimer?: ReturnType<typeof setInterval>;
     __agentApiIdleMaintenanceTimer?: ReturnType<typeof setInterval>;
-    __attachmentMaintenanceTimer?: ReturnType<typeof setInterval>;
     __logMaintenanceTimer?: ReturnType<typeof setInterval>;
     __piPackageSourceMaintenanceTimer?: NodeJS.Timeout;
   };
@@ -26,9 +24,7 @@ async function registerNodeOwned() {
   g.__mcpReconciled = true;
   g.__toolplaneStopTimers = () => {
     for (const timer of [
-      g.__attachmentMaintenanceTimer,
       g.__logMaintenanceTimer,
-      g.__agentApiMaintenanceTimer,
       g.__agentApiIdleMaintenanceTimer,
       g.__piPackageSourceMaintenanceTimer,
     ]) {
@@ -74,26 +70,6 @@ async function registerNodeOwned() {
       void maintain();
     }, 5 * 60_000);
     g.__piPackageSourceMaintenanceTimer.unref?.();
-  }
-  if (!g.__attachmentMaintenanceTimer) {
-    let running = false;
-    const maintain = async () => {
-      if (running || !runtimeCanOperate()) return;
-      running = true;
-      try {
-        await (
-          await import("@/lib/agents/upload-reservations")
-        ).maintainAttachmentUploads();
-      } catch (error) {
-        systemLog("error", "Attachment cleanup failed", error);
-      } finally {
-        running = false;
-      }
-    };
-    g.__attachmentMaintenanceTimer = setInterval(() => {
-      void maintain();
-    }, 60_000);
-    g.__attachmentMaintenanceTimer.unref?.();
   }
   const helpersCreatedBefore = new Date();
   // A materializer normally lives for only a few seconds. Unlike the broader
@@ -187,10 +163,6 @@ async function registerNodeOwned() {
       "@/lib/sandboxes/connector-broker"
     );
     await ensureConnectorBroker();
-    const { ensureHermesDashboardBroker } = await import(
-      "@/lib/agents/hermes/dashboard-broker"
-    );
-    await ensureHermesDashboardBroker();
     const { ensureSandboxNetwork } = await import("@/lib/process/supervisor");
     await ensureSandboxNetwork();
     const { cleanupHermesArchiveStaging } = await import(
@@ -224,39 +196,6 @@ async function registerNodeOwned() {
     systemLog("error", "[a2a] startup recovery failed");
   }
 
-  if (!g.__agentApiMaintenanceTimer) {
-    let running = false;
-    const maintain = async () => {
-      if (running || !runtimeCanOperate()) return;
-      running = true;
-      try {
-        const { runAgentApiMaintenance } = await import(
-          "@/lib/agents/public-api/maintenance"
-        );
-        const result = await runAgentApiMaintenance();
-        if (Object.values(result).some((count) => count > 0)) {
-          systemLog(
-            "info",
-            `[agent-api] retained-data cleanup removed ${result.conversations} conversation(s), ` +
-              `${result.runs} response(s), ${result.runtimes} runtime(s), and ` +
-              `${result.usageBuckets} usage bucket(s)`,
-          );
-        }
-      } catch (error) {
-        systemLog("error", "[agent-api] retained-data cleanup failed", error);
-      } finally {
-        running = false;
-      }
-    };
-    const first = setTimeout(() => {
-      void maintain();
-    }, 30_000);
-    first.unref?.();
-    g.__agentApiMaintenanceTimer = setInterval(() => {
-      void maintain();
-    }, 60 * 60_000);
-    g.__agentApiMaintenanceTimer.unref?.();
-  }
   if (!g.__agentApiIdleMaintenanceTimer) {
     let idleRunning = false;
     const stopIdleRuntimes = async () => {

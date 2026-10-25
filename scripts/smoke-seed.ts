@@ -10,7 +10,6 @@ import {
 } from "@/lib/agents/hermes/constants";
 import { hashPassword } from "@/lib/auth/password";
 import { DEFAULT_SANDBOX_IMAGE } from "@/lib/sandboxes/images";
-import { generateToken, hashToken, tokenPrefix } from "@/lib/auth/token-format";
 import {
   withMcpToolCatalog,
   type McpToolDefinition,
@@ -27,7 +26,6 @@ const MCP_SOURCE_TYPES = [
 const CATALOG_SERVER_SLUG = "smoke-catalog-memory";
 const SMOKE_AGENT_LISTINGS = [
   "smoke-research-copilot",
-  "smoke-hermes-operator",
   "smoke-code-quality-guardian",
   "smoke-incident-response-lead",
 ] as const;
@@ -1093,7 +1091,7 @@ async function createPublishedAgentListing(input: {
   });
 }
 
-async function main(): Promise<void> {
+export async function seedSmokeWorkspace(): Promise<void> {
   const email = "smoke@example.com";
   const hermesImage = resolveHermesImage(undefined);
   const leakedSkills = await db.skill.findMany({
@@ -1155,16 +1153,6 @@ async function main(): Promise<void> {
       name: "ToolPlane Starter Library",
       ownerId: user.id,
       members: { create: { userId: user.id, role: "owner" } },
-    },
-  });
-
-  const token = generateToken();
-  await db.apiToken.create({
-    data: {
-      userId: user.id,
-      name: "smoke",
-      prefix: tokenPrefix(token),
-      tokenHash: hashToken(token),
     },
   });
 
@@ -1269,6 +1257,8 @@ async function main(): Promise<void> {
             ? withMcpToolCatalog(seed.installCfg, seed.catalog.toolCatalog)
             : seed.installCfg) as Prisma.InputJsonValue,
           status: "stopped",
+          mcpToolExposure: "allowlist",
+          mcpAllowedTools: [],
         },
         select: { id: true },
       }),
@@ -1286,15 +1276,8 @@ async function main(): Promise<void> {
           ?.catalog?.toolCatalog ?? [],
       ) as Prisma.InputJsonValue,
       status: "stopped",
-    },
-    select: { id: true },
-  });
-  const promptStudioDeployment = await db.deployment.create({
-    data: {
-      workspaceId: ws.id,
-      name: "Prompt Studio",
-      source: null,
-      status: "stopped",
+      mcpToolExposure: "allowlist",
+      mcpAllowedTools: [],
     },
     select: { id: true },
   });
@@ -1326,9 +1309,9 @@ async function main(): Promise<void> {
     data: {
       workspaceId: ws.id,
       slug: "debug-starter",
-      name: "Debug Starter Kit",
+      name: "Historical Debug Starter Kit (read-only)",
       visibility: "private",
-      enabled: true,
+      enabled: false,
     },
     select: { id: true },
   });
@@ -1347,19 +1330,6 @@ async function main(): Promise<void> {
     }),
   ]);
 
-  const marketToolkit = await db.toolkit.create({
-    data: {
-      workspaceId: ws.id,
-      slug: "market-starter",
-      name: "Market Starter Kit",
-      visibility: "private",
-      enabled: true,
-      servers: { create: { deploymentId: catalogDeployment.id } },
-      skills: { create: { installedSkillId: installedSkills[0].id } },
-    },
-    select: { id: true },
-  });
-
   const libraryDeployments = await Promise.all(
     catalogMcps.map(({ seed, server }) => {
       const catalog = seed.catalog;
@@ -1375,6 +1345,8 @@ async function main(): Promise<void> {
             catalog.toolCatalog,
           ) as Prisma.InputJsonValue,
           status: "stopped",
+          mcpToolExposure: "allowlist",
+          mcpAllowedTools: [],
         },
         select: { id: true },
       });
@@ -1393,9 +1365,9 @@ async function main(): Promise<void> {
       data: {
         workspaceId: libraryWs.id,
         slug: "developer-essentials",
-        name: "Developer Essentials",
-        visibility: "public",
-        enabled: true,
+        name: "Historical Developer Essentials (read-only)",
+        visibility: "private",
+        enabled: false,
         categories: {
           connect: categoryConnections(categoryIds, [
             "developer-tools",
@@ -1418,9 +1390,9 @@ async function main(): Promise<void> {
       data: {
         workspaceId: libraryWs.id,
         slug: "research-desk",
-        name: "Research Desk",
-        visibility: "public",
-        enabled: true,
+        name: "Historical Research Desk (read-only)",
+        visibility: "private",
+        enabled: false,
         categories: {
           connect: categoryConnections(categoryIds, [
             "research",
@@ -1442,54 +1414,38 @@ async function main(): Promise<void> {
     }),
   ]);
 
-  const [researchAssistant, engineeringAssistant, operationsAssistant] =
-    await Promise.all([
-      db.chatAssistant.create({
-        data: {
-          workspaceId: ws.id,
-          name: "Research Assistant",
-          systemPrompt:
-            "Research questions carefully, verify uncertain claims, and return concise source-backed answers.",
-          maxSteps: 10,
-          mcpGrants: {
-            create: [catalogDeployment.id, customDeployments[3].id].map(
-              (deploymentId) => ({ deploymentId }),
-            ),
-          },
-        },
-        select: { id: true, name: true, systemPrompt: true, maxSteps: true },
-      }),
-      db.chatAssistant.create({
-        data: {
-          workspaceId: ws.id,
-          name: "Engineering Assistant",
-          systemPrompt:
-            "Help implement and review software changes with small diffs, explicit checks, and clear tradeoffs.",
-          maxSteps: 12,
-          mcpGrants: {
-            create: [customDeployments[2].id, customDeployments[6].id].map(
-              (deploymentId) => ({ deploymentId }),
-            ),
-          },
-        },
-        select: { id: true },
-      }),
-      db.chatAssistant.create({
-        data: {
-          workspaceId: ws.id,
-          name: "Operations Assistant",
-          systemPrompt:
-            "Triage operational issues from evidence, protect production data, and prioritize reversible mitigation.",
-          maxSteps: 10,
-          mcpGrants: {
-            create: [catalogDeployment.id, customDeployments[4].id].map(
-              (deploymentId) => ({ deploymentId }),
-            ),
-          },
-        },
-        select: { id: true },
-      }),
-    ]);
+  const [researchAssistant] = await Promise.all([
+    db.chatAssistant.create({
+      data: {
+        workspaceId: ws.id,
+        name: "Research Assistant",
+        systemPrompt:
+          "Research questions carefully, verify uncertain claims, and return concise source-backed answers.",
+        maxSteps: 10,
+      },
+      select: { id: true, name: true, systemPrompt: true, maxSteps: true },
+    }),
+    db.chatAssistant.create({
+      data: {
+        workspaceId: ws.id,
+        name: "Engineering Assistant",
+        systemPrompt:
+          "Help implement and review software changes with small diffs, explicit checks, and clear tradeoffs.",
+        maxSteps: 12,
+      },
+      select: { id: true },
+    }),
+    db.chatAssistant.create({
+      data: {
+        workspaceId: ws.id,
+        name: "Operations Assistant",
+        systemPrompt:
+          "Triage operational issues from evidence, protect production data, and prioritize reversible mitigation.",
+        maxSteps: 10,
+      },
+      select: { id: true },
+    }),
+  ]);
 
   const assistantManifest = {
     schemaVersion: 1,
@@ -1680,13 +1636,11 @@ async function main(): Promise<void> {
       workspaceId: ws.id,
       name: "Research Copilot",
       slug: "research-copilot",
-      runtimeKind: "pi",
+      runtimeKind: "pi-sdk",
+      currentRevisionVersion: 0,
       systemPrompt:
         "Research technical questions from primary sources and return concise citations.",
       maxSteps: 10,
-      servers: { create: { deploymentId: catalogDeployment.id } },
-      skills: { create: { installedSkillId: installedSkills[0].id } },
-      toolkits: { create: { toolkitId: marketToolkit.id } },
     },
     select: {
       id: true,
@@ -1700,13 +1654,11 @@ async function main(): Promise<void> {
   const hermesAgent = await db.agent.create({
     data: {
       workspaceId: ws.id,
-      name: "Hermes Operations Copilot",
-      slug: "hermes-operations-copilot",
+      name: "Historical Hermes Operations (read-only)",
+      slug: "hermes-operations-history",
       runtimeKind: HERMES_RUNTIME_KIND,
+      retiredAt: new Date(),
       maxSteps: 12,
-      servers: { create: { deploymentId: catalogDeployment.id } },
-      skills: { create: { installedSkillId: installedSkills[0].id } },
-      toolkits: { create: { toolkitId: marketToolkit.id } },
     },
     select: { id: true, name: true, slug: true, maxSteps: true },
   });
@@ -1715,12 +1667,11 @@ async function main(): Promise<void> {
       workspaceId: ws.id,
       name: "Code Quality Guardian",
       slug: "code-quality-guardian",
-      runtimeKind: "pi",
+      runtimeKind: "pi-sdk",
+      currentRevisionVersion: 0,
       systemPrompt:
         "Review code changes for correctness, security, maintainability, and missing verification.",
       maxSteps: 10,
-      servers: { create: { deploymentId: catalogDeployment.id } },
-      skills: { create: { installedSkillId: installedSkills[0].id } },
     },
     select: {
       id: true,
@@ -1735,12 +1686,11 @@ async function main(): Promise<void> {
       workspaceId: ws.id,
       name: "Incident Response Lead",
       slug: "incident-response-lead",
-      runtimeKind: "pi",
+      runtimeKind: "pi-sdk",
+      currentRevisionVersion: 0,
       systemPrompt:
         "Coordinate incident triage from evidence, reduce impact safely, and preserve a clear decision log.",
       maxSteps: 12,
-      servers: { create: { deploymentId: catalogDeployment.id } },
-      skills: { create: { installedSkillId: installedSkills[2].id } },
     },
     select: {
       id: true,
@@ -1750,24 +1700,6 @@ async function main(): Promise<void> {
       maxSteps: true,
     },
   });
-  await Promise.all([
-    db.agentServer.createMany({
-      data: [piAgent, hermesAgent, qualityAgent, incidentAgent].map(
-        ({ id: agentId }) => ({
-          agentId,
-          deploymentId: promptStudioDeployment.id,
-        }),
-      ),
-    }),
-    db.chatAssistantMcpGrant.createMany({
-      data: [researchAssistant, engineeringAssistant, operationsAssistant].map(
-        ({ id: assistantId }) => ({
-          assistantId,
-          deploymentId: promptStudioDeployment.id,
-        }),
-      ),
-    }),
-  ]);
   for (const agent of [piAgent, qualityAgent, incidentAgent]) {
     const deployment = await db.deployment.create({
       data: {
@@ -1837,7 +1769,7 @@ async function main(): Promise<void> {
       sandboxId: hermesSandbox.id,
       kind: HERMES_RUNTIME_KIND,
       image: hermesImage,
-      status: "setup_required",
+      status: "stopped",
     },
     select: { id: true },
   });
@@ -1865,16 +1797,8 @@ async function main(): Promise<void> {
     sourceRef: "@modelcontextprotocol/server-memory",
     requiredEnv: [],
     publicEnv: {},
-    mcpToolExposure: "all",
+    mcpToolExposure: "allowlist",
     mcpAllowedTools: [],
-  };
-  const marketManifestToolkit: SmokeAgentManifest["toolkits"][number] = {
-    key: "toolkit_1",
-    name: "Market Starter Kit",
-    slug: "market-starter",
-    enabled: true,
-    deploymentKeys: ["deployment_1"],
-    skillKeys: ["skill_1"],
   };
   const piManifest: SmokeAgentManifest = {
     schemaVersion: 1,
@@ -1890,36 +1814,13 @@ async function main(): Promise<void> {
         runtime: { kind: "pi" },
         deploymentKeys: ["deployment_1"],
         skillKeys: ["skill_1"],
-        toolkitKeys: ["toolkit_1"],
+        toolkitKeys: [],
         subAgentKeys: [],
       },
     ],
     deployments: [catalogManifestDeployment],
     skills: [portableSkill("skill_1", skillSeeds[0])],
-    toolkits: [marketManifestToolkit],
-  };
-  const hermesManifest: SmokeAgentManifest = {
-    schemaVersion: 1,
-    rootAgentKey: "agent_1",
-    agents: [
-      {
-        key: "agent_1",
-        name: hermesAgent.name,
-        slug: hermesAgent.slug,
-        systemPrompt: null,
-        maxSteps: hermesAgent.maxSteps,
-        modelRequirement: null,
-        runtime: { kind: "hermes", image: hermesImage },
-        modelProviderRequirements: [],
-        deploymentKeys: ["deployment_1"],
-        skillKeys: ["skill_1"],
-        toolkitKeys: ["toolkit_1"],
-        subAgentKeys: [],
-      },
-    ],
-    deployments: [catalogManifestDeployment],
-    skills: [portableSkill("skill_1", skillSeeds[0])],
-    toolkits: [marketManifestToolkit],
+    toolkits: [],
   };
   const qualityManifest: SmokeAgentManifest = {
     ...piManifest,
@@ -1971,24 +1872,8 @@ async function main(): Promise<void> {
     createPublishedAgentListing({
       workspaceId: ws.id,
       publishedById: user.id,
-      sourceAgentId: hermesAgent.id,
-      directorySlug: SMOKE_AGENT_LISTINGS[1],
-      slug: hermesAgent.slug,
-      name: hermesAgent.name,
-      summary:
-        "A Hermes runtime template that starts from an isolated, credential-free setup state.",
-      tags: ["seed", "hermes", "operations"],
-      categoryIds: categoryConnections(categoryIds, [
-        "operations",
-        "productivity",
-      ]).map(({ id }) => id),
-      manifest: hermesManifest,
-    }),
-    createPublishedAgentListing({
-      workspaceId: ws.id,
-      publishedById: user.id,
       sourceAgentId: qualityAgent.id,
-      directorySlug: SMOKE_AGENT_LISTINGS[2],
+      directorySlug: SMOKE_AGENT_LISTINGS[1],
       slug: qualityAgent.slug,
       name: qualityAgent.name,
       summary:
@@ -2005,7 +1890,7 @@ async function main(): Promise<void> {
       workspaceId: ws.id,
       publishedById: user.id,
       sourceAgentId: incidentAgent.id,
-      directorySlug: SMOKE_AGENT_LISTINGS[3],
+      directorySlug: SMOKE_AGENT_LISTINGS[2],
       slug: incidentAgent.slug,
       name: incidentAgent.name,
       summary:
@@ -2019,11 +1904,12 @@ async function main(): Promise<void> {
     }),
   ]);
 
-  console.log(`TOKEN=${token}`);
   console.log(
     `Seeded ${catalogMcps.length} market MCPs, ${catalogSkills.length} market skills, ` +
-      "2 public toolkits, 4 agents/listings, 3 chat assistants, 1 assistant listing, " +
-      "3 Docker workspaces, the Hermes runtime, and observability test data.",
+      "3 native Pi drafts/listings, 3 ungranted chat assistant drafts, 1 assistant listing, " +
+      "3 stopped Docker templates, read-only Hermes/Toolkit history, and observability fixtures. " +
+      "No API token issued, capability grants applied, immutable Agent revision published, or runtime started; " +
+      "configure and authorize a draft, then Prepare/review/Apply before execution.",
   );
   await db.$disconnect();
 }
@@ -2032,7 +1918,7 @@ if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
-  main()
+  seedSmokeWorkspace()
     .then(() => process.exit(0))
     .catch((err) => {
       console.error(err);

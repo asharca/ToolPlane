@@ -1,29 +1,17 @@
 import "server-only";
 import { TaskState } from "@a2a-js/sdk";
 import type { TaskExecutor } from "@/lib/a2a/executor";
-import { localTaskOptions } from "@/lib/a2a/local-task-options";
-import { assertLiveGrant, isLocalGrant } from "@/lib/a2a/principal";
-import type { TaskGrant } from "@/lib/a2a/principal";
-import {
-  bindPiHarnessOperation,
-  projectPiHarnessProgress,
-} from "@/lib/a2a/store";
-import { A2A_LIMITS, textArtifact } from "@/lib/a2a/model";
+import { isLocalGrant, type TaskGrant } from "@/lib/a2a/principal";
 import { db } from "@/lib/db";
 import {
   assertRuntimeOwner,
   runtimeAbortSignal,
   runtimeCanOperate,
 } from "@/lib/runtime/ownership-state";
-import { withSandboxExecutionLease } from "./sandbox-execution-gate";
-import {
-  preparePiHarnessOperation,
-  runPiHarnessOperation,
-  cancelPiHarnessOperation,
-} from "./sandbox-runtime";
-import type { PiHarnessOperationResult } from "./sandbox-runtime";
+import { findAgentConversationSandbox } from "./conversation-sandbox";
+import { cancelPiHarnessOperation } from "./sandbox-runtime";
 
-/** Infrastructure interruption, never a user cancellation or model/storage error. */
+/** Infrastructure interruption; retained old operations must not be replayed. */
 export class PiRuntimeInterruptedError extends Error {
   constructor(
     message = "Pi runtime interrupted; the original operation remains recoverable.",
@@ -41,125 +29,65 @@ A2A cancellation is not confirmed until the task reports a terminal state. Never
 Native tool calls are authorized by the platform under the task's existing permissions. A denied operation must not be rewritten to evade authorization.
 An interrupted unsafe tool has an uncertain result; never claim it succeeded or repeat it blindly.`;
 
-const terminalStates: Record<PiHarnessOperationResult["status"], TaskState> = {
-  completed: TaskState.TASK_STATE_COMPLETED,
-  declined: TaskState.TASK_STATE_REJECTED,
-  aborted: TaskState.TASK_STATE_CANCELED,
-  failed: TaskState.TASK_STATE_FAILED,
-};
-
-export const executePiHarnessTask: TaskExecutor = async (row, signal) => {
+/** Retirement drain only: old operations are canceled, never prepared or resumed. */
+export const drainRetiredPiHarnessTask: TaskExecutor = async (row, signal) => {
   assertRuntimeOwner();
   const grant = row.grant as unknown as TaskGrant;
   if (
     row.executionBackend !== "pi-harness" ||
     !isLocalGrant(grant) ||
-    !row.leaseToken
+    !row.leaseToken ||
+    !row.nativeOperationId
   )
-    throw new Error("Not a claimed Pi Harness task.");
-  const leaseToken = row.leaseToken;
-  let cleanup = Boolean(
-    row.nativeOperationId &&
-      (row.cancelRequestedAt || row.deadlineAt <= new Date()),
-  );
-  if (row.nativeOperationId && !cleanup) {
-    try {
-      await assertLiveGrant(grant, "send");
-    } catch {
-      cleanup = true;
-    }
-  }
-  const options = await localTaskOptions(
-    row,
-    signal,
-    PI_COLLABORATION_INSTRUCTIONS,
-    cleanup,
-  );
-  if (options.runtimeKind !== "pi")
-    throw new Error("Pi Harness target runtime changed.");
-  return withSandboxExecutionLease(options.sandboxId, async () => {
-    const operationId =
-      row.nativeOperationId ??
-      (await bindPiHarnessOperation(
-        row.id,
-        leaseToken,
-        await preparePiHarnessOperation(options, row.contextId),
-      ));
-    const binding = { taskId: row.id, contextId: row.contextId, operationId };
-    let progressText = "";
-    let lastProjection = 0;
-    options.onTextDelta = async (delta) => {
-      progressText = (progressText + delta).slice(-2048);
-      if (Date.now() - lastProjection < 1000) return;
-      lastProjection = Date.now();
-      // An unavailable observer never cancels the durable operation.
-      await projectPiHarnessProgress(
-        row.id,
-        leaseToken,
-        operationId,
-        progressText,
-      ).catch(() => undefined);
-    };
-    options.onActivity = async (activity) => {
-      if (activity.type !== "tool") return;
-      await projectPiHarnessProgress(
-        row.id,
-        leaseToken,
-        operationId,
-        `${activity.toolName ?? "Tool"}: ${activity.status}`,
-      ).catch(() => undefined);
-    };
-    let result: PiHarnessOperationResult;
-    try {
-      result = cleanup
-        ? await cancelPiHarnessOperation(options, binding)
-        : await runPiHarnessOperation(options, binding);
-      // Native settlement wins a later cancel marker. Recheck grants before a new
-      // effect, not by relabeling an already committed native terminal result.
-    } catch (error) {
-      if (
-        !runtimeCanOperate() ||
-        runtimeAbortSignal()?.aborted ||
-        signal.reason instanceof PiRuntimeInterruptedError
-      ) {
-        throw new PiRuntimeInterruptedError(undefined, { cause: error });
-      }
-      const current = await db.a2ATask.findFirst({
-        where: {
-          id: row.id,
-          contextId: row.contextId,
-          leaseToken: row.leaseToken,
-        },
-      });
-      if (!current)
-        throw new PiRuntimeInterruptedError("Pi task claim changed.", {
-          cause: error,
-        });
-      let revoked = false;
-      try {
-        await assertLiveGrant(grant, "send");
-      } catch {
-        revoked = true;
-      }
-      if (
-        current.cancelRequestedAt ||
-        current.deadlineAt <= new Date() ||
-        revoked
-      ) {
-        // The tracked exec has stopped and been awaited before this exclusive reopen.
-        result = await cancelPiHarnessOperation(options, binding);
-      } else {
-        throw error;
-      }
-    }
-    if (result.text.length > A2A_LIMITS.outputCharacters)
-      throw new Error("Task output limit exceeded.");
-    return {
-      state: terminalStates[result.status],
-      nativeOperationId: operationId,
-      ...(result.status === "completed"
-        ? { artifact: textArtifact(result.text) }
-        : { message: result.text || `Pi operation ${result.status}.` }),
-    };
+    throw new Error(
+      "Legacy Pi execution is retired; only an already-bound operation may drain.",
+    );
+  const context = await db.a2AContext.findFirst({
+    where: {
+      id: row.contextId,
+      workspaceId: grant.workspaceId,
+      agentId: grant.agentId,
+      targetKind: "local",
+      ownerKey: grant.ownerKey,
+    },
   });
+  if (!context) throw new Error("Historical operation context is unavailable.");
+  const mapping = await findAgentConversationSandbox({
+    workspaceId: grant.workspaceId,
+    agentId: grant.agentId,
+    contextId: context.id,
+    cleanup: true,
+  });
+  if (!mapping)
+    throw new PiRuntimeInterruptedError(
+      "Historical operation workspace is unavailable; its volume was retained.",
+    );
+  try {
+    const result = await cancelPiHarnessOperation(
+      {
+        workspaceId: grant.workspaceId,
+        agentId: grant.agentId,
+        sandboxId: mapping.sandboxId,
+        a2aContextId: context.id,
+      },
+      {
+        taskId: row.id,
+        contextId: context.id,
+        operationId: row.nativeOperationId,
+      },
+    );
+    return {
+      state: TaskState.TASK_STATE_CANCELED,
+      nativeOperationId: row.nativeOperationId,
+      message: result.text,
+    };
+  } catch (error) {
+    if (
+      !runtimeCanOperate() ||
+      runtimeAbortSignal()?.aborted ||
+      signal.reason instanceof PiRuntimeInterruptedError
+    )
+      throw new PiRuntimeInterruptedError(undefined, { cause: error });
+    throw error;
+  }
 };

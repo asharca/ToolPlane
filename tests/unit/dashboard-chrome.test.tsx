@@ -113,12 +113,14 @@ describe("DashboardChrome", () => {
 
   it("keeps sidebar navigation within the current workspace tab", async () => {
     render(chrome());
-    await userEvent.click(screen.getByRole("link", { name: "Skills" }));
+    await userEvent.click(
+      screen.getByRole("link", { name: "Resource Center" }),
+    );
     const target = new URL(
       navigation.push.mock.calls.at(-1)?.[0],
       "https://toolplane.local",
     );
-    expect(target.pathname).toBe("/app/smoke/skills");
+    expect(target.pathname).toBe("/app/smoke/market");
     expect(target.searchParams.get("__dashboardTab")).toBe("initial");
   });
 

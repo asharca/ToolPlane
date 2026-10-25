@@ -17,6 +17,19 @@ const updateBody = z
     targetReleaseId: z.string().min(1).max(240),
     currentReleaseId: z.string().min(1).max(240),
     force: z.boolean().optional(),
+    mcpBindings: z
+      .record(
+        z.string().regex(/^[a-z][a-z0-9-]{0,79}$/),
+        z
+          .object({
+            deploymentId: z.string().min(1).max(240),
+            tools: z.array(z.string().min(1).max(256)).max(256),
+          })
+          .strict(),
+      )
+      .refine((bindings) => Object.keys(bindings).length <= 64)
+      .optional(),
+    confirmExpandedPrivileges: z.boolean().optional(),
   })
   .strict();
 
@@ -42,6 +55,14 @@ export const PATCH = withRequestLogging(
         { error: "Invalid update request." },
         { status: 400 },
       );
+    if (parsed.data.mcpBindings && !parsed.data.confirmExpandedPrivileges)
+      return Response.json(
+        {
+          code: "pi_package_privilege_confirmation_required",
+          error: "Explicit capability authorization is required.",
+        },
+        { status: 400 },
+      );
     try {
       const result =
         parsed.data.action === "ignore"
@@ -59,6 +80,7 @@ export const PATCH = withRequestLogging(
               targetReleaseId: parsed.data.targetReleaseId,
               currentReleaseId: parsed.data.currentReleaseId,
               force: parsed.data.force,
+              mcpBindings: parsed.data.mcpBindings,
             });
       return Response.json({ id: result.id, status: result.status });
     } catch (error) {

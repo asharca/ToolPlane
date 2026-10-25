@@ -4,7 +4,6 @@ const mocks = vi.hoisted(() => ({
   requireAdmin: vi.fn(),
   revalidatePath: vi.fn(),
   updateListing: vi.fn(),
-  updateToolkit: vi.fn(),
   createAssistant: vi.fn(),
   updateAssistant: vi.fn(),
   deleteAssistant: vi.fn(),
@@ -24,7 +23,6 @@ vi.mock("@/lib/admin/market-catalog", () => ({
   updateAdminAssistantTemplate: mocks.updateAssistant,
   deleteAdminAssistantTemplate: mocks.deleteAssistant,
   updateAdminMarketListing: mocks.updateListing,
-  updateAdminPublicToolkit: mocks.updateToolkit,
 }));
 
 import {
@@ -32,7 +30,6 @@ import {
   deleteAssistantTemplateAdminAction,
   updateAssistantTemplateAdminAction,
   updateMarketListingAdminAction,
-  updatePublicToolkitAdminAction,
 } from "@/lib/admin/market-catalog-actions";
 
 describe("admin marketplace catalog actions", () => {
@@ -60,26 +57,6 @@ describe("admin marketplace catalog actions", () => {
         curated: true,
         isFeatured: true,
         categoryIds: ["category-1"],
-      },
-      "admin-1",
-    );
-  });
-
-  it("requires an admin before updating a public toolkit", async () => {
-    const formData = new FormData();
-    formData.set("toolkitId", "toolkit-1");
-    formData.set("enabled", "on");
-    formData.append("categoryIds", "category-2");
-
-    await expect(updatePublicToolkitAdminAction({}, formData)).resolves.toEqual(
-      { ok: true },
-    );
-    expect(mocks.requireAdmin).toHaveBeenCalledOnce();
-    expect(mocks.updateToolkit).toHaveBeenCalledWith(
-      {
-        id: "toolkit-1",
-        enabled: true,
-        categoryIds: ["category-2"],
       },
       "admin-1",
     );

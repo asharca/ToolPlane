@@ -2,7 +2,11 @@ import "server-only";
 import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { normalizedSkillDescription } from "@/lib/skills/frontmatter";
-import { parseServerRecipe } from "@/lib/workspace/server-recipe";
+import {
+  parseServerRecipe,
+  storedRequiredEnvironment,
+} from "@/lib/workspace/server-recipe";
+import { mcpEnvironmentState } from "@/lib/workspace/mcp-environment";
 import {
   hasMcpToolCatalog,
   hasVerifiedMcpToolCatalog,
@@ -65,7 +69,7 @@ export async function listWorkspacesForUser(userId: string) {
 }
 
 export async function getDeployments(workspaceId: string) {
-  return db.deployment.findMany({
+  const deployments = await db.deployment.findMany({
     where: {
       workspaceId,
       OR: [{ source: null }, { source: { not: "sandbox" } }],
@@ -75,6 +79,18 @@ export async function getDeployments(workspaceId: string) {
       server: { select: { slug: true, name: true, iconUrl: true } },
     },
   });
+  return deployments.map((deployment) => ({
+    ...deployment,
+    // Lists expose readiness and catalog metadata, never stored credentials or
+    // arbitrary launch configuration (including inline argument secrets).
+    installCfg: {
+      env: mcpEnvironmentState(deployment.installCfg),
+      requiredEnv: storedRequiredEnvironment(deployment.installCfg),
+      ...(hasMcpToolCatalog(deployment.installCfg)
+        ? { toolCatalog: readMcpToolCatalog(deployment.installCfg) }
+        : {}),
+    },
+  }));
 }
 
 export async function getWorkspaceMembers(workspaceId: string) {

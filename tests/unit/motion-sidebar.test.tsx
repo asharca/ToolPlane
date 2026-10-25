@@ -3,6 +3,7 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
   within,
 } from "@testing-library/react";
 import { createRef, useState } from "react";
@@ -131,7 +132,7 @@ describe("animated sidebar", () => {
     );
   });
 
-  it("traps mobile focus, restores body scrolling and returns focus when Escape dismisses", () => {
+  it("traps mobile focus, restores body scrolling and returns focus when Escape dismisses", async () => {
     mobile();
     document.body.style.overflow = "auto";
     render(
@@ -149,7 +150,7 @@ describe("animated sidebar", () => {
     const dialog = screen.getByRole("dialog", { name: "Workspace navigation" });
     const first = within(dialog).getByRole("button", { name: "First" });
     const last = within(dialog).getByRole("button", { name: "Last" });
-    expect(first).toHaveFocus();
+    await waitFor(() => expect(first).toHaveFocus());
     expect(document.body.style.overflow).toBe("hidden");
     fireEvent.keyDown(first, { key: "Tab", shiftKey: true });
     expect(last).toHaveFocus();
@@ -207,7 +208,7 @@ describe("animated sidebar", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
-  it("focuses an empty mobile panel and keeps Tab contained when no control is focusable", () => {
+  it("focuses an empty mobile panel and keeps Tab contained when no control is focusable", async () => {
     mobile();
     render(
       <AnimatedSidebarProvider defaultOpenMobile>
@@ -217,7 +218,7 @@ describe("animated sidebar", () => {
       </AnimatedSidebarProvider>,
     );
     const dialog = screen.getByRole("dialog");
-    expect(dialog).toHaveFocus();
+    await waitFor(() => expect(dialog).toHaveFocus());
     expect(fireEvent.keyDown(dialog, { key: "Tab" })).toBe(false);
     expect(dialog).toHaveFocus();
   });

@@ -26,6 +26,7 @@ const grant: LocalA2AGrant = {
   workspaceId: "ws",
   actorId: "actor",
   agentId: "agent",
+  agentRevisionId: "revision-1",
   targetBinding: "binding",
   ownerKey: "private-owner",
   expiresAt: Date.now() + 60_000,

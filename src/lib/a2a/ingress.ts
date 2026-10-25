@@ -1,7 +1,7 @@
 import "server-only";
 import { createHash } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
-import { SendMessageRequest, Task, TaskState } from "@a2a-js/sdk";
+import { SendMessageRequest, Task, TaskState, Role } from "@a2a-js/sdk";
 import {
   RequestMalformedError,
   TaskNotFoundError,
@@ -20,6 +20,7 @@ import type {
   RuntimeCommandResult,
   RuntimeUsage,
 } from "@/lib/agents/runtime-commands";
+import type { AgentPromptInvocation } from "@/lib/agents/sandbox-runtime";
 import { db } from "@/lib/db";
 import { assertRuntimeOwner } from "@/lib/runtime/ownership-state";
 import {
@@ -292,22 +293,42 @@ export async function runNativeEntry(
   input: NativeEntryInput & {
     signal?: AbortSignal;
     onAccepted?: (task: Task, path: string) => void | Promise<void>;
+    onPromptInvocation?: (
+      invocation: AgentPromptInvocation,
+    ) => void | Promise<void>;
   },
 ) {
   const accepted = await submitNativeEntry(input);
+  const promptMessageId = SendMessageRequest.fromJSON(accepted.row.request)
+    .message?.messageId;
+  if (!promptMessageId) throw new TaskNotFoundError();
   const workspace = await db.workspace.findUniqueOrThrow({
     where: { id: input.workspaceId },
     select: { slug: true },
   });
   const path = `/app/${encodeURIComponent(workspace.slug)}/agents/${encodeURIComponent(input.agentId)}?settings=a2a&task=${encodeURIComponent(accepted.row.id)}`;
   await input.onAccepted?.(Task.fromJSON(accepted.row.snapshot), path);
+  const observedPrompts = new Set<string>();
+  const observePrompts = async (task: Task) => {
+    if (!input.onPromptInvocation) return;
+    for (const invocation of nativeEntryPromptInvocations(
+      task,
+      promptMessageId,
+    )) {
+      const key = JSON.stringify(invocation);
+      if (observedPrompts.has(key)) continue;
+      observedPrompts.add(key);
+      await input.onPromptInvocation(invocation);
+    }
+  };
   try {
     while (true) {
       input.signal?.throwIfAborted();
       await assertLocalGrant(accepted.grant);
       const row = await getTaskRow(accepted.grant, accepted.row.id);
-      if (settled(row.state))
-        return { task: Task.fromJSON(row.snapshot), path };
+      const task = Task.fromJSON(row.snapshot);
+      await observePrompts(task);
+      if (settled(row.state)) return { task, path };
       if (row.deadlineAt <= new Date())
         throw new UnsupportedOperationError(
           `Task deadline reached. Inspect the durable task at ${path}`,
@@ -315,6 +336,11 @@ export async function runNativeEntry(
       await delay(500, undefined, { signal: input.signal });
     }
   } catch (error) {
+    const recorded = await db.a2ATask.findUnique({
+      where: { id: accepted.row.id },
+      select: { snapshot: true },
+    });
+    if (recorded) await observePrompts(Task.fromJSON(recorded.snapshot));
     // Work's explicit cancel flag is authoritative. A socket close/shutdown is not.
     if (input.kind === "work") {
       const work = await db.workSession.findFirst({
@@ -354,6 +380,22 @@ export function nativeEntryResult(task: Task, path: string) {
   throw new UnsupportedOperationError(
     `Native task did not complete (${task.status?.state ?? "unknown"}). Inspect ${path}`,
   );
+}
+
+/** The admission validator reserves this metadata for trusted native callbacks. */
+export function nativeEntryPromptInvocations(
+  task: Task,
+  messageId?: string,
+): AgentPromptInvocation[] {
+  const user = task.history.findLast(
+    (message) =>
+      message.role === Role.ROLE_USER &&
+      (!messageId || message.messageId === messageId),
+  );
+  const invocation = user?.metadata?.toolplanePromptInvocation;
+  return invocation && typeof invocation === "object"
+    ? [invocation as AgentPromptInvocation]
+    : [];
 }
 
 export type NativeEntryRuntimePart =

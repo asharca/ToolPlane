@@ -7,6 +7,8 @@ environment. In this project a sandbox is exposed to agents as MCP tools and,
 for the browser console, as a PTY-backed terminal stream. The app does not
 mount arbitrary server host directories as sandboxes.
 
+The sandbox list renders each mode icon in the badge's dedicated icon slot, keeping it beside the mode label on one line, including within the horizontally scrollable mobile table.
+
 ## Runtime Shape
 
 ```txt
@@ -27,9 +29,16 @@ Agent
 
 ## Pi SDK package bindings
 
-`pi-sdk` is a separate runtime kind; existing `pi` Harness agents are not migrated.
-Creating a Pi SDK agent allocates its own default sandbox. Control MCP creation,
-public endpoints, and agent-template runtime allowlists remain unchanged.
+`pi-sdk` is the native Pi runtime for new Agent execution. Non-Pi Agents retain
+historical messages and files as read-only records; their retired runtimes cannot
+be started or resumed. Convertible configuration must be copied into a new Pi
+Agent and explicitly authorized, not rebound to historical sessions.
+
+New Agents remain drafts until a revision is explicitly reviewed and applied.
+Work shows this unpublished state with a direct revision-review link rather than
+reporting a stopped runtime. After publication, the first task can start without
+manually starting the template sandbox; execution creates its isolated session
+sandbox on demand. Existing pinned sessions do not depend on the Agent's draft.
 
 `MarketInstall.currentReleaseId` records the workspace package version;
 `AgentPiPackage.releaseId` records the version explicitly enabled for one agent.
@@ -40,8 +49,9 @@ tasks, Work, or sandbox execution leases with `pi_package_agent_busy`.
 
 ## Selected-sandbox lifecycle actions
 
-The sandbox list supports selecting ordinary sandboxes and managed Hermes runtime
-sandboxes together. Selection and **Select all eligible** apply only to rows in
+The sandbox list supports selecting ordinary sandboxes. Historical managed Hermes
+runtime rows are never batch-eligible; only stopping an already-running runtime
+is retained for draining. Selection and **Select all eligible** apply to rows in
 the current All, Agent, or User-created scope. Nothing is selected initially;
 changing scope clears selection. Each batch is limited to 100 sandboxes. If more
 than 100 eligible rows are visible, select individual rows or narrow the scope
@@ -50,24 +60,23 @@ disabled legacy rows cannot be selected.
 
 **Start selected**, **Stop selected**, and **Restart selected** appear after
 selection. Stop and restart require confirmation because they can interrupt
-running tasks or sessions, including Hermes agent work. Selection and row mutation
+running tasks or sessions. Selection and row mutation
 controls are disabled while the batch request and status refresh are pending;
 the existing individual actions remain available outside that interval.
 
 Each selected sandbox receives an independent accepted, skipped, or failed result.
 Start skips running sandboxes; stop and restart skip non-running sandboxes.
 Provisioning and lifecycle-blocked sandboxes are skipped if their status changes
-after selection. Busy managed Hermes runtimes are skipped without bypassing their
-maintenance gates. One failure does not prevent processing the remaining rows.
+after selection. One failure does not prevent processing the remaining rows.
 Accepted means the lifecycle operation was accepted/completed, not that an
 asynchronous ordinary-sandbox start has finished provisioning. The result summary
 and named per-item messages remain visible after refreshing statuses; transport
 failures ask the user to inspect refreshed status rather than assuming no work ran.
 
 Batch requests use the same workspace authorization, per-sandbox operation queues,
-and runtime ownership as individual actions. Hermes lifecycle operations route to
-the owning agent runtime; batch operations do not replace it with an ordinary
-sandbox process. These actions do not clone, restore, delete, or erase sandbox data.
+and runtime ownership as individual actions. Retired Hermes runtimes cannot be
+started, restarted, or opened in a terminal/dashboard. These actions do not clone,
+restore, delete, or erase sandbox data.
 
 ## Modes
 
@@ -157,33 +166,31 @@ are neither captured nor rolled back by snapshot restore.
 User Connector sandboxes do not support clone or snapshot operations. Connector
 data stays on the user's machine and ToolPlane does not copy or delete it.
 
-Hermes runtime sandboxes expose rename, environment-variable, snapshot,
-restore, and snapshot-deletion controls from their managed-runtime panel. A
-Hermes snapshot copies its persistent `/opt/data` volume, which includes the
-workspace as well as Hermes sessions, memories, attachments, and native
-configuration. It does not include image-layer changes or ToolPlane database
-records such as `Conversation` and `AgentAttachment`; it is a volume snapshot,
-not a full logical Agent checkpoint. Hermes does not support direct sandbox
-cloning because a runtime is permanently bound to one Agent; use the Agent
-clone workflow when a second Hermes runtime is required.
-
-Hermes snapshot and restore operations acquire the runtime maintenance gate so
-chat and attachment writes cannot race the volume copy. After a restore,
-ToolPlane reprojects the current Agent-owned provider, MCP, skill, and
-environment configuration before restarting a runtime that was previously
-running. This keeps its control-plane configuration aligned even when the
-restored volume originated from an older runtime state.
+Historical Hermes workspace files remain available through the selected session's
+read-only file endpoint. This reads the retained volume without starting Hermes.
+Runtime terminals, configuration mutation, snapshot restore, and runtime restart
+are not available from historical sessions. Retained volume contents are not a
+logical Agent checkpoint and must not be presented as a resumable Pi session.
 
 #### Agent conversation sandboxes
 
-Ordinary Pi, Pi SDK, Claude Code, DSH and Hermes RPC Agents use their assigned
-Docker sandbox as a template. The first execution of each conversation creates
-a durable, independent `/workspace` volume and container from that template;
-delegated A2A contexts without a console conversation receive their own mapping.
-Later turns reuse the saved mapping and native session state. Files and Terminal
-follow the selected conversation, and opening an unallocated conversation does
-not expose or provision its template workspace. Copies do not merge changes back
-into the template or other conversations; external services are still shared.
+Native Pi Agents use their assigned Docker sandbox as a template. The first
+execution of each conversation creates a durable, independent `/workspace`
+volume and container from that template; delegated A2A contexts without a console
+conversation receive their own mapping. Later turns reuse the saved mapping and
+native session state. Each session pins an immutable Agent revision. Composer
+references and MCP prompts carry the selected conversation or Work session ID;
+they never resolve against the Agent's current configuration instead.
+Native prompt invocations retain the authored user text and show optional source
+release/path and arguments recorded by the server. The expanded input is audit
+metadata, not replacement text or an instruction to expand or execute again.
+Files and Terminal follow the selected session, and opening an unallocated session
+does not expose or provision its template workspace. Historical non-Pi sessions,
+missing/unresolved revision pins, and retired Agents are read-only: files can be
+listed, previewed, and downloaded from retained volumes without restarting the old
+runtime; terminals, uploads, deletes, execution, and model configuration mutation
+are unavailable. Start a new Pi session for new work. Copies do not merge changes
+back into the template or other sessions; external services are still shared.
 Terminal streams revalidate credentials, workspace membership and the exact sandbox
 mapping every 15 seconds; revoked access closes the existing stream.
 An open conversation terminal does not block turns in its already-running sandbox;

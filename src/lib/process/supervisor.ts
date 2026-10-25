@@ -6,6 +6,8 @@ import {
   markRuntimeUncertain,
 } from "@/lib/runtime/ownership-state";
 import { recordEvent } from "@/lib/observability/events";
+import { removeStaleSessionMcpCaptures } from "./mcp-runtime-image";
+import { remoteMcpConnectionIdentity } from "@/lib/remote-mcp/classification";
 import { spawn, type ChildProcess } from "node:child_process";
 import {
   existsSync,
@@ -19,7 +21,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { randomUUID } from "node:crypto";
+import { createHmac, randomBytes, randomUUID } from "node:crypto";
 import { StringDecoder } from "node:string_decoder";
 import os from "node:os";
 import path from "node:path";
@@ -27,7 +29,6 @@ import { db } from "@/lib/db";
 import type { SpawnSpec } from "./spawn-spec";
 import { MCP_NETWORK } from "./sandbox";
 import { ensureConnectorBroker } from "@/lib/sandboxes/connector-broker";
-import { deriveHermesRuntimeToken } from "@/lib/agents/hermes/token";
 import {
   resolveMcpStartupTimeoutSettings,
   resolveRemoteMcpPrivateHostsSettings,
@@ -36,6 +37,7 @@ import {
   DEPLOYMENT_CONFIG_MOUNT_PATH,
   configVolumeName,
   materializeDeploymentConfigVolume,
+  removeDeploymentConfigVolume,
 } from "./deployment-config-volume";
 import {
   deploymentContainerName as managedDeploymentContainerName,
@@ -52,6 +54,8 @@ type Entry = {
   stopGraceMs?: number;
   runtime: RuntimeRecord;
   redactionValues: string[];
+  remoteConnectionIdentity?: string;
+  credentialIdentity: string;
   // A launch-private capability used only to authenticate lifecycle events
   // emitted by the bridge. It never enters the runtime record or log file.
   runtimeEventToken: string;
@@ -115,6 +119,8 @@ export type LiveMcpRuntimeSnapshot = {
   port: number;
   generation: string;
   redactionValues: string[];
+  remoteConnectionIdentity?: string;
+  credentialIdentity?: string;
 };
 
 type RuntimeRecord = DeploymentRuntimeSnapshot & {
@@ -133,10 +139,97 @@ const g = globalThis as unknown as {
   __mcpSupervisorTombstones?: Set<string>;
   __mcpSupervisorWorkspaceTombstones?: Set<string>;
   __mcpSupervisorRuntime?: Map<string, RuntimeRecord>;
+  __mcpSupervisorCredentialIdentityKey?: Buffer;
+  __mcpSupervisorSourceProcesses?: Map<string, Set<string>>;
+  __mcpSupervisorProcessSources?: Map<string, string>;
+  __mcpSupervisorRemoteSourceProcesses?: Set<string>;
 };
 function store(): Store {
   if (!g.__mcpSupervisor) g.__mcpSupervisor = new Map();
   return g.__mcpSupervisor;
+}
+
+/** Process-private comparison only: never persist or publicly serialize this MAC. */
+export function mcpRuntimeCredentialIdentity(spec: SpawnSpec): string {
+  g.__mcpSupervisorCredentialIdentityKey ??= randomBytes(32);
+  const key = g.__mcpSupervisorCredentialIdentityKey;
+  const env =
+    spec.kind === "bridge"
+      ? { ...spec.env, ...spec.containerEnv }
+      : spec.kind === "remote"
+        ? spec.headers
+        : spec.kind === "sandbox"
+          ? spec.env
+          : {};
+  const entries = Object.keys(env)
+    .sort()
+    .map((name) => [name, env[name]]);
+  return createHmac("sha256", key)
+    .update(JSON.stringify([spec.kind, entries]))
+    .digest("hex");
+}
+
+function rememberProcessSource(
+  processId: string,
+  options: StartProcessOptions,
+  spec: SpawnSpec,
+): void {
+  const sourceId = options.configSourceDeploymentId;
+  if (!sourceId || sourceId === processId) return;
+  if (launchPrevented(sourceId, options.workspaceId))
+    throw new Error("MCP_SOURCE_UNAVAILABLE");
+  g.__mcpSupervisorProcessSources ??= new Map();
+  g.__mcpSupervisorSourceProcesses ??= new Map();
+  const previous = g.__mcpSupervisorProcessSources.get(processId);
+  if (previous && previous !== sourceId)
+    throw new Error("MCP_SOURCE_IDENTITY_CHANGED");
+  const processes =
+    g.__mcpSupervisorSourceProcesses.get(sourceId) ?? new Set<string>();
+  processes.add(processId);
+  g.__mcpSupervisorSourceProcesses.set(sourceId, processes);
+  g.__mcpSupervisorProcessSources.set(processId, sourceId);
+  if (spec.kind === "remote") {
+    g.__mcpSupervisorRemoteSourceProcesses ??= new Set();
+    g.__mcpSupervisorRemoteSourceProcesses.add(processId);
+  } else g.__mcpSupervisorRemoteSourceProcesses?.delete(processId);
+}
+
+async function releaseProcessSource(processId: string): Promise<void> {
+  const sourceId = g.__mcpSupervisorProcessSources?.get(processId);
+  if (!sourceId) return;
+  if (!g.__mcpSupervisorRemoteSourceProcesses?.has(processId)) {
+    await removeDeploymentContainer(processId);
+    // Session-private secret projections only, never Agent work volumes.
+    await removeDeploymentConfigVolume(processId);
+  }
+  const processes = g.__mcpSupervisorSourceProcesses?.get(sourceId);
+  processes?.delete(processId);
+  if (processes?.size === 0) g.__mcpSupervisorSourceProcesses?.delete(sourceId);
+  g.__mcpSupervisorProcessSources?.delete(processId);
+  g.__mcpSupervisorRemoteSourceProcesses?.delete(processId);
+}
+
+function sourceStopOperations(
+  sourceId: string,
+  options?: KillProcessOptions,
+): Promise<void>[] {
+  const associated = g.__mcpSupervisorSourceProcesses?.get(sourceId);
+  return associated
+    ? [...associated].map((processId) =>
+        options ? killProcess(processId, options) : stopProcess(processId),
+      )
+    : [];
+}
+
+function assertProcessStopsSucceeded(
+  results: PromiseSettledResult<unknown>[],
+): void {
+  const failures: unknown[] = [];
+  for (const result of results)
+    if (result.status === "rejected") failures.push(result.reason);
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1)
+    throw new AggregateError(failures, "MCP_SESSION_STOP_FAILED");
 }
 
 function persistQueues(): Map<string, Promise<void>> {
@@ -235,6 +328,7 @@ const DOCKER_LOG_TIMEOUT_MS = 5000;
 const LAUNCH_LOCK_MAX_AGE_MS = 10 * 60_000;
 
 async function persist(deploymentId: string, status: string) {
+  if (g.__mcpSupervisorProcessSources?.has(deploymentId)) return;
   const queues = persistQueues();
   const previous = queues.get(deploymentId) ?? Promise.resolve();
   const write = previous
@@ -607,10 +701,9 @@ function resetRuntimeLog(deploymentId: string): void {
 function secretValuesFromEnv(env: Record<string, string>): string[] {
   const values = new Set<string>();
   for (const value of Object.values(env)) {
-    // Configured MCP env is intentionally treated as confidential by default.
-    // Short primitives cannot meaningfully reveal a credential and redacting
-    // them would make normal logs unreadable (e.g. PORT=3).
-    if (typeof value === "string" && value.length >= 4) values.add(value);
+    // Even short configured values are confidential; never infer secrecy from
+    // length or entropy.
+    if (typeof value === "string" && value.length > 0) values.add(value);
   }
   return [...values].sort((a, b) => b.length - a.length);
 }
@@ -679,12 +772,9 @@ function redactionValuesForSpec(spec: SpawnSpec): string[] {
       : [],
   );
   if (spec.kind === "bridge") {
-    const shortConfiguredValues = new Set(
-      Object.values(spec.env).filter((value) => value.length < 4),
-    );
-    for (const value of sensitiveArgValues(spec.args)) {
-      if (!shortConfiguredValues.has(value)) values.add(value);
-    }
+    for (const value of secretValuesFromEnv(spec.containerEnv ?? {}))
+      values.add(value);
+    for (const value of sensitiveArgValues(spec.args)) values.add(value);
   } else if (spec.kind === "remote") {
     for (const value of Object.values(spec.headers)) {
       if (!value) continue;
@@ -1412,66 +1502,60 @@ function liveRegistry(deploymentId: string): RegistryEntry | null {
 // Called by the runtime owner before reconciliation. Unavailable Docker
 // leaves execution unready rather than advertising a healthy runtime.
 export function ensureSandboxNetwork(): Promise<void> {
-  return trackRuntimeOperation(
-    () =>
-      new Promise<void>((resolve, reject) => {
-        let child: ChildProcess | undefined;
-        let settled = false;
-        const finish = (error?: Error) => {
-          if (settled) return;
-          settled = true;
-          clearTimeout(timer);
-          if (error) reject(error);
-          else resolve();
-        };
-        const timer = setTimeout(() => {
-          markRuntimeUncertain();
-          child?.kill("SIGKILL");
-          finish(new Error("Sandbox network setup timed out."));
-        }, 30_000);
-        const launch = (
-          args: string[],
-          done: (code: number | null) => void,
-        ) => {
-          try {
-            // Recheck ownership before the mutation, not just before async inspect.
-            assertRuntimeOwner();
-            child = spawn("docker", args, {
-              stdio: "ignore",
-              ...(runtimeAbortSignal() ? { signal: runtimeAbortSignal() } : {}),
-            });
-            child.once("error", () =>
-              finish(
-                new Error("Docker is unavailable during runtime recovery."),
-              ),
-            );
-            child.once("exit", (code) => {
-              if (!settled) done(code);
-            });
-          } catch (error) {
-            finish(
-              error instanceof Error
-                ? error
-                : new Error("Runtime owner unavailable."),
-            );
-          }
-        };
-        launch(["network", "inspect", MCP_NETWORK], (code) => {
-          if (code === 0) finish();
-          else
-            launch(["network", "create", MCP_NETWORK], (created) => {
-              if (created === 0) finish();
-              else
-                launch(["network", "inspect", MCP_NETWORK], (exists) =>
-                  finish(
-                    exists === 0
-                      ? undefined
-                      : new Error("Sandbox network is unavailable."),
-                  ),
-                );
-            });
-        });
-      }),
+  return trackRuntimeOperation(() =>
+    new Promise<void>((resolve, reject) => {
+      let child: ChildProcess | undefined;
+      let settled = false;
+      const finish = (error?: Error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (error) reject(error);
+        else resolve();
+      };
+      const timer = setTimeout(() => {
+        markRuntimeUncertain();
+        child?.kill("SIGKILL");
+        finish(new Error("Sandbox network setup timed out."));
+      }, 30_000);
+      const launch = (args: string[], done: (code: number | null) => void) => {
+        try {
+          // Recheck ownership before the mutation, not just before async inspect.
+          assertRuntimeOwner();
+          child = spawn("docker", args, {
+            stdio: "ignore",
+            ...(runtimeAbortSignal() ? { signal: runtimeAbortSignal() } : {}),
+          });
+          child.once("error", () =>
+            finish(new Error("Docker is unavailable during runtime recovery.")),
+          );
+          child.once("exit", (code) => {
+            if (!settled) done(code);
+          });
+        } catch (error) {
+          finish(
+            error instanceof Error
+              ? error
+              : new Error("Runtime owner unavailable."),
+          );
+        }
+      };
+      launch(["network", "inspect", MCP_NETWORK], (code) => {
+        if (code === 0) finish();
+        else
+          launch(["network", "create", MCP_NETWORK], (created) => {
+            if (created === 0) finish();
+            else
+              launch(["network", "inspect", MCP_NETWORK], (exists) =>
+                finish(
+                  exists === 0
+                    ? undefined
+                    : new Error("Sandbox network is unavailable."),
+                ),
+              );
+          });
+      });
+    }).then(removeStaleSessionMcpCaptures),
   );
 }
 
@@ -1553,6 +1637,8 @@ export function liveMcpRuntimeSnapshot(
     port: entry.port,
     generation: entry.runtime.generation,
     redactionValues: [...entry.redactionValues],
+    remoteConnectionIdentity: entry.remoteConnectionIdentity,
+    credentialIdentity: entry.credentialIdentity,
   };
 }
 
@@ -1573,6 +1659,8 @@ type StartProcessOptions = {
   awaitReady?: boolean;
   workspaceId?: string;
   onReady?: () => void | Promise<void>;
+  configSourceDeploymentId?: string;
+  expectedConfigChecksum?: string;
 };
 
 type LaunchResult = {
@@ -1604,8 +1692,15 @@ async function launchProcess(
   deploymentId: string,
   spec: SpawnSpec,
   workspaceId?: string,
+  configSourceDeploymentId?: string,
+  expectedConfigChecksum?: string,
 ): Promise<LaunchResult> {
-  if (launchPrevented(deploymentId, workspaceId)) return { ready: null };
+  if (
+    launchPrevented(deploymentId, workspaceId) ||
+    (configSourceDeploymentId &&
+      launchPrevented(configSourceDeploymentId, workspaceId))
+  )
+    return { ready: null };
   if (
     workspaceId &&
     !(await db.workspace.findFirst({
@@ -1704,7 +1799,11 @@ async function launchProcess(
       // The per-deployment launch lock lets this launch safely clear that stale
       // container before it materializes a replacement configuration volume.
       await removeDeploymentContainer(deploymentId);
-      const config = await materializeDeploymentConfigVolume(deploymentId);
+      const config = await materializeDeploymentConfigVolume(
+        deploymentId,
+        configSourceDeploymentId,
+        expectedConfigChecksum,
+      );
       configRedactionValues = config.redactionValues;
       if (config.hasFiles)
         launchSpec = withDeploymentConfigVolume(spec, deploymentId);
@@ -1754,8 +1853,8 @@ async function launchProcess(
     managedSpec.kind === "bridge" || managedSpec.kind === "remote"
       ? randomUUID()
       : "";
-  // Keep app secrets out of the bridge. Docker argv contains only env names;
-  // their exact deployment-scoped values travel in the bridge environment.
+  // Keep app secrets out of the bridge. Deployment-scoped values enter only
+  // the bridge process and its stdin bootstrap, never Docker's environment.
   const env =
     managedSpec.kind === "bridge" && startupTimeouts
       ? {
@@ -1787,6 +1886,7 @@ async function launchProcess(
               transport: managedSpec.transport,
               headers: managedSpec.headers,
               timeoutMs: managedSpec.timeoutMs,
+              allowUnsafeHttp: managedSpec.allowUnsafeHttp,
             }),
             // Only the bridge sees this admin-controlled setting; deployment
             // config cannot opt individual workspace MCPs into private access.
@@ -1813,23 +1913,14 @@ async function launchProcess(
               SANDBOX_NETWORK: managedSpec.network,
               SANDBOX_ALLOW_SUDO: String(managedSpec.allowSudo === true),
               SANDBOX_ENV_JSON: JSON.stringify(managedSpec.env ?? {}),
+              SANDBOX_RESOURCE_LIMITS_JSON: managedSpec.resourceLimits
+                ? JSON.stringify(managedSpec.resourceLimits)
+                : "",
               SANDBOX_CONNECTOR_BROKER_URL: connectorBroker?.internalUrl ?? "",
               SANDBOX_CONNECTOR_BROKER_TOKEN:
                 connectorBroker?.internalToken ?? "",
               SANDBOX_CONNECTOR_REMOTE_ROOT:
                 managedSpec.connector?.remoteRoot ?? "",
-              HERMES_RUNTIME_ID: managedSpec.runtimeId ?? "",
-              HERMES_RUNTIME_API_KEY: managedSpec.runtimeId
-                ? deriveHermesRuntimeToken(managedSpec.runtimeId, "hermes-api")
-                : "",
-              HERMES_RUNTIME_DASHBOARD_TOKEN: managedSpec.runtimeId
-                ? deriveHermesRuntimeToken(
-                    managedSpec.runtimeId,
-                    "hermes-dashboard-api",
-                  )
-                : "",
-              HERMES_RUNTIME_MODEL_NAME:
-                managedSpec.runtimeModelName ?? "hermes-agent",
               TOOLPLANE_MAX_ATTACHMENT_BYTES:
                 process.env.TOOLPLANE_MAX_ATTACHMENT_BYTES ?? "",
             }
@@ -1857,10 +1948,6 @@ async function launchProcess(
     status: "provisioning",
     pid: child.pid,
     name: managedSpec.name,
-    stopGraceMs:
-      managedSpec.kind === "sandbox" && managedSpec.sandboxKind === "hermes"
-        ? 35_000
-        : undefined,
     runtime,
     redactionValues: [
       ...redactionValuesForSpec(managedSpec),
@@ -1870,6 +1957,11 @@ async function launchProcess(
       .filter((value, index, values) => values.indexOf(value) === index)
       .sort((a, b) => b.length - a.length),
     runtimeEventToken,
+    remoteConnectionIdentity:
+      managedSpec.kind === "remote"
+        ? remoteMcpConnectionIdentity(managedSpec)
+        : undefined,
+    credentialIdentity: mcpRuntimeCredentialIdentity(managedSpec),
     stderrBuffer: "",
     stderrDecoder: new StringDecoder("utf8"),
     discardingOverlongStderrLine: false,
@@ -1998,9 +2090,17 @@ export async function startProcess(
   options: StartProcessOptions = {},
 ): Promise<void> {
   assertRuntimeOwner();
-  const { ready } = await enqueueLifecycle(deploymentId, () =>
-    launchProcess(deploymentId, spec, options.workspaceId),
-  );
+  rememberProcessSource(deploymentId, options, spec);
+  const { ready } = await enqueueLifecycle(deploymentId, () => {
+    rememberProcessSource(deploymentId, options, spec);
+    return launchProcess(
+      deploymentId,
+      spec,
+      options.workspaceId,
+      options.configSourceDeploymentId,
+      options.expectedConfigChecksum,
+    );
+  });
   if (ready && options.onReady) {
     void ready
       .then(() => liveStatus(deploymentId) === "running" && options.onReady?.())
@@ -2047,11 +2147,18 @@ async function stopProcessUnlocked(
   }
   if (e && store().get(deploymentId) === e) store().delete(deploymentId);
   await persist(deploymentId, finalStatus);
+  await releaseProcessSource(deploymentId);
 }
 
 export async function stopProcess(deploymentId: string): Promise<void> {
   assertRuntimeOwner(true);
-  await enqueueLifecycle(deploymentId, () => stopProcessUnlocked(deploymentId));
+  // Enqueue our own signal immediately, without awaiting child cleanup or DB
+  // persistence. Still drain every associated stop before returning to writers.
+  const results = await Promise.allSettled([
+    ...sourceStopOperations(deploymentId),
+    enqueueLifecycle(deploymentId, () => stopProcessUnlocked(deploymentId)),
+  ]);
+  assertProcessStopsSucceeded(results);
 }
 
 export async function restartProcess(
@@ -2060,9 +2167,21 @@ export async function restartProcess(
   options: StartProcessOptions = {},
 ): Promise<void> {
   assertRuntimeOwner();
+  const sources = Promise.allSettled(sourceStopOperations(deploymentId));
+  rememberProcessSource(deploymentId, options, spec);
   const { ready } = await enqueueLifecycle(deploymentId, async () => {
-    await stopProcessUnlocked(deploymentId);
-    return launchProcess(deploymentId, spec, options.workspaceId);
+    const ownStop = await Promise.allSettled([
+      stopProcessUnlocked(deploymentId),
+    ]);
+    assertProcessStopsSucceeded([...(await sources), ...ownStop]);
+    rememberProcessSource(deploymentId, options, spec);
+    return launchProcess(
+      deploymentId,
+      spec,
+      options.workspaceId,
+      options.configSourceDeploymentId,
+      options.expectedConfigChecksum,
+    );
   });
   if (ready && options.onReady) {
     void ready
@@ -2083,9 +2202,13 @@ export async function killProcess(
 ): Promise<void> {
   assertRuntimeOwner(true);
   if (options.preventRestart) tombstones().add(deploymentId);
-  await enqueueLifecycle(deploymentId, () =>
-    stopProcessUnlocked(deploymentId, true, options.finalStatus),
-  );
+  const results = await Promise.allSettled([
+    ...sourceStopOperations(deploymentId, options),
+    enqueueLifecycle(deploymentId, () =>
+      stopProcessUnlocked(deploymentId, true, options.finalStatus),
+    ),
+  ]);
+  assertProcessStopsSucceeded(results);
 }
 
 // Kill every supervised process for a set of deployments (e.g. when a

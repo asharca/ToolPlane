@@ -12,13 +12,16 @@ const mocks = vi.hoisted(() => ({
   deploymentFindFirst: vi.fn(),
   deploymentUpdate: vi.fn(),
   deploymentConfigFileDeleteMany: vi.fn(),
+  deploymentConfigFileFindMany: vi.fn(),
+  agentServerFindMany: vi.fn(),
+  assistantGrantFindMany: vi.fn(),
   transaction: vi.fn(),
   transactionConfigFileFindMany: vi.fn(),
   transactionConfigFileUpsert: vi.fn(),
   restartProcess: vi.fn(),
   killProcess: vi.fn(),
   liveStatus: vi.fn(),
-  resolveSpawnSpec: vi.fn(),
+  resolveMcpConnectionSpawnSpec: vi.fn(),
   revalidatePath: vi.fn(),
 }));
 
@@ -35,7 +38,12 @@ vi.mock("@/lib/db", () => ({
       findFirst: mocks.deploymentFindFirst,
       update: mocks.deploymentUpdate,
     },
-    deploymentConfigFile: { deleteMany: mocks.deploymentConfigFileDeleteMany },
+    deploymentConfigFile: {
+      deleteMany: mocks.deploymentConfigFileDeleteMany,
+      findMany: mocks.deploymentConfigFileFindMany,
+    },
+    agentServer: { findMany: mocks.agentServerFindMany },
+    chatAssistantMcpGrant: { findMany: mocks.assistantGrantFindMany },
   },
 }));
 vi.mock("@/lib/process/supervisor", () => ({
@@ -43,8 +51,8 @@ vi.mock("@/lib/process/supervisor", () => ({
   killProcess: mocks.killProcess,
   liveStatus: mocks.liveStatus,
 }));
-vi.mock("@/lib/process/spawn-spec", () => ({
-  resolveSpawnSpec: mocks.resolveSpawnSpec,
+vi.mock("@/lib/process/mcp-credentials", () => ({
+  resolveMcpConnectionSpawnSpec: mocks.resolveMcpConnectionSpawnSpec,
 }));
 vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidatePath }));
 
@@ -86,6 +94,9 @@ describe("runtime file workspace actions", () => {
     mocks.getCurrentUser.mockResolvedValue({ id: "user-1" });
     mocks.getWorkspaceForUser.mockResolvedValue({ id: "workspace-1" });
     mocks.deploymentFindFirst.mockResolvedValue(deployment);
+    mocks.agentServerFindMany.mockResolvedValue([]);
+    mocks.assistantGrantFindMany.mockResolvedValue([]);
+    mocks.deploymentConfigFileFindMany.mockResolvedValue([]);
     mocks.transactionConfigFileFindMany.mockResolvedValue([]);
     mocks.transactionConfigFileUpsert.mockImplementation(
       async ({ create }) => ({
@@ -104,10 +115,9 @@ describe("runtime file workspace actions", () => {
       }),
     );
     mocks.deploymentConfigFileDeleteMany.mockResolvedValue({ count: 1 });
-    mocks.resolveSpawnSpec.mockReturnValue({
-      kind: "bridge",
-      command: "docker",
-      args: [],
+    mocks.resolveMcpConnectionSpawnSpec.mockResolvedValue({
+      spec: { kind: "bridge", command: "docker", args: [] },
+      redactionValues: [],
     });
     mocks.restartProcess.mockResolvedValue(undefined);
   });
@@ -140,7 +150,7 @@ describe("runtime file workspace actions", () => {
       where: {
         id: "dep-1",
         workspaceId: "workspace-1",
-        source: { in: ["npm", "pypi", "github", "docker", "config"] },
+        source: { in: ["npm", "pypi", "github", "docker", "config", "remote"] },
       },
       include: { server: { select: { name: true, installCfg: true } } },
     });
@@ -207,6 +217,92 @@ describe("runtime file workspace actions", () => {
     );
   });
 
+  it.each(["upsert", "delete"] as const)(
+    "requires current shared impact confirmation before a runtime file %s",
+    async (operation) => {
+      mocks.agentServerFindMany.mockResolvedValue([
+        { agentId: "agent-b" },
+        { agentId: "agent-a" },
+      ]);
+      mocks.assistantGrantFindMany.mockResolvedValue([
+        { assistantId: "assistant-1" },
+      ]);
+      const impact = {
+        agentIds: ["agent-a", "agent-b"],
+        assistantIds: ["assistant-1"],
+      };
+      const invoke = (confirmation?: string) => {
+        const overrides: Record<string, string> = confirmation
+          ? { confirmedImpactedObjects: confirmation }
+          : {};
+        return operation === "upsert"
+          ? upsertDeploymentRuntimeFileAction({}, upsertForm(overrides))
+          : deleteDeploymentRuntimeFileAction(deleteForm(overrides));
+      };
+
+      for (const confirmation of [
+        undefined,
+        "invalid-json",
+        JSON.stringify({
+          agentIds: ["agent-a"],
+          assistantIds: ["assistant-1"],
+        }),
+      ]) {
+        await expect(invoke(confirmation)).resolves.toEqual({
+          error: "sharedChangeConfirmationRequired",
+          impactedObjects: impact,
+        });
+      }
+      expect(mocks.transaction).not.toHaveBeenCalled();
+      expect(mocks.deploymentConfigFileDeleteMany).not.toHaveBeenCalled();
+      expect(mocks.restartProcess).not.toHaveBeenCalled();
+      expect(mocks.agentServerFindMany).toHaveBeenCalledWith({
+        where: { deploymentId: "dep-1", agent: { workspaceId: "workspace-1" } },
+        select: { agentId: true },
+      });
+      expect(mocks.assistantGrantFindMany).toHaveBeenCalledWith({
+        where: {
+          deploymentId: "dep-1",
+          assistant: { workspaceId: "workspace-1" },
+        },
+        select: { assistantId: true },
+      });
+
+      await expect(invoke(JSON.stringify(impact))).resolves.toMatchObject({
+        savedAt: expect.any(Number),
+      });
+      expect(mocks.restartProcess).toHaveBeenCalledOnce();
+      if (operation === "upsert") {
+        expect(mocks.transactionConfigFileUpsert).toHaveBeenCalledOnce();
+      } else {
+        expect(mocks.deploymentConfigFileDeleteMany).toHaveBeenCalledOnce();
+      }
+    },
+  );
+
+  it.each(["count", "bytes"] as const)(
+    "rejects a known aggregate %s overflow before stopping active processes",
+    async (limit) => {
+      mocks.deploymentConfigFileFindMany.mockResolvedValue(
+        limit === "count"
+          ? Array.from({ length: MAX_RUNTIME_TEXT_FILES }, (_, index) => ({
+              pathKey: `existing-${index}.txt`,
+              size: 1,
+            }))
+          : Array.from({ length: 4 }, (_, index) => ({
+              pathKey: `existing-${index}.txt`,
+              size: MAX_RUNTIME_TEXT_FILE_BYTES,
+            })),
+      );
+      await expect(
+        upsertDeploymentRuntimeFileAction({}, upsertForm({ content: "x" })),
+      ).resolves.toEqual({ error: "invalidFile" });
+      expect(mocks.killProcess).not.toHaveBeenCalled();
+      expect(mocks.transactionConfigFileUpsert).not.toHaveBeenCalled();
+      expect(mocks.restartProcess).not.toHaveBeenCalled();
+    },
+  );
+
   it("enforces the aggregate file-count limit inside the serializable transaction", async () => {
     mocks.transactionConfigFileFindMany.mockResolvedValue(
       Array.from({ length: MAX_RUNTIME_TEXT_FILES }, (_, index) => ({
@@ -224,7 +320,6 @@ describe("runtime file workspace actions", () => {
     expect(mocks.transaction).toHaveBeenCalledOnce();
     expect(mocks.transactionConfigFileUpsert).not.toHaveBeenCalled();
     expect(mocks.restartProcess).not.toHaveBeenCalled();
-    expect(mocks.revalidatePath).not.toHaveBeenCalled();
   });
 
   it("enforces the aggregate byte limit inside the serializable transaction", async () => {
@@ -245,7 +340,6 @@ describe("runtime file workspace actions", () => {
     expect(mocks.transaction).toHaveBeenCalledOnce();
     expect(mocks.transactionConfigFileUpsert).not.toHaveBeenCalled();
     expect(mocks.restartProcess).not.toHaveBeenCalled();
-    expect(mocks.revalidatePath).not.toHaveBeenCalled();
   });
 
   it("returns restartFailed and revalidates persisted file metadata after a restart failure", async () => {
@@ -285,7 +379,7 @@ describe("runtime file workspace actions", () => {
       finalStatus: "setup_required",
     });
     expect(mocks.restartProcess).not.toHaveBeenCalled();
-    expect(mocks.resolveSpawnSpec).not.toHaveBeenCalled();
+    expect(mocks.resolveMcpConnectionSpawnSpec).not.toHaveBeenCalled();
   });
 
   it("returns saveFailed when a scoped runtime-file deletion cannot be persisted", async () => {
@@ -303,6 +397,5 @@ describe("runtime file workspace actions", () => {
       where: { id: "file-1", deploymentId: "dep-1" },
     });
     expect(mocks.restartProcess).not.toHaveBeenCalled();
-    expect(mocks.revalidatePath).not.toHaveBeenCalled();
   });
 });

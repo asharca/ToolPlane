@@ -120,7 +120,7 @@ describe("resource tree keyboard accessibility", () => {
       render(<AISidebar defaultItems={items} />);
       fireEvent.keyDown(row("File"), event);
       const rename = await screen.findByRole("button", { name: "Rename" });
-      expect(rename).toHaveFocus();
+      await waitFor(() => expect(rename).toHaveFocus());
       fireEvent.click(rename);
       expect(screen.getByRole("textbox", { name: "Rename File" })).toHaveValue(
         "File",

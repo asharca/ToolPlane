@@ -214,7 +214,7 @@ async function postTerminal(
 
 export function SandboxConsole({
   deploymentId,
-  running,
+  running: sandboxRunning,
   initialPath,
   initialEntries,
   terminalOnly = false,
@@ -226,6 +226,7 @@ export function SandboxConsole({
   terminalSubtitle,
   workspaceRoot,
   waitingForConnector = false,
+  readOnly = false,
 }: {
   deploymentId: string;
   running: boolean;
@@ -240,7 +241,9 @@ export function SandboxConsole({
   terminalSubtitle?: string;
   workspaceRoot?: string;
   waitingForConnector?: boolean;
+  readOnly?: boolean;
 }) {
+  const running = sandboxRunning || readOnly;
   const t = useTranslations("console.sandboxes");
   const { resolvedTheme } = useTheme();
   const terminalBase =
@@ -393,6 +396,7 @@ export function SandboxConsole({
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: View changes remount the terminal host; generation changes explicitly reconnect the session.
   useEffect(() => {
+    if (readOnly) return;
     let disposed = false;
     let eventSource: EventSource | null = null;
     let resizeObserver: ResizeObserver | null = null;
@@ -527,6 +531,7 @@ export function SandboxConsole({
     compactView,
     compact,
     filesOnly,
+    readOnly,
     flushInput,
     initialPath,
     queueInput,
@@ -611,6 +616,7 @@ export function SandboxConsole({
   }
 
   async function deleteFile(path: string) {
+    if (readOnly) return;
     if (!window.confirm(t("deleteThisFile"))) return;
     setLoadingPath(path);
     setFileError("");
@@ -639,7 +645,7 @@ export function SandboxConsole({
   }
 
   async function uploadFiles(files: File[]) {
-    if (!files.length || uploading) return;
+    if (readOnly || !files.length || uploading) return;
     const directoryEntries = entriesByPath[selectedDirectory] ?? [];
     const existingNames = new Set(directoryEntries.map((entry) => entry.name));
     if (
@@ -660,6 +666,26 @@ export function SandboxConsole({
             file.name.includes("\\")
           ) {
             throw new Error(t("invalidUploadFilename"));
+          }
+          if (rpcApiBase) {
+            const content = await new Promise<string>((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () =>
+                resolve(String(reader.result).split(",")[1] ?? "");
+              reader.onerror = () => reject(reader.error);
+              reader.readAsDataURL(file);
+            });
+            await callSandboxTool(
+              rpcBase,
+              "write_file",
+              {
+                path: joinPath(selectedDirectory, file.name),
+                content,
+                encoding: "base64",
+              },
+              t("toolCallFailed"),
+            );
+            continue;
           }
           const url = new URL(uploadBase, window.location.origin);
           url.searchParams.set("path", joinPath(selectedDirectory, file.name));
@@ -832,7 +858,7 @@ export function SandboxConsole({
           <Button
             type="button"
             onClick={() => uploadInputRef.current?.click()}
-            disabled={!running || loadingPath !== null || uploading}
+            disabled={readOnly || !running || loadingPath !== null || uploading}
             variant="ghost"
             size="icon"
             title={t("uploadFilesTo", {
@@ -933,7 +959,9 @@ export function SandboxConsole({
               <Button
                 type="button"
                 onClick={() => void deleteFile(selectedPath)}
-                disabled={!running || loadingPath !== null || uploading}
+                disabled={
+                  readOnly || !running || loadingPath !== null || uploading
+                }
                 variant="ghost"
                 size="icon"
                 aria-label={t("deleteFile")}
@@ -960,7 +988,7 @@ export function SandboxConsole({
         <Button
           type="button"
           onClick={() => void deleteFile(selectedPath)}
-          disabled={!running || loadingPath !== null || uploading}
+          disabled={readOnly || !running || loadingPath !== null || uploading}
           variant="ghost"
           size="icon"
           title={t("deleteFile")}
@@ -972,9 +1000,9 @@ export function SandboxConsole({
     />
   );
 
-  if (terminalOnly) return terminalPanel;
+  if (terminalOnly && !readOnly) return terminalPanel;
 
-  if (filesOnly)
+  if (filesOnly || readOnly)
     return (
       <div className="relative h-full min-h-0 overflow-hidden bg-background">
         {filesPanel}
