@@ -74,9 +74,7 @@
     "author": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "name"
-      ],
+      "required": ["name"],
       "properties": {
         "name": {
           "type": "string",
@@ -93,11 +91,7 @@
     "resource": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "id",
-        "kind",
-        "manifest"
-      ],
+      "required": ["id", "kind", "manifest"],
       "properties": {
         "id": {
           "type": "string",
