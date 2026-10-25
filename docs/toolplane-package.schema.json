@@ -99,13 +99,7 @@
           "maxLength": 120
         },
         "kind": {
-          "enum": [
-            "skill",
-            "mcp",
-            "pi-package",
-            "agent",
-            "assistant"
-          ]
+          "enum": ["skill", "mcp", "pi-package", "agent", "assistant"]
         },
         "manifest": {
           "type": "string",
