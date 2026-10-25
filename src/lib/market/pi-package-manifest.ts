@@ -89,7 +89,7 @@ const piPackageRuntimeSchema = z.union([
     .object({
       kind: z.literal("pi-sdk"),
       piVersion: z.literal("0.87.1"),
-      nodeMajor: z.literal(24),
+      nodeMajor: z.literal(26),
       platform: z.literal("linux"),
       arch: z.enum(["x64", "arm64"]),
     })
@@ -98,7 +98,7 @@ const piPackageRuntimeSchema = z.union([
     .object({
       kind: z.literal("pi-sdk"),
       piVersion: z.literal("0.87.1"),
-      nodeMajor: z.literal(24),
+      nodeMajor: z.literal(26),
       platform: z.literal("any"),
       arch: z.literal("any"),
     })
