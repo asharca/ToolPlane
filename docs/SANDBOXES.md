@@ -95,7 +95,7 @@ Sandbox row
 The default image is:
 
 ```txt
-mcr.microsoft.com/devcontainers/javascript-node:24-bookworm
+mcr.microsoft.com/devcontainers/javascript-node:26-bookworm
 ```
 
 The container is not privileged, drops Linux capabilities, has pids/cpu/memory
