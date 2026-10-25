@@ -41,7 +41,7 @@ Sandbox row
 默认镜像：
 
 ```txt
-mcr.microsoft.com/devcontainers/javascript-node:24-bookworm
+mcr.microsoft.com/devcontainers/javascript-node:26-bookworm
 ```
 
 容器非特权运行，移除 Linux capabilities，带 pids/cpu/memory 限制，可使用专用的
