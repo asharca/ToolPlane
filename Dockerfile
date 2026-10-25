@@ -9,7 +9,7 @@
 # docker-source MCPs additionally need the host Docker socket mounted (see
 # docker-compose.yml).
 
-ARG NODE_IMAGE=node:24-bookworm-slim
+ARG NODE_IMAGE=node:26-bookworm-slim
 ARG PNPM_VERSION=10.14.0
 
 # ---- Python is used only for agent archive imports, not channels ----
