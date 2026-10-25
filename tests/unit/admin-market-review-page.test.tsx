@@ -114,7 +114,7 @@ const packageManifest = (
     runtime: {
       kind: "pi",
       piVersion: "0.1",
-      nodeMajor: 24,
+      nodeMajor: 26,
       platform: "linux",
       arch: "x64",
     },
