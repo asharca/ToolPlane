@@ -101,7 +101,7 @@ function snapshot(
     runtime: {
       kind: "pi-sdk",
       piVersion: "0.87.1",
-      nodeMajor: 24,
+      nodeMajor: 26,
       platform: "linux",
       arch,
     },
@@ -1125,7 +1125,7 @@ describe.sequential("Pi package market lifecycle", () => {
         runtimeCompatibility: {
           runtime: "pi-sdk",
           piVersion: "0.87.1",
-          nodeMajor: 24,
+          nodeMajor: 26,
         },
         latestRelease: { id: trusted.release.id },
       },
