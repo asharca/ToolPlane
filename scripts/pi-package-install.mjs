@@ -485,7 +485,7 @@ export async function installPiPackageClient(command, configFile) {
           !Array.isArray(pkg.entries) ||
           pkg.entries.length > 20000 ||
           pkg.runtime.piVersion !== "0.87.1" ||
-          pkg.runtime.nodeMajor !== 24
+          pkg.runtime.nodeMajor !== 26
         )
           fail("invalid_pi_snapshot");
         if (
