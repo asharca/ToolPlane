@@ -30,7 +30,7 @@ jobs:
           docker run --rm --init --cpus=2 --memory=3g --pids-limit=512 \
             --security-opt=no-new-privileges \
             -v "$PWD:/opt/toolplane:ro" \
-            mcr.microsoft.com/devcontainers/javascript-node:24-bookworm \
+            mcr.microsoft.com/devcontainers/javascript-node:26-bookworm \
             bash -euc '
               root=/workspace/.toolplane/runtime-packages/hermes-rpc-3c27eb6234bf91b8ceee9e9071591b31e9b148cb
               mkdir -p "$root"
