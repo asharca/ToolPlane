@@ -924,7 +924,7 @@ describe("supervisor readiness races", () => {
         args: [
           "run",
           "--rm",
-          "node:24-bookworm-slim",
+          "node:26-bookworm-slim",
           "npx",
           "-y",
           "@fangjunjie/ssh-mcp-server",
@@ -932,7 +932,7 @@ describe("supervisor readiness races", () => {
           "ssh-config.json",
         ],
         env: {},
-        image: "node:24-bookworm-slim",
+        image: "node:26-bookworm-slim",
         configWorkingDirectory: true,
       },
       { awaitReady: false },
@@ -1040,7 +1040,7 @@ describe("supervisor readiness races", () => {
         args: [
           "run",
           "--rm",
-          "node:24-bookworm-slim",
+          "node:26-bookworm-slim",
           "-e",
           "GITHUB_TOOLSETS",
           "--password",
@@ -1053,7 +1053,7 @@ describe("supervisor readiness races", () => {
           GITHUB_TOOLSETS: "all",
           CONTAINER_ONLY_TOKEN: "container-only-secret",
         },
-        image: "node:24-bookworm-slim",
+        image: "node:26-bookworm-slim",
       },
       { awaitReady: false },
     );
@@ -1073,7 +1073,7 @@ describe("supervisor readiness races", () => {
     };
     expect(options.env).toMatchObject({
       MCP_CONTAINER_NAME: "toolplane-mcp-runtime-progress",
-      MCP_IMAGE: "node:24-bookworm-slim",
+      MCP_IMAGE: "node:26-bookworm-slim",
       MCP_STARTUP_IDLE_TIMEOUT_MS: "300000",
       MCP_STARTUP_MAX_TIMEOUT_MS: "900000",
       MCP_RUNTIME_EVENT_TOKEN: expect.any(String),
@@ -1184,9 +1184,9 @@ describe("supervisor readiness races", () => {
         kind: "bridge",
         name: "Terminal tail",
         command: "docker",
-        args: ["run", "--rm", "node:24-bookworm-slim"],
+        args: ["run", "--rm", "node:26-bookworm-slim"],
         env: { MCP_TOKEN: "terminal-known-secret" },
-        image: "node:24-bookworm-slim",
+        image: "node:26-bookworm-slim",
       },
       { awaitReady: false },
     );
