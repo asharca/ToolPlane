@@ -19,7 +19,7 @@ const KIND = ["connector", "ssh"].includes(process.env.SANDBOX_KIND)
 const SANDBOX_ID = process.env.SANDBOX_ID || "sandbox";
 const IMAGE =
   process.env.SANDBOX_IMAGE ||
-  "mcr.microsoft.com/devcontainers/javascript-node:24-bookworm";
+  "mcr.microsoft.com/devcontainers/javascript-node:26-bookworm";
 const VOLUME =
   process.env.SANDBOX_VOLUME ||
   `toolplane_sandbox_${SANDBOX_ID.replace(/[^a-zA-Z0-9_.-]/g, "_")}`;
