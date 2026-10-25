@@ -118,7 +118,7 @@ function load(item) {
   if (
     runtime?.kind !== "pi-sdk" ||
     runtime.piVersion !== "0.87.1" ||
-    runtime.nodeMajor !== 24 ||
+    runtime.nodeMajor !== 26 ||
     (!portable &&
       (runtime.platform !== process.platform ||
         runtime.arch !== process.arch)) ||
