@@ -282,9 +282,7 @@ function MarketPublishForm(props: MarketPublishFormProps) {
                   disabled={previewPending}
                   value={piSourceType}
                   onChange={(event) => {
-                    setPiSourceType(
-                      event.target.value as "git" | "zip",
-                    );
+                    setPiSourceType(event.target.value as "git" | "zip");
                     setSourceId("");
                     clearPreview();
                   }}
