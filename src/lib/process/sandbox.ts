@@ -19,9 +19,9 @@ export const SANDBOX = {
 // npm/github packages run inside Node; PyPI packages inside the uv image (uv +
 // a managed Python). docker-source MCPs use the user's own image.
 export const WRAP_IMAGE = {
-  npm: "node:24-bookworm-slim",
-  npmGit: "node:24-bookworm",
-  github: "node:24-bookworm-slim",
+  npm: "node:26-bookworm-slim",
+  npmGit: "node:26-bookworm",
+  github: "node:26-bookworm-slim",
   pypi: "ghcr.io/astral-sh/uv:python3.13-bookworm-slim",
   pypiGit: "ghcr.io/astral-sh/uv:python3.13-bookworm",
 } as const;
