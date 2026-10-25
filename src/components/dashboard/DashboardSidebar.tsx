@@ -6,10 +6,14 @@ import { useTranslations } from "next-intl";
 import { Logo } from "@/components/layout/Logo";
 import {
   Bot,
-  Store,
-  MessageSquare,
+  Boxes,
+  Cpu,
   LibraryBig,
+  MessageSquare,
   ScrollText,
+  Settings,
+  Store,
+  Users,
   type LucideIcon,
 } from "lucide-react";
 import { useAnimatedSidebar } from "@/components/motion/animated-sidebar";
@@ -29,6 +33,12 @@ const NAV_ITEMS: NavItem[] = [
 const SECONDARY_ITEMS: NavItem[] = [
   { labelKey: "knowledge", segment: "knowledge", icon: LibraryBig },
   { labelKey: "observability", segment: "observability", icon: ScrollText },
+];
+const MANAGE_ITEMS: NavItem[] = [
+  { labelKey: "members", segment: "members", icon: Users },
+  { labelKey: "modelProviders", segment: "providers", icon: Cpu },
+  { labelKey: "sandboxes", segment: "sandboxes", icon: Boxes },
+  { labelKey: "settings", segment: "settings", icon: Settings },
 ];
 
 export function DashboardSidebar({
@@ -51,13 +61,11 @@ export function DashboardSidebar({
   const { open, isMobile, setOpenMobile } = useAnimatedSidebar();
   const activeSegment = pathname.slice(`${base}/`.length).split("/")[0];
   const activeId =
-    activeSegment === "work" || activeSegment === "sandboxes"
+    activeSegment === "work"
       ? "agents"
       : ["mcp", "skills", "toolkits", "seller"].includes(activeSegment)
         ? "market"
-        : ["members", "providers"].includes(activeSegment)
-          ? "settings"
-          : activeSegment;
+        : activeSegment;
   function navigate(event: MouseEvent<HTMLDivElement>) {
     if (
       event.defaultPrevented ||
@@ -100,6 +108,16 @@ export function DashboardSidebar({
           {
             id: "secondary",
             items: SECONDARY_ITEMS.map(({ segment, labelKey, icon: Icon }) => ({
+              id: segment,
+              label: t(labelKey),
+              icon: <Icon />,
+              href: `${base}/${segment}`,
+            })),
+          },
+          {
+            id: "manage",
+            title: t("manage"),
+            items: MANAGE_ITEMS.map(({ segment, labelKey, icon: Icon }) => ({
               id: segment,
               label: t(labelKey),
               icon: <Icon />,
