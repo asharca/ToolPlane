@@ -166,8 +166,13 @@ describe("market publishing and lifecycle boundaries", () => {
   it("previews real source inputs without publication and requires its digest for interactive publication", async () => {
     const preview = { sourceDigest: "b".repeat(64), name: "Captured name" };
     mocks.preview.mockResolvedValue(preview);
-    const source = "https://github.com/acme/fixture#cccccccccccccccccccccccccccccccccccccccc";
-    const form = marketForm({ sourceType: "git", source, sourceId: "registry" });
+    const source =
+      "https://github.com/acme/fixture#cccccccccccccccccccccccccccccccccccccccc";
+    const form = marketForm({
+      sourceType: "git",
+      source,
+      sourceId: "registry",
+    });
     expect(await actions.previewPiPackageSourceAction({}, form)).toEqual({
       ok: true,
       preview,
@@ -236,12 +241,17 @@ describe("market publishing and lifecycle boundaries", () => {
     expect(
       await actions.publishPiPackageReleaseAction(
         {},
-        marketForm({ sourceType: "git", source: "https://github.com/acme/pkg#cccccccccccccccccccccccccccccccccccccccc" }),
+        marketForm({
+          sourceType: "git",
+          source:
+            "https://github.com/acme/pkg#cccccccccccccccccccccccccccccccccccccccc",
+        }),
       ),
     ).toEqual({ ok: true, listingId: "listing" });
     expect(mocks.publish).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        source: "https://github.com/acme/pkg#cccccccccccccccccccccccccccccccccccccccc",
+        source:
+          "https://github.com/acme/pkg#cccccccccccccccccccccccccccccccccccccccc",
         sourceId: undefined,
         listingId: undefined,
         visibility: "private",
