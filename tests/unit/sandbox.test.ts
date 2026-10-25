@@ -189,7 +189,7 @@ describe("sandbox image catalog", () => {
     expect(SANDBOX_IMAGE_OPTIONS[0].image).toBe(DEFAULT_SANDBOX_IMAGE);
     expect(SANDBOX_IMAGE_OPTIONS.map((option) => option.image)).toEqual(
       expect.arrayContaining([
-        "mcr.microsoft.com/devcontainers/typescript-node:24-bookworm",
+        "mcr.microsoft.com/devcontainers/typescript-node:26-bookworm",
         "mcr.microsoft.com/devcontainers/python:3.12-bookworm",
         "mcr.microsoft.com/devcontainers/go:1-bookworm",
         "mcr.microsoft.com/devcontainers/rust:1-bookworm",
