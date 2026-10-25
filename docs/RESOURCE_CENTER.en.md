@@ -12,10 +12,10 @@ This guide covers the signed-in workspace console. `{workspace}` is the workspac
 | Workspace resources | `/app/{workspace}/market/installed` |
 | Available updates | `/app/{workspace}/market/installed?updates=1` |
 | My publications | `/app/{workspace}/market/publish` |
-| Import and publish entry | `/app/{workspace}/market/import` (`?type=skill`, `?type=pi`, or `?type=mcp`) |
+| Unified package import | `/app/{workspace}/market/import` (fixed GitHub commit or ZIP; standalone Skill compatibility remains) |
 | Listing details | `/app/{workspace}/market/items/{namespace}/{listingSlug}` |
-| Focused Pi package catalogue | `/app/{workspace}/market/pi-packages` |
-| Package assembly and authoring | `/app/{workspace}/market/compose` |
+| Pi package catalogue | `/app/{workspace}/market/pi-packages` (legacy entry) |
+| Legacy package assembly | Redirects to `/app/{workspace}/market/import?type=pi` |
 | Package sources and credentials | `/app/{workspace}/market/sources` |
 | Read-only Toolkit history | `/app/{workspace}/toolkits` and `/app/{workspace}/toolkits/{slug}` |
 
@@ -35,38 +35,32 @@ Before an update or rollback, the UI identifies the current and target versions 
 
 ## Import and publication
 
-Open `/market/import` from the signed-in workspace route and choose Skill, Pi, or MCP. The page presents inline source-specific forms: Skill and Pi sources can be previewed before import or publication, while the Create workspace MCP form deploys a workspace configuration. Import, installation, configuration, and Agent enablement remain distinct steps.
+The unified intake is /app/{workspace}/market/import?type=pi. Package authors provide a GitHub repository URL with an immutable 40-character commit SHA, or upload a ZIP whose root contains one toolplane.json. ToolPlane previews the package, validates resource manifests, checks paths, checksums and secrets, and then creates an immutable imported version. Preview never executes extensions, starts MCP, creates Agent runtimes, or installs dependencies.
 
-Pi Agent presets use the real publication flow linked from My publications at `/app/{workspace}/agents/{agentId}/publish`. The workspace owner reviews the portable definition, chooses categories, and explicitly confirms public contents before submitting an immutable release for administrator review. Installing an approved preset creates a fresh Pi Agent draft: credentials and capability authorization must be reviewed, and a revision explicitly applied before work starts. Publishing or installing a preset never resumes retired runtime sessions or makes historical files/messages writable.
+A package may contain Pi, MCP, Agent, Assistant, and Skill resources. Each resource continues to use its existing specialized manifest validator. Packages declare environment-variable names, exact dependency pins, and MCP tool allowlists only; they never contain API keys, private keys, workspace IDs, deployment IDs, provider IDs, conversation history, or runtime state. Installation binds models and credentials again in the target workspace, and Agents start in needs_setup.
+
+These legacy entry points are disabled or redirected:
+
+- /market/compose: redirects to Pi package intake and no longer composes a package from workspace Skills or MCP deployments.
+- /market/import?type=mcp: no longer creates a workspace MCP deployment directly; MCP must come from a standard package.
+- /market/publish: manages imported listings/releases only; it no longer publishes workspace MCP, Agent, Assistant, or other local resources.
+- Pi npm source: no longer accepted as a user package import source. The official Pi catalogue's internal npm path remains available.
 
 ### Skills
 
-The Skill flow accepts folder and ZIP uploads and GitHub sources. Preview is non-mutating; a ZIP preview lists root Skills so you can choose which to import. Import revalidates the source, rejecting changed bytes or a stale preview instead of silently importing a different archive. Imported Skills remain workspace resources; the Skill detail's Enable for Agent flow explicitly binds one selected Agent without replacing its other resources. Public publication follows a separate review flow.
+The standalone Skill page may retain its existing GitHub/ZIP compatibility flow. The unified market intake no longer composes Pi packages from workspace resources. When a Skill is part of a standard package, place it under resources/skills/<id>/ and reference it from the root toolplane.json.
 
 ### Pi packages
 
-Pi intake supports npm, Git, and ZIP source preview and publication, plus composition from existing workspace resources. Private workspace use requires explicit owner/admin code-trust consent; ZIP sources also require explicit execution consent. This trust is workspace-only, not public human review or official-directory validation. Public submissions enter human review. An approved private release can be submitted with new listing metadata as a separate public listing using its frozen release; the private listing does not simply change visibility.
-
-Selecting Submit new version in My publications opens the inline `/app/{workspace}/market/import?type=pi&listingId={listingId}` route and preserves the listing identity. Updating a workspace installation alone does not change Agent defaults. Package setup can explicitly Review and Apply the package and its listed MCP tools to one selected Agent, using its current applied revision as the baseline and rejecting a stale expected revision. The new immutable default applies to new sessions only; other Agents, existing sessions, and unrelated draft edits remain unchanged. An Agent without an applied revision must first prepare, review and apply its configuration from the linked Agent page, then reload package setup. Existing or reused shared MCP configuration must be changed through its affected-object confirmation flow, not silently through package setup.
-
-This shared-connection restriction does not forbid retrying configuration of a connection created by the same package-setup operation: the acting user must still own it, and it must remain unshared. Reuse outside that operation, or a connection now referenced by other objects, requires the normal shared-connection impact review rather than a package-setup configuration write.
-
-Catalog source imports also require a source preview and its immutable `sourceDigest`, with explicit execution consent. Upstream recapture links to the full publication preview page rather than submitting an unreviewed one-click capture.
-
-Capture and assembly forms preserve selected files and entered metadata when submission is refused, so missing fields can be corrected without re-uploading. A source-change or stale-preview refusal invalidates the preview and disables capture submission until the current source is previewed again.
+Pi resources must use the existing pi-package manifest v1, with pinned runtime, Pi SDK, Node major, resource paths, and file checksums. Users import only from a fixed GitHub commit or a complete ZIP. ZIP imports require explicit executable-code trust; that trust is scoped to the workspace and is not public human review.
 
 ### MCP
 
-`/app/{workspace}/market/import?type=mcp` provides an inline workspace MCP JSON deployment form. Stdio recipes use `command`, `args`, and environment variables; remote MCP uses Streamable HTTP or SSE endpoints with optional authentication. HTTPS is recommended. HTTP requires the installing user to separately check explicit plaintext-risk consent; a recipe or imported JSON flag is not consent. An unapproved connection remains in setup-required state and can be explicitly approved on its detail page; approval does not automatically start execution. HTTP may expose authentication headers, tool arguments, and results, so use it only on an assessed trusted isolated network or a tunnel covering the full connection. Private targets still require the administrator's allowlist; restricted-address checks, DNS validation and pinning, same-origin checks, and redirect rejection remain unchanged.
+MCP resources use the portable recipe. npm/PyPI dependencies use exact versions, GitHub uses a full commit, Docker uses a digest, and remote MCP uses HTTPS. Packages list only requiredEnv names and tool allowlists; users enter secrets during setup. Import does not start a deployment; target-workspace authorization is required.
 
-Configuration, environment variables, runtime files, and tool-exposure settings affect shared connections. Before saving, the UI displays the IDs of the Agents and Assistants actually referencing the connection and requires explicit confirmation. If concurrent changes alter that set, the server refuses the write and returns the latest objects for renewed confirmation. Editing a shared connection does not expand individual objects' tool permissions. The environment editor receives only key names and configured-state metadata, never saved secret values.
+### Agents and Assistants
 
-Protocol discovery performs a real handshake and reads catalogs; it does not call business tools or grant tool authorization. Assistants use remote MCP only; Agents may use remote connections or stdio in an isolated runtime. Creating or installing MCP does not bind or authorize it: the target and tools must be explicitly chosen. Standalone MCP discovery uses its registered runtime and does not automatically create an extra sandbox.
-
-Connection details provide target selection, real protocol discovery, per-tool authorization, and application. The Agent branch reuses single-resource source review and application: controlled temporary isolated inspection inherits the target default Docker sandbox constraints without starting that template sandbox or requiring a running shared MCP process. Its server-signed review receipt binds the user, workspace, target, expected revision, and actual source. Unpublished Agents must prepare and publish a revision first. Switching targets or rediscovering clears selected tools; unchecked tools are never automatically authorized. Expired reviews, changed sources, and revision conflicts require fresh review. Assistants appear only for actual remote connections and retain their independent remote discovery and authorization flow without a sandbox. Applying updates only the chosen object's new default revision, preserves other connections and configuration, and uses the expected revision to reject concurrent overwrites; existing sessions keep their pinned revision. Shared connection tool exposure remains an independent ceiling and is never silently widened by application.
-
-Pi package MCP requirements use the selected Agent's existing sandbox; that runtime must be running and its network cannot be `none`. The flow does not silently change sandbox settings. Exact npm/PyPI versions and Git commits are pinned recipes, not byte-locked transitive dependencies or wrapper images; Docker image references require a digest. Provide credentials through private configuration; they are not included in portable exports.
-
+Agents use the existing Agent release manifest v1 and Assistants use the existing Assistant market manifest v1. Manifests may declare prompts, model requirements, sub-agents, Skills, and verified MCP dependencies, but cannot contain workspace or runtime identities. Installation creates setup-required resources and asks the target workspace to authorize models, environment variables, and capabilities again.
 ## Client registrations and historical Toolkit cutover
 
 External access uses scoped, revocable registrations, not Toolkit execution endpoints. `GET /api/v1/pi-packages/registrations?workspace={workspace}` lists the signed-in account's registrations. `POST /api/v1/pi-packages/registrations` takes `workspace`, `client`, `label`, `bindings`, and exactly one of `marketInstallId` or `selections`; each explicit selection contains a fixed `releaseId`, `checksum`, and `kind` (`skill`, `mcp`, or `pi-package`). Private token/configuration is shown only at creation. Updating a registration requires its current integer `expectedConfigVersion` and explicit confirmation for expanded privileges; local installers must use the newly issued private configuration.
