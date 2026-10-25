@@ -6,7 +6,6 @@ import { Store } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { getWorkspaceForUser, getDeployments } from "@/lib/workspace/queries";
 import { effectiveStatus } from "@/lib/process/supervisor";
-import { DeployCustomMcpDialog } from "@/components/dashboard/DeployCustomMcpDialog";
 import { deploymentLabel } from "@/lib/workspace/deployment-label";
 import { ProvisioningRefresher } from "@/components/dashboard/ProvisioningRefresher";
 import {
@@ -67,7 +66,7 @@ export default async function McpServersPage({
   const anyProvisioning = deploymentItems.some(
     (deployment) => deployment.status === "provisioning",
   );
-  const marketHref = `/app/${encodeURIComponent(slug)}/market/mcp`;
+  const marketHref = `/app/${encodeURIComponent(slug)}/market/import?type=pi`;
 
   return (
     <>
@@ -81,10 +80,6 @@ export default async function McpServersPage({
                 <Store className="size-4" />
                 {t("browseToolplane")}
               </ButtonLink>
-              <DeployCustomMcpDialog
-                slug={slug}
-                defaultOpen={query.create === "1"}
-              />
             </>
           }
         >
