@@ -150,7 +150,7 @@ export async function loadPiClientSelections(
       runtime: {
         kind: "pi-sdk",
         piVersion: "0.87.1",
-        nodeMajor: 24,
+        nodeMajor: 26,
         platform: "any",
         arch: "any",
       },
