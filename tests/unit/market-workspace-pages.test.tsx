@@ -277,9 +277,10 @@ describe("workspace market management pages", () => {
       }),
     );
 
-    expect(
-      screen.getByRole("link", { name: "Pi package" }),
-    ).toHaveAttribute("href", "/app/acme/market/import");
+    expect(screen.getByRole("link", { name: "Pi package" })).toHaveAttribute(
+      "href",
+      "/app/acme/market/import",
+    );
     expect(screen.getByText("Publish new version")).toBeInTheDocument();
     expect(
       within(
