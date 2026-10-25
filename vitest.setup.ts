@@ -14,7 +14,7 @@ if (typeof window !== "undefined") {
         values.set(String(key), String(value));
       },
       removeItem: (key) => {
-        values.delete(key);
+        values.delete(String(key));
       },
       clear: () => {
         values.clear();
@@ -33,7 +33,6 @@ if (typeof window !== "undefined") {
       value: storage,
     });
   }
-}
   window.matchMedia ??= (query: string) => ({
     matches: false,
     media: query,
