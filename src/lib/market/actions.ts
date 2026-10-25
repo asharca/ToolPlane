@@ -221,7 +221,11 @@ export async function publishPiPackageReleaseAction(
     const archive = formData.get("archive");
     const source = String(formData.get("source") ?? "");
     const sourceId = String(formData.get("sourceId") ?? "") || undefined;
-    if (sourceType !== "zip" && sourceType !== "git" && sourceType !== "release")
+    if (
+      sourceType !== "zip" &&
+      sourceType !== "git" &&
+      sourceType !== "release"
+    )
       return { error: "source_invalid" };
     if (sourceType === "zip" && !(archive instanceof File))
       return { error: "source_invalid" };
