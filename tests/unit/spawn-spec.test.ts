@@ -44,7 +44,7 @@ describe("buildSpawnSpec — every custom source runs in a hardened container", 
 
   it("npm/github wrap in node + npx, cache redirected to tmpfs", () => {
     const { args, env } = buildSpawnSpec("npm", "mcp-server-fetch");
-    expect(args).toContain("node:24-bookworm-slim");
+    expect(args).toContain("node:26-bookworm-slim");
     expect(args.slice(-3)).toEqual(["npx", "-y", "mcp-server-fetch"]);
     expect(args).not.toContain("npm_config_cache");
     expect(env.npm_config_cache).toBe("/tmp/.npm");
@@ -120,7 +120,7 @@ describe("resolveSpawnSpec", () => {
     expect(args).not.toContain("--env");
     expect(args.join(" ")).not.toContain("secret");
     expect(env.SSH_PASSWORD).toBe("secret");
-    const imageIndex = args.indexOf("node:24-bookworm-slim");
+    const imageIndex = args.indexOf("node:26-bookworm-slim");
     expect(args.slice(imageIndex + 1)).toEqual(["npx", ...commandArgs]);
   });
 
@@ -163,7 +163,7 @@ describe("resolveSpawnSpec", () => {
     for (const source of npxGitSources) {
       const npxArgs = ["-y", source, "--config-file", "server.json"];
       const npx = buildStdioConfigSpawnSpec("npx", npxArgs);
-      expect(npx.image).toBe("node:24-bookworm");
+      expect(npx.image).toBe("node:26-bookworm");
       expect(npx.args.slice(npx.args.indexOf(npx.image) + 1)).toEqual([
         "npx",
         ...npxArgs,
@@ -191,7 +191,7 @@ describe("resolveSpawnSpec", () => {
     ];
     for (const args of npxPackageArgForms) {
       expect(buildStdioConfigSpawnSpec("npx", args).image).toBe(
-        "node:24-bookworm",
+        "node:26-bookworm",
       );
     }
 
@@ -223,13 +223,13 @@ describe("resolveSpawnSpec", () => {
         "-y",
         "@modelcontextprotocol/server-fetch",
       ]).image,
-    ).toBe("node:24-bookworm-slim");
+    ).toBe("node:26-bookworm-slim");
     expect(
       buildStdioConfigSpawnSpec("npx", [
         "-y",
         "https://downloads.example.test/mcp.tgz",
       ]).image,
-    ).toBe("node:24-bookworm-slim");
+    ).toBe("node:26-bookworm-slim");
     expect(
       buildStdioConfigSpawnSpec("uvx", [
         "--from",
@@ -544,11 +544,11 @@ describe("resolveSpawnSpec", () => {
       server: null,
       name: "Sandbox: Lab",
       source: "sandbox",
-      sourceRef: "mcr.microsoft.com/devcontainers/javascript-node:24-bookworm",
+      sourceRef: "mcr.microsoft.com/devcontainers/javascript-node:26-bookworm",
       installCfg: {
         sandboxId: "sb1",
         kind: "docker",
-        image: "node:24-bookworm-slim",
+        image: "node:26-bookworm-slim",
         volumeName: "vol1",
         network: "none",
         env: { A: "1" },
@@ -559,7 +559,7 @@ describe("resolveSpawnSpec", () => {
       name: "Sandbox: Lab",
       sandboxId: "sb1",
       sandboxKind: "docker",
-      image: "node:24-bookworm-slim",
+      image: "node:26-bookworm-slim",
       volumeName: "vol1",
       network: "none",
       env: { A: "1" },
