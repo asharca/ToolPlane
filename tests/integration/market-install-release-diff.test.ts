@@ -58,7 +58,7 @@ function pi(version = "1.0.0"): PiPackageManifestV1 {
       runtime: {
         kind: "pi-sdk",
         piVersion: "0.87.1",
-        nodeMajor: 24,
+        nodeMajor: 26,
         platform: "any",
         arch: "any",
       },
@@ -254,7 +254,7 @@ it("compares Pi hashes, executable modes, link targets and types with bounded st
   after.package.runtime = {
     kind: "pi-sdk",
     piVersion: "0.87.1",
-    nodeMajor: 24,
+    nodeMajor: 26,
     platform: "linux",
     arch: "x64",
   };
