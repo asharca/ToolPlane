@@ -9,7 +9,6 @@ import {
   Store,
   MessageSquare,
   LibraryBig,
-  Settings,
   ScrollText,
   type LucideIcon,
 } from "lucide-react";
@@ -19,7 +18,6 @@ import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
 import { AccountMenu } from "./AccountMenu";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
 import { useDashboardTabs } from "./DashboardTabs";
-import { ButtonLink } from "@/components/motion/button";
 
 type NavItem = { labelKey: string; segment: string; icon: LucideIcon };
 type Workspace = { id: string; slug: string; name: string };
@@ -111,22 +109,6 @@ export function DashboardSidebar({
         ]}
         footer={
           <div className="flex flex-col gap-1">
-            <ButtonLink
-              href={`${base}/settings?returnTo=${encodeURIComponent(pathname)}`}
-              variant={activeId === "settings" ? "secondary" : "ghost"}
-              size="sm"
-              aria-current={activeId === "settings" ? "page" : undefined}
-              aria-label={t("settings")}
-              title={t("settings")}
-              className={
-                !open && !isMobile ? "justify-center px-0" : "justify-start"
-              }
-            >
-              <Settings className="size-4 shrink-0" />
-              <span className={!open && !isMobile ? "sr-only" : undefined}>
-                {t("settings")}
-              </span>
-            </ButtonLink>
             <NotificationBell
               workspaceSlug={slug}
               compact={!open && !isMobile}
