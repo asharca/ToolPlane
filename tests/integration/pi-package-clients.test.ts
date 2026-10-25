@@ -170,7 +170,7 @@ function manifest(version = "1.0.0"): PiPackageManifestV1 {
       runtime: {
         kind: "pi-sdk",
         piVersion: "0.87.1",
-        nodeMajor: 24,
+        nodeMajor: 26,
         platform: "any",
         arch: "any",
       },
