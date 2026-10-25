@@ -5,7 +5,7 @@ import {
   PiPublicResubmissionForm,
   type PiSourceOption,
 } from "@/components/dashboard/market/SkillPublishForm";
-import { Button, ButtonLink } from "@/components/motion/button";
+import { ButtonLink } from "@/components/motion/button";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { db } from "@/lib/db";
 import { getWorkspaceForUser } from "@/lib/workspace/queries";
@@ -56,7 +56,10 @@ export default async function ResourceImportPage({
       activeType === "pi" && workspace.ownerId !== user.id
         ? db.membership.findUnique({
             where: {
-              workspaceId_userId: { workspaceId: workspace.id, userId: user.id },
+              workspaceId_userId: {
+                workspaceId: workspace.id,
+                userId: user.id,
+              },
             },
             select: { role: true },
           })
