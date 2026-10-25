@@ -12,10 +12,10 @@
 | 工作区资源 | `/app/{workspace}/market/installed` |
 | 可用更新 | `/app/{workspace}/market/installed?updates=1` |
 | 我的发布 | `/app/{workspace}/market/publish` |
-| 导入与发布入口 | `/app/{workspace}/market/import`（`?type=skill`、`?type=pi` 或 `?type=mcp`） |
+| 统一包导入 | `/app/{workspace}/market/import`（GitHub 固定 commit 或 ZIP；保留独立 Skill 兼容入口） |
 | 资源详情 | `/app/{workspace}/market/items/{namespace}/{listingSlug}` |
-| Pi 包专用目录 | `/app/{workspace}/market/pi-packages` |
-| 包组装与管理 | `/app/{workspace}/market/compose` |
+| Pi 包目录 | `/app/{workspace}/market/pi-packages`（历史入口） |
+| 旧包组装入口 | 重定向到 `/app/{workspace}/market/import?type=pi` |
 | 包来源与凭据 | `/app/{workspace}/market/sources` |
 | 只读 Toolkit 历史 | `/app/{workspace}/toolkits` 和 `/app/{workspace}/toolkits/{slug}` |
 
@@ -35,38 +35,32 @@
 
 ## 导入与发布
 
-从工作区控制台打开 `/market/import`，选择 Skill、Pi 或 MCP。该页面直接呈现按来源区分的引导表单：Skill 和 Pi 可先预览来源再导入或发布，MCP 的“创建工作区 MCP”表单创建部署；导入、安装、配置和 Agent 启用仍是明确区分的步骤。
+统一入口是 /app/{workspace}/market/import?type=pi。包作者提交 GitHub 仓库 URL 和固定的 40 位 commit SHA，或上传一个以唯一 toolplane.json 为根索引的 ZIP。导入器先做只读预览、资源 manifest 校验、路径安全检查、checksum 和 secret scan，再创建不可变的导入版本；预览阶段不执行扩展代码、不启动 MCP、不创建 Agent runtime，也不安装依赖。
 
-Pi Agent 预设通过“我的发布”中的真实入口 `/app/{workspace}/agents/{agentId}/publish` 发布。工作区所有者审阅可移植定义、选择分类并明确确认公开内容后，提交不可变版本供管理员审核。安装已批准的预设会创建新的 Pi Agent 草稿；开始任务前须配置凭据、审阅能力授权并明确应用修订。发布或安装预设不会恢复已退役运行时的会话，也不会使历史文件或消息变为可写。
+Pi、MCP、Agent、Assistant 和 Skill 都可以作为同一个外部包的资源。每种资源继续使用各自现有的 manifest 校验器。包中只声明环境变量名称、精确依赖版本和允许的 MCP 工具，不包含 API key、私钥、workspace ID、deployment ID、provider ID、会话记录或其他运行时状态。安装后由目标工作区重新绑定模型和凭据，Agent 从 needs_setup 状态开始。
+
+以下旧入口已经停用或应重定向：
+
+- /market/compose：重定向到统一 Pi 包导入，不再从当前工作区 Skill/MCP 组合包。
+- /market/import?type=mcp：不再直接创建工作区 MCP deployment；MCP 必须来自标准包。
+- /market/publish：只管理已导入 listing/release，不再发布当前工作区 MCP、Agent、Assistant 或其他本地资源。
+- Pi 的 npm source：不作为用户包导入来源。官方 Pi catalog 内部的 npm 安装路径仍保留。
 
 ### Skill
 
-Skill 流程支持文件夹、ZIP 上传和 GitHub 来源。预览不会写入资源；ZIP 预览列出根 Skill，选择需要导入的根目录后再提交。导入会重新校验来源，因此内容变化或预览过期会报错，而不会悄悄导入另一份归档。导入后的 Skill 属于工作区资源；在 Skill 详情的“为 Agent 启用”流程中可明确绑定到单个 Agent，不会替换其其他资源。公开发布使用单独的审核流程。
+独立 Skill 页面仍可提供现有 GitHub/ZIP 兼容流程；统一市场入口不再从工作区资源组合 Pi 包。若 Skill 是标准包的一部分，使用 resources/skills/<id>/ 并在根 toolplane.json 中引用。
 
 ### Pi 包
 
-Pi 导入入口支持 npm、Git、ZIP 来源预览与发布，也可从现有工作区资源组合 Pi 包。选择工作区私有使用时，所有者或管理员必须明确确认代码信任；ZIP 来源也要求明确执行授权。此信任仅适用于本工作区，不等同于公开人工审核或官方目录验证。公开提交会进入人工审核；已批准的私有版本可用冻结版本和新的条目资料提交为独立的公开待审核条目，原私有条目不会直接切换可见性。
-
-在“我的发布”中选择“提交新版本”会打开内联路由 `/app/{workspace}/market/import?type=pi&listingId={listingId}`，并沿用原条目身份。仅更新工作区安装不会更改 Agent 默认版本。包设置可基于一个选定 Agent 当前已应用的修订，明确审阅并应用此包及其列出的 MCP 工具；预期修订过期时拒绝覆盖。新的不可变默认修订仅用于新会话，其他 Agent、现有会话及无关草稿改动均不受影响。若 Agent 尚无已应用的修订，须先通过链接进入 Agent 页面，准备、审阅并应用配置，再刷新包设置。现有或复用的共享 MCP 配置须通过受影响对象确认流程修改，不能在包设置中静默更改。
-
-共享连接限制不禁止重试配置同一次包设置操作新建的连接：该连接仍须由当前操作者拥有，且尚未共享。同一操作之外的复用，或已被其他对象引用的连接，须走正常的共享连接影响审阅流程，不能通过包设置直接写入配置。
-
-目录来源导入同样要求先预览并提交不可变的 `sourceDigest`，同时明确确认执行授权。上游重新捕获入口进入完整发布预览页，不再一键提交未经预览的捕获操作。
-
-捕获和组装表单在提交被拒绝时保留已选文件与填写的资料，补齐遗漏项无需重新上传。来源变化或预览过期导致的拒绝会使旧预览失效，并禁用捕获提交，直到重新预览当前来源。
+Pi 资源必须符合现有 pi-package manifest v1，固定 runtime、Pi SDK、Node major、资源路径和文件 checksum。用户只能从 GitHub 固定 commit 或完整 ZIP 导入。ZIP 必须显式确认可执行代码信任；该信任只适用于当前工作区，不等于公开人工审核。
 
 ### MCP
 
-`/app/{workspace}/market/import?type=mcp` 提供内联工作区 MCP JSON 部署表单。stdio 配方使用 `command`、`args` 和环境变量；远程 MCP 使用 Streamable HTTP 或 SSE 端点与可选认证。HTTPS 为推荐选项；HTTP 需要安装用户单独勾选明文风险确认，配方或导入 JSON 内的标记不代表用户同意。未确认的连接停留在待配置状态，可在连接详情明确批准；批准不会自动启动执行。HTTP 可能暴露认证头、工具参数与结果，仅应在经评估的可信隔离网络或覆盖全链路的加密隧道中使用。私有目标仍需管理员白名单；受限地址、DNS 校验与固定、同源请求及禁止重定向等现有边界保持不变。
+MCP 资源使用 portable recipe。npm/PyPI 使用精确版本，GitHub 使用完整 commit，Docker 使用 digest，远程 MCP 使用 HTTPS。包中只列 requiredEnv 名称和工具 allowlist；实际密钥在安装设置流程填写。导入不会立即启动 deployment，必须经过目标工作区授权。
 
-配置、环境变量、运行时文件和工具暴露设置会影响共享连接。保存前显示实际引用该连接的 Agent／Assistant ID，必须明确确认；若并发修改导致影响对象变化，服务器拒绝保存并返回最新对象，重新确认后才能再次提交。各对象的工具权限不会因为修改共享连接而自动扩大。环境变量编辑器仅接收键名和已配置状态，不回传保存的私密值。
+### Agent 与 Assistant
 
-协议发现只进行真实握手与目录读取，不执行业务工具，也不代表工具已获授权。Assistant 仅使用远程 MCP；Agent 可使用远程连接或隔离运行时中的 stdio。创建或安装 MCP 不等于绑定或授权；需要明确选择目标与工具。独立 MCP 使用自身注册的运行时进行协议发现，不会自动创建额外沙箱。
-
-连接详情提供目标选择、真实协议发现、逐项工具授权与应用。Agent 分支复用单项资源的源码审核与应用流程：受控的临时隔离检查继承目标默认 Docker 沙箱的环境约束，不启动模板沙箱，也不要求共享 MCP 进程运行；服务端签名审核凭据绑定用户、工作区、目标、预期修订与实际来源。尚未发布的 Agent 必须先准备并发布修订。目标切换或重新发现会清空勾选，未勾选的工具不会自动授权；审核过期、来源变化或修订冲突要求重新审核。Assistant 仅出现在实际远程连接的目标列表中，保持独立的远程发现及授权流程，不要求创建沙箱。应用只更新所选对象的新默认修订，保留其他连接与配置，并通过预期修订拒绝并发覆盖；既有会话仍固定原修订。共享连接的工具暴露策略独立约束对象授权，应用不会静默扩大该策略。
-
-若 Pi 包声明了 MCP 需求，其引导配置会使用所选 Agent 的现有沙箱；沙箱运行时必须已运行且网络不能为“无”。流程不会静默更改沙箱设置。MCP 的 npm/PyPI 精确版本或 Git commit 是配方固定版本，不代表传递依赖或包装镜像已字节锁定；Docker 镜像引用需要 digest。凭据应通过私密配置提供，不会写入导出的便携配置。
-
+Agent 使用现有 Agent release manifest v1，Assistant 使用 Assistant market manifest v1。清单可以声明 prompt、模型要求、子 Agent、Skill 和已验证 MCP 依赖，但不能包含工作区或运行时身份。安装时创建待设置资源，模型、环境变量和能力授权由目标工作区重新确认。
 ## 客户端登记与历史 Toolkit 切换
 
 外部接入使用范围受限、可撤销的客户端登记，不再使用 Toolkit 执行端点。`GET /api/v1/pi-packages/registrations?workspace={workspace}` 列出当前登录账户的登记；`POST /api/v1/pi-packages/registrations` 接受 `workspace`、`client`、`label`、`bindings`，并且在 `marketInstallId` 与 `selections` 中二选一。每项显式选择包含固定的 `releaseId`、`checksum` 和 `kind`（`skill`、`mcp` 或 `pi-package`）。私密令牌与配置仅创建时显示；更新登记须提交当前整数版本 `expectedConfigVersion`，扩大权限须再次明确确认，本地安装器须使用新签发的私密配置。
