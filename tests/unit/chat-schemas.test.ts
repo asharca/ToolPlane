@@ -31,7 +31,7 @@ describe("chat bounded-context input", () => {
       marketTemplateReleaseId: "release-1",
       skillIds: ["skill-1"],
       sandboxId: "sandbox-1",
-      runtime: "hermes",
+      runtime: "pi-sdk",
     });
 
     expect(result.deploymentIds).toEqual(["mcp-1"]);

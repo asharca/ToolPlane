@@ -5,7 +5,6 @@ import {
   updateAgentChannelConnectionCredentialsAction,
   requestAgentChannelPairingAction,
   checkAgentChannelPairingAction,
-  applyAgentChannelPairingAction,
   deleteAgentChannelConnectionAction,
   startAgentChannelConnectionAction,
   stopAgentChannelConnectionAction,
@@ -20,7 +19,6 @@ const mocks = vi.hoisted(() => ({
   remove: vi.fn(),
   request: vi.fn(),
   check: vi.fn(),
-  apply: vi.fn(),
   start: vi.fn(),
   stop: vi.fn(),
   revalidate: vi.fn(),
@@ -39,13 +37,11 @@ vi.mock("@/lib/agents/channel-connections", () => ({
 vi.mock("@/lib/agents/channel-pairing", () => ({
   requestAgentChannelPairing: mocks.request,
   checkAgentChannelPairing: mocks.check,
-  applyAgentChannelPairing: mocks.apply,
 }));
 vi.mock("@/lib/agents/channel-runtime", () => ({
   startAgentChannelRunner: mocks.start,
   stopAgentChannelRunner: mocks.stop,
 }));
-vi.mock("@/lib/agents/hermes/runtime", () => ({}));
 vi.mock("@/lib/agents/sandbox-runtime", () => ({}));
 vi.mock("@/lib/sandboxes/actions", () => ({}));
 vi.mock("@/lib/process/supervisor", () => ({}));
@@ -67,7 +63,6 @@ const actions = [
   updateAgentChannelConnectionCredentialsAction,
   requestAgentChannelPairingAction,
   checkAgentChannelPairingAction,
-  applyAgentChannelPairingAction,
   deleteAgentChannelConnectionAction,
   startAgentChannelConnectionAction,
   stopAgentChannelConnectionAction,
@@ -95,7 +90,6 @@ describe("round two agent channel action authorization", () => {
         mocks.remove,
         mocks.request,
         mocks.check,
-        mocks.apply,
         mocks.start,
         mocks.stop,
       ])
@@ -146,14 +140,16 @@ describe("round two agent channel action authorization", () => {
     expect(mocks.revalidate).toHaveBeenCalledWith("/app/acme/agents/agent");
   });
 
-  it("requests built-in pairing only for a created connection missing start credentials", async () => {
+  it("requests built-in pairing for a created WeCom connection missing start credentials", async () => {
     mocks.create.mockResolvedValue({
       connection: {
         id: "created",
-        missingStartCredentialNames: ["TELEGRAM_BOT_TOKEN"],
+        missingStartCredentialNames: ["WECOM_BOT_ID"],
       },
     });
-    await createAgentChannelConnectionAction(form({ name: "  Team bot  " }));
+    await createAgentChannelConnectionAction(
+      form({ platform: "wecom", name: "  Team bot  " }),
+    );
     expect(mocks.create).toHaveBeenCalledWith(
       expect.objectContaining({ name: "Team bot" }),
     );
@@ -206,19 +202,13 @@ describe("round two agent channel action authorization", () => {
     expect(mocks.remove).toHaveBeenCalledWith("workspace", "connection");
   });
 
-  it("invalidates the agent view after start, stop, pairing request/check and apply", async () => {
+  it("invalidates the agent view after start, stop and pairing request/check", async () => {
     await startAgentChannelConnectionAction(form());
     await stopAgentChannelConnectionAction(form());
     await requestAgentChannelPairingAction(form());
     await checkAgentChannelPairingAction(form());
-    await applyAgentChannelPairingAction(form({ allowedUserIds: "100,200" }));
-    expect(mocks.apply).toHaveBeenCalledWith(
-      "workspace",
-      "connection",
-      "100,200",
-    );
     expect(mocks.revalidate.mock.calls).toEqual(
-      Array.from({ length: 5 }, () => ["/app/acme/agents/agent"]),
+      Array.from({ length: 4 }, () => ["/app/acme/agents/agent"]),
     );
   });
 });

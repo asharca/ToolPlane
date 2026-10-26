@@ -19,6 +19,7 @@ import {
 } from "@a2a-js/sdk/errors";
 import { db } from "@/lib/db";
 import { runtimeEnv } from "@/lib/runtime-env";
+import { a2aDeploymentOrigin } from "./connection-info";
 import { assertRuntimeOwner } from "@/lib/runtime/ownership-state";
 import {
   A2A_PROTOCOL_VERSION,
@@ -38,7 +39,6 @@ import {
 } from "./principal";
 import * as store from "./store";
 import { wakeA2AWorker } from "./worker";
-import { a2aDeploymentOrigin } from "./connection-info";
 
 export async function buildAgentCard(grant: TaskGrant): Promise<AgentCard> {
   if (isLocalGrant(grant)) {
@@ -65,17 +65,17 @@ export async function buildAgentCard(grant: TaskGrant): Promise<AgentCard> {
   const base = a2aDeploymentOrigin(
     runtimeEnv("NEXT_PUBLIC_APP_URL") || "http://localhost:3000",
   );
-  const url = new URL(
-    `/api/v1/agent-endpoints/${encodeURIComponent(endpoint.publicId)}/a2a`,
-    base,
-  ).href;
   return AgentCard.fromJSON({
     name: endpoint.name,
-    description: "An explicitly published ToolPlane Agent service.",
+    description:
+      "Historical published service. New public endpoint execution is unsupported.",
     version: String(endpoint.currentRevision?.version ?? 1),
     supportedInterfaces: [
       {
-        url,
+        url: new URL(
+          `/api/v1/agent-endpoints/${encodeURIComponent(endpoint.publicId)}/a2a`,
+          base,
+        ).href,
         protocolBinding: "JSONRPC",
         protocolVersion: A2A_PROTOCOL_VERSION,
       },
@@ -87,14 +87,7 @@ export async function buildAgentCard(grant: TaskGrant): Promise<AgentCard> {
     },
     defaultInputModes: ["text/plain"],
     defaultOutputModes: ["text/plain"],
-    skills: [
-      {
-        id: "execute",
-        name: endpoint.name,
-        description: "Execute a text task using this published service.",
-        tags: ["agent"],
-      },
-    ],
+    skills: [],
     securitySchemes: {
       bearer: {
         httpAuthSecurityScheme: {

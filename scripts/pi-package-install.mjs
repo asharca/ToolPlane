@@ -219,7 +219,7 @@ export async function installPiPackageClient(command, configFile) {
   if (
     !/^[a-zA-Z0-9_-]{1,100}$/.test(cfg.installationId) ||
     !/^tppi_[a-f0-9]{64}$/.test(cfg.token) ||
-    !["pi", "claude-code", "codex", "opencode", "hermes"].includes(cfg.client)
+    !["pi", "claude-code", "codex", "opencode"].includes(cfg.client)
   )
     fail("invalid_device_config");
   configOrigin(cfg);
@@ -252,22 +252,17 @@ export async function installPiPackageClient(command, configFile) {
   const opencodeHome = clientBase(
     process.env.OPENCODE_CONFIG_DIR || path.join(configHome, "opencode"),
   );
-  const hermesHome = clientBase(
-    process.env.HERMES_HOME || path.join(home, ".hermes"),
-  );
   const configPaths = {
     pi: path.join(piHome, "settings.json"),
     "claude-code": path.join(home, ".claude.json"),
     codex: path.join(codexHome, "config.toml"),
     opencode:
       process.env.OPENCODE_CONFIG || path.join(opencodeHome, "opencode.json"),
-    hermes: process.env.HERMES_CONFIG || path.join(hermesHome, "config.yaml"),
   };
   const skillRoots = {
     "claude-code": path.join(home, ".claude", "skills"),
     codex: path.join(home, ".agents", "skills"),
     opencode: path.join(opencodeHome, "skills"),
-    hermes: path.join(hermesHome, "skills"),
   };
   const selectedConfig = configPaths[cfg.client];
   const clientConfig = path.join(
@@ -739,7 +734,7 @@ export async function installPiPackageClient(command, configFile) {
         fail("client_config_conflict");
       if (starts.length) lines.splice(starts[0], ends[0] - starts[0] + 1);
       let block = null;
-      if (enable && cfg.client === "codex") {
+      if (enable) {
         if (lines.some((line) => line.includes(server)))
           fail("client_config_conflict");
         block = [
@@ -750,30 +745,6 @@ export async function installPiPackageClient(command, configFile) {
           end,
         ].join("\n");
         lines.push("", block);
-      } else if (enable) {
-        if (lines.some((line) => line.includes(server)))
-          fail("client_config_conflict");
-        const keys = lines.filter((line) => /^mcp_servers:/.test(line));
-        if (
-          keys.length > 1 ||
-          keys.some(
-            (line) => !/^mcp_servers:\s*(?:\{\}\s*)?(?:#.*)?$/.test(line),
-          )
-        )
-          fail("hermes_config_mapping_unsupported");
-        let index = lines.findIndex((line) => /^mcp_servers:/.test(line));
-        if (index < 0) {
-          lines.push("mcp_servers:");
-          index = lines.length - 1;
-        } else lines[index] = "mcp_servers:";
-        block = [
-          `  ${begin}`,
-          `  ${server}:`,
-          '    command: "node"',
-          `    args: ${JSON.stringify(args)}`,
-          `  ${end}`,
-        ].join("\n");
-        lines.splice(index + 1, 0, block);
       }
       nextState.configValue = block;
       configAfter = lines.join("\n");

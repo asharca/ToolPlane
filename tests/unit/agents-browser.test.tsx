@@ -5,7 +5,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentsBrowser } from "@/components/dashboard/agents/AgentsBrowser";
 
 const actions = vi.hoisted(() => ({
-  cloneAgentAction: vi.fn(),
   createAgentAction: vi.fn(),
   deleteAgentAction: vi.fn(),
   installAgentFromMarketAction: vi.fn(),
@@ -45,7 +44,6 @@ async function advanceToCreate(user: ReturnType<typeof userEvent.setup>) {
 
 describe("AgentsBrowser", () => {
   beforeEach(() => {
-    actions.cloneAgentAction.mockReset();
     actions.createAgentAction.mockReset();
     actions.deleteAgentAction.mockReset();
     actions.installAgentFromMarketAction.mockReset();
@@ -143,7 +141,7 @@ describe("AgentsBrowser", () => {
             iconUrl: null,
             publisher: "ToolPlane",
             tags: ["research"],
-            runtimes: ["hermes"],
+            runtimes: ["pi-sdk"],
             resourceCount: 3,
             sandboxCount: 1,
             installCount: 12,
@@ -260,7 +258,7 @@ describe("AgentsBrowser", () => {
     await openBlankCreate(user);
     expect(
       screen.queryByRole("radio", {
-        name: /Claude Code|DeepSeek Harness|Hermes/,
+        name: /Claude Code|DeepSeek Harness/,
       }),
     ).not.toBeInTheDocument();
     expect(
@@ -568,46 +566,6 @@ describe("AgentsBrowser", () => {
     );
   });
 
-  it("marks a Hermes agent ready from its provider inventory without a fixed model", () => {
-    render(
-      <AgentsBrowser
-        slug="acme"
-        agents={[
-          {
-            id: "agent-hermes",
-            name: "Hermes researcher",
-            providerName: null,
-            providerNames: ["OpenAI", "Anthropic"],
-            model: null,
-            toolCount: 0,
-            subAgentCount: 0,
-            runtimeKind: "hermes",
-            runtimeStatus: "running",
-            sandboxReady: false,
-          },
-        ]}
-        createOptions={{
-          providers: [],
-          deployments: [],
-          skills: [],
-          toolkits: [],
-        }}
-      />,
-    );
-
-    const row = screen
-      .getByRole("link", { name: "Hermes researcher" })
-      .closest("li");
-    expect(row).not.toBeNull();
-    expect(within(assertDefined(row)).getByText("Ready")).toBeInTheDocument();
-    expect(
-      within(assertDefined(row)).getByText(/2 selected: OpenAI, Anthropic/),
-    ).toBeInTheDocument();
-    expect(
-      within(assertDefined(row)).getByRole("link", { name: "Chat" }),
-    ).toHaveAttribute("href", "/app/acme/work?agent=agent-hermes");
-  });
-
   it("shows the stored runtime instead of relabeling it as Pi", () => {
     render(
       <AgentsBrowser
@@ -650,7 +608,7 @@ describe("AgentsBrowser", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("requires a new sandbox instead of cloning a dedicated-runtime agent", async () => {
+  it("exposes settings and confirms agent deletion", async () => {
     const user = userEvent.setup();
     render(
       <AgentsBrowser
@@ -679,16 +637,8 @@ describe("AgentsBrowser", () => {
     );
 
     const settingsButton = screen.getByRole("link", { name: "Settings" });
-    const cloneButton = screen.getByRole("button", {
-      name: "Create a new agent and select an unassigned sandbox",
-    });
     const deleteButton = screen.getByRole("button", { name: "Delete agent" });
     expect(settingsButton).toHaveAttribute("title", "Settings");
-    expect(cloneButton).toBeDisabled();
-    expect(cloneButton).toHaveAttribute(
-      "title",
-      "Create a new agent and select an unassigned sandbox",
-    );
 
     await user.click(deleteButton);
     expect(
@@ -702,80 +652,5 @@ describe("AgentsBrowser", () => {
     expect(
       screen.getByRole("button", { name: "Confirm delete" }),
     ).toHaveFocus();
-  });
-
-  it("offers Hermes state options and includes them in a complete clone", async () => {
-    const user = userEvent.setup();
-    render(
-      <AgentsBrowser
-        slug="acme"
-        agents={[
-          {
-            id: "agent-hermes",
-            name: "Hermes researcher",
-            providerName: null,
-            providerNames: ["OpenAI"],
-            model: null,
-            toolCount: 0,
-            subAgentCount: 0,
-            runtimeKind: "hermes",
-            runtimeStatus: "stopped",
-            sandboxReady: false,
-          },
-        ]}
-        createOptions={{
-          providers: [],
-          deployments: [],
-          skills: [],
-          toolkits: [],
-        }}
-      />,
-    );
-
-    await user.click(screen.getByRole("button", { name: "Clone agent" }));
-    const cloneDialog = screen.getByRole("dialog", { name: "Clone agent" });
-    const environment = within(cloneDialog).getByRole("checkbox", {
-      name: /^Hermes environment variables/,
-    });
-    const volume = within(cloneDialog).getByRole("checkbox", {
-      name: /^Hermes persistent volume/,
-    });
-    const conversations = within(cloneDialog).getByRole("checkbox", {
-      name: /^Conversations and messages/,
-    });
-
-    expect(environment).not.toBeChecked();
-    expect(volume).not.toBeChecked();
-    expect(conversations).not.toBeChecked();
-    await user.click(conversations);
-    expect(volume).toBeChecked();
-    await user.click(volume);
-    expect(volume).not.toBeChecked();
-    expect(conversations).not.toBeChecked();
-    await user.click(volume);
-    expect(conversations).toBeChecked();
-    expect(
-      screen.getByText(
-        "Conversations are included to preserve attachment and Hermes session references.",
-      ),
-    ).toBeInTheDocument();
-    await user.click(
-      within(cloneDialog).getByRole("button", {
-        name: "Select complete clone",
-      }),
-    );
-    expect(environment).toBeChecked();
-    expect(volume).toBeChecked();
-
-    await user.click(
-      within(cloneDialog).getByRole("button", { name: "Clone agent" }),
-    );
-    await waitFor(() =>
-      expect(actions.cloneAgentAction).toHaveBeenCalledOnce(),
-    );
-    const formData = actions.cloneAgentAction.mock.calls[0][0] as FormData;
-    expect(formData.get("copyConversations")).toBe("on");
-    expect(formData.get("copyHermesEnvironment")).toBe("on");
-    expect(formData.get("copyHermesVolume")).toBe("on");
   });
 });

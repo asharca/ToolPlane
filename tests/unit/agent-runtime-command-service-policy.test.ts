@@ -19,7 +19,6 @@ const mocks = vi.hoisted(() => ({
   append: vi.fn(),
   work: vi.fn(),
   entry: vi.fn(),
-  operate: vi.fn(),
   lock: vi.fn(),
   release: vi.fn(),
   actorPolicy: vi.fn(),
@@ -52,7 +51,6 @@ vi.mock("@/lib/a2a/ingress", () => ({
 vi.mock("@/lib/agents/conversation-operations", () => ({
   acquireConversationOperation: mocks.lock,
   conversationOperationKey: (row: { id: string }) => row.id,
-  operateConversation: mocks.operate,
 }));
 
 const input = {
@@ -178,30 +176,6 @@ describe("runtime command service admission", () => {
       expect(mocks.release).toHaveBeenCalledOnce();
     },
   );
-  it("uses Hermes compaction without entering the dedicated command lane", async () => {
-    fixture("hermes");
-    mocks.operate.mockResolvedValue({
-      conversationId: "conversation",
-      compacted: false,
-    });
-    expect(
-      await executeRuntimeCommand({
-        ...input,
-        line: "/compact preserve facts",
-      }),
-    ).toEqual({
-      kind: "compact",
-      conversationId: "conversation",
-      compacted: false,
-    });
-    expect(mocks.operate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        action: "compact",
-        instructions: "preserve facts",
-      }),
-    );
-    expect(mocks.lock).not.toHaveBeenCalled();
-  });
 });
 
 describe("runtime command output and failure policies", () => {

@@ -72,8 +72,7 @@ async function sandboxForComposer(
   }
   if (
     !sandboxId ||
-    (!agent.sandboxes.some((link) => link.sandboxId === sandboxId) &&
-      agent.runtime?.sandboxId !== sandboxId)
+    !agent.sandboxes.some((link) => link.sandboxId === sandboxId)
   ) {
     throw new ComposerRequestError(
       404,
@@ -299,7 +298,7 @@ export async function resolveComposerReference(
       if (typeof result.text !== "string")
         throw new ComposerRequestError(422, "No readable file content.");
       label = path;
-      text = `${sandbox.kind === "hermes" ? "/opt/data/workspace" : "/workspace"}/${path}\n${result.text}`;
+      text = `/workspace/${path}\n${result.text}`;
     } else {
       const session = await db.conversation.findFirst({
         where: { ...(await sessionScope(agent, sandbox.id)), id: input.id },

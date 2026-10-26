@@ -65,17 +65,6 @@ afterEach(() => {
   vi.unstubAllGlobals();
   window.localStorage.clear();
 });
-function show() {
-  return render(
-    <WorkspaceWork
-      slug="team"
-      workspaceId="workspace"
-      agents={[agent]}
-      sessions={[]}
-      selectedWorkSessionId={null}
-    />,
-  );
-}
 type WorkSession = Parameters<typeof WorkspaceWork>[0]["sessions"][number];
 const session: WorkSession = {
   id: "work",
@@ -202,98 +191,7 @@ describe("conversation workspace selection", () => {
   });
 });
 
-describe("Work attachment transaction failures", () => {
-  it("discards earlier uploads when a later attachment is rejected without submitting a task", async () => {
-    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
-      if (init?.method === "DELETE") return Response.json({ ok: true });
-      if (url.includes("first.txt"))
-        return Response.json({ id: "uploaded-first" });
-      return Response.json(
-        { error: "Attachment access denied" },
-        { status: 403 },
-      );
-    });
-    vi.stubGlobal("fetch", fetchMock);
-    const { container } = show();
-    fireEvent.change(
-      screen.getByRole("combobox", {
-        name: "What should the Agent accomplish?",
-      }),
-      { target: { value: "Prepare report" } },
-    );
-    const input = container.querySelector('input[type="file"]');
-    if (!input) throw new Error("Attachment picker missing");
-    fireEvent.change(input, {
-      target: {
-        files: [
-          new File(["first"], "first.txt"),
-          new File(["second"], "second.txt"),
-        ],
-      },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Send prompt" }));
-    await screen.findByText("Attachment access denied");
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/api/v1/attachments/uploaded-first",
-      { method: "DELETE" },
-    );
-    expect(
-      fetchMock.mock.calls.some(([url]) => url === "/api/v1/work-sessions"),
-    ).toBe(false);
-    expect(
-      screen.getByRole("combobox", {
-        name: "What should the Agent accomplish?",
-      }),
-    ).toHaveValue("Prepare report");
-    expect(screen.getByRole("button", { name: "Send prompt" })).toBeEnabled();
-  });
-
-  it("discards all staged attachments after task creation fails and keeps the draft retryable even when cleanup fails", async () => {
-    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
-      if (init?.method === "DELETE") throw new TypeError("cleanup offline");
-      if (url.includes("/attachments?")) return Response.json({ id: "staged" });
-      return Response.json({ error: "Agent access revoked" }, { status: 403 });
-    });
-    vi.stubGlobal("fetch", fetchMock);
-    const { container } = show();
-    fireEvent.change(
-      screen.getByRole("combobox", {
-        name: "What should the Agent accomplish?",
-      }),
-      { target: { value: "  Keep my task  " } },
-    );
-    const input = container.querySelector('input[type="file"]');
-    if (!input) throw new Error("Attachment picker missing");
-    fireEvent.change(input, {
-      target: { files: [new File(["report"], "report.txt")] },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Send prompt" }));
-    await screen.findByText("Agent access revoked");
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/api/v1/work-sessions",
-      expect.objectContaining({ body: expect.any(String) }),
-    );
-    const creation = fetchMock.mock.calls.find(
-      ([url]) => url === "/api/v1/work-sessions",
-    );
-    expect(JSON.parse(String(creation?.[1]?.body))).toMatchObject({
-      agentId: "worker",
-      sandboxId: "sandbox",
-      task: "Keep my task",
-      attachmentIds: ["staged"],
-    });
-    await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith("/api/v1/attachments/staged", {
-        method: "DELETE",
-      }),
-    );
-    expect(
-      screen.getByRole("combobox", {
-        name: "What should the Agent accomplish?",
-      }),
-    ).toHaveValue("  Keep my task  ");
-    expect(screen.getByRole("button", { name: "Send prompt" })).toBeEnabled();
-  });
+describe("Work message failures", () => {
   it("keeps a rejected follow-up draft and clears it only after the server accepts a retry", async () => {
     let inputAttempts = 0;
     const messages: WorkSession["messages"] = [
@@ -611,7 +509,6 @@ describe("Work attachment transaction failures", () => {
   it.each([
     ["claude-code", "Claude Code"],
     ["dsh", "DeepSeek Harness"],
-    ["hermes-rpc", "Hermes RPC"],
   ])(
     "explains cancelled %s runtime work without reporting success",
     (runtimeKind, label) => {

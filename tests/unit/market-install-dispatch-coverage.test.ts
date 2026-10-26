@@ -12,7 +12,6 @@ const m = vi.hoisted(() => ({
   assistants: vi.fn(),
   installs: vi.fn(),
   materialize: vi.fn(),
-  sync: vi.fn(),
   assistant: vi.fn(),
   install: vi.fn(),
 }));
@@ -43,7 +42,6 @@ vi.mock("@/lib/market/skills", async (original) => ({
   listWorkspaceMarketInstalls: m.installs,
 }));
 vi.mock("@/lib/market/resources", () => ({ installMarketRelease: m.install }));
-vi.mock("@/lib/agents/hermes/runtime", () => ({ syncHermesRuntime: m.sync }));
 vi.mock("@/lib/observability/http", () => ({
   withRequestLogging: (_path: string, handler: unknown) => handler,
 }));
@@ -160,7 +158,7 @@ describe("market installation dispatch and output policies", () => {
     },
   );
   it.each([false, true])(
-    "syncs materialized agent before returning reused=%s",
+    "serializes materialized agent installation with reused=%s",
     async (reused) => {
       m.release.mockResolvedValue(null);
       m.agentRelease.mockResolvedValue({ id: "release" });
@@ -174,19 +172,21 @@ describe("market installation dispatch and output policies", () => {
         ctx,
       );
       expect(response.status).toBe(reused ? 200 : 201);
-      expect(await response.json()).toMatchObject({
+      expect(await response.json()).toEqual({
         installId: "agent:install",
+        kind: "agent",
+        resourceId: "agent",
         agentId: "agent",
+        status: "ready",
         reused,
       });
-      expect(m.sync).toHaveBeenCalledWith("ws", "agent");
-      expect(m.materialize).toHaveBeenCalledWith(
-        expect.objectContaining({
-          name: "Named",
-          idempotencyKey: expect.any(String),
-          installedById: "user",
-        }),
-      );
+      expect(m.materialize).toHaveBeenCalledWith({
+        releaseId: "release",
+        targetWorkspaceId: "ws",
+        name: "Named",
+        idempotencyKey: expect.any(String),
+        installedById: "user",
+      });
     },
   );
   it("normalizes assistant options and deduplicates selected deployments", async () => {

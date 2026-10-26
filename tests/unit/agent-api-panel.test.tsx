@@ -280,9 +280,6 @@ describe("Agent API publishing and credentials", () => {
       />,
     );
     expect(screen.getByText("Disabled", { exact: true })).toBeInTheDocument();
-    expect(
-      screen.getByText("Shared mode shares Hermes data"),
-    ).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "FAQ" })).toBeDisabled();
     for (const name of [
       "Enable API",

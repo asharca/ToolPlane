@@ -307,7 +307,7 @@ describe("sandbox OAuth with PostgreSQL and genuine MCP SDK", () => {
     expect(location.searchParams.get("iss")).toBe(origin);
     expect(location.searchParams.get("error")).toBe("invalid_request");
   });
-  it("does not authorize outsiders or protected Hermes runtimes", async () => {
+  it("does not authorize outsiders", async () => {
     mocks.principal.mockResolvedValue({
       credential: "session",
       user: { id: outsiderId },
@@ -318,23 +318,6 @@ describe("sandbox OAuth with PostgreSQL and genuine MCP SDK", () => {
     );
     expect(
       new URL(assertDefined(denied.headers.get("location"))).searchParams.get(
-        "error",
-      ),
-    ).toBe("access_denied");
-    mocks.principal.mockResolvedValue({
-      credential: "session",
-      user: { id: userId },
-    });
-    await db.sandbox.update({
-      where: { id: sandboxId },
-      data: { kind: "hermes" },
-    });
-    const hermes = await handleSandboxOAuth(
-      new Request(authorizeUrl()),
-      "authorize",
-    );
-    expect(
-      new URL(assertDefined(hermes.headers.get("location"))).searchParams.get(
         "error",
       ),
     ).toBe("access_denied");

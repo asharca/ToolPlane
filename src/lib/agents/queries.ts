@@ -57,10 +57,6 @@ export const AGENT_PI_PACKAGES_INCLUDE = {
 
 const TOOL_INCLUDE = {
   piPackages: AGENT_PI_PACKAGES_INCLUDE,
-  modelProviders: {
-    include: { provider: true },
-    orderBy: { provider: { createdAt: "asc" } },
-  },
   servers: { select: { deploymentId: true } },
   skills: {
     select: {
@@ -92,7 +88,6 @@ const TOOL_INCLUDE = {
           slug: true,
           systemPrompt: true,
           runtimeKind: true,
-          runtime: { select: { kind: true } },
         },
       },
     },
@@ -126,11 +121,6 @@ const TOOL_INCLUDE = {
       },
     },
   },
-  runtime: {
-    include: {
-      sandbox: { include: { deployment: true } },
-    },
-  },
   // Internal lifecycle/execution callers need the immutable public revision
   // that owns an isolated runtime. Ordinary list/detail/request queries below
   // explicitly exclude these hidden runtime Agents.
@@ -159,8 +149,8 @@ export type AgentForRun = Prisma.AgentGetPayload<{
 export const ORDINARY_AGENT_FILTER = {
   publicRuntimeAllocation: { is: null },
   NOT: {
-    runtime: {
-      is: {
+    sandboxes: {
+      some: {
         sandbox: {
           config: {
             path: ["managedBy"],
@@ -295,13 +285,6 @@ export async function getAgentPageData(workspaceId: string, agentId: string) {
       model: true,
       maxSteps: true,
       provider: { select: { name: true } },
-      modelProviders: {
-        orderBy: { provider: { createdAt: "asc" } },
-        select: {
-          providerId: true,
-          provider: { select: { name: true, models: true } },
-        },
-      },
       servers: { select: { deploymentId: true } },
       skills: { select: { installedSkillId: true } },
       toolkits: { select: { toolkitId: true } },
@@ -329,25 +312,6 @@ export async function getAgentPageData(workspaceId: string, agentId: string) {
           resourceMap: true,
         },
       },
-      runtime: {
-        select: {
-          id: true,
-          kind: true,
-          image: true,
-          status: true,
-          lastError: true,
-          lastSyncedAt: true,
-          sandboxId: true,
-          sandbox: {
-            select: {
-              id: true,
-              config: true,
-              deploymentId: true,
-              deployment: { select: { status: true } },
-            },
-          },
-        },
-      },
     },
   });
 }
@@ -372,8 +336,6 @@ export async function resolveAgentMarketSetupGuide(
             id: true,
             model: true,
             provider: { select: { format: true } },
-            runtimeKind: true,
-            runtime: { select: { status: true } },
           },
         })
       : Promise.resolve([]),
@@ -394,32 +356,6 @@ export async function listAgents(workspaceId: string) {
     orderBy: [{ pinned: "desc" }, { createdAt: "desc" }],
     include: {
       provider: { select: { name: true } },
-      modelProviders: {
-        orderBy: { provider: { createdAt: "asc" } },
-        select: {
-          providerId: true,
-          provider: { select: { name: true, models: true } },
-        },
-      },
-      runtime: {
-        select: {
-          id: true,
-          kind: true,
-          image: true,
-          status: true,
-          lastError: true,
-          sandbox: {
-            select: {
-              id: true,
-              name: true,
-              kind: true,
-              network: true,
-              deploymentId: true,
-              deployment: { select: { status: true } },
-            },
-          },
-        },
-      },
       sandboxes: {
         select: {
           sandboxId: true,
@@ -489,33 +425,6 @@ export async function getAgentForRequest(agentId: string, userId: string) {
     });
   }
   return agent;
-}
-
-export async function getHermesTerminalForRequest(
-  agentId: string,
-  userId: string,
-) {
-  return db.agent.findFirst({
-    where: {
-      id: agentId,
-      ...ORDINARY_AGENT_FILTER,
-      workspace: {
-        status: "active",
-        OR: [{ ownerId: userId }, { members: { some: { userId } } }],
-      },
-      runtime: { is: { kind: "hermes" } },
-    },
-    select: {
-      id: true,
-      workspaceId: true,
-      runtime: {
-        select: {
-          id: true,
-          sandbox: { select: { deploymentId: true } },
-        },
-      },
-    },
-  });
 }
 
 // Used by the recursive sub-agent runner: loads a sub-agent scoped to the

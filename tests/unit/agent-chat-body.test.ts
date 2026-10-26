@@ -85,7 +85,7 @@ describe("parseAgentMessageBody", () => {
     expect(parsed?.attachments).toHaveLength(1);
   });
 
-  it("accepts Hermes-style normalized source payloads", () => {
+  it("accepts normalized source payloads", () => {
     const parsed = parseAgentMessageBody({
       message: "hello from a thread",
       source: {

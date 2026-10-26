@@ -1,5 +1,4 @@
 import "server-only";
-import { randomUUID } from "node:crypto";
 import { withLogContext } from "@/lib/observability/context";
 import { Type } from "@earendil-works/pi-ai";
 import { AGENT_MAX_DEPTH, resolveMaxSteps } from "./constants";
@@ -18,11 +17,6 @@ import { buildToolSet } from "./tools";
 import { buildSkillToolSet } from "./skill-tools";
 import { buildKnowledgeTool } from "@/lib/knowledge";
 import { getAgentForRun } from "./queries";
-import { runHermesText } from "./hermes/client";
-import {
-  acquireHermesRuntimeWriteLease,
-  HERMES_RUNTIME_COPY_IN_PROGRESS_ERROR,
-} from "./hermes/runtime";
 import {
   implementedAgentRuntimeKind,
   isDedicatedSandboxRuntimeKind,
@@ -51,8 +45,6 @@ export type RunAgent = LoadedAgentTools & {
   model: string | null;
   maxSteps: number;
   provider: ProviderConfig | null;
-  modelProviders?: Array<{ provider: ProviderConfig }>;
-  runtime?: { id: string; kind: string } | null;
 };
 
 // Injectable so unit tests can exercise the cycle/depth guards and delegation
@@ -163,49 +155,6 @@ export async function runAgentTurn(
     const runtimeKind = implementedAgentRuntimeKind(agent.runtimeKind);
     if (!runtimeKind)
       return `Sub-agent runtime "${agent.runtimeKind}" is not available.`;
-    const isHermes = runtimeKind === "hermes";
-    if (
-      isHermes ? !agent.modelProviders?.length : !agent.provider || !agent.model
-    ) {
-      if (isHermes)
-        return `Hermes sub-agent "${agent.name}" has no model provider configured.`;
-      return `Sub-agent "${agent.name}" has no model configured.`;
-    }
-
-    if (isHermes) {
-      const writeLease = acquireHermesRuntimeWriteLease(
-        ctx.workspaceId,
-        agentId,
-      );
-      if (!writeLease)
-        return `Hermes sub-agent unavailable: ${HERMES_RUNTIME_COPY_IN_PROGRESS_ERROR}`;
-      const sessionId = randomUUID();
-      try {
-        return await runHermesText({
-          agent: {
-            id: agentId,
-            slug: agent.slug ?? agentId,
-            workspaceId: ctx.workspaceId,
-            runtime: agent.runtime ?? null,
-          },
-          messages: [
-            {
-              id: randomUUID(),
-              role: "user",
-              parts: [{ type: "text", text: prompt }],
-            },
-          ],
-          sessionId,
-          sessionKey: `agent:${agentId}:subagent:${sessionId}`,
-          writeLease,
-        });
-      } catch (error) {
-        return `Hermes sub-agent failed: ${error instanceof Error ? error.message : String(error)}`;
-      } finally {
-        writeLease.release();
-      }
-    }
-
     if (!agent.provider || !agent.model) {
       return `Sub-agent "${agent.name}" has no model configured.`;
     }

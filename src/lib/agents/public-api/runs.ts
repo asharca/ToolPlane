@@ -1,52 +1,34 @@
 import "server-only";
 import { readNativeQuotaCharges } from "@/lib/a2a/quotas";
-import { recordEvent } from "@/lib/observability/events";
-import { enrichLogContext, withLogContext } from "@/lib/observability/context";
+import { withLogContext } from "@/lib/observability/context";
 
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import type { Prisma } from "@prisma/client";
-import type { UIMessage } from "ai";
 import { db } from "@/lib/db";
-import { getAgentEndpointRuntimeForExecution } from "@/lib/agents/queries";
-import { acquireHermesRuntimeWriteLease } from "@/lib/agents/hermes/runtime";
-import {
-  HermesResponseTooLargeError,
-  runHermesTextStream,
-} from "@/lib/agents/hermes/client";
 import type { AgentApiPrincipal } from "@/lib/agents/public-api/auth";
 import {
   AGENT_API_MAX_TIMEOUT_SECONDS,
   hashAgentApiSubject,
 } from "@/lib/agents/public-api/auth";
 import {
-  AGENT_API_MAX_CONTEXT_CHARACTERS,
-  AGENT_API_MAX_CONTEXT_MESSAGES,
   AGENT_API_MAX_INPUT_CHARACTERS,
   AGENT_API_MAX_OUTPUT_CHARACTERS,
 } from "@/lib/agents/public-api/body";
 import {
   AgentApiError,
-  asAgentApiError,
   publicErrorMessage,
   type AgentApiErrorCode,
 } from "@/lib/agents/public-api/errors";
 import {
-  createAgentConversationId,
   createAgentRequestId,
   createAgentResponseId,
 } from "@/lib/agents/public-api/ids";
-import {
-  abortAgentApiRun,
-  registerAgentApiRun,
-} from "@/lib/agents/public-api/run-control";
+import { abortAgentApiRun } from "@/lib/agents/public-api/run-control";
 import {
   takeAgentApiRateLimit,
   type AgentApiRateLimitResult,
 } from "@/lib/agents/public-api/rate-limit";
-import {
-  AgentEndpointRuntimeAllocationError,
-  ensureAgentEndpointRuntime,
-} from "@/lib/agents/public-api/runtime";
+import { assertPublicEndpointRuntime } from "@/lib/agents/public-api/runtime";
 import type { AgentApiResponseView } from "@/lib/agents/public-api/sse";
 
 const ACTIVE_RUN_STATUSES = ["provisioning", "running"] as const;
@@ -171,38 +153,6 @@ async function failRun(
       completedAt: new Date(),
     },
   });
-}
-
-function allocationError(error: unknown): AgentApiError {
-  if (error instanceof AgentEndpointRuntimeAllocationError) {
-    if (error.code === "quota_exceeded") {
-      return new AgentApiError(
-        "resource_limit_exceeded",
-        publicErrorMessage("resource_limit_exceeded"),
-        429,
-      );
-    }
-    if (error.code === "provisioning") {
-      return new AgentApiError(
-        "runtime_unavailable",
-        publicErrorMessage("runtime_unavailable"),
-        503,
-        3,
-      );
-    }
-    return new AgentApiError(
-      "runtime_unavailable",
-      publicErrorMessage("runtime_unavailable"),
-      503,
-      5,
-    );
-  }
-  return new AgentApiError(
-    "runtime_unavailable",
-    publicErrorMessage("runtime_unavailable"),
-    503,
-    5,
-  );
 }
 
 type BudgetRow = {
@@ -332,6 +282,7 @@ export async function prepareAgentResponse(
     },
     include: {
       currentRevision: true,
+      sourceAgent: { select: { runtimeKind: true } },
       clients: {
         where: { id: input.principal.clientId, status: "active" },
         take: 1,
@@ -459,6 +410,7 @@ export async function prepareAgentResponse(
             return { existing } as const;
           }
         }
+        assertPublicEndpointRuntime(endpoint.sourceAgent.runtimeKind);
 
         await assertPublicResourceBudgets(tx, {
           workspaceId: endpoint.workspaceId,
@@ -673,292 +625,12 @@ export async function prepareAgentResponse(
     };
   }
 
-  let allocated: Awaited<ReturnType<typeof ensureAgentEndpointRuntime>>;
-  const provisioningController = new AbortController();
-  const unregisterProvisioning = registerAgentApiRun(
-    admission.run.publicId,
-    provisioningController,
+  await failRun(admission.run.id, "runtime_unsupported");
+  throw new AgentApiError(
+    "runtime_unsupported",
+    publicErrorMessage("runtime_unsupported"),
+    409,
   );
-  let provisioningTimedOut = false;
-  let provisioningPolling = false;
-  let provisioningTimer: ReturnType<typeof setTimeout> | undefined;
-  let rejectProvisioningDeadline: ((error: AgentApiError) => void) | undefined;
-  const abortProvisioning = () => {
-    provisioningController.abort(
-      input.signal?.reason ??
-        new DOMException("Client disconnected.", "AbortError"),
-    );
-    rejectProvisioningDeadline?.(
-      new AgentApiError("cancelled", publicErrorMessage("cancelled"), 409),
-    );
-  };
-  const provisioningDeadline = new Promise<never>((_resolve, reject) => {
-    rejectProvisioningDeadline = reject;
-    const remainingMs = Math.max(
-      1,
-      admission.timeoutSeconds * 1_000 - (Date.now() - requestStartedAt),
-    );
-    provisioningTimer = setTimeout(() => {
-      provisioningTimedOut = true;
-      provisioningController.abort(
-        new DOMException("Runtime provisioning timed out.", "TimeoutError"),
-      );
-      reject(
-        new AgentApiError(
-          "request_timeout",
-          publicErrorMessage("request_timeout"),
-          504,
-        ),
-      );
-    }, remainingMs);
-    if (input.signal?.aborted) {
-      abortProvisioning();
-    } else {
-      input.signal?.addEventListener("abort", abortProvisioning, {
-        once: true,
-      });
-    }
-  });
-  const provisioningPoll = setInterval(() => {
-    if (provisioningPolling || provisioningController.signal.aborted) return;
-    provisioningPolling = true;
-    void db.agentRun
-      .findUnique({
-        where: { id: admission.run.id },
-        select: { status: true, cancelRequestedAt: true },
-      })
-      .then((run) => {
-        if (run?.status !== "provisioning" || run.cancelRequestedAt) {
-          provisioningController.abort(
-            new DOMException("The response was cancelled.", "AbortError"),
-          );
-        }
-      })
-      .catch(() => {
-        // A transient database failure is retried on the next poll; the hard
-        // provisioning deadline still bounds the operation.
-      })
-      .finally(() => {
-        provisioningPolling = false;
-      });
-  }, 1_000);
-  const materialization = ensureAgentEndpointRuntime({
-    endpointId: endpoint.id,
-    revisionId: admission.run.revisionId,
-    subjectHash: admission.allocationSubjectHash,
-    runId: admission.run.id,
-    signal: provisioningController.signal,
-  }).finally(() => {
-    clearInterval(provisioningPoll);
-    unregisterProvisioning();
-  });
-  try {
-    allocated = await Promise.race([materialization, provisioningDeadline]);
-  } catch (error) {
-    const mapped = provisioningTimedOut
-      ? new AgentApiError(
-          "request_timeout",
-          publicErrorMessage("request_timeout"),
-          504,
-        )
-      : input.signal?.aborted
-        ? new AgentApiError("cancelled", publicErrorMessage("cancelled"), 409)
-        : provisioningController.signal.aborted
-          ? new AgentApiError("cancelled", publicErrorMessage("cancelled"), 409)
-          : error instanceof AgentApiError
-            ? error
-            : allocationError(error);
-    // The durable run and process-local bookkeeping must converge immediately;
-    // a Docker/runtime operation that ignores abort cannot keep consuming a
-    // public concurrency slot while it drains in the background.
-    await failRun(admission.run.id, mapped.code);
-    void materialization.catch(() => undefined);
-    throw mapped;
-  } finally {
-    if (provisioningTimer) clearTimeout(provisioningTimer);
-    clearInterval(provisioningPoll);
-    unregisterProvisioning();
-    input.signal?.removeEventListener("abort", abortProvisioning);
-  }
-
-  let publicConversationId = admission.publicConversation?.publicId ?? "";
-  try {
-    if (!admission.publicConversation) {
-      const runtimeSessionId = randomUUID();
-      const runtimeSessionKey = `agent:${allocated.agent.id}:public:${randomUUID()}`;
-      const created = await db.$transaction(async (tx) => {
-        await tx.$queryRaw`SELECT "id" FROM "AgentRun" WHERE "id" = ${admission.run.id} FOR UPDATE`;
-        const stillActive = await tx.agentRun.findFirst({
-          where: {
-            id: admission.run.id,
-            status: "provisioning",
-            cancelRequestedAt: null,
-          },
-          select: { id: true },
-        });
-        if (!stillActive)
-          throw new AgentApiError(
-            "cancelled",
-            publicErrorMessage("cancelled"),
-            409,
-          );
-        const conversation = await tx.conversation.create({
-          data: {
-            agentId: allocated.agent.id,
-            runtimeSessionId,
-            runtimeSessionKey,
-          },
-          select: { id: true },
-        });
-        const wrapper = await tx.agentPublicConversation.create({
-          data: {
-            publicId: createAgentConversationId(),
-            endpointId: endpoint.id,
-            revisionId: admission.run.revisionId,
-            clientId: client.id,
-            runtimeAllocationId: allocated.allocation.id,
-            conversationId: conversation.id,
-            subjectHash,
-          },
-          select: { id: true, publicId: true },
-        });
-        const started = await tx.agentRun.updateMany({
-          where: {
-            id: admission.run.id,
-            status: "provisioning",
-            cancelRequestedAt: null,
-          },
-          data: {
-            publicConversationId: wrapper.id,
-            runtimeAllocationId: allocated.allocation.id,
-            status: "running",
-            startedAt: new Date(),
-          },
-        });
-        if (started.count !== 1) {
-          throw new AgentApiError(
-            "cancelled",
-            publicErrorMessage("cancelled"),
-            409,
-          );
-        }
-        return wrapper;
-      });
-      publicConversationId = created.publicId;
-    } else {
-      if (
-        admission.publicConversation.runtimeAllocationId !==
-        allocated.allocation.id
-      ) {
-        throw new Error("Conversation runtime allocation mismatch");
-      }
-      const started = await db.agentRun.updateMany({
-        where: {
-          id: admission.run.id,
-          status: "provisioning",
-          cancelRequestedAt: null,
-        },
-        data: { status: "running", startedAt: new Date() },
-      });
-      if (started.count !== 1) {
-        throw new AgentApiError(
-          "cancelled",
-          publicErrorMessage("cancelled"),
-          409,
-        );
-      }
-    }
-  } catch (error) {
-    const mapped = asAgentApiError(error);
-    await failRun(admission.run.id, mapped.code);
-    throw mapped;
-  }
-
-  return {
-    runId: admission.run.id,
-    responseId: admission.run.publicId,
-    requestId: admission.run.requestId,
-    endpointId: endpoint.id,
-    endpointPublicId: endpoint.publicId,
-    endpointRevision: admission.revisionVersion,
-    clientId: client.id,
-    subjectHash,
-    publicConversationId,
-    input: input.input,
-    stream: input.stream,
-    timeoutSeconds: Math.max(
-      0.001,
-      admission.timeoutSeconds - (Date.now() - requestStartedAt) / 1_000,
-    ),
-    replay: false,
-    rateLimitHeaders: rate.headers,
-  };
-}
-
-function partsFor(text: string): Prisma.InputJsonValue {
-  return [{ type: "text", text }];
-}
-
-function abortKind(signal: AbortSignal, timedOut: boolean): AgentApiErrorCode {
-  return timedOut ||
-    (signal.reason instanceof DOMException &&
-      signal.reason.name === "TimeoutError")
-    ? "request_timeout"
-    : "cancelled";
-}
-
-async function loadPublicConversationContext(
-  conversationId: string,
-): Promise<UIMessage[]> {
-  const candidates = await db.message.findMany({
-    where: { conversationId, role: { in: ["user", "assistant"] } },
-    orderBy: [{ sequence: "desc" }, { createdAt: "desc" }, { id: "desc" }],
-    take: AGENT_API_MAX_CONTEXT_MESSAGES + 2,
-    select: { id: true, role: true, textCharacters: true },
-  });
-
-  // Context is admitted as complete turns. Never send a detached assistant
-  // answer (or detached user prompt) when the character window is reached.
-  const selectedNewestFirst: string[] = [];
-  let contextCharacters = 0;
-  for (let index = 0; index + 1 < candidates.length; ) {
-    const assistant = candidates[index];
-    const user = candidates[index + 1];
-    if (assistant.role !== "assistant" || user.role !== "user") {
-      index += 1;
-      continue;
-    }
-    const turnCharacters = assistant.textCharacters + user.textCharacters;
-    if (
-      selectedNewestFirst.length + 2 > AGENT_API_MAX_CONTEXT_MESSAGES ||
-      contextCharacters + turnCharacters > AGENT_API_MAX_CONTEXT_CHARACTERS
-    )
-      break;
-    contextCharacters += turnCharacters;
-    selectedNewestFirst.push(assistant.id, user.id);
-    index += 2;
-  }
-
-  if (!selectedNewestFirst.length) return [];
-  const selectedMessages = await db.message.findMany({
-    where: { id: { in: selectedNewestFirst }, conversationId },
-    select: { id: true, role: true, parts: true },
-  });
-  const selectedById = new Map(
-    selectedMessages.map((message) => [message.id, message]),
-  );
-  return [...selectedNewestFirst].reverse().flatMap((id) => {
-    const message = selectedById.get(id);
-    return message
-      ? [
-          {
-            id: message.id,
-            role: message.role as UIMessage["role"],
-            parts: message.parts as UIMessage["parts"],
-          },
-        ]
-      : [];
-  });
 }
 
 export async function executePreparedAgentResponse(
@@ -977,7 +649,7 @@ export async function executePreparedAgentResponse(
 
 async function executeObservedResponse(
   prepared: PreparedAgentResponse,
-  options: ExecuteAgentResponseOptions,
+  _options: ExecuteAgentResponseOptions,
 ): Promise<AgentApiResponseView> {
   if (prepared.replay) {
     const replay = await getAgentResponseForPrincipal({
@@ -995,345 +667,12 @@ async function executeObservedResponse(
     return replay;
   }
 
-  const controller = new AbortController();
-  const unregister = registerAgentApiRun(prepared.responseId, controller);
-  let timedOut = false;
-  let outputLimitExceeded = false;
-  let emittedCharacters = 0;
-  let lease: ReturnType<typeof acquireHermesRuntimeWriteLease> = null;
-  const startedAt = Date.now();
-  const timeout = setTimeout(() => {
-    timedOut = true;
-    controller.abort(
-      new DOMException("The Agent response timed out.", "TimeoutError"),
-    );
-  }, prepared.timeoutSeconds * 1_000);
-  const forwardAbort = () =>
-    controller.abort(
-      options.signal?.reason ??
-        new DOMException("Client disconnected.", "AbortError"),
-    );
-  if (options.signal?.aborted) forwardAbort();
-  else options.signal?.addEventListener("abort", forwardAbort, { once: true });
-
-  let polling = false;
-  const cancelPoll = setInterval(() => {
-    if (polling || controller.signal.aborted) return;
-    polling = true;
-    void db.agentRun
-      .findUnique({
-        where: { id: prepared.runId },
-        select: { cancelRequestedAt: true, status: true },
-      })
-      .then((run) => {
-        if (!run || run.cancelRequestedAt || run.status !== "running") {
-          controller.abort(
-            new DOMException("The response was cancelled.", "AbortError"),
-          );
-        }
-      })
-      .catch(() => {
-        // The next poll or the response timeout will retry/fail closed.
-      })
-      .finally(() => {
-        polling = false;
-      });
-  }, 1_000);
-
-  try {
-    const loaded = await db.agentRun.findFirst({
-      where: { id: prepared.runId, status: "running", cancelRequestedAt: null },
-      include: {
-        publicConversation: {
-          include: {
-            conversation: {
-              select: {
-                id: true,
-                runtimeSessionId: true,
-                runtimeSessionKey: true,
-              },
-            },
-          },
-        },
-        runtimeAllocation: true,
-      },
-    });
-    if (!loaded) {
-      const state = await db.agentRun.findUnique({
-        where: { id: prepared.runId },
-        select: { status: true, cancelRequestedAt: true },
-      });
-      if (state?.status === "cancelled" || state?.cancelRequestedAt) {
-        throw new AgentApiError(
-          "cancelled",
-          publicErrorMessage("cancelled"),
-          409,
-        );
-      }
-      throw new AgentApiError(
-        "runtime_unavailable",
-        publicErrorMessage("runtime_unavailable"),
-        503,
-        5,
-      );
-    }
-    const runtimeAgentId = loaded.runtimeAllocation?.runtimeAgentId;
-    const runtimeAllocationId = loaded.runtimeAllocationId;
-    const publicConversation = loaded.publicConversation;
-    const conversation = publicConversation?.conversation;
-    const sessionId = conversation?.runtimeSessionId;
-    const sessionKey = conversation?.runtimeSessionKey;
-    if (
-      !conversation ||
-      !publicConversation ||
-      !runtimeAgentId ||
-      !runtimeAllocationId ||
-      !sessionId ||
-      !sessionKey
-    ) {
-      throw new AgentApiError(
-        "runtime_unavailable",
-        publicErrorMessage("runtime_unavailable"),
-        503,
-        5,
-      );
-    }
-    const workspaceId =
-      loaded.endpointId === prepared.endpointId
-        ? ((
-            await db.agentEndpoint.findUnique({
-              where: { id: loaded.endpointId },
-              select: { workspaceId: true },
-            })
-          )?.workspaceId ?? "")
-        : "";
-    const agent = workspaceId
-      ? await getAgentEndpointRuntimeForExecution(
-          workspaceId,
-          runtimeAgentId,
-          runtimeAllocationId,
-        )
-      : null;
-    if (agent?.runtime?.kind !== "hermes") {
-      throw new AgentApiError(
-        "runtime_unavailable",
-        publicErrorMessage("runtime_unavailable"),
-        503,
-        5,
-      );
-    }
-    enrichLogContext({
-      workspaceId: agent.workspaceId,
-      agentId: agent.id,
-      conversationId: conversation.id,
-    });
-    await recordEvent({ domain: "agent", eventName: "public.run.started" });
-    lease = acquireHermesRuntimeWriteLease(agent.workspaceId, agent.id);
-    if (!lease) {
-      throw new AgentApiError(
-        "runtime_maintenance",
-        publicErrorMessage("runtime_maintenance"),
-        503,
-        3,
-      );
-    }
-
-    const priorMessages = await loadPublicConversationContext(conversation.id);
-    const userMessage: UIMessage = {
-      id: randomUUID(),
-      role: "user",
-      parts: [{ type: "text", text: prepared.input }],
-    };
-    const stillActive = await db.agentRun.findFirst({
-      where: { id: prepared.runId, status: "running", cancelRequestedAt: null },
-      select: { id: true },
-    });
-    if (!stillActive) {
-      controller.abort(
-        new DOMException("The response was cancelled.", "AbortError"),
-      );
-      throw new AgentApiError(
-        "cancelled",
-        publicErrorMessage("cancelled"),
-        409,
-      );
-    }
-    const runInput = {
-      agent,
-      messages: [...priorMessages, userMessage],
-      sessionId,
-      sessionKey,
-      writeLease: lease,
-      signal: controller.signal,
-      timeoutMs: prepared.timeoutSeconds * 1_000,
-    };
-    const text = await runHermesTextStream({
-      ...runInput,
-      maxOutputCharacters: AGENT_API_MAX_OUTPUT_CHARACTERS,
-      onDelta: async (delta) => {
-        emittedCharacters = Math.min(
-          AGENT_API_MAX_OUTPUT_CHARACTERS,
-          emittedCharacters + delta.length,
-        );
-        await options.onDelta?.(delta);
-      },
-    });
-
-    const durationMs = Date.now() - startedAt;
-    const completed = await db.$transaction(async (tx) => {
-      await tx.$queryRaw`SELECT "id" FROM "AgentRun" WHERE "id" = ${prepared.runId} FOR UPDATE`;
-      const current = await tx.agentRun.findFirst({
-        where: {
-          id: prepared.runId,
-          status: "running",
-          cancelRequestedAt: null,
-        },
-        select: { id: true, deadlineAt: true },
-      });
-      if (!current || controller.signal.aborted) return false;
-      if (current.deadlineAt <= new Date()) {
-        throw new AgentApiError(
-          "request_timeout",
-          publicErrorMessage("request_timeout"),
-          504,
-        );
-      }
-      const sequence = await tx.message.aggregate({
-        where: { conversationId: conversation.id },
-        _max: { sequence: true },
-      });
-      const userSequence = (sequence._max.sequence ?? 0) + 1;
-      await tx.conversation.updateMany({
-        where: { id: conversation.id, title: null },
-        data: {
-          title: prepared.input.trim().replace(/\s+/g, " ").slice(0, 80),
-        },
-      });
-      await tx.message.createMany({
-        data: [
-          {
-            conversationId: conversation.id,
-            role: "user",
-            parts: partsFor(prepared.input),
-            textCharacters: prepared.input.length,
-            sequence: userSequence,
-          },
-          {
-            conversationId: conversation.id,
-            role: "assistant",
-            parts: partsFor(text),
-            textCharacters: text.length,
-            sequence: userSequence + 1,
-          },
-        ],
-      });
-      await tx.agentPublicConversation.updateMany({
-        where: { id: publicConversation.id, deletingAt: null },
-        data: {
-          storedCharacters: { increment: prepared.input.length + text.length },
-        },
-      });
-      await tx.agentEndpointRuntime.updateMany({
-        where: { id: runtimeAllocationId },
-        data: { lastUsedAt: new Date() },
-      });
-      // This is deliberately the final statement in the transaction. Postgres
-      // NOW() is fixed at transaction start; clock_timestamp() enforces the
-      // durable wall-clock deadline after every transcript/accounting write.
-      // A miss throws and rolls the entire transaction back.
-      const saved = await tx.$queryRaw<Array<{ id: string }>>`
-        UPDATE "AgentRun"
-        SET "status" = 'completed',
-            "outputText" = ${text},
-            "outputCharacters" = ${text.length},
-            "durationMs" = ${durationMs},
-            "completedAt" = clock_timestamp(),
-            "updatedAt" = clock_timestamp()
-        WHERE "id" = ${prepared.runId}
-          AND "status" = 'running'
-          AND "cancelRequestedAt" IS NULL
-          AND "deadlineAt" > clock_timestamp()
-        RETURNING "id"
-      `;
-      if (saved.length !== 1) {
-        throw new AgentApiError(
-          "request_timeout",
-          publicErrorMessage("request_timeout"),
-          504,
-        );
-      }
-      return true;
-    });
-    if (!completed) {
-      throw new AgentApiError(
-        "cancelled",
-        publicErrorMessage("cancelled"),
-        409,
-      );
-    }
-    await recordEvent({
-      domain: "agent",
-      eventName: "public.run.completed",
-      durationMs: Date.now() - startedAt,
-    });
-  } catch (error) {
-    if (error instanceof HermesResponseTooLargeError)
-      outputLimitExceeded = true;
-    await recordEvent({
-      domain: "agent",
-      eventName: "public.run.failed",
-      runId: prepared.runId,
-      error,
-      outcome: timedOut
-        ? "timeout"
-        : controller.signal.aborted
-          ? "cancelled"
-          : "error",
-      durationMs: Date.now() - startedAt,
-    });
-    const mapped = outputLimitExceeded
-      ? new AgentApiError(
-          "response_too_large",
-          publicErrorMessage("response_too_large"),
-          502,
-        )
-      : controller.signal.aborted
-        ? new AgentApiError(
-            abortKind(controller.signal, timedOut),
-            publicErrorMessage(abortKind(controller.signal, timedOut)),
-            timedOut ? 504 : 409,
-          )
-        : error instanceof AgentApiError
-          ? error
-          : new AgentApiError(
-              "upstream_error",
-              publicErrorMessage("upstream_error"),
-              502,
-            );
-    await failRun(
-      prepared.runId,
-      mapped.code,
-      Date.now() - startedAt,
-      emittedCharacters,
-    );
-    throw mapped;
-  } finally {
-    clearTimeout(timeout);
-    clearInterval(cancelPoll);
-    options.signal?.removeEventListener("abort", forwardAbort);
-    unregister();
-    lease?.release();
-  }
-
-  const response = await getAgentResponseForPrincipal({
-    endpointPublicId: prepared.endpointPublicId,
-    responseId: prepared.responseId,
-    clientId: prepared.clientId,
-    subjectHash: prepared.subjectHash,
-  });
-  if (!response)
-    throw new AgentApiError("not_found", publicErrorMessage("not_found"), 404);
-  return response;
+  await failRun(prepared.runId, "runtime_unsupported");
+  throw new AgentApiError(
+    "runtime_unsupported",
+    publicErrorMessage("runtime_unsupported"),
+    409,
+  );
 }
 
 type ResponseLookup = {

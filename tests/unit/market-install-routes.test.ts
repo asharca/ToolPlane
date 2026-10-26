@@ -16,7 +16,6 @@ const mocks = vi.hoisted(() => ({
   chatAssistantFindMany: vi.fn(),
   chatAssistantFindFirst: vi.fn(),
   materializeAgentRelease: vi.fn(),
-  syncHermesRuntime: vi.fn(),
   installAssistantMarketRelease: vi.fn(),
   deleteManagedAgent: vi.fn(),
   deleteChatAssistant: vi.fn(),
@@ -45,9 +44,6 @@ vi.mock("@/lib/db", () => ({
 vi.mock("@/lib/agents/market", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/agents/market")>()),
   materializeAgentRelease: mocks.materializeAgentRelease,
-}));
-vi.mock("@/lib/agents/hermes/runtime", () => ({
-  syncHermesRuntime: mocks.syncHermesRuntime,
 }));
 vi.mock("@/lib/agents/deletion", () => ({
   deleteManagedAgent: mocks.deleteManagedAgent,
@@ -118,7 +114,6 @@ describe("market install API", () => {
       agent: { id: "agent-1" },
       reused: false,
     });
-    mocks.syncHermesRuntime.mockResolvedValue({ status: "ready" });
     mocks.installAssistantMarketRelease.mockResolvedValue({
       id: "assistant-1",
     });
@@ -203,62 +198,6 @@ describe("market install API", () => {
     );
 
     expect(response.status).toBe(401);
-    expect(mocks.installMarketRelease).not.toHaveBeenCalled();
-  });
-
-  it("installs assistant and agent releases through their real materializers", async () => {
-    mocks.marketReleaseFindUnique.mockResolvedValueOnce({
-      listing: { kind: "assistant" },
-    });
-    const assistant = await POST(
-      new Request("http://toolplane.test/install", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ releaseId: "assistant-release" }),
-      }),
-      collectionContext,
-    );
-    mocks.marketReleaseFindUnique.mockResolvedValueOnce(null);
-    mocks.agentReleaseFindUnique.mockResolvedValueOnce({ id: "agent-release" });
-    const agent = await POST(
-      new Request("http://toolplane.test/install", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ releaseId: "agent-release" }),
-      }),
-      collectionContext,
-    );
-
-    expect(assistant.status).toBe(201);
-    expect(await assistant.json()).toMatchObject({
-      installId: "assistant:assistant-1",
-      kind: "assistant",
-      assistantId: "assistant-1",
-    });
-    expect(mocks.installAssistantMarketRelease).toHaveBeenCalledWith(
-      "user-1",
-      expect.objectContaining({
-        workspaceId: "workspace-1",
-        releaseId: "assistant-release",
-      }),
-    );
-    expect(agent.status).toBe(201);
-    expect(await agent.json()).toMatchObject({
-      installId: "agent:agent-install-1",
-      kind: "agent",
-      agentId: "agent-1",
-    });
-    expect(mocks.materializeAgentRelease).toHaveBeenCalledWith(
-      expect.objectContaining({
-        releaseId: "agent-release",
-        targetWorkspaceId: "workspace-1",
-        installedById: "user-1",
-      }),
-    );
-    expect(mocks.syncHermesRuntime).toHaveBeenCalledWith(
-      "workspace-1",
-      "agent-1",
-    );
     expect(mocks.installMarketRelease).not.toHaveBeenCalled();
   });
 

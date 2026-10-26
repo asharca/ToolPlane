@@ -28,7 +28,6 @@ import {
   Folder,
   Loader2,
   MessageSquare,
-  Paperclip,
   ScrollText,
   Search,
   SlidersHorizontal,
@@ -38,7 +37,6 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
-import { ConversationFilePreview } from "@/components/dashboard/ConversationComposer";
 import { PromptInput } from "@/components/agents/prompt-input";
 import { McpPromptPickerButton } from "@/components/dashboard/McpPromptPickerButton";
 import { ComposerPromptManager } from "./ComposerPromptManager";
@@ -103,12 +101,9 @@ export function WorkComposer({
   conversationId,
   draft,
   onDraftChange,
-  attachments,
-  onAttachmentsChange,
   references,
   onReferencesChange,
   disabled,
-  supportsAttachments,
   onSubmit,
   onError,
   onPendingChange,
@@ -126,12 +121,9 @@ export function WorkComposer({
   conversationId?: string;
   draft: string;
   onDraftChange: (text: string) => void;
-  attachments: File[];
-  onAttachmentsChange: (files: File[]) => void;
   references: ComposerReference[];
   onReferencesChange: (references: ComposerReference[]) => void;
   disabled: boolean;
-  supportsAttachments: boolean;
   onSubmit: () => void;
   onError: (text: string | null) => void;
   onPendingChange: (pending: boolean) => void;
@@ -167,10 +159,8 @@ export function WorkComposer({
   }>({ key: "", items: [] });
   const formRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
   const insertionRef = useRef({ start: 0, end: 0 });
   const requestRef = useRef<AbortController | null>(null);
-  const [attachmentKeys] = useState(() => new WeakMap<File, string>());
   const menuId = useId();
   const focusSearchOnMount = useCallback((input: HTMLInputElement | null) => {
     searchRef.current = input;
@@ -365,12 +355,6 @@ export function WorkComposer({
   }
 
   const rootOptions: Option[] = [
-    {
-      id: "attachments",
-      label: agentsT("addAttachment"),
-      icon: Paperclip,
-      disabled: !supportsAttachments,
-    },
     { id: "prompts", label: t("prompts"), icon: SquarePen, disabled: !agentId },
     {
       id: "mcp-prompts",
@@ -514,7 +498,6 @@ export function WorkComposer({
     }
     consumeTrigger();
     setPanel(null);
-    if (option.id === "attachments") fileRef.current?.click();
     if (option.id === "prompts") setPromptsOpen(true);
     if (option.id === "mcp-prompts") setMcpOpen(true);
   }
@@ -791,30 +774,8 @@ export function WorkComposer({
           {waitingQuestion ? (
             <p className="mb-2 text-sm font-medium">{waitingQuestion}</p>
           ) : null}
-          {attachments.length || references.length || resolving ? (
+          {references.length || resolving ? (
             <div className="mb-2 flex flex-wrap items-center gap-3">
-              {attachments.map((file, index) => {
-                let key = attachmentKeys.get(file);
-                if (!key) {
-                  key = crypto.randomUUID();
-                  attachmentKeys.set(file, key);
-                }
-                return (
-                  <ConversationFilePreview
-                    key={key}
-                    file={file}
-                    name={file.name}
-                    removeLabel={agentsT("removeAttachment", {
-                      name: file.name,
-                    })}
-                    onRemove={() =>
-                      onAttachmentsChange(
-                        attachments.filter((_, position) => position !== index),
-                      )
-                    }
-                  />
-                );
-              })}
               {references.map((reference, index) => {
                 const Icon = referenceIcon[reference.kind];
                 return (
@@ -852,23 +813,6 @@ export function WorkComposer({
               ) : null}
             </div>
           ) : null}
-          <input
-            ref={fileRef}
-            type="file"
-            multiple
-            hidden
-            onChange={(event) => {
-              const files = [
-                ...attachments,
-                ...Array.from(event.target.files ?? []),
-              ];
-              if (files.length > 5)
-                onError(agentsT("attachmentLimitReached", { count: 5 }));
-              onAttachmentsChange(files.slice(0, 5));
-              event.target.value = "";
-              focusInput();
-            }}
-          />
           <PromptInput
             className="bg-transparent"
             value={draft}

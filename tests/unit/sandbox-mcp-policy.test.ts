@@ -21,7 +21,6 @@ describe("sandbox MCP grant policy", () => {
     for (const value of [
       [],
       ["*"],
-      ["hermes_dashboard"],
       ["terminal_session"],
       ["tools/call"],
       null,
@@ -33,8 +32,8 @@ describe("sandbox MCP grant policy", () => {
     for (const kind of ["docker", "connector", "ssh"])
       expect(sandboxMcpExportable(kind)).toBe(true);
   });
-  it("keeps credential-bearing and legacy runtimes blocked", () => {
-    for (const kind of ["hermes", "host", "", "future-runtime"])
+  it("keeps unsupported and legacy runtimes blocked", () => {
+    for (const kind of ["host", "", "future-runtime"])
       expect(sandboxMcpExportable(kind)).toBe(false);
   });
 });

@@ -571,7 +571,7 @@ describe.sequential("Pi package external device boundary", () => {
       data: { currentReleaseId: releaseId, requestedReleaseId: releaseId },
     });
   });
-  it.each(["pi", "claude-code", "codex", "opencode", "hermes"] as const)(
+  it.each(["pi", "claude-code", "codex", "opencode"] as const)(
     "installs %s native resources, preserves modified files, and revokes on uninstall",
     async (client) => {
       const current = await device(client);
@@ -610,8 +610,6 @@ describe.sequential("Pi package external device boundary", () => {
           "opencode",
           "opencode.json",
         ),
-        HERMES_HOME: join(homeAlias, ".hermes"),
-        HERMES_CONFIG: join(homeAlias, ".hermes", "config.yaml"),
       };
       const execute = (command: string) =>
         promisify(execFile)(

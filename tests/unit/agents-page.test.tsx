@@ -42,10 +42,6 @@ vi.mock("@/lib/toolkits/queries", () => ({ listToolkits: mocks.listToolkits }));
 vi.mock("@/lib/agents/market", () => ({
   listAgentMarketListings: mocks.listAgentMarketListings,
 }));
-vi.mock("@/lib/agents/hermes/constants", () => ({
-  HERMES_IMAGE_OPTIONS: [],
-  resolveHermesImage: () => "hermes:latest",
-}));
 vi.mock("@/lib/process/supervisor", () => ({ effectiveStatus: vi.fn() }));
 vi.mock("@/lib/http/origin", () => ({
   originFromHeaders: () => "http://localhost",

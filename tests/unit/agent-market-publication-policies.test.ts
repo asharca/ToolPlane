@@ -35,12 +35,10 @@ function rootAgent() {
     slug: "researcher",
     workspaceId: "workspace",
     runtimeKind: "pi",
-    runtime: null,
     systemPrompt: null,
     maxSteps: 8,
     model: null,
     provider: null,
-    modelProviders: [],
     sandboxes: [
       {
         sandbox: {
@@ -343,20 +341,11 @@ describe("round two market publication trust policies", () => {
   );
 
   it.each([
-    {
-      runtime: { kind: "hermes", image: "hermes:stable" },
-      systemPrompt: "private",
-    },
-    {
-      runtime: { kind: "hermes", image: "hermes:stable" },
-      modelRequirement: { format: "openai", model: "m" },
-    },
-    {
-      runtime: { kind: "pi" },
-      modelProviderRequirements: [{ format: "openai" }],
-    },
+    { runtime: { kind: "unsupported" } },
+    { runtime: { kind: "pi", image: "private-image" } },
+    { runtime: { kind: "pi" }, providerLinks: [{ format: "openai" }] },
   ])(
-    "rejects manifests that expose private Hermes configuration %j",
+    "rejects unsupported runtime and provider configuration %j",
     async (override) => {
       const result = await assessAgentPortability({
         workspaceId: "workspace",

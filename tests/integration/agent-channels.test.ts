@@ -1576,18 +1576,19 @@ describe("workspace channels", () => {
         })
       ).status,
     ).toBe(400);
-    for (const action of [
-      "update",
-      "start",
-      "stop",
-      "delete",
-      "pair",
-      "check",
-      "apply",
+    const moveTarget = await createSandbox(other.id, "Foreign move target");
+    for (const input of [
+      { action: "update", connectionId },
+      { action: "start", connectionId },
+      { action: "stop", connectionId },
+      { action: "delete", connectionId },
+      { action: "pair", connectionId },
+      { action: "check", connectionId },
+      { action: "move", connectionId, sandboxId: moveTarget.id },
     ]) {
-      expect((await command({ action, connectionId }, other.slug)).status).toBe(
-        404,
-      );
+      const response = await command(input, other.slug);
+      expect(response.status).toBe(404);
+      expect(await response.json()).toEqual({ error: "Channel not found" });
     }
     const logs = await GET(
       new Request(`http://localhost?logs=${connectionId}`),

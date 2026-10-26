@@ -89,7 +89,7 @@ describe("buildAgentToolSet", () => {
     ]);
   });
 
-  it.each(["pi", "claude-code", "dsh", "hermes-rpc"])(
+  it.each(["pi", "claude-code", "dsh"])(
     "delegates %s through the sandbox runner with the prompt",
     async (runtimeKind) => {
       const runModel = vi.fn<RunDeps["runModel"]>(async () => "FROM_SUB");

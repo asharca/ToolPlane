@@ -8,15 +8,11 @@ import type { UIMessage } from "ai";
 import { withRequestLogging } from "@/lib/observability/http";
 import { workspaceAccessResponse } from "@/lib/workspace/access-stream";
 import { enrichLogContext } from "@/lib/observability/context";
-import { randomUUID } from "node:crypto";
 import { createUIMessageStream, createUIMessageStreamResponse } from "ai";
 import { db } from "@/lib/db";
 import { resolveRequestUser } from "@/lib/auth/request-user";
 import { getAgentForRequest } from "@/lib/agents/queries";
-import {
-  appendMessage,
-  ensureConversationRuntimeSession,
-} from "@/lib/agents/mutations";
+import { appendMessage } from "@/lib/agents/mutations";
 import { resolveAgentTools } from "@/lib/agents/resolve";
 import { assembleSystemPrompt } from "@/lib/agents/system-prompt";
 import { buildAgentToolSet } from "@/lib/agents/run";
@@ -27,15 +23,7 @@ import {
 } from "@/lib/agents/ui-stream";
 import { parseAgentChatBody, type AgentChatBody } from "@/lib/agents/chat-body";
 import { normalizeReasoningEffort } from "@/lib/agents/constants";
-import { writeHermesChatStream } from "@/lib/agents/hermes/client";
-import {
-  acquireHermesRuntimeWriteLease,
-  HERMES_RUNTIME_COPY_IN_PROGRESS_ERROR,
-} from "@/lib/agents/hermes/runtime";
-import {
-  hermesAssistantSegments,
-  type HermesUIMessage,
-} from "@/lib/agents/hermes/message-segments";
+import type { AgentUIMessage } from "@/lib/agents/message-segments";
 import {
   implementedAgentRuntimeKind,
   isDedicatedSandboxRuntimeKind,
@@ -43,8 +31,6 @@ import {
 import {
   activeConversationMessages,
   latestCompaction,
-  compactedConversationSeed,
-  needsCompactionSeed,
 } from "@/lib/agents/conversation-context";
 import {
   acquireConversationOperation,
@@ -78,40 +64,15 @@ export const POST = withRequestLogging(
         `Agent runtime "${agent.runtimeKind}" is not available.`,
         { status: 409 },
       );
-    const isHermes = runtimeKind === "hermes";
-    if (
-      isHermes
-        ? agent.modelProviders.length === 0
-        : !agent.provider || !agent.model
-    ) {
+    if (!agent.provider || !agent.model) {
       return new Response(
-        isHermes
-          ? "This Hermes agent has no model provider configured. Open Settings and select one or more providers."
-          : "This agent has no model configured. Open Settings and pick a provider + model.",
+        "This agent has no model configured. Open Settings and pick a provider + model.",
         { status: 400 },
       );
     }
 
-    // Keep the lease through Hermes' volume write and the matching database
-    // persistence in onFinish. A clone closes this gate before it snapshots.
-    const hermesWriteLease = isHermes
-      ? acquireHermesRuntimeWriteLease(agent.workspaceId, agent.id)
-      : null;
-    if (isHermes && !hermesWriteLease) {
-      return new Response(HERMES_RUNTIME_COPY_IN_PROGRESS_ERROR, {
-        status: 503,
-      });
-    }
-    let streamOwnsHermesWriteLease = false;
     let releaseConversation: (() => void) | null = null;
     let streamOwnsConversation = false;
-    let hermesLeaseReleased = false;
-    const releaseHermesWriteLease = () => {
-      if (hermesWriteLease && !hermesLeaseReleased) {
-        hermesLeaseReleased = true;
-        hermesWriteLease.release();
-      }
-    };
 
     try {
       let body: AgentChatBody;
@@ -128,7 +89,7 @@ export const POST = withRequestLogging(
       } catch {
         return new Response("Bad request", { status: 400 });
       }
-      const messages = (body.messages ?? []) as HermesUIMessage[];
+      const messages = (body.messages ?? []) as AgentUIMessage[];
 
       // Only persist to a conversation that belongs to THIS agent.
       const conversation = body.conversationId
@@ -137,9 +98,6 @@ export const POST = withRequestLogging(
             select: {
               id: true,
               title: true,
-              hermesProfile: true,
-              hermesProvider: true,
-              hermesModel: true,
               reasoningEffort: true,
               publicApiConversation: { select: { id: true } },
               workSession: { select: { id: true } },
@@ -183,7 +141,7 @@ export const POST = withRequestLogging(
         ? ([
             ...activeConversationMessages(storedMessages),
             ...(lastInput?.role === "user" ? [lastInput] : []),
-          ] as HermesUIMessage[])
+          ] as AgentUIMessage[])
         : messages;
       const storedReasoningEffort =
         normalizeReasoningEffort(conversation?.reasoningEffort) ?? "default";
@@ -207,179 +165,8 @@ export const POST = withRequestLogging(
         if (updated.count !== 1)
           return new Response("Conversation not found", { status: 404 });
       }
-      const runtimeSession =
-        isHermes && conversationId
-          ? await ensureConversationRuntimeSession(
-              agent.workspaceId,
-              agent.id,
-              conversationId,
-            )
-          : null;
 
       const last = messages[messages.length - 1];
-      if (hermesWriteLease) {
-        const writeLease = hermesWriteLease;
-        const runtimeSessionId =
-          runtimeSession?.runtimeSessionId ?? randomUUID();
-        const runtimeSessionKey =
-          runtimeSession?.runtimeSessionKey ??
-          `agent:${agent.id}:console:${runtimeSessionId}`;
-        let executionSettled = false;
-        let responseCancelled = false;
-        let settleExecution!: (result: { ok: boolean }) => void;
-        const executionFinished = new Promise<{ ok: boolean }>((resolve) => {
-          settleExecution = resolve;
-        });
-        const stream = createUIMessageStream<HermesUIMessage>({
-          originalMessages: messages,
-          execute: async ({ writer }) => {
-            try {
-              const compactionSeed =
-                compaction &&
-                needsCompactionSeed(storedMessages) &&
-                lastInput?.role === "user"
-                  ? compactedConversationSeed(storedMessages)
-                  : null;
-              const result = await writeHermesChatStream({
-                agent,
-                messages:
-                  compactionSeed !== null && lastInput?.role === "user"
-                    ? [
-                        ...modelMessages.slice(0, -1),
-                        {
-                          ...lastInput,
-                          parts: [
-                            {
-                              type: "text",
-                              text: compactionSeed,
-                            },
-                            ...lastInput.parts,
-                          ],
-                        },
-                      ]
-                    : modelMessages,
-                conversationId: conversationId ?? runtimeSessionId,
-                runtimeSessionId,
-                sessionKey: runtimeSessionKey,
-                profile: conversation?.hermesProfile,
-                provider: conversation?.hermesProvider,
-                model: conversation?.hermesModel,
-                reasoningEffort,
-                writeLease,
-                signal: req.signal,
-                writer,
-              });
-              if (
-                conversationId &&
-                result.runtimeSessionId !== runtimeSessionId
-              ) {
-                const updated = await db.conversation.updateMany({
-                  where: {
-                    id: conversationId,
-                    agentId,
-                    agent: { workspaceId: agent.workspaceId },
-                    runtimeSessionId,
-                  },
-                  data: { runtimeSessionId: result.runtimeSessionId },
-                });
-                if (updated.count !== 1) {
-                  throw new Error(
-                    "The Hermes conversation session changed during this turn.",
-                  );
-                }
-              }
-              executionSettled = true;
-              settleExecution({ ok: true });
-            } catch (error) {
-              executionSettled = true;
-              settleExecution({ ok: false });
-              throw error;
-            }
-          },
-          onError: (error) =>
-            error instanceof Error
-              ? error.message
-              : "Hermes runtime request failed.",
-          onFinish: async ({ responseMessage, isAborted }) => {
-            try {
-              const responseFinishedEarly = !executionSettled;
-              const execution = await executionFinished;
-              if (
-                !execution.ok ||
-                responseFinishedEarly ||
-                responseCancelled ||
-                !conversationId ||
-                isAborted ||
-                req.signal.aborted
-              )
-                return;
-              if (last?.role === "user") {
-                await appendMessage(
-                  conversationId,
-                  "user",
-                  last.parts as never,
-                );
-              }
-              const segments = hermesAssistantSegments(responseMessage.parts);
-              if (!segments.length) {
-                await appendMessage(
-                  conversationId,
-                  "assistant",
-                  responseMessage.parts as never,
-                );
-                return;
-              }
-              await db.$transaction(
-                segments.map((segment) =>
-                  db.message.create({
-                    data: {
-                      conversationId,
-                      role: "assistant",
-                      parts: [
-                        { type: "text", text: segment.text, state: "done" },
-                      ],
-                    },
-                  }),
-                ),
-              );
-            } finally {
-              releaseConversation?.();
-              releaseHermesWriteLease();
-            }
-          },
-        });
-        const response = createUIMessageStreamResponse({ stream });
-        if (!response.body)
-          throw new Error("Hermes chat response has no body.");
-        streamOwnsConversation = true;
-        const reader = response.body.getReader();
-        const body = new ReadableStream<Uint8Array>({
-          async pull(controller) {
-            try {
-              const next = await reader.read();
-              if (next.done) controller.close();
-              else controller.enqueue(next.value);
-            } catch (error) {
-              controller.error(error);
-            }
-          },
-          async cancel(reason) {
-            responseCancelled = true;
-            await reader.cancel(reason);
-          },
-        });
-        streamOwnsHermesWriteLease = true;
-        return workspaceAccessResponse(
-          new Response(body, {
-            status: response.status,
-            statusText: response.statusText,
-            headers: response.headers,
-          }),
-          agent.workspaceId,
-          user.id,
-          req.signal,
-        );
-      }
 
       const provider = agent.provider;
       const model = agent.model;
@@ -440,7 +227,7 @@ export const POST = withRequestLogging(
               workspaceId: agent.workspaceId,
               scope: { conversationId },
             },
-          )) as HermesUIMessage[];
+          )) as AgentUIMessage[];
         } catch (error) {
           return error instanceof AttachmentMessageError
             ? new Response(error.message, { status: error.status })
@@ -554,7 +341,6 @@ export const POST = withRequestLogging(
       );
     } finally {
       if (!streamOwnsConversation) releaseConversation?.();
-      if (!streamOwnsHermesWriteLease) releaseHermesWriteLease();
     }
   },
 );

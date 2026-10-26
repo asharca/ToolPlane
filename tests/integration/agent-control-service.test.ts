@@ -1,7 +1,6 @@
 // @vitest-environment node
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { db } from "@/lib/db";
-import { createConfiguredAgent } from "@/lib/agents/mutations";
 import {
   createAgentFromControl,
   getAgentControlAgent,
@@ -213,7 +212,6 @@ function createInput(
     runtime: "pi",
     systemPrompt: "Use the attached tools carefully.",
     providerId,
-    providerIds: [],
     model: "model-safe",
     maxSteps: 12,
     deploymentIds: [deploymentId],
@@ -299,51 +297,6 @@ describe("Agent Control service", () => {
     expect(
       JSON.stringify(await listAgentControlAgents(workspaceId)),
     ).not.toContain("SUPER_SECRET");
-  });
-
-  it("atomically creates Hermes runtime records and multi-provider bindings before Docker sync", async () => {
-    const created = await createConfiguredAgent(
-      workspaceId,
-      {
-        name: "Hermes control agent",
-        systemPrompt: null,
-        providerId: null,
-        providerIds: [providerId],
-        model: null,
-        maxSteps: 20,
-      },
-      {
-        deploymentIds: [deploymentId],
-        installedSkillIds: [installedSkillId],
-        toolkitIds: [],
-      },
-      { runtime: "hermes", hermesImage: "nousresearch/hermes-agent:v2026.8.3" },
-    );
-    const stored = await db.agent.findUniqueOrThrow({
-      where: { id: created.id },
-      include: { runtime: true, modelProviders: true },
-    });
-    expect(stored).toMatchObject({
-      providerId: null,
-      model: null,
-      systemPrompt: null,
-      maxSteps: 20,
-      runtime: {
-        kind: "hermes",
-        image: "nousresearch/hermes-agent:v2026.8.3",
-        status: "setup_required",
-      },
-    });
-    expect(stored.modelProviders.map(({ providerId: id }) => id)).toEqual([
-      providerId,
-    ]);
-    await expect(
-      getAgentControlAgent(workspaceId, workspaceSlug, created.id),
-    ).resolves.toMatchObject({
-      configured: true,
-      ready: false,
-      runtime: { kind: "hermes", status: "setup_required" },
-    });
   });
 
   it.each([

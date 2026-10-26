@@ -7,17 +7,7 @@ import {
   type SpawnSpec,
 } from "./spawn-spec";
 
-type HermesRuntimeRef = { agentId: string; kind: string; workspaceId: string };
-type RunningDeployment = DeploymentForSpawn & {
-  id: string;
-  sandbox?: {
-    agentRuntime?:
-      | (HermesRuntimeRef & {
-          agent: { publicRuntimeAllocation: { id: string } | null };
-        })
-      | null;
-  } | null;
-};
+type RunningDeployment = DeploymentForSpawn & { id: string };
 
 export type ReconcileDeps = {
   loadRunning: () => Promise<RunningDeployment[]>;
@@ -30,7 +20,6 @@ export type ReconcileDeps = {
       onReady?: () => void | Promise<void>;
     },
   ) => Promise<void>;
-  ensureHermesReady?: (workspaceId: string, agentId: string) => Promise<void>;
 };
 
 const defaultDeps: ReconcileDeps = {
@@ -39,37 +28,11 @@ const defaultDeps: ReconcileDeps = {
       where: { status: { in: ["running", "provisioning"] } },
       include: {
         server: { select: { name: true } },
-        sandbox: {
-          select: {
-            agentRuntime: {
-              select: {
-                agentId: true,
-                kind: true,
-                workspaceId: true,
-                agent: {
-                  select: { publicRuntimeAllocation: { select: { id: true } } },
-                },
-              },
-            },
-          },
-        },
       },
     });
-    // Public Endpoint runtimes are lazy: a request starts them and the idle
-    // maintenance pass stops them again. Never eagerly boot every tenant
-    // container after an app restart.
-    return deployments.filter(
-      (deployment) =>
-        !deployment.sandbox?.agentRuntime?.agent.publicRuntimeAllocation,
-    ) as RunningDeployment[];
+    return deployments as RunningDeployment[];
   },
   start: startProcess,
-  ensureHermesReady: async (workspaceId, agentId) => {
-    const { ensureHermesRuntimeReady } = await import(
-      "@/lib/agents/hermes/runtime"
-    );
-    await ensureHermesRuntimeReady(workspaceId, agentId);
-  },
 };
 
 // On server startup the in-memory process table is empty, but the DB may still
@@ -84,18 +47,7 @@ export async function reconcileDeployments(
   let started = 0;
   for (const d of deployments) {
     try {
-      const runtime = d.sandbox?.agentRuntime;
-      const ensureHermesReady = deps.ensureHermesReady;
-      if (runtime?.kind === "hermes" && ensureHermesReady) {
-        await deps.start(d.id, resolveSpawnSpec(d), {
-          awaitReady: false,
-          workspaceId: runtime.workspaceId,
-          onReady: () =>
-            ensureHermesReady.call(deps, runtime.workspaceId, runtime.agentId),
-        });
-      } else {
-        await deps.start(d.id, resolveSpawnSpec(d), { awaitReady: false });
-      }
+      await deps.start(d.id, resolveSpawnSpec(d), { awaitReady: false });
       started += 1;
     } catch {
       // startProcess persists 'error' on failure; keep reconciling the others.

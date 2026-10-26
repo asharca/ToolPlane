@@ -170,7 +170,7 @@ describe("per-installation credentials", () => {
         linkId,
         a.installationId,
         `Bearer ${a.token}`,
-        "hermes",
+        "opencode",
       ),
     ).toBeNull();
     await revokeInstallationForLink(
@@ -241,7 +241,7 @@ describe("per-installation credentials", () => {
   });
   it("management lists metadata, revokes all installations, and invalidates rotated links", async () => {
     const a = assertDefined(await issueInstallToken(linkId, "codex"));
-    const b = assertDefined(await issueInstallToken(linkId, "hermes"));
+    const b = assertDefined(await issueInstallToken(linkId, "opencode"));
     const account = await createApiToken(userId, "account");
     const listed = await installationsGET(
       new Request("http://localhost/installations", {

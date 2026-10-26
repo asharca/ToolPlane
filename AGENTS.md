@@ -35,12 +35,11 @@ details live in `docs/`. Read only the references relevant to the task.
   `resolveRequestPrincipal()` and intersect the token scope with the query; agent-control
   MCP requires an account-level Bearer token, never a cookie or toolkit token.
   See `src/lib/auth/request-user.ts` before choosing an auth helper.
-- Public agent endpoints must not expose Hermes container APIs/dashboards,
-  runtime tokens, provider keys, or MCP runtime tokens. Hermes containers do not
-  receive Postgres access or user-level ToolPlane tokens. Selected provider keys
-  are projected into the agent's private Hermes config volume; do not expose
-  them through public responses, Deployment/Sandbox JSON, or Docker inspect
-  environment. See `src/lib/agents/hermes/runtime.ts` and `config.ts`.
+- Public agent endpoints must not expose container APIs/dashboards, runtime tokens,
+  provider keys, or MCP runtime tokens. Runtime containers must not receive Postgres
+  access or user-level ToolPlane tokens. Never expose credentials through public
+  responses, Deployment/Sandbox JSON, or Docker inspect environment. Public API
+  infrastructure remains, but no runtime currently supports public Endpoint execution.
 - Return plaintext API tokens only at creation; persist only their hashes.
   Keep credentials out of logs, test artifacts, and committed files.
 
@@ -115,11 +114,10 @@ sandboxes, and agents. Route groups do not appear in URLs:
 | Toolkits and sync | `src/lib/toolkits/actions.ts`; `docs/TOOLKIT_SYNC.md` |
 | Agent runtime selection and turns | `src/lib/agents/runtime-kind.ts`, `sandbox-turn.ts`, `run.ts`, `native.ts`; Pi, Claude Code, and DSH use dedicated sandboxes. The internal `native.ts` helper uses `@earendil-works/pi-ai`, not AI SDK `streamText`; its filename is not a public runtime identifier. |
 | Chat and tools | `src/app/api/v1/agents/[agentId]/chat/route.ts`; `src/lib/agents/resolve.ts`, `tools.ts`, `skill-tools.ts`, `system-prompt.ts`, `mutations.ts` |
-| Hermes | `docs/HERMES_AGENT_RUNTIME.md`; `src/lib/agents/hermes/` |
 | Sandboxes and PTY | `docs/SANDBOXES.md`; `src/app/api/v1/agents/[agentId]/terminal/` |
 | Messaging channels | `docs/AGENT_MESSAGING_PLATFORMS.md`; `src/lib/agents/channel-*.ts` |
 | Public agent API | `docs/AGENT_PUBLIC_API.md`; `src/lib/agents/public-api/` |
-| Workspace control MCP | `docs/AGENT_CONTROL_MCP.md`; `src/lib/agents/control-mcp.ts`, `control-service.ts`; creation accepts `pi` or `hermes`, not every console runtime. |
+| Workspace control MCP | `docs/AGENT_CONTROL_MCP.zh-CN.md`; `src/lib/agents/control-mcp.ts`, `control-service.ts`; creation accepts only `pi`, not every console runtime. |
 | Agent market | `src/lib/agents/market*.ts`; immutable releases use allowlisted manifests without secrets |
 
 MCP deployments run real processes/containers. Reconcile persisted deployment

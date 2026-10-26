@@ -105,7 +105,9 @@ const row = () =>
   }) as unknown as A2ATask;
 const agent = {
   id: "agent",
+  workspaceId: "ws",
   runtimeKind: "pi",
+  piPackages: [],
   provider: { id: "provider", apiKey: "fixture-secret" },
   model: "model",
   maxSteps: 10,
@@ -133,7 +135,7 @@ beforeEach(() => {
   mocks.run.mockResolvedValue("review result");
 });
 describe("historical local TaskExecutor runtime port", () => {
-  it.each(["pi", "claude-code", "dsh", "hermes-rpc"])(
+  it.each(["pi", "claude-code", "dsh", "pi-sdk"])(
     "projects a task-scoped %s turn without a private Conversation",
     async (runtimeKind) => {
       mocks.agent.mockResolvedValue({ ...agent, runtimeKind });
@@ -163,6 +165,8 @@ describe("historical local TaskExecutor runtime port", () => {
         modelId: "model",
         disabledBuiltinTools: ["dangerous-tool"],
       });
+      if (runtimeKind === "pi-sdk") expect(projection.piPackages).toEqual([]);
+      else expect(projection).not.toHaveProperty("piPackages");
       expect(projection.mcpServers).toEqual([
         { deploymentId: "live-mcp", url: "https://proxy.test/mcp/live-mcp" },
         {

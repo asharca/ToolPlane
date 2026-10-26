@@ -44,15 +44,13 @@ export type SpawnSpec =
       kind: "sandbox";
       name: string;
       sandboxId: string;
-      sandboxKind: "docker" | "connector" | "hermes" | "ssh";
+      sandboxKind: "docker" | "connector" | "ssh";
       sshTargetId?: string;
       image?: string;
       volumeName?: string;
       network: McpNetwork;
       env: Record<string, string>;
       connector?: SandboxConnectorConfig;
-      runtimeId?: string;
-      runtimeModelName?: string;
       allowSudo?: boolean;
     };
 
@@ -347,15 +345,13 @@ function readCfg(installCfg: unknown): {
 
 function readSandboxCfg(installCfg: unknown): {
   sandboxId: string;
-  kind: "docker" | "connector" | "hermes" | "ssh";
+  kind: "docker" | "connector" | "ssh";
   sshTargetId?: string;
   image?: string;
   volumeName?: string;
   network: McpNetwork;
   env: Record<string, string>;
   connector?: SandboxConnectorConfig;
-  runtimeId?: string;
-  runtimeModelName?: string;
   allowSudo: boolean;
 } {
   const c = (installCfg ?? {}) as {
@@ -365,8 +361,6 @@ function readSandboxCfg(installCfg: unknown): {
     volumeName?: string;
     network?: string;
     env?: Record<string, string>;
-    runtimeId?: string;
-    runtimeModelName?: string;
     allowSudo?: boolean;
   };
   const connector = connectorFromConfig(installCfg);
@@ -378,11 +372,9 @@ function readSandboxCfg(installCfg: unknown): {
   const kind =
     c.kind === "ssh" && sshTargetId
       ? "ssh"
-      : c.kind === "hermes" && c.runtimeId
-        ? "hermes"
-        : c.kind === "connector" && connector
-          ? "connector"
-          : "docker";
+      : c.kind === "connector" && connector
+        ? "connector"
+        : "docker";
   return {
     sandboxId: c.sandboxId ?? "",
     kind,
@@ -392,8 +384,6 @@ function readSandboxCfg(installCfg: unknown): {
     network: c.network === "none" ? "none" : "isolated",
     env: c.env ?? {},
     connector: connector ?? undefined,
-    runtimeId: c.runtimeId,
-    runtimeModelName: c.runtimeModelName,
     allowSudo: c.allowSudo === true,
   };
 }
@@ -415,10 +405,6 @@ export function resolveSpawnSpec(
       ...(cfg.image ? { image: cfg.image } : {}),
       ...(cfg.volumeName ? { volumeName: cfg.volumeName } : {}),
       ...(cfg.connector ? { connector: cfg.connector } : {}),
-      ...(cfg.runtimeId ? { runtimeId: cfg.runtimeId } : {}),
-      ...(cfg.runtimeModelName
-        ? { runtimeModelName: cfg.runtimeModelName }
-        : {}),
       ...(cfg.allowSudo ? { allowSudo: true } : {}),
     };
   }

@@ -22,23 +22,17 @@ export const GET = withRequestLogging(
     const work = await getWorkSessionForUser(user.id, workSessionId);
     if (!work) return Response.json({ error: "Not found" }, { status: 404 });
     const { conversation, sandbox: assignedSandbox, ...view } = work;
-    const sandbox =
-      work.runtimeKind === "hermes"
-        ? assignedSandbox
-        : await getConversationWorkspaceSandbox({
-            workspaceId: work.workspaceId,
-            agentId: work.agentId,
-            conversationId: work.conversationId,
-          });
+    const sandbox = await getConversationWorkspaceSandbox({
+      workspaceId: work.workspaceId,
+      agentId: work.agentId,
+      conversationId: work.conversationId,
+    });
     return Response.json({
       ...view,
       sandboxId: sandbox?.id ?? null,
       titlePending,
       reasoningEffort:
         normalizeReasoningEffort(conversation.reasoningEffort) ?? null,
-      hermesProfile: conversation.hermesProfile,
-      hermesProvider: conversation.hermesProvider,
-      hermesModel: conversation.hermesModel,
       workingDirectory: workSessionWorkingDirectory(work.runtimeSnapshot),
       messages: conversation.messages,
       sandbox: sandbox

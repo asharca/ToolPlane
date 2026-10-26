@@ -86,7 +86,7 @@ import {
   type SidebarGroupPreferences,
 } from "@/lib/sidebar-groups";
 import { usePersistentSidebarGroups } from "@/lib/use-persistent-sidebar-groups";
-import type { HermesUIMessage } from "@/lib/agents/hermes/message-segments";
+import type { AgentUIMessage } from "@/lib/agents/message-segments";
 
 type ProviderOption = ModelProviderOption & { format: string };
 type McpOption = {
@@ -177,7 +177,7 @@ export function WorkspaceAssistantChat({
   assistants: ChatAssistantItem[];
   branch?: ChatBranchState | null;
   deployments: McpOption[];
-  initialMessages: HermesUIMessage[];
+  initialMessages: AgentUIMessage[];
   marketTemplate?: AssistantMarketTemplate | null;
   marketTemplates?: AssistantMarketTemplate[];
   providers: ProviderOption[];
@@ -1285,7 +1285,6 @@ export function WorkspaceAssistantChat({
                   allowEdit
                   allowRegenerate
                   apiPath={`/api/v1/chat/threads/${activeThread.id}/turns`}
-                  attachmentUploadUrl={`/api/v1/workspaces/${workspaceId}/attachments`}
                   contextBaseText={activeAssistant.systemPrompt}
                   contextWindow={activeAssistant.contextWindow}
                   contextWindowEstimated={
@@ -1344,7 +1343,6 @@ export function WorkspaceAssistantChat({
                   reasoningAvailable={reasoningAvailable}
                   runtimeKind={null}
                   serverManaged
-                  supportsAttachments
                   webSearchAvailable={activeAssistant.webSearchAvailable}
                   branchBusy={branchBusy}
                   branchNavigation={branch?.navigation ?? []}

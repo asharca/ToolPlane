@@ -1,8 +1,7 @@
 import { observe, recordEvent } from "@/lib/observability/events";
 import "server-only";
 import { isDedicatedSandboxRuntimeKind } from "./runtime-kind";
-import { bindHermesRpcConversation } from "./hermes-rpc-session-binding";
-import { normalizeSandboxWorkingDirectory } from "./sandbox-runtime";
+
 import { db } from "@/lib/db";
 import {
   createAgentRuntimeToken,
@@ -136,20 +135,6 @@ export async function runDedicatedSandboxTurn(
               data: { sandboxId: link.sandboxId },
             });
 
-          if (runtimeKind === "hermes-rpc" && conversationId) {
-            await bindHermesRpcConversation({
-              workspaceId: input.agent.workspaceId,
-              agentId: input.agent.id,
-              conversationId,
-              sandboxId: link.sandboxId,
-              providerId: provider.id,
-              modelId,
-              providerFormat: provider.format,
-              workingDirectory: normalizeSandboxWorkingDirectory(
-                input.workingDirectory,
-              ),
-            });
-          }
           const deploymentIds = [...new Set(input.deploymentIds ?? [])].filter(
             (deploymentId) => liveStatus(deploymentId) === "running",
           );

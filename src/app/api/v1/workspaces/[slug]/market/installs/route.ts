@@ -3,7 +3,6 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { AGENT_STEP_BOUNDS } from "@/lib/agents/constants";
 import { AgentMarketError, materializeAgentRelease } from "@/lib/agents/market";
-import { syncHermesRuntime } from "@/lib/agents/hermes/runtime";
 import { resolveAccountRequestUser } from "@/lib/auth/request-user";
 import {
   ChatServiceError,
@@ -259,7 +258,6 @@ export const POST = withRequestLogging(
             installedById: ctx.user.id,
             name: parsed.data.name,
           });
-          await syncHermesRuntime(ctx.workspace.id, result.agent.id);
           return Response.json(
             {
               installId: `agent:${result.install.id}`,

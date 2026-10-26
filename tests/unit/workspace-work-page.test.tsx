@@ -86,31 +86,27 @@ describe("Workspace Work page", () => {
     });
     mocks.listAgents.mockResolvedValue([
       {
-        id: "agent-hermes",
-        name: "Hermes researcher",
-        runtimeKind: "hermes",
+        id: "agent-sdk",
+        name: "SDK researcher",
+        runtimeKind: "pi-sdk",
         pinned: true,
-        providerId: null,
-        model: null,
-        provider: null,
-        modelProviders: [
+        providerId: "provider-1",
+        model: "model-1",
+        provider: { name: "OpenAI", models: [] },
+        sandboxes: [
           {
-            providerId: "provider-1",
-            provider: { name: "OpenAI", models: [] },
+            sandboxId: "sandbox-sdk",
+            isDefault: true,
+            sandbox: {
+              id: "sandbox-sdk",
+              name: "SDK workspace",
+              kind: "docker",
+              network: "isolated",
+              deploymentId: "deployment-sdk",
+              deployment: { status: "stopped" },
+            },
           },
         ],
-        sandboxes: [],
-        runtime: {
-          kind: "hermes",
-          sandbox: {
-            id: "sandbox-hermes",
-            name: "Hermes researcher runtime",
-            kind: "hermes",
-            network: "isolated",
-            deploymentId: "deployment-hermes",
-            deployment: { status: "stopped" },
-          },
-        },
       },
       {
         id: "agent-pi",
@@ -139,15 +135,15 @@ describe("Workspace Work page", () => {
         requestedAgentId: "agent-pi",
         agents: [
           expect.objectContaining({
-            id: "agent-hermes",
+            id: "agent-sdk",
             pinned: true,
             supportsWork: true,
             ready: true,
             providerIds: ["provider-1"],
             sandboxes: [
               expect.objectContaining({
-                id: "sandbox-hermes",
-                kind: "hermes",
+                id: "sandbox-sdk",
+                kind: "docker",
                 status: "provisioning",
                 running: false,
                 isDefault: true,
@@ -254,7 +250,7 @@ describe("Workspace Work page", () => {
     );
 
     expect(mocks.listConversations).toHaveBeenCalledWith("workspace-1", [
-      "agent-hermes",
+      "agent-sdk",
       "agent-pi",
     ]);
     expect(mocks.surface).toHaveBeenCalledWith(
@@ -332,7 +328,7 @@ describe("Workspace Work page", () => {
   it.each([
     null,
     { id: "history", agentId: "other-agent" },
-    { id: "history", agentId: "agent-hermes" },
+    { id: "history", agentId: "agent-sdk" },
   ])(
     "rejects missing, hidden, or differently bound history: %s",
     async (conversation) => {
@@ -358,38 +354,6 @@ describe("Workspace Work page", () => {
       searchParams: Promise.resolve({ c: "history" }),
     });
     expect(redirect).toHaveBeenCalledWith("/app/acme/work?w=work-1");
-  });
-
-  it("preserves ordinary Hermes chat selection inside Work", async () => {
-    mocks.getConversation.mockResolvedValue({
-      id: "history",
-      agentId: "agent-hermes",
-      title: "Notes",
-      workSession: null,
-      publicApiConversation: null,
-      hermesProfile: "research",
-      hermesProvider: "provider-1",
-      hermesModel: "model-1",
-      messages: [],
-    });
-    render(
-      await WorkspaceWorkPage({
-        params: Promise.resolve({ workspace: "acme" }),
-        searchParams: Promise.resolve({ c: "history" }),
-      }),
-    );
-    expect(mocks.surface).toHaveBeenCalledWith(
-      expect.objectContaining({
-        selectedConversation: expect.objectContaining({
-          id: "history",
-          agentId: "agent-hermes",
-          readOnly: false,
-          hermesProfile: "research",
-          hermesProvider: "provider-1",
-          hermesModel: "model-1",
-        }),
-      }),
-    );
   });
 });
 

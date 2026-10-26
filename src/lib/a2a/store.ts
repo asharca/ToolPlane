@@ -211,6 +211,14 @@ export async function submitTask(
     submitTaskInTransaction(tx, grant, request, admission),
   );
 }
+function assertNewTaskExecutionSupported(grant: TaskGrant): void {
+  if (!isWorkspaceGrant(grant)) {
+    throw new UnsupportedOperationError(
+      "This Agent runtime does not support public endpoint execution.",
+    );
+  }
+}
+
 /** Used by authenticated ingress adapters so binding, receipt and Task commit together. */
 export async function submitTaskInTransaction(
   tx: Tx,
@@ -290,6 +298,7 @@ export async function submitTaskInTransaction(
       throw notFound();
     return replay.task;
   }
+  assertNewTaskExecutionSupported(grant);
   // Reference IDs are informational, never authorization or an instruction override.
   for (const id of message.referenceTaskIds) {
     if (!(await tx.a2ATask.count({ where: { id, context: scope(grant) } })))

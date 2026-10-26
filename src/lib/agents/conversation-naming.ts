@@ -96,10 +96,6 @@ async function generateConversationTitle(
               titleModel: true,
             },
           },
-          modelProviders: {
-            orderBy: { createdAt: "asc" },
-            select: { provider: true },
-          },
         },
       },
     },
@@ -177,15 +173,7 @@ async function generateConversationTitle(
           modelId: conversation.agent.model,
         }
       : null;
-  const linkedProvider = conversation.agent.modelProviders.find(
-    (link) => link.provider.models[0],
-  )?.provider;
-  const linkedModelId = linkedProvider?.models[0];
-  selectedModel ??=
-    directModel ??
-    (linkedProvider && linkedModelId
-      ? { provider: linkedProvider, modelId: linkedModelId }
-      : null);
+  selectedModel ??= directModel;
   if (!selectedModel)
     throw new Error("No model is configured for conversation titles.");
 

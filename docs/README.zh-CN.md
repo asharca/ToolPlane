@@ -1,6 +1,5 @@
 # ToolPlane 文档
 
-> **English**: [README.md](./README.md)
 
 从[项目介绍与快速开始](../README.md)入门，按下面的主题继续阅读。
 
@@ -22,38 +21,36 @@ Markdown 原文件是唯一内容来源：直接修改 `docs/**/*.md`、仓库�
 
 | 文档 | 内容 |
 |---|---|
-| [系统架构](./ARCHITECTURE.md) · [English](./ARCHITECTURE.en.md) | 技术栈、模块与数据模型 |
-| [Pi / Claude Code / DSH](./AGENT_RUNTIMES.zh-CN.md) · [English](./AGENT_RUNTIMES.md) | 执行链路、原生会话与安全边界 |
-| [Hermes 运行时](./HERMES_AGENT_RUNTIME.md) · [English](./HERMES_AGENT_RUNTIME.en.md) | 配置、生命周期与凭据隔离 |
-| [Hermes RPC](./HERMES_RPC_RUNTIME.zh-CN.md) · [English](./HERMES_RPC_RUNTIME.md) | 在所选 Docker 沙箱中运行原生 Hermes：配置、会话、边界与测试 |
+| 系统架构 | 技术栈、模块与数据模型 |
+| [Pi / Claude Code / DSH](./AGENT_RUNTIMES.zh-CN.md) | 执行链路、原生会话与安全边界 |
 
 ## 使用与集成
 
 | 文档 | 内容 |
 |---|---|
-| [Toolkit 同步](./TOOLKIT_SYNC.md) · [English](./TOOLKIT_SYNC.en.md) | 向 AI 客户端同步 MCP 与 Skill |
-| [远程 MCP HTTP](./REMOTE_MCP_HTTP.zh-CN.md) · [English](./REMOTE_MCP_HTTP.md) | HTTP/HTTPS 端点、明文传输风险与保留的安全边界 |
-| [沙箱与连接器](./SANDBOXES.zh-CN.md) · [English](./SANDBOXES.md) | Docker、设备连接、终端与屏幕 |
-| [Agent Control MCP](./AGENT_CONTROL_MCP.zh-CN.md) · [English](./AGENT_CONTROL_MCP.md) | 从 MCP 客户端创建和调用 Agent |
-| [公共 Agent API](./AGENT_PUBLIC_API.zh-CN.md) · [English](./AGENT_PUBLIC_API.md) | 发布 Endpoint、鉴权与限额 |
-| [A2A 控制台接入](./A2A_CONSOLE.zh-CN.md) · [English](./A2A_CONSOLE.md) | 可视化启用、连接示例、凭据与本地任务调试 |
-| [A2A MCP 适配](./A2A_MCP_BRIDGE.zh-CN.md) · [English](./A2A_MCP_BRIDGE.md) | 外部 MCP 客户端使用原生任务 |
-| [A2A 资源限额](./A2A_RESOURCE_LIMITS.zh-CN.md) · [English](./A2A_RESOURCE_LIMITS.md) | 载荷存储、输出预留与迁移 |
-| [远程 A2A Agent](./A2A_REMOTE_AGENTS.zh-CN.md) · [English](./A2A_REMOTE_AGENTS.md) | 注册、出站授权、远程委派与恢复 |
-| [原生 A2A 1.0](./A2A_NATIVE.zh-CN.md) · [English](./A2A_NATIVE.md) | 标准任务、事件订阅、独立执行与发布授权 |
-| [A2A 内部协作](./A2A_LOCAL_COLLABORATION.zh-CN.md) · [English](./A2A_LOCAL_COLLABORATION.md) | 本地身份、原生委派、父任务等待与恢复 |
-| [消息渠道](./AGENT_MESSAGING_PLATFORMS.zh-CN.md) · [English](./AGENT_MESSAGING_PLATFORMS.md) | Telegram、飞书、QQ、微信、Discord、Slack |
-| [工作区管理](./WORKSPACES.md) · [English](./WORKSPACES.en.md) | 成员、邀请、所有权与删除 |
+| Toolkit 同步 | 向 AI 客户端同步 MCP 与 Skill |
+| [远程 MCP HTTP](./REMOTE_MCP_HTTP.zh-CN.md) | HTTP/HTTPS 端点、明文传输风险与保留的安全边界 |
+| [沙箱与连接器](./SANDBOXES.zh-CN.md) | Docker、设备连接、终端与屏幕 |
+| [Agent Control MCP](./AGENT_CONTROL_MCP.zh-CN.md) | 从 MCP 客户端创建和调用 Agent |
+| [公共 Agent API](./AGENT_PUBLIC_API.zh-CN.md) | 发布 Endpoint、鉴权与限额 |
+| [A2A 控制台接入](./A2A_CONSOLE.zh-CN.md) | 可视化启用、连接示例、凭据与本地任务调试 |
+| [A2A MCP 适配](./A2A_MCP_BRIDGE.zh-CN.md) | 外部 MCP 客户端使用原生任务 |
+| [A2A 资源限额](./A2A_RESOURCE_LIMITS.zh-CN.md) | 载荷存储、输出预留与迁移 |
+| [远程 A2A Agent](./A2A_REMOTE_AGENTS.zh-CN.md) | 注册、出站授权、远程委派与恢复 |
+| [原生 A2A 1.0](./A2A_NATIVE.zh-CN.md) | 标准任务、事件订阅、独立执行与发布授权 |
+| [A2A 内部协作](./A2A_LOCAL_COLLABORATION.zh-CN.md) | 本地身份、原生委派、父任务等待与恢复 |
+| [消息渠道](./AGENT_MESSAGING_PLATFORMS.zh-CN.md) | Telegram、飞书、QQ、微信、Discord、Slack |
+| 工作区管理 | 成员、邀请、所有权与删除 |
 
 ## 部署与维护
 
 | 文档 | 内容 |
 |---|---|
-| [部署配置](./DEPLOYMENT.md) · [English](./DEPLOYMENT.en.md) | 镜像、端口、HTTPS、邮件与更新 |
-| [升级与恢复](./RUNTIME_OPERATIONS.zh-CN.md) · [English](./RUNTIME_OPERATIONS.md) | 数据迁移、单所有者恢复与附件配额 |
-| [日志与审计](./OBSERVABILITY.zh-CN.md) · [English](./OBSERVABILITY.md) | 日志模型、诊断抓取与保留策略 |
-| [版本发布](./RELEASES.zh-CN.md) · [English](./RELEASES.md) | release-please 发布流程与 GitHub 配置 |
-| [共享 UI](./UI_LIBRARY.zh-CN.md) · [English](./UI_LIBRARY.md) | 原版 beUI Registry 源码接入 |
+| 部署配置 | 镜像、端口、HTTPS、邮件与更新 |
+| [升级与恢复](./RUNTIME_OPERATIONS.zh-CN.md) | 数据迁移、单所有者恢复与附件配额 |
+| [日志与审计](./OBSERVABILITY.zh-CN.md) | 日志模型、诊断抓取与保留策略 |
+| [版本发布](./RELEASES.zh-CN.md) | release-please 发布流程与 GitHub 配置 |
+| [共享 UI](./UI_LIBRARY.zh-CN.md) | 原版 beUI Registry 源码接入 |
 
 ## 维护约定
 

@@ -20,7 +20,6 @@ const mocks = vi.hoisted(() => ({
     sandbox: { findMany: vi.fn() },
   },
   create: vi.fn(),
-  sync: vi.fn(),
   message: vi.fn(),
   tools: vi.fn(),
 }));
@@ -28,9 +27,6 @@ vi.mock("@/lib/db", () => ({ db: mocks.db }));
 vi.mock("@/lib/agents/mutations", () => ({
   createConfiguredAgent: mocks.create,
   AgentConfigurationError: class extends Error {},
-}));
-vi.mock("@/lib/agents/hermes/runtime", () => ({
-  syncHermesRuntime: mocks.sync,
 }));
 vi.mock("@/lib/agents/message-service", () => ({
   runWorkspaceAgentMessage: mocks.message,
@@ -44,7 +40,6 @@ vi.mock("@/lib/process/mcp-client", () => ({ listMcpTools: mocks.tools }));
 const input: CreateAgentFromControlInput = {
   name: "Agent",
   runtime: "pi",
-  providerIds: [],
   maxSteps: 10,
   deploymentIds: [],
   installedSkillIds: [],
@@ -65,15 +60,6 @@ function agent() {
       format: string;
     } | null,
     model: "model",
-    modelProviders: [] as {
-      providerId: string;
-      provider: { name: string; format: string };
-    }[],
-    runtime: null as {
-      status: string;
-      image: string;
-      sandbox: { deploymentId: string; deployment: { status: string } };
-    } | null,
     systemPrompt: null,
     maxSteps: 10,
     createdAt: new Date(0),
@@ -101,17 +87,15 @@ beforeEach(() => {
 });
 
 describe("agent control configuration and safe serialization", () => {
-  it.each([
-    { ...input, model: "model" },
-    { ...input, runtime: "hermes" as const, providerId: "provider" },
-    { ...input, runtime: "hermes" as const, model: "model" },
-    { ...input, runtime: "hermes" as const, systemPrompt: "prompt" },
-  ])("rejects incompatible creation configuration %j", async (value) => {
-    await expect(
-      createAgentFromControl("workspace", "slug", value),
-    ).rejects.toMatchObject({ code: "invalid_arguments" });
-    expect(mocks.create).not.toHaveBeenCalled();
-  });
+  it.each([{ ...input, model: "model" }])(
+    "rejects incompatible creation configuration %j",
+    async (value) => {
+      await expect(
+        createAgentFromControl("workspace", "slug", value),
+      ).rejects.toMatchObject({ code: "invalid_arguments" });
+      expect(mocks.create).not.toHaveBeenCalled();
+    },
+  );
   it("serializes only safe agent metadata with escaped resource paths", async () => {
     expect(
       await getAgentControlAgent("workspace", "workspace /", "agent/id"),
@@ -129,43 +113,12 @@ describe("agent control configuration and safe serialization", () => {
       getAgentControlAgent("workspace", "slug", "unknown"),
     ).rejects.toMatchObject({ code: "not_found" });
   });
-  it.each(["error", "setup_required", "stopped", "running"])(
-    "preserves Hermes runtime status %s without inventing readiness",
-    async (status) => {
-      const row = agent();
-      row.runtimeKind = "hermes";
-      row.modelProviders = [
-        {
-          providerId: "provider",
-          provider: { name: "Provider", format: "openai" },
-        },
-      ];
-      row.runtime = {
-        status,
-        image: "image",
-        sandbox: { deploymentId: "runtime", deployment: { status: "running" } },
-      };
-      mocks.db.agent.findFirst.mockResolvedValue(row);
-      const result = await getAgentControlAgent("workspace", "slug", row.id);
-      expect(result.runtime.status).toBe(
-        ["error", "setup_required"].includes(status) ? status : "running",
-      );
-      expect(result.ready).toBe(!["error", "setup_required"].includes(status));
-      expect(result.model).toEqual({
-        providerIds: ["provider"],
-        providers: [{ name: "Provider", format: "openai" }],
-      });
-    },
-  );
   it("marks unconfigured agents not ready and counts all attached tool resources", async () => {
     const pi = agent();
     pi.provider = null;
-    const hermes = agent();
-    hermes.runtimeKind = "hermes";
-    mocks.db.agent.findMany.mockResolvedValue([pi, hermes, agent()]);
+    mocks.db.agent.findMany.mockResolvedValue([pi, agent()]);
     const results = await listAgentControlAgents("workspace");
     expect(results.map((result) => [result.configured, result.ready])).toEqual([
-      [false, false],
       [false, false],
       [true, true],
     ]);
@@ -178,33 +131,6 @@ describe("agent control configuration and safe serialization", () => {
       await getAgentControlAgent("workspace", "slug", pi.id),
     ).toMatchObject({ ready: false, model: { provider: null } });
   });
-  it.each(["success", "reported-error", "thrown-error"])(
-    "sanitizes Hermes runtime synchronization: %s",
-    async (outcome) => {
-      if (outcome === "thrown-error")
-        mocks.sync.mockRejectedValue(new Error("secret process details"));
-      else
-        mocks.sync.mockResolvedValue({
-          status: "running",
-          ...(outcome === "reported-error" ? { error: "secret" } : {}),
-        });
-      const result = await createAgentFromControl("workspace", "slug", {
-        ...input,
-        runtime: "hermes",
-      });
-      expect(result.created).toBe(true);
-      expect(result.runtimeSync).toEqual(
-        outcome === "success"
-          ? { status: "running" }
-          : {
-              status: outcome === "thrown-error" ? "error" : "running",
-              error:
-                "Hermes runtime sync failed. Open the Agent console to retry.",
-            },
-      );
-      expect(JSON.stringify(result)).not.toContain("secret");
-    },
-  );
   it("maps configuration errors but propagates unexpected persistence failures", async () => {
     mocks.create
       .mockRejectedValueOnce(new AgentConfigurationError("invalid relation"))
@@ -219,20 +145,18 @@ describe("agent control configuration and safe serialization", () => {
       createAgentFromControl("workspace", "slug", input),
     ).rejects.toThrow("storage failed");
   });
-  it("creates unbound Pi agents without syncing managed runtimes", async () => {
+  it("creates unbound Pi agents", async () => {
     const result = await createAgentFromControl("workspace", "slug", {
       ...input,
       systemPrompt: "  ",
     });
-    expect(result.runtimeSync).toEqual({ status: "pi" });
-    expect(mocks.sync).not.toHaveBeenCalled();
+    expect(result.created).toBe(true);
     expect(mocks.create).toHaveBeenCalledWith(
       "workspace",
       expect.objectContaining({
         systemPrompt: null,
         providerId: null,
         model: null,
-        providerIds: [],
       }),
       expect.any(Object),
       { runtime: "pi" },

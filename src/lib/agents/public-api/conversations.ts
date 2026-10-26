@@ -1,9 +1,6 @@
 import "server-only";
 import type { AgentApiPrincipal } from "@/lib/agents/public-api/auth";
 import { db } from "@/lib/db";
-import { getAgentEndpointRuntimeForExecution } from "@/lib/agents/queries";
-import { acquireHermesRuntimeWriteLease } from "@/lib/agents/hermes/runtime";
-import { deleteHermesSession } from "@/lib/agents/hermes/client";
 import {
   AgentApiError,
   publicErrorMessage,
@@ -140,14 +137,13 @@ export async function getAgentConversationForPrincipal(
 }
 
 /**
- * The tombstone is irreversible: the transcript is deleted transactionally
- * before best-effort Hermes cleanup. A broken/stopped runtime can delay volume
- * cleanup, but it can never make user-deleted or expired data public again.
+ * The tombstone is irreversible: messages and their accounting are deleted
+ * transactionally. Allocation cleanup is independent of transcript access.
  */
 export async function deleteAgentConversationForPrincipal(
   principal: AgentApiPrincipal,
   publicId: string,
-  signal?: AbortSignal,
+  _signal?: AbortSignal,
 ): Promise<boolean> {
   const locked = await db.$transaction(
     async (tx) => {
@@ -156,13 +152,7 @@ export async function deleteAgentConversationForPrincipal(
         include: {
           endpoint: { select: { workspaceId: true } },
           runtimeAllocation: true,
-          conversation: {
-            select: {
-              id: true,
-              runtimeSessionId: true,
-              runtimeSessionKey: true,
-            },
-          },
+          conversation: { select: { id: true } },
         },
       });
       if (!wrapper) return null;
@@ -200,53 +190,8 @@ export async function deleteAgentConversationForPrincipal(
   );
   if (!locked) return false;
 
-  const runtimeAgentId = locked.runtimeAllocation.runtimeAgentId;
-  const agent = runtimeAgentId
-    ? await getAgentEndpointRuntimeForExecution(
-        locked.endpoint.workspaceId,
-        runtimeAgentId,
-        locked.runtimeAllocation.id,
-      )
-    : null;
-  const sessionId = locked.conversation.runtimeSessionId;
-  const sessionKey = locked.conversation.runtimeSessionKey;
-  if (!agent?.runtime || !sessionId || !sessionKey) {
-    await db.agentPublicConversation.updateMany({
-      where: { id: locked.id, deletingAt: { not: null } },
-      data: { updatedAt: new Date() },
-    });
-    return true;
-  }
-
-  const lease = acquireHermesRuntimeWriteLease(agent.workspaceId, agent.id);
-  if (!lease) {
-    await db.agentPublicConversation.updateMany({
-      where: { id: locked.id, deletingAt: { not: null } },
-      data: { updatedAt: new Date() },
-    });
-    return true;
-  }
-  try {
-    await deleteHermesSession({
-      agent,
-      sessionId,
-      sessionKey,
-      writeLease: lease,
-      signal,
-    });
-    await db.conversation.deleteMany({
-      where: { id: locked.conversation.id, agentId: agent.id },
-    });
-    return true;
-  } catch {
-    await db.agentPublicConversation
-      .updateMany({
-        where: { id: locked.id, deletingAt: { not: null } },
-        data: { updatedAt: new Date() },
-      })
-      .catch(() => undefined);
-    return true;
-  } finally {
-    lease.release();
-  }
+  await db.conversation.deleteMany({
+    where: { id: locked.conversation.id },
+  });
+  return true;
 }

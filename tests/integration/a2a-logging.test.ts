@@ -2,6 +2,9 @@
 import { assertDefined } from "../assert-defined";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import type { Prisma } from "@prisma/client";
+import { UnsupportedOperationError, toJsonRpcError } from "@a2a-js/sdk/errors";
+import { resolveA2AGrant } from "@/lib/a2a/principal";
 import { db } from "@/lib/db";
 import { createAgentApiKey } from "@/lib/agents/public-api/auth";
 import { POST } from "@/app/api/v1/agent-endpoints/[endpointId]/a2a/route";
@@ -87,7 +90,7 @@ beforeAll(async () => {
         workspaceId,
         slug: "fixture",
         name: "Logging fixture",
-        runtimeKind: "hermes",
+        runtimeKind: "pi-sdk",
       },
     })
   ).id;
@@ -212,6 +215,46 @@ const send = () => ({
   },
 });
 
+/** Seed historical work: public SendMessage admission is intentionally unavailable. */
+async function historicalLoggingTask() {
+  const { grant } = await resolveA2AGrant(
+    new Request("https://toolplane.test/a2a", {
+      headers: { authorization: `Bearer ${token}` },
+    }),
+    publicId,
+  );
+  const context = await db.a2AContext.create({
+    data: {
+      workspaceId,
+      endpointId,
+      revisionId: grant.revisionId,
+      clientId,
+      ownerKey: grant.ownerKey,
+      expiresAt: new Date(Date.now() + 86400000),
+    },
+  });
+  const id = randomUUID();
+  const snapshot = {
+    id,
+    contextId: context.id,
+    status: { state: "TASK_STATE_SUBMITTED" },
+    history: [send().params.message],
+  };
+  await db.a2ATask.create({
+    data: {
+      id,
+      contextId: context.id,
+      state: 1,
+      snapshot,
+      request: send().params,
+      grant: grant as unknown as Prisma.InputJsonValue,
+      deadlineAt: new Date(Date.now() + 60000),
+      events: { create: { sequence: 1, payload: { task: snapshot } } },
+    },
+  });
+  return id;
+}
+
 describe("real authorized A2A protocol logging", () => {
   it("captures one redacted inbound request per access without capture settings or duplicate task execution", async () => {
     const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
@@ -219,20 +262,19 @@ describe("real authorized A2A protocol logging", () => {
       const input = send();
       const first = await call(input);
       expect(first.response.status).toBe(200);
-      expect(first.result.result.task.status.state).toBe(
-        "TASK_STATE_SUBMITTED",
+      expect(first.result.error.code).toBe(
+        toJsonRpcError(new UnsupportedOperationError("Unsupported execution"))
+          .code,
       );
       expect(first.event).toMatchObject({
         workspaceId,
         actorId: null,
-        outcome: "success",
+        outcome: "error",
         rpcMethod: "SendMessage",
         attributes: {
           data: {
             a2a: {
               clientId,
-              taskId: first.result.result.task.id,
-              rootTaskId: first.result.result.task.id,
             },
           },
         },
@@ -241,7 +283,7 @@ describe("real authorized A2A protocol logging", () => {
       expect(first.event.detail).not.toBeNull();
       const payload = JSON.stringify(assertDefined(first.event.detail).data);
       expect(payload).toContain("日志验收-hello");
-      expect(payload).toContain("TASK_STATE_SUBMITTED");
+      expect(payload).toContain("does not support public endpoint execution");
       expect(payload).not.toContain("fixture-private");
       expect(payload).not.toContain(token);
       expect(
@@ -252,10 +294,10 @@ describe("real authorized A2A protocol logging", () => {
       ).not.toContain("日志验收-hello");
       expect(JSON.stringify(stderr.mock.calls)).not.toContain("日志验收-hello");
       const replay = await call(input);
-      expect(replay.result.result.task.id).toBe(first.result.result.task.id);
+      expect(replay.result.error.code).toBe(first.result.error.code);
       expect(
         await db.a2ATask.count({ where: { context: { endpointId } } }),
-      ).toBe(1);
+      ).toBe(0);
     } finally {
       stderr.mockRestore();
     }
@@ -313,7 +355,13 @@ describe("real authorized A2A protocol logging", () => {
     }
   });
   it("records stream disconnection once without canceling accepted work", async () => {
-    const input = { ...send(), method: "SendStreamingMessage" };
+    const historicalId = await historicalLoggingTask();
+    const input = {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "SubscribeToTask",
+      params: { id: historicalId },
+    };
     const response = await POST(
       new Request(`http://localhost/api/v1/agent-endpoints/${publicId}/a2a`, {
         method: "POST",
@@ -358,8 +406,13 @@ describe("real authorized A2A protocol logging", () => {
     ).toMatchObject({ state: 1, cancelRequestedAt: null });
   });
   it("keeps asynchronous execution on a new trace and retains only the committed public result", async () => {
-    const submitted = await call(send());
-    const taskId = submitted.result.result.task.id;
+    const taskId = await historicalLoggingTask();
+    const submitted = await call({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "GetTask",
+      params: { id: taskId },
+    });
     await withLogContext(
       {
         requestId: "unrelated-wakeup",
@@ -430,11 +483,11 @@ describe("real authorized A2A protocol logging", () => {
         where: {
           workspaceId,
           eventName: "a2a.request",
-          rpcMethod: "SendMessage",
+          rpcMethod: "GetTask",
           attributes: { path: ["data", "a2a", "taskId"], equals: taskId },
         },
       }),
-    ).toBe(1);
+    ).toBe(2);
   });
 });
 

@@ -8,7 +8,6 @@ const m = vi.hoisted(() => ({
   end: vi.fn(),
   channel: vi.fn(),
   connector: vi.fn(),
-  dashboard: vi.fn(),
   processes: vi.fn(),
   coordinator: vi.fn(),
   worker: vi.fn(),
@@ -35,9 +34,6 @@ vi.mock("@/lib/agents/channel-runtime", () => ({
 vi.mock("@/lib/sandboxes/connector-broker", () => ({
   shutdownConnectorBroker: m.connector,
 }));
-vi.mock("@/lib/agents/hermes/dashboard-broker", () => ({
-  closeHermesDashboardBroker: m.dashboard,
-}));
 vi.mock("@/lib/process/supervisor", () => ({
   shutdownOwnedProcesses: m.processes,
 }));
@@ -59,7 +55,7 @@ describe("runtime owner recovery and shutdown boundaries", () => {
     m.query.mockImplementation(async (sql: string) => ({
       rows: sql.startsWith("SELECT pg_try") ? [{ locked: true }] : [],
     }));
-    for (const mock of [m.channel, m.connector, m.dashboard, m.processes])
+    for (const mock of [m.channel, m.connector, m.processes])
       mock.mockResolvedValue(undefined);
   });
   afterEach(() => {

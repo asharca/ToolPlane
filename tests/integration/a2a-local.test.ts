@@ -227,9 +227,7 @@ beforeAll(async () => {
         workspaceId: ws,
         name: `Agent ${i}`,
         slug: `a-${i}`,
-        runtimeKind: ["claude-code", "claude-code", "dsh", "hermes-rpc", "pi"][
-          i
-        ],
+        runtimeKind: ["claude-code", "claude-code", "dsh", "pi-sdk", "pi"][i],
         providerId: provider,
         model: "fixture",
         a2aInternalEnabled: true,

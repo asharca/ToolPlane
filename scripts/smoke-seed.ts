@@ -4,10 +4,6 @@ import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { agentReleaseChecksum } from "@/lib/agents/market-artifact";
 import { marketReleaseChecksum } from "@/lib/market/artifact";
-import {
-  HERMES_RUNTIME_KIND,
-  resolveHermesImage,
-} from "@/lib/agents/hermes/constants";
 import { hashPassword } from "@/lib/auth/password";
 import { DEFAULT_SANDBOX_IMAGE } from "@/lib/sandboxes/images";
 import { generateToken, hashToken, tokenPrefix } from "@/lib/auth/token-format";
@@ -27,7 +23,6 @@ const MCP_SOURCE_TYPES = [
 const CATALOG_SERVER_SLUG = "smoke-catalog-memory";
 const SMOKE_AGENT_LISTINGS = [
   "smoke-research-copilot",
-  "smoke-hermes-operator",
   "smoke-code-quality-guardian",
   "smoke-incident-response-lead",
 ] as const;
@@ -91,7 +86,7 @@ type SmokeAgentManifest = {
     systemPrompt: string | null;
     maxSteps: number;
     modelRequirement: { format: string; model: string } | null;
-    runtime: { kind: "pi" } | { kind: "hermes"; image: string };
+    runtime: { kind: "pi" };
     modelProviderRequirements?: Array<{ format: string }>;
     deploymentKeys: string[];
     skillKeys: string[];
@@ -144,7 +139,7 @@ type SmokeAgentReleaseSummary = {
   resourceCount: number;
   toolCount: number;
   models: Array<{ format: string; model: string }>;
-  runtimes: Array<"pi" | "hermes">;
+  runtimes: Array<"pi">;
 };
 
 function objectInputSchema(
@@ -975,7 +970,7 @@ function summarizeManifest(
   }
   const runtimes = [
     ...new Set(manifest.agents.map((agent) => agent.runtime.kind)),
-  ].sort((a, b) => a.localeCompare(b)) as Array<"pi" | "hermes">;
+  ].sort((a, b) => a.localeCompare(b)) as Array<"pi">;
   const deploymentCount = manifest.deployments.length;
   const skillCount = manifest.skills.length;
   const toolkitCount = manifest.toolkits.length;
@@ -1095,7 +1090,6 @@ async function createPublishedAgentListing(input: {
 
 async function main(): Promise<void> {
   const email = "smoke@example.com";
-  const hermesImage = resolveHermesImage(undefined);
   const leakedSkills = await db.skill.findMany({
     where: {
       author: null,
@@ -1697,19 +1691,6 @@ async function main(): Promise<void> {
     },
   });
 
-  const hermesAgent = await db.agent.create({
-    data: {
-      workspaceId: ws.id,
-      name: "Hermes Operations Copilot",
-      slug: "hermes-operations-copilot",
-      runtimeKind: HERMES_RUNTIME_KIND,
-      maxSteps: 12,
-      servers: { create: { deploymentId: catalogDeployment.id } },
-      skills: { create: { installedSkillId: installedSkills[0].id } },
-      toolkits: { create: { toolkitId: marketToolkit.id } },
-    },
-    select: { id: true, name: true, slug: true, maxSteps: true },
-  });
   const qualityAgent = await db.agent.create({
     data: {
       workspaceId: ws.id,
@@ -1752,12 +1733,10 @@ async function main(): Promise<void> {
   });
   await Promise.all([
     db.agentServer.createMany({
-      data: [piAgent, hermesAgent, qualityAgent, incidentAgent].map(
-        ({ id: agentId }) => ({
-          agentId,
-          deploymentId: promptStudioDeployment.id,
-        }),
-      ),
+      data: [piAgent, qualityAgent, incidentAgent].map(({ id: agentId }) => ({
+        agentId,
+        deploymentId: promptStudioDeployment.id,
+      })),
     }),
     db.chatAssistantMcpGrant.createMany({
       data: [researchAssistant, engineeringAssistant, operationsAssistant].map(
@@ -1807,55 +1786,6 @@ async function main(): Promise<void> {
       },
     });
   }
-  const hermesDeployment = await db.deployment.create({
-    data: {
-      workspaceId: ws.id,
-      name: `Hermes runtime: ${hermesAgent.name}`,
-      source: "sandbox",
-      sourceRef: hermesImage,
-      status: "stopped",
-    },
-    select: { id: true },
-  });
-  const hermesSandbox = await db.sandbox.create({
-    data: {
-      workspaceId: ws.id,
-      deploymentId: hermesDeployment.id,
-      name: `${hermesAgent.name} Hermes`,
-      slug: `${hermesAgent.slug}-runtime`,
-      kind: HERMES_RUNTIME_KIND,
-      image: hermesImage,
-      network: "isolated",
-      config: { managedBy: "agent-runtime" },
-    },
-    select: { id: true },
-  });
-  const hermesRuntime = await db.agentRuntime.create({
-    data: {
-      workspaceId: ws.id,
-      agentId: hermesAgent.id,
-      sandboxId: hermesSandbox.id,
-      kind: HERMES_RUNTIME_KIND,
-      image: hermesImage,
-      status: "setup_required",
-    },
-    select: { id: true },
-  });
-  await db.deployment.update({
-    where: { id: hermesDeployment.id },
-    data: {
-      installCfg: {
-        sandboxId: hermesSandbox.id,
-        kind: HERMES_RUNTIME_KIND,
-        image: hermesImage,
-        network: "isolated",
-        volumeName: smokeSandboxVolumeName(hermesSandbox.id),
-        runtimeId: hermesRuntime.id,
-        runtimeModelName: hermesAgent.slug,
-        env: {},
-      },
-    },
-  });
 
   const catalogManifestDeployment: SmokeAgentManifest["deployments"][number] = {
     key: "deployment_1",
@@ -1888,29 +1818,6 @@ async function main(): Promise<void> {
         maxSteps: piAgent.maxSteps,
         modelRequirement: null,
         runtime: { kind: "pi" },
-        deploymentKeys: ["deployment_1"],
-        skillKeys: ["skill_1"],
-        toolkitKeys: ["toolkit_1"],
-        subAgentKeys: [],
-      },
-    ],
-    deployments: [catalogManifestDeployment],
-    skills: [portableSkill("skill_1", skillSeeds[0])],
-    toolkits: [marketManifestToolkit],
-  };
-  const hermesManifest: SmokeAgentManifest = {
-    schemaVersion: 1,
-    rootAgentKey: "agent_1",
-    agents: [
-      {
-        key: "agent_1",
-        name: hermesAgent.name,
-        slug: hermesAgent.slug,
-        systemPrompt: null,
-        maxSteps: hermesAgent.maxSteps,
-        modelRequirement: null,
-        runtime: { kind: "hermes", image: hermesImage },
-        modelProviderRequirements: [],
         deploymentKeys: ["deployment_1"],
         skillKeys: ["skill_1"],
         toolkitKeys: ["toolkit_1"],
@@ -1971,24 +1878,8 @@ async function main(): Promise<void> {
     createPublishedAgentListing({
       workspaceId: ws.id,
       publishedById: user.id,
-      sourceAgentId: hermesAgent.id,
-      directorySlug: SMOKE_AGENT_LISTINGS[1],
-      slug: hermesAgent.slug,
-      name: hermesAgent.name,
-      summary:
-        "A Hermes runtime template that starts from an isolated, credential-free setup state.",
-      tags: ["seed", "hermes", "operations"],
-      categoryIds: categoryConnections(categoryIds, [
-        "operations",
-        "productivity",
-      ]).map(({ id }) => id),
-      manifest: hermesManifest,
-    }),
-    createPublishedAgentListing({
-      workspaceId: ws.id,
-      publishedById: user.id,
       sourceAgentId: qualityAgent.id,
-      directorySlug: SMOKE_AGENT_LISTINGS[2],
+      directorySlug: SMOKE_AGENT_LISTINGS[1],
       slug: qualityAgent.slug,
       name: qualityAgent.name,
       summary:
@@ -2005,7 +1896,7 @@ async function main(): Promise<void> {
       workspaceId: ws.id,
       publishedById: user.id,
       sourceAgentId: incidentAgent.id,
-      directorySlug: SMOKE_AGENT_LISTINGS[3],
+      directorySlug: SMOKE_AGENT_LISTINGS[2],
       slug: incidentAgent.slug,
       name: incidentAgent.name,
       summary:
@@ -2022,8 +1913,8 @@ async function main(): Promise<void> {
   console.log(`TOKEN=${token}`);
   console.log(
     `Seeded ${catalogMcps.length} market MCPs, ${catalogSkills.length} market skills, ` +
-      "2 public toolkits, 4 agents/listings, 3 chat assistants, 1 assistant listing, " +
-      "3 Docker workspaces, the Hermes runtime, and observability test data.",
+      "2 public toolkits, 3 agents/listings, 3 chat assistants, 1 assistant listing, " +
+      "3 Docker workspaces and observability test data.",
   );
   await db.$disconnect();
 }

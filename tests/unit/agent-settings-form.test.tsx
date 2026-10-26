@@ -13,11 +13,6 @@ vi.mock("next/navigation", () => ({
 }));
 
 const actions = vi.hoisted(() => ({
-  stopAgentRuntimeAction: vi.fn(),
-  syncAgentRuntimeAction: vi.fn(),
-  upgradeHermesRuntimeAction: vi.fn<FormActionMock>(async () => ({
-    savedAt: Date.now(),
-  })),
   updateAgentRuntimeEnvAction: vi.fn<FormActionMock>(async () => ({
     savedAt: Date.now(),
   })),
@@ -75,16 +70,6 @@ describe("AgentSettingsForm", () => {
     ["pi", ["read", "bash", "edit", "write"], "Glob"],
     ["claude-code", ["Read", "Bash", "Glob", "Workflow"], "read_image"],
     ["dsh", ["read_image", "todo_write", "subagent", "web_search"], "Read"],
-    [
-      "hermes-rpc",
-      ["read_file", "terminal", "memory", "session_search"],
-      "browser_navigate",
-    ],
-    [
-      "hermes",
-      ["read_file", "terminal", "browser_navigate", "image_generate"],
-      "todo_write",
-    ],
   ])(
     "shows the %s runtime built-in tools",
     (runtimeKind, expectedTools, absentTool) => {
@@ -139,7 +124,7 @@ describe("AgentSettingsForm", () => {
     expect(screen.getByLabelText("System prompt")).toHaveValue("你好 hello");
   });
 
-  it.each(["pi", "claude-code", "dsh", "hermes-rpc"])(
+  it.each(["pi", "claude-code", "dsh"])(
     "keeps %s on one networked Docker sandbox",
     async (runtimeKind) => {
       const user = userEvent.setup();
@@ -212,80 +197,14 @@ describe("AgentSettingsForm", () => {
     },
   );
 
-  it("does not expose a ToolPlane system prompt field for Hermes agents", () => {
+  it("edits the sandbox environment separately from agent autosave", async () => {
     render(
       <AgentSettingsForm
         {...baseProps}
-        runtimeKind="hermes"
-        systemPrompt="Legacy ToolPlane prompt"
-        runtime={{
-          kind: "hermes",
-          image: "nousresearch/hermes-agent:latest",
-          status: "running",
-          lastError: null,
-          lastSyncedAt: null,
-          sandboxId: "sandbox-1",
-        }}
-      />,
-    );
-
-    expect(screen.queryByLabelText("System prompt")).not.toBeInTheDocument();
-    expect(document.querySelector('[name="systemPrompt"]')).toBeNull();
-    expect(screen.queryByLabelText("Model")).not.toBeInTheDocument();
-  });
-
-  it("lets Hermes agents select multiple providers without selecting a model", async () => {
-    render(
-      <AgentSettingsForm
-        {...baseProps}
-        runtimeKind="hermes"
-        providers={[
-          ...baseProps.providers,
-          {
-            id: "provider-2",
-            name: "Anthropic",
-            format: "anthropic",
-            models: ["claude-sonnet"],
-          },
-        ]}
-        providerIds={["provider-1"]}
-        runtime={{
-          kind: "hermes",
-          image: "nousresearch/hermes-agent:latest",
-          status: "running",
-          lastError: null,
-          lastSyncedAt: null,
-          sandboxId: "sandbox-1",
-        }}
-      />,
-    );
-
-    expect(
-      screen.getByRole("checkbox", { name: "Select OpenAI" }),
-    ).toBeChecked();
-    await userEvent.click(
-      screen.getByRole("checkbox", { name: "Select Anthropic" }),
-    );
-    expect(document.querySelectorAll('input[name="providerId"]')).toHaveLength(
-      2,
-    );
-    expect(document.querySelector('[name="model"]')).toBeNull();
-  });
-
-  it("edits the Hermes volume environment separately from agent autosave", async () => {
-    render(
-      <AgentSettingsForm
-        {...baseProps}
-        runtimeKind="hermes"
-        runtime={{
-          kind: "hermes",
-          image: "nousresearch/hermes-agent:latest",
-          status: "running",
-          lastError: null,
-          lastSyncedAt: null,
-          sandboxId: "sandbox-1",
-          environment: "EXISTING=value",
-        }}
+        runtimeSandboxId="sandbox-1"
+        runtimeEnvironment="EXISTING=value"
+        activeSection="advanced"
+        showNavigation={false}
       />,
     );
 
@@ -294,7 +213,6 @@ describe("AgentSettingsForm", () => {
     await userEvent.clear(environment);
     await userEvent.type(environment, "API_KEY=secret");
 
-    await userEvent.click(screen.getByRole("button", { name: "Advanced" }));
     await userEvent.click(
       screen.getByRole("button", { name: "Save environment" }),
     );
@@ -324,108 +242,6 @@ describe("AgentSettingsForm", () => {
     const form = document.querySelector("form");
     if (!form) throw new Error("Expected settings form.");
     expect(new FormData(form).getAll("disabledBuiltinTool")).toEqual(["bash"]);
-  });
-
-  it("upgrades Hermes with the selected image through its dedicated action", async () => {
-    actions.upgradeHermesRuntimeAction.mockClear();
-    actions.updateAgentAction.mockClear();
-    render(
-      <AgentSettingsForm
-        {...baseProps}
-        runtimeKind="hermes"
-        hermesImages={[
-          "nousresearch/hermes-agent:latest",
-          "nousresearch/hermes-agent:v2026.7.20",
-        ]}
-        runtime={{
-          kind: "hermes",
-          image: "nousresearch/hermes-agent:latest",
-          status: "running",
-          lastError: null,
-          lastSyncedAt: null,
-          sandboxId: "sandbox-1",
-        }}
-      />,
-    );
-
-    await userEvent.click(screen.getByRole("button", { name: "Advanced" }));
-    await userEvent.click(
-      screen.getByRole("combobox", { name: "Hermes version" }),
-    );
-    await userEvent.click(
-      screen.getByRole("option", {
-        name: "nousresearch/hermes-agent:v2026.7.20",
-      }),
-    );
-    await new Promise<void>((resolve) => window.setTimeout(resolve, 800));
-    expect(actions.updateAgentAction).not.toHaveBeenCalled();
-
-    await userEvent.click(
-      screen.getByRole("button", { name: "Upgrade & restart" }),
-    );
-    await waitFor(() =>
-      expect(actions.upgradeHermesRuntimeAction).toHaveBeenCalled(),
-    );
-    const formData = actions.upgradeHermesRuntimeAction.mock.calls.at(-1)?.[1];
-    expect(formData).toBeInstanceOf(FormData);
-    if (!formData) throw new Error("Hermes upgrade form was not submitted.");
-    expect(formData.get("workspace")).toBe("acme");
-    expect(formData.get("agentId")).toBe("agent-1");
-    expect(formData.get("hermesImage")).toBe(
-      "nousresearch/hermes-agent:v2026.7.20",
-    );
-  });
-
-  it("shows pending and completed feedback for Hermes sync and stop actions", async () => {
-    let finishSync: ((state: { savedAt: number }) => void) | undefined;
-    let finishStop: ((state: { savedAt: number }) => void) | undefined;
-    actions.syncAgentRuntimeAction.mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          finishSync = resolve;
-        }),
-    );
-    actions.stopAgentRuntimeAction.mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          finishStop = resolve;
-        }),
-    );
-    render(
-      <AgentSettingsForm
-        {...baseProps}
-        runtimeKind="hermes"
-        runtime={{
-          kind: "hermes",
-          image: "nousresearch/hermes-agent:latest",
-          status: "running",
-          lastError: null,
-          lastSyncedAt: null,
-          sandboxId: "sandbox-1",
-        }}
-      />,
-    );
-
-    await userEvent.click(screen.getByRole("button", { name: "Advanced" }));
-    await userEvent.click(screen.getByRole("button", { name: "Sync / start" }));
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Syncing..." })).toBeDisabled(),
-    );
-    finishSync?.({ savedAt: 1 });
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Synced" })).toBeEnabled(),
-    );
-
-    await userEvent.click(screen.getByRole("button", { name: "Stop" }));
-    await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "Stopping..." }),
-      ).toBeDisabled(),
-    );
-    finishStop?.({ savedAt: 2 });
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Stopped" })).toBeEnabled(),
-    );
   });
 
   it("does not save searches but saves resource changes", async () => {

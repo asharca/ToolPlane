@@ -11,8 +11,6 @@ const categories: Record<string, Doc["category"]> = {
   REMOTE_MCP_HTTP: "api",
   ARCHITECTURE: "developers",
   AGENT_RUNTIMES: "developers",
-  HERMES_AGENT_RUNTIME: "developers",
-  HERMES_RPC_RUNTIME: "developers",
   RELEASES: "developers",
   UI_LIBRARY: "developers",
   RUNTIME_OPERATIONS: "developers",

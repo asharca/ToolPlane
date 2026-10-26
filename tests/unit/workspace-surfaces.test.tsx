@@ -888,7 +888,7 @@ describe("Chat, Work, and Knowledge surfaces", () => {
       container.querySelector('[data-ui="chat.composer"]'),
     ).toBeInTheDocument();
   });
-  it.each(["pi", "hermes"] as const)(
+  it.each(["pi", "pi-sdk"] as const)(
     "refreshes a newly created %s Agent until its runtime leaves provisioning",
     (runtimeKind) => {
       vi.useFakeTimers();
@@ -969,20 +969,20 @@ describe("Chat, Work, and Knowledge surfaces", () => {
             ],
           },
           {
-            id: "agent-hermes",
-            name: "Hermes researcher",
+            id: "agent-sdk",
+            name: "SDK researcher",
             pinned: true,
             supportsWork: true,
             ready: false,
-            runtimeKind: "hermes",
-            providerIds: ["provider-hermes"],
+            runtimeKind: "pi-sdk",
+            providerIds: ["provider-sdk"],
             providerLabel: "OpenAI",
             sandboxes: [
               {
-                id: "sandbox-hermes",
-                name: "Hermes runtime",
-                kind: "hermes",
-                deploymentId: "deployment-hermes",
+                id: "sandbox-sdk",
+                name: "SDK sandbox",
+                kind: "docker",
+                deploymentId: "deployment-sdk",
                 running: false,
                 isDefault: true,
               },
@@ -1031,14 +1031,14 @@ describe("Chat, Work, and Knowledge surfaces", () => {
     });
     expect(surfaceMocks.routerRefresh).toHaveBeenCalledOnce();
     await user.click(
-      screen.getByRole("button", { name: "Actions for Hermes researcher" }),
+      screen.getByRole("button", { name: "Actions for SDK researcher" }),
     );
-    const hermesMenu = document.querySelector<HTMLElement>(
-      '[data-sidebar-resource-menu="agent:agent-hermes"]',
+    const sdkMenu = document.querySelector<HTMLElement>(
+      '[data-sidebar-resource-menu="agent:agent-sdk"]',
     );
-    expect(hermesMenu).not.toBeNull();
+    expect(sdkMenu).not.toBeNull();
     await user.click(
-      within(assertDefined(hermesMenu)).getByRole("button", {
+      within(assertDefined(sdkMenu)).getByRole("button", {
         name: "Delete agent",
       }),
     );
@@ -1252,189 +1252,6 @@ describe("Chat, Work, and Knowledge surfaces", () => {
     expect(
       screen.getAllByRole("treeitem").map((item) => item.textContent?.trim()),
     ).toEqual(["Builder", "Hidden task", "Visible second", "Visible first"]);
-  });
-
-  it("selects thinking effort for Hermes Work", async () => {
-    render(
-      <WorkspaceWork
-        slug="acme"
-        workspaceId="workspace-1"
-        agents={[
-          {
-            id: "agent-hermes",
-            name: "Hermes researcher",
-            pinned: false,
-            supportsWork: true,
-            ready: true,
-            runtimeKind: "hermes",
-            providerIds: ["provider-hermes"],
-            providerLabel: "OpenAI",
-            sandboxes: [
-              {
-                id: "sandbox-hermes",
-                name: "Hermes runtime",
-                kind: "hermes",
-                deploymentId: "deployment-hermes",
-                running: true,
-                isDefault: true,
-              },
-            ],
-          },
-        ]}
-        sessions={[]}
-        selectedWorkSessionId={null}
-      />,
-    );
-
-    const effort = screen.getByRole("button", { name: /Thinking effort/ });
-    await userEvent.click(effort);
-    const slider = screen.getByRole("slider", { name: "Thinking effort" });
-    slider.focus();
-    await userEvent.keyboard("{End}{ArrowLeft}");
-    expect(slider).toHaveAttribute("aria-valuetext", "Extra high");
-    await userEvent.keyboard("{Escape}");
-    expect(effort).toHaveAccessibleName("Thinking effort: Extra high");
-  });
-
-  it("sends a draft Hermes model with the first Work task", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValue(
-        Response.json({ error: "stop after capture" }, { status: 400 }),
-      );
-    vi.stubGlobal("fetch", fetchMock);
-    render(
-      <WorkspaceWork
-        slug="acme"
-        workspaceId="workspace-1"
-        agents={[
-          {
-            id: "agent-hermes",
-            name: "Hermes researcher",
-            pinned: false,
-            supportsWork: true,
-            ready: false,
-            runtimeKind: "hermes",
-            providerIds: [],
-            providerLabel: "OpenAI",
-            sandboxes: [
-              {
-                id: "sandbox-hermes",
-                name: "Hermes runtime",
-                kind: "hermes",
-                deploymentId: "deployment-hermes",
-                running: true,
-                isDefault: true,
-              },
-            ],
-          },
-        ]}
-        sessions={[]}
-        selectedWorkSessionId={null}
-      />,
-    );
-    const dialogProps = surfaceMocks.modelDialog.mock.calls.at(-1)?.[0] as {
-      hermesConversation: { id: string | null; editable: boolean };
-      onHermesDraftChange: (selection: {
-        profile: string;
-        provider: string | null;
-        model: string | null;
-      }) => void;
-    };
-    expect(dialogProps.hermesConversation).toMatchObject({
-      id: null,
-      editable: true,
-    });
-    fireEvent.change(
-      screen.getByRole("combobox", {
-        name: "What should the Agent accomplish?",
-      }),
-      { target: { value: "Research it" } },
-    );
-    expect(screen.getByRole("button", { name: "Send prompt" })).toBeDisabled();
-    act(() =>
-      dialogProps.onHermesDraftChange({
-        profile: "research",
-        provider: "openrouter",
-        model: "model-b",
-      }),
-    );
-    expect(screen.getByRole("button", { name: "Send prompt" })).toBeEnabled();
-
-    fireEvent.click(screen.getByRole("button", { name: "Send prompt" }));
-    await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith(
-        "/api/v1/work-sessions",
-        expect.objectContaining({ method: "POST" }),
-      ),
-    );
-    const request = fetchMock.mock.calls.find(
-      ([url]) => url === "/api/v1/work-sessions",
-    )?.[1] as RequestInit;
-    expect(JSON.parse(String(request.body))).toMatchObject({
-      hermesProfile: "research",
-      hermesProvider: "openrouter",
-      hermesModel: "model-b",
-    });
-  });
-
-  it("keeps legacy Hermes Work creation unchanged until a model is explicitly selected", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValue(
-        Response.json({ error: "stop after capture" }, { status: 400 }),
-      );
-    vi.stubGlobal("fetch", fetchMock);
-    render(
-      <WorkspaceWork
-        slug="acme"
-        workspaceId="workspace-1"
-        agents={[
-          {
-            id: "agent-hermes",
-            name: "Hermes researcher",
-            pinned: false,
-            supportsWork: true,
-            ready: true,
-            runtimeKind: "hermes",
-            providerIds: ["provider-hermes"],
-            sandboxes: [
-              {
-                id: "sandbox-hermes",
-                name: "Hermes runtime",
-                kind: "hermes",
-                deploymentId: "deployment-hermes",
-                running: true,
-                isDefault: true,
-              },
-            ],
-          },
-        ]}
-        sessions={[]}
-        selectedWorkSessionId={null}
-      />,
-    );
-
-    fireEvent.change(
-      screen.getByRole("combobox", {
-        name: "What should the Agent accomplish?",
-      }),
-      { target: { value: "Run it" } },
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Send prompt" }));
-    await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith(
-        "/api/v1/work-sessions",
-        expect.anything(),
-      ),
-    );
-    const request = fetchMock.mock.calls.find(
-      ([url]) => url === "/api/v1/work-sessions",
-    )?.[1] as RequestInit;
-    const body = JSON.parse(String(request.body));
-    expect(body).not.toHaveProperty("hermesProfile");
-    expect(body).not.toHaveProperty("hermesProvider");
-    expect(body).not.toHaveProperty("hermesModel");
   });
 
   it("inserts an attached MCP prompt into the Work composer", async () => {

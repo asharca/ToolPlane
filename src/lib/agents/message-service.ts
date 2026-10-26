@@ -15,7 +15,6 @@ import { getAgent, getAgentForRequest } from "@/lib/agents/queries";
 import {
   appendConversationTurn,
   createConversation,
-  ensureConversationRuntimeSession,
 } from "@/lib/agents/mutations";
 import { resolveAgentTools } from "@/lib/agents/resolve";
 import { assembleSystemPrompt } from "@/lib/agents/system-prompt";
@@ -35,11 +34,6 @@ import {
 } from "@/lib/agents/channel-connections";
 import { channelSenderAllowed } from "@/lib/agents/channel-access";
 import { getChannelSandbox } from "@/lib/agents/channel-sandboxes";
-import { runHermesText } from "@/lib/agents/hermes/client";
-import {
-  acquireHermesRuntimeWriteLease,
-  HERMES_RUNTIME_COPY_IN_PROGRESS_ERROR,
-} from "@/lib/agents/hermes/runtime";
 import {
   implementedAgentRuntimeKind,
   isDedicatedSandboxRuntimeKind,
@@ -242,10 +236,7 @@ export async function runAgentChannelMessage(params: {
     ) {
       message =
         "A stable channel message ID is required for native task deduplication.";
-    } else if (
-      name !== "new" &&
-      (name !== "compact" || agent.runtimeKind !== "hermes")
-    ) {
+    } else if (name !== "new") {
       try {
         if (!prior) {
           const release = acquireConversationOperation(sessionKey);
@@ -377,29 +368,13 @@ async function runLoadedAgentMessage(params: {
       body: { error: `Agent runtime "${agent.runtimeKind}" is not available.` },
     };
   }
-  const isHermes = runtimeKind === "hermes";
-  if (
-    isHermes
-      ? agent.modelProviders.length === 0
-      : !agent.provider || !agent.model
-  ) {
+  if (!agent.provider || !agent.model) {
     return {
       status: 400,
       body: {
-        error: isHermes
-          ? "This Hermes agent has no model provider configured. Open Settings and select one or more providers."
-          : "This agent has no model configured. Open Settings and pick a provider + model.",
+        error:
+          "This agent has no model configured. Open Settings and pick a provider + model.",
       },
-    };
-  }
-
-  const hermesWriteLease = isHermes
-    ? acquireHermesRuntimeWriteLease(agent.workspaceId, agent.id)
-    : null;
-  if (isHermes && !hermesWriteLease) {
-    return {
-      status: 503,
-      body: { error: HERMES_RUNTIME_COPY_IN_PROGRESS_ERROR },
     };
   }
 
@@ -482,18 +457,6 @@ async function runLoadedAgentMessage(params: {
       };
     }
 
-    const runtimeSession = isHermes
-      ? await ensureConversationRuntimeSession(
-          agent.workspaceId,
-          agent.id,
-          conversation.id,
-          { runtimeSessionKey: event.sessionKey },
-        )
-      : null;
-    if (isHermes && !runtimeSession) {
-      return { status: 404, body: { error: "Conversation not found" } };
-    }
-
     const priorMessages: UIMessage[] = activeConversationMessages(
       loadedConversation?.messages ?? [],
     ).map((m) => ({
@@ -523,98 +486,69 @@ async function runLoadedAgentMessage(params: {
 
     let text: string;
     let runtimeParts: NativeEntryRuntimePart[] = [];
-    if (isHermes && runtimeSession) {
-      try {
-        text = await runHermesText({
-          agent,
-          messages: [...priorMessages, userMessage],
-          sessionId: runtimeSession.runtimeSessionId,
-          sessionKey: runtimeSession.runtimeSessionKey,
-          writeLease: hermesWriteLease ?? undefined,
-          signal: params.signal,
-        });
-      } catch (error) {
+    if (isDedicatedSandboxRuntimeKind(runtimeKind)) {
+      if (!params.actorId)
         return {
-          status: 502,
+          status: 403,
           body: {
-            error:
-              error instanceof Error
-                ? error.message
-                : "Hermes runtime request failed.",
+            error: "An authenticated native execution actor is required.",
           },
         };
-      }
-    } else {
-      if (!agent.provider || !agent.model) {
+      if (body.attachments.length || params.attachmentParts?.length)
+        return {
+          status: 415,
+          body: { error: "Native message ingress accepts text only." },
+        };
+      if (params.connectionId && !event.source.messageId)
         return {
           status: 400,
-          body: { error: "This agent has no model configured." },
+          body: {
+            error:
+              "A stable channel message ID is required for native task deduplication.",
+          },
         };
-      }
+      const result = await runNativeEntry({
+        kind: params.connectionId
+          ? "channel"
+          : event.source.platform === "mcp"
+            ? "control"
+            : "chat",
+        sourceId: conversation.id,
+        channelId: params.connectionId,
+        workspaceId: agent.workspaceId,
+        agentId: agent.id,
+        actorId: params.actorId,
+        messageId: userMessage.id,
+        text: latestEntryText(userMessage),
+        signal: params.signal,
+        onAccepted: (_task, path) =>
+          params.onAccepted?.(
+            `Native task accepted. Approvals and progress (authorized console operator only): ${path}`,
+          ),
+      });
+      text = nativeEntryResult(result.task, result.path);
+      runtimeParts = nativeEntryRuntimeParts(result.task);
+    } else {
       const resolved = resolveAgentTools(agent);
-      if (isDedicatedSandboxRuntimeKind(runtimeKind)) {
-        if (!params.actorId)
-          return {
-            status: 403,
-            body: {
-              error: "An authenticated native execution actor is required.",
-            },
-          };
-        if (body.attachments.length || params.attachmentParts?.length)
-          return {
-            status: 415,
-            body: { error: "Native message ingress accepts text only." },
-          };
-        if (params.connectionId && !event.source.messageId)
-          return {
-            status: 400,
-            body: {
-              error:
-                "A stable channel message ID is required for native task deduplication.",
-            },
-          };
-        const result = await runNativeEntry({
-          kind: params.connectionId
-            ? "channel"
-            : event.source.platform === "mcp"
-              ? "control"
-              : "chat",
-          sourceId: conversation.id,
-          channelId: params.connectionId,
-          workspaceId: agent.workspaceId,
-          agentId: agent.id,
-          actorId: params.actorId,
-          messageId: userMessage.id,
-          text: latestEntryText(userMessage),
-          signal: params.signal,
-          onAccepted: (_task, path) =>
-            params.onAccepted?.(
-              `Native task accepted. Approvals and progress (authorized console operator only): ${path}`,
-            ),
-        });
-        text = nativeEntryResult(result.task, result.path);
-        runtimeParts = nativeEntryRuntimeParts(result.task);
-      } else {
-        const tools = await buildAgentToolSet(resolved, {
-          workspaceId: agent.workspaceId,
-          depth: 0,
-          visited: new Set([agent.id]),
-        });
-        const system = assembleSystemPrompt(
-          agent.systemPrompt,
-          resolved.skills,
-          Boolean(resolved.knowledgeBases?.length),
-        );
-        text = await runNativeAgent({
-          provider: agent.provider,
-          modelId: agent.model,
-          systemPrompt: system,
-          messages: uiMessagesToPi([...priorMessages, userMessage]),
-          tools,
-          maxSteps: agent.maxSteps,
-          signal: params.signal,
-        });
-      }
+      const tools = await buildAgentToolSet(resolved, {
+        workspaceId: agent.workspaceId,
+        depth: 0,
+        visited: new Set([agent.id]),
+      });
+      const system = assembleSystemPrompt(
+        agent.systemPrompt,
+        resolved.skills,
+        Boolean(resolved.knowledgeBases?.length),
+      );
+      text = await runNativeAgent({
+        provider: agent.provider,
+        modelId: agent.model,
+        systemPrompt: system,
+        messages: uiMessagesToPi([...priorMessages, userMessage]),
+        tools,
+        maxSteps: agent.maxSteps,
+        signal: params.signal,
+      });
     }
     const silent = isSilentAgentReply(text);
 
@@ -642,6 +576,5 @@ async function runLoadedAgentMessage(params: {
     };
   } finally {
     releaseConversation?.();
-    hermesWriteLease?.release();
   }
 }

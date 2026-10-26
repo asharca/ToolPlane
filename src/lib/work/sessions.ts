@@ -2,10 +2,7 @@ import "server-only";
 import { posix } from "node:path";
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
-import {
-  defaultConversationRuntimeSession,
-  type HermesConversationSelection,
-} from "@/lib/agents/mutations";
+import { defaultConversationRuntimeSession } from "@/lib/agents/mutations";
 import type { ReasoningEffort } from "@/lib/agents/constants";
 import { isWorkRuntimeKind } from "@/lib/agents/runtime-kind";
 import { AGENT_PI_PACKAGES_INCLUDE } from "@/lib/agents/queries";
@@ -34,7 +31,6 @@ type CreateWorkSessionInput = {
   attachments?: PreparedWorkAttachment[];
   references?: ComposerReference[];
   reasoningEffort?: ReasoningEffort;
-  hermesSelection?: HermesConversationSelection;
 };
 
 export type WorkSessionTransitionResult =
@@ -150,23 +146,7 @@ export async function createWorkSession(input: CreateWorkSessionInput) {
         runtimeKind: true,
         systemPrompt: true,
         maxSteps: true,
-        modelProviders: { take: 1, select: { providerId: true } },
         piPackages: AGENT_PI_PACKAGES_INCLUDE,
-        runtime: {
-          select: {
-            id: true,
-            kind: true,
-            sandboxId: true,
-            sandbox: {
-              select: {
-                id: true,
-                workspaceId: true,
-                kind: true,
-                network: true,
-              },
-            },
-          },
-        },
         servers: { select: { deploymentId: true } },
         skills: { select: { installedSkillId: true } },
         toolkits: {
@@ -191,39 +171,17 @@ export async function createWorkSession(input: CreateWorkSessionInput) {
         },
       },
     });
+    if (!agent || !isWorkRuntimeKind(agent.runtimeKind)) return null;
+    if (agent.sandboxes.length !== 1) return null;
+    const link = agent.sandboxes[0];
     if (
-      !agent ||
-      !isWorkRuntimeKind(agent.runtimeKind) ||
-      (input.hermesSelection !== undefined && agent.runtimeKind !== "hermes")
+      !link ||
+      (input.sandboxId && input.sandboxId !== link.sandboxId) ||
+      link.sandbox.kind !== "docker" ||
+      link.sandbox.network === "none"
     )
       return null;
-
-    let sandboxId: string;
-    if (agent.runtimeKind === "hermes") {
-      const runtime = agent.runtime;
-      if (
-        runtime?.kind !== "hermes" ||
-        runtime.sandbox.workspaceId !== input.workspaceId ||
-        runtime.sandbox.kind !== "hermes" ||
-        runtime.sandbox.network === "none" ||
-        agent.modelProviders.length === 0 ||
-        (input.sandboxId && input.sandboxId !== runtime.sandboxId)
-      )
-        return null;
-      sandboxId = runtime.sandboxId;
-    } else {
-      if (agent.sandboxes.length !== 1) return null;
-      const link = agent.sandboxes[0];
-      if (
-        !link ||
-        (input.sandboxId && input.sandboxId !== link.sandboxId) ||
-        agent.runtime?.sandboxId === link.sandboxId ||
-        link.sandbox.kind !== "docker" ||
-        link.sandbox.network === "none"
-      )
-        return null;
-      sandboxId = link.sandboxId;
-    }
+    const sandboxId = link.sandboxId;
     const piPackages = resolveAgentPiPackages(agent);
 
     const conversation = await tx.conversation.create({
@@ -232,16 +190,6 @@ export async function createWorkSession(input: CreateWorkSessionInput) {
         title: task.slice(0, 80),
         ...(input.reasoningEffort && input.reasoningEffort !== "default"
           ? { reasoningEffort: input.reasoningEffort }
-          : {}),
-        ...(input.hermesSelection
-          ? {
-              hermesProfile:
-                input.hermesSelection.profile === "default"
-                  ? null
-                  : input.hermesSelection.profile,
-              hermesProvider: input.hermesSelection.provider,
-              hermesModel: input.hermesSelection.model,
-            }
           : {}),
       },
     });
@@ -325,7 +273,6 @@ export async function createWorkSession(input: CreateWorkSessionInput) {
             (item) => item.knowledgeBaseId,
           ),
           sandboxId,
-          runtimeId: agent.runtime?.id ?? null,
           workingDirectory,
         },
         status: "queued",

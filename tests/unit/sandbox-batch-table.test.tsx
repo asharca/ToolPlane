@@ -24,10 +24,10 @@ const rows = [
     cells: ["Ordinary sandbox"],
   },
   {
-    id: "hermes-sandbox",
-    name: "Hermes sandbox",
+    id: "second-sandbox",
+    name: "Second sandbox",
     batchEligible: true,
-    cells: ["Hermes sandbox"],
+    cells: ["Second sandbox"],
   },
   {
     id: "blocked-sandbox",
@@ -65,7 +65,7 @@ describe("SandboxBatchTable", () => {
     mocks.refresh.mockReset();
   });
 
-  it("only offers lifecycle actions after selecting visible eligible ordinary and Hermes sandbox ids", async () => {
+  it("only offers lifecycle actions after selecting visible eligible sandbox ids", async () => {
     const user = userEvent.setup();
     render(table());
     expect(screen.queryByRole("toolbar")).not.toBeInTheDocument();
@@ -86,14 +86,14 @@ describe("SandboxBatchTable", () => {
     );
     mocks.batchSandboxLifecycleAction.mockResolvedValue([
       outcome("ordinary-sandbox", "success", "accepted"),
-      outcome("hermes-sandbox", "skipped", "already_running"),
+      outcome("second-sandbox", "skipped", "already_running"),
     ]);
     await user.click(screen.getByRole("button", { name: "Start selected" }));
     await waitFor(() =>
       expect(mocks.batchSandboxLifecycleAction).toHaveBeenCalledWith(
         "acme",
         "start",
-        ["ordinary-sandbox", "hermes-sandbox"],
+        ["ordinary-sandbox", "second-sandbox"],
       ),
     );
     expect(
@@ -150,7 +150,7 @@ describe("SandboxBatchTable", () => {
     expect(mocks.batchSandboxLifecycleAction).toHaveBeenCalledWith(
       "acme",
       "restart",
-      ["ordinary-sandbox", "hermes-sandbox"],
+      ["ordinary-sandbox", "second-sandbox"],
     );
     try {
       await waitFor(() =>
@@ -167,7 +167,7 @@ describe("SandboxBatchTable", () => {
     } finally {
       resolveBatch([
         outcome("ordinary-sandbox", "success", "accepted"),
-        outcome("hermes-sandbox", "error", "operation_failed"),
+        outcome("second-sandbox", "error", "operation_failed"),
       ]);
     }
     expect(
@@ -227,7 +227,7 @@ describe("SandboxBatchTable", () => {
       screen.getByRole("toolbar", { name: "1 selected" }),
     ).toBeInTheDocument();
     mocks.batchSandboxLifecycleAction.mockResolvedValue([
-      outcome("hermes-sandbox", "skipped", "not_running"),
+      outcome("second-sandbox", "skipped", "not_running"),
     ]);
     await user.click(screen.getByRole("button", { name: "Stop selected" }));
     await user.click(screen.getByRole("button", { name: "Confirm" }));
@@ -235,7 +235,7 @@ describe("SandboxBatchTable", () => {
       expect(mocks.batchSandboxLifecycleAction).toHaveBeenCalledWith(
         "acme",
         "stop",
-        ["hermes-sandbox"],
+        ["second-sandbox"],
       ),
     );
     expect(

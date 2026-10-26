@@ -25,7 +25,7 @@
 Worker 或私人 Conversation。Task 是业务生命周期，不是某一次 HTTP 或模型调用。
 Context 可以包含多个 Task；它绑定调用身份、发布版本和独立运行会话，不允许跨客户端借用。
 旧 Responses 接口保留兼容；两条链路只共享发布、身份验证、运行环境与并发准入基础设施。
-当前正式接上的公开执行适配器是隔离 Hermes；其他运行时不得未经隔离验收自动发布。
+当前没有可用的公开执行适配器；其他运行时不得未经隔离验收自动发布。
 
 ## 显式开启
 
@@ -94,8 +94,7 @@ curl "$TOOLPLANE_URL/api/v1/agent-endpoints/$ENDPOINT_ID/a2a" \
 
 同一 Context 仅允许一个活动 Task。后续新的任务使用相同 Context；补充信息必须使用
 原 Task 的 taskId、新 messageId，且原任务处于 INPUT_REQUIRED。COMPLETED、FAILED、
-CANCELED、REJECTED 不重开。AUTH_REQUIRED 不接受模型消息作为授权；当前 Hermes 适配器
-不会把普通文本猜测成原生审批或追问事件。
+CANCELED、REJECTED 不重开。AUTH_REQUIRED 不接受模型消息作为授权，不把普通文本猜测成原生审批或追问事件。
 
 任务、接收消息去重记录和初始事件在同一事务内写入。状态和交付物事件同样原子写入。
 Worker 与 HTTP 请求解耦，执行租约防止过期执行器覆盖结果。取消请求不是停止确认，
@@ -119,7 +118,7 @@ agentId 作为授权。读、继续、取消和订阅都限制到 Endpoint、客
 只声明 JSONRPC、streaming 和 text/plain。REST、gRPC、Push Notification、扩展 Card、
 文件与结构化输入均未声明实现；不支持的能力返回标准错误，不伪造成功。
 没有自动注册任意外部 URL，不会抓取调用方提供的文件 URL。
-内部 Agent 现在可以通过独立的[原生协作入口](A2A_LOCAL_COLLABORATION.zh-CN.md)使用同一任务核心，支持父任务等待与续轮。受支持的旧入口适配及执行前审批见[统一入口说明](A2A_INGRESS_APPROVALS.zh-CN.md)，不代表托管 Hermes 或所有原生交互审批已经迁移。
+内部 Agent 现在可以通过独立的[原生协作入口](A2A_LOCAL_COLLABORATION.zh-CN.md)使用同一任务核心，支持父任务等待与续轮。受支持的入口适配及执行前审批见[统一入口说明](A2A_INGRESS_APPROVALS.zh-CN.md)，不代表所有原生交互审批已经迁移。
 
 升级前按平台单所有者流程应用 `20260922000000_a2a_native_tasks` 并重新生成 Prisma Client。
 此迁移新增独立表、索引和显式开关，不迁移/重放旧会话或旧协作任务。
@@ -134,7 +133,7 @@ pnpm lint
 单元测试使用未改动的官方 ClientFactory/JSON-RPC transport 进行互通验证。
 集成测试使用隔离数据库和替身执行器；`TOOLPLANE_TEST_PGLITE=1` 仅用于本地嵌入数据库，
 明确跳过真实 PostgreSQL 并发锁验证。CI 不应设置该标记。不能把此模式结果当成真实
-PostgreSQL 并发、真实 Hermes/CLI/模型端到端验收或官方 TCK 认证。
+PostgreSQL 并发、真实 CLI/模型端到端验收或官方 TCK 认证。
 
 外部 MCP 客户端可通过[原生 MCP 适配](A2A_MCP_BRIDGE.zh-CN.md)使用同一任务核心，不经过旧 Responses 执行链。
 

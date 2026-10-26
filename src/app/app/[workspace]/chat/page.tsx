@@ -13,7 +13,7 @@ import {
   listRunningChatThreadIds,
 } from "@/lib/chat/service";
 import { parseChatAssistantModelParameters } from "@/lib/chat/schemas";
-import type { HermesUIMessage } from "@/lib/agents/hermes/message-segments";
+import type { AgentUIMessage } from "@/lib/agents/message-segments";
 import { formatInTimeZone, resolveUserTimeZone } from "@/lib/timezone";
 import { DashboardHeader } from "@/components/dashboard/DashboardHeader";
 import { WorkspaceAssistantChat } from "@/components/dashboard/chat/WorkspaceAssistantChat";
@@ -181,11 +181,11 @@ export default async function WorkspaceChatPage({
     );
   }
   const timeZone = resolveUserTimeZone(user);
-  const initialMessages: HermesUIMessage[] = (activeThread?.messages ?? []).map(
+  const initialMessages: AgentUIMessage[] = (activeThread?.messages ?? []).map(
     (message) => ({
       id: message.id,
-      role: message.role as HermesUIMessage["role"],
-      parts: message.parts as HermesUIMessage["parts"],
+      role: message.role as AgentUIMessage["role"],
+      parts: message.parts as AgentUIMessage["parts"],
     }),
   );
 

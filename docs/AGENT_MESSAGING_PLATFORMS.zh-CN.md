@@ -1,6 +1,5 @@
 # Agent 消息平台
 
-> **English**: [AGENT_MESSAGING_PLATFORMS.md](./AGENT_MESSAGING_PLATFORMS.md)
 
 ## 频道管理
 
@@ -50,8 +49,11 @@ ToolPlane 平台负责原生频道工作和 Agent 执行。一个频道连接属
 智能体侧栏保留 New work 控件。操作绝不会把控制台文本作为频道消息发出，也不会把
 用户带进助手界面。
 
-Work 输入框在 `+` 和 `/` 之间共享一个五项菜单：附件、已存 prompt 管理、MCP prompts、
-MCP resources、用户可调用的已绑定 skills。菜单和固定工具栏均不再提供“新任务”。
+Work 输入框在 `+` 和 `/` 之间共享一个四项菜单：已存 prompt 管理、MCP prompts、
+MCP resources、用户可调用的已绑定 skills。输入框不再提供文件附件：
+`POST /api/v1/workspaces/:slug/attachments` 返回 `403 Forbidden`，已上传的附件仍可读取和
+下载。需要把文件带入工作区时，请改用 GitHub 仓库或预打包 ZIP 导入。菜单和固定工具栏
+均不再提供“新任务”。
 `@` 在当前沙箱中搜索文件和会话（包括频道历史），排除当前会话。引用读取会校验工作
 区、Agent 和沙箱归属。选中的引用以可移除 chip 呈现，作为带引用元数据的 text part 持久
 化，并进入 runtime 上下文。Prompt 模板按 Agent 存储，不存浏览器。菜单的 **Customize
@@ -70,13 +72,6 @@ runtime 配置。Claude Code 和 Pi 通过沙箱本地 Unix socket 在轮次间�
 个 ToolPlane 会话有独立的原生会话。压缩改变该原生会话的活动上下文，`/new` 另起一个
 会话。既有平台历史只在首次使用时导入，不会在原生压缩上重放。Claude `/usage` 返回与
 其认证模式匹配的原生输出，绝不是平台估算的统计面板。命令输出作为普通助手回复存储和渲染，支持复制（包括旧命令记录）；控制类读数不进入模型上下文。
-
-Hermes 的压缩逐字保留最近的若干轮，并保存一条包含
-`data-conversation-compaction` part 的系统消息。原始消息和附件保持不变。Work、控制台
-chat 和频道轮次会把最新摘要加上其边界之后的消息投影进 runtime；界面仍显示完整历史。
-Hermes 会换一个新的 runtime 会话别名，并以保留下来的上下文作为种子。失败、取消、繁忙或无法
-缩减的压缩不会改变历史。显示的 token 缩减量是估算值。压缩和新会话动作使用与传入轮次
-相同的工作区/Agent 鉴权和每会话准入闸门。不涉及任何 Hermes 平台适配器。
 
 ## 职责划分
 
@@ -113,12 +108,9 @@ c03519c028cfe25e32060ad7dcdeea531f22fd46。见 `src/lib/agents/channels/NOTICE` 
 | Slack | REST API 和 Socket Mode | Bot token 和 app token |
 
 `channel-runtime.ts` 在常驻 Node 服务器中管理这些适配器。入站消息直接调用
-`runAgentChannelMessage`，回复使用同一适配器。没有 Python 进程，没有 Hermes 平台导
-入，也没有 Hermes checkout 路径。DSH、Pi、Claude Code 和 Hermes Agent runtime 各自保
-留执行路径；频道传输从不选择 Agent runtime。
-
-企业微信（WeCom）和钉钉的旧记录保留，但其旧的基于 Hermes 的托管启动器不可用，也不作
-为新原生频道提供。回调集成保持独立，且必须对交接进行鉴权。
+`runAgentChannelMessage`，回复使用同一适配器。传输运行在 Node 中，不启动 Python 子进程。
+DSH、Pi、Pi SDK 和 Claude Code 保留各自的执行路径；频道传输从不选择 Agent runtime。
+回调集成保持独立，且必须对交接进行鉴权。
 
 ## 沙箱归属与迁移
 
@@ -165,8 +157,6 @@ ID，包括 DSH。
 
 有些平台不能只靠静态 token 表单配置：
 
-- Telegram 托管机器人设置显示扫码深链；扫码创建机器人，但用户仍须确认允许的数字
-  Telegram 用户 ID 后 ToolPlane 才保存 token。
 - 企业微信 AI Bot 设置显示二维码；扫码返回 Bot ID 和 Secret。
 - 微信/iLink 登录显示二维码；扫码返回账户/会话数据。
 - WhatsApp bridge 设置显示必须在手机 App 中扫描的配对二维码。
@@ -178,21 +168,17 @@ ToolPlane 把这些建模为两阶段频道连接：
 create channel -> request QR -> user scans -> poll provider -> save credentials -> stopped -> running
 ```
 
-Telegram 多一步确认，与 Hermes 一致：
-
-```text
-create channel -> request QR -> user scans -> poll ready -> confirm allowed user IDs -> save credentials -> stopped -> running
-```
-
 对支持扫码的平台，UI 不要求用户粘贴二维码载荷。ToolPlane 主动调用平台设置端点，把
 短期配对会话存进频道配置，渲染返回的二维码内容，并轮询平台等待扫码完成。提供方返回
 凭据后，ToolPlane 将其加密存到频道上。
+
+Telegram 使用 BotFather token 配置，不再依赖外部托管机器人设置服务；现有已保存的
+Bot Token 与访问策略保留，旧扫码配对会话及其临时秘密由删除迁移清除。
 
 当前活跃的扫码提供方：
 
 | 平台 | 二维码请求 | 轮询结果 | 保存的凭据 |
 | --- | --- | --- | --- |
-| Telegram | `setup.hermes-agent.nousresearch.com/v1/telegram/pairings` | 托管机器人就绪 + bot token + 所有者用户 ID | 用户确认后的 `TELEGRAM_BOT_TOKEN`、`TELEGRAM_ALLOWED_USERS` |
 | 企业微信 | `work.weixin.qq.com/ai/qc/generate` | `work.weixin.qq.com/ai/qc/query_result` | `WECOM_BOT_ID`、`WECOM_SECRET` |
 | 微信 | `ilink/bot/get_bot_qrcode` | `ilink/bot/get_qrcode_status` | `WEIXIN_ACCOUNT_ID`、`WEIXIN_TOKEN`、`WEIXIN_BASE_URL` |
 
@@ -327,15 +313,6 @@ POST /api/v1/agent-channels/:connectionId/events?token=<toolplane-channel-token>
 - `simplex`
 - `photon`
 
-Hermes 风格的连字符别名也被接受，如 `whatsapp-cloud`、`wecom-callback`、
+连字符别名也被接受，如 `whatsapp-cloud`、`wecom-callback`、
 `teams-meetings`、`msgraph-webhook`、`open-webui`。
 
-## Hermes 参考
-
-- [Telegram](https://hermes-agent.nousresearch.com/docs/user-guide/messaging/telegram)
-- [WeCom](https://hermes-agent.nousresearch.com/docs/user-guide/messaging/wecom)
-- [Weixin](https://hermes-agent.nousresearch.com/docs/user-guide/messaging/weixin)
-- [Slack](https://hermes-agent.nousresearch.com/docs/user-guide/messaging/slack)
-- [Discord](https://hermes-agent.nousresearch.com/docs/user-guide/messaging/discord)
-- [WhatsApp Cloud](https://hermes-agent.nousresearch.com/docs/user-guide/messaging/whatsapp-cloud)
-- [WeCom Callback](https://hermes-agent.nousresearch.com/docs/user-guide/messaging/wecom-callback)

@@ -21,7 +21,6 @@ import {
   getAgentForRequest,
   getAgentForRun,
   getAgentPageData,
-  getHermesTerminalForRequest,
   listAgents,
 } from "@/lib/agents/queries";
 
@@ -40,7 +39,7 @@ describe("managed public runtime Agent visibility", () => {
         where: {
           workspaceId: "workspace-1",
           publicRuntimeAllocation: { is: null },
-          NOT: expect.objectContaining({ runtime: expect.any(Object) }),
+          NOT: expect.objectContaining({ sandboxes: expect.any(Object) }),
         },
       }),
     );
@@ -52,23 +51,14 @@ describe("managed public runtime Agent visibility", () => {
           id: "runtime-agent-1",
           workspaceId: "workspace-1",
           publicRuntimeAllocation: { is: null },
-          NOT: expect.objectContaining({ runtime: expect.any(Object) }),
+          NOT: expect.objectContaining({ sandboxes: expect.any(Object) }),
         },
       }),
     );
   });
 
-  it("blocks console chat, terminal, and sub-agent loaders from reaching a managed runtime", async () => {
+  it("blocks console chat and sub-agent loaders from reaching a managed runtime", async () => {
     await getAgentForRequest("runtime-agent-1", "user-1");
-    expect(mocks.agentFindFirst).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          publicRuntimeAllocation: { is: null },
-        }),
-      }),
-    );
-
-    await getHermesTerminalForRequest("runtime-agent-1", "user-1");
     expect(mocks.agentFindFirst).toHaveBeenLastCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({

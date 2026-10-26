@@ -1,4 +1,3 @@
-import { assertDefined } from "../assert-defined";
 // @vitest-environment node
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -9,9 +8,6 @@ const mocks = vi.hoisted(() => ({
   conversationUpdateMany: vi.fn(),
   appendMessage: vi.fn(),
   ensureConversationRuntimeSession: vi.fn(),
-  writeHermesChatStream: vi.fn(),
-  acquireHermesRuntimeWriteLease: vi.fn(),
-  hermesAssistantSegments: vi.fn(),
   transaction: vi.fn(),
   messageCreate: vi.fn(),
   messageFindMany: vi.fn(),
@@ -54,16 +50,6 @@ vi.mock("@/lib/agents/native", () => ({
   uiMessagesToPi: vi.fn(),
   runNativeAgent: vi.fn(),
 }));
-vi.mock("@/lib/agents/hermes/client", () => ({
-  writeHermesChatStream: mocks.writeHermesChatStream,
-}));
-vi.mock("@/lib/agents/hermes/runtime", () => ({
-  acquireHermesRuntimeWriteLease: mocks.acquireHermesRuntimeWriteLease,
-  HERMES_RUNTIME_COPY_IN_PROGRESS_ERROR: "Runtime busy",
-}));
-vi.mock("@/lib/agents/hermes/message-segments", () => ({
-  hermesAssistantSegments: mocks.hermesAssistantSegments,
-}));
 vi.mock("@/lib/agents/sandbox-turn", () => ({
   runDedicatedSandboxTurn: mocks.runDedicatedSandboxTurn,
 }));
@@ -97,7 +83,6 @@ describe("Chat and Work execution boundary", () => {
       runtime: null,
       provider: { id: "provider-1" },
       model: "model-1",
-      modelProviders: [],
     });
     mocks.conversationUpdateMany.mockResolvedValue({ count: 1 });
     mocks.messageFindMany.mockResolvedValue([]);
@@ -111,201 +96,6 @@ describe("Chat and Work execution boundary", () => {
       }),
       path: "/native-task",
     });
-  });
-
-  it("persists and snapshots the selected reasoning effort for Hermes", async () => {
-    const release = vi.fn();
-    mocks.getAgentForRequest.mockResolvedValue({
-      id: "agent-1",
-      workspaceId: "workspace-1",
-      runtimeKind: "hermes",
-      runtime: { id: "runtime-1", kind: "hermes" },
-      provider: null,
-      model: null,
-      modelProviders: [{ provider: { id: "provider-1" } }],
-    });
-    mocks.conversationFindFirst.mockResolvedValue({
-      id: "conversation-1",
-      title: null,
-      hermesProfile: null,
-      hermesProvider: null,
-      hermesModel: null,
-      reasoningEffort: null,
-      publicApiConversation: null,
-      workSession: null,
-    });
-    mocks.ensureConversationRuntimeSession.mockResolvedValue({
-      runtimeSessionId: "conversation-1",
-      runtimeSessionKey: "session-key",
-    });
-    mocks.acquireHermesRuntimeWriteLease.mockReturnValue({ release });
-    mocks.writeHermesChatStream.mockResolvedValue({
-      runtimeSessionId: "conversation-1",
-    });
-    mocks.hermesAssistantSegments.mockReturnValue([]);
-
-    const response = await POST(
-      request({
-        conversationId: "conversation-1",
-        reasoningEffort: "high",
-        messages: [
-          {
-            id: "user-1",
-            role: "user",
-            parts: [{ type: "text", text: "Think carefully" }],
-          },
-        ],
-      }),
-      context,
-    );
-    await response.text();
-
-    expect(mocks.conversationUpdateMany).toHaveBeenCalledWith({
-      where: {
-        id: "conversation-1",
-        agentId: "agent-1",
-        agent: { workspaceId: "workspace-1" },
-      },
-      data: { reasoningEffort: "high" },
-    });
-    expect(mocks.writeHermesChatStream).toHaveBeenCalledWith(
-      expect.objectContaining({
-        reasoningEffort: "high",
-      }),
-    );
-  });
-
-  it("holds the Hermes write lease until a cancelled turn actually exits", async () => {
-    const release = vi.fn();
-    let finishTurn!: (value: { runtimeSessionId: string }) => void;
-    const turn = new Promise<{ runtimeSessionId: string }>((resolve) => {
-      finishTurn = resolve;
-    });
-    mocks.getAgentForRequest.mockResolvedValue({
-      id: "agent-1",
-      workspaceId: "workspace-1",
-      runtimeKind: "hermes",
-      runtime: { id: "runtime-1", kind: "hermes" },
-      provider: null,
-      model: null,
-      modelProviders: [{ provider: { id: "provider-1" } }],
-    });
-    mocks.conversationFindFirst.mockResolvedValue({
-      id: "conversation-1",
-      title: null,
-      hermesProfile: null,
-      hermesProvider: null,
-      hermesModel: null,
-      publicApiConversation: null,
-      workSession: null,
-    });
-    mocks.ensureConversationRuntimeSession.mockResolvedValue({
-      runtimeSessionId: "conversation-1",
-      runtimeSessionKey: "session-key",
-    });
-    mocks.acquireHermesRuntimeWriteLease.mockReturnValue({ release });
-    mocks.writeHermesChatStream.mockReturnValue(turn);
-
-    const response = await POST(
-      request({
-        conversationId: "conversation-1",
-        messages: [
-          {
-            id: "user-1",
-            role: "user",
-            parts: [{ type: "text", text: "Hello" }],
-          },
-        ],
-      }),
-      context,
-    );
-    const cancellation = assertDefined(response.body).cancel();
-    await vi.waitFor(() =>
-      expect(mocks.writeHermesChatStream).toHaveBeenCalled(),
-    );
-
-    expect(release).not.toHaveBeenCalled();
-    expect(mocks.writeHermesChatStream).toHaveBeenCalledWith(
-      expect.objectContaining({
-        signal: expect.any(AbortSignal),
-      }),
-    );
-    finishTurn({ runtimeSessionId: "conversation-1" });
-    await cancellation;
-
-    await vi.waitFor(() => expect(release).toHaveBeenCalledOnce());
-    expect(mocks.appendMessage).not.toHaveBeenCalled();
-  });
-
-  it("persists Hermes compression rollover before completing a successful turn", async () => {
-    const release = vi.fn();
-    let finishPersistence!: () => void;
-    const persistence = new Promise<void>((resolve) => {
-      finishPersistence = resolve;
-    });
-    mocks.getAgentForRequest.mockResolvedValue({
-      id: "agent-1",
-      workspaceId: "workspace-1",
-      runtimeKind: "hermes",
-      runtime: { id: "runtime-1", kind: "hermes" },
-      provider: null,
-      model: null,
-      modelProviders: [{ provider: { id: "provider-1" } }],
-    });
-    mocks.conversationFindFirst.mockResolvedValue({
-      id: "conversation-1",
-      title: null,
-      hermesProfile: null,
-      hermesProvider: null,
-      hermesModel: null,
-      publicApiConversation: null,
-      workSession: null,
-    });
-    mocks.ensureConversationRuntimeSession.mockResolvedValue({
-      runtimeSessionId: "conversation-1",
-      runtimeSessionKey: "session-key",
-    });
-    mocks.acquireHermesRuntimeWriteLease.mockReturnValue({ release });
-    mocks.writeHermesChatStream.mockResolvedValue({
-      runtimeSessionId: "conversation-child",
-    });
-    mocks.conversationUpdateMany.mockResolvedValue({ count: 1 });
-    mocks.hermesAssistantSegments.mockReturnValue([]);
-    mocks.appendMessage
-      .mockResolvedValueOnce(undefined)
-      .mockReturnValueOnce(persistence);
-
-    const response = await POST(
-      request({
-        conversationId: "conversation-1",
-        messages: [
-          {
-            id: "user-1",
-            role: "user",
-            parts: [{ type: "text", text: "Hello" }],
-          },
-        ],
-      }),
-      context,
-    );
-    const body = response.text();
-
-    await vi.waitFor(() =>
-      expect(mocks.appendMessage).toHaveBeenCalledTimes(2),
-    );
-    expect(release).not.toHaveBeenCalled();
-    finishPersistence();
-    await body;
-
-    expect(mocks.conversationUpdateMany).toHaveBeenCalledWith({
-      where: expect.objectContaining({
-        id: "conversation-1",
-        agentId: "agent-1",
-        runtimeSessionId: "conversation-1",
-      }),
-      data: { runtimeSessionId: "conversation-child" },
-    });
-    expect(release).toHaveBeenCalledOnce();
   });
 
   it("rejects the legacy workSessionId transport", async () => {
@@ -422,7 +212,6 @@ describe("Chat and Work execution boundary", () => {
       runtimeKind: "dsh",
       provider: { id: "provider-1" },
       model: "model-1",
-      modelProviders: [],
     });
     mocks.conversationFindFirst.mockResolvedValue({
       id: "conversation-1",
@@ -486,118 +275,5 @@ describe("Chat and Work execution boundary", () => {
     expect(JSON.stringify(mocks.runNativeEntry.mock.calls[0][0])).not.toContain(
       "Saved concise context",
     );
-  });
-  it.each([
-    "unauthorized",
-    "foreign",
-    "unsupported",
-    "model",
-    "provider",
-    "hermes-provider",
-    "copy",
-  ])(
-    "rejects unavailable execution before touching conversation state: %s",
-    async (reason) => {
-      const agent = await mocks.getAgentForRequest();
-      let status = 400;
-      if (reason === "unauthorized") {
-        mocks.resolveRequestUser.mockResolvedValue(null);
-        status = 401;
-      }
-      if (reason === "foreign") {
-        mocks.getAgentForRequest.mockResolvedValue(null);
-        status = 404;
-      }
-      if (reason === "unsupported") {
-        mocks.getAgentForRequest.mockResolvedValue({
-          ...agent,
-          runtimeKind: "unknown",
-        });
-        status = 409;
-      }
-      if (reason === "model")
-        mocks.getAgentForRequest.mockResolvedValue({ ...agent, model: null });
-      if (reason === "provider")
-        mocks.getAgentForRequest.mockResolvedValue({
-          ...agent,
-          provider: null,
-        });
-      if (reason === "hermes-provider")
-        mocks.getAgentForRequest.mockResolvedValue({
-          ...agent,
-          runtimeKind: "hermes",
-          modelProviders: [],
-        });
-      if (reason === "copy") {
-        mocks.getAgentForRequest.mockResolvedValue({
-          ...agent,
-          runtimeKind: "hermes",
-          modelProviders: [{ provider: { id: "provider" } }],
-        });
-        mocks.acquireHermesRuntimeWriteLease.mockReturnValue(null);
-        status = 503;
-      }
-      expect((await POST(request({ messages: [] }), context)).status).toBe(
-        status,
-      );
-      expect(mocks.conversationFindFirst).not.toHaveBeenCalled();
-      expect(mocks.writeHermesChatStream).not.toHaveBeenCalled();
-    },
-  );
-
-  it.each([
-    "json",
-    "schema",
-    "work-request",
-    "foreign-conversation",
-    "work-conversation",
-    "public-conversation",
-    "channel-conversation",
-  ])("releases a Hermes volume lease when rejecting %s", async (reason) => {
-    const release = vi.fn();
-    const agent = await mocks.getAgentForRequest();
-    mocks.getAgentForRequest.mockResolvedValue({
-      ...agent,
-      runtimeKind: "hermes",
-      modelProviders: [{ provider: { id: "provider" } }],
-    });
-    mocks.acquireHermesRuntimeWriteLease.mockReturnValue({ release });
-    const conversation = {
-      id: "conversation",
-      title: null,
-      workSession: null,
-      publicApiConversation: null,
-    };
-    mocks.conversationFindFirst.mockResolvedValue(
-      reason === "foreign-conversation"
-        ? null
-        : {
-            ...conversation,
-            ...(reason === "work-conversation"
-              ? { workSession: { id: "work" } }
-              : {}),
-            ...(reason === "public-conversation"
-              ? { publicApiConversation: { id: "public" } }
-              : {}),
-            ...(reason === "channel-conversation"
-              ? { title: "msg:slack" }
-              : {}),
-          },
-    );
-    const req =
-      reason === "json"
-        ? new Request("http://localhost", { method: "POST", body: "{" })
-        : request(
-            reason === "schema"
-              ? { messages: "bad" }
-              : reason === "work-request"
-                ? { workSessionId: "work", messages: [] }
-                : { conversationId: "conversation", messages: [] },
-          );
-    expect((await POST(req, context)).status).toBe(
-      reason === "foreign-conversation" ? 404 : 400,
-    );
-    expect(release).toHaveBeenCalledTimes(1);
-    expect(mocks.writeHermesChatStream).not.toHaveBeenCalled();
   });
 });

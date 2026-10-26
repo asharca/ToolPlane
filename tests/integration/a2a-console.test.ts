@@ -112,9 +112,9 @@ beforeAll(async () => {
   const source = await db.agent.create({
     data: {
       workspaceId,
-      name: "Hermes",
+      name: "Historical public source",
       slug: "public",
-      runtimeKind: "hermes",
+      runtimeKind: "pi-sdk",
     },
   });
   published = { ...local, agentId: source.id };
@@ -182,6 +182,23 @@ describe("A2A console management persists scoped configuration", () => {
     await mutateA2AConsole(published, { action: "set-public", enabled: false });
     expect((await getA2AConsoleView(local)).local.enabled).toBe(true);
     expect((await getA2AConsoleView(published)).endpoint?.enabled).toBe(false);
+  });
+  it("rejects public enablement without changing the persisted opt-in", async () => {
+    await db.agentEndpoint.update({
+      where: { id: endpointId },
+      data: { a2aEnabled: false },
+    });
+    await expect(
+      mutateA2AConsole(published, { action: "set-public", enabled: true }),
+    ).rejects.toMatchObject({
+      status: 409,
+      message: "This Agent runtime does not support public endpoint execution.",
+    });
+    expect(
+      (await db.agentEndpoint.findUniqueOrThrow({ where: { id: endpointId } }))
+        .a2aEnabled,
+    ).toBe(false);
+    expect((await getA2AConsoleView(published)).endpoint?.ready).toBe(false);
   });
   it("rolls back enabling a runtime without local isolation support", async () => {
     await expect(

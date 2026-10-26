@@ -185,7 +185,6 @@ model Workspace {
   piPackageClientInstallations PiPackageClientInstallation[]
   remoteA2AAgents RemoteA2AAgent[]
   a2aContexts A2AContext[]
-  agentUploadReservations AgentUploadReservation[]
   id                     String                   @id @default(cuid())
   slug                   String                   @unique
   name                   String
@@ -207,8 +206,6 @@ model Workspace {
   chatAssistants         ChatAssistant[]
   chatThreads            ChatThread[]
   agents                 Agent[]
-  agentRuntimes          AgentRuntime[]
-  agentAttachments       AgentAttachment[]
   workspaceAttachments   WorkspaceAttachment[]
   agentChannels          AgentChannelConnection[]
   workSessions           WorkSession[]
@@ -341,7 +338,6 @@ model Sandbox {
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
   agentLinks         AgentSandbox[]
-  agentRuntime       AgentRuntime?
   snapshots          SandboxSnapshot[]
   workSessions       WorkSession[]
   knowledgeDocuments KnowledgeDocument[]
@@ -540,7 +536,6 @@ model ModelProvider {
   modelsFetchedAt DateTime?
   createdAt       DateTime             @default(now())
   agents          Agent[]
-  agentLinks      AgentModelProvider[]
   knowledgeBases  KnowledgeBase[]
   chatAssistants  ChatAssistant[]
   modelRecords    ProviderModel[]
@@ -573,7 +568,6 @@ model ProviderModel {
 model Agent {
   a2aInternalEnabled Boolean @default(false)
   a2aContexts A2AContext[]
-  uploadReservations AgentUploadReservation[]
   id                      String                   @id @default(cuid())
   workspaceId             String
   workspace               Workspace                @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -601,14 +595,11 @@ model Agent {
   workSessions            WorkSession[]
   knowledgeBases          AgentKnowledgeBase[]
   channels                AgentChannelConnection[]
-  runtime                 AgentRuntime?
-  attachments             AgentAttachment[]
   marketListing           AgentListing?            @relation("AgentListingSource")
   marketInstall           AgentInstall?            @relation("AgentInstallAgent")
   sourceMarketListing     MarketListing?           @relation("MarketListingSourceAgent")
   unifiedMarketInstall    MarketInstall?           @relation("MarketInstallAgent")
   piPackages              AgentPiPackage[]
-  modelProviders          AgentModelProvider[]
   publicEndpoints         AgentEndpoint[]          @relation("EndpointSourceAgent")
   publicRuntimeAllocation AgentEndpointRuntime?    @relation("EndpointRuntimeAgent")
 
@@ -625,17 +616,6 @@ model AgentComposerPrompt {
   updatedAt DateTime @updatedAt
 
   @@index([agentId, updatedAt])
-}
-
-model AgentModelProvider {
-  agentId    String
-  agent      Agent         @relation(fields: [agentId], references: [id], onDelete: Cascade)
-  providerId String
-  provider   ModelProvider @relation(fields: [providerId], references: [id], onDelete: Cascade)
-  createdAt  DateTime      @default(now())
-
-  @@id([agentId, providerId])
-  @@index([providerId])
 }
 
 // Public marketplace metadata is separate from the mutable workspace Agent.
@@ -883,51 +863,6 @@ model AgentPiPackage {
   @@index([releaseId])
 }
 
-model AgentRuntime {
-  id            String            @id @default(cuid())
-  workspaceId   String
-  workspace     Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  agentId       String            @unique
-  agent         Agent             @relation(fields: [agentId], references: [id], onDelete: Cascade)
-  sandboxId     String            @unique
-  sandbox       Sandbox           @relation(fields: [sandboxId], references: [id], onDelete: Cascade)
-  kind          String            @default("hermes")
-  image         String
-  status        String            @default("provisioning")
-  configVersion Int               @default(1)
-  configHash    String?
-  capabilities  Json?
-  lastSyncedAt  DateTime?
-  lastStartedAt DateTime?
-  lastError     String?
-  createdAt     DateTime          @default(now())
-  updatedAt     DateTime          @updatedAt
-  attachments   AgentAttachment[]
-
-  @@index([workspaceId, kind, status])
-}
-
-model AgentAttachment {
-  id             String        @id @default(cuid())
-  workspaceId    String
-  workspace      Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  agentId        String
-  agent          Agent         @relation(fields: [agentId], references: [id], onDelete: Cascade)
-  conversationId String?
-  conversation   Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
-  runtimeId      String?
-  runtime        AgentRuntime? @relation(fields: [runtimeId], references: [id], onDelete: SetNull)
-  name           String
-  mimeType       String
-  size           Int
-  storage        String        @default("hermes-volume")
-  storagePath    String
-  createdAt      DateTime      @default(now())
-
-  @@index([workspaceId, agentId, createdAt])
-  @@index([conversationId])
-}
-
 model WorkspaceAttachment {
   id             String        @id @default(cuid())
   workspaceId    String
@@ -1156,24 +1091,16 @@ model Conversation {
   sandboxId             String?                  @unique
   sandbox               Sandbox?                 @relation(fields: [sandboxId], references: [id], onDelete: Restrict)
   title                 String?
-  // Hermes keeps its own state in the runtime volume. These aliases let a
-  // cloned ToolPlane conversation retain the source runtime's session identity
-  // even though its database primary key must be new.
+  // Some runtimes keep their own state outside this database. These aliases
+  // let a cloned ToolPlane conversation retain the source runtime's session
+  // identity even though its database primary key must be new.
   runtimeSessionId      String?
   runtimeSessionKey     String?
-  // Independent binding for sandbox Hermes RPC; never replaces channel routing keys.
-  hermesRpcBinding      String?
-  // null profile means Hermes' default profile. null provider/model means the
-  // conversation follows that profile's configured default model.
-  hermesProfile         String?
-  hermesProvider        String?
-  hermesModel           String?
   // null follows the model/provider default. Explicit values are snapshotted
   // per conversation so one chat cannot change another chat's reasoning level.
   reasoningEffort       String?
   createdAt             DateTime                 @default(now())
   messages              Message[]
-  attachments           AgentAttachment[]
   workspaceAttachments  WorkspaceAttachment[]
   publicApiConversation AgentPublicConversation?
   workSession           WorkSession?
@@ -1390,7 +1317,7 @@ model AgentApiKey {
   @@index([clientId, revokedAt])
 }
 
-// A clean hidden Agent/Hermes runtime allocated for either the whole Endpoint
+// A clean hidden Agent runtime allocated for either the whole Endpoint
 // or one HMAC-namespaced public subject. runtimeAgentId stays nullable while a
 // crash-safe reservation is being materialized.
 model AgentEndpointRuntime {
@@ -1569,24 +1496,6 @@ model ToolkitInstallation {
   updatedAt DateTime @updatedAt
   lastUsedAt DateTime?
   @@index([userId, toolkitId, status])
-}
-
-// Capacity remains reserved until metadata commits or external cleanup is
-// confirmed. Expiry means "needs reconciliation", never "free the bytes".
-model AgentUploadReservation {
-  id String @id
-  workspaceId String
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  agentId String
-  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
-  runtimeId String
-  storagePath String
-  reservedBytes Int
-  status String @default("uploading")
-  createdAt DateTime @default(now())
-  expiresAt DateTime
-  @@index([workspaceId, status])
-  @@index([status, expiresAt])
 }
 
 model PiPackageSource {

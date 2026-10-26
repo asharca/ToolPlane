@@ -16,7 +16,6 @@ import {
   it,
   vi,
 } from "vitest";
-import { verifyHermesRuntimeToken } from "@/lib/agents/hermes/token";
 import type * as SupervisorModule from "@/lib/process/supervisor";
 
 const mocks = vi.hoisted(() => ({
@@ -1841,8 +1840,8 @@ describe("supervisor readiness races", () => {
   });
 
   it.each([false, true])(
-    "isolates connector launch credentials with Hermes runtime enabled=%s",
-    async (withRuntime) => {
+    "isolates connector launch credentials with sudo enabled=%s",
+    async (withSudo) => {
       vi.stubEnv("DATABASE_URL", "postgres://private-application-secret");
       vi.stubEnv("AUTH_SECRET", "application-signing-secret");
       vi.stubEnv("DOCKER_HOST", "unix:///private/docker.sock");
@@ -1857,7 +1856,7 @@ describe("supervisor readiness races", () => {
           sandboxId: "sandbox-connector",
           sandboxKind: "connector",
           network: "isolated",
-          allowSudo: withRuntime,
+          allowSudo: withSudo,
           env: { SANDBOX_PROJECT: "project-visible" },
           connector: {
             provider: "websocket",
@@ -1869,9 +1868,6 @@ describe("supervisor readiness races", () => {
             packageName: "/api/v1/connectors/package.tgz",
             createdAt: "2026-10-18T00:00:00.000Z",
           },
-          ...(withRuntime
-            ? { runtimeId: "runtime-one", runtimeModelName: "custom-hermes" }
-            : {}),
         },
         { awaitReady: false },
       );
@@ -1881,44 +1877,19 @@ describe("supervisor readiness races", () => {
         SANDBOX_ID: "sandbox-connector",
         SANDBOX_KIND: "connector",
         SANDBOX_NETWORK: "isolated",
-        SANDBOX_ALLOW_SUDO: String(withRuntime),
+        SANDBOX_ALLOW_SUDO: String(withSudo),
         SANDBOX_CONNECTOR_BROKER_URL: "http://127.0.0.1:9322",
         SANDBOX_CONNECTOR_BROKER_TOKEN: "internal-test-token",
         SANDBOX_CONNECTOR_REMOTE_ROOT: "/workspace/remote",
         SANDBOX_SSH_CONFIG: "",
         DOCKER_HOST: "unix:///private/docker.sock",
         TOOLPLANE_MAX_ATTACHMENT_BYTES: "4096",
-        HERMES_RUNTIME_MODEL_NAME: withRuntime
-          ? "custom-hermes"
-          : "hermes-agent",
       });
       expect(JSON.parse(env.SANDBOX_ENV_JSON)).toEqual({
         SANDBOX_PROJECT: "project-visible",
       });
       expect(env).not.toHaveProperty("DATABASE_URL");
       expect(env).not.toHaveProperty("AUTH_SECRET");
-      if (withRuntime) {
-        expect(
-          verifyHermesRuntimeToken(
-            "runtime-one",
-            "hermes-api",
-            env.HERMES_RUNTIME_API_KEY,
-          ),
-        ).toBe(true);
-        expect(
-          verifyHermesRuntimeToken(
-            "runtime-one",
-            "hermes-dashboard-api",
-            env.HERMES_RUNTIME_DASHBOARD_TOKEN,
-          ),
-        ).toBe(true);
-        expect(env.HERMES_RUNTIME_API_KEY).not.toBe(
-          env.HERMES_RUNTIME_DASHBOARD_TOKEN,
-        );
-      } else {
-        expect(env.HERMES_RUNTIME_API_KEY).toBe("");
-        expect(env.HERMES_RUNTIME_DASHBOARD_TOKEN).toBe("");
-      }
       child.stdout.emit("data", Buffer.from("LISTENING 8123\n"));
       expect(supervisor.liveStatus("connector-launch")).toBe("running");
     },

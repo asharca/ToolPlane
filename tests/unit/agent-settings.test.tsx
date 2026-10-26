@@ -71,7 +71,7 @@ describe("AgentSettings", () => {
     expect(screen.queryByText("New chat")).not.toBeInTheDocument();
   });
 
-  it.each(["pi", "hermes"])(
+  it.each(["pi", "pi-sdk"])(
     "keeps channels inside the %s settings navigation",
     async (runtimeKind) => {
       render(

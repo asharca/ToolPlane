@@ -3,7 +3,10 @@ import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { ORDINARY_AGENT_FILTER } from "@/lib/agents/queries";
-import { isDedicatedSandboxRuntimeKind } from "@/lib/agents/runtime-kind";
+import {
+  agentRuntimeCapabilities,
+  isDedicatedSandboxRuntimeKind,
+} from "@/lib/agents/runtime-kind";
 import {
   generateAgentApiKey,
   hashAgentApiKey,
@@ -182,7 +185,11 @@ export async function getA2AConsoleView(
           id: endpoint.publicId,
           enabled: endpoint.a2aEnabled,
           ready:
-            endpoint.status === "active" && Boolean(endpoint.currentRevision),
+            Boolean(
+              agentRuntimeCapabilities(agent.runtimeKind)?.publicEndpoint,
+            ) &&
+            endpoint.status === "active" &&
+            Boolean(endpoint.currentRevision),
           revision: endpoint.currentRevision?.version ?? null,
           clients: clients
             .filter((client) => isA2AClient(client.scopes))
@@ -216,7 +223,7 @@ export async function mutateA2AConsole(
         id: ctx.agentId,
         workspaceId: ctx.workspaceId,
       },
-      select: { id: true },
+      select: { id: true, runtimeKind: true },
     });
     if (!agent) throw new A2AHttpError(404, "Agent unavailable.");
     if (input.action === "set-channel-operator") {
@@ -292,6 +299,15 @@ export async function mutateA2AConsole(
       throw new A2AHttpError(409, "An active published revision is required.");
     }
     if (input.action === "set-public") {
+      if (
+        input.enabled &&
+        !agentRuntimeCapabilities(agent.runtimeKind)?.publicEndpoint
+      ) {
+        throw new A2AHttpError(
+          409,
+          "This Agent runtime does not support public endpoint execution.",
+        );
+      }
       await tx.agentEndpoint.update({
         where: { id: endpoint.id },
         data: { a2aEnabled: input.enabled },

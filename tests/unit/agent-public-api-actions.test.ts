@@ -5,9 +5,6 @@ const m = vi.hoisted(() => ({
   workspace: vi.fn(),
   member: vi.fn(),
   agent: vi.fn(),
-  deployments: vi.fn(),
-  skills: vi.fn(),
-  digest: vi.fn(),
   transaction: vi.fn(),
   endpoint: vi.fn(),
   createEndpoint: vi.fn(),
@@ -29,9 +26,6 @@ vi.mock("@/lib/auth/current-user", () => ({ getCurrentUser: m.user }));
 vi.mock("@/lib/workspace/queries", () => ({
   getWorkspaceForUser: m.workspace,
 }));
-vi.mock("@/lib/sandboxes/runtime", () => ({
-  resolveDockerImageDigest: m.digest,
-}));
 vi.mock("@/lib/agents/public-api/auth", () => ({
   AGENT_API_MAX_TIMEOUT_SECONDS: 600,
   createAgentApiKey: m.key,
@@ -45,8 +39,6 @@ vi.mock("@/lib/db", () => ({
   db: {
     membership: { findUnique: m.member },
     agent: { findFirst: m.agent },
-    deployment: { findMany: m.deployments },
-    installedSkill: { findMany: m.skills },
     agentEndpoint: {
       findFirst: m.endpoint,
       findUnique: m.endpoint,
@@ -68,8 +60,6 @@ import {
   revokeAgentApiKeyAction as revoke,
   createAgentClientTokenAction as mint,
 } from "@/lib/agents/public-api/actions";
-const image = "nousresearch/hermes-agent:v2026.8.3";
-const pinned = `nousresearch/hermes-agent@sha256:${"a".repeat(64)}`;
 function form(overrides: Record<string, string | string[] | undefined> = {}) {
   const data = new FormData();
   const values: Record<string, string | string[] | undefined> = {
@@ -105,25 +95,11 @@ beforeEach(() => {
   vi.resetAllMocks();
   m.user.mockResolvedValue({ id: "owner" });
   m.workspace.mockResolvedValue({ id: "workspace", ownerId: "owner" });
-  m.agent.mockResolvedValue({
-    id: "agent",
-    maxSteps: 40,
-    runtime: { kind: "hermes", image },
-    modelProviders: [{ providerId: "provider" }],
-  });
-  m.digest.mockResolvedValue(pinned);
-  m.deployments.mockResolvedValue([
-    {
-      id: "mcp",
-      publicInvocable: true,
-      mcpToolExposure: "allowlist",
-      mcpAllowedTools: ["write", "read", "read"],
-    },
-  ]);
-  m.skills.mockResolvedValue([{ id: "skill" }]);
+  m.agent.mockResolvedValue({ id: "agent", runtimeKind: "pi-sdk" });
   m.endpoint.mockResolvedValue({
     id: "endpoint",
     publicId: "public",
+    sourceAgent: { runtimeKind: "pi-sdk" },
     rpmLimit: 60,
     dailyRequestLimit: 1000,
     dailyOutputCharacterLimit: 200000,
@@ -155,210 +131,26 @@ beforeEach(() => {
 });
 
 describe("Agent API publication", () => {
-  it.each([
-    { agentId: "" },
-    { name: "" },
-    { name: "x".repeat(81) },
-    { systemPrompt: "x".repeat(20001) },
-    { rpmLimit: "0" },
-    { dailyRequestLimit: "1000001" },
-    { dailyOutputCharacterLimit: "199999" },
-    { maxConcurrent: "1.5" },
-    { maxRuntimes: "1001" },
-    { maxStoredCharacters: "1" },
-    { timeoutSeconds: "9" },
-    { retentionDays: "366" },
-    { allowedOrigins: "https://example.com/path" },
-    {
-      allowedOrigins: Array.from(
-        { length: 51 },
-        (_, i) => `https://site${i}.com`,
-      ).join(","),
-    },
-  ])("rejects invalid public boundary configuration: %j", async (values) => {
-    expect(await publish({}, form(values))).toEqual({
-      error: "The Agent API configuration is invalid.",
-    });
-    expect(m.agent).not.toHaveBeenCalled();
-    expect(m.transaction).not.toHaveBeenCalled();
-  });
-  it("allows only owners or admins to publish", async () => {
-    m.user.mockResolvedValueOnce(null);
-    expect(await publish({}, form())).toHaveProperty(
-      "error",
-      "Only a workspace owner or administrator can publish an Agent API.",
-    );
-    m.workspace.mockResolvedValueOnce(null);
-    expect(await publish({}, form())).toHaveProperty("error");
-    m.workspace.mockResolvedValue({ id: "workspace", ownerId: "other" });
-    m.member
-      .mockResolvedValueOnce({ role: "member" })
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({ role: "admin" });
-    expect(await publish({}, form())).toHaveProperty("error");
-    expect(await publish({}, form())).toHaveProperty("error");
-    expect(await publish({}, form())).toMatchObject({
-      success: true,
-      endpointId: "public",
-    });
-    expect(m.member).toHaveBeenCalledWith({
-      where: {
-        workspaceId_userId: { workspaceId: "workspace", userId: "owner" },
-      },
-      select: { role: true },
-    });
-  });
-  it("requires a workspace Hermes agent, reviewed immutable image and providers", async () => {
-    m.agent
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({ runtime: { kind: "pi" } });
-    for (let i = 0; i < 2; i++)
+  it.each(["pi", "pi-sdk", "claude-code", "dsh"])(
+    "rejects unsupported %s publication before creating records",
+    async (runtimeKind) => {
+      m.agent.mockResolvedValue({ runtimeKind });
       expect(await publish({}, form())).toEqual({
-        error: "Only a Hermes Agent can be published.",
+        error: "This Agent runtime does not support public endpoint execution.",
       });
-    m.agent.mockResolvedValueOnce({
-      runtime: { kind: "hermes", image: "untrusted:latest" },
-    });
-    expect(await publish({}, form())).toHaveProperty(
-      "error",
-      "Public Agent APIs require a reviewed versioned Hermes image or an operator-allowlisted digest.",
-    );
-    m.digest.mockRejectedValueOnce(new Error("registry offline"));
-    expect(await publish({}, form())).toHaveProperty(
-      "error",
-      "The reviewed Hermes image could not be pulled and pinned to a registry digest.",
-    );
-    m.digest.mockResolvedValueOnce(image);
-    expect(await publish({}, form())).toHaveProperty(
-      "error",
-      "The Hermes image registry did not return an approved immutable digest.",
-    );
-    m.agent.mockResolvedValueOnce({
-      runtime: { kind: "hermes", image },
-      modelProviders: [],
-    });
-    expect(await publish({}, form())).toHaveProperty(
-      "error",
-      "Select at least one model provider before publishing.",
-    );
-    expect(m.agent).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: {
-          id: "agent",
-          workspaceId: "workspace",
-          publicRuntimeAllocation: { is: null },
-        },
-      }),
-    );
-    expect(m.transaction).not.toHaveBeenCalled();
+      expect(m.transaction).not.toHaveBeenCalled();
+      expect(m.createEndpoint).not.toHaveBeenCalled();
+      expect(m.createRevision).not.toHaveBeenCalled();
+    },
+  );
+  it("requires owner or administrator access", async () => {
+    m.user.mockResolvedValue(null);
+    expect(await publish({}, form())).toHaveProperty("error");
+    expect(m.agent).not.toHaveBeenCalled();
   });
-  it("rejects unavailable or unsafe deployments and non-invocable skills", async () => {
-    m.deployments.mockResolvedValueOnce([]);
-    expect(await publish({}, form())).toHaveProperty(
-      "error",
-      "One or more MCP deployments are unavailable.",
-    );
-    for (const unsafe of [
-      {
-        publicInvocable: false,
-        mcpToolExposure: "allowlist",
-        mcpAllowedTools: ["read"],
-      },
-      {
-        publicInvocable: true,
-        mcpToolExposure: "all",
-        mcpAllowedTools: ["read"],
-      },
-      {
-        publicInvocable: true,
-        mcpToolExposure: "allowlist",
-        mcpAllowedTools: [],
-      },
-    ]) {
-      m.deployments.mockResolvedValueOnce([{ id: "mcp", ...unsafe }]);
-      expect(await publish({}, form())).toHaveProperty(
-        "error",
-        "Every public MCP deployment must be explicitly approved for public Agents and use a non-empty tool allowlist.",
-      );
-    }
-    m.skills.mockResolvedValueOnce([]);
-    expect(await publish({}, form())).toHaveProperty(
-      "error",
-      "One or more selected skills are unavailable or not Agent-invocable.",
-    );
-    expect(m.transaction).not.toHaveBeenCalled();
-  });
-  it("publishes a versioned snapshot with deduplicated policy and normalized origins", async () => {
-    const result = await publish(
-      {},
-      form({
-        isolationMode: "shared",
-        allowedOrigins:
-          "https://example.com,https://example.com\nhttps://other.com",
-      }),
-    );
-    expect(result).toMatchObject({
-      success: true,
-      endpointId: "public",
-      savedAt: expect.any(String),
-    });
-    expect(m.updateEndpoint).toHaveBeenCalledWith({
-      where: { id: "endpoint" },
-      data: expect.objectContaining({
-        name: "Release API",
-        isolationMode: "shared",
-        allowedOrigins: ["https://example.com", "https://other.com"],
-      }),
-    });
-    expect(m.createRevision).toHaveBeenCalledWith({
-      data: {
-        endpointId: "endpoint",
-        version: 3,
-        systemPrompt: "Be helpful",
-        maxSteps: 20,
-        runtimeImage: pinned,
-        providerIds: ["provider"],
-        deploymentIds: ["mcp"],
-        installedSkillIds: ["skill"],
-        toolPolicy: { mcp: ["read", "write"] },
-      },
-      select: { id: true },
-    });
-    expect(m.updateEndpoint).toHaveBeenLastCalledWith({
-      where: { id: "endpoint" },
-      data: { currentRevisionId: "revision" },
-    });
-    expect(m.revalidate).toHaveBeenCalledWith("/app/team/agents/agent");
-  });
-  it("creates new endpoints disabled and starts revision numbering at one", async () => {
-    m.endpoint.mockResolvedValue(null);
-    m.revision.mockResolvedValue({ _max: { version: null } });
-    expect(await publish({}, form())).toMatchObject({
-      success: true,
-      endpointId: "new-public",
-    });
-    expect(m.createEndpoint).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        status: "disabled",
-        isolationMode: "subject",
-        workspaceId: "workspace",
-        createdById: "owner",
-        sourceAgentId: "agent",
-      }),
-      select: { id: true, publicId: true },
-    });
-    expect(m.createRevision).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ version: 1 }),
-      }),
-    );
-  });
-  it("reports transactional failures without announcing a successful publication", async () => {
-    m.transaction.mockRejectedValue(new Error("serialization"));
-    expect(await publish({}, form())).toEqual({
-      error: "The endpoint could not be published. Retry the request.",
-    });
-    expect(m.revalidate).not.toHaveBeenCalled();
+  it("conceals an inaccessible source agent", async () => {
+    m.agent.mockResolvedValue(null);
+    expect(await publish({}, form())).toEqual({ error: "Agent not found." });
   });
 });
 
@@ -375,16 +167,11 @@ describe("Agent API access management", () => {
     });
     expect(m.abort).toHaveBeenCalledWith("run-public");
     m.runs.mockClear();
-    await setStatus(form({ status: "active" }));
-    expect(m.endpoint).toHaveBeenLastCalledWith({
-      where: {
-        publicId: "public",
-        workspaceId: "workspace",
-        sourceAgentId: "agent",
-        currentRevisionId: { not: null },
-      },
-      select: { id: true },
+    await expect(setStatus(form({ status: "active" }))).rejects.toMatchObject({
+      code: "runtime_unsupported",
+      status: 409,
     });
+    expect(m.updateEndpoint).toHaveBeenCalledTimes(1);
     expect(m.runs).not.toHaveBeenCalled();
   });
   it("does not mutate statuses outside management scope or for unknown endpoints", async () => {
@@ -489,6 +276,11 @@ describe("Agent API access management", () => {
       { subject: " " },
       { subject: "x".repeat(201) },
       { origin: "https://example.com/path" },
+      { origin: "https://example.com?query=1" },
+      { origin: "https://example.com#fragment" },
+      { origin: "https://user:password@example.com" },
+      { origin: "file:///example.com" },
+      { origin: "null" },
     ])
       expect(await mint({}, form(values))).toHaveProperty(
         "error",
@@ -502,6 +294,22 @@ describe("Agent API access management", () => {
       error: "The selected browser origin is not allowed by this endpoint.",
     });
     expect(m.mint).not.toHaveBeenCalled();
+  });
+  it("normalizes browser origins consistently with the stored allowlist", async () => {
+    m.client.mockResolvedValue({
+      id: "client",
+      endpoint: {
+        id: "endpoint",
+        publicId: "public",
+        allowedOrigins: ["https://EXAMPLE.com:443/"],
+      },
+    });
+    expect(
+      await mint({}, form({ origin: "https://EXAMPLE.com:443/" })),
+    ).toHaveProperty("success", true);
+    expect(m.mint).toHaveBeenCalledWith(
+      expect.objectContaining({ origin: "https://example.com" }),
+    );
   });
   it("mints a fifteen-minute browser token with explicit conversation and response scopes", async () => {
     expect(await mint({}, form())).toEqual({

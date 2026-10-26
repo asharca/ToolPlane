@@ -151,7 +151,7 @@ describe("sandbox token management", () => {
       expect(mocks.release).toHaveBeenCalledOnce();
     },
   );
-  it.each(["hermes", "legacy-host"])(
+  it.each(["legacy-host", "unsupported-backend"])(
     "refuses export of protected %s sandboxes",
     async (kind) => {
       mocks.owned.mockResolvedValue({ kind, workspaceId: "workspace" });

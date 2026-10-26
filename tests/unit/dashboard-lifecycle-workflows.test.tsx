@@ -229,7 +229,7 @@ describe("toolkit installation management", () => {
             {
               id: "old",
               label: "Old laptop",
-              client: "hermes",
+              client: "pi",
               status: "revoked",
               lastUsedAt: null,
             },
@@ -334,7 +334,7 @@ describe("toolkit installation management", () => {
           skillCount={1}
         />,
       );
-      for (const label of ["Codex", "Hermes", "opencode", "Claude Code"]) {
+      for (const label of ["Codex", "opencode", "Claude Code"]) {
         fireEvent.click(screen.getByRole("button", { name: label }));
         expect(container.querySelector("pre")?.textContent).toContain(
           query ? "&client=" : "?client=",

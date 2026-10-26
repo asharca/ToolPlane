@@ -1,5 +1,4 @@
 import "server-only";
-import { randomUUID } from "node:crypto";
 import { db } from "@/lib/db";
 import { getAgentForRun } from "@/lib/agents/queries";
 import { createConversation } from "@/lib/agents/mutations";
@@ -201,11 +200,8 @@ export async function operateConversation(params: {
     }
     const agent = await getAgentForRun(params.agentId, params.workspaceId);
     if (!agent) throw new ConversationOperationError("notFound", 404);
-    const linked = agent.modelProviders.find(
-      (link) => link.provider.models.length,
-    )?.provider;
-    const provider = agent.provider ?? linked;
-    const modelId = agent.model ?? linked?.models[0];
+    const provider = agent.provider;
+    const modelId = agent.model;
     if (!provider || !modelId)
       throw new ConversationOperationError("noModel", 400);
     const modelContext = resolveModelContext(provider, modelId);
@@ -293,12 +289,6 @@ export async function operateConversation(params: {
           ],
         },
       });
-      if (agent.runtimeKind === "hermes") {
-        await tx.conversation.update({
-          where: { id: conversation.id },
-          data: { runtimeSessionId: randomUUID() },
-        });
-      }
     });
     return { conversationId: conversation.id, compacted: true, ...data };
   } finally {

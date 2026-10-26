@@ -4,7 +4,7 @@ export const agentPublicApiOpenApi = {
     title: "ToolPlane Agent API",
     version: "1.1.0",
     description:
-      "Run published ToolPlane Agent Endpoints without exposing workspace or Hermes runtime credentials. Long-lived keys are server-side only; browsers use origin-bound short-lived client tokens with the endpoint-scoped API. Public Hermes execution requires a single runtime-owning ToolPlane app process/replica.",
+      "Manage published ToolPlane Agent Endpoints without exposing workspace runtime credentials. Long-lived keys are server-side only; browsers use origin-bound short-lived client tokens. No currently supported Agent runtime provides public endpoint execution; publication and new execution requests are rejected.",
   },
   servers: [{ url: "/" }],
   tags: [
@@ -480,7 +480,7 @@ export const agentPublicApiOpenApi = {
         tags: ["Conversations"],
         summary: "Tombstone a conversation and delete its retained transcript",
         description:
-          "Atomically blocks new turns and deletes database-visible messages. Hermes session cleanup is best-effort, and later empty-runtime/volume garbage collection does not gate the 204 response.",
+          "Atomically blocks new turns and deletes database-visible messages. Allocation garbage collection does not gate the 204 response.",
         security: [{ agentApiKey: [] }, { agentClientToken: [] }],
         parameters: [
           {

@@ -6,9 +6,9 @@
 
 ## 支持边界
 
-Pi、Claude Code、DSH、Hermes RPC 的经典聊天、Work、Agent Control MCP 和经过授权的消息渠道，均通过 `submitNativeEntry` / `runNativeEntry` 提交至同一个 A2ATask / A2AContext / Worker。启用条件不满足会拒绝执行，**不会回退旧执行器**。标准 A2A/MCP 服务入口继续使用同一核心；独立 A2A 工作台已移除。
+Pi、Pi SDK、Claude Code、DSH 的经典聊天、Work、Agent Control MCP 和经过授权的消息渠道，均通过 `submitNativeEntry` / `runNativeEntry` 提交至同一个 A2ATask / A2AContext / Worker。启用条件不满足会拒绝执行，**不会回退旧执行器**。标准 A2A/MCP 服务入口继续使用同一核心；独立 A2A 工作台已移除。
 
-托管 `hermes` 的经典运行及公共隔离服务仍保留其兼容执行方式。其原生会话审批无法可靠绑定单次工具调用的问题尚未解决，不能宣传所有运行时完全迁移。入站服务不因此获得私人 Agent 或浏览器审批权限。
+公共 Endpoint 的协议与凭据基础设施保留，但当前没有可用的公共执行适配器。入站服务不因此获得私人 Agent 或浏览器审批权限。
 
 本地 Agent 必须在 A2A 设置中显式启用、配置模型及独占联网 Docker 沙箱。升级不会自动启用任何 Agent。经典入口暂时仅接受文本，附件和旧运行时 slash 命令不会静默丢弃或绕过新审批执行。
 
@@ -53,7 +53,6 @@ HTTP 断开仅停止观察，已经接受的任务继续存在。经典聊天的
 | Pi | `tool_call` 扩展在执行前阻止调用 | 需要锁定运行时契约；尚无真实模型端到端通过结果 |
 | Claude Code | SessionStart / PreToolUse，明确设置文件，移除该模式的 blanket bypass | 保留 dontAsk；运行时自身异常/Hook 故障语义须真实 CLI 验证，不能据此宣称恶意 CLI 的强隔离 |
 | DSH | `tools/pre-execute` 中间件，保留后续拒绝结果 | 不以工具活动日志代替拦截，需真实 CLI 验证 |
-| Hermes RPC | 原始 `tool_execution` 中间件，批准后才调用一次 `next_call` | 内置交互 `approval.request` 尚不能安全绑定单次调用，保持拒绝，不关闭内置审批 |
 
 审批控制面不作为操作系统沙箱边界。人批准任意 shell 后，命令本身能做的事情仍取决于沙箱与已有权限。不要给不受信任的运行时/插件额外管理凭据。
 
@@ -78,6 +77,6 @@ POST /api/v1/workspaces/{slug}/agents/{agentId}/a2a/console/approvals
 
 随后生成 Prisma Client 并按单运行时所有者流程重启。迁移默认不绑定历史 Work 或渠道操作人；历史记录不被自动启动或重放。不要在生产上运行本地测试/seed。
 
-重点测试包含同请求去重、追问、配置/身份撤销、一次性审批、前置网络失败拒绝、HTTP 鉴权/CSRF 和 UI 决策。Hermes 合约测试运行未修改的上游中间件，但替换注册表及工具回调，**不是实际 Hermes CLI 或模型验收**。本地 PGlite 也不能代替真实 PostgreSQL 并发。
+重点测试包含同请求去重、追问、配置/身份撤销、一次性审批、前置网络失败拒绝、HTTP 鉴权/CSRF 和 UI 决策。本地 PGlite 不能代替真实 PostgreSQL 并发。
 
 完整第三方 TCK、实际模型/远程 TLS、真实浏览器与全部入口 end-to-end 必须另有实测报告；预检或组件测试通过不能当作这些项目通过。参见 [验收前置条件](A2A_E2E_VALIDATION.md)。

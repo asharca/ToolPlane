@@ -22,10 +22,7 @@ export async function resolveAgentRuntimeGrant(
       id: token.agentId,
       workspaceId: token.workspaceId,
       workspace: { status: "active" },
-      OR: [
-        { providerId: token.providerId },
-        { modelProviders: { some: { providerId: token.providerId } } },
-      ],
+      providerId: token.providerId,
     },
     select: {
       runtimeKind: true,

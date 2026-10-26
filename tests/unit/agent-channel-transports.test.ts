@@ -18,9 +18,7 @@ const credentials = {
 const log = { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn() };
 
 describe("Cherry native transports", () => {
-  it("creates all six adapters without a Hermes checkout or subprocess", async () => {
-    vi.stubEnv("TOOLPLANE_HERMES_ROOT", "");
-    vi.stubEnv("HERMES_ROOT", "");
+  it("creates all six native adapters", async () => {
     for (const platform of [
       "telegram",
       "weixin",

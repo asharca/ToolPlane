@@ -101,7 +101,7 @@ export function handleSandboxMcpTokens(
         return privateJson(
           {
             error:
-              "This sandbox kind is not exportable. Hermes private runtime and legacy host sandboxes remain protected.",
+              "This sandbox kind is not exportable. Legacy host sandboxes remain protected.",
           },
           409,
         );

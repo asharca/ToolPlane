@@ -27,7 +27,6 @@ import { db } from "@/lib/db";
 import type { SpawnSpec } from "./spawn-spec";
 import { MCP_NETWORK } from "./sandbox";
 import { ensureConnectorBroker } from "@/lib/sandboxes/connector-broker";
-import { deriveHermesRuntimeToken } from "@/lib/agents/hermes/token";
 import {
   resolveMcpStartupTimeoutSettings,
   resolveRemoteMcpPrivateHostsSettings,
@@ -1818,18 +1817,6 @@ async function launchProcess(
                 connectorBroker?.internalToken ?? "",
               SANDBOX_CONNECTOR_REMOTE_ROOT:
                 managedSpec.connector?.remoteRoot ?? "",
-              HERMES_RUNTIME_ID: managedSpec.runtimeId ?? "",
-              HERMES_RUNTIME_API_KEY: managedSpec.runtimeId
-                ? deriveHermesRuntimeToken(managedSpec.runtimeId, "hermes-api")
-                : "",
-              HERMES_RUNTIME_DASHBOARD_TOKEN: managedSpec.runtimeId
-                ? deriveHermesRuntimeToken(
-                    managedSpec.runtimeId,
-                    "hermes-dashboard-api",
-                  )
-                : "",
-              HERMES_RUNTIME_MODEL_NAME:
-                managedSpec.runtimeModelName ?? "hermes-agent",
               TOOLPLANE_MAX_ATTACHMENT_BYTES:
                 process.env.TOOLPLANE_MAX_ATTACHMENT_BYTES ?? "",
             }
@@ -1857,10 +1844,6 @@ async function launchProcess(
     status: "provisioning",
     pid: child.pid,
     name: managedSpec.name,
-    stopGraceMs:
-      managedSpec.kind === "sandbox" && managedSpec.sandboxKind === "hermes"
-        ? 35_000
-        : undefined,
     runtime,
     redactionValues: [
       ...redactionValuesForSpec(managedSpec),

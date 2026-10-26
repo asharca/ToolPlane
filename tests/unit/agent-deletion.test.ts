@@ -4,7 +4,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   workspaceFindFirst: vi.fn(),
   agentFindFirst: vi.fn(),
-  cleanupHermesRuntime: vi.fn(),
   getAgentDeleteTargets: vi.fn(),
   deleteAgent: vi.fn(),
   cleanupAgentEndpointRuntimesForSource: vi.fn(),
@@ -19,9 +18,6 @@ vi.mock("@/lib/db", () => ({
     workspace: { findFirst: mocks.workspaceFindFirst },
     agent: { findFirst: mocks.agentFindFirst },
   },
-}));
-vi.mock("@/lib/agents/hermes/runtime", () => ({
-  cleanupHermesRuntime: mocks.cleanupHermesRuntime,
 }));
 vi.mock("@/lib/agents/mutations", () => ({
   getAgentDeleteTargets: mocks.getAgentDeleteTargets,
@@ -53,11 +49,10 @@ describe("deleteManagedAgent", () => {
     mocks.agentFindFirst.mockResolvedValue({
       publicRuntimeAllocation: null,
       publicEndpoints: [],
-      runtime: { sandbox: { config: { managedBy: "agent-runtime" } } },
+      sandboxes: [],
     });
     mocks.cleanupAgentEndpointRuntimesForSource.mockResolvedValue(true);
     mocks.isAgentEndpointRuntimeSandboxConfig.mockReturnValue(false);
-    mocks.cleanupHermesRuntime.mockResolvedValue(true);
     mocks.deleteAgent.mockImplementation(
       async (
         _workspaceId: string,
@@ -71,13 +66,6 @@ describe("deleteManagedAgent", () => {
       agentIds: ["agent-1"],
       sandboxes: [
         {
-          id: "hermes-sandbox",
-          kind: "hermes",
-          deploymentId: "hermes-deployment",
-          volumeName: "hermes-volume",
-          snapshotVolumeNames: ["hermes-snapshot"],
-        },
-        {
           id: "docker-sandbox",
           kind: "docker",
           deploymentId: "docker-deployment",
@@ -88,7 +76,7 @@ describe("deleteManagedAgent", () => {
     });
   });
 
-  it("cleans Hermes snapshot volumes before removing the agent record", async () => {
+  it("cleans sandbox snapshot volumes before removing the agent record", async () => {
     await expect(
       deleteManagedAgent({
         workspaceId: "workspace-1",
@@ -97,13 +85,6 @@ describe("deleteManagedAgent", () => {
       }),
     ).resolves.toBe(true);
 
-    expect(mocks.cleanupHermesRuntime).toHaveBeenCalledWith(
-      "workspace-1",
-      "agent-1",
-    );
-    expect(mocks.removeDockerVolumeStrict).toHaveBeenCalledWith(
-      "hermes-snapshot",
-    );
     expect(mocks.removeDockerVolumeStrict).toHaveBeenCalledWith(
       "docker-snapshot",
     );
@@ -115,5 +96,28 @@ describe("deleteManagedAgent", () => {
       "docker-sandbox",
       "docker-volume",
     );
+  });
+
+  it("does not delete an endpoint runtime identified by its sandbox marker", async () => {
+    const config = { managedBy: "agent-endpoint-runtime" };
+    mocks.agentFindFirst.mockResolvedValue({
+      publicRuntimeAllocation: null,
+      publicEndpoints: [],
+      sandboxes: [{ sandbox: { config } }],
+    });
+    mocks.isAgentEndpointRuntimeSandboxConfig.mockReturnValue(true);
+
+    await expect(
+      deleteManagedAgent({
+        workspaceId: "workspace-1",
+        agentId: "agent-1",
+        actorId: "user-1",
+      }),
+    ).resolves.toBe(false);
+    expect(mocks.isAgentEndpointRuntimeSandboxConfig).toHaveBeenCalledWith(
+      config,
+    );
+    expect(mocks.cleanupAgentEndpointRuntimesForSource).not.toHaveBeenCalled();
+    expect(mocks.deleteAgent).not.toHaveBeenCalled();
   });
 });

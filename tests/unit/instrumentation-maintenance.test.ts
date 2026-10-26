@@ -5,12 +5,10 @@ const tasks = vi.hoisted(() => ({
   log: vi.fn(),
   logs: vi.fn(),
   packages: vi.fn(),
-  attachments: vi.fn(),
   api: vi.fn(),
   idle: vi.fn(),
   channels: vi.fn(),
   connector: vi.fn(),
-  dashboard: vi.fn(),
   network: vi.fn(),
   helpers: vi.fn(),
   copies: vi.fn(),
@@ -31,21 +29,17 @@ vi.mock("@/lib/observability/maintenance", () => ({
 vi.mock("@/lib/market/pi-package-catalog", () => ({
   maintainPiPackageSources: tasks.packages,
 }));
-vi.mock("@/lib/agents/upload-reservations", () => ({
-  maintainAttachmentUploads: tasks.attachments,
-}));
 vi.mock("@/lib/agents/public-api/maintenance", () => ({
   runAgentApiMaintenance: tasks.api,
-  runAgentApiIdleRuntimeMaintenance: tasks.idle,
+}));
+vi.mock("@/lib/agents/conversation-sandbox", () => ({
+  stopIdleAgentConversationSandboxes: tasks.idle,
 }));
 vi.mock("@/lib/agents/channel-runtime", () => ({
   reconcileAgentChannelRunners: tasks.channels,
 }));
 vi.mock("@/lib/sandboxes/connector-broker", () => ({
   ensureConnectorBroker: tasks.connector,
-}));
-vi.mock("@/lib/agents/hermes/dashboard-broker", () => ({
-  ensureHermesDashboardBroker: tasks.dashboard,
 }));
 vi.mock("@/lib/process/supervisor", () => ({
   ensureSandboxNetwork: tasks.network,
@@ -68,8 +62,7 @@ const runtime = globalThis as typeof globalThis & {
   __mcpReconciled?: boolean;
   __toolplaneStopTimers?: () => void;
   __agentApiMaintenanceTimer?: NodeJS.Timeout;
-  __agentApiIdleMaintenanceTimer?: NodeJS.Timeout;
-  __attachmentMaintenanceTimer?: NodeJS.Timeout;
+  __agentConversationMaintenanceTimer?: NodeJS.Timeout;
   __logMaintenanceTimer?: NodeJS.Timeout;
   __piPackageSourceMaintenanceTimer?: NodeJS.Timeout;
 };
@@ -90,7 +83,7 @@ beforeEach(() => {
     runtimes: 0,
     usageBuckets: 0,
   });
-  tasks.idle.mockResolvedValue(0);
+  tasks.idle.mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -98,8 +91,7 @@ afterEach(() => {
   delete runtime.__toolplaneStopTimers;
   delete runtime.__mcpReconciled;
   delete runtime.__agentApiMaintenanceTimer;
-  delete runtime.__agentApiIdleMaintenanceTimer;
-  delete runtime.__attachmentMaintenanceTimer;
+  delete runtime.__agentConversationMaintenanceTimer;
   delete runtime.__logMaintenanceTimer;
   delete runtime.__piPackageSourceMaintenanceTimer;
   vi.clearAllTimers();
@@ -166,13 +158,7 @@ describe("owned runtime recovery and maintenance", () => {
     await vi.advanceTimersByTimeAsync(5 * 60_000);
     expect(tasks.helpers).toHaveBeenCalledOnce();
     expect(tasks.copies).toHaveBeenCalledOnce();
-    for (const task of [
-      tasks.logs,
-      tasks.packages,
-      tasks.attachments,
-      tasks.api,
-      tasks.idle,
-    ])
+    for (const task of [tasks.logs, tasks.packages, tasks.api, tasks.idle])
       expect(task).not.toHaveBeenCalled();
   });
 
@@ -193,7 +179,6 @@ describe("owned runtime recovery and maintenance", () => {
       runtimes: 3,
       usageBuckets: 4,
     });
-    tasks.idle.mockResolvedValue(5);
     await registerNode();
     await vi.advanceTimersByTimeAsync(60_000);
     expect(tasks.log).toHaveBeenCalledWith(
@@ -218,30 +203,19 @@ describe("owned runtime recovery and maintenance", () => {
         "1 conversation(s), 2 response(s), 3 runtime(s), and 4 usage bucket(s)",
       ),
     );
-    expect(tasks.log).toHaveBeenCalledWith(
-      "info",
-      expect.stringContaining("stopped 5 idle public runtime(s)"),
-    );
   });
 
   it("releases each maintenance guard after errors and retries on the next interval", async () => {
     const error = new Error("temporary outage");
-    for (const task of [
-      tasks.logs,
-      tasks.packages,
-      tasks.attachments,
-      tasks.api,
-      tasks.idle,
-    ])
+    for (const task of [tasks.logs, tasks.packages, tasks.api, tasks.idle])
       task.mockRejectedValueOnce(error);
     await registerNode();
     await vi.advanceTimersByTimeAsync(5 * 60_000);
     for (const message of [
       "Log retention maintenance failed",
       "Pi package metadata maintenance failed",
-      "Attachment cleanup failed",
       "[agent-api] retained-data cleanup failed",
-      "[agent-api] idle runtime cleanup failed",
+      "[agent] conversation sandbox maintenance failed",
     ]) {
       expect(
         tasks.log.mock.calls.some(
@@ -250,25 +224,13 @@ describe("owned runtime recovery and maintenance", () => {
       ).toBe(true);
     }
     await vi.advanceTimersByTimeAsync(60 * 60_000);
-    for (const task of [
-      tasks.logs,
-      tasks.packages,
-      tasks.attachments,
-      tasks.api,
-      tasks.idle,
-    ])
+    for (const task of [tasks.logs, tasks.packages, tasks.api, tasks.idle])
       expect(task.mock.calls.length).toBeGreaterThan(1);
   });
 
   it("prevents overlapping maintenance and stopTimers cancels recurring work", async () => {
     const finishes: Array<() => void> = [];
-    for (const task of [
-      tasks.logs,
-      tasks.packages,
-      tasks.attachments,
-      tasks.api,
-      tasks.idle,
-    ]) {
+    for (const task of [tasks.logs, tasks.packages, tasks.api, tasks.idle]) {
       task.mockImplementation(
         () =>
           new Promise<void>((resolve) => {
@@ -278,24 +240,12 @@ describe("owned runtime recovery and maintenance", () => {
     }
     await registerNode();
     await vi.advanceTimersByTimeAsync(2 * 60 * 60_000);
-    for (const task of [
-      tasks.logs,
-      tasks.packages,
-      tasks.attachments,
-      tasks.api,
-      tasks.idle,
-    ])
+    for (const task of [tasks.logs, tasks.packages, tasks.api, tasks.idle])
       expect(task).toHaveBeenCalledOnce();
     runtime.__toolplaneStopTimers?.();
     for (const finish of finishes) finish();
     await vi.advanceTimersByTimeAsync(2 * 60 * 60_000);
-    for (const task of [
-      tasks.logs,
-      tasks.packages,
-      tasks.attachments,
-      tasks.api,
-      tasks.idle,
-    ])
+    for (const task of [tasks.logs, tasks.packages, tasks.api, tasks.idle])
       expect(task).toHaveBeenCalledOnce();
   });
 });

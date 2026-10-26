@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -85,7 +91,7 @@ describe("AISidebar action isolation", () => {
         within(row).getByRole("button", { name: "Actions for Agent" }),
       );
       const action = await screen.findByRole("button", { name: "Pin agent" });
-      expect(action).toHaveFocus();
+      await waitFor(() => expect(action).toHaveFocus());
       await user.keyboard(key);
 
       expect(onAction).toHaveBeenCalledOnce();

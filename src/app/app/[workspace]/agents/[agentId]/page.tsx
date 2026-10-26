@@ -16,11 +16,6 @@ import { effectiveStatus } from "@/lib/process/supervisor";
 import { AgentSettings } from "@/components/dashboard/agents/AgentSettings";
 import { listAgentChannelConnections } from "@/lib/agents/channel-connections";
 import { toAgentChannelConnectionClientView } from "@/lib/agents/channel-connection-client";
-import { createHermesDashboardPath } from "@/lib/agents/hermes/token";
-import {
-  HERMES_IMAGE_OPTIONS,
-  resolveHermesImage,
-} from "@/lib/agents/hermes/constants";
 import { SettingsModal } from "@/components/dashboard/SettingsModal";
 import { readSandboxEnv, sandboxEnvToText } from "@/lib/sandboxes/env";
 import { originFromHeaders } from "@/lib/http/origin";
@@ -68,7 +63,6 @@ export default async function AgentDetailPage({
   if (!user) redirect("/app/login");
   const ws = await getWorkspaceForUser(slug, user.id);
   if (!ws) redirect("/app");
-  const hermesImages = [resolveHermesImage(undefined), ...HERMES_IMAGE_OPTIONS];
 
   const agent = await getAgentPageData(ws.id, agentId);
   if (!agent) notFound();
@@ -87,18 +81,15 @@ export default async function AgentDetailPage({
     redirect(`/app/${slug}/work?${query}`);
   }
 
-  const isHermes = agent.runtimeKind === "hermes";
   const sandboxReady =
     agent.sandboxes.length === 1 &&
     agent.sandboxes[0]?.sandbox.kind === "docker" &&
     agent.sandboxes[0]?.sandbox.network !== "none";
-  const ready = isHermes
-    ? agent.modelProviders.length > 0
-    : Boolean(
-        agent.providerId &&
-          agent.model &&
-          (!isDedicatedSandboxRuntimeKind(agent.runtimeKind) || sandboxReady),
-      );
+  const ready = Boolean(
+    agent.providerId &&
+      agent.model &&
+      (!isDedicatedSandboxRuntimeKind(agent.runtimeKind) || sandboxReady),
+  );
   const selectedDeps = new Set(
     agent.servers.map((server) => server.deploymentId),
   );
@@ -125,10 +116,8 @@ export default async function AgentDetailPage({
     listToolkits(ws.id),
     listSandboxes(ws.id),
     listAgents(ws.id),
-    isHermes
-      ? getAgentEndpointForManagement(ws.id, agentId)
-      : Promise.resolve(null),
-    !isHermes || ws.ownerId === user.id
+    getAgentEndpointForManagement(ws.id, agentId),
+    ws.ownerId === user.id
       ? Promise.resolve(null)
       : db.membership.findUnique({
           where: {
@@ -165,9 +154,9 @@ export default async function AgentDetailPage({
     ws.id,
     agent.marketInstall,
   );
-  const runtimeSandbox = isHermes
-    ? agent.runtime?.sandbox
-    : agent.sandboxes.find((sandbox) => sandbox.isDefault)?.sandbox;
+  const runtimeSandbox = agent.sandboxes.find(
+    (sandbox) => sandbox.isDefault,
+  )?.sandbox;
 
   return (
     <SettingsModal
@@ -184,10 +173,10 @@ export default async function AgentDetailPage({
           name: agent.name,
           description: agent.description ?? "",
           runtimeKind: agent.runtimeKind,
-          systemPrompt: isHermes ? "" : (agent.systemPrompt ?? ""),
+          systemPrompt: agent.systemPrompt ?? "",
           disabledBuiltinTools: agent.disabledBuiltinTools,
           providerId: agent.providerId,
-          providerIds: agent.modelProviders.map((link) => link.providerId),
+          providerIds: agent.providerId ? [agent.providerId] : [],
           model: agent.model,
           maxSteps: agent.maxSteps,
           providers: providers.map((provider) => ({
@@ -241,7 +230,6 @@ export default async function AgentDetailPage({
             : undefined,
           sandboxes: sandboxes
             .filter((s) => {
-              if (s.id === agent.runtime?.sandboxId) return false;
               if (s._count.agentLinks > 0 && !selectedSandboxes.has(s.id))
                 return false;
               return ![
@@ -269,89 +257,59 @@ export default async function AgentDetailPage({
               label: a.name,
               checked: selectedSubAgents.has(a.id),
             })),
-          hermesImages,
-          runtime: agent.runtime
-            ? (() => {
-                return {
-                  kind: agent.runtime.kind,
-                  image: agent.runtime.image,
-                  status: ["error", "setup_required"].includes(
-                    agent.runtime.status,
-                  )
-                    ? agent.runtime.status
-                    : effectiveStatus(
-                        agent.runtime.sandbox.deploymentId,
-                        agent.runtime.sandbox.deployment.status,
-                      ),
-                  lastError: agent.runtime.lastError,
-                  lastSyncedAt:
-                    agent.runtime.lastSyncedAt?.toISOString() ?? null,
-                  sandboxId: agent.runtime.sandboxId,
-                  environment: sandboxEnvToText(
-                    readSandboxEnv(agent.runtime.sandbox.config),
-                  ),
-                  deploymentId: agent.runtime.sandbox.deploymentId,
-                  dashboardUrl: createHermesDashboardPath(agent.runtime.id),
-                };
-              })()
-            : null,
         }}
         channelSettings={{
           connections: channelConnections.map(
             toAgentChannelConnectionClientView,
           ),
         }}
-        apiSettings={
-          isHermes
-            ? {
-                origin: originFromHeaders(requestHeaders),
-                canManage:
-                  ws.ownerId === user.id || managerMembership?.role === "admin",
-                endpoint: apiEndpoint?.currentRevision
-                  ? (() => {
-                      const revision = apiEndpoint.currentRevision;
-                      return {
-                        id: apiEndpoint.publicId,
-                        status: apiEndpoint.status,
-                        name: apiEndpoint.name,
-                        isolationMode: apiEndpoint.isolationMode,
-                        rpmLimit: apiEndpoint.rpmLimit,
-                        dailyRequestLimit: apiEndpoint.dailyRequestLimit,
-                        dailyOutputCharacterLimit:
-                          apiEndpoint.dailyOutputCharacterLimit,
-                        maxConcurrent: apiEndpoint.maxConcurrent,
-                        maxRuntimes: apiEndpoint.maxRuntimes,
-                        maxStoredCharacters: apiEndpoint.maxStoredCharacters,
-                        timeoutSeconds: apiEndpoint.timeoutSeconds,
-                        retentionDays: apiEndpoint.retentionDays,
-                        systemPrompt: revision.systemPrompt,
-                        allowedOrigins: apiEndpoint.allowedOrigins,
-                        revision: revision.version,
-                        deploymentIds: revision.deploymentIds,
-                        skillIds: revision.installedSkillIds,
-                        clients: apiEndpoint.clients.map((client) => ({
-                          id: client.id,
-                          name: client.name,
-                          createdAt: isoDate(client.createdAt) ?? "",
-                          lastUsedAt: latestDate(
-                            client.keys.map((key) => key.lastUsedAt),
-                          ),
-                          keys: client.keys.map((key) => ({
-                            id: key.id,
-                            name: key.name,
-                            prefix: key.prefix,
-                            createdAt: isoDate(key.createdAt) ?? "",
-                            lastUsedAt: isoDate(key.lastUsedAt),
-                            expiresAt: isoDate(key.expiresAt),
-                            revokedAt: isoDate(key.revokedAt),
-                          })),
-                        })),
-                      };
-                    })()
-                  : null,
-              }
-            : undefined
-        }
+        apiSettings={{
+          origin: originFromHeaders(requestHeaders),
+          canManage:
+            ws.ownerId === user.id || managerMembership?.role === "admin",
+          endpoint: apiEndpoint?.currentRevision
+            ? (() => {
+                const revision = apiEndpoint.currentRevision;
+                return {
+                  id: apiEndpoint.publicId,
+                  status: apiEndpoint.status,
+                  name: apiEndpoint.name,
+                  isolationMode: apiEndpoint.isolationMode,
+                  rpmLimit: apiEndpoint.rpmLimit,
+                  dailyRequestLimit: apiEndpoint.dailyRequestLimit,
+                  dailyOutputCharacterLimit:
+                    apiEndpoint.dailyOutputCharacterLimit,
+                  maxConcurrent: apiEndpoint.maxConcurrent,
+                  maxRuntimes: apiEndpoint.maxRuntimes,
+                  maxStoredCharacters: apiEndpoint.maxStoredCharacters,
+                  timeoutSeconds: apiEndpoint.timeoutSeconds,
+                  retentionDays: apiEndpoint.retentionDays,
+                  systemPrompt: revision.systemPrompt,
+                  allowedOrigins: apiEndpoint.allowedOrigins,
+                  revision: revision.version,
+                  deploymentIds: revision.deploymentIds,
+                  skillIds: revision.installedSkillIds,
+                  clients: apiEndpoint.clients.map((client) => ({
+                    id: client.id,
+                    name: client.name,
+                    createdAt: isoDate(client.createdAt) ?? "",
+                    lastUsedAt: latestDate(
+                      client.keys.map((key) => key.lastUsedAt),
+                    ),
+                    keys: client.keys.map((key) => ({
+                      id: key.id,
+                      name: key.name,
+                      prefix: key.prefix,
+                      createdAt: isoDate(key.createdAt) ?? "",
+                      lastUsedAt: isoDate(key.lastUsedAt),
+                      expiresAt: isoDate(key.expiresAt),
+                      revokedAt: isoDate(key.revokedAt),
+                    })),
+                  })),
+                };
+              })()
+            : null,
+        }}
         ready={ready}
         agentName={agent.name}
         marketSetup={marketSetup}
@@ -364,17 +322,11 @@ export default async function AgentDetailPage({
                 ? "subAgents"
                 : settings === "channels"
                   ? "channels"
-                  : settings === "api" && isHermes
+                  : settings === "api"
                     ? "api"
-                    : settings === "profiles" && isHermes
-                      ? "profiles"
-                      : settings === "hermes"
-                        ? "hermes"
-                        : settings === "terminal"
-                          ? "terminal"
-                          : settings === "agent"
-                            ? "agent"
-                            : null
+                    : settings === "agent"
+                      ? "agent"
+                      : null
         }
       />
     </SettingsModal>

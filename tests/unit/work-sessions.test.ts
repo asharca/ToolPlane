@@ -76,8 +76,6 @@ describe("WorkSession coordinator", () => {
       runtimeKind: "pi",
       systemPrompt: null,
       maxSteps: 8,
-      modelProviders: [],
-      runtime: null,
       servers: [],
       skills: [],
       toolkits: [],
@@ -133,112 +131,6 @@ describe("WorkSession coordinator", () => {
         }),
       }),
     );
-  });
-
-  it("creates Hermes Work on its managed runtime sandbox", async () => {
-    mocks.agentFindFirst.mockResolvedValueOnce({
-      id: "agent-1",
-      providerId: null,
-      model: null,
-      runtimeKind: "hermes",
-      systemPrompt: null,
-      maxSteps: 8,
-      modelProviders: [{ providerId: "provider-1" }],
-      runtime: {
-        id: "runtime-1",
-        kind: "hermes",
-        sandboxId: "sandbox-hermes",
-        sandbox: {
-          id: "sandbox-hermes",
-          workspaceId: "workspace-1",
-          kind: "hermes",
-          network: "isolated",
-        },
-      },
-      servers: [],
-      skills: [],
-      toolkits: [],
-      knowledgeBases: [],
-      sandboxes: [],
-    });
-
-    await expect(
-      createWorkSession({
-        workspaceId: "workspace-1",
-        agentId: "agent-1",
-        sandboxId: "sandbox-hermes",
-        task: "Build it",
-        reasoningEffort: "high",
-        hermesSelection: {
-          profile: "research",
-          provider: "openrouter",
-          model: "model-b",
-        },
-      }),
-    ).resolves.toMatchObject({
-      sandboxId: "sandbox-hermes",
-      runtimeKind: "hermes",
-      status: "queued",
-    });
-    expect(mocks.workCreate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({
-          sandboxId: "sandbox-hermes",
-          runtimeSnapshot: expect.objectContaining({
-            runtimeId: "runtime-1",
-            sandboxId: "sandbox-hermes",
-          }),
-        }),
-      }),
-    );
-    expect(mocks.conversationCreate).toHaveBeenCalledWith({
-      data: {
-        agentId: "agent-1",
-        title: "Build it",
-        reasoningEffort: "high",
-        hermesProfile: "research",
-        hermesProvider: "openrouter",
-        hermesModel: "model-b",
-      },
-    });
-  });
-
-  it("rejects a sandbox that is not the Hermes Agent runtime sandbox", async () => {
-    mocks.agentFindFirst.mockResolvedValueOnce({
-      id: "agent-1",
-      providerId: null,
-      model: null,
-      runtimeKind: "hermes",
-      systemPrompt: null,
-      maxSteps: 8,
-      modelProviders: [{ providerId: "provider-1" }],
-      runtime: {
-        id: "runtime-1",
-        kind: "hermes",
-        sandboxId: "sandbox-hermes",
-        sandbox: {
-          id: "sandbox-hermes",
-          workspaceId: "workspace-1",
-          kind: "hermes",
-          network: "isolated",
-        },
-      },
-      servers: [],
-      skills: [],
-      toolkits: [],
-      knowledgeBases: [],
-      sandboxes: [],
-    });
-
-    await expect(
-      createWorkSession({
-        workspaceId: "workspace-1",
-        agentId: "agent-1",
-        sandboxId: "sandbox-other",
-        task: "Build it",
-      }),
-    ).resolves.toBeNull();
-    expect(mocks.conversationCreate).not.toHaveBeenCalled();
   });
 
   it("normalizes sandbox working directories without allowing traversal", () => {
@@ -659,80 +551,6 @@ describe("WorkSession coordinator", () => {
         : ".",
     );
   });
-  it.each([
-    "wrong-sandbox",
-    "shared-runtime",
-    "wrong-kind",
-    "offline",
-    "multiple",
-    "unsupported",
-  ])(
-    "refuses unsafe dedicated sandbox assignment %s before persisting conversation state",
-    async (condition) => {
-      const agent = await mocks.agentFindFirst();
-      if (condition === "wrong-sandbox")
-        agent.sandboxes[0].sandboxId = "different";
-      if (condition === "shared-runtime")
-        agent.runtime = { sandboxId: "sandbox-1" };
-      if (condition === "wrong-kind")
-        agent.sandboxes[0].sandbox.kind = "hermes";
-      if (condition === "offline") agent.sandboxes[0].sandbox.network = "none";
-      if (condition === "multiple")
-        agent.sandboxes.push({ ...agent.sandboxes[0], sandboxId: "second" });
-      if (condition === "unsupported") agent.runtimeKind = "unknown";
-      mocks.agentFindFirst.mockResolvedValue(agent);
-      expect(
-        await createWorkSession({
-          workspaceId: "workspace-1",
-          agentId: "agent-1",
-          sandboxId: "sandbox-1",
-          task: "Build",
-        }),
-      ).toBeNull();
-      expect(mocks.conversationCreate).not.toHaveBeenCalled();
-      expect(mocks.messageCreate).not.toHaveBeenCalled();
-    },
-  );
-
-  it.each([
-    "runtime-kind",
-    "workspace",
-    "sandbox-kind",
-    "offline",
-    "no-provider",
-  ])(
-    "refuses invalid Hermes ownership or runtime state: %s",
-    async (condition) => {
-      const agent = await mocks.agentFindFirst();
-      agent.runtimeKind = "hermes";
-      agent.modelProviders = [{ providerId: "provider-1" }];
-      agent.runtime = {
-        id: "runtime",
-        kind: "hermes",
-        sandboxId: "sandbox-hermes",
-        sandbox: {
-          workspaceId: "workspace-1",
-          kind: "hermes",
-          network: "isolated",
-        },
-      };
-      if (condition === "runtime-kind") agent.runtime.kind = "pi";
-      if (condition === "workspace")
-        agent.runtime.sandbox.workspaceId = "other";
-      if (condition === "sandbox-kind") agent.runtime.sandbox.kind = "docker";
-      if (condition === "offline") agent.runtime.sandbox.network = "none";
-      if (condition === "no-provider") agent.modelProviders = [];
-      mocks.agentFindFirst.mockResolvedValue(agent);
-      expect(
-        await createWorkSession({
-          workspaceId: "workspace-1",
-          agentId: "agent-1",
-          task: "Build",
-        }),
-      ).toBeNull();
-      expect(mocks.conversationCreate).not.toHaveBeenCalled();
-    },
-  );
 
   it("snapshots a deduplicated union of direct and toolkit resources", async () => {
     const agent = await mocks.agentFindFirst();

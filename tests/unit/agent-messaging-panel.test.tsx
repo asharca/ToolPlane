@@ -260,7 +260,7 @@ describe("channel settings", () => {
     expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 
-  it("allows Telegram reauthentication and clears saved secret drafts", async () => {
+  it("clears saved Telegram token drafts", async () => {
     const channel: Channel = {
       id: "channel",
       agentId: null,
@@ -273,11 +273,7 @@ describe("channel settings", () => {
       credentialNames: ["TELEGRAM_BOT_TOKEN"],
       credentialValues: {},
       missingStartCredentialNames: [],
-      pairing: {
-        provider: "telegram_managed_bot",
-        status: "ready",
-        extra: { ownerUserId: "42" },
-      },
+      pairing: null,
       lastError: null,
     };
     vi.stubGlobal(
@@ -288,9 +284,6 @@ describe("channel settings", () => {
     fireEvent.click(screen.getByRole("button", { name: "Telegram" }));
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));
     const dialog = await screen.findByRole("dialog");
-    expect(
-      within(dialog).getByRole("button", { name: "Save Telegram setup" }),
-    ).toBeInTheDocument();
     const token = within(dialog).getByLabelText("Bot Token");
     fireEvent.change(token, { target: { value: "replacement-secret" } });
     fireEvent.blur(token);

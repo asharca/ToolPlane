@@ -6,7 +6,7 @@ import {
 import { withSandboxExecutionLease } from "./sandbox-execution-gate";
 import { findAgentConversationSandbox } from "./conversation-sandbox";
 import { withAgentMaintenanceLease } from "./agent-execution-gate";
-import { runHermesRpcTurn } from "./hermes-rpc";
+
 import { PiRuntimeInterruptedError } from "./pi-harness";
 import {
   assertRuntimeOwner,
@@ -134,12 +134,7 @@ const NPM_CACHE = "/workspace/.toolplane/npm-cache";
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 export const CLAUDE_RUNTIME_USER = "1000:1000";
 
-export type SandboxAgentRuntimeKind =
-  | "pi"
-  | "pi-sdk"
-  | "claude-code"
-  | "dsh"
-  | "hermes-rpc";
+export type SandboxAgentRuntimeKind = "pi" | "pi-sdk" | "claude-code" | "dsh";
 
 export type SandboxRuntimeProvider = {
   id: string;
@@ -2366,8 +2361,6 @@ async function runNativeSessionExec(
   exec: DockerExecOptions,
   sdk?: { configPath: string; packageSetChecksum: string; mcpConfig: unknown },
 ) {
-  if (options.runtimeKind === "hermes-rpc")
-    throw new Error("Hermes RPC uses its own native protocol driver.");
   if (!options.runtimeSessionId) return runTrackedDockerExec(exec);
   const id = randomUUID();
   const driverPath = `${RUNTIME_TEMP_ROOT}/${id}-session.mjs`;
@@ -3291,46 +3284,7 @@ async function runExclusiveSandboxAgentTurn(
     options.runtimeKind,
     options.agentId,
   );
-  if (options.runtimeKind === "hermes-rpc") {
-    return runHermesRpcTurn(
-      options,
-      {
-        container,
-        workdir,
-        skillRoot,
-        stateRoot: sandboxRuntimeStateRoot("hermes-rpc", options.agentId),
-        mcpServers,
-        history: (options.command
-          ? options.messages
-          : options.messages.slice(0, -1)
-        )
-          .filter(
-            (message) =>
-              message.role === "user" || message.role === "assistant",
-          )
-          .map((message) => ({
-            role: message.role,
-            content: buildSandboxTranscript([message]),
-          })),
-        message: buildSandboxTranscript(options.messages.slice(-1)),
-      },
-      {
-        exec: runTrackedDockerExec,
-        write: writeSandboxFile,
-        remove: removeSandboxFiles,
-        prepareSkills: () =>
-          materializeSandboxSkills(
-            container,
-            "hermes-rpc",
-            skillRoot,
-            options.skills ?? [],
-            options.signal,
-          ),
-        activities: (activities) =>
-          reportActivities(options, activities, mcpServers),
-      },
-    );
-  }
+
   if (options.runtimeKind === "pi-sdk") {
     await ensureRuntimeInstalled("pi-sdk", container, options.signal);
     await materializeSandboxSkills(

@@ -225,7 +225,7 @@ describe("Agent Responses public route", () => {
     expect(body).not.toContain("provider-secret");
   });
 
-  it("replays a completed idempotent response without starting Hermes again", async () => {
+  it("replays a completed idempotent response without starting execution again", async () => {
     mocks.prepare.mockResolvedValue({ ...prepared, replay: true });
     const response = await POST(
       request({ input: "hello", end_user: "u", stream: false }),

@@ -27,7 +27,6 @@ import { appendConversationTurn } from "./mutations";
 import {
   acquireConversationOperation,
   conversationOperationKey,
-  operateConversation,
 } from "./conversation-operations";
 import {
   activeConversationMessages,
@@ -91,15 +90,6 @@ export async function executeRuntimeCommand(input: {
     )
   )
     throw new RuntimeCommandError("unsupportedCommand");
-  if (parsed.name === "compact" && kind === "hermes")
-    return {
-      kind: "compact" as const,
-      ...(await operateConversation({
-        ...input,
-        action: "compact",
-        instructions: parsed.args,
-      })),
-    };
   const release = acquireConversationOperation(
     conversationOperationKey(scope),
     parsed.name,

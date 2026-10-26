@@ -3,7 +3,6 @@ import { AnimatedBadge } from "@/components/motion/animated-badge";
 import { Button, ButtonLink } from "@/components/motion/button/base";
 import { RadioGroup, RadioGroupItem } from "@/components/motion/radio";
 import { Input } from "@/components/motion/input";
-import { FormSelect } from "@/components/ui/FormSelect";
 
 import { useTranslations } from "next-intl";
 import { useState } from "react";
@@ -16,7 +15,6 @@ import {
   Bot,
   CheckCircle2,
   CircleAlert,
-  Container,
   Cpu,
   ChevronDown,
   ChevronLeft,
@@ -39,11 +37,9 @@ import {
 } from "@/components/dashboard/DashboardUI";
 import { AgentResourceSelect } from "@/components/dashboard/agents/AgentResourceSelect";
 import type { AgentResourceOption } from "@/components/dashboard/agents/AgentResourceSelect";
-import { HermesImageSelector } from "@/components/dashboard/agents/HermesImageSelector";
 import { ModelPicker } from "@/components/dashboard/models/ModelPicker";
 import type { ModelProviderOption } from "@/components/dashboard/models/ModelPicker";
 import { SubmitButton } from "@/components/dashboard/SubmitButton";
-import { CloneAgentButton } from "@/components/dashboard/agents/CloneAgentButton";
 import { DeleteAgentButton } from "@/components/dashboard/agents/DeleteAgentButton";
 import { ConnectDialog } from "@/components/dashboard/ConnectDialog";
 import { AgentMarketInstallForm } from "@/components/dashboard/market/AgentMarketInstallForm";
@@ -113,7 +109,6 @@ function isAgentReady(
     "providerName" | "providerNames" | "model" | "runtimeKind" | "sandboxReady"
   >,
 ) {
-  if (agent.runtimeKind === "hermes") return agent.providerNames.length > 0;
   if (isDedicatedSandboxRuntimeKind(agent.runtimeKind)) {
     return Boolean(agent.providerName && agent.model && agent.sandboxReady);
   }
@@ -144,7 +139,6 @@ export function AgentsBrowser({
   agentControlEndpoint,
   agents,
   createOptions,
-  hermesImages,
   marketAgents = [],
 }: {
   slug: string;
@@ -152,7 +146,6 @@ export function AgentsBrowser({
   agentControlEndpoint?: string;
   agents: AgentRow[];
   createOptions: CreateOptions;
-  hermesImages?: string[];
   marketAgents?: AgentMarketOption[];
 }) {
   const t = useTranslations("console.agents");
@@ -200,14 +193,6 @@ export function AgentsBrowser({
     defaultNativeModel?.providerId ?? "",
   );
   const [modelId, setModelId] = useState(defaultNativeModel?.model ?? "");
-  const [selectedProviderIds, setSelectedProviderIds] = useState<Set<string>>(
-    () =>
-      new Set(
-        createOptions.defaultModel?.providerId
-          ? [createOptions.defaultModel.providerId]
-          : [],
-      ),
-  );
   const [selectedDeploymentIds, setSelectedDeploymentIds] = useState<
     Set<string>
   >(() => new Set());
@@ -217,7 +202,6 @@ export function AgentsBrowser({
   const [selectedToolkitIds, setSelectedToolkitIds] = useState<Set<string>>(
     () => new Set(),
   );
-  const [sandboxId, setSandboxId] = useState("");
   const [disabledBuiltinTools, setDisabledBuiltinTools] = useState<Set<string>>(
     () => new Set(),
   );
@@ -229,21 +213,12 @@ export function AgentsBrowser({
   );
   const selectedProvider =
     compatibleProviders.find((provider) => provider.id === providerId) ?? null;
-  const createReady =
-    Boolean(agentName.trim()) &&
-    (runtime === "hermes"
-      ? selectedProviderIds.size > 0
-      : Boolean(
-          selectedProvider &&
-            modelId &&
-            selectedProvider.models.includes(modelId),
-        ));
-  const providerOptions = createOptions.providers.map((provider) => ({
-    id: provider.id,
-    label: provider.name,
-    description: t("providerModelCount", { count: provider.models.length }),
-    keywords: provider.models,
-  }));
+  const createReady = Boolean(
+    agentName.trim() &&
+      selectedProvider &&
+      modelId &&
+      selectedProvider.models.includes(modelId),
+  );
   const createSteps: Array<{
     id: CreateStep;
     label: string;
@@ -254,15 +229,11 @@ export function AgentsBrowser({
       label: t("basic"),
       description: t("generalSettingsDescription"),
     },
-    ...(runtime === "hermes"
-      ? []
-      : [
-          {
-            id: "instructions" as const,
-            label: t("instructions"),
-            description: t("instructionsSettingsDescription"),
-          },
-        ]),
+    {
+      id: "instructions",
+      label: t("instructions"),
+      description: t("instructionsSettingsDescription"),
+    },
     {
       id: "builtInTools",
       label: t("builtInTools"),
@@ -323,18 +294,10 @@ export function AgentsBrowser({
     setRuntime("pi");
     setProviderId(defaultNativeModel?.providerId ?? "");
     setModelId(defaultNativeModel?.model ?? "");
-    setSelectedProviderIds(
-      new Set(
-        createOptions.defaultModel?.providerId
-          ? [createOptions.defaultModel.providerId]
-          : [],
-      ),
-    );
     setSelectedDeploymentIds(new Set());
     setSelectedSkillIds(new Set());
     setSelectedToolkitIds(new Set());
     setDisabledBuiltinTools(new Set());
-    setSandboxId("");
   }
 
   return (
@@ -788,28 +751,7 @@ export function AgentsBrowser({
                   </div>
                 ) : null}
 
-                {runtime === "hermes" ? (
-                  <HermesImageSelector
-                    id="create-hermes-version"
-                    images={hermesImages}
-                  />
-                ) : null}
-
-                {runtime === "hermes" ? (
-                  <div className="space-y-2">
-                    <AgentResourceSelect
-                      icon={Cpu}
-                      label={t("modelProviders")}
-                      name="providerId"
-                      options={providerOptions}
-                      selectedIds={selectedProviderIds}
-                      onSelectionChange={setSelectedProviderIds}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      {t("hermesProviderSelectionHelp")}
-                    </p>
-                  </div>
-                ) : runtime ? (
+                {runtime ? (
                   <div>
                     <input type="hidden" name="providerId" value={providerId} />
                     <input type="hidden" name="model" value={modelId} />
@@ -857,33 +799,7 @@ export function AgentsBrowser({
                   </div>
                 ) : null}
 
-                {runtime === "hermes-rpc" ? (
-                  <div className="block">
-                    <span className="mb-1.5 block text-xs font-semibold text-foreground">
-                      {t("hermesRpcSandbox")}
-                    </span>
-                    <FormSelect
-                      name={sandboxId ? "sandboxId" : undefined}
-                      value={sandboxId}
-                      label={t("hermesRpcSandbox")}
-                      options={[
-                        { value: "", label: t("hermesRpcNewSandbox") },
-                        (createOptions.sandboxes ?? []).map((sandbox) => ({
-                          value: sandbox.id,
-                          label: sandbox.label,
-                        })),
-                      ]
-                        .flat()
-                        .filter((option) => option != null)}
-                      onValueChange={(value) => setSandboxId(value)}
-                      className="w-full"
-                    />
-                    <span className="mt-1.5 block text-xs text-muted-foreground">
-                      {t("hermesRpcSandboxHelp")}
-                    </span>
-                  </div>
-                ) : null}
-                {runtime && runtime !== "hermes" && runtime !== "hermes-rpc" ? (
+                {runtime ? (
                   <div className="flex items-start gap-2 text-xs leading-5 text-muted-foreground">
                     <Box className="mt-0.5 size-4 shrink-0" />
                     <p>{t("automaticSandboxHelp")}</p>
@@ -1139,17 +1055,9 @@ export function AgentsBrowser({
                 const ready = isAgentReady(agent);
                 const agentsHref = `/app/${encodeURIComponent(slug)}/agents`;
                 const detailsHref = `${agentsHref}/${encodeURIComponent(agent.id)}?returnTo=${encodeURIComponent(returnTo)}`;
-                const model =
-                  agent.runtimeKind === "hermes"
-                    ? agent.providerNames.length > 0
-                      ? t("providerSummary", {
-                          count: agent.providerNames.length,
-                          names: agent.providerNames.join(", "),
-                        })
-                      : t("noProviderSelected")
-                    : agent.providerName
-                      ? `${agent.providerName} / ${agent.model ?? t("noModelSelected")}`
-                      : t("noProviderSelected");
+                const model = agent.providerName
+                  ? `${agent.providerName} / ${agent.model ?? t("noModelSelected")}`
+                  : t("noProviderSelected");
 
                 return (
                   <li
@@ -1194,17 +1102,12 @@ export function AgentsBrowser({
                                       agent.runtimeKind,
                                     ) && !agent.sandboxReady
                                   ? t("needsSandbox")
-                                  : agent.runtimeKind === "hermes" ||
-                                      !agent.providerName
+                                  : !agent.providerName
                                     ? t("needsProvider")
                                     : t("needsModel")}
                             </AnimatedBadge>
                             <AnimatedBadge status="neutral">
-                              {agent.runtimeKind === "hermes" ? (
-                                <Container className="size-3.5" />
-                              ) : (
-                                <Bot className="size-3.5" />
-                              )}
+                              <Bot className="size-3.5" />
                               {agentRuntimeDisplayName(agent.runtimeKind)}
                               {agent.runtimeStatus
                                 ? ` · ${agent.runtimeStatus}`
@@ -1212,10 +1115,7 @@ export function AgentsBrowser({
                             </AnimatedBadge>
                           </div>
                           <p className="mt-1 truncate text-sm text-muted-foreground">
-                            {agent.runtimeKind === "hermes"
-                              ? t("modelProviders")
-                              : t("model")}
-                            : {model}
+                            {t("model")}: {model}
                           </p>
                           <div className="mt-2 flex flex-wrap gap-3">
                             <CountPill
@@ -1255,12 +1155,6 @@ export function AgentsBrowser({
                         >
                           <Settings2 className="size-[18px] shrink-0" />
                         </ButtonLink>
-                        <CloneAgentButton
-                          slug={slug}
-                          agentId={agent.id}
-                          agentName={agent.name}
-                          runtimeKind={agent.runtimeKind}
-                        />
                         <DeleteAgentButton slug={slug} agentId={agent.id} />
                       </div>
                     </div>

@@ -68,11 +68,9 @@ export function ToolkitInstall({
   const autoDescription =
     autoClient === "codex"
       ? t("codexAutoSyncDescription")
-      : autoClient === "hermes"
-        ? t("hermesAutoSyncDescription")
-        : autoClient === "opencode"
-          ? t("openCodeAutoSyncDescription")
-          : t("claudeAutoSyncDescription");
+      : autoClient === "opencode"
+        ? t("openCodeAutoSyncDescription")
+        : t("claudeAutoSyncDescription");
 
   return (
     <div className="rounded-lg border border-border bg-card p-4 border-border bg-card">

@@ -1,8 +1,11 @@
 # 运行时运维与架构升级
 
-> **English**: [RUNTIME_OPERATIONS.md](./RUNTIME_OPERATIONS.md)
 
-本指南面向单所有者 ToolPlane 部署的运维人员，说明架构加固迁移、运行时恢复、安装凭据及普通 Hermes 附件配额，不引入 active-active 执行。
+本指南面向单所有者 ToolPlane 部署的运维人员，说明架构加固迁移、运行时恢复与安装凭据，不引入 active-active 执行。
+
+本次移除 Hermes managed / Hermes RPC 后，仅保留 Pi、Pi SDK、Claude Code 与 DSH。迁移 `20261026120000_remove_hermes_runtime` 会删除这两类 Agent 及其级联历史，删除运行时、附件、上传预留表与会话专用字段；不可仅靠回退应用恢复。应用前必须备份并明确批准目标数据库。消息平台及 Public API/A2A 协议基础设施保留，但公共 Endpoint 暂无执行适配器。
+
+数据库迁移不会停止 Docker 容器或删除物理卷；旧运行时资源须在旧所有者排空后按备份与资源归属清单单独处理，不能把删除数据库记录视为资源清理完成。本次代码清理本身不执行生产迁移或删除生产卷。
 
 ## 升级顺序
 
@@ -102,7 +105,7 @@ Pi 市场仅负责发现与安装，不提供发布表单。
 获批包可下载确定性的 npm 兼容 tarball。发布到配置的 npm registry 需要 owner/admin
 权限和明确确认，不能覆盖既有版本，也不自动进入官方目录。
 
-**已安装 → 客户端安装**为 Pi、Claude Code、Codex、OpenCode 或 Hermes 创建固定
+**已安装 → 客户端安装**为 Pi、Claude Code、Codex 或 OpenCode 创建固定
 release 的独立登记。下载安装器与一次性私有配置，以 `chmod 600` 保护配置，再执行
 `node pi-package-install.mjs install --config <私有配置.json>`；更新与卸载分别使用
 `update`、`uninstall`。Pi 获取原生包资源，其他客户端只获取支持的 Skill/MCP 配置，
@@ -201,7 +204,6 @@ owner 停机只停止 driver，不等于用户取消。恢复仍须经过原有 
 仍控制外部调用、个人令牌认证的 A2A 入站和渠道授权；远程目标与渠道执行身份仍需
 各自授权。修改开关仍需管理员权限和确认，选择子智能体不会自动启用此开关。
 个人 Bearer 只用于操作者控制的服务，不能交给第三方 Agent、放进提示词或浏览器代码。
-Hermes 发布服务及独立 key 流程保持原样。
 
 在独立真实 PostgreSQL 测试库串行运行 `pi-harness-recovery`、`pi-harness-host`、
 `pi-harness-binding`、`pi-harness-worker` 和 `pi-agent-communication` 集成测试，
@@ -252,30 +254,12 @@ driver 消失且原 operation 仍未终结；未提示前不要重启。确认 `
 `node scripts/a2a-e2e-preflight.mjs` 仅检查前提，不是 E2E 通过证明。
 
 
-## 普通 Hermes 附件
-
-所有大小配置经过同一解析器。单文件默认仍为 **1,000,000,000 字节**；绝对硬上限为 **2,000,000,000 字节**，与当前 `AgentAttachment.size` 的 Prisma Int 一致。`TOOLPLANE_ATTACHMENT_HARD_MAX_BYTES` 可进一步降低硬上限。数据库设置优先于 `TOOLPLANE_MAX_ATTACHMENT_BYTES`，再到默认值，但所有来源均受硬上限约束。无效值报错，不静默放宽；数据库读取失败时，已有有效缓存的进程可使用最后有效值并显示 cached，冷启动进程拒绝新上传。
-
-默认配额：
-
-| 环境变量 | 默认值 | 范围 |
-|---|---:|---|
-| `TOOLPLANE_ATTACHMENT_WORKSPACE_BYTES` | 20,000,000,000 | 一个工作区已提交的普通 Agent 附件及待结算预留 |
-| `TOOLPLANE_ATTACHMENT_AGENT_BYTES` | 5,000,000,000 | 同一 Agent 的上述用量 |
-| `TOOLPLANE_ATTACHMENT_CONCURRENT_UPLOADS` | 2 | 每工作区活跃普通 Agent 上传数 |
-
-上传前在持有工作区行锁的短事务中预留额度，不在传输整个字节流时持有数据库事务。缺少 Content-Length 时预留单文件最大额度；即使伪造头部，实际流入字节也不能超出预留。成功时写附件元数据并移除预留，二者原子完成；失败仍计入用量，直到确认物理文件清理完成。
-
-预留 30 分钟到期，长于有界上传时间。owner 每分钟执行有限批次回收，只经所属 Hermes 沙箱删除预留中记录的最终和临时路径。运行时缺失、不可达或清理失败时继续计费；应调查原因，而非手工删除预留记录制造空闲额度。销毁卷仍由 runtime/workspace 删除流程负责。
-
-这些是**普通 Hermes Agent 附件**配额，不是整个 Docker 磁盘配额。Workspace/Work 上传、Hermes 归档、快照和运行时直接生成的文件有各自生命周期，不会悄然计入此处。Connector 文件在用户机器上，不由本配额管理器回收。运维仍须监控物理磁盘并设置文件系统限制。已有附件计入准入用量，升级不清理它们；超过新配额的部署应显式调高配额，或通过支持的数据生命周期移除内容。
-
 ## 安装与诊断变化
 
-稳定命名、多设备凭据、五分钟轮换宽限、可恢复本地更新和准确归属卸载，详见 [Toolkit 同步](./TOOLKIT_SYNC.md)。预览链接不再签发 Token；安装链接仍是敏感能力，泄露后应重新生成。
+稳定命名、多设备凭据、五分钟轮换宽限、可恢复本地更新和准确归属卸载，详见 Toolkit 同步。预览链接不再签发 Token；安装链接仍是敏感能力，泄露后应重新生成。
 
 Agent 内容采集见[日志与审计](./OBSERVABILITY.zh-CN.md)。普通诊断不启用内容采集；显式开启后仍有大小限制、审计，最多保留 24 小时。公共 Endpoint 禁止策略不可覆盖。
 
 ## 验证边界
 
-`tests/unit/runtime-owner.test.ts` 验证状态机和租约故障路径；`tests/integration/runtime-owner-lease.test.ts` 需要真实独立 PostgreSQL 会话，验证锁争用和连接丢失。`tests/integration/attachment-reservations.test.ts` 验证额度准入与事务结算。`TOOLPLANE_TEST_PGLITE=1` 仅供隔离嵌入式数据库冒烟测试，跳过其不支持的多会话场景，不能在 CI 或生产设置。Docker 生命周期及真实客户端验收需要相应运行环境，不能用解析器或 mock 测试通过替代。
+`tests/unit/runtime-owner.test.ts` 验证状态机和租约故障路径；`tests/integration/runtime-owner-lease.test.ts` 需要真实独立 PostgreSQL 会话，验证锁争用和连接丢失。`tests/unit/workspace-attachment-boundary-coverage.test.ts` 验证通用附件的认证、成员读取、上传者删除和并发占用边界。`TOOLPLANE_TEST_PGLITE=1` 仅供隔离嵌入式数据库冒烟测试，跳过其不支持的多会话场景，不能在 CI 或生产设置。Docker 生命周期及真实客户端验收需要相应运行环境，不能用解析器或 mock 测试通过替代。

@@ -10,15 +10,12 @@ import { posix } from "node:path";
 import type { Prisma } from "@prisma/client";
 import { Type, type ToolCall } from "@earendil-works/pi-ai";
 import { db } from "@/lib/db";
-import { normalizeReasoningEffort } from "@/lib/agents/constants";
 import { generateWorkSessionTitle } from "@/lib/agents/conversation-naming";
 import {
   activeConversationMessages,
   CLEAR_CONTEXT_PART,
-  compactedConversationSeed,
 } from "@/lib/agents/conversation-context";
 import { getAgentForRun } from "@/lib/agents/queries";
-import { ensureConversationRuntimeSession } from "@/lib/agents/mutations";
 import {
   resolveAgentTools,
   resolveAgentPiPackages,
@@ -47,15 +44,6 @@ import type {
   RuntimeUsage,
 } from "@/lib/agents/runtime-commands";
 import { runDedicatedSandboxTurn } from "@/lib/agents/sandbox-turn";
-import {
-  runHermesWork,
-  stopHermesWorkRun,
-  type HermesWorkApproval,
-} from "@/lib/agents/hermes/work";
-import {
-  acquireHermesRuntimeWriteLease,
-  HERMES_RUNTIME_COPY_IN_PROGRESS_ERROR,
-} from "@/lib/agents/hermes/runtime";
 import type { ContextUsageSnapshot } from "@/lib/context-usage";
 import { effectiveStatus } from "@/lib/process/supervisor";
 import { deploymentLabel } from "@/lib/workspace/deployment-label";
@@ -85,8 +73,6 @@ type RuntimeSnapshot = {
   installedSkillIds?: string[];
   knowledgeBaseIds?: string[];
   workingDirectory?: string;
-  runtimeId?: string | null;
-  hermesRunId?: string | null;
 };
 
 type RuntimeMessage = {
@@ -145,18 +131,6 @@ type WorkTurnTiming = {
   runtimeKind: string;
   modelName?: string;
 };
-
-function hermesMcpToolOrigin(
-  toolName: string,
-  deploymentIds: readonly string[],
-) {
-  const deploymentId = [...deploymentIds]
-    .sort((left, right) => right.length - left.length)
-    .find((id) => toolName.startsWith(`${id}__`));
-  if (!deploymentId) return null;
-  const originalToolName = toolName.slice(deploymentId.length + 2);
-  return originalToolName ? { deploymentId, originalToolName } : null;
-}
 
 type CoordinatorState = {
   draining: boolean;
@@ -536,79 +510,6 @@ function workSystemPrompt(
     .join("\n\n");
 }
 
-function latestWorkTask(
-  messages: RuntimeMessage[],
-  fallback: string | null,
-): string {
-  const projected = uiMessagesToPi(messages)
-    .filter((message) => message.role === "user")
-    .at(-1);
-  const content = projected?.content;
-  const text =
-    typeof content === "string"
-      ? content
-      : Array.isArray(content)
-        ? content
-            .flatMap((part) => (part.type === "text" ? [part.text] : []))
-            .join("\n")
-        : "";
-  return text.trim() || fallback?.trim() || "";
-}
-
-async function resolveHermesWorkApproval(
-  work: { id: string; workspaceId: string },
-  controller: AbortController,
-  request: HermesWorkApproval,
-  toolCallId: string,
-  onWait?: (durationMs: number) => void,
-): Promise<"allow" | "deny"> {
-  const approval = await db.$transaction(async (tx) => {
-    const waiting = await tx.workSession.updateMany({
-      where: { id: work.id, workspaceId: work.workspaceId, status: "running" },
-      data: { status: "waiting_approval" },
-    });
-    if (!waiting.count) return null;
-    return tx.workApproval.create({
-      data: {
-        workSessionId: work.id,
-        toolCallId,
-        toolName: "Hermes command",
-        input: {
-          command: request.command,
-          description: request.description,
-          patternKeys: request.patternKeys,
-          choices: request.choices,
-        },
-      },
-    });
-  });
-  if (!approval) throw new Error("Work is no longer running.");
-  releaseWorkSlot(work.id);
-  const waitStartedAt = Date.now();
-  let decision: Awaited<ReturnType<typeof waitForApproval>>;
-  try {
-    decision = await waitForApproval(approval.id, controller.signal);
-  } finally {
-    onWait?.(Math.max(0, Date.now() - waitStartedAt));
-  }
-  await acquireWorkSlot(work.id, controller.signal);
-  const resumed = await db.workSession.updateMany({
-    where: {
-      id: work.id,
-      workspaceId: work.workspaceId,
-      status: "waiting_approval",
-    },
-    data: { status: "running" },
-  });
-  if (resumed.count !== 1 || controller.signal.aborted) {
-    releaseWorkSlot(work.id);
-    throw controller.signal.aborted
-      ? abortError(controller.signal)
-      : new Error("Work is no longer waiting for approval.");
-  }
-  return decision === "allowed" ? "allow" : "deny";
-}
-
 async function appendAssistantResult(
   conversationId: string,
   text: string,
@@ -707,8 +608,7 @@ async function executeWork(workSessionId: string) {
   registerWorkRun(work.id, controller);
   const runStartedAt = Date.now();
   const initialSnapshot = snapshot(work.runtimeSnapshot);
-  const initialModelName =
-    initialSnapshot.model ?? work.conversation.hermesModel ?? undefined;
+  const initialModelName = initialSnapshot.model ?? undefined;
   startWorkOutput(work.id, {
     startedAt: runStartedAt,
     runtimeKind: work.runtimeKind,
@@ -826,12 +726,7 @@ async function executeWork(workSessionId: string) {
     finishReasoning();
     if (!activity.toolCallId) return;
     const previous = toolTrace.get(activity.toolCallId);
-    const runtimeOrigin =
-      !activity.deploymentId && work.runtimeKind === "hermes"
-        ? hermesMcpToolOrigin(activity.toolName ?? "", resolvedDeploymentIds)
-        : null;
-    const candidateDeploymentId =
-      activity.deploymentId ?? runtimeOrigin?.deploymentId;
+    const candidateDeploymentId = activity.deploymentId;
     const deploymentId =
       candidateDeploymentId &&
       resolvedDeploymentIds.includes(candidateDeploymentId)
@@ -841,9 +736,7 @@ async function executeWork(workSessionId: string) {
       ? (deploymentNames.get(deploymentId) ?? previous?.deploymentName)
       : previous?.deploymentName;
     const originalToolName = deploymentId
-      ? (activity.originalToolName ??
-        runtimeOrigin?.originalToolName ??
-        previous?.originalToolName)
+      ? (activity.originalToolName ?? previous?.originalToolName)
       : previous?.originalToolName;
     const startedAt = toolStartedAt.get(activity.toolCallId);
     const reportedDurationMs =
@@ -958,7 +851,6 @@ async function executeWork(workSessionId: string) {
       throw new Error("Work sandbox is unavailable.");
     }
     if (
-      work.runtimeKind !== "hermes" &&
       !isDedicatedSandboxRuntimeKind(work.runtimeKind) &&
       effectiveStatus(
         work.sandbox.deploymentId,
@@ -983,19 +875,7 @@ async function executeWork(workSessionId: string) {
     );
     const provider = agent.provider;
     const model = agent.model;
-    if (work.runtimeKind === "hermes") {
-      if (
-        agent.runtime?.kind !== "hermes" ||
-        agent.runtime.sandboxId !== work.sandbox.id ||
-        (saved.runtimeId && saved.runtimeId !== agent.runtime.id)
-      ) {
-        throw new Error(
-          "The Hermes runtime sandbox changed after this Work session was created. Start a new Work session.",
-        );
-      }
-      if (!agent.modelProviders.length)
-        throw new Error("Hermes Work Agent has no configured model provider.");
-    } else if (!provider || !model) {
+    if (!provider || !model) {
       throw new Error("Work Agent has no configured model.");
     }
     const workingDirectory =
@@ -1060,173 +940,7 @@ async function executeWork(workSessionId: string) {
       parts: message.parts as RuntimeMessage["parts"],
     }));
     let response: string;
-    if (work.runtimeKind === "hermes") {
-      const runtimeSession = await ensureConversationRuntimeSession(
-        work.workspaceId,
-        work.agentId,
-        work.conversationId,
-      );
-      if (!runtimeSession)
-        throw new Error("Hermes Work conversation no longer exists.");
-      const writeLease = acquireHermesRuntimeWriteLease(
-        work.workspaceId,
-        work.agentId,
-      );
-      if (!writeLease) throw new Error(HERMES_RUNTIME_COPY_IN_PROGRESS_ERROR);
-      const activeTools = new Map<string, string[]>();
-      const subagentTools = new Map<string, string>();
-      let eventSequence = 0;
-      try {
-        const result = await runHermesWork({
-          agent,
-          task: latestWorkTask(runtimeMessages, work.task),
-          instructions: [
-            workSystemPrompt(workingDirectory, true, "/opt/data/workspace"),
-            compactedConversationSeed(work.conversation.messages),
-          ]
-            .filter(Boolean)
-            .join("\n\n"),
-          workingDirectory,
-          sessionId: runtimeSession.runtimeSessionId,
-          sessionKey: runtimeSession.runtimeSessionKey,
-          profile: work.conversation.hermesProfile,
-          provider: work.conversation.hermesProvider,
-          model: work.conversation.hermesModel,
-          reasoningEffort:
-            normalizeReasoningEffort(work.conversation.reasoningEffort) ??
-            "default",
-          writeLease,
-          signal: controller.signal,
-          onRunStarted: async (runId) => {
-            await db.workSession.updateMany({
-              where: { id: work.id, status: "running" },
-              data: { runtimeSnapshot: { ...saved, hermesRunId: runId } },
-            });
-          },
-          onMessageDelta: ({ delta }) => {
-            finishReasoning();
-            publishWorkOutput(work.id, delta);
-          },
-          onReasoningAvailable: ({ text }) => {
-            if (text)
-              onActivity({
-                type: "reasoning",
-                status: "running",
-                delta: `${text}\n`,
-              });
-          },
-          onToolStarted: ({ runId, tool, preview }) => {
-            const toolName = tool || "Hermes tool";
-            const toolCallId = `hermes:${runId}:tool:${++eventSequence}`;
-            activeTools.set(toolName, [
-              ...(activeTools.get(toolName) ?? []),
-              toolCallId,
-            ]);
-            onActivity({
-              type: "tool",
-              status: "running",
-              toolCallId,
-              toolName,
-              input: preview ? { preview } : null,
-            });
-          },
-          onToolCompleted: ({ runId, tool, duration, error }) => {
-            const toolName = tool || "Hermes tool";
-            const pending = activeTools.get(toolName) ?? [];
-            const toolCallId =
-              pending.shift() ?? `hermes:${runId}:tool:${++eventSequence}`;
-            activeTools.set(toolName, pending);
-            onActivity({
-              type: "tool",
-              status: error ? "failed" : "completed",
-              toolCallId,
-              toolName,
-              output: { durationSeconds: duration },
-              ...(duration > 0
-                ? { durationMs: Math.round(duration * 1_000) }
-                : {}),
-              isError: error,
-            });
-          },
-          onSubagent: (event) => {
-            const key =
-              event.childSessionId ||
-              event.subagentId ||
-              String(event.taskIndex ?? eventSequence + 1);
-            const toolCallId =
-              event.event === "subagent.start"
-                ? `hermes:${event.runId}:subagent:${++eventSequence}`
-                : (subagentTools.get(key) ??
-                  `hermes:${event.runId}:subagent:${++eventSequence}`);
-            if (event.event === "subagent.start")
-              subagentTools.set(key, toolCallId);
-            else subagentTools.delete(key);
-            onActivity({
-              type: "tool",
-              status:
-                event.event === "subagent.start"
-                  ? "running"
-                  : event.status === "failed"
-                    ? "failed"
-                    : "completed",
-              toolCallId,
-              toolName: "delegate_task",
-              input:
-                event.event === "subagent.start"
-                  ? { goal: event.goal ?? event.preview ?? "" }
-                  : undefined,
-              output:
-                event.event === "subagent.complete"
-                  ? {
-                      status: event.status,
-                      summary: event.summary,
-                      output: event.outputTail,
-                    }
-                  : undefined,
-              isError: event.status === "failed",
-            });
-          },
-          onApproval: async (request) => {
-            const toolCallId = `hermes:${request.runId}:approval:${++eventSequence}`;
-            onActivity({
-              type: "tool",
-              status: "running",
-              toolCallId,
-              toolName: "Hermes approval",
-              input: {
-                command: request.command,
-                description: request.description,
-              },
-            });
-            const decision = await resolveHermesWorkApproval(
-              work,
-              controller,
-              request,
-              toolCallId,
-              (durationMs) => {
-                approvalWaitMs += durationMs;
-              },
-            );
-            onActivity({
-              type: "tool",
-              status: "completed",
-              toolCallId,
-              toolName: "Hermes approval",
-              output: { decision },
-              isError: decision === "deny",
-            });
-            return decision;
-          },
-        });
-        if (result.status === "failed")
-          throw new Error(result.error || "Hermes run failed.");
-        if (result.status === "cancelled")
-          throw new Error("Hermes run was cancelled.");
-        response = result.text;
-      } finally {
-        writeLease.release();
-      }
-    } else if (isDedicatedSandboxRuntimeKind(work.runtimeKind)) {
+    if (isDedicatedSandboxRuntimeKind(work.runtimeKind)) {
       const last = runtimeMessages.at(-1);
       const commandText =
         last?.role === "user"
@@ -1613,35 +1327,9 @@ export function kickWorkCoordinator() {
   );
 }
 
-async function stopInterruptedHermesRuns() {
-  const interrupted = await db.workSession.findMany({
-    where: {
-      runtimeKind: "hermes",
-      status: { in: ["running", "waiting_approval", "cancelling"] },
-    },
-    select: {
-      runtimeSnapshot: true,
-      agent: {
-        select: {
-          id: true,
-          workspaceId: true,
-          runtime: { select: { id: true, kind: true } },
-        },
-      },
-    },
-  });
-  await Promise.all(
-    interrupted.map(async (work) => {
-      const runId = snapshot(work.runtimeSnapshot).hermesRunId?.trim();
-      if (runId) await stopHermesWorkRun({ agent: work.agent, runId });
-    }),
-  );
-}
-
 export async function startWorkCoordinator() {
   if (!state.reconciled) {
     const now = new Date();
-    await stopInterruptedHermesRuns();
     await db.$transaction(async (tx) => {
       await tx.workApproval.updateMany({
         where: {

@@ -1,10 +1,10 @@
 "use client";
-import { AnimatedBadge } from "@/components/motion/animated-badge";
 import { Button, ButtonLink } from "@/components/motion/button/base";
 import { Input } from "@/components/motion/input";
+import { AnimatedBadge } from "@/components/motion/animated-badge";
 import { FormSelect } from "@/components/ui/FormSelect";
 
-import { useLocale, useTranslations } from "next-intl";
+import { useTranslations } from "next-intl";
 import { useRouter } from "next/navigation";
 import { useActionState, useEffect, useMemo, useRef, useState } from "react";
 import type { FocusEvent } from "react";
@@ -13,26 +13,18 @@ import {
   Bot,
   Box,
   BrainCircuit,
-  Check,
   ChevronDown,
-  Container,
-  Cpu,
   FileText,
   Hammer,
   Loader2,
   PackageCheck,
   Save,
   Server,
-  Square,
-  RefreshCw,
   Users,
 } from "lucide-react";
 import {
-  stopAgentRuntimeAction,
-  syncAgentRuntimeAction,
-  upgradeHermesRuntimeAction,
-  updateAgentRuntimeEnvAction,
   updateAgentAction,
+  updateAgentRuntimeEnvAction,
 } from "@/lib/agents/actions";
 import type { ActionState } from "@/lib/agents/actions";
 import { AGENT_STEP_BOUNDS } from "@/lib/agents/constants";
@@ -40,16 +32,12 @@ import {
   agentRuntimeBuiltinToolGroups,
   agentRuntimeDisplayName,
   agentRuntimeSupportsProviderFormat,
-  agentRuntimeCapabilities,
   isDedicatedSandboxRuntimeKind,
 } from "@/lib/agents/runtime-kind";
-import { formatInTimeZone } from "@/lib/timezone";
 import { AgentResourceSelect } from "@/components/dashboard/agents/AgentResourceSelect";
 import type { AgentResourceOption } from "@/components/dashboard/agents/AgentResourceSelect";
-import { HermesImageSelector } from "@/components/dashboard/agents/HermesImageSelector";
 import { ModelPicker } from "@/components/dashboard/models/ModelPicker";
 import type { ModelProviderOption } from "@/components/dashboard/models/ModelPicker";
-import { useUserTimeZone } from "@/components/timezone/UserTimeZoneContext";
 
 import { AgentBuiltInTools } from "@/components/dashboard/agents/AgentBuiltInTools";
 import { AgentSystemPromptEditor } from "@/components/dashboard/agents/AgentSystemPromptEditor";
@@ -95,7 +83,6 @@ export function AgentSettingsForm({
   systemPrompt,
   disabledBuiltinTools = [],
   providerId,
-  providerIds = [],
   model,
   maxSteps,
   providers,
@@ -108,8 +95,6 @@ export function AgentSettingsForm({
   runtimeEnvironment,
   sandboxes,
   subAgents,
-  runtime = null,
-  hermesImages,
   className = "max-w-2xl space-y-5 px-8 py-6",
   activeSection: controlledActiveSection,
   onSectionChange,
@@ -124,7 +109,6 @@ export function AgentSettingsForm({
   systemPrompt: string;
   disabledBuiltinTools?: string[];
   providerId: string | null;
-  providerIds?: string[];
   model: string | null;
   maxSteps: number;
   providers: Provider[];
@@ -137,24 +121,12 @@ export function AgentSettingsForm({
   runtimeEnvironment?: string;
   sandboxes: AgentResourceOption[];
   subAgents: AgentResourceOption[];
-  runtime?: {
-    kind: string;
-    image: string;
-    status: string;
-    lastError: string | null;
-    lastSyncedAt: string | null;
-    sandboxId: string;
-    environment?: string;
-  } | null;
-  hermesImages?: string[];
   className?: string;
   activeSection?: AgentSettingsSection;
   onSectionChange?: (section: AgentSettingsSection) => void;
   showNavigation?: boolean;
 }) {
   const t = useTranslations("console.agents");
-  const locale = useLocale();
-  const { timeZone } = useUserTimeZone();
   const router = useRouter();
   const formRef = useRef<HTMLFormElement>(null);
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -162,18 +134,6 @@ export function AgentSettingsForm({
     updateAgentAction,
     {},
   );
-  const [syncState, syncFormAction, isSyncPending] = useActionState<
-    ActionState,
-    FormData
-  >(syncAgentRuntimeAction, {});
-  const [stopState, stopFormAction, isStopPending] = useActionState<
-    ActionState,
-    FormData
-  >(stopAgentRuntimeAction, {});
-  const [upgradeState, upgradeFormAction, isUpgradePending] = useActionState<
-    ActionState,
-    FormData
-  >(upgradeHermesRuntimeAction, {});
   const [envState, envFormAction, isEnvPending] = useActionState<
     ActionState,
     FormData
@@ -192,9 +152,6 @@ export function AgentSettingsForm({
       ? provider.id
       : "";
   });
-  const [selectedProviderIds, setSelectedProviderIds] = useState(
-    () => new Set(providerIds),
-  );
   const [selectedModel, setSelectedModel] = useState(model ?? "");
   const [maxStepsValue, setMaxStepsValue] = useState(String(maxSteps));
   const [selectedDeploymentIds, setSelectedDeploymentIds] = useState(() =>
@@ -252,9 +209,6 @@ export function AgentSettingsForm({
   const [uncontrolledActiveSection, setUncontrolledActiveSection] =
     useState<AgentSettingsSection>("general");
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
-  const [lastRuntimeAction, setLastRuntimeAction] = useState<
-    "sync" | "stop" | "upgrade" | null
-  >(null);
   const compatibleProviders = useMemo(
     () =>
       providers.filter((provider) =>
@@ -270,16 +224,6 @@ export function AgentSettingsForm({
   const selectedProviderOption =
     compatibleProviders.find((provider) => provider.id === selectedProvider) ??
     null;
-  const providerOptions = useMemo(
-    () =>
-      providers.map((provider) => ({
-        id: provider.id,
-        label: provider.name,
-        description: t("providerModelCount", { count: provider.models.length }),
-        keywords: provider.models,
-      })),
-    [providers, t],
-  );
   const sandboxOptions = useMemo(
     () =>
       singleSandboxRuntime
@@ -290,9 +234,6 @@ export function AgentSettingsForm({
         : sandboxes,
     [sandboxes, singleSandboxRuntime],
   );
-  const isHermes =
-    agentRuntimeCapabilities(runtimeKind)?.providerBinding === "multiple";
-  const environmentSandboxId = runtimeSandboxId ?? runtime?.sandboxId ?? null;
   const runtimeLabel = agentRuntimeDisplayName(runtimeKind);
   const builtInToolCount = agentRuntimeBuiltinToolGroups(runtimeKind).reduce(
     (count, group) => count + group.tools.length,
@@ -379,24 +320,9 @@ export function AgentSettingsForm({
 
     router.refresh();
   }, [router, state.savedAt]);
-
   useEffect(() => {
-    if (
-      !syncState.savedAt &&
-      !stopState.savedAt &&
-      !upgradeState.savedAt &&
-      !envState.savedAt
-    )
-      return;
-
-    router.refresh();
-  }, [
-    envState.savedAt,
-    router,
-    stopState.savedAt,
-    syncState.savedAt,
-    upgradeState.savedAt,
-  ]);
+    if (envState.savedAt) router.refresh();
+  }, [envState.savedAt, router]);
 
   useEffect(
     () => () => {
@@ -434,48 +360,6 @@ export function AgentSettingsForm({
     clearAutoSaveTimer();
     event.currentTarget.requestSubmit();
   }
-
-  const activeRuntimeState =
-    lastRuntimeAction === "sync"
-      ? syncState
-      : lastRuntimeAction === "stop"
-        ? stopState
-        : upgradeState;
-  const runtimeActionPending =
-    lastRuntimeAction === "sync"
-      ? isSyncPending
-      : lastRuntimeAction === "stop"
-        ? isStopPending
-        : isUpgradePending;
-  const runtimeActionMessage = runtimeActionPending
-    ? lastRuntimeAction === "sync"
-      ? t("syncingRuntime")
-      : lastRuntimeAction === "stop"
-        ? t("stoppingRuntime")
-        : t("upgradingHermesRuntime")
-    : activeRuntimeState.error
-      ? activeRuntimeState.error
-      : activeRuntimeState.savedAt
-        ? lastRuntimeAction === "sync"
-          ? t("runtimeSynced")
-          : lastRuntimeAction === "stop"
-            ? t("runtimeStopped")
-            : t("hermesRuntimeUpgraded")
-        : null;
-  const runtimeControlsDisabled =
-    isPending ||
-    saveStatus === "dirty" ||
-    isSyncPending ||
-    isStopPending ||
-    isUpgradePending ||
-    isEnvPending;
-  const envMessage = isEnvPending
-    ? t("savingAndSyncingEnvironment")
-    : envState.error
-      ? envState.error
-      : envState.savedAt
-        ? t("environmentSaved")
-        : null;
 
   return (
     <form
@@ -635,11 +519,6 @@ export function AgentSettingsForm({
                   <span className="truncate font-medium text-foreground">
                     {runtimeLabel}
                   </span>
-                  {isHermes && runtime?.status ? (
-                    <span className="shrink-0 text-xs text-muted-foreground">
-                      {runtime.status}
-                    </span>
-                  ) : null}
                 </section>
               </div>
               {runtimeKind === "pi-sdk" ? (
@@ -655,24 +534,18 @@ export function AgentSettingsForm({
             hidden={activeSection !== "instructions"}
             aria-label={t("instructions")}
           >
-            {isHermes ? (
-              <p className="rounded-md bg-muted/40 px-3 py-3 text-sm leading-6 text-muted-foreground">
-                {t("hermesPromptManaged")}
-              </p>
-            ) : (
-              <AgentSystemPromptEditor
-                workspaceId={workspaceId}
-                name={nameValue}
-                description={descriptionValue}
-                providerId={selectedProvider}
-                model={selectedModel}
-                value={systemPromptValue}
-                onChange={(value) => {
-                  setSystemPromptValue(value);
-                  scheduleAutoSave();
-                }}
-              />
-            )}
+            <AgentSystemPromptEditor
+              workspaceId={workspaceId}
+              name={nameValue}
+              description={descriptionValue}
+              providerId={selectedProvider}
+              model={selectedModel}
+              value={systemPromptValue}
+              onChange={(value) => {
+                setSystemPromptValue(value);
+                scheduleAutoSave();
+              }}
+            />
           </section>
 
           <section
@@ -692,23 +565,17 @@ export function AgentSettingsForm({
                   className="w-full"
                 />
               </div>
-              {environmentSandboxId ? (
+              {runtimeSandboxId ? (
                 <div className="space-y-3 border-t border-border pt-5">
-                  <div>
-                    <h3 className="text-sm font-semibold text-foreground">
-                      {t("environmentVariables")}
-                    </h3>
-                    <p className="mt-0.5 text-xs text-muted-foreground">
-                      {isHermes
-                        ? t("hermesEnvironmentHelp")
-                        : t("runtimeEnvironmentHelp")}
-                    </p>
-                  </div>
+                  <h3 className="text-sm font-semibold text-foreground">
+                    {t("environmentVariables")}
+                  </h3>
+                  <p className="text-xs text-muted-foreground">
+                    {t("runtimeEnvironmentHelp")}
+                  </p>
                   <textarea
                     name="runtimeEnv"
-                    defaultValue={
-                      runtimeEnvironment ?? runtime?.environment ?? ""
-                    }
+                    defaultValue={runtimeEnvironment ?? ""}
                     onChange={(event) => event.stopPropagation()}
                     rows={6}
                     spellCheck={false}
@@ -720,23 +587,24 @@ export function AgentSettingsForm({
                     <p
                       role={envState.error ? "alert" : "status"}
                       aria-live="polite"
-                      className={
-                        envState.error
-                          ? "text-xs text-destructive"
-                          : "text-xs text-muted-foreground"
-                      }
+                      className="text-xs text-muted-foreground"
                     >
-                      {envMessage}
+                      {isEnvPending
+                        ? t("savingAndSyncingEnvironment")
+                        : envState.error ||
+                          (envState.savedAt ? t("environmentSaved") : null)}
                     </p>
                     <Button
                       type="submit"
                       formAction={envFormAction}
                       formNoValidate
-                      disabled={runtimeControlsDisabled}
+                      disabled={
+                        isPending || saveStatus === "dirty" || isEnvPending
+                      }
                       aria-busy={isEnvPending}
                       onClick={clearAutoSaveTimer}
-                      variant={"secondary"}
-                      size={"sm"}
+                      variant="secondary"
+                      size="sm"
                     >
                       {isEnvPending ? (
                         <Loader2 className="size-4 animate-spin" />
@@ -752,168 +620,6 @@ export function AgentSettingsForm({
               ) : null}
             </div>
           </section>
-
-          {isHermes && runtime ? (
-            <section
-              hidden={activeSection !== "advanced"}
-              className="rounded-lg border border-border bg-background"
-            >
-              <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
-                <div className="flex min-w-0 items-center gap-2.5">
-                  <Container className="size-[18px] shrink-0 text-muted-foreground" />
-                  <h3 className="text-sm font-semibold text-foreground">
-                    Hermes
-                  </h3>
-                  <AnimatedBadge status="neutral">
-                    {runtime.status}
-                  </AnimatedBadge>
-                </div>
-                <div className="flex gap-2">
-                  <Button
-                    type="submit"
-                    formAction={syncFormAction}
-                    formNoValidate
-                    disabled={runtimeControlsDisabled}
-                    aria-busy={isSyncPending}
-                    onClick={() => setLastRuntimeAction("sync")}
-                    variant={"secondary"}
-                    size={"sm"}
-                  >
-                    {isSyncPending ? (
-                      <Loader2 className="size-4 animate-spin" />
-                    ) : lastRuntimeAction === "sync" && syncState.savedAt ? (
-                      <Check className="size-4 text-muted-foreground" />
-                    ) : (
-                      <RefreshCw className="size-4" />
-                    )}
-                    {isSyncPending
-                      ? t("syncingRuntime")
-                      : lastRuntimeAction === "sync" && syncState.savedAt
-                        ? t("runtimeSynced")
-                        : t("syncRuntime")}
-                  </Button>
-                  <Button
-                    type="submit"
-                    formAction={stopFormAction}
-                    formNoValidate
-                    disabled={runtimeControlsDisabled}
-                    aria-busy={isStopPending}
-                    onClick={() => setLastRuntimeAction("stop")}
-                    variant={"secondary"}
-                    size={"sm"}
-                  >
-                    {isStopPending ? (
-                      <Loader2 className="size-4 animate-spin" />
-                    ) : lastRuntimeAction === "stop" && stopState.savedAt ? (
-                      <Check className="size-4 text-muted-foreground" />
-                    ) : (
-                      <Square className="size-3.5" />
-                    )}
-                    {isStopPending
-                      ? t("stoppingRuntime")
-                      : lastRuntimeAction === "stop" && stopState.savedAt
-                        ? t("runtimeStopped")
-                        : t("stopRuntime")}
-                  </Button>
-                </div>
-              </div>
-              <div className="space-y-2 px-4 py-4 text-sm">
-                <div className="grid gap-1 sm:grid-cols-[8rem_minmax(0,1fr)]">
-                  <span className="text-muted-foreground">
-                    {t("dockerImage")}
-                  </span>
-                  <code className="min-w-0 break-all text-xs text-foreground">
-                    {runtime.image}
-                  </code>
-                </div>
-                <div className="grid gap-1 sm:grid-cols-[8rem_minmax(0,1fr)]">
-                  <span className="text-muted-foreground">{t("sandbox")}</span>
-                  <code className="min-w-0 break-all text-xs text-foreground">
-                    {runtime.sandboxId}
-                  </code>
-                </div>
-                {runtime.lastSyncedAt ? (
-                  <div className="grid gap-1 sm:grid-cols-[8rem_minmax(0,1fr)]">
-                    <span className="text-muted-foreground">
-                      {t("lastSynced")}
-                    </span>
-                    <span className="text-xs text-foreground">
-                      {formatInTimeZone(
-                        runtime.lastSyncedAt,
-                        timeZone,
-                        { dateStyle: "medium", timeStyle: "short" },
-                        locale,
-                      )}
-                    </span>
-                  </div>
-                ) : null}
-                {runtime.lastError ? (
-                  <p className="rounded-md border border-border bg-muted px-3 py-2 text-xs text-destructive text-destructive">
-                    {runtime.lastError}
-                  </p>
-                ) : null}
-                {runtimeActionMessage ? (
-                  <p
-                    role={activeRuntimeState.error ? "alert" : "status"}
-                    aria-live="polite"
-                    className={
-                      activeRuntimeState.error
-                        ? "rounded-md border border-border bg-muted px-3 py-2 text-xs text-destructive text-destructive"
-                        : "text-xs text-muted-foreground"
-                    }
-                  >
-                    {runtimeActionMessage}
-                  </p>
-                ) : null}
-              </div>
-              <div className="space-y-3 border-t border-border px-4 py-4">
-                <div>
-                  <h4 className="text-sm font-semibold text-foreground">
-                    {t("hermesVersion")}
-                  </h4>
-                  <p className="mt-0.5 text-xs text-muted-foreground">
-                    {t("hermesRuntimeUpgradeHelp")}
-                  </p>
-                </div>
-                <HermesImageSelector
-                  key={runtime.image}
-                  id="settings-hermes-version"
-                  images={hermesImages}
-                  value={runtime.image}
-                  disabled={runtimeControlsDisabled}
-                />
-                <div className="flex flex-wrap items-center justify-end gap-3">
-                  <Button
-                    type="submit"
-                    formAction={upgradeFormAction}
-                    formNoValidate
-                    disabled={runtimeControlsDisabled}
-                    aria-busy={isUpgradePending}
-                    onClick={() => {
-                      clearAutoSaveTimer();
-                      setLastRuntimeAction("upgrade");
-                    }}
-                    variant={"secondary"}
-                    size={"sm"}
-                  >
-                    {isUpgradePending ? (
-                      <Loader2 className="size-4 animate-spin" />
-                    ) : lastRuntimeAction === "upgrade" &&
-                      upgradeState.savedAt ? (
-                      <Check className="size-4 text-muted-foreground" />
-                    ) : (
-                      <RefreshCw className="size-4" />
-                    )}
-                    {isUpgradePending
-                      ? t("upgradingHermesRuntime")
-                      : lastRuntimeAction === "upgrade" && upgradeState.savedAt
-                        ? t("hermesRuntimeUpgraded")
-                        : t("upgradeHermesRuntime")}
-                  </Button>
-                </div>
-              </div>
-            </section>
-          ) : null}
 
           <section
             hidden={activeSection !== "builtInTools"}
@@ -1165,15 +871,13 @@ export function AgentSettingsForm({
                 />
               </div>
             ) : null}
-            {!isHermes ? (
-              <p className="mt-3 text-xs leading-5 text-muted-foreground">
-                {t(
-                  runtimeKind === "pi-sdk"
-                    ? "piSdkRuntimeDescription"
-                    : "nativeHarnessSandboxHelp",
-                )}
-              </p>
-            ) : null}
+            <p className="mt-3 text-xs leading-5 text-muted-foreground">
+              {t(
+                runtimeKind === "pi-sdk"
+                  ? "piSdkRuntimeDescription"
+                  : "nativeHarnessSandboxHelp",
+              )}
+            </p>
           </section>
 
           <section
@@ -1193,81 +897,58 @@ export function AgentSettingsForm({
             />
           </section>
 
-          <section
-            hidden={activeSection !== "general"}
-            aria-label={isHermes ? t("modelProviders") : t("model")}
-          >
+          <section hidden={activeSection !== "general"} aria-label={t("model")}>
             <div className="grid items-start gap-3 sm:grid-cols-2">
-              {isHermes ? (
-                <div className="space-y-2 sm:col-span-2">
-                  <AgentResourceSelect
-                    icon={Cpu}
-                    label={t("modelProviders")}
-                    name="providerId"
-                    options={providerOptions}
-                    selectedIds={selectedProviderIds}
-                    onSelectionChange={(next) => {
-                      setSelectedProviderIds(next);
-                      scheduleAutoSave();
-                    }}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    {t("hermesProviderSelectionHelp")}
-                  </p>
-                </div>
-              ) : (
-                <div className="sm:col-span-2">
-                  <input
-                    type="hidden"
-                    name="providerId"
-                    value={selectedProvider}
-                  />
-                  <input type="hidden" name="model" value={selectedModel} />
-                  <span className="mb-1.5 block text-xs font-semibold text-foreground">
-                    {t("model")}
-                  </span>
-                  <ModelPicker
-                    providers={compatibleProviders}
-                    value={
-                      selectedProvider && selectedModel
-                        ? { providerId: selectedProvider, model: selectedModel }
-                        : null
-                    }
-                    onSelect={(selection) => {
-                      setSelectedProvider(selection.providerId);
-                      setSelectedModel(selection.model);
-                      scheduleAutoSave();
-                    }}
-                    onConfigure={() => {
-                      window.location.assign(
-                        `/app/${encodeURIComponent(slug)}/providers`,
-                      );
-                    }}
-                    trigger={
-                      <Button
-                        variant="secondary"
-                        type="button"
-                        aria-label={`${t("model")}: ${selectedModel || t("selectModel")}`}
-                        className="w-full text-left"
-                      >
-                        <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-semibold text-muted-foreground">
-                          {selectedProviderOption?.name
-                            .charAt(0)
-                            .toUpperCase() || "M"}
-                        </span>
-                        <span className="min-w-0 flex-1 truncate">
-                          {selectedModel || t("selectModel")}
-                        </span>
-                        <span className="hidden max-w-44 truncate text-xs text-muted-foreground sm:block">
-                          {selectedProviderOption?.name}
-                        </span>
-                        <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
-                      </Button>
-                    }
-                  />
-                </div>
-              )}
-              {!isHermes && selectedProvider && models.length === 0 ? (
+              <div className="sm:col-span-2">
+                <input
+                  type="hidden"
+                  name="providerId"
+                  value={selectedProvider}
+                />
+                <input type="hidden" name="model" value={selectedModel} />
+                <span className="mb-1.5 block text-xs font-semibold text-foreground">
+                  {t("model")}
+                </span>
+                <ModelPicker
+                  providers={compatibleProviders}
+                  value={
+                    selectedProvider && selectedModel
+                      ? { providerId: selectedProvider, model: selectedModel }
+                      : null
+                  }
+                  onSelect={(selection) => {
+                    setSelectedProvider(selection.providerId);
+                    setSelectedModel(selection.model);
+                    scheduleAutoSave();
+                  }}
+                  onConfigure={() => {
+                    window.location.assign(
+                      `/app/${encodeURIComponent(slug)}/providers`,
+                    );
+                  }}
+                  trigger={
+                    <Button
+                      variant="secondary"
+                      type="button"
+                      aria-label={`${t("model")}: ${selectedModel || t("selectModel")}`}
+                      className="w-full text-left"
+                    >
+                      <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-semibold text-muted-foreground">
+                        {selectedProviderOption?.name.charAt(0).toUpperCase() ||
+                          "M"}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate">
+                        {selectedModel || t("selectModel")}
+                      </span>
+                      <span className="hidden max-w-44 truncate text-xs text-muted-foreground sm:block">
+                        {selectedProviderOption?.name}
+                      </span>
+                      <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+                    </Button>
+                  }
+                />
+              </div>
+              {selectedProvider && models.length === 0 ? (
                 <p className="rounded-md border border-border bg-muted px-3 py-2 text-xs text-muted-foreground text-muted-foreground sm:col-span-2">
                   {t(
                     "thisProviderHasNoCachedModelsRefreshItsModelsOnTheModelProvidersTab",

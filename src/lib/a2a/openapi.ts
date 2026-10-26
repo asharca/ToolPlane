@@ -152,7 +152,7 @@ const cardResponse = {
 const localDescription =
   "Enable External A2A & channel access in Agent settings after configuring its model and sandbox. Use an account-level personal Bearer token from Account settings → API tokens, belonging to a user with workspace access. Server-to-server only: every Origin header is rejected, including an empty value. Cookies, Toolkit tokens and published-service keys are not accepted. Never share an account token with third parties. Card and RPC share this URL, using GET and POST respectively.";
 const publicDescription =
-  "Publish an active isolated Hermes Endpoint, enable its A2A access, then create a dedicated client/key in Agent settings → A2A. Requires a service key with a2a:read, a2a:send and/or a2a:cancel scopes for the requested operation; ordinary Responses keys do not grant A2A access. Keep keys server-side. Task access is scoped to the client identity that created the task, not merely knowledge of its ID. Browser Origin requests are rejected.";
+  "Published endpoint execution is unavailable for all currently supported Agent runtimes. Existing task history, cancellation, credentials and management remain available; new publication and task admission are rejected. Local workspace and remote Agent collaboration are independent. Requires a service key with a2a:read, a2a:send and/or a2a:cancel scopes for the requested operation; ordinary Responses keys do not grant A2A access. Keep keys server-side. Task access is scoped to the client identity that created the task. Browser Origin requests are rejected.";
 
 export const a2aOpenApi = {
   tags: [

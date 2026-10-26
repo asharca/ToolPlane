@@ -24,7 +24,7 @@ describe("durable Work output replay lifecycle", () => {
     const second = subscribeWorkOutput("listener-isolation", healthy);
     startWorkOutput("listener-isolation", {
       startedAt: 42,
-      runtimeKind: "hermes",
+      runtimeKind: "pi-sdk",
       modelName: "model",
     });
     publishWorkOutput("listener-isolation", "hello");
@@ -42,7 +42,7 @@ describe("durable Work output replay lifecycle", () => {
       done: true,
       active: false,
       startedAt: 42,
-      runtimeKind: "hermes",
+      runtimeKind: "pi-sdk",
       modelName: "model",
     });
     first.unsubscribe();

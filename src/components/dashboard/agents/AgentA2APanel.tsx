@@ -33,7 +33,6 @@ const cardClass =
 export function AgentA2APanel({
   slug,
   agentId,
-  runtimeKind,
   initialTaskId,
 }: {
   slug: string;
@@ -48,9 +47,7 @@ export function AgentA2APanel({
   const [busy, setBusy] = useState(false);
   const [secret, setSecret] = useState("");
   const [name, setName] = useState("");
-  const [mode, setMode] = useState<"local" | "public">(
-    runtimeKind === "hermes" ? "public" : "local",
-  );
+  const [mode, setMode] = useState<"local" | "public">("local");
   const flight = useRef(false);
   const mounted = useRef(true);
   const base = `/api/v1/workspaces/${encodeURIComponent(slug)}/agents/${encodeURIComponent(agentId)}/a2a/console`;
@@ -299,73 +296,64 @@ export function AgentA2APanel({
           {view.local.supported ? (
             <AgentA2ARemotes key={base} base={base} />
           ) : null}
-          {runtimeKind === "hermes" ? (
-            <section className={cardClass} aria-labelledby="a2a-public-heading">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <h3 id="a2a-public-heading" className="font-semibold">
-                    {t("publicTitle")}
-                  </h3>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {t("publicDescription")}
-                  </p>
-                </div>
-                <AnimatedBadge
-                  status={view.endpoint?.enabled ? "success" : "neutral"}
-                >
-                  {t(view.endpoint?.enabled ? "enabled" : "disabled")}
-                </AnimatedBadge>
-              </div>
-              <p className="text-sm text-muted-foreground">
-                {t("publicBoundary")}
-              </p>
-              {!view.endpoint?.ready ? (
-                <div
-                  role="alert"
-                  className="space-y-2 text-sm text-muted-foreground"
-                >
-                  {t("publishFirst")}{" "}
-                  {runtimeKind === "hermes" ? (
-                    <a className="underline" href="?settings=api">
-                      {t("openPublication")}
-                    </a>
-                  ) : null}
-                </div>
-              ) : (
-                <p className="text-xs text-muted-foreground">
-                  {t("revision", { version: view.endpoint.revision ?? "—" })}
+          <section className={cardClass} aria-labelledby="a2a-public-heading">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 id="a2a-public-heading" className="font-semibold">
+                  {t("publicTitle")}
+                </h3>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {t("publicDescription")}
                 </p>
-              )}
-              <Button
-                disabled={
-                  locked || (!view.endpoint?.enabled && !view.endpoint?.ready)
-                }
-                onClick={() => {
-                  if (
-                    window.confirm(
-                      t(
-                        view.endpoint?.enabled
-                          ? "disablePublicConfirm"
-                          : "enablePublicConfirm",
-                      ),
-                    )
-                  )
-                    void mutate({
-                      action: "set-public",
-                      enabled: !view.endpoint?.enabled,
-                    });
-                }}
-                variant={view.endpoint?.enabled ? "secondary" : "primary"}
+              </div>
+              <AnimatedBadge
+                status={view.endpoint?.enabled ? "success" : "neutral"}
               >
-                {t(view.endpoint?.enabled ? "disablePublic" : "enablePublic")}
-              </Button>
-            </section>
-          ) : null}
-          {runtimeKind === "pi-sdk" ? (
-            <p className={`${cardClass} text-sm text-muted-foreground`}>
-              {t("piSdkPublicUnsupported")}
+                {t(view.endpoint?.enabled ? "enabled" : "disabled")}
+              </AnimatedBadge>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              {t("publicBoundary")}
             </p>
-          ) : null}
+            {!view.endpoint?.ready ? (
+              <div
+                role="alert"
+                className="space-y-2 text-sm text-muted-foreground"
+              >
+                {t("publishFirst")}{" "}
+                <a className="underline" href="?settings=api">
+                  {t("openPublication")}
+                </a>
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                {t("revision", { version: view.endpoint.revision ?? "—" })}
+              </p>
+            )}
+            <Button
+              disabled={
+                locked || (!view.endpoint?.enabled && !view.endpoint?.ready)
+              }
+              onClick={() => {
+                if (
+                  window.confirm(
+                    t(
+                      view.endpoint?.enabled
+                        ? "disablePublicConfirm"
+                        : "enablePublicConfirm",
+                    ),
+                  )
+                )
+                  void mutate({
+                    action: "set-public",
+                    enabled: !view.endpoint?.enabled,
+                  });
+              }}
+              variant={view.endpoint?.enabled ? "secondary" : "primary"}
+            >
+              {t(view.endpoint?.enabled ? "disablePublic" : "enablePublic")}
+            </Button>
+          </section>
           <section className={cardClass} aria-labelledby="a2a-connect-heading">
             <h3 id="a2a-connect-heading" className="font-semibold">
               {t("connectionTitle")}
@@ -378,29 +366,27 @@ export function AgentA2APanel({
                 {t("invalidOrigin")}
               </div>
             ) : null}
-            {runtimeKind === "hermes" ? (
-              <fieldset
-                className="m-0 flex min-w-0 flex-wrap gap-2 border-0 p-0"
-                aria-label={t("connectionMode")}
+            <fieldset
+              className="m-0 flex min-w-0 flex-wrap gap-2 border-0 p-0"
+              aria-label={t("connectionMode")}
+            >
+              <Button
+                aria-pressed={mode === "local"}
+                onClick={() => setMode("local")}
+                variant={mode === "local" ? "primary" : "secondary"}
+                size={"sm"}
               >
-                <Button
-                  aria-pressed={mode === "local"}
-                  onClick={() => setMode("local")}
-                  variant={mode === "local" ? "primary" : "secondary"}
-                  size={"sm"}
-                >
-                  {t("localTitle")}
-                </Button>
-                <Button
-                  aria-pressed={mode === "public"}
-                  onClick={() => setMode("public")}
-                  variant={mode === "public" ? "primary" : "secondary"}
-                  size={"sm"}
-                >
-                  {t("publicTitle")}
-                </Button>
-              </fieldset>
-            ) : null}
+                {t("localTitle")}
+              </Button>
+              <Button
+                aria-pressed={mode === "public"}
+                onClick={() => setMode("public")}
+                variant={mode === "public" ? "primary" : "secondary"}
+                size={"sm"}
+              >
+                {t("publicTitle")}
+              </Button>
+            </fieldset>
             <p className="text-sm text-muted-foreground">
               {t(mode === "local" ? "accountCredential" : "serviceCredential")}
             </p>
@@ -423,7 +409,7 @@ export function AgentA2APanel({
               </p>
             )}
           </section>
-          {runtimeKind === "hermes" && view.canManage && view.endpoint ? (
+          {view.canManage && view.endpoint ? (
             <section className={cardClass} aria-labelledby="a2a-keys-heading">
               <h3
                 id="a2a-keys-heading"

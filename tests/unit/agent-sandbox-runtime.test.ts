@@ -231,7 +231,7 @@ describe("sandbox Agent runtime helpers", () => {
 
   it("routes all dedicated runtimes through the three generic provider protocols", () => {
     expect(CLAUDE_RUNTIME_USER).toBe("1000:1000");
-    for (const runtime of ["pi", "claude-code", "dsh", "hermes-rpc"]) {
+    for (const runtime of ["pi", "claude-code", "dsh"]) {
       expect(
         ["openai", "openai-responses", "anthropic"].every((format) =>
           agentRuntimeSupportsProviderFormat(runtime, format),

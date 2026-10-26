@@ -12,17 +12,16 @@
 
 本地 Context 使用 `targetKind=local`、工作区、Agent、调用用户和配置指纹；不创建虚假的
 Endpoint、API 客户端或私人 Conversation。公开 Context 保留发布修订与客户端隔离。
-公共凭据不能访问本地入口，公共 Hermes 执行器也不会通过这次改动取得私人 Agent 的权限。
+公共凭据不能访问本地入口，公共执行服务也不能取得私人 Agent 的权限。
 
-支持独占 Docker 沙箱的 Pi、Claude Code、DSH、Hermes RPC；每个目标使用自己的模型、
+支持独占 Docker 沙箱的 Pi、Pi SDK、Claude Code、DSH；每个目标使用自己的模型、
 MCP、Skill、Toolkit 和已配置沙箱。`Context.id` 是独立的原生会话身份，**不是新文件系统**。
 同一个 Agent 的不同任务仍可能看到该 Agent 沙箱中已有的文件和原生记忆，因此只应对
-有权使用这些资源的工作区成员开启。托管 `hermes` 保持公开执行适配，不自动加入内部协作。
+有权使用这些资源的工作区成员开启。
 
 新链路直接接原生沙箱执行端口，不调用旧 `runAgentTurn`、旧协作 Worker、Responses API
 或 `runDedicatedSandboxTurn`。受支持运行时的经典聊天、Work、Control MCP 和显式授权渠道
-现在通过[统一入口与执行前审批](A2A_INGRESS_APPROVALS.zh-CN.md)使用同一核心；托管 Hermes
-仍有兼容路径，历史数据不自动重放。[A2A 接入页面](A2A_CONSOLE.zh-CN.md)提供开关、连接示例和任务树。
+现在通过[统一入口与执行前审批](A2A_INGRESS_APPROVALS.zh-CN.md)使用同一核心；历史数据不自动重放。[A2A 接入页面](A2A_CONSOLE.zh-CN.md)提供开关、连接示例和任务树。
 
 ## 显式启用和调用
 
@@ -109,8 +108,7 @@ curl "$TOOLPLANE_URL/api/v1/workspaces/$WORKSPACE/agents/$AGENT_ID/a2a/local" \
 ## 交付物
 
 本地 Agent Card 声明 text/plain、text/markdown、text/x-diff、application/json 和
-application/octet-stream 输出；输入仍只接受 text/plain。公开 Hermes 执行配置仍为文本输出，
-不会因本地支持新格式而自动扩大公开能力。
+application/octet-stream 输出；输入仍只接受 text/plain。本地输出格式支持不会自动扩大公共端点能力；当前没有公共执行适配器。
 
 运行中的本地 Agent 可调用 `a2a_publish_artifact`：
 
@@ -143,7 +141,7 @@ application/octet-stream 输出；输入仍只接受 text/plain。公开 Hermes 
 
 整个核心仍只有一个运行时所有者。本地沙箱任务统一遵守管理员的单 Agent 和平台并发
 限额；每个会话/context 使用独立沙箱，同一会话仍串行。原有四槽池仅限制公共端点与
-远端执行，不再额外限制本地 Pi、Pi SDK、Claude Code、DSH 和 Hermes RPC。等待中的
+远端执行，不再额外限制本地 Pi、Pi SDK、Claude Code 和 DSH。等待中的
 父任务释放执行名额；忙碌的根任务保持排队，嵌套子任务遇满额立即失败，避免相互等待。
 
 这些不是金额或精确 Token 预算。聚合准入计数见[资源限额](A2A_RESOURCE_LIMITS.zh-CN.md)。

@@ -10,7 +10,7 @@ import {
 } from "@/lib/agents/platforms";
 
 describe("messaging platform catalog", () => {
-  it("covers the Hermes messaging platform surface", () => {
+  it("covers the supported messaging platform surface", () => {
     const slugs = MESSAGING_PLATFORMS.map((p) => p.slug);
 
     expect(slugs).toEqual(
@@ -136,7 +136,6 @@ describe("messaging platform catalog", () => {
 
   it("models active QR pairing providers for scan-first platforms", () => {
     const qrPlatforms = [
-      "telegram",
       "wecom",
       "weixin",
       "dingtalk",
@@ -150,12 +149,14 @@ describe("messaging platform catalog", () => {
       expect(platform?.pairing?.provider).toBeTruthy();
     }
     const telegram = assertDefined(getMessagingPlatform("telegram"));
-    expect(telegram.pairing?.provider).toBe("telegram_managed_bot");
-    expect(missingCreateCredentialNames(telegram, {})).toEqual([]);
+    expect(telegram.pairing).toBeUndefined();
+    expect(missingCreateCredentialNames(telegram, {})).toEqual([
+      "TELEGRAM_BOT_TOKEN",
+    ]);
     expect(missingStartCredentialNames(telegram, {})).toEqual([
       "TELEGRAM_BOT_TOKEN",
     ]);
-    expect(hasBuiltInPairingProvider(telegram)).toBe(true);
+    expect(hasBuiltInPairingProvider(telegram)).toBe(false);
     expect(
       hasBuiltInPairingProvider(assertDefined(getMessagingPlatform("wecom"))),
     ).toBe(true);

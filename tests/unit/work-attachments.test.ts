@@ -26,13 +26,6 @@ vi.mock("@/lib/sandboxes/runtime", () => ({
   sandboxVolumeName: (id: string) => `volume-${id}`,
 }));
 
-vi.mock("@/lib/agents/hermes/runtime", () => ({
-  acquireHermesRuntimeWriteLease: vi.fn(() => ({
-    release: mocks.releaseLease,
-  })),
-  HERMES_RUNTIME_COPY_IN_PROGRESS_ERROR: "Hermes maintenance in progress.",
-}));
-
 import {
   claimWorkAttachments,
   prepareWorkAttachments,
@@ -45,7 +38,6 @@ describe("Work attachments", () => {
     mocks.sandboxFindFirst.mockResolvedValue({
       id: "sandbox-1",
       kind: "docker",
-      agentRuntime: null,
       deployment: { installCfg: null },
     });
     mocks.attachmentFindMany.mockResolvedValue([
@@ -56,38 +48,6 @@ describe("Work attachments", () => {
         storagePath: "objects/source-notes.txt",
       },
     ]);
-  });
-
-  it("copies into the Hermes workspace inside its dedicated volume", async () => {
-    mocks.sandboxFindFirst.mockResolvedValue({
-      id: "sandbox-hermes",
-      kind: "hermes",
-      agentRuntime: { agentId: "agent-hermes" },
-      deployment: { installCfg: { volumeName: "hermes-volume" } },
-    });
-
-    await expect(
-      prepareWorkAttachments({
-        workspaceId: "workspace-1",
-        userId: "user-1",
-        sandboxId: "sandbox-hermes",
-        workingDirectory: "projects/app",
-        attachmentIds: ["attachment-1"],
-      }),
-    ).resolves.toEqual([
-      expect.objectContaining({
-        runtimePath:
-          "/opt/data/workspace/projects/app/.toolplane/attachments/attachment-1/notes.txt",
-      }),
-    ]);
-    expect(mocks.copy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        destinationVolume: "hermes-volume",
-        destinationPath:
-          "workspace/projects/app/.toolplane/attachments/attachment-1/notes.txt",
-      }),
-    );
-    expect(mocks.releaseLease).toHaveBeenCalledOnce();
   });
 
   it("copies a caller-owned draft into the selected sandbox directory", async () => {
@@ -146,7 +106,6 @@ describe("Work attachments", () => {
     mocks.sandboxFindFirst.mockResolvedValue({
       id: "sandbox-1",
       kind: "connector",
-      agentRuntime: null,
       deployment: { installCfg: null },
     });
     await expect(

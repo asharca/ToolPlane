@@ -70,7 +70,7 @@ beforeEach(() => {
     id: "agent-1",
     name: "Researcher",
     slug: "researcher",
-    runtimeKind: "hermes",
+    runtimeKind: "pi",
   });
   mocks.listing.mockResolvedValue(null);
   mocks.assessment.mockResolvedValue({

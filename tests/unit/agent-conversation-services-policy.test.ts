@@ -55,7 +55,6 @@ function conversation() {
     agent: {
       provider: provider as typeof provider | null,
       model: "model" as string | null,
-      modelProviders: [] as { provider: typeof provider }[],
       workspace: {
         titleModelProviderId: null as string | null,
         titleModel: null as string | null,
@@ -97,7 +96,6 @@ beforeEach(() => {
   mocks.agent.mockResolvedValue({
     provider,
     model: "model",
-    modelProviders: [],
     runtimeKind: "pi",
   });
 });
@@ -201,17 +199,11 @@ describe("conversation title input and concurrent updates", () => {
     expect(mocks.db.modelProvider.findFirst).toHaveBeenCalledTimes(2);
   });
 
-  it("falls back to linked providers and rejects missing models", async () => {
+  it("rejects missing agent models", async () => {
     const row = conversation();
     row.agent.provider = null;
     row.agent.model = null;
-    row.agent.modelProviders = [
-      { provider: { ...provider, models: [] } },
-      { provider },
-    ];
     mocks.db.conversation.findFirst.mockResolvedValue(row);
-    expect(await callTitle()).toBe("Generated title");
-    row.agent.modelProviders = [];
     await expect(callTitle()).rejects.toThrow("No model is configured");
   });
 
@@ -403,7 +395,6 @@ describe("conversation operation admission and compaction", () => {
     "larger-summary",
     "changed",
     "success",
-    "hermes",
     "aborted",
   ])("compaction outcome: %s", async (kind) => {
     const messages = [
@@ -427,14 +418,6 @@ describe("conversation operation admission and compaction", () => {
       mocks.agent.mockResolvedValue({
         provider: null,
         model: null,
-        modelProviders: [],
-      });
-    if (kind === "hermes")
-      mocks.agent.mockResolvedValue({
-        provider: null,
-        model: null,
-        modelProviders: [{ provider }],
-        runtimeKind: "hermes",
       });
     const controller = new AbortController();
     if (kind === "aborted") controller.abort();
@@ -472,9 +455,7 @@ describe("conversation operation admission and compaction", () => {
             }),
           }),
         );
-        expect(mocks.db.conversation.update).toHaveBeenCalledTimes(
-          kind === "hermes" ? 1 : 0,
-        );
+        expect(mocks.db.conversation.update).not.toHaveBeenCalled();
       }
     }
     const release = acquireConversationOperation("conversation");

@@ -218,7 +218,7 @@ export function resolveAgentTools(
       id: c.id,
       name: c.name,
       slug: c.slug,
-      description: c.runtimeKind === "hermes" ? null : c.systemPrompt,
+      description: c.systemPrompt,
     });
   }
 

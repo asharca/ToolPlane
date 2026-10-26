@@ -19,7 +19,7 @@ import {
   parseChatTurn,
 } from "@/lib/chat/schemas";
 import type { ContextUsageSnapshot } from "@/lib/context-usage";
-import type { HermesUIMessage } from "@/lib/agents/hermes/message-segments";
+import type { AgentUIMessage } from "@/lib/agents/message-segments";
 import {
   ChatServiceError,
   beginChatTurn,
@@ -136,7 +136,7 @@ export const POST = withRequestLogging(
           userId: user.id,
         },
         (signal) =>
-          createUIMessageStream<HermesUIMessage>({
+          createUIMessageStream<AgentUIMessage>({
             generateId: () => turn.assistantMessageId,
             execute: async ({ writer }) => {
               writer.write({

@@ -13,11 +13,6 @@ import {
 } from "@/lib/agents/queries";
 import { AgentsBrowser } from "@/components/dashboard/agents/AgentsBrowser";
 import { listToolkits } from "@/lib/toolkits/queries";
-import { effectiveStatus } from "@/lib/process/supervisor";
-import {
-  HERMES_IMAGE_OPTIONS,
-  resolveHermesImage,
-} from "@/lib/agents/hermes/constants";
 import { SettingsModal } from "@/components/dashboard/SettingsModal";
 import { originFromHeaders } from "@/lib/http/origin";
 import { listAgentMarketListings } from "@/lib/agents/market";
@@ -56,7 +51,6 @@ export default async function AgentsPage({
       </SettingsModal>
     );
   }
-  const hermesImages = [resolveHermesImage(undefined), ...HERMES_IMAGE_OPTIONS];
   const agentControlEndpoint = `${originFromHeaders(await headers())}/api/v1/workspaces/${encodeURIComponent(slug)}/agents/mcp`;
 
   const [
@@ -127,7 +121,7 @@ export default async function AgentsPage({
             id: a.id,
             name: a.name,
             providerName: a.provider?.name ?? null,
-            providerNames: a.modelProviders.map((link) => link.provider.name),
+            providerNames: a.provider ? [a.provider.name] : [],
             model: a.model,
             toolCount:
               a._count.servers +
@@ -140,14 +134,7 @@ export default async function AgentsPage({
               a.sandboxes.length === 1 &&
               a.sandboxes[0]?.sandbox.kind === "docker" &&
               a.sandboxes[0]?.sandbox.network !== "none",
-            runtimeStatus: a.runtime
-              ? ["error", "setup_required"].includes(a.runtime.status)
-                ? a.runtime.status
-                : effectiveStatus(
-                    a.runtime.sandbox.deploymentId,
-                    a.runtime.sandbox.deployment.status,
-                  )
-              : null,
+            runtimeStatus: null,
           }))}
           marketAgents={marketAgents.items.map((agent) => ({
             id: agent.id,
@@ -167,7 +154,6 @@ export default async function AgentsPage({
             sandboxCount: agent.releaseSummary.agentCount,
             installCount: agent.installCount,
           }))}
-          hermesImages={hermesImages}
           createOptions={{
             providers: providers.map((provider) => ({
               id: provider.id,

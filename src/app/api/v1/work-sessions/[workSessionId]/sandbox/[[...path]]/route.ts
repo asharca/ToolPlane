@@ -2,7 +2,6 @@ import { withRequestLogging } from "@/lib/observability/http";
 import { resolveRequestUser } from "@/lib/auth/request-user";
 import { db } from "@/lib/db";
 import { livePort } from "@/lib/process/supervisor";
-import { ensureHermesRuntimeReady } from "@/lib/agents/hermes/runtime";
 import { findAgentConversationSandbox } from "@/lib/agents/conversation-sandbox";
 import { proxyConversationWorkspace } from "@/lib/agents/conversation-workspace-proxy";
 
@@ -31,35 +30,22 @@ async function resolveTarget(req: Request, workSessionId: string) {
       agent: {
         select: {
           id: true,
-          runtime: { select: { kind: true, sandboxId: true } },
         },
       },
       sandbox: { select: { deploymentId: true } },
     },
   });
   if (!work?.sandbox || !work.sandboxId) return null;
-  const mapping =
-    work.runtimeKind !== "hermes"
-      ? await findAgentConversationSandbox({
-          workspaceId: work.workspaceId,
-          agentId: work.agent.id,
-          conversationId: work.conversationId,
-        })
-      : null;
+  const mapping = await findAgentConversationSandbox({
+    workspaceId: work.workspaceId,
+    agentId: work.agent.id,
+    conversationId: work.conversationId,
+  });
   const genericSandbox =
     mapping?.sandboxId === work.sandboxId &&
     mapping.deploymentId === work.sandbox.deploymentId;
-  const hermesSandbox =
-    work.runtimeKind === "hermes" &&
-    work.agent.runtime?.kind === "hermes" &&
-    work.agent.runtime.sandboxId === work.sandboxId;
-  if (!genericSandbox && !hermesSandbox) return null;
-  let port = livePort(work.sandbox.deploymentId);
-  if (!port && hermesSandbox) {
-    port =
-      (await ensureHermesRuntimeReady(work.workspaceId, work.agent.id)).port ??
-      null;
-  }
+  if (!genericSandbox) return null;
+  const port = livePort(work.sandbox.deploymentId);
   return port ? { port, sandboxId: work.sandboxId } : null;
 }
 

@@ -1,12 +1,9 @@
 # Agent 运行时实现：Pi、Claude Code 与 DSH
 
-> **English**: [AGENT_RUNTIMES.md](./AGENT_RUNTIMES.md)
 
-本文面向维护 ToolPlane、接入新运行时或排查 Agent 执行问题的开发者，说明 Pi、Claude Code（CC）和 DeepSeek Harness（DSH）的实际调用链、配置、原生会话和安全边界。这里讲的是 **ToolPlane 在沙箱中运行 Agent**，不是把 Toolkit 安装到用户电脑上的客户端；后者见 [Toolkit 同步](./TOOLKIT_SYNC.md)。
+本文面向维护 ToolPlane、接入新运行时或排查 Agent 执行问题的开发者，说明 Pi、Claude Code（CC）和 DeepSeek Harness（DSH）的实际调用链、配置、原生会话和安全边界。这里讲的是 **ToolPlane 在沙箱中运行 Agent**，不是把 Toolkit 安装到用户电脑上的客户端；后者见 Toolkit 同步。
 
-核对基线：`35c308e83e75228f1b42e7660ceefdc1e459d04f`（2026-09-17）。包版本和能力允许值以链接的源码为准，不以文档中的产品名称推断上游 CLI 的所有功能都已接入。系统全貌见[架构](./ARCHITECTURE.md)，Hermes 的独立实现见 [Hermes 运行时](./HERMES_AGENT_RUNTIME.md)。
-
-独立的 Hermes RPC 沙箱适配器见 [Hermes RPC](./HERMES_RPC_RUNTIME.zh-CN.md)；本文仍聚焦 Pi、Claude Code 和 DSH。
+包版本和能力允许值以链接的源码为准，不以文档中的产品名称推断上游 CLI 的所有功能都已接入。当前支持 Pi、Pi SDK、Claude Code 和 DSH；公共 Endpoint 暂无执行适配器。
 
 ## 1. 先分清四个概念
 
@@ -21,10 +18,10 @@
 | 执行环境 | 恰好一个可联网的 Docker 沙箱 | 同左 | 同左 |
 | 控制台 / Work 执行 | 支持 | 支持 | 支持 |
 | Control MCP 的 `create_agent` | 支持 | 未开放 | 未开放 |
-| Hermes 专用附件上传能力 | 不支持 | 不支持 | 不支持 |
+| 专用附件上传接口 | 不支持 | 不支持 | 不支持 |
 | 发布为公共 Agent Endpoint | 未开放 | 未开放 | 未开放 |
 
-三者接受的 provider format 为 `openai`、`openai-responses`、`anthropic`，但走的适配路径不同，见第 4 节。附件能力为 false 不等于 Agent 不能读取沙箱文件；已有文件引用与 Hermes 专用上传接口不是同一个能力。
+三者接受的 provider format 为 `openai`、`openai-responses`、`anthropic`，但走的适配路径不同，见第 4 节。附件能力为 false 不等于 Agent 不能读取沙箱文件；已有文件引用与专用上传接口不是同一个能力。
 
 `native.ts` 是平台内部模型循环辅助模块，不是可提交给创建接口的 `native` 运行时。不要把 Pi CLI、平台使用的 `pi-ai` 库和前端 AI SDK UI message stream 当作同一层，也不要用根 `package.json` 的 `pi-ai` 版本推断沙箱内 Pi CLI 的版本。
 
@@ -141,7 +138,7 @@ DSH 的内置工具禁用映射到插件行：例如多个文件工具共用 `to
 | `agents/[agentId]/chat/route.ts` 的 dedicated 分支 | 未传 | 使用无显式原生会话 ID 的执行路径 |
 | `run.ts` 的 dedicated 子 Agent 分支 | 未传 | 单次委派，不复用父对话的原生会话 |
 
-因此，数据库中的平台消息、Hermes 的运行会话字段和这里的原生会话键不能混用。特别是直接 `/chat` 路径，即使保存了平台消息，也不能据此推断后续原生命令与聊天共享了同一个 CLI 状态。
+因此，数据库中的平台消息和这里的原生会话键不能混用。特别是直接 `/chat` 路径，即使保存了平台消息，也不能据此推断后续原生命令与聊天共享了同一个 CLI 状态。
 
 Pi/CC 驱动按 `statePath` 的哈希生成沙箱内 Unix socket。一个 socket 同时只接一个请求；配置签名变化或进程达到复用年龄时，在下一次请求重启并恢复；空闲时也会退出。状态通过临时文件加 rename 保存。已经导入过的原生历史丢失时，驱动会报错，不能靠重放完整平台历史掩盖丢失，否则可能撤销先前的压缩语义。
 

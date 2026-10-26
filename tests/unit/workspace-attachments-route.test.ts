@@ -41,21 +41,9 @@ vi.mock("@/lib/attachments/storage", async (importOriginal) => {
 import { POST } from "@/app/api/v1/workspaces/[slug]/attachments/route";
 import { DELETE, GET } from "@/app/api/v1/attachments/[attachmentId]/route";
 
-const uploadContext = { params: Promise.resolve({ slug: "workspace-1" }) };
 const attachmentContext = {
   params: Promise.resolve({ attachmentId: "attachment-1" }),
 };
-
-function uploadRequest(body: BodyInit = Buffer.from("hello")) {
-  return new Request(
-    "http://toolplane.test/api/v1/workspaces/workspace-1/attachments?filename=notes.txt",
-    {
-      method: "POST",
-      headers: { "content-type": "text/plain" },
-      body,
-    },
-  );
-}
 
 function attachmentRow(overrides: Record<string, unknown> = {}) {
   return {
@@ -96,48 +84,16 @@ describe("workspace attachment routes", () => {
     );
   });
 
-  it("stores a raw body only after workspace authorization", async () => {
-    const response = await POST(uploadRequest(), uploadContext);
-
-    expect(response.status).toBe(201);
-    expect(mocks.workspaceFindFirst).toHaveBeenCalledWith({
-      where: {
-        id: "workspace-1",
-        status: "active",
-        OR: [
-          { ownerId: "user-1" },
-          { members: { some: { userId: "user-1" } } },
-        ],
-      },
-      select: { id: true },
-    });
-    expect(mocks.writeWorkspaceAttachment).toHaveBeenCalledWith(
-      expect.objectContaining({
-        workspaceId: "workspace-1",
-        filename: "notes.txt",
-        maxBytes: 1_000_000_000,
-        body: expect.any(ReadableStream),
-      }),
+  it("rejects workspace uploads with 403 without touching storage", async () => {
+    const response = await POST(
+      new Request("http://toolplane.test/api", { method: "POST" }),
     );
-    expect(mocks.attachmentCreate).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        workspaceId: "workspace-1",
-        uploadedById: "user-1",
-        mimeType: "text/plain",
-        size: 5,
-      }),
-    });
-  });
 
-  it("rejects a declared oversize upload before touching Docker storage", async () => {
-    mocks.systemSettingFindUnique.mockResolvedValue({ value: "4" });
-    const request = uploadRequest();
-    request.headers.set("content-length", "5");
-
-    const response = await POST(request, uploadContext);
-
-    expect(response.status).toBe(413);
+    expect(response.status).toBe(403);
+    await expect(response.text()).resolves.toContain("disabled");
+    expect(mocks.workspaceFindFirst).not.toHaveBeenCalled();
     expect(mocks.writeWorkspaceAttachment).not.toHaveBeenCalled();
+    expect(mocks.attachmentCreate).not.toHaveBeenCalled();
   });
 
   it("keeps unclaimed drafts private to their uploader", async () => {

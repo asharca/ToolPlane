@@ -328,8 +328,6 @@ describe("WorkspaceAssistantChat", () => {
     expect(mocks.conversation).toHaveBeenCalledWith(
       expect.objectContaining({
         allowRegenerate: true,
-        attachmentUploadUrl: "/api/v1/workspaces/workspace-1/attachments",
-        supportsAttachments: true,
         initialReasoningEffort: "default",
         mcpResourceApiPath: "/api/v1/chat/threads/thread-1/composer",
         onNewConversation: expect.any(Function),

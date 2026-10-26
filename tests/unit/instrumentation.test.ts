@@ -4,7 +4,6 @@ const mocks = vi.hoisted(() => ({
   ensureConnectorBroker: vi.fn(),
   ownerReady: vi.fn(),
   ownerFailed: vi.fn(),
-  ensureHermesDashboardBroker: vi.fn(),
   ensureSandboxNetwork: vi.fn(),
   removeStaleDeploymentConfigMaterializerHelpers: vi.fn(),
   reconcileSandboxVolumeCopies: vi.fn(),
@@ -31,9 +30,6 @@ vi.mock("@/lib/work/coordinator", () => ({
 }));
 vi.mock("@/lib/sandboxes/connector-broker", () => ({
   ensureConnectorBroker: mocks.ensureConnectorBroker,
-}));
-vi.mock("@/lib/agents/hermes/dashboard-broker", () => ({
-  ensureHermesDashboardBroker: mocks.ensureHermesDashboardBroker,
 }));
 vi.mock("@/lib/process/supervisor", () => ({
   ensureSandboxNetwork: mocks.ensureSandboxNetwork,
@@ -68,7 +64,6 @@ describe("startup sandbox lifecycle reconciliation", () => {
     process.env.NEXT_RUNTIME = "nodejs";
     delete process.env.NEXT_PHASE;
     mocks.ensureConnectorBroker.mockResolvedValue(undefined);
-    mocks.ensureHermesDashboardBroker.mockResolvedValue(undefined);
     mocks.ensureSandboxNetwork.mockResolvedValue(undefined);
     mocks.removeStaleDeploymentConfigMaterializerHelpers.mockResolvedValue(0);
     mocks.reconcileDeployments.mockResolvedValue(0);
@@ -102,7 +97,6 @@ describe("startup sandbox lifecycle reconciliation", () => {
     });
 
     expect(mocks.reconcileAgentChannelRunners).toHaveBeenCalledTimes(1);
-    expect(mocks.ensureHermesDashboardBroker).toHaveBeenCalledTimes(1);
     expect(
       mocks.removeStaleDeploymentConfigMaterializerHelpers,
     ).toHaveBeenCalledTimes(1);

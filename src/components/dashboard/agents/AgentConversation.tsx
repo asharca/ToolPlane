@@ -32,12 +32,10 @@ import { CopyButton } from "@/components/dashboard/CopyButton";
 import {
   useCallback,
   useEffect,
-  useId,
   useMemo,
   useRef,
   useState,
   useSyncExternalStore,
-  type ChangeEvent,
   type ReactNode,
 } from "react";
 import { useTranslations } from "next-intl";
@@ -48,16 +46,9 @@ import {
   useAuiState,
   type AppendMessage,
   type AssistantRuntime,
-  type AttachmentAdapter,
-  type CompleteAttachment,
 } from "@assistant-ui/react";
 import { useAISDKRuntime } from "@assistant-ui/react-ai-sdk";
-import {
-  DefaultChatTransport,
-  generateId,
-  type CreateUIMessage,
-  type UIMessage,
-} from "ai";
+import { DefaultChatTransport, type CreateUIMessage, type UIMessage } from "ai";
 import {
   Bot,
   ChevronLeft,
@@ -68,7 +59,6 @@ import {
   Database,
   Eraser,
   Globe2,
-  Paperclip,
   ScrollText,
   Server,
   SlidersHorizontal,
@@ -86,54 +76,24 @@ import type { ReasoningEffort } from "@/lib/agents/constants";
 import { ReasoningEffortControl } from "@/components/dashboard/agents/ReasoningEffortControl";
 import { displayMessagingUserText } from "@/lib/agents/messaging";
 import {
-  expandHermesAssistantMessages,
-  type HermesUIMessage,
-} from "@/lib/agents/hermes/message-segments";
+  expandAssistantMessages,
+  type AgentUIMessage,
+} from "@/lib/agents/message-segments";
 import {
   parseRuntimeCommand,
   sessionRuntimeCommands,
   type RuntimeCommand,
 } from "@/lib/agents/runtime-commands";
 
-const MAX_ATTACHMENTS = 5;
-const ATTACHMENT_ERROR_PART = "data-toolplane-attachment-error";
-
-type AttachmentContentPart = CompleteAttachment["content"][number];
-type DraftSnapshot = {
-  text: string;
-  files: File[];
-};
-
 function toChatCreateMessage<UI_MESSAGE extends UIMessage = UIMessage>(
   message: AppendMessage,
 ): CreateUIMessage<UI_MESSAGE> {
-  const inputParts = [
-    ...message.content.filter((part) => part.type !== "file"),
-    ...(message.attachments?.flatMap((attachment) =>
-      attachment.content.map((part) => ({
-        ...part,
-        filename: attachment.name,
-      })),
-    ) ?? []),
-  ];
-  const parts = inputParts.map((part) => {
+  const parts = message.content.map((part) => {
     if (part.type === "text") return { type: "text", text: part.text };
-    if (part.type === "image") {
-      return {
-        type: "file",
-        url: part.image,
-        mediaType: "image/png",
-        ...(part.filename ? { filename: part.filename } : {}),
-      };
-    }
-    if (part.type === "file") {
-      return {
-        type: "file",
-        url: part.data,
-        mediaType: part.mimeType,
-        ...(part.filename ? { filename: part.filename } : {}),
-      };
-    }
+    if (part.type === "image")
+      return { type: "file", url: part.image, mediaType: "image/png" };
+    if (part.type === "file")
+      return { type: "file", url: part.data, mediaType: part.mimeType };
     if (part.type === "data")
       return { type: `data-${part.name}`, data: part.data };
     throw new Error(`Unsupported message part: ${part.type}`);
@@ -160,30 +120,6 @@ function mergeDraftText(current: string, restored: string) {
   return `${restored}\n${current}`;
 }
 
-async function restoreDraftSnapshot(
-  runtime: AssistantRuntime,
-  snapshot: DraftSnapshot,
-) {
-  const composer = runtime.thread.composer;
-  const current = composer.getState();
-  composer.setText(mergeDraftText(current.text, snapshot.text));
-  const existingFiles = new Set(
-    current.attachments.flatMap((attachment) =>
-      attachment.file
-        ? [
-            `${attachment.file.name}:${attachment.file.size}:${attachment.file.lastModified}`,
-          ]
-        : [],
-    ),
-  );
-  for (const file of snapshot.files) {
-    const key = `${file.name}:${file.size}:${file.lastModified}`;
-    if (existingFiles.has(key)) continue;
-    await composer.addAttachment(file);
-    existingFiles.add(key);
-  }
-}
-
 async function restoreCreateMessageDraft(
   runtime: AssistantRuntime | null,
   message: unknown,
@@ -191,13 +127,7 @@ async function restoreCreateMessageDraft(
   if (!runtime || !message || typeof message !== "object") return;
   const candidate = message as {
     text?: unknown;
-    parts?: Array<{
-      type?: unknown;
-      text?: unknown;
-      url?: unknown;
-      mediaType?: unknown;
-      filename?: unknown;
-    }>;
+    parts?: Array<{ type?: unknown; text?: unknown }>;
   };
   const parts = Array.isArray(candidate.parts) ? candidate.parts : [];
   const text = [
@@ -211,30 +141,6 @@ async function restoreCreateMessageDraft(
   const composer = runtime.thread.composer;
   const current = composer.getState();
   composer.setText(mergeDraftText(current.text, text));
-
-  for (const part of parts) {
-    if (
-      part.type !== "file" ||
-      typeof part.url !== "string" ||
-      typeof part.mediaType !== "string"
-    )
-      continue;
-    const name =
-      typeof part.filename === "string" ? part.filename : "attachment";
-    await composer.addAttachment({
-      name,
-      type: part.mediaType.startsWith("image/") ? "image" : "file",
-      contentType: part.mediaType,
-      content: [
-        {
-          type: "file",
-          data: part.url,
-          mimeType: part.mediaType,
-          filename: name,
-        },
-      ],
-    });
-  }
 }
 
 type ComposerToolItem = {
@@ -280,7 +186,6 @@ function focusComposerInput() {
 }
 
 function ConversationTools({
-  attachmentsEnabled,
   disabled,
   mcpPromptApiPath,
   mcpResourceApiPath,
@@ -291,7 +196,6 @@ function ConversationTools({
   webSearchEnabled,
   onWebSearchChange,
 }: {
-  attachmentsEnabled: boolean;
   disabled: boolean;
   mcpPromptApiPath?: string;
   mcpResourceApiPath?: string;
@@ -313,7 +217,6 @@ function ConversationTools({
   const [mcpOpen, setMcpOpen] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
   const [customizing, setCustomizing] = useState(false);
-  const attachmentInputId = useId();
   const toolsButtonRef = useRef<HTMLButtonElement>(null);
   const toolbarValue = useSyncExternalStore(
     subscribeToolbar,
@@ -336,47 +239,11 @@ function ConversationTools({
     },
     [aui.composer],
   );
-  const addAttachments = useCallback(
-    async (event: ChangeEvent<HTMLInputElement>) => {
-      const files = Array.from(event.currentTarget.files ?? []);
-      event.currentTarget.value = "";
-      for (const file of files) {
-        try {
-          await aui.composer.addAttachment(file);
-        } catch (cause) {
-          onError(
-            cause instanceof Error
-              ? cause.message
-              : agentsT("attachmentUploadFailed"),
-          );
-        }
-      }
-      focusComposerInput();
-    },
-    [agentsT, aui.composer, onError],
-  );
-  const openAttachmentPicker = useCallback(() => {
-    if (!attachmentsEnabled) {
-      onError(agentsT("attachmentRuntimeRequired"));
-      return;
-    }
-    document.getElementById(attachmentInputId)?.click();
-  }, [agentsT, attachmentInputId, attachmentsEnabled, onError]);
   const clearRuntimeCommand = runtimeCommands.find(
     (command) => command.name === "clear",
   );
   const actions = useMemo<ComposerToolItem[]>(
     () => [
-      {
-        id: "attachments",
-        label: agentsT("addAttachment"),
-        description: attachmentsEnabled
-          ? undefined
-          : agentsT("attachmentRuntimeRequired"),
-        disabled: !attachmentsEnabled,
-        icon: Paperclip,
-        execute: openAttachmentPicker,
-      },
       ...(mcpResourceApiPath
         ? [
             {
@@ -458,13 +325,11 @@ function ConversationTools({
     ],
     [
       agentsT,
-      attachmentsEnabled,
       clearRuntimeCommand,
       mcpPromptApiPath,
       mcpResourceApiPath,
       onNewConversation,
       onWebSearchChange,
-      openAttachmentPicker,
       runtimeCommands,
       setCommandText,
       t,
@@ -655,13 +520,6 @@ function ConversationTools({
           </div>
         </MorphPopoverContent>
       </MorphPopover>
-      <input
-        id={attachmentInputId}
-        type="file"
-        multiple
-        hidden
-        onChange={(event) => void addAttachments(event)}
-      />
       <McpServerPickerButton
         apiPath={mcpResourceApiPath}
         disabled={disabled}
@@ -720,200 +578,6 @@ function ConversationTools({
   );
 }
 
-function useAgentAttachmentAdapter({
-  agentId,
-  attachmentUploadUrl,
-  ensureConversation,
-  isHermes,
-  onError,
-  onUploadingChange,
-  runtimeRef,
-  sendConversationIdRef,
-  draftSnapshotRef,
-  recoveryErrorRef,
-}: {
-  agentId: string;
-  attachmentUploadUrl?: string;
-  ensureConversation: () => Promise<string>;
-  isHermes: boolean;
-  onError: (message: string | null) => void;
-  onUploadingChange: (uploading: boolean) => void;
-  runtimeRef: { current: AssistantRuntime | null };
-  sendConversationIdRef: { current: string | null };
-  draftSnapshotRef: { current: DraftSnapshot | null };
-  recoveryErrorRef: { current: string | null };
-}) {
-  const t = useTranslations("console.agents");
-  const activeAttachmentIds = useRef(new Set<string>());
-  const activeSends = useRef(0);
-
-  return useMemo<AttachmentAdapter>(
-    () => ({
-      accept: "*",
-      async add({ file }) {
-        if (!isHermes && !attachmentUploadUrl) {
-          const message = t("attachmentRuntimeRequired");
-          onError(message);
-          throw new Error(message);
-        }
-        if (activeAttachmentIds.current.size >= MAX_ATTACHMENTS) {
-          const message = t("attachmentLimitReached", {
-            count: MAX_ATTACHMENTS,
-          });
-          onError(message);
-          throw new Error(message);
-        }
-
-        const id = generateId();
-        activeAttachmentIds.current.add(id);
-        return {
-          id,
-          type: file.type.startsWith("image/") ? "image" : "file",
-          name: file.name,
-          file,
-          contentType: file.type || "application/octet-stream",
-          content: [],
-          status: { type: "requires-action", reason: "composer-send" },
-        };
-      },
-      async remove(attachment) {
-        activeAttachmentIds.current.delete(attachment.id);
-      },
-      async send(attachment) {
-        if (!draftSnapshotRef.current) {
-          const state = runtimeRef.current?.thread.composer.getState();
-          if (state) {
-            draftSnapshotRef.current = {
-              text: state.text,
-              files: state.attachments.flatMap((item) =>
-                item.file ? [item.file] : [],
-              ),
-            };
-          }
-        }
-        activeSends.current += 1;
-        onUploadingChange(true);
-        onError(null);
-        try {
-          let uploadUrl: string;
-          if (isHermes) {
-            const conversationId =
-              sendConversationIdRef.current ?? (await ensureConversation());
-            sendConversationIdRef.current = conversationId;
-            const query = new URLSearchParams({
-              conversationId,
-              filename: attachment.file.name,
-            });
-            uploadUrl = `/api/v1/agents/${agentId}/attachments?${query}`;
-          } else {
-            if (!attachmentUploadUrl)
-              throw new Error(t("attachmentRuntimeRequired"));
-            const url = new URL(attachmentUploadUrl, window.location.origin);
-            url.searchParams.set("filename", attachment.file.name);
-            uploadUrl = `${url.pathname}${url.search}`;
-          }
-          const response = await fetch(uploadUrl, {
-            method: "POST",
-            headers: {
-              "content-type":
-                attachment.contentType || "application/octet-stream",
-            },
-            body: attachment.file,
-          });
-          const result = (await response.json().catch(() => ({}))) as {
-            name?: string;
-            mimeType?: string;
-            runtimePath?: string;
-            size?: number;
-            url?: string;
-            error?: string;
-          };
-          const location = isHermes ? result.runtimePath : result.url;
-          if (!response.ok || !location) {
-            throw new Error(result.error || t("attachmentUploadFailed"));
-          }
-          const name = result.name || attachment.name;
-          const content: AttachmentContentPart[] = isHermes
-            ? [
-                {
-                  type: "text",
-                  text: [
-                    t("attachmentStoredInHermesWorkspace"),
-                    t("attachmentMetadataName", { name }),
-                    t("attachmentMetadataPath", { path: location }),
-                    t("attachmentMetadataSize", {
-                      size: result.size ?? attachment.file.size,
-                    }),
-                    t("attachmentMetadataType", {
-                      type:
-                        attachment.contentType || "application/octet-stream",
-                    }),
-                  ].join("\n"),
-                },
-              ]
-            : [
-                {
-                  type: "file",
-                  data: location,
-                  mimeType:
-                    result.mimeType ||
-                    attachment.contentType ||
-                    "application/octet-stream",
-                  filename: name,
-                },
-              ];
-
-          return {
-            ...attachment,
-            status: { type: "complete" },
-            content,
-          };
-        } catch (error) {
-          const message =
-            error instanceof Error
-              ? error.message === "conversation"
-                ? t("couldNotCreateConversation")
-                : error.message
-              : t("attachmentUploadFailed");
-          recoveryErrorRef.current = message;
-          onError(message);
-          return {
-            ...attachment,
-            status: { type: "complete" },
-            content: [
-              {
-                type: "data",
-                name: ATTACHMENT_ERROR_PART.slice(5),
-                data: { message },
-              },
-            ],
-          };
-        } finally {
-          activeAttachmentIds.current.delete(attachment.id);
-          activeSends.current = Math.max(0, activeSends.current - 1);
-          onUploadingChange(activeSends.current > 0);
-          if (activeSends.current === 0 && !recoveryErrorRef.current) {
-            draftSnapshotRef.current = null;
-          }
-        }
-      },
-    }),
-    [
-      agentId,
-      attachmentUploadUrl,
-      draftSnapshotRef,
-      ensureConversation,
-      isHermes,
-      onError,
-      onUploadingChange,
-      recoveryErrorRef,
-      runtimeRef,
-      sendConversationIdRef,
-      t,
-    ],
-  );
-}
-
 function ConversationReasoning({
   text,
   working,
@@ -959,7 +623,6 @@ export function AgentConversation({
   allowEdit = false,
   allowRegenerate = true,
   apiPath,
-  attachmentUploadUrl,
   branchBusy = false,
   branchNavigation = [],
   contextBaseText,
@@ -982,7 +645,6 @@ export function AgentConversation({
   ready,
   reasoningAvailable = false,
   runtimeKind,
-  supportsAttachments,
   serverManaged = false,
   webSearchAvailable,
   workSessionId,
@@ -993,7 +655,6 @@ export function AgentConversation({
   allowEdit?: boolean;
   allowRegenerate?: boolean;
   apiPath?: string;
-  attachmentUploadUrl?: string;
   branchBusy?: boolean;
   branchNavigation?: ChatBranchNavigation[];
   contextBaseText?: string | null;
@@ -1003,7 +664,7 @@ export function AgentConversation({
   ensureConversation: () => Promise<string>;
   includeConversationIdInBody?: boolean;
   initialReasoningEffort?: ReasoningEffort;
-  initialMessages: HermesUIMessage[];
+  initialMessages: AgentUIMessage[];
   modelName?: string | null;
   modelPicker?: ReactNode;
   mcpPromptApiPath?: string;
@@ -1016,7 +677,6 @@ export function AgentConversation({
   ready: boolean;
   reasoningAvailable?: boolean;
   runtimeKind: string | null;
-  supportsAttachments?: boolean;
   serverManaged?: boolean;
   webSearchAvailable?: boolean;
   workSessionId?: string;
@@ -1028,7 +688,6 @@ export function AgentConversation({
   const commandsT = useTranslations("console.runtimeCommands");
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [followingOutput, setFollowingOutput] = useState(true);
-  const [uploadingAttachments, setUploadingAttachments] = useState(false);
   const [commandBusy, setCommandBusy] = useState(false);
   const [webSearchEnabled, setWebSearchEnabled] = useState(false);
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>(
@@ -1036,8 +695,6 @@ export function AgentConversation({
   );
   const assistantRuntimeRef = useRef<AssistantRuntime | null>(null);
   const sendConversationIdRef = useRef<string | null>(null);
-  const attachmentDraftSnapshotRef = useRef<DraftSnapshot | null>(null);
-  const attachmentRecoveryErrorRef = useRef<string | null>(null);
   const { transport, getServerResponse } = useMemo(() => {
     let serverResponse: Promise<Response> | null = null;
     return {
@@ -1086,7 +743,7 @@ export function AgentConversation({
       }),
     };
   }, [agentId, apiPath, includeConversationIdInBody, serverManaged]);
-  const chat = useChat<HermesUIMessage>({
+  const chat = useChat<AgentUIMessage>({
     transport,
     resume: serverManaged,
     messages: initialMessages,
@@ -1149,7 +806,7 @@ export function AgentConversation({
   );
 
   const displayMessages = useMemo(
-    () => expandHermesAssistantMessages(chat.messages),
+    () => expandAssistantMessages(chat.messages),
     [chat.messages],
   );
   const runtimeCommands = useMemo(
@@ -1182,24 +839,6 @@ export function AgentConversation({
         Array.isArray(message.parts)
           ? (message.parts as Array<{ type: string; text?: unknown }>)
           : [];
-      const attachmentFailed = messageParts.some(
-        (part) => part.type === ATTACHMENT_ERROR_PART,
-      );
-      if (attachmentFailed) {
-        const snapshot = attachmentDraftSnapshotRef.current;
-        const errorMessage =
-          attachmentRecoveryErrorRef.current ?? t("attachmentUploadFailed");
-        attachmentDraftSnapshotRef.current = null;
-        attachmentRecoveryErrorRef.current = null;
-        sendConversationIdRef.current = null;
-        if (snapshot && assistantRuntimeRef.current) {
-          await restoreDraftSnapshot(assistantRuntimeRef.current, snapshot);
-        } else {
-          await restoreCreateMessageDraft(assistantRuntimeRef.current, message);
-        }
-        setSubmitError(errorMessage);
-        return;
-      }
       const commandLine = messageParts
         .filter(
           (part): part is { type: string; text: string } =>
@@ -1349,18 +988,6 @@ export function AgentConversation({
       workSessionId,
     ],
   );
-  const attachmentAdapter = useAgentAttachmentAdapter({
-    agentId,
-    attachmentUploadUrl,
-    ensureConversation,
-    isHermes: runtimeKind === "hermes",
-    onError: setSubmitError,
-    onUploadingChange: setUploadingAttachments,
-    runtimeRef: assistantRuntimeRef,
-    sendConversationIdRef,
-    draftSnapshotRef: attachmentDraftSnapshotRef,
-    recoveryErrorRef: attachmentRecoveryErrorRef,
-  });
   const assistantChat = useMemo(
     () => ({
       ...chat,
@@ -1372,15 +999,9 @@ export function AgentConversation({
     [chat, displayMessages, regenerate, sendMessage, stop],
   );
   const runtime = useAISDKRuntime(assistantChat, {
-    adapters: { attachments: attachmentAdapter },
-    isSendDisabled:
-      !ready ||
-      branchBusy ||
-      commandBusy ||
-      creatingConversation ||
-      uploadingAttachments,
+    isSendDisabled: !ready || branchBusy || commandBusy || creatingConversation,
     joinStrategy: "none",
-    // Preserve internal attachment URLs; the default converter treats relative paths as base64.
+    // Preserve edit-message metadata and internal file URLs from the composer.
     toCreateMessage: toChatCreateMessage,
   });
   useEffect(() => {
@@ -1391,18 +1012,12 @@ export function AgentConversation({
     };
   }, [runtime]);
 
-  const composerDisabled =
-    branchBusy || commandBusy || creatingConversation || uploadingAttachments;
-  const attachmentsEnabled =
-    supportsAttachments ??
-    (runtimeKind === "hermes" || Boolean(attachmentUploadUrl));
+  const composerDisabled = branchBusy || commandBusy || creatingConversation;
   const composerStatus = !ready
     ? t("chooseAModelBeforeSending")
-    : uploadingAttachments
-      ? t("uploadingAttachments")
-      : !activeConversationId
-        ? t("conversationWillBeCreated")
-        : null;
+    : !activeConversationId
+      ? t("conversationWillBeCreated")
+      : null;
   const composer = useSyncExternalStore(
     runtime.thread.composer.subscribe,
     runtime.thread.composer.getState,
@@ -1869,59 +1484,7 @@ export function AgentConversation({
                 : submitError || chat.error?.message}
             </p>
           ) : null}
-          {/* biome-ignore lint/a11y/noStaticElementInteractions: Non-focusable drop zone wraps the accessible composer; keyboard attachments use its upload control. */}
-          <div
-            data-ui="chat.composer"
-            className="relative"
-            onDragOver={(event) => {
-              if (
-                attachmentsEnabled &&
-                !blocked &&
-                event.dataTransfer.types.includes("Files")
-              )
-                event.preventDefault();
-            }}
-            onDrop={(event) => {
-              if (
-                !attachmentsEnabled ||
-                blocked ||
-                !event.dataTransfer.files.length
-              )
-                return;
-              event.preventDefault();
-              for (const file of event.dataTransfer.files)
-                void runAction(() =>
-                  runtime.thread.composer.addAttachment(file),
-                );
-            }}
-          >
-            {composer.attachments.length ? (
-              <div className="mb-2 flex flex-wrap gap-3">
-                {composer.attachments.map((attachment, index) => (
-                  <ConversationFilePreview
-                    key={attachment.id}
-                    file={attachment.file}
-                    name={attachment.name}
-                    mimeType={attachment.contentType}
-                    progress={
-                      attachment.status.type === "running"
-                        ? attachment.status.progress
-                        : undefined
-                    }
-                    removeLabel={t("removeAttachment", {
-                      name: attachment.name,
-                    })}
-                    onRemove={() =>
-                      void runAction(() =>
-                        runtime.thread.composer
-                          .getAttachmentByIndex(index)
-                          .remove(),
-                      )
-                    }
-                  />
-                ))}
-              </div>
-            ) : null}
+          <div data-ui="chat.composer" className="relative">
             <PromptInput
               className="bg-transparent"
               value={composer.text}
@@ -1937,7 +1500,6 @@ export function AgentConversation({
               leadingAction={
                 <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
                   <ConversationTools
-                    attachmentsEnabled={attachmentsEnabled}
                     disabled={blocked}
                     mcpPromptApiPath={mcpPromptApiPath}
                     mcpResourceApiPath={mcpResourceApiPath}
@@ -1956,16 +1518,6 @@ export function AgentConversation({
                       disabled={blocked}
                       onChange={setReasoningEffort}
                     />
-                  ) : null}
-                  {!composer.text.trim() && composer.attachments.length ? (
-                    <Button
-                      type="button"
-                      size="sm"
-                      disabled={blocked}
-                      onClick={() => runtime.thread.composer.send()}
-                    >
-                      {t("send")}
-                    </Button>
                   ) : null}
                 </div>
               }

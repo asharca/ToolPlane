@@ -11,8 +11,6 @@ const mocks = vi.hoisted(() => ({
   archiveWorkSession: vi.fn(),
   findWorkSession: vi.fn(),
   livePort: vi.fn(),
-  ensureHermesRuntimeReady: vi.fn(),
-  prepareHermesConversationSelection: vi.fn(),
   isWorkSessionTitlePending: vi.fn(),
   findConversationSandbox: vi.fn(),
   conversationWorkspace: vi.fn(),
@@ -40,12 +38,6 @@ vi.mock("@/lib/db", () => ({
   db: { workSession: { findFirst: mocks.findWorkSession } },
 }));
 vi.mock("@/lib/process/supervisor", () => ({ livePort: mocks.livePort }));
-vi.mock("@/lib/agents/hermes/runtime", () => ({
-  ensureHermesRuntimeReady: mocks.ensureHermesRuntimeReady,
-}));
-vi.mock("@/lib/agents/hermes/conversation-selection", () => ({
-  prepareHermesConversationSelection: mocks.prepareHermesConversationSelection,
-}));
 vi.mock("@/lib/work/sessions", () => ({
   createWorkSession: mocks.createWorkSession,
   listWorkSessions: mocks.listWorkSessions,
@@ -100,10 +92,6 @@ describe("WorkSession API", () => {
       sandbox: { deploymentId: "deployment-1" },
     });
     mocks.livePort.mockReturnValue(4312);
-    mocks.ensureHermesRuntimeReady.mockResolvedValue({ port: 4312 });
-    mocks.prepareHermesConversationSelection.mockImplementation(
-      async (_agent, selection) => selection,
-    );
   });
 
   afterEach(() => vi.unstubAllGlobals());
@@ -217,80 +205,6 @@ describe("WorkSession API", () => {
       "Review",
       { references, a2aActorId: "user-1" },
     );
-  });
-
-  it("validates and forwards a Hermes model selected for the new Work conversation", async () => {
-    const agent = {
-      id: "agent-1",
-      workspaceId: "workspace-1",
-      runtimeKind: "hermes",
-      runtime: {
-        kind: "hermes",
-        sandboxId: "sandbox-1",
-        sandbox: {
-          workspaceId: "workspace-1",
-          kind: "hermes",
-          network: "bridge",
-        },
-      },
-    };
-    mocks.getAgentForRequest.mockResolvedValueOnce(agent);
-    const response = await createWork(
-      new Request("http://toolplane.test/api/v1/work-sessions", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          agentId: "agent-1",
-          task: "Run the tests",
-          hermesProfile: "research",
-          hermesProvider: "openrouter",
-          hermesModel: "model-b",
-        }),
-      }),
-    );
-
-    expect(response.status).toBe(202);
-    expect(mocks.prepareHermesConversationSelection).toHaveBeenCalledWith(
-      agent,
-      {
-        profile: "research",
-        provider: "openrouter",
-        model: "model-b",
-      },
-    );
-    expect(mocks.createWorkSession).toHaveBeenCalledWith(
-      expect.objectContaining({
-        hermesSelection: {
-          profile: "research",
-          provider: "openrouter",
-          model: "model-b",
-        },
-      }),
-    );
-  });
-
-  it("rejects an incomplete Hermes provider and model pair", async () => {
-    mocks.getAgentForRequest.mockResolvedValueOnce({
-      id: "agent-1",
-      workspaceId: "workspace-1",
-      runtimeKind: "hermes",
-    });
-    const response = await createWork(
-      new Request("http://toolplane.test/api/v1/work-sessions", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          agentId: "agent-1",
-          task: "Run the tests",
-          hermesProfile: "default",
-          hermesProvider: "openrouter",
-        }),
-      }),
-    );
-
-    expect(response.status).toBe(400);
-    expect(mocks.prepareHermesConversationSelection).not.toHaveBeenCalled();
-    expect(mocks.createWorkSession).not.toHaveBeenCalled();
   });
 
   it("updates a scoped Work conversation reasoning effort before requeueing", async () => {
@@ -462,84 +376,5 @@ describe("WorkSession API", () => {
       params: Promise.resolve({ workSessionId: "work-1" }),
     });
     expect((await response.json()).sandbox).toBeNull();
-  });
-
-  it("opens the exact Hermes runtime sandbox and starts it on demand", async () => {
-    mocks.findWorkSession.mockResolvedValue({
-      workspaceId: "workspace-1",
-      runtimeKind: "hermes",
-      sandboxId: "sandbox-hermes",
-      agent: {
-        id: "agent-hermes",
-        sandboxes: [],
-        runtime: { kind: "hermes", sandboxId: "sandbox-hermes" },
-      },
-      sandbox: { deploymentId: "deployment-hermes" },
-    });
-    mocks.livePort.mockReturnValue(null);
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response('{"id":"terminal-1"}', {
-        status: 201,
-        headers: { "content-type": "application/json" },
-      }),
-    );
-    vi.stubGlobal("fetch", fetchMock);
-
-    const response = await openWorkTerminal(
-      new Request("http://toolplane.test/sandbox/terminal", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: "{}",
-      }),
-      {
-        params: Promise.resolve({
-          workSessionId: "work-1",
-          path: ["terminal"],
-        }),
-      },
-    );
-
-    expect(response.status).toBe(201);
-    expect(mocks.ensureHermesRuntimeReady).toHaveBeenCalledWith(
-      "workspace-1",
-      "agent-hermes",
-    );
-    expect(fetchMock).toHaveBeenCalledWith(
-      "http://127.0.0.1:4312/terminal/session",
-      expect.objectContaining({ method: "POST" }),
-    );
-  });
-
-  it("does not proxy a Work session to another Hermes runtime sandbox", async () => {
-    mocks.findWorkSession.mockResolvedValue({
-      workspaceId: "workspace-1",
-      runtimeKind: "hermes",
-      sandboxId: "sandbox-other",
-      agent: {
-        id: "agent-hermes",
-        sandboxes: [],
-        runtime: { kind: "hermes", sandboxId: "sandbox-hermes" },
-      },
-      sandbox: { deploymentId: "deployment-other" },
-    });
-    const fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
-
-    const response = await openWorkTerminal(
-      new Request("http://toolplane.test/sandbox/terminal", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: "{}",
-      }),
-      {
-        params: Promise.resolve({
-          workSessionId: "work-1",
-          path: ["terminal"],
-        }),
-      },
-    );
-
-    expect(response.status).toBe(404);
-    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

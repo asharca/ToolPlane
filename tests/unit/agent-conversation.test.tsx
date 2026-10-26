@@ -1,16 +1,10 @@
 import { assertDefined } from "../assert-defined";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import {
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
 import { AgentConversation } from "@/components/dashboard/agents/AgentConversation";
-import type { HermesUIMessage } from "@/lib/agents/hermes/message-segments";
+import type { AgentUIMessage } from "@/lib/agents/message-segments";
 
 const chatMocks = vi.hoisted(() => ({
   useChat: vi.fn(),
@@ -51,7 +45,7 @@ vi.mock("streamdown", () => ({
 
 vi.mock("@streamdown/code", () => ({ code: {} }));
 
-const initialMessages: HermesUIMessage[] = [
+const initialMessages: AgentUIMessage[] = [
   { id: "m1", role: "assistant", parts: [{ type: "text", text: "hello" }] },
 ];
 
@@ -214,7 +208,7 @@ describe("AgentConversation", () => {
   });
 
   it("sends an edited user message with its source id", async () => {
-    const messages: HermesUIMessage[] = [
+    const messages: AgentUIMessage[] = [
       {
         id: "u1",
         role: "user",
@@ -267,7 +261,7 @@ describe("AgentConversation", () => {
   });
 
   it("shows context usage and token details in the composer", async () => {
-    const messages: HermesUIMessage[] = [
+    const messages: AgentUIMessage[] = [
       {
         id: "m-usage",
         role: "assistant",
@@ -311,10 +305,10 @@ describe("AgentConversation", () => {
   });
 
   it("syncs local messages when the active conversation changes", async () => {
-    const firstMessages: HermesUIMessage[] = [
+    const firstMessages: AgentUIMessage[] = [
       { id: "a1", role: "assistant", parts: [{ type: "text", text: "first" }] },
     ];
-    const secondMessages: HermesUIMessage[] = [
+    const secondMessages: AgentUIMessage[] = [
       {
         id: "a2",
         role: "assistant",
@@ -421,139 +415,8 @@ describe("AgentConversation", () => {
     });
   });
 
-  it("enables attachments for stored native uploads and Hermes", async () => {
-    const { props, rerender } = renderConversation();
-
-    const toolsButton = screen.getByRole("button", { name: "Open tools" });
-    expect(toolsButton).toBeEnabled();
-    await userEvent.click(toolsButton);
-    expect(
-      screen.getByRole("menuitem", { name: /Add attachment/ }),
-    ).toBeDisabled();
-    expect(
-      screen.getByText(
-        "Attachments are not available for this runtime or sandbox.",
-      ),
-    ).toBeInTheDocument();
-
-    rerender(
-      <AgentConversation
-        {...props}
-        attachmentUploadUrl="/api/v1/workspaces/workspace-1/attachments"
-      />,
-    );
-
-    expect(
-      screen.getByRole("menuitem", { name: /Add attachment/ }),
-    ).toBeEnabled();
-
-    rerender(<AgentConversation {...props} runtimeKind="hermes" />);
-
-    expect(
-      screen.getByRole("menuitem", { name: /Add attachment/ }),
-    ).toBeEnabled();
-  });
-
-  it("uploads a native attachment as an internal file part", async () => {
-    apiMocks.fetch.mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({
-          id: "attachment-1",
-          name: "notes.txt",
-          mimeType: "text/plain",
-          size: 5,
-          url: "/api/v1/attachments/attachment-1",
-        }),
-        {
-          status: 201,
-          headers: { "content-type": "application/json" },
-        },
-      ),
-    );
-    renderConversation({
-      attachmentUploadUrl: "/api/v1/workspaces/workspace-1/attachments",
-      runtimeKind: "pi",
-    });
-
-    await userEvent.click(screen.getByRole("button", { name: "Open tools" }));
-    await userEvent.click(
-      screen.getByRole("menuitem", { name: /Add attachment/ }),
-    );
-    const fileInput =
-      document.querySelector<HTMLInputElement>('input[type="file"]');
-    expect(fileInput).not.toBeNull();
-    await userEvent.upload(
-      assertDefined(fileInput),
-      new File(["notes"], "notes.txt", { type: "text/plain" }),
-    );
-    await userEvent.type(
-      screen.getByPlaceholderText("Message this agent"),
-      "Read this",
-    );
-    await userEvent.click(screen.getByRole("button", { name: "Send prompt" }));
-
-    await waitFor(() =>
-      expect(apiMocks.fetch).toHaveBeenCalledWith(
-        "/api/v1/workspaces/workspace-1/attachments?filename=notes.txt",
-        expect.objectContaining({ method: "POST", body: expect.any(File) }),
-      ),
-    );
-    await waitFor(() =>
-      expect(chatMocks.sendMessage).toHaveBeenCalledWith(
-        expect.objectContaining({
-          parts: expect.arrayContaining([
-            expect.objectContaining({
-              type: "file",
-              filename: "notes.txt",
-              mediaType: "text/plain",
-              url: "/api/v1/attachments/attachment-1",
-            }),
-          ]),
-        }),
-        expect.objectContaining({ body: { conversationId: "conv-new" } }),
-      ),
-    );
-  });
-
-  it("restores the composer when a Hermes attachment upload fails", async () => {
-    apiMocks.fetch.mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({
-          error: "Hermes storage is unavailable.",
-        }),
-        {
-          status: 503,
-          headers: { "content-type": "application/json" },
-        },
-      ),
-    );
-    renderConversation({ runtimeKind: "hermes" });
-
-    await userEvent.click(screen.getByRole("button", { name: "Open tools" }));
-    await userEvent.click(
-      screen.getByRole("menuitem", { name: /Add attachment/ }),
-    );
-    const fileInput =
-      document.querySelector<HTMLInputElement>('input[type="file"]');
-    expect(fileInput).not.toBeNull();
-    await userEvent.upload(
-      assertDefined(fileInput),
-      new File(["one"], "one.txt", { type: "text/plain" }),
-    );
-    const composer = screen.getByPlaceholderText("Message this agent");
-    await userEvent.type(composer, "Keep the file and text");
-    await userEvent.click(screen.getByRole("button", { name: "Send prompt" }));
-
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Hermes storage is unavailable.",
-    );
-    expect(composer).toHaveValue("Keep the file and text");
-    expect(screen.getByText("one.txt")).toBeInTheDocument();
-    expect(chatMocks.sendMessage).not.toHaveBeenCalled();
-  });
-
   it("stops a streaming response", async () => {
-    const streamingMessages: HermesUIMessage[] = [
+    const streamingMessages: AgentUIMessage[] = [
       { id: "m-streaming", role: "assistant", parts: [] },
     ];
     chatMocks.useChat.mockReturnValue({
@@ -596,7 +459,7 @@ describe("AgentConversation", () => {
           { type: "text", text: "Here is the answer." },
         ],
       },
-    ] as HermesUIMessage[];
+    ] as AgentUIMessage[];
     chatMocks.useChat.mockReturnValue({
       messages,
       sendMessage: chatMocks.sendMessage,
@@ -647,7 +510,7 @@ describe("AgentConversation", () => {
           },
         ],
       },
-    ] as HermesUIMessage[];
+    ] as AgentUIMessage[];
     chatMocks.useChat.mockReturnValue({
       messages,
       sendMessage: chatMocks.sendMessage,
@@ -753,11 +616,10 @@ describe("AgentConversation", () => {
     },
   );
 
-  it("reuses assistant chat tools for + and /, including attachments", async () => {
+  it("reuses assistant chat tools for + and /", async () => {
     const user = userEvent.setup();
     const onNewConversation = vi.fn();
     renderConversation({
-      attachmentUploadUrl: "/attachments",
       mcpPromptApiPath: "/prompts",
       mcpResourceApiPath: "/composer",
       onNewConversation,
@@ -768,8 +630,8 @@ describe("AgentConversation", () => {
     await user.click(tools);
     const plusMenu = await screen.findByRole("menu", { name: "Tools" });
     expect(
-      within(plusMenu).getByRole("menuitem", { name: /Add attachment/ }),
-    ).toBeInTheDocument();
+      within(plusMenu).queryByRole("menuitem", { name: /Add attachment/ }),
+    ).not.toBeInTheDocument();
     expect(
       within(plusMenu).getByRole("menuitem", { name: "MCP" }),
     ).toBeInTheDocument();
@@ -790,8 +652,8 @@ describe("AgentConversation", () => {
     await user.type(screen.getByPlaceholderText("Message this agent"), "/");
     const menu = await screen.findByRole("menu", { name: "Tools" });
     expect(
-      within(menu).getByRole("menuitem", { name: "Add attachment" }),
-    ).toBeInTheDocument();
+      within(menu).queryByRole("menuitem", { name: "Add attachment" }),
+    ).not.toBeInTheDocument();
     expect(
       within(menu).getByRole("menuitem", { name: "MCP" }),
     ).toBeInTheDocument();
@@ -847,38 +709,13 @@ describe("AgentConversation", () => {
       name: "Customize toolbar",
     });
     await user.click(
-      within(customizer).getByRole("checkbox", { name: "Add attachment" }),
-    );
-    await user.click(
       within(customizer).getByRole("checkbox", { name: "MCP resources" }),
     );
-    const resources = within(customizer).getByRole("checkbox", {
-      name: "MCP resources",
-    });
-    const attachment = within(customizer).getByRole("checkbox", {
-      name: "Add attachment",
-    });
-    const data = new Map<string, string>();
-    const dataTransfer = {
-      setData: (type: string, value: string) => data.set(type, value),
-      getData: (type: string) => data.get(type) ?? "",
-      effectAllowed: "",
-      dropEffect: "",
-    };
-    fireEvent.dragStart(assertDefined(resources.closest("[draggable]")), {
-      dataTransfer,
-    });
-    fireEvent.dragOver(assertDefined(attachment.closest("[draggable]")), {
-      dataTransfer,
-    });
-    fireEvent.drop(assertDefined(attachment.closest("[draggable]")), {
-      dataTransfer,
-    });
     expect(
       [...document.querySelectorAll("[data-composer-shortcut]")].map((el) =>
         el.getAttribute("aria-label"),
       ),
-    ).toEqual(["MCP resources", "Add attachment"]);
+    ).toEqual(["MCP resources"]);
     await user.click(within(customizer).getByRole("button", { name: "Close" }));
 
     await user.click(screen.getByRole("button", { name: "MCP resources" }));
@@ -1102,111 +939,14 @@ describe("AgentConversation", () => {
     await screen.findByText("Not allowed to cancel this turn");
     expect(chatMocks.stop).not.toHaveBeenCalled();
   });
-  it("enforces attachment count, lets users remove a file and accepts a replacement", async () => {
-    renderConversation({
-      attachmentUploadUrl: "/api/v1/workspaces/workspace/attachments",
-    });
-    await userEvent.click(screen.getByRole("button", { name: "Open tools" }));
-    await userEvent.click(
-      screen.getByRole("menuitem", { name: /Add attachment/ }),
-    );
-    const input = assertDefined(
-      document.querySelector<HTMLInputElement>('input[type="file"]'),
-    );
-    const files = Array.from(
-      { length: 6 },
-      (_, index) => new File(["data"], `file-${index}.txt`),
-    );
-    await userEvent.upload(input, files);
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "You can attach up to 5 files.",
-    );
-    expect(screen.queryByText("file-5.txt")).not.toBeInTheDocument();
-    await userEvent.click(
-      screen.getByRole("button", { name: "Remove file-0.txt" }),
-    );
-    expect(screen.queryByText("file-0.txt")).not.toBeInTheDocument();
-    await userEvent.upload(input, new File(["replacement"], "replacement.txt"));
-    expect(await screen.findByText("replacement.txt")).toBeInTheDocument();
-    expect(apiMocks.fetch).not.toHaveBeenCalled();
-  });
+  it("offers no file upload control in chat", async () => {
+    renderConversation({ runtimeKind: "pi" });
 
-  it("uploads Hermes files as runtime-path context without attaching an external download URL", async () => {
-    apiMocks.fetch.mockResolvedValueOnce(
-      Response.json({
-        runtimePath: "/home/hermes/notes.txt",
-        name: "notes.txt",
-        size: 5,
-      }),
-    );
-    renderConversation({ runtimeKind: "hermes" });
     await userEvent.click(screen.getByRole("button", { name: "Open tools" }));
-    await userEvent.click(
-      screen.getByRole("menuitem", { name: /Add attachment/ }),
-    );
-    const input = assertDefined(
-      document.querySelector<HTMLInputElement>('input[type="file"]'),
-    );
-    await userEvent.upload(
-      input,
-      new File(["notes"], "notes.txt", { type: "text/plain" }),
-    );
-    await userEvent.type(
-      screen.getByPlaceholderText("Message this agent"),
-      "Read this runtime file",
-    );
-    await userEvent.click(screen.getByRole("button", { name: "Send prompt" }));
-    await waitFor(() =>
-      expect(chatMocks.sendMessage).toHaveBeenCalledWith(
-        expect.objectContaining({
-          parts: expect.arrayContaining([
-            expect.objectContaining({
-              type: "text",
-              text: expect.stringContaining("/home/hermes/notes.txt"),
-            }),
-          ]),
-        }),
-        expect.anything(),
-      ),
-    );
-    const parts = chatMocks.sendMessage.mock.calls.at(-1)?.[0]?.parts as Array<{
-      type: string;
-    }>;
-    expect(parts.some((part) => part.type === "file")).toBe(false);
-  });
-
-  it("retains attachments when runtime commands reject attached input locally", async () => {
-    renderConversation({
-      runtimeKind: "dsh",
-      attachmentUploadUrl: "/api/v1/workspaces/workspace/attachments",
-    });
-    await userEvent.click(screen.getByRole("button", { name: "Open tools" }));
-    await userEvent.click(
-      screen.getByRole("menuitem", { name: /Add attachment/ }),
-    );
-    await userEvent.upload(
-      assertDefined(
-        document.querySelector<HTMLInputElement>('input[type="file"]'),
-      ),
-      new File(["notes"], "notes.txt"),
-    );
-    await userEvent.type(
-      screen.getByPlaceholderText("Message this agent"),
-      "/compact",
-    );
-    apiMocks.fetch.mockResolvedValueOnce(
-      Response.json({ url: "/api/v1/attachments/notes" }),
-    );
-    await userEvent.click(screen.getByRole("button", { name: "Send prompt" }));
-    await screen.findByText(
-      "Send attachments and references in a regular message, separately from commands.",
-    );
-    await waitFor(() =>
-      expect(screen.getByPlaceholderText("Message this agent")).toHaveValue(
-        "/compact",
-      ),
-    );
-    expect(chatMocks.sendMessage).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole("menuitem", { name: /Add attachment/ }),
+    ).not.toBeInTheDocument();
+    expect(document.querySelector('input[type="file"]')).toBeNull();
   });
 
   it.each([true, false])(
@@ -1227,7 +967,7 @@ describe("AgentConversation", () => {
             },
           ],
         },
-      ] as HermesUIMessage[];
+      ] as AgentUIMessage[];
       chatMocks.useChat.mockReturnValue({
         ...chatMocks.useChat(),
         messages,

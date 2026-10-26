@@ -8,7 +8,6 @@ const mocks = vi.hoisted(() => ({
   user: vi.fn(),
   workspace: vi.fn(),
   sandboxes: vi.fn(),
-  runtimes: vi.fn(),
 }));
 vi.mock("next/navigation", () => ({
   redirect: (path: string) => {
@@ -27,16 +26,12 @@ vi.mock("@/lib/workspace/queries", () => ({
 }));
 vi.mock("@/lib/sandboxes/queries", () => ({
   listSandboxes: mocks.sandboxes,
-  listManagedAgentRuntimes: mocks.runtimes,
 }));
 vi.mock("@/lib/process/supervisor", () => ({
   effectiveStatus: (_id: string, status: string) => status,
 }));
 vi.mock("@/lib/sandboxes/runtime", () => ({
   sandboxVolumeName: (id: string) => `toolplane-sandbox-${id}`,
-}));
-vi.mock("@/lib/agents/hermes/token", () => ({
-  createHermesDashboardPath: (id: string) => `/hermes/${id}`,
 }));
 vi.mock("@/lib/sandboxes/actions", () => ({
   deleteSandboxAction: vi.fn(),
@@ -65,11 +60,6 @@ vi.mock("@/components/dashboard/sandboxes/SandboxCreateForm", () => ({
 }));
 vi.mock("@/components/dashboard/sandboxes/SandboxConnectorStatus", () => ({
   SandboxConnectorStatus: () => null,
-}));
-vi.mock("@/components/dashboard/agents/HermesRuntimeDialog", () => ({
-  HermesRuntimeDialogLauncher: ({ runtime }: { runtime: { name: string } }) => (
-    <button type="button">Manage {runtime.name}</button>
-  ),
 }));
 vi.mock("@/components/dashboard/sandboxes/SandboxBatchTable", () => ({
   SandboxBatchTable: ({
@@ -123,25 +113,11 @@ const sandbox = (id: string, status = "running", kind = "docker") => ({
   agentLinks: [],
   _count: { agentLinks: 0, snapshots: 0 },
 });
-const runtime = (status = "running") => ({
-  id: "runtime-1",
-  status,
-  image: "hermes:latest",
-  lastError: null,
-  agent: { id: "agent-1", name: "Research agent" },
-  sandbox: {
-    ...sandbox("hermes-sandbox", status),
-    name: "Hermes runtime",
-    config: { importSource: "hermes-archive" },
-    snapshots: [],
-  },
-});
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.user.mockResolvedValue({ id: "user-1", timeZone: "UTC" });
   mocks.workspace.mockResolvedValue({ id: "ws-1" });
   mocks.sandboxes.mockResolvedValue([]);
-  mocks.runtimes.mockResolvedValue([]);
 });
 afterEach(cleanup);
 
@@ -177,14 +153,13 @@ describe("sandbox list ownership and scope", () => {
           _count: { agentLinks: 1, snapshots: 2 },
         },
       ]);
-      mocks.runtimes.mockResolvedValue([runtime()]);
       render(await page(scope));
       const expected =
         scope === "agents"
-          ? ["Sandbox attached", "Hermes runtime"]
+          ? ["Sandbox attached"]
           : scope === "users"
             ? ["Sandbox personal"]
-            : ["Sandbox personal", "Sandbox attached", "Hermes runtime"];
+            : ["Sandbox personal", "Sandbox attached"];
       expect(
         screen.getAllByRole("row").map((row) => row.getAttribute("aria-label")),
       ).toEqual(expected);
@@ -205,11 +180,10 @@ describe("sandbox list ownership and scope", () => {
       { ...sandbox("old"), createdAt: new Date("2026-01-01") },
       { ...sandbox("new"), createdAt: new Date("2026-10-01") },
     ]);
-    mocks.runtimes.mockResolvedValue([runtime()]);
     render(await page());
     expect(
       screen.getAllByRole("row").map((row) => row.getAttribute("aria-label")),
-    ).toEqual(["Sandbox new", "Hermes runtime", "Sandbox old"]);
+    ).toEqual(["Sandbox new", "Sandbox old"]);
   });
   it.each([
     "running",
@@ -285,39 +259,4 @@ describe("sandbox list ownership and scope", () => {
     expect(row.getByRole("checkbox")).toBeEnabled();
     expect(row.getByRole("button", { name: "stop" })).toBeInTheDocument();
   });
-  it.each(["running", "stopped", "error", "setup_required", "copying"])(
-    "renders managed runtime %s with agent rather than standalone deletion",
-    async (status) => {
-      mocks.runtimes.mockResolvedValue([
-        {
-          ...runtime(status),
-          lastError: status === "error" ? "Runtime image unavailable" : null,
-        },
-      ]);
-      render(await page());
-      const row = within(screen.getByRole("row", { name: "Hermes runtime" }));
-      expect(row.getByRole("link", { name: "Research agent" })).toHaveAttribute(
-        "href",
-        "/app/acme/agents/agent-1",
-      );
-      expect(row.getByRole("link", { name: "channels" })).toHaveAttribute(
-        "href",
-        "/app/acme/agents/agent-1?settings=channels",
-      );
-      expect(row.getByText(/importedHermesArchiveLabel/)).toBeInTheDocument();
-      expect(
-        row.queryByRole("button", { name: "delete" }),
-      ).not.toBeInTheDocument();
-      if (status === "error")
-        expect(row.getByText("Runtime image unavailable")).toBeInTheDocument();
-      if (status === "copying")
-        expect(row.getByRole("checkbox")).toBeDisabled();
-      else
-        expect(
-          row.getByRole("button", {
-            name: status === "running" ? "stop" : "start",
-          }),
-        ).toBeInTheDocument();
-    },
-  );
 });

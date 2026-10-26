@@ -61,8 +61,7 @@ import {
 } from "@/components/motion/animated-sidebar";
 import { AgentModelDialog } from "@/components/dashboard/agents/AgentModelDialog";
 import { AgentConversation } from "@/components/dashboard/agents/AgentConversation";
-import type { HermesUIMessage } from "@/lib/agents/hermes/message-segments";
-import { ReasoningEffortControl } from "@/components/dashboard/agents/ReasoningEffortControl";
+import type { AgentUIMessage } from "@/lib/agents/message-segments";
 import type { ModelProviderOption } from "@/components/dashboard/models/ModelPicker";
 import { ConversationContextUsage } from "@/components/dashboard/ConversationComposer";
 import { WorkComposer } from "./WorkComposer";
@@ -88,10 +87,7 @@ import { ToolApproval } from "@/components/agents/tool-approval";
 import { SandboxConsole } from "@/components/dashboard/sandboxes/SandboxConsole";
 import { resolveContextUsage } from "@/lib/context-usage";
 import { deleteAgentAction, pinAgentAction } from "@/lib/agents/actions";
-import {
-  normalizeReasoningEffort,
-  type ReasoningEffort,
-} from "@/lib/agents/constants";
+import type { ReasoningEffort } from "@/lib/agents/constants";
 import {
   displayMessagingUserText,
   type ParsedMessagingSession,
@@ -208,9 +204,6 @@ type ConversationDetail = ConversationSummary & {
   readOnly: boolean;
   messages: WorkMessage[];
   reasoningEffort?: ReasoningEffort | null;
-  hermesProfile?: string | null;
-  hermesProvider?: string | null;
-  hermesModel?: string | null;
 };
 
 type WorkSidebarAgent = {
@@ -254,9 +247,6 @@ type WorkItem = {
   artifacts: string[];
   conversationId: string;
   reasoningEffort?: ReasoningEffort | null;
-  hermesProfile?: string | null;
-  hermesProvider?: string | null;
-  hermesModel?: string | null;
   workingDirectory?: string;
   sandbox: {
     id: string;
@@ -338,8 +328,6 @@ function runtimeLabel(kind: string | null | undefined): string {
   if (kind === "pi-sdk") return "Pi SDK";
   if (kind === "claude-code") return "Claude Code";
   if (kind === "dsh") return "DeepSeek Harness";
-  if (kind === "hermes") return "Hermes";
-  if (kind === "hermes-rpc") return "Hermes RPC";
   return "Pi";
 }
 
@@ -1053,30 +1041,6 @@ export function WorkspaceWork({
     workAgents[0]?.id ??
     "";
   const [agentId, setAgentId] = useState(initialAgentId);
-  const reasoningScope = conversation?.id ?? selected?.id ?? `agent:${agentId}`;
-  const [reasoningSelection, setReasoningSelection] = useState<{
-    scope: string;
-    value: ReasoningEffort;
-  }>({
-    scope: initialSelected?.id ?? `agent:${initialAgentId}`,
-    value:
-      normalizeReasoningEffort(initialSelected?.reasoningEffort) ?? "default",
-  });
-  const reasoningEffort =
-    reasoningSelection.scope === reasoningScope
-      ? reasoningSelection.value
-      : (normalizeReasoningEffort(
-          conversation?.reasoningEffort ?? selected?.reasoningEffort,
-        ) ?? "default");
-  const setReasoningEffort = (value: ReasoningEffort) => {
-    setReasoningSelection({ scope: reasoningScope, value });
-  };
-  const [hermesDraftSelection, setHermesDraftSelection] = useState<{
-    agentId: string;
-    profile: string;
-    provider: string | null;
-    model: string | null;
-  } | null>(null);
   const [sandboxId, setSandboxId] = useState("");
   const [workingDirectory, setWorkingDirectory] = useState(
     initialSelected?.workingDirectory ?? ".",
@@ -1090,7 +1054,6 @@ export function WorkspaceWork({
     name: string;
   } | null>(null);
   const [draft, setDraft] = useState("");
-  const [attachments, setAttachments] = useState<File[]>([]);
   const [referenceSelection, setReferenceSelection] = useState<{
     scope: string;
     items: ComposerReference[];
@@ -1138,8 +1101,7 @@ export function WorkspaceWork({
       ? selected.sandbox
       : activeSandbox;
   const conversationWorkspace =
-    Boolean(conversation && !conversation.legacyWorkspace) ||
-    Boolean(selected && selected.runtimeKind !== "hermes");
+    Boolean(conversation && !conversation.legacyWorkspace) || Boolean(selected);
   const workspacePending =
     controlSandbox &&
     ["copying", "provisioning"].includes(controlSandbox.status ?? "");
@@ -1149,31 +1111,7 @@ export function WorkspaceWork({
       : workspacePending
         ? t("conversationWorkspaceProvisioning")
         : t("noSandbox");
-  const controlHermesSelection =
-    controlAgent?.runtimeKind === "hermes"
-      ? conversation
-        ? {
-            profile: conversation.hermesProfile ?? "default",
-            provider: conversation.hermesProvider ?? null,
-            model: conversation.hermesModel ?? null,
-          }
-        : selected
-          ? {
-              profile: selected.hermesProfile ?? "default",
-              provider: selected.hermesProvider ?? null,
-              model: selected.hermesModel ?? null,
-            }
-          : hermesDraftSelection?.agentId === controlAgent.id
-            ? hermesDraftSelection
-            : {
-                agentId: controlAgent.id,
-                profile: "default",
-                provider: null,
-                model: null,
-              }
-      : null;
-  const controlWorkspaceRoot =
-    controlSandbox?.kind === "hermes" ? "/opt/data/workspace" : "/workspace";
+  const controlWorkspaceRoot = "/workspace";
   const composerScope = `${controlAgent?.id}:${controlSandbox?.id}:${selected?.id ?? conversation?.id ?? "new"}`;
   const references =
     referenceSelection.scope === composerScope ? referenceSelection.items : [];
@@ -1198,14 +1136,10 @@ export function WorkspaceWork({
     ? `/api/v1/work-sessions/${selected.id}/sandbox/terminal`
     : conversationWorkspaceApiBase
       ? `${conversationWorkspaceApiBase}/terminal`
-      : controlAgent?.runtimeKind === "hermes"
-        ? `/api/v1/agents/${controlAgent.id}/terminal`
-        : controlSandbox
-          ? `/api/v1/mcp/${controlSandbox.deploymentId}/terminal`
-          : undefined;
-  const controlModelLabel = controlHermesSelection
-    ? `${controlHermesSelection.profile} · ${controlHermesSelection.model ?? tAgents("profileDefault")}`
-    : controlAgent?.model || t("selectModel");
+      : controlSandbox
+        ? `/api/v1/mcp/${controlSandbox.deploymentId}/terminal`
+        : undefined;
+  const controlModelLabel = controlAgent?.model || t("selectModel");
   const activeWorkingDirectory = conversation
     ? "."
     : (selected?.workingDirectory ?? workingDirectory);
@@ -1654,15 +1588,6 @@ export function WorkspaceWork({
           ? { modelName: current.modelName }
           : {}),
       }));
-      if (
-        next.activities.some(
-          (activity) =>
-            activity.toolName === "Hermes approval" &&
-            activity.status === "running",
-        )
-      ) {
-        void refreshSelected();
-      }
     });
     source.addEventListener("done", () => void finish());
 
@@ -1691,10 +1616,7 @@ export function WorkspaceWork({
     setDraftSelectionKey(selectionKey);
     setMobilePane("work");
     setDraft("");
-    setAttachments([]);
     setReferenceSelection({ scope: "", items: [] });
-    setReasoningSelection({ scope: `agent:${nextAgentId}`, value: "default" });
-    setHermesDraftSelection(null);
     setWorkingDirectory(".");
     setError(null);
     window.history.replaceState(
@@ -1704,59 +1626,11 @@ export function WorkspaceWork({
     );
   }
 
-  async function uploadAttachments(): Promise<string[]> {
-    const uploaded: string[] = [];
-    try {
-      for (const file of attachments) {
-        const query = new URLSearchParams({ filename: file.name });
-        const response = await fetch(
-          `/api/v1/workspaces/${workspaceId}/attachments?${query}`,
-          {
-            method: "POST",
-            headers: {
-              "content-type": file.type || "application/octet-stream",
-            },
-            body: file,
-          },
-        );
-        const result = (await response.json().catch(() => ({}))) as {
-          id?: string;
-          error?: string;
-        };
-        if (!response.ok || !result.id)
-          throw new Error(result.error || tAgents("attachmentUploadFailed"));
-        uploaded.push(result.id);
-      }
-      return uploaded;
-    } catch (error) {
-      await Promise.all(
-        uploaded.map((id) =>
-          fetch(`/api/v1/attachments/${id}`, { method: "DELETE" }).catch(
-            () => undefined,
-          ),
-        ),
-      );
-      throw error;
-    }
-  }
-
-  async function discardUploaded(ids: string[]) {
-    await Promise.all(
-      ids.map((id) =>
-        fetch(`/api/v1/attachments/${id}`, { method: "DELETE" }).catch(
-          () => undefined,
-        ),
-      ),
-    );
-  }
-
   async function createWork() {
     if (!agentId || !activeSandboxId || !draft.trim()) return;
     setBusy("create");
     setError(null);
-    let attachmentIds: string[] = [];
     try {
-      attachmentIds = await uploadAttachments();
       const response = await fetch("/api/v1/work-sessions", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -1766,19 +1640,6 @@ export function WorkspaceWork({
           task: draft.trim(),
           ...(references.length ? { references } : {}),
           workingDirectory,
-          attachmentIds,
-          ...(agent?.runtimeKind === "hermes"
-            ? {
-                reasoningEffort,
-                ...(hermesDraftSelection?.agentId === agent.id
-                  ? {
-                      hermesProfile: hermesDraftSelection.profile,
-                      hermesProvider: hermesDraftSelection.provider,
-                      hermesModel: hermesDraftSelection.model,
-                    }
-                  : {}),
-              }
-            : {}),
         }),
       });
       const body = (await response.json()) as {
@@ -1789,7 +1650,6 @@ export function WorkspaceWork({
         throw new Error(body.error || t("createError"));
       window.location.assign(workHref(slug, body.workSessionId));
     } catch (cause) {
-      await discardUploaded(attachmentIds);
       setError(cause instanceof Error ? cause.message : t("createError"));
       setBusy(null);
     }
@@ -1840,7 +1700,7 @@ export function WorkspaceWork({
         setError(commandsT("unsupportedCommand"));
         return;
       }
-      if (attachments.length || references.length) {
+      if (references.length) {
         setError(commandsT("noAttachments"));
         return;
       }
@@ -1888,31 +1748,14 @@ export function WorkspaceWork({
     if (!selected) return createWork();
     setBusy("input");
     setError(null);
-    let attachmentIds: string[] = [];
-    try {
-      attachmentIds = await uploadAttachments();
-    } catch (cause) {
-      setError(
-        cause instanceof Error
-          ? cause.message
-          : tAgents("attachmentUploadFailed"),
-      );
-      setBusy(null);
-      return;
-    }
     if (
       await postAction("input", {
         input,
         ...(references.length ? { references } : {}),
-        ...(selected.runtimeKind === "hermes" ? { reasoningEffort } : {}),
-        ...(attachmentIds.length ? { attachmentIds } : {}),
       })
     ) {
       setDraft("");
-      setAttachments([]);
       setReferenceSelection({ scope: "", items: [] });
-    } else {
-      await discardUploaded(attachmentIds);
     }
   }
 
@@ -2002,17 +1845,9 @@ export function WorkspaceWork({
   }
 
   const running = Boolean(selected && ACTIVE_STATUSES.has(selected.status));
-  const draftHermesModelReady =
-    agent?.runtimeKind === "hermes" &&
-    hermesDraftSelection?.agentId === agent.id &&
-    Boolean(hermesDraftSelection.provider && hermesDraftSelection.model);
   const canSend = selected
     ? MESSAGEABLE_STATUSES.has(selected.status)
-    : Boolean(
-        (agent?.ready || draftHermesModelReady) &&
-          activeSandbox &&
-          (activeSandbox.running || agent?.runtimeKind === "hermes"),
-      );
+    : Boolean(agent?.ready && activeSandbox?.running);
   const localCommand = Boolean(parseRuntimeCommand(draft, commandRuntimeKind));
 
   function togglePanel(panel: WorkPanel) {
@@ -2043,39 +1878,6 @@ export function WorkspaceWork({
         conversation?.messages.length || selected?.messages.length
           ? t("modelSwitchConfirm")
           : undefined
-      }
-      hermesConversation={
-        controlAgent.runtimeKind === "hermes"
-          ? {
-              id: conversation?.id ?? selected?.conversationId ?? null,
-              profile: controlHermesSelection?.profile ?? "default",
-              provider: controlHermesSelection?.provider ?? null,
-              model: controlHermesSelection?.model ?? null,
-              hasMessages: Boolean(
-                conversation?.messages.length || selected?.messages.length,
-              ),
-              editable: conversation
-                ? !conversation.readOnly
-                : !selected || MESSAGEABLE_STATUSES.has(selected.status),
-              forkOnProfileChange: false,
-            }
-          : undefined
-      }
-      onHermesDraftChange={
-        !selected && !conversation
-          ? (selection) =>
-              setHermesDraftSelection({
-                agentId: controlAgent.id,
-                ...selection,
-              })
-          : undefined
-      }
-      onHermesSelectionSaved={
-        conversation
-          ? async () => router.refresh()
-          : selected
-            ? refreshSelected
-            : undefined
       }
       trigger={
         <Button
@@ -2506,24 +2308,18 @@ export function WorkspaceWork({
                 agentName={controlAgent.name}
                 ready={controlAgent.ready}
                 runtimeKind={controlAgent.runtimeKind}
-                modelName={controlHermesSelection?.model ?? controlAgent.model}
+                modelName={controlAgent.model}
                 modelPicker={modelPicker}
                 initialMessages={
                   conversation.messages.filter(
                     (message) => !messageCompaction(message),
-                  ) as HermesUIMessage[]
+                  ) as AgentUIMessage[]
                 }
                 initialReasoningEffort={
                   conversation.reasoningEffort ?? "default"
                 }
-                reasoningAvailable={controlAgent.runtimeKind === "hermes"}
                 creatingConversation={false}
                 ensureConversation={async () => conversation.id}
-                attachmentUploadUrl={
-                  controlAgent.runtimeKind === "hermes"
-                    ? undefined
-                    : `/api/v1/workspaces/${workspaceId}/attachments`
-                }
                 mcpPromptApiPath={`/api/v1/agents/${controlAgent.id}/prompts`}
                 mcpResourceApiPath={`/api/v1/agents/${controlAgent.id}/composer`}
                 onBusyChange={setConversationBusy}
@@ -2542,12 +2338,7 @@ export function WorkspaceWork({
                   <>
                     <WorkTranscript
                       agentName={controlAgent?.name ?? t("agent")}
-                      modelName={
-                        conversation?.hermesModel ??
-                        selected?.hermesModel ??
-                        selectedAgent?.model ??
-                        null
-                      }
+                      modelName={selectedAgent?.model ?? null}
                       messages={
                         conversation?.messages ?? selected?.messages ?? []
                       }
@@ -2637,15 +2428,9 @@ export function WorkspaceWork({
                       runtimeKind={commandRuntimeKind}
                       draft={draft}
                       onDraftChange={setDraft}
-                      attachments={attachments}
-                      onAttachmentsChange={setAttachments}
                       references={references}
                       onReferencesChange={(items) =>
                         setReferenceSelection({ scope: composerScope, items })
-                      }
-                      supportsAttachments={
-                        controlSandbox?.kind === "docker" ||
-                        controlSandbox?.kind === "hermes"
                       }
                       onError={setError}
                       onPendingChange={setComposerPending}
@@ -2653,13 +2438,6 @@ export function WorkspaceWork({
                       toolbarStart={
                         <>
                           {modelPicker}
-                          {controlAgent?.runtimeKind === "hermes" ? (
-                            <ReasoningEffortControl
-                              value={reasoningEffort}
-                              disabled={Boolean(busy) || running}
-                              onChange={setReasoningEffort}
-                            />
-                          ) : null}
                           <span className="flex min-w-0 items-center gap-1.5 truncate px-1 text-[11px] text-muted-foreground">
                             <TerminalSquare className="size-3.5 shrink-0" />
                             {runtimeLabel(
@@ -2702,8 +2480,7 @@ export function WorkspaceWork({
                   {!selected &&
                   activeSandbox &&
                   !activeSandbox.running &&
-                  activeSandbox.status !== "provisioning" &&
-                  agent?.runtimeKind !== "hermes" ? (
+                  activeSandbox.status !== "provisioning" ? (
                     <p className="px-2 pt-2 text-xs text-muted-foreground text-muted-foreground">
                       {t("stopped")}
                     </p>

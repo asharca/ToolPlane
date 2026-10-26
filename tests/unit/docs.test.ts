@@ -42,27 +42,14 @@ describe("public documentation", () => {
     expect(docs.find((doc) => doc.file === "README.md")?.url).toBe(
       "/docs/zh/guides/README",
     );
-    expect(docs.find((doc) => doc.file === "docs/README.md")?.url).toBe(
-      "/docs/en/guides/docs/README",
+    expect(docs.find((doc) => doc.file === "docs/README.zh-CN.md")?.url).toBe(
+      "/docs/zh/guides/docs/README",
     );
     for (const doc of docs) {
       expect(doc.url).toBe(
         `/docs/${doc.language}/${doc.category}/${doc.topic.split("/").map(encodeURIComponent).join("/")}`,
       );
     }
-    expect(
-      docs.find((doc) => doc.file === "docs/ARCHITECTURE.md"),
-    ).toMatchObject({ language: "zh", topic: "docs/ARCHITECTURE" });
-    expect(
-      docs.find((doc) => doc.file === "docs/ARCHITECTURE.en.md"),
-    ).toMatchObject({ language: "en", topic: "docs/ARCHITECTURE" });
-    expect(
-      docs.find((doc) => doc.file === "docs/HERMES_AGENT_RUNTIME.md")?.language,
-    ).toBe("zh");
-    expect(
-      docs.find((doc) => doc.file === "docs/HERMES_AGENT_RUNTIME.en.md")
-        ?.language,
-    ).toBe("en");
   });
 
   it("resolves known documents and repository files without consuming anchors or escaping the repository", () => {
@@ -109,12 +96,9 @@ describe("public documentation", () => {
 
 describe("scoped documentation search", () => {
   it.each([
-    ["zh", "guides", "docs/WORKSPACES.md"],
-    ["en", "guides", "docs/WORKSPACES.en.md"],
-    ["zh", "developers", "docs/ARCHITECTURE.md"],
-    ["en", "developers", "docs/ARCHITECTURE.en.md"],
+    ["zh", "guides", "docs/SANDBOXES.zh-CN.md"],
+    ["zh", "developers", "docs/AGENT_RUNTIMES.zh-CN.md"],
     ["zh", "api", "docs/AGENT_PUBLIC_API.zh-CN.md"],
-    ["en", "api", "docs/AGENT_PUBLIC_API.md"],
   ])(
     "searches only %s/%s using the real Markdown inventory",
     async (language, category, file) => {

@@ -1,6 +1,5 @@
 # 远程 MCP：HTTP 兼容与传输风险
 
-> **English**: [REMOTE_MCP_HTTP.md](./REMOTE_MCP_HTTP.md)
 
 本文面向将 ToolPlane 连接到远程 MCP 服务的用户与管理员。远程 MCP 支持 `https://`（推荐）、`http://`，以及 1–65535 范围内的显式端口。JSON 配置中的 `"type": "http"` 表示 Streamable HTTP 传输，不代表地址必须使用明文 HTTP；HTTPS 地址仍使用这个 type。
 

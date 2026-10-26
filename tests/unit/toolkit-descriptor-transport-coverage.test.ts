@@ -73,7 +73,7 @@ describe("toolkit descriptor and bootstrap transport", () => {
     expect((await install(req, ctx)).status).toBe(404);
     expect(m.link).not.toHaveBeenCalled();
   });
-  it.each(["codex", "opencode", "hermes", "unknown", ""])(
+  it.each(["codex", "opencode", "unknown", ""])(
     "returns a real bootstrap for client %s without embedding authorization",
     async (client) => {
       const response = await install(

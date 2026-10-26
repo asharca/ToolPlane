@@ -31,7 +31,6 @@ function Composer({
 }) {
   const [draft, setDraft] = useState("");
   const [references, setReferences] = useState<ComposerReference[]>([]);
-  const [attachments, setAttachments] = useState<File[]>([]);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   return (
@@ -48,10 +47,7 @@ function Composer({
         onDraftChange={setDraft}
         references={references}
         onReferencesChange={setReferences}
-        attachments={attachments}
-        onAttachmentsChange={setAttachments}
         disabled={false}
-        supportsAttachments
         onSubmit={() => onSubmit(references)}
         onPendingChange={setPending}
         onError={setError}
@@ -80,7 +76,7 @@ async function customize(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("Work composer", () => {
-  it.each(["pi", "claude-code", "dsh", "hermes-rpc"])(
+  it.each(["pi", "claude-code", "dsh", "pi-sdk"])(
     "offers only %s commands through /, completes without executing, and keeps + unchanged",
     async (runtimeKind) => {
       const user = userEvent.setup();
@@ -137,9 +133,6 @@ describe("Work composer", () => {
     await user.click(screen.getByRole("button", { name: "Back" }));
     expect(search).toHaveFocus();
     expect(screen.getByRole("option", { name: "Skills" })).toBeInTheDocument();
-    expect(
-      screen.getByRole("option", { name: "Add attachment" }),
-    ).toBeInTheDocument();
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
     expect(input()).toHaveValue("Keep this draft");
@@ -195,7 +188,7 @@ describe("Work composer", () => {
     fireEvent.drop(
       assertDefined(
         within(dialog)
-          .getByRole("checkbox", { name: "Add attachment" })
+          .getByRole("checkbox", { name: "Prompt management" })
           .closest("[draggable]"),
       ),
       { dataTransfer },

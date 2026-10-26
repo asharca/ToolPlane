@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 import {
   buildToolkitInstallScript,
   buildPluginInstallScript,
-  buildPluginUninstallScript,
   resolveClient,
 } from "@/lib/plugin/install-script";
 import { buildSyncScript } from "@/lib/plugin/sync-script";
@@ -28,14 +27,18 @@ function decodeFile(
 const BASE = "http://localhost:3000";
 
 describe("resolveClient", () => {
-  it("accepts supported auto-sync clients and falls back to Claude Code", () => {
-    expect(resolveClient("claude-code")).toBe("claude-code");
-    expect(resolveClient("codex")).toBe("codex");
-    expect(resolveClient("hermes")).toBe("hermes");
-    expect(resolveClient("opencode")).toBe("opencode");
-    expect(resolveClient("bogus")).toBe("claude-code");
-    expect(resolveClient(null)).toBe("claude-code");
-  });
+  it.each(["claude-code", "codex", "opencode"])(
+    "keeps supported client %s",
+    (client) => {
+      expect(resolveClient(client)).toBe(client);
+    },
+  );
+  it.each([null, undefined, "unknown"])(
+    "defaults unsupported client %s to Claude Code",
+    (client) => {
+      expect(resolveClient(client)).toBe("claude-code");
+    },
+  );
 });
 
 describe("buildPluginInstallScript", () => {
@@ -169,46 +172,6 @@ describe("buildToolkitInstallScript", () => {
     expect(sync).toContain('SKILLS_DIR="$PLUGIN_ROOT/skills"');
   });
 
-  it("dispatches Hermes installs to config.yaml + ~/.hermes skills", () => {
-    const script = buildToolkitInstallScript({
-      base: BASE,
-      workspaceSlug: "ws",
-      toolkitSlug: "tk",
-      token: "sk_user_HERMES",
-      client: "hermes",
-    });
-
-    expect(script).toContain("config.yaml");
-    expect(script).toContain("skill-bundles");
-    expect(script).toContain("mcp_servers:");
-    expect(script).not.toContain("claude plugin install");
-
-    const mcp = JSON.parse(decodeFile(script, ".mcp.json", "BUNDLE_DIR"));
-    expect(
-      mcp.mcpServers["toolplane-9916dc3062c5469024a6b8b3"].headers
-        .Authorization,
-    ).toBe("Bearer sk_user_HERMES");
-
-    const sync = decodeFile(script, "shared/sync.sh", "BUNDLE_DIR");
-    expect(sync).toContain('CLIENT="hermes"');
-    expect(sync).toContain(
-      'PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"',
-    );
-    expect(sync).toContain(
-      `SKILLS_DIR="\${HERMES_HOME:-$HOME/.hermes}/skills/toolplane-9916dc3062c5469024a6b8b3"`,
-    );
-    expect(sync).toContain('SKILL_DIR_PREFIX=""');
-    const hookSync = decodeFile(script, "shared/hook-sync.sh", "BUNDLE_DIR");
-    expect(hookSync).toContain('TOOLPLANE_SYNC_ROOT="$BUNDLE_DIR"');
-    expect(hookSync).toContain(
-      'rm -f "$HERMES_HOME_DIR/.skills_prompt_snapshot.json"',
-    );
-    expect(script).toContain("on_session_start:");
-    expect(script).toContain("HOOK_COMMAND=");
-    expect(script).toContain("shared/hook-sync.sh");
-    expect(script).toContain("$HOME/.local/bin/hermes");
-  });
-
   it("falls back to Claude Code for unknown clients", () => {
     const script = buildToolkitInstallScript({
       base: BASE,
@@ -220,32 +183,6 @@ describe("buildToolkitInstallScript", () => {
     expect(script).toContain(
       "claude plugin install toolplane-9916dc3062c5469024a6b8b3@toolplane-9916dc3062c5469024a6b8b3",
     );
-  });
-});
-
-describe("buildPluginUninstallScript", () => {
-  const script = buildPluginUninstallScript({
-    base: "http://localhost:3000",
-    workspaceSlug: "ws",
-    toolkitSlug: "tk",
-    client: "hermes",
-  });
-  it("unregisters only the selected client and removes exact owned files", () => {
-    expect(script).toContain(
-      "$HOME/.claude/plugins/toolplane-9916dc3062c5469024a6b8b3",
-    );
-    expect(script).toContain("$HOME/.codex");
-    expect(script).toContain("$HOME/.config/opencode");
-    expect(script).toContain("$HOME/.hermes");
-    expect(script).toContain(
-      "claude plugin uninstall toolplane-9916dc3062c5469024a6b8b3@toolplane-9916dc3062c5469024a6b8b3",
-    );
-    expect(script).toContain(
-      "claude plugin marketplace remove toolplane-9916dc3062c5469024a6b8b3",
-    );
-    expect(script).not.toContain('rm -rf "$PLUGIN_DIR"');
-    expect(script).toContain("manifest.installation !== server");
-    expect(script).toContain("fs.rmdirSync");
   });
 });
 

@@ -202,11 +202,8 @@ describe("Agent A2A console panel", () => {
       screen.getByText(/Never give your account token to third parties/),
     ).toBeInTheDocument();
     expect(
-      screen.queryByText(/Publish an active isolated Hermes/),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("heading", { name: "Published service" }),
-    ).not.toBeInTheDocument();
+      screen.getByRole("heading", { name: "Published service" }),
+    ).toBeInTheDocument();
     expect(
       screen.queryByRole("textbox", {
         name: "Task message / additional input",
@@ -250,8 +247,9 @@ describe("Agent A2A console panel", () => {
     ).toBeEnabled();
     expect(posts()).toHaveLength(0);
   });
-  it("retains Hermes publication and dedicated service credentials", async () => {
-    await show("hermes");
+  it("retains publication and dedicated service credentials", async () => {
+    await show("pi");
+    fireEvent.click(screen.getByRole("button", { name: "Published service" }));
     expect(
       screen.getByRole("heading", { name: "Published service" }),
     ).toBeInTheDocument();
@@ -309,7 +307,7 @@ describe("Agent A2A console panel", () => {
     },
   );
   it("preserves the one-time credential when a subsequent list refresh fails; no automatic retry", async () => {
-    await show("hermes");
+    await show("pi");
     fetchMock.mockImplementation((_url, init) =>
       init?.method === "POST"
         ? json({ ok: true, token: "tp_agent_ONE_TIME_FIXTURE" })
@@ -339,7 +337,8 @@ describe("Agent A2A console panel", () => {
     ).not.toBeInTheDocument();
   });
   it("switches connection URLs without submitting tasks or exposing credentials in docs", async () => {
-    await show("hermes");
+    await show("pi");
+    fireEvent.click(screen.getByRole("button", { name: "Published service" }));
     expect(
       screen.getByText("https://tp.example/a2a", { selector: "code" }),
     ).toBeVisible();
