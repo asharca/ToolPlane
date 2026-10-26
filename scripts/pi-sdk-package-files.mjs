@@ -122,7 +122,7 @@ function load(item) {
     (!portable &&
       (runtime.platform !== process.platform ||
         runtime.arch !== process.arch)) ||
-    Number(process.versions.node.split(".")[0]) !== 24
+    Number(process.versions.node.split(".")[0]) !== runtime.nodeMajor
   )
     throw new Error("package_platform_mismatch");
   if (

@@ -489,7 +489,8 @@ export async function installPiPackageClient(command, configFile) {
         )
           fail("invalid_pi_snapshot");
         if (
-          Number(process.versions.node.split(".")[0]) !== 24 ||
+          Number(process.versions.node.split(".")[0]) !==
+            pkg.runtime.nodeMajor ||
           (pkg.runtime.platform !== "any" &&
             (process.platform !== pkg.runtime.platform ||
               process.arch !== pkg.runtime.arch))
