@@ -171,7 +171,6 @@ describe("administrator assistant immutable releases", () => {
     expect(m.release.mock.calls[0][0].data.manifest.assistant).toMatchObject({
       modelRequirement: { providerFormat: "openai", model: "gpt" },
       modelParameters: null,
-      promptTemplates: [],
       mcpRequirements: [
         { catalogSlug: "search", name: "Search", allowedToolNames: [] },
       ],

@@ -306,6 +306,7 @@ describe("Chat turn admission", () => {
         threadId: "thread-1",
         idempotencyKey: "request-1",
         actorUserId: "user-1",
+        assistantRevisionId: "revision-1",
         requestHash: expect.stringMatching(/^[a-f0-9]{64}$/),
       },
     });

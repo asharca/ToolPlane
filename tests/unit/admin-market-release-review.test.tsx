@@ -190,7 +190,6 @@ describe("admin market release review", () => {
           model: "gpt-5.6",
         },
         modelParameters: null,
-        promptTemplates: [],
         mcpRequirements: [
           {
             catalogSlug: "filesystem",

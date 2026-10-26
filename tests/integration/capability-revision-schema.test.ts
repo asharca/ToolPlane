@@ -16,7 +16,6 @@ const assistantConfig = ChatAssistantRevisionConfigSchema.parse({
   model: null,
   modelParameters: null,
   maxSteps: 100,
-  promptTemplates: [],
   mcpGrants: [],
 });
 let userId = "";

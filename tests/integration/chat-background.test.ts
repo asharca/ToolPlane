@@ -227,7 +227,6 @@ beforeAll(async () => {
           model: "chat-background-fixture",
           modelParameters: null,
           maxSteps: 5,
-          promptTemplates: [],
           mcpGrants: [],
         },
       },

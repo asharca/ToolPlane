@@ -528,11 +528,9 @@ describe("revision source release retention", () => {
         where: { revisionId: agentRevision.id },
       }),
     ).rejects.toThrow();
-    // Removing either object must not remove the other object's retained source.
+    // Assistant revisions carry no market-release source, so deleting the agent
+    // removes the only retained reference and releases the artifact.
     await db.agent.delete({ where: { id: agent.id } });
-    await expect(
-      db.marketRelease.delete({ where: { id: source.id } }),
-    ).rejects.toThrow();
     await db.chatAssistant.delete({ where: { id: assistant.id } });
     await db.marketRelease.delete({ where: { id: source.id } });
   });

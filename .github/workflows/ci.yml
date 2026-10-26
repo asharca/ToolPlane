@@ -110,8 +110,8 @@ jobs:
       - name: Enable pgvector
         run: psql "$DATABASE_URL" -c 'CREATE EXTENSION IF NOT EXISTS vector'
 
-      - name: Push Prisma schema
-        run: pnpm exec prisma db push
+      - name: Apply database migrations
+        run: pnpm exec prisma migrate deploy
 
       - name: Biome lint, format and typecheck
         run: pnpm check

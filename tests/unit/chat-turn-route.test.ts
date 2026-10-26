@@ -198,7 +198,6 @@ describe("server-owned assistant turns", () => {
         model: "current-model",
         modelParameters: { temperature: 0.4 },
         maxSteps: 5,
-        promptTemplates: [],
         mcpGrants: [],
       },
       branch: {
