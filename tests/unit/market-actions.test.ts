@@ -260,7 +260,8 @@ describe("market publishing and lifecycle boundaries", () => {
     await actions.publishPiPackageReleaseAction(
       {},
       marketForm({
-        source: "https://github.com/acme/pkg#cccccccccccccccccccccccccccccccccccccccc",
+        source:
+          "https://github.com/acme/pkg#cccccccccccccccccccccccccccccccccccccccc",
         sourceId: "source",
         visibility: "public",
         listingId: "listing",

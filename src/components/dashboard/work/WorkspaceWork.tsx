@@ -2533,12 +2533,10 @@ export function WorkspaceWork({
                       onPendingChange={setComposerPending}
                       waitingQuestion={selected?.waitingQuestion}
                       toolbarStart={
-                        <>
-                          <span className="flex min-w-0 items-center gap-1.5 truncate px-1 text-[11px] text-muted-foreground">
-                            <TerminalSquare className="size-3.5 shrink-0" />
-                            {runtimeLabel(commandRuntimeKind)}
-                          </span>
-                        </>
+                        <span className="flex min-w-0 items-center gap-1.5 truncate px-1 text-[11px] text-muted-foreground">
+                          <TerminalSquare className="size-3.5 shrink-0" />
+                          {runtimeLabel(commandRuntimeKind)}
+                        </span>
                       }
                       disabled={
                         sessionReadOnly ||

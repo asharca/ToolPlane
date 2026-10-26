@@ -75,12 +75,10 @@ export default async function McpServersPage({
         <DashboardToolbar
           className="shrink-0"
           actions={
-            <>
-              <ButtonLink href={marketHref} variant="secondary" size="md">
-                <Store className="size-4" />
-                {t("browseToolplane")}
-              </ButtonLink>
-            </>
+            <ButtonLink href={marketHref} variant="secondary" size="md">
+              <Store className="size-4" />
+              {t("browseToolplane")}
+            </ButtonLink>
           }
         >
           <h1 className="text-xl font-semibold">{t("title")}</h1>
