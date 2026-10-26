@@ -339,8 +339,9 @@ function readSandboxCfg(installCfg: unknown): {
     network?: string;
     env?: Record<string, string>;
     allowSudo?: boolean;
+    readOnly?: boolean;
   };
-  if (c.kind === "hermes") throw new Error("AGENT_RUNTIME_RETIRED");
+  if (c.readOnly === true) throw new Error("AGENT_RUNTIME_RETIRED");
   const connector = connectorFromConfig(installCfg);
   const sshTargetId = sshTargetIdFromConfig(installCfg);
   if (c.kind === "ssh" && !sshTargetId)

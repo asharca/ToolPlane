@@ -1,6 +1,5 @@
 # 原生 A2A 内部协作
 
-> [English](A2A_LOCAL_COLLABORATION.md)
 
 控制台现在提供显式开关、连接信息与本地任务调试，见[A2A 接入指南](A2A_CONSOLE.zh-CN.md)。下面的 Bearer API 保持不变；这不表示旧 Work／聊天入口已自动迁移。
 
@@ -12,16 +11,14 @@
 
 本地 Context 使用 `targetKind=local`、工作区、Agent、调用用户和配置指纹；不创建虚假的
 Endpoint、API 客户端或私人 Conversation。公开 Context 保留发布修订与客户端隔离。
-公共凭据不能访问本地入口，公共 Hermes 执行器也不会通过这次改动取得私人 Agent 的权限。
+公共凭据不能访问本地入口，公共执行服务也不能取得私人 Agent 的权限。
 
-本地目标使用自己的模型、MCP、Skill、能力包和会话沙箱；运行时切换另行实施。
+本地可执行目标仅为 Pi SDK 0.87.1，使用已应用修订中的模型、MCP、Skill、能力包和会话沙箱；其他运行时历史只读，不提供执行兼容。
 `Context.id` 绑定独立原生上下文与可写工作卷，不共享来源会话目录；同一上下文串行。
-托管 `hermes` 保持公开执行适配，不自动加入内部协作。
 
 新链路直接接原生沙箱执行端口，不调用旧 `runAgentTurn`、旧协作 Worker、Responses API
 或 `runDedicatedSandboxTurn`。受支持运行时的经典聊天、Work、Control MCP 和显式授权渠道
-现在通过[统一入口与执行前审批](A2A_INGRESS_APPROVALS.zh-CN.md)使用同一核心；托管 Hermes
-仍有兼容路径，历史数据不自动重放。[A2A 接入页面](A2A_CONSOLE.zh-CN.md)提供开关、连接示例和任务树。
+现在通过[统一入口与执行前审批](A2A_INGRESS_APPROVALS.zh-CN.md)使用同一核心；历史数据不自动重放。[A2A 接入页面](A2A_CONSOLE.zh-CN.md)提供开关、连接示例和任务树。
 
 ## 显式启用和调用
 
@@ -53,8 +50,7 @@ curl -X PUT "$TOOLPLANE_URL/api/v1/workspaces/$WORKSPACE/agents/$AGENT_ID/a2a/lo
 不重复消费。严格策略拒绝测量账单硬上限和 token 限额，不能假装对端提供了费用证明。
 策略不匹配、次数/费用耗尽时，运行工具持久化 INPUT_REQUIRED 并返回 `approvalRequired`，
 不创建子任务、不发送数据。模型不能批准；已批准范围内的确认可恢复原上下文，扩大权限
-需管理员修改策略并创建新任务/修订，不能用一句回复扩大历史上下文。完整 JSON 示例见
-[英文策略配置](A2A_LOCAL_COLLABORATION.md)。
+需管理员修改策略并创建新任务/修订，不能用一句回复扩大历史上下文。固定修订与实时授权的交集见[原生 Pi SDK](AGENT_RUNTIMES.zh-CN.md)。
 
 遵循 [A2A 1.0 AgentCard 语义](https://a2a-protocol.org/v1.0.0/specification/#441-agentcard)，
 卡片的 `description` 返回 Agent 配置的简介，并去掉首尾空白；未填写或只有空白时，
@@ -120,8 +116,7 @@ curl "$TOOLPLANE_URL/api/v1/workspaces/$WORKSPACE/agents/$AGENT_ID/a2a/local" \
 ## 交付物
 
 本地 Agent Card 声明 text/plain、text/markdown、text/x-diff、application/json 和
-application/octet-stream 输出；输入仍只接受 text/plain。公开 Hermes 执行配置仍为文本输出，
-不会因本地支持新格式而自动扩大公开能力。
+application/octet-stream 输出；输入仍只接受 text/plain。本地输出格式支持不会自动扩大公共端点能力；当前没有公共执行适配器。
 
 运行中的本地 Agent 可调用 `a2a_publish_artifact`：
 
@@ -159,7 +154,7 @@ application/octet-stream 输出；输入仍只接受 text/plain。公开 Hermes 
 
 整个核心仍只有一个运行时所有者。本地沙箱任务统一遵守管理员的单 Agent 和平台并发
 限额；每个会话/context 使用独立沙箱，同一会话仍串行。原有四槽池仅限制公共端点与
-远端执行，不再额外限制本地 Pi、Pi SDK、Claude Code、DSH 和 Hermes RPC。等待中的
+远端执行，不再额外限制本地 Pi SDK。等待中的
 父任务释放执行名额；忙碌的根任务保持排队，嵌套子任务遇满额立即失败，避免相互等待。
 
 这些不是金额或精确 Token 预算。聚合准入计数见[资源限额](A2A_RESOURCE_LIMITS.zh-CN.md)。

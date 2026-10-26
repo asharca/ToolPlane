@@ -31,11 +31,9 @@ const tx = vi.hoisted(() => ({
     create: vi.fn(),
     update: vi.fn(),
   },
-  agentModelProvider: { deleteMany: vi.fn(), createMany: vi.fn() },
   chatAssistant: { findFirst: vi.fn() },
   knowledgeBase: { findFirst: vi.fn() },
   workspace: { findFirst: vi.fn() },
-  agentRuntime: { findFirst: vi.fn() },
   sandbox: { updateMany: vi.fn() },
   deployment: { updateMany: vi.fn() },
   marketInstall: { findFirst: vi.fn() },
@@ -200,11 +198,11 @@ describe("round two agent mutation safety policies", () => {
   it("leaves a missing agent unchanged and clears selection when its provider is unavailable", async () => {
     tx.agent.findFirst.mockResolvedValueOnce(null);
     await expect(
-      updateAgentModelSelection("workspace", "missing", ["provider"], "model"),
+      updateAgentModelSelection("workspace", "missing", "provider", "model"),
     ).resolves.toBeUndefined();
     expect(tx.agent.updateMany).not.toHaveBeenCalled();
     tx.$queryRaw.mockResolvedValue([]);
-    await updateAgentModelSelection("workspace", "agent", ["foreign"], "model");
+    await updateAgentModelSelection("workspace", "agent", "foreign", "model");
     expect(tx.agent.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({ data: { providerId: null, model: null } }),
     );
@@ -223,21 +221,21 @@ describe("round two agent mutation safety policies", () => {
       });
       tx.$queryRaw.mockResolvedValue([{ ...provider, format }]);
       await expect(
-        updateAgentModelSelection("workspace", "agent", ["provider"], model),
+        updateAgentModelSelection("workspace", "agent", "provider", model),
       ).rejects.toThrow(error);
       expect(tx.agent.updateMany).not.toHaveBeenCalled();
     },
   );
 
-  it("clears an explicit provider selection when requested IDs are empty", async () => {
-    await updateAgentModelSelection("workspace", "agent", [], "model");
+  it("clears an explicit provider selection when the requested provider is null", async () => {
+    await updateAgentModelSelection("workspace", "agent", null, "model");
     expect(tx.agent.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({ data: { providerId: null, model: null } }),
     );
     expect(tx.$queryRaw).not.toHaveBeenCalled();
   });
 
-  it.each(["hermes", "pi", "claude-code", "dsh", "hermes-rpc"])(
+  it.each(["pi", "claude-code", "dsh"])(
     "rejects model/config changes for historical runtime %s without changing history",
     async (runtimeKind) => {
       tx.agent.findFirst.mockResolvedValue({
@@ -246,7 +244,7 @@ describe("round two agent mutation safety policies", () => {
         retiredAt: null,
       });
       await expect(
-        updateAgentModelSelection("workspace", "agent", ["provider"], "model"),
+        updateAgentModelSelection("workspace", "agent", "provider", "model"),
       ).rejects.toThrow("Historical Agents are read-only");
       await expect(
         updateAgent("workspace", "agent", {
@@ -269,7 +267,7 @@ describe("round two agent mutation safety policies", () => {
       retiredAt: new Date(),
     });
     await expect(
-      updateAgentModelSelection("workspace", "agent", ["provider"], "model"),
+      updateAgentModelSelection("workspace", "agent", "provider", "model"),
     ).rejects.toThrow("Historical Agents are read-only");
     expect(tx.agent.updateMany).not.toHaveBeenCalled();
   });

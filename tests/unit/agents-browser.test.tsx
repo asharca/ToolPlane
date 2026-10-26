@@ -178,7 +178,6 @@ describe("AgentsBrowser", () => {
             id: "agent-1",
             name: "Existing Agent",
             providerName: "OpenAI",
-            providerNames: [],
             model: "gpt-5",
             toolCount: 0,
             subAgentCount: 0,
@@ -517,7 +516,6 @@ describe("AgentsBrowser", () => {
             id: "agent-1",
             name: "Orphaned model",
             providerName: null,
-            providerNames: [],
             model: "gpt-4.1",
             toolCount: 0,
             subAgentCount: 0,
@@ -555,20 +553,19 @@ describe("AgentsBrowser", () => {
     );
   });
 
-  it("marks a Hermes agent ready from its provider inventory without a fixed model", () => {
+  it("keeps non-Pi history accessible through settings without offering chat before its sandbox is ready", () => {
     render(
       <AgentsBrowser
         slug="acme"
         agents={[
           {
-            id: "agent-hermes",
-            name: "Hermes researcher",
-            providerName: null,
-            providerNames: ["OpenAI", "Anthropic"],
-            model: null,
+            id: "agent-claude",
+            name: "Historical researcher",
+            providerName: "OpenAI",
+            model: "gpt-5",
             toolCount: 0,
             subAgentCount: 0,
-            runtimeKind: "hermes",
+            runtimeKind: "claude-code",
             runtimeStatus: "running",
             sandboxReady: false,
           },
@@ -582,16 +579,21 @@ describe("AgentsBrowser", () => {
     );
 
     const row = screen
-      .getByRole("link", { name: "Hermes researcher" })
+      .getByRole("link", { name: "Historical researcher" })
       .closest("li");
     expect(row).not.toBeNull();
-    expect(within(assertDefined(row)).getByText("Ready")).toBeInTheDocument();
     expect(
-      within(assertDefined(row)).getByText(/2 selected: OpenAI, Anthropic/),
-    ).toBeInTheDocument();
+      within(assertDefined(row)).queryByText("Ready"),
+    ).not.toBeInTheDocument();
     expect(
-      within(assertDefined(row)).getByRole("link", { name: "Chat" }),
-    ).toHaveAttribute("href", "/app/acme/work?agent=agent-hermes");
+      within(assertDefined(row)).queryByRole("link", { name: "Chat" }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(assertDefined(row)).getByRole("link", { name: "Settings" }),
+    ).toHaveAttribute(
+      "href",
+      "/app/acme/agents/agent-claude?returnTo=%2Fapp%2Facme%2Fagents%3F__dashboardTab%3Dagents-tab",
+    );
   });
 
   it("shows the stored runtime instead of relabeling it as Pi", () => {
@@ -603,7 +605,6 @@ describe("AgentsBrowser", () => {
             id: "agent-dsh",
             name: "Harness agent",
             providerName: "OpenAI",
-            providerNames: [],
             model: "gpt-4.1",
             toolCount: 0,
             subAgentCount: 0,
@@ -645,7 +646,6 @@ describe("AgentsBrowser", () => {
             id: "agent-1",
             name: "Researcher",
             providerName: "OpenAI",
-            providerNames: [],
             model: "gpt-4.1",
             toolCount: 2,
             subAgentCount: 1,
@@ -691,14 +691,13 @@ describe("AgentsBrowser", () => {
         slug="acme"
         agents={[
           {
-            id: "agent-hermes",
-            name: "Hermes researcher",
+            id: "agent-dsh-history",
+            name: "Historical researcher",
             providerName: null,
-            providerNames: ["OpenAI"],
             model: null,
             toolCount: 0,
             subAgentCount: 0,
-            runtimeKind: "hermes",
+            runtimeKind: "dsh",
             runtimeStatus: "stopped",
             sandboxReady: false,
           },
@@ -733,15 +732,13 @@ describe("AgentsBrowser", () => {
     const formData = actions.cloneAgentAction.mock.calls[0][0] as FormData;
     expect(formData.get("copyConversations")).toBe("on");
     expect(formData.get("workspace")).toBe("acme");
-    expect(formData.get("agentId")).toBe("agent-hermes");
+    expect(formData.get("agentId")).toBe("agent-dsh-history");
     for (const field of [
       "copyMcp",
       "copySkills",
       "copyToolkits",
       "copySandboxes",
       "copySubAgents",
-      "copyHermesEnvironment",
-      "copyHermesVolume",
       "providerId",
       "sandboxId",
       "piPackages",

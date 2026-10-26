@@ -114,7 +114,13 @@ describe("A2A publication authorization", () => {
     });
     mocks.member.mockResolvedValue(1);
     expect(
-      (await manageA2AService(request(), "workspace", "agent")).status,
+      (
+        await manageA2AService(
+          request({ enabled: false }),
+          "workspace",
+          "agent",
+        )
+      ).status,
     ).toBe(200);
     expect(mocks.member).toHaveBeenCalledWith({
       where: { workspaceId: "w", userId: "u", role: "admin" },
@@ -124,27 +130,19 @@ describe("A2A publication authorization", () => {
       sourceAgentId: "agent",
     });
   });
-  it("creates a least-privilege client and returns its token once without auditing it", async () => {
+  it("rejects enabling unsupported execution before creating clients or credentials", async () => {
     const response = await manageA2AService(
       request({ enabled: true, clientName: "Integration" }),
       "workspace",
       "agent",
     );
-    expect(response.status).toBe(200);
-    expect(response.headers.get("cache-control")).toContain("no-store");
+    expect(response.status).toBe(409);
     expect(await response.json()).toMatchObject({
-      enabled: true,
-      token: "fixture-created-once",
-      clientId: "client",
-      scopes: ["a2a:send", "a2a:read", "a2a:cancel"],
+      code: "runtime_unsupported",
     });
-    expect(mocks.create.mock.calls[0][0].data.scopes).not.toContain(
-      "responses:create",
-    );
-    expect(mocks.audit.mock.calls[0][1].changes).toEqual({
-      enabled: true,
-      clientId: "client",
-    });
+    expect(mocks.create).not.toHaveBeenCalled();
+    expect(mocks.key).not.toHaveBeenCalled();
+    expect(mocks.update).not.toHaveBeenCalled();
   });
   it("does not mint a client when disabling a service", async () => {
     expect(
@@ -176,16 +174,14 @@ describe("A2A publication authorization", () => {
     ).toBe(409);
     expect(mocks.update).not.toHaveBeenCalled();
   });
-  it("does not leak a key creation error and warns about partial client creation", async () => {
-    mocks.key.mockRejectedValue(new Error("private database details"));
+  it("sanitizes management transaction failures", async () => {
+    mocks.current.mockRejectedValue(new Error("private database details"));
     const response = await manageA2AService(
-      request({ enabled: true, clientName: "Integration" }),
+      request({ enabled: false }),
       "workspace",
       "agent",
     );
     expect(response.status).toBe(409);
-    const body = await response.text();
-    expect(body).not.toContain("private database");
-    expect(body).toContain("before retrying");
+    expect(await response.text()).not.toContain("private database");
   });
 });

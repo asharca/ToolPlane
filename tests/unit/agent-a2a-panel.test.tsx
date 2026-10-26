@@ -242,7 +242,7 @@ describe("Agent A2A console panel", () => {
     expect(posts()).toHaveLength(0);
   });
   it("retains historical publication metadata without enabling or issuing credentials", async () => {
-    await show("hermes");
+    await show();
     expect(
       screen.getByRole("heading", { name: "Published service" }),
     ).toBeInTheDocument();
@@ -333,7 +333,7 @@ describe("Agent A2A console panel", () => {
     expect(sessionStorage.length).toBe(0);
   });
   it("switches connection URLs without submitting tasks or exposing credentials in docs", async () => {
-    await show("hermes");
+    await show();
     expect(
       screen.getAllByText("https://tp.example/local", { selector: "code" }),
     ).toHaveLength(2);

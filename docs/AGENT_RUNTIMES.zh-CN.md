@@ -1,10 +1,9 @@
 # Agent 运行时实现：原生 Pi SDK
 
-> **English**: [AGENT_RUNTIMES.md](./AGENT_RUNTIMES.md)
 
-本文说明 ToolPlane 唯一的可执行 Agent 架构：在专属 Docker 沙箱中使用官方 `AgentSession` 的 **Pi SDK 0.87.1**。这不是用户电脑上的 Toolkit 安装指南；后者见 [Toolkit 同步](./TOOLKIT_SYNC.md)。所有权、恢复和受控切换流程见[运行时运维](./RUNTIME_OPERATIONS.zh-CN.md)。
+本文说明 ToolPlane 唯一的可执行 Agent 架构：在专属 Docker 沙箱中使用官方 `AgentSession` 的 **Pi SDK 0.87.1**。这不是用户电脑上的客户端安装指南；客户端登记、包导入、所有权、恢复和受控切换流程见[运行时运维](./RUNTIME_OPERATIONS.zh-CN.md)。
 
-可执行路径只有一条。普通 Pi CLI、Claude Code、DSH、Hermes 和旧 Harness 都不是可选执行器或恢复降级方案。非 Pi 历史消息和绑定文件只读；只保留真正已绑定操作的取消/排空。转换创建需要显式授权的全新 Pi 草稿，不恢复旧会话。
+可执行路径只有一条。普通 Pi CLI、Claude Code、DSH 和旧 Harness 都不是可选执行器或恢复降级方案。非 Pi 历史消息和绑定文件只读；只保留真正已绑定操作的取消/排空。转换创建需要显式授权的全新 Pi 草稿，不恢复旧会话。
 
 ## 1. 配置不等于执行授权
 
@@ -37,7 +36,7 @@ Chat / 消息渠道 / Work / 本地 A2A
   → 调用方负责 UI 流、Work 状态与平台消息持久化
 ```
 
-SDK 要求 Linux、Node 24，原生包架构须匹配 Docker daemon。可信运行时安装与冻结扩展制品落盘是不同操作；每轮不重新下载或安装审核过的扩展依赖。不得通过在活跃沙箱安装新版上游 Pi 或修改版本文件来升级。
+SDK 要求 Linux、Node 26，原生包架构须匹配 Docker daemon。可信运行时安装与冻结扩展制品落盘是不同操作；每轮不重新下载或安装审核过的扩展依赖。不得通过在活跃沙箱安装新版上游 Pi 或修改版本文件来升级。
 
 沙箱不可用、固定引用无效、broker 拒绝或原生加载失败均停止执行，不选择宿主模型循环、普通 CLI、其他运行时、当前可变默认值，也不重放历史消息。
 
@@ -66,6 +65,8 @@ SDK 要求 Linux、Node 24，原生包架构须匹配 Docker daemon。可信运�
 新 Conversation、Work 和本地 A2A context 持久化 `agentRevisionId`；Work 在分配卷前的准入阶段固定修订。每个会话按固定环境懒创建持久沙箱，不读取 Agent 当前可变模板。并发会话不共享可写沙箱，会话文件不自动合并回模板。同会话内 turn 串行，Agent/平台并发限制及原生/session-MCP 租约继续生效。
 
 `PiSessionPackageSet` 记录准确包 release/checksum 和 MCP 绑定。工作区包更新、新应用默认和回滚只影响新会话。普通卸载或下架保留已引用的批准制品；危险 release 撤销和当前 provider、凭据、包、MCP、方向性协作限制仍阻止执行。固定引用不是不可撤销权限快照。
+
+条目下架后，新建 Work 在写入 Conversation/Work 记录前返回 `PI_PACKAGE_UNAVAILABLE`，不为新任务分配执行资源；已有会话仍按上述固定引用与实时撤销规则处理。
 
 数据库管理身份、修订/沙箱绑定、授权与任务回执；官方 SDK JSONL 文件管理原生对话状态。状态限定在 `/workspace/.toolplane/runtimes/pi-sdk/agents/<agent-id>/`；本地 A2A 复用持久化 context ID。私有宿主状态跟踪 new/fork/switch 后实际选中的 SDK 会话，与旧 Harness 检查点无关。
 
@@ -107,7 +108,7 @@ Prepare/发布在固定隔离捕获镜像 `toolplane-pi-package-capture:0.87.1` 
 
 单一 runtime owner 完成恢复后才接受执行。所有权丢失停止新工作；停机停止 coordinator/broker，排空或中止跟踪操作，最后释放所有权。不确定清理保留 dirty marker。HTTP liveness 不等于 readiness，换数据库/domain 或删除恢复标记不是接管流程。遵循[运行时运维](./RUNTIME_OPERATIONS.zh-CN.md)，包括准确且仅用于一次重启的恢复 ACK 要求。
 
-**非 Pi 和未解决固定引用的历史会话只读。**保留历史消息、response、绑定文件读取、历史解析/归档访问及真正已绑定操作的取消/排空。不得启动、恢复、重放旧运行时，也不向其上传或开启执行终端。退役 Hermes 执行/model/profile/runtime MCP/dashboard/terminal/upload 端点返回 HTTP **410**，不是通向 Pi 的兼容路由。旧 `pi-harness` 任务标签只识别绑定清理。受控转换须排空旧任务，创建全新 Pi 草稿并重新审阅授权，不恢复旧运行时状态、不自动重新发布公开包。
+**非 Pi 和未解决固定引用的历史会话只读。**保留非删除范围内的历史消息、response、绑定文件读取、历史解析/归档访问及真正已绑定操作的取消/排空。不得启动、恢复、重放旧运行时，也不向其上传或开启执行终端。已删除的专用执行/model/profile/runtime MCP/dashboard/upload 路由不是通向 Pi 的兼容入口。旧 `pi-harness` 任务标签只识别绑定清理。受控转换须排空旧任务，创建全新 Pi 草稿并重新审阅授权，不恢复旧运行时状态、不自动重新发布公开包。公共 A2A 服务启用返回 `runtime_unsupported`（HTTP 409），旧公开发布 action 已删除；公开 A2A 发送及退役 HTTP 执行入口在新记录或分配前拒绝（HTTP 410 或对应协议错误），不转接新执行器。
 
 排障优先使用关联 ID、状态、耗时与失败类型。Agent 内容采集须显式限时授权，见[可观测性](./OBSERVABILITY.zh-CN.md)。不要将完整原生输出、提示词或私有配置贴到公开 issue。
 
@@ -119,4 +120,4 @@ Prepare/发布在固定隔离捕获镜像 `toolplane-pi-package-capture:0.87.1` 
 
 涉及数据库/Docker 的租约与通信套件只在已批准隔离环境、固定捕获镜像下串行运行；前提以[运行时运维](./RUNTIME_OPERATIONS.zh-CN.md#原生-sdk-验证)和各测试源码为准。不要使用生产 Agent 沙箱、并发操作同一测试数据库，也不要将 parser/unit/受控宿主结果当作真实 provider 验收。原生压缩须单独验证，通信 smoke 不覆盖它。
 
-SDK 变更须同步维护修订 Prepare/CAS、原生预检、冻结制品、实时 broker 权限、会话固定引用、独立工作卷、命令与取消边界。两种语言文档随实现更新，不得为满足旧调用方或测试而恢复已退役执行别名。
+SDK 变更须同步维护修订 Prepare/CAS、原生预检、冻结制品、实时 broker 权限、会话固定引用、独立工作卷、命令与取消边界。相关文档随实现更新，不得为满足旧调用方或测试而恢复已退役执行别名。

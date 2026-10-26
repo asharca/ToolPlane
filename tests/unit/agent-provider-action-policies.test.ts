@@ -62,7 +62,6 @@ vi.mock("@/lib/agents/model", () => ({
 }));
 vi.mock("@/lib/agents/channel-connections", () => ({}));
 vi.mock("@/lib/agents/channel-pairing", () => ({}));
-vi.mock("@/lib/agents/hermes/runtime", () => ({}));
 vi.mock("@/lib/agents/market", () => ({}));
 vi.mock("@/lib/agents/sandbox-runtime", () => ({}));
 vi.mock("@/lib/sandboxes/actions", () => ({}));

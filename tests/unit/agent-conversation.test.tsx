@@ -10,7 +10,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
 import { AgentConversation } from "@/components/dashboard/agents/AgentConversation";
-import type { HermesUIMessage } from "@/lib/agents/hermes/message-segments";
+import type { AgentUIMessage } from "@/lib/agents/message-segments";
 
 const chatMocks = vi.hoisted(() => ({
   useChat: vi.fn(),
@@ -51,7 +51,7 @@ vi.mock("streamdown", () => ({
 
 vi.mock("@streamdown/code", () => ({ code: {} }));
 
-const initialMessages: HermesUIMessage[] = [
+const initialMessages: AgentUIMessage[] = [
   { id: "m1", role: "assistant", parts: [{ type: "text", text: "hello" }] },
 ];
 
@@ -82,6 +82,7 @@ function renderConversation(overrides: Partial<ConversationProps> = {}) {
 describe("AgentConversation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    apiMocks.fetch.mockReset();
     window.localStorage.clear();
     vi.stubGlobal(
       "ResizeObserver",
@@ -146,7 +147,7 @@ describe("AgentConversation", () => {
           },
         ],
       },
-    ] as HermesUIMessage[];
+    ] as AgentUIMessage[];
     chatMocks.useChat.mockReturnValue({ ...chatMocks.useChat(), messages });
     renderConversation({ initialMessages: messages });
     expect(screen.getByText('/review "some file"')).toBeInTheDocument();
@@ -254,7 +255,7 @@ describe("AgentConversation", () => {
   });
 
   it("sends an edited user message with its source id", async () => {
-    const messages: HermesUIMessage[] = [
+    const messages: AgentUIMessage[] = [
       {
         id: "u1",
         role: "user",
@@ -307,7 +308,7 @@ describe("AgentConversation", () => {
   });
 
   it("shows context usage and token details in the composer", async () => {
-    const messages: HermesUIMessage[] = [
+    const messages: AgentUIMessage[] = [
       {
         id: "m-usage",
         role: "assistant",
@@ -351,10 +352,10 @@ describe("AgentConversation", () => {
   });
 
   it("syncs local messages when the active conversation changes", async () => {
-    const firstMessages: HermesUIMessage[] = [
+    const firstMessages: AgentUIMessage[] = [
       { id: "a1", role: "assistant", parts: [{ type: "text", text: "first" }] },
     ];
-    const secondMessages: HermesUIMessage[] = [
+    const secondMessages: AgentUIMessage[] = [
       {
         id: "a2",
         role: "assistant",
@@ -589,7 +590,7 @@ describe("AgentConversation", () => {
   });
 
   it("stops a streaming response", async () => {
-    const streamingMessages: HermesUIMessage[] = [
+    const streamingMessages: AgentUIMessage[] = [
       { id: "m-streaming", role: "assistant", parts: [] },
     ];
     chatMocks.useChat.mockReturnValue({
@@ -632,7 +633,7 @@ describe("AgentConversation", () => {
           { type: "text", text: "Here is the answer." },
         ],
       },
-    ] as HermesUIMessage[];
+    ] as AgentUIMessage[];
     chatMocks.useChat.mockReturnValue({
       messages,
       sendMessage: chatMocks.sendMessage,
@@ -683,7 +684,7 @@ describe("AgentConversation", () => {
           },
         ],
       },
-    ] as HermesUIMessage[];
+    ] as AgentUIMessage[];
     chatMocks.useChat.mockReturnValue({
       messages,
       sendMessage: chatMocks.sendMessage,
@@ -1071,7 +1072,7 @@ describe("AgentConversation", () => {
     },
   );
 
-  it.each(["hermes", "dsh", "pi", "claude-code", null])(
+  it.each(["dsh", "pi", "claude-code", null])(
     "keeps retired %s history read-only",
     async (runtimeKind) => {
       renderConversation({ runtimeKind });
@@ -1243,7 +1244,7 @@ describe("AgentConversation", () => {
             },
           ],
         },
-      ] as HermesUIMessage[];
+      ] as AgentUIMessage[];
       chatMocks.useChat.mockReturnValue({
         ...chatMocks.useChat(),
         messages,

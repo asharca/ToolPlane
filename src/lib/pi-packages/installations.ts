@@ -22,7 +22,6 @@ export const piPackageClientSchema = z.enum([
   "claude-code",
   "codex",
   "opencode",
-  "hermes",
 ]);
 export type PiPackageClient = z.infer<typeof piPackageClientSchema>;
 export const piPackageBindingsSchema = z

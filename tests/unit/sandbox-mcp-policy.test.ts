@@ -21,7 +21,6 @@ describe("sandbox MCP grant policy", () => {
     for (const value of [
       [],
       ["*"],
-      ["hermes_dashboard"],
       ["terminal_session"],
       ["tools/call"],
       null,
@@ -31,10 +30,15 @@ describe("sandbox MCP grant policy", () => {
   });
   it("treats user and ordinary agent sandboxes identically by backend kind", () => {
     for (const kind of ["docker", "connector", "ssh"])
-      expect(sandboxMcpExportable(kind)).toBe(true);
+      expect(sandboxMcpExportable({ kind })).toBe(true);
   });
-  it("keeps credential-bearing and legacy runtimes blocked", () => {
-    for (const kind of ["hermes", "host", "", "future-runtime"])
-      expect(sandboxMcpExportable(kind)).toBe(false);
+  it("keeps unsupported and legacy runtimes blocked", () => {
+    for (const kind of ["host", "", "future-runtime"])
+      expect(sandboxMcpExportable({ kind })).toBe(false);
+  });
+  it("does not export retained historical Docker workspaces", () => {
+    expect(
+      sandboxMcpExportable({ kind: "docker", config: { readOnly: true } }),
+    ).toBe(false);
   });
 });

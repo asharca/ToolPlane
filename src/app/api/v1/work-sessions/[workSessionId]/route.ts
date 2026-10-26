@@ -34,9 +34,6 @@ export const GET = withRequestLogging(
       titlePending,
       reasoningEffort:
         normalizeReasoningEffort(conversation.reasoningEffort) ?? null,
-      hermesProfile: conversation.hermesProfile,
-      hermesProvider: conversation.hermesProvider,
-      hermesModel: conversation.hermesModel,
       workingDirectory: workSessionWorkingDirectory(work.runtimeSnapshot),
       messages: conversation.messages,
       sandbox: sandbox

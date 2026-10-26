@@ -225,7 +225,6 @@ function createInput(
     runtime: "pi-sdk",
     systemPrompt: "Use the attached tools carefully.",
     providerId,
-    providerIds: [],
     model: "model-safe",
     maxSteps: 12,
     deploymentIds: [deploymentId],
@@ -331,52 +330,37 @@ describe("Agent Control service", () => {
     ).not.toContain("SUPER_SECRET");
   });
 
-  it("keeps retained Hermes runtime records discoverable but read-only", async () => {
+  it("keeps historical agents discoverable but read-only with single-provider metadata", async () => {
     const created = await db.agent.create({
       data: {
         workspaceId,
-        slug: `retained-hermes-${stamp}`,
-        name: "Retained Hermes control agent",
-        runtimeKind: "hermes",
+        slug: `retained-historical-${stamp}`,
+        name: "Retained historical control agent",
+        runtimeKind: "claude-code",
         retiredAt: new Date(),
+        providerId,
+        model: "model-safe",
         maxSteps: 20,
-        modelProviders: { create: { providerId } },
-        runtime: {
-          create: {
-            workspaceId,
-            sandboxId,
-            kind: "hermes",
-            image: "nousresearch/hermes-agent:retained",
-            status: "stopped",
-          },
-        },
       },
     });
     const stored = await db.agent.findUniqueOrThrow({
       where: { id: created.id },
-      include: { runtime: true, modelProviders: true },
     });
     expect(stored).toMatchObject({
-      providerId: null,
-      model: null,
+      providerId,
+      model: "model-safe",
       systemPrompt: null,
       maxSteps: 20,
-      runtime: {
-        kind: "hermes",
-        image: "nousresearch/hermes-agent:retained",
-        status: "stopped",
-      },
+      currentRevisionVersion: 0,
     });
-    expect(stored.modelProviders.map(({ providerId: id }) => id)).toEqual([
-      providerId,
-    ]);
     await expect(
       getAgentControlAgent(workspaceId, workspaceSlug, created.id),
     ).resolves.toMatchObject({
       configured: true,
       ready: false,
       readOnly: true,
-      runtime: { kind: "hermes", status: "stopped" },
+      model: { providerId, model: "model-safe" },
+      runtime: { kind: "claude-code", status: null, image: null },
     });
   });
 

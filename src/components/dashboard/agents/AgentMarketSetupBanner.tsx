@@ -4,13 +4,7 @@ import { ButtonLink } from "@/components/motion/button/base";
 
 import { useId } from "react";
 
-import {
-  AlertTriangle,
-  ArrowRight,
-  Container,
-  Cpu,
-  KeyRound,
-} from "lucide-react";
+import { AlertTriangle, ArrowRight, Cpu, KeyRound } from "lucide-react";
 import { useTranslations } from "next-intl";
 import type { AgentMarketSetupGuide } from "@/lib/agents/market-setup";
 
@@ -104,27 +98,6 @@ export function AgentMarketSetupBanner({
               size="sm"
             >
               {t("marketSetupReviewPackages")}
-              <ArrowRight className="size-3.5" />
-            </ButtonLink>
-          </li>
-        ))}
-        {setup.runtimes.map((runtime) => (
-          <li
-            key={`${runtime.agentId}:${runtime.kind}`}
-            className="grid gap-2 px-4 py-3 sm:grid-cols-[1.25rem_minmax(0,1fr)_auto] sm:items-center"
-          >
-            <Container className="size-4 text-muted-foreground text-muted-foreground" />
-            <span className="min-w-0 text-xs leading-5">
-              {t("marketSetupLegacyRuntimeRequirement", {
-                runtime: runtime.kind,
-              })}
-            </span>
-            <ButtonLink
-              href={`/app/${encodeURIComponent(slug)}/agents?create=1`}
-              variant="ghost"
-              size="sm"
-            >
-              {t("newAgent")}
               <ArrowRight className="size-3.5" />
             </ButtonLink>
           </li>

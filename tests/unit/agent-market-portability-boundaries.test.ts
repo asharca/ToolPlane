@@ -19,12 +19,10 @@ function agent(id = "root") {
     name: "Researcher",
     slug: "researcher",
     runtimeKind: "pi",
-    runtime: null,
     systemPrompt: "Be accurate",
     maxSteps: 8,
     model: null,
     provider: null,
-    modelProviders: [],
     sandboxes: [
       {
         sandbox: {
@@ -486,61 +484,5 @@ describe("market portable graph trust boundaries", () => {
         });
       },
     );
-
-    it.each(["workspace", "sandbox"])(
-      "rejects Hermes runtime ownership mismatch in %s",
-      async (kind) => {
-        mocks.findAgent.mockResolvedValue({
-          ...agent(),
-          runtimeKind: "hermes",
-          sandboxes: [],
-          runtime: {
-            id: "runtime",
-            kind: "hermes",
-            image: "hermes:stable",
-            workspaceId: kind === "workspace" ? "foreign" : "workspace-1",
-            sandbox: {
-              workspaceId: kind === "sandbox" ? "foreign" : "workspace-1",
-            },
-          },
-        });
-        expect(await assessAgentPortability(input)).toMatchObject({
-          portable: false,
-          issues: expect.arrayContaining([
-            expect.objectContaining({ code: "invalid_definition" }),
-          ]),
-        });
-      },
-    );
-
-    it("rejects a Hermes model provider linked from another workspace", async () => {
-      mocks.findAgent.mockResolvedValue({
-        ...agent(),
-        runtimeKind: "hermes",
-        sandboxes: [],
-        runtime: {
-          id: "runtime",
-          kind: "hermes",
-          image: "hermes:stable",
-          workspaceId: "workspace-1",
-          sandbox: { workspaceId: "workspace-1" },
-        },
-        modelProviders: [
-          {
-            provider: {
-              id: "provider",
-              format: "openai",
-              workspaceId: "foreign",
-            },
-          },
-        ],
-      });
-      expect(await assessAgentPortability(input)).toMatchObject({
-        portable: false,
-        issues: expect.arrayContaining([
-          expect.objectContaining({ code: "cross_workspace_provider" }),
-        ]),
-      });
-    });
   });
 });

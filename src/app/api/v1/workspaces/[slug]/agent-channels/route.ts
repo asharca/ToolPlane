@@ -28,7 +28,6 @@ import {
   getPersistedAgentChannelLogs,
 } from "@/lib/agents/channel-runtime-logs";
 import {
-  applyAgentChannelPairing,
   checkAgentChannelPairing,
   requestAgentChannelPairing,
 } from "@/lib/agents/channel-pairing";
@@ -52,7 +51,6 @@ const commandSchema = z
       "stop",
       "pair",
       "check",
-      "apply",
       "move",
     ]),
     connectionId: z.string().min(1).max(200).optional(),
@@ -61,7 +59,6 @@ const commandSchema = z
     agentId: z.string().min(1).max(200).nullable().optional(),
     sandboxId: z.string().min(1).max(200).optional(),
     credentials: z.record(z.string().max(80), z.string().max(8000)).default({}),
-    allowedUserIds: z.string().max(4000).default(""),
   })
   .strict()
   .refine((input) => input.action !== "move" || Boolean(input.sandboxId));
@@ -247,13 +244,6 @@ export const POST = withRequestLogging(
             result = await checkAgentChannelPairing(
               workspace.id,
               existingConnectionId,
-            );
-            break;
-          case "apply":
-            result = await applyAgentChannelPairing(
-              workspace.id,
-              existingConnectionId,
-              input.allowedUserIds,
             );
             break;
           case "move":

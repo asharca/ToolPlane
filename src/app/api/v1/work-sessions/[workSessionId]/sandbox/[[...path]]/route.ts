@@ -26,11 +26,7 @@ async function proxy(req: Request, { params }: Params) {
     include: {
       conversation: { include: { sandbox: { include: { deployment: true } } } },
       sandbox: { include: { deployment: true } },
-      agent: {
-        include: {
-          runtime: { include: { sandbox: { include: { deployment: true } } } },
-        },
-      },
+      agent: true,
     },
   });
   if (!work) return Response.json({ error: "Not found" }, { status: 404 });
@@ -46,11 +42,7 @@ async function proxy(req: Request, { params }: Params) {
     return serveHistoricalSandboxFiles(
       req,
       path,
-      work.conversation.sandbox ??
-        work.sandbox ??
-        (work.agent.runtimeKind !== "pi-sdk"
-          ? work.agent.runtime?.sandbox
-          : null),
+      work.conversation.sandbox ?? work.sandbox,
     );
   try {
     await resolvePinnedAgent(work.agent, work.agentRevisionId);

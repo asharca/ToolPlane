@@ -47,7 +47,7 @@ export async function serveHistoricalSandboxFiles(
       },
       { status: parsed.reason === "too_large" ? 413 : 410 },
     );
-  if (!sandbox || (sandbox.kind !== "docker" && sandbox.kind !== "hermes"))
+  if (sandbox?.kind !== "docker")
     return Response.json(
       { error: "Historical workspace is unavailable." },
       { status: 404 },
@@ -65,7 +65,12 @@ export async function serveHistoricalSandboxFiles(
     const result = await readHistoricalSandboxVolume(volumeName, {
       operation: rpc.params.name,
       path: rpc.params.arguments.path,
-      ...(sandbox.kind === "hermes" ? { root: "workspace" as const } : {}),
+      ...(config &&
+      typeof config === "object" &&
+      !Array.isArray(config) &&
+      config.historicalRoot === "workspace"
+        ? { root: "workspace" as const }
+        : {}),
     });
     return Response.json({
       jsonrpc: "2.0",

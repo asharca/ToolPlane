@@ -444,12 +444,12 @@ describe("Workspace chat page", () => {
     await WorkspaceChatPage({
       params: Promise.resolve({ workspace: "acme" }),
       searchParams: Promise.resolve({
-        agent: "agent-hermes",
+        agent: "agent-sdk",
         c: "conversation-1",
       }),
     });
     expect(redirect).toHaveBeenCalledWith(
-      "/app/acme/work?agent=agent-hermes&c=conversation-1",
+      "/app/acme/work?agent=agent-sdk&c=conversation-1",
     );
     expect(mocks.listAssistants).not.toHaveBeenCalled();
     expect(mocks.surface).not.toHaveBeenCalled();
@@ -459,12 +459,12 @@ describe("Workspace chat page", () => {
     await WorkspaceAgentChatPage({
       params: Promise.resolve({ workspace: "acme" }),
       searchParams: Promise.resolve({
-        agent: "agent-hermes",
+        agent: "agent-sdk",
         c: "conversation-1",
       }),
     });
     expect(redirect).toHaveBeenCalledWith(
-      "/app/acme/work?agent=agent-hermes&c=conversation-1",
+      "/app/acme/work?agent=agent-sdk&c=conversation-1",
     );
     expect(mocks.listAssistants).not.toHaveBeenCalled();
     expect(mocks.listChatDeployments).not.toHaveBeenCalled();

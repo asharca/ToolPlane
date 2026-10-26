@@ -166,7 +166,7 @@ it("creates fresh native drafts without applying grants and keeps historical run
       workspaceId,
       name: "Historical",
       slug: randomUUID(),
-      runtimeKind: "hermes",
+      runtimeKind: "claude-code",
     },
   });
   await expect(
@@ -421,7 +421,7 @@ it("restores original session code after default changes/uninstall and rejects r
   );
   await db.agent.update({
     where: { id: agent.id },
-    data: { retiredAt: null, runtimeKind: "hermes" },
+    data: { retiredAt: null, runtimeKind: "claude-code" },
   });
   await expect(resolvePiSessionPackages(old)).rejects.toThrow(
     "AGENT_EXECUTION_RETIRED",

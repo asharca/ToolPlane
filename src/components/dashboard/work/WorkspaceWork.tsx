@@ -57,7 +57,7 @@ import {
   AnimatedSidebarRail,
 } from "@/components/motion/animated-sidebar";
 import { AgentConversation } from "@/components/dashboard/agents/AgentConversation";
-import type { HermesUIMessage } from "@/lib/agents/hermes/message-segments";
+import type { AgentUIMessage } from "@/lib/agents/message-segments";
 import { AgentPromptProvenance } from "@/components/dashboard/agents/AgentPromptProvenance";
 import { ConversationContextUsage } from "@/components/dashboard/ConversationComposer";
 import { WorkComposer } from "./WorkComposer";
@@ -131,7 +131,6 @@ type WorkAgent = {
   runtimeKind: string | null;
   currentRevisionVersion?: number;
   providerId?: string | null;
-  providerIds?: string[];
   providerLabel?: string;
   model?: string | null;
   contextWindow?: number | null;
@@ -206,9 +205,6 @@ type ConversationDetail = ConversationSummary & {
   readOnly: boolean;
   messages: WorkMessage[];
   reasoningEffort?: ReasoningEffort | null;
-  hermesProfile?: string | null;
-  hermesProvider?: string | null;
-  hermesModel?: string | null;
 };
 
 type WorkSidebarAgent = {
@@ -258,9 +254,6 @@ type WorkItem = {
   artifacts: string[];
   conversationId: string;
   reasoningEffort?: ReasoningEffort | null;
-  hermesProfile?: string | null;
-  hermesProvider?: string | null;
-  hermesModel?: string | null;
   workingDirectory?: string;
   sandbox: {
     id: string;
@@ -342,8 +335,6 @@ function runtimeLabel(kind: string | null | undefined): string {
   if (kind === "pi-sdk") return "Pi";
   if (kind === "claude-code") return "Claude Code";
   if (kind === "dsh") return "DeepSeek Harness";
-  if (kind === "hermes") return "Hermes";
-  if (kind === "hermes-rpc") return "Hermes RPC";
   return kind === "pi" ? "Pi" : "—";
 }
 
@@ -1123,8 +1114,7 @@ export function WorkspaceWork({
       : workspacePending
         ? t("conversationWorkspaceProvisioning")
         : t("noSandbox");
-  const controlWorkspaceRoot =
-    controlSandbox?.kind === "hermes" ? "/opt/data/workspace" : "/workspace";
+  const controlWorkspaceRoot = "/workspace";
   const composerScope = `${controlAgent?.id}:${controlSandbox?.id}:${selected?.id ?? conversation?.id ?? "new"}`;
   const references =
     referenceSelection.scope === composerScope ? referenceSelection.items : [];
@@ -1613,15 +1603,6 @@ export function WorkspaceWork({
           ? { modelName: current.modelName }
           : {}),
       }));
-      if (
-        next.activities.some(
-          (activity) =>
-            activity.toolName === "Hermes approval" &&
-            activity.status === "running",
-        )
-      ) {
-        void refreshSelected();
-      }
     });
     source.addEventListener("done", () => void finish());
 
@@ -2398,7 +2379,7 @@ export function WorkspaceWork({
                 initialMessages={
                   conversation.messages.filter(
                     (message) => !messageCompaction(message),
-                  ) as HermesUIMessage[]
+                  ) as AgentUIMessage[]
                 }
                 initialReasoningEffort={
                   conversation.reasoningEffort ?? "default"

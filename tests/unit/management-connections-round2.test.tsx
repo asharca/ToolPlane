@@ -63,7 +63,7 @@ describe("agent A2A management", () => {
   });
   it("reads historical public connection details without issuing new credentials", async () => {
     const user = userEvent.setup();
-    render(<AgentA2APanel slug="a b" agentId="agent/1" runtimeKind="hermes" />);
+    render(<AgentA2APanel slug="a b" agentId="agent/1" runtimeKind="dsh" />);
     await screen.findByText("https://example.test/local");
     expect(fetcher.mock.calls[0][0]).toContain("a%20b/agents/agent%2F1");
     await user.click(screen.getByRole("button", { name: "publicTitle" }));
@@ -129,7 +129,7 @@ describe("agent A2A management", () => {
       },
     };
     fetcher.mockResolvedValue(reply(view));
-    render(<AgentA2APanel slug="space" agentId="a" runtimeKind="hermes" />);
+    render(<AgentA2APanel slug="space" agentId="a" runtimeKind="dsh" />);
     await screen.findByText("live-prefix");
     expect(screen.getAllByText("activeKey")).toHaveLength(2);
     expect(screen.getByText("expired")).toBeVisible();
@@ -147,7 +147,7 @@ describe("agent A2A management", () => {
       ).toBe(true),
     );
   });
-  it.each(["native", "pi-sdk", "hermes"])(
+  it.each(["native", "pi-sdk", "dsh"])(
     "enforces read-only and unavailable connections for %s",
     async (runtimeKind) => {
       fetcher.mockResolvedValue(
@@ -528,70 +528,6 @@ describe("agent messaging connection interactions", () => {
         (call) => call[1]?.method === "POST",
       )?.[1].body;
       expect(JSON.parse(command)).not.toHaveProperty("agentId");
-    },
-  );
-  it.each(["expired", "ready"] as const)(
-    "shows Telegram %s pairing feedback and applies allowed users",
-    async (status) => {
-      const user = userEvent.setup();
-      const connection = {
-        ...channel,
-        platform: "telegram" as const,
-        pairing: {
-          provider: "telegram_managed_bot" as const,
-          status,
-          error: "Pairing note",
-          extra: { ownerUserId: "42" },
-        },
-      };
-      fetcher.mockResolvedValue(reply({ connections: [connection] }));
-      render(<AgentMessagingPanel slug="space" connections={[connection]} />);
-      await user.click(
-        screen.getByRole("button", { name: "platforms.telegram" }),
-      );
-      await user.click(screen.getByRole("button", { name: "edit" }));
-      const dialog = await screen.findByRole("dialog");
-      expect(within(dialog).getByRole("alert")).toHaveTextContent(
-        "Pairing note",
-      );
-      if (status === "ready") {
-        const allowed = within(dialog).getByRole("textbox", {
-          name: "allowedTelegramUserIdsOptional",
-        });
-        expect(allowed).toHaveValue("42");
-        fireEvent.change(allowed, { target: { value: "42,84" } });
-        await user.click(
-          within(dialog).getByRole("button", { name: "saveTelegramSetup" }),
-        );
-        await waitFor(() =>
-          expect(
-            fetcher.mock.calls.some(
-              (call) =>
-                call[1]?.body ===
-                JSON.stringify({
-                  action: "apply",
-                  connectionId: "connection",
-                  allowedUserIds: "42,84",
-                }),
-            ),
-          ).toBe(true),
-        );
-      } else
-        expect(within(dialog).getByRole("status")).toHaveTextContent(
-          "statusExpired",
-        );
-      await user.click(
-        within(dialog).getByRole("button", { name: "reauthenticate" }),
-      );
-      await waitFor(() =>
-        expect(
-          fetcher.mock.calls.some(
-            (call) =>
-              call[1]?.body ===
-              JSON.stringify({ action: "pair", connectionId: "connection" }),
-          ),
-        ).toBe(true),
-      );
     },
   );
   it("shows log-load errors and failed connection writes without closing the editor", async () => {

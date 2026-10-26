@@ -1980,10 +1980,6 @@ describe("supervisor readiness races", () => {
       });
       expect(env).not.toHaveProperty("DATABASE_URL");
       expect(env).not.toHaveProperty("AUTH_SECRET");
-      expect(env).not.toHaveProperty("HERMES_RUNTIME_ID");
-      expect(env).not.toHaveProperty("HERMES_RUNTIME_API_KEY");
-      expect(env).not.toHaveProperty("HERMES_RUNTIME_DASHBOARD_TOKEN");
-      expect(env).not.toHaveProperty("HERMES_RUNTIME_MODEL_NAME");
       child.stdout.emit("data", Buffer.from("LISTENING 8123\n"));
       expect(supervisor.liveStatus("connector-launch")).toBe("running");
     },

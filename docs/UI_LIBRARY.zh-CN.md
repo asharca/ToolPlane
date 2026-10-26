@@ -1,6 +1,5 @@
 # 共享 UI 与 CI
 
-> **English**: [UI_LIBRARY.md](./UI_LIBRARY.md)
 
 当前 beUI 源码来自 https://asharca.github.io/ui/llms.txt 提供的 Registry。
 ToolPlane 将原版组件源码安装到 `src/components/`，将原版 helper 安装到

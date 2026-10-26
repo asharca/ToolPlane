@@ -223,7 +223,7 @@ describe("sandbox Agent runtime helpers", () => {
   });
 
   it("preserves generic provider-format compatibility metadata", () => {
-    for (const runtime of ["pi", "claude-code", "dsh", "hermes-rpc"]) {
+    for (const runtime of ["pi", "claude-code", "dsh"]) {
       expect(
         ["openai", "openai-responses", "anthropic"].every((format) =>
           agentRuntimeSupportsProviderFormat(runtime, format),

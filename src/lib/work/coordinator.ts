@@ -33,7 +33,6 @@ import type {
   RuntimeUsage,
 } from "@/lib/agents/runtime-commands";
 import { runDedicatedSandboxTurn } from "@/lib/agents/sandbox-turn";
-import { stopHermesWorkRun } from "@/lib/agents/hermes/work";
 import type { ContextUsageSnapshot } from "@/lib/context-usage";
 import { deploymentLabel } from "@/lib/workspace/deployment-label";
 import {
@@ -61,8 +60,6 @@ type RuntimeSnapshot = {
   installedSkillIds?: string[];
   knowledgeBaseIds?: string[];
   workingDirectory?: string;
-  runtimeId?: string | null;
-  hermesRunId?: string | null;
 };
 
 type RuntimeMessage = {
@@ -846,35 +843,9 @@ export function kickWorkCoordinator() {
   );
 }
 
-async function stopInterruptedHermesRuns() {
-  const interrupted = await db.workSession.findMany({
-    where: {
-      runtimeKind: "hermes",
-      status: { in: ["running", "waiting_approval", "cancelling"] },
-    },
-    select: {
-      runtimeSnapshot: true,
-      agent: {
-        select: {
-          id: true,
-          workspaceId: true,
-          runtime: { select: { id: true, kind: true } },
-        },
-      },
-    },
-  });
-  await Promise.all(
-    interrupted.map(async (work) => {
-      const runId = snapshot(work.runtimeSnapshot).hermesRunId?.trim();
-      if (runId) await stopHermesWorkRun({ agent: work.agent, runId });
-    }),
-  );
-}
-
 export async function startWorkCoordinator() {
   if (!state.reconciled) {
     const now = new Date();
-    await stopInterruptedHermesRuns();
     await db.$transaction(async (tx) => {
       await tx.workApproval.updateMany({
         where: {

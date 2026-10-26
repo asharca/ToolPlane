@@ -11,8 +11,6 @@ import pty from "node-pty";
 import { createSshSandbox } from "./ssh-sandbox-adapter.mjs";
 
 const NAME = process.env.MCP_NAME || "sandbox";
-if (process.env.SANDBOX_KIND === "hermes")
-  throw new Error("AGENT_RUNTIME_RETIRED");
 const KIND = ["connector", "ssh"].includes(process.env.SANDBOX_KIND)
   ? process.env.SANDBOX_KIND
   : "docker";
@@ -579,11 +577,6 @@ async function createDockerContainer() {
       created.stderr || `docker run failed (${created.exitCode})`,
     );
 }
-
-// Opt-in per sandbox via the allowSudo setting: agent shell commands run as
-// the non-root service user and rely on classic sudo. Install it once (best
-// effort when the image lacks apt or egress) and grant the service user
-// passwordless rights so sudo works without a TTY.
 
 async function ensureDockerContainer() {
   const info = await dockerInspectJson();
@@ -1565,13 +1558,6 @@ const shutdown = () => {
   SSH?.close();
   for (const session of terminalSessions.values()) session.term.kill();
   server.close();
-  if (KIND === "hermes") {
-    void run("docker", ["stop", "--time", "10", CONTAINER], {
-      env: dockerEnv(),
-      timeoutMs: 30_000,
-    }).finally(() => process.exit(0));
-    return;
-  }
   process.exit(0);
 };
 process.on("SIGTERM", shutdown);

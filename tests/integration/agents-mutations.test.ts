@@ -39,7 +39,6 @@ import {
   updateAgentChannelConnectionCredentials,
 } from "@/lib/agents/channel-connections";
 import {
-  applyAgentChannelPairing,
   checkAgentChannelPairing,
   requestAgentChannelPairing,
 } from "@/lib/agents/channel-pairing";
@@ -165,7 +164,7 @@ describe("agents mutations", () => {
     await expect(createConversation(workspaceId, agent.id)).rejects.toThrow(
       "AGENT_REVISION_UNRESOLVED",
     );
-    for (const runtime of ["pi", "hermes", "claude-code", "dsh"] as const) {
+    for (const runtime of ["pi", "claude-code", "dsh"] as const) {
       await expect(
         createAgent(workspaceId, `Retired ${runtime}`, { runtime }),
       ).rejects.toThrow("Only native Pi");
@@ -178,7 +177,7 @@ describe("agents mutations", () => {
         workspaceId,
         name: "Historical clone source",
         slug: `history-copy-${Date.now()}`,
-        runtimeKind: "hermes",
+        runtimeKind: "pi",
         retiredAt: new Date(),
         systemPrompt: "Convertible instructions",
         a2aInboundEnabled: true,
@@ -293,7 +292,7 @@ describe("agents mutations", () => {
   });
 
   it.each(["config", "model"] as const)(
-    "preserves a published conversation provider when the native default changes through %s",
+    "preserves immutable provider pins and requires current reauthorization after native default changes through %s",
     async (editPath) => {
       const prior = await db.modelProvider.create({
         data: {
@@ -332,20 +331,7 @@ describe("agents mutations", () => {
         },
         { runtime: "pi-sdk" },
       );
-      expect(
-        await db.agentModelProvider.findUnique({
-          where: {
-            agentId_providerId: { agentId: agent.id, providerId: prior.id },
-          },
-        }),
-      ).not.toBeNull();
       const published = await seedPublishedRevision(agent.id);
-      // Older native rows may have authorized the current default without a grant row.
-      await db.agentModelProvider.delete({
-        where: {
-          agentId_providerId: { agentId: agent.id, providerId: prior.id },
-        },
-      });
       const conversation = assertDefined(
         await createConversation(workspaceId, agent.id),
       );
@@ -361,7 +347,7 @@ describe("agents mutations", () => {
         await updateAgentModelSelection(
           workspaceId,
           agent.id,
-          [next.id],
+          next.id,
           "next-model",
         );
       }
@@ -370,11 +356,15 @@ describe("agents mutations", () => {
       });
       expect(changed.providerId).toBe(next.id);
       expect(changed.currentRevisionVersion).toBe(published.version);
-      expect(
-        (await db.agentModelProvider.findMany({ where: { agentId: agent.id } }))
-          .map((grant) => grant.providerId)
-          .sort(),
-      ).toEqual([prior.id, next.id].sort());
+      await expect(
+        resolvePinnedAgent(changed, conversation.agentRevisionId),
+      ).rejects.toThrow("AGENT_PROVIDER_REVOKED");
+      await updateAgentModelSelection(
+        workspaceId,
+        agent.id,
+        prior.id,
+        "prior-model",
+      );
       expect(
         await resolvePinnedAgent(changed, conversation.agentRevisionId),
       ).toMatchObject({
@@ -382,10 +372,16 @@ describe("agents mutations", () => {
         model: "prior-model",
         systemPrompt: "Published instructions",
       });
-      await updateAgentModelSelection(workspaceId, agent.id, [], null);
-      expect(
-        await resolvePinnedAgent(changed, conversation.agentRevisionId),
-      ).toMatchObject({ providerId: prior.id });
+      await updateAgentModelSelection(workspaceId, agent.id, null, null);
+      await expect(
+        resolvePinnedAgent(changed, conversation.agentRevisionId),
+      ).rejects.toThrow("AGENT_PROVIDER_REVOKED");
+      await updateAgentModelSelection(
+        workspaceId,
+        agent.id,
+        prior.id,
+        "prior-model",
+      );
       await deleteProvider(workspaceId, prior.id, userId);
       await expect(
         resolvePinnedAgent(changed, conversation.agentRevisionId),
@@ -462,7 +458,7 @@ describe("agents mutations", () => {
       updateAgentModelSelection(
         workspaceId,
         agent.id,
-        [providerId],
+        providerId,
         config.model,
       ),
     ).rejects.toThrow("Unknown or unavailable model: stale-model");
@@ -545,6 +541,37 @@ describe("agents mutations", () => {
     ]);
     await deleteAgent(workspaceId, agent.id);
     await db.deployment.delete({ where: { id: deployment.id } });
+  });
+
+  it("rejects read-only archived Docker sandboxes as Agent templates without changing assignments", async () => {
+    const agent = await createAgent(workspaceId, "Archived sandbox consumer");
+    const original = await db.agentSandbox.findMany({
+      where: { agentId: agent.id },
+    });
+    const archived = await createDockerSandbox("Archived runtime workspace");
+    await db.sandbox.update({
+      where: { id: archived.id },
+      data: { config: { readOnly: true } },
+    });
+
+    try {
+      await expect(
+        setAgentTools(workspaceId, agent.id, {
+          deploymentIds: [],
+          installedSkillIds: [],
+          toolkitIds: [],
+          sandboxIds: [archived.id],
+        }),
+      ).rejects.toThrow(
+        "Read-only sandboxes cannot be assigned as Agent templates.",
+      );
+      await expect(
+        db.agentSandbox.findMany({ where: { agentId: agent.id } }),
+      ).resolves.toEqual(original);
+    } finally {
+      await deleteAgent(workspaceId, agent.id);
+      await db.deployment.delete({ where: { id: archived.deploymentId } });
+    }
   });
 
   it("updates config and replaces the attached tools", async () => {
@@ -720,16 +747,6 @@ describe("agents mutations", () => {
     const agent = await createAgent(workspaceId, "Disposable provider agent", {
       runtime: "pi-sdk",
     });
-    const hermesAgent = await db.agent.create({
-      data: {
-        workspaceId,
-        name: "Historical provider agent",
-        slug: `historical-provider-${Date.now()}`,
-        runtimeKind: "hermes",
-        retiredAt: new Date(),
-        modelProviders: { create: { providerId: provider.id } },
-      },
-    });
     await updateAgent(workspaceId, agent.id, {
       name: agent.name,
       systemPrompt: null,
@@ -740,16 +757,13 @@ describe("agents mutations", () => {
 
     await deleteProvider(workspaceId, provider.id);
 
-    const [deletedProvider, rereadAgent, hermesProviderLinks] =
-      await Promise.all([
-        db.modelProvider.findUnique({ where: { id: provider.id } }),
-        db.agent.findUnique({ where: { id: agent.id } }),
-        db.agentModelProvider.count({ where: { agentId: hermesAgent.id } }),
-      ]);
+    const [deletedProvider, rereadAgent] = await Promise.all([
+      db.modelProvider.findUnique({ where: { id: provider.id } }),
+      db.agent.findUnique({ where: { id: agent.id } }),
+    ]);
     expect(deletedProvider).toBeNull();
     expect(rereadAgent?.providerId).toBeNull();
     expect(rereadAgent?.model).toBeNull();
-    expect(hermesProviderLinks).toBe(0);
 
     await updateAgent(workspaceId, agent.id, {
       name: agent.name,
@@ -765,58 +779,6 @@ describe("agents mutations", () => {
     expect(afterStaleSave?.model).toBeNull();
 
     await deleteAgent(workspaceId, agent.id);
-    await deleteAgent(workspaceId, hermesAgent.id);
-  });
-
-  it("preserves readonly historical provider/model metadata through provider CRUD", async () => {
-    const provider = await db.modelProvider.create({
-      data: {
-        id: `historical-provider-${Date.now()}`,
-        workspaceId,
-        name: `Historical metadata ${Date.now()}`,
-        format: "openai",
-        baseUrl: "https://historical-provider.test/v1",
-        apiKey: "historical-key",
-        models: ["legacy-model", "current-model"],
-      },
-    });
-    const history = await db.agent.create({
-      data: {
-        workspaceId,
-        name: "Readonly provider metadata",
-        slug: `readonly-provider-${Date.now()}`,
-        runtimeKind: "hermes",
-        retiredAt: new Date(),
-      },
-    });
-    // Historical aliases are persisted metadata, not live provider bindings.
-    const historicalAlias = `custom:toolplane-${provider.id}`;
-    const conversation = await db.conversation.create({
-      data: {
-        agentId: history.id,
-        title: "Historical selection",
-        hermesProvider: historicalAlias,
-        hermesModel: "legacy-model",
-        legacyRevisionUnresolved: true,
-      },
-    });
-    try {
-      await deleteProviderModel(workspaceId, provider.id, "legacy-model");
-      await setProviderModels(workspaceId, provider.id, ["replacement-model"]);
-      await deleteProvider(workspaceId, provider.id);
-      expect(
-        await db.conversation.findUnique({ where: { id: conversation.id } }),
-      ).toMatchObject({
-        hermesProvider: historicalAlias,
-        hermesModel: "legacy-model",
-        legacyRevisionUnresolved: true,
-      });
-    } finally {
-      await deleteAgent(workspaceId, history.id);
-      await db.modelProvider.deleteMany({
-        where: { id: provider.id, workspaceId },
-      });
-    }
   });
 
   it("updates providers within the workspace and keeps the API key when omitted", async () => {
@@ -1017,7 +979,7 @@ describe("agents mutations", () => {
   });
 
   it("initializes legacy runtime session aliases once without replacing them", async () => {
-    const agent = await createAgent(workspaceId, "Legacy Hermes chat", {
+    const agent = await createAgent(workspaceId, "Legacy runtime chat", {
       runtime: "pi-sdk",
     });
     const legacy = await db.conversation.create({
@@ -1138,10 +1100,6 @@ describe("agents mutations", () => {
     await expect(
       db.agent.findUniqueOrThrow({ where: { id: linked.id } }),
     ).resolves.toMatchObject({ providerId: null });
-    const links = await db.agentModelProvider.findMany({
-      where: { agentId: linked.id },
-    });
-    expect(links.map((link) => link.providerId)).toEqual([providerId]);
     await db.workspace.delete({ where: { id: other.id } });
   });
 
@@ -1313,108 +1271,6 @@ describe("agents mutations", () => {
       where: { id: connectionId },
     });
     expect(JSON.stringify(raw?.credentials)).not.toContain("secret");
-
-    await deleteAgentChannelConnection(workspaceId, connectionId);
-  });
-
-  it("requests Telegram managed-bot QR and clears prior restrictions when applying an empty allowlist", async () => {
-    const a = await createAgent(workspaceId, "Telegram active QR", {
-      runtime: "pi-sdk",
-    });
-    const result = await createAgentChannelConnection({
-      workspaceId,
-      agentId: a.id,
-      platform: "telegram",
-      name: "Telegram active setup",
-      credentials: {
-        TELEGRAM_ALLOWED_USERS: "987654321",
-        TELEGRAM_ALLOW_ALL_USERS: "false",
-      },
-    });
-    expect(result.error).toBeUndefined();
-    expect(result.connection?.status).toBe("setup_required");
-    const connectionId = assertDefined(result.connection).id;
-
-    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
-      if (url.endsWith("/v1/telegram/pairings") && init?.method === "POST") {
-        return new Response(
-          JSON.stringify({
-            pairing_id: "tg-pair-1",
-            poll_token: "poll-secret",
-            suggested_username: "toolplane_pair_bot",
-            deep_link: "https://t.me/newbot/HermesSetupBot/toolplane_pair_bot",
-            qr_payload: "https://t.me/newbot/HermesSetupBot/toolplane_pair_bot",
-            expires_at: "2027-05-18T00:00:00.000Z",
-          }),
-          { status: 200 },
-        );
-      }
-      if (url.endsWith("/v1/telegram/pairings/tg-pair-1")) {
-        expect(init?.headers).toEqual(
-          expect.objectContaining({
-            Authorization: "Bearer poll-secret",
-          }),
-        );
-        return new Response(
-          JSON.stringify({
-            status: "ready",
-            token: "123456:SECRETabcdefghijklmnopqrstuvwxyz1234",
-            bot_username: "toolplane_pair_bot",
-            owner_user_id: 123456789,
-          }),
-          { status: 200 },
-        );
-      }
-      return new Response("{}", { status: 404 });
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
-    const requested = await requestAgentChannelPairing(
-      workspaceId,
-      connectionId,
-    );
-    expect(requested.error).toBeUndefined();
-    expect(requested.pairing?.provider).toBe("telegram_managed_bot");
-    expect(requested.pairing?.qrPayload).toBe(
-      "https://t.me/newbot/HermesSetupBot/toolplane_pair_bot",
-    );
-
-    const checked = await checkAgentChannelPairing(workspaceId, connectionId);
-    expect(checked.error).toBeUndefined();
-
-    const afterReady = await listAgentChannelConnections(workspaceId, a.id);
-    expect(afterReady[0].pairing?.status).toBe("ready");
-    expect(afterReady[0].pairing?.extra?.botUsername).toBe(
-      "toolplane_pair_bot",
-    );
-    expect(afterReady[0].pairing?.extra?.ownerUserId).toBe("123456789");
-    expect(afterReady[0].missingStartCredentialNames).toEqual([
-      "TELEGRAM_BOT_TOKEN",
-    ]);
-
-    const applied = await applyAgentChannelPairing(
-      workspaceId,
-      connectionId,
-      "",
-    );
-    expect("error" in applied ? applied.error : undefined).toBeUndefined();
-
-    const afterApply = await listAgentChannelConnections(workspaceId, a.id);
-    expect(afterApply[0].status).toBe("stopped");
-    expect(afterApply[0].missingStartCredentialNames).toEqual([]);
-    expect(afterApply[0].credentialNames).toEqual([
-      "TELEGRAM_ALLOW_ALL_USERS",
-      "TELEGRAM_BOT_TOKEN",
-    ]);
-    expect(afterApply[0].credentialValues).toEqual({
-      TELEGRAM_ALLOW_ALL_USERS: "true",
-    });
-
-    const raw = await db.agentChannelConnection.findUnique({
-      where: { id: connectionId },
-    });
-    expect(JSON.stringify(raw?.credentials)).not.toContain("SECRET");
-    expect(JSON.stringify(raw?.config)).not.toContain("poll-secret");
 
     await deleteAgentChannelConnection(workspaceId, connectionId);
   });

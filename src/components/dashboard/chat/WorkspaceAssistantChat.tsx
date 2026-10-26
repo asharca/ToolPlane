@@ -80,7 +80,7 @@ import {
   type SidebarGroupPreferences,
 } from "@/lib/sidebar-groups";
 import { usePersistentSidebarGroups } from "@/lib/use-persistent-sidebar-groups";
-import type { HermesUIMessage } from "@/lib/agents/hermes/message-segments";
+import type { AgentUIMessage } from "@/lib/agents/message-segments";
 
 type ProviderOption = ModelProviderOption & { format: string };
 type McpOption = {
@@ -203,7 +203,7 @@ export function WorkspaceAssistantChat({
   assistants: ChatAssistantItem[];
   branch?: ChatBranchState | null;
   deployments: McpOption[];
-  initialMessages: HermesUIMessage[];
+  initialMessages: AgentUIMessage[];
   marketTemplate?: AssistantMarketTemplate | null;
   marketTemplates?: AssistantMarketTemplate[];
   providers: ProviderOption[];

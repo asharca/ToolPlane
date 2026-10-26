@@ -38,7 +38,7 @@ export const POST = withRequestLogging(
         sandbox: {
           select: {
             id: true,
-            agentRuntime: { select: { agentId: true, kind: true } },
+            config: true,
           },
         },
       },
@@ -46,7 +46,13 @@ export const POST = withRequestLogging(
     if (!deployment) {
       return NextResponse.json({ error: "not found" }, { status: 404 });
     }
-    if (deployment.sandbox?.agentRuntime?.kind === "hermes")
+    const config = deployment.sandbox?.config;
+    if (
+      config &&
+      typeof config === "object" &&
+      !Array.isArray(config) &&
+      config.readOnly === true
+    )
       return NextResponse.json(
         {
           error:

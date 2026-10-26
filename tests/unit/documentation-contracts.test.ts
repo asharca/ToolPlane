@@ -33,13 +33,13 @@ import {
 } from "@/lib/agents/control-mcp";
 
 const docs = path.join(process.cwd(), "docs");
-const read = (file: string) => readFileSync(path.join(docs, file), "utf8");
-
-describe("production capabilities and bilingual documentation contracts", () => {
-  it.each(["AGENT_CONTROL_MCP.md", "AGENT_CONTROL_MCP.zh-CN.md"])(
+describe("production capabilities and maintained documentation contracts", () => {
+  it.each(["AGENT_CONTROL_MCP.zh-CN.md"])(
     "validates the actual JSON-RPC example in %s through the production parser",
     async (file) => {
-      const match = /-d '(\{[\s\S]*?\})'/.exec(read(file));
+      const match = /-d '(\{[\s\S]*?\})'/.exec(
+        readFileSync(path.join(process.cwd(), "docs", file), "utf8"),
+      );
       expect(match).not.toBeNull();
       const request = JSON.parse(assertDefined(match)[1]);
       expect(request).toMatchObject({
@@ -84,46 +84,41 @@ describe("production capabilities and bilingual documentation contracts", () => 
     );
     expect(AGENT_CONTROL_RUNTIME_KINDS).toEqual(["pi-sdk"]);
     expect(agentRuntimeCapabilities("native")).toBeNull();
-    expect(agentRuntimeCapabilities("hermes")).toMatchObject({
-      attachments: true,
-      providerBinding: "multiple",
-    });
-    for (const kind of ["pi", "pi-sdk", "claude-code", "dsh", "hermes-rpc"])
+    expect(agentRuntimeCapabilities("hermes")).toBeNull();
+    expect(agentRuntimeCapabilities("hermes-rpc")).toBeNull();
+    for (const kind of ["pi", "pi-sdk", "claude-code", "dsh"])
       expect(agentRuntimeCapabilities(kind)).toMatchObject({
         attachments: false,
         providerBinding: "single",
       });
   });
-  it("keeps every topic bilingual, top-linked and registered in both indexes", () => {
-    const names = readdirSync(docs).filter(
-      (name) => /^[A-Z_]+\.md$/.test(name) && name !== "README.md",
-    );
-    for (const name of names) {
-      const stem = name.slice(0, -3);
-      const counterpart = existsSync(path.join(docs, `${stem}.en.md`))
-        ? `${stem}.en.md`
-        : `${stem}.zh-CN.md`;
-      expect(existsSync(path.join(docs, counterpart)), counterpart).toBe(true);
-      expect(read(name).split("\n").slice(0, 8).join("\n")).toContain(
-        `](./${counterpart})`,
-      );
-      expect(read(counterpart).split("\n").slice(0, 8).join("\n")).toContain(
-        `](./${name})`,
-      );
-      for (const index of ["README.md", "README.zh-CN.md"]) {
-        expect(read(index), index).toContain(`](./${name})`);
-        expect(read(index), index).toContain(`](./${counterpart})`);
-      }
+  it("registers maintained Chinese topics without requiring deleted translation copies", () => {
+    const index = readFileSync(path.join(docs, "README.zh-CN.md"), "utf8");
+    for (const file of readdirSync(docs).filter(
+      (file) => file.endsWith(".zh-CN.md") && file !== "README.zh-CN.md",
+    )) {
+      expect(index, file).toContain(`](./${file})`);
+    }
+    for (const file of [
+      "README.md",
+      "HERMES_AGENT_RUNTIME.md",
+      "HERMES_AGENT_RUNTIME.en.md",
+      "HERMES_RPC_RUNTIME.md",
+      "HERMES_RPC_RUNTIME.zh-CN.md",
+    ]) {
+      expect(existsSync(path.join(docs, file)), file).toBe(false);
     }
   });
   it("resolves relative links and linked source entry points in maintained topic docs", () => {
     for (const file of readdirSync(docs).filter((file) =>
       file.endsWith(".md"),
     )) {
-      for (const [, target] of read(file).matchAll(
-        /\]\((\.{1,2}\/[^)\s]+)\)/g,
-      )) {
-        const pathname = target.split("#")[0];
+      for (const [, target] of readFileSync(
+        path.join(docs, file),
+        "utf8",
+      ).matchAll(/\]\(([^)\s]+)\)/g)) {
+        if (/^(?:[a-z][a-z0-9+.-]*:|[/#?])/i.test(target)) continue;
+        const pathname = target.split(/[?#]/)[0];
         expect(
           existsSync(path.resolve(docs, decodeURIComponent(pathname))),
           `${file}: ${target}`,

@@ -1053,21 +1053,11 @@ describe("Chat, Work, and Knowledge surfaces", () => {
             id: "agent-hermes",
             name: "Hermes researcher",
             pinned: true,
-            supportsWork: true,
+            supportsWork: false,
             ready: false,
             runtimeKind: "hermes",
-            providerIds: ["provider-hermes"],
             providerLabel: "OpenAI",
-            sandboxes: [
-              {
-                id: "sandbox-hermes",
-                name: "Hermes runtime",
-                kind: "hermes",
-                deploymentId: "deployment-hermes",
-                running: false,
-                isDefault: true,
-              },
-            ],
+            sandboxes: [],
           },
           {
             id: "agent-chat",

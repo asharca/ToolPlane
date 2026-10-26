@@ -25,13 +25,11 @@ const seedDatabase = vi.hoisted(() => {
       "syncEvent",
       "agent",
       "sandbox",
-      "agentRuntime",
       "agentListing",
       "agentRelease",
       "apiToken",
       "agentRevision",
       "agentServer",
-      "agentModelProvider",
       "agentSkill",
       "agentToolkit",
       "chatAssistantMcpGrant",
@@ -87,32 +85,41 @@ it("seeds ungranted native drafts and read-only history without issuing client t
   const output = vi.spyOn(console, "log").mockImplementation(() => {});
   await seedSmokeWorkspace();
   const agents = seedDatabase.writes.filter(({ model }) => model === "agent");
-  expect(agents).toHaveLength(4);
-  const drafts = agents.filter(({ data }) => data.runtimeKind === "pi-sdk");
-  expect(drafts).toHaveLength(3);
-  for (const { data } of drafts) {
+  expect(agents.map(({ data }) => data)).toEqual([
+    expect.objectContaining({
+      name: "Research Copilot",
+      slug: "research-copilot",
+      runtimeKind: "pi-sdk",
+    }),
+    expect.objectContaining({
+      name: "Code Quality Guardian",
+      slug: "code-quality-guardian",
+      runtimeKind: "pi-sdk",
+    }),
+    expect.objectContaining({
+      name: "Incident Response Lead",
+      slug: "incident-response-lead",
+      runtimeKind: "pi-sdk",
+    }),
+  ]);
+  for (const { data } of agents) {
     expect(data.currentRevisionVersion).toBe(0);
     for (const authority of [
       "servers",
       "skills",
       "toolkits",
-      "modelProviders",
       "providerId",
       "a2aAgents",
     ]) {
       expect(data).not.toHaveProperty(authority);
     }
   }
-  const historical = agents.find(({ data }) => data.runtimeKind === "hermes");
-  expect(historical?.data.retiredAt).toBeInstanceOf(Date);
-  expect(historical?.data.name).toContain("read-only");
   expect(
     seedDatabase.writes.filter(({ model }) =>
       [
         "apiToken",
         "agentRevision",
         "agentServer",
-        "agentModelProvider",
         "agentSkill",
         "agentToolkit",
         "chatAssistantMcpGrant",
@@ -141,11 +148,6 @@ it("seeds ungranted native drafts and read-only history without issuing client t
       });
     }
   }
-  const runtimes = seedDatabase.writes.filter(
-    ({ model }) => model === "agentRuntime",
-  );
-  expect(runtimes).toHaveLength(1);
-  expect(runtimes[0].data).toMatchObject({ kind: "hermes", status: "stopped" });
   const templates = seedDatabase.writes.filter(
     ({ model }) => model === "agentRelease",
   );

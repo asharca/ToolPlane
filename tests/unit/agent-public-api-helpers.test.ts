@@ -6,10 +6,6 @@ import {
 } from "@/lib/agents/public-api/cors";
 import { AgentApiError, errorResponse } from "@/lib/agents/public-api/errors";
 import { encodeSseDone, encodeSseEvent } from "@/lib/agents/public-api/sse";
-import {
-  isPinnedPublicHermesImage,
-  isPublicHermesImage,
-} from "@/lib/agents/hermes/constants";
 
 describe("Agent public API helpers", () => {
   it("normalizes exact HTTP origins and denies paths or credentials", () => {
@@ -49,17 +45,5 @@ describe("Agent public API helpers", () => {
         request_id: "req_123",
       },
     });
-  });
-
-  it("accepts reviewed release tags only for publication and immutable digests for execution", () => {
-    const digest = `nousresearch/hermes-agent@sha256:${"a".repeat(64)}`;
-    expect(isPublicHermesImage("nousresearch/hermes-agent:v2026.8.3")).toBe(
-      true,
-    );
-    expect(isPublicHermesImage("nousresearch/hermes-agent:latest")).toBe(false);
-    expect(
-      isPinnedPublicHermesImage("nousresearch/hermes-agent:v2026.8.3"),
-    ).toBe(false);
-    expect(isPinnedPublicHermesImage(digest)).toBe(true);
   });
 });

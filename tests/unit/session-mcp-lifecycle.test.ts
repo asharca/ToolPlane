@@ -430,14 +430,15 @@ it("does not trust an old runtime entry with no private credential identity", as
   expect(mocks.rpc).not.toHaveBeenCalled();
 });
 
-it("never resumes a retained legacy Agent runtime during ordinary MCP recovery", async () => {
+it("never resumes a read-only historical sandbox during ordinary MCP recovery", async () => {
   const resolve = vi.fn();
   const started = await reconcileDeployments({
     loadRunning: async () => [
       {
         ...recipe,
         source: "sandbox",
-        sandbox: { agentRuntime: { kind: "hermes" } },
+        installCfg: { ...recipe.installCfg, readOnly: true },
+        sandbox: { config: { readOnly: true } },
       },
     ],
     start: mocks.start,
@@ -448,16 +449,17 @@ it("never resumes a retained legacy Agent runtime during ordinary MCP recovery",
   expect(mocks.start).not.toHaveBeenCalled();
 });
 
-it("rejects retired Hermes spawn recipes instead of downgrading them to ordinary Docker", () => {
+it("rejects read-only historical sandbox spawn recipes", () => {
   expect(() =>
     resolveSpawnSpec({
       ...recipe,
       source: "sandbox",
       installCfg: {
         sandboxId: "retained-sandbox",
-        kind: "hermes",
-        runtimeId: "retained-runtime",
-        image: "legacy-runtime",
+        kind: "docker",
+        readOnly: true,
+        historicalRoot: "workspace",
+        image: "retained-image",
         env: {},
       },
     }),

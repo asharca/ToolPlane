@@ -40,7 +40,6 @@ vi.mock("@/lib/process/mcp-client", () => ({ listMcpTools: mocks.tools }));
 const input: CreateAgentFromControlInput = {
   name: "Agent",
   runtime: "pi-sdk",
-  providerIds: [],
   maxSteps: 10,
   deploymentIds: [],
   installedSkillIds: [],
@@ -63,15 +62,6 @@ function agent() {
       format: string;
     } | null,
     model: "model",
-    modelProviders: [] as {
-      providerId: string;
-      provider: { name: string; format: string };
-    }[],
-    runtime: null as {
-      status: string;
-      image: string;
-      sandbox: { deploymentId: string; deployment: { status: string } };
-    } | null,
     systemPrompt: null,
     maxSteps: 10,
     createdAt: new Date(0),
@@ -130,21 +120,19 @@ describe("agent control configuration and safe serialization", () => {
       ).resolves.toMatchObject({ ready, readOnly });
     },
   );
-  it.each([
-    { ...input, model: "model" },
-    { ...input, runtime: "hermes" as const, providerId: "provider" },
-    { ...input, runtime: "hermes" as const, model: "model" },
-    { ...input, runtime: "hermes" as const, systemPrompt: "prompt" },
-  ])("rejects incompatible creation configuration %j", async (value) => {
-    await expect(
-      createAgentFromControl(
-        "workspace",
-        "slug",
-        value as CreateAgentFromControlInput,
-      ),
-    ).rejects.toMatchObject({ code: "invalid_arguments" });
-    expect(mocks.create).not.toHaveBeenCalled();
-  });
+  it.each([{ ...input, model: "model" }])(
+    "rejects incompatible creation configuration %j",
+    async (value) => {
+      await expect(
+        createAgentFromControl(
+          "workspace",
+          "slug",
+          value as CreateAgentFromControlInput,
+        ),
+      ).rejects.toMatchObject({ code: "invalid_arguments" });
+      expect(mocks.create).not.toHaveBeenCalled();
+    },
+  );
   it("serializes only safe agent metadata with escaped resource paths", async () => {
     expect(
       await getAgentControlAgent("workspace", "workspace /", "agent/id"),
@@ -162,45 +150,33 @@ describe("agent control configuration and safe serialization", () => {
       getAgentControlAgent("workspace", "slug", "unknown"),
     ).rejects.toMatchObject({ code: "not_found" });
   });
-  it.each(["error", "setup_required", "stopped", "running"])(
-    "preserves Hermes runtime status %s without inventing readiness",
-    async (status) => {
-      const row = agent();
-      row.runtimeKind = "hermes";
-      row.modelProviders = [
-        {
-          providerId: "provider",
-          provider: { name: "Provider", format: "openai" },
-        },
-      ];
-      row.runtime = {
-        status,
-        image: "image",
-        sandbox: { deploymentId: "runtime", deployment: { status: "running" } },
-      };
-      mocks.db.agent.findFirst.mockResolvedValue(row);
-      const result = await getAgentControlAgent("workspace", "slug", row.id);
-      expect(result.runtime.status).toBe(
-        ["error", "setup_required"].includes(status) ? status : "running",
-      );
-      expect(result.ready).toBe(false);
-      expect(result.readOnly).toBe(true);
-      expect(result.model).toEqual({
-        providerIds: ["provider"],
-        providers: [{ name: "Provider", format: "openai" }],
-      });
-    },
-  );
+  it("serializes historical agent metadata without advertising execution readiness", async () => {
+    const row = agent();
+    row.runtimeKind = "claude-code";
+    mocks.db.agent.findFirst.mockResolvedValue(row);
+    const result = await getAgentControlAgent("workspace", "slug", row.id);
+    expect(result.runtime).toEqual({
+      kind: "claude-code",
+      status: null,
+      image: null,
+    });
+    expect(result.ready).toBe(false);
+    expect(result.readOnly).toBe(true);
+    expect(result.model).toEqual({
+      providerId: "provider",
+      provider: { name: "Provider", format: "openai" },
+      model: "model",
+    });
+  });
   it("marks unconfigured agents not ready and counts all attached tool resources", async () => {
     const pi = agent();
     pi.provider = null;
-    const hermes = agent();
-    hermes.runtimeKind = "hermes";
-    mocks.db.agent.findMany.mockResolvedValue([pi, hermes, agent()]);
+    const retired = { ...agent(), retiredAt: new Date(0) };
+    mocks.db.agent.findMany.mockResolvedValue([pi, retired, agent()]);
     const results = await listAgentControlAgents("workspace");
     expect(results.map((result) => [result.configured, result.ready])).toEqual([
       [false, false],
-      [false, false],
+      [true, false],
       [true, true],
     ]);
     expect(results[0]).toMatchObject({
@@ -250,7 +226,6 @@ describe("agent control configuration and safe serialization", () => {
         systemPrompt: null,
         providerId: null,
         model: null,
-        providerIds: [],
       }),
       expect.any(Object),
       { runtime: "pi-sdk" },

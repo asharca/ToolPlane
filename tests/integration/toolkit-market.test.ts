@@ -113,7 +113,7 @@ describe.sequential("controlled Toolkit private-package cutover", () => {
         workspaceId,
         slug: `legacy-${++sequence}`,
         name: "Legacy",
-        runtimeKind: "hermes",
+        runtimeKind: "claude-code",
         toolkits: { create: { toolkitId } },
       },
     });
@@ -125,7 +125,7 @@ describe.sequential("controlled Toolkit private-package cutover", () => {
         workspaceId,
         agentId: agent.id,
         conversationId: conversation.id,
-        runtimeKind: "hermes",
+        runtimeKind: "claude-code",
         status: "running",
       },
     });
@@ -256,7 +256,9 @@ describe.sequential("controlled Toolkit private-package cutover", () => {
         ),
       }),
     ).toBeNull();
-    expect(await db.workSession.count({ where: { workspaceId } })).toBe(1);
+    expect(
+      await db.workSession.findMany({ where: { workspaceId } }),
+    ).toMatchObject([{ runtimeKind: "claude-code", status: "completed" }]);
     expect(
       await db.agentPiPackage.count({
         where: { marketInstall: { listingId: release.listingId } },

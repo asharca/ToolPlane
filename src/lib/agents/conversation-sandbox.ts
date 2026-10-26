@@ -179,6 +179,8 @@ export async function ensureAgentConversationSandbox(
       throw new Error("Session revision changed.");
     if (current.sandbox) {
       const config = current.sandbox.config as Record<string, unknown> | null;
+      if (config?.readOnly === true)
+        throw new Error("Historical Agent sessions are read-only.");
       if (config?.agentRevisionId !== revision.id)
         throw new Error("Session sandbox revision does not match.");
       return { sandbox: current.sandbox, created: false };
@@ -276,9 +278,14 @@ export async function ensureAgentConversationSandbox(
                 sandboxId: revision.config.sandboxTemplateId ?? "",
                 sandbox: { workspaceId: input.workspaceId },
               },
+              include: { sandbox: { select: { config: true } } },
             });
             if (
               !frozen ||
+              (frozen.sandbox?.config &&
+                typeof frozen.sandbox.config === "object" &&
+                !Array.isArray(frozen.sandbox.config) &&
+                frozen.sandbox.config.readOnly === true) ||
               (await digestDockerVolume(snapshot.volumeName)) !==
                 snapshot.checksum
             )

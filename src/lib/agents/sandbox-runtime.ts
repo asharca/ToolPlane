@@ -62,12 +62,7 @@ const RUNTIME_TEMP_ROOT = "/workspace/.toolplane/runtime-tmp";
 const NPM_CACHE = "/workspace/.toolplane/npm-cache";
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
-export type SandboxAgentRuntimeKind =
-  | "pi"
-  | "pi-sdk"
-  | "claude-code"
-  | "dsh"
-  | "hermes-rpc";
+export type SandboxAgentRuntimeKind = "pi" | "pi-sdk" | "claude-code" | "dsh";
 
 export type SandboxRuntimeProvider = {
   id: string;

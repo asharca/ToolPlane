@@ -4,7 +4,6 @@ import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import {
   requestAgentChannelPairing,
   checkAgentChannelPairing,
-  applyAgentChannelPairing,
 } from "@/lib/agents/channel-pairing";
 import { pairingFromConfig } from "@/lib/agents/channel-pairing-state";
 
@@ -12,7 +11,7 @@ const store = vi.hoisted(() => ({
   row: {
     id: "c",
     workspaceId: "w",
-    platform: "telegram",
+    platform: "wecom",
     credentials: {},
     config: {} as Prisma.JsonValue,
   },
@@ -49,7 +48,7 @@ beforeEach(() => {
   store.row = {
     id: "c",
     workspaceId: "w",
-    platform: "telegram",
+    platform: "wecom",
     credentials: {},
     config: {},
   };
@@ -101,9 +100,6 @@ describe("QR pairing provider outcomes", () => {
       expect(await operation("w", "c")).toEqual({
         error: "Channel connection not found.",
       });
-    expect(await applyAgentChannelPairing("w", "c", "")).toEqual({
-      error: "Channel connection not found.",
-    });
     store.missing = false;
     store.row.platform = "unknown";
     expect(await requestAgentChannelPairing("w", "c")).toEqual({
@@ -112,9 +108,17 @@ describe("QR pairing provider outcomes", () => {
     expect(await checkAgentChannelPairing("w", "c")).toEqual({
       error: "This platform does not use QR pairing.",
     });
-    expect(await applyAgentChannelPairing("w", "c", "")).toEqual({
-      error: "Only Telegram QR setup needs an apply step.",
+  });
+  it("requires Telegram bot credentials instead of contacting a managed setup service", async () => {
+    store.row.platform = "telegram";
+    const fetch = responses();
+    expect(await requestAgentChannelPairing("w", "c")).toEqual({
+      error: "This platform does not use QR pairing.",
     });
+    expect(await checkAgentChannelPairing("w", "c")).toEqual({
+      error: "This platform does not use QR pairing.",
+    });
+    expect(fetch).not.toHaveBeenCalled();
   });
   it.each([null, "text", 12])(
     "persists malformed JSON provider failure %j",
@@ -142,107 +146,12 @@ describe("QR pairing provider outcomes", () => {
       "Failed to request QR.",
     );
   });
-  it("creates Telegram setup with private polling token and uses configured service origin", async () => {
-    vi.stubEnv("TELEGRAM_ONBOARDING_URL", " https://setup.example/ ");
-    const fetch = responses({
-      pairing_id: 123,
-      poll_token: "poll",
-      expires_at: "2030-01-02",
-      deep_link: "tg://setup",
-      suggested_username: "bot",
-    });
-    const result = await requestAgentChannelPairing("w", "c");
-    expect(result.pairing).toMatchObject({
-      providerSessionId: "123",
-      qrPayload: "tg://setup",
-      extra: { suggestedUsername: "bot" },
-    });
-    expect(result.pairing).not.toHaveProperty("pollToken");
-    expect(fetch.mock.calls[0]?.[0]).toBe(
-      "https://setup.example/v1/telegram/pairings",
-    );
-    expect(store.row.config).toMatchObject({
-      pairingSecrets: { pollToken: "poll" },
-    });
-  });
-  it.each(["", "123"])(
-    "saves Telegram ready state and applies allowed users %s",
-    async (owner) => {
-      session("telegram", "telegram_managed_bot", { pollToken: "poll" });
-      responses({
-        status: "ready",
-        token: "token",
-        bot_username: "bot",
-        owner_user_id: owner,
-      });
-      expect(await checkAgentChannelPairing("w", "c")).toEqual({});
-      expect(pairingFromConfig(store.row.config)?.status).toBe("ready");
-      expect(
-        await applyAgentChannelPairing(
-          "w",
-          "c",
-          owner ? "123, 123, 456, " : "",
-        ),
-      ).toEqual({});
-      expect(store.credentials).toHaveBeenCalledWith({
-        workspaceId: "w",
-        connectionId: "c",
-        credentials: {
-          TELEGRAM_BOT_TOKEN: "token",
-          TELEGRAM_ALLOWED_USERS: owner ? "123,456" : "",
-          TELEGRAM_ALLOW_ALL_USERS: owner ? "false" : "true",
-        },
-      });
-      expect(store.row.config).toMatchObject({ pairingSecrets: {} });
-    },
-  );
-  it.each([
-    [{ status: "pending" }, "waiting"],
-    [{ status: "ready" }, "error"],
-  ])("handles Telegram poll response %j", async (response, status) => {
-    session("telegram", "telegram_managed_bot", { pollToken: "poll" });
-    responses(response);
-    await checkAgentChannelPairing("w", "c");
-    expect(pairingFromConfig(store.row.config)?.status).toBe(status);
-  });
-  it.each([{}, { botToken: "token" }])(
-    "enforces apply readiness and numeric users with secrets %j",
-    async (secrets) => {
-      expect((await applyAgentChannelPairing("w", "c", "")).error).toContain(
-        "Request Telegram",
-      );
-      session("telegram", "telegram_managed_bot", secrets);
-      expect((await applyAgentChannelPairing("w", "c", "")).error).toContain(
-        "not ready",
-      );
-      store.row.config = {
-        ...(store.row.config as Prisma.JsonObject),
-        pairing: { provider: "telegram_managed_bot", status: "ready" },
-        pairingSecrets: secrets,
-      };
-      const result = await applyAgentChannelPairing("w", "c", "abc");
-      expect(result.error).toContain(
-        secrets.botToken ? "numeric: abc" : "token is missing",
-      );
-    },
-  );
-  it("propagates credential rejection without destroying the completed pairing", async () => {
-    store.row.config = {
-      pairing: { provider: "telegram_managed_bot", status: "ready" },
-      pairingSecrets: { botToken: "token" },
-    };
-    store.credentials.mockResolvedValue({ error: "not allowed" });
-    expect(await applyAgentChannelPairing("w", "c", "123")).toEqual({
-      error: "not allowed",
-    });
-    expect(store.update).not.toHaveBeenCalled();
-  });
   it("expires local sessions and never polls terminal states", async () => {
     const fetch = responses();
-    session("telegram", "telegram_managed_bot");
+    session("wecom", "wecom_admin_qr");
     store.row.config = {
       pairing: {
-        provider: "telegram_managed_bot",
+        provider: "wecom_admin_qr",
         status: "waiting",
         expiresAt: "2029-01-01",
         qrPayload: "secret",
@@ -255,7 +164,7 @@ describe("QR pairing provider outcomes", () => {
     });
     for (const status of ["ready", "expired", "error"]) {
       store.row.config = {
-        pairing: { provider: "telegram_managed_bot", status },
+        pairing: { provider: "wecom_admin_qr", status },
       };
       expect(await checkAgentChannelPairing("w", "c")).toEqual({});
     }
@@ -266,7 +175,6 @@ describe("QR pairing provider outcomes", () => {
     );
   });
   it.each([
-    ["telegram", "telegram_managed_bot", "pairing id"],
     ["wecom", "wecom_admin_qr", "scode"],
     ["weixin", "weixin_ilink_qr", "QR id"],
     ["dingtalk", "dingtalk_device_qr", "device code"],
@@ -277,15 +185,6 @@ describe("QR pairing provider outcomes", () => {
       store.row.platform = platform;
       store.row.config = { pairing: { provider, status: "waiting" } };
       expect((await checkAgentChannelPairing("w", "c")).error).toContain(error);
-    },
-  );
-  it.each([{}, { broken: "yes" }])(
-    "rejects missing or undecryptable polling secrets %j",
-    async (secrets) => {
-      session("telegram", "telegram_managed_bot", secrets);
-      expect((await checkAgentChannelPairing("w", "c")).error).toContain(
-        "poll token",
-      );
     },
   );
   it.each(["wecom", "weixin"])(

@@ -323,7 +323,7 @@ describe("Pi client installation bindings", () => {
       workspaceBindings: true,
       existing: {
         id: "device",
-        client: "hermes",
+        client: "pi",
         bindings: { search: { deploymentId: "dep", tools: ["query"] } },
         configVersion: 0,
       },

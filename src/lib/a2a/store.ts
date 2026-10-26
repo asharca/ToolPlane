@@ -678,7 +678,11 @@ export async function releasePiHarnessClaim(
   });
 }
 
-/** Observer-only projection; native Session state remains the execution truth. */
+/**
+ * Observer-only projection; native Session state remains the execution truth.
+ * Progress updates the live snapshot without appending journal events, so a
+ * long-running task cannot exhaust its stored payload budget on polling.
+ */
 export async function projectPiHarnessProgress(
   taskId: string,
   leaseToken: string,
@@ -700,7 +704,15 @@ export async function projectPiHarnessProgress(
     if (!task.status) throw new Error("Task status is required.");
     task.status.timestamp = new Date().toISOString();
     task.status.message = agentMessage(task, detail.slice(-2048));
-    await persist(tx, row, task, statusEvent(task));
+    await tx.a2ATask.update({
+      where: { id: row.id },
+      data: {
+        statusAt: new Date(task.status.timestamp),
+        snapshot: json(jsonTask(task)),
+      },
+    });
+    // Projection accounting must not fail the durable native operation.
+    await refreshTaskStorage(tx, row.id, true);
   });
 }
 export async function finishTask(

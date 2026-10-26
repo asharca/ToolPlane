@@ -8,8 +8,6 @@ const mocks = vi.hoisted(() => ({
   sandboxUpdate: vi.fn(),
   agentFindFirst: vi.fn(),
   assertDockerVolumeExists: vi.fn(),
-  agentRuntimeFindFirst: vi.fn(),
-  agentRuntimeUpdateMany: vi.fn(),
   sandboxSnapshotFindFirst: vi.fn(),
   sandboxSnapshotCreate: vi.fn(),
   sandboxSnapshotUpdate: vi.fn(),
@@ -45,7 +43,6 @@ const mocks = vi.hoisted(() => ({
   redirect: vi.fn(),
   disconnectConnector: vi.fn(),
   setConnectorSetupTokenCookie: vi.fn(),
-  stopHermesRuntime: vi.fn(),
   stopAgentSandboxSessionMcp: vi.fn(),
   headers: vi.fn(),
 }));
@@ -64,10 +61,6 @@ vi.mock("@/lib/db", () => ({
       findFirst: mocks.sandboxFindFirst,
       create: mocks.sandboxCreate,
       update: mocks.sandboxUpdate,
-    },
-    agentRuntime: {
-      findFirst: mocks.agentRuntimeFindFirst,
-      updateMany: mocks.agentRuntimeUpdateMany,
     },
     sandboxSnapshot: {
       findFirst: mocks.sandboxSnapshotFindFirst,
@@ -116,9 +109,6 @@ vi.mock("@/lib/sandboxes/connector-broker", () => ({
 }));
 vi.mock("@/lib/sandboxes/connector-setup-token", () => ({
   setConnectorSetupTokenCookie: mocks.setConnectorSetupTokenCookie,
-}));
-vi.mock("@/lib/agents/hermes/runtime", () => ({
-  stopHermesRuntime: mocks.stopHermesRuntime,
 }));
 vi.mock("@/lib/agents/conversation-sandbox", () => ({
   stopAgentSandboxSessionMcp: mocks.stopAgentSandboxSessionMcp,
@@ -185,19 +175,14 @@ function dockerSandbox(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function hermesSandbox(overrides: Record<string, unknown> = {}) {
-  return dockerSandbox({
-    kind: "hermes",
-    image: "nousresearch/hermes-agent:test",
-    ...overrides,
-  });
+function historicalSandbox(overrides: Record<string, unknown> = {}) {
+  return dockerSandbox({ config: { readOnly: true }, ...overrides });
 }
 
 describe("renameSandboxAction", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     mocks.agentFindFirst.mockResolvedValue(null);
-    mocks.agentRuntimeFindFirst.mockResolvedValue(null);
     mocks.getCurrentUser.mockResolvedValue({ id: "user1" });
     mocks.getWorkspaceForUser.mockResolvedValue({
       id: "ws1",
@@ -207,7 +192,6 @@ describe("renameSandboxAction", () => {
     mocks.effectiveStatus.mockReturnValue("stopped");
     mocks.killProcess.mockResolvedValue(undefined);
     mocks.removeDockerVolumeCopyHelper.mockResolvedValue(undefined);
-    mocks.stopHermesRuntime.mockResolvedValue(undefined);
     mocks.headers.mockResolvedValue(
       new Headers({
         "x-forwarded-host": "connect.example.com",
@@ -224,9 +208,9 @@ describe("renameSandboxAction", () => {
     restoreSandboxSnapshotAction,
     cloneSandboxAction,
   ])(
-    "never executes historical Hermes through generic controls",
+    "never executes read-only historical workspaces through generic controls",
     async (action) => {
-      mocks.sandboxFindFirst.mockResolvedValue(hermesSandbox());
+      mocks.sandboxFindFirst.mockResolvedValue(historicalSandbox());
       await action(envForm("TOKEN=changed"));
       expect(mocks.startProcess).not.toHaveBeenCalled();
       expect(mocks.restartProcess).not.toHaveBeenCalled();
@@ -516,9 +500,9 @@ describe("renameSandboxAction", () => {
     );
   });
 
-  it("renames an agent-managed Hermes container without renaming its agent", async () => {
+  it("renames a historical workspace without renaming its agent", async () => {
     mocks.sandboxFindFirst.mockResolvedValue(
-      hermesSandbox({
+      historicalSandbox({
         deployment: { id: "dep1", status: "stopped" },
       }),
     );
@@ -577,17 +561,12 @@ describe("renameSandboxAction", () => {
     expect(mocks.startProcess).toHaveBeenCalledTimes(2);
   });
 
-  it("stops an agent-managed Hermes sandbox through its runtime", async () => {
-    mocks.sandboxFindFirst.mockResolvedValue(hermesSandbox());
-    mocks.agentRuntimeFindFirst.mockResolvedValue({ agentId: "agent-1" });
+  it("stops a historical workspace through generic process controls", async () => {
+    mocks.sandboxFindFirst.mockResolvedValue(historicalSandbox());
 
     await stopSandboxAction(renameForm("Ignored"));
 
-    expect(mocks.stopHermesRuntime).toHaveBeenCalledWith("ws1", "agent-1");
-    expect(mocks.stopProcess).not.toHaveBeenCalled();
-    expect(mocks.revalidatePath).toHaveBeenCalledWith(
-      "/app/mine/agents/agent-1",
-    );
+    expect(mocks.stopProcess).toHaveBeenCalledWith("dep1");
     expect(mocks.revalidatePath).toHaveBeenCalledWith("/app/mine/sandboxes");
   });
   describe("batchSandboxLifecycleAction", () => {
@@ -772,10 +751,11 @@ describe("renameSandboxAction", () => {
         expect.anything(),
         expect.anything(),
       );
-      for (const [query] of mocks.agentRuntimeFindFirst.mock.calls) {
+      expect(mocks.agentFindFirst).toHaveBeenCalled();
+      for (const [query] of mocks.agentFindFirst.mock.calls) {
         expect(query.where).toMatchObject({
           workspaceId: "ws1",
-          sandboxId: "sb1",
+          sandboxes: { some: { sandboxId: "sb1" } },
         });
       }
       expect(mocks.deploymentUpdateMany).not.toHaveBeenCalled();
@@ -1807,7 +1787,7 @@ describe("renameSandboxAction", () => {
     "does not mutate names or environment while sandbox is %s",
     async (status) => {
       mocks.sandboxFindFirst.mockResolvedValue(
-        hermesSandbox({ deployment: { id: "dep1", status } }),
+        historicalSandbox({ deployment: { id: "dep1", status } }),
       );
       const form = envForm("TOKEN=new-value");
       await renameSandboxAction(renameForm("New name"));

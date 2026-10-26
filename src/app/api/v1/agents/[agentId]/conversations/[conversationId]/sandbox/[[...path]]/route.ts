@@ -33,7 +33,6 @@ async function proxy(req: Request, { params }: Params) {
         where: { id: conversationId },
         include: { sandbox: { include: { deployment: true } } },
       },
-      runtime: { include: { sandbox: { include: { deployment: true } } } },
     },
   });
   const conversation = agent?.conversations[0];
@@ -45,12 +44,7 @@ async function proxy(req: Request, { params }: Params) {
     conversation.legacyRevisionUnresolved ||
     !conversation.agentRevisionId;
   if (historical)
-    return serveHistoricalSandboxFiles(
-      req,
-      path,
-      conversation.sandbox ??
-        (agent.runtimeKind !== "pi-sdk" ? agent.runtime?.sandbox : null),
-    );
+    return serveHistoricalSandboxFiles(req, path, conversation.sandbox);
   try {
     await resolvePinnedAgent(agent, conversation.agentRevisionId);
   } catch {

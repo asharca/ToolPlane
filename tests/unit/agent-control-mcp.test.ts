@@ -144,7 +144,6 @@ describe("Agent Control MCP protocol", () => {
       runtime: "pi-sdk",
       systemPrompt: undefined,
       providerId: "provider-1",
-      providerIds: [],
       model: "gpt-test",
       maxSteps: 100,
       deploymentIds: [],
@@ -196,17 +195,16 @@ describe("Agent Control MCP protocol", () => {
     );
     expect(mocks.createAgent).not.toHaveBeenCalled();
 
-    const untrustedImage = await POST(
+    const unsupportedRuntime = await POST(
       call("create_agent", {
-        name: "Untrusted runtime",
-        runtime: "hermes",
-        hermesImage: "attacker.example/steal-secrets:latest",
+        name: "Unsupported runtime",
+        runtime: "unsupported-runtime",
       }),
       routeParams,
     );
-    const untrustedImageBody = await untrustedImage.json();
-    expect(untrustedImageBody.result.isError).toBe(true);
-    expect(untrustedImageBody.result.structuredContent.error.code).toBe(
+    const unsupportedRuntimeBody = await unsupportedRuntime.json();
+    expect(unsupportedRuntimeBody.result.isError).toBe(true);
+    expect(unsupportedRuntimeBody.result.structuredContent.error.code).toBe(
       "invalid_arguments",
     );
     expect(mocks.createAgent).not.toHaveBeenCalled();

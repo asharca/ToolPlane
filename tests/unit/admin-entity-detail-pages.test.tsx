@@ -208,7 +208,7 @@ describe("admin workspace detail", () => {
         {
           id: "agent-1",
           name: "Research agent",
-          runtimeKind: "hermes",
+          runtimeKind: "pi-sdk",
           model: null,
         },
       ],

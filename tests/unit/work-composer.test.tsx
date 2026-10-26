@@ -26,11 +26,13 @@ function Composer({
   runtimeKind,
   conversationId = "conversation-1",
   workSessionId = "work-1",
+  supportsAttachments = true,
 }: {
   sandboxId?: string;
   runtimeKind?: string;
   conversationId?: string;
   workSessionId?: string;
+  supportsAttachments?: boolean;
   onSubmit?: (references: ComposerReference[]) => void;
 }) {
   const [draft, setDraft] = useState("");
@@ -55,7 +57,7 @@ function Composer({
         attachments={attachments}
         onAttachmentsChange={setAttachments}
         disabled={false}
-        supportsAttachments
+        supportsAttachments={supportsAttachments}
         onSubmit={() => onSubmit(references)}
         onPendingChange={setPending}
         onError={setError}
@@ -93,6 +95,68 @@ describe("Work composer", () => {
       expect(screen.getByRole("option", { name })).toBeDisabled();
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it("keeps native file attachments local, removable, and separate from the draft", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const { container } = render(<Composer />);
+    const fileInput = assertDefined(
+      container.querySelector<HTMLInputElement>('input[type="file"]'),
+    );
+    const openPicker = vi.spyOn(fileInput, "click");
+    await user.type(input(), "Review these files");
+    await user.click(screen.getByRole("button", { name: "Open tools" }));
+    await user.click(screen.getByRole("option", { name: "Add attachment" }));
+    expect(openPicker).toHaveBeenCalledOnce();
+    openPicker.mockRestore();
+    await user.upload(fileInput, [
+      new File(["first"], "first.txt", { type: "text/plain" }),
+      new File(["second"], "second.txt", { type: "text/plain" }),
+    ]);
+    expect(screen.getByText("first.txt")).toBeInTheDocument();
+    expect(screen.getByText("second.txt")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Remove first.txt" }));
+    expect(screen.queryByText("first.txt")).not.toBeInTheDocument();
+    expect(screen.getByText("second.txt")).toBeInTheDocument();
+    expect(input()).toHaveValue("Review these files");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("retains the five-file limit across successive native selections", async () => {
+    const user = userEvent.setup();
+    const { container } = render(<Composer />);
+    const fileInput = assertDefined(
+      container.querySelector<HTMLInputElement>('input[type="file"]'),
+    );
+    await user.upload(fileInput, [
+      new File(["first"], "first.txt", { type: "text/plain" }),
+    ]);
+    await user.upload(
+      fileInput,
+      Array.from(
+        { length: 5 },
+        (_, index) =>
+          new File([`file ${index}`], `file-${index}.txt`, {
+            type: "text/plain",
+          }),
+      ),
+    );
+    expect(screen.getByText("first.txt")).toBeInTheDocument();
+    for (let index = 0; index < 4; index += 1)
+      expect(screen.getByText(`file-${index}.txt`)).toBeInTheDocument();
+    expect(screen.queryByText("file-4.txt")).not.toBeInTheDocument();
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+  });
+
+  it("disables native attachments when the workspace cannot accept uploads", async () => {
+    render(<Composer supportsAttachments={false} />);
+    await userEvent.click(screen.getByRole("button", { name: "Open tools" }));
+    expect(
+      screen.getByRole("option", { name: "Add attachment" }),
+    ).toBeDisabled();
+  });
+
   it.each(["pi-sdk"])(
     "offers only %s commands through /, completes without executing, and keeps + unchanged",
     async (runtimeKind) => {

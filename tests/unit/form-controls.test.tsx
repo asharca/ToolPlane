@@ -8,7 +8,7 @@ import { FormCheckbox } from "@/components/ui/FormCheckbox";
 const options = [
   { value: "", label: "Choose runtime" },
   { value: "pi", label: "Pi" },
-  { value: "hermes", label: "Hermes" },
+  { value: "pi-sdk", label: "Pi SDK" },
 ];
 
 describe("beUI form participation", () => {
@@ -42,7 +42,7 @@ describe("beUI form participation", () => {
     await userEvent.click(screen.getByRole("button", { name: "Publish" }));
     expect(action).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole("combobox", { name: "Runtime" }));
-    await userEvent.click(screen.getByRole("option", { name: "Hermes" }));
+    await userEvent.click(screen.getByRole("option", { name: "Pi SDK" }));
     await userEvent.click(screen.getByRole("button", { name: "Publish" }));
     expect(action).not.toHaveBeenCalled();
     await userEvent.click(
@@ -52,7 +52,7 @@ describe("beUI form participation", () => {
     await waitFor(() => expect(action).toHaveBeenCalledTimes(1));
     const data = action.mock.calls[0][0] as FormData;
     expect(Object.fromEntries(data)).toEqual({
-      runtime: "hermes",
+      runtime: "pi-sdk",
       consent: "yes",
     });
   });
@@ -113,14 +113,14 @@ describe("beUI form participation", () => {
     );
     const form = assertDefined(container.querySelector("form"));
     await userEvent.click(screen.getByRole("combobox", { name: "Runtime" }));
-    await userEvent.click(screen.getByRole("option", { name: "Hermes" }));
+    await userEvent.click(screen.getByRole("option", { name: "Pi SDK" }));
     await userEvent.click(screen.getByRole("checkbox", { name: "Enabled" }));
     cancelReset = true;
     await userEvent.click(
       screen.getByRole("button", { name: "Reset choices" }),
     );
     expect(Object.fromEntries(new FormData(form))).toEqual({
-      runtime: "hermes",
+      runtime: "pi-sdk",
     });
     cancelReset = false;
     await userEvent.click(

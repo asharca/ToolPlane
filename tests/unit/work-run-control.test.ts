@@ -100,7 +100,7 @@ describe("Work output channel", () => {
 
     startWorkOutput(workSessionId, {
       startedAt: 2_000,
-      runtimeKind: "hermes",
+      runtimeKind: "pi-sdk",
       modelName: "model-b",
     });
     const nextTurn = subscribeWorkOutput(workSessionId, () => {});
@@ -110,7 +110,7 @@ describe("Work output channel", () => {
       active: true,
       done: false,
       startedAt: 2_000,
-      runtimeKind: "hermes",
+      runtimeKind: "pi-sdk",
       modelName: "model-b",
     });
     finishWorkOutput(workSessionId);

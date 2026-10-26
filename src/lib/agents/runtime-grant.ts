@@ -30,10 +30,7 @@ export async function resolveAgentRuntimeGrant(
           runtimeKind: "pi-sdk",
           retiredAt: null,
           workspace: { status: "active" },
-          OR: [
-            { providerId: token.providerId },
-            { modelProviders: { some: { providerId: token.providerId } } },
-          ],
+          providerId: token.providerId,
         },
         select: {
           servers: { select: { deploymentId: true, allowedToolNames: true } },

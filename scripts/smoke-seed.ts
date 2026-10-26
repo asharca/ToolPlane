@@ -4,10 +4,6 @@ import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { agentReleaseChecksum } from "@/lib/agents/market-artifact";
 import { marketReleaseChecksum } from "@/lib/market/artifact";
-import {
-  HERMES_RUNTIME_KIND,
-  resolveHermesImage,
-} from "@/lib/agents/hermes/constants";
 import { hashPassword } from "@/lib/auth/password";
 import { DEFAULT_SANDBOX_IMAGE } from "@/lib/sandboxes/images";
 import {
@@ -89,7 +85,7 @@ type SmokeAgentManifest = {
     systemPrompt: string | null;
     maxSteps: number;
     modelRequirement: { format: string; model: string } | null;
-    runtime: { kind: "pi" } | { kind: "hermes"; image: string };
+    runtime: { kind: "pi" };
     modelProviderRequirements?: Array<{ format: string }>;
     deploymentKeys: string[];
     skillKeys: string[];
@@ -142,7 +138,7 @@ type SmokeAgentReleaseSummary = {
   resourceCount: number;
   toolCount: number;
   models: Array<{ format: string; model: string }>;
-  runtimes: Array<"pi" | "hermes">;
+  runtimes: Array<"pi">;
 };
 
 function objectInputSchema(
@@ -973,7 +969,7 @@ function summarizeManifest(
   }
   const runtimes = [
     ...new Set(manifest.agents.map((agent) => agent.runtime.kind)),
-  ].sort((a, b) => a.localeCompare(b)) as Array<"pi" | "hermes">;
+  ].sort((a, b) => a.localeCompare(b)) as Array<"pi">;
   const deploymentCount = manifest.deployments.length;
   const skillCount = manifest.skills.length;
   const toolkitCount = manifest.toolkits.length;
@@ -1093,7 +1089,6 @@ async function createPublishedAgentListing(input: {
 
 export async function seedSmokeWorkspace(): Promise<void> {
   const email = "smoke@example.com";
-  const hermesImage = resolveHermesImage(undefined);
   const leakedSkills = await db.skill.findMany({
     where: {
       author: null,
@@ -1651,17 +1646,6 @@ export async function seedSmokeWorkspace(): Promise<void> {
     },
   });
 
-  const hermesAgent = await db.agent.create({
-    data: {
-      workspaceId: ws.id,
-      name: "Historical Hermes Operations (read-only)",
-      slug: "hermes-operations-history",
-      runtimeKind: HERMES_RUNTIME_KIND,
-      retiredAt: new Date(),
-      maxSteps: 12,
-    },
-    select: { id: true, name: true, slug: true, maxSteps: true },
-  });
   const qualityAgent = await db.agent.create({
     data: {
       workspaceId: ws.id,
@@ -1739,55 +1723,6 @@ export async function seedSmokeWorkspace(): Promise<void> {
       },
     });
   }
-  const hermesDeployment = await db.deployment.create({
-    data: {
-      workspaceId: ws.id,
-      name: `Hermes runtime: ${hermesAgent.name}`,
-      source: "sandbox",
-      sourceRef: hermesImage,
-      status: "stopped",
-    },
-    select: { id: true },
-  });
-  const hermesSandbox = await db.sandbox.create({
-    data: {
-      workspaceId: ws.id,
-      deploymentId: hermesDeployment.id,
-      name: `${hermesAgent.name} Hermes`,
-      slug: `${hermesAgent.slug}-runtime`,
-      kind: HERMES_RUNTIME_KIND,
-      image: hermesImage,
-      network: "isolated",
-      config: { managedBy: "agent-runtime" },
-    },
-    select: { id: true },
-  });
-  const hermesRuntime = await db.agentRuntime.create({
-    data: {
-      workspaceId: ws.id,
-      agentId: hermesAgent.id,
-      sandboxId: hermesSandbox.id,
-      kind: HERMES_RUNTIME_KIND,
-      image: hermesImage,
-      status: "stopped",
-    },
-    select: { id: true },
-  });
-  await db.deployment.update({
-    where: { id: hermesDeployment.id },
-    data: {
-      installCfg: {
-        sandboxId: hermesSandbox.id,
-        kind: HERMES_RUNTIME_KIND,
-        image: hermesImage,
-        network: "isolated",
-        volumeName: smokeSandboxVolumeName(hermesSandbox.id),
-        runtimeId: hermesRuntime.id,
-        runtimeModelName: hermesAgent.slug,
-        env: {},
-      },
-    },
-  });
 
   const catalogManifestDeployment: SmokeAgentManifest["deployments"][number] = {
     key: "deployment_1",
@@ -1907,7 +1842,7 @@ export async function seedSmokeWorkspace(): Promise<void> {
   console.log(
     `Seeded ${catalogMcps.length} market MCPs, ${catalogSkills.length} market skills, ` +
       "3 native Pi drafts/listings, 3 ungranted chat assistant drafts, 1 assistant listing, " +
-      "3 stopped Docker templates, read-only Hermes/Toolkit history, and observability fixtures. " +
+      "3 stopped Docker templates, read-only Toolkit history, and observability fixtures. " +
       "No API token issued, capability grants applied, immutable Agent revision published, or runtime started; " +
       "configure and authorize a draft, then Prepare/review/Apply before execution.",
   );

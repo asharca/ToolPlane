@@ -133,8 +133,8 @@ beforeAll(async () => {
       data: {
         workspaceId,
         slug: "retained-service",
-        name: "Retained Hermes Agent",
-        runtimeKind: "hermes",
+        name: "Retained Claude Code Agent",
+        runtimeKind: "claude-code",
       },
     })
   ).id;

@@ -25,7 +25,6 @@ const settings = {
   runtimeKind: "pi-sdk",
   systemPrompt: "",
   providerId: "provider-1",
-  providerIds: [],
   model: "gpt-5",
   maxSteps: 8,
   providers: [

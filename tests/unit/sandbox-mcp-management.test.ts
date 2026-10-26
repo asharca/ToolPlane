@@ -151,17 +151,18 @@ describe("sandbox token management", () => {
       expect(mocks.release).toHaveBeenCalledOnce();
     },
   );
-  it.each(["hermes", "legacy-host"])(
-    "refuses export of protected %s sandboxes",
-    async (kind) => {
-      mocks.owned.mockResolvedValue({ kind, workspaceId: "workspace" });
-      expect((await handleSandboxMcpTokens(request(), "sandbox")).status).toBe(
-        409,
-      );
-      expect(mocks.create).not.toHaveBeenCalled();
-      expect(mocks.release).toHaveBeenCalledOnce();
-    },
-  );
+  it.each([
+    { kind: "legacy-host" },
+    { kind: "unsupported-backend" },
+    { kind: "docker", config: { readOnly: true } },
+  ])("refuses export of protected %j sandboxes", async (sandbox) => {
+    mocks.owned.mockResolvedValue({ ...sandbox, workspaceId: "workspace" });
+    expect((await handleSandboxMcpTokens(request(), "sandbox")).status).toBe(
+      409,
+    );
+    expect(mocks.create).not.toHaveBeenCalled();
+    expect(mocks.release).toHaveBeenCalledOnce();
+  });
   it.each([
     { name: "" },
     { name: "Token", expiresInDays: 91 },

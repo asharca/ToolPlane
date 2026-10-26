@@ -611,22 +611,21 @@ describe("resolveSpawnSpec", () => {
   });
 
   it.each([false, true])(
-    "rejects retired Hermes startup instead of downgrading to Docker (sudo=%s)",
+    "rejects read-only historical workspace startup (sudo=%s)",
     (allowSudo) => {
       expect(() =>
         resolveSpawnSpec({
           serverId: null,
           server: null,
-          name: "Retained Hermes storage",
+          name: "Retained historical storage",
           source: "sandbox",
-          sourceRef: "nousresearch/hermes-agent:retained",
+          sourceRef: "sandbox:latest",
           installCfg: {
-            sandboxId: "sb-hermes",
-            kind: "hermes",
-            image: "nousresearch/hermes-agent:retained",
-            volumeName: "hermes-volume",
-            runtimeId: "runtime-1",
-            runtimeModelName: "research",
+            sandboxId: "sb-historical",
+            kind: "docker",
+            readOnly: true,
+            image: "sandbox:latest",
+            volumeName: "historical-volume",
             allowSudo,
           },
         }),

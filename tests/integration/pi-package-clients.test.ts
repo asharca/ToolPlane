@@ -645,7 +645,44 @@ describe.sequential("Pi package external device boundary", () => {
       data: { currentReleaseId: releaseId, requestedReleaseId: releaseId },
     });
   });
-  it.each(["pi", "claude-code", "codex", "opencode", "hermes"] as const)(
+  it("rejects retired clients before creating managed installation files", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pi-device-retired-"));
+    homes.push(home);
+    const config = join(home, "device.json");
+    await writeFile(
+      config,
+      JSON.stringify({
+        baseUrl: origin,
+        installationId: "retired-client",
+        token: `tppi_${"0".repeat(64)}`,
+        client: "hermes",
+      }),
+      { mode: 0o600 },
+    );
+    await expect(
+      promisify(execFile)(
+        process.execPath,
+        [
+          resolve("scripts/pi-package-install.mjs"),
+          "install",
+          "--config",
+          config,
+        ],
+        {
+          env: {
+            ...process.env,
+            HOME: home,
+            XDG_CONFIG_HOME: join(home, ".config"),
+          },
+          timeout: 60000,
+        },
+      ),
+    ).rejects.toMatchObject({
+      stderr: expect.stringContaining("invalid_device_config"),
+    });
+    expect(await readdir(home)).toEqual(["device.json"]);
+  });
+  it.each(["pi", "claude-code", "codex", "opencode"] as const)(
     "installs %s native resources, preserves modified files, and revokes on uninstall",
     async (client) => {
       const current = await device(client);
@@ -684,8 +721,6 @@ describe.sequential("Pi package external device boundary", () => {
           "opencode",
           "opencode.json",
         ),
-        HERMES_HOME: join(homeAlias, ".hermes"),
-        HERMES_CONFIG: join(homeAlias, ".hermes", "config.yaml"),
       };
       const execute = (command: string) =>
         promisify(execFile)(

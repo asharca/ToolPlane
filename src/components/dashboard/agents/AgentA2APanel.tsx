@@ -336,7 +336,7 @@ export function AgentA2APanel({
           {view.local.supported ? (
             <AgentA2ARemotes key={base} base={base} />
           ) : null}
-          {runtimeKind === "hermes" ? (
+          {view.endpoint ? (
             <section className={cardClass} aria-labelledby="a2a-public-heading">
               <div className="flex items-start justify-between gap-3">
                 <div>
@@ -378,7 +378,7 @@ export function AgentA2APanel({
                 {t("invalidOrigin")}
               </div>
             ) : null}
-            {runtimeKind === "hermes" ? (
+            {view.endpoint ? (
               <fieldset
                 className="m-0 flex min-w-0 flex-wrap gap-2 border-0 p-0"
                 aria-label={t("connectionMode")}
@@ -423,7 +423,7 @@ export function AgentA2APanel({
               </p>
             )}
           </section>
-          {runtimeKind === "hermes" && view.canManage && view.endpoint ? (
+          {view.canManage && view.endpoint ? (
             <section className={cardClass} aria-labelledby="a2a-keys-heading">
               <h3
                 id="a2a-keys-heading"

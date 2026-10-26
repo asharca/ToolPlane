@@ -13,7 +13,6 @@ import {
   Bot,
   CheckCircle2,
   CircleAlert,
-  Container,
   Cpu,
   ChevronDown,
   ChevronLeft,
@@ -55,7 +54,6 @@ export type AgentRow = {
   id: string;
   name: string;
   providerName: string | null;
-  providerNames: string[];
   model: string | null;
   toolCount: number;
   subAgentCount: number;
@@ -96,10 +94,9 @@ function cx(...classes: Array<string | false | null | undefined>) {
 function isAgentReady(
   agent: Pick<
     AgentRow,
-    "providerName" | "providerNames" | "model" | "runtimeKind" | "sandboxReady"
+    "providerName" | "model" | "runtimeKind" | "sandboxReady"
   >,
 ) {
-  if (agent.runtimeKind === "hermes") return agent.providerNames.length > 0;
   if (isDedicatedSandboxRuntimeKind(agent.runtimeKind)) {
     return Boolean(agent.providerName && agent.model && agent.sandboxReady);
   }
@@ -916,17 +913,9 @@ export function AgentsBrowser({
                 const ready = isAgentReady(agent);
                 const agentsHref = `/app/${encodeURIComponent(slug)}/agents`;
                 const detailsHref = `${agentsHref}/${encodeURIComponent(agent.id)}?returnTo=${encodeURIComponent(returnTo)}`;
-                const model =
-                  agent.runtimeKind === "hermes"
-                    ? agent.providerNames.length > 0
-                      ? t("providerSummary", {
-                          count: agent.providerNames.length,
-                          names: agent.providerNames.join(", "),
-                        })
-                      : t("noProviderSelected")
-                    : agent.providerName
-                      ? `${agent.providerName} / ${agent.model ?? t("noModelSelected")}`
-                      : t("noProviderSelected");
+                const model = agent.providerName
+                  ? `${agent.providerName} / ${agent.model ?? t("noModelSelected")}`
+                  : t("noProviderSelected");
 
                 return (
                   <li
@@ -971,17 +960,12 @@ export function AgentsBrowser({
                                       agent.runtimeKind,
                                     ) && !agent.sandboxReady
                                   ? t("needsSandbox")
-                                  : agent.runtimeKind === "hermes" ||
-                                      !agent.providerName
+                                  : !agent.providerName
                                     ? t("needsProvider")
                                     : t("needsModel")}
                             </AnimatedBadge>
                             <AnimatedBadge status="neutral">
-                              {agent.runtimeKind === "hermes" ? (
-                                <Container className="size-3.5" />
-                              ) : (
-                                <Bot className="size-3.5" />
-                              )}
+                              <Bot className="size-3.5" />
                               {agentRuntimeDisplayName(agent.runtimeKind)}
                               {agent.runtimeStatus
                                 ? ` · ${agent.runtimeStatus}`
@@ -989,10 +973,7 @@ export function AgentsBrowser({
                             </AnimatedBadge>
                           </div>
                           <p className="mt-1 truncate text-sm text-muted-foreground">
-                            {agent.runtimeKind === "hermes"
-                              ? t("modelProviders")
-                              : t("model")}
-                            : {model}
+                            {t("model")}: {model}
                           </p>
                           <div className="mt-2 flex flex-wrap gap-3">
                             <CountPill

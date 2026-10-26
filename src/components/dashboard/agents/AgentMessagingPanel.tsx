@@ -94,7 +94,6 @@ type Command = {
     | "stop"
     | "pair"
     | "check"
-    | "apply"
     | "move";
   connectionId?: string;
   platform?: string;
@@ -102,7 +101,6 @@ type Command = {
   agentId?: string | null;
   sandboxId?: string;
   credentials?: Record<string, string>;
-  allowedUserIds?: string;
 };
 type ChannelResponse = {
   connections?: Channel[];
@@ -307,14 +305,9 @@ function ChannelEditor({
   const [name, setName] = useState(channel.name);
   const [agentId, setAgentId] = useState(channel.agentId ?? "");
   const [values, setValues] = useState<Record<string, string>>({});
-  const [allowedUsers, setAllowedUsers] = useState<string | null>(null);
   const pairing = channel.pairing;
   const waiting =
     pairing?.status === "waiting" || pairing?.status === "scanned";
-  const needsApply =
-    pairing?.provider === "telegram_managed_bot" &&
-    pairing.status === "ready" &&
-    !pairing.extra?.allowedUserIds;
   const credentialValue = (key: string, fallback = "") =>
     values[key] ?? channel.credentialValues[key] ?? fallback;
   const update = (changes: Omit<Command, "action" | "connectionId">) =>
@@ -513,36 +506,6 @@ function ChannelEditor({
               <p role="alert" className="break-words text-xs text-destructive">
                 {pairing.error}
               </p>
-            )}
-            {needsApply && (
-              <div className="space-y-2">
-                <div className="block space-y-1 text-xs">
-                  <Input
-                    label={t("allowedTelegramUserIdsOptional")}
-                    value={String(
-                      allowedUsers ?? pairing.extra?.ownerUserId ?? "",
-                    )}
-                    className="w-full"
-                    onChange={(value) => setAllowedUsers(value)}
-                  />
-                </div>
-                <Button
-                  type="button"
-                  disabled={pending}
-                  onClick={() =>
-                    void send({
-                      action: "apply",
-                      connectionId: channel.id,
-                      allowedUserIds:
-                        allowedUsers ?? pairing.extra?.ownerUserId ?? "",
-                    })
-                  }
-                  variant={"secondary"}
-                  size={"sm"}
-                >
-                  {t("saveTelegramSetup")}
-                </Button>
-              </div>
             )}
           </section>
         )}

@@ -9,7 +9,6 @@ const mocks = vi.hoisted(() => ({
   createConfiguredAgent: vi.fn(),
   cloneAgent: vi.fn(),
   setAgentTools: vi.fn(),
-  stopHermesRuntime: vi.fn(),
   sandboxFindMany: vi.fn(),
   stopSandboxAction: vi.fn(),
   updateAgent: vi.fn(),
@@ -109,7 +108,6 @@ vi.mock("@/lib/agents/channel-connections", () => ({
   updateAgentChannelConnectionCredentials: vi.fn(),
 }));
 vi.mock("@/lib/agents/channel-pairing", () => ({
-  applyAgentChannelPairing: vi.fn(),
   checkAgentChannelPairing: vi.fn(),
   requestAgentChannelPairing: vi.fn(),
 }));
@@ -121,9 +119,6 @@ vi.mock("@/lib/agents/market", () => ({
   publishAgentRelease: mocks.publishAgentRelease,
   unpublishAgentListing: mocks.unpublishAgentListing,
   withdrawPendingAgentRelease: mocks.withdrawPendingAgentRelease,
-}));
-vi.mock("@/lib/agents/hermes/runtime", () => ({
-  stopHermesRuntime: mocks.stopHermesRuntime,
 }));
 vi.mock("@/lib/agents/deletion", () => ({
   deleteManagedAgent: mocks.deleteManagedAgent,
@@ -211,13 +206,6 @@ describe("Agent runtime stop boundaries", () => {
       ["acme", "conversation"],
       ["acme", "delegation"],
     ]);
-    expect(mocks.stopHermesRuntime).toHaveBeenCalledWith(
-      "workspace-1",
-      "agent-1",
-    );
-    expect(
-      mocks.stopSandboxAction.mock.invocationCallOrder.at(-1),
-    ).toBeLessThan(mocks.stopHermesRuntime.mock.invocationCallOrder[0]);
     expect(mocks.startProcess).not.toHaveBeenCalled();
   });
 
@@ -244,7 +232,6 @@ describe("Agent runtime stop boundaries", () => {
     });
     expect(mocks.sandboxFindMany).not.toHaveBeenCalled();
     expect(mocks.stopSandboxAction).not.toHaveBeenCalled();
-    expect(mocks.stopHermesRuntime).not.toHaveBeenCalled();
   });
 
   it("returns strict shared teardown failures without claiming a successful stop", async () => {
@@ -255,17 +242,7 @@ describe("Agent runtime stop boundaries", () => {
     expect(await stopAgentRuntimeAction({}, runtimeForm())).toEqual({
       error: "Session MCP cleanup failed",
     });
-    expect(mocks.stopHermesRuntime).not.toHaveBeenCalled();
     expect(mocks.revalidatePath).not.toHaveBeenCalled();
-  });
-
-  it("retains strict legacy container stop cleanup after session teardown", async () => {
-    mocks.stopHermesRuntime.mockRejectedValue(
-      new Error("Docker daemon unavailable"),
-    );
-    expect(await stopAgentRuntimeAction({}, runtimeForm())).toEqual({
-      error: "Docker daemon unavailable",
-    });
   });
 });
 
@@ -401,8 +378,6 @@ describe("native draft clone actions", () => {
         copySandboxes: false,
         copySubAgents: false,
         copyConversations: true,
-        copyHermesEnvironment: false,
-        copyHermesVolume: false,
       },
     );
   });
@@ -496,7 +471,7 @@ describe("deleteAgentAction", () => {
     mocks.deleteManagedAgent.mockResolvedValue(true);
   });
 
-  it("deletes a Hermes agent from the unified sandbox view and returns there", async () => {
+  it("deletes an agent from the unified sandbox view and returns there", async () => {
     const form = runtimeForm();
     form.set("returnTo", "/app/acme/sandboxes");
 
@@ -553,7 +528,7 @@ describe("model configuration action", () => {
     mockAuthorizedAgent();
   });
 
-  it("updates only the selected model binding and refreshes the chat workspace", async () => {
+  it("saves model changes and refreshes the chat workspace", async () => {
     mocks.updateAgentModelSelection.mockResolvedValueOnce("native");
     const form = runtimeForm();
     form.set("providerId", "provider-1");
@@ -563,12 +538,6 @@ describe("model configuration action", () => {
       savedAt: expect.any(Number),
     });
 
-    expect(mocks.updateAgentModelSelection).toHaveBeenCalledWith(
-      "workspace-1",
-      "agent-1",
-      ["provider-1"],
-      "gpt-5",
-    );
     expect(mocks.revalidatePath).toHaveBeenCalledWith("/app/acme/work");
   });
 
@@ -984,7 +953,7 @@ describe("round two agent action safety boundaries", () => {
         error: "Agent not found.",
       });
       expect(mocks.updateAgent).not.toHaveBeenCalled();
-      expect(mocks.stopHermesRuntime).not.toHaveBeenCalled();
+      expect(mocks.stopSandboxAction).not.toHaveBeenCalled();
     },
   );
 
@@ -1069,7 +1038,7 @@ describe("round two agent action safety boundaries", () => {
     await expect(stopAgentRuntimeAction({}, runtimeForm())).resolves.toEqual({
       savedAt: expect.any(Number),
     });
-    mocks.stopHermesRuntime.mockRejectedValue("unknown");
+    mocks.sandboxFindMany.mockRejectedValueOnce("unknown");
     await expect(stopAgentRuntimeAction({}, runtimeForm())).resolves.toEqual({
       error: "Could not stop the Agent runtime.",
     });

@@ -53,8 +53,10 @@ in the relevant subsystem document rather than duplicating it.
   session's writable volume. Keep secrets out of public responses,
   Deployment/Sandbox JSON and Docker inspect environment. See
   `src/lib/agents/runtime-grant.ts`, `src/lib/process/session-mcp.ts` and
-  `docs/RUNTIME_OPERATIONS.md`. Non-Pi runtime history is read-only; do not restore
+  `docs/RUNTIME_OPERATIONS.zh-CN.md`. Non-Pi runtime history is read-only; do not restore
   legacy execution or reuse its credentials when creating a new Pi draft.
+  Public API infrastructure remains, but no runtime supports public Endpoint execution.
+  Hermes Agent records and their history are removed by the runtime-removal migration.
 - Return plaintext API tokens only at creation; persist only their hashes.
   Keep credentials out of logs, test artifacts, and committed files.
 
@@ -122,31 +124,30 @@ sandboxes, and agents. Route groups do not appear in URLs:
 
 | Task | Start here |
 | --- | --- |
-| Core platform | `docs/README.md` (index), `docs/ARCHITECTURE.md` (Chinese); `prisma/schema.prisma` |
-| Shared UI | `docs/UI_LIBRARY.md`; use published `@asharca/ui`. Change shared components/styles in `asharca/ui`, then update the pinned dependency through a PR. Do not recreate `packages/ui` or alias imports to local UI source. |
+| Core platform | `docs/README.zh-CN.md` (index); `prisma/schema.prisma` |
+| Shared UI | `docs/UI_LIBRARY.zh-CN.md`; use published `@asharca/ui`. Change shared components/styles in `asharca/ui`, then update the pinned dependency through a PR. Do not recreate `packages/ui` or alias imports to local UI source. |
 | MCP runtime/gateway | `src/lib/process/supervisor.ts`, `mcp-client.ts`, `src/app/api/v1/mcp/[deploymentId]/rpc/route.ts` |
 | Auth | `src/lib/auth/request-user.ts`, `session.ts`, `tokens.ts` |
-| Toolkit retirement and client registration | `src/lib/toolkits/cutover.ts`; `docs/TOOLKIT_SYNC.md`; `src/lib/pi-packages/installations.ts`. Legacy execution/tokens are retired; conversion does not grant new authority. |
+| Toolkit retirement and client registration | `src/lib/toolkits/cutover.ts`; `docs/TOOLKIT_SYNC.zh-CN.md`; `src/lib/pi-packages/installations.ts`. Legacy execution/tokens are retired; conversion does not grant new authority. |
 | Agent revisions and turns | `src/lib/agents/revisions.ts`, `sandbox-turn.ts`, `conversation-sandbox.ts`; Pi is the only executable kernel (`pi-sdk` internally). New sessions pin an applied revision and receive independent persistent work volumes. |
 | Assistant chat and tools | `src/lib/chat/service.ts`, `run-control.ts`, `tools.ts`; independent Assistant revisions and durable Runs, remote MCP only, no Agent/Skill/package/stdio/A2A execution. |
 | Agent chat and tools | `src/app/api/v1/agents/[agentId]/chat/route.ts`; `src/lib/agents/resolve.ts`, `tools.ts`, `mutations.ts` |
-| Historical Hermes storage | `src/lib/agents/hermes/archive.ts`, `archive-storage.ts`; read-only history, not an executable runtime option. |
-| Sandboxes and PTY | `docs/SANDBOXES.md`; conversation-scoped routes under `src/app/api/v1/agents/[agentId]/conversations/[conversationId]/` |
-| Messaging channels | `docs/AGENT_MESSAGING_PLATFORMS.md`; `src/lib/agents/channel-*.ts` |
-| Public agent API | `docs/AGENT_PUBLIC_API.md`; `src/lib/agents/public-api/` |
-| Workspace control MCP | `docs/AGENT_CONTROL_MCP.md`; `src/lib/agents/control-mcp.ts`, `control-service.ts`; creation accepts `pi-sdk` and produces an unauthorized draft requiring explicit revision review/application. |
+| Sandboxes and PTY | `docs/SANDBOXES.zh-CN.md`; conversation-scoped routes under `src/app/api/v1/agents/[agentId]/conversations/[conversationId]/` |
+| Messaging channels | `docs/AGENT_MESSAGING_PLATFORMS.zh-CN.md`; `src/lib/agents/channel-*.ts` |
+| Public agent API | `docs/AGENT_PUBLIC_API.zh-CN.md`; `src/lib/agents/public-api/` |
+| Workspace control MCP | `docs/AGENT_CONTROL_MCP.zh-CN.md`; `src/lib/agents/control-mcp.ts`, `control-service.ts`; creation accepts `pi-sdk` and produces an unauthorized draft requiring explicit revision review/application. |
 | Agent market | `src/lib/agents/market*.ts`; immutable releases use allowlisted manifests without secrets |
 
 MCP deployments run real processes/containers. Reconcile persisted deployment
 status with supervisor live state; observability comes from `LogEvent` (see
-docs/OBSERVABILITY.md).
+docs/OBSERVABILITY.zh-CN.md).
 Agent chat uses the AI SDK UI message stream through `ui-stream.ts`; execution
 uses the pinned Pi revision and its isolated session environment. Preserve
 conversation ownership, immutable artifacts, live authorization narrowing,
 tool-source deduplication, and A2A depth/cycle guards. Assistant Run persistence,
 confirmation recovery and subscription lifecycles remain separate.
 Trust current code over stale architecture descriptions.
-Runtime mutations require the single-owner guard; read `docs/RUNTIME_OPERATIONS.md`
+Runtime mutations require the single-owner guard; read `docs/RUNTIME_OPERATIONS.zh-CN.md`
 for upgrade/recovery and `src/lib/runtime/` before adding external operations.
 
 ## Repository skill

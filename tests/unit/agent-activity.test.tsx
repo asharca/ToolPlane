@@ -15,7 +15,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-it("fits short live reasoning, caps growth, and releases space on completion", async () => {
+it("keeps a stable live reasoning viewport, caps completed content, and releases space on completion", async () => {
   let height = 74;
   let resize!: () => void;
   vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(
@@ -37,7 +37,7 @@ it("fits short live reasoning, caps growth, and releases space on completion", a
   const { rerender } = render(<AgentActivity items={items} status="working" />);
   const region = screen.getByRole("region");
   (region.firstElementChild as HTMLElement).scrollTo = vi.fn();
-  expect(region).toHaveStyle({ height: "74px" });
+  expect(region).toHaveStyle({ height: "208px" });
   act(() => {
     height = 320;
     resize();
@@ -47,6 +47,11 @@ it("fits short live reasoning, caps growth, and releases space on completion", a
   expect(region).toHaveStyle({ height: "0px" });
   fireEvent.click(screen.getByRole("button"));
   expect(region).toHaveStyle({ height: "208px" });
+  act(() => {
+    height = 74;
+    resize();
+  });
+  expect(region).toHaveStyle({ height: "74px" });
   await waitFor(() =>
     expect(screen.getByText("Compare the options.")).toBeVisible(),
   );

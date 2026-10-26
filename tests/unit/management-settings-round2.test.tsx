@@ -8,7 +8,6 @@ vi.mock("@/lib/agents/actions", () => ({
   updateAgentAction: io.update,
   prepareAgentRevisionAction: vi.fn(),
   publishAgentRevisionAction: vi.fn(),
-  stopAgentRuntimeAction: vi.fn(),
 }));
 vi.mock("@/lib/agents/environment-credential-actions", () => ({
   createAgentEnvironmentCredentialAction: vi.fn(),
@@ -35,7 +34,6 @@ const base = {
   name: "Agent",
   systemPrompt: "Be useful",
   providerId: null,
-  providerIds: [],
   model: null,
   maxSteps: 8,
   providers: [],

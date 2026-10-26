@@ -87,9 +87,9 @@ import type { ReasoningEffort } from "@/lib/agents/constants";
 import { ReasoningEffortControl } from "@/components/dashboard/agents/ReasoningEffortControl";
 import { displayMessagingUserText } from "@/lib/agents/messaging";
 import {
-  expandHermesAssistantMessages,
-  type HermesUIMessage,
-} from "@/lib/agents/hermes/message-segments";
+  expandAssistantMessages,
+  type AgentUIMessage,
+} from "@/lib/agents/message-segments";
 import {
   parseRuntimeCommand,
   sessionRuntimeCommands,
@@ -975,7 +975,7 @@ export function AgentConversation({
   ensureConversation: () => Promise<string>;
   includeConversationIdInBody?: boolean;
   initialReasoningEffort?: ReasoningEffort;
-  initialMessages: HermesUIMessage[];
+  initialMessages: AgentUIMessage[];
   modelName?: string | null;
   modelPicker?: ReactNode;
   mcpPromptApiPath?: string;
@@ -1072,7 +1072,7 @@ export function AgentConversation({
       }),
     };
   }, [agentId, apiPath, includeConversationIdInBody, serverManaged]);
-  const chat = useChat<HermesUIMessage>({
+  const chat = useChat<AgentUIMessage>({
     transport,
     resume: serverManaged,
     messages: initialMessages,
@@ -1135,7 +1135,7 @@ export function AgentConversation({
   );
 
   const displayMessages = useMemo(
-    () => expandHermesAssistantMessages(chat.messages),
+    () => expandAssistantMessages(chat.messages),
     [chat.messages],
   );
   const runtimeCommands = useMemo(

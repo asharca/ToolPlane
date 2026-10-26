@@ -86,7 +86,6 @@ beforeEach(() => {
     runtimeKind: "pi-sdk",
     retiredAt: null,
     conversations: [session],
-    modelProviders: [],
     skills: [],
     servers: [],
     disabledBuiltinTools: [],
@@ -153,7 +152,7 @@ describe("conversation workspace authorization and activity", () => {
     expect(m.port).not.toHaveBeenCalled();
     expect(m.begin).not.toHaveBeenCalled();
   });
-  it("reads retained historical files offline without resolving or starting a native workspace", async () => {
+  it.each([false, true])("reads old files %s", async (root) => {
     m.agent.mockResolvedValue({
       id: "agent",
       workspaceId: "workspace",
@@ -165,7 +164,14 @@ describe("conversation workspace authorization and activity", () => {
           sandbox: {
             id: "historical",
             kind: "docker",
-            deployment: { installCfg: { volumeName: "retained-volume" } },
+            config: { readOnly: true },
+            deployment: {
+              installCfg: {
+                readOnly: true,
+                volumeName: "retained-volume",
+                ...(root ? { historicalRoot: "workspace" } : {}),
+              },
+            },
           },
         },
       ],
@@ -187,6 +193,7 @@ describe("conversation workspace authorization and activity", () => {
     expect(m.readHistorical).toHaveBeenCalledWith("retained-volume", {
       operation: "read_file",
       path: "notes.txt",
+      ...(root ? { root: "workspace" } : {}),
     });
     expect(m.mapping).not.toHaveBeenCalled();
     expect(m.port).not.toHaveBeenCalled();

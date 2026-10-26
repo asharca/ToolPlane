@@ -3,6 +3,7 @@ import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { ORDINARY_AGENT_FILTER } from "@/lib/agents/queries";
+import { agentRuntimeCapabilities } from "@/lib/agents/runtime-kind";
 import {
   requireAgentRevision,
   publishAgentRevisionInTransaction,
@@ -179,7 +180,11 @@ export async function getA2AConsoleView(
           id: endpoint.publicId,
           enabled: endpoint.a2aEnabled,
           ready:
-            endpoint.status === "active" && Boolean(endpoint.currentRevision),
+            Boolean(
+              agentRuntimeCapabilities(agent.runtimeKind)?.publicEndpoint,
+            ) &&
+            endpoint.status === "active" &&
+            Boolean(endpoint.currentRevision),
           revision: endpoint.currentRevision?.version ?? null,
           clients: clients
             .filter((client) => isA2AClient(client.scopes))

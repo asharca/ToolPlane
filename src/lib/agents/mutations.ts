@@ -12,7 +12,6 @@ import {
   type ProviderModelValues,
 } from "@/lib/agents/model-catalog";
 import { matchingPiModelReferences } from "@/lib/agents/provider-catalog";
-import { HERMES_RUNTIME_KIND } from "@/lib/agents/hermes/constants";
 import {
   agentRuntimeDisplayName,
   agentRuntimeSupportsProviderFormat,
@@ -106,8 +105,6 @@ export type AgentCloneOptions = {
   copySandboxes?: boolean;
   copySubAgents?: boolean;
   copyConversations?: boolean;
-  copyHermesEnvironment?: boolean;
-  copyHermesVolume?: boolean;
 };
 
 export const DEFAULT_AGENT_CLONE_OPTIONS: Required<AgentCloneOptions> = {
@@ -117,8 +114,6 @@ export const DEFAULT_AGENT_CLONE_OPTIONS: Required<AgentCloneOptions> = {
   copySandboxes: false,
   copySubAgents: false,
   copyConversations: false,
-  copyHermesEnvironment: false,
-  copyHermesVolume: false,
 };
 
 function normalizeCloneOptions(
@@ -129,9 +124,7 @@ function normalizeCloneOptions(
     options?.copySkills ||
     options?.copyToolkits ||
     options?.copySandboxes ||
-    options?.copySubAgents ||
-    options?.copyHermesEnvironment ||
-    options?.copyHermesVolume
+    options?.copySubAgents
   ) {
     throw new AgentConfigurationError(
       "Copies require fresh capability authorization and cannot inherit sandbox or runtime state.",
@@ -404,7 +397,6 @@ export type AgentConfig = {
   systemPrompt: string | null;
   providerId: string | null;
   model: string | null;
-  providerIds?: string[];
   disabledBuiltinTools?: string[];
   maxSteps: number;
   piPackages?: Array<{ marketInstallId: string; releaseId: string }>;
@@ -702,6 +694,19 @@ function assertRuntimeSandboxes(
         config &&
         typeof config === "object" &&
         !Array.isArray(config) &&
+        config.readOnly === true,
+    )
+  ) {
+    throw new AgentConfigurationError(
+      "Read-only sandboxes cannot be assigned as Agent templates.",
+    );
+  }
+  if (
+    sandboxes.some(
+      ({ config }) =>
+        config &&
+        typeof config === "object" &&
+        !Array.isArray(config) &&
         config.managedBy === "agent-conversation",
     )
   ) {
@@ -786,27 +791,16 @@ async function lockProvider(
 function uniqueIds(ids: readonly string[]): string[] {
   return [...new Set(ids.filter(Boolean))];
 }
-async function grantNativeModelSelection(
+async function validateNativeModelSelection(
   tx: Prisma.TransactionClient,
   workspaceId: string,
-  agentId: string,
   runtimeKind: string,
-  priorProviderId: string | null,
   selectedProviderId: string | null | undefined,
   model: string | null,
 ): Promise<string | null> {
-  const grantedIds: string[] = [];
-  let selected: LockedModelProvider | null = null;
-  // Keep provider lock ordering stable when two selections swap defaults.
-  for (const id of uniqueIds([
-    priorProviderId ?? "",
-    selectedProviderId ?? "",
-  ]).sort()) {
-    const provider = await lockProvider(tx, workspaceId, id);
-    if (!provider) continue;
-    grantedIds.push(provider.id);
-    if (id === selectedProviderId) selected = provider;
-  }
+  const selected = selectedProviderId
+    ? await lockProvider(tx, workspaceId, selectedProviderId)
+    : null;
   if (selected) {
     assertRuntimeProviderFormat(runtimeKind, selected.format);
     if (model && !selected.models.includes(model))
@@ -814,11 +808,6 @@ async function grantNativeModelSelection(
         `Unknown or unavailable model: ${model}`,
       );
   }
-  if (grantedIds.length)
-    await tx.agentModelProvider.createMany({
-      data: grantedIds.map((providerId) => ({ agentId, providerId })),
-      skipDuplicates: true,
-    });
   return selected?.id ?? null;
 }
 
@@ -876,7 +865,6 @@ export async function createConfiguredAgent(
           slug,
           "workspace",
         );
-        const modelProviderIds = cfg.providerId ? [cfg.providerId] : [];
         if (cfg.model && !cfg.providerId) {
           throw new AgentConfigurationError(
             "A model requires a model provider.",
@@ -918,7 +906,6 @@ export async function createConfiguredAgent(
           where: {
             id: { in: sandboxIds },
             workspaceId,
-            kind: { not: HERMES_RUNTIME_KIND },
             deployment: { status: { notIn: UNAVAILABLE_SANDBOX_STATUSES } },
           },
           select: { id: true, kind: true, network: true, config: true },
@@ -964,12 +951,6 @@ export async function createConfiguredAgent(
             ),
             maxSteps: cfg.maxSteps,
           },
-        });
-        await tx.agentModelProvider.createMany({
-          data: modelProviderIds.map((providerId) => ({
-            agentId: agent.id,
-            providerId,
-          })),
         });
         await tx.agentServer.createMany({
           data: deployments.map(({ id }) => ({
@@ -1037,18 +1018,15 @@ export async function updateAgent(
           id: true,
           runtimeKind: true,
           retiredAt: true,
-          providerId: true,
         },
       });
       if (!agent) return;
       assertNativeAgent(agent.runtimeKind, agent.retiredAt);
 
-      const providerId = await grantNativeModelSelection(
+      const providerId = await validateNativeModelSelection(
         tx,
         workspaceId,
-        agentId,
         agent.runtimeKind,
-        agent.providerId,
         cfg.providerId,
         cfg.model,
       );
@@ -1087,7 +1065,7 @@ export async function updateAgent(
 export async function updateAgentModelSelection(
   workspaceId: string,
   agentId: string,
-  requestedProviderIds: string[],
+  providerId: string | null,
   model: string | null,
 ) {
   return db.$transaction(async (tx) => {
@@ -1097,19 +1075,16 @@ export async function updateAgentModelSelection(
         id: true,
         runtimeKind: true,
         retiredAt: true,
-        providerId: true,
       },
     });
     if (!agent) return;
     assertNativeAgent(agent.runtimeKind, agent.retiredAt);
 
-    const validProviderId = await grantNativeModelSelection(
+    const validProviderId = await validateNativeModelSelection(
       tx,
       workspaceId,
-      agentId,
       agent.runtimeKind,
-      agent.providerId,
-      requestedProviderIds[0],
+      providerId,
       model,
     );
     await tx.agent.updateMany({
@@ -1334,7 +1309,6 @@ export async function setAgentTools(
         where: {
           id: { in: requestedSandboxIds },
           workspaceId,
-          kind: { not: HERMES_RUNTIME_KIND },
           deployment: {
             status: { notIn: UNAVAILABLE_SANDBOX_STATUSES },
           },
@@ -1456,19 +1430,6 @@ export async function getAgentDeleteTargets(
           },
         },
       },
-      runtime: {
-        select: {
-          sandbox: {
-            select: {
-              id: true,
-              kind: true,
-              deploymentId: true,
-              deployment: { select: { installCfg: true } },
-              snapshots: { select: { volumeName: true } },
-            },
-          },
-        },
-      },
     },
   });
   const deletableAgents = agents.filter(
@@ -1491,10 +1452,9 @@ export async function getAgentDeleteTargets(
       snapshotVolumeNames: string[];
     }
   >();
-  for (const candidate of deletableAgents.flatMap((row) => [
-    ...row.sandboxes.map(({ sandbox }) => sandbox),
-    ...(row.runtime ? [row.runtime.sandbox] : []),
-  ])) {
+  for (const candidate of deletableAgents.flatMap((row) =>
+    row.sandboxes.map(({ sandbox }) => sandbox),
+  )) {
     if (
       map &&
       allowedSandboxIds.size > 0 &&
@@ -1700,22 +1660,9 @@ async function deleteAgentRecords(workspaceId: string, agentId: string) {
         const legacySandboxes = await tx.sandbox.findMany({
           where: {
             workspaceId,
-            AND: [
-              {
-                OR: [
-                  {
-                    agentLinks: {
-                      some: { agentId: { in: deletableAgentIds } },
-                    },
-                  },
-                  {
-                    agentRuntime: {
-                      is: { agentId: { in: deletableAgentIds } },
-                    },
-                  },
-                ],
-              },
-            ],
+            agentLinks: {
+              some: { agentId: { in: deletableAgentIds } },
+            },
             ...(mappedSandboxIds.length > 0
               ? { id: { in: mappedSandboxIds } }
               : {}),
@@ -1758,20 +1705,13 @@ async function deleteAgentRecords(workspaceId: string, agentId: string) {
     );
   }
 
-  const [runtime, sandboxes] = await Promise.all([
-    db.agentRuntime.findFirst({
-      where: { agentId, workspaceId },
-      select: { sandbox: { select: { deploymentId: true } } },
-    }),
-    db.sandbox.findMany({
-      where: { workspaceId, agentLinks: { some: { agentId } } },
-      select: { deploymentId: true },
-    }),
-  ]);
-  const sandboxDeploymentIds = [
-    ...sandboxes.map(({ deploymentId }) => deploymentId),
-    ...(runtime ? [runtime.sandbox.deploymentId] : []),
-  ];
+  const sandboxes = await db.sandbox.findMany({
+    where: { workspaceId, agentLinks: { some: { agentId } } },
+    select: { deploymentId: true },
+  });
+  const sandboxDeploymentIds = sandboxes.map(
+    ({ deploymentId }) => deploymentId,
+  );
   await db.$transaction(async (tx) => {
     if (sandboxDeploymentIds.length > 0) {
       await tx.deployment.deleteMany({
@@ -2215,12 +2155,6 @@ export async function createConversation(
   });
 }
 
-export type HermesConversationSelection = {
-  profile: string;
-  provider: string | null;
-  model: string | null;
-};
-
 export async function renameConsoleConversation(
   workspaceId: string,
   agentId: string,
@@ -2283,7 +2217,7 @@ export async function deleteConsoleConversation(
 }
 
 // Conversations created before runtime session aliases existed are initialized
-// lazily on their first Hermes request. The nullable-only updates ensure a
+// lazily on their first runtime request. The nullable-only updates ensure a
 // concurrent request never overwrites an alias already chosen by another one.
 export async function ensureConversationRuntimeSession(
   workspaceId: string,

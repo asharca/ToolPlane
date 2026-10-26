@@ -13,7 +13,6 @@ import {
   removeDockerVolume,
   removeDockerVolumeStrict,
   removeStaleDockerVolumeCopyHelpers,
-  removeStaleHermesArchiveImportHelpers,
   stopDockerSandboxContainer,
 } from "@/lib/sandboxes/runtime";
 
@@ -212,7 +211,7 @@ describe("Docker cleanup boundaries", () => {
             : childResult("", failure, 1),
         );
       await expect(
-        removeStaleHermesArchiveImportHelpers(new Date()),
+        removeStaleDockerVolumeCopyHelpers(new Date()),
       ).rejects.toThrow(
         failure === "invalid timestamp" ? "invalid creation time" : failure,
       );

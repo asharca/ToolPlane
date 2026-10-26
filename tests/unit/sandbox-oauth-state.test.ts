@@ -224,7 +224,11 @@ describe("sandbox OAuth consent state machine", () => {
       new URL(denied.headers.get("location") ?? "").searchParams.get("error"),
     ).toBe("access_denied");
   });
-  it.each([null, { kind: "hermes" }])(
+  it.each([
+    null,
+    { kind: "legacy-host" },
+    { kind: "docker", config: { readOnly: true } },
+  ])(
     "denies consent for inaccessible or protected sandboxes",
     async (sandbox) => {
       mocks.owned.mockResolvedValue(sandbox);
@@ -373,7 +377,11 @@ describe("sandbox OAuth token rotation", () => {
     expect(mocks.createToken).not.toHaveBeenCalled();
     expect(mocks.release).toHaveBeenCalledOnce();
   });
-  it.each([null, { kind: "hermes" }])(
+  it.each([
+    null,
+    { kind: "legacy-host" },
+    { kind: "docker", config: { readOnly: true } },
+  ])(
     "rejects code and refresh for inaccessible or protected sandboxes",
     async (sandbox) => {
       mocks.owned.mockResolvedValue(sandbox);

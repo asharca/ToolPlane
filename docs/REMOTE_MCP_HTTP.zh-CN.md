@@ -1,6 +1,5 @@
 # 远程 MCP：HTTP 兼容与传输风险
 
-> **English**: [REMOTE_MCP_HTTP.md](./REMOTE_MCP_HTTP.md)
 
 本文面向将 ToolPlane 连接到远程 MCP 服务的用户与管理员。远程 MCP 支持 `https://`（推荐）、`http://`，以及 1–65535 范围内的显式端口。JSON 配置中的 `"type": "http"` 表示 Streamable HTTP 传输，不代表地址必须使用明文 HTTP；HTTPS 地址仍使用这个 type。
 
@@ -68,4 +67,4 @@ Agent 修订准备先要求准确的 npm/PyPI 版本或 Git commit，再把完�
 
 启动协调不恢复绑定旧 Agent runtime 的部署，也不调用旧运行时就绪回调；这些容器只保留受控停止／排空与历史文件处理用途，普通非 Agent MCP 的恢复不受影响。
 
-生成启动配置时，保留的 Hermes 配方直接返回 `AGENT_RUNTIME_RETIRED`，不会降级成普通 Docker 沙箱。监督器不再生成旧运行时令牌、模型配置或 Hermes 专用启动／就绪参数；绑定历史资源的停止与显式删除清理仍独立保留。
+生成启动配置时，保留的旧 Agent runtime 配方直接返回 `AGENT_RUNTIME_RETIRED`，不会降级成普通 Docker 沙箱。监督器不再生成旧运行时令牌、模型配置或专用启动／就绪参数；绑定历史资源的停止与显式删除清理仍独立保留。

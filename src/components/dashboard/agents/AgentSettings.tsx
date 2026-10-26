@@ -37,7 +37,6 @@ type SettingsData = {
   systemPrompt: string;
   disabledBuiltinTools?: string[];
   providerId: string | null;
-  providerIds: string[];
   model: string | null;
   maxSteps: number;
   providers: Array<ModelProviderOption & { format: string }>;
@@ -53,14 +52,6 @@ type SettingsData = {
     config: AgentRevisionConfig;
   } | null;
   canManageCredentials?: boolean;
-  runtime?: {
-    kind: string;
-    image: string;
-    status: string;
-    lastError: string | null;
-    lastSyncedAt: string | null;
-    sandboxId: string;
-  } | null;
 };
 
 type ChannelSettingsData = {
@@ -217,7 +208,6 @@ export function AgentSettings({
                 systemPrompt={settings.systemPrompt}
                 disabledBuiltinTools={settings.disabledBuiltinTools}
                 providerId={settings.providerId}
-                providerIds={settings.providerIds}
                 model={settings.model}
                 maxSteps={settings.maxSteps}
                 providers={settings.providers}
@@ -228,7 +218,6 @@ export function AgentSettings({
                 sandboxes={settings.sandboxes}
                 subAgents={settings.subAgents}
                 runtimeKind={settings.runtimeKind}
-                runtime={settings.runtime}
                 publishedRevision={settings.publishedRevision}
                 canManageCredentials={settings.canManageCredentials}
                 activeSection={settingsTab}
@@ -241,11 +230,7 @@ export function AgentSettings({
                 <AgentMessagingPanel
                   slug={slug}
                   agentId={agentId}
-                  sandboxId={
-                    settings.runtime?.sandboxId ??
-                    settings.defaultSandboxId ??
-                    undefined
-                  }
+                  sandboxId={settings.defaultSandboxId ?? undefined}
                   connections={channelSettings.connections}
                   ready={ready}
                 />

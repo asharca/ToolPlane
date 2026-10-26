@@ -57,7 +57,6 @@ export function SandboxDataManagement({
   disabled = false,
   disabledLabel,
   creationDisabled = false,
-  mode = "sandbox",
   showClone = true,
 }: {
   workspace: string;
@@ -67,24 +66,20 @@ export function SandboxDataManagement({
   disabled?: boolean;
   disabledLabel?: string;
   creationDisabled?: boolean;
-  mode?: "sandbox" | "hermes";
   showClone?: boolean;
 }) {
   const t = useTranslations("console.sandboxes");
   const common = useTranslations("common");
-  const isHermes = mode === "hermes";
 
   return (
     <section className="py-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h3 className="text-sm font-semibold text-foreground">
-            {isHermes ? t("hermesData") : t("workspaceData")}
+            {t("workspaceData")}
           </h3>
           <p className="mt-0.5 max-w-2xl text-xs leading-5 text-muted-foreground">
-            {isHermes
-              ? t("hermesDataDescription")
-              : t("workspaceDataDescription")}
+            {t("workspaceDataDescription")}
           </p>
         </div>
         {disabled ? (
@@ -251,12 +246,9 @@ export function SandboxDataManagement({
                               }
                               confirmLabel={common("confirm")}
                               cancelLabel={common("cancel")}
-                              prompt={t(
-                                isHermes
-                                  ? "restoreHermesSnapshotPrompt"
-                                  : "restoreSnapshotPrompt",
-                                { name: snapshot.name },
-                              )}
+                              prompt={t("restoreSnapshotPrompt", {
+                                name: snapshot.name,
+                              })}
                               pendingLabel={t("restoringSnapshot")}
                               promptClassName="max-w-56 text-xs text-muted-foreground"
                             />

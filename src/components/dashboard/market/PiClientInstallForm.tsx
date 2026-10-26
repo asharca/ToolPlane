@@ -199,7 +199,7 @@ export function PiClientInstallForm({
               label={t("client")}
               value={client}
               onValueChange={setClient}
-              options={["pi", "claude-code", "codex", "opencode", "hermes"].map(
+              options={["pi", "claude-code", "codex", "opencode"].map(
                 (value) => ({ value, label: value }),
               )}
             />

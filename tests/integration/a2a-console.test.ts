@@ -117,9 +117,9 @@ beforeAll(async () => {
   const source = await db.agent.create({
     data: {
       workspaceId,
-      name: "Hermes",
+      name: "Retained Claude Code Agent",
       slug: "public",
-      runtimeKind: "hermes",
+      runtimeKind: "claude-code",
     },
   });
   published = { ...local, agentId: source.id };
@@ -221,6 +221,7 @@ describe("A2A console directional policy and retained credentials", () => {
       outboundEnabled: true,
     });
     expect((await getA2AConsoleView(published)).endpoint?.enabled).toBe(true);
+    expect((await getA2AConsoleView(published)).endpoint?.ready).toBe(false);
     expect(
       (
         await db.$transaction((tx) =>

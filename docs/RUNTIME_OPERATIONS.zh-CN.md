@@ -1,6 +1,5 @@
 # 运行时运维与架构升级
 
-> **English**: [RUNTIME_OPERATIONS.md](./RUNTIME_OPERATIONS.md)
 
 本指南面向单所有者 ToolPlane 部署的运维人员，说明运行时恢复、经审阅的 Pi 能力、限定范围的客户端登记与只读历史存储；不引入 active-active 执行，也不构成生产迁移授权。
 
@@ -10,9 +9,11 @@
 2. 停止旧应用，确认其子进程和外部复制、导入、删除操作已结束。不要让新旧实例同时操作同一运行域。
 3. 审阅目标版本对应的仓库迁移，仅在明确核实的目标数据库通过现有部署 migrator 应用，然后生成匹配的 Prisma client 并构建应用。保留的消息、文件和审计/来源记录不是可随意清除的迁移数据。
 4. 使用 `pnpm start` 或生产镜像启动一个应用进程，等待 `/api/v1/readiness` 返回 HTTP 200，再接收运行时流量。`/api/v1/health` 只表示存活，不证明恢复完成。
-5. 受控切换前排空全部旧运行时活动任务。Toolkit 可转换内容冻结为私有包，撤销旧客户端凭据，客户端须按明确选择的版本与范围重新登记；不自动重发公开版本，不恢复旧执行。历史消息和文件保留只读，见 [Toolkit 受控切换](./TOOLKIT_SYNC.md)。
+5. 受控切换前排空全部旧运行时活动任务。Toolkit 可转换内容冻结为私有包，撤销旧客户端凭据，客户端须按明确选择的版本与范围重新登记；不自动重发公开版本，不恢复旧执行。非删除范围内的历史消息和文件保留只读；转换产生重新授权的全新 Pi 草稿，不能把旧状态冒充可恢复会话。
 
 新操作运行时不要只回退应用程序。先停止所有者，再采用验证过的数据库/卷恢复或向前修复方案。生产备份和凭据不能进入测试产物。
+
+移除旧 managed/RPC 运行时的迁移 `20261026120000_remove_hermes_runtime` 会删除对应 Agent 及其级联历史、专用上传预留与会话字段；执行前须备份并在独立数据库验证。它不删除通用 WorkspaceAttachment、消息渠道配置、非删除范围内的历史、AgentEndpointRuntime 修订清单或公共分配外键。该删除不能只靠回退应用恢复；本说明不是生产或共享数据库迁移授权。
 
 在线发布更新必须使用受管生产启动器。下载校验完成后，更新器先排空当前 runtime owner，**确认干净退出后才替换任何运行文件**，确保停机阶段的动态导入仍来自旧版本。缺少停机入口或排空失败时保留旧文件并报告失败；成功替换后发送 SIGTERM，由启动器完成退出，不直接调用 `process.exit()`。排空失败后的运行时保持阻断，须人工核对恢复，不能自动确认 dirty 标记。
 
@@ -22,7 +23,7 @@ Docker/Coolify 健康检查应使用 `/api/v1/readiness`，而不是 `/api/v1/he
 
 Docker 构建与运行阶段共用 `python-runtime-base`，确保 Prisma 组装时检测到的 OpenSSL ABI 与启动环境一致。须保持这些系统库一致，否则镜像可能只包含 OpenSSL 1.1 引擎，而生产需要 OpenSSL 3，导致启动时临时联网下载。上线前应使用最终镜像，在禁止外网访问的隔离备份数据库上验证 `prisma migrate deploy`。
 
-受管启动器在 Next 前加载 `abort-signal.cjs`，对原生 `AbortSignal.any()` 的结果短暂添加再移除 abort 监听器，启动弱引用源信号跟踪。Node 24.21 否则会在超时后保留嵌套组合信号，最终令 MCP/消息通道请求报 `Set maximum size exceeded`。发布组装时须将该文件与内嵌 `server.cjs` 放在同一目录。将来升级 Node 后，先运行 `pnpm vitest run tests/unit/abort-signal.test.ts` 验证，再移除兼容处理。已经耗尽信号集合的进程须受控重启；只重启 MCP bridge 无法清空主进程的信号集合。
+当前应用、SDK 沙箱与捕获平台使用 Node 26。受管启动器仍在 Next 前加载 `abort-signal.cjs`，对原生 `AbortSignal.any()` 的结果短暂添加再移除 abort 监听器，启动弱引用源信号跟踪。该兼容处理源于 Node 24.21 上曾观察到的嵌套组合信号保留与 `Set maximum size exceeded`，不表示已经证明 Node 26 存在相同缺陷。发布组装仍须将该文件与内嵌 `server.cjs` 放在同一目录；移除前须在目标 Node 版本运行 `pnpm vitest run tests/unit/abort-signal.test.ts` 并验证长时间运行行为。已经耗尽信号集合的进程须受控重启；只重启 MCP bridge 无法清空主进程的信号集合。
 
 ## 共享 MCP 凭据切换
 
@@ -134,7 +135,7 @@ provider 和凭据授权。包的 MCP 工具须同时处于固定修订授权与
 
 创建新的 **Pi Agent**，在草稿选择已安装包，再执行**保存草稿 → Prepare → 审阅 → Apply**。
 没有另一种 Pi SDK runtime 选择器，也不回退旧 Harness 执行。草稿修改不启用包、不改动
-已有会话。SDK 固定 0.87.1，要求 Linux、Node 24；捕获包架构须匹配 Docker daemon。
+已有会话。SDK 固定 0.87.1，要求 Linux、Node 26；捕获包架构须匹配 Docker daemon。
 TP 组装包声明 `any/any`，但不放宽 SDK/Node 要求。可信运行时安装使用
 `pnpm add --save-prod`，兼容 pnpm 10/12；执行 turn 时不安装市场包依赖。
 
@@ -204,7 +205,7 @@ Toolkit 历史只读；转换是另行授权、排空后的 dry-run/apply 操作
 
 **资源中心 → 客户端登记**统一使用既有 Pi 包机制，固定选择包 release 或独立 Skill/MCP
 release；登记本身不能作为组合产品再次发布。Pi 获取原生包资源；Claude Code、Codex、
-OpenCode、Hermes 只获取支持的 Skill/MCP，不获取 Pi 扩展、提示词或主题。下载安装器
+OpenCode 等外部客户端只获取支持的 Skill/MCP，不获取 Pi 扩展、提示词或主题。下载安装器
 和一次性私有配置，以 `chmod 600` 保护，执行
 `node pi-package-install.mjs install --config <私有配置.json>`；更新与卸载使用同一配置的
 `update`/`uninstall`。安装为系统用户全局范围，不是项目级；MCP 需要连接该 TP 实例。
@@ -226,8 +227,8 @@ runtime owner 每五分钟至多串行检查八个到期订阅，每个包至少
 ## 不可变 Pi SDK 修订
 
 所有可执行 Agent 均使用 **Pi SDK 0.87.1**。Chat、消息渠道、control、Work 和本地
-A2A 统一走固定修订的原生 SDK 入口，不回退直接 Pi CLI、宿主 Agent 循环、Hermes
-或 Harness。其他 Pi 版本会被拒绝，不会安装到活跃 Agent 或代替所选版本。
+A2A 统一走固定修订的原生 SDK 入口，不回退直接 Pi CLI、宿主 Agent 循环
+或旧 Harness。其他 Pi 版本会被拒绝，不会安装到活跃 Agent 或代替所选版本。
 原生扩展预检需要固定隔离镜像 `toolplane-pi-package-capture:0.87.1`。
 预检容器只以只读方式挂载暂存的公开辅助脚本，使用独立可写 `/tmp`，不会向只读根文件系统
 复制脚本。原生加载器的命名冲突保留类型化 `PI_CAPABILITY_CONFLICT` 分类。
@@ -307,11 +308,8 @@ context ID。数据库管理身份、修订/沙箱绑定、任务回执和授权
 扩大祖先批准的深度。续接纳入子任务结果前也须校验当前子任务权限；撤销不能让父任务无限等待
 已失去授权的子任务。
 
-非 Pi 和未解决固定修订的历史会话只读。旧 Hermes 公开执行、runtime MCP/dashboard、
-终端、上传、模型和 profile 端点以 HTTP **410** 退役，不映射到新执行器。保留历史
-消息、response 和绑定文件读取，以及真实已绑定操作的取消/排空。旧 `pi-harness`
-任务标记仅用于绑定清理，不接受新执行或重放。转换产生须重新授权的全新 Pi 草稿，
-不恢复旧运行时状态。
+非 Pi 和未解决固定修订的历史会话只读。已删除的专用公开执行、runtime MCP/dashboard、上传、模型和 profile 路由不映射到新执行器。保留非删除范围内的历史消息、response 和绑定文件读取，以及真实已绑定操作的取消/排空。旧 `pi-harness` 任务标记仅用于绑定清理，不接受新执行或重放。转换产生须重新授权的全新 Pi 草稿，不恢复旧运行时状态。
+公共 API 的认证、凭据、限额、历史、取消与重放数据契约保留，但不恢复执行。所有运行时的 `publicEndpoint=false`；A2A 服务启用在创建客户端/密钥前返回 `runtime_unsupported`（HTTP 409），旧公开发布 action 已删除。公开 A2A 的新消息和续写在持久化前拒绝（内部 HTTP 410，传输层可能序列化为协议错误）；Responses/OpenAI HTTP 执行入口保持 HTTP 410，不引入兼容适配器或创建新 Run/分配。关闭服务和撤销现有密钥仍可操作。
 活跃会话终端流每 15 秒重新校验相同的当前认证身份、工作区成员资格、固定修订、沙箱映射
 与 bridge；凭据、身份或执行权限撤销会关闭流，已打开连接不代表永久授权。
 复用真正运行中的会话也会重验修订、卷和凭据，但不会重启 bridge，也无需关闭活跃终端；
@@ -366,23 +364,18 @@ smoke 验证同一消息的幂等准入、一个真实完成的子任务、原�
 `/compact` 须单独验证；`a2a-e2e-preflight.mjs` 仅报告前提。禁止指向生产或普通
 共享开发运行时，也不能仅为运行 smoke 修改 owner/recovery ACK、迁移共享库或重启服务。
 
-## 历史 Hermes 附件
+## 通用附件与历史存储
 
-保留历史附件元数据、归档和绑定工作区文件。通过会话范围的只读文件端点读取，包括
-离线卷读取；查看历史不能启动旧运行时。旧上传/预留执行及其自动 Hermes 清理任务
-已删除。不要手工删除预留行，也不能声称升级已清除保留字节。物理销毁由显式授权的
-删除生命周期负责，普通停止保留卷。
+WorkspaceAttachment、Pi 会话文件和 Work 附件继续使用现有鉴权、配额及限定范围的文件生命周期，不因删除专用上传预留而失效。非删除范围内的历史绑定文件保持只读；查看历史不能启动旧运行时。归档导入只向停止状态的存储复制文件。物理销毁由显式授权的删除生命周期负责，普通停止保留卷。Connector 文件仍位于用户机器。继续监控物理磁盘和文件系统限制；只读保留不等于自动回收。
 
-新 Pi 会话文件及 Workspace/Work 附件使用当前限定范围的文件/附件生命周期，不使用
-已删除的 Hermes 配额/预留流程。历史归档导入只向停止状态的存储复制文件。Connector
-文件仍位于用户机器。继续监控物理磁盘和文件系统限制；只读保留不等于自动回收。
+通用工作区附件 `POST /api/v1/workspaces/{slug}/attachments` 继续按现有权限接受写入，不因删除专用运行时上传而统一返回 403。历史沙箱通过 `Sandbox.config.readOnly` 与 `Deployment.installCfg.readOnly` 标记只读，迁移保留其映射和卷；这些只读资源禁止变更、附件写入、MCP 授权/导出、OAuth 与自动协调恢复。保留历史读取不代表可以重新授予执行能力或恢复旧运行时。
 
 ## 安装与诊断变化
 
-排空后的 dry-run/apply 转换与只读历史保留详见 [Toolkit 受控切换](./TOOLKIT_SYNC.md)。旧 Toolkit bootstrap、同步、可执行安装链接和旧 scoped Token 不再接受。新客户端使用资源中心经审阅的登记；保护一次性配置，泄露后明确撤销登记 Token。
+排空后的 dry-run/apply 转换必须审阅复制的配置与授权；新 Pi 草稿须执行 Prepare、审阅及 Apply，不能恢复旧会话。旧 Toolkit bootstrap、同步、可执行安装链接和旧 scoped Token 不再接受。新客户端使用资源中心经审阅的登记；保护一次性配置，泄露后明确撤销登记 Token。
 
 Agent 内容采集见[日志与审计](./OBSERVABILITY.zh-CN.md)。普通诊断不启用内容采集；显式开启后仍有大小限制、审计，最多保留 24 小时。公共 Endpoint 禁止策略不可覆盖。
 
 ## 验证边界
 
-`tests/unit/runtime-owner.test.ts` 验证状态机和租约故障路径；`tests/integration/runtime-owner-lease.test.ts` 需要真实独立 PostgreSQL 会话，验证锁争用和连接丢失。`tests/integration/hermes-runtime-mcp.test.ts` 验证端点退役与历史保留，不执行 Hermes。上述原生 SDK 测试分别覆盖宿主/能力/租约边界。`TOOLPLANE_TEST_PGLITE=1` 仅供隔离嵌入式数据库冒烟测试，跳过其不支持的多会话场景，不能在 CI 或生产设置。Docker 生命周期及真实客户端验收需要相应运行环境，不能用解析器或 mock 测试通过替代。
+`tests/unit/runtime-owner.test.ts` 验证状态机和租约故障路径；`tests/integration/runtime-owner-lease.test.ts` 需要真实独立 PostgreSQL 会话，验证锁争用和连接丢失。上述原生 SDK 测试分别覆盖宿主/能力/租约边界。`TOOLPLANE_TEST_PGLITE=1` 仅供隔离嵌入式数据库冒烟测试，跳过其不支持的多会话场景，不能在 CI 或生产设置。Docker 生命周期及真实客户端验收需要相应运行环境，不能用解析器或 mock 测试通过替代。

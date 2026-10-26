@@ -7,9 +7,11 @@ import { AgentRevisionConfigSchema } from "@/lib/agents/revision-types";
 import { resolveModelContext } from "@/lib/agents/model";
 import type { ReasoningEffort } from "@/lib/agents/constants";
 import { pinCurrentAgentRevision } from "@/lib/agents/revisions";
-import { AGENT_PI_PACKAGES_INCLUDE } from "@/lib/agents/pi-package-includes";
 import { resolveAgentPiPackages } from "@/lib/agents/resolve";
-import type { ResolvedAgentPiPackage } from "@/lib/agents/resolve";
+import type {
+  LoadedAgentPiPackages,
+  ResolvedAgentPiPackage,
+} from "@/lib/agents/resolve";
 import type { ComposerReference } from "./composer-types";
 import {
   claimWorkAttachments,
@@ -228,23 +230,6 @@ export async function createWorkSession(input: CreateWorkSessionInput) {
         systemPrompt: true,
         maxSteps: true,
         provider: true,
-        modelProviders: { select: { providerId: true, provider: true } },
-        piPackages: AGENT_PI_PACKAGES_INCLUDE,
-        runtime: {
-          select: {
-            id: true,
-            kind: true,
-            sandboxId: true,
-            sandbox: {
-              select: {
-                id: true,
-                workspaceId: true,
-                kind: true,
-                network: true,
-              },
-            },
-          },
-        },
         servers: { select: { deploymentId: true } },
         skills: { select: { installedSkillId: true } },
         toolkits: {
@@ -264,7 +249,7 @@ export async function createWorkSession(input: CreateWorkSessionInput) {
           select: {
             sandboxId: true,
             isDefault: true,
-            sandbox: { select: { kind: true, network: true } },
+            sandbox: { select: { kind: true, network: true, config: true } },
           },
         },
       },
@@ -273,11 +258,7 @@ export async function createWorkSession(input: CreateWorkSessionInput) {
     const revision = await pinCurrentAgentRevision(tx, agent.id);
     const config = revision.config;
     const pinnedProvider =
-      agent.provider?.id === config.providerId
-        ? agent.provider
-        : agent.modelProviders.find(
-            (entry) => entry.providerId === config.providerId,
-          )?.provider;
+      agent.provider?.id === config.providerId ? agent.provider : null;
     const modelContext =
       pinnedProvider && config.model
         ? resolveModelContext(pinnedProvider, config.model)
@@ -288,9 +269,12 @@ export async function createWorkSession(input: CreateWorkSessionInput) {
       !link ||
       link.sandboxId !== config.sandboxTemplateId ||
       (input.sandboxId && input.sandboxId !== link.sandboxId) ||
-      agent.runtime?.sandboxId === link.sandboxId ||
       link.sandbox.kind !== "docker" ||
-      link.sandbox.network === "none"
+      link.sandbox.network === "none" ||
+      (link.sandbox.config &&
+        typeof link.sandbox.config === "object" &&
+        !Array.isArray(link.sandbox.config) &&
+        link.sandbox.config.readOnly === true)
     )
       return null;
     const sandboxId = link.sandboxId;
@@ -298,20 +282,39 @@ export async function createWorkSession(input: CreateWorkSessionInput) {
     agent.model = config.model;
     agent.systemPrompt = config.systemPrompt;
     agent.maxSteps = config.maxSteps;
-    const pinnedPackages = [];
+    const pinnedPackages: NonNullable<LoadedAgentPiPackages["piPackages"]> = [];
     for (const pin of config.packages) {
-      const binding = agent.piPackages.find(
-        (item) => item.marketInstallId === pin.marketInstallId,
-      );
+      const marketInstall = await tx.marketInstall.findFirst({
+        where: {
+          id: pin.marketInstallId,
+          targetWorkspaceId: input.workspaceId,
+        },
+        include: { listing: true },
+      });
       const release = await tx.marketRelease.findUnique({
         where: { id: pin.releaseId },
       });
-      if (!binding || !release || release.checksum !== pin.integrity)
+      if (
+        marketInstall?.listing.status !== "published" ||
+        (marketInstall.status !== "ready" &&
+          marketInstall.status !== "uninstalled") ||
+        !release ||
+        release.checksum !== pin.integrity ||
+        release.listingId !== marketInstall.listingId
+      )
         throw new Error("PI_PACKAGE_UNAVAILABLE");
-      pinnedPackages.push({ ...binding, releaseId: pin.releaseId, release });
+      pinnedPackages.push({
+        marketInstallId: pin.marketInstallId,
+        marketInstall,
+        releaseId: pin.releaseId,
+        release,
+      });
     }
-    agent.piPackages = pinnedPackages;
-    const piPackages = resolveAgentPiPackages(agent);
+    const piPackages = resolveAgentPiPackages({
+      ...agent,
+      agentRevisionId: revision.id,
+      piPackages: pinnedPackages,
+    });
 
     const conversation = await tx.conversation.create({
       data: {
@@ -333,7 +336,7 @@ export async function createWorkSession(input: CreateWorkSessionInput) {
               marketInstallId: pkg.marketInstallId,
               releaseId: pkg.releaseId,
               checksum: pkg.checksum,
-              resourceMap: (agent.piPackages.find(
+              resourceMap: (pinnedPackages.find(
                 (binding) => binding.marketInstallId === pkg.marketInstallId,
               )?.marketInstall.resourceMap ?? {}) as Prisma.InputJsonValue,
             })),
@@ -412,7 +415,6 @@ export async function createWorkSession(input: CreateWorkSessionInput) {
           ),
           knowledgeBaseIds: config.knowledgeBaseIds,
           sandboxId,
-          runtimeId: agent.runtime?.id ?? null,
           workingDirectory,
         },
         status: "queued",

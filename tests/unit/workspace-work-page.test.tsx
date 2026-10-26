@@ -94,24 +94,7 @@ describe("Workspace Work page", () => {
         providerId: null,
         model: null,
         provider: null,
-        modelProviders: [
-          {
-            providerId: "provider-1",
-            provider: { name: "OpenAI", models: [] },
-          },
-        ],
         sandboxes: [],
-        runtime: {
-          kind: "hermes",
-          sandbox: {
-            id: "sandbox-hermes",
-            name: "Hermes researcher runtime",
-            kind: "hermes",
-            network: "isolated",
-            deploymentId: "deployment-hermes",
-            deployment: { status: "stopped" },
-          },
-        },
       },
       {
         id: "agent-pi",
@@ -146,7 +129,6 @@ describe("Workspace Work page", () => {
             pinned: true,
             supportsWork: false,
             ready: false,
-            providerIds: [],
             sandboxes: [],
           }),
           expect.objectContaining({
@@ -423,9 +405,6 @@ describe("Workspace Work page", () => {
       contextWindow: null,
       contextWindowEstimated: null,
       boundSandbox: null,
-      hermesProfile: "research",
-      hermesProvider: "provider-1",
-      hermesModel: "model-1",
       messages: [],
     });
     render(
@@ -442,9 +421,6 @@ describe("Workspace Work page", () => {
           readOnly: true,
           modelName: null,
           sandbox: null,
-          hermesProfile: "research",
-          hermesProvider: "provider-1",
-          hermesModel: "model-1",
         }),
       }),
     );

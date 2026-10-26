@@ -39,7 +39,6 @@ const CreateAgentArguments = z
     runtime: z.enum(AGENT_CONTROL_RUNTIME_KINDS),
     systemPrompt: z.string().trim().max(100_000).nullable().optional(),
     providerId: Id.nullable().optional(),
-    providerIds: IdList.default([]),
     model: z.string().trim().min(1).max(240).nullable().optional(),
     maxSteps: z
       .number()
@@ -55,13 +54,6 @@ const CreateAgentArguments = z
   })
   .strict()
   .superRefine((input, ctx) => {
-    if (input.providerIds.length > 0) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["providerIds"],
-        message: "Pi SDK agents use providerId, not providerIds.",
-      });
-    }
     if (input.model && !input.providerId) {
       ctx.addIssue({
         code: "custom",
@@ -154,12 +146,6 @@ export const AGENT_CONTROL_MCP_TOOLS = [
         providerId: {
           type: ["string", "null"],
           description: "Pi model provider ID.",
-        },
-        providerIds: {
-          type: "array",
-          items: { type: "string" },
-          maxItems: 100,
-          description: "Must be empty; native Pi SDK Agents use providerId.",
         },
         model: { type: ["string", "null"], description: "Pi model ID." },
         maxSteps: {

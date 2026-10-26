@@ -517,7 +517,8 @@ describe("WorkSession API", () => {
       sandbox: {
         id: "historical",
         name: "Retained files",
-        kind: "hermes",
+        kind: "docker",
+        config: { readOnly: true },
         deploymentId: "historical-deployment",
         deployment: { status: "stopped" },
       },

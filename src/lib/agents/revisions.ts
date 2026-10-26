@@ -134,7 +134,6 @@ export async function captureInstalledSkillSnapshot(
 }
 
 const captureInclude = {
-  modelProviders: true,
   servers: { include: { deployment: true } },
   skills: { include: { installedSkill: { include: { skill: true } } } },
   knowledgeBases: true,
@@ -166,6 +165,13 @@ export async function captureAgentRevisionConfig(
     ? AgentRevisionConfigSchema.parse(previous.config)
     : null;
   const template = agent.sandboxes.find((link) => link.isDefault)?.sandbox;
+  if (
+    template?.config &&
+    typeof template.config === "object" &&
+    !Array.isArray(template.config) &&
+    template.config.readOnly === true
+  )
+    throw new AgentRevisionError("AGENT_EXECUTION_RETIRED");
   const frozenEnvironment =
     environment ??
     prior?.environment ??
@@ -189,7 +195,7 @@ export async function captureAgentRevisionConfig(
     systemPrompt: agent.systemPrompt,
     providerId: agent.providerId,
     model: agent.model,
-    modelProviderIds: agent.modelProviders.map((entry) => entry.providerId),
+    modelProviderIds: [],
     maxSteps: agent.maxSteps,
     disabledBuiltinTools: agent.disabledBuiltinTools,
     sandboxTemplateId: template?.id ?? null,
@@ -266,10 +272,7 @@ async function validateRevisionAuthorization(
     include: captureInclude,
   });
   if (!agent) throw new AgentRevisionError("AGENT_EXECUTION_RETIRED");
-  const providers = new Set([
-    agent.providerId,
-    ...agent.modelProviders.map((entry) => entry.providerId),
-  ]);
+  const providers = new Set([agent.providerId]);
   if (
     (config.providerId && !providers.has(config.providerId)) ||
     config.modelProviderIds.some((id) => !providers.has(id))
@@ -636,17 +639,13 @@ export async function resolvePinnedAgent<
       include: {
         ...captureInclude,
         provider: true,
-        modelProviders: { include: { provider: true } },
         knowledgeBases: {
           include: { knowledgeBase: { include: { provider: true } } },
         },
       },
     });
     if (!live) throw new AgentRevisionError("AGENT_NOT_FOUND");
-    const providerIds = new Set([
-      live.providerId,
-      ...live.modelProviders.map((entry) => entry.providerId),
-    ]);
+    const providerIds = new Set([live.providerId]);
     if (config.providerId && !providerIds.has(config.providerId))
       throw new AgentRevisionError("AGENT_PROVIDER_REVOKED");
     const provider = config.providerId
@@ -720,9 +719,6 @@ export async function resolvePinnedAgent<
           ...live.disabledBuiltinTools,
         ]),
       ],
-      modelProviders: live.modelProviders.filter((entry) =>
-        config.modelProviderIds.includes(entry.providerId),
-      ),
       servers: grants.map((grant) => ({ deploymentId: grant.deploymentId })),
       mcpToolPolicy: Object.fromEntries(
         grants.map((grant) => [grant.deploymentId, grant.allowedToolNames]),

@@ -8,7 +8,6 @@ const actions = vi.hoisted(() => ({
   updateAgentAction: vi.fn(),
   prepareAgentRevisionAction: vi.fn(),
   publishAgentRevisionAction: vi.fn(),
-  stopAgentRuntimeAction: vi.fn(),
 }));
 vi.mock("@/lib/agents/actions", () => actions);
 const credentials = vi.hoisted(() => ({
@@ -61,7 +60,6 @@ const props = {
   name: "Researcher",
   systemPrompt: "",
   providerId: null,
-  providerIds: [],
   model: null,
   maxSteps: 20,
   providers: [],

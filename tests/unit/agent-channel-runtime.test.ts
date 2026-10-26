@@ -59,8 +59,6 @@ const event = {
 };
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.stubEnv("TOOLPLANE_HERMES_ROOT", "");
-  vi.stubEnv("HERMES_ROOT", "");
   globalThis.__toolplaneAgentChannelAdapters = undefined;
   globalThis.__toolplaneAgentChannelStarts = undefined;
   globalThis.__toolplaneAgentChannelLogs = undefined;
@@ -123,7 +121,7 @@ describe("native channel lifecycle", () => {
     expect(liveAgentChannelStatus("connection")).toBe("stopped");
   });
 
-  it("restores active channels without spawning Hermes or Python", async () => {
+  it("restores active channels without spawning external runtimes", async () => {
     mocks.findMany.mockResolvedValue([
       { id: "missing", workspaceId: "workspace", platform: "weixin" },
       { id: "connection", workspaceId: "workspace", platform: "weixin" },

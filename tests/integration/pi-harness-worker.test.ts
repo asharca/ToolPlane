@@ -45,7 +45,7 @@ afterAll(async () => {
   if (userId) await db.user.delete({ where: { id: userId } });
 });
 describe("retired native Harness and legacy execution", () => {
-  it.each(["pi", "claude-code", "dsh", "hermes-rpc", "hermes"])(
+  it.each(["pi", "claude-code", "dsh"])(
     "preserves %s messages but never admits new execution",
     async (runtimeKind) => {
       const deployment = await db.deployment.create({

@@ -208,7 +208,6 @@ export function sandboxRuntimeOrigin(): string {
       : undefined;
   const configured =
     runtimeEnv("TOOLPLANE_RUNTIME_ORIGIN") ||
-    runtimeEnv("TOOLPLANE_HERMES_CALLBACK_URL") ||
     developmentOrigin ||
     runtimeEnv("NEXT_PUBLIC_APP_URL") ||
     `http://localhost:${runtimeEnv("PORT") || "3000"}`;

@@ -45,7 +45,6 @@ import {
 import { disconnectConnector } from "./connector-broker";
 import { setConnectorSetupTokenCookie } from "./connector-setup-token";
 import { beginWorkspaceOperation } from "@/lib/workspace/operation-gate";
-import { stopHermesRuntime } from "@/lib/agents/hermes/runtime";
 import { enqueueSandboxOperation, quiesceDockerSandbox } from "./lifecycle";
 import { stopAgentSandboxSessionMcp } from "@/lib/agents/conversation-sandbox";
 
@@ -104,18 +103,13 @@ type AuthorizedSandbox = NonNullable<
 async function genericSandboxMutationAllowed(
   sandbox: AuthorizedSandbox,
 ): Promise<boolean> {
-  if (
-    sandbox.kind === "hermes" ||
-    sandbox.conversations.length ||
-    sandbox.a2aContexts.length
-  )
-    return false;
+  if (sandbox.conversations.length || sandbox.a2aContexts.length) return false;
   const config = sandbox.config;
   if (
     config &&
     typeof config === "object" &&
     !Array.isArray(config) &&
-    config.managedBy === "agent-conversation"
+    (config.managedBy === "agent-conversation" || config.readOnly === true)
   )
     return false;
   const legacyAgent = await db.agent.findFirst({
@@ -126,11 +120,7 @@ async function genericSandboxMutationAllowed(
     },
     select: { id: true },
   });
-  const runtime = await db.agentRuntime.findFirst({
-    where: { workspaceId: sandbox.workspaceId, sandboxId: sandbox.id },
-    select: { id: true },
-  });
-  return !legacyAgent && !runtime;
+  return !legacyAgent;
 }
 
 type QuiescedOperationControl = {
@@ -219,17 +209,6 @@ function sandboxLifecycleBlocked(sandbox: AuthorizedSandbox): boolean {
     "upgrading",
     "deleting",
   ].includes(sandbox.deployment.status);
-}
-
-async function hermesAgentIdForSandbox(
-  workspaceId: string,
-  sandboxId: string,
-): Promise<string | null> {
-  const runtime = await db.agentRuntime.findFirst({
-    where: { workspaceId, sandboxId, kind: "hermes" },
-    select: { agentId: true },
-  });
-  return runtime?.agentId ?? null;
 }
 
 async function quiesceSandboxVolume<T>(
@@ -953,7 +932,6 @@ export type SandboxLifecycleBatchResult = {
 
 function runSandboxLifecycle(
   workspaceId: string,
-  slug: string,
   sandboxId: string,
   operation: SandboxLifecycleOperation,
   batch = false,
@@ -990,13 +968,6 @@ function runSandboxLifecycle(
       (sandbox.conversations.length || sandbox.a2aContexts.length)
     )
       await stopAgentSandboxSessionMcp(sandbox.id, workspaceId);
-    if (sandbox.kind === "hermes") {
-      const agentId = await hermesAgentIdForSandbox(workspaceId, sandbox.id);
-      if (!agentId) return result("error", "runtime_unavailable");
-      await stopHermesRuntime(workspaceId, agentId);
-      revalidatePath(`/app/${slug}/agents/${agentId}`);
-      return result("success", "accepted");
-    }
     if (operation !== "stop") {
       if (sandbox.kind === "host") return result("skipped", "host_unmanaged");
       if (sandbox.kind === "ssh" && !sshTargetIdFromConfig(sandbox.config)) {
@@ -1073,13 +1044,11 @@ export async function batchSandboxLifecycleAction(
   for (const sandboxId of ids) {
     try {
       results.push(
-        (await runSandboxLifecycle(
-          ctx.ws.id,
-          workspace,
+        (await runSandboxLifecycle(ctx.ws.id, sandboxId, operation, true)) ?? {
           sandboxId,
-          operation,
-          true,
-        )) ?? { sandboxId, outcome: "skipped", message: "workspace_busy" },
+          outcome: "skipped",
+          message: "workspace_busy",
+        },
       );
     } catch {
       results.push({
@@ -1100,7 +1069,7 @@ export async function startSandboxAction(formData: FormData) {
   const sandboxId = String(formData.get("sandboxId") ?? "");
   const ctx = await authorizedWorkspace(slug);
   if (!ctx || !sandboxId) return;
-  await runSandboxLifecycle(ctx.ws.id, slug, sandboxId, "start");
+  await runSandboxLifecycle(ctx.ws.id, sandboxId, "start");
   revalidatePath(`/app/${slug}/sandboxes`);
   revalidatePath(`/app/${slug}/sandboxes/${sandboxId}`);
   revalidatePath(`/app/${slug}/work`);
@@ -1180,7 +1149,7 @@ export async function stopSandboxAction(formData: FormData) {
   const sandboxId = String(formData.get("sandboxId") ?? "");
   const ctx = await authorizedWorkspace(slug);
   if (!ctx || !sandboxId) return;
-  await runSandboxLifecycle(ctx.ws.id, slug, sandboxId, "stop");
+  await runSandboxLifecycle(ctx.ws.id, sandboxId, "stop");
   revalidatePath(`/app/${slug}/sandboxes`);
   revalidatePath(`/app/${slug}/sandboxes/${sandboxId}`);
 }
@@ -1190,7 +1159,7 @@ export async function restartSandboxAction(formData: FormData) {
   const sandboxId = String(formData.get("sandboxId") ?? "");
   const ctx = await authorizedWorkspace(slug);
   if (!ctx || !sandboxId) return;
-  await runSandboxLifecycle(ctx.ws.id, slug, sandboxId, "restart");
+  await runSandboxLifecycle(ctx.ws.id, sandboxId, "restart");
   revalidatePath(`/app/${slug}/sandboxes`);
   revalidatePath(`/app/${slug}/sandboxes/${sandboxId}`);
 }
@@ -1207,7 +1176,10 @@ export async function deleteSandboxAction(formData: FormData) {
         const sandbox = await sandboxInWorkspace(sandboxId, ctx.ws.id);
         if (
           !sandbox ||
-          sandbox.kind === "hermes" ||
+          (sandbox.config &&
+            typeof sandbox.config === "object" &&
+            !Array.isArray(sandbox.config) &&
+            sandbox.config.readOnly === true) ||
           sandbox.agentLinks.length > 0 ||
           sandbox.conversations.length > 0 ||
           sandbox.a2aContexts.length > 0

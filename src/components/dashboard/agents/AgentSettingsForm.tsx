@@ -19,7 +19,6 @@ import { AgentSystemPromptEditor } from "./AgentSystemPromptEditor";
 import {
   prepareAgentRevisionAction,
   publishAgentRevisionAction,
-  stopAgentRuntimeAction,
   updateAgentAction,
 } from "@/lib/agents/actions";
 import {
@@ -60,7 +59,6 @@ type Props = {
   systemPrompt: string;
   disabledBuiltinTools?: string[];
   providerId: string | null;
-  providerIds: string[];
   model: string | null;
   maxSteps: number;
   providers: Array<ModelProviderOption & { format: string }>;
@@ -76,7 +74,6 @@ type Props = {
     config: AgentRevisionConfig;
   } | null;
   canManageCredentials?: boolean;
-  runtime?: { status: string; lastError: string | null } | null;
   className?: string;
   activeSection?: AgentSettingsSection;
   onSectionChange?: (section: AgentSettingsSection) => void;
@@ -239,21 +236,6 @@ export function AgentSettingsForm(props: Props) {
         >
           {t("createPiSdkAgent")}
         </ButtonLink>
-        {props.runtime ? (
-          <Button
-            type="button"
-            disabled={pending}
-            onClick={() =>
-              void perform(async () => {
-                const result = await stopAgentRuntimeAction({}, identity());
-                if (result.error) throw new Error(result.error);
-                router.refresh();
-              })
-            }
-          >
-            {t("stopRuntime")}
-          </Button>
-        ) : null}
         {error ? <p role="alert">{error}</p> : null}
       </div>
     );

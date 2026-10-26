@@ -1,6 +1,5 @@
 # 注册和委派远程 A2A Agent
 
-> [English](A2A_REMOTE_AGENTS.md)
 
 面向部署管理员、工作区管理员和 Agent 使用者。此功能允许 ToolPlane 内部 Agent 把明确的
 文本任务委派给经过授权的外部 A2A 服务。任务仍使用原生 A2ATask / Context / Worker 和

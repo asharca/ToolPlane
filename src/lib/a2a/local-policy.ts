@@ -99,7 +99,6 @@ export async function localTarget(
       a2aInboundEnabled: true,
       a2aOutboundEnabled: true,
       providerId: true,
-      modelProviders: { select: { providerId: true } },
       sandboxes: {
         select: {
           sandboxId: true,
@@ -139,10 +138,7 @@ export async function localTarget(
     sandbox.sandboxId !== config.sandboxTemplateId ||
     !config.providerId ||
     !config.model ||
-    (agent.providerId !== config.providerId &&
-      !agent.modelProviders.some(
-        (link) => link.providerId === config.providerId,
-      ))
+    agent.providerId !== config.providerId
   )
     throw missing();
   const skills = config.skills

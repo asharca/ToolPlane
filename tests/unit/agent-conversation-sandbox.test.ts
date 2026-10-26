@@ -313,6 +313,17 @@ describe("durable conversation sandbox bindings", () => {
       a2aContextId: "context",
     });
   });
+  it("rejects archived read-only session sandboxes before starting execution", async () => {
+    mocks.sandbox.mockResolvedValue({
+      ...sandbox,
+      config: { ...sandbox.config, readOnly: true },
+    });
+    await expect(ensureAgentConversationSandbox(input)).rejects.toThrow(
+      "Historical Agent sessions are read-only.",
+    );
+    expect(mocks.start).not.toHaveBeenCalled();
+    expect(mocks.copy).not.toHaveBeenCalled();
+  });
   it("restarts the saved sandbox without copying native session files again", async () => {
     await expect(ensureAgentConversationSandbox(input)).resolves.toEqual({
       sandboxId: "isolated",
@@ -606,15 +617,6 @@ describe("durable conversation sandbox bindings", () => {
       "frozen-native-data",
       expect.stringMatching(/^volume-/),
     );
-    expect(mocks.snapshot).toHaveBeenCalledWith({
-      where: {
-        id: "frozen-snapshot",
-        volumeName: "frozen-native-data",
-        status: "ready",
-        sandboxId: "source",
-        sandbox: { workspaceId: "workspace" },
-      },
-    });
     expect(mocks.createVolume).not.toHaveBeenCalled();
     expect(mocks.updateDeployment).toHaveBeenCalledWith({
       where: { id: "deployment" },

@@ -37,7 +37,7 @@ describe("Work attachments", () => {
     mocks.sandboxFindFirst.mockResolvedValue({
       id: "sandbox-1",
       kind: "docker",
-      agentRuntime: null,
+      config: null,
       deployment: { installCfg: null },
     });
     mocks.attachmentFindMany.mockResolvedValue([
@@ -50,18 +50,18 @@ describe("Work attachments", () => {
     ]);
   });
 
-  it("rejects historical Hermes workspace writes without copying files", async () => {
+  it("rejects read-only historical workspace writes without copying files", async () => {
     mocks.sandboxFindFirst.mockResolvedValue({
-      id: "sandbox-hermes",
-      kind: "hermes",
-      agentRuntime: { agentId: "agent-hermes" },
-      deployment: { installCfg: { volumeName: "hermes-volume" } },
+      id: "sandbox-historical",
+      kind: "docker",
+      config: { readOnly: true },
+      deployment: { installCfg: { volumeName: "historical-volume" } },
     });
     await expect(
       prepareWorkAttachments({
         workspaceId: "workspace-1",
         userId: "user-1",
-        sandboxId: "sandbox-hermes",
+        sandboxId: "sandbox-historical",
         workingDirectory: "projects/app",
         attachmentIds: ["attachment-1"],
       }),
@@ -125,7 +125,7 @@ describe("Work attachments", () => {
     mocks.sandboxFindFirst.mockResolvedValue({
       id: "sandbox-1",
       kind: "connector",
-      agentRuntime: null,
+      config: null,
       deployment: { installCfg: null },
     });
     await expect(

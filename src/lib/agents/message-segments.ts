@@ -1,31 +1,33 @@
 import type { UIMessage } from "ai";
 import type { ContextUsageSnapshot } from "@/lib/context-usage";
 
-export type HermesAssistantSegment = {
+export type AssistantSegment = {
   id: string;
   text: string;
 };
 
-export type HermesTurnMessages = {
-  segments: HermesAssistantSegment[];
+export type TurnMessages = {
+  segments: AssistantSegment[];
 };
 
-export type HermesUIData = {
-  "hermes-messages": HermesTurnMessages;
+export type AgentUIData = {
+  "assistant-messages": TurnMessages;
   "context-usage": ContextUsageSnapshot;
 };
 
-export type HermesUIMessage = UIMessage<unknown, HermesUIData>;
+export type AgentUIMessage = UIMessage<unknown, AgentUIData>;
 
 type MessagePartLike = {
   type: string;
   data?: unknown;
 };
 
-export function hermesAssistantSegments(
+export function assistantSegments(
   parts: readonly MessagePartLike[],
-): HermesAssistantSegment[] {
-  const transcript = parts.find((part) => part.type === "data-hermes-messages");
+): AssistantSegment[] {
+  const transcript = parts.find(
+    (part) => part.type === "data-assistant-messages",
+  );
   if (!transcript?.data || typeof transcript.data !== "object") return [];
   const segments = (transcript.data as { segments?: unknown }).segments;
   if (!Array.isArray(segments)) return [];
@@ -43,15 +45,15 @@ export function hermesAssistantSegments(
   });
 }
 
-export function expandHermesAssistantMessages(
-  messages: readonly HermesUIMessage[],
-): HermesUIMessage[] {
+export function expandAssistantMessages(
+  messages: readonly AgentUIMessage[],
+): AgentUIMessage[] {
   return messages.flatMap((message) => {
     if (message.role !== "assistant") return [message];
-    const segments = hermesAssistantSegments(message.parts);
+    const segments = assistantSegments(message.parts);
     if (!segments.length) return [message];
     return segments.map((segment) => ({
-      id: `${message.id}:hermes:${segment.id}`,
+      id: `${message.id}:segment:${segment.id}`,
       role: "assistant" as const,
       parts: [
         { type: "text" as const, text: segment.text, state: "done" as const },

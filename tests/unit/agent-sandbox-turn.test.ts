@@ -65,7 +65,6 @@ const liveAgent = {
   providerId: provider.id,
   provider,
   model: "mutable-model",
-  modelProviders: [],
   disabledBuiltinTools: [],
   skills: [],
   knowledgeBases: [],

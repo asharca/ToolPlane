@@ -59,7 +59,6 @@ import {
   updateAgentChannelConnectionCredentials,
 } from "@/lib/agents/channel-connections";
 import {
-  applyAgentChannelPairing,
   checkAgentChannelPairing,
   requestAgentChannelPairing,
 } from "@/lib/agents/channel-pairing";
@@ -67,7 +66,6 @@ import {
   getMessagingPlatform,
   hasBuiltInPairingProvider,
 } from "@/lib/agents/platforms";
-import { stopHermesRuntime } from "@/lib/agents/hermes/runtime";
 import { stopSandboxAction } from "@/lib/sandboxes/actions";
 import {
   AgentMarketError,
@@ -77,7 +75,6 @@ import {
   withdrawPendingAgentRelease,
 } from "@/lib/agents/market";
 import { safeRelativePath } from "@/lib/auth/safe-redirect";
-import { isAgentEndpointRuntimeSandboxConfig } from "@/lib/agents/public-api/tool-policy";
 import { db } from "@/lib/db";
 import { deleteManagedAgent } from "@/lib/agents/deletion";
 import { AgentEnvironmentSnapshotSchema } from "./revision-types";
@@ -161,14 +158,9 @@ async function isManageableAgent(
     where: { id: agentId, workspaceId },
     select: {
       publicRuntimeAllocation: { select: { id: true } },
-      runtime: { select: { sandbox: { select: { config: true } } } },
     },
   });
-  return Boolean(
-    agent &&
-      !agent.publicRuntimeAllocation &&
-      !isAgentEndpointRuntimeSandboxConfig(agent.runtime?.sandbox.config),
-  );
+  return Boolean(agent && !agent.publicRuntimeAllocation);
 }
 
 export type ActionState = {
@@ -234,8 +226,6 @@ function cloneOptionsFromFormData(formData: FormData) {
     copySandboxes: checked("copySandboxes"),
     copySubAgents: checked("copySubAgents"),
     copyConversations: checked("copyConversations"),
-    copyHermesEnvironment: checked("copyHermesEnvironment"),
-    copyHermesVolume: checked("copyHermesVolume"),
   };
 }
 
@@ -656,8 +646,7 @@ export async function createAgentAction(formData: FormData) {
   if (rawRuntime && rawRuntime !== "pi-sdk")
     throw new Error("Only native Pi Agents are available for creation.");
   const runtime = "pi-sdk";
-  const providerIds = formData.getAll("providerId").map(String).filter(Boolean);
-  const providerId = providerIds[0] ?? null;
+  const providerId = String(formData.get("providerId") ?? "").trim() || null;
   const model = String(formData.get("model") ?? "") || null;
   const provider = providerId ? await getProvider(ctx.ws.id, providerId) : null;
   if (!provider || !model || !provider.models.includes(model)) {
@@ -676,7 +665,6 @@ export async function createAgentAction(formData: FormData) {
           .trim()
           .slice(0, 100_000) || null,
       providerId,
-      providerIds,
       model,
       disabledBuiltinTools: formData.getAll("disabledBuiltinTool").map(String),
       maxSteps: agentMaxSteps(formData),
@@ -1027,8 +1015,7 @@ export async function updateAgentAction(
   if (!(await isManageableAgent(ctx.ws.id, agentId)))
     return { error: "Agent not found." };
 
-  const providerIds = formData.getAll("providerId").map(String).filter(Boolean);
-  const providerId = providerIds[0] ?? null;
+  const providerId = String(formData.get("providerId") ?? "").trim() || null;
   const model = String(formData.get("model") ?? "") || null;
   const maxSteps = agentMaxSteps(formData);
 
@@ -1045,7 +1032,6 @@ export async function updateAgentAction(
             .trim()
             .slice(0, 100_000) || null,
         providerId,
-        providerIds,
         model,
         disabledBuiltinTools: formData
           .getAll("disabledBuiltinTool")
@@ -1102,7 +1088,7 @@ export async function updateAgentModelAction(
     await updateAgentModelSelection(
       ctx.ws.id,
       agentId,
-      formData.getAll("providerId").map(String),
+      String(formData.get("providerId") ?? "").trim() || null,
       String(formData.get("model") ?? "").trim() || null,
     );
   } catch (error) {
@@ -1195,7 +1181,6 @@ export async function stopAgentRuntimeAction(
       stop.set("sandboxId", sandbox.id);
       await stopSandboxAction(stop);
     }
-    await stopHermesRuntime(ctx.ws.id, agentId);
     revalidatePath(`/app/${slug}/agents/${agentId}`);
     return { savedAt: Date.now() };
   } catch (error) {
@@ -1363,17 +1348,6 @@ export async function checkAgentChannelPairingAction(formData: FormData) {
   const ctx = await authorizedWorkspace(slug, true);
   if (!ctx) return;
   await checkAgentChannelPairing(ctx.ws.id, connectionId);
-  revalidatePath(`/app/${slug}/agents/${agentId}`);
-}
-
-export async function applyAgentChannelPairingAction(formData: FormData) {
-  const slug = String(formData.get("workspace") ?? "");
-  const agentId = String(formData.get("agentId") ?? "");
-  const connectionId = String(formData.get("connectionId") ?? "");
-  const allowedUserIds = String(formData.get("allowedUserIds") ?? "");
-  const ctx = await authorizedWorkspace(slug, true);
-  if (!ctx) return;
-  await applyAgentChannelPairing(ctx.ws.id, connectionId, allowedUserIds);
   revalidatePath(`/app/${slug}/agents/${agentId}`);
 }
 

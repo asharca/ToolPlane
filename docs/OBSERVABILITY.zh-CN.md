@@ -1,6 +1,5 @@
 # 日志与审计
 
-> **English**: [OBSERVABILITY.md](./OBSERVABILITY.md)
 
 管理后台 `/admin/logs` 读取独立的结构化事件。工作区「日志」只能读取自身日志：
 部署 MCP 请求与响应正文按原权限展示，成员也可查看获准的脱敏 A2A 正文；
@@ -47,7 +46,7 @@ MCP 部署异常结合持久化状态与进程监管状态：failed/error，以�
 `withLogContext` 用 AsyncLocalStorage 串联子 span。已验证的资源查找会丰富上下文；调用
 方提供的请求 ID 不被信任。带签名的沙箱 runtime grant 把 trace 血缘带到模型和 MCP 回调。
 Work 执行启动独立（detached）上下文，后台任务不会继承其他请求的操作者。Native 运行记
-录模型用量、首个输出延迟、停止原因和工具结果。Hermes/沙箱埋点记录可用的 runtime 事件，
+录模型用量、首个输出延迟、停止原因和工具结果。沙箱埋点记录可用的 runtime 事件，
 不记录私有推理过程，也不记录 runtime 的每一次内部操作。
 
 `recordEvent` 同时向 stderr 输出脱敏后的 JSON。数据库写入限制为每个 worker 最多 32 个

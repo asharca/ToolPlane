@@ -18,10 +18,24 @@ export const SANDBOX_MCP_READ_TOOLS: SandboxMcpTool[] = [
 export function isSandboxMcpTool(value: string): value is SandboxMcpTool {
   return (SANDBOX_MCP_TOOLS as readonly string[]).includes(value);
 }
-export function sandboxMcpExportable(kind: string): boolean {
-  // Hermes shares a credential-bearing private runtime volume; do not export
-  // it until its file and process boundary is separated from that volume.
-  return kind === "docker" || kind === "connector" || kind === "ssh";
+export function sandboxMcpExportable(sandbox: {
+  kind: string;
+  config?: unknown;
+}): boolean {
+  const config = sandbox.config;
+  if (
+    config &&
+    typeof config === "object" &&
+    !Array.isArray(config) &&
+    "readOnly" in config &&
+    config.readOnly === true
+  )
+    return false;
+  return (
+    sandbox.kind === "docker" ||
+    sandbox.kind === "connector" ||
+    sandbox.kind === "ssh"
+  );
 }
 export function normalizeSandboxMcpTools(raw: unknown): SandboxMcpTool[] {
   if (raw === undefined) return [...SANDBOX_MCP_READ_TOOLS];

@@ -16,7 +16,7 @@ import {
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/motion/button";
 import { AssistantMarkdown } from "@/components/dashboard/ConversationMessage";
-import type { HermesUIMessage } from "@/lib/agents/hermes/message-segments";
+import type { AgentUIMessage } from "@/lib/agents/message-segments";
 import { McpPromptPickerButton } from "@/components/dashboard/McpPromptPickerButton";
 import { McpResourcePickerButton } from "@/components/dashboard/McpResourcePickerButton";
 import { ReasoningEffortControl } from "@/components/dashboard/agents/ReasoningEffortControl";
@@ -109,7 +109,7 @@ export function AssistantConversation({
   revisionId: string | null;
   readOnly: boolean;
   pinnedRevision?: number | null;
-  initialMessages: HermesUIMessage[];
+  initialMessages: AgentUIMessage[];
   onConversationChanged: () => void;
   onBranchChange: (id: string) => void;
   onStartBranch: (id: string) => void;

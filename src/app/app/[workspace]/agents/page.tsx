@@ -11,7 +11,6 @@ import {
   listProviders,
 } from "@/lib/agents/queries";
 import { AgentsBrowser } from "@/components/dashboard/agents/AgentsBrowser";
-import { effectiveStatus } from "@/lib/process/supervisor";
 import { SettingsModal } from "@/components/dashboard/SettingsModal";
 import { originFromHeaders } from "@/lib/http/origin";
 import { listAgentMarketListings } from "@/lib/agents/market";
@@ -74,7 +73,6 @@ export default async function AgentsPage({
             id: a.id,
             name: a.name,
             providerName: a.provider?.name ?? null,
-            providerNames: a.modelProviders.map((link) => link.provider.name),
             model: a.model,
             toolCount:
               a._count.servers +
@@ -87,14 +85,7 @@ export default async function AgentsPage({
               a.sandboxes.length === 1 &&
               a.sandboxes[0]?.sandbox.kind === "docker" &&
               a.sandboxes[0]?.sandbox.network !== "none",
-            runtimeStatus: a.runtime
-              ? ["error", "setup_required"].includes(a.runtime.status)
-                ? a.runtime.status
-                : effectiveStatus(
-                    a.runtime.sandbox.deploymentId,
-                    a.runtime.sandbox.deployment.status,
-                  )
-              : null,
+            runtimeStatus: null,
           }))}
           marketAgents={marketAgents.items.map((agent) => ({
             id: agent.id,

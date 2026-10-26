@@ -39,7 +39,6 @@ export type CreateAgentFromControlInput = {
   runtime: ImplementedAgentRuntimeKind;
   systemPrompt?: string | null;
   providerId?: string | null;
-  providerIds: string[];
   model?: string | null;
   maxSteps: number;
   deploymentIds: string[];
@@ -63,13 +62,6 @@ const AGENT_CONTROL_SELECT = {
   createdAt: true,
   updatedAt: true,
   provider: { select: { id: true, name: true, format: true } },
-  modelProviders: {
-    orderBy: { provider: { createdAt: "asc" as const } },
-    select: {
-      providerId: true,
-      provider: { select: { name: true, format: true } },
-    },
-  },
   servers: {
     select: {
       deployment: {
@@ -125,20 +117,6 @@ const AGENT_CONTROL_SELECT = {
       child: { select: { id: true, name: true, slug: true } },
     },
   },
-  runtime: {
-    select: {
-      id: true,
-      kind: true,
-      image: true,
-      status: true,
-      sandbox: {
-        select: {
-          deploymentId: true,
-          deployment: { select: { status: true } },
-        },
-      },
-    },
-  },
   _count: { select: { conversations: true } },
 } as const;
 
@@ -146,62 +124,25 @@ type AgentControlRow = Prisma.AgentGetPayload<{
   select: typeof AGENT_CONTROL_SELECT;
 }>;
 
-function safeRuntimeStatus(
-  runtime: {
-    status: string;
-    sandbox: { deploymentId: string; deployment: { status: string } };
-  } | null,
-): string | null {
-  if (!runtime) return null;
-  if (runtime.status === "error" || runtime.status === "setup_required")
-    return runtime.status;
-  return effectiveStatus(
-    runtime.sandbox.deploymentId,
-    runtime.sandbox.deployment.status,
-  );
-}
-
 function toSafeAgent(agent: AgentControlRow, workspaceSlug: string) {
-  const runtimeStatus = safeRuntimeStatus(agent.runtime);
-  const configured =
-    agent.runtimeKind === "hermes"
-      ? agent.modelProviders.length > 0
-      : Boolean(agent.provider && agent.model);
+  const configured = Boolean(agent.provider && agent.model);
   const readOnly = agent.runtimeKind !== "pi-sdk" || Boolean(agent.retiredAt);
   return {
     id: agent.id,
     name: agent.name,
     slug: agent.slug,
-    runtime:
-      agent.runtimeKind === "hermes" && agent.runtime
-        ? {
-            kind: agent.runtimeKind,
-            status: runtimeStatus,
-            image: agent.runtime.image,
-          }
-        : { kind: agent.runtimeKind, status: null, image: null },
+    runtime: { kind: agent.runtimeKind, status: null, image: null },
     configured,
     readOnly,
     ready: !readOnly && configured && agent.currentRevisionVersion > 0,
     systemPrompt: agent.systemPrompt,
-    model:
-      agent.runtimeKind === "hermes"
-        ? {
-            providerIds: agent.modelProviders.map(
-              ({ providerId }) => providerId,
-            ),
-            providers: agent.modelProviders.map(({ provider }) => ({
-              name: provider.name,
-              format: provider.format,
-            })),
-          }
-        : {
-            providerId: agent.providerId,
-            provider: agent.provider
-              ? { name: agent.provider.name, format: agent.provider.format }
-              : null,
-            model: agent.model,
-          },
+    model: {
+      providerId: agent.providerId,
+      provider: agent.provider
+        ? { name: agent.provider.name, format: agent.provider.format }
+        : null,
+      model: agent.model,
+    },
     maxSteps: agent.maxSteps,
     resources: {
       deployments: agent.servers.map(({ deployment }) => {
@@ -305,7 +246,7 @@ export async function listAgentControlResources(workspaceId: string) {
         },
       }),
       db.sandbox.findMany({
-        where: { workspaceId, kind: { not: "hermes" } },
+        where: { workspaceId },
         orderBy: { createdAt: "desc" },
         select: {
           id: true,
@@ -376,21 +317,6 @@ export async function listAgentControlAgents(workspaceId: string) {
       providerId: true,
       model: true,
       provider: { select: { name: true } },
-      modelProviders: {
-        select: { providerId: true, provider: { select: { name: true } } },
-      },
-      runtime: {
-        select: {
-          kind: true,
-          status: true,
-          sandbox: {
-            select: {
-              deploymentId: true,
-              deployment: { select: { status: true } },
-            },
-          },
-        },
-      },
       _count: {
         select: {
           servers: true,
@@ -404,25 +330,19 @@ export async function listAgentControlAgents(workspaceId: string) {
     },
   });
   return agents.map((agent) => {
-    const runtimeStatus = safeRuntimeStatus(agent.runtime);
-    const configured =
-      agent.runtimeKind === "hermes"
-        ? agent.modelProviders.length > 0
-        : Boolean(agent.provider && agent.model);
+    const configured = Boolean(agent.provider && agent.model);
     const readOnly = agent.runtimeKind !== "pi-sdk" || Boolean(agent.retiredAt);
     return {
       id: agent.id,
       name: agent.name,
       slug: agent.slug,
       runtime: agent.runtimeKind,
-      runtimeStatus,
+      runtimeStatus: null,
       configured,
       readOnly,
       ready: !readOnly && configured && agent.currentRevisionVersion > 0,
       providerId: agent.providerId,
       providerName: agent.provider?.name ?? null,
-      providerIds: agent.modelProviders.map(({ providerId }) => providerId),
-      providerNames: agent.modelProviders.map(({ provider }) => provider.name),
       model: agent.model,
       counts: {
         tools:
@@ -527,7 +447,6 @@ export async function createAgentFromControl(
         name: input.name,
         systemPrompt: input.systemPrompt?.trim() || null,
         providerId: input.providerId ?? null,
-        providerIds: input.providerIds,
         model: input.model ?? null,
         maxSteps: input.maxSteps,
       },

@@ -59,7 +59,6 @@ function conversation() {
     agent: {
       provider: provider as typeof provider | null,
       model: "model" as string | null,
-      modelProviders: [] as { provider: typeof provider }[],
       workspace: {
         titleModelProviderId: null as string | null,
         titleModel: null as string | null,
@@ -103,7 +102,6 @@ beforeEach(() => {
     retiredAt: null,
     provider,
     model: "model",
-    modelProviders: [],
     runtimeKind: "pi-sdk",
   });
 });
@@ -198,11 +196,10 @@ describe("conversation title input and concurrent updates", () => {
     expect(mocks.db.modelProvider.findFirst).not.toHaveBeenCalled();
   });
 
-  it("rejects a missing pinned model rather than using linked providers", async () => {
+  it("rejects a missing pinned model rather than using workspace defaults", async () => {
     mocks.pinned.mockResolvedValueOnce({
       provider: null,
       model: null,
-      modelProviders: [{ provider }],
     });
     await expect(callTitle()).rejects.toThrow(
       "No model is configured in the pinned revision",

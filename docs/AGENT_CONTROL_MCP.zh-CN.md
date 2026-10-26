@@ -1,6 +1,5 @@
 # Agent Control MCP
 
-> **English**: [AGENT_CONTROL_MCP.md](./AGENT_CONTROL_MCP.md)
 
 ToolPlane 把每个工作区暴露为一个带鉴权的无会话 Streamable HTTP MCP 服务器，用于创建和使用智能体：
 

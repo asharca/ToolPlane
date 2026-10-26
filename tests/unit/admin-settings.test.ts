@@ -1,10 +1,6 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  DEFAULT_HERMES_ARCHIVE_MAX_UPLOAD_MIB,
-  MAX_HERMES_ARCHIVE_MAX_UPLOAD_MIB,
-} from "@/lib/agents/hermes/archive-limits";
-import {
   DEFAULT_SKILL_IMPORT_SKILLS,
   MAX_SKILL_IMPORT_SKILLS,
 } from "@/lib/skills/limits";
@@ -36,8 +32,6 @@ vi.mock("@/lib/db", () => {
 import {
   getAgentConcurrencySettings,
   updateAgentConcurrencySettings,
-  getHermesArchiveSettings,
-  HERMES_ARCHIVE_MAX_UPLOAD_MIB_SETTING_KEY,
   MCP_STARTUP_TIMEOUTS_SETTING_KEY,
   REMOTE_MCP_PRIVATE_HOSTS_SETTING_KEY,
   getSkillImportSettings,
@@ -46,7 +40,6 @@ import {
   resetMcpStartupTimeoutSettings,
   resetRemoteMcpPrivateHostsSettings,
   SKILL_IMPORT_MAX_SKILLS_SETTING_KEY,
-  updateHermesArchiveSettings,
   updateMcpStartupTimeoutSettings,
   updateRemoteMcpPrivateHostsSettings,
   updateSkillImportSettings,
@@ -98,51 +91,6 @@ describe("system settings storage", () => {
       expect(mocks.upsert).not.toHaveBeenCalled();
     },
   );
-  it("uses the safe archive default until the generic setting row exists", async () => {
-    mocks.findUnique.mockResolvedValue(null);
-
-    await expect(getHermesArchiveSettings()).resolves.toEqual({
-      hermesArchiveMaxUploadMiB: DEFAULT_HERMES_ARCHIVE_MAX_UPLOAD_MIB,
-    });
-    expect(mocks.findUnique).toHaveBeenCalledWith({
-      where: { key: HERMES_ARCHIVE_MAX_UPLOAD_MIB_SETTING_KEY },
-      select: { value: true },
-    });
-  });
-
-  it("writes a key/value setting and never expands a stale value past the hard cap", async () => {
-    mocks.upsert.mockResolvedValue(undefined);
-
-    await expect(
-      updateHermesArchiveSettings(MAX_HERMES_ARCHIVE_MAX_UPLOAD_MIB + 1),
-    ).resolves.toEqual({
-      hermesArchiveMaxUploadMiB: MAX_HERMES_ARCHIVE_MAX_UPLOAD_MIB,
-    });
-    expect(mocks.upsert).toHaveBeenCalledWith({
-      where: { key: HERMES_ARCHIVE_MAX_UPLOAD_MIB_SETTING_KEY },
-      create: {
-        key: HERMES_ARCHIVE_MAX_UPLOAD_MIB_SETTING_KEY,
-        value: String(MAX_HERMES_ARCHIVE_MAX_UPLOAD_MIB),
-      },
-      update: { value: String(MAX_HERMES_ARCHIVE_MAX_UPLOAD_MIB) },
-    });
-    expect(mocks.auditCreate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({
-          action: "setting.changed",
-          actorId: "system",
-        }),
-      }),
-    );
-  });
-
-  it("falls back to the safe default while the shared settings table is unavailable", async () => {
-    mocks.findUnique.mockRejectedValue(new Error("relation does not exist"));
-
-    await expect(getHermesArchiveSettings()).resolves.toEqual({
-      hermesArchiveMaxUploadMiB: DEFAULT_HERMES_ARCHIVE_MAX_UPLOAD_MIB,
-    });
-  });
 
   it("uses the default skill import limit until a valid administrator override exists", async () => {
     mocks.findUnique.mockResolvedValue(null);

@@ -36,7 +36,7 @@ beforeAll(async () => {
       workspaceId,
       name: "Historical",
       slug: `historical-${suffix}`,
-      runtimeKind: "hermes",
+      runtimeKind: "claude-code",
     },
   });
   const endpoint = await db.agentEndpoint.create({
@@ -54,7 +54,7 @@ beforeAll(async () => {
       endpointId: endpoint.id,
       version: 1,
       systemPrompt: "Historical",
-      runtimeImage: "nousresearch/hermes-agent:v2026.8.3",
+      runtimeImage: "historical-claude-code:retired",
       toolPolicy: {},
     },
   });

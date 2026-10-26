@@ -39,7 +39,7 @@ let endpointId: string, publicId: string, clientId: string, token: string;
 let historicalGrant: A2AGrant;
 let retainedTaskId: string;
 const retainedCallerInput = "Retained caller input";
-let previousSetting: string | null;
+let previousSetting: string | null | undefined;
 const requestIds: string[] = [];
 beforeAll(async () => {
   userId = (
@@ -88,7 +88,7 @@ beforeAll(async () => {
         workspaceId,
         slug: "fixture",
         name: "Logging fixture",
-        runtimeKind: "hermes",
+        runtimeKind: "claude-code",
       },
     })
   ).id;
@@ -163,7 +163,7 @@ beforeAll(async () => {
 afterAll(async () => {
   if (previousSetting === null)
     await db.systemSetting.deleteMany({ where: { key: LOG_SETTINGS_KEY } });
-  else
+  else if (previousSetting !== undefined)
     await db.systemSetting.upsert({
       where: { key: LOG_SETTINGS_KEY },
       create: { key: LOG_SETTINGS_KEY, value: previousSetting },

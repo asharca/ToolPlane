@@ -16,7 +16,7 @@ async function registerNodeOwned() {
   const g = globalThis as unknown as {
     __toolplaneStopTimers?: () => void;
     __mcpReconciled?: boolean;
-    __agentApiIdleMaintenanceTimer?: ReturnType<typeof setInterval>;
+    __agentConversationMaintenanceTimer?: NodeJS.Timeout;
     __logMaintenanceTimer?: ReturnType<typeof setInterval>;
     __piPackageSourceMaintenanceTimer?: NodeJS.Timeout;
   };
@@ -25,7 +25,7 @@ async function registerNodeOwned() {
   g.__toolplaneStopTimers = () => {
     for (const timer of [
       g.__logMaintenanceTimer,
-      g.__agentApiIdleMaintenanceTimer,
+      g.__agentConversationMaintenanceTimer,
       g.__piPackageSourceMaintenanceTimer,
     ]) {
       if (timer) clearInterval(timer);
@@ -121,8 +121,7 @@ async function registerNodeOwned() {
       if (Object.values(copies).some((count) => count > 0)) {
         systemLog(
           "warn",
-          `[mcp] cleaned ${copies.helpersRemoved} stale volume helper(s) and ` +
-            `${copies.hermesArchiveHelpersRemoved} stale Hermes import helper(s); ` +
+          `[mcp] cleaned ${copies.helpersRemoved} stale volume helper(s); ` +
             `marked ${copies.copiesInterrupted} clone(s), ${copies.restoresInterrupted} restore(s), ` +
             `${copies.upgradesInterrupted} image upgrade(s), and ${copies.snapshotsInterrupted} snapshot(s) as interrupted`,
         );
@@ -165,10 +164,6 @@ async function registerNodeOwned() {
     await ensureConnectorBroker();
     const { ensureSandboxNetwork } = await import("@/lib/process/supervisor");
     await ensureSandboxNetwork();
-    const { cleanupHermesArchiveStaging } = await import(
-      "@/lib/agents/hermes/archive"
-    );
-    await cleanupHermesArchiveStaging();
     await reconcileDeploymentConfigHelpers();
     await reconcileSandboxCopies();
     const { reconcileDeployments } = await import("@/lib/process/reconcile");
@@ -196,25 +191,11 @@ async function registerNodeOwned() {
     systemLog("error", "[a2a] startup recovery failed");
   }
 
-  if (!g.__agentApiIdleMaintenanceTimer) {
+  if (!g.__agentConversationMaintenanceTimer) {
     let idleRunning = false;
     const stopIdleRuntimes = async () => {
       if (idleRunning || !runtimeCanOperate()) return;
       idleRunning = true;
-      try {
-        const { runAgentApiIdleRuntimeMaintenance } = await import(
-          "@/lib/agents/public-api/maintenance"
-        );
-        const stopped = await runAgentApiIdleRuntimeMaintenance();
-        if (stopped > 0) {
-          systemLog(
-            "info",
-            `[agent-api] stopped ${stopped} idle public runtime(s)`,
-          );
-        }
-      } catch (error) {
-        systemLog("error", "[agent-api] idle runtime cleanup failed", error);
-      }
       try {
         await stopIdleAgentConversationSandboxes();
       } catch (error) {
@@ -231,10 +212,10 @@ async function registerNodeOwned() {
       void stopIdleRuntimes();
     }, 60_000);
     firstIdleStop.unref?.();
-    g.__agentApiIdleMaintenanceTimer = setInterval(() => {
+    g.__agentConversationMaintenanceTimer = setInterval(() => {
       void stopIdleRuntimes();
     }, 60_000);
-    g.__agentApiIdleMaintenanceTimer.unref?.();
+    g.__agentConversationMaintenanceTimer.unref?.();
   }
   if (failed)
     throw new Error(

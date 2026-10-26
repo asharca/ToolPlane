@@ -126,8 +126,6 @@ describe("WorkSession coordinator", () => {
       runtimeKind: "pi-sdk",
       systemPrompt: null,
       maxSteps: 8,
-      modelProviders: [],
-      runtime: null,
       servers: [],
       skills: [],
       toolkits: [],
@@ -219,44 +217,6 @@ describe("WorkSession coordinator", () => {
       expect(mocks.conversationCreate).not.toHaveBeenCalled();
     },
   );
-
-  it("rejects a sandbox that is not the Hermes Agent runtime sandbox", async () => {
-    mocks.agentFindFirst.mockResolvedValueOnce({
-      id: "agent-1",
-      providerId: null,
-      model: null,
-      runtimeKind: "hermes",
-      systemPrompt: null,
-      maxSteps: 8,
-      modelProviders: [{ providerId: "provider-1" }],
-      runtime: {
-        id: "runtime-1",
-        kind: "hermes",
-        sandboxId: "sandbox-hermes",
-        sandbox: {
-          id: "sandbox-hermes",
-          workspaceId: "workspace-1",
-          kind: "hermes",
-          network: "isolated",
-        },
-      },
-      servers: [],
-      skills: [],
-      toolkits: [],
-      knowledgeBases: [],
-      sandboxes: [],
-    });
-
-    await expect(
-      createWorkSession({
-        workspaceId: "workspace-1",
-        agentId: "agent-1",
-        sandboxId: "sandbox-other",
-        task: "Build it",
-      }),
-    ).resolves.toBeNull();
-    expect(mocks.conversationCreate).not.toHaveBeenCalled();
-  });
 
   it("normalizes sandbox working directories without allowing traversal", () => {
     expect(normalizeWorkDirectory("/workspace/projects/toolplane")).toBe(
@@ -710,7 +670,7 @@ describe("WorkSession coordinator", () => {
   });
   it.each([
     "wrong-sandbox",
-    "shared-runtime",
+    "read-only",
     "wrong-kind",
     "offline",
     "multiple",
@@ -721,10 +681,9 @@ describe("WorkSession coordinator", () => {
       const agent = await mocks.agentFindFirst();
       if (condition === "wrong-sandbox")
         agent.sandboxes[0].sandboxId = "different";
-      if (condition === "shared-runtime")
-        agent.runtime = { sandboxId: "sandbox-1" };
-      if (condition === "wrong-kind")
-        agent.sandboxes[0].sandbox.kind = "hermes";
+      if (condition === "read-only")
+        agent.sandboxes[0].sandbox.config = { readOnly: true };
+      if (condition === "wrong-kind") agent.sandboxes[0].sandbox.kind = "host";
       if (condition === "offline") agent.sandboxes[0].sandbox.network = "none";
       if (condition === "multiple")
         agent.sandboxes.push({ ...agent.sandboxes[0], sandboxId: "second" });

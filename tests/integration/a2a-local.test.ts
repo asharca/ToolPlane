@@ -43,6 +43,7 @@ import type { LocalA2AGrant } from "@/lib/a2a/principal";
 import {
   submitTask,
   claimTask as claimStoredTask,
+  projectPiHarnessProgress,
   finishTask,
   getTask,
   getTaskRow,
@@ -55,6 +56,7 @@ import {
   requestLocalInput,
   reconcileLocalWaits,
 } from "@/lib/a2a/local-continuation";
+import { refreshTaskStorage } from "@/lib/a2a/quotas";
 import { textArtifact } from "@/lib/a2a/model";
 import {
   executeA2ATask as executeStoredTask,
@@ -311,6 +313,74 @@ afterAll(async () => {
 });
 
 describe("local Agent authorization and native continuations", () => {
+  it("rejects a pinned local grant after its live provider is removed", async () => {
+    await db.agent.update({
+      where: { id: agents[0] },
+      data: { providerId: null },
+    });
+    try {
+      await expect(assertLocalGrant(grant)).rejects.toBeInstanceOf(
+        TaskNotFoundError,
+      );
+    } finally {
+      await db.agent.update({
+        where: { id: agents[0] },
+        data: { providerId: provider },
+      });
+    }
+  });
+
+  it("projects bound native progress without spending journal sequence or event storage", async () => {
+    const running = await root();
+    const operationId = randomUUID();
+    const leaseToken = assertDefined(running.leaseToken);
+    await db.a2ATask.update({
+      where: { id: running.id },
+      data: {
+        executionBackend: "pi-harness",
+        nativeOperationId: operationId,
+        sequence: 129,
+      },
+    });
+    const eventCount = await db.a2AEvent.count({
+      where: { taskId: running.id },
+    });
+    await db.$transaction((tx) => refreshTaskStorage(tx, running.id));
+    await projectPiHarnessProgress(
+      running.id,
+      leaseToken,
+      operationId,
+      "Still working",
+    );
+    const projected = await getTaskRow(grant, running.id);
+    expect(projected.sequence).toBe(129);
+    expect(projected.storageBytes).toBeGreaterThan(0);
+    expect(
+      Task.fromJSON(projected.snapshot).status?.message?.parts[0]?.content,
+    ).toEqual({ $case: "text", value: "Still working" });
+    expect(await db.a2AEvent.count({ where: { taskId: running.id } })).toBe(
+      eventCount,
+    );
+    for (const [token, operation] of [
+      ["stale-lease", operationId],
+      [leaseToken, randomUUID()],
+    ] as const) {
+      await projectPiHarnessProgress(
+        running.id,
+        token,
+        operation,
+        "Stale update",
+      );
+      const unchanged = await getTaskRow(grant, running.id);
+      expect(unchanged.snapshot).toEqual(projected.snapshot);
+      expect(unchanged.sequence).toBe(129);
+      expect(unchanged.storageBytes).toBe(projected.storageBytes);
+    }
+    expect(await db.a2AEvent.count({ where: { taskId: running.id } })).toBe(
+      eventCount,
+    );
+  });
+
   it("admits configured execution capacity plus a bounded queue and frees canceled slots", async () => {
     const key = "agents.concurrency";
     const previous = await db.systemSetting.findUnique({ where: { key } });

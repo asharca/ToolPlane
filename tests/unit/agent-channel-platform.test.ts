@@ -31,7 +31,7 @@ describe("agent channel platform primitives", () => {
     });
   });
 
-  it("uses Cherry native Node adapters without Hermes imports or process configuration", () => {
+  it("uses Cherry native Node adapters without process configuration", () => {
     expect(hostedRunnerSpec("feishu")?.className).toBe("FeishuAdapter");
     expect(hostedRunnerSpec("qqbot")?.className).toBe("QqAdapter");
     expect(hostedRunnerSpec("telegram")).toMatchObject({

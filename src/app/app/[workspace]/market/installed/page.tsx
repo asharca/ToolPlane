@@ -307,7 +307,7 @@ export default async function InstalledMarketPage({
       kind: "agent",
       source: "workspace",
       sourceDetail: agent.runtimeKind,
-      status: agent.runtime?.status ?? "ready",
+      status: "ready",
       href: `${base}/agents/${encodeURIComponent(agent.id)}`,
       updatedAt: agent.updatedAt,
     });

@@ -91,9 +91,6 @@ function serializeWorkSession(session: WorkSummary | WorkDetail) {
     conversationId: session.conversationId,
     reasoningEffort:
       normalizeReasoningEffort(detail?.conversation.reasoningEffort) ?? null,
-    hermesProfile: detail?.conversation.hermesProfile ?? null,
-    hermesProvider: detail?.conversation.hermesProvider ?? null,
-    hermesModel: detail?.conversation.hermesModel ?? null,
     workingDirectory: workSessionWorkingDirectory(session.runtimeSnapshot),
     sandbox: session.sandbox
       ? {
@@ -260,9 +257,6 @@ export default async function WorkspaceWorkPage({
                 reasoningEffort: normalizeReasoningEffort(
                   conversation.reasoningEffort,
                 ),
-                hermesProfile: conversation.hermesProfile,
-                hermesProvider: conversation.hermesProvider,
-                hermesModel: conversation.hermesModel,
                 messages: serializeMessages(conversation.messages),
               }
             : null
@@ -278,7 +272,6 @@ export default async function WorkspaceWorkPage({
         agents={agents.map((agent) => {
           const supportsWork =
             isWorkRuntimeKind(agent.runtimeKind) && !agent.retiredAt;
-          const providerIds = agent.providerId ? [agent.providerId] : [];
           const modelProvider = agent.providerId
             ? providersById.get(agent.providerId)
             : null;
@@ -298,7 +291,6 @@ export default async function WorkspaceWorkPage({
             runtimeKind: agent.runtimeKind,
             currentRevisionVersion: agent.currentRevisionVersion,
             providerId: agent.providerId,
-            providerIds,
             providerLabel: agent.provider?.name ?? "",
             model: agent.model,
             contextWindow: modelContext?.maxTokens ?? null,
@@ -329,7 +321,7 @@ export default async function WorkspaceWorkPage({
         sessions={sessions.map((session) =>
           serializeWorkSession({
             ...session,
-            sandbox: session.runtimeKind === "hermes" ? session.sandbox : null,
+            sandbox: null,
           }),
         )}
       />

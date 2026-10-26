@@ -15,7 +15,6 @@ describe("AgentMarketSetupBanner", () => {
             { deploymentId: "deployment/1", variable: "FIRST_API_KEY" },
             { deploymentId: "deployment-2", variable: "SECOND_API_KEY" },
           ],
-          runtimes: [{ agentId: "runtime/agent", kind: "hermes" }],
           legacyToolkitConversions: [
             {
               toolkitKey: "toolkit-1",
@@ -43,10 +42,6 @@ describe("AgentMarketSetupBanner", () => {
     expect(mcpLinks[1]).toHaveAttribute(
       "href",
       "/app/acme%20team/mcp/deployment-2",
-    );
-    expect(screen.getByRole("link", { name: "New agent" })).toHaveAttribute(
-      "href",
-      "/app/acme%20team/agents?create=1",
     );
     expect(
       screen.queryByRole("link", { name: /Configure runtime/i }),

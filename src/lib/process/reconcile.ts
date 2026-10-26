@@ -12,7 +12,7 @@ type RunningDeployment = DeploymentForSpawn & {
   id: string;
   workspaceId?: string;
   sandbox?: {
-    agentRuntime?: { kind: string } | null;
+    config?: unknown;
   } | null;
 };
 
@@ -37,7 +37,7 @@ const defaultDeps: ReconcileDeps = {
         server: { select: { name: true } },
         sandbox: {
           select: {
-            agentRuntime: { select: { kind: true } },
+            config: true,
           },
         },
       },
@@ -45,7 +45,7 @@ const defaultDeps: ReconcileDeps = {
     // Bound legacy Agent runtimes are read-only history, never restart targets.
     // Pi session execution and lazy public endpoints own their own startup.
     return deployments.filter(
-      (deployment) => !deployment.sandbox?.agentRuntime,
+      (deployment) => !isReadOnlySandbox(deployment),
     ) as RunningDeployment[];
   },
   start: startProcess,
@@ -62,6 +62,17 @@ const defaultDeps: ReconcileDeps = {
   },
 };
 
+function isReadOnlySandbox(deployment: RunningDeployment): boolean {
+  const config = deployment.sandbox?.config;
+  return (
+    !!config &&
+    typeof config === "object" &&
+    !Array.isArray(config) &&
+    "readOnly" in config &&
+    config.readOnly === true
+  );
+}
+
 // On server startup the in-memory process table is empty, but the DB may still
 // mark deployments as running from before the restart. Re-spawn each so the
 // live state matches what the DB (and the UI) claims. startProcess is
@@ -73,7 +84,7 @@ export async function reconcileDeployments(
   const deployments = await deps.loadRunning();
   let started = 0;
   for (const d of deployments) {
-    if (d.sandbox?.agentRuntime) continue;
+    if (isReadOnlySandbox(d)) continue;
     try {
       const spec = deps.resolve ? await deps.resolve(d) : resolveSpawnSpec(d);
       await deps.start(d.id, spec, {

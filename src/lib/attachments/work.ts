@@ -71,7 +71,7 @@ export async function prepareWorkAttachments(input: {
       select: {
         id: true,
         kind: true,
-        agentRuntime: { select: { agentId: true } },
+        config: true,
         deployment: { select: { installCfg: true } },
       },
     }),
@@ -92,7 +92,13 @@ export async function prepareWorkAttachments(input: {
     }),
   ]);
   if (!sandbox) throw new WorkAttachmentError(404, "Sandbox not found.");
-  if (sandbox.kind === "hermes" || sandbox.agentRuntime)
+  const sandboxConfig = sandbox.config;
+  if (
+    sandboxConfig &&
+    typeof sandboxConfig === "object" &&
+    !Array.isArray(sandboxConfig) &&
+    sandboxConfig.readOnly === true
+  )
     throw new WorkAttachmentError(
       409,
       "Historical Agent workspaces are read-only.",

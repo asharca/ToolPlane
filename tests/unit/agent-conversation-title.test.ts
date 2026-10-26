@@ -92,7 +92,6 @@ beforeEach(() => {
         titleModelProviderId: null,
         titleModel: null,
       },
-      modelProviders: [],
     },
   });
   mocks.messageFindFirst.mockResolvedValue({

@@ -152,7 +152,6 @@ export default async function AgentDetailPage({
           systemPrompt: agent.systemPrompt ?? "",
           disabledBuiltinTools: agent.disabledBuiltinTools,
           providerId: agent.providerId,
-          providerIds: agent.modelProviders.map((link) => link.providerId),
           model: agent.model,
           maxSteps: agent.maxSteps,
           providers: providers.map((provider) => ({
@@ -236,16 +235,6 @@ export default async function AgentDetailPage({
               label: child.name,
               checked: selectedSubAgents.has(child.id),
             })),
-          runtime: agent.runtime
-            ? {
-                kind: agent.runtime.kind,
-                image: agent.runtime.image,
-                status: agent.runtime.status,
-                lastError: agent.runtime.lastError,
-                lastSyncedAt: agent.runtime.lastSyncedAt?.toISOString() ?? null,
-                sandboxId: agent.runtime.sandboxId,
-              }
-            : null,
         }}
       />
     </SettingsModal>

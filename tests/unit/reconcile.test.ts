@@ -96,19 +96,19 @@ describe("reconcileDeployments", () => {
     expect(start).toHaveBeenCalledTimes(2);
   });
 
-  it("never resolves or starts a bound retired Hermes runtime during recovery", async () => {
+  it("never resolves or starts a read-only historical workspace during recovery", async () => {
     const start = vi.fn<ReconcileDeps["start"]>(async () => {});
     const n = await reconcileDeployments({
       loadRunning: async () => [
         {
-          id: "hermes-deployment",
+          id: "historical-deployment",
           serverId: null,
           server: null,
-          name: "Hermes",
+          name: "Historical workspace",
           source: "sandbox",
           sourceRef: null,
-          installCfg: { kind: "hermes" },
-          sandbox: { agentRuntime: { kind: "hermes" } },
+          installCfg: { kind: "docker", readOnly: true },
+          sandbox: { config: { readOnly: true } },
         },
       ],
       start,
@@ -213,13 +213,13 @@ it("does not route sandbox recovery through the MCP credential resolver", async 
   );
 });
 
-it("does not recover an unbound retired Hermes recipe", async () => {
+it("does not recover a read-only historical workspace recipe", async () => {
   mocks.load.mockResolvedValue([
     {
       id: "retired",
       workspaceId: "owner",
       source: "sandbox",
-      installCfg: { kind: "hermes" },
+      installCfg: { kind: "docker", readOnly: true },
     },
   ]);
   expect(await reconcileDeployments()).toBe(0);

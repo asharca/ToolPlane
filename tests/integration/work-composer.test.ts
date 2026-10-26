@@ -134,7 +134,6 @@ beforeAll(async () => {
           runtimeKind: "pi-sdk",
           providerId: provider.id,
           model: "fixture",
-          modelProviders: { create: { providerId: provider.id } },
         },
       })
     ).id;

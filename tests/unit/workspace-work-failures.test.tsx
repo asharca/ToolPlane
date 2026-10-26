@@ -646,7 +646,6 @@ describe("Work attachment transaction failures", () => {
   it.each([
     ["claude-code", "Claude Code"],
     ["dsh", "DeepSeek Harness"],
-    ["hermes-rpc", "Hermes RPC"],
   ])(
     "explains cancelled %s runtime work without reporting success",
     (runtimeKind, label) => {
