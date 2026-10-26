@@ -24,8 +24,8 @@ Markdown 原文件是唯一内容来源：直接修改 `docs/**/*.md`、仓库�
 |---|---|
 | [系统架构](./ARCHITECTURE.md) · [English](./ARCHITECTURE.en.md) | 技术栈、模块与数据模型 |
 | [Pi / Claude Code / DSH](./AGENT_RUNTIMES.zh-CN.md) · [English](./AGENT_RUNTIMES.md) | 执行链路、原生会话与安全边界 |
-| [Hermes 运行时](./HERMES_AGENT_RUNTIME.md) · [English](./HERMES_AGENT_RUNTIME.en.md) | 配置、生命周期与凭据隔离 |
-| [Hermes RPC](./HERMES_RPC_RUNTIME.zh-CN.md) · [English](./HERMES_RPC_RUNTIME.md) | 在所选 Docker 沙箱中运行原生 Hermes：配置、会话、边界与测试 |
+| [Hermes 运行时](./HERMES_AGENT_RUNTIME.md) · [English](./HERMES_AGENT_RUNTIME.en.md) | 已停用运行时；历史存储只读保留 |
+| [Hermes RPC](./HERMES_RPC_RUNTIME.zh-CN.md) · [English](./HERMES_RPC_RUNTIME.md) | 已停用运行时；历史会话只读保留 |
 
 ## 使用与集成
 
@@ -33,6 +33,8 @@ Markdown 原文件是唯一内容来源：直接修改 `docs/**/*.md`、仓库�
 |---|---|
 | [Toolkit 同步](./TOOLKIT_SYNC.md) · [English](./TOOLKIT_SYNC.en.md) | 向 AI 客户端同步 MCP 与 Skill |
 | [资源中心](./RESOURCE_CENTER.md) · [English](./RESOURCE_CENTER.en.md) | 在工作区发现、导入、安装、更新与发布资源 |
+| [外部包标准](./TOOLPLANE_PACKAGE_STANDARD.zh-CN.md) · [English](./TOOLPLANE_PACKAGE_STANDARD.md) | 外部包契约、来源、清单与审核 |
+| [包迁移](./TOOLPLANE_PACKAGE_MIGRATION.zh-CN.md) · [English](./TOOLPLANE_PACKAGE_MIGRATION.md) | 本地资源迁出与包导入清单 |
 | [远程 MCP HTTP](./REMOTE_MCP_HTTP.zh-CN.md) · [English](./REMOTE_MCP_HTTP.md) | HTTP/HTTPS 端点、明文传输风险与保留的安全边界 |
 | [沙箱与连接器](./SANDBOXES.zh-CN.md) · [English](./SANDBOXES.md) | Docker、设备连接、终端与屏幕 |
 | [Agent Control MCP](./AGENT_CONTROL_MCP.zh-CN.md) · [English](./AGENT_CONTROL_MCP.md) | 从 MCP 客户端创建和调用 Agent |

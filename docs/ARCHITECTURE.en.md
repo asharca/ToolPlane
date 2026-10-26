@@ -297,4 +297,4 @@ The public Agent API supports one runtime-owning application process. A process-
 
 Logging is bounded best-effort diagnostics, not a lossless external queue. Diagnostic capture may retain sanitized user text; redaction is not anonymization. Public Agent API and Agent Control MCP payload policies differ; consult their respective topic documents.
 
-The independent [Hermes RPC sandbox runtime](./HERMES_RPC_RUNTIME.md) uses platform single-model/resource bindings; managed Hermes is unchanged.
+Retired Hermes RPC and managed Hermes runtimes keep only historical, read-only records; neither is an execution path.

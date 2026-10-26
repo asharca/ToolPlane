@@ -1,5 +1,7 @@
 # ToolPlane 外部包标准（v1）
 
+> **English**：[TOOLPLANE_PACKAGE_STANDARD.md](./TOOLPLANE_PACKAGE_STANDARD.md)
+
 状态：提案，供 ToolPlane 导入器和包作者共同实现。
 
 ## 1. 目标和边界

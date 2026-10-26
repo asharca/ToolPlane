@@ -1,5 +1,7 @@
 # ToolPlane 包导入改造清单
 
+> **配套**：[包迁移清单](./TOOLPLANE_PACKAGE_MIGRATION.zh-CN.md)
+
 本文与 [`TOOLPLANE_PACKAGE_STANDARD.md`](./TOOLPLANE_PACKAGE_STANDARD.md) 配套，给实现者列出需要删除、保留和新增的代码边界。
 
 ## 删除或改为不可达

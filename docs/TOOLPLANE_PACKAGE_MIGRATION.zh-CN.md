@@ -1,5 +1,7 @@
 # ToolPlane 包迁移清单
 
+> **配套**：[包导入改造清单](./TOOLPLANE_PACKAGE_MIGRATION.md)
+
 将现有本地能力转换为外部包时，请按以下清单执行：
 
 1. 将实现放入 GitHub 仓库，或按标准目录制作 ZIP。

@@ -287,4 +287,4 @@ Agent 公共 API 只支持一个拥有 runtime 的应用进程；进程内 super
 
 日志是有界、尽力而为的诊断存储，不是无损外部队列。诊断抓取可能保存经过脱敏的用户文本；脱敏不等于匿名化。公共 Agent API 与 Agent Control MCP 的载荷策略不同，分别以对应专题说明为准。
 
-独立的 [Hermes RPC 沙箱运行时](./HERMES_RPC_RUNTIME.zh-CN.md)使用平台单模型与资源绑定，原托管 Hermes 保持不变。
+已停用的 Hermes RPC 与托管 Hermes 运行时只保留历史只读记录，不再作为执行路径。

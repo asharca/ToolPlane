@@ -1,5 +1,7 @@
 # ToolPlane Package Standard
 
+> **中文**：[TOOLPLANE_PACKAGE_STANDARD.zh-CN.md](./TOOLPLANE_PACKAGE_STANDARD.zh-CN.md)
+
 This standard defines the only external package contract accepted by ToolPlane Resource Center.
 
 ## Import sources

@@ -24,8 +24,8 @@ The official Fumadocs MDX Next.js plugin compiles the allowlisted `.md` files as
 |---|---|
 | [System architecture](./ARCHITECTURE.en.md) · [中文](./ARCHITECTURE.md) | Stack, modules, and data models |
 | [Pi / Claude Code / DSH](./AGENT_RUNTIMES.md) · [中文](./AGENT_RUNTIMES.zh-CN.md) | Execution paths, native sessions, and security boundaries |
-| [Hermes runtime](./HERMES_AGENT_RUNTIME.en.md) · [中文](./HERMES_AGENT_RUNTIME.md) | Configuration, lifecycle, and credential isolation |
-| [Hermes RPC](./HERMES_RPC_RUNTIME.md) · [中文](./HERMES_RPC_RUNTIME.zh-CN.md) | Independent native Hermes in a selected Docker sandbox: configuration, sessions, isolation and tests |
+| [Hermes runtime](./HERMES_AGENT_RUNTIME.en.md) · [中文](./HERMES_AGENT_RUNTIME.md) | Retired runtime; historical storage stays read-only |
+| [Hermes RPC](./HERMES_RPC_RUNTIME.md) · [中文](./HERMES_RPC_RUNTIME.zh-CN.md) | Retired runtime; historical sessions stay read-only |
 
 ## Usage and integrations
 
@@ -33,6 +33,8 @@ The official Fumadocs MDX Next.js plugin compiles the allowlisted `.md` files as
 |---|---|
 | [Toolkit sync](./TOOLKIT_SYNC.en.md) · [中文](./TOOLKIT_SYNC.md) | Syncing MCP and Skills to AI clients |
 | [Resource Center](./RESOURCE_CENTER.en.md) · [中文](./RESOURCE_CENTER.md) | Discover, import, install, update, and publish workspace resources |
+| [Package standard](./TOOLPLANE_PACKAGE_STANDARD.md) · [中文](./TOOLPLANE_PACKAGE_STANDARD.zh-CN.md) | External package contract, sources, manifests, and review |
+| [Package migration](./TOOLPLANE_PACKAGE_MIGRATION.md) · [中文](./TOOLPLANE_PACKAGE_MIGRATION.zh-CN.md) | Moving local resources to external packages, and the import checklist |
 | [Remote MCP HTTP](./REMOTE_MCP_HTTP.md) · [中文](./REMOTE_MCP_HTTP.zh-CN.md) | HTTP/HTTPS endpoints, plaintext risks, and preserved security boundaries |
 | [Sandboxes and connectors](./SANDBOXES.md) · [中文](./SANDBOXES.zh-CN.md) | Docker, device connections, terminals, and screens |
 | [Agent Control MCP](./AGENT_CONTROL_MCP.md) · [中文](./AGENT_CONTROL_MCP.zh-CN.md) | Creating and invoking Agents from MCP clients |
