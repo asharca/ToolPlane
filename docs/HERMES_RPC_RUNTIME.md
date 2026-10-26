@@ -18,7 +18,7 @@ The sandbox must belong to the same workspace, be exclusive to one Agent, have n
 | Tools and Skills | Platform selection, Toolkit merging, native memory and Skill tools | Existing projection and native capabilities |
 | Entry points | Chat, Work, message service, one-shot sub-Agent delegation | Unchanged |
 | Native commands | `/compact [focus]` | Unchanged |
-| Dashboard, archive import, dedicated attachments, public Endpoint | Not exposed | Unchanged |
+| Dashboard, dedicated attachments, public Endpoint | Not exposed | Unchanged |
 | Agent Control MCP creation | Not exposed | Existing `pi/hermes` subset |
 
 Native tools and Skills can read ordinary sandbox files; that does not enable the managed-Hermes attachment-upload API. Interactive approvals and clarification are not yet bridged: such requests fail closed and end the turn. Earlier tool side effects are not rolled back.

@@ -12,7 +12,6 @@ const tasks = vi.hoisted(() => ({
   connector: vi.fn(),
   dashboard: vi.fn(),
   network: vi.fn(),
-  archives: vi.fn(),
   helpers: vi.fn(),
   copies: vi.fn(),
   deployments: vi.fn(),
@@ -50,9 +49,6 @@ vi.mock("@/lib/agents/hermes/dashboard-broker", () => ({
 }));
 vi.mock("@/lib/process/supervisor", () => ({
   ensureSandboxNetwork: tasks.network,
-}));
-vi.mock("@/lib/agents/hermes/archive", () => ({
-  cleanupHermesArchiveStaging: tasks.archives,
 }));
 vi.mock("@/lib/process/deployment-config-volume", () => ({
   removeStaleDeploymentConfigMaterializerHelpers: tasks.helpers,
@@ -185,7 +181,6 @@ describe("owned runtime recovery and maintenance", () => {
     tasks.helpers.mockResolvedValue(3);
     tasks.copies.mockResolvedValue({
       helpersRemoved: 1,
-      hermesArchiveHelpersRemoved: 2,
       copiesInterrupted: 3,
       restoresInterrupted: 4,
       upgradesInterrupted: 5,

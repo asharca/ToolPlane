@@ -42,15 +42,6 @@ services:
     stop_grace_period: 60s
     image: ${TOOLPLANE_IMAGE:-ghcr.io/asharca/toolplane:latest}
     platform: ${TOOLPLANE_PLATFORM:-linux/amd64}
-    # Keep the archive lease owner stable across an app-container recreate so
-    # PID/start-identity recovery can reclaim a crashed import immediately.
-    hostname: toolplane-app
-    volumes:
-      # Raw Hermes archive uploads are streamed here before inspection. Keep
-      # this source on a disk sized for the ZIP, extracted tree, and Docker
-      # copy phase. Set TOOLPLANE_HERMES_ARCHIVE_VOLUME to an absolute host
-      # path to use a dedicated bind mount instead of the named-volume default.
-      - ${TOOLPLANE_HERMES_ARCHIVE_VOLUME:-toolplane_imports}:/var/lib/toolplane/imports
     expose:
       - '3000'
       - '9321'
@@ -110,7 +101,6 @@ services:
       # agents may still choose a pinned image in the dashboard.
       TOOLPLANE_HERMES_IMAGE: ${TOOLPLANE_HERMES_IMAGE:-}
       TOOLPLANE_MAX_ATTACHMENT_BYTES: ${TOOLPLANE_MAX_ATTACHMENT_BYTES:-1000000000}
-      TOOLPLANE_HERMES_ARCHIVE_TMP_DIR: /var/lib/toolplane/imports
       TOOLPLANE_HTTP_REQUEST_TIMEOUT_MS: ${TOOLPLANE_HTTP_REQUEST_TIMEOUT_MS:-14400000}
       # Git/PyPI/GitHub MCPs may need a quiet first install. Values are in ms;
       # admins can override them in Settings for subsequent MCP starts.

@@ -1,4 +1,9 @@
 export const HERMES_RUNTIME_KIND = "hermes";
+
+// Hermes volumes can hold gigabytes of user data, so copying or removing one
+// legitimately takes far longer than a normal Docker command. The generous
+// budget applies only to these sequential, non-concurrent operations.
+export const HERMES_SANDBOX_OPERATION_TIMEOUT_MS = 4 * 60 * 60 * 1000;
 export const HERMES_IMAGE_REPOSITORY = "nousresearch/hermes-agent";
 export const DEFAULT_HERMES_IMAGE = `${HERMES_IMAGE_REPOSITORY}:latest`;
 

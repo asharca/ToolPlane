@@ -376,20 +376,6 @@ export async function removeStaleDockerVolumeCopyHelpers(
   );
 }
 
-// Archive imports use a named, stopped init container rather than `docker run
-// --rm`. If the app dies during a 10 GiB copy, recover that labelled helper at
-// startup before the deployment is marked copy_failed.
-export async function removeStaleHermesArchiveImportHelpers(
-  createdBefore = new Date(),
-  timeoutMs?: number,
-): Promise<number> {
-  return removeStaleDockerHelpers(
-    "label=toolplane.hermes-archive-import=true",
-    createdBefore,
-    timeoutMs,
-  );
-}
-
 export async function removeDockerVolume(volumeName: string): Promise<void> {
   if (!validVolumeName(volumeName)) return;
   await dockerBestEffort(["volume", "rm", "-f", volumeName]);

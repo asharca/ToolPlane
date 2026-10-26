@@ -9,14 +9,12 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/auth/admin", () => ({ requireAdmin: mocks.requireAdmin }));
+vi.mock("@/lib/admin/settings", () => ({}));
 vi.mock("@/lib/agents/attachment-limits", () => ({
   MIN_ADMIN_ATTACHMENT_MEGABYTES: 1,
   MAX_ADMIN_ATTACHMENT_MEGABYTES: 10_000,
   setAgentAttachmentLimitBytes: mocks.setLimit,
   resetAgentAttachmentLimit: mocks.resetLimit,
-}));
-vi.mock("@/lib/admin/settings", () => ({
-  updateHermesArchiveSettings: vi.fn(),
 }));
 vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidatePath }));
 vi.mock("next-intl/server", () => ({

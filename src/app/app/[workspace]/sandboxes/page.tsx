@@ -62,11 +62,6 @@ import {
 import { SubmitButton } from "@/components/dashboard/SubmitButton";
 import { ConfirmSubmitButton } from "@/components/dashboard/ConfirmSubmitButton";
 import { formatInTimeZone, resolveUserTimeZone } from "@/lib/timezone";
-import { getHermesArchiveSettings } from "@/lib/admin/settings";
-import {
-  HERMES_IMAGE_OPTIONS,
-  resolveHermesImage,
-} from "@/lib/agents/hermes/constants";
 
 export const dynamic = "force-dynamic";
 
@@ -195,12 +190,10 @@ export default async function SandboxesPage({
   const timeZone = resolveUserTimeZone(user);
   const ws = await getWorkspaceForUser(slug, user.id);
   if (!ws) redirect("/app");
-  const hermesImages = [resolveHermesImage(undefined), ...HERMES_IMAGE_OPTIONS];
 
-  const [sandboxes, rawManagedRuntimes, systemSettings] = await Promise.all([
+  const [sandboxes, rawManagedRuntimes] = await Promise.all([
     listSandboxes(ws.id),
     listManagedAgentRuntimes(ws.id),
-    getHermesArchiveSettings(),
   ]);
   const managedRuntimes = rawManagedRuntimes.map((runtime) => ({
     ...runtime,
@@ -331,13 +324,7 @@ export default async function SandboxesPage({
           actions={
             <div className="flex flex-wrap items-start gap-2">
               <SshSandboxCreate workspaceId={ws.id} />
-              <SandboxCreateForm
-                workspace={slug}
-                hermesArchiveMaxUploadMiB={
-                  systemSettings.hermesArchiveMaxUploadMiB
-                }
-                hermesImages={hermesImages}
-              />
+              <SandboxCreateForm workspace={slug} />
             </div>
           }
         >

@@ -40,23 +40,12 @@ Existing agents upgrade through **Settings → Hermes → Upgrade & restart**. T
 
 The chosen image is written back to `AgentRuntime`, the managed `Sandbox`, and `Deployment` so later syncs do not revert it. Messaging channels use separate Node adapters rather than Python channel adapters installed in the Hermes image.
 
-### Importing an Existing `.hermes` Home
+### Archive Imports Removed
 
-Upload a ZIP through **Sandboxes → New sandbox → Import .hermes archive**. It may contain a single `.hermes/` root or the home directory's contents directly. Import creates the same Agent/runtime/Sandbox chain, not a generic sandbox detached from an agent.
+ToolPlane no longer imports `.hermes` ZIP archives. `POST /api/v1/workspaces/:slug/sandboxes/hermes-import` now returns `410 Gone`, and the dashboard no longer offers **Import .hermes archive** or a configurable upload limit. Create a sandbox from an image or connect a machine instead.
 
-[`archive-limits.ts`](../src/lib/agents/hermes/archive-limits.ts) defines a default compressed limit of 48 MiB, configurable from 1 to 10,240 MiB. The unpacked-total cap defaults to 256 MiB and grows with a raised upload limit, up to 10 GiB. These are binary MiB/GiB units, unlike the decimal MB/GB used for ordinary attachments.
+Sandboxes imported before this change keep their private volumes and remain readable; only the upload and staging pipeline was removed. The retained `SystemSetting` row (`hermes.maxArchiveUploadMiB`) is inert and is not read or written anymore.
 
-The browser streams a raw request body into staging storage, without Server Actions, multipart parsing, or a whole-archive `arrayBuffer()`. Compose mounts `toolplane_imports` at `/var/lib/toolplane/imports` by default. Set `TOOLPLANE_HERMES_ARCHIVE_VOLUME=/srv/toolplane/imports` for a larger host directory and ensure the container's `node` user can write there.
-
-The ZIP, unpacked tree, initialization copy, and final volume can coexist; plan roughly 40 GiB of transient capacity for a 10 GiB import. The instance serializes archive imports, prechecks capacity, and cleans crash leftovers and expired-lease staging files. This lease is single-application-process crash recovery, not a distributed lock for sharing staging across active replicas.
-
-Archive checks cover paths, duplicate/Unicode conflicts, links/special files, encryption, permissions, entry counts, sizes, compression ratios, and inspection time. Relative links that stay under the home root may survive; links to absolute paths on the old host are dropped; other unsafe links are rejected. Additional limits include 200,000 entries, 1,024 links, and 4 MiB each for runtime-parsed `config.yaml` / `.env`, with a bounded exception for highly compressible cache files. The compressed-upload limit is not the only check.
-
-Reverse proxies must relax body and upload/read limits for `POST /api/v1/workspaces/:slug/sandboxes/hermes-import` and disable request buffering there. The production launcher's `TOOLPLANE_HTTP_REQUEST_TIMEOUT_MS` defaults to four hours, configurable no lower than one minute, for raw-body reception. The complete Route Handler budget is 50,400 seconds (fourteen hours), including inspection, copies, and synchronization. Keep suitable connection and rate limits on other routes. `pnpm dev` does not replace production-launcher validation for large imports.
-
-Uploads are single-request streams without resume. The page reuses an import ID: retrying after a lost response can return a completed result, while an unfinished previous import requires inspection or cleanup. ToolPlane's managed env-key manifest, `skills/toolplane-agent/`, and `skill-bundles/toolplane-agent.yaml` are removed and regenerated; existing sessions, memories, local Skills, and other native settings enter the private volume.
-
-Imported runtimes stay stopped and select no provider automatically. Imported plugins, hooks, and MCP configuration can run only after model configuration is confirmed and the runtime is explicitly started. Import only trusted archives: they can contain credentials, sessions, and executable configuration.
 
 ## 3. Configuration Projection
 

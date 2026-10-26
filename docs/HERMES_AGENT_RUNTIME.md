@@ -40,23 +40,12 @@ Agent
 
 镜像选择写回 `AgentRuntime`、受管 `Sandbox` 与 `Deployment`，避免后续同步回退。消息频道使用独立的 Node 适配器，不依赖在 Hermes 镜像中安装 Python 消息频道适配器。
 
-### 导入已有 `.hermes` 主目录
+### 归档导入已移除
 
-在 **Sandboxes → New sandbox → Import .hermes archive** 上传 ZIP。归档可以以单个 `.hermes/` 为根，也可以直接包含主目录内容。此流程建立上述 Agent/runtime/Sandbox 链路，不会创建脱离 Agent 的通用 Sandbox。
+ToolPlane 不再导入 `.hermes` ZIP 归档。`POST /api/v1/workspaces/:slug/sandboxes/hermes-import` 现在返回 `410 Gone`，控制台也不再提供 **Import .hermes archive** 入口或可配置的上传上限。请改为从镜像创建沙箱或连接本机。
 
-[`archive-limits.ts`](../src/lib/agents/hermes/archive-limits.ts) 定义：压缩包默认 48 MiB，管理员可配置 1–10,240 MiB；解压总量默认上限 256 MiB，随调高的上传上限增长，最高 10 GiB。它使用 MiB/GiB（二进制单位），不要与普通附件的 MB/GB 混淆。
+此变更前导入的沙箱保留各自的私有卷并可继续读取；被移除的只有上传与暂存链路。数据库中保留的 `SystemSetting` 行（`hermes.maxArchiveUploadMiB`）不再被读写。
 
-浏览器把 ZIP 作为原始请求体流式传入暂存存储，不经 Server Action、multipart 或全量 `arrayBuffer()`。Compose 默认把 `toolplane_imports` 挂载到 `/var/lib/toolplane/imports`；可通过 `TOOLPLANE_HERMES_ARCHIVE_VOLUME=/srv/toolplane/imports` 使用更大的宿主机目录，并确保容器内 `node` 用户可写。
-
-ZIP、解压树、初始化副本和最终卷可能同时占用空间；10 GiB 导入应为约 40 GiB 的临时峰值规划容量。实例一次只执行一个归档导入，预检空间，并清理崩溃遗留或过期租约的暂存文件。该租约用于单应用进程崩溃恢复，不是多实例共享暂存卷的分布式锁。
-
-归档检查路径、重复/Unicode 冲突、链接/特殊文件、加密条目、权限、条目数量、大小、压缩比及检查时限。相对且不逃出根目录的链接可保留，旧主机的绝对链接被丢弃，其余不安全链接被拒绝。归档限制还包括最多 200,000 个条目、1,024 个链接，以及 `config.yaml` / `.env` 各 4 MiB；高度可压缩的缓存文件有受限例外。不要把 ZIP 上传大小上限当作唯一检查。
-
-反向代理必须为 `POST /api/v1/workspaces/:slug/sandboxes/hermes-import` 放宽 body 大小和上传/读取时限，并关闭请求缓冲。生产启动器默认的 `TOOLPLANE_HTTP_REQUEST_TIMEOUT_MS` 为四小时（配置不低于一分钟），覆盖原始请求体接收；完整 Route Handler 的预算是 50,400 秒，即十四小时，包含后续检查、拷贝和同步。其他路由仍应保留合理的代理连接与速率限制。`pnpm dev` 不能替代生产启动器的大文件验证。
-
-上传是单请求流，不支持断点续传。页面复用导入 ID：响应丢失后的重试可返回已完成结果，未完成的旧导入需先检查或清理。归档中的 ToolPlane 受管键清单、`skills/toolplane-agent/` 和 `skill-bundles/toolplane-agent.yaml` 被移除后重新生成；原有会话、记忆、本地 Skills 和其他原生设置写入私有卷。
-
-导入后 runtime 默认停止，不自动选择 provider。确认模型配置并显式启动后，归档里的插件、hook 或 MCP 才可能运行。只能导入可信归档：其中可能包含凭据、会话及可执行配置。
 
 ## 3. 配置投影
 

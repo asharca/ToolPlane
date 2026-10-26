@@ -335,7 +335,7 @@ A short workspace-locked DB transaction reserves quota before upload. No databas
 
 Reservations expire after 30 minutes, longer than the bounded upload. The owner retries a bounded cleanup every minute, deleting only the reservation's known final and temporary paths through the owning Hermes sandbox. Missing/unreachable runtimes and failed cleanup remain charged; investigate rather than deleting reservation rows to manufacture free quota. The runtime/workspace deletion workflow owns destruction of its volumes.
 
-These are **ordinary Hermes Agent attachment** quotas, not whole-Docker disk quotas. Workspace/Work uploads, Hermes archive imports, snapshots and files produced directly inside a runtime have separate lifecycles; they are not silently included here. Connector files remain on the user's machine and are never reclaimed by this quota manager. Operators still need physical disk monitoring and filesystem limits. Existing stored bytes count toward admission and are not purged on upgrade; a deployment already over a new quota must deliberately raise it or remove data through its supported lifecycle.
+These are **ordinary Hermes Agent attachment** quotas, not whole-Docker disk quotas. Workspace/Work uploads, snapshots and files produced directly inside a runtime have separate lifecycles; they are not silently included here. Connector files remain on the user's machine and are never reclaimed by this quota manager. Operators still need physical disk monitoring and filesystem limits. Existing stored bytes count toward admission and are not purged on upgrade; a deployment already over a new quota must deliberately raise it or remove data through its supported lifecycle.
 
 ## Installation and diagnostic changes
 

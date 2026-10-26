@@ -12,24 +12,17 @@ import {
   MIN_ADMIN_ATTACHMENT_MEGABYTES,
   resolveAgentAttachmentLimit,
 } from "@/lib/agents/attachment-limits";
-import {
-  AdminPage,
-  AdminPageHeader,
-  AdminPanel,
-} from "@/components/admin/AdminUI";
+import { AdminPage, AdminPageHeader } from "@/components/admin/AdminUI";
 import { McpRuntimeSettingsForm } from "@/components/admin/McpRuntimeSettingsForm";
 import { AgentConcurrencySettingsForm } from "@/components/admin/AgentConcurrencySettingsForm";
 import { RemoteMcpPrivateHostsSettingsForm } from "@/components/admin/RemoteMcpPrivateHostsSettingsForm";
 import { RuntimeSettingsForm } from "@/components/admin/RuntimeSettingsForm";
 import { SkillImportSettingsForm } from "@/components/admin/SkillImportSettingsForm";
-import { SystemSettingsForm } from "@/components/admin/SystemSettingsForm";
 import {
   AGENT_CONCURRENCY_SETTING_KEY,
   getAgentConcurrencySettings,
   MAX_AGENT_CONCURRENCY,
   MAX_TOTAL_AGENT_CONCURRENCY,
-  getHermesArchiveSettings,
-  HERMES_ARCHIVE_MAX_UPLOAD_MIB_SETTING_KEY,
   MCP_STARTUP_TIMEOUTS_SETTING_KEY,
   REMOTE_MCP_PRIVATE_HOSTS_SETTING_KEY,
   SKILL_IMPORT_MAX_SKILLS_SETTING_KEY,
@@ -47,7 +40,6 @@ export default async function AdminSettingsPage() {
   const [
     t,
     attachmentLimit,
-    hermesArchiveSettings,
     skillImportSettings,
     mcpStartupTimeouts,
     remoteMcpPrivateHosts,
@@ -55,7 +47,6 @@ export default async function AdminSettingsPage() {
   ] = await Promise.all([
     getTranslations("admin"),
     resolveAgentAttachmentLimit(),
-    getHermesArchiveSettings(),
     getSkillImportSettings(),
     resolveMcpStartupTimeoutSettings(),
     resolveRemoteMcpPrivateHostsSettings(),
@@ -69,7 +60,6 @@ export default async function AdminSettingsPage() {
       AGENT_ATTACHMENT_LIMIT_SETTING_KEY,
       MCP_STARTUP_TIMEOUTS_SETTING_KEY,
       REMOTE_MCP_PRIVATE_HOSTS_SETTING_KEY,
-      HERMES_ARCHIVE_MAX_UPLOAD_MIB_SETTING_KEY,
       SKILL_IMPORT_MAX_SKILLS_SETTING_KEY,
     ]),
   ]);
@@ -148,19 +138,6 @@ export default async function AdminSettingsPage() {
             value={remoteMcpPrivateHosts.value}
             source={remoteMcpPrivateHosts.source}
           />,
-        )}
-        {section(
-          HERMES_ARCHIVE_MAX_UPLOAD_MIB_SETTING_KEY,
-          <AdminPanel
-            title={t("hermesArchiveImports")}
-            description={t("hermesArchiveImportsDescription")}
-          >
-            <SystemSettingsForm
-              hermesArchiveMaxUploadMiB={
-                hermesArchiveSettings.hermesArchiveMaxUploadMiB
-              }
-            />
-          </AdminPanel>,
         )}
         {section(
           SKILL_IMPORT_MAX_SKILLS_SETTING_KEY,

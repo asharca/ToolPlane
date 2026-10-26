@@ -38,9 +38,6 @@ vi.mock("@/lib/sandboxes/runtime", () => ({
 vi.mock("@/lib/agents/hermes/token", () => ({
   createHermesDashboardPath: (id: string) => `/hermes/${id}`,
 }));
-vi.mock("@/lib/admin/settings", () => ({
-  getHermesArchiveSettings: async () => ({ hermesArchiveMaxUploadMiB: 1024 }),
-}));
 vi.mock("@/lib/sandboxes/actions", () => ({
   deleteSandboxAction: vi.fn(),
   restartSandboxAction: vi.fn(),

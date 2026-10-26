@@ -36,8 +36,11 @@ import {
   sandboxVolumeName,
   stopDockerSandboxContainer,
 } from "@/lib/sandboxes/runtime";
-import { HERMES_RUNTIME_KIND, isValidHermesImage } from "./constants";
-import { HERMES_ARCHIVE_IMPORT_TIMEOUT_MS } from "./archive-limits";
+import {
+  HERMES_RUNTIME_KIND,
+  HERMES_SANDBOX_OPERATION_TIMEOUT_MS,
+  isValidHermesImage,
+} from "./constants";
 import {
   renderHermesConfig,
   renderHermesEnvPayload,
@@ -54,7 +57,6 @@ import { readSandboxEnv, sandboxConfigWithEnv } from "@/lib/sandboxes/env";
 import { runtimeEnv } from "@/lib/runtime-env";
 
 const DOCKER_TIMEOUT_MS = 15 * 60_000;
-const HERMES_ARCHIVE_COPY_TIMEOUT_MS = HERMES_ARCHIVE_IMPORT_TIMEOUT_MS;
 const HERMES_SYNC_CONTAINER_RESOURCE_LIMITS = [
   "--memory",
   "1g",
@@ -1054,75 +1056,6 @@ async function removeHermesContainerStrict(sandboxId: string): Promise<void> {
     // with stale in-memory configuration.
     if (/no such container/i.test(copyErrorMessage(error))) return;
     throw error;
-  }
-}
-
-// Importing an existing Hermes home must go through `docker cp`, not a bind
-// mount: production uses a remote Docker socket proxy, so app-container paths
-// are not paths on the Docker daemon host. The staged directory is already
-// sanitized by the archive importer before it reaches this helper.
-export async function copyHermesArchiveToVolume(params: {
-  directory: string;
-  image: string;
-  sandboxId: string;
-}): Promise<void> {
-  const volume = sandboxVolumeName(params.sandboxId);
-  const initContainer = sandboxSyncContainerName(params.sandboxId);
-  await runDocker(["volume", "create", volume]);
-  await runDocker(
-    ["rm", "-f", initContainer],
-    undefined,
-    HERMES_ARCHIVE_COPY_TIMEOUT_MS,
-  ).catch(() => undefined);
-
-  const installCommand = [
-    "set -eu",
-    "mkdir -p /opt/data",
-    "cp -R /tmp/toolplane-import/. /opt/data/",
-    'if id hermes >/dev/null 2>&1; then chown -R "$(id -u hermes):$(id -g hermes)" /opt/data; fi',
-  ].join(" && ");
-  await runDocker([
-    "create",
-    "--name",
-    initContainer,
-    "--network",
-    "none",
-    "--label",
-    "toolplane.hermes-archive-import=true",
-    "--cap-drop",
-    "ALL",
-    "--cap-add",
-    "CHOWN",
-    "--cap-add",
-    "DAC_OVERRIDE",
-    "--security-opt",
-    "no-new-privileges",
-    ...HERMES_SYNC_CONTAINER_RESOURCE_LIMITS,
-    "-v",
-    `${volume}:/opt/data`,
-    "--entrypoint",
-    "/bin/sh",
-    params.image,
-    "-c",
-    installCommand,
-  ]);
-  try {
-    await runDocker(
-      ["cp", `${params.directory}/.`, `${initContainer}:/tmp/toolplane-import`],
-      undefined,
-      HERMES_ARCHIVE_COPY_TIMEOUT_MS,
-    );
-    await runDocker(
-      ["start", "--attach", initContainer],
-      undefined,
-      HERMES_ARCHIVE_COPY_TIMEOUT_MS,
-    );
-  } finally {
-    await runDocker(
-      ["rm", "-f", initContainer],
-      undefined,
-      HERMES_ARCHIVE_COPY_TIMEOUT_MS,
-    ).catch(() => undefined);
   }
 }
 
@@ -2561,7 +2494,7 @@ export async function cleanupHermesRuntime(
     await removeDockerSandboxRuntimeStrict(
       agent.runtime.sandboxId,
       sandboxVolumeName(agent.runtime.sandboxId),
-      { timeoutMs: options.timeoutMs ?? HERMES_ARCHIVE_IMPORT_TIMEOUT_MS },
+      { timeoutMs: options.timeoutMs ?? HERMES_SANDBOX_OPERATION_TIMEOUT_MS },
     );
     return true;
   });

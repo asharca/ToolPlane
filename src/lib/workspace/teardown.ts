@@ -2,11 +2,11 @@ import "server-only";
 import { db } from "@/lib/db";
 import { killMany, preventWorkspaceStarts } from "@/lib/process/supervisor";
 import { removeDeploymentContainer } from "@/lib/process/deployment-runtime-container";
+import { HERMES_SANDBOX_OPERATION_TIMEOUT_MS } from "@/lib/agents/hermes/constants";
 import {
   removeDockerSandboxRuntimeStrict,
   removeDockerVolumeStrict,
 } from "@/lib/sandboxes/runtime";
-import { HERMES_ARCHIVE_IMPORT_TIMEOUT_MS } from "@/lib/agents/hermes/archive-limits";
 import { disconnectConnector } from "@/lib/sandboxes/connector-broker";
 import { removeDeploymentConfigVolume } from "@/lib/process/deployment-config-volume";
 import { removeWorkspaceAttachmentVolume } from "@/lib/attachments/storage";
@@ -112,7 +112,7 @@ export async function killWorkspaceProcesses(
       if (sandbox.kind === "hermes") {
         await removeDockerVolumeStrict(
           snapshot.volumeName,
-          HERMES_ARCHIVE_IMPORT_TIMEOUT_MS,
+          HERMES_SANDBOX_OPERATION_TIMEOUT_MS,
         );
       } else {
         await removeDockerVolumeStrict(snapshot.volumeName);
@@ -124,7 +124,7 @@ export async function killWorkspaceProcesses(
       };
       if (sandbox.kind === "hermes") {
         await removeDockerSandboxRuntimeStrict(sandbox.id, cfg.volumeName, {
-          timeoutMs: HERMES_ARCHIVE_IMPORT_TIMEOUT_MS,
+          timeoutMs: HERMES_SANDBOX_OPERATION_TIMEOUT_MS,
         });
       } else {
         await removeDockerSandboxRuntimeStrict(sandbox.id, cfg.volumeName);

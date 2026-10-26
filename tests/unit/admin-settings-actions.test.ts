@@ -4,7 +4,6 @@ import type * as Settings from "@/lib/admin/settings";
 
 const mocks = vi.hoisted(() => ({
   requireAdmin: vi.fn(),
-  updateHermesArchiveSettings: vi.fn(),
   updateSkillImportSettings: vi.fn(),
   updateMcpStartupTimeoutSettings: vi.fn(),
   resetMcpStartupTimeoutSettings: vi.fn(),
@@ -34,7 +33,6 @@ vi.mock("@/lib/admin/settings", async (original) => ({
   MAX_TOTAL_AGENT_CONCURRENCY: 256,
   updateAgentConcurrencySettings: mocks.updateAgentConcurrencySettings,
   resetAgentConcurrencySettings: mocks.resetAgentConcurrencySettings,
-  updateHermesArchiveSettings: mocks.updateHermesArchiveSettings,
   updateSkillImportSettings: mocks.updateSkillImportSettings,
   updateMcpStartupTimeoutSettings: mocks.updateMcpStartupTimeoutSettings,
   resetMcpStartupTimeoutSettings: mocks.resetMcpStartupTimeoutSettings,
@@ -57,17 +55,10 @@ vi.mock("@/lib/agents/agent-execution-gate", () => ({
 
 import {
   updateAgentConcurrencySettingsAction,
-  updateHermesArchiveUploadLimitAction,
   updateMcpStartupTimeoutSettingsAction,
   updateRemoteMcpPrivateHostsSettingsAction,
   updateSkillImportLimitAction,
 } from "@/lib/admin/settings-actions";
-
-function settingsForm(value: string): FormData {
-  const formData = new FormData();
-  formData.set("hermesArchiveMaxUploadMiB", value);
-  return formData;
-}
 
 function mcpTimeoutsForm(
   idleSeconds: string,
@@ -93,43 +84,6 @@ function remoteMcpPrivateHostsForm(value: string, intent?: string): FormData {
   if (intent) formData.set("intent", intent);
   return formData;
 }
-
-describe("updateHermesArchiveUploadLimitAction", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mocks.requireAdmin.mockResolvedValue({ id: "admin-1" });
-    mocks.getTranslations.mockResolvedValue((key: string) => key);
-    mocks.updateHermesArchiveSettings.mockResolvedValue({
-      hermesArchiveMaxUploadMiB: 24,
-    });
-  });
-
-  it("requires an admin and persists a valid whole-MiB limit", async () => {
-    await expect(
-      updateHermesArchiveUploadLimitAction({}, settingsForm("24")),
-    ).resolves.toEqual({ ok: true });
-
-    expect(mocks.requireAdmin).toHaveBeenCalledOnce();
-    expect(mocks.updateHermesArchiveSettings).toHaveBeenCalledWith(
-      24,
-      "admin-1",
-    );
-    expect(mocks.revalidatePath).toHaveBeenCalledWith("/admin/settings");
-  });
-
-  it.each(["", "12.5", "0", "10241", "999999999999999999999"])(
-    "rejects invalid setting %j without writing",
-    async (value) => {
-      await expect(
-        updateHermesArchiveUploadLimitAction({}, settingsForm(value)),
-      ).resolves.toEqual({
-        error: "errorHermesArchiveMaxUploadMiB",
-      });
-
-      expect(mocks.updateHermesArchiveSettings).not.toHaveBeenCalled();
-    },
-  );
-});
 
 describe("updateMcpStartupTimeoutSettingsAction", () => {
   beforeEach(() => {

@@ -145,8 +145,7 @@ async function registerNodeOwned() {
       if (Object.values(copies).some((count) => count > 0)) {
         systemLog(
           "warn",
-          `[mcp] cleaned ${copies.helpersRemoved} stale volume helper(s) and ` +
-            `${copies.hermesArchiveHelpersRemoved} stale Hermes import helper(s); ` +
+          `[mcp] cleaned ${copies.helpersRemoved} stale volume helper(s); ` +
             `marked ${copies.copiesInterrupted} clone(s), ${copies.restoresInterrupted} restore(s), ` +
             `${copies.upgradesInterrupted} image upgrade(s), and ${copies.snapshotsInterrupted} snapshot(s) as interrupted`,
         );
@@ -193,10 +192,6 @@ async function registerNodeOwned() {
     await ensureHermesDashboardBroker();
     const { ensureSandboxNetwork } = await import("@/lib/process/supervisor");
     await ensureSandboxNetwork();
-    const { cleanupHermesArchiveStaging } = await import(
-      "@/lib/agents/hermes/archive"
-    );
-    await cleanupHermesArchiveStaging();
     await reconcileDeploymentConfigHelpers();
     await reconcileSandboxCopies();
     const { reconcileDeployments } = await import("@/lib/process/reconcile");

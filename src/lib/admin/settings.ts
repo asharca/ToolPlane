@@ -4,18 +4,11 @@ import { saveAuditedSetting } from "./audited-setting";
 
 import { db } from "@/lib/db";
 import {
-  DEFAULT_HERMES_ARCHIVE_MAX_UPLOAD_MIB,
-  isValidHermesArchiveMaxUploadMiB,
-  normalizeHermesArchiveMaxUploadMiB,
-} from "@/lib/agents/hermes/archive-limits";
-import {
   DEFAULT_SKILL_IMPORT_SKILLS,
   isValidSkillImportMaxSkills,
 } from "@/lib/skills/limits";
 import { parseRemoteMcpPrivateHosts } from "../../../scripts/remote-mcp-private-hosts.mjs";
 
-export const HERMES_ARCHIVE_MAX_UPLOAD_MIB_SETTING_KEY =
-  "hermes.maxArchiveUploadMiB";
 export const MCP_STARTUP_TIMEOUTS_SETTING_KEY = "mcp.startupTimeouts";
 export const REMOTE_MCP_PRIVATE_HOSTS_SETTING_KEY = "mcp.remotePrivateHosts";
 export const SKILL_IMPORT_MAX_SKILLS_SETTING_KEY = "skills.maxImportSkills";
@@ -88,10 +81,6 @@ export const DEFAULT_MCP_STARTUP_MAX_TIMEOUT_MS = 5 * 60_000;
 export const MIN_MCP_STARTUP_TIMEOUT_MS = 1_000;
 export const MAX_MCP_STARTUP_TIMEOUT_MS = 30 * 60_000;
 
-export type SystemSettings = {
-  hermesArchiveMaxUploadMiB: number;
-};
-
 export type McpStartupTimeoutSettings = {
   idleTimeoutMs: number;
   maxTimeoutMs: number;
@@ -106,15 +95,6 @@ export type RemoteMcpPrivateHostsSettings = {
   value: string;
   source: "database" | "environment" | "default";
 };
-
-function toSystemSettings(value?: string | null): SystemSettings {
-  const parsed = Number(value);
-  return {
-    hermesArchiveMaxUploadMiB: isValidHermesArchiveMaxUploadMiB(parsed)
-      ? parsed
-      : DEFAULT_HERMES_ARCHIVE_MAX_UPLOAD_MIB,
-  };
-}
 
 function validMcpStartupTimeout(value: unknown): number | null {
   const parsed = Number(value);
@@ -199,36 +179,6 @@ function parseMcpStartupTimeoutSettings(
   } catch {
     return null;
   }
-}
-
-// This deliberately reads through to Postgres: an administrator's changed
-// limit must be enforced by the very next import, including on another app
-// instance.
-export async function getHermesArchiveSettings(): Promise<SystemSettings> {
-  try {
-    const settings = await db.systemSetting.findUnique({
-      where: { key: HERMES_ARCHIVE_MAX_UPLOAD_MIB_SETTING_KEY },
-      select: { value: true },
-    });
-    return toSystemSettings(settings?.value);
-  } catch {
-    // Keep archive imports available during a rolling deploy before the
-    // generic SystemSetting migration has completed.
-    return toSystemSettings();
-  }
-}
-
-export async function updateHermesArchiveSettings(
-  hermesArchiveMaxUploadMiB: number,
-  actorId = "system",
-): Promise<SystemSettings> {
-  const value = normalizeHermesArchiveMaxUploadMiB(hermesArchiveMaxUploadMiB);
-  await saveAuditedSetting(
-    HERMES_ARCHIVE_MAX_UPLOAD_MIB_SETTING_KEY,
-    String(value),
-    actorId,
-  );
-  return toSystemSettings(String(value));
 }
 
 // Read through to Postgres so a saved administrator override applies to the

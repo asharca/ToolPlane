@@ -6,7 +6,6 @@ const mocks = vi.hoisted(() => ({
   ownerFailed: vi.fn(),
   ensureHermesDashboardBroker: vi.fn(),
   ensureSandboxNetwork: vi.fn(),
-  cleanupHermesArchiveStaging: vi.fn(),
   removeStaleDeploymentConfigMaterializerHelpers: vi.fn(),
   reconcileSandboxVolumeCopies: vi.fn(),
   reconcileDeployments: vi.fn(),
@@ -38,9 +37,6 @@ vi.mock("@/lib/agents/hermes/dashboard-broker", () => ({
 }));
 vi.mock("@/lib/process/supervisor", () => ({
   ensureSandboxNetwork: mocks.ensureSandboxNetwork,
-}));
-vi.mock("@/lib/agents/hermes/archive", () => ({
-  cleanupHermesArchiveStaging: mocks.cleanupHermesArchiveStaging,
 }));
 vi.mock("@/lib/process/deployment-config-volume", () => ({
   removeStaleDeploymentConfigMaterializerHelpers:
@@ -74,7 +70,6 @@ describe("startup sandbox lifecycle reconciliation", () => {
     mocks.ensureConnectorBroker.mockResolvedValue(undefined);
     mocks.ensureHermesDashboardBroker.mockResolvedValue(undefined);
     mocks.ensureSandboxNetwork.mockResolvedValue(undefined);
-    mocks.cleanupHermesArchiveStaging.mockResolvedValue(undefined);
     mocks.removeStaleDeploymentConfigMaterializerHelpers.mockResolvedValue(0);
     mocks.reconcileDeployments.mockResolvedValue(0);
     mocks.reconcileAgentChannelRunners.mockResolvedValue(0);
@@ -95,7 +90,6 @@ describe("startup sandbox lifecycle reconciliation", () => {
       .mockRejectedValueOnce(new Error("docker unavailable"))
       .mockResolvedValueOnce({
         helpersRemoved: 1,
-        hermesArchiveHelpersRemoved: 1,
         copiesInterrupted: 1,
         restoresInterrupted: 1,
         upgradesInterrupted: 1,
@@ -107,7 +101,6 @@ describe("startup sandbox lifecycle reconciliation", () => {
       expect(mocks.reconcileDeployments).toHaveBeenCalledTimes(1);
     });
 
-    expect(mocks.cleanupHermesArchiveStaging).toHaveBeenCalledTimes(1);
     expect(mocks.reconcileAgentChannelRunners).toHaveBeenCalledTimes(1);
     expect(mocks.ensureHermesDashboardBroker).toHaveBeenCalledTimes(1);
     expect(
