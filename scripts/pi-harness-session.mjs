@@ -475,19 +475,29 @@ async function outcomeText(session, outcome) {
   );
   let resultText = "";
   let toolError = "";
+  let truncated = false;
   const warnings = [];
   for (const entry of entries) {
     if (entry.id === outcome.fromTipId) break;
     if (entry.type === "compaction" && !resultText) resultText = entry.summary;
     if (entry.type !== "message") continue;
-    if (entry.message.role === "assistant" && !resultText)
+    if (entry.message.role === "assistant" && !resultText) {
       resultText = textOf(entry.message.content);
+      // The newest assistant message is the operation result; a token-limit stop
+      // is truncated output, never a completed structured answer.
+      truncated = entry.message.stopReason === "length";
+    }
     if (entry.message.role === "toolResult" && entry.message.isError) {
       const text = textOf(entry.message.content);
       toolError ||= text;
       if (text.includes("external outcome is unknown")) warnings.push(text);
     }
   }
+  if (truncated && outcome.status === "completed")
+    throw failure(
+      "PI_OUTPUT_TRUNCATED",
+      "The model stopped at its output token limit; the truncated text was not published as a result.",
+    );
   return [
     ...warnings.reverse(),
     resultText || outcome.error?.message || toolError,

@@ -331,6 +331,24 @@ describe("A2A worker admission and recovery boundaries", () => {
     });
   });
 
+  it.each([
+    [new A2AQuotaError(), "PI_STORAGE_QUOTA_EXCEEDED"],
+    [
+      new Error("PI_OUTPUT_TRUNCATED: model stopped at its output limit"),
+      "PI_OUTPUT_TRUNCATED",
+    ],
+  ])(
+    "preserves the %s storage or truncation cause for the caller",
+    async (error, code) => {
+      const row = task("local", "pi-harness", true);
+      await executeA2ATask(row.id, async () => {
+        throw error;
+      });
+      expect(row.state).toBe(TaskState.TASK_STATE_FAILED);
+      expect(state.messages.get(row.id)).toMatch(new RegExp(`^${code}:`));
+    },
+  );
+
   it("releases an interrupted native claim for recovery without recording task failure", async () => {
     const row = task("local", "pi-harness", true);
     await executeA2ATask(row.id, async () => {

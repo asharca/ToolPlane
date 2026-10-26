@@ -153,7 +153,9 @@ export const executePiHarnessTask: TaskExecutor = async (row, signal) => {
       }
     }
     if (result.text.length > A2A_LIMITS.outputCharacters)
-      throw new Error("Task output limit exceeded.");
+      throw new Error(
+        "PI_OUTPUT_TRUNCATED: Task output exceeded the A2A character limit; no artifact was published.",
+      );
     return {
       state: terminalStates[result.status],
       nativeOperationId: operationId,

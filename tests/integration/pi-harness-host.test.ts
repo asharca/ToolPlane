@@ -165,7 +165,13 @@ function sendCompletion(
     },
     {
       choices: [{ index: 0, delta: {}, finish_reason: finish }],
-      usage: { prompt_tokens: 20, completion_tokens: 5, total_tokens: 25 },
+      usage: {
+        prompt_tokens: 20,
+        // A length stop that consumed the full intended output budget is a real
+        // token-limit truncation, not a recoverable context overflow.
+        completion_tokens: finish === "length" ? 4096 : 5,
+        total_tokens: finish === "length" ? 4116 : 25,
+      },
     },
   ])
     response.write(
@@ -188,6 +194,7 @@ async function setup() {
     allow: false,
     pauseFirst: false,
     pauseAfterTool: false,
+    truncate: false,
   };
   const server = createServer((request, response) => {
     void (async () => {
@@ -255,7 +262,11 @@ async function setup() {
           "tool_calls",
         );
       } else {
-        sendCompletion(response, { content: "HOST_COMPLETE" }, "stop");
+        sendCompletion(
+          response,
+          { content: "HOST_COMPLETE" },
+          behavior.truncate ? "length" : "stop",
+        );
       }
     })().catch((error: unknown) => {
       errors.push(String(error));
@@ -505,6 +516,17 @@ describe("real Pi native host protocol and persistent Session", () => {
     },
     60_000,
   );
+
+  it("refuses to publish a token-limit truncated result", async () => {
+    const fixture = await setup();
+    fixture.behavior.truncate = true;
+    const operationId = await fixture.prepare();
+    const result = protocol(
+      await fixture.run({ action: "run", operationId, taskId: "host-task" }),
+      "error",
+    );
+    expect(result.code).toBe("PI_OUTPUT_TRUNCATED");
+  });
 
   it("does not recreate a previously bound context when the next task prepares", async () => {
     const fixture = await setup();

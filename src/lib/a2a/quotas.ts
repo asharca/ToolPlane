@@ -55,9 +55,11 @@ export async function refreshTaskStorage(
   const row = rows[0];
   if (!row) throw new Error("Task storage record disappeared.");
   // Keep headroom for a final failure/cancellation event, even when a successful output is too large.
+  // Payload bytes are the storage budget; the event count is not. Capping the sequence made a long
+  // but small task unable to settle a successful result after enough progress projections.
   if (
     !permitFailureSettlement &&
-    (Number(row.bytes) > A2A_TASK_STORAGE_BYTES - 16_384 || row.sequence > 128)
+    Number(row.bytes) > A2A_TASK_STORAGE_BYTES - 16_384
   )
     throw new A2AQuotaError();
   await tx.a2ATask.update({

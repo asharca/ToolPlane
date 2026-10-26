@@ -824,17 +824,39 @@ describe("native task resource accounting", () => {
       A2A_LIMITS.outputCharacters,
     ]);
   });
-  it("still settles a failed task when the successful payload would exceed its journal cap", async () => {
+  it("settles a successful result after many journal events", async () => {
     const task = await submitTask(grant, request());
     const claimed = await claimTask(task.id);
+    // Long tasks accumulate durable events; the event count is not a storage budget.
     await db.a2ATask.update({
       where: { id: task.id },
-      data: { sequence: 128 },
+      data: { sequence: 512 },
+    });
+    await finishTask(
+      task.id,
+      assertDefined(assertDefined(claimed).leaseToken),
+      TaskState.TASK_STATE_COMPLETED,
+      undefined,
+      textArtifact("result"),
+    );
+    const stored = await getTask(grant, task.id);
+    expect(stored.status?.state).toBe(TaskState.TASK_STATE_COMPLETED);
+    expect(stored.artifacts).toHaveLength(1);
+  });
+  it("still settles a failed task when the successful payload would exceed its budget", async () => {
+    const task = await submitTask(grant, request());
+    const claimed = assertDefined(await claimTask(task.id));
+    await db.a2AEvent.create({
+      data: {
+        taskId: task.id,
+        sequence: 900,
+        payload: { text: "x".repeat(A2A_TASK_STORAGE_BYTES) },
+      },
     });
     await expect(
       finishTask(
         task.id,
-        assertDefined(assertDefined(claimed).leaseToken),
+        assertDefined(claimed.leaseToken),
         TaskState.TASK_STATE_COMPLETED,
         undefined,
         textArtifact("result"),
@@ -844,7 +866,7 @@ describe("native task resource accounting", () => {
     expect(await settledEvents(task.id)).toEqual([]);
     await finishTask(
       task.id,
-      assertDefined(assertDefined(claimed).leaseToken),
+      assertDefined(claimed.leaseToken),
       TaskState.TASK_STATE_FAILED,
       "Stopped at the configured quota.",
     );

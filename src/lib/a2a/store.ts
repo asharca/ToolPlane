@@ -679,6 +679,28 @@ export async function releasePiHarnessClaim(
   });
 }
 
+/**
+ * Observer-only projection; native Session state remains the execution truth.
+ * Progress is not durable journal history: it updates the live snapshot in place
+ * instead of appending an event, so a long-running task cannot spend its stored
+ * payload budget (or its sequence) on periodic progress.
+ */
+async function persistProgress(tx: Tx, row: A2ATask, task: Task) {
+  const status = task.status;
+  if (!status?.timestamp)
+    throw new Error("Task status and timestamp are required.");
+  await tx.a2ATask.update({
+    where: { id: row.id },
+    data: {
+      state: status.state,
+      statusAt: new Date(status.timestamp),
+      snapshot: json(jsonTask(task)),
+    },
+  });
+  // A projection must never fail the durable operation; accounting still refreshes.
+  await refreshTaskStorage(tx, row.id, true);
+}
+
 /** Observer-only projection; native Session state remains the execution truth. */
 export async function projectPiHarnessProgress(
   taskId: string,
@@ -701,7 +723,7 @@ export async function projectPiHarnessProgress(
     if (!task.status) throw new Error("Task status is required.");
     task.status.timestamp = new Date().toISOString();
     task.status.message = agentMessage(task, detail.slice(-2048));
-    await persist(tx, row, task, statusEvent(task));
+    await persistProgress(tx, row, task);
   });
 }
 export async function finishTask(

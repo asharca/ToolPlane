@@ -197,6 +197,9 @@ describe("Pi native operation binding in PostgreSQL", () => {
       assertDefined(row.leaseToken),
       randomUUID(),
     );
+    const eventsBefore = await db.a2AEvent.count({
+      where: { taskId: row.id },
+    });
     await projectPiHarnessProgress(
       row.id,
       assertDefined(row.leaseToken),
@@ -204,6 +207,12 @@ describe("Pi native operation binding in PostgreSQL", () => {
       "x".repeat(4096),
     );
     const projected = await getTaskRow(grant, row.id);
+    // Progress is a live view, not durable journal history: it must not spend
+    // the task's sequence or stored event payload on periodic projections.
+    expect(projected.sequence).toBe(row.sequence);
+    expect(await db.a2AEvent.count({ where: { taskId: row.id } })).toBe(
+      eventsBefore,
+    );
     const task = Task.fromJSON(projected.snapshot);
     expect(
       assertDefined(assertDefined(task.status).message).parts[0].content,

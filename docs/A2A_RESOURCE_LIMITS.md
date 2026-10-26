@@ -15,10 +15,13 @@ This is a payload charge, not physical disk usage including indexes, row overhea
 or backups.
 
 Active and input/auth-waiting tasks reserve at least 4 MiB; terminal tasks charge their
-retained payload. Normal writes leave 16 KiB of headroom for failure/cancellation and
-limit the journal sequence to 128. Failure settlement can still commit the necessary
-terminal event. Oversized success output rolls back the whole result transaction,
-including artifact publication, rather than leaving a partial state update.
+retained payload. Normal writes leave 16 KiB of headroom for failure/cancellation. Failure
+settlement can still commit the necessary terminal event. The event count is not a storage
+budget: a long task that records many small events still settles a result that fits the byte
+limit. Native progress projections update the live task snapshot instead of appending journal
+events, so periodic progress does not consume stored payload. Oversized success output rolls
+back the whole result transaction, including artifact publication, rather than leaving a
+partial state update.
 
 Native and compatibility Responses requests share workspace admission locks and quota
 checks. The workspace storage ceiling is 1,000,000,000 units. Published tasks also check

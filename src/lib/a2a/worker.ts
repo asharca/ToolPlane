@@ -71,10 +71,13 @@ function nativeFailure(error: unknown) {
     error instanceof AgentExecutionBusyError
   )
     return "PI_SANDBOX_BUSY: The target Agent/session is busy; the child task was not started.";
+  // Storage exhaustion is a platform decision, not an opaque Pi crash.
+  if (error instanceof A2AQuotaError)
+    return "PI_STORAGE_QUOTA_EXCEEDED: The task payload exceeded the configured storage budget; the result was not stored.";
   // Only fixed codes may escape: native exception text can contain credentials or task content.
   const code =
     error instanceof Error
-      ? /^(PI_SESSION_MISSING|PI_SESSION_CORRUPT|PI_MODEL_UNAVAILABLE|PI_INPUT_INVALID|PI_CONFIG_INVALID|PI_PROCESS_STOP_UNCONFIRMED|PI_NODE_UNSUPPORTED|PI_SQLITE_UNAVAILABLE|PI_HARNESS_VERSION_MISMATCH|PI_RECOVERY_CHECK_FAILED|PI_PROTOCOL_ERROR|PI_TARGET_UNAVAILABLE)(?=:|$)/.exec(
+      ? /^(PI_SESSION_MISSING|PI_SESSION_CORRUPT|PI_MODEL_UNAVAILABLE|PI_INPUT_INVALID|PI_CONFIG_INVALID|PI_PROCESS_STOP_UNCONFIRMED|PI_NODE_UNSUPPORTED|PI_SQLITE_UNAVAILABLE|PI_HARNESS_VERSION_MISMATCH|PI_RECOVERY_CHECK_FAILED|PI_PROTOCOL_ERROR|PI_TARGET_UNAVAILABLE|PI_OUTPUT_TRUNCATED)(?=:|$)/.exec(
           error.message,
         )?.[1]
       : undefined;
