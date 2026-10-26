@@ -1,6 +1,4 @@
-import { assertDefined } from "../assert-defined";
 import { render, screen, within } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -277,16 +275,19 @@ describe("workspace market management pages", () => {
       }),
     );
 
-    expect(screen.getByRole("link", { name: "Pi package" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "intakePi" })).toHaveAttribute(
       "href",
       "/app/acme/market/import",
     );
-    expect(screen.getByText("Publish new version")).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "ownedPublications" }),
+    ).toBeInTheDocument();
     expect(
       within(
-        screen.getByRole("region", { name: "publishManagement" }),
+        screen.getByRole("region", { name: "ownedPublications" }),
       ).getByRole("button", { name: "withdrawSubmission" }),
     ).toBeInTheDocument();
+    expect(screen.getByText("packageImportOnly")).toBeInTheDocument();
   });
 
   it("routes locally modified skills through the explicit overwrite review", async () => {
@@ -332,7 +333,7 @@ describe("workspace market management pages", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("publishes chat assistants through the unified review flow", async () => {
+  it("shows assistant publications with lifecycle controls instead of local publish forms", async () => {
     mocks.listChatAssistants.mockResolvedValue([
       {
         id: "assistant-1",
@@ -349,6 +350,8 @@ describe("workspace market management pages", () => {
         sourceInstalledSkillId: null,
         sourceDeploymentId: null,
         sourceToolkitId: null,
+        kind: "assistant",
+        namespace: "acme",
         name: "Market assistant",
         slug: "market-assistant",
         summary: "A lightweight assistant.",
@@ -372,21 +375,17 @@ describe("workspace market management pages", () => {
     ).toBeInTheDocument();
     expect(
       within(
-        screen.getByRole("region", { name: "publishManagement" }),
+        screen.getByRole("region", { name: "ownedPublications" }),
       ).getByRole("button", { name: "unpublishListing" }),
     ).toBeInTheDocument();
-    await userEvent.click(
-      screen.getByRole("button", { name: "Publish new version" }),
+    expect(screen.getByRole("link", { name: "viewDetails" })).toHaveAttribute(
+      "href",
+      "/app/acme/market/items/acme/market-assistant",
     );
-    const dialog = await screen.findByRole("dialog", {
-      name: "Publish new version",
-    });
-    const formData = new FormData(assertDefined(dialog.querySelector("form")));
-    expect(formData.get("assistantId")).toBe("assistant-1");
-    expect(formData.get("workspace")).toBe("acme");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
-  it("keeps publishing available after a reviewed MCP receives a catalog identity", async () => {
+  it("keeps reviewed MCP publications manageable without a local publish form", async () => {
     mocks.getDeployments.mockResolvedValue([
       {
         id: "deployment-1",
@@ -407,6 +406,8 @@ describe("workspace market management pages", () => {
         sourceInstalledSkillId: null,
         sourceToolkitId: null,
         sourceChatAssistantId: null,
+        kind: "mcp",
+        namespace: "acme",
         name: "Reviewed MCP",
         slug: "reviewed-mcp",
         summary: "A reviewed MCP.",
@@ -425,15 +426,17 @@ describe("workspace market management pages", () => {
       }),
     );
 
+    expect(
+      screen.getByRole("heading", { name: "Reviewed MCP" }),
+    ).toBeInTheDocument();
+    expect(
+      within(
+        screen.getByRole("region", { name: "ownedPublications" }),
+      ).getByRole("button", { name: "unpublishListing" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "publishNewVersion" }),
+    ).not.toBeInTheDocument();
     expect(screen.queryByText("catalogAlreadyListed")).not.toBeInTheDocument();
-    await userEvent.click(
-      screen.getByRole("button", { name: "Publish new version" }),
-    );
-    const dialog = await screen.findByRole("dialog", {
-      name: "Publish new version",
-    });
-    const formData = new FormData(assertDefined(dialog.querySelector("form")));
-    expect(formData.get("deploymentId")).toBe("deployment-1");
-    expect(formData.get("workspace")).toBe("acme");
   });
 });
