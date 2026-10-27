@@ -1,6 +1,6 @@
 // @vitest-environment node
-import { assertDefined } from "../assert-defined";
 import { randomUUID } from "node:crypto";
+import { publishFixtureAgentRevision } from "./agent-revision-fixture";
 import {
   afterAll,
   beforeAll,
@@ -40,7 +40,11 @@ import {
   mutateA2AConsole,
   type ConsoleActor,
 } from "@/lib/a2a/console-service";
-import { verifyAgentApiKey } from "@/lib/agents/public-api/auth";
+import {
+  createAgentApiKey,
+  verifyAgentApiKey,
+} from "@/lib/agents/public-api/auth";
+import { requireAgentRevision } from "@/lib/agents/revisions";
 
 let owner: string,
   member: string,
@@ -101,7 +105,7 @@ beforeAll(async () => {
       workspaceId,
       name: "Local agent",
       slug: "local",
-      runtimeKind: "pi",
+      runtimeKind: "pi-sdk",
       providerId: provider.id,
       model: "fixture",
       systemPrompt: "PRIVATE PROMPT",
@@ -112,9 +116,9 @@ beforeAll(async () => {
   const source = await db.agent.create({
     data: {
       workspaceId,
-      name: "Hermes",
+      name: "Retained Claude Code Agent",
       slug: "public",
-      runtimeKind: "hermes",
+      runtimeKind: "claude-code",
     },
   });
   published = { ...local, agentId: source.id };
@@ -152,8 +156,13 @@ beforeEach(async () => {
   });
   await db.agent.update({
     where: { id: local.agentId },
-    data: { a2aInternalEnabled: false },
+    data: {
+      a2aInternalEnabled: false,
+      a2aInboundEnabled: false,
+      a2aOutboundEnabled: false,
+    },
   });
+  await publishFixtureAgentRevision(workspaceId, local.agentId);
   await db.agentEndpoint.update({
     where: { id: endpointId },
     data: { status: "active", a2aEnabled: true },
@@ -172,49 +181,98 @@ afterAll(async () => {
   await db.$disconnect();
 });
 
-describe("A2A console management persists scoped configuration", () => {
-  it("keeps public and local opt-ins separate", async () => {
-    await mutateA2AConsole(local, { action: "set-local", enabled: true });
-    expect((await getA2AConsoleView(local)).local).toMatchObject({
-      enabled: true,
+/** Recorded credentials are fixture imports, never issued by the retired console contract. */
+async function retainedCredential(scopes = ["a2a:read", "a2a:cancel"]) {
+  const client = await db.agentApiClient.create({
+    data: { endpointId, name: "Retained integration", scopes },
+  });
+  const issued = await createAgentApiKey({
+    clientId: client.id,
+    endpointPublicId: publicId,
+    workspaceId,
+    sourceAgentId: published.agentId,
+    name: "Retained credential",
+  });
+  const key = await db.agentApiKey.findFirstOrThrow({
+    where: { clientId: client.id },
+  });
+  return { client, key, token: issued.token };
+}
+
+describe("A2A console directional policy and retained credentials", () => {
+  it("publishes independent inbound and outbound flags without mutating prior pins or retained endpoint state", async () => {
+    const before = await db.$transaction((tx) =>
+      requireAgentRevision(tx, local.agentId),
+    );
+    await mutateA2AConsole(local, { action: "set-inbound", enabled: true });
+    expect((await getA2AConsoleView(local)).collaboration).toEqual({
+      inboundEnabled: true,
+      outboundEnabled: false,
+    });
+    expect((await getA2AConsoleView(local)).local).toEqual({
+      supported: true,
       ready: true,
     });
-    await mutateA2AConsole(published, { action: "set-public", enabled: false });
-    expect((await getA2AConsoleView(local)).local.enabled).toBe(true);
-    expect((await getA2AConsoleView(published)).endpoint?.enabled).toBe(false);
-  });
-  it("rolls back enabling a runtime without local isolation support", async () => {
-    await expect(
-      mutateA2AConsole(published, { action: "set-local", enabled: true }),
-    ).rejects.toMatchObject({ status: 409 });
+    await mutateA2AConsole(local, { action: "set-outbound", enabled: true });
+    await mutateA2AConsole(local, { action: "set-inbound", enabled: false });
+    expect((await getA2AConsoleView(local)).collaboration).toEqual({
+      inboundEnabled: false,
+      outboundEnabled: true,
+    });
+    expect((await getA2AConsoleView(published)).endpoint?.enabled).toBe(true);
+    expect((await getA2AConsoleView(published)).endpoint?.ready).toBe(false);
     expect(
-      (await db.agent.findUniqueOrThrow({ where: { id: published.agentId } }))
-        .a2aInternalEnabled,
-    ).toBe(false);
+      (
+        await db.$transaction((tx) =>
+          requireAgentRevision(tx, local.agentId, before.id),
+        )
+      ).config,
+    ).toEqual(before.config);
+    const current = await db.$transaction((tx) =>
+      requireAgentRevision(tx, local.agentId),
+    );
+    expect(current.id).not.toBe(before.id);
+    expect(current.config.a2a).toMatchObject({
+      inboundEnabled: false,
+      outboundEnabled: true,
+    });
   });
-  it.each(["set-local", "set-public"] as const)(
+
+  it.each(["set-inbound", "set-outbound"] as const)(
+    "never enables retired runtime execution through %s",
+    async (action) => {
+      await expect(
+        mutateA2AConsole(published, { action, enabled: true }),
+      ).rejects.toMatchObject({ status: 409 });
+      expect(
+        await db.agent.findUniqueOrThrow({ where: { id: published.agentId } }),
+      ).toMatchObject({ a2aInboundEnabled: false, a2aOutboundEnabled: false });
+    },
+  );
+
+  it.each(["set-inbound", "set-outbound"] as const)(
     "rejects member and outsider %s mutations",
     async (action) => {
-      const target = action === "set-local" ? local : published;
       for (const actorId of [member, other])
         await expect(
-          mutateA2AConsole({ ...target, actorId }, { action, enabled: true }),
+          mutateA2AConsole({ ...local, actorId }, { action, enabled: true }),
         ).rejects.toMatchObject({ status: 403 });
     },
   );
+
   it("rejects disabled users, closing workspaces and foreign targets", async () => {
     await db.user.update({
       where: { id: owner },
       data: { status: "suspended" },
     });
     await expect(
-      mutateA2AConsole(local, { action: "set-local", enabled: true }),
+      mutateA2AConsole(local, { action: "set-inbound", enabled: true }),
     ).rejects.toMatchObject({ status: 403 });
     await db.user.update({ where: { id: owner }, data: { status: "active" } });
     await expect(
       mutateA2AConsole(
         { ...local, agentId: "foreign-target" },
-        { action: "set-local", enabled: true },
+        { action: "set-inbound", enabled: true },
       ),
     ).rejects.toMatchObject({ status: 404 });
     await db.workspace.update({
@@ -222,115 +280,99 @@ describe("A2A console management persists scoped configuration", () => {
       data: { status: "deleting" },
     });
     await expect(
-      mutateA2AConsole(local, { action: "set-local", enabled: true }),
+      mutateA2AConsole(local, { action: "set-outbound", enabled: true }),
     ).rejects.toMatchObject({ status: 403 });
   });
-  it("creates a client and one-time key atomically using only A2A scopes", async () => {
-    const result = await mutateA2AConsole(published, {
-      action: "create-client",
-      name: "External integration",
+
+  it("rolls back directional flags and revision publication when auditing fails", async () => {
+    const before = await db.$transaction((tx) =>
+      requireAgentRevision(tx, local.agentId),
+    );
+    faults.audit = true;
+    await expect(
+      mutateA2AConsole(local, { action: "set-outbound", enabled: true }),
+    ).rejects.toThrow();
+    expect((await getA2AConsoleView(local)).collaboration).toEqual({
+      inboundEnabled: false,
+      outboundEnabled: false,
     });
-    expect(result.token).toMatch(/^tp_agent_/);
-    const stored = await db.agentApiKey.findFirstOrThrow({
-      where: { clientId: result.clientId },
-    });
-    expect(stored.tokenHash).not.toContain(result.token);
     expect(
-      await verifyAgentApiKey(`Bearer ${result.token}`, publicId, "a2a:send"),
-    ).not.toBeNull();
-    expect(
-      await verifyAgentApiKey(
-        `Bearer ${result.token}`,
-        publicId,
-        "responses:create",
-      ),
-    ).toBeNull();
+      (await db.$transaction((tx) => requireAgentRevision(tx, local.agentId)))
+        .id,
+    ).toBe(before.id);
+  });
+
+  it("exposes retained credential metadata without secrets", async () => {
+    const retained = await retainedCredential();
     const view = await getA2AConsoleView(published);
     const serialized = JSON.stringify(view);
     for (const secret of [
-      assertDefined(result.token),
-      stored.tokenHash,
+      retained.token,
+      retained.key.tokenHash,
       "PRIVATE PUBLIC CONFIG",
       "do-not-expose-fixture-provider-key",
     ])
       expect(serialized).not.toContain(secret);
     expect(view.endpoint?.clients).toHaveLength(1);
+    expect(view.endpoint?.clients[0].keys[0].prefix).toBe(retained.key.prefix);
     expect(
       JSON.stringify(await db.auditEvent.findMany({ where: { workspaceId } })),
-    ).not.toContain(result.token);
+    ).not.toContain(retained.token);
   });
-  it("does not leave a client or key when auditing fails", async () => {
+
+  it("revokes retained keys idempotently without affecting a different retained client", async () => {
+    const first = await retainedCredential(),
+      second = await retainedCredential();
+    await mutateA2AConsole(published, {
+      action: "revoke-key",
+      keyId: first.key.id,
+    });
+    await mutateA2AConsole(published, {
+      action: "revoke-key",
+      keyId: first.key.id,
+    });
+    expect(
+      await verifyAgentApiKey(`Bearer ${first.token}`, publicId, "a2a:read"),
+    ).toBeNull();
+    expect(
+      await verifyAgentApiKey(`Bearer ${second.token}`, publicId, "a2a:read"),
+    ).not.toBeNull();
+  });
+
+  it("rolls back retained credential revocation when auditing fails", async () => {
+    const retained = await retainedCredential();
     faults.audit = true;
     await expect(
       mutateA2AConsole(published, {
-        action: "create-client",
-        name: "Must rollback",
+        action: "revoke-key",
+        keyId: retained.key.id,
       }),
     ).rejects.toThrow();
-    expect(await db.agentApiClient.count({ where: { endpointId } })).toBe(0);
     expect(
-      await db.agentApiKey.count({ where: { client: { endpointId } } }),
-    ).toBe(0);
-  });
-  it("rotates without silently revoking the old key; revoke is scoped and idempotent", async () => {
-    const original = await mutateA2AConsole(published, {
-      action: "create-client",
-      name: "Integration",
-    });
-    const replacement = await mutateA2AConsole(published, {
-      action: "create-key",
-      clientId: assertDefined(original.clientId),
-    });
-    expect(original.token).not.toBe(replacement.token);
-    expect(
-      await verifyAgentApiKey(`Bearer ${original.token}`, publicId, "a2a:read"),
-    ).not.toBeNull();
-    const oldKey = await db.agentApiKey.findFirstOrThrow({
-      where: { clientId: original.clientId },
-      orderBy: { createdAt: "asc" },
-    });
-    await mutateA2AConsole(published, {
-      action: "revoke-key",
-      keyId: oldKey.id,
-    });
-    await mutateA2AConsole(published, {
-      action: "revoke-key",
-      keyId: oldKey.id,
-    });
-    expect(
-      await verifyAgentApiKey(`Bearer ${original.token}`, publicId, "a2a:read"),
+      (
+        await db.agentApiKey.findUniqueOrThrow({
+          where: { id: retained.key.id },
+        })
+      ).revokedAt,
     ).toBeNull();
-    expect(
-      await verifyAgentApiKey(
-        `Bearer ${replacement.token}`,
-        publicId,
-        "a2a:read",
-      ),
-    ).not.toBeNull();
   });
-  it("never upgrades or modifies legacy response clients", async () => {
-    const legacy = await db.agentApiClient.create({
-      data: {
-        endpointId,
-        name: "Legacy",
-        scopes: ["responses:create", "responses:read"],
-      },
-    });
+
+  it("never manages legacy Responses credentials", async () => {
+    const retained = await retainedCredential([
+      "responses:create",
+      "responses:read",
+    ]);
     await expect(
       mutateA2AConsole(published, {
-        action: "create-key",
-        clientId: legacy.id,
+        action: "revoke-key",
+        keyId: retained.key.id,
       }),
     ).rejects.toMatchObject({ status: 404 });
-    expect((await getA2AConsoleView(published)).endpoint?.clients).toHaveLength(
-      0,
-    );
+    expect((await getA2AConsoleView(published)).endpoint?.clients).toEqual([]);
   });
-  it("does not expose key management data to a member or accept foreign key IDs", async () => {
-    await mutateA2AConsole(published, {
-      action: "create-client",
-      name: "Owner integration",
-    });
+
+  it("does not expose credential metadata to members or accept foreign key IDs", async () => {
+    const retained = await retainedCredential();
     const memberView = await getA2AConsoleView({
       ...published,
       actorId: member,
@@ -338,40 +380,41 @@ describe("A2A console management persists scoped configuration", () => {
     expect(memberView.canManage).toBe(false);
     expect(memberView.endpoint?.clients).toEqual([]);
     await expect(
+      mutateA2AConsole(
+        { ...published, actorId: member },
+        { action: "revoke-key", keyId: retained.key.id },
+      ),
+    ).rejects.toMatchObject({ status: 403 });
+    await expect(
       mutateA2AConsole(published, {
         action: "revoke-key",
         keyId: "foreign-key",
       }),
     ).rejects.toMatchObject({ status: 404 });
   });
-  it("allows revocation on a disabled endpoint, but refuses new credentials", async () => {
-    const created = await mutateA2AConsole(published, {
-      action: "create-client",
-      name: "Integration",
-    });
-    const key = await db.agentApiKey.findFirstOrThrow({
-      where: { clientId: created.clientId },
-    });
+
+  it("allows retained key revocation when the historical endpoint is disabled", async () => {
+    const retained = await retainedCredential();
     await db.agentEndpoint.update({
       where: { id: endpointId },
       data: { status: "disabled", a2aEnabled: false },
     });
-    await expect(
-      mutateA2AConsole(published, {
-        action: "create-client",
-        name: "Not allowed",
-      }),
-    ).rejects.toMatchObject({ status: 409 });
-    await mutateA2AConsole(published, { action: "revoke-key", keyId: key.id });
+    await mutateA2AConsole(published, {
+      action: "revoke-key",
+      keyId: retained.key.id,
+    });
     expect(
-      (await db.agentApiKey.findUniqueOrThrow({ where: { id: key.id } }))
-        .revokedAt,
+      (
+        await db.agentApiKey.findUniqueOrThrow({
+          where: { id: retained.key.id },
+        })
+      ).revokedAt,
     ).not.toBeNull();
   });
 });
 
 it("requires an administrator to bind the current human as channel operator, never an arbitrary actor", async () => {
-  await mutateA2AConsole(local, { action: "set-local", enabled: true });
+  await mutateA2AConsole(local, { action: "set-inbound", enabled: true });
   const channel = await db.agentChannelConnection.create({
     data: {
       workspaceId,

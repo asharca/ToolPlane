@@ -21,13 +21,27 @@ import {
   type RemoteA2AGrant,
 } from "./principal";
 import { remotePair } from "./remote-network";
+import { AgentCard } from "@a2a-js/sdk";
+import {
+  collaborationPolicy,
+  CollaborationApprovalRequiredError,
+} from "./collaboration-policy";
 const missing = () => new TaskNotFoundError();
 export async function remoteTarget(
   tx: Prisma.TransactionClient,
   workspaceId: string,
   sourceAgentId: string,
   id: string,
+  sourceTaskId?: string,
 ) {
+  const policy = await collaborationPolicy(
+    tx,
+    workspaceId,
+    sourceAgentId,
+    "remote",
+    id,
+    sourceTaskId,
+  );
   const row = await tx.remoteA2AAgent.findFirst({
     where: {
       id,
@@ -42,12 +56,22 @@ export async function remoteTarget(
       cardUrl: true,
       rpcUrl: true,
       revision: true,
+      card: true,
     },
   });
   if (!row) throw missing();
   remotePair(row.cardUrl, row.rpcUrl);
+  if (
+    AgentCard.fromJSON(row.card).skills.some(
+      (skill) => !policy.capabilityIds.includes(skill.id),
+    )
+  )
+    throw new CollaborationApprovalRequiredError(
+      "Remote capabilities exceed the approved policy.",
+    );
   return {
     ...row,
+    maxDepth: policy.maxDepth,
     binding: createHash("sha256")
       .update(
         JSON.stringify([
@@ -84,8 +108,13 @@ export async function assertRemoteGrant(
     grant.workspaceId,
     grant.sourceAgentId,
     grant.remoteAgentId,
+    grant.parentTaskId,
   );
-  if (target.binding !== grant.targetBinding) throw missing();
+  if (
+    target.binding !== grant.targetBinding ||
+    (!cancellation && grant.ancestorTaskIds.length > target.maxDepth)
+  )
+    throw missing();
   const parent = await tx.a2ATask.findUnique({
     where: { id: grant.parentTaskId },
   });
@@ -104,7 +133,7 @@ export async function assertRemoteGrant(
       where: {
         id: grant.sourceAgentId,
         workspaceId: grant.workspaceId,
-        a2aInternalEnabled: true,
+        a2aOutboundEnabled: true,
       },
     }))
   )
@@ -122,8 +151,17 @@ export async function assertRemoteGrant(
   if (cancellation) {
     // A stopped parent may still cancel a known remote task, but never authorize new work.
     if (
-      (await localTarget(tx, grant.workspaceId, authority.agentId)).binding !==
-      authority.targetBinding
+      (
+        await localTarget(
+          tx,
+          grant.workspaceId,
+          authority.agentId,
+          authority.ancestorTaskIds.length
+            ? "delegation"
+            : authority.entryPolicy,
+          authority.agentRevisionId,
+        )
+      ).binding !== authority.targetBinding
     )
       throw missing();
     return;
@@ -134,7 +172,7 @@ export async function assertRemoteGrant(
     [3, 4, 5, 7].includes(parent.state)
   )
     throw missing();
-  await assertLocalGrant(authority, tx);
+  await assertLocalGrant(authority, tx, grant.ancestorTaskIds.length);
 }
 export async function remoteChildGrant(
   parentId: string,
@@ -153,27 +191,30 @@ export async function remoteChildGrant(
     parent.cancelRequestedAt
   )
     throw missing();
-  await assertLocalGrant(caller);
-  if (
-    !(await db.agent.count({
-      where: {
-        id: caller.agentId,
-        workspaceId: caller.workspaceId,
-        a2aInternalEnabled: true,
-      },
-    }))
-  )
-    throw missing();
   if (caller.ancestorTaskIds.length + 1 > LOCAL_LIMITS.depth)
     throw new UnsupportedOperationError(
       "Remote delegation depth limit reached.",
     );
+  await assertLocalGrant(caller, db, caller.ancestorTaskIds.length + 1);
   const target = await remoteTarget(
     db,
     caller.workspaceId,
     caller.agentId,
     remoteId,
+    parent.id,
   );
+  const policy = await collaborationPolicy(
+    db,
+    caller.workspaceId,
+    caller.agentId,
+    "remote",
+    remoteId,
+    parent.id,
+  );
+  if (caller.ancestorTaskIds.length + 1 > policy.maxDepth)
+    throw new CollaborationApprovalRequiredError(
+      "Approved remote delegation depth exceeded.",
+    );
   return {
     kind: "remote",
     workspaceId: caller.workspaceId,
@@ -193,9 +234,11 @@ export async function remoteChildGrant(
     ancestorTaskIds: [...caller.ancestorTaskIds, parent.id],
     ancestorAgentIds: [...caller.ancestorAgentIds, caller.agentId],
     expiresAt: Math.min(caller.expiresAt, parent.deadlineAt.getTime()),
-    timeoutSeconds: 840,
+    timeoutSeconds: Math.min(caller.timeoutSeconds, policy.timeoutSeconds),
     retentionDays: 7,
-    maxConcurrent: 4,
-    scopes: [...A2A_SCOPES],
+    maxConcurrent: Math.min(caller.maxConcurrent, policy.maxConcurrent),
+    scopes: caller.scopes.filter((scope) =>
+      A2A_SCOPES.some((allowed) => allowed === scope),
+    ),
   };
 }

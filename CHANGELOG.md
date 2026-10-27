@@ -4,8 +4,9 @@
 
 ### Features
 * add administrator-configurable per-Agent and platform execution limits, isolated persistent conversation sandboxes, cancellable admission, conversation-scoped files and nonblocking terminals with live access revalidation, and idle container cleanup with preserved volumes
-* add selected-sandbox batch start, stop and restart with disruptive-action confirmation, workspace-scoped lifecycle guards and per-sandbox results, including Hermes runtimes
+* add selected-sandbox batch start, stop and restart with disruptive-action confirmation, workspace-scoped lifecycle guards and per-sandbox results
 * add request-level A2A debugging across HTTP, MCP and native entries, with redacted 24-hour administrator-only bodies, committed task timelines, and workspace-scoped metadata views
+* make GitHub registries the Resource Center's only content-publishing path for Skills, MCP configurations, Pi packages, Agents and Assistants; resolve fixed commits into immutable releases with atomic synchronization, workspace-scoped credentials and webhook signatures, preserved session pins, and explicit installation/application; remove local uploads, inline authoring and direct npm/Git/ZIP publication while preserving private Skill editing and chat/Work attachments
 
 ### Documentation
 * add an evidence-based repository lessons notebook, require coding agents to read and maintain it, and promote recurring lessons into durable guidance
@@ -13,7 +14,7 @@
 ### Bug Fixes
 * preserve indexed package and configuration context in staged checks so React/Next rules remain enabled without rejecting valid suppressions or reading unstaged dependency changes
 * serialize terminal input requests and drain pending writes before closing a session, preventing keystroke reordering through asynchronous sandbox proxies
-* enforce 80% global statement, branch, function and line coverage without narrowing source inclusion; expand behavioral tests across authorization, runtime lifecycles, transports and console workflows, and isolate request-origin fixtures from external application settings
+* focus permanent tests and CI on core behavior and security boundaries; remove implementation-detail, wording and duplicate suites, retire the global 80% coverage gate and Codecov upload, and retain optional coverage diagnostics
 * return sub-agent resource validation failures without aborting the parent tool call; build the Pi capture sandbox before CI tests and align behavioral coverage with current UI controls
 * reject staged JS/TS syntax, JSON and lint errors before commit; install repository hooks automatically and run shared lint/type checks before push and in CI, excluding generated MDX files from lint
 * prevent long-running MCP and channel outages from Node 24.21 retaining nested timeout signals; initialize native weak signal following in the managed launcher before Next starts

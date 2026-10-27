@@ -169,6 +169,7 @@ describe("parseCustomMcpInput", () => {
         env: { MCP_BEARER_TOKEN: "test-token" },
         requiredEnv: ["MCP_BEARER_TOKEN"],
         transport: "streamable-http",
+        allowUnsafeHttp: false,
         authType: "bearer",
         bearerEnv: "MCP_BEARER_TOKEN",
       },
@@ -192,6 +193,7 @@ describe("parseCustomMcpInput", () => {
               remote: {
                 type: "http",
                 url,
+                allowUnsafeHttp: url.startsWith("http:"),
                 headers: { Authorization: "Bearer test-token" },
               },
             },
@@ -201,6 +203,7 @@ describe("parseCustomMcpInput", () => {
         source: "remote",
         ref: url,
         installCfg: {
+          allowUnsafeHttp: url.startsWith("http:"),
           env: { MCP_BEARER_TOKEN: "test-token" },
           authType: "bearer",
           bearerEnv: "MCP_BEARER_TOKEN",
@@ -208,6 +211,38 @@ describe("parseCustomMcpInput", () => {
       });
     },
   );
+
+  it.each([undefined, false, "true", 1])(
+    "rejects plaintext HTTP without boolean approval (%s)",
+    (allowUnsafeHttp) => {
+      expect(() =>
+        parseMcpJsonConfig(
+          JSON.stringify({
+            remote: {
+              type: "http",
+              url: "http://mcp.example.com/mcp",
+              allowUnsafeHttp,
+            },
+          }),
+        ),
+      ).toThrow(/HTTP is unencrypted; explicitly set allowUnsafeHttp: true/);
+    },
+  );
+
+  it("accepts SSE transport without requiring unsafe approval for HTTPS", () => {
+    expect(
+      parseMcpJsonConfig(
+        JSON.stringify({
+          remote: { type: "sse", url: "https://mcp.example.com/sse" },
+        }),
+      ).installCfg,
+    ).toEqual({
+      env: {},
+      transport: "sse",
+      allowUnsafeHttp: false,
+      authType: "none",
+    });
+  });
 
   it("accepts an unauthenticated remote HTTP MCP", () => {
     expect(
@@ -244,7 +279,10 @@ describe("parseCustomMcpInput", () => {
   it("strictly rejects unsafe remote HTTP MCP fields without exposing credentials", () => {
     const token = "secret-token-must-not-appear";
     const cases: Array<[Record<string, unknown>, RegExp]> = [
-      [{ type: "sse", url: "https://mcp.example.com/mcp" }, /type must be/],
+      [
+        { type: "websocket", url: "https://mcp.example.com/mcp" },
+        /type must be/,
+      ],
       [
         {
           type: "http",
@@ -269,7 +307,7 @@ describe("parseCustomMcpInput", () => {
           url: "https://mcp.example.com/mcp",
           headers: { "X-API-Key": token },
         },
-        /Authorization header/,
+        /allowed header names and environment references/,
       ],
       [
         {
@@ -281,7 +319,7 @@ describe("parseCustomMcpInput", () => {
       ],
       [
         { type: "http", url: "https://mcp.example.com/mcp", command: "npx" },
-        /only type, url, and headers/,
+        /only type, url, headers, and allowUnsafeHttp/,
       ],
     ];
 
@@ -486,31 +524,28 @@ describe("parseCustomMcpInput", () => {
     expect(JSON.parse(serialized)).toEqual({
       command: "npx",
       args: ["-y", "@fangjunjie/ssh-mcp-server", "--port", "22"],
-      env: { SSH_USER: "root" },
+      env: { SSH_USER: "********" },
     });
     expect(parseMcpJsonConfig(serialized)).toMatchObject({
       source: "config",
       name: "ssh-mcp-server",
-      installCfg: { command: "npx", env: { SSH_USER: "root" } },
+      installCfg: { command: "npx", env: { SSH_USER: "********" } },
     });
     expect(
       parseMcpDeploymentConfig(serialized, "config", undefined, "none"),
     ).toMatchObject({
       installCfg: {
         command: "npx",
-        env: { SSH_USER: "root" },
+        env: { SSH_USER: "********" },
         network: "none",
       },
     });
 
-    const masked = serializeMcpJsonConfig(
-      {
-        command: "npx",
-        args: ["-y", "ssh-mcp-server", "--password", "secret", "--port", "22"],
-        env: { SSH_USER: "root", SSH_PASSWORD: "secret" },
-      },
-      { maskSecrets: true },
-    );
+    const masked = serializeMcpJsonConfig({
+      command: "npx",
+      args: ["-y", "ssh-mcp-server", "--password", "secret", "--port", "22"],
+      env: { SSH_USER: "root", SSH_PASSWORD: "secret" },
+    });
     expect(JSON.parse(masked)).toEqual({
       command: "npx",
       args: ["-y", "ssh-mcp-server", "--password", "********", "--port", "22"],
@@ -535,30 +570,27 @@ describe("parseCustomMcpInput", () => {
   );
 
   it("masks credential URLs in command args", () => {
-    const masked = serializeMcpJsonConfig(
-      {
-        command: "uvx",
-        args: [
-          "--index-url=https://user:secret@repo.example/simple",
-          "--registry",
-          "https://user:secret@registry.example",
-          "--header=Authorization: Bearer token-value",
-          "--auth-token",
-          "auth-value",
-          "--access-token=access-value",
-          "--credential",
-          "credential-value",
-          "TOKEN=assignment-value",
-          "https://token-value@private.example/path",
-          "--url=https://api.example/run?access_token=query-secret",
-          "--header",
-          "X-API-Key: header-secret",
-          "https://api.example/run?api_key=position-secret",
-          "mcp-server-fetch",
-        ],
-      },
-      { maskSecrets: true },
-    );
+    const masked = serializeMcpJsonConfig({
+      command: "uvx",
+      args: [
+        "--index-url=https://user:secret@repo.example/simple",
+        "--registry",
+        "https://user:secret@registry.example",
+        "--header=Authorization: Bearer token-value",
+        "--auth-token",
+        "auth-value",
+        "--access-token=access-value",
+        "--credential",
+        "credential-value",
+        "TOKEN=assignment-value",
+        "https://token-value@private.example/path",
+        "--url=https://api.example/run?access_token=query-secret",
+        "--header",
+        "X-API-Key: header-secret",
+        "https://api.example/run?api_key=position-secret",
+        "mcp-server-fetch",
+      ],
+    });
     expect(JSON.parse(masked).args).toEqual([
       "--index-url=********",
       "--registry",
@@ -686,7 +718,7 @@ describe("editable deployment configurations", () => {
       installCfg: { env: {}, startCommand: "/tmp", network: "none" as const },
     },
   ])(
-    "round-trips a $source deployment config",
+    "serializes a $source deployment without its private values",
     ({ source, ref, installCfg }) => {
       const serialized = serializeMcpDeploymentConfig({
         source,
@@ -703,7 +735,13 @@ describe("editable deployment configurations", () => {
       ).toEqual({
         source,
         ref,
-        installCfg,
+        installCfg: {
+          ...installCfg,
+          env: Object.fromEntries(
+            Object.keys(installCfg.env).map((key) => [key, "********"]),
+          ),
+          ...("startCommand" in installCfg ? { startCommand: "********" } : {}),
+        },
       });
     },
   );
@@ -728,18 +766,15 @@ describe("editable deployment configurations", () => {
   });
 
   it("masks package env and Docker startCommand secrets", () => {
-    const masked = serializeMcpDeploymentConfig(
-      {
-        source: "docker",
-        sourceRef: "mcp/example",
-        installCfg: {
-          startCommand:
-            "--token secret --registry=https://user:secret@repo.example",
-          env: { API_TOKEN: "secret" },
-        },
+    const masked = serializeMcpDeploymentConfig({
+      source: "docker",
+      sourceRef: "mcp/example",
+      installCfg: {
+        startCommand:
+          "--token secret --registry=https://user:secret@repo.example",
+        env: { API_TOKEN: "secret" },
       },
-      { maskSecrets: true },
-    );
+    });
     expect(JSON.parse(masked)).toEqual({
       source: "docker",
       ref: "mcp/example",

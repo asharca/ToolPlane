@@ -61,7 +61,13 @@ export async function managePiPackageClientAction(
         const { installation, token } = await createPiPackageClientInstallation(
           {
             ...context,
-            marketInstallId: String(formData.get("marketInstallId") ?? ""),
+            ...(formData.get("selections")
+              ? { selections: JSON.parse(String(formData.get("selections"))) }
+              : {
+                  marketInstallId: String(
+                    formData.get("marketInstallId") ?? "",
+                  ),
+                }),
             label: String(formData.get("label") ?? ""),
             client: piPackageClientSchema.parse(formData.get("client")),
             bindings,
@@ -83,7 +89,16 @@ export async function managePiPackageClientAction(
       await updatePiPackageClientInstallation({
         ...context,
         installationId,
-        releaseId: String(formData.get("releaseId") ?? ""),
+        ...(formData.get("releaseId")
+          ? { releaseId: String(formData.get("releaseId")) }
+          : {}),
+        expectedConfigVersion:
+          formData.get("expectedConfigVersion") === null
+            ? Number.NaN
+            : Number(formData.get("expectedConfigVersion")),
+        ...(formData.get("selections")
+          ? { selections: JSON.parse(String(formData.get("selections"))) }
+          : {}),
         bindings,
         confirmExpandedPrivileges:
           formData.get("confirmExpandedPrivileges") === "yes",

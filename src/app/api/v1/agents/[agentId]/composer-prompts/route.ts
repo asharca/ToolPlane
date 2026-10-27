@@ -44,6 +44,11 @@ export const POST = withRequestLogging(
   async function POST(req: Request, { params }: Params) {
     const agent = await authorized(req, params);
     if (!agent) return Response.json({ error: "Not found" }, { status: 404 });
+    if (agent.runtimeKind !== "pi-sdk" || agent.retiredAt)
+      return Response.json(
+        { error: "Historical Agents are read-only." },
+        { status: 410 },
+      );
     const input = PromptSchema.safeParse(await req.json().catch(() => null));
     if (!input.success)
       return Response.json({ error: "Invalid prompt" }, { status: 400 });

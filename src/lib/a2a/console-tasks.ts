@@ -23,6 +23,7 @@ import { remoteTarget } from "./remote-policy";
 import { getTaskRow } from "./store";
 import { historyView, jsonTask } from "./model";
 import type { ConsoleActor } from "./console-service";
+import { collaborationReservation } from "./collaboration-policy";
 
 /** Console-only projection. Phase/ancestry are UI metadata, not new A2A wire fields. */
 export type ConsoleTaskTree = {
@@ -37,9 +38,16 @@ export type ConsoleTaskTree = {
     phase: string;
     pendingApprovals?: number;
     cancelRequested: boolean;
+    remoteState?: string;
+    remoteOutcome?: "observed" | "unknown";
+    authorizedReservation?: {
+      currency: string;
+      reservedMicros: number;
+      limitMicros: number;
+    };
     resumeCount: number;
     updatedAt: string;
-    executionBackend?: "pi-harness";
+    executionBackend?: "pi-sdk" | "pi-harness";
     nativeOperationId?: string | null;
     contextId?: string;
   }>;
@@ -175,6 +183,9 @@ export async function getConsoleTaskTree(
         visible.set(row.id, row);
         const task = Task.fromJSON(row.snapshot),
           status = jsonTask(task).status as { state?: string };
+        const remote = task.metadata?.toolplaneRemote as
+          | { state?: string; outcome?: "observed" | "unknown" }
+          | undefined;
         nodes.push({
           id: row.id,
           parentTaskId: row.parentTaskId,
@@ -183,6 +194,11 @@ export async function getConsoleTaskTree(
           state: status?.state ?? "TASK_STATE_UNSPECIFIED",
           phase: row.phase,
           cancelRequested: Boolean(row.cancelRequestedAt),
+          authorizedReservation: await collaborationReservation(db, grant),
+          remoteState: remote?.state,
+          remoteOutcome:
+            remote?.outcome ??
+            (row.remoteDispatchedAt && row.state === 4 ? "unknown" : undefined),
           resumeCount: row.resumeCount,
           updatedAt: row.statusAt.toISOString(),
         });
@@ -230,14 +246,16 @@ export async function getConsoleTaskTree(
       state: status?.state ?? "TASK_STATE_UNSPECIFIED",
       phase: row.phase,
       pendingApprovals,
-      ...(row.executionBackend === "pi-harness"
+      ...(row.executionBackend === "pi-sdk" ||
+      row.executionBackend === "pi-harness"
         ? {
-            executionBackend: "pi-harness" as const,
+            executionBackend: row.executionBackend,
             nativeOperationId: row.nativeOperationId,
             contextId: row.contextId,
           }
         : {}),
       cancelRequested: Boolean(row.cancelRequestedAt),
+      authorizedReservation: await collaborationReservation(db, grant),
       resumeCount: row.resumeCount,
       updatedAt: row.statusAt.toISOString(),
     });

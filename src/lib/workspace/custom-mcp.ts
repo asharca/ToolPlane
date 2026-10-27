@@ -4,11 +4,11 @@ import {
   parseDockerJsonArgs,
 } from "./docker-json-command";
 import { isValidRemoteMcpUrl } from "@/lib/remote-mcp/url";
+import { isAllowedRemoteMcpHeaderName } from "@/lib/remote-mcp/header-policy";
+import { mcpEnvironmentState } from "./mcp-environment";
 
 const NPM_NAME = /^(@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/;
 const PYPI_NAME = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/;
-const GITHUB_URL =
-  /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/?$/;
 
 export type LocalMcpSource = "npm" | "pypi" | "github" | "docker";
 export type McpSource = LocalMcpSource | "remote";
@@ -19,6 +19,7 @@ export const EDITABLE_MCP_SOURCES = [
   "github",
   "docker",
   "config",
+  "remote",
 ] as const;
 export type EditableMcpSource = (typeof EDITABLE_MCP_SOURCES)[number];
 
@@ -98,9 +99,11 @@ type StdioMcpInstallConfig = {
 type RemoteMcpInstallConfig = {
   env: Record<string, string>;
   requiredEnv?: string[];
-  transport: "streamable-http";
-  authType: "none" | "bearer";
+  transport: "streamable-http" | "sse";
+  authType: "none" | "bearer" | "headers";
   bearerEnv?: string;
+  headerEnv?: Record<string, string>;
+  allowUnsafeHttp?: boolean;
 };
 
 type PackageMcpInstallConfig = {
@@ -112,18 +115,27 @@ type PackageMcpInstallConfig = {
 export type ParsedMcpDeploymentConfig = {
   source: EditableMcpSource;
   ref: string;
-  installCfg: StdioMcpInstallConfig | PackageMcpInstallConfig;
+  installCfg:
+    | StdioMcpInstallConfig
+    | PackageMcpInstallConfig
+    | RemoteMcpInstallConfig;
 };
 
 // Shared reference validator for a given source — reused by both the custom-MCP
 // deploy form and the admin server-recipe parser so the rules can't drift.
 export function isValidMcpRef(source: McpSource, ref: string): boolean {
   return source === "npm"
-    ? NPM_NAME.test(ref)
+    ? /^(?:@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*(?:@\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)?$/.test(
+        ref,
+      )
     : source === "pypi"
-      ? PYPI_NAME.test(ref)
+      ? /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?(?:==\d+(?:\.\d+)*(?:[A-Za-z0-9.-]+)?)?$/.test(
+          ref,
+        )
       : source === "github"
-        ? GITHUB_URL.test(ref)
+        ? /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/?(?:#[a-fA-F0-9]{40})?$/.test(
+            ref,
+          )
         : source === "docker"
           ? isValidDockerImageRef(ref)
           : isValidRemoteMcpUrl(ref);
@@ -165,27 +177,25 @@ function isSupportedJsonCommand(value: unknown): value is StdioMcpCommand {
   );
 }
 
-function serializedEnv(
-  value: unknown,
-  maskSecrets: boolean,
-): Record<string, string> {
+function serializedEnv(installCfg: unknown): Record<string, string> {
+  const value = (installCfg as { env?: unknown } | null)?.env;
+  const configured = mcpEnvironmentState(installCfg);
   const env: Record<string, string> = {};
   if (!value || typeof value !== "object" || Array.isArray(value)) return env;
   for (const [key, envValue] of Object.entries(
     value as Record<string, unknown>,
   )) {
     if (ENV_KEY.test(key) && typeof envValue === "string") {
-      env[key] = maskSecrets && envValue ? MASKED_SECRET : envValue;
+      env[key] = configured[key] || envValue ? MASKED_SECRET : "";
     }
   }
   return env;
 }
 
-function serializedArgs(value: unknown, maskSecrets: boolean): string[] {
+function serializedArgs(value: unknown): string[] {
   const args = Array.isArray(value)
     ? value.filter((arg): arg is string => typeof arg === "string")
     : [];
-  if (!maskSecrets) return args;
   const masked = [...args];
   for (let index = 0; index < masked.length; index += 1) {
     const [flag, assigned] = masked[index].split("=", 2);
@@ -222,7 +232,7 @@ function serializedArgs(value: unknown, maskSecrets: boolean): string[] {
 
 export function serializeMcpJsonConfig(
   installCfg: unknown,
-  options: { maskSecrets?: boolean; includeEnv?: boolean } = {},
+  options: { includeEnv?: boolean } = {},
 ): string {
   const stored = (installCfg ?? {}) as {
     command?: unknown;
@@ -233,8 +243,8 @@ export function serializeMcpJsonConfig(
   const command = isSupportedJsonCommand(stored.command)
     ? stored.command
     : "npx";
-  const args = serializedArgs(stored.args, Boolean(options.maskSecrets));
-  const env = serializedEnv(stored.env, Boolean(options.maskSecrets));
+  const args = serializedArgs(stored.args);
+  const env = serializedEnv(installCfg);
   return JSON.stringify(
     {
       command,
@@ -254,8 +264,33 @@ export function serializeMcpDeploymentConfig(
     sourceRef: string | null;
     installCfg: unknown;
   },
-  options: { maskSecrets?: boolean; includeEnv?: boolean } = {},
+  options: { includeEnv?: boolean } = {},
 ): string {
+  if (deployment.source === "remote") {
+    const stored =
+      deployment.installCfg as Partial<RemoteMcpInstallConfig> | null;
+    const headers =
+      stored?.authType === "bearer" && stored.bearerEnv
+        ? { Authorization: `Bearer \${${stored.bearerEnv}}` }
+        : stored?.authType === "headers" && stored.headerEnv
+          ? Object.fromEntries(
+              Object.entries(stored.headerEnv).map(([name, key]) => [
+                name,
+                `\${${key}}`,
+              ]),
+            )
+          : undefined;
+    return JSON.stringify(
+      {
+        type: stored?.transport === "sse" ? "sse" : "http",
+        url: deployment.sourceRef ?? "",
+        ...(headers ? { headers } : {}),
+        allowUnsafeHttp: stored?.allowUnsafeHttp === true,
+      },
+      null,
+      2,
+    );
+  }
   if (deployment.source === "config") {
     return serializeMcpJsonConfig(deployment.installCfg, options);
   }
@@ -270,11 +305,10 @@ export function serializeMcpDeploymentConfig(
     startCommand?: unknown;
     network?: unknown;
   };
-  const env = serializedEnv(stored.env, Boolean(options.maskSecrets));
+  const env = serializedEnv(deployment.installCfg);
   const rawStartCommand =
     typeof stored.startCommand === "string" ? stored.startCommand : "";
-  const startCommand =
-    options.maskSecrets && rawStartCommand ? MASKED_SECRET : rawStartCommand;
+  const startCommand = rawStartCommand ? MASKED_SECRET : "";
 
   return JSON.stringify(
     {
@@ -468,21 +502,30 @@ function inferredConfigName(command: StdioMcpCommand, args: string[]): string {
   return "mcp-server";
 }
 
-const REMOTE_HTTP_FIELDS = new Set(["type", "url", "headers"]);
+const REMOTE_HTTP_FIELDS = new Set([
+  "type",
+  "url",
+  "headers",
+  "allowUnsafeHttp",
+]);
 const REMOTE_BEARER_ENV = "MCP_BEARER_TOKEN";
 const MAX_REMOTE_HEADER_VALUE_LENGTH = 8_192;
 
 function parseRemoteHttpMcpConfig(
   config: Record<string, unknown>,
   name: string,
+  operatorApproval?: boolean,
+  allowEnvironment = true,
 ): ParsedCustomMcp {
   const unknownKey = Object.keys(config).find(
     (key) => !REMOTE_HTTP_FIELDS.has(key),
   );
   if (unknownKey)
-    return configError("remote HTTP MCP supports only type, url, and headers.");
-  if (config.type !== "http")
-    return configError('remote HTTP MCP type must be "http".');
+    return configError(
+      "remote MCP supports only type, url, headers, and allowUnsafeHttp.",
+    );
+  if (config.type !== "http" && config.type !== "sse")
+    return configError('remote MCP type must be "http" or "sse".');
   if (
     typeof config.url !== "string" ||
     config.url !== config.url.trim() ||
@@ -492,6 +535,14 @@ function parseRemoteHttpMcpConfig(
       "remote HTTP MCP url must be an allowed HTTP or HTTPS URL without credentials, query parameters, or a fragment; ports must be between 1 and 65535.",
     );
   }
+  const allowUnsafeHttp = operatorApproval ?? config.allowUnsafeHttp === true;
+  if (new URL(config.url).protocol === "http:" && !allowUnsafeHttp) {
+    return configError(
+      "HTTP is unencrypted; explicitly set allowUnsafeHttp: true to approve the risk.",
+    );
+  }
+  const transport =
+    config.type === "sse" ? ("sse" as const) : ("streamable-http" as const);
   if (!name || name.length > 80)
     return configError("the server name must be 1-80 characters.");
 
@@ -500,7 +551,7 @@ function parseRemoteHttpMcpConfig(
       source: "remote",
       ref: config.url,
       name,
-      installCfg: { env: {}, transport: "streamable-http", authType: "none" },
+      installCfg: { env: {}, transport, allowUnsafeHttp, authType: "none" },
     };
   }
   if (
@@ -516,13 +567,48 @@ function parseRemoteHttpMcpConfig(
       source: "remote",
       ref: config.url,
       name,
-      installCfg: { env: {}, transport: "streamable-http", authType: "none" },
+      installCfg: { env: {}, transport, allowUnsafeHttp, authType: "none" },
     };
   }
-  if (entries.length !== 1 || entries[0][0].toLowerCase() !== "authorization") {
-    return configError(
-      "remote HTTP MCP supports only an Authorization header.",
-    );
+  if (
+    entries.length !== 1 ||
+    entries[0][0].toLowerCase() !== "authorization" ||
+    (typeof entries[0][1] === "string" &&
+      /^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/.test(entries[0][1]))
+  ) {
+    if (entries.length > 32)
+      return configError("remote MCP supports at most 32 credential headers.");
+    const seen = new Set<string>();
+    const headerEnv: Record<string, string> = {};
+    for (const [header, value] of entries) {
+      const key =
+        typeof value === "string"
+          ? /^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$/.exec(value)?.[1]
+          : undefined;
+      if (
+        !key ||
+        !isAllowedRemoteMcpHeaderName(header) ||
+        seen.has(header.toLowerCase())
+      )
+        return configError(
+          "custom remote credentials must use allowed header names and environment references.",
+        );
+      seen.add(header.toLowerCase());
+      headerEnv[header] = key;
+    }
+    return {
+      source: "remote",
+      ref: config.url,
+      name,
+      installCfg: {
+        env: {},
+        requiredEnv: [...new Set(Object.values(headerEnv))],
+        transport,
+        allowUnsafeHttp,
+        authType: "headers",
+        headerEnv,
+      },
+    };
   }
   const authorization = entries[0][1];
   if (
@@ -537,16 +623,23 @@ function parseRemoteHttpMcpConfig(
       "remote HTTP MCP Authorization header must use Bearer authentication.",
     );
 
+  const reference = /^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$/.exec(token)?.[1];
+  if (!allowEnvironment && !reference)
+    return configError(
+      "credential values belong in Variables; use an environment reference.",
+    );
+  const bearerEnv = reference ?? REMOTE_BEARER_ENV;
   return {
     source: "remote",
     ref: config.url,
     name,
     installCfg: {
-      env: { [REMOTE_BEARER_ENV]: token },
-      requiredEnv: [REMOTE_BEARER_ENV],
-      transport: "streamable-http",
+      env: reference ? {} : { [bearerEnv]: token },
+      requiredEnv: [bearerEnv],
+      transport,
+      allowUnsafeHttp,
       authType: "bearer",
-      bearerEnv: REMOTE_BEARER_ENV,
+      bearerEnv,
     },
   };
 }
@@ -554,7 +647,7 @@ function parseRemoteHttpMcpConfig(
 export function parseMcpJsonConfig(
   raw: string,
   fallbackName?: string,
-  options: { allowEnvironment?: boolean } = {},
+  options: { allowEnvironment?: boolean; allowUnsafeHttp?: boolean } = {},
 ): ParsedCustomMcp {
   let document: unknown;
   try {
@@ -583,7 +676,11 @@ export function parseMcpJsonConfig(
     !Array.isArray(rootEntries[0][1]);
   if (
     !isNamedSingleEntry &&
-    ("command" in root || "args" in root || "env" in root)
+    ("command" in root ||
+      "args" in root ||
+      "env" in root ||
+      "type" in root ||
+      "url" in root)
   ) {
     config = root;
   } else {
@@ -607,7 +704,12 @@ export function parseMcpJsonConfig(
 
   const name = explicitName || fallbackName?.trim();
   if ("type" in config || "url" in config)
-    return parseRemoteHttpMcpConfig(config, name ?? "");
+    return parseRemoteHttpMcpConfig(
+      config,
+      name ?? "",
+      options.allowUnsafeHttp,
+      options.allowEnvironment,
+    );
 
   const allowedKeys = new Set([
     "command",
@@ -649,8 +751,18 @@ export function parseMcpDeploymentConfig(
   expectedSource: EditableMcpSource,
   fallbackName?: string,
   networkOverride?: unknown,
-  options: { allowEnvironment?: boolean } = {},
+  options: { allowEnvironment?: boolean; allowUnsafeHttp?: boolean } = {},
 ): ParsedMcpDeploymentConfig {
+  if (expectedSource === "remote") {
+    const parsed = parseMcpJsonConfig(raw, fallbackName, options);
+    if (
+      parsed.source !== "remote" ||
+      !parsed.installCfg ||
+      !("transport" in parsed.installCfg)
+    )
+      return configError("the remote transport configuration is invalid.");
+    return { source: "remote", ref: parsed.ref, installCfg: parsed.installCfg };
+  }
   if (expectedSource === "config") {
     const parsed = parseMcpJsonConfig(raw, fallbackName, options);
     if (!parsed.installCfg || !("command" in parsed.installCfg)) {
@@ -738,9 +850,11 @@ export function parseCustomMcpInput(raw: unknown): ParsedCustomMcp {
     const input = raw as Record<string, unknown>;
     const config = input.config;
     if (typeof config !== "string") return configError("config is required.");
-    const parsed = parseMcpJsonConfig(config);
-    // Older callers may omit this field and keep the value declared in JSON.
-    // The create form always submits it, making the visible selector authoritative.
+    const parsed = parseMcpJsonConfig(config, undefined, {
+      allowUnsafeHttp: input.allowUnsafeHttp === true,
+    });
+    // Transport-risk consent is the explicit caller choice, never inherited
+    // from a downloaded/imported document. Network selection stays separate.
     if (input.network === undefined || parsed.source === "remote")
       return parsed;
     if (!parsed.installCfg || !("command" in parsed.installCfg)) {

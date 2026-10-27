@@ -1,14 +1,11 @@
 import "server-only";
 import { writeAudit } from "@/lib/observability/audit";
 
-import { Prisma } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { normalizeAdminPage } from "@/lib/admin/pagination";
 import {
   AGENT_MARKET_MANIFEST_VERSION,
-  AgentMarketError,
-  agentReleaseChecksum,
-  buildCatalogAgentManifest,
   parseAgentReleaseManifest,
   summarizeAgentReleaseManifest,
   type AgentReleaseManifestV1,
@@ -24,35 +21,6 @@ export const ADMIN_AGENT_LISTING_STATUSES = [
 ] as const;
 export type AdminAgentListingStatus =
   (typeof ADMIN_AGENT_LISTING_STATUSES)[number];
-
-export type AgentListingMetadataInput = {
-  directorySlug: string;
-  name: string;
-  author: string | null;
-  summary: string | null;
-  iconUrl: string | null;
-  tags: string[];
-  curated: boolean;
-  isFeatured: boolean;
-  categoryIds: string[];
-  status: AdminAgentListingStatus;
-};
-
-export type CatalogAgentConfigInput = {
-  systemPrompt: string | null;
-  maxSteps: number;
-  modelFormat: string | null;
-  model: string | null;
-  serverIds: string[];
-  skillIds: string[];
-};
-
-export type DirectoryAgentTemplateInput = AgentListingMetadataInput &
-  CatalogAgentConfigInput;
-
-export type UpdateDirectoryAgentInput = AgentListingMetadataInput & {
-  config?: CatalogAgentConfigInput;
-};
 
 export class AdminAgentMarketError extends Error {
   constructor(
@@ -76,15 +44,6 @@ export class AdminAgentMarketError extends Error {
   }
 }
 
-function isPrismaUniqueError(error: unknown): boolean {
-  return Boolean(
-    error &&
-      typeof error === "object" &&
-      "code" in error &&
-      error.code === "P2002",
-  );
-}
-
 function isPrismaForeignKeyError(error: unknown): boolean {
   return Boolean(
     error &&
@@ -92,16 +51,6 @@ function isPrismaForeignKeyError(error: unknown): boolean {
       "code" in error &&
       error.code === "P2003",
   );
-}
-
-export function normalizeAgentListingTags(values: readonly string[]): string[] {
-  return [
-    ...new Set(
-      values
-        .map((value) => value.trim().toLocaleLowerCase().slice(0, 40))
-        .filter(Boolean),
-    ),
-  ].slice(0, 20);
 }
 
 async function checkedCategoryIds(
@@ -252,310 +201,6 @@ export function getDirectoryAgentListing(id: string) {
       _count: { select: { releases: true } },
     },
   });
-}
-
-export async function listCatalogAgentResources() {
-  const [servers, skills] = await Promise.all([
-    db.server.findMany({
-      where: { verifiedAt: { not: null }, installCfg: { not: Prisma.DbNull } },
-      orderBy: { name: "asc" },
-      select: { id: true, slug: true, name: true },
-    }),
-    db.skill.findMany({
-      where: { curated: true },
-      orderBy: { name: "asc" },
-      select: { id: true, slug: true, name: true },
-    }),
-  ]);
-  return { servers, skills };
-}
-
-async function buildReleaseArtifact(
-  tx: Prisma.TransactionClient,
-  metadata: Pick<
-    AgentListingMetadataInput,
-    "directorySlug" | "name" | "summary" | "iconUrl" | "tags"
-  >,
-  config: CatalogAgentConfigInput,
-): Promise<{
-  manifest: AgentReleaseManifestV1;
-  releaseSummary: ReturnType<typeof summarizeAgentReleaseManifest>;
-  checksum: string;
-}> {
-  let manifest: AgentReleaseManifestV1;
-  try {
-    manifest = await buildCatalogAgentManifest(tx, {
-      name: metadata.name,
-      slug: metadata.directorySlug,
-      systemPrompt: config.systemPrompt,
-      maxSteps: config.maxSteps,
-      modelFormat: config.modelFormat,
-      model: config.model,
-      serverIds: config.serverIds,
-      skillIds: config.skillIds,
-    });
-  } catch (error) {
-    if (error instanceof AgentMarketError) {
-      throw new AdminAgentMarketError("invalid_config", error.message);
-    }
-    throw error;
-  }
-  const scan = scanAgentReleaseManifest(manifest, metadata.summary);
-  if (scan.status === "blocked") {
-    throw new AdminAgentMarketError(
-      "invalid_config",
-      "Remove possible credentials from the agent before publishing it.",
-    );
-  }
-  return {
-    manifest,
-    releaseSummary: summarizeAgentReleaseManifest(manifest),
-    checksum: agentReleaseChecksum(manifest),
-  };
-}
-
-export async function createDirectoryAgentTemplate(
-  input: DirectoryAgentTemplateInput,
-  reviewedById: string,
-) {
-  try {
-    return await db.$transaction(
-      async (tx) => {
-        const categoryIds = await checkedCategoryIds(tx, input.categoryIds);
-        const artifact = await buildReleaseArtifact(tx, input, input);
-        const listing = await tx.agentListing.create({
-          data: {
-            publisherKind: "platform",
-            publisherWorkspaceId: null,
-            publishedById: null,
-            sourceAgentId: null,
-            slug: input.directorySlug,
-            directorySlug: input.directorySlug,
-            name: input.name,
-            author: input.author,
-            summary: input.summary,
-            iconUrl: input.iconUrl,
-            tags: normalizeAgentListingTags(input.tags),
-            status: input.status,
-            curated: input.curated,
-            isFeatured: input.isFeatured,
-            categories: { connect: categoryIds.map((id) => ({ id })) },
-          },
-          select: { id: true },
-        });
-        const release = await tx.agentRelease.create({
-          data: {
-            listingId: listing.id,
-            version: 1,
-            manifestVersion: AGENT_MARKET_MANIFEST_VERSION,
-            manifest: artifact.manifest as Prisma.InputJsonValue,
-            releaseSummary: artifact.releaseSummary as Prisma.InputJsonValue,
-            checksum: artifact.checksum,
-            name: input.name,
-            summary: input.summary,
-            iconUrl: input.iconUrl,
-            tags: normalizeAgentListingTags(input.tags),
-            categoryIds,
-            reviewStatus: "approved",
-            reviewedById,
-            reviewedAt: new Date(),
-            reviewNote: "Created by an administrator.",
-          },
-          select: { id: true, publishedAt: true },
-        });
-        await tx.agentListing.update({
-          where: { id: listing.id },
-          data: {
-            latestVersion: 1,
-            latestReleaseId: release.id,
-            publishedAt:
-              input.status === "published" ? release.publishedAt : null,
-          },
-        });
-        await writeAudit(tx, {
-          actorId: reviewedById,
-          action: "market.agent.created",
-          targetType: "agentListing",
-          targetId: listing.id,
-          changes: { releaseId: release.id, status: input.status, categoryIds },
-        });
-        return { id: listing.id, releaseId: release.id };
-      },
-      { isolationLevel: "Serializable" },
-    );
-  } catch (error) {
-    if (isPrismaUniqueError(error)) {
-      throw new AdminAgentMarketError(
-        "slug_conflict",
-        "An agent directory entry already uses this slug.",
-      );
-    }
-    throw error;
-  }
-}
-
-async function nextReleaseVersion(
-  tx: Prisma.TransactionClient,
-  listingId: string,
-): Promise<number> {
-  const aggregate = await tx.agentRelease.aggregate({
-    where: { listingId },
-    _max: { version: true },
-  });
-  return (aggregate._max.version ?? 0) + 1;
-}
-
-export async function updateDirectoryAgentListing(
-  id: string,
-  input: UpdateDirectoryAgentInput,
-  reviewedById: string,
-) {
-  try {
-    return await db.$transaction(
-      async (tx) => {
-        const categoryIds = await checkedCategoryIds(tx, input.categoryIds);
-        const existing = await tx.agentListing.findUnique({
-          where: { id },
-          select: {
-            id: true,
-            publisherKind: true,
-            publisherWorkspaceId: true,
-            latestReleaseId: true,
-            pendingReleaseId: true,
-            publishedAt: true,
-            latestRelease: {
-              select: {
-                checksum: true,
-                reviewStatus: true,
-                name: true,
-                summary: true,
-                iconUrl: true,
-                tags: true,
-              },
-            },
-          },
-        });
-        if (!existing)
-          throw new AdminAgentMarketError(
-            "not_found",
-            "Agent listing not found.",
-          );
-        if (input.status === "published") assertPublishableOrigin(existing);
-
-        const tags = normalizeAgentListingTags(input.tags);
-        let releaseId = existing.latestReleaseId;
-        let releaseApproved =
-          existing.latestRelease?.reviewStatus === "approved";
-        let latestVersion: number | undefined;
-        let publishedAt =
-          input.status === "published"
-            ? (existing.publishedAt ?? new Date())
-            : existing.publishedAt;
-
-        if (input.config) {
-          if (existing.pendingReleaseId) {
-            throw new AdminAgentMarketError(
-              "pending_release_exists",
-              "Review the pending publisher release before changing the approved configuration.",
-            );
-          }
-          const artifact = await buildReleaseArtifact(tx, input, input.config);
-          const metadataChanged =
-            !existing.latestRelease ||
-            existing.latestRelease.name !== input.name ||
-            existing.latestRelease.summary !== input.summary ||
-            existing.latestRelease.iconUrl !== input.iconUrl ||
-            JSON.stringify(existing.latestRelease.tags) !==
-              JSON.stringify(tags);
-          if (
-            !existing.latestRelease ||
-            existing.latestRelease.checksum !== artifact.checksum ||
-            metadataChanged
-          ) {
-            latestVersion = await nextReleaseVersion(tx, id);
-            const release = await tx.agentRelease.create({
-              data: {
-                listingId: id,
-                version: latestVersion,
-                manifestVersion: AGENT_MARKET_MANIFEST_VERSION,
-                manifest: artifact.manifest as Prisma.InputJsonValue,
-                releaseSummary:
-                  artifact.releaseSummary as Prisma.InputJsonValue,
-                checksum: artifact.checksum,
-                name: input.name,
-                summary: input.summary,
-                iconUrl: input.iconUrl,
-                tags,
-                categoryIds,
-                reviewStatus: "approved",
-                reviewedById,
-                reviewedAt: new Date(),
-                reviewNote: "Updated by an administrator.",
-              },
-              select: { id: true, publishedAt: true },
-            });
-            releaseId = release.id;
-            releaseApproved = true;
-            if (input.status === "published") publishedAt = release.publishedAt;
-          }
-        }
-
-        if (input.status === "published" && (!releaseId || !releaseApproved)) {
-          throw new AdminAgentMarketError(
-            "publish_without_release",
-            "An agent listing needs an approved release before it can be published.",
-          );
-        }
-
-        const updated = await tx.agentListing.update({
-          where: { id },
-          data: {
-            directorySlug: input.directorySlug,
-            name: input.name,
-            author: input.author,
-            summary: input.summary,
-            iconUrl: input.iconUrl,
-            tags,
-            curated: input.curated,
-            isFeatured: input.isFeatured,
-            status: input.status,
-            categories: {
-              set: categoryIds.map((categoryId) => ({ id: categoryId })),
-            },
-            ...(releaseId ? { latestReleaseId: releaseId } : {}),
-            ...(latestVersion ? { latestVersion } : {}),
-            publishedAt,
-          },
-          select: { id: true, directorySlug: true, status: true },
-        });
-        await writeAudit(tx, {
-          actorId: reviewedById,
-          action: "market.agent.updated",
-          targetType: "agentListing",
-          targetId: id,
-          changes: {
-            name: input.name,
-            status: input.status,
-            curated: input.curated,
-            isFeatured: input.isFeatured,
-            categoryIds,
-            releaseId,
-          },
-        });
-        return updated;
-      },
-      { isolationLevel: "Serializable" },
-    );
-  } catch (error) {
-    if (error instanceof AdminAgentMarketError) throw error;
-    if (isPrismaUniqueError(error)) {
-      throw new AdminAgentMarketError(
-        "slug_conflict",
-        "An agent directory entry already uses this slug.",
-      );
-    }
-    throw error;
-  }
 }
 
 export async function approvePendingAgentRelease(input: {
@@ -769,41 +414,24 @@ export async function rejectPendingAgentRelease(input: {
 
 export async function setDirectoryAgentListingStatus(
   id: string,
-  status: "published" | "disabled",
+  status: "disabled",
   actorId = "system",
 ) {
   return db.$transaction(async (tx) => {
+    if (status !== "disabled") {
+      throw new AdminAgentMarketError(
+        "invalid_config",
+        "This action only disables listings; registry sync preserves moderation takedowns.",
+      );
+    }
     const listing = await tx.agentListing.findUnique({
       where: { id },
       select: {
         id: true,
-        publisherKind: true,
-        publisherWorkspaceId: true,
-        latestReleaseId: true,
-        publishedAt: true,
-        latestRelease: { select: { reviewStatus: true } },
-        _count: { select: { categories: true } },
       },
     });
     if (!listing)
       throw new AdminAgentMarketError("not_found", "Agent listing not found.");
-    if (status === "published") assertPublishableOrigin(listing);
-    if (
-      status === "published" &&
-      (!listing.latestReleaseId ||
-        listing.latestRelease?.reviewStatus !== "approved")
-    ) {
-      throw new AdminAgentMarketError(
-        "publish_without_release",
-        "An agent listing needs an approved release before it can be published.",
-      );
-    }
-    if (status === "published" && listing._count.categories === 0) {
-      throw new AdminAgentMarketError(
-        "invalid_categories",
-        "An agent listing needs at least one category before it can be published.",
-      );
-    }
     await writeAudit(tx, {
       actorId,
       action: "market.agent.status_changed",
@@ -813,12 +441,7 @@ export async function setDirectoryAgentListingStatus(
     });
     return tx.agentListing.update({
       where: { id },
-      data: {
-        status,
-        ...(status === "published"
-          ? { publishedAt: listing.publishedAt ?? new Date() }
-          : {}),
-      },
+      data: { status },
       select: { id: true, directorySlug: true, status: true },
     });
   });

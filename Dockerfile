@@ -9,7 +9,7 @@
 # docker-source MCPs additionally need the host Docker socket mounted (see
 # docker-compose.yml).
 
-ARG NODE_IMAGE=node:24-bookworm-slim
+ARG NODE_IMAGE=node:26-bookworm-slim
 ARG PNPM_VERSION=10.14.0
 
 # ---- Python is used only for agent archive imports, not channels ----
@@ -31,15 +31,12 @@ RUN set -eux; \
 # Runs as non-root node user; network=none at runtime; proxy via stdin/stdout.
 FROM python-runtime-base AS pi-package-capture
 ARG PNPM_VERSION
-ENV COREPACK_HOME=/opt/corepack COREPACK_DEFAULT_TO_LATEST=0
 WORKDIR /opt/pi-sdk
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends git; \
     rm -rf /var/lib/apt/lists/*; \
-    corepack enable; \
-    corepack prepare pnpm@${PNPM_VERSION} --activate; \
-    chmod -R a+rX /opt/corepack
+    npm install --global --no-update-notifier pnpm@${PNPM_VERSION}
 # The actual SDK entry anchors its locked semver/undici dependency resolution.
 RUN node -e "require('node:fs').writeFileSync('package.json', JSON.stringify({name:'pi-sdk',private:true,pnpm:{overrides:{semver:'7.8.5',undici:'8.10.2'}}}))" \
     && pnpm add --prod --ignore-scripts --save-exact --config.auto-install-peers=false @earendil-works/pi-coding-agent@0.87.1 \
@@ -53,7 +50,7 @@ ENTRYPOINT ["node", "/app/scripts/pi-package-capture.mjs"]
 FROM ${NODE_IMAGE} AS deps
 WORKDIR /app
 ARG PNPM_VERSION
-RUN corepack enable && corepack prepare pnpm@${PNPM_VERSION} --activate
+RUN npm install --global --no-update-notifier pnpm@${PNPM_VERSION}
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages/connector/package.json ./packages/connector/package.json
 COPY runtime/migrator/package.json runtime/migrator/pnpm-lock.yaml runtime/migrator/pnpm-workspace.yaml ./runtime/migrator/
@@ -66,7 +63,7 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
 FROM python-runtime-base AS build
 WORKDIR /app
 ARG PNPM_VERSION
-RUN corepack enable && corepack prepare pnpm@${PNPM_VERSION} --activate
+RUN npm install --global --no-update-notifier pnpm@${PNPM_VERSION}
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/packages/connector/node_modules ./packages/connector/node_modules
 COPY --from=deps /app/runtime/migrator/node_modules ./runtime/migrator/node_modules
@@ -108,8 +105,7 @@ COPY --from=build --chown=node:node /app/dist/release/app/ ./
 
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh \
-    && mkdir -p /var/lib/toolplane/imports \
-    && chown -R node:node /app /var/lib/toolplane
+    && chown -R node:node /app
 
 # Non-root: the app reaches Docker over TCP via the proxy, so it needs no socket
 # group membership.

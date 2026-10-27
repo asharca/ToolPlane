@@ -62,9 +62,11 @@ describe("skill bundle transport and import limits", () => {
       fetchMock
         .mockRejectedValueOnce(new Error("transient"))
         .mockImplementation(async (url: string) =>
-          url.includes("api.github.com")
-            ? Response.json({ tree: [skill] })
-            : new Response("# Skill"),
+          url.includes("/commits/")
+            ? Response.json({ sha: "a".repeat(40) })
+            : url.includes("api.github.com")
+              ? Response.json({ tree: [skill] })
+              : new Response("# Skill"),
         ),
     );
     const pending = fetchGithubSkillBundles("acme/repo");
@@ -79,24 +81,31 @@ describe("skill bundle transport and import limits", () => {
   it.each([{}, { tree: "bad" }, { tree: [], truncated: true }, { tree: [] }])(
     "rejects invalid, truncated or skill-less trees %j",
     async (tree) => {
-      vi.stubGlobal("fetch", fetchMock.mockResolvedValue(Response.json(tree)));
+      vi.stubGlobal(
+        "fetch",
+        fetchMock
+          .mockResolvedValueOnce(Response.json({ sha: "a".repeat(40) }))
+          .mockResolvedValue(Response.json(tree)),
+      );
       await expect(fetchGithubSkillBundles("acme/repo")).rejects.toThrow();
-      expect(fetchMock).toHaveBeenCalledOnce();
+      expect(fetchMock).toHaveBeenCalledTimes(2);
     },
   );
   it("handles direct SKILL.md sources and binary assets in nested skills", async () => {
     vi.stubGlobal(
       "fetch",
       fetchMock.mockImplementation(async (url: string) =>
-        url.includes("api.github.com")
-          ? Response.json({
-              tree: [
-                { type: "tree", path: "directory" },
-                { type: "blob", path: "outside" },
-                { type: "blob", path: "folder/SKILL.md" },
-              ],
-            })
-          : new Response("# Skill"),
+        url.includes("/commits/")
+          ? Response.json({ sha: "a".repeat(40) })
+          : url.includes("api.github.com")
+            ? Response.json({
+                tree: [
+                  { type: "tree", path: "directory" },
+                  { type: "blob", path: "outside" },
+                  { type: "blob", path: "folder/SKILL.md" },
+                ],
+              })
+            : new Response("# Skill"),
       ),
     );
     expect(
@@ -108,6 +117,8 @@ describe("skill bundle transport and import limits", () => {
       source: { path: "folder/SKILL.md" },
     });
     fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes("/commits/"))
+        return Response.json({ sha: "a".repeat(40) });
       if (url.includes("api.github.com"))
         return Response.json({
           tree: [
@@ -127,10 +138,16 @@ describe("skill bundle transport and import limits", () => {
     const bundles = await fetchGithubSkillBundles("acme/repo/folder");
     expect(bundles).toMatchObject([
       {
-        source: { normalized: "acme/repo/folder/first" },
+        source: {
+          normalized: `https://github.com/acme/repo/tree/${"a".repeat(40)}/folder/first`,
+        },
         files: [{ path: "icon.bin", encoding: "base64", content: "AP8=" }],
       },
-      { source: { normalized: "acme/repo/folder/second" } },
+      {
+        source: {
+          normalized: `https://github.com/acme/repo/tree/${"a".repeat(40)}/folder/second`,
+        },
+      },
     ]);
     await expect(
       fetchGithubSkillBundle("https://github.com/acme/repo/tree/main/folder"),
@@ -140,6 +157,7 @@ describe("skill bundle transport and import limits", () => {
     vi.stubGlobal(
       "fetch",
       fetchMock
+        .mockResolvedValueOnce(Response.json({ sha: "a".repeat(40) }))
         .mockResolvedValueOnce(Response.json({ tree: [skill] }))
         .mockResolvedValueOnce(new Response("not found", { status: 404 })),
     );
@@ -183,12 +201,14 @@ describe("skill bundle transport and import limits", () => {
                 ];
       vi.stubGlobal(
         "fetch",
-        fetchMock.mockResolvedValue(Response.json({ tree })),
+        fetchMock
+          .mockResolvedValueOnce(Response.json({ sha: "a".repeat(40) }))
+          .mockResolvedValue(Response.json({ tree })),
       );
       await expect(
         fetchGithubSkillBundles("acme/repo", limit === "skills" ? 1 : 100),
       ).rejects.toThrow();
-      expect(fetchMock).toHaveBeenCalledOnce();
+      expect(fetchMock).toHaveBeenCalledTimes(2);
     },
   );
 });

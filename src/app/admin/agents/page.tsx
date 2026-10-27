@@ -1,7 +1,7 @@
 /* DashboardTable consumes cell arrays as indexed values. */
 
 import { ButtonLink } from "@/components/motion/button";
-import { Bot, Plus } from "lucide-react";
+import { Bot } from "lucide-react";
 import { getTranslations } from "next-intl/server";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -95,12 +95,6 @@ export default async function AdminAgentsPage({
         title={t("directoryAgents")}
         description={t("agentsDirectoryDescription")}
         meta={t("agentListingCount", { count: result.total.toLocaleString() })}
-        actions={
-          <ButtonLink href="/admin/agents/new" variant="primary" size="md">
-            <Plus className="size-4" aria-hidden="true" />
-            {t("addAgentTemplate")}
-          </ButtonLink>
-        }
       />
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -149,14 +143,6 @@ export default async function AdminAgentsPage({
             q || status
               ? t("noAgentListingsDescription")
               : t("emptyAgentListingsDescription")
-          }
-          actions={
-            q || status ? null : (
-              <ButtonLink href="/admin/agents/new" variant="primary" size="md">
-                <Plus className="size-4" aria-hidden="true" />
-                {t("addAgentTemplate")}
-              </ButtonLink>
-            )
           }
         />
       ) : (

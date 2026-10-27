@@ -6,16 +6,13 @@ import {
   type DeploymentForSpawn,
   type SpawnSpec,
 } from "./spawn-spec";
+import { resolveMcpConnectionSpawnSpec } from "./mcp-credentials";
 
-type HermesRuntimeRef = { agentId: string; kind: string; workspaceId: string };
 type RunningDeployment = DeploymentForSpawn & {
   id: string;
+  workspaceId?: string;
   sandbox?: {
-    agentRuntime?:
-      | (HermesRuntimeRef & {
-          agent: { publicRuntimeAllocation: { id: string } | null };
-        })
-      | null;
+    config?: unknown;
   } | null;
 };
 
@@ -27,10 +24,9 @@ export type ReconcileDeps = {
     options?: {
       awaitReady?: boolean;
       workspaceId?: string;
-      onReady?: () => void | Promise<void>;
     },
   ) => Promise<void>;
-  ensureHermesReady?: (workspaceId: string, agentId: string) => Promise<void>;
+  resolve?: (deployment: RunningDeployment) => Promise<SpawnSpec>;
 };
 
 const defaultDeps: ReconcileDeps = {
@@ -41,36 +37,41 @@ const defaultDeps: ReconcileDeps = {
         server: { select: { name: true } },
         sandbox: {
           select: {
-            agentRuntime: {
-              select: {
-                agentId: true,
-                kind: true,
-                workspaceId: true,
-                agent: {
-                  select: { publicRuntimeAllocation: { select: { id: true } } },
-                },
-              },
-            },
+            config: true,
           },
         },
       },
     });
-    // Public Endpoint runtimes are lazy: a request starts them and the idle
-    // maintenance pass stops them again. Never eagerly boot every tenant
-    // container after an app restart.
+    // Bound legacy Agent runtimes are read-only history, never restart targets.
+    // Pi session execution and lazy public endpoints own their own startup.
     return deployments.filter(
-      (deployment) =>
-        !deployment.sandbox?.agentRuntime?.agent.publicRuntimeAllocation,
+      (deployment) => !isReadOnlySandbox(deployment),
     ) as RunningDeployment[];
   },
   start: startProcess,
-  ensureHermesReady: async (workspaceId, agentId) => {
-    const { ensureHermesRuntimeReady } = await import(
-      "@/lib/agents/hermes/runtime"
-    );
-    await ensureHermesRuntimeReady(workspaceId, agentId);
+  resolve: async (deployment) => {
+    if (deployment.source === "sandbox") return resolveSpawnSpec(deployment);
+    if (!deployment.workspaceId)
+      throw new Error("MCP_CREDENTIAL_SCOPE_INVALID");
+    return (
+      await resolveMcpConnectionSpawnSpec({
+        workspaceId: deployment.workspaceId,
+        deploymentId: deployment.id,
+      })
+    ).spec;
   },
 };
+
+function isReadOnlySandbox(deployment: RunningDeployment): boolean {
+  const config = deployment.sandbox?.config;
+  return (
+    !!config &&
+    typeof config === "object" &&
+    !Array.isArray(config) &&
+    "readOnly" in config &&
+    config.readOnly === true
+  );
+}
 
 // On server startup the in-memory process table is empty, but the DB may still
 // mark deployments as running from before the restart. Re-spawn each so the
@@ -83,19 +84,13 @@ export async function reconcileDeployments(
   const deployments = await deps.loadRunning();
   let started = 0;
   for (const d of deployments) {
+    if (isReadOnlySandbox(d)) continue;
     try {
-      const runtime = d.sandbox?.agentRuntime;
-      const ensureHermesReady = deps.ensureHermesReady;
-      if (runtime?.kind === "hermes" && ensureHermesReady) {
-        await deps.start(d.id, resolveSpawnSpec(d), {
-          awaitReady: false,
-          workspaceId: runtime.workspaceId,
-          onReady: () =>
-            ensureHermesReady.call(deps, runtime.workspaceId, runtime.agentId),
-        });
-      } else {
-        await deps.start(d.id, resolveSpawnSpec(d), { awaitReady: false });
-      }
+      const spec = deps.resolve ? await deps.resolve(d) : resolveSpawnSpec(d);
+      await deps.start(d.id, spec, {
+        awaitReady: false,
+        workspaceId: d.workspaceId,
+      });
       started += 1;
     } catch {
       // startProcess persists 'error' on failure; keep reconciling the others.

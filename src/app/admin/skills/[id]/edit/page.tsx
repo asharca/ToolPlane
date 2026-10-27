@@ -5,12 +5,7 @@ import { adminHref, adminReturnHref } from "@/lib/admin/navigation";
 import { notFound } from "next/navigation";
 import { requireAdmin } from "@/lib/auth/admin";
 import { getDirectorySkill } from "@/lib/admin/market";
-import { listCategories } from "@/lib/admin/categories";
-import {
-  updateSkillAction,
-  deleteSkillAction,
-} from "@/lib/admin/market-actions";
-import { SkillForm } from "@/components/admin/SkillForm";
+import { deleteSkillAction } from "@/lib/admin/market-actions";
 import { ConfirmDialog } from "@/components/admin/ConfirmDialog";
 import {
   AdminBadge,
@@ -31,10 +26,7 @@ export default async function EditSkillPage({
   const t = await getTranslations("admin");
   await requireAdmin();
   const { id } = await params;
-  const [skill, categories] = await Promise.all([
-    getDirectorySkill(id),
-    listCategories(),
-  ]);
+  const skill = await getDirectorySkill(id);
   if (!skill) notFound();
   const ops = await getTranslations("adminOps");
   const backHref = adminReturnHref(
@@ -67,27 +59,10 @@ export default async function EditSkillPage({
           </ButtonLink>
         }
       />
-      <section
-        className="border-t border-border pt-6"
-        aria-label={`${t("edit")} ${skill.name}`}
-      >
-        <SkillForm
-          action={updateSkillAction}
-          initial={{
-            id: skill.id,
-            slug: skill.slug,
-            name: skill.name,
-            author: skill.author,
-            description: skill.description,
-            iconUrl: skill.iconUrl,
-            githubSource: skill.githubSource,
-            score: skill.score,
-            categoryIds: skill.categories.map((c) => c.id),
-          }}
-          categories={categories}
-          submitLabel={t("saveChanges")}
-        />
-      </section>
+      <p className="text-sm text-muted-foreground">
+        {t("githubManagedResources")}
+      </p>
+      <p className="whitespace-pre-wrap text-sm">{skill.description}</p>
       <AdminPanel
         title={t("dangerZone")}
         description={`${t("refusedWhileAnyWorkspaceHasThisSkillInstalled")}${skill._count.installs} ${t("now")}`}

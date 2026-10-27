@@ -19,7 +19,7 @@ import {
   isRemoteGrant,
   type TaskGrant,
 } from "./principal";
-import { LOCAL_LIMITS } from "./local-policy";
+import { assertLocalGrant, LOCAL_LIMITS } from "./local-policy";
 import { lockTask, persist, interruptTask } from "./store";
 
 type Tx = Prisma.TransactionClient;
@@ -35,6 +35,10 @@ async function ownedChildren(tx: Tx, row: A2ATask, ids: string[]) {
     },
   });
   if (rows.length !== ids.length) throw new TaskNotFoundError();
+  for (const child of rows) {
+    const grant = child.grant as unknown as TaskGrant;
+    if (isLocalGrant(grant)) await assertLocalGrant(grant, tx);
+  }
   return rows;
 }
 async function writableTurn(tx: Tx, id: string, lease: string) {
@@ -50,7 +54,6 @@ async function writableTurn(tx: Tx, id: string, lease: string) {
     throw new TaskNotFoundError();
   const grant = row.grant as unknown as TaskGrant;
   if (isLocalGrant(grant)) {
-    const { assertLocalGrant } = await import("./local-policy");
     await assertLocalGrant(grant, tx);
   }
   return row;
@@ -217,7 +220,7 @@ export async function resumeMessage(tx: Tx, row: A2ATask): Promise<Message> {
 export async function reconcileLocalWaits() {
   const rows = await db.a2ATask.findMany({
     where: {
-      executionBackend: "legacy",
+      executionBackend: "pi-sdk",
       state: TaskState.TASK_STATE_WORKING,
       phase: { in: ["waiting", "resumable"] },
       context: { targetKind: "local" },

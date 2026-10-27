@@ -11,13 +11,17 @@ import {
   loadMcpToolPolicies,
 } from "@/lib/workspace/mcp-tool-exposure";
 import { listMcpTools } from "@/lib/process/mcp-client";
+import {
+  loadPiClientSelections,
+  piClientSelectionsSchema,
+  type PiClientSelection,
+} from "./selections";
 
 export const piPackageClientSchema = z.enum([
   "pi",
   "claude-code",
   "codex",
   "opencode",
-  "hermes",
 ]);
 export type PiPackageClient = z.infer<typeof piPackageClientSchema>;
 export const piPackageBindingsSchema = z
@@ -48,12 +52,14 @@ const publicSelect = {
   userId: true,
   marketInstallId: true,
   releaseId: true,
+  selections: true,
   client: true,
   label: true,
   status: true,
   bindings: true,
   createdAt: true,
   updatedAt: true,
+  configVersion: true,
   lastUsedAt: true,
 } as const;
 
@@ -182,7 +188,8 @@ function checkClient(
 export async function createPiPackageClientInstallation(input: {
   workspaceId: string;
   userId: string;
-  marketInstallId: string;
+  marketInstallId?: string;
+  selections?: PiClientSelection[];
   client: PiPackageClient;
   label: string;
   bindings: PiPackageBindings;
@@ -191,12 +198,26 @@ export async function createPiPackageClientInstallation(input: {
   const label = z.string().trim().min(1).max(100).parse(input.label);
   await assertPiClientMember(input.workspaceId, input.userId);
   // Validate ownership before discovering tools; no network inside the write transaction.
-  const preview = await loadRelease(
-    input.workspaceId,
-    input.marketInstallId,
-    undefined,
-    db,
-  );
+  if (Boolean(input.marketInstallId) === Boolean(input.selections))
+    throw new PiInstallationError("pi_installation_invalid_selection");
+  let source: { marketInstallId: string } | { selections: PiClientSelection[] };
+  if (input.selections) {
+    source = { selections: input.selections };
+  } else {
+    const marketInstallId = input.marketInstallId;
+    if (!marketInstallId)
+      throw new PiInstallationError("pi_installation_invalid_selection");
+    source = { marketInstallId };
+  }
+  const preview =
+    "selections" in source
+      ? await loadPiClientSelections(db, input.workspaceId, source.selections)
+      : await loadRelease(
+          input.workspaceId,
+          source.marketInstallId,
+          undefined,
+          db,
+        );
   await validateBindings(
     input.workspaceId,
     preview.manifest,
@@ -209,12 +230,20 @@ export async function createPiPackageClientInstallation(input: {
     async (tx) => {
       await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${input.workspaceId} FOR UPDATE`;
       await assertPiClientMember(input.workspaceId, input.userId, tx);
-      const { release, manifest } = await loadRelease(
-        input.workspaceId,
-        input.marketInstallId,
-        undefined,
-        tx,
-      );
+      const loaded =
+        "selections" in source
+          ? await loadPiClientSelections(
+              tx,
+              input.workspaceId,
+              source.selections,
+            )
+          : await loadRelease(
+              input.workspaceId,
+              source.marketInstallId,
+              "release" in preview ? preview.release.id : undefined,
+              tx,
+            );
+      const { manifest } = loaded;
       const bindings = await validateBindings(
         input.workspaceId,
         manifest,
@@ -226,8 +255,11 @@ export async function createPiPackageClientInstallation(input: {
         data: {
           workspaceId: input.workspaceId,
           userId: input.userId,
-          marketInstallId: input.marketInstallId,
-          releaseId: release.id,
+          marketInstallId: input.marketInstallId ?? null,
+          releaseId: "release" in loaded ? loaded.release.id : null,
+          selections: input.selections
+            ? piClientSelectionsSchema.parse(input.selections)
+            : [],
           client,
           label,
           bindings,
@@ -245,10 +277,17 @@ export async function updatePiPackageClientInstallation(input: {
   workspaceId: string;
   userId: string;
   installationId: string;
-  releaseId: string;
+  releaseId?: string;
+  selections?: PiClientSelection[];
+  expectedConfigVersion: number;
   bindings: PiPackageBindings;
   confirmExpandedPrivileges?: boolean;
 }) {
+  if (
+    !Number.isSafeInteger(input.expectedConfigVersion) ||
+    input.expectedConfigVersion < 0
+  )
+    throw new PiInstallationError("pi_installation_conflict", 409);
   await assertPiClientMember(input.workspaceId, input.userId);
   const previewInstallation = await db.piPackageClientInstallation.findFirst({
     where: {
@@ -260,12 +299,25 @@ export async function updatePiPackageClientInstallation(input: {
   });
   if (!previewInstallation)
     throw new PiInstallationError("pi_installation_not_found", 404);
-  const preview = await loadRelease(
-    input.workspaceId,
-    previewInstallation.marketInstallId,
-    input.releaseId,
-    db,
-  );
+  if (
+    (previewInstallation.marketInstallId && input.selections !== undefined) ||
+    (!previewInstallation.marketInstallId && input.releaseId !== undefined)
+  )
+    throw new PiInstallationError("pi_installation_invalid_selection");
+  if (previewInstallation.configVersion !== input.expectedConfigVersion)
+    throw new PiInstallationError("pi_installation_conflict", 409);
+  const preview = previewInstallation.marketInstallId
+    ? await loadRelease(
+        input.workspaceId,
+        previewInstallation.marketInstallId,
+        input.releaseId,
+        db,
+      )
+    : await loadPiClientSelections(
+        db,
+        input.workspaceId,
+        input.selections ?? previewInstallation.selections,
+      );
   await validateBindings(
     input.workspaceId,
     preview.manifest,
@@ -287,12 +339,21 @@ export async function updatePiPackageClientInstallation(input: {
       });
       if (!current)
         throw new PiInstallationError("pi_installation_not_found", 404);
-      const { release, manifest } = await loadRelease(
-        input.workspaceId,
-        current.marketInstallId,
-        input.releaseId,
-        tx,
-      );
+      if (current.configVersion !== input.expectedConfigVersion)
+        throw new PiInstallationError("pi_installation_conflict", 409);
+      const loaded = current.marketInstallId
+        ? await loadRelease(
+            input.workspaceId,
+            current.marketInstallId,
+            input.releaseId,
+            tx,
+          )
+        : await loadPiClientSelections(
+            tx,
+            input.workspaceId,
+            input.selections ?? current.selections,
+          );
+      const { manifest } = loaded;
       const bindings = await validateBindings(
         input.workspaceId,
         manifest,
@@ -315,13 +376,40 @@ export async function updatePiPackageClientInstallation(input: {
           "pi_package_privileges_confirmation_required",
           409,
         );
-      return tx.piPackageClientInstallation.update({
+      const selectionChanged =
+        !current.marketInstallId &&
+        JSON.stringify(current.selections) !==
+          JSON.stringify("selections" in loaded ? loaded.selections : []);
+      if (selectionChanged && input.confirmExpandedPrivileges !== true)
+        throw new PiInstallationError(
+          "pi_package_privileges_confirmation_required",
+          409,
+        );
+      await tx.$queryRaw`SELECT set_config('toolplane.client_registration_reviewed_update','on',true)`;
+      const updated = await tx.piPackageClientInstallation.updateMany({
+        where: {
+          id: current.id,
+          workspaceId: input.workspaceId,
+          userId: input.userId,
+          status: "active",
+          configVersion: input.expectedConfigVersion,
+        },
+        data: {
+          releaseId: "release" in loaded ? loaded.release.id : null,
+          selections: "selections" in loaded ? loaded.selections : [],
+          bindings,
+          configVersion: { increment: 1 },
+        },
+      });
+      if (!updated.count)
+        throw new PiInstallationError("pi_installation_conflict", 409);
+      return tx.piPackageClientInstallation.findUniqueOrThrow({
         where: { id: current.id },
-        data: { releaseId: release.id, bindings },
         select: publicSelect,
       });
     },
-    { isolationLevel: "Serializable" },
+    // Access-time writes are independent; the reviewed configVersion is the CAS.
+    { isolationLevel: "ReadCommitted" },
   );
 }
 
@@ -349,7 +437,7 @@ export async function revokePiPackageClientInstallation(input: {
       workspaceId: input.workspaceId,
       userId: input.userId,
     },
-    data: { status: "revoked" },
+    data: { status: "revoked", configVersion: { increment: 1 } },
   });
   if (!result.count)
     throw new PiInstallationError("pi_installation_not_found", 404);
@@ -373,12 +461,23 @@ export async function authenticatePiPackageInstallation(
   if (!installation)
     throw new PiInstallationError("pi_installation_unauthorized", 401);
   await assertPiClientMember(installation.workspaceId, installation.userId);
-  const loaded = await loadRelease(
-    installation.workspaceId,
-    installation.marketInstallId,
-    installation.releaseId,
-    db,
-  );
+  const loaded =
+    installation.marketInstallId && installation.releaseId
+      ? await loadRelease(
+          installation.workspaceId,
+          installation.marketInstallId,
+          installation.releaseId,
+          db,
+        )
+      : {
+          ...(await loadPiClientSelections(
+            db,
+            installation.workspaceId,
+            installation.selections,
+          )),
+          release: null,
+          install: null,
+        };
   const bindings = piPackageBindingsSchema.parse(installation.bindings);
   const declarations = loaded.manifest.package.toolplane?.mcp ?? [];
   if (

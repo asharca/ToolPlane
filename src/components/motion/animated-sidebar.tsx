@@ -348,11 +348,14 @@ function MobileSidebar({
     body.style.right = "0";
     body.style.overflow = "hidden";
 
-    const firstFocusable =
-      panelRef.current?.querySelector<HTMLElement>(FOCUSABLE_SELECTOR);
-    (firstFocusable ?? panelRef.current)?.focus({ preventScroll: true });
+    const focusFrame = requestAnimationFrame(() => {
+      const firstFocusable =
+        panelRef.current?.querySelector<HTMLElement>(FOCUSABLE_SELECTOR);
+      (firstFocusable ?? panelRef.current)?.focus({ preventScroll: true });
+    });
 
     return () => {
+      cancelAnimationFrame(focusFrame);
       body.style.position = previousBodyStyles.position;
       body.style.top = previousBodyStyles.top;
       body.style.left = previousBodyStyles.left;

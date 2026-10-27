@@ -20,10 +20,8 @@ import { useTranslations } from "next-intl";
 
 import {
   Bot,
-  ChevronDown,
   ChevronsDownUp,
   ChevronsUpDown,
-  Cpu,
   Folder,
   FolderPlus,
   GitBranch,
@@ -53,17 +51,13 @@ import {
   ChatApp,
   ChatAppSidebarTrigger,
 } from "@/components/dashboard/chat/ChatApp";
-import { AgentConversation } from "@/components/dashboard/agents/AgentConversation";
+import { AssistantConversation } from "./AssistantConversation";
 import { AssistantEditor } from "./AssistantEditor";
 import {
   ChatBranchPanel,
   type ChatBranchState,
 } from "@/components/dashboard/chat/ChatBranchFlow";
-import {
-  ModelPicker,
-  type ModelProviderOption,
-  type ModelSelection,
-} from "@/components/dashboard/models/ModelPicker";
+import type { ModelProviderOption } from "@/components/dashboard/models/ModelPicker";
 import {
   CenterMorphModal,
   CenterMorphModalContent,
@@ -86,7 +80,7 @@ import {
   type SidebarGroupPreferences,
 } from "@/lib/sidebar-groups";
 import { usePersistentSidebarGroups } from "@/lib/use-persistent-sidebar-groups";
-import type { HermesUIMessage } from "@/lib/agents/hermes/message-segments";
+import type { AgentUIMessage } from "@/lib/agents/message-segments";
 
 type ProviderOption = ModelProviderOption & { format: string };
 type McpOption = {
@@ -94,6 +88,9 @@ type McpOption = {
   name: string;
   status: string;
   keywords?: string[];
+  available?: boolean;
+  definitionChecksum?: string;
+  tools?: Array<{ name: string; description: string }>;
 };
 type AssistantModelParameters = {
   temperature?: number;
@@ -125,6 +122,31 @@ export type ChatAssistantItem = {
   name: string;
   description?: string | null;
   pinned: boolean;
+  revision: number;
+  mcpGrants?: Array<{
+    deploymentId: string;
+    allowedToolNames: string[];
+    pendingToolChanges?: Record<
+      string,
+      {
+        previousSignature: string;
+        currentSignature: string;
+        previous: {
+          description?: string | null;
+          inputSchema?: unknown;
+          outputSchema?: unknown;
+          annotations?: unknown;
+        };
+        current: {
+          description?: string | null;
+          inputSchema?: unknown;
+          outputSchema?: unknown;
+          annotations?: unknown;
+        };
+        detectedAt: string;
+      }
+    > | null;
+  }>;
   systemPrompt: string | null;
   modelProviderId: string | null;
   model: string | null;
@@ -140,6 +162,9 @@ export type ChatAssistantItem = {
     title: string | null;
     createdAt: string;
     lastMessageAt: string | null;
+    revisionId?: string | null;
+    revision?: number | null;
+    legacyRevisionUnresolved?: boolean;
   }>;
 };
 
@@ -156,7 +181,7 @@ function chatHref(slug: string, assistantId: string, threadId?: string) {
 export { estimatePromptTokens } from "@/lib/prompt-tokens";
 
 export function WorkspaceAssistantChat({
-  assistants,
+  assistants: serverAssistants,
   branch = null,
   deployments,
   initialMessages,
@@ -168,6 +193,7 @@ export function WorkspaceAssistantChat({
   selectedThreadId,
   slug,
   startCreating = false,
+  startEditing = false,
   initialExpandedAssistants = EMPTY_EXPANDED_ASSISTANTS,
   initialGroupPreferences = EMPTY_SIDEBAR_GROUP_PREFERENCES,
   initialSidebarOpen = true,
@@ -177,7 +203,7 @@ export function WorkspaceAssistantChat({
   assistants: ChatAssistantItem[];
   branch?: ChatBranchState | null;
   deployments: McpOption[];
-  initialMessages: HermesUIMessage[];
+  initialMessages: AgentUIMessage[];
   marketTemplate?: AssistantMarketTemplate | null;
   marketTemplates?: AssistantMarketTemplate[];
   providers: ProviderOption[];
@@ -186,6 +212,7 @@ export function WorkspaceAssistantChat({
   selectedThreadId: string | null;
   slug: string;
   startCreating?: boolean;
+  startEditing?: boolean;
   initialExpandedAssistants?: Record<string, boolean>;
   initialGroupPreferences?: SidebarGroupPreferences;
   initialSidebarOpen?: boolean;
@@ -196,6 +223,7 @@ export function WorkspaceAssistantChat({
   const common = useTranslations("common");
   const workT = useTranslations("console.work");
   const router = useRouter();
+  const assistants = serverAssistants;
   const activeAssistant =
     assistants.find((assistant) => assistant.id === selectedAssistantId) ??
     assistants[0] ??
@@ -283,7 +311,7 @@ export function WorkspaceAssistantChat({
     activeThread ? "chat" : "sidebar",
   );
   const [editing, setEditing] = useState<ChatAssistantItem | null | "new">(
-    startCreating ? "new" : null,
+    startCreating ? "new" : startEditing ? activeAssistant : null,
   );
   const [selectedMarketTemplate, setSelectedMarketTemplate] =
     useState(marketTemplate);
@@ -298,6 +326,7 @@ export function WorkspaceAssistantChat({
   const refreshChat = useCallback(() => {
     startBranchRefresh(() => router.refresh());
   }, [router]);
+
   const sortedAssistants = useMemo(
     () =>
       sortSidebarItems(assistants, groupPreferences.entityOrder).map(
@@ -461,38 +490,6 @@ export function WorkspaceAssistantChat({
     }
   }
 
-  async function moveThread(
-    threadId: string,
-    targetAssistantId: string,
-  ): Promise<boolean> {
-    if (busy) return false;
-    setBusy(true);
-    setError(null);
-    try {
-      const response = await fetch(`/api/v1/chat/threads/${threadId}`, {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ assistantId: targetAssistantId }),
-      });
-      const body = (await response.json().catch(() => ({}))) as {
-        error?: string;
-      };
-      if (!response.ok) throw new Error(body.error || t("moveThreadError"));
-      setExpandedAssistants((current) => ({
-        ...current,
-        [targetAssistantId]: true,
-      }));
-      openAssistantGroup(targetAssistantId);
-      router.push(chatHref(slug, targetAssistantId, threadId));
-      return true;
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : t("moveThreadError"));
-      return false;
-    } finally {
-      setBusy(false);
-    }
-  }
-
   async function deleteThread(threadId: string) {
     if (!window.confirm(t("deleteThreadConfirm"))) return;
     const response = await fetch(`/api/v1/chat/threads/${threadId}`, {
@@ -529,7 +526,10 @@ export function WorkspaceAssistantChat({
       const response = await fetch(`/api/v1/chat/assistants/${assistant.id}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ pinned: !assistant.pinned }),
+        body: JSON.stringify({
+          pinned: !assistant.pinned,
+          expectedRevision: assistant.revision,
+        }),
       });
       const body = (await response.json().catch(() => ({}))) as {
         error?: string;
@@ -550,35 +550,6 @@ export function WorkspaceAssistantChat({
       return;
     }
     window.location.assign(chatHref(slug, assistantId, activeThread?.id));
-  }
-
-  async function updateAssistantModel(selection: ModelSelection) {
-    if (!activeAssistant || busy) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const response = await fetch(
-        `/api/v1/chat/assistants/${activeAssistant.id}`,
-        {
-          method: "PATCH",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            modelProviderId: selection.providerId,
-            model: selection.model,
-          }),
-        },
-      );
-      const body = (await response.json().catch(() => ({}))) as {
-        error?: string;
-      };
-      if (!response.ok) throw new Error(body.error || t("saveError"));
-      window.location.assign(
-        chatHref(slug, activeAssistant.id, activeThread?.id),
-      );
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : t("saveError"));
-      setBusy(false);
-    }
   }
 
   function openAssistantGroup(assistantId: string) {
@@ -765,9 +736,9 @@ export function WorkspaceAssistantChat({
     if (!sourceOwner) return;
     if (move.position === "inside" && targetAssistantId) {
       if (sourceOwner.id !== targetAssistantId) {
-        if (!(await moveThread(sourceThreadId, targetAssistantId)))
-          throw new Error(t("moveThreadError"));
-        return;
+        throw new Error(
+          "A conversation cannot change its Assistant or pinned revision",
+        );
       }
       const lastThread = sourceOwner.threads.at(-1);
       if (lastThread && lastThread.id !== sourceThreadId) {
@@ -803,9 +774,9 @@ export function WorkspaceAssistantChat({
       assistant.threads.some((thread) => thread.id === targetThreadId),
     );
     if (targetOwner && sourceOwner.id !== targetOwner.id) {
-      if (!(await moveThread(sourceThreadId, targetOwner.id)))
-        throw new Error(t("moveThreadError"));
-      return;
+      throw new Error(
+        "A conversation cannot change its Assistant or pinned revision",
+      );
     }
     if (sourceOwner.threads.some((thread) => thread.id === targetThreadId)) {
       setGroupPreferences((current) => ({
@@ -1276,81 +1247,20 @@ export function WorkspaceAssistantChat({
                   {error}
                 </p>
               ) : null}
+
               {activeAssistant && activeThread ? (
-                <AgentConversation
-                  key={activeThread.id}
-                  activeConversationId={activeThread.id}
-                  agentId={activeAssistant.id}
-                  agentName={activeAssistant.name}
-                  allowEdit
-                  allowRegenerate
-                  apiPath={`/api/v1/chat/threads/${activeThread.id}/turns`}
-                  attachmentUploadUrl={`/api/v1/workspaces/${workspaceId}/attachments`}
-                  contextBaseText={activeAssistant.systemPrompt}
-                  contextWindow={activeAssistant.contextWindow}
-                  contextWindowEstimated={
-                    activeAssistant.contextWindowEstimated
-                  }
-                  creatingConversation={false}
-                  ensureConversation={async () => activeThread.id}
-                  includeConversationIdInBody={false}
-                  initialMessages={initialMessages}
-                  initialReasoningEffort="default"
-                  mcpPromptApiPath={`/api/v1/chat/threads/${activeThread.id}/prompts`}
-                  mcpResourceApiPath={`/api/v1/chat/threads/${activeThread.id}/composer`}
-                  modelName={activeAssistant.model}
-                  modelPicker={
-                    <ModelPicker
-                      providers={providers}
-                      value={
-                        activeAssistant.modelProviderId && activeAssistant.model
-                          ? {
-                              providerId: activeAssistant.modelProviderId,
-                              model: activeAssistant.model,
-                            }
-                          : null
-                      }
-                      pending={busy}
-                      onSelect={(selection) =>
-                        void updateAssistantModel(selection)
-                      }
-                      onConfigure={() => {
-                        window.location.assign(
-                          `/app/${encodeURIComponent(slug)}/providers`,
-                        );
-                      }}
-                      trigger={
-                        <Button
-                          type="button"
-                          disabled={busy}
-                          aria-label={`${t("model")}: ${activeAssistant.model ?? t("modelMissing")}`}
-                          title={activeAssistant.model ?? t("modelMissing")}
-                          variant="ghost"
-                          size="sm"
-                          className="h-8 min-w-0 max-w-52 gap-1.5 rounded-xl px-2 text-xs text-muted-foreground"
-                        >
-                          <Cpu className="size-3.5 shrink-0" />
-                          <span className="min-w-0 truncate">
-                            {activeAssistant.model ?? t("modelMissing")}
-                          </span>
-                          <ChevronDown className="size-3 shrink-0" />
-                        </Button>
-                      }
-                    />
-                  }
-                  ready={Boolean(
-                    activeAssistant.modelProviderId && activeAssistant.model,
-                  )}
+                <AssistantConversation
+                  key={`${activeThread.id}:${branch?.activeMessageId ?? "root"}`}
+                  threadId={activeThread.id}
+                  revision={activeAssistant.revision}
+                  revisionId={activeThread.revisionId ?? null}
+                  pinnedRevision={activeThread.revision}
                   reasoningAvailable={reasoningAvailable}
-                  runtimeKind={null}
-                  serverManaged
-                  supportsAttachments
-                  webSearchAvailable={activeAssistant.webSearchAvailable}
-                  branchBusy={branchBusy}
-                  branchNavigation={branch?.navigation ?? []}
-                  onBranchChange={(messageId) => void switchBranch(messageId)}
+                  attachmentUploadUrl={`/api/v1/workspaces/${workspaceId}/attachments`}
+                  readOnly={activeThread.legacyRevisionUnresolved === true}
+                  initialMessages={initialMessages}
                   onConversationChanged={refreshChat}
-                  onNewConversation={() => createThread(activeAssistant.id)}
+                  onBranchChange={(messageId) => void switchBranch(messageId)}
                   onStartBranch={(messageId) => void startBranch(messageId)}
                 />
               ) : (

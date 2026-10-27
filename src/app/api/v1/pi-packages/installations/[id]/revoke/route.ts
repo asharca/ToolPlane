@@ -33,7 +33,7 @@ export async function DELETE(
         id,
         tokenHash: createHash("sha256").update(match[1]).digest("hex"),
       },
-      data: { status: "revoked" },
+      data: { status: "revoked", configVersion: { increment: 1 } },
     });
     if (!revoked.count)
       return privateJson({ error: "pi_installation_not_found" }, 404);

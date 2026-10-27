@@ -1,12 +1,15 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
+import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import {
   AgentConfigurationError,
   createConfiguredAgent,
 } from "@/lib/agents/mutations";
-import { syncHermesRuntime } from "@/lib/agents/hermes/runtime";
-import { runWorkspaceAgentMessage } from "@/lib/agents/message-service";
+import {
+  runWorkspaceAgentMessage,
+  type AgentMessageResult,
+} from "@/lib/agents/message-service";
 import { effectiveStatus, effectiveStatuses } from "@/lib/process/supervisor";
 import { listMcpTools } from "@/lib/process/mcp-client";
 import {
@@ -36,7 +39,6 @@ export type CreateAgentFromControlInput = {
   runtime: ImplementedAgentRuntimeKind;
   systemPrompt?: string | null;
   providerId?: string | null;
-  providerIds: string[];
   model?: string | null;
   maxSteps: number;
   deploymentIds: string[];
@@ -51,6 +53,8 @@ const AGENT_CONTROL_SELECT = {
   name: true,
   slug: true,
   runtimeKind: true,
+  retiredAt: true,
+  currentRevisionVersion: true,
   systemPrompt: true,
   providerId: true,
   model: true,
@@ -58,13 +62,6 @@ const AGENT_CONTROL_SELECT = {
   createdAt: true,
   updatedAt: true,
   provider: { select: { id: true, name: true, format: true } },
-  modelProviders: {
-    orderBy: { provider: { createdAt: "asc" as const } },
-    select: {
-      providerId: true,
-      provider: { select: { name: true, format: true } },
-    },
-  },
   servers: {
     select: {
       deployment: {
@@ -120,85 +117,32 @@ const AGENT_CONTROL_SELECT = {
       child: { select: { id: true, name: true, slug: true } },
     },
   },
-  runtime: {
-    select: {
-      id: true,
-      kind: true,
-      image: true,
-      status: true,
-      sandbox: {
-        select: {
-          deploymentId: true,
-          deployment: { select: { status: true } },
-        },
-      },
-    },
-  },
   _count: { select: { conversations: true } },
 } as const;
 
-function safeRuntimeStatus(
-  runtime: {
-    status: string;
-    sandbox: { deploymentId: string; deployment: { status: string } };
-  } | null,
-): string | null {
-  if (!runtime) return null;
-  if (runtime.status === "error" || runtime.status === "setup_required")
-    return runtime.status;
-  return effectiveStatus(
-    runtime.sandbox.deploymentId,
-    runtime.sandbox.deployment.status,
-  );
-}
+type AgentControlRow = Prisma.AgentGetPayload<{
+  select: typeof AGENT_CONTROL_SELECT;
+}>;
 
-function toSafeAgent(
-  agent: Awaited<ReturnType<typeof loadAgentControlRow>> extends infer T
-    ? NonNullable<T>
-    : never,
-  workspaceSlug: string,
-) {
-  const runtimeStatus = safeRuntimeStatus(agent.runtime);
-  const configured =
-    agent.runtimeKind === "hermes"
-      ? agent.modelProviders.length > 0
-      : Boolean(agent.provider && agent.model);
+function toSafeAgent(agent: AgentControlRow, workspaceSlug: string) {
+  const configured = Boolean(agent.provider && agent.model);
+  const readOnly = agent.runtimeKind !== "pi-sdk" || Boolean(agent.retiredAt);
   return {
     id: agent.id,
     name: agent.name,
     slug: agent.slug,
-    runtime:
-      agent.runtimeKind === "hermes" && agent.runtime
-        ? {
-            kind: agent.runtimeKind,
-            status: runtimeStatus,
-            image: agent.runtime.image,
-          }
-        : { kind: agent.runtimeKind, status: null, image: null },
+    runtime: { kind: agent.runtimeKind, status: null, image: null },
     configured,
-    ready:
-      agent.runtimeKind === "hermes"
-        ? configured && runtimeStatus === "running"
-        : configured,
+    readOnly,
+    ready: !readOnly && configured && agent.currentRevisionVersion > 0,
     systemPrompt: agent.systemPrompt,
-    model:
-      agent.runtimeKind === "hermes"
-        ? {
-            providerIds: agent.modelProviders.map(
-              ({ providerId }) => providerId,
-            ),
-            providers: agent.modelProviders.map(({ provider }) => ({
-              name: provider.name,
-              format: provider.format,
-            })),
-          }
-        : {
-            providerId: agent.providerId,
-            provider: agent.provider
-              ? { name: agent.provider.name, format: agent.provider.format }
-              : null,
-            model: agent.model,
-          },
+    model: {
+      providerId: agent.providerId,
+      provider: agent.provider
+        ? { name: agent.provider.name, format: agent.provider.format }
+        : null,
+      model: agent.model,
+    },
     maxSteps: agent.maxSteps,
     resources: {
       deployments: agent.servers.map(({ deployment }) => {
@@ -302,7 +246,7 @@ export async function listAgentControlResources(workspaceId: string) {
         },
       }),
       db.sandbox.findMany({
-        where: { workspaceId, kind: { not: "hermes" } },
+        where: { workspaceId },
         orderBy: { createdAt: "desc" },
         select: {
           id: true,
@@ -368,24 +312,11 @@ export async function listAgentControlAgents(workspaceId: string) {
       name: true,
       slug: true,
       runtimeKind: true,
+      retiredAt: true,
+      currentRevisionVersion: true,
       providerId: true,
       model: true,
       provider: { select: { name: true } },
-      modelProviders: {
-        select: { providerId: true, provider: { select: { name: true } } },
-      },
-      runtime: {
-        select: {
-          kind: true,
-          status: true,
-          sandbox: {
-            select: {
-              deploymentId: true,
-              deployment: { select: { status: true } },
-            },
-          },
-        },
-      },
       _count: {
         select: {
           servers: true,
@@ -399,26 +330,19 @@ export async function listAgentControlAgents(workspaceId: string) {
     },
   });
   return agents.map((agent) => {
-    const runtimeStatus = safeRuntimeStatus(agent.runtime);
-    const configured =
-      agent.runtimeKind === "hermes"
-        ? agent.modelProviders.length > 0
-        : Boolean(agent.provider && agent.model);
+    const configured = Boolean(agent.provider && agent.model);
+    const readOnly = agent.runtimeKind !== "pi-sdk" || Boolean(agent.retiredAt);
     return {
       id: agent.id,
       name: agent.name,
       slug: agent.slug,
       runtime: agent.runtimeKind,
-      runtimeStatus,
+      runtimeStatus: null,
       configured,
-      ready:
-        agent.runtimeKind === "hermes"
-          ? configured && runtimeStatus === "running"
-          : configured,
+      readOnly,
+      ready: !readOnly && configured && agent.currentRevisionVersion > 0,
       providerId: agent.providerId,
       providerName: agent.provider?.name ?? null,
-      providerIds: agent.modelProviders.map(({ providerId }) => providerId),
-      providerNames: agent.modelProviders.map(({ provider }) => provider.name),
       model: agent.model,
       counts: {
         tools:
@@ -502,19 +426,16 @@ export async function createAgentFromControl(
   workspaceSlug: string,
   input: CreateAgentFromControlInput,
 ) {
-  if (input.runtime === "pi" && input.model && !input.providerId) {
+  if (input.runtime !== "pi-sdk") {
+    throw new AgentControlError(
+      "invalid_arguments",
+      "Historical Agents are read-only. Create a Pi Agent.",
+    );
+  }
+  if (input.model && !input.providerId) {
     throw new AgentControlError(
       "invalid_arguments",
       "A model requires providerId.",
-    );
-  }
-  if (
-    input.runtime === "hermes" &&
-    (input.providerId || input.model || input.systemPrompt)
-  ) {
-    throw new AgentControlError(
-      "invalid_arguments",
-      "Hermes agents use providerIds and do not accept providerId, model, or systemPrompt.",
     );
   }
 
@@ -525,9 +446,8 @@ export async function createAgentFromControl(
       {
         name: input.name,
         systemPrompt: input.systemPrompt?.trim() || null,
-        providerId: input.runtime === "pi" ? (input.providerId ?? null) : null,
-        providerIds: input.runtime === "hermes" ? input.providerIds : [],
-        model: input.runtime === "pi" ? (input.model ?? null) : null,
+        providerId: input.providerId ?? null,
+        model: input.model ?? null,
         maxSteps: input.maxSteps,
       },
       {
@@ -546,24 +466,7 @@ export async function createAgentFromControl(
     throw error;
   }
 
-  let runtimeSync: { status: string; error?: string } = { status: "pi" };
-  if (input.runtime === "hermes") {
-    try {
-      const result = await syncHermesRuntime(workspaceId, created.id);
-      runtimeSync = result.error
-        ? {
-            status: result.status,
-            error:
-              "Hermes runtime sync failed. Open the Agent console to retry.",
-          }
-        : { status: result.status };
-    } catch {
-      runtimeSync = {
-        status: "error",
-        error: "Hermes runtime sync failed. Open the Agent console to retry.",
-      };
-    }
-  }
+  const runtimeSync = { status: "pi-sdk" };
 
   return {
     created: true,
@@ -578,7 +481,7 @@ export async function sendAgentControlMessage(
   actorId?: string,
 ) {
   const sourceId = randomUUID();
-  let result: Awaited<ReturnType<typeof runWorkspaceAgentMessage>>;
+  let result: AgentMessageResult;
   try {
     result = await runWorkspaceAgentMessage({
       userId: actorId,

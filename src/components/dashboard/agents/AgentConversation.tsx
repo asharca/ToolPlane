@@ -29,6 +29,7 @@ import { AssistantMarkdown } from "@/components/dashboard/ConversationMessage";
 import { ConversationFilePreview } from "@/components/dashboard/ConversationComposer";
 import { CopyButton } from "@/components/dashboard/CopyButton";
 
+import { AgentPromptProvenance } from "@/components/dashboard/agents/AgentPromptProvenance";
 import {
   useCallback,
   useEffect,
@@ -86,9 +87,9 @@ import type { ReasoningEffort } from "@/lib/agents/constants";
 import { ReasoningEffortControl } from "@/components/dashboard/agents/ReasoningEffortControl";
 import { displayMessagingUserText } from "@/lib/agents/messaging";
 import {
-  expandHermesAssistantMessages,
-  type HermesUIMessage,
-} from "@/lib/agents/hermes/message-segments";
+  expandAssistantMessages,
+  type AgentUIMessage,
+} from "@/lib/agents/message-segments";
 import {
   parseRuntimeCommand,
   sessionRuntimeCommands,
@@ -671,6 +672,20 @@ function ConversationTools({
       />
       <McpResourcePickerButton
         apiPath={mcpResourceApiPath}
+        conversationId={
+          mcpResourceApiPath
+            ? (new URLSearchParams(mcpResourceApiPath.split("?")[1]).get(
+                "conversationId",
+              ) ?? undefined)
+            : undefined
+        }
+        workSessionId={
+          mcpResourceApiPath
+            ? (new URLSearchParams(mcpResourceApiPath.split("?")[1]).get(
+                "workSessionId",
+              ) ?? undefined)
+            : undefined
+        }
         disabled={disabled}
         hideTrigger
         onError={onError}
@@ -721,25 +736,17 @@ function ConversationTools({
 }
 
 function useAgentAttachmentAdapter({
-  agentId,
   attachmentUploadUrl,
-  ensureConversation,
-  isHermes,
   onError,
   onUploadingChange,
   runtimeRef,
-  sendConversationIdRef,
   draftSnapshotRef,
   recoveryErrorRef,
 }: {
-  agentId: string;
   attachmentUploadUrl?: string;
-  ensureConversation: () => Promise<string>;
-  isHermes: boolean;
   onError: (message: string | null) => void;
   onUploadingChange: (uploading: boolean) => void;
   runtimeRef: { current: AssistantRuntime | null };
-  sendConversationIdRef: { current: string | null };
   draftSnapshotRef: { current: DraftSnapshot | null };
   recoveryErrorRef: { current: string | null };
 }) {
@@ -751,7 +758,7 @@ function useAgentAttachmentAdapter({
     () => ({
       accept: "*",
       async add({ file }) {
-        if (!isHermes && !attachmentUploadUrl) {
+        if (!attachmentUploadUrl) {
           const message = t("attachmentRuntimeRequired");
           onError(message);
           throw new Error(message);
@@ -795,23 +802,11 @@ function useAgentAttachmentAdapter({
         onUploadingChange(true);
         onError(null);
         try {
-          let uploadUrl: string;
-          if (isHermes) {
-            const conversationId =
-              sendConversationIdRef.current ?? (await ensureConversation());
-            sendConversationIdRef.current = conversationId;
-            const query = new URLSearchParams({
-              conversationId,
-              filename: attachment.file.name,
-            });
-            uploadUrl = `/api/v1/agents/${agentId}/attachments?${query}`;
-          } else {
-            if (!attachmentUploadUrl)
-              throw new Error(t("attachmentRuntimeRequired"));
-            const url = new URL(attachmentUploadUrl, window.location.origin);
-            url.searchParams.set("filename", attachment.file.name);
-            uploadUrl = `${url.pathname}${url.search}`;
-          }
+          if (!attachmentUploadUrl)
+            throw new Error(t("attachmentRuntimeRequired"));
+          const url = new URL(attachmentUploadUrl, window.location.origin);
+          url.searchParams.set("filename", attachment.file.name);
+          const uploadUrl = `${url.pathname}${url.search}`;
           const response = await fetch(uploadUrl, {
             method: "POST",
             headers: {
@@ -823,45 +818,25 @@ function useAgentAttachmentAdapter({
           const result = (await response.json().catch(() => ({}))) as {
             name?: string;
             mimeType?: string;
-            runtimePath?: string;
-            size?: number;
             url?: string;
             error?: string;
           };
-          const location = isHermes ? result.runtimePath : result.url;
+          const location = result.url;
           if (!response.ok || !location) {
             throw new Error(result.error || t("attachmentUploadFailed"));
           }
           const name = result.name || attachment.name;
-          const content: AttachmentContentPart[] = isHermes
-            ? [
-                {
-                  type: "text",
-                  text: [
-                    t("attachmentStoredInHermesWorkspace"),
-                    t("attachmentMetadataName", { name }),
-                    t("attachmentMetadataPath", { path: location }),
-                    t("attachmentMetadataSize", {
-                      size: result.size ?? attachment.file.size,
-                    }),
-                    t("attachmentMetadataType", {
-                      type:
-                        attachment.contentType || "application/octet-stream",
-                    }),
-                  ].join("\n"),
-                },
-              ]
-            : [
-                {
-                  type: "file",
-                  data: location,
-                  mimeType:
-                    result.mimeType ||
-                    attachment.contentType ||
-                    "application/octet-stream",
-                  filename: name,
-                },
-              ];
+          const content: AttachmentContentPart[] = [
+            {
+              type: "file",
+              data: location,
+              mimeType:
+                result.mimeType ||
+                attachment.contentType ||
+                "application/octet-stream",
+              filename: name,
+            },
+          ];
 
           return {
             ...attachment,
@@ -899,16 +874,12 @@ function useAgentAttachmentAdapter({
       },
     }),
     [
-      agentId,
       attachmentUploadUrl,
       draftSnapshotRef,
-      ensureConversation,
-      isHermes,
       onError,
       onUploadingChange,
       recoveryErrorRef,
       runtimeRef,
-      sendConversationIdRef,
       t,
     ],
   );
@@ -979,9 +950,10 @@ export function AgentConversation({
   onConversationChanged,
   onNewConversation,
   onStartBranch,
-  ready,
+  ready: configuredReady,
   reasoningAvailable = false,
   runtimeKind,
+  readOnly = false,
   supportsAttachments,
   serverManaged = false,
   webSearchAvailable,
@@ -1003,7 +975,7 @@ export function AgentConversation({
   ensureConversation: () => Promise<string>;
   includeConversationIdInBody?: boolean;
   initialReasoningEffort?: ReasoningEffort;
-  initialMessages: HermesUIMessage[];
+  initialMessages: AgentUIMessage[];
   modelName?: string | null;
   modelPicker?: ReactNode;
   mcpPromptApiPath?: string;
@@ -1016,6 +988,7 @@ export function AgentConversation({
   ready: boolean;
   reasoningAvailable?: boolean;
   runtimeKind: string | null;
+  readOnly?: boolean;
   supportsAttachments?: boolean;
   serverManaged?: boolean;
   webSearchAvailable?: boolean;
@@ -1026,6 +999,19 @@ export function AgentConversation({
   const work = useTranslations("console.work");
   const chatAssistants = useTranslations("console.chatAssistants");
   const commandsT = useTranslations("console.runtimeCommands");
+  const ready =
+    configuredReady && !readOnly && (serverManaged || runtimeKind === "pi-sdk");
+  const sessionQuery = new URLSearchParams({
+    ...(activeConversationId ? { conversationId: activeConversationId } : {}),
+    ...(workSessionId ? { workSessionId } : {}),
+  });
+  const scopeApiPath = (path?: string) => {
+    if (!path || (!activeConversationId && !workSessionId)) return undefined;
+    const [pathname, query = ""] = path.split("?");
+    const params = new URLSearchParams(query);
+    for (const [key, value] of sessionQuery) params.set(key, value);
+    return `${pathname}?${params}`;
+  };
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [followingOutput, setFollowingOutput] = useState(true);
   const [uploadingAttachments, setUploadingAttachments] = useState(false);
@@ -1086,7 +1072,7 @@ export function AgentConversation({
       }),
     };
   }, [agentId, apiPath, includeConversationIdInBody, serverManaged]);
-  const chat = useChat<HermesUIMessage>({
+  const chat = useChat<AgentUIMessage>({
     transport,
     resume: serverManaged,
     messages: initialMessages,
@@ -1149,11 +1135,14 @@ export function AgentConversation({
   );
 
   const displayMessages = useMemo(
-    () => expandHermesAssistantMessages(chat.messages),
+    () => expandAssistantMessages(chat.messages),
     [chat.messages],
   );
   const runtimeCommands = useMemo(
-    () => sessionRuntimeCommands(runtimeKind ?? "", chat.messages),
+    () =>
+      runtimeKind === "pi-sdk"
+        ? sessionRuntimeCommands(runtimeKind, chat.messages)
+        : [],
     [chat.messages, runtimeKind],
   );
   const initialMessagesSignature = useMemo(
@@ -1173,7 +1162,7 @@ export function AgentConversation({
   const regenerateChat = chat.regenerate;
   const sendMessage = useCallback<typeof chat.sendMessage>(
     async (message, options) => {
-      if (branchBusy || commandBusy) return;
+      if (!ready || branchBusy || commandBusy) return;
       setSubmitError(null);
       const messageParts =
         message &&
@@ -1227,7 +1216,9 @@ export function AgentConversation({
         setCommandBusy(true);
         try {
           const nextConversationId =
-            sendConversationIdRef.current ?? (await ensureConversation());
+            activeConversationId ??
+            sendConversationIdRef.current ??
+            (await ensureConversation());
           sendConversationIdRef.current = null;
           const response = await fetch(
             `/api/v1/agents/${encodeURIComponent(agentId)}/conversations/${encodeURIComponent(nextConversationId)}/commands`,
@@ -1263,7 +1254,9 @@ export function AgentConversation({
       let nextConversationId: string;
       try {
         nextConversationId =
-          sendConversationIdRef.current ?? (await ensureConversation());
+          activeConversationId ??
+          sendConversationIdRef.current ??
+          (await ensureConversation());
         sendConversationIdRef.current = null;
       } catch {
         sendConversationIdRef.current = null;
@@ -1289,6 +1282,7 @@ export function AgentConversation({
     },
     [
       agentId,
+      activeConversationId,
       branchBusy,
       commandBusy,
       commandsT,
@@ -1296,6 +1290,7 @@ export function AgentConversation({
       includeConversationIdInBody,
       onConversationChanged,
       reasoningAvailable,
+      ready,
       reasoningEffort,
       runtimeCommands,
       runtimeKind,
@@ -1308,7 +1303,7 @@ export function AgentConversation({
   );
   const regenerate = useCallback<typeof chat.regenerate>(
     async (options) => {
-      if (!allowRegenerate || branchBusy) return;
+      if (!ready || !allowRegenerate || branchBusy) return;
       setSubmitError(null);
       let nextConversationId: string;
       try {
@@ -1341,6 +1336,7 @@ export function AgentConversation({
       ensureConversation,
       includeConversationIdInBody,
       reasoningAvailable,
+      ready,
       reasoningEffort,
       regenerateChat,
       t,
@@ -1350,14 +1346,10 @@ export function AgentConversation({
     ],
   );
   const attachmentAdapter = useAgentAttachmentAdapter({
-    agentId,
     attachmentUploadUrl,
-    ensureConversation,
-    isHermes: runtimeKind === "hermes",
     onError: setSubmitError,
     onUploadingChange: setUploadingAttachments,
     runtimeRef: assistantRuntimeRef,
-    sendConversationIdRef,
     draftSnapshotRef: attachmentDraftSnapshotRef,
     recoveryErrorRef: attachmentRecoveryErrorRef,
   });
@@ -1394,8 +1386,8 @@ export function AgentConversation({
   const composerDisabled =
     branchBusy || commandBusy || creatingConversation || uploadingAttachments;
   const attachmentsEnabled =
-    supportsAttachments ??
-    (runtimeKind === "hermes" || Boolean(attachmentUploadUrl));
+    (serverManaged || runtimeKind === "pi-sdk") &&
+    (supportsAttachments ?? Boolean(attachmentUploadUrl));
   const composerStatus = !ready
     ? t("chooseAModelBeforeSending")
     : uploadingAttachments
@@ -1510,6 +1502,14 @@ export function AgentConversation({
                   ) : null;
                 const messageBody = (
                   <>
+                    {from === "user" ? (
+                      <AgentPromptProvenance
+                        parts={
+                          chat.messages.find((entry) => entry.id === message.id)
+                            ?.parts ?? []
+                        }
+                      />
+                    ) : null}
                     {message.content.map((part, index) => {
                       if (part.type === "text")
                         return from === "user" ? (
@@ -1939,8 +1939,8 @@ export function AgentConversation({
                   <ConversationTools
                     attachmentsEnabled={attachmentsEnabled}
                     disabled={blocked}
-                    mcpPromptApiPath={mcpPromptApiPath}
-                    mcpResourceApiPath={mcpResourceApiPath}
+                    mcpPromptApiPath={scopeApiPath(mcpPromptApiPath)}
+                    mcpResourceApiPath={scopeApiPath(mcpResourceApiPath)}
                     onError={setSubmitError}
                     onNewConversation={onNewConversation}
                     runtimeCommands={runtimeCommands}

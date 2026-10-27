@@ -5,17 +5,15 @@ import { usePathname } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { Logo } from "@/components/layout/Logo";
 import {
-  Plug,
-  Brain,
-  Wrench,
+  Bot,
   Boxes,
-  Store,
-  MessageSquare,
-  TerminalSquare,
-  LibraryBig,
   Cpu,
-  Users,
+  LibraryBig,
+  MessageSquare,
   ScrollText,
+  Settings,
+  Store,
+  Users,
   type LucideIcon,
 } from "lucide-react";
 import { useAnimatedSidebar } from "@/components/motion/animated-sidebar";
@@ -29,16 +27,18 @@ type NavItem = { labelKey: string; segment: string; icon: LucideIcon };
 type Workspace = { id: string; slug: string; name: string };
 const NAV_ITEMS: NavItem[] = [
   { labelKey: "chat", segment: "chat", icon: MessageSquare },
-  { labelKey: "work", segment: "work", icon: TerminalSquare },
-  { labelKey: "knowledge", segment: "knowledge", icon: LibraryBig },
-  { labelKey: "members", segment: "members", icon: Users },
+  { labelKey: "agents", segment: "agents", icon: Bot },
   { labelKey: "market", segment: "market", icon: Store },
-  { labelKey: "mcpServers", segment: "mcp", icon: Plug },
-  { labelKey: "skills", segment: "skills", icon: Brain },
-  { labelKey: "toolkits", segment: "toolkits", icon: Wrench },
-  { labelKey: "sandboxes", segment: "sandboxes", icon: Boxes },
-  { labelKey: "modelProviders", segment: "providers", icon: Cpu },
+];
+const SECONDARY_ITEMS: NavItem[] = [
+  { labelKey: "knowledge", segment: "knowledge", icon: LibraryBig },
   { labelKey: "observability", segment: "observability", icon: ScrollText },
+];
+const MANAGE_ITEMS: NavItem[] = [
+  { labelKey: "members", segment: "members", icon: Users },
+  { labelKey: "modelProviders", segment: "providers", icon: Cpu },
+  { labelKey: "sandboxes", segment: "sandboxes", icon: Boxes },
+  { labelKey: "settings", segment: "settings", icon: Settings },
 ];
 
 export function DashboardSidebar({
@@ -58,12 +58,14 @@ export function DashboardSidebar({
   const base = `/app/${slug}`;
   const t = useTranslations("console.sidebar");
   const { openRoute } = useDashboardTabs();
-  const { open, isMobile } = useAnimatedSidebar();
-  const active = NAV_ITEMS.find(
-    (item) =>
-      pathname === `${base}/${item.segment}` ||
-      pathname.startsWith(`${base}/${item.segment}/`),
-  );
+  const { open, isMobile, setOpenMobile } = useAnimatedSidebar();
+  const activeSegment = pathname.slice(`${base}/`.length).split("/")[0];
+  const activeId =
+    activeSegment === "work"
+      ? "agents"
+      : ["mcp", "skills", "toolkits", "seller"].includes(activeSegment)
+        ? "market"
+        : activeSegment;
   function navigate(event: MouseEvent<HTMLDivElement>) {
     if (
       event.defaultPrevented ||
@@ -84,6 +86,7 @@ export function DashboardSidebar({
     )
       return;
     event.preventDefault();
+    if (isMobile) setOpenMobile(false);
     openRoute(`${target.pathname}${target.search}`);
   }
   return (
@@ -91,7 +94,7 @@ export function DashboardSidebar({
       <WorkspaceSidebar
         title="ToolPlane"
         logo={<Logo svgSize={28} wordmarkClass="hidden" />}
-        activeId={active?.segment}
+        activeId={activeId}
         groups={[
           {
             id: "workspace",
@@ -102,18 +105,37 @@ export function DashboardSidebar({
               href: `${base}/${segment}`,
             })),
           },
+          {
+            id: "secondary",
+            items: SECONDARY_ITEMS.map(({ segment, labelKey, icon: Icon }) => ({
+              id: segment,
+              label: t(labelKey),
+              icon: <Icon />,
+              href: `${base}/${segment}`,
+            })),
+          },
+          {
+            id: "manage",
+            title: t("manage"),
+            items: MANAGE_ITEMS.map(({ segment, labelKey, icon: Icon }) => ({
+              id: segment,
+              label: t(labelKey),
+              icon: <Icon />,
+              href: `${base}/${segment}`,
+            })),
+          },
         ]}
         footer={
           <div className="flex flex-col gap-1">
+            <NotificationBell
+              workspaceSlug={slug}
+              compact={!open && !isMobile}
+            />
             <WorkspaceSwitcher
               slug={slug}
               workspaceName={workspaceName}
               userLabel={userLabel}
               workspaces={workspaces}
-              compact={!open && !isMobile}
-            />
-            <NotificationBell
-              workspaceSlug={slug}
               compact={!open && !isMobile}
             />
             <AccountMenu

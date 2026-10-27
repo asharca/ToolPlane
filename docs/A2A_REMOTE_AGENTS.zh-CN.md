@@ -1,6 +1,5 @@
 # 注册和委派远程 A2A Agent
 
-> [English](A2A_REMOTE_AGENTS.md)
 
 面向部署管理员、工作区管理员和 Agent 使用者。此功能允许 ToolPlane 内部 Agent 把明确的
 文本任务委派给经过授权的外部 A2A 服务。任务仍使用原生 A2ATask / Context / Worker 和
@@ -56,7 +55,7 @@ Card 是能力声明，不是信任证明。本功能没有进行 Card 签名认
 
 ## 从原生 Agent 任务委派
 
-先启用调用方的内部 A2A，通过本地任务调试或原生本地 API 发起根任务。
+开启调用方出站协作，分别批准远端连接允许列表与版本化目标策略，再发起本地任务。
 运行时受限 MCP 工具新增：
 
 | 工具 | 用途 |
@@ -85,6 +84,8 @@ Card 是能力声明，不是信任证明。本功能没有进行 Card 签名认
 内容会离开 ToolPlane：不要未经授权提交私人文件、记忆或凭据。平台只发送本次明确的
 文本，不投影本地账户、模型凭据、运行 Token、授权元数据或本地任务 ID。远端要求的租户
 来自已批准的 Card，不接受模型临时更换目标 URL 或连接凭据。
+返回内容仍是不可信文本。最终内联结果包含本地任务/上下文、已登记目标、大小及规范化
+内容摘要，不证明远端内部实现、工具授权或实际费用。平台不自动抓取远端产物 URL。
 
 ToolPlane Task ID 与远端 Task ID 分开。查询与续写使用返回的 **ToolPlane 子任务 ID**，
 平台内部保存对应关系；INPUT_REQUIRED 时用相同子 taskId、新 messageId 补充信息。
@@ -104,6 +105,8 @@ ToolPlane Task ID 与远端 Task ID 分开。查询与续写使用返回的 **To
 重试而自动再发一次任务**。知道远端 ID 的工作中任务在平台重启后只恢复观察，不重发消息。
 读失败最多四次退避重试（2/4/8/16 秒），截止时间、授权撤销或持续失败后停止观察，标记
 本地失败并明确远端可能仍在执行。已发生的外部副作用不会回滚，也不保证 exactly-once。
+任务保留远端原始状态并与本地调度状态分开显示；已观察的 FAILED 不应显示成未知。
+无法对账的截止/中断显示结果未知；取消请求没有对端确认时显示“取消待确认／远端可能继续”。
 
 父任务的取消/失败会向后代传播。当前有效授权允许取消已知远端任务；连接关闭、密钥变化、
 成员移除或部署白名单撤销后不能继续借用旧授权发网络请求，包括取消。
@@ -122,7 +125,7 @@ ToolPlane Task ID 与远端 Task ID 分开。查询与续写使用返回的 **To
 
 ```bash
 pnpm exec prisma generate
-pnpm vitest run tests/unit/a2a-remote-*.test.ts tests/unit/agent-a2a-remotes.test.tsx tests/integration/a2a-remote*.test.ts
+pnpm vitest run tests/integration/a2a-remote.test.ts
 pnpm exec tsc --noEmit
 ```
 

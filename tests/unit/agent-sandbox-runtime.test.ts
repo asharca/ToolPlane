@@ -5,34 +5,23 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import {
-  CLAUDE_RUNTIME_USER,
-  SANDBOX_RUNTIME_PACKAGES,
-  buildClaudeRuntimeArgs,
-  buildClaudeSkillPluginManifest,
+  PI_SDK_RUNTIME,
   buildSandboxSkillBundles,
-  buildClaudeMcpConfig,
-  buildDshPatch,
   buildSandboxTranscript,
-  dshProviderProtocol,
-  dshEventTapSource,
   normalizeSandboxWorkingDirectory,
   parseClaudeStreamLine,
-  parseClaudeRuntimeMetadata,
   parseDshEventLine,
   parsePiStreamLine,
   resolveSandboxMcpToolOrigin,
   sandboxRuntimeCanReachProxy,
-  sandboxRuntimeExecWrapper,
   sandboxSkillBundleDigest,
   sandboxRuntimeSkillRoot,
   sandboxRuntimeStateRoot,
   waitForSandboxRuntimeInstall,
 } from "@/lib/agents/sandbox-runtime";
 import type { SkillForPrompt } from "@/lib/agents/resolve";
-import { agentRuntimeSupportsProviderFormat } from "@/lib/agents/runtime-kind";
 import {
   parseRuntimeCommand,
-  runtimeCommands,
   sessionRuntimeCommands,
   RUNTIME_COMMANDS_PART,
 } from "@/lib/agents/runtime-commands";
@@ -71,68 +60,6 @@ describe("sandbox Agent runtime helpers", () => {
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
-  });
-  it("scopes Cherry command catalogs to the runtime and the latest valid session metadata", () => {
-    expect(runtimeCommands("pi").map((item) => item.name)).toEqual(["compact"]);
-    expect(runtimeCommands("claude-code").map((item) => item.name)).toEqual([
-      "clear",
-      "compact",
-      "context",
-      "usage",
-    ]);
-    expect(runtimeCommands("dsh").map((item) => item.name)).toEqual([
-      "compact",
-      "goal",
-    ]);
-    const history = [
-      {
-        parts: [
-          {
-            type: RUNTIME_COMMANDS_PART,
-            data: {
-              runtimeKind: "claude-code",
-              commands: [{ name: "plugin:review" }, { name: "new" }],
-            },
-          },
-        ],
-      },
-    ];
-    expect(
-      sessionRuntimeCommands("claude-code", history).map((item) => item.name),
-    ).toEqual(["clear", "compact", "context", "usage", "plugin:review"]);
-    expect(sessionRuntimeCommands("dsh", history)).toEqual(
-      runtimeCommands("dsh"),
-    );
-    expect(runtimeCommands("pi", [{ name: "goal" }])).toEqual(
-      runtimeCommands("pi"),
-    );
-    expect(
-      sessionRuntimeCommands("claude-code", [
-        ...history,
-        {
-          parts: [
-            {
-              type: RUNTIME_COMMANDS_PART,
-              data: { runtimeKind: "claude-code", commands: [] },
-            },
-          ],
-        },
-      ]),
-    ).toEqual(runtimeCommands("claude-code"));
-    expect(parseRuntimeCommand(" /goal edit Preserve plan.md ", "dsh")).toEqual(
-      { name: "goal", args: "edit Preserve plan.md" },
-    );
-    expect(parseRuntimeCommand("/plugin:review src", "claude-code")).toEqual({
-      name: "plugin:review",
-      args: "src",
-    });
-    for (const text of [
-      "/workspace/file",
-      "review /usage",
-      "https://example.test",
-      "/file.md",
-    ])
-      expect(parseRuntimeCommand(text, "pi")).toBeNull();
   });
 
   it("preserves SDK invocation names and conflict suffixes across saved catalogs without changing legacy case folding", () => {
@@ -173,74 +100,6 @@ describe("sandbox Agent runtime helpers", () => {
     });
     expect(parseRuntimeCommand(`/${"a".repeat(101)}`, "pi-sdk")).toBeNull();
     expect(parseRuntimeCommand("/package/path", "pi-sdk")).toBeNull();
-  });
-
-  it("reads actual Claude commands and usage without inventing missing cost or malformed token counts", () => {
-    expect(
-      parseClaudeRuntimeMetadata(
-        JSON.stringify({
-          type: "system",
-          subtype: "init",
-          slash_commands: ["compact", "plugin:review"],
-        }),
-      ),
-    ).toEqual({ commands: [{ name: "compact" }, { name: "plugin:review" }] });
-    const event = {
-      type: "result",
-      usage: {
-        input_tokens: 12,
-        output_tokens: 9,
-        cache_read_input_tokens: 4,
-        cache_creation_input_tokens: 3,
-      },
-    };
-    expect(parseClaudeRuntimeMetadata(JSON.stringify(event))).toEqual({
-      usage: {
-        inputTokens: 12,
-        outputTokens: 9,
-        cacheReadTokens: 4,
-        cacheWriteTokens: 3,
-      },
-    });
-    expect(
-      parseClaudeRuntimeMetadata(
-        JSON.stringify({ ...event, total_cost_usd: 0.02 }),
-      ).usage?.costUsd,
-    ).toBe(0.02);
-    expect(
-      parseClaudeRuntimeMetadata(
-        JSON.stringify({ type: "result", usage: { input_tokens: -1 } }),
-      ),
-    ).toEqual({});
-    expect(parseClaudeRuntimeMetadata("not json")).toEqual({});
-    expect(
-      parseClaudeRuntimeMetadata(
-        JSON.stringify({ type: "system", subtype: "init", slash_commands: {} }),
-      ),
-    ).toEqual({});
-    expect(
-      parseClaudeRuntimeMetadata(
-        JSON.stringify({
-          type: "system",
-          subtype: "commands_changed",
-          commands: [null],
-        }),
-      ),
-    ).toEqual({});
-  });
-
-  it("routes all dedicated runtimes through the three generic provider protocols", () => {
-    expect(CLAUDE_RUNTIME_USER).toBe("1000:1000");
-    for (const runtime of ["pi", "claude-code", "dsh", "hermes-rpc"]) {
-      expect(
-        ["openai", "openai-responses", "anthropic"].every((format) =>
-          agentRuntimeSupportsProviderFormat(runtime, format),
-        ),
-      ).toBe(true);
-      expect(agentRuntimeSupportsProviderFormat(runtime, "pi:openai")).toBe(
-        false,
-      );
-    }
   });
 
   it("keeps work paths inside /workspace and never copies attachment bytes into the transcript", () => {
@@ -383,11 +242,7 @@ describe("sandbox Agent runtime helpers", () => {
     ).toEqual({ result: "Native error", isError: true });
   });
 
-  it("pins Pi and parses its JSONL text and failures", () => {
-    expect(SANDBOX_RUNTIME_PACKAGES.pi.specs).toEqual([
-      "@earendil-works/pi-coding-agent@0.80.3",
-      "@earendil-works/pi-ai@0.80.3",
-    ]);
+  it("parses historical Pi JSONL text and failures", () => {
     expect(
       parsePiStreamLine(
         JSON.stringify({
@@ -501,18 +356,15 @@ describe("sandbox Agent runtime helpers", () => {
     ).toEqual({ error: "bad request", isError: true });
   });
 
-  it("scopes pnpm lifecycle scripts to each dedicated runtime", () => {
-    expect(SANDBOX_RUNTIME_PACKAGES.pi).toMatchObject({
+  it("pins SDK install specs and disables package lifecycle scripts", () => {
+    expect(PI_SDK_RUNTIME.specs).toEqual([
+      "@earendil-works/pi-coding-agent@0.87.1",
+      "@earendil-works/pi-ai@0.87.1",
+    ]);
+    expect(PI_SDK_RUNTIME).toMatchObject({
       ignoreScripts: true,
       allowBuilds: [],
     });
-    expect(SANDBOX_RUNTIME_PACKAGES["claude-code"]).toMatchObject({
-      ignoreScripts: false,
-      allowBuilds: ["@anthropic-ai/claude-code"],
-    });
-    expect(SANDBOX_RUNTIME_PACKAGES.dsh.allowBuilds).toContain(
-      "@deepseek-ai/dsh-subprocess-local",
-    );
   });
 
   it("lets one cancelled caller stop waiting without cancelling a shared runtime install", async () => {
@@ -526,8 +378,8 @@ describe("sandbox Agent runtime helpers", () => {
 
     controller.abort();
     await expect(cancelled).rejects.toThrow("Sandbox runtime aborted.");
-    finishInstall("/runtime/bin/dsh");
-    await expect(waiting).resolves.toBe("/runtime/bin/dsh");
+    finishInstall("/runtime/bin/pi");
+    await expect(waiting).resolves.toBe("/runtime/bin/pi");
   });
 
   it("recovers MCP origin only from stable runtime aliases", () => {
@@ -553,49 +405,7 @@ describe("sandbox Agent runtime helpers", () => {
     expect(resolveSandboxMcpToolOrigin("bash", servers)).toBeNull();
   });
 
-  it("generates a DSH proxy profile and env-backed MCP auth without embedding a token", async () => {
-    const patch = buildDshPatch({
-      provider: {
-        id: "provider-1",
-        name: 'Gateway "One"',
-        format: "openai-responses",
-      },
-      modelId: "model\nname",
-      modelProxyBase:
-        "http://host.docker.internal:3000/api/v1/agent-runtime/model/provider-1",
-      systemPrompt: "line one\nline two",
-      skillRoot: "/workspace/.toolplane/runtimes/dsh/agents/agent-1/skills",
-      mcpServers: [
-        {
-          deploymentId: "dep-1",
-          url: "http://host.docker.internal:3000/api/v1/agent-runtime/mcp/dep-1/rpc",
-        },
-      ],
-      eventPluginPath: "/workspace/.toolplane/runtime-tmp/events.mjs",
-    });
-    expect(dshProviderProtocol("openai-responses")).toBe("openai-responses");
-    expect(patch).toContain("apiKeyEnv: TOOLPLANE_RUNTIME_TOKEN");
-    expect(patch).toContain(
-      "Authorization: !!js process.env.TOOLPLANE_MCP_AUTH",
-    );
-    expect(patch).toContain("model\\nname");
-    expect(patch).not.toContain("Bearer runtime-secret");
-    expect(patch.match(/^- insert:$/gm)).toHaveLength(1);
-    expect(patch).toContain(
-      "file:///workspace/.toolplane/runtime-tmp/events.mjs",
-    );
-    expect(patch).toContain("includeDefaultRoots: false");
-    expect(patch).toContain("customSkillDirs:");
-    expect(patch).toContain(
-      "/workspace/.toolplane/runtimes/dsh/agents/agent-1/skills",
-    );
-    const eventTap = dshEventTapSource("__EVENT__");
-    expect(eventTap).toContain("ctx.on('session/event'");
-    expect(eventTap).toContain("process.stdout.write");
-    const eventTapModule = (await import(
-      /* @vite-ignore */ `data:text/javascript;base64,${Buffer.from(eventTap).toString("base64")}`
-    )) as { apply?: unknown };
-    expect(eventTapModule.apply).toBeTypeOf("function");
+  it("parses archived DSH text, reasoning, and tool events", () => {
     expect(
       parseDshEventLine(
         '__EVENT__{"type":"text","delta":"hello"}',
@@ -627,6 +437,9 @@ describe("sandbox Agent runtime helpers", () => {
         },
       ],
     });
+  });
+
+  it("preserves proxy isolation and safe historical state paths", () => {
     expect(sandboxRuntimeCanReachProxy("none")).toBe(false);
     expect(sandboxRuntimeCanReachProxy("isolated")).toBe(true);
     expect(sandboxRuntimeStateRoot("claude-code", "agent/a")).toBe(
@@ -647,12 +460,9 @@ describe("sandbox Agent runtime helpers", () => {
     expect(sandboxRuntimeSkillRoot("claude-code", "agent/a")).toBe(
       `${sandboxRuntimeStateRoot("claude-code", "agent/a")}/skills`,
     );
-    const wrapper = sandboxRuntimeExecWrapper("__CONTROL__");
-    expect(wrapper).toContain('> "$pid_file"');
-    expect(wrapper).toContain("trap 'rm -f -- \"$pid_file\"' EXIT");
   });
 
-  it("projects complete skill directories and explicitly loads ToolPlane skills in Claude bare mode", () => {
+  it("projects complete skill directories with unique names and content-sensitive digests", () => {
     const bundles = buildSandboxSkillBundles([
       {
         skillId: null,
@@ -699,39 +509,6 @@ describe("sandbox Agent runtime helpers", () => {
         },
         assertDefined(bundles[1]),
       ]),
-    );
-    expect(JSON.parse(buildClaudeSkillPluginManifest())).toMatchObject({
-      name: "toolplane-agent",
-      skills: "./skills/",
-    });
-    expect(
-      buildClaudeRuntimeArgs({
-        modelId: "model-1",
-        systemPrompt: "",
-        disabledBuiltinTools: [],
-        skillPluginRoot:
-          "/workspace/.toolplane/runtimes/claude-code/agents/agent-1/skills",
-      }),
-    ).toEqual(
-      expect.arrayContaining([
-        "--bare",
-        "--plugin-dir",
-        "/workspace/.toolplane/runtimes/claude-code/agents/agent-1/skills",
-      ]),
-    );
-    const config = JSON.parse(
-      buildClaudeMcpConfig(
-        [
-          {
-            deploymentId: "dep-1",
-            url: "https://runtime.example/mcp/dep-1/rpc",
-          },
-        ],
-        "runtime-secret",
-      ),
-    ) as { mcpServers: Record<string, { headers: { Authorization: string } }> };
-    expect(Object.values(config.mcpServers)[0]?.headers.Authorization).toBe(
-      "Bearer runtime-secret",
     );
   });
 });

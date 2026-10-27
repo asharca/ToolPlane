@@ -9,6 +9,7 @@ export const AGENT_RUNTIME_TOKEN_HEADER = "x-toolplane-runtime-token";
 export type AgentRuntimeTokenPayload = {
   workspaceId: string;
   agentId: string;
+  agentRevisionId: string;
   sandboxId: string;
   conversationId?: string;
   a2aContextId?: string;
@@ -50,6 +51,7 @@ export async function createAgentRuntimeToken(
 ): Promise<string> {
   const issuedAt = Math.floor(now / 1000);
   if (
+    (!payload.conversationId && !payload.a2aContextId) ||
     (payload.conversationId !== undefined &&
       !validId(payload.conversationId)) ||
     (payload.a2aContextId !== undefined && !validId(payload.a2aContextId)) ||
@@ -59,6 +61,7 @@ export async function createAgentRuntimeToken(
       (payload.a2aApprovalRequired !== true || !payload.a2aTaskId)) ||
     !validId(payload.workspaceId) ||
     !validId(payload.agentId) ||
+    !validId(payload.agentRevisionId) ||
     !validId(payload.sandboxId) ||
     !validId(payload.providerId) ||
     !validDeploymentIds(payload.deploymentIds) ||
@@ -78,6 +81,7 @@ export async function createAgentRuntimeToken(
       : {}),
     workspaceId: payload.workspaceId,
     agentId: payload.agentId,
+    agentRevisionId: payload.agentRevisionId,
     sandboxId: payload.sandboxId,
     conversationId: payload.conversationId,
     a2aContextId: payload.a2aContextId,
@@ -109,6 +113,7 @@ export async function verifyAgentRuntimeToken(
     const issuedAt = payload.iat;
     const expiresAt = payload.exp;
     if (
+      (!payload.conversationId && !payload.a2aContextId) ||
       (payload.conversationId !== undefined &&
         !validId(payload.conversationId)) ||
       (payload.a2aContextId !== undefined && !validId(payload.a2aContextId)) ||
@@ -119,6 +124,7 @@ export async function verifyAgentRuntimeToken(
         (payload.a2aApprovalRequired !== true || !payload.a2aTaskId)) ||
       !validId(payload.workspaceId) ||
       !validId(payload.agentId) ||
+      !validId(payload.agentRevisionId) ||
       !validId(payload.sandboxId) ||
       !validId(payload.providerId) ||
       !validDeploymentIds(payload.deploymentIds) ||
@@ -147,6 +153,7 @@ export async function verifyAgentRuntimeToken(
         : {}),
       workspaceId: payload.workspaceId,
       agentId: payload.agentId,
+      agentRevisionId: payload.agentRevisionId,
       sandboxId: payload.sandboxId,
       ...(typeof payload.conversationId === "string"
         ? { conversationId: payload.conversationId }
@@ -201,7 +208,6 @@ export function sandboxRuntimeOrigin(): string {
       : undefined;
   const configured =
     runtimeEnv("TOOLPLANE_RUNTIME_ORIGIN") ||
-    runtimeEnv("TOOLPLANE_HERMES_CALLBACK_URL") ||
     developmentOrigin ||
     runtimeEnv("NEXT_PUBLIC_APP_URL") ||
     `http://localhost:${runtimeEnv("PORT") || "3000"}`;

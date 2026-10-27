@@ -8,11 +8,17 @@ export const GET = withRequestLogging(
   async function GET(req: Request) {
     const query = new URL(req.url).searchParams;
     const requestedSort = query.get("sort");
+    const requestedRuntime = query.get("runtime");
     const result = await listMarketListings({
       kind: query.get("kind") ?? undefined,
       q: query.get("q") ?? undefined,
       tag: query.get("tag") ?? undefined,
       category: query.get("category") ?? undefined,
+      sourceKind: query.get("sourceKind") ?? undefined,
+      runtime:
+        requestedRuntime === "pi-sdk" || requestedRuntime === "mcp"
+          ? requestedRuntime
+          : undefined,
       sort:
         requestedSort === "newest" || requestedSort === "name"
           ? requestedSort

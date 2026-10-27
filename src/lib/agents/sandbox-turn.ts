@@ -1,22 +1,16 @@
 import { observe, recordEvent } from "@/lib/observability/events";
 import "server-only";
-import { isDedicatedSandboxRuntimeKind } from "./runtime-kind";
-import { bindHermesRpcConversation } from "./hermes-rpc-session-binding";
-import { normalizeSandboxWorkingDirectory } from "./sandbox-runtime";
 import { db } from "@/lib/db";
 import {
   createAgentRuntimeToken,
   runtimeMcpProxyUrl,
   runtimeModelProxyBase,
+  sandboxRuntimeOrigin,
 } from "./runtime-access";
-import {
-  runSandboxAgentTurn,
-  compactPiHarnessSession,
-} from "./sandbox-runtime";
+import { runSandboxAgentTurn } from "./sandbox-runtime";
 import type {
-  PiHarnessOperationResult,
+  AgentPromptInvocation,
   RunSandboxAgentTurnOptions,
-  SandboxAgentRuntimeKind,
   SandboxRuntimeActivity,
   SandboxRuntimeMessage,
   SandboxRuntimeProvider,
@@ -24,7 +18,6 @@ import type {
 import type { ResolvedAgentPiPackage, SkillForPrompt } from "./resolve";
 import type { ContextUsageSnapshot } from "@/lib/context-usage";
 import { resolveModelContext, type ProviderConfig } from "./model";
-import { liveStatus } from "@/lib/process/supervisor";
 import type {
   RuntimeCommand,
   RuntimeCommandResult,
@@ -32,6 +25,11 @@ import type {
 } from "./runtime-commands";
 import { ensureAgentConversationSandbox } from "./conversation-sandbox";
 import { withAgentExecutionLease } from "./agent-execution-gate";
+import { resolvePiSessionPackages } from "./pi-session-packages";
+import { getAgentForRun } from "./queries";
+import { resolvePinnedAgent } from "./revisions";
+import { resolveAgentTools, resolveAgentPiPackages } from "./resolve";
+import type { ReasoningEffort } from "./constants";
 
 type SandboxTurnAgent = {
   id: string;
@@ -56,11 +54,11 @@ export type RunDedicatedSandboxTurnInput = {
   workingDirectory?: string | null;
   runtimeSessionId?: string;
   command?: string;
-  nativeCompaction?: {
-    contextId: string;
-    customInstructions: string;
-    onResult: (result: PiHarnessOperationResult) => void;
-  };
+  reasoningEffort?: ReasoningEffort;
+  historyRequired?: boolean;
+  onPromptInvocation?: (
+    invocation: AgentPromptInvocation,
+  ) => void | Promise<void>;
   signal?: AbortSignal;
   onTextDelta?: (text: string) => void | Promise<void>;
   onActivity?: (activity: SandboxRuntimeActivity) => void | Promise<void>;
@@ -81,6 +79,53 @@ export async function runDedicatedSandboxTurn(
     throw new Error(
       "A conversation or context is required for dedicated execution.",
     );
+  const [liveAgent, conversation, context] = await Promise.all([
+    getAgentForRun(input.agent.id, input.agent.workspaceId),
+    conversationId
+      ? db.conversation.findFirst({
+          where: {
+            id: conversationId,
+            agentId: input.agent.id,
+            agent: { workspaceId: input.agent.workspaceId },
+          },
+        })
+      : null,
+    input.a2aContextId
+      ? db.a2AContext.findFirst({
+          where: {
+            id: input.a2aContextId,
+            agentId: input.agent.id,
+            workspaceId: input.agent.workspaceId,
+            targetKind: "local",
+          },
+        })
+      : null,
+  ]);
+  if (
+    !liveAgent ||
+    (conversationId && !conversation) ||
+    (input.a2aContextId && !context)
+  )
+    throw new Error("Session does not belong to this Agent.");
+  if (
+    conversation &&
+    context &&
+    conversation.agentRevisionId !== context.agentRevisionId
+  )
+    throw new Error("Session revision bindings conflict.");
+  const agent = await resolvePinnedAgent(
+    liveAgent,
+    (conversation ?? context)?.agentRevisionId,
+  );
+  const resolved = resolveAgentTools(agent);
+  input = {
+    ...input,
+    agent,
+    systemPrompt: agent.systemPrompt,
+    skills: resolved.skills,
+    piPackages: resolveAgentPiPackages(agent),
+    deploymentIds: resolved.deploymentIds,
+  };
   if (
     runtimeSessionId !== conversationId &&
     runtimeSessionId !== input.a2aContextId
@@ -108,8 +153,8 @@ export async function runDedicatedSandboxTurn(
         },
         async () => {
           const runtimeKind = input.agent.runtimeKind;
-          if (!isDedicatedSandboxRuntimeKind(runtimeKind)) {
-            throw new Error(`Unsupported sandbox runtime: ${runtimeKind}.`);
+          if (runtimeKind !== "pi-sdk") {
+            throw new Error("Historical Agent sessions are read-only.");
           }
           if (runtimeKind === "pi-sdk" && !input.piPackages)
             throw new Error("PI_PACKAGE_UNAVAILABLE");
@@ -126,6 +171,17 @@ export async function runDedicatedSandboxTurn(
             contextId: input.a2aContextId,
             signal: input.signal,
           });
+          const piSession =
+            runtimeKind === "pi-sdk"
+              ? await resolvePiSessionPackages({
+                  workspaceId: input.agent.workspaceId,
+                  agentId: input.agent.id,
+                  sandboxId: link.sandboxId,
+                  conversationId,
+                  contextId: input.a2aContextId,
+                  runtimeSessionId,
+                })
+              : undefined;
           if (conversationId)
             await db.workSession.updateMany({
               where: {
@@ -136,26 +192,13 @@ export async function runDedicatedSandboxTurn(
               data: { sandboxId: link.sandboxId },
             });
 
-          if (runtimeKind === "hermes-rpc" && conversationId) {
-            await bindHermesRpcConversation({
-              workspaceId: input.agent.workspaceId,
-              agentId: input.agent.id,
-              conversationId,
-              sandboxId: link.sandboxId,
-              providerId: provider.id,
-              modelId,
-              providerFormat: provider.format,
-              workingDirectory: normalizeSandboxWorkingDirectory(
-                input.workingDirectory,
-              ),
-            });
-          }
-          const deploymentIds = [...new Set(input.deploymentIds ?? [])].filter(
-            (deploymentId) => liveStatus(deploymentId) === "running",
-          );
+          const deploymentIds = [
+            ...new Set(piSession?.deploymentIds ?? input.deploymentIds ?? []),
+          ];
           const now = Math.floor(Date.now() / 1000);
           const runtimeAccessToken = await createAgentRuntimeToken({
             workspaceId: input.agent.workspaceId,
+            agentRevisionId: agent.agentRevisionId,
             agentId: input.agent.id,
             sandboxId: link.sandboxId,
             conversationId,
@@ -166,7 +209,8 @@ export async function runDedicatedSandboxTurn(
           });
 
           const options: RunSandboxAgentTurnOptions = {
-            runtimeKind: runtimeKind as SandboxAgentRuntimeKind,
+            runtimeKind: "pi-sdk",
+            piVersion: agent.revisionConfig.environment.piVersion,
             workspaceId: input.agent.workspaceId,
             agentId: input.agent.id,
             sandboxId: link.sandboxId,
@@ -179,12 +223,13 @@ export async function runDedicatedSandboxTurn(
             contextWindowEstimated: modelContext.estimated,
             modelProxyBase: runtimeModelProxyBase(provider.id),
             runtimeAccessToken,
+            nativeApprovalUrl: `${sandboxRuntimeOrigin()}/api/v1/agent-runtime/sessions/approvals`,
             systemPrompt: input.systemPrompt,
             disabledBuiltinTools: input.agent.disabledBuiltinTools,
             messages: input.messages,
             skills: input.skills,
             ...(runtimeKind === "pi-sdk"
-              ? { piPackages: input.piPackages }
+              ? { piPackages: piSession?.packages }
               : {}),
             mcpServers: deploymentIds.map((deploymentId) => ({
               deploymentId,
@@ -193,6 +238,9 @@ export async function runDedicatedSandboxTurn(
             workingDirectory: input.workingDirectory,
             runtimeSessionId,
             command: input.command,
+            reasoningEffort: input.reasoningEffort,
+            historyRequired: input.historyRequired,
+            onPromptInvocation: input.onPromptInvocation,
             signal: input.signal,
             onTextDelta: input.onTextDelta,
             onActivity: async (activity) => {
@@ -214,15 +262,6 @@ export async function runDedicatedSandboxTurn(
             onUsage: input.onUsage,
             onCommandResult: input.onCommandResult,
           };
-          if (input.nativeCompaction) {
-            const result = await compactPiHarnessSession(
-              options,
-              input.nativeCompaction.contextId,
-              input.nativeCompaction.customInstructions,
-            );
-            input.nativeCompaction.onResult(result);
-            return result.text;
-          }
           return runSandboxAgentTurn(options);
         },
       ),

@@ -1,4 +1,3 @@
-import { db } from "@/lib/db";
 import { randomUUID } from "node:crypto";
 import { redirect } from "next/navigation";
 import { headers } from "next/headers";
@@ -12,16 +11,9 @@ import {
   listProviders,
 } from "@/lib/agents/queries";
 import { AgentsBrowser } from "@/components/dashboard/agents/AgentsBrowser";
-import { listToolkits } from "@/lib/toolkits/queries";
-import { effectiveStatus } from "@/lib/process/supervisor";
-import {
-  HERMES_IMAGE_OPTIONS,
-  resolveHermesImage,
-} from "@/lib/agents/hermes/constants";
 import { SettingsModal } from "@/components/dashboard/SettingsModal";
 import { originFromHeaders } from "@/lib/http/origin";
 import { listAgentMarketListings } from "@/lib/agents/market";
-import { PiRuntimeManagement } from "@/components/dashboard/agents/PiRuntimeManagement";
 
 export const dynamic = "force-dynamic";
 
@@ -36,69 +28,27 @@ export default async function AgentsPage({
   const { tab, create } = await searchParams;
   if (tab === "providers")
     redirect(`/app/${encodeURIComponent(slug)}/providers`);
-  if (create !== "1" && tab !== "management")
-    redirect(`/app/${encodeURIComponent(slug)}/work`);
+  if (create !== "1") redirect(`/app/${encodeURIComponent(slug)}/work`);
   const t = await getTranslations("console.agents");
 
   const user = await getCurrentUser();
   if (!user) redirect("/app/login");
   const ws = await getWorkspaceForUser(slug, user.id);
   if (!ws) redirect("/app");
-  if (tab === "management") {
-    return (
-      <SettingsModal
-        title={t("agentManagement")}
-        fallbackHref={`/app/${slug}/work`}
-      >
-        <div className="h-full overflow-y-auto">
-          <PiRuntimeManagement slug={slug} />
-        </div>
-      </SettingsModal>
-    );
-  }
-  const hermesImages = [resolveHermesImage(undefined), ...HERMES_IMAGE_OPTIONS];
   const agentControlEndpoint = `${originFromHeaders(await headers())}/api/v1/workspaces/${encodeURIComponent(slug)}/agents/mcp`;
 
-  const [
-    agents,
-    providers,
-    deployments,
-    skills,
-    toolkits,
-    marketAgents,
-    rpcSandboxes,
-  ] = await Promise.all([
-    listAgents(ws.id),
-    listProviders(ws.id),
-    listAgentDeploymentOptions(ws.id),
-    listAgentSkillOptions(ws.id),
-    listToolkits(ws.id),
-    listAgentMarketListings({ pageSize: 12, sort: "popular" }),
-    db.sandbox.findMany({
-      where: {
+  const [agents, providers, deployments, skills, marketAgents] =
+    await Promise.all([
+      listAgents(ws.id),
+      listProviders(ws.id),
+      listAgentDeploymentOptions(ws.id),
+      listAgentSkillOptions(ws.id),
+      listAgentMarketListings({
+        pageSize: 12,
+        sort: "popular",
         workspaceId: ws.id,
-        kind: "docker",
-        network: { not: "none" },
-        agentLinks: { none: {} },
-        deployment: {
-          workspaceId: ws.id,
-          status: {
-            notIn: [
-              "copying",
-              "copy_failed",
-              "restoring",
-              "restore_failed",
-              "restore_cleanup_required",
-              "upgrading",
-              "deleting",
-            ],
-          },
-        },
-      },
-      select: { id: true, name: true },
-      orderBy: { name: "asc" },
-    }),
-  ]);
+      }),
+    ]);
   const defaultModelProviderId = ws.defaultModelProviderId;
   const defaultModelId = ws.defaultModel;
   const defaultModel =
@@ -127,7 +77,6 @@ export default async function AgentsPage({
             id: a.id,
             name: a.name,
             providerName: a.provider?.name ?? null,
-            providerNames: a.modelProviders.map((link) => link.provider.name),
             model: a.model,
             toolCount:
               a._count.servers +
@@ -140,14 +89,7 @@ export default async function AgentsPage({
               a.sandboxes.length === 1 &&
               a.sandboxes[0]?.sandbox.kind === "docker" &&
               a.sandboxes[0]?.sandbox.network !== "none",
-            runtimeStatus: a.runtime
-              ? ["error", "setup_required"].includes(a.runtime.status)
-                ? a.runtime.status
-                : effectiveStatus(
-                    a.runtime.sandbox.deploymentId,
-                    a.runtime.sandbox.deployment.status,
-                  )
-              : null,
+            runtimeStatus: null,
           }))}
           marketAgents={marketAgents.items.map((agent) => ({
             id: agent.id,
@@ -167,7 +109,6 @@ export default async function AgentsPage({
             sandboxCount: agent.releaseSummary.agentCount,
             installCount: agent.installCount,
           }))}
-          hermesImages={hermesImages}
           createOptions={{
             providers: providers.map((provider) => ({
               id: provider.id,
@@ -185,15 +126,6 @@ export default async function AgentsPage({
             defaultModel,
             deployments,
             skills,
-            sandboxes: rpcSandboxes.map((sandbox) => ({
-              id: sandbox.id,
-              label: sandbox.name,
-            })),
-            toolkits: toolkits.map((toolkit) => ({
-              id: toolkit.id,
-              label: toolkit.name,
-              status: toolkit.enabled ? "enabled" : "disabled",
-            })),
           }}
         />
       </div>

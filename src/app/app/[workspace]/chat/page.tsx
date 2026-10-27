@@ -3,17 +3,15 @@ import { cookies } from "next/headers";
 import { getLocale, getTranslations } from "next-intl/server";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { getWorkspaceForUser } from "@/lib/workspace/queries";
-import {
-  listAgentDeploymentOptions,
-  listProviders,
-} from "@/lib/agents/queries";
+import { listProviders } from "@/lib/agents/queries";
+import { listChatDeploymentOptions } from "@/lib/chat/resources";
 import {
   getChatThreadForWorkspace,
   listChatAssistantsForWorkspace,
   listRunningChatThreadIds,
 } from "@/lib/chat/service";
 import { parseChatAssistantModelParameters } from "@/lib/chat/schemas";
-import type { HermesUIMessage } from "@/lib/agents/hermes/message-segments";
+import type { AgentUIMessage } from "@/lib/agents/message-segments";
 import { formatInTimeZone, resolveUserTimeZone } from "@/lib/timezone";
 import { DashboardHeader } from "@/components/dashboard/DashboardHeader";
 import { WorkspaceAssistantChat } from "@/components/dashboard/chat/WorkspaceAssistantChat";
@@ -56,6 +54,7 @@ export default async function WorkspaceChatPage({
     c?: string;
     newAssistant?: string;
     template?: string;
+    settings?: string;
   }>;
 }) {
   const [{ workspace: slug }, query, user, locale, t] = await Promise.all([
@@ -97,11 +96,17 @@ export default async function WorkspaceChatPage({
   ] = await Promise.all([
     listChatAssistantsForWorkspace(workspace.id),
     listProviders(workspace.id),
-    listAgentDeploymentOptions(workspace.id),
+    listChatDeploymentOptions(user.id, workspace.id),
     query.newAssistant === "1" && query.template
-      ? getAssistantMarketTemplate(query.template)
+      ? getAssistantMarketTemplate(query.template, {
+          workspaceId: workspace.id,
+          userId: user.id,
+        })
       : Promise.resolve(null),
-    listAssistantMarketTemplates({ limit: 12 }),
+    listAssistantMarketTemplates({
+      limit: 12,
+      viewer: { workspaceId: workspace.id, userId: user.id },
+    }),
     listRunningChatThreadIds(user.id, workspace.id),
   ]);
   const templates =
@@ -113,15 +118,7 @@ export default async function WorkspaceChatPage({
       : listedTemplates;
   const marketTemplates = templates.map((template) => {
     const assistant = template.manifest.assistant;
-    const resolvedSlugs = new Set(
-      deployments
-        .filter((deployment) =>
-          assistant.mcpRequirements.some(
-            (requirement) => deployment.catalogSlug === requirement.catalogSlug,
-          ),
-        )
-        .map((deployment) => deployment.catalogSlug),
-    );
+    // Templates suggest requirements but never implicitly authorize connections.
     return {
       releaseId: template.releaseId,
       name: assistant.name,
@@ -131,16 +128,10 @@ export default async function WorkspaceChatPage({
       maxSteps: assistant.maxSteps,
       providerFormat: assistant.modelRequirement?.providerFormat ?? null,
       model: assistant.modelRequirement?.model ?? null,
-      deploymentIds: deployments
-        .filter((deployment) =>
-          assistant.mcpRequirements.some(
-            (requirement) => deployment.catalogSlug === requirement.catalogSlug,
-          ),
-        )
-        .map((deployment) => deployment.id),
-      missingMcpNames: assistant.mcpRequirements
-        .filter((requirement) => !resolvedSlugs.has(requirement.catalogSlug))
-        .map((requirement) => requirement.name),
+      deploymentIds: [],
+      missingMcpNames: assistant.mcpRequirements.map(
+        (requirement) => requirement.name,
+      ),
     };
   });
   const providersById = new Map(
@@ -181,11 +172,11 @@ export default async function WorkspaceChatPage({
     );
   }
   const timeZone = resolveUserTimeZone(user);
-  const initialMessages: HermesUIMessage[] = (activeThread?.messages ?? []).map(
+  const initialMessages: AgentUIMessage[] = (activeThread?.messages ?? []).map(
     (message) => ({
       id: message.id,
-      role: message.role as HermesUIMessage["role"],
-      parts: message.parts as HermesUIMessage["parts"],
+      role: message.role as AgentUIMessage["role"],
+      parts: message.parts as AgentUIMessage["parts"],
     }),
   );
 
@@ -200,6 +191,7 @@ export default async function WorkspaceChatPage({
         initialGroupPreferences={initialGroupPreferences}
         initialSidebarOpen={initialSidebarOpen}
         startCreating={query.newAssistant === "1"}
+        startEditing={query.settings === "1"}
         selectedAssistantId={activeAssistant?.id ?? null}
         selectedThreadId={activeThread?.id ?? null}
         reasoningAvailable={reasoningAvailable}
@@ -224,12 +216,7 @@ export default async function WorkspaceChatPage({
             cost: model.cost,
           })),
         }))}
-        deployments={deployments.map((deployment) => ({
-          id: deployment.id,
-          name: deployment.label,
-          status: deployment.status,
-          keywords: deployment.keywords,
-        }))}
+        deployments={deployments}
         assistants={assistants.map((assistant) => {
           const modelProvider = assistant.modelProviderId
             ? providersById.get(assistant.modelProviderId)
@@ -240,6 +227,9 @@ export default async function WorkspaceChatPage({
               : null;
           const threads = assistant.threads.map((thread) => ({
             id: thread.id,
+            revisionId: thread.assistantRevisionId,
+            revision: thread.assistantRevision?.version ?? null,
+            legacyRevisionUnresolved: thread.legacyRevisionUnresolved,
             title: thread.title,
             createdAt: formatDate(thread.createdAt, timeZone, locale),
             lastMessageAt: thread.messages[0]?.createdAt
@@ -254,6 +244,9 @@ export default async function WorkspaceChatPage({
             const lastMessage = activeThread.messages.at(-1);
             threads.unshift({
               id: activeThread.id,
+              revisionId: activeThread.assistantRevisionId,
+              revision: activeThread.assistantRevision?.version ?? null,
+              legacyRevisionUnresolved: activeThread.legacyRevisionUnresolved,
               title: activeThread.title,
               createdAt: formatDate(activeThread.createdAt, timeZone, locale),
               lastMessageAt: lastMessage?.createdAt
@@ -266,6 +259,11 @@ export default async function WorkspaceChatPage({
             name: assistant.name,
             description: assistant.description,
             pinned: assistant.pinned,
+            revision: assistant.currentRevisionVersion,
+            mcpGrants: assistant.mcpGrants.map((grant) => ({
+              deploymentId: grant.deploymentId,
+              allowedToolNames: grant.allowedToolNames,
+            })),
             systemPrompt: assistant.systemPrompt,
             modelProviderId: assistant.modelProviderId,
             model: assistant.model,

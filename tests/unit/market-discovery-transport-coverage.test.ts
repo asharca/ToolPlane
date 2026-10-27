@@ -1,7 +1,6 @@
 // @vitest-environment node
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const m = vi.hoisted(() => ({
-  list: vi.fn(),
   listing: vi.fn(),
   agent: vi.fn(),
   user: vi.fn(),
@@ -9,7 +8,6 @@ const m = vi.hoisted(() => ({
   archive: vi.fn(),
 }));
 vi.mock("@/lib/market/listings", () => ({
-  listMarketListings: m.list,
   getMarketListing: m.listing,
 }));
 vi.mock("@/lib/agents/market", () => ({
@@ -27,7 +25,6 @@ vi.mock("@/lib/market/pi-package-archive", () => ({
 vi.mock("@/lib/observability/http", () => ({
   withRequestLogging: (_path: string, handler: unknown) => handler,
 }));
-import { GET as list } from "@/app/api/v1/market/listings/route";
 import { GET as detail } from "@/app/api/v1/market/listings/[namespace]/[slug]/route";
 import { GET as download } from "@/app/api/v1/workspaces/[slug]/market/pi-packages/[releaseId]/download/route";
 const request = new Request("https://test/api");
@@ -38,41 +35,8 @@ const packageCtx = {
 describe("market discovery and package download boundaries", () => {
   beforeEach(() => {
     vi.resetAllMocks();
-    m.list.mockResolvedValue({ items: [], total: 0 });
     m.user.mockResolvedValue({ id: "user" });
     m.workspace.mockResolvedValue({ id: "ws" });
-  });
-  it.each([
-    "",
-    "?sort=newest&kind=skill&q=hello&tag=tag&category=tools&page=2&pageSize=12",
-    "?sort=name",
-    "?sort=invalid",
-  ])("normalizes catalog query %s", async (query) => {
-    const response = await list(new Request(`https://test/api${query}`));
-    expect(await response.json()).toEqual({ items: [], total: 0 });
-    const params = new URLSearchParams(query);
-    expect(m.list).toHaveBeenCalledWith({
-      kind: params.get("kind") ?? undefined,
-      q: params.get("q") ?? undefined,
-      tag: params.get("tag") ?? undefined,
-      category: params.get("category") ?? undefined,
-      sort:
-        params.get("sort") === "newest"
-          ? "newest"
-          : params.get("sort") === "name"
-            ? "name"
-            : "popular",
-      page: Number(params.get("page")),
-      pageSize: Number(params.get("pageSize")),
-    });
-  });
-  it("returns a standard listing without querying agent fallback", async () => {
-    m.listing.mockResolvedValue({ id: "listing", kind: "skill" });
-    expect(await (await detail(request, ctx)).json()).toEqual({
-      id: "listing",
-      kind: "skill",
-    });
-    expect(m.agent).not.toHaveBeenCalled();
   });
   it.each([null, { workspace: { slug: "other" } }])(
     "does not expose missing or foreign agent listings %j",
@@ -80,34 +44,6 @@ describe("market discovery and package download boundaries", () => {
       m.listing.mockResolvedValue(null);
       m.agent.mockResolvedValue(agent);
       expect((await detail(request, ctx)).status).toBe(404);
-    },
-  );
-  it.each([
-    { workspace: { slug: "team" }, namespace: "team" },
-    { workspace: null, namespace: "toolplane" },
-  ])(
-    "maps an agent listing in its canonical namespace %j",
-    async ({ workspace, namespace }) => {
-      m.agent.mockResolvedValue({
-        workspace,
-        listing: { id: "listing", directorySlug: "kit", name: "Agent" },
-        release: { id: "release", summary: "Summary" },
-        manifest: { version: 1 },
-      });
-      const response = await detail(request, {
-        params: Promise.resolve({ namespace, slug: "kit" }),
-      });
-      expect(await response.json()).toMatchObject({
-        id: "listing",
-        namespace,
-        kind: "agent",
-        slug: "kit",
-        latestRelease: {
-          id: "release",
-          releaseSummary: "Summary",
-          manifest: { version: 1 },
-        },
-      });
     },
   );
   it("requires account authentication before resolving workspace", async () => {

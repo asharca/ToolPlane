@@ -39,7 +39,6 @@ const CreateAgentArguments = z
     runtime: z.enum(AGENT_CONTROL_RUNTIME_KINDS),
     systemPrompt: z.string().trim().max(100_000).nullable().optional(),
     providerId: Id.nullable().optional(),
-    providerIds: IdList.default([]),
     model: z.string().trim().min(1).max(240).nullable().optional(),
     maxSteps: z
       .number()
@@ -55,35 +54,12 @@ const CreateAgentArguments = z
   })
   .strict()
   .superRefine((input, ctx) => {
-    if (input.runtime === "pi") {
-      if (input.providerIds.length > 0) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["providerIds"],
-          message: "Pi agents use providerId, not providerIds.",
-        });
-      }
-      if (input.model && !input.providerId) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["model"],
-          message: "A model requires providerId.",
-        });
-      }
-    } else {
-      for (const [key, value] of [
-        ["providerId", input.providerId],
-        ["model", input.model],
-        ["systemPrompt", input.systemPrompt],
-      ] as const) {
-        if (value) {
-          ctx.addIssue({
-            code: "custom",
-            path: [key],
-            message: `Hermes agents do not accept ${key}.`,
-          });
-        }
-      }
+    if (input.model && !input.providerId) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["model"],
+        message: "A model requires providerId.",
+      });
     }
   });
 
@@ -160,7 +136,7 @@ export const AGENT_CONTROL_MCP_TOOLS = [
   {
     name: "create_agent",
     description:
-      "Create and fully configure a ToolPlane agent atomically from existing workspace resources. Pi agents use providerId/model/systemPrompt. Hermes agents use providerIds and the instance-approved runtime image. Omit model configuration to create a draft. This call is non-idempotent; after an uncertain timeout, call list_agents before retrying.",
+      "Create a native Pi SDK Agent draft atomically from existing workspace resources. Use providerId/model/systemPrompt to configure its model. Execution requires explicit revision publication after configuration. This call is non-idempotent; after an uncertain timeout, call list_agents before retrying.",
     inputSchema: {
       type: "object",
       properties: {
@@ -170,12 +146,6 @@ export const AGENT_CONTROL_MCP_TOOLS = [
         providerId: {
           type: ["string", "null"],
           description: "Pi model provider ID.",
-        },
-        providerIds: {
-          type: "array",
-          items: { type: "string" },
-          maxItems: 100,
-          description: "Hermes model provider IDs.",
         },
         model: { type: ["string", "null"], description: "Pi model ID." },
         maxSteps: {

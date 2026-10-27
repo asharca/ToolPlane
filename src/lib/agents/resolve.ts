@@ -15,6 +15,7 @@ export type ResolvedAgentPiPackage = {
 export type LoadedAgentPiPackages = {
   runtimeKind: string;
   workspaceId: string;
+  agentRevisionId?: string;
   piPackages?: Array<{
     marketInstallId: string;
     releaseId: string;
@@ -51,10 +52,11 @@ export function resolveAgentPiPackages(
         seen.has(binding.marketInstallId) ||
         install.id !== binding.marketInstallId ||
         install.targetWorkspaceId !== agent.workspaceId ||
-        install.status !== "ready" ||
+        (install.status !== "ready" &&
+          (!agent.agentRevisionId || install.status !== "uninstalled")) ||
         install.listing.id !== install.listingId ||
         install.listing.kind !== "pi-package" ||
-        install.listing.status !== "published" ||
+        (!agent.agentRevisionId && install.listing.status !== "published") ||
         release.id !== binding.releaseId ||
         release.listingId !== install.listingId ||
         release.reviewStatus !== "approved"
@@ -129,7 +131,9 @@ export type SubAgentRef = {
 export type LoadedAgentTools = {
   runtimeKind?: string;
   workspaceId?: string;
+  agentRevisionId?: string;
   piPackages?: LoadedAgentPiPackages["piPackages"];
+  mcpToolPolicy?: PiPackageMcpToolPolicy;
   servers: { deploymentId: string }[];
   skills: AttachedSkill[];
   toolkits: {
@@ -179,11 +183,17 @@ export function resolveAgentTools(
     for (const s of tk.toolkit.skills)
       skillMap.set(s.installedSkill.id, s.installedSkill);
   }
-  const mcpToolPolicy: PiPackageMcpToolPolicy = {};
+  const mcpToolPolicy: PiPackageMcpToolPolicy = Object.fromEntries(
+    Object.entries(agent.mcpToolPolicy ?? {}).map(([id, names]) => [
+      id,
+      [...names],
+    ]),
+  );
   if (agent.runtimeKind === "pi-sdk") {
     if (!agent.workspaceId) throw new Error("PI_PACKAGE_UNAVAILABLE");
     const packages = resolveAgentPiPackages({
       runtimeKind: agent.runtimeKind,
+      agentRevisionId: agent.agentRevisionId,
       workspaceId: agent.workspaceId,
       piPackages: agent.piPackages,
     });
@@ -198,6 +208,13 @@ export function resolveAgentTools(
         binding.marketInstall.resourceMap,
       );
       for (const [deploymentId, tools] of Object.entries(policy)) {
+        if (agent.mcpToolPolicy) {
+          // The complete pinned/live owner policy is authoritative. One package
+          // must neither restore revoked tools nor narrow another package's grant.
+          if (Object.hasOwn(agent.mcpToolPolicy, deploymentId))
+            depSet.add(deploymentId);
+          continue;
+        }
         depSet.add(deploymentId);
         if (!directDeployments.has(deploymentId)) {
           mcpToolPolicy[deploymentId] = [
@@ -218,7 +235,7 @@ export function resolveAgentTools(
       id: c.id,
       name: c.name,
       slug: c.slug,
-      description: c.runtimeKind === "hermes" ? null : c.systemPrompt,
+      description: c.systemPrompt,
     });
   }
 

@@ -1,7 +1,6 @@
 import "server-only";
 import { z } from "zod";
 import {
-  SendMessageRequest,
   GetTaskRequest,
   ListTasksRequest,
   CancelTaskRequest,
@@ -35,7 +34,6 @@ import {
 import { NativeA2AHandler, buildAgentCard } from "./handler";
 import {
   Rpc,
-  A2ASendSchema,
   A2AGetSchema,
   A2ACancelSchema,
   A2AListSchema,
@@ -45,13 +43,6 @@ import { A2A_LIMITS, A2A_PROTOCOL_VERSION } from "./model";
 import { getTaskRow } from "./store";
 
 const catalog = [
-  {
-    name: "a2a_send_message",
-    operation: "send",
-    schema: A2ASendSchema,
-    description:
-      "Submit or continue a durable A2A 1.0 task on THIS published Agent service. Returns immediately, not a completion promise. Retry only the identical messageId and body. Use a2a_get_task to read results. A network disconnect does not cancel accepted work.",
-  },
   {
     name: "a2a_get_task",
     operation: "read",
@@ -85,30 +76,17 @@ export async function executeServiceMcpTool(
     throw new A2AHttpError(403, "A2A operation is not permitted.");
   await assertLiveGrant(grant, tool.operation);
   const method =
-    name === "a2a_send_message"
-      ? "SendMessage"
-      : name === "a2a_get_task"
-        ? "GetTask"
-        : name === "a2a_list_tasks"
-          ? "ListTasks"
-          : "CancelTask";
+    name === "a2a_get_task"
+      ? "GetTask"
+      : name === "a2a_list_tasks"
+        ? "ListTasks"
+        : "CancelTask";
   validateParams(method, input);
   const handler = new NativeA2AHandler(grant, await buildAgentCard(grant));
   const context = new ServerCallContext({
     requestedVersion: A2A_PROTOCOL_VERSION,
     tenant: (input as { tenant?: string }).tenant,
   });
-  if (method === "SendMessage") {
-    const request = SendMessageRequest.fromJSON(input);
-    request.configuration = {
-      ...request.configuration,
-      taskPushNotificationConfig:
-        request.configuration?.taskPushNotificationConfig,
-      acceptedOutputModes: request.configuration?.acceptedOutputModes ?? [],
-      returnImmediately: true,
-    };
-    return { task: Task.toJSON(await handler.sendMessage(request, context)) };
-  }
   if (method === "GetTask")
     return {
       task: Task.toJSON(
@@ -132,7 +110,7 @@ export async function executeServiceMcpTool(
   };
 }
 
-/** This is a standard MCP tool facade over the native A2A service, not the removed Responses executor. */
+/** Retained published services expose authorized history and cancellation, never new execution. */
 export async function handleServiceMcp(req: Request, endpointId: string) {
   return withLogContext({ suppressPayload: true }, async () => {
     const headers = new Headers({

@@ -4,11 +4,15 @@ import { AnimatedBadge } from "@/components/motion/animated-badge";
 import { Button } from "@/components/motion/button";
 import { Input } from "@/components/motion/input";
 
-import { useId, useMemo, useRef, useState } from "react";
+import { useActionState, useId, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { CheckCircle2, KeyRound, Plus, Trash2, Undo2 } from "lucide-react";
-import { setDeploymentEnvAction } from "@/lib/workspace/actions";
+import {
+  setDeploymentEnvAction,
+  type DeploymentEnvActionState,
+} from "@/lib/workspace/actions";
 import { SubmitButton } from "./SubmitButton";
+import { McpSharedChangeConfirmation } from "./McpSharedChangeConfirmation";
 
 type InitialVariable = {
   key: string;
@@ -59,6 +63,10 @@ function VariablesEditorForm({
   const fieldId = useId();
   const [rows, setRows] = useState<Row[]>(() => rowsFromInitial(initial));
   const nextId = useRef(initial.length);
+  const [state, formAction] = useActionState<
+    DeploymentEnvActionState,
+    FormData
+  >(async (_previous, form) => setDeploymentEnvAction(form), {});
 
   const changes = useMemo(() => {
     const set: Record<string, string> = {};
@@ -140,7 +148,7 @@ function VariablesEditorForm({
 
   return (
     <form
-      action={setDeploymentEnvAction}
+      action={formAction}
       className="rounded-xl border border-border bg-card max-w-5xl overflow-hidden"
     >
       <input type="hidden" name="workspace" value={slug} />
@@ -323,6 +331,23 @@ function VariablesEditorForm({
           })}
         </div>
       )}
+      <div className="space-y-3 px-5 py-4">
+        <McpSharedChangeConfirmation
+          workspace={slug}
+          deploymentId={deploymentId}
+          impactedObjects={state?.impactedObjects}
+        />
+        {state?.error ? (
+          <p role="alert" className="text-sm text-destructive">
+            {t(state.error)}
+          </p>
+        ) : null}
+        {state.savedAt ? (
+          <p role="status" className="text-sm">
+            {t("variablesSaved")}
+          </p>
+        ) : null}
+      </div>
 
       <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-border bg-muted/20 px-5 py-4">
         <div className="text-xs text-muted-foreground" aria-live="polite">
@@ -337,6 +362,7 @@ function VariablesEditorForm({
                   : t("variablesSaveHint")}
         </div>
         <SubmitButton
+          error={state?.error ? t(state.error) : null}
           pendingLabel={t("savingVariables")}
           savedLabel={t("variablesSaved")}
           disabled={!canSave}

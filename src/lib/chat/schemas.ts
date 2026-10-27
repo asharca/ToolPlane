@@ -87,18 +87,38 @@ const assistantFields = {
     .min(AGENT_STEP_BOUNDS.min)
     .max(AGENT_STEP_BOUNDS.max)
     .optional(),
-  deploymentIds: z
-    .array(z.string().trim().min(1))
+  mcpGrants: z
+    .array(
+      z
+        .object({
+          deploymentId: z.string().trim().min(1),
+          allowedToolNames: z
+            .array(z.string().trim().min(1).max(240))
+            .max(1000),
+          expectedDefinitionChecksum: z
+            .string()
+            .regex(/^[a-f0-9]{64}$/)
+            .optional(),
+        })
+        .strict(),
+    )
     .max(50)
-    .transform((ids) => [...new Set(ids)])
+    .refine(
+      (grants) =>
+        new Set(grants.map((grant) => grant.deploymentId)).size ===
+        grants.length,
+      { message: "MCP deployments must be unique" },
+    )
     .optional(),
 };
 
-export const CreateChatAssistantSchema = z.object({
-  workspaceId: z.string().trim().min(1),
-  marketTemplateReleaseId: z.string().trim().min(1).max(240).optional(),
-  ...assistantFields,
-});
+export const CreateChatAssistantSchema = z
+  .object({
+    workspaceId: z.string().trim().min(1),
+    marketTemplateReleaseId: z.string().trim().min(1).max(240).optional(),
+    ...assistantFields,
+  })
+  .strict();
 
 export const GenerateChatAssistantPromptSchema = z
   .object({
@@ -116,10 +136,15 @@ export const UpdateChatAssistantSchema = z
     ...assistantFields,
     name: assistantFields.name.optional(),
     pinned: z.boolean().optional(),
+    expectedRevision: z.number().int().min(0),
   })
-  .refine((value) => Object.keys(value).length > 0, {
-    message: "At least one field is required",
-  });
+  .strict()
+  .refine(
+    (value) => Object.keys(value).some((key) => key !== "expectedRevision"),
+    {
+      message: "At least one field is required",
+    },
+  );
 
 export const CreateChatThreadSchema = z.object({
   title: nullableTrimmedString(200).optional(),
@@ -127,7 +152,7 @@ export const CreateChatThreadSchema = z.object({
 
 export const UpdateChatThreadSchema = z
   .object({
-    assistantId: z.string().trim().min(1).optional(),
+    assistantId: z.never().optional(),
     title: nullableTrimmedString(200).optional(),
     activeMessageId: z.string().trim().min(1).optional(),
   })
@@ -160,6 +185,7 @@ export const CreateChatTurnSchema = z
       .enum(["submit-message", "regenerate-message"])
       .default("submit-message"),
     messageId: z.string().min(1).optional(),
+    idempotencyKey: z.string().trim().min(1).max(240),
     webSearchEnabled: z.boolean().default(false),
     reasoningEffort: z.enum(REASONING_EFFORTS).optional(),
   })
@@ -181,6 +207,7 @@ export type GenerateChatAssistantPromptInput = z.infer<
 export type CreateChatTurnInput = {
   messages: UIMessage[];
   trigger: "submit-message" | "regenerate-message";
+  idempotencyKey: string;
   messageId?: string;
   webSearchEnabled: boolean;
   reasoningEffort?: ReasoningEffort;

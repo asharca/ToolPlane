@@ -1,4 +1,5 @@
-const DOCKER_IMAGE = /^[a-z0-9]+([._/-][a-z0-9]+)*(:[\w.-]+)?$/;
+const DOCKER_IMAGE =
+  /^(?:[a-z0-9]+(?:[.-][a-z0-9]+)*:[0-9]+\/)?[a-z0-9]+([._/-][a-z0-9]+)*(:[\w.-]+)?(?:@sha256:[a-f0-9]{64})?$/;
 
 const ALLOWED_DOCKER_RUN_OPTIONS = new Set(["-i", "--interactive", "--rm"]);
 

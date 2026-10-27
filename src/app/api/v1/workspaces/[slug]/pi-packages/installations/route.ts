@@ -5,6 +5,7 @@ import {
   piPackageBindingsSchema,
   piPackageClientSchema,
 } from "@/lib/pi-packages/installations";
+import { piClientSelectionsSchema } from "@/lib/pi-packages/selections";
 import {
   piInstallationAccountContext,
   piInstallationErrorResponse,
@@ -13,10 +14,11 @@ import { privateJson, readSandboxJson } from "@/lib/sandboxes/http-body";
 export const runtime = "nodejs";
 const createSchema = z
   .object({
-    marketInstallId: z.string().min(1).max(100),
+    marketInstallId: z.string().min(1).max(100).optional(),
+    selections: piClientSelectionsSchema.optional(),
     client: piPackageClientSchema,
     label: z.string().min(1).max(100),
-    bindings: piPackageBindingsSchema,
+    bindings: piPackageBindingsSchema.default({}),
   })
   .strict();
 export async function GET(

@@ -33,6 +33,7 @@ export function A2AToolApprovals({
   const [busy, setBusy] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
   const [observedAt, setObservedAt] = useState(0);
+  const [reopenNotice, setReopenNotice] = useState(false);
   const mounted = useRef(true);
   const decisionFlight = useRef<AbortController | null>(null);
   useEffect(() => {
@@ -153,14 +154,38 @@ export function A2AToolApprovals({
           </Button>
         </div>
       ) : null}
+      {reopenNotice ? (
+        <div role="status" className="space-y-2 text-sm text-muted-foreground">
+          {t("reopenHint")}{" "}
+          <Button
+            type="button"
+            onClick={() => setReopenNotice(false)}
+            variant={"secondary"}
+            size={"sm"}
+          >
+            {t("dismiss")}
+          </Button>
+        </div>
+      ) : null}
       {items.map((item) =>
-        item.status === "pending" && Date.parse(item.expiresAt) > observedAt ? (
+        item.status === "pending" || item.status === "expired" ? (
           <fieldset key={item.id} disabled={Boolean(busy)} className="contents">
             <ToolApproval
               tool={item.toolName}
               title={t("title")}
               description={t("hint")}
-              status={busy === item.id ? "approving" : "pending"}
+              status={
+                item.status === "expired" ||
+                Date.parse(item.expiresAt) <= observedAt
+                  ? "expired"
+                  : busy === item.id
+                    ? "approving"
+                    : "pending"
+              }
+              expiresAt={item.expiresAt}
+              expiredLabel={t("expired")}
+              reopenLabel={t("reopen")}
+              onReopen={() => setReopenNotice(true)}
               defaultOpen
               parameters={[
                 {

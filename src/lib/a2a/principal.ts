@@ -38,6 +38,7 @@ export type LocalA2AGrant = {
   kind: "local";
   workspaceId: string;
   agentId: string;
+  agentRevisionId: string;
   actorId: string;
   targetBinding: string;
   ownerKey: string;
@@ -51,7 +52,10 @@ export type LocalA2AGrant = {
   parentTaskId?: string;
   rootTaskId?: string;
 };
-export type RemoteA2AGrant = Omit<LocalA2AGrant, "kind" | "agentId"> & {
+export type RemoteA2AGrant = Omit<
+  LocalA2AGrant,
+  "kind" | "agentId" | "agentRevisionId"
+> & {
   kind: "remote";
   remoteAgentId: string;
   sourceAgentId: string;

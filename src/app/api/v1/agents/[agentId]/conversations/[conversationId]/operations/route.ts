@@ -4,13 +4,12 @@ import { resolveRequestUser } from "@/lib/auth/request-user";
 import { getAgentForRequest } from "@/lib/agents/queries";
 import {
   ConversationOperationError,
-  operateConversation,
+  rotateChannelConversation,
 } from "@/lib/agents/conversation-operations";
 import {
   executeRuntimeCommand,
   RuntimeCommandError,
 } from "@/lib/agents/runtime-command-service";
-import { isDedicatedSandboxRuntimeKind } from "@/lib/agents/runtime-kind";
 
 export const runtime = "nodejs";
 export const maxDuration = 900;
@@ -39,10 +38,7 @@ export const POST = withRequestLogging(
       return Response.json({ error: "Bad request" }, { status: 400 });
     }
     try {
-      if (
-        body.action === "compact" &&
-        isDedicatedSandboxRuntimeKind(agent.runtimeKind)
-      )
+      if (body.action === "compact")
         return Response.json(
           await executeRuntimeCommand({
             workspaceId: agent.workspaceId,
@@ -54,13 +50,10 @@ export const POST = withRequestLogging(
           }),
         );
       return Response.json(
-        await operateConversation({
+        await rotateChannelConversation({
           workspaceId: agent.workspaceId,
           agentId,
           conversationId,
-          action: body.action,
-          instructions: body.instructions,
-          signal: req.signal,
         }),
       );
     } catch (error) {

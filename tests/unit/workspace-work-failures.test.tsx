@@ -15,10 +15,6 @@ vi.mock("next/navigation", () => ({
 vi.mock("@/lib/agents/actions", () => ({
   deleteAgentAction: vi.fn(),
   pinAgentAction: vi.fn(),
-  updateAgentModelAction: vi.fn(),
-}));
-vi.mock("@/components/dashboard/agents/AgentModelDialog", () => ({
-  AgentModelDialog: ({ trigger }: { trigger: React.ReactNode }) => trigger,
 }));
 vi.mock("@/components/dashboard/ConversationMessage", () => ({
   AssistantMarkdown: ({ text }: { text: string }) => <div>{text}</div>,
@@ -28,15 +24,18 @@ vi.mock("@/components/dashboard/sandboxes/SandboxConsole", () => ({
     deploymentId,
     rpcApiBase,
     terminalApiBase,
+    readOnly,
   }: {
     deploymentId: string;
     rpcApiBase?: string;
     terminalApiBase?: string;
+    readOnly?: boolean;
   }) => (
     <div
       data-testid="selected-workspace"
       data-rpc={rpcApiBase}
       data-terminal={terminalApiBase}
+      data-read-only={readOnly}
     >
       {deploymentId}
     </div>
@@ -48,7 +47,7 @@ const agent = {
   pinned: false,
   supportsWork: true,
   ready: true,
-  runtimeKind: "pi",
+  runtimeKind: "pi-sdk",
   sandboxes: [
     {
       id: "sandbox",
@@ -83,7 +82,11 @@ const session: WorkSession = {
   title: "Release",
   task: "Ship report",
   acceptanceCriteria: null,
-  runtimeKind: "pi",
+  runtimeKind: "pi-sdk",
+  agentRevisionId: "worker-revision-1",
+  legacyRevisionUnresolved: false,
+  readOnly: false,
+  modelName: "pinned-model",
   status: "completed",
   waitingQuestion: null,
   result: null,
@@ -127,6 +130,10 @@ describe("conversation workspace selection", () => {
       agentId: agent.id,
       source: null,
       readOnly: true,
+      agentRevisionId: null,
+      legacyRevisionUnresolved: true,
+      runtimeKind: undefined,
+      modelName: null,
       messages: [],
       sandbox: {
         id: "isolated-one",
@@ -147,6 +154,11 @@ describe("conversation workspace selection", () => {
       "data-rpc",
       "/api/v1/agents/worker/conversations/conversation-one/sandbox/rpc",
     );
+    expect(screen.getByTestId("selected-workspace")).toHaveAttribute(
+      "data-read-only",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "Terminal" })).toBeDisabled();
     view.rerender(
       <WorkspaceWork
         {...props}
@@ -331,7 +343,6 @@ describe("Work attachment transaction failures", () => {
   });
 
   it.each([
-    ["/clear", "This command is not supported by the current runtime."],
     [
       `/compact ${"x".repeat(2000)}`,
       "Enter a valid command of at most 2,000 characters.",
@@ -353,6 +364,30 @@ describe("Work attachment transaction failures", () => {
       expect(fetchMock).not.toHaveBeenCalled();
     },
   );
+
+  it("forwards Pi extension commands and preserves the draft on runtime rejection", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        Response.json({ error: "Extension command rejected" }, { status: 400 }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    showSession();
+    const input = screen.getByRole("combobox", {
+      name: "What should the Agent accomplish?",
+    });
+    fireEvent.change(input, { target: { value: "/clear" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send prompt" }));
+    await screen.findByText("Extension command rejected");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/agents/worker/conversations/conversation/commands",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ line: "/clear" }),
+      }),
+    );
+    expect(input).toHaveValue("/clear");
+  });
 
   it.each([
     ["busy", "Wait for the current operation to finish."],
@@ -417,92 +452,6 @@ describe("Work attachment transaction failures", () => {
     },
   );
 
-  it("shows downloadable attachments, source references and failed tool details without exposing arbitrary external file URLs", async () => {
-    showSession({
-      artifacts: ["reports/result.md"],
-      messages: [
-        {
-          id: "user",
-          role: "user",
-          createdAt: "invalid",
-          parts: [
-            { type: "text", text: "Review these files" },
-            {
-              type: "file",
-              filename: "report.txt",
-              mediaType: "text/plain",
-              url: "/api/v1/attachments/report",
-            },
-            {
-              type: "file",
-              filename: "image.png",
-              mediaType: "image/png",
-              url: "data:image/png;base64,aGVsbG8=",
-            },
-            {
-              type: "file",
-              filename: "external.txt",
-              url: "https://untrusted.invalid/file",
-            },
-            {
-              type: "text",
-              text: "Authorized reference body",
-              reference: { kind: "file", id: "file", label: "source.md" },
-            },
-          ],
-        },
-        {
-          id: "assistant",
-          role: "assistant",
-          createdAt: "2026-01-01T00:00:00Z",
-          parts: [
-            {
-              type: "reasoning",
-              text: "Investigating safely",
-              status: "completed",
-            },
-            {
-              type: "work-tool",
-              toolCallId: "call",
-              toolName: "exec",
-              originalToolName: "run",
-              deploymentName: "Shell",
-              status: "failed",
-              input: { command: "build" },
-              output: "Permission refused",
-              durationMs: 250,
-            },
-            { type: "work-runtime", runtimeKind: "pi-sdk", status: "failed" },
-            { type: "text", text: "Build was blocked" },
-            {
-              type: "data-work-timing",
-              data: {
-                startedAt: 1000,
-                completedAt: 2400,
-                durationMs: 1400,
-                approvalWaitMs: 0,
-                modelName: "review-model",
-              },
-            },
-          ],
-        },
-      ],
-    });
-    expect(screen.getByRole("link", { name: "report.txt" })).toHaveAttribute(
-      "href",
-      "/api/v1/attachments/report",
-    );
-    expect(screen.getByRole("img", { name: "image.png" })).toBeInTheDocument();
-    expect(
-      screen.queryByRole("link", { name: "external.txt" }),
-    ).not.toBeInTheDocument();
-    fireEvent.click(screen.getByText("@source.md"));
-    expect(screen.getByText("Authorized reference body")).toBeVisible();
-    expect(screen.getByText("Permission refused")).toBeInTheDocument();
-    expect(screen.getByText("Build was blocked")).toBeInTheDocument();
-    expect(screen.getByText("reports/result.md")).toBeInTheDocument();
-    expect(screen.getAllByText("1.4 s")).toHaveLength(2);
-  });
   it("recovers a running turn snapshot, ignores malformed events, and replaces streamed text with persisted completion", async () => {
     class WorkEvents {
       static latest: WorkEvents;
@@ -574,68 +523,4 @@ describe("Work attachment transaction failures", () => {
       cache: "no-store",
     });
   });
-
-  it.each([
-    [{ startedAt: 1000, completedAt: 1250 }, "250 ms"],
-    [{ startedAt: 1000, completedAt: 15000, approvalWaitMs: 2000 }, "12 s"],
-    [
-      {
-        startedAt: 1000,
-        durationMs: 2500,
-        approvalWaitMs: 500,
-        runtimeKind: "dsh",
-        modelName: "test-model",
-      },
-      "2.0 s",
-    ],
-  ])(
-    "reports elapsed execution excluding approval waits for %j",
-    (timing, expected) => {
-      showSession({
-        messages: [
-          {
-            id: "timed",
-            role: "assistant",
-            parts: [
-              { type: "text", text: "Timed answer" },
-              { type: "data-work-timing", data: timing },
-            ],
-          },
-        ],
-      });
-      expect(screen.getByText(expected)).toBeInTheDocument();
-      expect(screen.getByText("Timed answer")).toBeInTheDocument();
-    },
-  );
-
-  it.each([
-    ["claude-code", "Claude Code"],
-    ["dsh", "DeepSeek Harness"],
-    ["hermes-rpc", "Hermes RPC"],
-  ])(
-    "explains cancelled %s runtime work without reporting success",
-    (runtimeKind, label) => {
-      showSession({
-        runtimeKind,
-        messages: [
-          {
-            id: "cancelled",
-            role: "assistant",
-            parts: [
-              { type: "work-runtime", runtimeKind, status: "cancelled" },
-              {
-                type: "work-tool",
-                toolName: "read_file",
-                input: { path: "notes" },
-                status: "cancelled",
-              },
-              { type: "text", text: "Stopped at user request" },
-            ],
-          },
-        ],
-      });
-      expect(screen.getByText(`${label} stopped`)).toBeInTheDocument();
-      expect(screen.getByText("Stopped at user request")).toBeInTheDocument();
-    },
-  );
 });

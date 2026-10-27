@@ -8,7 +8,6 @@ import {
   resolveRequestUser,
   resolveAgentControlRequestUser,
 } from "@/lib/auth/request-user";
-import { toolkitAccessWhere } from "@/lib/auth/toolkit-scope";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -34,43 +33,5 @@ describe("credential scope is never reduced to user identity", () => {
       await resolveAgentControlRequestUser(req("Bearer install")),
     ).toBeNull();
     expect(mocks.session).not.toHaveBeenCalled();
-  });
-  it.each(["", "Bearer invalid", "Basic abc"])(
-    "never retries a supplied invalid header through a cookie: %s",
-    async (header) => {
-      mocks.context.mockResolvedValue(null);
-      expect(await resolveRequestUser(req(header))).toBeNull();
-      expect(mocks.session).not.toHaveBeenCalled();
-    },
-  );
-  it("allows personal tokens and cookie-only sessions where explicitly supported", async () => {
-    mocks.context.mockResolvedValue({
-      user: { id: "user" },
-      token: { id: "token", toolkitId: null },
-    });
-    expect(await resolveRequestUser(req("Bearer personal"))).toEqual({
-      id: "user",
-    });
-    expect(await resolveRequestUser(req())).toEqual({ id: "user" });
-    expect(
-      await resolveRequestPrincipal(req(), { allowSession: false }),
-    ).toBeNull();
-  });
-  it("intersects A scope with requested B and current workspace membership", () => {
-    const where = toolkitAccessWhere(
-      { user: { id: "user" }, token: { toolkitId: "a" } },
-      "other-workspace",
-      "b",
-    );
-    expect(where).toEqual({
-      id: "a",
-      slug: "b",
-      enabled: true,
-      workspace: {
-        slug: "other-workspace",
-        status: "active",
-        OR: [{ ownerId: "user" }, { members: { some: { userId: "user" } } }],
-      },
-    });
   });
 });

@@ -2,394 +2,266 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  agentFindFirst: vi.fn(),
-  modelProviderFindFirst: vi.fn(),
-  deploymentFindFirst: vi.fn(),
-  livePort: vi.fn(),
-  logRequest: vi.fn(),
+  transaction: vi.fn(),
+  agent: vi.fn(),
+  conversation: vi.fn(),
+  context: vi.fn(),
+  provider: vi.fn(),
+  revision: vi.fn(),
+  credentials: vi.fn(),
+  localToken: vi.fn(),
+  listTools: vi.fn(),
+  callTool: vi.fn(),
   fetch: vi.fn(),
-  handleAnthropicMessages: vi.fn(),
-  handleAnthropicCountTokens: vi.fn(),
-  findConversationSandbox: vi.fn(),
+  logRequest: vi.fn(),
 }));
-
 vi.mock("@/lib/db", () => ({
   db: {
-    agent: { findFirst: mocks.agentFindFirst },
-    modelProvider: { findFirst: mocks.modelProviderFindFirst },
-    deployment: { findFirst: mocks.deploymentFindFirst },
+    $transaction: mocks.transaction,
+    agent: { findFirst: mocks.agent },
+    conversation: { findFirst: mocks.conversation },
+    a2AContext: { findFirst: mocks.context },
+    modelProvider: { findFirst: mocks.provider },
   },
 }));
-vi.mock("@/lib/agents/conversation-sandbox", () => ({
-  findAgentConversationSandbox: mocks.findConversationSandbox,
+vi.mock("@/lib/agents/revisions", () => ({
+  requireAgentRevision: mocks.revision,
 }));
-vi.mock("@/lib/process/supervisor", () => ({ livePort: mocks.livePort }));
+vi.mock("@/lib/agents/environment-credentials", () => ({
+  assertAgentEnvironmentCredentialReferences: mocks.credentials,
+}));
+vi.mock("@/lib/a2a/local-runtime", () => ({
+  assertLocalRuntimeToken: mocks.localToken,
+}));
+vi.mock("@/lib/process/session-mcp", () => ({
+  listSessionMcpTools: mocks.listTools,
+  callSessionMcpTool: mocks.callTool,
+}));
 vi.mock("@/lib/observability/log", () => ({ logRequest: mocks.logRequest }));
-vi.mock("@/lib/agents/anthropic-gateway", () => ({
-  handleAnthropicMessages: mocks.handleAnthropicMessages,
-  handleAnthropicCountTokens: mocks.handleAnthropicCountTokens,
-}));
-
 import { createAgentRuntimeToken } from "@/lib/agents/runtime-access";
 import { POST as proxyModel } from "@/app/api/v1/agent-runtime/model/[providerId]/[[...path]]/route";
 import { POST as proxyMcp } from "@/app/api/v1/agent-runtime/mcp/[deploymentId]/rpc/route";
 
-describe("Agent runtime proxy boundaries", () => {
+const pin = {
+  id: "revision-1",
+  config: {
+    providerId: "provider-1",
+    mcpGrants: [{ deploymentId: "deployment-1", allowedToolNames: ["read"] }],
+    environment: { credentialReferences: [] },
+  },
+};
+const identity = {
+  workspaceId: "workspace-1",
+  agentId: "agent-1",
+  agentRevisionId: "revision-1",
+  sandboxId: "sandbox-1",
+  conversationId: "conversation-1",
+  providerId: "provider-1",
+  deploymentIds: ["deployment-1"],
+};
+
+describe("pinned Agent runtime proxy authorization", () => {
   const originalSecret = process.env.AUTH_SECRET;
-
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     process.env.AUTH_SECRET = "runtime-proxy-test-secret";
-    mocks.findConversationSandbox.mockResolvedValue({
-      sandboxId: "sandbox-1",
-      deploymentId: "mapped-deployment",
-    });
-    mocks.agentFindFirst.mockResolvedValue({
-      runtimeKind: "pi",
-      servers: [{ deploymentId: "deployment-1" }],
-      toolkits: [],
-      sandboxes: [
-        {
-          sandboxId: "sandbox-1",
-          sandbox: {
-            workspaceId: "workspace-1",
-            kind: "docker",
-            network: "isolated",
-          },
-        },
-      ],
-    });
-    mocks.livePort.mockReturnValue(4312);
-    mocks.logRequest.mockResolvedValue(undefined);
-    mocks.handleAnthropicMessages.mockResolvedValue(
-      new Response("anthropic gateway"),
+    mocks.transaction.mockImplementation(async (callback) =>
+      callback({
+        agent: { findFirst: mocks.agent },
+        conversation: { findFirst: mocks.conversation },
+        a2AContext: { findFirst: mocks.context },
+      }),
     );
-    mocks.handleAnthropicCountTokens.mockResolvedValue(
-      Response.json({ input_tokens: 12 }),
-    );
-    vi.stubGlobal("fetch", mocks.fetch);
-  });
-
-  afterEach(() => {
-    process.env.AUTH_SECRET = originalSecret;
-    vi.unstubAllGlobals();
-  });
-
-  async function token() {
-    return createAgentRuntimeToken({
-      workspaceId: "workspace-1",
-      agentId: "agent-1",
-      sandboxId: "sandbox-1",
-      conversationId: "conversation-1",
-      providerId: "provider-1",
-      deploymentIds: ["deployment-1"],
-      exp: Math.floor(Date.now() / 1000) + 300,
+    mocks.revision.mockResolvedValue(pin);
+    mocks.agent.mockResolvedValue({
+      servers: [{ deploymentId: "deployment-1", allowedToolNames: ["read"] }],
     });
-  }
-
-  it("rejects a provider outside the signed grant before querying it", async () => {
-    const response = await proxyModel(
-      new Request(
-        "http://toolplane.test/api/v1/agent-runtime/model/provider-2/chat/completions",
-        {
-          method: "POST",
-          headers: { authorization: `Bearer ${await token()}` },
-          body: "{}",
-        },
-      ),
-      {
-        params: Promise.resolve({
-          providerId: "provider-2",
-          path: ["chat", "completions"],
-        }),
-      },
-    );
-
-    expect(response.status).toBe(403);
-    expect(mocks.modelProviderFindFirst).not.toHaveBeenCalled();
-  });
-
-  it("injects the workspace provider key and streams the upstream response", async () => {
-    mocks.modelProviderFindFirst.mockResolvedValue({
+    mocks.conversation.mockResolvedValue({ id: "conversation-1" });
+    mocks.provider.mockResolvedValue({
+      name: "OpenAI",
       format: "openai",
       baseUrl: "https://provider.test/v1",
       apiKey: "real-provider-key",
     });
-    let sentHeaders = new Headers();
-    mocks.fetch.mockImplementation(async (_url: string, init: RequestInit) => {
-      sentHeaders = new Headers(init.headers);
-      return new Response("data: chunk\n\n", {
+    mocks.fetch.mockResolvedValue(
+      new Response("data: chunk\n\n", {
         headers: {
           "content-type": "text/event-stream",
           "set-cookie": "provider=x",
         },
-      });
-    });
-
-    const response = await proxyModel(
-      new Request(
-        "http://toolplane.test/api/v1/agent-runtime/model/provider-1/chat/completions?stream=true",
-        {
-          method: "POST",
-          headers: {
-            authorization: `Bearer ${await token()}`,
-            cookie: "runtime=session",
-            "content-type": "application/json",
-            "x-api-key": "container-supplied-key",
-          },
-          body: '{"stream":true}',
-        },
-      ),
-      {
-        params: Promise.resolve({
-          providerId: "provider-1",
-          path: ["chat", "completions"],
-        }),
-      },
+      }),
     );
+    mocks.listTools.mockResolvedValue([
+      { name: "read", inputSchema: { type: "object" } },
+    ]);
+    mocks.callTool.mockResolvedValue({
+      content: [{ type: "text", text: "read result" }],
+    });
+    vi.stubGlobal("fetch", mocks.fetch);
+  });
+  afterEach(() => {
+    process.env.AUTH_SECRET = originalSecret;
+    vi.unstubAllGlobals();
+  });
+  async function request(path: string, body: unknown = {}) {
+    const token = await createAgentRuntimeToken({
+      ...identity,
+      exp: Math.floor(Date.now() / 1000) + 300,
+    });
+    return new Request(`http://toolplane.test/api/v1/agent-runtime/${path}`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+        cookie: "runtime=session",
+        "x-api-key": "untrusted-key",
+      },
+      body: JSON.stringify(body),
+    });
+  }
+  async function model(providerId = "provider-1") {
+    return proxyModel(await request(`model/${providerId}/chat/completions`), {
+      params: Promise.resolve({ providerId, path: ["chat", "completions"] }),
+    });
+  }
+  async function mcp(
+    method: string,
+    params?: object,
+    deploymentId = "deployment-1",
+  ) {
+    return proxyMcp(
+      await request(`mcp/${deploymentId}/rpc`, {
+        jsonrpc: "2.0",
+        id: 1,
+        method,
+        ...(params ? { params } : {}),
+      }),
+      { params: Promise.resolve({ deploymentId }) },
+    );
+  }
 
-    expect(mocks.modelProviderFindFirst).toHaveBeenCalledWith({
-      where: { id: "provider-1", workspaceId: "workspace-1" },
-      select: { name: true, format: true, baseUrl: true, apiKey: true },
-    });
-    expect(mocks.agentFindFirst).toHaveBeenCalledWith({
-      where: {
-        id: "agent-1",
-        workspaceId: "workspace-1",
-        workspace: { status: "active" },
-        OR: [
-          { providerId: "provider-1" },
-          { modelProviders: { some: { providerId: "provider-1" } } },
-        ],
-      },
-      select: {
-        runtimeKind: true,
-        servers: { select: { deploymentId: true } },
-        toolkits: {
-          select: {
-            toolkit: {
-              select: { servers: { select: { deploymentId: true } } },
-            },
-          },
-        },
-        sandboxes: {
-          select: {
-            sandboxId: true,
-            sandbox: {
-              select: { workspaceId: true, kind: true, network: true },
-            },
-          },
-        },
-      },
-    });
-    expect(mocks.fetch).toHaveBeenCalledWith(
-      "https://provider.test/v1/chat/completions?stream=true",
+  it("rejects a provider outside the signed grant without reading provider credentials", async () => {
+    expect((await model("other-provider")).status).toBe(403);
+    expect(mocks.provider).not.toHaveBeenCalled();
+    expect(mocks.fetch).not.toHaveBeenCalled();
+  });
+  it("uses the persisted revision and session mapping and strips caller credentials", async () => {
+    const response = await model();
+    expect(response.status).toBe(200);
+    expect(mocks.revision).toHaveBeenCalledWith(
       expect.any(Object),
+      "agent-1",
+      "revision-1",
     );
-    expect(sentHeaders.get("authorization")).toBe("Bearer real-provider-key");
-    expect(sentHeaders.get("x-api-key")).toBeNull();
-    expect(sentHeaders.get("cookie")).toBeNull();
-    expect(response.body).not.toBeNull();
+    expect(mocks.conversation).toHaveBeenCalledWith({
+      where: {
+        id: "conversation-1",
+        agentId: "agent-1",
+        agentRevisionId: "revision-1",
+        legacyRevisionUnresolved: false,
+        sandboxId: "sandbox-1",
+      },
+      select: { id: true },
+    });
+    expect(mocks.agent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          runtimeKind: "pi-sdk",
+          retiredAt: null,
+          workspaceId: "workspace-1",
+        }),
+      }),
+    );
+    const headers = new Headers(mocks.fetch.mock.calls[0][1].headers);
+    expect(headers.get("authorization")).toBe("Bearer real-provider-key");
+    expect(headers.get("x-api-key")).toBeNull();
+    expect(headers.get("cookie")).toBeNull();
     expect(response.headers.get("set-cookie")).toBeNull();
     await expect(response.text()).resolves.toBe("data: chunk\n\n");
   });
-
-  it("routes Claude Messages and count_tokens through the compatibility gateway", async () => {
-    const configuredProvider = {
-      name: "Responses",
-      format: "openai-responses",
-      baseUrl: "https://provider.test/v1",
-      apiKey: "real-provider-key",
-    };
-    mocks.modelProviderFindFirst.mockResolvedValue(configuredProvider);
-
-    const messagesRequest = new Request(
-      "http://toolplane.test/api/v1/agent-runtime/model/provider-1/v1/messages",
-      {
-        method: "POST",
-        headers: { authorization: `Bearer ${await token()}` },
-        body: "{}",
-      },
-    );
-    const messages = await proxyModel(messagesRequest, {
-      params: Promise.resolve({
-        providerId: "provider-1",
-        path: ["v1", "messages"],
-      }),
-    });
-    expect(await messages.text()).toBe("anthropic gateway");
-    expect(mocks.handleAnthropicMessages).toHaveBeenCalledWith(
-      messagesRequest,
-      {
-        id: "provider-1",
-        ...configuredProvider,
-      },
-    );
-
-    const countRequest = new Request(
-      "http://toolplane.test/api/v1/agent-runtime/model/provider-1/v1/messages/count_tokens",
-      {
-        method: "POST",
-        headers: { authorization: `Bearer ${await token()}` },
-        body: "{}",
-      },
-    );
-    await proxyModel(countRequest, {
-      params: Promise.resolve({
-        providerId: "provider-1",
-        path: ["v1", "messages", "count_tokens"],
-      }),
-    });
-    expect(mocks.handleAnthropicCountTokens).toHaveBeenCalledWith(countRequest);
-    expect(mocks.fetch).not.toHaveBeenCalled();
-  });
-
-  it("keeps Anthropic providers on the native pass-through path", async () => {
-    mocks.modelProviderFindFirst.mockResolvedValue({
-      name: "Anthropic",
-      format: "anthropic",
-      baseUrl: "https://api.anthropic.com/v1",
-      apiKey: "anthropic-key",
-    });
-    mocks.fetch.mockResolvedValue(Response.json({ type: "message" }));
-
-    await proxyModel(
-      new Request(
-        "http://toolplane.test/api/v1/agent-runtime/model/provider-1/v1/messages",
-        {
-          method: "POST",
-          headers: { authorization: `Bearer ${await token()}` },
-          body: "{}",
-        },
-      ),
-      {
-        params: Promise.resolve({
-          providerId: "provider-1",
-          path: ["v1", "messages"],
-        }),
-      },
-    );
-
-    expect(mocks.fetch).toHaveBeenCalledWith(
-      "https://api.anthropic.com/v1/messages",
-      expect.any(Object),
-    );
-    expect(mocks.handleAnthropicMessages).not.toHaveBeenCalled();
-  });
-
-  it("rejects an MCP deployment outside the signed grant", async () => {
-    const response = await proxyMcp(
-      new Request(
-        "http://toolplane.test/api/v1/agent-runtime/mcp/deployment-2/rpc",
-        {
-          method: "POST",
-          headers: { authorization: `Bearer ${await token()}` },
-          body: '{"jsonrpc":"2.0","id":1,"method":"tools/list"}',
-        },
-      ),
-      { params: Promise.resolve({ deploymentId: "deployment-2" }) },
-    );
-
-    expect(response.status).toBe(403);
-    expect(mocks.deploymentFindFirst).not.toHaveBeenCalled();
-  });
-
-  it("rejects a token after its Agent, provider, or docker sandbox binding is removed", async () => {
-    mocks.agentFindFirst.mockResolvedValue(null);
-    const response = await proxyModel(
-      new Request(
-        "http://toolplane.test/api/v1/agent-runtime/model/provider-1/chat/completions",
-        {
-          method: "POST",
-          headers: { authorization: `Bearer ${await token()}` },
-          body: "{}",
-        },
-      ),
-      {
-        params: Promise.resolve({
-          providerId: "provider-1",
-          path: ["chat", "completions"],
-        }),
-      },
-    );
-
-    expect(response.status).toBe(403);
-    expect(mocks.modelProviderFindFirst).not.toHaveBeenCalled();
-  });
-
-  it("scopes an allowed MCP deployment to the workspace and keeps its tool policy", async () => {
-    mocks.deploymentFindFirst.mockResolvedValue({
-      id: "deployment-1",
-      workspaceId: "workspace-1",
-      mcpToolExposure: "allowlist",
-      mcpAllowedTools: ["read"],
-    });
-    mocks.fetch.mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          jsonrpc: "2.0",
-          id: 1,
-          result: { tools: [{ name: "read" }, { name: "write" }] },
-        }),
-      ),
-    );
-
-    const response = await proxyMcp(
-      new Request(
-        "http://toolplane.test/api/v1/agent-runtime/mcp/deployment-1/rpc",
-        {
-          method: "POST",
-          headers: { authorization: `Bearer ${await token()}` },
-          body: '{"jsonrpc":"2.0","id":1,"method":"tools/list"}',
-        },
-      ),
-      { params: Promise.resolve({ deploymentId: "deployment-1" }) },
-    );
-
-    expect(mocks.deploymentFindFirst).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { id: "deployment-1", workspaceId: "workspace-1" },
-      }),
-    );
-    expect(mocks.agentFindFirst).toHaveBeenCalled();
-    await expect(response.json()).resolves.toMatchObject({
-      result: { tools: [{ name: "read" }] },
-    });
-    expect(mocks.logRequest).toHaveBeenCalledWith(
-      expect.objectContaining({
-        workspaceId: "workspace-1",
-        deploymentId: "deployment-1",
-      }),
-    );
-  });
-  it.each([null, { sandboxId: "different-session-sandbox" }])(
-    "rejects absent or mismatched conversation mappings",
-    async (mapping) => {
-      mocks.findConversationSandbox.mockResolvedValue(mapping);
-      const response = await proxyModel(
-        new Request(
-          "http://toolplane.test/api/v1/agent-runtime/model/provider-1/chat/completions",
-          {
-            method: "POST",
-            headers: { authorization: `Bearer ${await token()}` },
-            body: "{}",
-          },
-        ),
-        {
-          params: Promise.resolve({
-            providerId: "provider-1",
-            path: ["chat", "completions"],
-          }),
-        },
-      );
-      expect(response.status).toBe(403);
-      expect(mocks.findConversationSandbox).toHaveBeenCalledWith({
-        workspaceId: "workspace-1",
-        agentId: "agent-1",
-        conversationId: "conversation-1",
-        contextId: undefined,
-      });
+  it.each(["revision", "agent", "session", "credential", "provider"])(
+    "rejects live %s revocation before any upstream request",
+    async (condition) => {
+      if (condition === "revision")
+        mocks.revision.mockRejectedValue(
+          new Error("AGENT_REVISION_UNRESOLVED"),
+        );
+      if (condition === "agent") mocks.agent.mockResolvedValue(null);
+      if (condition === "session") mocks.conversation.mockResolvedValue(null);
+      if (condition === "credential")
+        mocks.credentials.mockRejectedValue(
+          new Error("AGENT_CREDENTIAL_REVOKED"),
+        );
+      if (condition === "provider")
+        mocks.revision.mockResolvedValue({
+          ...pin,
+          config: { ...pin.config, providerId: "different-provider" },
+        });
+      expect((await model()).status).toBe(403);
       expect(mocks.fetch).not.toHaveBeenCalled();
     },
   );
+  it("does not widen a token to a revoked MCP deployment", async () => {
+    mocks.agent.mockResolvedValue({ servers: [] });
+    expect((await mcp("tools/list")).status).toBe(403);
+    expect(mocks.listTools).not.toHaveBeenCalled();
+  });
+  it("never forwards a deployment outside the signed revision grant", async () => {
+    expect((await mcp("tools/list", undefined, "unapproved")).status).toBe(403);
+    expect(mocks.listTools).not.toHaveBeenCalled();
+  });
+  it("lists and calls tools through the isolated session broker, never shared process HTTP", async () => {
+    const context = {
+      workspaceId: "workspace-1",
+      agentId: "agent-1",
+      agentRevisionId: "revision-1",
+      conversationId: "conversation-1",
+    };
+    const listed = await mcp("tools/list");
+    expect(listed.status).toBe(200);
+    expect(mocks.listTools).toHaveBeenCalledWith(context, "deployment-1");
+    const called = await mcp("tools/call", {
+      name: "read",
+      arguments: { path: "report.txt" },
+    });
+    expect(called.status).toBe(200);
+    expect(mocks.callTool).toHaveBeenCalledWith(
+      context,
+      "deployment-1",
+      "read",
+      { path: "report.txt" },
+    );
+    expect(mocks.fetch).not.toHaveBeenCalled();
+  });
+  it("rejects generic MCP execution methods", async () => {
+    expect(
+      (await mcp("resources/read", { uri: "file:///secret" })).status,
+    ).toBe(403);
+    expect(mocks.callTool).not.toHaveBeenCalled();
+    expect(mocks.fetch).not.toHaveBeenCalled();
+  });
+  it.each(["MCP_RUNTIME_FILES_CHANGED", "MCP_CREDENTIAL_REQUIRED"])(
+    "classifies %s as a pre-effect denial, not unknown execution",
+    async (code) => {
+      mocks.callTool.mockRejectedValueOnce(new Error(code));
+      const response = await mcp("tools/call", { name: "read", arguments: {} });
+      expect(response.status).toBe(403);
+      expect(await response.json()).toMatchObject({ error: { code: -32003 } });
+      expect(mocks.callTool).toHaveBeenCalledOnce();
+      expect(mocks.fetch).not.toHaveBeenCalled();
+    },
+  );
+  it("denies revoked tools and preserves unknown side effects without automatic retry", async () => {
+    mocks.callTool.mockRejectedValueOnce(new Error("MCP_TOOL_FORBIDDEN"));
+    expect((await mcp("tools/call", { name: "write" })).status).toBe(403);
+    mocks.callTool.mockRejectedValueOnce(
+      new Error("MCP_TOOL_EXECUTION_UNKNOWN"),
+    );
+    const response = await mcp("tools/call", { name: "read" });
+    expect(response.status).toBe(502);
+    expect(await response.json()).toMatchObject({
+      error: { data: { status: "execution_unknown" } },
+    });
+    expect(mocks.callTool).toHaveBeenCalledTimes(2);
+  });
 });

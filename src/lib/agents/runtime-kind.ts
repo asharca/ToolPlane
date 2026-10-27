@@ -3,8 +3,6 @@ export const AGENT_RUNTIME_KINDS = [
   "pi-sdk",
   "claude-code",
   "dsh",
-  "hermes",
-  "hermes-rpc",
 ] as const;
 
 export type AgentRuntimeKind = (typeof AGENT_RUNTIME_KINDS)[number];
@@ -15,15 +13,14 @@ export type SandboxHarnessRuntimeKind = Extract<
 >;
 export type DedicatedSandboxRuntimeKind = Extract<
   AgentRuntimeKind,
-  "pi" | "pi-sdk" | "claude-code" | "dsh" | "hermes-rpc"
+  "pi" | "pi-sdk" | "claude-code" | "dsh"
 >;
-export type WorkRuntimeKind = DedicatedSandboxRuntimeKind | "hermes";
+export type WorkRuntimeKind = DedicatedSandboxRuntimeKind;
 
 // Explicit public capability inventory. Entry-point subsets are intentional:
 // console support does not automatically grant creation through Control MCP.
 export const AGENT_CONTROL_RUNTIME_KINDS = [
-  "pi",
-  "hermes",
+  "pi-sdk",
 ] as const satisfies readonly AgentRuntimeKind[];
 export const AGENT_RUNTIME_CAPABILITIES = {
   pi: {
@@ -41,20 +38,6 @@ export const AGENT_RUNTIME_CAPABILITIES = {
     publicEndpoint: false,
   },
   dsh: {
-    sandbox: true,
-    providerBinding: "single",
-    attachments: false,
-    terminal: true,
-    publicEndpoint: false,
-  },
-  hermes: {
-    sandbox: true,
-    providerBinding: "multiple",
-    attachments: true,
-    terminal: true,
-    publicEndpoint: true,
-  },
-  "hermes-rpc": {
     sandbox: true,
     providerBinding: "single",
     attachments: false,
@@ -142,68 +125,6 @@ const AGENT_RUNTIME_BUILTIN_TOOL_GROUPS: Record<
       ],
     },
   ],
-  "hermes-rpc": [
-    {
-      category: "file",
-      tools: ["read_file", "write_file", "patch", "search_files"],
-    },
-    { category: "shell", tools: ["terminal", "process"] },
-    { category: "context", tools: ["memory", "session_search"] },
-  ],
-  hermes: [
-    {
-      category: "file",
-      tools: ["read_file", "write_file", "patch", "search_files"],
-    },
-    { category: "shell", tools: ["terminal", "process"] },
-    {
-      category: "context",
-      tools: ["web_search", "web_extract", "memory", "session_search"],
-    },
-    {
-      category: "browser",
-      tools: [
-        "browser_navigate",
-        "browser_snapshot",
-        "browser_click",
-        "browser_type",
-        "browser_scroll",
-        "browser_back",
-        "browser_press",
-        "browser_get_images",
-        "browser_vision",
-        "browser_console",
-        "browser_cdp",
-        "browser_dialog",
-        "browser_exec",
-      ],
-    },
-    {
-      category: "orchestration",
-      tools: [
-        "skills_list",
-        "skill_view",
-        "skill_manage",
-        "todo",
-        "execute_code",
-        "delegate_task",
-        "cronjob",
-      ],
-    },
-    {
-      category: "media",
-      tools: [
-        "vision_analyze",
-        "image_generate",
-        "bfl_flux3_text_to_video",
-        "bfl_flux3_image_to_video",
-        "bfl_flux3_keyframes_to_video",
-        "bfl_flux3_video_continuation",
-        "bfl_flux3_get_result",
-        "bfl_flux3_prompting_guide",
-      ],
-    },
-  ],
 };
 
 const GENERIC_PROXY_PROVIDER_FORMATS = new Set([
@@ -215,8 +136,6 @@ const GENERIC_PROXY_PROVIDER_FORMATS = new Set([
 export function agentRuntimeDisplayName(value: string): string {
   if (value === "claude-code") return "Claude Code";
   if (value === "dsh") return "DeepSeek Harness";
-  if (value === "hermes") return "Hermes";
-  if (value === "hermes-rpc") return "Hermes RPC";
   if (value === "pi") return "Pi";
   if (value === "pi-sdk") return "Pi SDK";
   return value;
@@ -279,7 +198,8 @@ export function agentRuntimeSupportsProviderFormat(
   runtime: string,
   format: string,
 ): boolean {
-  if (isDedicatedSandboxRuntimeKind(runtime))
-    return GENERIC_PROXY_PROVIDER_FORMATS.has(format);
-  return agentRuntimeCapabilities(runtime)?.providerBinding === "multiple";
+  return (
+    isDedicatedSandboxRuntimeKind(runtime) &&
+    GENERIC_PROXY_PROVIDER_FORMATS.has(format)
+  );
 }

@@ -71,10 +71,13 @@ function nativeFailure(error: unknown) {
     error instanceof AgentExecutionBusyError
   )
     return "PI_SANDBOX_BUSY: The target Agent/session is busy; the child task was not started.";
+  // Storage exhaustion is a platform decision, not an opaque Pi crash.
+  if (error instanceof A2AQuotaError)
+    return "PI_STORAGE_QUOTA_EXCEEDED: The task payload exceeded the configured storage budget; the result was not stored.";
   // Only fixed codes may escape: native exception text can contain credentials or task content.
   const code =
     error instanceof Error
-      ? /^(PI_SESSION_MISSING|PI_SESSION_CORRUPT|PI_MODEL_UNAVAILABLE|PI_INPUT_INVALID|PI_CONFIG_INVALID|PI_PROCESS_STOP_UNCONFIRMED|PI_NODE_UNSUPPORTED|PI_SQLITE_UNAVAILABLE|PI_HARNESS_VERSION_MISMATCH|PI_RECOVERY_CHECK_FAILED|PI_PROTOCOL_ERROR|PI_TARGET_UNAVAILABLE)(?=:|$)/.exec(
+      ? /^(PI_SESSION_MISSING|PI_SESSION_CORRUPT|PI_MODEL_UNAVAILABLE|PI_INPUT_INVALID|PI_CONFIG_INVALID|PI_PROCESS_STOP_UNCONFIRMED|PI_NODE_UNSUPPORTED|PI_SQLITE_UNAVAILABLE|PI_HARNESS_VERSION_MISMATCH|PI_RECOVERY_CHECK_FAILED|PI_PROTOCOL_ERROR|PI_TARGET_UNAVAILABLE|PI_OUTPUT_TRUNCATED)(?=:|$)/.exec(
           error.message,
         )?.[1]
       : undefined;
@@ -374,10 +377,8 @@ export function executeA2ATask(
       )
         return;
       if (
-        (error instanceof SandboxExecutionBusyError ||
-          error instanceof AgentExecutionBusyError) &&
-        (!grant.ancestorTaskIds.length ||
-          (active.native && queued.nativeOperationId))
+        error instanceof SandboxExecutionBusyError ||
+        error instanceof AgentExecutionBusyError
       )
         return;
       const failure =
@@ -431,15 +432,15 @@ export async function tickA2AWorker() {
       { state: TaskState.TASK_STATE_SUBMITTED },
       { state: TaskState.TASK_STATE_WORKING, phase: "resumable" },
     ];
-    // Separate pages prevent pooled public/remote work from hiding local admission
-    // or native cleanup. Local execution is bounded by the administrator limits.
+    // Separate pages keep remote observations from hiding SDK admission or bound cleanup.
+    // Retired published queues never acquire a new execution lease.
     const queues = await Promise.all(
       [
         { executionBackend: "pi-harness" },
-        { executionBackend: "legacy", context: { targetKind: "local" } },
+        { executionBackend: "pi-sdk", context: { targetKind: "local" } },
         {
           executionBackend: "legacy",
-          context: { targetKind: { not: "local" } },
+          context: { targetKind: "remote" },
         },
       ].map((scope) =>
         db.a2ATask.findMany({

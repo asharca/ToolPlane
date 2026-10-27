@@ -3,7 +3,6 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { AGENT_STEP_BOUNDS } from "@/lib/agents/constants";
 import { AgentMarketError, materializeAgentRelease } from "@/lib/agents/market";
-import { syncHermesRuntime } from "@/lib/agents/hermes/runtime";
 import { resolveAccountRequestUser } from "@/lib/auth/request-user";
 import {
   ChatServiceError,
@@ -31,10 +30,20 @@ const installBody = z
       .min(AGENT_STEP_BOUNDS.min)
       .max(AGENT_STEP_BOUNDS.max)
       .optional(),
-    deploymentIds: z
-      .array(z.string().trim().min(1).max(240))
+    mcpGrants: z
+      .array(
+        z
+          .object({
+            deploymentId: z.string().trim().min(1).max(240),
+            allowedToolNames: z.array(z.string().min(1).max(240)).max(1_000),
+            expectedDefinitionChecksum: z
+              .string()
+              .regex(/^[a-f0-9]{64}$/)
+              .optional(),
+          })
+          .strict(),
+      )
       .max(50)
-      .transform((ids) => [...new Set(ids)])
       .optional(),
     mcpBindings: z
       .record(
@@ -259,7 +268,6 @@ export const POST = withRequestLogging(
             installedById: ctx.user.id,
             name: parsed.data.name,
           });
-          await syncHermesRuntime(ctx.workspace.id, result.agent.id);
           return Response.json(
             {
               installId: `agent:${result.install.id}`,
@@ -290,7 +298,7 @@ export const POST = withRequestLogging(
           modelProviderId: parsed.data.modelProviderId,
           model: parsed.data.model,
           maxSteps: parsed.data.maxSteps,
-          deploymentIds: parsed.data.deploymentIds,
+          mcpGrants: parsed.data.mcpGrants,
         });
         return Response.json(
           {
@@ -307,9 +315,7 @@ export const POST = withRequestLogging(
         return installErrorResponse(error);
       }
     }
-    if (
-      !["mcp", "skill", "toolkit", "pi-package"].includes(release.listing.kind)
-    ) {
+    if (!["mcp", "skill", "pi-package"].includes(release.listing.kind)) {
       return Response.json(
         { error: "Unsupported market release kind.", code: "unsupported_kind" },
         { status: 422 },
@@ -333,9 +339,6 @@ export const POST = withRequestLogging(
             : {}),
           ...(result.kind === "mcp"
             ? { deploymentId: result.resource.id }
-            : {}),
-          ...(result.kind === "toolkit"
-            ? { toolkitId: result.resource.id }
             : {}),
           status: result.install.status,
           reused: result.reused,

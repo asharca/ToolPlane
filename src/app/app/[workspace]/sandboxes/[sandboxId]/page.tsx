@@ -114,21 +114,29 @@ export default async function SandboxDetailPage({
   const sandbox = await getSandbox(ws.id, sandboxId);
   if (!sandbox) notFound();
   const agent = sandbox.agentLinks[0]?.agent;
+  const readOnly = Boolean(
+    sandbox.config &&
+      typeof sandbox.config === "object" &&
+      !Array.isArray(sandbox.config) &&
+      sandbox.config.readOnly === true,
+  );
 
   const status = effectiveStatus(
     sandbox.deploymentId,
     sandbox.deployment.status,
   );
   const running = status === "running" || status === "provisioning";
-  const lifecycleBlocked = [
-    "copying",
-    "copy_failed",
-    "restoring",
-    "restore_failed",
-    "restore_cleanup_required",
-    "upgrading",
-    "deleting",
-  ].includes(status);
+  const lifecycleBlocked =
+    readOnly ||
+    [
+      "copying",
+      "copy_failed",
+      "restoring",
+      "restore_failed",
+      "restore_cleanup_required",
+      "upgrading",
+      "deleting",
+    ].includes(status);
   const connector = connectorFromConfig(sandbox.config);
   const sshTargetId = sshTargetIdFromConfig(sandbox.config);
   let mcpEndpoint: string | null = null;
@@ -186,6 +194,7 @@ export default async function SandboxDetailPage({
   const connectorRoot = connectorLive?.root ?? connector?.remoteRoot;
   const envText = sandboxEnvToText(readSandboxEnv(sandbox.config));
   const disabledLegacy =
+    readOnly ||
     sandbox.kind === "host" ||
     (sandbox.kind === "ssh" && !sshTargetId) ||
     (sandbox.kind === "connector" && !connector);
@@ -395,7 +404,7 @@ export default async function SandboxDetailPage({
                   <SandboxMcpExport
                     sandboxId={sandbox.id}
                     endpoint={mcpEndpoint}
-                    exportable={sandboxMcpExportable(sandbox.kind)}
+                    exportable={sandboxMcpExportable(sandbox)}
                   />
                   <section className="pb-5">
                     <h3 className="text-sm font-semibold text-foreground">
@@ -497,6 +506,7 @@ export default async function SandboxDetailPage({
                       sandboxId={sandbox.id}
                       sandboxName={sandbox.name}
                       disabled={
+                        readOnly ||
                         status === "provisioning" ||
                         status === "copying" ||
                         status === "restoring" ||

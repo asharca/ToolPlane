@@ -1,10 +1,26 @@
 // @vitest-environment node
-import { randomUUID } from "node:crypto";
-import { afterAll, beforeAll, expect, it } from "vitest";
+import { randomUUID, createHash } from "node:crypto";
+import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { db } from "@/lib/db";
-import { createAgent, updateAgent } from "@/lib/agents/mutations";
+import {
+  createAgent,
+  updateAgent,
+  setAgentPiPackages,
+} from "@/lib/agents/mutations";
 import { withSandboxExecutionLease } from "@/lib/agents/sandbox-execution-gate";
 
+import { resolvePiSessionPackages } from "@/lib/agents/pi-session-packages";
+import { marketReleaseChecksum } from "@/lib/market/artifact";
+import { removeMarketInstall } from "@/lib/market/skills";
+import { revokeDangerousMarketRelease } from "@/lib/market/revocation";
+import { publishFixtureAgentRevision } from "./agent-revision-fixture";
+import type * as SandboxRuntimeModule from "@/lib/agents/sandbox-runtime";
+vi.mock("@/lib/agents/sandbox-runtime", async (original) => ({
+  ...(await original<typeof SandboxRuntimeModule>()),
+  preflightPiSdkCapabilities: vi
+    .fn()
+    .mockResolvedValue({ commands: [], tools: [], skills: [], prompts: [] }),
+}));
 let workspaceId: string;
 let userId: string;
 let installId: string;
@@ -35,6 +51,7 @@ beforeAll(async () => {
         namespace: suffix,
         slug,
         kind: "pi-package",
+        publisherWorkspaceId: workspaceId,
         name: slug,
         metadata: {},
         status: "published",
@@ -92,7 +109,6 @@ afterAll(async () => {
 });
 it("pins creation, preserves old approved bindings and rejects foreign releases and active leases", async () => {
   const agent = await createAgent(workspaceId, "SDK", {
-    runtime: "pi-sdk",
     piPackages: [{ marketInstallId: installId, releaseId: v1 }],
   });
   const binding = () =>
@@ -139,20 +155,26 @@ it("pins creation, preserves old approved bindings and rejects foreign releases 
     0,
   );
 });
-it("rejects bindings for ordinary Pi even when empty and rejects noncurrent first bindings", async () => {
-  await db.marketInstall.update({
-    where: { id: installId },
-    data: { currentReleaseId: v2, requestedReleaseId: v2 },
+it("creates fresh native drafts without applying grants and keeps historical runtimes read-only", async () => {
+  const prior = await createAgent(workspaceId, "Prior", {
+    piPackages: [{ marketInstallId: installId, releaseId: v1 }],
+  });
+  expect(prior.runtimeKind).toBe("pi-sdk");
+  expect(prior.currentRevisionVersion).toBe(0);
+  const historical = await db.agent.create({
+    data: {
+      workspaceId,
+      name: "Historical",
+      slug: randomUUID(),
+      runtimeKind: "claude-code",
+    },
   });
   await expect(
-    createAgent(workspaceId, "Pi", { runtime: "pi", piPackages: [] }),
-  ).rejects.toThrow("pi_packages_runtime_unsupported");
-  await expect(
-    createAgent(workspaceId, "Stale", {
-      runtime: "pi-sdk",
-      piPackages: [{ marketInstallId: installId, releaseId: v1 }],
-    }),
-  ).rejects.toThrow("pi_package_release_not_current");
+    updateAgent(workspaceId, historical.id, { ...cfg, piPackages: [] }),
+  ).rejects.toThrow("Historical Agents are read-only");
+  expect(
+    await db.agent.findUnique({ where: { id: historical.id } }),
+  ).not.toBeNull();
 });
 it("rejects foreign workspace installs, duplicates, arbitrary fields and busy Work without losing bindings", async () => {
   await db.marketInstall.update({
@@ -161,7 +183,6 @@ it("rejects foreign workspace installs, duplicates, arbitrary fields and busy Wo
   });
   const packages = [{ marketInstallId: installId, releaseId: v2 }];
   const agent = await createAgent(workspaceId, "Bound SDK", {
-    runtime: "pi-sdk",
     piPackages: packages,
   });
   await expect(
@@ -184,7 +205,6 @@ it("rejects foreign workspace installs, duplicates, arbitrary fields and busy Wo
   try {
     await expect(
       createAgent(foreignWorkspace.id, "Foreign SDK", {
-        runtime: "pi-sdk",
         piPackages: packages,
       }),
     ).rejects.toThrow("Unknown or inaccessible market install");
@@ -219,4 +239,204 @@ it("rejects foreign workspace installs, duplicates, arbitrary fields and busy Wo
   expect(await db.agentPiPackage.count({ where: { agentId: agent.id } })).toBe(
     0,
   );
+});
+
+it("restores original session code after default changes/uninstall and rejects revoked releases", async () => {
+  const manifest = {
+    schemaVersion: 1,
+    kind: "pi-package",
+    listing: {
+      slug: "session-fixture",
+      name: "Session fixture",
+      summary: null,
+      iconUrl: null,
+      author: "fixture",
+      tags: [],
+    },
+    package: {
+      source: {
+        kind: "toolplane",
+        requested: "toolplane:session-fixture@1.0.0",
+        name: "session-fixture",
+        version: "1.0.0",
+      },
+      name: "session-fixture",
+      version: "1.0.0",
+      root: "package",
+      runtime: {
+        kind: "pi-sdk",
+        piVersion: "0.87.1",
+        nodeMajor: 26,
+        platform: "any",
+        arch: "any",
+      },
+      resources: {
+        extensions: ["package/index.mjs"],
+        skills: [],
+        prompts: [],
+        themes: [],
+      },
+      entries: [
+        { type: "directory", path: "package" },
+        {
+          type: "file",
+          path: "package/index.mjs",
+          contentEncoding: "base64",
+          content: Buffer.from("export default () => {}").toString("base64"),
+          executable: false,
+          sha256: createHash("sha256")
+            .update("export default () => {}")
+            .digest("hex"),
+        },
+      ],
+    },
+  };
+  for (const id of [v1, v2])
+    await db.marketRelease.update({
+      where: { id },
+      data: { manifest, checksum: marketReleaseChecksum(manifest) },
+    });
+  const agent = await createAgent(workspaceId, "Session SDK", {
+    piPackages: [{ marketInstallId: installId, releaseId: v1 }],
+  });
+  const makeSession = async () => {
+    const deployment = await db.deployment.create({ data: { workspaceId } });
+    const sandbox = await db.sandbox.create({
+      data: {
+        workspaceId,
+        name: "Session",
+        slug: randomUUID(),
+        deploymentId: deployment.id,
+      },
+    });
+    const revision = await publishFixtureAgentRevision(workspaceId, agent.id);
+    const conversation = await db.conversation.create({
+      data: {
+        agentId: agent.id,
+        sandboxId: sandbox.id,
+        agentRevisionId: revision.id,
+        legacyRevisionUnresolved: false,
+      },
+    });
+    return {
+      workspaceId,
+      agentId: agent.id,
+      sandboxId: sandbox.id,
+      conversationId: conversation.id,
+      runtimeSessionId: conversation.id,
+    };
+  };
+  const old = await makeSession();
+  expect((await resolvePiSessionPackages(old)).packages[0].releaseId).toBe(v1);
+  await setAgentPiPackages(workspaceId, agent.id, [
+    { marketInstallId: installId, releaseId: v2 },
+  ]);
+  expect((await resolvePiSessionPackages(old)).packages[0].releaseId).toBe(v1);
+  const fresh = await makeSession();
+  expect((await resolvePiSessionPackages(fresh)).packages[0].releaseId).toBe(
+    v2,
+  );
+  await expect(
+    resolvePiSessionPackages({ ...old, conversationId: fresh.conversationId }),
+  ).rejects.toThrow("PI_PACKAGE_UNAVAILABLE");
+  await expect(
+    resolvePiSessionPackages({
+      ...old,
+      runtimeSessionId: fresh.conversationId,
+    }),
+  ).rejects.toThrow("PI_PACKAGE_UNAVAILABLE");
+  const otherAgent = await createAgent(workspaceId, "Other session owner");
+  const otherConversation = await db.conversation.create({
+    data: { agentId: otherAgent.id },
+  });
+  await expect(
+    resolvePiSessionPackages({ ...old, conversationId: otherConversation.id }),
+  ).rejects.toThrow("PI_PACKAGE_UNAVAILABLE");
+  expect(
+    (
+      await db.piSessionPackageSet.findUniqueOrThrow({
+        where: { sandboxId: old.sandboxId },
+      })
+    ).conversationId,
+  ).toBe(old.conversationId);
+  const shared = await db.deployment.create({
+    data: { workspaceId, name: "Shared MCP" },
+  });
+  await db.marketInstall.update({
+    where: { id: installId },
+    data: {
+      resourceMap: {
+        kind: "pi-package",
+        mcpBindings: { shared: { deploymentId: shared.id, tools: ["lookup"] } },
+      },
+    },
+  });
+  await expect(
+    db.marketRelease.delete({ where: { id: v1 } }),
+  ).rejects.toThrow();
+  await removeMarketInstall({
+    installId,
+    targetWorkspaceId: workspaceId,
+    actorId: userId,
+  });
+  expect(
+    await db.deployment.findUnique({ where: { id: shared.id } }),
+  ).not.toBeNull();
+  expect((await resolvePiSessionPackages(old)).packages[0].releaseId).toBe(v1);
+  expect(
+    (await resolvePiSessionPackages(await makeSession())).packages,
+  ).toEqual([]);
+  await db.workspace.update({
+    where: { id: workspaceId },
+    data: { status: "suspended" },
+  });
+  await expect(resolvePiSessionPackages(old)).rejects.toThrow(
+    "AGENT_EXECUTION_RETIRED",
+  );
+  await db.workspace.update({
+    where: { id: workspaceId },
+    data: { status: "active" },
+  });
+  await revokeDangerousMarketRelease({
+    workspaceId,
+    userId,
+    releaseId: v1,
+    reason: "Dangerous fixture code",
+  });
+  await expect(resolvePiSessionPackages(old)).rejects.toMatchObject({
+    code: "listing_unavailable",
+  });
+  await expect(
+    resolvePiSessionPackages({
+      ...old,
+      runtimeSessionId: fresh.conversationId,
+    }),
+  ).rejects.toThrow("PI_PACKAGE_UNAVAILABLE");
+  await db.agent.update({
+    where: { id: agent.id },
+    data: { retiredAt: new Date() },
+  });
+  await expect(resolvePiSessionPackages(old)).rejects.toThrow(
+    "AGENT_EXECUTION_RETIRED",
+  );
+  await db.agent.update({
+    where: { id: agent.id },
+    data: { retiredAt: null, runtimeKind: "claude-code" },
+  });
+  await expect(resolvePiSessionPackages(old)).rejects.toThrow(
+    "AGENT_EXECUTION_RETIRED",
+  );
+  await db.agent.update({
+    where: { id: agent.id },
+    data: { runtimeKind: "pi-sdk" },
+  });
+  expect(
+    await db.piSessionPackageSet.findUniqueOrThrow({
+      where: { sandboxId: old.sandboxId },
+      include: { packages: true },
+    }),
+  ).toMatchObject({
+    conversationId: old.conversationId,
+    packages: [{ releaseId: v1 }],
+  });
 });

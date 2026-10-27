@@ -4,10 +4,10 @@ import { useState } from "react";
 import { LogOut, Settings, Shield } from "lucide-react";
 import { useTranslations } from "next-intl";
 import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/motion/popover";
+  MorphPopover,
+  MorphPopoverContent,
+  MorphPopoverTrigger,
+} from "@/components/motion/popover-morph";
 import { ButtonLink } from "@/components/motion/button/base";
 import { Tooltip } from "@/components/motion/tooltip";
 import { workspaceInitials } from "@/lib/workspace/navigation";
@@ -31,24 +31,18 @@ export function AccountMenu({
   const switcher = useTranslations("console.workspaceSwitcher");
   const [open, setOpen] = useState(false);
   return (
-    <Popover
-      open={open}
-      onOpenChange={setOpen}
-      side="top"
-      align="start"
-      className="w-full"
-    >
+    <MorphPopover open={open} onOpenChange={setOpen} className="w-full">
       <Tooltip
         content={`${t("account")}: ${userLabel}`}
         open={compact ? undefined : false}
         side="right"
         wrapperClassName="flex w-full"
       >
-        <PopoverTrigger>
+        <MorphPopoverTrigger>
           <button
             type="button"
             aria-label="账户菜单"
-            className="flex h-9 w-full items-center gap-2 overflow-hidden rounded-lg bg-secondary px-1 py-1 text-left outline-none transition-colors hover:bg-secondary/80 focus-visible:ring-2 focus-visible:ring-ring"
+            className="flex h-9 w-full items-center gap-2 overflow-hidden rounded-lg px-1 py-1 text-left outline-none transition-colors hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring"
           >
             <span className="grid size-7 shrink-0 place-items-center rounded-full bg-[#d5ff66] text-[11px] font-semibold text-[#172000]">
               {workspaceInitials(userLabel)}
@@ -59,9 +53,14 @@ export function AccountMenu({
               </span>
             )}
           </button>
-        </PopoverTrigger>
+        </MorphPopoverTrigger>
       </Tooltip>
-      <PopoverContent className="w-56 max-w-[calc(100vw-2rem)] p-1.5">
+      <MorphPopoverContent
+        side="top"
+        align="start"
+        sideOffset={10}
+        className="w-56 max-w-[calc(100vw-2rem)] border-foreground/15 p-1.5 text-popover-foreground"
+      >
         <p className="truncate px-2.5 pb-1 pt-2 text-xs font-medium text-foreground">
           {userLabel}
         </p>
@@ -101,7 +100,7 @@ export function AccountMenu({
             {switcher("signOut")}
           </button>
         </form>
-      </PopoverContent>
-    </Popover>
+      </MorphPopoverContent>
+    </MorphPopover>
   );
 }

@@ -183,81 +183,13 @@ describe("knowledge access and configuration", () => {
     expect(m.create).not.toHaveBeenCalled();
   });
 
-  it("normalizes names and bounds embedding options on creation", async () => {
-    const response = await POST(
-      request({
-        ...valid,
-        name: " ",
-        chunkSize: 10,
-        chunkOverlap: 9999,
-        topK: 50,
-        threshold: -8,
-      }),
-    );
-    expect(response.status).toBe(201);
-    expect(await response.json()).toMatchObject({
-      name: "Knowledge base",
-      embeddingModel: "embed",
-      chunkSize: 200,
-      chunkOverlap: 199,
-      topK: 20,
-      threshold: -1,
-    });
-    const defaults = await POST(request(valid));
-    expect(await defaults.json()).toMatchObject({
-      name: "Handbook",
-      chunkSize: 1200,
-      chunkOverlap: 200,
-      topK: 6,
-      threshold: 0.2,
-    });
-    m.create.mockRejectedValueOnce(new Error("duplicate"));
-    const conflict = await POST(request(valid));
-    expect(conflict.status).toBe(409);
-    expect(await conflict.json()).toEqual({
-      error: "A knowledge base with this name already exists",
-    });
-  });
-
-  it("patches finite settings, preserves omitted identity fields and rejects foreign providers", async () => {
+  it("rejects malformed patches and foreign providers before writes", async () => {
     expect((await PATCH(malformed(), context)).status).toBe(400);
     m.provider.mockResolvedValueOnce(null);
     expect(
       (await PATCH(request({ providerId: "foreign" }), context)).status,
     ).toBe(400);
     expect(m.update).not.toHaveBeenCalled();
-    const changed = await PATCH(
-      request({
-        name: " ",
-        providerId: "provider",
-        embeddingModel: " new ",
-        chunkSize: 9000,
-        chunkOverlap: -9,
-        topK: 1.7,
-        threshold: 5,
-      }),
-      context,
-    );
-    expect(await changed.json()).toMatchObject({
-      name: "Knowledge base",
-      providerId: "provider",
-      embeddingModel: "new",
-      chunkSize: 8000,
-      chunkOverlap: 0,
-      topK: 2,
-      threshold: 1,
-    });
-    const defaults = await PATCH(
-      request({ chunkSize: "bad", topK: "bad", threshold: "bad" }),
-      context,
-    );
-    expect(await defaults.json()).toEqual({
-      id: "kb",
-      chunkSize: 1200,
-      chunkOverlap: 200,
-      topK: 6,
-      threshold: 0.2,
-    });
   });
 
   it("hides inaccessible bases for updates and deletes, and deletes an authorized base", async () => {

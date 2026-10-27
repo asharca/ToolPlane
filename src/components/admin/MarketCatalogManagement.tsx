@@ -11,10 +11,7 @@ import { useTranslations } from "next-intl";
 import { AdminBadge, AdminPanel } from "@/components/admin/AdminUI";
 import { SubmitButton } from "@/components/dashboard/SubmitButton";
 
-import {
-  updateMarketListingAdminAction,
-  updatePublicToolkitAdminAction,
-} from "@/lib/admin/market-catalog-actions";
+import { updateMarketListingAdminAction } from "@/lib/admin/market-catalog-actions";
 import type { AdminActionState } from "@/lib/admin/user-actions";
 
 type CategoryOption = { id: string; slug: string; name: string };
@@ -127,13 +124,17 @@ export function MarketListingManagement({
       padded={false}
     >
       {listings.length ? (
-        listings.map((listing) => (
-          <ListingForm
-            key={listing.id}
-            listing={listing}
-            categories={categories}
-          />
-        ))
+        listings.map((listing) =>
+          listing.kind === "toolkit" ? (
+            <ToolkitListingHistory key={listing.id} listing={listing} />
+          ) : (
+            <ListingForm
+              key={listing.id}
+              listing={listing}
+              categories={categories}
+            />
+          ),
+        )
       ) : (
         <p className="px-5 py-10 text-center text-sm text-muted-foreground">
           {t("marketCatalogNoListings")}
@@ -185,6 +186,59 @@ function CategoryChecklist({
         ))}
       </div>
     </fieldset>
+  );
+}
+
+function ToolkitListingHistory({ listing }: { listing: ListingRow }) {
+  const t = useTranslations("admin");
+  const ops = useTranslations("adminOps");
+  return (
+    <details className="border-b border-border last:border-b-0">
+      <summary className="flex min-h-14 cursor-pointer flex-wrap items-center gap-2 px-5 py-3">
+        <span className="min-w-0 flex-1 break-words font-semibold">
+          {listing.name}
+        </span>
+        <code className="break-all text-xs">
+          /{listing.namespace}/{listing.slug}
+        </code>
+        <AdminBadge tone="neutral">{listing.status}</AdminBadge>
+        <span className="text-xs">
+          v{listing.latestVersion} · {listing.installCount}{" "}
+          {t("installsColumn")}
+        </span>
+      </summary>
+      <div className="space-y-3 border-t border-border px-5 py-5">
+        <p className="text-sm text-muted-foreground">
+          {t("marketToolkitLegacyNotice")}
+        </p>
+        {listing.latestRelease ? (
+          <p className="text-xs">
+            {t("marketCatalogLatestReleaseStatus", {
+              status: listing.latestRelease.reviewStatus,
+            })}
+          </p>
+        ) : null}
+        {listing.pendingRelease ? (
+          <p className="text-xs">
+            v{listing.pendingRelease.version} ·{" "}
+            {listing.pendingRelease.reviewStatus}
+          </p>
+        ) : null}
+        <ButtonLink
+          href={adminHref("/admin/logs", {
+            tab: "audit",
+            targetType: "marketListing",
+            targetId: listing.id,
+            returnTo: "/admin/market",
+          })}
+          variant="ghost"
+          size="md"
+        >
+          <History className="size-4" />
+          {ops("audit")}
+        </ButtonLink>
+      </div>
+    </details>
   );
 }
 
@@ -241,9 +295,24 @@ function ListingForm({
               defaultValue={listing.status}
               label={t("statusColumn")}
               options={[
-                { value: "draft", label: t("agentListingStatusDraft") },
-                { value: "published", label: t("agentListingStatusPublished") },
-                { value: "disabled", label: t("agentListingStatusDisabled") },
+                {
+                  value: listing.status,
+                  label: t(
+                    listing.status === "published"
+                      ? "agentListingStatusPublished"
+                      : listing.status === "disabled"
+                        ? "agentListingStatusDisabled"
+                        : "agentListingStatusDraft",
+                  ),
+                },
+                ...(listing.status !== "disabled"
+                  ? [
+                      {
+                        value: "disabled",
+                        label: t("agentListingStatusDisabled"),
+                      },
+                    ]
+                  : []),
               ]}
             />
           </div>
@@ -332,7 +401,7 @@ function ListingForm({
   );
 }
 
-function ToolkitForm({
+function ToolkitHistoryRow({
   toolkit,
   categories,
 }: {
@@ -340,10 +409,7 @@ function ToolkitForm({
   categories: CategoryOption[];
 }) {
   const t = useTranslations("admin");
-  const [state, action] = useActionState<AdminActionState, FormData>(
-    updatePublicToolkitAdminAction,
-    {},
-  );
+  const ops = useTranslations("adminOps");
   return (
     <details className="group border-b border-border last:border-b-0">
       <summary className="flex min-h-14 cursor-pointer list-none flex-wrap items-center gap-2 px-5 py-3 marker:hidden hover:bg-muted/45">
@@ -363,11 +429,7 @@ function ToolkitForm({
           })}
         </span>
       </summary>
-      <form
-        action={action}
-        className="space-y-5 border-t border-border bg-muted/20 px-5 py-5"
-      >
-        <input type="hidden" name="toolkitId" value={toolkit.id} />
+      <div className="space-y-5 border-t border-border bg-muted/20 px-5 py-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <p className="text-sm font-medium text-foreground">
@@ -377,36 +439,30 @@ function ToolkitForm({
               {t("marketToolkitLegacyNotice")}
             </p>
           </div>
-          <div className="flex min-h-10 items-center gap-2 rounded px-2 text-sm font-medium text-foreground hover:bg-muted/60">
-            <FormCheckbox
-              name="enabled"
-              defaultChecked={toolkit.enabled}
-              label={t("enabled")}
-            />
-          </div>
         </div>
-        <CategoryChecklist
-          categories={categories}
-          selectedIds={toolkit.categories.map(({ id }) => id)}
-        />
-        <div className="flex flex-wrap items-center gap-3">
-          <SubmitButton
-            error={state.error}
-            pendingLabel={t("saving")}
-            savedLabel={t("saved")}
-            variant="primary"
-            size="md"
-          >
-            <Save className="size-4" />
-            {t("saveChanges")}
-          </SubmitButton>
-          {state.error ? (
-            <p role="alert" className="text-sm text-destructive">
-              {state.error}
-            </p>
-          ) : null}
-        </div>
-      </form>
+        <ul className="flex flex-wrap gap-2 text-sm text-muted-foreground">
+          {categories
+            .filter((category) =>
+              toolkit.categories.some(({ id }) => id === category.id),
+            )
+            .map((category) => (
+              <li key={category.id}>{category.name}</li>
+            ))}
+        </ul>
+        <ButtonLink
+          href={adminHref("/admin/logs", {
+            tab: "audit",
+            targetType: "toolkit",
+            targetId: toolkit.id,
+            returnTo: "/admin/market",
+          })}
+          variant="ghost"
+          size="md"
+        >
+          <History className="size-4" />
+          {ops("audit")}
+        </ButtonLink>
+      </div>
     </details>
   );
 }
@@ -455,7 +511,7 @@ export function MarketCatalogManagement({
       >
         {toolkits.length ? (
           toolkits.map((toolkit) => (
-            <ToolkitForm
+            <ToolkitHistoryRow
               key={toolkit.id}
               toolkit={toolkit}
               categories={categories}

@@ -1,6 +1,5 @@
 # 日志与审计
 
-> **English**: [OBSERVABILITY.md](./OBSERVABILITY.md)
 
 管理后台 `/admin/logs` 读取独立的结构化事件。工作区「日志」只能读取自身日志：
 部署 MCP 请求与响应正文按原权限展示，成员也可查看获准的脱敏 A2A 正文；
@@ -47,7 +46,7 @@ MCP 部署异常结合持久化状态与进程监管状态：failed/error，以�
 `withLogContext` 用 AsyncLocalStorage 串联子 span。已验证的资源查找会丰富上下文；调用
 方提供的请求 ID 不被信任。带签名的沙箱 runtime grant 把 trace 血缘带到模型和 MCP 回调。
 Work 执行启动独立（detached）上下文，后台任务不会继承其他请求的操作者。Native 运行记
-录模型用量、首个输出延迟、停止原因和工具结果。Hermes/沙箱埋点记录可用的 runtime 事件，
+录模型用量、首个输出延迟、停止原因和工具结果。沙箱埋点记录可用的 runtime 事件，
 不记录私有推理过程，也不记录 runtime 的每一次内部操作。
 
 `recordEvent` 同时向 stderr 输出脱敏后的 JSON。数据库写入限制为每个 worker 最多 32 个
@@ -113,9 +112,7 @@ UI 使用 50 行的 keyset 分页和有界的、最长 31 天的检索窗口。T
 - 设置页显示保留期内最近一次成功的审计记录，并在离开未保存编辑前警告。没有审计历
   史意味着没有记录到修改者，不一定是设置从未变过。保存失败保留输入；保存一个分区不
   会丢弃另一个分区的未保存修改。
-- Registry 同步报告单个失败路径。重试使用上次结果的来源，且只重试仍存在于该
-  registry 中的路径。失败列表是页面状态，刷新即清空。`pnpm skills:sync:tp` 使用 Node
-  的 `react-server` condition 来运行共享的 server-only 审计写入器。
+- GitHub 资源同步使用持久任务记录状态、固定提交与错误代码；同一提交重复触发不重复发布。同步失败保留上次可见目录，重试重新解析当前分支。Webhook 只排队，资源中心显示最近同步结果；不再使用旧 Skill registry 重试页面或独立同步脚本。
 
 ## 破坏性升级
 
@@ -129,7 +126,7 @@ UI 使用 50 行的 keyset 分页和有界的、最长 31 天的检索窗口。T
 针对性检查：
 
 ```bash
-pnpm vitest run tests/unit/logging.test.ts tests/unit/logging-storage.test.ts tests/unit/agent-runtime-access.test.ts tests/integration/logging.test.ts tests/integration/observability.test.ts
+pnpm vitest run tests/unit/logging.test.ts tests/unit/logging-payload-policy.test.ts tests/integration/logging.test.ts tests/integration/observability.test.ts
 pnpm exec tsc --noEmit
 pnpm lint
 ```

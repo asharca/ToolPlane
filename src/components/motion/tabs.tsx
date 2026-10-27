@@ -11,6 +11,8 @@ import {
   type Transition,
 } from "motion/react";
 import {
+  type ButtonHTMLAttributes,
+  type HTMLAttributes,
   createContext,
   useCallback,
   useContext,
@@ -107,11 +109,10 @@ export function TabsList({
   children,
   className,
   wrapperClassName,
+  ...props
 }: {
-  children: ReactNode;
-  className?: string;
   wrapperClassName?: string;
-}) {
+} & HTMLAttributes<HTMLDivElement>) {
   const { variant, value } = useTabs();
   const reduce = useReducedMotion();
   const rootRef = useRef<HTMLDivElement>(null);
@@ -333,6 +334,7 @@ export function TabsList({
         }}
       >
         <div
+          {...props}
           ref={listRef}
           role="tablist"
           className={cn(listClasses[variant], "w-max", className)}
@@ -373,12 +375,12 @@ export function TabsTrigger({
   children,
   className,
   indicatorClassName,
+  onClick,
+  ...props
 }: {
   value: string;
-  children: ReactNode;
-  className?: string;
   indicatorClassName?: string;
-}) {
+} & Omit<ButtonHTMLAttributes<HTMLButtonElement>, "value">) {
   const { value: current, setValue, layoutId, variant } = useTabs();
   const active = current === value;
   // React owns the initial mask only; TabsList synchronizes subsequent masks.
@@ -389,10 +391,14 @@ export function TabsTrigger({
   if (variant === "underline") {
     return (
       <button
+        {...props}
         type="button"
         role="tab"
         aria-selected={active}
-        onClick={() => setValue(value)}
+        onClick={(event) => {
+          onClick?.(event);
+          if (!event.defaultPrevented) setValue(value);
+        }}
         className={cn(
           "relative isolate px-3 pb-2.5 pt-1 -mb-px text-sm font-medium transition-colors min-h-[44px] inline-flex items-center whitespace-nowrap shrink-0",
           active
@@ -434,11 +440,15 @@ export function TabsTrigger({
         />
       ) : null}
       <button
+        {...props}
         type="button"
         role="tab"
         aria-selected={active}
         data-tabs-value={value}
-        onClick={() => setValue(value)}
+        onClick={(event) => {
+          onClick?.(event);
+          if (!event.defaultPrevented) setValue(value);
+        }}
         className={cn(
           "relative z-10 inline-flex items-center justify-center whitespace-nowrap bg-transparent px-3.5 py-1.5 text-sm font-medium outline-none",
           "text-muted-foreground hover:text-foreground",

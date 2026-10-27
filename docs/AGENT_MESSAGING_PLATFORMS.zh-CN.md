@@ -1,6 +1,5 @@
 # Agent 消息平台
 
-> **English**: [AGENT_MESSAGING_PLATFORMS.md](./AGENT_MESSAGING_PLATFORMS.md)
 
 ## 频道管理
 
@@ -58,25 +57,9 @@ MCP resources、用户可调用的已绑定 skills。菜单和固定工具栏均
 toolbar** 项可以固定/取消固定动作、拖拽按钮排序、恢复默认。固定的动作离开根菜单；
 工具栏偏好在本浏览器内跨 Work 会话持久化。
 
-沿袭 Cherry 的做法，`/` 也列出 runtime 命令（而非额外的 `+` 工具）：Pi 提供
-`/compact [focus]`；Claude Code 提供 `/clear`、`/compact [focus]`、`/context`、`/usage`；
-DSH 提供 `/compact` 和 `/goal`（带其原生 objective/edit/pause/resume/clear 参数）。运
-行中的 Claude/DSH 命令注册表可以为当前会话增加第三方命令。选中即插入命令，提交即执
-行。不支持的命令绝不会变成普通模型 prompt。
+`/` 列出当前 Pi SDK 支持的原生命令（而非额外的 `+` 工具），包括 `/compact [focus]`。选中即插入命令，提交即执行；不支持的命令绝不会变成普通模型 prompt。历史非 Pi 运行时命令记录仍可读取，不恢复旧命令执行。
 
-命令通过原生 runtime 执行，不在宿主机侧模拟。Work 命令与普通轮次使用相同的协调器和
-runtime 配置。Claude Code 和 Pi 通过沙箱本地 Unix socket 在轮次间保留 CLI 会话；空闲进
-程两分钟后停止，后续轮次恢复原生会话文件。DSH 恢复其原生持久化会话和命令注册表。每
-个 ToolPlane 会话有独立的原生会话。压缩改变该原生会话的活动上下文，`/new` 另起一个
-会话。既有平台历史只在首次使用时导入，不会在原生压缩上重放。Claude `/usage` 返回与
-其认证模式匹配的原生输出，绝不是平台估算的统计面板。命令输出作为普通助手回复存储和渲染，支持复制（包括旧命令记录）；控制类读数不进入模型上下文。
-
-Hermes 的压缩逐字保留最近的若干轮，并保存一条包含
-`data-conversation-compaction` part 的系统消息。原始消息和附件保持不变。Work、控制台
-chat 和频道轮次会把最新摘要加上其边界之后的消息投影进 runtime；界面仍显示完整历史。
-Hermes 会换一个新的 runtime 会话别名，并以保留下来的上下文作为种子。失败、取消、繁忙或无法
-缩减的压缩不会改变历史。显示的 token 缩减量是估算值。压缩和新会话动作使用与传入轮次
-相同的工作区/Agent 鉴权和每会话准入闸门。不涉及任何 Hermes 平台适配器。
+命令通过固定修订的原生 SDK 执行，不在宿主机侧模拟。Work 命令与普通轮次使用相同的协调器、实时授权和独立会话沙箱；原生 daemon 在轮次间保留会话状态，恢复以原生会话文件为准。压缩改变该原生会话的活动上下文，`/new` 另起一个会话；不重放旧平台历史来恢复执行。命令输出作为普通助手回复存储和渲染，支持复制（包括旧命令记录）；控制类读数不进入模型上下文。
 
 ## 职责划分
 
@@ -113,12 +96,7 @@ c03519c028cfe25e32060ad7dcdeea531f22fd46。见 `src/lib/agents/channels/NOTICE` 
 | Slack | REST API 和 Socket Mode | Bot token 和 app token |
 
 `channel-runtime.ts` 在常驻 Node 服务器中管理这些适配器。入站消息直接调用
-`runAgentChannelMessage`，回复使用同一适配器。没有 Python 进程，没有 Hermes 平台导
-入，也没有 Hermes checkout 路径。DSH、Pi、Claude Code 和 Hermes Agent runtime 各自保
-留执行路径；频道传输从不选择 Agent runtime。
-
-企业微信（WeCom）和钉钉的旧记录保留，但其旧的基于 Hermes 的托管启动器不可用，也不作
-为新原生频道提供。回调集成保持独立，且必须对交接进行鉴权。
+`runAgentChannelMessage`，回复使用同一适配器。频道层没有 Python 平台导入或外部运行时 checkout 路径；Agent 执行统一使用固定修订的 Pi SDK，频道传输从不选择或替换 Agent runtime。企业微信（WeCom）和钉钉的旧记录保留，其旧托管启动器不可用；回调集成保持独立，且必须对交接进行鉴权。
 
 ## 沙箱归属与迁移
 
@@ -134,8 +112,7 @@ ID 和入站 token 保持不变，因此迁移不需要重新扫码。活跃频�
 Agent 的目标收到一个停止的草稿。重启失败会回滚原绑定。
 
 历史仍归原 Agent；目标 Agent 开启自己的会话。调用方不能复用原 Agent 的会话 ID。已排
-队的旧消息和迟到的适配器事件在移动后不能再回复。Runtime 轮次会显式收到频道的沙箱
-ID，包括 DSH。
+队的旧消息和迟到的适配器事件在移动后不能再回复。Runtime 轮次会显式收到频道的沙箱 ID。
 
 服务器恢复和适配器状态都是单进程的。每个频道队列深度上限 20 条待处理消息；日志在内
 存中保留最近 200 行。要用同一套 bot 凭据运行多个应用副本，请先引入持久队列和分布式
@@ -165,8 +142,6 @@ ID，包括 DSH。
 
 有些平台不能只靠静态 token 表单配置：
 
-- Telegram 托管机器人设置显示扫码深链；扫码创建机器人，但用户仍须确认允许的数字
-  Telegram 用户 ID 后 ToolPlane 才保存 token。
 - 企业微信 AI Bot 设置显示二维码；扫码返回 Bot ID 和 Secret。
 - 微信/iLink 登录显示二维码；扫码返回账户/会话数据。
 - WhatsApp bridge 设置显示必须在手机 App 中扫描的配对二维码。
@@ -178,12 +153,6 @@ ToolPlane 把这些建模为两阶段频道连接：
 create channel -> request QR -> user scans -> poll provider -> save credentials -> stopped -> running
 ```
 
-Telegram 多一步确认，与 Hermes 一致：
-
-```text
-create channel -> request QR -> user scans -> poll ready -> confirm allowed user IDs -> save credentials -> stopped -> running
-```
-
 对支持扫码的平台，UI 不要求用户粘贴二维码载荷。ToolPlane 主动调用平台设置端点，把
 短期配对会话存进频道配置，渲染返回的二维码内容，并轮询平台等待扫码完成。提供方返回
 凭据后，ToolPlane 将其加密存到频道上。
@@ -192,7 +161,6 @@ create channel -> request QR -> user scans -> poll ready -> confirm allowed user
 
 | 平台 | 二维码请求 | 轮询结果 | 保存的凭据 |
 | --- | --- | --- | --- |
-| Telegram | `setup.hermes-agent.nousresearch.com/v1/telegram/pairings` | 托管机器人就绪 + bot token + 所有者用户 ID | 用户确认后的 `TELEGRAM_BOT_TOKEN`、`TELEGRAM_ALLOWED_USERS` |
 | 企业微信 | `work.weixin.qq.com/ai/qc/generate` | `work.weixin.qq.com/ai/qc/query_result` | `WECOM_BOT_ID`、`WECOM_SECRET` |
 | 微信 | `ilink/bot/get_bot_qrcode` | `ilink/bot/get_qrcode_status` | `WEIXIN_ACCOUNT_ID`、`WEIXIN_TOKEN`、`WEIXIN_BASE_URL` |
 
@@ -327,15 +295,5 @@ POST /api/v1/agent-channels/:connectionId/events?token=<toolplane-channel-token>
 - `simplex`
 - `photon`
 
-Hermes 风格的连字符别名也被接受，如 `whatsapp-cloud`、`wecom-callback`、
+连字符别名也被接受，如 `whatsapp-cloud`、`wecom-callback`、
 `teams-meetings`、`msgraph-webhook`、`open-webui`。
-
-## Hermes 参考
-
-- [Telegram](https://hermes-agent.nousresearch.com/docs/user-guide/messaging/telegram)
-- [WeCom](https://hermes-agent.nousresearch.com/docs/user-guide/messaging/wecom)
-- [Weixin](https://hermes-agent.nousresearch.com/docs/user-guide/messaging/weixin)
-- [Slack](https://hermes-agent.nousresearch.com/docs/user-guide/messaging/slack)
-- [Discord](https://hermes-agent.nousresearch.com/docs/user-guide/messaging/discord)
-- [WhatsApp Cloud](https://hermes-agent.nousresearch.com/docs/user-guide/messaging/whatsapp-cloud)
-- [WeCom Callback](https://hermes-agent.nousresearch.com/docs/user-guide/messaging/wecom-callback)

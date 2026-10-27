@@ -2,15 +2,16 @@ import "server-only";
 import { posix } from "node:path";
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
-import {
-  defaultConversationRuntimeSession,
-  type HermesConversationSelection,
-} from "@/lib/agents/mutations";
+import { defaultConversationRuntimeSession } from "@/lib/agents/mutations";
+import { AgentRevisionConfigSchema } from "@/lib/agents/revision-types";
+import { resolveModelContext } from "@/lib/agents/model";
 import type { ReasoningEffort } from "@/lib/agents/constants";
-import { isWorkRuntimeKind } from "@/lib/agents/runtime-kind";
-import { AGENT_PI_PACKAGES_INCLUDE } from "@/lib/agents/queries";
+import { pinCurrentAgentRevision } from "@/lib/agents/revisions";
 import { resolveAgentPiPackages } from "@/lib/agents/resolve";
-import type { ResolvedAgentPiPackage } from "@/lib/agents/resolve";
+import type {
+  LoadedAgentPiPackages,
+  ResolvedAgentPiPackage,
+} from "@/lib/agents/resolve";
 import type { ComposerReference } from "./composer-types";
 import {
   claimWorkAttachments,
@@ -34,7 +35,6 @@ type CreateWorkSessionInput = {
   attachments?: PreparedWorkAttachment[];
   references?: ComposerReference[];
   reasoningEffort?: ReasoningEffort;
-  hermesSelection?: HermesConversationSelection;
 };
 
 export type WorkSessionTransitionResult =
@@ -44,7 +44,10 @@ export type WorkSessionTransitionResult =
   | { ok: false; reason: "invalid_transition"; status: string };
 
 const workSessionClientInclude = {
-  agent: { select: { id: true, name: true } },
+  agent: {
+    select: { id: true, name: true, runtimeKind: true, retiredAt: true },
+  },
+  agentRevision: { select: { id: true, agentId: true, config: true } },
   sandbox: {
     select: {
       id: true,
@@ -65,7 +68,10 @@ const workSessionClientInclude = {
 } satisfies Prisma.WorkSessionInclude;
 
 const workSessionSummaryInclude = {
-  agent: { select: { id: true, name: true } },
+  agent: {
+    select: { id: true, name: true, runtimeKind: true, retiredAt: true },
+  },
+  agentRevision: { select: { id: true, agentId: true, config: true } },
   sandbox: {
     select: {
       id: true,
@@ -76,6 +82,20 @@ const workSessionSummaryInclude = {
     },
   },
 } as const;
+const workSessionExecutionSelect = {
+  agentId: true,
+  agentRevisionId: true,
+  legacyRevisionUnresolved: true,
+  runtimeKind: true,
+  runtimeSnapshot: true,
+  status: true,
+  conversationId: true,
+  agent: { select: { runtimeKind: true, retiredAt: true } },
+  agentRevision: { select: { id: true, agentId: true, config: true } },
+  conversation: {
+    select: { agentRevisionId: true, legacyRevisionUnresolved: true },
+  },
+} satisfies Prisma.WorkSessionSelect;
 
 export function normalizeWorkDirectory(value: unknown): string | null {
   if (typeof value !== "string" || value.length > 1_000 || value.includes("\0"))
@@ -100,6 +120,65 @@ export function workSessionWorkingDirectory(
       (value as { workingDirectory?: unknown }).workingDirectory,
     ) ?? "."
   );
+}
+export function workSessionRevisionMetadata(session: {
+  agentId: string;
+  agentRevisionId: string | null;
+  legacyRevisionUnresolved: boolean;
+  runtimeKind: string;
+  runtimeSnapshot: unknown;
+  agent: { runtimeKind: string; retiredAt: Date | null };
+  agentRevision: { id: string; agentId: string; config: unknown } | null;
+  conversation?: {
+    agentRevisionId: string | null;
+    legacyRevisionUnresolved: boolean;
+  };
+}) {
+  const revision = session.agentRevision;
+  const parsed =
+    revision &&
+    revision.id === session.agentRevisionId &&
+    revision.agentId === session.agentId
+      ? AgentRevisionConfigSchema.safeParse(revision.config)
+      : null;
+  const config = parsed?.success ? parsed.data : null;
+  const saved =
+    session.runtimeSnapshot && typeof session.runtimeSnapshot === "object"
+      ? (session.runtimeSnapshot as Record<string, unknown>)
+      : {};
+  const snapshotMatches =
+    config &&
+    saved.providerId === config.providerId &&
+    saved.model === config.model;
+  return {
+    agentRevisionId: session.agentRevisionId,
+    legacyRevisionUnresolved: session.legacyRevisionUnresolved,
+    readOnly:
+      session.runtimeKind !== "pi-sdk" ||
+      session.legacyRevisionUnresolved ||
+      !config ||
+      session.agent.runtimeKind !== "pi-sdk" ||
+      Boolean(session.agent.retiredAt) ||
+      Boolean(
+        session.conversation &&
+          (session.conversation.legacyRevisionUnresolved ||
+            session.conversation.agentRevisionId !== session.agentRevisionId),
+      ),
+    runtimeKind: config?.runtimeKind ?? session.runtimeKind,
+    modelName:
+      snapshotMatches && typeof saved.modelName === "string"
+        ? saved.modelName
+        : (config?.model ??
+          (typeof saved.model === "string" ? saved.model : null)),
+    contextWindow:
+      snapshotMatches &&
+      typeof saved.contextWindow === "number" &&
+      saved.contextWindow > 0
+        ? saved.contextWindow
+        : null,
+    contextWindowEstimated:
+      !snapshotMatches || saved.contextWindowEstimated !== false,
+  };
 }
 
 export function assertWorkPiPackageSnapshot(
@@ -150,23 +229,7 @@ export async function createWorkSession(input: CreateWorkSessionInput) {
         runtimeKind: true,
         systemPrompt: true,
         maxSteps: true,
-        modelProviders: { take: 1, select: { providerId: true } },
-        piPackages: AGENT_PI_PACKAGES_INCLUDE,
-        runtime: {
-          select: {
-            id: true,
-            kind: true,
-            sandboxId: true,
-            sandbox: {
-              select: {
-                id: true,
-                workspaceId: true,
-                kind: true,
-                network: true,
-              },
-            },
-          },
-        },
+        provider: true,
         servers: { select: { deploymentId: true } },
         skills: { select: { installedSkillId: true } },
         toolkits: {
@@ -186,65 +249,100 @@ export async function createWorkSession(input: CreateWorkSessionInput) {
           select: {
             sandboxId: true,
             isDefault: true,
-            sandbox: { select: { kind: true, network: true } },
+            sandbox: { select: { kind: true, network: true, config: true } },
           },
         },
       },
     });
+    if (agent?.runtimeKind !== "pi-sdk") return null;
+    const revision = await pinCurrentAgentRevision(tx, agent.id);
+    const config = revision.config;
+    const pinnedProvider =
+      agent.provider?.id === config.providerId ? agent.provider : null;
+    const modelContext =
+      pinnedProvider && config.model
+        ? resolveModelContext(pinnedProvider, config.model)
+        : null;
+    if (agent.sandboxes.length !== 1) return null;
+    const link = agent.sandboxes[0];
     if (
-      !agent ||
-      !isWorkRuntimeKind(agent.runtimeKind) ||
-      (input.hermesSelection !== undefined && agent.runtimeKind !== "hermes")
+      !link ||
+      link.sandboxId !== config.sandboxTemplateId ||
+      (input.sandboxId && input.sandboxId !== link.sandboxId) ||
+      link.sandbox.kind !== "docker" ||
+      link.sandbox.network === "none" ||
+      (link.sandbox.config &&
+        typeof link.sandbox.config === "object" &&
+        !Array.isArray(link.sandbox.config) &&
+        link.sandbox.config.readOnly === true)
     )
       return null;
-
-    let sandboxId: string;
-    if (agent.runtimeKind === "hermes") {
-      const runtime = agent.runtime;
+    const sandboxId = link.sandboxId;
+    agent.providerId = config.providerId;
+    agent.model = config.model;
+    agent.systemPrompt = config.systemPrompt;
+    agent.maxSteps = config.maxSteps;
+    const pinnedPackages: NonNullable<LoadedAgentPiPackages["piPackages"]> = [];
+    for (const pin of config.packages) {
+      const marketInstall = await tx.marketInstall.findFirst({
+        where: {
+          id: pin.marketInstallId,
+          targetWorkspaceId: input.workspaceId,
+        },
+        include: { listing: true },
+      });
+      const release = await tx.marketRelease.findUnique({
+        where: { id: pin.releaseId },
+      });
       if (
-        runtime?.kind !== "hermes" ||
-        runtime.sandbox.workspaceId !== input.workspaceId ||
-        runtime.sandbox.kind !== "hermes" ||
-        runtime.sandbox.network === "none" ||
-        agent.modelProviders.length === 0 ||
-        (input.sandboxId && input.sandboxId !== runtime.sandboxId)
+        marketInstall?.listing.status !== "published" ||
+        (marketInstall.status !== "ready" &&
+          marketInstall.status !== "uninstalled") ||
+        !release ||
+        release.checksum !== pin.integrity ||
+        release.listingId !== marketInstall.listingId
       )
-        return null;
-      sandboxId = runtime.sandboxId;
-    } else {
-      if (agent.sandboxes.length !== 1) return null;
-      const link = agent.sandboxes[0];
-      if (
-        !link ||
-        (input.sandboxId && input.sandboxId !== link.sandboxId) ||
-        agent.runtime?.sandboxId === link.sandboxId ||
-        link.sandbox.kind !== "docker" ||
-        link.sandbox.network === "none"
-      )
-        return null;
-      sandboxId = link.sandboxId;
+        throw new Error("PI_PACKAGE_UNAVAILABLE");
+      pinnedPackages.push({
+        marketInstallId: pin.marketInstallId,
+        marketInstall,
+        releaseId: pin.releaseId,
+        release,
+      });
     }
-    const piPackages = resolveAgentPiPackages(agent);
+    const piPackages = resolveAgentPiPackages({
+      ...agent,
+      agentRevisionId: revision.id,
+      piPackages: pinnedPackages,
+    });
 
     const conversation = await tx.conversation.create({
       data: {
         agentId: agent.id,
+        agentRevisionId: revision.id,
+        legacyRevisionUnresolved: false,
         title: task.slice(0, 80),
         ...(input.reasoningEffort && input.reasoningEffort !== "default"
           ? { reasoningEffort: input.reasoningEffort }
           : {}),
-        ...(input.hermesSelection
-          ? {
-              hermesProfile:
-                input.hermesSelection.profile === "default"
-                  ? null
-                  : input.hermesSelection.profile,
-              hermesProvider: input.hermesSelection.provider,
-              hermesModel: input.hermesSelection.model,
-            }
-          : {}),
       },
     });
+    if (agent.runtimeKind === "pi-sdk")
+      await tx.piSessionPackageSet.create({
+        data: {
+          conversationId: conversation.id,
+          packages: {
+            create: piPackages.map((pkg) => ({
+              marketInstallId: pkg.marketInstallId,
+              releaseId: pkg.releaseId,
+              checksum: pkg.checksum,
+              resourceMap: (pinnedPackages.find(
+                (binding) => binding.marketInstallId === pkg.marketInstallId,
+              )?.marketInstall.resourceMap ?? {}) as Prisma.InputJsonValue,
+            })),
+          },
+        },
+      });
     await tx.conversation.update({
       where: { id: conversation.id },
       data: defaultConversationRuntimeSession(agent.id, conversation.id),
@@ -276,6 +374,8 @@ export async function createWorkSession(input: CreateWorkSessionInput) {
       data: {
         workspaceId: input.workspaceId,
         agentId: agent.id,
+        agentRevisionId: revision.id,
+        legacyRevisionUnresolved: false,
         sandboxId,
         conversationId: conversation.id,
         a2aActorId: input.a2aActorId,
@@ -284,8 +384,12 @@ export async function createWorkSession(input: CreateWorkSessionInput) {
         acceptanceCriteria,
         runtimeKind: agent.runtimeKind,
         runtimeSnapshot: {
+          agentRevisionId: revision.id,
           providerId: agent.providerId,
           model: agent.model,
+          modelName: modelContext?.modelName ?? config.model,
+          contextWindow: modelContext?.maxTokens ?? null,
+          contextWindowEstimated: modelContext?.estimated ?? true,
           systemPrompt: agent.systemPrompt,
           agentMaxSteps: agent.maxSteps,
           ...(agent.runtimeKind === "pi-sdk"
@@ -305,27 +409,12 @@ export async function createWorkSession(input: CreateWorkSessionInput) {
                 ),
               }
             : {}),
-          deploymentIds: [
-            ...new Set([
-              ...agent.servers.map((item) => item.deploymentId),
-              ...agent.toolkits.flatMap((item) =>
-                item.toolkit.servers.map((server) => server.deploymentId),
-              ),
-            ]),
-          ],
-          installedSkillIds: [
-            ...new Set([
-              ...agent.skills.map((item) => item.installedSkillId),
-              ...agent.toolkits.flatMap((item) =>
-                item.toolkit.skills.map((skill) => skill.installedSkillId),
-              ),
-            ]),
-          ],
-          knowledgeBaseIds: agent.knowledgeBases.map(
-            (item) => item.knowledgeBaseId,
+          deploymentIds: config.mcpGrants.map((grant) => grant.deploymentId),
+          installedSkillIds: config.skills.map(
+            (skill) => skill.installedSkillId,
           ),
+          knowledgeBaseIds: config.knowledgeBaseIds,
           sandboxId,
-          runtimeId: agent.runtime?.id ?? null,
           workingDirectory,
         },
         status: "queued",
@@ -348,7 +437,22 @@ export async function transitionWorkSession(
     (source) => source !== status,
   );
   const updated = await db.workSession.updateMany({
-    where: { id: workSessionId, workspaceId, status: { in: sources } },
+    where: {
+      id: workSessionId,
+      workspaceId,
+      status: { in: sources },
+      ...(["queued", "running"].includes(status)
+        ? {
+            runtimeKind: "pi-sdk",
+            agentRevisionId: { not: null },
+            legacyRevisionUnresolved: false,
+            conversation: {
+              legacyRevisionUnresolved: false,
+              agentRevisionId: { not: null },
+            },
+          }
+        : {}),
+    },
     data: { status, ...data },
   });
   if (updated.count === 1) return { ok: true, changed: true, status };
@@ -468,25 +572,50 @@ export async function resumeWorkSession(
   workSessionId: string,
   actorId?: string,
 ): Promise<WorkSessionTransitionResult> {
-  const updated = await db.workSession.updateMany({
-    where: { id: workSessionId, workspaceId, status: "failed" },
-    data: {
-      status: "queued",
-      ...(actorId ? { a2aActorId: actorId } : {}),
-      result: null,
-      error: null,
-      waitingQuestion: null,
-      completedAt: null,
-      cancelRequestedAt: null,
-    },
+  return db.$transaction(async (tx) => {
+    const work = await tx.workSession.findFirst({
+      where: { id: workSessionId, workspaceId },
+      select: workSessionExecutionSelect,
+    });
+    if (!work) return { ok: false, reason: "not_found" } as const;
+    if (work.status !== "failed" || workSessionRevisionMetadata(work).readOnly)
+      return {
+        ok: false,
+        reason: "invalid_transition",
+        status: work.status,
+      } as const;
+    const updated = await tx.workSession.updateMany({
+      where: {
+        id: workSessionId,
+        workspaceId,
+        status: "failed",
+        runtimeKind: "pi-sdk",
+        agentRevisionId: work.agentRevisionId,
+        legacyRevisionUnresolved: false,
+        agent: { runtimeKind: "pi-sdk", retiredAt: null },
+        conversation: {
+          agentRevisionId: work.agentRevisionId,
+          legacyRevisionUnresolved: false,
+        },
+      },
+      data: {
+        status: "queued",
+        ...(actorId ? { a2aActorId: actorId } : {}),
+        result: null,
+        error: null,
+        waitingQuestion: null,
+        completedAt: null,
+        cancelRequestedAt: null,
+      },
+    });
+    return updated.count === 1
+      ? ({ ok: true, changed: true, status: "queued" } as const)
+      : ({
+          ok: false,
+          reason: "invalid_transition",
+          status: work.status,
+        } as const);
   });
-  if (updated.count === 1) return { ok: true, changed: true, status: "queued" };
-  const current = await db.workSession.findFirst({
-    where: { id: workSessionId, workspaceId },
-    select: { status: true },
-  });
-  if (!current) return { ok: false, reason: "not_found" };
-  return { ok: false, reason: "invalid_transition", status: current.status };
 }
 
 export async function appendWorkSessionInput(
@@ -508,9 +637,15 @@ export async function appendWorkSessionInput(
   return db.$transaction(async (tx) => {
     const work = await tx.workSession.findFirst({
       where: { id: workSessionId, workspaceId },
-      select: { conversationId: true, status: true },
+      select: workSessionExecutionSelect,
     });
     if (!work) return { ok: false, reason: "not_found" } as const;
+    if (workSessionRevisionMetadata(work).readOnly)
+      return {
+        ok: false,
+        reason: "invalid_transition",
+        status: work.status,
+      } as const;
     if (
       !["idle", "waiting_user", "completed", "failed"].includes(work.status)
     ) {
@@ -585,7 +720,7 @@ export async function appendWorkSessionInput(
 }
 
 export async function listWorkSessions(workspaceId: string, agentId?: string) {
-  return db.workSession.findMany({
+  const sessions = await db.workSession.findMany({
     where: {
       workspaceId,
       status: { not: "archived" },
@@ -595,6 +730,10 @@ export async function listWorkSessions(workspaceId: string, agentId?: string) {
     take: 100,
     include: workSessionSummaryInclude,
   });
+  return sessions.map((session) => ({
+    ...session,
+    ...workSessionRevisionMetadata(session),
+  }));
 }
 
 export async function getWorkSession(
@@ -603,7 +742,7 @@ export async function getWorkSession(
   agentId?: string,
   conversationId?: string,
 ) {
-  return db.workSession.findFirst({
+  const session = await db.workSession.findFirst({
     where: {
       id: workSessionId,
       workspaceId,
@@ -612,13 +751,16 @@ export async function getWorkSession(
     },
     include: workSessionClientInclude,
   });
+  return session
+    ? { ...session, ...workSessionRevisionMetadata(session) }
+    : null;
 }
 
 export async function getWorkSessionForUser(
   userId: string,
   workSessionId: string,
 ) {
-  return db.workSession.findFirst({
+  const session = await db.workSession.findFirst({
     where: {
       id: workSessionId,
       workspace: {
@@ -628,6 +770,9 @@ export async function getWorkSessionForUser(
     },
     include: workSessionClientInclude,
   });
+  return session
+    ? { ...session, ...workSessionRevisionMetadata(session) }
+    : null;
 }
 
 export async function archiveWorkSession(

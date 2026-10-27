@@ -3,7 +3,7 @@ import { ModalSidebar } from "../ModalSidebar";
 import { Button } from "@/components/motion/button/base";
 
 import dynamic from "next/dynamic";
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { useTranslations } from "next-intl";
 import type { AgentResourceOption } from "@/components/dashboard/agents/AgentResourceSelect";
 import type { ModelProviderOption } from "@/components/dashboard/models/ModelPicker";
@@ -15,29 +15,11 @@ import type {
 import { AgentMarketSetupBanner } from "@/components/dashboard/agents/AgentMarketSetupBanner";
 import type { AgentChannelConnectionClientView } from "@/lib/agents/channel-connection-client";
 import type { AgentMarketSetupGuide } from "@/lib/agents/market-setup";
-import type { AgentEndpointView } from "@/components/dashboard/agents/AgentApiPanel";
+import type { AgentRevisionConfig } from "@/lib/agents/revision-types";
 
 const AgentMessagingPanel = dynamic(() =>
   import("@/components/dashboard/agents/AgentMessagingPanel").then(
     (module) => module.AgentMessagingPanel,
-  ),
-);
-
-const HermesRuntimePanel = dynamic(() =>
-  import("@/components/dashboard/agents/HermesRuntimePanel").then(
-    (module) => module.HermesRuntimePanel,
-  ),
-);
-
-const AgentApiPanel = dynamic(() =>
-  import("@/components/dashboard/agents/AgentApiPanel").then(
-    (module) => module.AgentApiPanel,
-  ),
-);
-
-const HermesProfilesPanel = dynamic(() =>
-  import("@/components/dashboard/agents/HermesProfilesPanel").then(
-    (module) => module.HermesProfilesPanel,
   ),
 );
 
@@ -55,51 +37,28 @@ type SettingsData = {
   systemPrompt: string;
   disabledBuiltinTools?: string[];
   providerId: string | null;
-  providerIds: string[];
   model: string | null;
   maxSteps: number;
   providers: Array<ModelProviderOption & { format: string }>;
   deployments: AgentResourceOption[];
   skills: AgentResourceOption[];
-  toolkits: AgentResourceOption[];
   piPackages?: AgentPiPackageOption[];
   defaultSandboxId?: string | null;
-  runtimeSandboxId?: string | null;
-  runtimeEnvironment?: string;
   sandboxes: AgentResourceOption[];
   subAgents: AgentResourceOption[];
-  hermesImages?: string[];
-  runtime?: {
-    kind: string;
-    image: string;
-    status: string;
-    lastError: string | null;
-    lastSyncedAt: string | null;
-    sandboxId: string;
-    environment?: string;
-    deploymentId: string;
-    dashboardUrl: string;
+  publishedRevision?: {
+    id: string;
+    version: number;
+    config: AgentRevisionConfig;
   } | null;
+  canManageCredentials?: boolean;
 };
 
 type ChannelSettingsData = {
   connections: AgentChannelConnectionClientView[];
 };
 
-type AgentApiSettingsData = {
-  endpoint: AgentEndpointView | null;
-  origin: string;
-  canManage: boolean;
-};
-
-type SettingsTab =
-  | AgentSettingsSection
-  | "channels"
-  | "api"
-  | "a2a"
-  | "profiles"
-  | "hermes"
-  | "terminal";
+type SettingsTab = AgentSettingsSection | "channels" | "a2a";
 type InitialSettingsTab = SettingsTab | "agent";
 
 const AGENT_SETTINGS_SECTIONS: readonly AgentSettingsSection[] = [
@@ -108,7 +67,6 @@ const AGENT_SETTINGS_SECTIONS: readonly AgentSettingsSection[] = [
   "builtInTools",
   "mcp",
   "skills",
-  "toolkits",
   "piPackages",
   "sandboxes",
   "subAgents",
@@ -125,14 +83,10 @@ function isAgentSettingsSection(tab: SettingsTab): tab is AgentSettingsSection {
 
 function resolveSettingsTab({
   initialSettingsTab,
-  isHermesRuntime,
   supportsChannelSettings,
-  supportsApiSettings,
 }: {
   initialSettingsTab?: InitialSettingsTab | null;
-  isHermesRuntime: boolean;
   supportsChannelSettings: boolean;
-  supportsApiSettings: boolean;
 }): SettingsTab {
   const requested =
     initialSettingsTab === "agent"
@@ -141,9 +95,6 @@ function resolveSettingsTab({
   if (requested === "a2a") return requested;
   if (isAgentSettingsSection(requested)) return requested;
   if (requested === "channels" && supportsChannelSettings) return requested;
-  if (requested === "api" && supportsApiSettings) return requested;
-  if (isHermesRuntime && ["profiles", "hermes", "terminal"].includes(requested))
-    return requested;
   return "general";
 }
 
@@ -152,7 +103,6 @@ export function AgentSettings({
   agentId,
   settings,
   channelSettings,
-  apiSettings,
   ready,
   agentName,
   marketSetup = null,
@@ -163,7 +113,6 @@ export function AgentSettings({
   agentId: string;
   settings: SettingsData;
   channelSettings: ChannelSettingsData;
-  apiSettings?: AgentApiSettingsData;
   ready: boolean;
   agentName: string;
   marketSetup?: AgentMarketSetupGuide | null;
@@ -171,40 +120,26 @@ export function AgentSettings({
   initialA2ATaskId?: string;
 }) {
   const t = useTranslations("console.agents");
-  const isHermesRuntime = settings.runtimeKind === "hermes";
-  const supportsChannelSettings = true;
-  const supportsApiSettings = isHermesRuntime && Boolean(apiSettings);
+  const supportsChannelSettings = settings.runtimeKind === "pi-sdk";
   const requestedTab = resolveSettingsTab({
     initialSettingsTab,
-    isHermesRuntime,
     supportsChannelSettings,
-    supportsApiSettings,
   });
   const [settingsTab, setSettingsTab] = useState<SettingsTab>(requestedTab);
-  const hermesIframeRef = useRef<HTMLIFrameElement>(null);
 
   const navigationItems: Array<{ id: SettingsTab; label: string }> = [
     { id: "general", label: t("basic") },
     { id: "instructions", label: t("instructions") },
     { id: "sandboxes", label: t("sandboxes") },
     { id: "advanced", label: t("advanced") },
-    ...(isHermesRuntime
-      ? [
-          { id: "profiles" as const, label: t("hermesProfilesSettingsTab") },
-          { id: "hermes" as const, label: t("hermesSettingsTab") },
-          { id: "terminal" as const, label: t("terminalSettingsTab") },
-        ]
-      : []),
     { id: "builtInTools", label: t("builtInTools") },
     { id: "mcp", label: t("mcp") },
     { id: "skills", label: t("skills") },
-    { id: "toolkits", label: t("toolkits") },
     { id: "piPackages", label: t("piPackages") },
     { id: "subAgents", label: t("subAgents") },
     { id: "a2a", label: t("a2a.title") },
-    { id: "channels", label: t("channelSettingsTab") },
-    ...(supportsApiSettings
-      ? [{ id: "api" as const, label: t("agentApiSettingsTab") }]
+    ...(supportsChannelSettings
+      ? [{ id: "channels" as const, label: t("channelSettingsTab") }]
       : []),
   ];
 
@@ -260,10 +195,7 @@ export function AgentSettings({
           </ModalSidebar>
           <div
             className={cx(
-              "min-h-0 min-w-0 flex-1",
-              settingsTab === "hermes" || settingsTab === "terminal"
-                ? "overflow-hidden"
-                : "overflow-y-auto overscroll-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+              "min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
             )}
           >
             {isAgentSettingsSection(settingsTab) ? (
@@ -276,22 +208,18 @@ export function AgentSettings({
                 systemPrompt={settings.systemPrompt}
                 disabledBuiltinTools={settings.disabledBuiltinTools}
                 providerId={settings.providerId}
-                providerIds={settings.providerIds}
                 model={settings.model}
                 maxSteps={settings.maxSteps}
                 providers={settings.providers}
                 deployments={settings.deployments}
                 skills={settings.skills}
-                toolkits={settings.toolkits}
                 piPackages={settings.piPackages}
                 defaultSandboxId={settings.defaultSandboxId}
-                runtimeSandboxId={settings.runtimeSandboxId}
-                runtimeEnvironment={settings.runtimeEnvironment}
                 sandboxes={settings.sandboxes}
                 subAgents={settings.subAgents}
-                hermesImages={settings.hermesImages}
                 runtimeKind={settings.runtimeKind}
-                runtime={settings.runtime}
+                publishedRevision={settings.publishedRevision}
+                canManageCredentials={settings.canManageCredentials}
                 activeSection={settingsTab}
                 onSectionChange={setSettingsTab}
                 showNavigation={false}
@@ -302,11 +230,7 @@ export function AgentSettings({
                 <AgentMessagingPanel
                   slug={slug}
                   agentId={agentId}
-                  sandboxId={
-                    settings.runtime?.sandboxId ??
-                    settings.defaultSandboxId ??
-                    undefined
-                  }
+                  sandboxId={settings.defaultSandboxId ?? undefined}
                   connections={channelSettings.connections}
                   ready={ready}
                 />
@@ -318,28 +242,6 @@ export function AgentSettings({
                 agentId={agentId}
                 runtimeKind={settings.runtimeKind}
                 initialTaskId={initialA2ATaskId}
-              />
-            ) : settingsTab === "api" && isHermesRuntime && apiSettings ? (
-              <AgentApiPanel
-                key={`${apiSettings.endpoint?.id ?? "draft"}:${apiSettings.endpoint?.revision ?? 0}`}
-                workspaceSlug={slug}
-                agentId={agentId}
-                agentName={agentName}
-                origin={apiSettings.origin}
-                canManage={apiSettings.canManage}
-                endpoint={apiSettings.endpoint}
-                deployments={settings.deployments}
-                skills={settings.skills}
-              />
-            ) : settingsTab === "profiles" && isHermesRuntime ? (
-              <HermesProfilesPanel slug={slug} agentId={agentId} />
-            ) : isHermesRuntime && settings.runtime ? (
-              <HermesRuntimePanel
-                view={settingsTab === "hermes" ? "web" : "terminal"}
-                agentId={agentId}
-                deploymentId={settings.runtime.deploymentId}
-                dashboardUrl={settings.runtime.dashboardUrl}
-                iframeRef={hermesIframeRef}
               />
             ) : null}
           </div>

@@ -1,6 +1,5 @@
 # 发布
 
-> **English**: [RELEASES.md](./RELEASES.md)
 
 ToolPlane 用 `release-please` 自动计算语义化版本，但发布准备由手动触发。实际流程以 [`release-please.yml`](../.github/workflows/release-please.yml) 为准。
 

@@ -1,7 +1,10 @@
 import { withRequestLogging } from "@/lib/observability/http";
 import { z } from "zod";
 import { resolveRequestUser } from "@/lib/auth/request-user";
-import { getChatThreadForExecution } from "@/lib/chat/service";
+import {
+  ChatServiceError,
+  getChatThreadForExecution,
+} from "@/lib/chat/service";
 import {
   getMcpPromptSources,
   McpPromptRequestError,
@@ -26,7 +29,13 @@ const ResolveSchema = z
 async function requestThread(req: Request, threadId: string) {
   const user = await resolveRequestUser(req);
   if (!user) return null;
-  return getChatThreadForExecution(user.id, threadId);
+  try {
+    return await getChatThreadForExecution(user.id, threadId);
+  } catch (error) {
+    if (error instanceof ChatServiceError)
+      return Response.json({ error: error.message }, { status: error.status });
+    throw error;
+  }
 }
 
 export const GET = withRequestLogging(
@@ -37,6 +46,7 @@ export const GET = withRequestLogging(
   ) {
     const { threadId } = await params;
     const thread = await requestThread(req, threadId);
+    if (thread instanceof Response) return thread;
     if (!thread)
       return Response.json(
         { error: "Chat thread not found." },
@@ -102,6 +112,7 @@ export const POST = withRequestLogging(
   ) {
     const { threadId } = await params;
     const thread = await requestThread(req, threadId);
+    if (thread instanceof Response) return thread;
     if (!thread)
       return Response.json(
         { error: "Chat thread not found." },

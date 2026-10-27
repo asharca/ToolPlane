@@ -7,12 +7,11 @@ import type {
 } from "@earendil-works/pi-ai";
 import { z } from "zod";
 import type { AgentConfig } from "@/lib/agents/mutations";
-import { systemLog } from "@/lib/observability/system";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { getWorkspaceForUser } from "@/lib/workspace/queries";
-import { getProvider, ORDINARY_AGENT_FILTER } from "@/lib/agents/queries";
+import { getProvider } from "@/lib/agents/queries";
 import { generateConsoleConversationTitle } from "@/lib/agents/conversation-naming";
 import { buildModel } from "@/lib/agents/model";
 import { providerPreset } from "@/lib/agents/provider-catalog";
@@ -21,14 +20,11 @@ import {
   withAgentMaintenanceLease,
 } from "@/lib/agents/agent-execution-gate";
 import {
-  hermesAgentsUsingProvider,
   refreshProviderModels,
   revalidateProviderViews,
-  syncHermesAgents,
 } from "@/lib/agents/provider-model-refresh";
 import {
   cloneAgent,
-  cloneHermesVolumeData,
   createConfiguredAgent,
   AgentConfigurationError,
   updateAgent,
@@ -42,10 +38,8 @@ import {
   deleteProviderModel,
   ProviderModelError,
   createConversation,
-  setHermesConversationSelection,
   renameConsoleConversation,
   deleteConsoleConversation,
-  setHermesRuntimeEnv,
 } from "@/lib/agents/mutations";
 import {
   MODEL_CAPABILITIES,
@@ -65,7 +59,6 @@ import {
   updateAgentChannelConnectionCredentials,
 } from "@/lib/agents/channel-connections";
 import {
-  applyAgentChannelPairing,
   checkAgentChannelPairing,
   requestAgentChannelPairing,
 } from "@/lib/agents/channel-pairing";
@@ -73,43 +66,80 @@ import {
   getMessagingPlatform,
   hasBuiltInPairingProvider,
 } from "@/lib/agents/platforms";
-import {
-  HermesProfileError,
-  listHermesProfiles,
-  normalizeHermesProfile,
-  setHermesProfileDefaultModel,
-} from "@/lib/agents/hermes/profiles";
-import { prepareHermesConversationSelection } from "@/lib/agents/hermes/conversation-selection";
-import {
-  copyHermesRuntimeVolume,
-  ensureHermesRuntimeReady,
-  runHermesRuntimeMaintenance,
-  stopHermesRuntime,
-  syncHermesRuntime,
-  upgradeHermesRuntime,
-} from "@/lib/agents/hermes/runtime";
-import { parseSandboxEnvText, sandboxEnvToText } from "@/lib/sandboxes/env";
-import { updateSandboxEnvAction } from "@/lib/sandboxes/actions";
+import { stopSandboxAction } from "@/lib/sandboxes/actions";
 import {
   AgentMarketError,
   materializeAgentRelease,
-  publishAgentRelease,
   unpublishAgentListing,
   withdrawPendingAgentRelease,
 } from "@/lib/agents/market";
 import { safeRelativePath } from "@/lib/auth/safe-redirect";
-import { isAgentEndpointRuntimeSandboxConfig } from "@/lib/agents/public-api/tool-policy";
 import { db } from "@/lib/db";
 import { deleteManagedAgent } from "@/lib/agents/deletion";
-import { resolveSpawnSpec } from "@/lib/process/spawn-spec";
-import { startProcess } from "@/lib/process/supervisor";
+import { AgentEnvironmentSnapshotSchema } from "./revision-types";
 import {
-  getPiRuntimeVersion,
-  updatePiRuntimeVersion,
-  validatePiVersion,
-} from "./sandbox-runtime";
-import type { PiRuntimeVersion } from "./sandbox-runtime";
-import { SandboxExecutionBusyError } from "./sandbox-execution-gate";
+  captureAgentRevisionConfig,
+  publishAgentRevision,
+  AgentRevisionError,
+} from "./revisions";
+import {
+  prepareAgentResourceReview,
+  applyAgentResourceReview,
+} from "./resource-apply";
+import type { AgentResourceReview } from "./resource-apply";
+
+const resourceReviewPublicErrors: Record<string, true> = {
+  PI_CAPABILITY_CONFLICT: true,
+  PI_EXTENSION_LOAD_FAILED: true,
+  PI_CAPABILITY_PREFLIGHT_FAILED: true,
+  PI_CAPABILITY_PREFLIGHT_TIMEOUT: true,
+  MCP_CONNECTION_NOT_AUTHORIZED: true,
+  AGENT_EXECUTION_RETIRED: true,
+  AGENT_REVISION_CONFLICT: true,
+  MCP_INSPECTION_SANDBOX_REQUIRED: true,
+  MCP_CONNECTION_NOT_FOUND: true,
+  MCP_DEFINITION_CHANGED: true,
+  MCP_RUNTIME_FILES_CHANGED: true,
+  MCP_CONNECTION_RESTART_REQUIRED: true,
+  MCP_CATALOG_INVALID: true,
+  MCP_INSPECTION_CLEANUP_FAILED: true,
+  MCP_CREDENTIAL_REQUIRED: true,
+  MCP_CREDENTIAL_INVALID: true,
+  MCP_CREDENTIAL_SCOPE_INVALID: true,
+  MCP_CREDENTIAL_MIGRATION_REQUIRED: true,
+};
+
+function resourceReviewError(error: unknown) {
+  if (error instanceof AgentExecutionBusyError) return "resource_binding_busy";
+  if (
+    error instanceof AgentRevisionError &&
+    error.code === "AGENT_REVISION_UNRESOLVED"
+  )
+    return "revisionPreparationRequired";
+  if (
+    error instanceof AgentRevisionError ||
+    error instanceof AgentConfigurationError
+  )
+    return error.message;
+  if (
+    error &&
+    typeof error === "object" &&
+    "code" in error &&
+    typeof error.code === "string" &&
+    (/^(?:AGENT_|PI_|MCP_)[A-Z0-9_]+$/.test(error.code) ||
+      error.code === "resourceChanged" ||
+      error.code === "reviewRequired" ||
+      error.code === "reviewExpired" ||
+      error.code === "revisionPreparationRequired")
+  )
+    return error.code;
+  if (
+    error instanceof Error &&
+    resourceReviewPublicErrors[error.message] === true
+  )
+    return error.message;
+  return "resource_binding_unavailable";
+}
 
 async function authorizedWorkspace(slug: string, ownerOnly = false) {
   const user = await getCurrentUser();
@@ -127,14 +157,9 @@ async function isManageableAgent(
     where: { id: agentId, workspaceId },
     select: {
       publicRuntimeAllocation: { select: { id: true } },
-      runtime: { select: { sandbox: { select: { config: true } } } },
     },
   });
-  return Boolean(
-    agent &&
-      !agent.publicRuntimeAllocation &&
-      !isAgentEndpointRuntimeSandboxConfig(agent.runtime?.sandbox.config),
-  );
+  return Boolean(agent && !agent.publicRuntimeAllocation);
 }
 
 export type ActionState = {
@@ -190,8 +215,7 @@ function piPackagesFromForm(formData: FormData): AgentConfig["piPackages"] {
 }
 
 function cloneOptionsFromFormData(formData: FormData) {
-  // Existing integrations can keep posting the old minimal form. Only forms
-  // that opt into the scoped-clone UI override the safe historical defaults.
+  // Copies never inherit authority. Historical conversations are opt-in only.
   if (formData.get("cloneOptions") !== "1") return undefined;
   const checked = (name: string) => formData.get(name) === "on";
   return {
@@ -201,78 +225,7 @@ function cloneOptionsFromFormData(formData: FormData) {
     copySandboxes: checked("copySandboxes"),
     copySubAgents: checked("copySubAgents"),
     copyConversations: checked("copyConversations"),
-    copyHermesEnvironment: checked("copyHermesEnvironment"),
-    copyHermesVolume: checked("copyHermesVolume"),
   };
-}
-
-async function startCreatedAgentRuntime(workspaceId: string, agentId: string) {
-  let deploymentId: string | null = null;
-  try {
-    const agent = await db.agent.findFirst({
-      where: { id: agentId, workspaceId },
-      select: {
-        runtimeKind: true,
-        sandboxes: {
-          where: {
-            isDefault: true,
-            sandbox: { workspaceId, deployment: { workspaceId } },
-          },
-          take: 1,
-          select: {
-            sandbox: {
-              select: {
-                deployment: {
-                  select: {
-                    id: true,
-                    serverId: true,
-                    name: true,
-                    source: true,
-                    sourceRef: true,
-                    installCfg: true,
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    });
-    if (!agent) throw new Error("The created Agent could not be loaded.");
-    if (agent.runtimeKind === "hermes") {
-      const result = await syncHermesRuntime(workspaceId, agentId);
-      if (result.error) throw new Error(result.error);
-      return;
-    }
-    const deployment = agent.sandboxes[0]?.sandbox.deployment;
-    if (!deployment)
-      throw new Error("The Agent runtime sandbox was not created.");
-    deploymentId = deployment.id;
-    await startProcess(deployment.id, resolveSpawnSpec(deployment), {
-      awaitReady: false,
-      workspaceId,
-    });
-  } catch (error) {
-    systemLog(
-      "error",
-      `Failed to start runtime sandbox for Agent ${agentId}.`,
-      error,
-    );
-    if (deploymentId) {
-      await db.deployment
-        .updateMany({
-          where: { id: deploymentId, workspaceId },
-          data: { status: "error" },
-        })
-        .catch((statusError) => {
-          systemLog(
-            "error",
-            `Failed to record runtime startup error for Agent ${agentId}.`,
-            statusError,
-          );
-        });
-    }
-  }
 }
 
 export async function createProviderAction(
@@ -337,7 +290,6 @@ export async function updateProviderAction(
   if (!ctx) return { error: "Not authorized." };
   const existing = await getProvider(ctx.ws.id, providerId);
   if (!existing) return { error: "Provider not found." };
-  const hermesAgents = await hermesAgentsUsingProvider(ctx.ws.id, providerId);
 
   try {
     await updateProvider(
@@ -370,8 +322,6 @@ export async function updateProviderAction(
     if (refreshError)
       warning = `Provider updated, but models were not refreshed: ${refreshError}`;
   }
-  const syncWarning = await syncHermesAgents(ctx.ws.id, hermesAgents);
-  if (syncWarning) warning = [warning, syncWarning].filter(Boolean).join(" ");
   revalidateProviderViews(slug);
   return { ...(warning ? { warning } : {}), savedAt: Date.now() };
 }
@@ -381,10 +331,8 @@ export async function deleteProviderAction(formData: FormData) {
   const providerId = String(formData.get("providerId") ?? "");
   const ctx = await authorizedWorkspace(slug, true);
   if (!ctx) return;
-  const hermesAgents = await deleteProvider(ctx.ws.id, providerId, ctx.user.id);
-  const warning = await syncHermesAgents(ctx.ws.id, hermesAgents);
+  await deleteProvider(ctx.ws.id, providerId, ctx.user.id);
   revalidateProviderViews(slug);
-  if (warning) throw new Error(warning);
 }
 
 function optionalPositiveInteger(
@@ -557,11 +505,6 @@ export async function addProviderModelAction(
   } catch (error) {
     return providerModelError(error);
   }
-  const syncError = await syncHermesAgents(
-    ctx.ws.id,
-    await hermesAgentsUsingProvider(ctx.ws.id, providerId),
-  );
-  if (syncError) return { warning: syncError, savedAt: Date.now() };
   revalidateProviderViews(slug);
   return { savedAt: Date.now() };
 }
@@ -597,14 +540,11 @@ export async function deleteProviderModelAction(
   const modelId = String(formData.get("modelId") ?? "").trim();
   const ctx = await authorizedWorkspace(slug, true);
   if (!ctx) return { error: "Not authorized." };
-  const hermesAgents = await hermesAgentsUsingProvider(ctx.ws.id, providerId);
   try {
     await deleteProviderModel(ctx.ws.id, providerId, modelId);
   } catch (error) {
     return providerModelError(error);
   }
-  const syncError = await syncHermesAgents(ctx.ws.id, hermesAgents);
-  if (syncError) return { warning: syncError, savedAt: Date.now() };
   revalidateProviderViews(slug);
   return { savedAt: Date.now() };
 }
@@ -702,11 +642,10 @@ export async function createAgentAction(formData: FormData) {
   const ctx = await authorizedWorkspace(slug);
   if (!ctx) return;
   const rawRuntime = formData.get("runtime");
-  if (rawRuntime !== "pi" && rawRuntime !== "pi-sdk")
-    throw new Error("Only Pi runtimes are available for new agents.");
-  const runtime = rawRuntime as "pi" | "pi-sdk";
-  const providerIds = formData.getAll("providerId").map(String).filter(Boolean);
-  const providerId = providerIds[0] ?? null;
+  if (rawRuntime && rawRuntime !== "pi-sdk")
+    throw new Error("Only native Pi Agents are available for creation.");
+  const runtime = "pi-sdk";
+  const providerId = String(formData.get("providerId") ?? "").trim() || null;
   const model = String(formData.get("model") ?? "") || null;
   const provider = providerId ? await getProvider(ctx.ws.id, providerId) : null;
   if (!provider || !model || !provider.models.includes(model)) {
@@ -725,7 +664,6 @@ export async function createAgentAction(formData: FormData) {
           .trim()
           .slice(0, 100_000) || null,
       providerId,
-      providerIds,
       model,
       disabledBuiltinTools: formData.getAll("disabledBuiltinTool").map(String),
       maxSteps: agentMaxSteps(formData),
@@ -735,14 +673,11 @@ export async function createAgentAction(formData: FormData) {
       deploymentIds: formData.getAll("deploymentId").map(String),
       installedSkillIds: formData.getAll("installedSkillId").map(String),
       toolkitIds: formData.getAll("toolkitId").map(String),
-      sandboxIds: formData.getAll("sandboxId").map(String),
     },
     {
       runtime,
-      hermesImage: String(formData.get("hermesImage") ?? ""),
     },
   );
-  await startCreatedAgentRuntime(ctx.ws.id, agent.id);
   revalidatePath(`/app/${slug}/agents`);
   revalidatePath(`/app/${slug}/work`);
   redirect(
@@ -811,23 +746,6 @@ export async function cloneAgentAction(formData: FormData) {
   );
   if (!cloned) return;
   const targetPath = `/app/${slug}/agents/${cloned.id}`;
-  if (cloned.runtimeKind === "hermes") {
-    if (cloneOptions?.copyHermesVolume) {
-      const copied = await copyHermesRuntimeVolume(
-        ctx.ws.id,
-        sourceAgentId,
-        cloned.id,
-        () => cloneHermesVolumeData(ctx.ws.id, sourceAgentId, cloned.id),
-      );
-      if (copied.status === "error") {
-        revalidatePath(`/app/${slug}/agents`);
-        revalidatePath(`/app/${slug}/work`);
-        revalidatePath(targetPath);
-        redirect(`${targetPath}?settings=agent`);
-      }
-    }
-  }
-  await startCreatedAgentRuntime(ctx.ws.id, cloned.id);
   revalidatePath(`/app/${slug}/agents`);
   revalidatePath(`/app/${slug}/work`);
   revalidatePath(targetPath);
@@ -836,74 +754,8 @@ export async function cloneAgentAction(formData: FormData) {
   );
 }
 
-function marketTags(value: FormDataEntryValue | null): string[] {
-  if (typeof value !== "string") return [];
-  return [
-    ...new Set(
-      value
-        .split(",")
-        .map((tag) => tag.trim().slice(0, 32))
-        .filter(Boolean),
-    ),
-  ].slice(0, 6);
-}
-
 function marketErrorCode(error: unknown) {
   return error instanceof AgentMarketError ? error.code : "install_failed";
-}
-
-export async function publishAgentReleaseAction(formData: FormData) {
-  const slug = String(formData.get("workspace") ?? "");
-  const agentId = String(formData.get("agentId") ?? "");
-  const ctx = await authorizedWorkspace(slug);
-  if (!ctx || !agentId) return;
-  if (!(await isManageableAgent(ctx.ws.id, agentId))) return;
-
-  const publishPath = `/app/${slug}/agents/${agentId}/publish`;
-  if (ctx.ws.ownerId !== ctx.user.id) {
-    redirect(`${publishPath}?error=owner_only`);
-  }
-  if (formData.get("confirmPublicContents") !== "yes") {
-    redirect(`${publishPath}?error=confirm_required`);
-  }
-
-  const name = String(formData.get("name") ?? "")
-    .trim()
-    .slice(0, 80);
-  const summary = String(formData.get("summary") ?? "")
-    .trim()
-    .slice(0, 360);
-  if (!name || !summary) {
-    redirect(`${publishPath}?error=missing_fields`);
-  }
-
-  let errorCode: string | null = null;
-  try {
-    await publishAgentRelease({
-      workspaceId: ctx.ws.id,
-      agentId,
-      publishedById: ctx.user.id,
-      listing: {
-        slug: String(formData.get("listingSlug") ?? "").trim() || undefined,
-        name,
-        summary,
-        iconUrl:
-          String(formData.get("iconUrl") ?? "")
-            .trim()
-            .slice(0, 2000) || null,
-        tags: marketTags(formData.get("tags")),
-        categoryIds: formData.getAll("categoryIds").map(String).filter(Boolean),
-      },
-    });
-  } catch (error) {
-    errorCode = marketErrorCode(error);
-  }
-  if (errorCode)
-    redirect(`${publishPath}?error=${encodeURIComponent(errorCode)}`);
-
-  revalidatePath(`/app/${slug}/market/agents`);
-  revalidatePath(publishPath);
-  redirect(`${publishPath}?submitted=1`);
 }
 
 export async function unpublishAgentListingAction(formData: FormData) {
@@ -969,7 +821,6 @@ export async function installAgentFromMarketAction(formData: FormData) {
           .slice(0, 80) || undefined,
     });
     clonedAgentId = result.agent.id;
-    await startCreatedAgentRuntime(ctx.ws.id, clonedAgentId);
   } catch (error) {
     errorCode = marketErrorCode(error);
   }
@@ -988,6 +839,104 @@ export async function installAgentFromMarketAction(formData: FormData) {
   );
 }
 
+export type ResourceEnableState = Partial<AgentResourceReview> & {
+  error?: string;
+  enabled?: boolean;
+  bound?: boolean;
+  revisionId?: string;
+};
+
+export async function previewAgentResourceAction(
+  _previous: ResourceEnableState,
+  formData: FormData,
+): Promise<ResourceEnableState> {
+  const slug = String(formData.get("workspace") ?? "");
+  const agentId = String(formData.get("agentId") ?? "");
+  const resourceId = String(formData.get("resourceId") ?? "");
+  const resourceKind = formData.get("resourceKind");
+  const ctx = await authorizedWorkspace(slug);
+  if (
+    !ctx ||
+    !agentId ||
+    !resourceId ||
+    (resourceKind !== "skill" && resourceKind !== "mcp") ||
+    !(await isManageableAgent(ctx.ws.id, agentId))
+  )
+    return { error: "resource_binding_unavailable" };
+  try {
+    return await prepareAgentResourceReview({
+      workspaceId: ctx.ws.id,
+      userId: ctx.user.id,
+      agentId,
+      resourceId,
+      resourceKind,
+    });
+  } catch (error) {
+    return { error: resourceReviewError(error) };
+  }
+}
+
+export async function enableAgentResourceAction(
+  _previous: ResourceEnableState,
+  formData: FormData,
+): Promise<ResourceEnableState> {
+  const slug = String(formData.get("workspace") ?? "");
+  const agentId = String(formData.get("agentId") ?? "");
+  const resourceId = String(formData.get("resourceId") ?? "");
+  const resourceKind = formData.get("resourceKind");
+  const ctx = await authorizedWorkspace(slug);
+  if (
+    !ctx ||
+    !agentId ||
+    !resourceId ||
+    (resourceKind !== "skill" && resourceKind !== "mcp") ||
+    !(await isManageableAgent(ctx.ws.id, agentId))
+  )
+    return { error: "resource_binding_unavailable" };
+  if (formData.get("confirm") !== "yes")
+    return { error: "resource_binding_consent" };
+  const expectedRevisionId = String(formData.get("expectedRevisionId") ?? "");
+  const reviewReceipt = String(formData.get("reviewReceipt") ?? "");
+  if (!expectedRevisionId || !reviewReceipt) return { error: "reviewRequired" };
+  try {
+    let allowedToolNames: string[] | undefined;
+    if (resourceKind === "mcp") {
+      const selection = formData.get("allowedToolNames");
+      if (typeof selection !== "string") return { error: "reviewRequired" };
+      const parsed = z
+        .array(z.string().min(1).max(240))
+        .max(1_000)
+        .safeParse(JSON.parse(selection));
+      if (!parsed.success || new Set(parsed.data).size !== parsed.data.length)
+        return { error: "reviewRequired" };
+      allowedToolNames = parsed.data;
+    }
+    const revision = await applyAgentResourceReview({
+      workspaceId: ctx.ws.id,
+      userId: ctx.user.id,
+      agentId,
+      resourceId,
+      resourceKind,
+      expectedRevisionId,
+      reviewReceipt,
+      ...(allowedToolNames === undefined ? {} : { allowedToolNames }),
+    });
+    revalidatePath(`/app/${slug}/agents/${agentId}`);
+    revalidatePath(
+      `/app/${slug}/${resourceKind === "skill" ? "skills" : "mcp"}/${resourceId}`,
+    );
+    revalidatePath(`/app/${slug}/work`);
+    return { bound: true, enabled: true, agentId, revisionId: revision.id };
+  } catch (error) {
+    return {
+      error:
+        error instanceof SyntaxError
+          ? "reviewRequired"
+          : resourceReviewError(error),
+    };
+  }
+}
+
 export async function updateAgentAction(
   _prev: ActionState,
   formData: FormData,
@@ -999,8 +948,7 @@ export async function updateAgentAction(
   if (!(await isManageableAgent(ctx.ws.id, agentId)))
     return { error: "Agent not found." };
 
-  const providerIds = formData.getAll("providerId").map(String).filter(Boolean);
-  const providerId = providerIds[0] ?? null;
+  const providerId = String(formData.get("providerId") ?? "").trim() || null;
   const model = String(formData.get("model") ?? "") || null;
   const maxSteps = agentMaxSteps(formData);
 
@@ -1017,7 +965,6 @@ export async function updateAgentAction(
             .trim()
             .slice(0, 100_000) || null,
         providerId,
-        providerIds,
         model,
         disabledBuiltinTools: formData
           .getAll("disabledBuiltinTool")
@@ -1054,15 +1001,8 @@ export async function updateAgentAction(
     }
     throw error;
   }
-  const runtimeResult = await syncHermesRuntime(ctx.ws.id, agentId);
   revalidatePath(`/app/${slug}/agents/${agentId}`);
   revalidatePath(`/app/${slug}/work`);
-  if (runtimeResult.error) {
-    return {
-      warning: `Saved, but Hermes sync failed: ${runtimeResult.error}`,
-      savedAt: Date.now(),
-    };
-  }
   return { savedAt: Date.now() };
 }
 
@@ -1077,12 +1017,11 @@ export async function updateAgentModelAction(
   if (!(await isManageableAgent(ctx.ws.id, agentId)))
     return { error: "Agent not found." };
 
-  let runtimeKind: string | null | undefined;
   try {
-    runtimeKind = await updateAgentModelSelection(
+    await updateAgentModelSelection(
       ctx.ws.id,
       agentId,
-      formData.getAll("providerId").map(String),
+      String(formData.get("providerId") ?? "").trim() || null,
       String(formData.get("model") ?? "").trim() || null,
     );
   } catch (error) {
@@ -1090,432 +1029,60 @@ export async function updateAgentModelAction(
       return { error: error.message };
     throw error;
   }
-  const runtimeResult =
-    runtimeKind === "hermes"
-      ? await syncHermesRuntime(ctx.ws.id, agentId)
-      : null;
   revalidatePath(`/app/${slug}/agents/${agentId}`);
   revalidatePath(`/app/${slug}/work`);
-  revalidatePath(`/app/${slug}/work`);
-  if (runtimeResult?.error) {
-    return {
-      warning: `Saved, but Hermes sync failed: ${runtimeResult.error}`,
-      savedAt: Date.now(),
-    };
-  }
   return { savedAt: Date.now() };
 }
 
-async function manageableHermesAgent(workspaceId: string, agentId: string) {
-  if (!(await isManageableAgent(workspaceId, agentId))) return null;
-  return db.agent.findFirst({
-    where: { id: agentId, workspaceId, runtime: { is: { kind: "hermes" } } },
-    select: {
-      id: true,
-      workspaceId: true,
-      runtime: { select: { id: true, kind: true, sandboxId: true } },
-    },
-  });
-}
-
-export async function updateHermesConversationSelectionAction(
-  _prev: ActionState,
-  formData: FormData,
-): Promise<ActionState> {
+/** Preview the complete immutable configuration; never changes the default. */
+export async function prepareAgentRevisionAction(formData: FormData) {
   const slug = String(formData.get("workspace") ?? "");
   const agentId = String(formData.get("agentId") ?? "");
-  const conversationId =
-    String(formData.get("conversationId") ?? "").trim() || null;
-  const profile = normalizeHermesProfile(formData.get("profile"));
-  const useDefault = formData.get("useDefault") === "1";
-  const provider = useDefault
-    ? null
-    : String(formData.get("provider") ?? "").trim() || null;
-  const model = useDefault
-    ? null
-    : String(formData.get("model") ?? "").trim() || null;
-  if (!profile || (provider === null) !== (model === null)) {
-    return { error: "Choose a valid Hermes profile and model." };
-  }
   const ctx = await authorizedWorkspace(slug);
-  if (!ctx) return { error: "Not authorized." };
-  const agent = await manageableHermesAgent(ctx.ws.id, agentId);
-  if (!agent) return { error: "Hermes agent not found." };
-  const runtime = agent.runtime;
-  if (!runtime) return { error: "Hermes agent not found." };
-
-  try {
-    const selection = await prepareHermesConversationSelection(agent, {
-      profile,
-      provider,
-      model,
-    });
-    const update = await runHermesRuntimeMaintenance(
-      ctx.ws.id,
-      agent.id,
-      runtime.sandboxId,
-      { quiesce: false },
-      () =>
-        setHermesConversationSelection(
-          ctx.ws.id,
-          agent.id,
-          conversationId,
-          selection,
-        ),
-    );
-    if (update.status === "error") return { error: update.error };
-    const result = update.data;
-    if (!result)
-      return { error: "Conversation not found or cannot be changed." };
-    revalidatePath(`/app/${slug}/work`);
-    revalidatePath(`/app/${slug}/work`);
-    return { savedAt: Date.now(), ...result };
-  } catch (error) {
-    if (
-      error instanceof HermesProfileError ||
-      error instanceof AgentConfigurationError
-    ) {
-      return { error: error.message };
-    }
-    return { error: "Could not update the Hermes conversation model." };
-  }
-}
-
-export async function updateHermesProfileDefaultModelAction(
-  _prev: ActionState,
-  formData: FormData,
-): Promise<ActionState> {
-  const slug = String(formData.get("workspace") ?? "");
-  const agentId = String(formData.get("agentId") ?? "");
-  const profile = normalizeHermesProfile(formData.get("profile"));
-  const provider = String(formData.get("provider") ?? "").trim();
-  const model = String(formData.get("model") ?? "").trim();
-  if (!profile || !provider || !model)
-    return { error: "Choose a valid Hermes profile and model." };
-  const ctx = await authorizedWorkspace(slug);
-  if (!ctx) return { error: "Not authorized." };
-  const agent = await manageableHermesAgent(ctx.ws.id, agentId);
-  if (!agent) return { error: "Hermes agent not found." };
-
-  try {
-    const profiles = await listHermesProfiles(agent);
-    if (!profiles.some((item) => item.name === profile)) {
-      return { error: "The selected Hermes profile no longer exists." };
-    }
-    const { provider: projectedProvider } =
-      await prepareHermesConversationSelection(agent, {
-        profile,
-        provider,
-        model,
+  if (!ctx || !(await isManageableAgent(ctx.ws.id, agentId)))
+    throw new Error("Agent not found.");
+  const rawEnvironment = formData.get("environment");
+  const environment =
+    typeof rawEnvironment === "string" && rawEnvironment
+      ? AgentEnvironmentSnapshotSchema.parse(JSON.parse(rawEnvironment))
+      : undefined;
+  return db.$transaction(
+    async (tx) => {
+      const agent = await tx.agent.findFirstOrThrow({
+        where: { id: agentId, workspaceId: ctx.ws.id },
+        select: { currentRevisionVersion: true },
       });
-    if (!projectedProvider)
-      return { error: "Choose a valid Hermes profile and model." };
-    await setHermesProfileDefaultModel(
-      agent,
-      profile,
-      projectedProvider,
-      model,
-    );
-    revalidatePath(`/app/${slug}/agents/${agentId}`);
-    revalidatePath(`/app/${slug}/work`);
-    return { savedAt: Date.now() };
-  } catch (error) {
-    if (
-      error instanceof HermesProfileError ||
-      error instanceof AgentConfigurationError
-    ) {
-      return { error: error.message };
-    }
-    return { error: "Could not update the Hermes profile model." };
-  }
-}
-
-export async function syncAgentRuntimeAction(
-  _prev: ActionState,
-  formData: FormData,
-): Promise<ActionState> {
-  const slug = String(formData.get("workspace") ?? "");
-  const agentId = String(formData.get("agentId") ?? "");
-  const ctx = await authorizedWorkspace(slug);
-  if (!ctx) return { error: "Not authorized." };
-  if (!(await isManageableAgent(ctx.ws.id, agentId)))
-    return { error: "Agent not found." };
-  try {
-    const result = await syncHermesRuntime(ctx.ws.id, agentId, { force: true });
-    revalidatePath(`/app/${slug}/agents/${agentId}`);
-    if (result.error) return { error: result.error };
-    if (result.status === "provisioning") {
-      const ready = await ensureHermesRuntimeReady(ctx.ws.id, agentId);
-      if (ready.error) return { error: ready.error };
-    }
-    return { savedAt: Date.now() };
-  } catch {
-    return { error: "Could not sync the Hermes runtime." };
-  }
-}
-
-export async function upgradeHermesRuntimeAction(
-  _prev: ActionState,
-  formData: FormData,
-): Promise<ActionState> {
-  const slug = String(formData.get("workspace") ?? "");
-  const agentId = String(formData.get("agentId") ?? "");
-  const image = String(formData.get("hermesImage") ?? "").trim();
-  const ctx = await authorizedWorkspace(slug);
-  if (!ctx) return { error: "Not authorized." };
-  if (!(await isManageableAgent(ctx.ws.id, agentId)))
-    return { error: "Agent not found." };
-  if (!image) return { error: "Choose a Hermes image version." };
-
-  try {
-    const result = await upgradeHermesRuntime(ctx.ws.id, agentId, image);
-    revalidatePath(`/app/${slug}/agents`);
-    revalidatePath(`/app/${slug}/agents/${agentId}`);
-    if (result.error) return { error: result.error };
-    return { savedAt: Date.now() };
-  } catch {
-    return { error: "Could not upgrade the Hermes runtime." };
-  }
-}
-
-export type PiRuntimeAgentState = {
-  agentId: string;
-  name: string;
-  version?: string;
-  installed?: boolean;
-  status: "ready" | "updated" | "unchanged" | "error";
-  error?: string;
-};
-
-export type PiRuntimeManagementState = {
-  agents?: PiRuntimeAgentState[];
-  latestVersion?: string;
-  targetVersion?: string;
-  error?: string;
-  warning?: string;
-  finishedAt?: number;
-};
-
-async function latestPiVersion(): Promise<string> {
-  const response = await fetch(
-    "https://registry.npmjs.org/@earendil-works%2fpi-coding-agent/latest",
-    {
-      cache: "no-store",
-      signal: AbortSignal.timeout(15_000),
-      redirect: "error",
+      const current = await tx.agentRevision.findUnique({
+        where: {
+          agentId_version: { agentId, version: agent.currentRevisionVersion },
+        },
+        select: { id: true },
+      });
+      const config = await captureAgentRevisionConfig(tx, agentId, environment);
+      return { expectedRevisionId: current?.id ?? null, config };
     },
+    { timeout: 120_000 },
   );
-  if (!response.ok) throw new Error("Could not check the latest Pi release.");
-  const data = await response.json();
-  if (typeof data.version !== "string")
-    throw new Error("Invalid Pi release metadata.");
-  return validatePiVersion(data.version);
 }
 
-async function managePiRuntimes(
-  slug: string,
-  target?: string,
-  agentIds?: string[],
-): Promise<PiRuntimeManagementState> {
-  const ctx = await authorizedWorkspace(slug);
-  if (!ctx) return { error: "Not authorized." };
-  if (
-    target !== undefined &&
-    (!Array.isArray(agentIds) ||
-      !agentIds.length ||
-      agentIds.some((id) => typeof id !== "string" || !id.trim()))
-  ) {
-    return { error: "Select at least one Pi agent." };
-  }
-  if (target !== undefined && target !== "latest") {
-    try {
-      validatePiVersion(target);
-    } catch {
-      return { error: "Enter an exact Pi version, for example 0.80.3." };
-    }
-  }
-  // Authorize the collection on the server before applying the requested selection.
-  const agents = await db.agent.findMany({
-    where: {
-      workspaceId: ctx.ws.id,
-      runtimeKind: "pi",
-      ...ORDINARY_AGENT_FILTER,
-    },
-    select: { id: true, name: true },
-    orderBy: [{ name: "asc" }, { id: "asc" }],
-  });
-  const selectedIds = new Set(agentIds);
-  const targets =
-    target === undefined
-      ? agents
-      : agents.filter((agent) => selectedIds.has(agent.id));
-  if (target !== undefined && targets.length !== selectedIds.size) {
-    return {
-      error:
-        "One or more selected Pi agents are unavailable in this workspace. Refresh and select again.",
-    };
-  }
-  let latestVersion: string | undefined;
-  let warning: string | undefined;
-  if (target === undefined || target === "latest") {
-    try {
-      latestVersion = await latestPiVersion();
-    } catch {
-      const error =
-        "Could not check the latest Pi release. Retry or specify an exact version.";
-      if (target) return { error };
-      warning = error;
-    }
-  }
-  const version = target === "latest" ? latestVersion : target;
-  const results: PiRuntimeAgentState[] = [];
-  for (const agent of targets) {
-    let current: PiRuntimeVersion | undefined;
-    try {
-      if (!(await isManageableAgent(ctx.ws.id, agent.id)))
-        throw new Error("Agent unavailable.");
-      current = await getPiRuntimeVersion(ctx.ws.id, agent.id);
-      if (version && (!current.installed || current.version !== version)) {
-        const updated = await updatePiRuntimeVersion(
-          ctx.ws.id,
-          agent.id,
-          version,
-        );
-        results.push({
-          agentId: agent.id,
-          name: agent.name,
-          ...updated,
-          status: "updated",
-        });
-      } else {
-        results.push({
-          agentId: agent.id,
-          name: agent.name,
-          ...current,
-          status: version ? "unchanged" : "ready",
-        });
-      }
-    } catch (error) {
-      results.push({
-        agentId: agent.id,
-        name: agent.name,
-        ...current,
-        status: "error",
-        error:
-          error instanceof SandboxExecutionBusyError
-            ? error.message
-            : "Could not manage this Pi runtime. Check its sandbox, network and requested version, then check again before retrying.",
-      });
-    }
-  }
-  if (version) revalidatePath(`/app/${slug}/agents`);
-  return {
-    agents: results,
-    ...(latestVersion ? { latestVersion } : {}),
-    ...(warning ? { warning } : {}),
-    ...(version ? { targetVersion: version, finishedAt: Date.now() } : {}),
-  };
-}
-
-export async function checkPiRuntimesAction(
-  slug: string,
-): Promise<PiRuntimeManagementState> {
-  return managePiRuntimes(slug);
-}
-
-export async function updatePiRuntimesAction(
-  slug: string,
-  target: string,
-  agentIds: string[],
-): Promise<PiRuntimeManagementState> {
-  if (typeof target !== "string" || !target.trim())
-    return { error: "Enter an exact Pi version or choose latest." };
-  return managePiRuntimes(slug, target, agentIds);
-}
-
-export async function updateAgentRuntimeEnvAction(
-  _prev: ActionState,
-  formData: FormData,
-): Promise<ActionState> {
+/** Apply exactly the reviewed configuration using a compare-and-swap default. */
+export async function publishAgentRevisionAction(formData: FormData) {
   const slug = String(formData.get("workspace") ?? "");
   const agentId = String(formData.get("agentId") ?? "");
   const ctx = await authorizedWorkspace(slug);
-  if (!ctx) return { error: "Not authorized." };
-  if (!(await isManageableAgent(ctx.ws.id, agentId)))
-    return { error: "Agent not found." };
-
-  const agent = await db.agent.findFirst({
-    where: { id: agentId, workspaceId: ctx.ws.id },
-    select: {
-      runtimeKind: true,
-      runtime: { select: { sandboxId: true } },
-      sandboxes: {
-        where: { isDefault: true },
-        take: 1,
-        select: { sandboxId: true },
-      },
-    },
-  });
-  if (!agent) return { error: "Agent not found." };
-
-  let env: ReturnType<typeof parseSandboxEnvText>;
-  try {
-    env = parseSandboxEnvText(
-      formData.get("runtimeEnv") ?? formData.get("hermesEnv"),
-    );
-  } catch (error) {
-    return {
-      error:
-        error instanceof Error
-          ? error.message
-          : "Invalid environment variables.",
-    };
-  }
-
-  if (agent.runtimeKind !== "hermes") {
-    const sandboxId = agent.sandboxes[0]?.sandboxId;
-    if (!sandboxId) return { error: "Agent runtime sandbox not found." };
-    const sandboxForm = new FormData();
-    sandboxForm.set("workspace", slug);
-    sandboxForm.set("sandboxId", sandboxId);
-    sandboxForm.set("env", sandboxEnvToText(env));
-    try {
-      await updateSandboxEnvAction(sandboxForm);
-    } catch (error) {
-      return {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Could not save environment variables.",
-      };
-    }
-    revalidatePath(`/app/${slug}/agents/${agentId}`);
-    return { savedAt: Date.now() };
-  }
-
-  if (!(await setHermesRuntimeEnv(ctx.ws.id, agentId, env))) {
-    return { error: "Hermes runtime not found." };
-  }
-  const runtimeResult = await syncHermesRuntime(ctx.ws.id, agentId, {
-    force: true,
+  if (!ctx || !(await isManageableAgent(ctx.ws.id, agentId)))
+    throw new Error("Agent not found.");
+  if (!formData.has("expectedRevisionId"))
+    throw new Error("Prepare the Agent configuration before applying it.");
+  const revision = await publishAgentRevision(ctx.ws.id, agentId, {
+    expectedRevisionId:
+      String(formData.get("expectedRevisionId") ?? "") || null,
+    config: JSON.parse(String(formData.get("config") ?? "")),
   });
   revalidatePath(`/app/${slug}/agents/${agentId}`);
-  if (runtimeResult.error)
-    return { error: `Saved, but Hermes sync failed: ${runtimeResult.error}` };
-  if (runtimeResult.status === "provisioning") {
-    const ready = await ensureHermesRuntimeReady(ctx.ws.id, agentId);
-    if (ready.error)
-      return { error: `Saved, but Hermes sync failed: ${ready.error}` };
-  }
-  return { savedAt: Date.now() };
-}
-
-// Kept for existing callers; the shared action now handles every runtime.
-export async function updateHermesRuntimeEnvAction(
-  prev: ActionState,
-  formData: FormData,
-): Promise<ActionState> {
-  return updateAgentRuntimeEnvAction(prev, formData);
+  revalidatePath(`/app/${slug}/agents`);
+  revalidatePath(`/app/${slug}/work`);
+  return { revisionId: revision.id };
 }
 
 export async function stopAgentRuntimeAction(
@@ -1529,7 +1096,24 @@ export async function stopAgentRuntimeAction(
   if (!(await isManageableAgent(ctx.ws.id, agentId)))
     return { error: "Agent not found." };
   try {
-    await stopHermesRuntime(ctx.ws.id, agentId);
+    const sandboxes = await db.sandbox.findMany({
+      where: {
+        workspaceId: ctx.ws.id,
+        OR: [
+          { agentLinks: { some: { agentId } } },
+          { conversations: { some: { agentId } } },
+          { a2aContexts: { some: { agentId, targetKind: "local" } } },
+        ],
+      },
+      select: { id: true },
+    });
+    // Shared stop tears down persisted MCP bindings without deleting volumes.
+    for (const sandbox of sandboxes) {
+      const stop = new FormData();
+      stop.set("workspace", slug);
+      stop.set("sandboxId", sandbox.id);
+      await stopSandboxAction(stop);
+    }
     revalidatePath(`/app/${slug}/agents/${agentId}`);
     return { savedAt: Date.now() };
   } catch (error) {
@@ -1537,7 +1121,7 @@ export async function stopAgentRuntimeAction(
       error:
         error instanceof Error
           ? error.message
-          : "Could not stop the Hermes runtime.",
+          : "Could not stop the Agent runtime.",
     };
   }
 }
@@ -1697,17 +1281,6 @@ export async function checkAgentChannelPairingAction(formData: FormData) {
   const ctx = await authorizedWorkspace(slug, true);
   if (!ctx) return;
   await checkAgentChannelPairing(ctx.ws.id, connectionId);
-  revalidatePath(`/app/${slug}/agents/${agentId}`);
-}
-
-export async function applyAgentChannelPairingAction(formData: FormData) {
-  const slug = String(formData.get("workspace") ?? "");
-  const agentId = String(formData.get("agentId") ?? "");
-  const connectionId = String(formData.get("connectionId") ?? "");
-  const allowedUserIds = String(formData.get("allowedUserIds") ?? "");
-  const ctx = await authorizedWorkspace(slug, true);
-  if (!ctx) return;
-  await applyAgentChannelPairing(ctx.ws.id, connectionId, allowedUserIds);
   revalidatePath(`/app/${slug}/agents/${agentId}`);
 }
 

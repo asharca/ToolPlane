@@ -179,9 +179,10 @@ export function WorkComposer({
   useEffect(() => {
     inputRef.current = formRef.current?.querySelector("textarea") ?? null;
   }, []);
-  const endpoint = agentId
-    ? `/api/v1/agents/${encodeURIComponent(agentId)}/composer`
-    : "";
+  const endpoint =
+    agentId && (conversationId || workSessionId)
+      ? `/api/v1/agents/${encodeURIComponent(agentId)}/composer`
+      : "";
   const section = panel?.view !== "root" ? panel?.view : undefined;
   const query = panel?.query ?? "";
   const requestKey = section
@@ -206,7 +207,9 @@ export function WorkComposer({
           query,
           ...(sandboxId ? { sandboxId } : {}),
           ...(workSessionId ? { workSessionId } : {}),
-          ...(conversationId ? { excludeConversationId: conversationId } : {}),
+          ...(conversationId
+            ? { conversationId, excludeConversationId: conversationId }
+            : {}),
         });
         void fetch(`${endpoint}?${params}`, {
           signal: controller.signal,
@@ -338,6 +341,7 @@ export function WorkComposer({
           ...(item.deploymentId ? { deploymentId: item.deploymentId } : {}),
           ...(sandboxId ? { sandboxId } : {}),
           ...(workSessionId ? { workSessionId } : {}),
+          ...(conversationId ? { conversationId } : {}),
         }),
       });
       if (!response.ok) throw new Error(t("referenceFailed"));
@@ -376,15 +380,15 @@ export function WorkComposer({
       id: "mcp-prompts",
       label: agentsT("mcpPrompts"),
       icon: ScrollText,
-      disabled: !agentId,
+      disabled: !endpoint,
     },
     {
       id: "resources",
       label: t("resources"),
       icon: Database,
-      disabled: !agentId,
+      disabled: !endpoint,
     },
-    { id: "skills", label: t("skills"), icon: Sparkles, disabled: !agentId },
+    { id: "skills", label: t("skills"), icon: Sparkles, disabled: !endpoint },
   ];
   let pinnedIds: string[] = [];
   try {
@@ -965,9 +969,9 @@ export function WorkComposer({
           />
         </MorphPopover>
       </div>
-      {agentId && (
+      {agentId && (conversationId || workSessionId) && (
         <McpPromptPickerButton
-          apiPath={`/api/v1/agents/${encodeURIComponent(agentId)}/prompts`}
+          apiPath={`/api/v1/agents/${encodeURIComponent(agentId)}/prompts?${new URLSearchParams({ ...(conversationId ? { conversationId } : {}), ...(workSessionId ? { workSessionId } : {}) })}`}
           disabled={disabled}
           open={mcpOpen}
           onOpenChange={setMcpOpen}

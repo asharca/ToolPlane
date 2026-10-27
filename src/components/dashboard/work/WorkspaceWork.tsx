@@ -21,13 +21,11 @@ import { useTranslations } from "next-intl";
 import {
   Bot,
   Boxes,
-  ChevronDown,
   ChevronsDownUp,
   ChevronsUpDown,
   Circle,
   Clock3,
   Minimize2,
-  Cpu,
   FileText,
   FileOutput,
   Folder,
@@ -38,7 +36,6 @@ import {
   PanelLeft,
   Plus,
   Radio,
-  Settings2,
   TerminalSquare,
   UserRound,
 } from "lucide-react";
@@ -59,11 +56,9 @@ import {
   AnimatedSidebarInset,
   AnimatedSidebarRail,
 } from "@/components/motion/animated-sidebar";
-import { AgentModelDialog } from "@/components/dashboard/agents/AgentModelDialog";
 import { AgentConversation } from "@/components/dashboard/agents/AgentConversation";
-import type { HermesUIMessage } from "@/lib/agents/hermes/message-segments";
-import { ReasoningEffortControl } from "@/components/dashboard/agents/ReasoningEffortControl";
-import type { ModelProviderOption } from "@/components/dashboard/models/ModelPicker";
+import type { AgentUIMessage } from "@/lib/agents/message-segments";
+import { AgentPromptProvenance } from "@/components/dashboard/agents/AgentPromptProvenance";
 import { ConversationContextUsage } from "@/components/dashboard/ConversationComposer";
 import { WorkComposer } from "./WorkComposer";
 import type { ComposerReference } from "@/lib/work/composer-types";
@@ -88,10 +83,7 @@ import { ToolApproval } from "@/components/agents/tool-approval";
 import { SandboxConsole } from "@/components/dashboard/sandboxes/SandboxConsole";
 import { resolveContextUsage } from "@/lib/context-usage";
 import { deleteAgentAction, pinAgentAction } from "@/lib/agents/actions";
-import {
-  normalizeReasoningEffort,
-  type ReasoningEffort,
-} from "@/lib/agents/constants";
+import type { ReasoningEffort } from "@/lib/agents/constants";
 import {
   displayMessagingUserText,
   type ParsedMessagingSession,
@@ -137,8 +129,8 @@ type WorkAgent = {
   supportsWork: boolean;
   ready: boolean;
   runtimeKind: string | null;
+  currentRevisionVersion?: number;
   providerId?: string | null;
-  providerIds?: string[];
   providerLabel?: string;
   model?: string | null;
   contextWindow?: number | null;
@@ -204,13 +196,15 @@ type ConversationSummary = {
 };
 type ConversationDetail = ConversationSummary & {
   sandbox?: WorkItem["sandbox"];
-  legacyWorkspace?: boolean;
+  runtimeKind?: string;
+  modelName?: string | null;
+  contextWindow?: number | null;
+  agentRevisionId?: string | null;
+  legacyRevisionUnresolved?: boolean;
+  contextWindowEstimated?: boolean;
   readOnly: boolean;
   messages: WorkMessage[];
   reasoningEffort?: ReasoningEffort | null;
-  hermesProfile?: string | null;
-  hermesProvider?: string | null;
-  hermesModel?: string | null;
 };
 
 type WorkSidebarAgent = {
@@ -245,6 +239,12 @@ type WorkItem = {
   task: string | null;
   acceptanceCriteria: string | null;
   runtimeKind: string;
+  readOnly?: boolean;
+  agentRevisionId?: string | null;
+  legacyRevisionUnresolved?: boolean;
+  modelName?: string | null;
+  contextWindow?: number | null;
+  contextWindowEstimated?: boolean;
   status: string;
   startedAt?: string | null;
   completedAt?: string | null;
@@ -254,9 +254,6 @@ type WorkItem = {
   artifacts: string[];
   conversationId: string;
   reasoningEffort?: ReasoningEffort | null;
-  hermesProfile?: string | null;
-  hermesProvider?: string | null;
-  hermesModel?: string | null;
   workingDirectory?: string;
   sandbox: {
     id: string;
@@ -335,12 +332,10 @@ function agentSidebarIssueTone(
 }
 
 function runtimeLabel(kind: string | null | undefined): string {
-  if (kind === "pi-sdk") return "Pi SDK";
+  if (kind === "pi-sdk") return "Pi";
   if (kind === "claude-code") return "Claude Code";
   if (kind === "dsh") return "DeepSeek Harness";
-  if (kind === "hermes") return "Hermes";
-  if (kind === "hermes-rpc") return "Hermes RPC";
-  return "Pi";
+  return kind === "pi" ? "Pi" : "—";
 }
 
 function formatWorkDuration(durationMs: number | undefined): string | null {
@@ -754,6 +749,9 @@ function WorkTranscript({
         const messageBody = (
           <>
             {attachmentLinks}
+            {message.role === "user" ? (
+              <AgentPromptProvenance parts={message.parts} />
+            ) : null}
             {message.parts
               .filter((part) => part.reference)
               .map((part, index) =>
@@ -974,7 +972,6 @@ export function WorkspaceWork({
   workspaceId,
   agents,
   sessions,
-  providers = [],
   selectedWorkSessionId,
   selectedSession,
   requestedAgentId,
@@ -989,7 +986,6 @@ export function WorkspaceWork({
   workspaceId: string;
   agents: WorkAgent[];
   sessions: WorkItem[];
-  providers?: Array<ModelProviderOption & { format: string }>;
   selectedWorkSessionId: string | null;
   selectedSession?: WorkItem | null;
   requestedAgentId?: string;
@@ -1053,35 +1049,10 @@ export function WorkspaceWork({
     workAgents[0]?.id ??
     "";
   const [agentId, setAgentId] = useState(initialAgentId);
-  const reasoningScope = conversation?.id ?? selected?.id ?? `agent:${agentId}`;
-  const [reasoningSelection, setReasoningSelection] = useState<{
-    scope: string;
-    value: ReasoningEffort;
-  }>({
-    scope: initialSelected?.id ?? `agent:${initialAgentId}`,
-    value:
-      normalizeReasoningEffort(initialSelected?.reasoningEffort) ?? "default",
-  });
-  const reasoningEffort =
-    reasoningSelection.scope === reasoningScope
-      ? reasoningSelection.value
-      : (normalizeReasoningEffort(
-          conversation?.reasoningEffort ?? selected?.reasoningEffort,
-        ) ?? "default");
-  const setReasoningEffort = (value: ReasoningEffort) => {
-    setReasoningSelection({ scope: reasoningScope, value });
-  };
-  const [hermesDraftSelection, setHermesDraftSelection] = useState<{
-    agentId: string;
-    profile: string;
-    provider: string | null;
-    model: string | null;
-  } | null>(null);
   const [sandboxId, setSandboxId] = useState("");
   const [workingDirectory, setWorkingDirectory] = useState(
     initialSelected?.workingDirectory ?? ".",
   );
-  const [modelDialogOpen, setModelDialogOpen] = useState(false);
   const [deleteAgentTarget, setDeleteAgentTarget] = useState<WorkAgent | null>(
     null,
   );
@@ -1129,17 +1100,11 @@ export function WorkspaceWork({
     sandboxOptions.find((item) => item.id === activeSandboxId) ?? null;
   const controlAgent = selectedAgent ?? agent;
   const controlSandbox = conversation
-    ? conversation.legacyWorkspace
-      ? (selectedAgent?.sandboxes.find((sandbox) => sandbox.isDefault) ??
-        selectedAgent?.sandboxes[0] ??
-        null)
-      : (conversation.sandbox ?? null)
+    ? (conversation.sandbox ?? null)
     : selected
       ? selected.sandbox
-      : activeSandbox;
-  const conversationWorkspace =
-    Boolean(conversation && !conversation.legacyWorkspace) ||
-    Boolean(selected && selected.runtimeKind !== "hermes");
+      : null;
+  const conversationWorkspace = Boolean(conversation || selected);
   const workspacePending =
     controlSandbox &&
     ["copying", "provisioning"].includes(controlSandbox.status ?? "");
@@ -1149,63 +1114,42 @@ export function WorkspaceWork({
       : workspacePending
         ? t("conversationWorkspaceProvisioning")
         : t("noSandbox");
-  const controlHermesSelection =
-    controlAgent?.runtimeKind === "hermes"
-      ? conversation
-        ? {
-            profile: conversation.hermesProfile ?? "default",
-            provider: conversation.hermesProvider ?? null,
-            model: conversation.hermesModel ?? null,
-          }
-        : selected
-          ? {
-              profile: selected.hermesProfile ?? "default",
-              provider: selected.hermesProvider ?? null,
-              model: selected.hermesModel ?? null,
-            }
-          : hermesDraftSelection?.agentId === controlAgent.id
-            ? hermesDraftSelection
-            : {
-                agentId: controlAgent.id,
-                profile: "default",
-                provider: null,
-                model: null,
-              }
-      : null;
-  const controlWorkspaceRoot =
-    controlSandbox?.kind === "hermes" ? "/opt/data/workspace" : "/workspace";
+  const controlWorkspaceRoot = "/workspace";
   const composerScope = `${controlAgent?.id}:${controlSandbox?.id}:${selected?.id ?? conversation?.id ?? "new"}`;
   const references =
     referenceSelection.scope === composerScope ? referenceSelection.items : [];
-  const commandRuntimeKind =
-    selected?.runtimeKind ?? controlAgent?.runtimeKind ?? "";
-  const commands = sessionRuntimeCommands(
-    commandRuntimeKind,
-    selected?.messages ?? [],
+  const commandRuntimeKind = conversation
+    ? (conversation.runtimeKind ?? "")
+    : selected
+      ? selected.runtimeKind
+      : (controlAgent?.runtimeKind ?? "");
+  const sessionReadOnly = conversation
+    ? conversation.readOnly || conversation.runtimeKind !== "pi-sdk"
+    : selected
+      ? selected.readOnly !== false || selected.runtimeKind !== "pi-sdk"
+      : controlAgent?.runtimeKind !== "pi-sdk";
+  const unappliedDraft = Boolean(
+    !selected &&
+      !conversation &&
+      agent?.runtimeKind === "pi-sdk" &&
+      agent.currentRevisionVersion === 0,
   );
-  const conversationWorkspaceApiBase =
-    conversation && !conversation.legacyWorkspace
-      ? `/api/v1/agents/${conversation.agentId}/conversations/${conversation.id}/sandbox`
-      : undefined;
+  const commands = sessionReadOnly
+    ? []
+    : sessionRuntimeCommands(commandRuntimeKind, selected?.messages ?? []);
+  const conversationWorkspaceApiBase = conversation
+    ? `/api/v1/agents/${conversation.agentId}/conversations/${conversation.id}/sandbox`
+    : undefined;
   const workspaceRpcApiBase = selected
     ? `/api/v1/work-sessions/${selected.id}/sandbox/rpc`
     : conversationWorkspaceApiBase
       ? `${conversationWorkspaceApiBase}/rpc`
-      : controlSandbox
-        ? `/api/v1/mcp/${controlSandbox.deploymentId}/rpc`
-        : undefined;
+      : undefined;
   const workspaceTerminalApiBase = selected
     ? `/api/v1/work-sessions/${selected.id}/sandbox/terminal`
     : conversationWorkspaceApiBase
       ? `${conversationWorkspaceApiBase}/terminal`
-      : controlAgent?.runtimeKind === "hermes"
-        ? `/api/v1/agents/${controlAgent.id}/terminal`
-        : controlSandbox
-          ? `/api/v1/mcp/${controlSandbox.deploymentId}/terminal`
-          : undefined;
-  const controlModelLabel = controlHermesSelection
-    ? `${controlHermesSelection.profile} · ${controlHermesSelection.model ?? tAgents("profileDefault")}`
-    : controlAgent?.model || t("selectModel");
+      : undefined;
   const activeWorkingDirectory = conversation
     ? "."
     : (selected?.workingDirectory ?? workingDirectory);
@@ -1267,6 +1211,11 @@ export function WorkspaceWork({
     streamOutput.workSessionId === selectedWorkSessionId
       ? streamOutput.modelName
       : undefined;
+  const sessionContextWindow =
+    conversation?.contextWindow ?? selected?.contextWindow;
+  const sessionModelName = conversation?.modelName ?? selected?.modelName;
+  const sessionContextEstimated =
+    conversation?.contextWindowEstimated ?? selected?.contextWindowEstimated;
   const contextUsage = useMemo(
     () =>
       resolveContextUsage(
@@ -1276,16 +1225,16 @@ export function WorkspaceWork({
           parts: Array.isArray(message.parts) ? message.parts : [],
         })),
         {
-          maxTokens: controlAgent?.contextWindow,
-          modelName: controlAgent?.model,
+          maxTokens: sessionContextWindow,
+          modelName: sessionModelName,
           context: streamText,
-          estimated: controlAgent?.contextWindowEstimated,
+          estimated: sessionContextEstimated,
         },
       ),
     [
-      controlAgent?.contextWindow,
-      controlAgent?.contextWindowEstimated,
-      controlAgent?.model,
+      sessionContextWindow,
+      sessionContextEstimated,
+      sessionModelName,
       selected?.messages,
       conversation?.messages,
       streamText,
@@ -1654,15 +1603,6 @@ export function WorkspaceWork({
           ? { modelName: current.modelName }
           : {}),
       }));
-      if (
-        next.activities.some(
-          (activity) =>
-            activity.toolName === "Hermes approval" &&
-            activity.status === "running",
-        )
-      ) {
-        void refreshSelected();
-      }
     });
     source.addEventListener("done", () => void finish());
 
@@ -1693,8 +1633,6 @@ export function WorkspaceWork({
     setDraft("");
     setAttachments([]);
     setReferenceSelection({ scope: "", items: [] });
-    setReasoningSelection({ scope: `agent:${nextAgentId}`, value: "default" });
-    setHermesDraftSelection(null);
     setWorkingDirectory(".");
     setError(null);
     window.history.replaceState(
@@ -1751,7 +1689,13 @@ export function WorkspaceWork({
   }
 
   async function createWork() {
-    if (!agentId || !activeSandboxId || !draft.trim()) return;
+    if (
+      agent?.runtimeKind !== "pi-sdk" ||
+      !agentId ||
+      !activeSandboxId ||
+      !draft.trim()
+    )
+      return;
     setBusy("create");
     setError(null);
     let attachmentIds: string[] = [];
@@ -1767,18 +1711,6 @@ export function WorkspaceWork({
           ...(references.length ? { references } : {}),
           workingDirectory,
           attachmentIds,
-          ...(agent?.runtimeKind === "hermes"
-            ? {
-                reasoningEffort,
-                ...(hermesDraftSelection?.agentId === agent.id
-                  ? {
-                      hermesProfile: hermesDraftSelection.profile,
-                      hermesProvider: hermesDraftSelection.provider,
-                      hermesModel: hermesDraftSelection.model,
-                    }
-                  : {}),
-              }
-            : {}),
         }),
       });
       const body = (await response.json()) as {
@@ -1828,7 +1760,8 @@ export function WorkspaceWork({
 
   async function sendMessage(event?: FormEvent) {
     event?.preventDefault();
-    if (conversation || busy || running || composerPending) return;
+    if (sessionReadOnly || conversation || busy || running || composerPending)
+      return;
     const input = draft.trim();
     if (!input) return;
     const command = parseRuntimeCommand(input, commandRuntimeKind);
@@ -1904,7 +1837,6 @@ export function WorkspaceWork({
       await postAction("input", {
         input,
         ...(references.length ? { references } : {}),
-        ...(selected.runtimeKind === "hermes" ? { reasoningEffort } : {}),
         ...(attachmentIds.length ? { attachmentIds } : {}),
       })
     ) {
@@ -2002,17 +1934,12 @@ export function WorkspaceWork({
   }
 
   const running = Boolean(selected && ACTIVE_STATUSES.has(selected.status));
-  const draftHermesModelReady =
-    agent?.runtimeKind === "hermes" &&
-    hermesDraftSelection?.agentId === agent.id &&
-    Boolean(hermesDraftSelection.provider && hermesDraftSelection.model);
-  const canSend = selected
-    ? MESSAGEABLE_STATUSES.has(selected.status)
-    : Boolean(
-        (agent?.ready || draftHermesModelReady) &&
-          activeSandbox &&
-          (activeSandbox.running || agent?.runtimeKind === "hermes"),
-      );
+  const canSend =
+    !sessionReadOnly &&
+    !unappliedDraft &&
+    (selected
+      ? MESSAGEABLE_STATUSES.has(selected.status)
+      : Boolean(agent?.ready && agent.runtimeKind === "pi-sdk"));
   const localCommand = Boolean(parseRuntimeCommand(draft, commandRuntimeKind));
 
   function togglePanel(panel: WorkPanel) {
@@ -2025,74 +1952,6 @@ export function WorkspaceWork({
     }
     setMobilePanel(panel);
   }
-
-  const modelPicker = controlAgent ? (
-    <AgentModelDialog
-      key={`${controlAgent.id}:${controlAgent.model ?? ""}`}
-      open={modelDialogOpen}
-      onOpenChange={setModelDialogOpen}
-      slug={slug}
-      agent={{
-        ...controlAgent,
-        providerId: controlAgent.providerId ?? null,
-        providerIds: controlAgent.providerIds ?? [],
-        model: controlAgent.model ?? null,
-      }}
-      providers={providers}
-      confirmationMessage={
-        conversation?.messages.length || selected?.messages.length
-          ? t("modelSwitchConfirm")
-          : undefined
-      }
-      hermesConversation={
-        controlAgent.runtimeKind === "hermes"
-          ? {
-              id: conversation?.id ?? selected?.conversationId ?? null,
-              profile: controlHermesSelection?.profile ?? "default",
-              provider: controlHermesSelection?.provider ?? null,
-              model: controlHermesSelection?.model ?? null,
-              hasMessages: Boolean(
-                conversation?.messages.length || selected?.messages.length,
-              ),
-              editable: conversation
-                ? !conversation.readOnly
-                : !selected || MESSAGEABLE_STATUSES.has(selected.status),
-              forkOnProfileChange: false,
-            }
-          : undefined
-      }
-      onHermesDraftChange={
-        !selected && !conversation
-          ? (selection) =>
-              setHermesDraftSelection({
-                agentId: controlAgent.id,
-                ...selection,
-              })
-          : undefined
-      }
-      onHermesSelectionSaved={
-        conversation
-          ? async () => router.refresh()
-          : selected
-            ? refreshSelected
-            : undefined
-      }
-      trigger={
-        <Button
-          type="button"
-          aria-label={`${t("model")}: ${controlModelLabel}`}
-          title={controlModelLabel}
-          variant="ghost"
-          size="sm"
-          className="h-8 min-w-0 max-w-52 gap-1.5 rounded-xl px-2 text-xs text-muted-foreground"
-        >
-          <Cpu className="size-3.5 shrink-0" />
-          <span className="min-w-0 truncate">{controlModelLabel}</span>
-          <ChevronDown className="size-3 shrink-0" />
-        </Button>
-      }
-    />
-  ) : null;
 
   return (
     <ChatApp
@@ -2143,17 +2002,6 @@ export function WorkspaceWork({
                     sideOffset={4}
                     className="z-50 w-52 p-1.5"
                   >
-                    <ButtonLink
-                      href={`/app/${encodeURIComponent(slug)}/agents?tab=management&returnTo=${encodeURIComponent(workReturnTo)}`}
-                      onClick={() => setListOptionsOpen(false)}
-                      variant="ghost"
-                      size="sm"
-                      className="w-full justify-start rounded-md px-2.5 text-left text-sm gap-2"
-                    >
-                      <Settings2 className="size-4 shrink-0" />
-                      <span>{tAgents("agentManagement")}</span>
-                    </ButtonLink>
-                    <div className="my-1 h-px bg-border" />
                     {agents.length ? (
                       <>
                         <Button
@@ -2444,7 +2292,7 @@ export function WorkspaceWork({
                   </p>
                   <p className="truncate text-[11px] text-muted-foreground">
                     {controlAgent
-                      ? `${controlAgent.name} · ${runtimeLabel(selected?.runtimeKind ?? agent?.runtimeKind)}`
+                      ? `${controlAgent.name} · ${runtimeLabel(commandRuntimeKind)}`
                       : t("emptyDescription")}
                   </p>
                 </div>
@@ -2465,6 +2313,7 @@ export function WorkspaceWork({
                     </Button>
                     <Button
                       type="button"
+                      disabled={sessionReadOnly}
                       onClick={() => togglePanel("terminal")}
                       aria-label={tSandboxes("terminal")}
                       title={tSandboxes("terminal")}
@@ -2478,12 +2327,32 @@ export function WorkspaceWork({
                 ) : null}
               </div>
             </header>
-
-            {conversation?.readOnly ? (
-              <div className="mx-auto w-full max-w-3xl px-4 py-2">
-                {modelPicker}
+            {unappliedDraft && agent ? (
+              <div
+                role="status"
+                className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3 text-sm"
+              >
+                <p className="text-muted-foreground">
+                  {t("agentDraftUnapplied")}
+                </p>
+                <ButtonLink
+                  href={agentSettingsHref(slug, agent.id, workReturnTo)}
+                  variant="outline"
+                  size="sm"
+                >
+                  {t("agentDraftReview")}
+                </ButtonLink>
               </div>
             ) : null}
+            {(selected || conversation) && sessionReadOnly ? (
+              <p
+                role="status"
+                className="border-b border-border px-4 py-3 text-sm text-muted-foreground"
+              >
+                {t("sessionHistoryReadOnly")}
+              </p>
+            ) : null}
+
             {visibleError ? (
               <p
                 role="alert"
@@ -2498,32 +2367,27 @@ export function WorkspaceWork({
                   : visibleError}
               </p>
             ) : null}
-            {conversation && !conversation.readOnly && controlAgent ? (
+            {conversation && !sessionReadOnly && controlAgent ? (
               <AgentConversation
                 key={conversation.id}
                 activeConversationId={conversation.id}
                 agentId={controlAgent.id}
                 agentName={controlAgent.name}
-                ready={controlAgent.ready}
-                runtimeKind={controlAgent.runtimeKind}
-                modelName={controlHermesSelection?.model ?? controlAgent.model}
-                modelPicker={modelPicker}
+                ready={!sessionReadOnly}
+                runtimeKind={conversation.runtimeKind ?? null}
+                modelName={conversation.modelName}
                 initialMessages={
                   conversation.messages.filter(
                     (message) => !messageCompaction(message),
-                  ) as HermesUIMessage[]
+                  ) as AgentUIMessage[]
                 }
                 initialReasoningEffort={
                   conversation.reasoningEffort ?? "default"
                 }
-                reasoningAvailable={controlAgent.runtimeKind === "hermes"}
+                reasoningAvailable={false}
                 creatingConversation={false}
                 ensureConversation={async () => conversation.id}
-                attachmentUploadUrl={
-                  controlAgent.runtimeKind === "hermes"
-                    ? undefined
-                    : `/api/v1/workspaces/${workspaceId}/attachments`
-                }
+                attachmentUploadUrl={`/api/v1/workspaces/${workspaceId}/attachments`}
                 mcpPromptApiPath={`/api/v1/agents/${controlAgent.id}/prompts`}
                 mcpResourceApiPath={`/api/v1/agents/${controlAgent.id}/composer`}
                 onBusyChange={setConversationBusy}
@@ -2543,10 +2407,7 @@ export function WorkspaceWork({
                     <WorkTranscript
                       agentName={controlAgent?.name ?? t("agent")}
                       modelName={
-                        conversation?.hermesModel ??
-                        selected?.hermesModel ??
-                        selectedAgent?.model ??
-                        null
+                        conversation?.modelName ?? selected?.modelName ?? null
                       }
                       messages={
                         conversation?.messages ?? selected?.messages ?? []
@@ -2594,10 +2455,10 @@ export function WorkspaceWork({
               </MessageScroller>
             )}
 
-            {!conversation && (
+            {!conversation && (!sessionReadOnly || selectedActive) && (
               <div className="mx-auto w-full max-w-3xl shrink-0 px-4 pb-2">
                 <div>
-                  {pendingApprovals.length ? (
+                  {pendingApprovals.length && !sessionReadOnly ? (
                     <div className="space-y-3">
                       {pendingApprovals.map((approval) => (
                         <ToolApproval
@@ -2644,31 +2505,23 @@ export function WorkspaceWork({
                         setReferenceSelection({ scope: composerScope, items })
                       }
                       supportsAttachments={
-                        controlSandbox?.kind === "docker" ||
-                        controlSandbox?.kind === "hermes"
+                        !sessionReadOnly &&
+                        (selected
+                          ? controlSandbox?.kind
+                          : activeSandbox?.kind) === "docker"
                       }
                       onError={setError}
                       onPendingChange={setComposerPending}
                       waitingQuestion={selected?.waitingQuestion}
                       toolbarStart={
-                        <>
-                          {modelPicker}
-                          {controlAgent?.runtimeKind === "hermes" ? (
-                            <ReasoningEffortControl
-                              value={reasoningEffort}
-                              disabled={Boolean(busy) || running}
-                              onChange={setReasoningEffort}
-                            />
-                          ) : null}
-                          <span className="flex min-w-0 items-center gap-1.5 truncate px-1 text-[11px] text-muted-foreground">
-                            <TerminalSquare className="size-3.5 shrink-0" />
-                            {runtimeLabel(
-                              selected?.runtimeKind ?? agent?.runtimeKind,
-                            )}
-                          </span>
-                        </>
+                        <span className="flex min-w-0 items-center gap-1.5 truncate px-1 text-[11px] text-muted-foreground">
+                          <TerminalSquare className="size-3.5 shrink-0" />
+                          {runtimeLabel(commandRuntimeKind)}
+                        </span>
                       }
                       disabled={
+                        sessionReadOnly ||
+                        unappliedDraft ||
                         Boolean(busy) ||
                         running ||
                         (!canSend && !localCommand) ||
@@ -2689,7 +2542,7 @@ export function WorkspaceWork({
                       }
                     />
                   )}
-                  {!selected && agent && !agent.ready ? (
+                  {!selected && agent && !agent.ready && !unappliedDraft ? (
                     <p className="px-2 pt-2 text-xs text-muted-foreground text-muted-foreground">
                       {t("configureAgent")}
                     </p>
@@ -2697,15 +2550,6 @@ export function WorkspaceWork({
                   {!selected && agent?.ready && !sandboxOptions.length ? (
                     <p className="px-2 pt-2 text-xs text-muted-foreground text-muted-foreground">
                       {t("attachSandbox")}
-                    </p>
-                  ) : null}
-                  {!selected &&
-                  activeSandbox &&
-                  !activeSandbox.running &&
-                  activeSandbox.status !== "provisioning" &&
-                  agent?.runtimeKind !== "hermes" ? (
-                    <p className="px-2 pt-2 text-xs text-muted-foreground text-muted-foreground">
-                      {t("stopped")}
                     </p>
                   ) : null}
                 </div>
@@ -2721,6 +2565,7 @@ export function WorkspaceWork({
                 key={`${conversation?.id ?? selected?.id ?? "new"}:${controlSandbox.id}`}
                 compact
                 filesOnly={desktopPanel === "files"}
+                readOnly={sessionReadOnly}
                 terminalOnly={desktopPanel === "terminal"}
                 deploymentId={controlSandbox.deploymentId}
                 running={controlSandbox.running}
@@ -2776,6 +2621,7 @@ export function WorkspaceWork({
                   key={`${conversation?.id ?? selected?.id ?? "new"}:${controlSandbox.id}`}
                   compact
                   filesOnly={mobilePanel === "files"}
+                  readOnly={sessionReadOnly}
                   terminalOnly={mobilePanel === "terminal"}
                   deploymentId={controlSandbox.deploymentId}
                   running={controlSandbox.running}

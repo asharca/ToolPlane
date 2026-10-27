@@ -1,17 +1,9 @@
 "use client";
-import { AnimatedBadge } from "@/components/motion/animated-badge";
 
-import { Button, ButtonLink } from "@/components/motion/button";
-import { Input } from "@/components/motion/input";
-
-import { useTranslations } from "next-intl";
 import { useState } from "react";
+import { useTranslations } from "next-intl";
 import Link from "next/link";
-import { Plus, Lock, Globe, Settings, Store, Wrench, X } from "lucide-react";
-import {
-  createToolkitAction,
-  updateToolkitAvailabilityAction,
-} from "@/lib/toolkits/actions";
+import { ButtonLink } from "@/components/motion/button";
 import {
   DashboardEmptyState,
   DashboardFilterInput,
@@ -30,296 +22,67 @@ export type ToolkitRow = {
   created: string;
 };
 
-function CreateToolkitToggle({
-  expanded,
-  onClick,
-}: {
-  expanded: boolean;
-  onClick: () => void;
-}) {
-  const t = useTranslations("console.toolkits");
-
-  return (
-    <Button
-      type="button"
-      onClick={onClick}
-      aria-controls="toolkit-create-form"
-      aria-expanded={expanded}
-      variant={expanded ? "secondary" : "primary"}
-      size="md"
-    >
-      {expanded ? <X className="size-4" /> : <Plus className="size-4" />}
-      {expanded ? t("cancel") : t("newToolkit")}
-    </Button>
-  );
-}
-
-function ToolkitAvailabilityPill({
-  workspaceSlug,
-  toolkit,
-  kind,
-  canManage,
-}: {
-  workspaceSlug: string;
-  toolkit: ToolkitRow;
-  kind: "visibility" | "enabled";
-  canManage: boolean;
-}) {
-  const t = useTranslations("console.toolkits");
-  const isVisibility = kind === "visibility";
-  const isPublic = toolkit.visibility === "public";
-  const enabled = toolkit.enabled;
-  const label = isVisibility
-    ? isPublic
-      ? t("public")
-      : t("private")
-    : enabled
-      ? t("enabled")
-      : t("disabled");
-  const nextVisibility = isVisibility
-    ? isPublic
-      ? "private"
-      : "public"
-    : toolkit.visibility;
-  const nextEnabled = isVisibility ? enabled : !enabled;
-  const actionLabel = isVisibility
-    ? isPublic
-      ? t("makeToolkitPrivate", { name: toolkit.name })
-      : t("publishToolkit", { name: toolkit.name })
-    : enabled
-      ? t("disableToolkit", { name: toolkit.name })
-      : t("enableToolkit", { name: toolkit.name });
-  const content = (
-    <AnimatedBadge
-      status={isVisibility ? "neutral" : enabled ? "success" : "neutral"}
-      size="sm"
-      icon={
-        isVisibility ? (
-          isPublic ? (
-            <Globe className="size-3" />
-          ) : (
-            <Lock className="size-3" />
-          )
-        ) : undefined
-      }
-    >
-      {label}
-    </AnimatedBadge>
-  );
-
-  if (!canManage) return content;
-
-  return (
-    <form action={updateToolkitAvailabilityAction} className="inline-flex">
-      <input type="hidden" name="workspace" value={workspaceSlug} />
-      <input type="hidden" name="toolkitSlug" value={toolkit.slug} />
-      <input type="hidden" name="visibility" value={nextVisibility} />
-      {nextEnabled ? <input type="hidden" name="enabled" value="on" /> : null}
-      <Button
-        type="submit"
-        aria-label={actionLabel}
-        title={actionLabel}
-        variant="ghost"
-        size="md"
-      >
-        {content}
-      </Button>
-    </form>
-  );
-}
-
 export function ToolkitsBrowser({
   slug,
   toolkits,
-  canManagePublishing = false,
-  startCreating = false,
 }: {
   slug: string;
   toolkits: ToolkitRow[];
-  canManagePublishing?: boolean;
-  startCreating?: boolean;
 }) {
   const t = useTranslations("console.toolkits");
   const [query, setQuery] = useState("");
-  const [creating, setCreating] = useState(startCreating);
-
-  const filtered = toolkits.filter((t) =>
-    t.name.toLowerCase().includes(query.trim().toLowerCase()),
+  const filtered = toolkits.filter((toolkit) =>
+    toolkit.name.toLowerCase().includes(query.trim().toLowerCase()),
   );
-  const toggleCreateForm = () => setCreating((value) => !value);
-
+  const base = `/app/${encodeURIComponent(slug)}`;
   return (
-    <DashboardPage>
+    <DashboardPage className="space-y-4">
       <DashboardToolbar
         actions={
-          <>
-            <ButtonLink
-              href={`/app/${slug}/market/toolkits`}
-              variant="secondary"
-              size="md"
-            >
-              <Store className="size-4" />
-              {t("browseMarket")}
-            </ButtonLink>
-            <ButtonLink
-              href={`/app/${encodeURIComponent(slug)}/toolkits/pi-packages`}
-              variant="secondary"
-              size="md"
-            >
-              {t("piPackagesTitle")}
-            </ButtonLink>
-            <ButtonLink
-              href={`/app/${encodeURIComponent(slug)}/toolkits/pi-packages#compose`}
-              variant="secondary"
-              size="md"
-            >
-              {t("newPiPackage")}
-            </ButtonLink>
-            <CreateToolkitToggle
-              expanded={creating}
-              onClick={toggleCreateForm}
-            />
-          </>
+          <ButtonLink
+            href={`${base}/market/pi-packages`}
+            variant="secondary"
+            size="sm"
+          >
+            {t("browsePiPackages")}
+          </ButtonLink>
         }
       >
-        <p className="text-sm text-muted-foreground">
-          {t("bundleToolsIntoASingleEndpoint")}
+        <p className="max-w-3xl text-sm text-muted-foreground">
+          {t("historyReadOnly")}
         </p>
       </DashboardToolbar>
-
-      {creating ? (
-        <form
-          id="toolkit-create-form"
-          action={createToolkitAction}
-          className="rounded-xl border border-border bg-card grid gap-3 p-4 sm:grid-cols-[minmax(0,20rem)_auto] sm:items-end"
-        >
-          <input type="hidden" name="workspace" value={slug} />
-          <label
-            htmlFor="toolkit-create-name"
-            className="block text-xs font-medium text-muted-foreground"
-          >
-            {t("toolkitName")}
-            <Input
-              id="toolkit-create-name"
-              name="name"
-              autoFocus
-              required
-              maxLength={60}
-              placeholder={t("egResearchStack")}
-              className="mt-1.5"
-            />
-          </label>
-          <div className="grid grid-cols-2 gap-2 sm:flex">
-            <Button
-              type="button"
-              onClick={() => setCreating(false)}
-              variant="secondary"
-              size="md"
-            >
-              {t("cancel")}
-            </Button>
-            <Button variant="primary" size="md" type="submit">
-              {t("createToolkit")}
-            </Button>
-          </div>
-        </form>
-      ) : null}
-
-      {toolkits.length === 0 ? (
-        <DashboardEmptyState
-          icon={Wrench}
-          description={t("noToolkitsYet")}
-          actions={
-            !creating ? (
-              <CreateToolkitToggle
-                expanded={creating}
-                onClick={toggleCreateForm}
-              />
-            ) : undefined
-          }
-        />
+      <DashboardFilterInput
+        value={query}
+        onChange={setQuery}
+        placeholder={t("searchToolkits")}
+      />
+      {!filtered.length ? (
+        <DashboardEmptyState description={t("historyEmpty")} />
       ) : (
-        <div className="rounded-xl border border-border bg-card overflow-hidden">
-          <div className="flex flex-col gap-3 border-b border-border p-3 sm:flex-row sm:items-center sm:justify-between">
-            <DashboardFilterInput
-              value={query}
-              onChange={setQuery}
-              placeholder={t("searchToolkits")}
-            />
-            <span className="shrink-0 text-sm text-muted-foreground">
-              {t("toolkitCount", { count: filtered.length })}
-            </span>
-          </div>
-
-          {filtered.length === 0 ? (
-            <DashboardEmptyState
-              description={t("noToolkitsMatch", { query: query.trim() })}
-              className="min-h-64 rounded-none border-0 shadow-none"
-            />
-          ) : (
-            <DashboardTable
-              headers={[
-                { label: t("toolkitColumn") },
-                { label: t("status") },
-                { label: t("tools") },
-                { label: t("created") },
-                { label: t("settings"), align: "right" },
-              ]}
-              rows={filtered.map((toolkit) => ({
-                id: toolkit.id,
-                cells: [
-                  <Link
-                    key="identity"
-                    href={`/app/${slug}/toolkits/${toolkit.slug}`}
-                    className="block px-4 py-3 font-medium text-foreground transition-colors hover:bg-muted/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
-                  >
-                    {toolkit.name}
-                  </Link>,
-                  <div
-                    key="status"
-                    className="flex flex-wrap items-center gap-2.5"
-                  >
-                    <ToolkitAvailabilityPill
-                      workspaceSlug={slug}
-                      toolkit={toolkit}
-                      kind="visibility"
-                      canManage={canManagePublishing}
-                    />
-                    <ToolkitAvailabilityPill
-                      workspaceSlug={slug}
-                      toolkit={toolkit}
-                      kind="enabled"
-                      canManage={canManagePublishing}
-                    />
-                  </div>,
-                  toolkit.toolCount,
-                  toolkit.created,
-                  <div
-                    key="actions"
-                    className="flex flex-wrap items-center justify-end gap-2"
-                  >
-                    <ButtonLink
-                      href={`/app/${encodeURIComponent(slug)}/toolkits/pi-packages?${new URLSearchParams({ toolkit: toolkit.slug })}#compose`}
-                      variant="ghost"
-                      size="sm"
-                    >
-                      {t("packageExistingToolkit")}
-                    </ButtonLink>
-                    <ButtonLink
-                      href={`/app/${slug}/toolkits/${toolkit.slug}?tab=settings`}
-                      aria-label={`${toolkit.name}: ${t("settings")}`}
-                      title={t("settings")}
-                      variant="ghost"
-                      size="icon"
-                    >
-                      <Settings className="size-4" />
-                    </ButtonLink>
-                  </div>,
-                ],
-              }))}
-            />
-          )}
-        </div>
+        <DashboardTable
+          headers={[
+            { label: t("toolkitColumn") },
+            { label: t("historySavedState") },
+            { label: t("tools") },
+            { label: t("created") },
+          ]}
+          rows={filtered.map((toolkit) => ({
+            id: toolkit.id,
+            cells: [
+              <Link
+                key="name"
+                href={`${base}/toolkits/${encodeURIComponent(toolkit.slug)}`}
+                className="break-words font-medium hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring"
+              >
+                {toolkit.name}
+              </Link>,
+              `${toolkit.visibility === "public" ? t("public") : t("private")} · ${toolkit.enabled ? t("enabled") : t("disabled")}`,
+              toolkit.toolCount,
+              toolkit.created,
+            ],
+          }))}
+        />
       )}
     </DashboardPage>
   );

@@ -23,10 +23,6 @@ import {
   DashboardPagination,
 } from "@/components/dashboard/DashboardUI";
 import { MarketCategorySidebar } from "@/components/dashboard/market/MarketCategorySidebar";
-import {
-  PiCatalogNavigation,
-  PiCatalogView,
-} from "@/components/dashboard/market/PiCatalogView";
 
 export const dynamic = "force-dynamic";
 type MarketSort = "popular" | "newest" | "name";
@@ -41,7 +37,6 @@ function marketHref(
 ) {
   const query = new URLSearchParams();
   if (input.q) query.set("q", input.q);
-  query.set("view", "toolplane");
   if (input.category) query.set("category", input.category);
   if (input.sort && input.sort !== "popular") query.set("sort", input.sort);
   if (input.page && input.page > 1) query.set("page", String(input.page));
@@ -55,7 +50,6 @@ export default async function PiPackageMarketPage({
 }: {
   params: Promise<{ workspace: string }>;
   searchParams: Promise<{
-    view?: string | string[];
     page?: string | string[];
     q?: string | string[];
     category?: string | string[];
@@ -78,11 +72,6 @@ export default async function PiPackageMarketPage({
   const rawPage = Number(firstParam(query.page));
   const page = Number.isSafeInteger(rawPage) && rawPage > 0 ? rawPage : 1;
   const q = firstParam(query.q).trim().slice(0, 200);
-  const view = firstParam(query.view);
-  if (view === "workspace")
-    redirect(`/app/${encodeURIComponent(slug)}/toolkits/pi-packages`);
-  if (view !== "toolplane")
-    return <PiCatalogView workspace={workspace} query={q} page={page} />;
   const category = firstParam(query.category).trim().toLocaleLowerCase();
   const requestedSort = firstParam(query.sort);
   const sort: MarketSort =
@@ -121,9 +110,7 @@ export default async function PiPackageMarketPage({
           {t("piMarketDescription")}
         </p>
       </div>
-      <PiCatalogNavigation workspace={slug} active="toolplane" />
       <form className="flex w-full flex-col gap-2 sm:flex-row">
-        <input type="hidden" name="view" value="toolplane" />
         <input type="hidden" name="category" value={category} />
         <Input
           label={t("piSearch")}
@@ -183,11 +170,11 @@ export default async function PiPackageMarketPage({
               description={t(hasFilters ? "piNoMatches" : "piEmptyDescription")}
               actions={
                 <ButtonLink
-                  href={`/app/${encodeURIComponent(slug)}/toolkits/pi-packages`}
+                  href={`/app/${encodeURIComponent(slug)}/market/sources`}
                   variant="secondary"
                   size="sm"
                 >
-                  {t("piPublishTitle")}
+                  {t("githubRegistry.title")}
                 </ButtonLink>
               }
             />

@@ -16,7 +16,6 @@ const mocks = vi.hoisted(() => ({
   chatAssistantFindMany: vi.fn(),
   chatAssistantFindFirst: vi.fn(),
   materializeAgentRelease: vi.fn(),
-  syncHermesRuntime: vi.fn(),
   installAssistantMarketRelease: vi.fn(),
   deleteManagedAgent: vi.fn(),
   deleteChatAssistant: vi.fn(),
@@ -45,9 +44,6 @@ vi.mock("@/lib/db", () => ({
 vi.mock("@/lib/agents/market", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/agents/market")>()),
   materializeAgentRelease: mocks.materializeAgentRelease,
-}));
-vi.mock("@/lib/agents/hermes/runtime", () => ({
-  syncHermesRuntime: mocks.syncHermesRuntime,
 }));
 vi.mock("@/lib/agents/deletion", () => ({
   deleteManagedAgent: mocks.deleteManagedAgent,
@@ -118,7 +114,6 @@ describe("market install API", () => {
       agent: { id: "agent-1" },
       reused: false,
     });
-    mocks.syncHermesRuntime.mockResolvedValue({ status: "ready" });
     mocks.installAssistantMarketRelease.mockResolvedValue({
       id: "assistant-1",
     });
@@ -180,6 +175,7 @@ describe("market install API", () => {
       targetReleaseId: "release-2",
       currentReleaseId: "release-1",
       force: true,
+      mcpBindings: undefined,
     });
     expect(mocks.removeMarketInstall).toHaveBeenCalledWith({
       installId: "install-1",
@@ -204,6 +200,47 @@ describe("market install API", () => {
 
     expect(response.status).toBe(401);
     expect(mocks.installMarketRelease).not.toHaveBeenCalled();
+  });
+
+  it("rejects unacknowledged capability changes before mutating the install", async () => {
+    const response = await PATCH(
+      new Request("http://toolplane.test/update", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          action: "update",
+          targetReleaseId: "release-2",
+          currentReleaseId: "release-1",
+          mcpBindings: { search: { deploymentId: "mcp", tools: ["write"] } },
+        }),
+      }),
+      itemContext,
+    );
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      code: "pi_package_privilege_confirmation_required",
+    });
+    expect(mocks.updateMarketInstall).not.toHaveBeenCalled();
+  });
+
+  it("does not accept capability acknowledgement as authorization to a foreign workspace", async () => {
+    mocks.getWorkspaceForUser.mockResolvedValue(null);
+    const response = await PATCH(
+      new Request("http://toolplane.test/update", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          action: "update",
+          targetReleaseId: "release-2",
+          currentReleaseId: "release-1",
+          confirmExpandedPrivileges: true,
+          mcpBindings: { search: { deploymentId: "mcp", tools: ["write"] } },
+        }),
+      }),
+      itemContext,
+    );
+    expect(response.status).toBe(401);
+    expect(mocks.updateMarketInstall).not.toHaveBeenCalled();
   });
 
   it("installs assistant and agent releases through their real materializers", async () => {
@@ -254,10 +291,6 @@ describe("market install API", () => {
         targetWorkspaceId: "workspace-1",
         installedById: "user-1",
       }),
-    );
-    expect(mocks.syncHermesRuntime).toHaveBeenCalledWith(
-      "workspace-1",
-      "agent-1",
     );
     expect(mocks.installMarketRelease).not.toHaveBeenCalled();
   });

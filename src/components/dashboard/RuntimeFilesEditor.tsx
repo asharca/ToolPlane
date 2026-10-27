@@ -31,6 +31,7 @@ import {
   type RuntimeFilesActionState,
 } from "@/lib/workspace/runtime-files-actions";
 import { FilePathTree } from "./FilePathTree";
+import { McpSharedChangeConfirmation } from "./McpSharedChangeConfirmation";
 
 type Draft = {
   /** A present id means the user explicitly revealed an existing file. */
@@ -77,6 +78,8 @@ function actionErrorMessage(
       return t("runtimeFileSaveFailed");
     case "restartFailed":
       return t("runtimeFileRestartFailed");
+    case "sharedChangeConfirmationRequired":
+      return t("sharedChangeConfirmationRequired");
     default:
       return null;
   }
@@ -129,6 +132,14 @@ export function RuntimeFilesEditor({
   const [isDeleting, startDelete] = useTransition();
   const [deletingFileId, setDeletingFileId] = useState<string | null>(null);
   const uploadInputRef = useRef<HTMLInputElement>(null);
+  const sectionRef = useRef<HTMLElement>(null);
+  const [impactState, setImpactState] = useState<RuntimeFilesActionState>({});
+  const addImpactConfirmation = (form: FormData) => {
+    const input = sectionRef.current?.querySelector<HTMLInputElement>(
+      'input[name="confirmedImpactedObjects"]',
+    );
+    if (input) form.set("confirmedImpactedObjects", input.value);
+  };
 
   // Props remain the source of truth. These small local overlays make a save
   // or deletion visible immediately while the server action revalidates the
@@ -228,11 +239,13 @@ export function RuntimeFilesEditor({
   const saveFile = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const formData = new FormData(event.currentTarget);
+    addImpactConfirmation(formData);
     setMutationError(null);
     setNotice(null);
     startSave(async () => {
       try {
         const result = await upsertDeploymentRuntimeFileAction({}, formData);
+        setImpactState(result);
         if (result.error || !result.savedAt) {
           setMutationError(
             actionErrorMessage(result.error, t) ?? t("runtimeFileSaveFailed"),
@@ -274,12 +287,14 @@ export function RuntimeFilesEditor({
     formData.set("workspace", workspace);
     formData.set("deploymentId", deploymentId);
     formData.set("fileId", file.id);
+    addImpactConfirmation(formData);
     setDeletingFileId(file.id);
     setMutationError(null);
     setNotice(null);
     startDelete(async () => {
       try {
         const result = await deleteDeploymentRuntimeFileAction(formData);
+        setImpactState(result);
         if (result.error || !result.savedAt) {
           setMutationError(
             removeActionErrorMessage(result.error, t) ??
@@ -314,6 +329,7 @@ export function RuntimeFilesEditor({
 
   return (
     <section
+      ref={sectionRef}
       className="max-w-4xl rounded-lg border border-border"
       aria-labelledby="runtime-files-heading"
     >
@@ -375,6 +391,13 @@ export function RuntimeFilesEditor({
           />
         </div>
       </header>
+      <div className="p-4">
+        <McpSharedChangeConfirmation
+          workspace={workspace}
+          deploymentId={deploymentId}
+          impactedObjects={impactState.impactedObjects}
+        />
+      </div>
 
       <div className="divide-y divide-border">
         {files.length === 0 ? (

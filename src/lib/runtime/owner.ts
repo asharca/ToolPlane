@@ -159,11 +159,9 @@ export function shutdownRuntimeOwner(): Promise<boolean> {
       (await import("@/lib/a2a/worker")).stopA2AWorker();
       const channels = await import("@/lib/agents/channel-runtime");
       const connectors = await import("@/lib/sandboxes/connector-broker");
-      const dashboard = await import("@/lib/agents/hermes/dashboard-broker");
       const results = await Promise.allSettled([
         channels.shutdownAgentChannelRunners(),
         connectors.shutdownConnectorBroker(),
-        dashboard.closeHermesDashboardBroker(),
       ]);
       if (results.some((result) => result.status === "rejected"))
         ownership.uncertain = true;

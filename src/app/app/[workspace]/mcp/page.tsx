@@ -6,7 +6,6 @@ import { Store } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { getWorkspaceForUser, getDeployments } from "@/lib/workspace/queries";
 import { effectiveStatus } from "@/lib/process/supervisor";
-import { DeployCustomMcpDialog } from "@/components/dashboard/DeployCustomMcpDialog";
 import { deploymentLabel } from "@/lib/workspace/deployment-label";
 import { ProvisioningRefresher } from "@/components/dashboard/ProvisioningRefresher";
 import {
@@ -36,7 +35,7 @@ export default async function McpServersPage({
   searchParams,
 }: {
   params: Promise<{ workspace: string }>;
-  searchParams: Promise<{ create?: string }>;
+  searchParams: Promise<{ create?: string; error?: string }>;
 }) {
   const [{ workspace: slug }, query] = await Promise.all([
     params,
@@ -76,16 +75,10 @@ export default async function McpServersPage({
         <DashboardToolbar
           className="shrink-0"
           actions={
-            <>
-              <ButtonLink href={marketHref} variant="secondary" size="md">
-                <Store className="size-4" />
-                {t("browseToolplane")}
-              </ButtonLink>
-              <DeployCustomMcpDialog
-                slug={slug}
-                defaultOpen={query.create === "1"}
-              />
-            </>
+            <ButtonLink href={marketHref} variant="secondary" size="md">
+              <Store className="size-4" />
+              {t("browseToolplane")}
+            </ButtonLink>
           }
         >
           <h1 className="text-xl font-semibold">{t("title")}</h1>
@@ -93,6 +86,11 @@ export default async function McpServersPage({
             {t("deploymentCountSummary", { count: deploymentItems.length })}
           </p>
         </DashboardToolbar>
+        {query.error === "unsafeHttpConfirmationRequired" ? (
+          <p role="alert" className="text-sm text-destructive">
+            {t("unsafeHttpConsentDescription")}
+          </p>
+        ) : null}
 
         <McpDeploymentsBrowser slug={slug} deployments={deploymentItems} />
       </DashboardPage>

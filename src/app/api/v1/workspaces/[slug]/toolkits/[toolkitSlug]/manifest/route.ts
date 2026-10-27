@@ -86,7 +86,8 @@ export const GET = withRequestLogging(
       skills: toolkit.skills.map((s) => ({
         name: skillLabel(s.installedSkill).name,
         slug: skillLabel(s.installedSkill).slug,
-        download: `/api/v1/skills/${s.installedSkill.id}/download`,
+        download: `/api/v1/skills/${s.installedSkill.id}/download?format=markdown`,
+        bundleDownload: `/api/v1/skills/${s.installedSkill.id}/download`,
       })),
     };
 

@@ -4,6 +4,8 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getTranslations } from "next-intl/server";
 import type { InstalledSkill } from "@prisma/client";
+import { createHash } from "node:crypto";
+import { readZip } from "@/lib/archives/zip";
 import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { getSkillImportSettings } from "@/lib/admin/settings";
@@ -14,7 +16,7 @@ import {
   MAX_SKILL_FILE_BYTES,
   MAX_SKILL_IMPORT_BYTES,
   MAX_SKILL_IMPORT_FILES,
-  isTextSkillFile,
+  encodeSkillFile,
   parseUploadedSkillBundles,
   type SkillBundleFile,
   type SkillBundle,
@@ -49,7 +51,8 @@ function isUploadedFile(value: FormDataEntryValue): value is File {
     value !== null &&
     "arrayBuffer" in value &&
     "name" in value &&
-    "size" in value
+    "size" in value &&
+    (value.name !== "" || value.size !== 0)
   );
 }
 
@@ -67,6 +70,18 @@ function parseFilePathList(raw: FormDataEntryValue | null): string[] {
 async function readUploadedSkillFiles(
   formData: FormData,
 ): Promise<SkillBundleFile[]> {
+  const archive = formData.get("archive");
+  if (archive && isUploadedFile(archive) && archive.size > 0) {
+    if (formData.getAll("folderFiles").some(isUploadedFile))
+      throw new Error("invalidUpload");
+    if (archive.size > MAX_SKILL_IMPORT_BYTES) throw new Error("invalidUpload");
+    return readZip(Buffer.from(await archive.arrayBuffer()), {
+      maxArchiveBytes: MAX_SKILL_IMPORT_BYTES,
+      maxBytes: MAX_SKILL_IMPORT_BYTES,
+      maxFileBytes: MAX_SKILL_FILE_BYTES,
+      maxFiles: MAX_SKILL_IMPORT_FILES,
+    }).map(({ path, data }) => ({ path, ...encodeSkillFile(data, path) }));
+  }
   const multipartFiles = formData.getAll("folderFiles").filter(isUploadedFile);
   if (multipartFiles.length > 0) {
     if (multipartFiles.length > MAX_SKILL_IMPORT_FILES) {
@@ -87,15 +102,7 @@ async function readUploadedSkillFiles(
         throw new Error("Skill import is too large.");
 
       const buffer = Buffer.from(await file.arrayBuffer());
-      if (isTextSkillFile(path, file.type)) {
-        files.push({ path, content: buffer.toString("utf8") });
-      } else {
-        files.push({
-          path,
-          content: buffer.toString("base64"),
-          encoding: "base64",
-        });
-      }
+      files.push({ path, ...encodeSkillFile(buffer, path, file.type) });
     }
     return files;
   }
@@ -264,29 +271,110 @@ export async function deleteCustomSkillAction(formData: FormData) {
   redirect(`/app/${slug}/skills`);
 }
 
-export type SkillActionState = { error?: string; saved?: boolean };
+export type SkillActionState = {
+  error?: string;
+  saved?: boolean;
+  sourceDigest?: string;
+  preview?: Array<{
+    rootPath: string | null;
+    name: string;
+    description: string | null;
+    fileCount: number;
+  }>;
+};
+
+async function bundleDigest(
+  bundles: Array<UploadedSkillBundle | SkillBundle>,
+  formData: FormData,
+): Promise<string> {
+  const hash = createHash("sha256").update(JSON.stringify(bundles));
+  const archive = formData.get("archive");
+  if (archive && isUploadedFile(archive))
+    hash.update(Buffer.from(await archive.arrayBuffer()));
+  return hash.digest("hex");
+}
+
+async function selectBundles<T extends UploadedSkillBundle | SkillBundle>(
+  bundles: T[],
+  formData: FormData,
+): Promise<T[]> {
+  const digest = String(formData.get("sourceDigest") ?? "");
+  const selecting = formData.get("selectionMode") === "explicit";
+  const archive = formData.get("archive");
+  if (selecting || (archive && isUploadedFile(archive) && archive.size > 0)) {
+    if (!digest || digest !== (await bundleDigest(bundles, formData)))
+      throw new Error("importSourceChanged");
+  }
+  if (!selecting) return bundles;
+  const roots = formData.getAll("roots").map(String);
+  if (!roots.length) throw new Error("importSelectRoots");
+  const selected = bundles.filter((bundle) =>
+    roots.includes(
+      "rootPath" in bundle ? (bundle.rootPath ?? "") : bundle.source.path,
+    ),
+  );
+  if (selected.length !== new Set(roots).size)
+    throw new Error("importSourceChanged");
+  return selected;
+}
+
+export async function previewSkillUploadAction(
+  _previous: SkillActionState,
+  formData: FormData,
+): Promise<SkillActionState> {
+  const t = await getTranslations("console.skills");
+  const ctx = await authedWs(String(formData.get("workspace") ?? ""));
+  if (!ctx) return { error: t("formAccessDenied") };
+  if (formData.get("repo") && !isGithubUrl(String(formData.get("repo"))))
+    return { error: t("invalidUpload") };
+  try {
+    const { maxSkills } = await getSkillImportSettings();
+    const bundles = formData.get("repo")
+      ? await fetchGithubSkillBundles(String(formData.get("repo")), maxSkills)
+      : parseUploadedSkillBundles(
+          await readUploadedSkillFiles(formData),
+          String(formData.get("name") ?? ""),
+          maxSkills,
+        );
+    const sourceDigest = await bundleDigest(bundles, formData);
+    return {
+      sourceDigest,
+      preview: bundles.map((bundle) => ({
+        rootPath: "rootPath" in bundle ? bundle.rootPath : bundle.source.path,
+        name: bundle.name,
+        description: bundle.description,
+        fileCount: bundle.files.length + 1,
+      })),
+    };
+  } catch {
+    return { error: t("invalidUpload") };
+  }
+}
 
 export async function importSkillFromGithubAction(
   _previous: SkillActionState,
   formData: FormData,
 ): Promise<SkillActionState> {
+  const t = await getTranslations("console.skills");
   const slug = String(formData.get("workspace") ?? "");
   const repo = String(formData.get("repo") ?? "").trim();
   const ctx = await authedWs(slug);
-  if (!ctx) return { error: "Workspace not found or access denied." };
-  if (!isGithubUrl(repo))
-    return { error: "Enter a valid github.com repository or folder URL." };
+  if (!ctx) return { error: t("formAccessDenied") };
+  if (!isGithubUrl(repo)) return { error: t("invalidUpload") };
   let bundles: SkillBundle[];
   try {
     const { maxSkills } = await getSkillImportSettings();
-    bundles = await fetchGithubSkillBundles(repo, maxSkills);
+    bundles = await selectBundles(
+      await fetchGithubSkillBundles(repo, maxSkills),
+      formData,
+    );
   } catch (error) {
-    return {
-      error:
-        error instanceof Error
-          ? error.message
-          : "Failed to fetch skills from GitHub.",
-    };
+    const key =
+      error instanceof Error &&
+      ["importSourceChanged", "importSelectRoots"].includes(error.message)
+        ? error.message
+        : "invalidUpload";
+    return { error: t(key) };
   }
   const existing = await db.installedSkill.findMany({
     where: { workspaceId: ctx.ws.id },
@@ -318,7 +406,7 @@ export async function importSkillFromGithubAction(
       ),
     );
   } catch {
-    return { error: "Failed to save imported skills." };
+    return { error: t("formSaveFailed") };
   }
   revalidatePath(`/app/${slug}/skills`);
   if (created.length === 1) redirect(`/app/${slug}/skills/${created[0].id}`);
@@ -340,9 +428,17 @@ export async function uploadSkillFolderAction(
   try {
     const files = await readUploadedSkillFiles(formData);
     const { maxSkills } = await getSkillImportSettings();
-    bundles = parseUploadedSkillBundles(files, name, maxSkills);
-  } catch {
-    return { error: t("invalidUpload") };
+    bundles = await selectBundles(
+      parseUploadedSkillBundles(files, name, maxSkills),
+      formData,
+    );
+  } catch (error) {
+    const key =
+      error instanceof Error &&
+      ["importSourceChanged", "importSelectRoots"].includes(error.message)
+        ? error.message
+        : "invalidUpload";
+    return { error: t(key) };
   }
   let created: InstalledSkill[];
   try {

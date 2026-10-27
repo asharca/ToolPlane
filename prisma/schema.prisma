@@ -50,6 +50,8 @@ model Server {
 }
 
 model User {
+  chatRunActors ChatTurn[] @relation("ChatRunActor")
+  chatToolApprovals ChatToolConfirmation[] @relation("ChatToolApprover")
   piPackageClientInstallations PiPackageClientInstallation[]
   nativeWorkSessions WorkSession[] @relation("NativeWorkActor")
   nativeChannelConnections AgentChannelConnection[] @relation("NativeChannelActor")
@@ -183,9 +185,9 @@ model Workspace {
   piPackageSources PiPackageSource[]
   piPackageTracking PiPackageTracking[]
   piPackageClientInstallations PiPackageClientInstallation[]
+  agentEnvironmentCredentials AgentEnvironmentCredential[]
   remoteA2AAgents RemoteA2AAgent[]
   a2aContexts A2AContext[]
-  agentUploadReservations AgentUploadReservation[]
   id                     String                   @id @default(cuid())
   slug                   String                   @unique
   name                   String
@@ -207,8 +209,6 @@ model Workspace {
   chatAssistants         ChatAssistant[]
   chatThreads            ChatThread[]
   agents                 Agent[]
-  agentRuntimes          AgentRuntime[]
-  agentAttachments       AgentAttachment[]
   workspaceAttachments   WorkspaceAttachment[]
   agentChannels          AgentChannelConnection[]
   workSessions           WorkSession[]
@@ -216,6 +216,7 @@ model Workspace {
   agentListings          AgentListing[]           @relation("AgentListingWorkspace")
   agentInstalls          AgentInstall[]           @relation("AgentInstallWorkspace")
   marketListings         MarketListing[]          @relation("MarketListingPublisherWorkspace")
+  githubResourceRegistries GithubResourceRegistry[]
   marketInstalls         MarketInstall[]          @relation("MarketInstallWorkspace")
   agentEndpoints         AgentEndpoint[]
   skillInvocations       SkillInvocation[]
@@ -341,13 +342,13 @@ model Sandbox {
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
   agentLinks         AgentSandbox[]
-  agentRuntime       AgentRuntime?
   snapshots          SandboxSnapshot[]
   workSessions       WorkSession[]
   knowledgeDocuments KnowledgeDocument[]
   channelConnections AgentChannelConnection[]
   conversations      Conversation[]
   a2aContexts         A2AContext[]
+  piPackageSet        PiSessionPackageSet?
 
   @@unique([workspaceId, slug])
 }
@@ -540,7 +541,6 @@ model ModelProvider {
   modelsFetchedAt DateTime?
   createdAt       DateTime             @default(now())
   agents          Agent[]
-  agentLinks      AgentModelProvider[]
   knowledgeBases  KnowledgeBase[]
   chatAssistants  ChatAssistant[]
   modelRecords    ProviderModel[]
@@ -571,9 +571,16 @@ model ProviderModel {
 }
 
 model Agent {
+  a2aInboundEnabled Boolean @default(false)
+  a2aOutboundEnabled Boolean @default(false)
+  a2aPolicy Json?
+  // Retired legacy Agents retain readable history but cannot start/resume work.
+  retiredAt DateTime?
+  currentRevisionVersion Int @default(0)
+  revisions AgentRevision[]
+  environmentCredentials AgentEnvironmentCredential[]
   a2aInternalEnabled Boolean @default(false)
   a2aContexts A2AContext[]
-  uploadReservations AgentUploadReservation[]
   id                      String                   @id @default(cuid())
   workspaceId             String
   workspace               Workspace                @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -601,18 +608,34 @@ model Agent {
   workSessions            WorkSession[]
   knowledgeBases          AgentKnowledgeBase[]
   channels                AgentChannelConnection[]
-  runtime                 AgentRuntime?
-  attachments             AgentAttachment[]
   marketListing           AgentListing?            @relation("AgentListingSource")
   marketInstall           AgentInstall?            @relation("AgentInstallAgent")
   sourceMarketListing     MarketListing?           @relation("MarketListingSourceAgent")
   unifiedMarketInstall    MarketInstall?           @relation("MarketInstallAgent")
   piPackages              AgentPiPackage[]
-  modelProviders          AgentModelProvider[]
   publicEndpoints         AgentEndpoint[]          @relation("EndpointSourceAgent")
   publicRuntimeAllocation AgentEndpointRuntime?    @relation("EndpointRuntimeAgent")
 
   @@unique([workspaceId, slug])
+  @@unique([id, workspaceId])
+}
+
+// Private encrypted values; revisions contain only credential IDs and names.
+// Revocation retains rows so historical revision references never dangle.
+model AgentEnvironmentCredential {
+  id String @id @default(cuid())
+  workspaceId String
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  agentId String
+  agent Agent @relation(fields: [agentId, workspaceId], references: [id, workspaceId], onDelete: Restrict, onUpdate: Restrict)
+  name String
+  encryptedValue Json
+  revokedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([agentId, name])
+  @@index([workspaceId, agentId, revokedAt])
 }
 
 model AgentComposerPrompt {
@@ -627,21 +650,11 @@ model AgentComposerPrompt {
   @@index([agentId, updatedAt])
 }
 
-model AgentModelProvider {
-  agentId    String
-  agent      Agent         @relation(fields: [agentId], references: [id], onDelete: Cascade)
-  providerId String
-  provider   ModelProvider @relation(fields: [providerId], references: [id], onDelete: Cascade)
-  createdAt  DateTime      @default(now())
-
-  @@id([agentId, providerId])
-  @@index([providerId])
-}
-
 // Public marketplace metadata is separate from the mutable workspace Agent.
 // The listing points at an immutable release artifact; no runtime secret or
 // workspace-owned tool id is exposed through this model.
 model AgentListing {
+  visibility String @default("public")
   id                   String         @id @default(cuid())
   publisherKind        String         @default("workspace")
   publisherWorkspaceId String?
@@ -669,6 +682,7 @@ model AgentListing {
   publishedAt          DateTime?
   releases             AgentRelease[] @relation("AgentListingReleases")
   categories           Category[]     @relation("AgentListingCategories")
+  githubRegistryResource GithubRegistryResource?
   createdAt            DateTime       @default(now())
   updatedAt            DateTime       @updatedAt
 
@@ -689,6 +703,7 @@ model AgentRelease {
   manifest        Json
   releaseSummary  Json
   checksum        String
+  author          String?
   name            String
   summary         String?
   iconUrl         String?
@@ -703,6 +718,7 @@ model AgentRelease {
   latestFor       AgentListing?  @relation("AgentListingLatestRelease")
   pendingFor      AgentListing?  @relation("AgentListingPendingRelease")
   installs        AgentInstall[]
+  githubRegistryVersion GithubRegistryVersion?
 
   @@unique([listingId, version])
   @@index([listingId, publishedAt])
@@ -781,6 +797,7 @@ model MarketListing {
   publishedAt            DateTime?
   releases               MarketRelease[] @relation("MarketListingReleases")
   installs               MarketInstall[]
+  githubRegistryResource GithubRegistryResource?
   createdAt              DateTime        @default(now())
   updatedAt              DateTime        @updatedAt
 
@@ -794,6 +811,9 @@ model MarketListing {
 // provider keys, environment values, credentials, conversations, or runtime state.
 model MarketRelease {
   piPackageClientInstallations PiPackageClientInstallation[]
+  selectionReferences PiPackageClientSelection[]
+  agentRevisionReferences AgentRevisionReleaseReference[]
+  assistantRevisionReferences ChatAssistantRevisionReleaseReference[]
   id              String          @id @default(cuid())
   listingId       String
   listing         MarketListing   @relation("MarketListingReleases", fields: [listingId], references: [id], onDelete: Cascade)
@@ -818,6 +838,8 @@ model MarketRelease {
   requestedBy     MarketInstall[] @relation("MarketInstallRequestedRelease")
   chatAssistants  ChatAssistant[] @relation("ChatAssistantMarketTemplate")
   agentPiPackages AgentPiPackage[]
+  piSessionPackages PiSessionPackage[]
+  githubRegistryVersion GithubRegistryVersion?
   createdAt       DateTime        @default(now())
 
   @@unique([listingId, version])
@@ -861,6 +883,7 @@ model MarketInstall {
   createdAt          DateTime        @default(now())
   updatedAt          DateTime        @updatedAt
   agentPiPackages         AgentPiPackage[]
+  piSessionPackages PiSessionPackage[]
 
   @@unique([targetWorkspaceId, listingId])
   @@unique([targetWorkspaceId, idempotencyKey])
@@ -883,49 +906,33 @@ model AgentPiPackage {
   @@index([releaseId])
 }
 
-model AgentRuntime {
-  id            String            @id @default(cuid())
-  workspaceId   String
-  workspace     Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  agentId       String            @unique
-  agent         Agent             @relation(fields: [agentId], references: [id], onDelete: Cascade)
-  sandboxId     String            @unique
-  sandbox       Sandbox           @relation(fields: [sandboxId], references: [id], onDelete: Cascade)
-  kind          String            @default("hermes")
-  image         String
-  status        String            @default("provisioning")
-  configVersion Int               @default(1)
-  configHash    String?
-  capabilities  Json?
-  lastSyncedAt  DateTime?
-  lastStartedAt DateTime?
-  lastError     String?
-  createdAt     DateTime          @default(now())
-  updatedAt     DateTime          @updatedAt
-  attachments   AgentAttachment[]
-
-  @@index([workspaceId, kind, status])
+// Session package references outlive mutable Agent defaults and pin executable artifacts.
+model PiSessionPackageSet {
+  id String @id @default(cuid())
+  sandboxId String? @unique
+  sandbox Sandbox? @relation(fields: [sandboxId], references: [id], onDelete: Cascade)
+  conversationId String? @unique
+  conversation Conversation? @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  contextId String? @unique
+  context A2AContext? @relation(fields: [contextId], references: [id], onDelete: Cascade)
+  legacy Boolean @default(false)
+  packages PiSessionPackage[]
+  createdAt DateTime @default(now())
 }
 
-model AgentAttachment {
-  id             String        @id @default(cuid())
-  workspaceId    String
-  workspace      Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  agentId        String
-  agent          Agent         @relation(fields: [agentId], references: [id], onDelete: Cascade)
-  conversationId String?
-  conversation   Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
-  runtimeId      String?
-  runtime        AgentRuntime? @relation(fields: [runtimeId], references: [id], onDelete: SetNull)
-  name           String
-  mimeType       String
-  size           Int
-  storage        String        @default("hermes-volume")
-  storagePath    String
-  createdAt      DateTime      @default(now())
+model PiSessionPackage {
+  packageSetId String
+  packageSet PiSessionPackageSet @relation(fields: [packageSetId], references: [id], onDelete: Cascade)
+  marketInstallId String
+  marketInstall MarketInstall @relation(fields: [marketInstallId], references: [id], onDelete: NoAction)
+  releaseId String
+  release MarketRelease @relation(fields: [releaseId], references: [id], onDelete: NoAction)
+  checksum String
+  resourceMap Json
 
-  @@index([workspaceId, agentId, createdAt])
-  @@index([conversationId])
+  @@id([packageSetId, marketInstallId])
+  @@index([marketInstallId])
+  @@index([releaseId])
 }
 
 model WorkspaceAttachment {
@@ -996,6 +1003,9 @@ model AgentSubAgent {
 model AgentServer {
   agentId      String
   deploymentId String
+  allowedToolNames String[] @default([])
+  approvedToolSignatures Json @default("{}")
+  pendingToolChanges Json @default("{}")
   agent        Agent      @relation(fields: [agentId], references: [id], onDelete: Cascade)
   deployment   Deployment @relation(fields: [deploymentId], references: [id], onDelete: Cascade)
 
@@ -1033,6 +1043,10 @@ model AgentSandbox {
 }
 
 model WorkSession {
+  agentRevisionId String?
+  agentRevision AgentRevision? @relation(fields: [agentId, agentRevisionId], references: [agentId, id], onDelete: Restrict, onUpdate: Restrict)
+  legacyRevisionUnresolved Boolean @default(true)
+  @@index([agentId, agentRevisionId])
   a2aActorId String?
   a2aActor User? @relation("NativeWorkActor", fields: [a2aActorId], references: [id], onDelete: SetNull)
   id                 String         @id @default(cuid())
@@ -1150,33 +1164,30 @@ model AgentKnowledgeBase {
 }
 
 model Conversation {
+  agentRevisionId String?
+  agentRevision AgentRevision? @relation(fields: [agentId, agentRevisionId], references: [agentId, id], onDelete: Restrict, onUpdate: Restrict)
+  legacyRevisionUnresolved Boolean @default(true)
+  @@index([agentId, agentRevisionId])
   id                    String                   @id @default(cuid())
   agentId               String
   agent                 Agent                    @relation(fields: [agentId], references: [id], onDelete: Cascade)
   sandboxId             String?                  @unique
   sandbox               Sandbox?                 @relation(fields: [sandboxId], references: [id], onDelete: Restrict)
   title                 String?
-  // Hermes keeps its own state in the runtime volume. These aliases let a
-  // cloned ToolPlane conversation retain the source runtime's session identity
-  // even though its database primary key must be new.
+  // Some runtimes keep their own state outside this database. These aliases
+  // let a cloned ToolPlane conversation retain the source runtime's session
+  // identity even though its database primary key must be new.
   runtimeSessionId      String?
   runtimeSessionKey     String?
-  // Independent binding for sandbox Hermes RPC; never replaces channel routing keys.
-  hermesRpcBinding      String?
-  // null profile means Hermes' default profile. null provider/model means the
-  // conversation follows that profile's configured default model.
-  hermesProfile         String?
-  hermesProvider        String?
-  hermesModel           String?
   // null follows the model/provider default. Explicit values are snapshotted
   // per conversation so one chat cannot change another chat's reasoning level.
   reasoningEffort       String?
   createdAt             DateTime                 @default(now())
   messages              Message[]
-  attachments           AgentAttachment[]
   workspaceAttachments  WorkspaceAttachment[]
   publicApiConversation AgentPublicConversation?
   workSession           WorkSession?
+  piPackageSet PiSessionPackageSet?
 
   @@index([sandboxId])
 }
@@ -1201,6 +1212,8 @@ model Message {
 // a prompt, and direct MCP deployments; there are no Skill, Sandbox, Toolkit,
 // sub-agent, or Runtime relations in this bounded context.
 model ChatAssistant {
+  currentRevisionVersion Int @default(0)
+  revisions ChatAssistantRevision[]
   id                      String                  @id @default(cuid())
   workspaceId             String
   workspace               Workspace               @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -1227,6 +1240,9 @@ model ChatAssistant {
 }
 
 model ChatAssistantMcpGrant {
+  allowedToolNames String[] @default([])
+  approvedToolSignatures Json @default("{}")
+  pendingToolChanges Json @default("{}")
   assistantId  String
   assistant    ChatAssistant @relation(fields: [assistantId], references: [id], onDelete: Cascade)
   deploymentId String
@@ -1238,6 +1254,10 @@ model ChatAssistantMcpGrant {
 }
 
 model ChatThread {
+  assistantRevisionId String?
+  assistantRevision ChatAssistantRevision? @relation(fields: [assistantId, assistantRevisionId], references: [assistantId, id], onDelete: Restrict, onUpdate: Restrict)
+  legacyRevisionUnresolved Boolean @default(true)
+  @@index([assistantId, assistantRevisionId])
   id              String                @id @default(cuid())
   workspaceId     String
   workspace       Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -1256,6 +1276,23 @@ model ChatThread {
 }
 
 model ChatTurn {
+  idempotencyKey String?
+  requestHash String?
+  actorUserId String?
+  actorUser User? @relation("ChatRunActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  leaseToken String?
+  leaseExpiresAt DateTime?
+  generation Int @default(0)
+  lastEventSequence Int @default(0)
+  stopRequestedAt DateTime?
+  startedAt DateTime?
+  errorAt DateTime?
+  updatedAt DateTime @default(now()) @updatedAt
+  events ChatRunEvent[]
+  confirmations ChatToolConfirmation[]
+  @@unique([threadId, idempotencyKey])
+  @@index([status, leaseExpiresAt])
+  @@index([actorUserId])
   id          String        @id @default(cuid())
   threadId    String
   thread      ChatThread    @relation(fields: [threadId], references: [id], onDelete: Cascade)
@@ -1263,6 +1300,7 @@ model ChatTurn {
   error       String?
   messages    ChatMessage[]
   createdAt   DateTime      @default(now())
+  assistantRevisionId String?
   completedAt DateTime?
 
   @@index([threadId, createdAt])
@@ -1390,7 +1428,7 @@ model AgentApiKey {
   @@index([clientId, revokedAt])
 }
 
-// A clean hidden Agent/Hermes runtime allocated for either the whole Endpoint
+// A clean hidden Agent runtime allocated for either the whole Endpoint
 // or one HMAC-namespaced public subject. runtimeAgentId stays nullable while a
 // crash-safe reservation is being materialized.
 model AgentEndpointRuntime {
@@ -1571,24 +1609,6 @@ model ToolkitInstallation {
   @@index([userId, toolkitId, status])
 }
 
-// Capacity remains reserved until metadata commits or external cleanup is
-// confirmed. Expiry means "needs reconciliation", never "free the bytes".
-model AgentUploadReservation {
-  id String @id
-  workspaceId String
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  agentId String
-  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
-  runtimeId String
-  storagePath String
-  reservedBytes Int
-  status String @default("uploading")
-  createdAt DateTime @default(now())
-  expiresAt DateTime
-  @@index([workspaceId, status])
-  @@index([status, expiresAt])
-}
-
 model PiPackageSource {
   id             String @id @default(cuid())
   workspaceId    String
@@ -1631,10 +1651,12 @@ model PiPackageClientInstallation {
   workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   userId          String
   user            User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  marketInstallId String
-  marketInstall   MarketInstall @relation(fields: [marketInstallId], references: [id], onDelete: Restrict)
-  releaseId       String
-  release         MarketRelease @relation(fields: [releaseId], references: [id], onDelete: Restrict)
+  marketInstallId String?
+  marketInstall   MarketInstall? @relation(fields: [marketInstallId], references: [id], onDelete: Restrict)
+  releaseId       String?
+  release         MarketRelease? @relation(fields: [releaseId], references: [id], onDelete: Restrict)
+  selections      Json @default("[]")
+  selectionReferences PiPackageClientSelection[]
   client          String
   label           String
   status          String @default("active")
@@ -1642,6 +1664,8 @@ model PiPackageClientInstallation {
   bindings        Json
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+  // Authorization CAS excludes authentication timestamp writes.
+  configVersion   Int @default(0)
   lastUsedAt      DateTime?
 
   @@index([workspaceId, userId, status])
@@ -1649,8 +1673,26 @@ model PiPackageClientInstallation {
   @@index([releaseId])
 }
 
+// Database-maintained references for the fixed, credential-free selections JSON.
+model PiPackageClientSelection {
+  installationId String
+  installation PiPackageClientInstallation @relation(fields: [installationId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  releaseId String
+  release MarketRelease @relation(fields: [releaseId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  checksum String
+  kind String
+
+  @@id([installationId, releaseId])
+  @@index([releaseId])
+}
+
 // A2A v1 native task ledger. No AgentRun / Conversation / legacy delegation IDs.
 model A2AContext {
+  agentRevisionId String?
+  agentRevision AgentRevision? @relation(fields: [agentId, agentRevisionId], references: [agentId, id], onDelete: Restrict, onUpdate: Restrict)
+  legacyRevisionUnresolved Boolean @default(true)
+  @@index([agentId, agentRevisionId])
+  piPackageSet PiSessionPackageSet?
   entryBindings A2AEntryBinding[]
   remoteAgentId       String?
   remoteAgent         RemoteA2AAgent? @relation(fields: [remoteAgentId, workspaceId], references: [id, workspaceId], onDelete: Cascade)
@@ -1878,4 +1920,166 @@ model SandboxMcpOAuthRefresh {
   consumedAt DateTime?
   @@index([grantId])
   @@index([expiresAt])
+}
+
+// Revision JSON is parsed with the strict versioned DTO in each bounded context.
+// Publishing increments the owner's currentRevisionVersion in the same transaction.
+model ChatAssistantRevision {
+  id String @id @default(cuid())
+  assistantId String
+  assistant ChatAssistant @relation(fields: [assistantId], references: [id], onDelete: Cascade)
+  version Int
+  config Json
+  createdAt DateTime @default(now())
+  threads ChatThread[]
+  releaseReferences ChatAssistantRevisionReleaseReference[]
+  @@unique([assistantId, id])
+  @@unique([assistantId, version])
+}
+
+model AgentRevision {
+  id String @id @default(cuid())
+  agentId String
+  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  version Int
+  config Json
+  createdAt DateTime @default(now())
+  conversations Conversation[]
+  workSessions WorkSession[]
+  a2aContexts A2AContext[]
+  releaseReferences AgentRevisionReleaseReference[]
+  @@unique([agentId, id])
+  @@unique([agentId, version])
+}
+
+// Maintained from immutable revision JSON by database triggers, not consumers.
+model AgentRevisionReleaseReference {
+  revisionId String
+  revision AgentRevision @relation(fields: [revisionId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  releaseId String
+  release MarketRelease @relation(fields: [releaseId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  @@id([revisionId, releaseId])
+  @@index([releaseId])
+}
+
+model ChatAssistantRevisionReleaseReference {
+  revisionId String
+  revision ChatAssistantRevision @relation(fields: [revisionId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  releaseId String
+  release MarketRelease @relation(fields: [releaseId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  @@id([revisionId, releaseId])
+  @@index([releaseId])
+}
+
+model ChatRunEvent {
+  id String @id @default(cuid())
+  turnId String
+  turn ChatTurn @relation(fields: [turnId], references: [id], onDelete: Cascade)
+  sequence Int
+  generation Int
+  payload Json
+  createdAt DateTime @default(now())
+  @@unique([turnId, sequence])
+}
+
+// Claim execution before calling a tool; a lost claim becomes execution_unknown,
+// never awaiting_user/approved again without external reconciliation.
+model ChatToolConfirmation {
+  id String @id @default(cuid())
+  turnId String
+  turn ChatTurn @relation(fields: [turnId], references: [id], onDelete: Cascade)
+  toolCallId String
+  toolName String
+  input Json
+  status String @default("awaiting_user")
+  approverUserId String?
+  approverUser User? @relation("ChatToolApprover", fields: [approverUserId], references: [id], onDelete: SetNull)
+  resolvedAt DateTime?
+  executionStartedAt DateTime?
+  executionCompletedAt DateTime?
+  result Json?
+  error String?
+  createdAt DateTime @default(now())
+  expiresAt DateTime?
+  @@unique([turnId, toolCallId])
+  @@index([turnId, status, createdAt])
+  @@index([approverUserId])
+}
+
+// GitHub credentials remain encrypted and server-only; releases contain only pinned provenance.
+model GithubResourceRegistry {
+  id String @id @default(cuid())
+  workspaceId String
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdById String
+  name String
+  repository String
+  branch String @default("main")
+  visibility String @default("private")
+  credentials Json?
+  status String @default("pending")
+  generation Int @default(0)
+  lastAppliedCommit String?
+  lastSyncAt DateTime?
+  error String?
+  leaseToken String?
+  leaseExpiresAt DateTime?
+  jobs GithubResourceSyncJob[]
+  resources GithubRegistryResource[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([workspaceId, repository, branch])
+  @@index([status, leaseExpiresAt])
+}
+
+model GithubResourceSyncJob {
+  id String @id @default(cuid())
+  registryId String
+  registry GithubResourceRegistry @relation(fields: [registryId], references: [id], onDelete: Cascade)
+  generation Int
+  deliveryId String?
+  leaseToken String?
+  status String @default("pending")
+  commit String?
+  error String?
+  startedAt DateTime?
+  finishedAt DateTime?
+  createdAt DateTime @default(now())
+
+  @@unique([registryId, deliveryId])
+  @@index([status, createdAt])
+}
+
+model GithubRegistryResource {
+  id String @id @default(cuid())
+  registryId String
+  registry GithubResourceRegistry @relation(fields: [registryId], references: [id], onDelete: Cascade)
+  resourceId String
+  kind String
+  listingId String? @unique
+  listing MarketListing? @relation(fields: [listingId], references: [id], onDelete: Restrict)
+  agentListingId String? @unique
+  agentListing AgentListing? @relation(fields: [agentListingId], references: [id], onDelete: Restrict)
+  active Boolean @default(true)
+  versions GithubRegistryVersion[]
+
+  @@unique([registryId, resourceId])
+}
+
+model GithubRegistryVersion {
+  id String @id @default(cuid())
+  resourceId String
+  resource GithubRegistryResource @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+  version String
+  digest String
+  sourceRepository String
+  sourceCommit String
+  sourcePath String
+  releaseId String? @unique
+  release MarketRelease? @relation(fields: [releaseId], references: [id], onDelete: Restrict)
+  agentReleaseId String? @unique
+  agentRelease AgentRelease? @relation(fields: [agentReleaseId], references: [id], onDelete: Restrict)
+
+  @@unique([resourceId, version])
 }

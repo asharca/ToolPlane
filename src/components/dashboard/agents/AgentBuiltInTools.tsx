@@ -81,11 +81,6 @@ export function AgentBuiltInTools({
           );
         })}
       </ul>
-      {!selectable ? (
-        <p className="text-xs leading-5 text-muted-foreground">
-          {t("hermesBuiltInToolsDescription")}
-        </p>
-      ) : null}
     </div>
   );
 }

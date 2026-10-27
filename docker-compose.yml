@@ -42,23 +42,12 @@ services:
     stop_grace_period: 60s
     image: ${TOOLPLANE_IMAGE:-ghcr.io/asharca/toolplane:latest}
     platform: ${TOOLPLANE_PLATFORM:-linux/amd64}
-    # Keep the archive lease owner stable across an app-container recreate so
-    # PID/start-identity recovery can reclaim a crashed import immediately.
-    hostname: toolplane-app
-    volumes:
-      # Raw Hermes archive uploads are streamed here before inspection. Keep
-      # this source on a disk sized for the ZIP, extracted tree, and Docker
-      # copy phase. Set TOOLPLANE_HERMES_ARCHIVE_VOLUME to an absolute host
-      # path to use a dedicated bind mount instead of the named-volume default.
-      - ${TOOLPLANE_HERMES_ARCHIVE_VOLUME:-toolplane_imports}:/var/lib/toolplane/imports
     expose:
       - '3000'
       - '9321'
-      - '9332'
     ports:
       - '${APP_HOST_BIND:-0.0.0.0}:${APP_HOST_PORT:-10030}:3000'
       - '${CONNECTOR_WS_HOST_BIND:-0.0.0.0}:${CONNECTOR_WS_HOST_PORT:-9321}:9321'
-      - '${HERMES_DASHBOARD_HOST_BIND:-0.0.0.0}:${HERMES_DASHBOARD_HOST_PORT:-9332}:9332'
     restart: unless-stopped
     healthcheck:
       test:
@@ -83,9 +72,6 @@ services:
       TOOLPLANE_RUNTIME_DOMAIN: ${TOOLPLANE_RUNTIME_DOMAIN:-default}
       TOOLPLANE_RUNTIME_RECOVERY_ACK: ${TOOLPLANE_RUNTIME_RECOVERY_ACK:-}
       TOOLPLANE_ATTACHMENT_HARD_MAX_BYTES: ${TOOLPLANE_ATTACHMENT_HARD_MAX_BYTES:-2000000000}
-      TOOLPLANE_ATTACHMENT_WORKSPACE_BYTES: ${TOOLPLANE_ATTACHMENT_WORKSPACE_BYTES:-20000000000}
-      TOOLPLANE_ATTACHMENT_AGENT_BYTES: ${TOOLPLANE_ATTACHMENT_AGENT_BYTES:-5000000000}
-      TOOLPLANE_ATTACHMENT_CONCURRENT_UPLOADS: ${TOOLPLANE_ATTACHMENT_CONCURRENT_UPLOADS:-2}
       NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:10030}
       NEXT_PUBLIC_SUPPORT_EMAIL: ${NEXT_PUBLIC_SUPPORT_EMAIL:-support@tp.rhzy.ai}
       SMTP_URL: ${SMTP_URL:-}
@@ -95,9 +81,6 @@ services:
       CONNECTOR_WS_BIND: 0.0.0.0
       CONNECTOR_WS_PORT: ${CONNECTOR_WS_PORT:-9321}
       CONNECTOR_WS_PUBLIC_URL: ${CONNECTOR_WS_PUBLIC_URL:-}
-      HERMES_DASHBOARD_BIND: 0.0.0.0
-      HERMES_DASHBOARD_PORT: ${HERMES_DASHBOARD_PORT:-9332}
-      HERMES_DASHBOARD_PUBLIC_URL: ${HERMES_DASHBOARD_PUBLIC_URL:-}
       # Reach the Docker daemon through the restricted proxy, not the raw socket.
       DOCKER_HOST: tcp://socket-proxy:2375
       # Admin-only online updates download a GitHub Release runtime artifact,
@@ -106,11 +89,7 @@ services:
       TOOLPLANE_UPDATE_ENABLED: ${TOOLPLANE_UPDATE_ENABLED:-true}
       TOOLPLANE_UPDATE_REPO: ${TOOLPLANE_UPDATE_REPO:-asharca/ToolPlane}
       TOOLPLANE_UPDATE_ARTIFACT: ${TOOLPLANE_UPDATE_ARTIFACT:-toolplane-runtime-linux-amd64.tar.gz}
-      # Instance default for new/imported Hermes agent runtimes. Individual
-      # agents may still choose a pinned image in the dashboard.
-      TOOLPLANE_HERMES_IMAGE: ${TOOLPLANE_HERMES_IMAGE:-}
       TOOLPLANE_MAX_ATTACHMENT_BYTES: ${TOOLPLANE_MAX_ATTACHMENT_BYTES:-1000000000}
-      TOOLPLANE_HERMES_ARCHIVE_TMP_DIR: /var/lib/toolplane/imports
       TOOLPLANE_HTTP_REQUEST_TIMEOUT_MS: ${TOOLPLANE_HTTP_REQUEST_TIMEOUT_MS:-14400000}
       # Git/PyPI/GitHub MCPs may need a quiet first install. Values are in ms;
       # admins can override them in Settings for subsequent MCP starts.
@@ -123,4 +102,3 @@ services:
 
 volumes:
   mcp_pg:
-  toolplane_imports:

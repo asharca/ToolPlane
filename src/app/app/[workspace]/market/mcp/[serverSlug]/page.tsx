@@ -1,3 +1,5 @@
+import { McpConnectionCreateForm } from "@/components/dashboard/McpConnectionCreateForm";
+import { McpHttpConsent } from "@/components/dashboard/McpHttpConsent";
 import { ButtonLink } from "@/components/motion/button";
 
 import { notFound, redirect } from "next/navigation";
@@ -140,9 +142,13 @@ export default async function McpMarketDetailPage({
                 </p>
               </div>
             </div>
-            <form action={deployServerAction}>
+            <McpConnectionCreateForm action={deployServerAction}>
               <input type="hidden" name="workspace" value={slug} />
               <input type="hidden" name="serverId" value={server.id} />
+              {server.recipe.source === "remote" &&
+              server.recipe.ref.startsWith("http:") ? (
+                <McpHttpConsent required />
+              ) : null}
               <SubmitButton
                 flash={false}
                 pendingLabel={t(
@@ -158,7 +164,7 @@ export default async function McpMarketDetailPage({
                 )}{" "}
                 <ArrowRight className="size-4" />
               </SubmitButton>
-            </form>
+            </McpConnectionCreateForm>
             <p className="w-full text-xs leading-5 text-muted-foreground">
               {t(
                 server.mcpKind === "connector"

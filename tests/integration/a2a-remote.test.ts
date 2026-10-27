@@ -25,7 +25,8 @@ import {
   remoteRegistryView,
 } from "@/lib/a2a/remote-registry";
 import { remoteChildGrant, assertRemoteGrant } from "@/lib/a2a/remote-policy";
-import { createLocalRootGrant } from "@/lib/a2a/local-policy";
+import { publishFixtureAgentRevision } from "./agent-revision-fixture";
+import { createLocalRootGrant, childGrant } from "@/lib/a2a/local-policy";
 import {
   submitTask,
   claimTask,
@@ -215,10 +216,12 @@ beforeAll(async () => {
             workspaceId: ws,
             name: `Local ${i}`,
             slug: `local-${i}`,
-            runtimeKind: "claude-code",
+            runtimeKind: "pi-sdk",
             model: "fixture",
             providerId: provider.id,
             a2aInternalEnabled: true,
+            a2aInboundEnabled: true,
+            a2aOutboundEnabled: true,
             sandboxes: { create: { sandboxId: sandbox.id, isDefault: true } },
           },
         })
@@ -247,11 +250,19 @@ beforeEach(async () => {
   );
   await db.a2AContext.deleteMany({ where: { workspaceId: ws } });
   await db.remoteA2AAgent.deleteMany({ where: { workspaceId: ws } });
+  await db.agentSubAgent.deleteMany({
+    where: { parentId: { in: [agent, otherAgent] } },
+  });
   await db.agent.updateMany({
     where: { workspaceId: ws },
-    data: { a2aInternalEnabled: true, systemPrompt: null },
+    data: {
+      a2aInternalEnabled: true,
+      a2aInboundEnabled: true,
+      a2aOutboundEnabled: true,
+      systemPrompt: null,
+      a2aPolicy: { schemaVersion: 1, targets: [] },
+    },
   });
-  grant = await createLocalRootGrant(ws, agent, user);
   remote = (
     await mutateRemoteRegistry(ctx, {
       action: "register",
@@ -259,6 +270,30 @@ beforeEach(async () => {
       token: "fixture-peer-key",
     })
   ).id;
+  await db.agent.update({
+    where: { id: agent },
+    data: {
+      a2aPolicy: {
+        schemaVersion: 1,
+        targets: [
+          {
+            kind: "remote",
+            targetId: remote,
+            capabilityIds: remoteCard().skills.map((skill) => skill.id),
+            maxCalls: 128,
+            maxDepth: 3,
+            maxConcurrent: 16,
+            timeoutSeconds: 840,
+            maxInputBytes: 65_536,
+            dataAllowance: "text_only",
+          },
+        ],
+      },
+    },
+  });
+  for (const id of [agent, otherAgent])
+    await publishFixtureAgentRevision(ws, id);
+  grant = await createLocalRootGrant(ws, agent, user);
 });
 afterAll(async () => {
   stopA2AWorker();
@@ -275,6 +310,235 @@ afterAll(async () => {
 });
 
 describe("registered remote Agents in the native task core", () => {
+  async function localRelay(maxDepth: number) {
+    const limits = {
+      maxCalls: 128,
+      maxDepth,
+      maxConcurrent: 16,
+      timeoutSeconds: 840,
+      maxInputBytes: 65_536,
+      dataAllowance: "text_only",
+    };
+    const ancestorPolicy = {
+      schemaVersion: 1,
+      targets: [
+        { ...limits, kind: "local", targetId: otherAgent, capabilityIds: [] },
+      ],
+    };
+    const relayPolicy = {
+      schemaVersion: 1,
+      targets: [
+        {
+          ...limits,
+          maxDepth: 3,
+          kind: "remote",
+          targetId: remote,
+          capabilityIds: remoteCard().skills.map((skill) => skill.id),
+        },
+      ],
+    };
+    await db.agentSubAgent.create({
+      data: { parentId: agent, childId: otherAgent },
+    });
+    await db.agent.update({
+      where: { id: agent },
+      data: { a2aPolicy: ancestorPolicy },
+    });
+    await db.agent.update({
+      where: { id: otherAgent },
+      data: { a2aPolicy: relayPolicy },
+    });
+    await mutateRemoteRegistry(
+      { ...ctx, agentId: otherAgent },
+      {
+        action: "configure",
+        id: remote,
+        revision: 1,
+        allowCurrentAgent: true,
+      },
+    );
+    for (const id of [agent, otherAgent])
+      await publishFixtureAgentRevision(ws, id);
+    grant = await createLocalRootGrant(ws, agent, user);
+    const ancestor = await root();
+    const authority = await childGrant(
+      ancestor.id,
+      assertDefined(ancestor.leaseToken),
+      otherAgent,
+    );
+    const relay = assertDefined(
+      await claimTask(
+        (
+          await submitTask(authority, message(), {
+            parentLeaseToken: assertDefined(ancestor.leaseToken),
+          })
+        ).id,
+      ),
+    );
+    return { relay, ancestorPolicy, relayPolicy };
+  }
+
+  it("includes the remote leaf in every ancestor's pinned depth after live expansion", async () => {
+    const { relay, ancestorPolicy } = await localRelay(1);
+    await expect(
+      remoteChildGrant(relay.id, assertDefined(relay.leaseToken), remote),
+    ).rejects.toThrow();
+    await db.agent.update({
+      where: { id: agent },
+      data: {
+        a2aPolicy: {
+          ...ancestorPolicy,
+          targets: ancestorPolicy.targets.map((policy) => ({
+            ...policy,
+            maxDepth: 3,
+          })),
+        },
+      },
+    });
+    await expect(
+      remoteChildGrant(relay.id, assertDefined(relay.leaseToken), remote),
+    ).rejects.toThrow();
+    expect(network.rpc).not.toHaveBeenCalled();
+  });
+
+  it.each(["ancestor", "remote-leaf"] as const)(
+    "revalidates live %s depth before admitting or using an issued remote grant",
+    async (edge) => {
+      const { relay, ancestorPolicy, relayPolicy } = await localRelay(3);
+      const delegated = await remoteChildGrant(
+        relay.id,
+        assertDefined(relay.leaseToken),
+        remote,
+      );
+      expect(delegated.ancestorTaskIds).toHaveLength(2);
+      await expect(assertRemoteGrant(delegated)).resolves.toBeUndefined();
+      const previous = edge === "ancestor" ? ancestorPolicy : relayPolicy;
+      await db.agent.update({
+        where: { id: edge === "ancestor" ? agent : otherAgent },
+        data: {
+          a2aPolicy: {
+            ...previous,
+            targets: previous.targets.map((policy) => ({
+              ...policy,
+              maxDepth: 1,
+            })),
+          },
+        },
+      });
+      const before = await db.a2ATask.count({
+        where: { context: { workspaceId: ws } },
+      });
+      await expect(
+        remoteChildGrant(relay.id, assertDefined(relay.leaseToken), remote),
+      ).rejects.toThrow();
+      await expect(assertRemoteGrant(delegated)).rejects.toThrow();
+      await expect(
+        submitTask(delegated, message(), {
+          parentLeaseToken: assertDefined(relay.leaseToken),
+        }),
+      ).rejects.toThrow();
+      expect(
+        await db.a2ATask.count({ where: { context: { workspaceId: ws } } }),
+      ).toBe(before);
+      expect(network.rpc).not.toHaveBeenCalled();
+    },
+  );
+
+  it("requires independent inbound and outbound approval", async () => {
+    await db.agent.update({
+      where: { id: agent },
+      data: { a2aInboundEnabled: false },
+    });
+    await expect(createLocalRootGrant(ws, agent, user)).rejects.toThrow();
+    await db.agent.update({
+      where: { id: agent },
+      data: { a2aInboundEnabled: true, a2aOutboundEnabled: false },
+    });
+    grant = await createLocalRootGrant(ws, agent, user);
+    const parent = await root();
+    await expect(child(parent)).rejects.toThrow(/approved policy/);
+    expect(network.rpc).not.toHaveBeenCalled();
+  });
+  it.each(["calls", "authorized-cost", "input", "capabilities"] as const)(
+    "enforces the approved %s scope before remote side effects",
+    async (limit) => {
+      const policy = {
+        kind: "remote",
+        targetId: remote,
+        capabilityIds: ["review"],
+        maxCalls: limit === "calls" ? 1 : 16,
+        maxDepth: 3,
+        maxConcurrent: 4,
+        timeoutSeconds: 30,
+        maxInputBytes: limit === "input" ? 1 : 65_536,
+        dataAllowance: "text_only",
+        ...(limit === "authorized-cost"
+          ? {
+              budget: {
+                currency: "USD",
+                maxAuthorizedCostMicros: 100,
+                authorizedCostPerCallMicros: 100,
+              },
+            }
+          : {}),
+      };
+      if (limit === "capabilities") policy.capabilityIds = [];
+      await db.agent.update({
+        where: { id: agent },
+        data: { a2aPolicy: { schemaVersion: 1, targets: [policy] } },
+      });
+      grant = await createLocalRootGrant(ws, agent, user);
+      const parent = await root();
+      if (limit === "calls" || limit === "authorized-cost") {
+        const delegated = await sendChild(parent);
+        // Unknown/failed outcomes never refund an authorized reservation.
+        await interruptTask(delegated.row.id, "Observation lost.");
+      }
+      const sent = network.rpc.mock.calls.length;
+      await expect(child(parent)).rejects.toThrow();
+      expect(network.rpc).toHaveBeenCalledTimes(sent);
+    },
+  );
+  it("charges continuation admission against the same authorized reservation budget", async () => {
+    await db.agent.update({
+      where: { id: agent },
+      data: {
+        a2aPolicy: {
+          schemaVersion: 1,
+          targets: [
+            {
+              kind: "remote",
+              targetId: remote,
+              capabilityIds: ["review"],
+              maxCalls: 16,
+              maxDepth: 3,
+              maxConcurrent: 4,
+              timeoutSeconds: 840,
+              maxInputBytes: 65_536,
+              dataAllowance: "text_only",
+              budget: {
+                currency: "USD",
+                maxAuthorizedCostMicros: 100,
+                authorizedCostPerCallMicros: 100,
+              },
+            },
+          ],
+        },
+      },
+    });
+    grant = await createLocalRootGrant(ws, agent, user);
+    const parent = await root();
+    peerState = "TASK_STATE_INPUT_REQUIRED";
+    const delegated = await sendChild(parent);
+    await expect(
+      submitTask(
+        delegated.grant,
+        message("Additional input", { taskId: delegated.row.id }),
+        { parentLeaseToken: assertDefined(parent.leaseToken) },
+      ),
+    ).rejects.toThrow(/authorized cost reservation/);
+    expect(network.rpc).toHaveBeenCalledTimes(1);
+  });
   it("registers enabled for only the current Agent, encrypts credentials and exposes no secret", async () => {
     await db.agent.update({
       where: { id: agent },
@@ -714,9 +978,11 @@ describe("registered remote Agents in the native task core", () => {
     expect((await getTask(grant, parent.id)).status?.state).toBe(5);
     peerState = "TASK_STATE_CANCELED";
     await due(delegated.row.id);
+    await expect(getTask(delegated.grant, delegated.row.id)).rejects.toThrow();
     expect(
-      (await getTask(delegated.grant, delegated.row.id)).status?.state,
-    ).toBe(5);
+      (await db.a2ATask.findUniqueOrThrow({ where: { id: delegated.row.id } }))
+        .state,
+    ).toBe(TaskState.TASK_STATE_CANCELED);
   });
   it("fails an uncertain submission without automatic resend or false cancellation", async () => {
     const parent = await root(),
@@ -727,6 +993,13 @@ describe("registered remote Agents in the native task core", () => {
     expect(task.status?.state).toBe(4);
     expect(JSON.stringify(task)).not.toContain("secret upstream exception");
     expect(JSON.stringify(task)).toContain("may still");
+    expect(task.metadata?.toolplaneRemote).toMatchObject({
+      outcome: "unknown",
+    });
+    const view = await getConsoleTaskTree(ctx, parent.id, delegated.row.id);
+    expect(
+      view.nodes.find((node) => node.id === delegated.row.id),
+    ).toMatchObject({ remoteOutcome: "unknown" });
     await executeA2ATask(delegated.row.id);
     await due(delegated.row.id);
     expect(network.rpc).toHaveBeenCalledTimes(1);
@@ -751,9 +1024,11 @@ describe("registered remote Agents in the native task core", () => {
     });
     await expect(assertRemoteGrant(delegated.grant)).rejects.toThrow();
     await due(delegated.row.id);
+    await expect(getTask(delegated.grant, delegated.row.id)).rejects.toThrow();
     expect(
-      (await getTask(delegated.grant, delegated.row.id)).status?.state,
-    ).toBe(4);
+      (await db.a2ATask.findUniqueOrThrow({ where: { id: delegated.row.id } }))
+        .state,
+    ).toBe(TaskState.TASK_STATE_FAILED);
     expect(network.rpc).toHaveBeenCalledTimes(1);
     await expect(
       getConsoleTaskTree(ctx, parent.id, delegated.row.id),

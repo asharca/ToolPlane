@@ -3,6 +3,7 @@ import { runtimeCanOperate } from "@/lib/runtime/ownership-state";
 import { systemLog } from "@/lib/observability/system";
 import { maintainPiPackageSources } from "@/lib/market/pi-package-catalog";
 import { stopIdleAgentConversationSandboxes } from "@/lib/agents/conversation-sandbox";
+import { runPendingGithubResourceSyncJobs } from "@/lib/market/github-registry";
 // Next.js startup hook. Runs once when the Node server boots to recover MCP
 // processes, channel runners, and sandbox data operations interrupted by a restart.
 export async function registerNode() {
@@ -16,21 +17,19 @@ async function registerNodeOwned() {
   const g = globalThis as unknown as {
     __toolplaneStopTimers?: () => void;
     __mcpReconciled?: boolean;
-    __agentApiMaintenanceTimer?: ReturnType<typeof setInterval>;
-    __agentApiIdleMaintenanceTimer?: ReturnType<typeof setInterval>;
-    __attachmentMaintenanceTimer?: ReturnType<typeof setInterval>;
+    __agentConversationMaintenanceTimer?: NodeJS.Timeout;
     __logMaintenanceTimer?: ReturnType<typeof setInterval>;
     __piPackageSourceMaintenanceTimer?: NodeJS.Timeout;
+    __githubResourceSyncTimer?: NodeJS.Timeout;
   };
   if (g.__mcpReconciled) return;
   g.__mcpReconciled = true;
   g.__toolplaneStopTimers = () => {
     for (const timer of [
-      g.__attachmentMaintenanceTimer,
       g.__logMaintenanceTimer,
-      g.__agentApiMaintenanceTimer,
-      g.__agentApiIdleMaintenanceTimer,
+      g.__agentConversationMaintenanceTimer,
       g.__piPackageSourceMaintenanceTimer,
+      g.__githubResourceSyncTimer,
     ]) {
       if (timer) clearInterval(timer);
     }
@@ -75,25 +74,19 @@ async function registerNodeOwned() {
     }, 5 * 60_000);
     g.__piPackageSourceMaintenanceTimer.unref?.();
   }
-  if (!g.__attachmentMaintenanceTimer) {
-    let running = false;
-    const maintain = async () => {
-      if (running || !runtimeCanOperate()) return;
-      running = true;
+  if (!g.__githubResourceSyncTimer) {
+    const synchronize = async () => {
+      if (!runtimeCanOperate()) return;
       try {
-        await (
-          await import("@/lib/agents/upload-reservations")
-        ).maintainAttachmentUploads();
-      } catch (error) {
-        systemLog("error", "Attachment cleanup failed", error);
-      } finally {
-        running = false;
+        await runPendingGithubResourceSyncJobs();
+      } catch {
+        systemLog("error", "GitHub resource registry maintenance failed");
       }
     };
-    g.__attachmentMaintenanceTimer = setInterval(() => {
-      void maintain();
-    }, 60_000);
-    g.__attachmentMaintenanceTimer.unref?.();
+    g.__githubResourceSyncTimer = setInterval(() => {
+      void synchronize();
+    }, 15_000);
+    g.__githubResourceSyncTimer.unref?.();
   }
   const helpersCreatedBefore = new Date();
   // A materializer normally lives for only a few seconds. Unlike the broader
@@ -145,8 +138,7 @@ async function registerNodeOwned() {
       if (Object.values(copies).some((count) => count > 0)) {
         systemLog(
           "warn",
-          `[mcp] cleaned ${copies.helpersRemoved} stale volume helper(s) and ` +
-            `${copies.hermesArchiveHelpersRemoved} stale Hermes import helper(s); ` +
+          `[mcp] cleaned ${copies.helpersRemoved} stale volume helper(s); ` +
             `marked ${copies.copiesInterrupted} clone(s), ${copies.restoresInterrupted} restore(s), ` +
             `${copies.upgradesInterrupted} image upgrade(s), and ${copies.snapshotsInterrupted} snapshot(s) as interrupted`,
         );
@@ -187,16 +179,8 @@ async function registerNodeOwned() {
       "@/lib/sandboxes/connector-broker"
     );
     await ensureConnectorBroker();
-    const { ensureHermesDashboardBroker } = await import(
-      "@/lib/agents/hermes/dashboard-broker"
-    );
-    await ensureHermesDashboardBroker();
     const { ensureSandboxNetwork } = await import("@/lib/process/supervisor");
     await ensureSandboxNetwork();
-    const { cleanupHermesArchiveStaging } = await import(
-      "@/lib/agents/hermes/archive"
-    );
-    await cleanupHermesArchiveStaging();
     await reconcileDeploymentConfigHelpers();
     await reconcileSandboxCopies();
     const { reconcileDeployments } = await import("@/lib/process/reconcile");
@@ -224,58 +208,11 @@ async function registerNodeOwned() {
     systemLog("error", "[a2a] startup recovery failed");
   }
 
-  if (!g.__agentApiMaintenanceTimer) {
-    let running = false;
-    const maintain = async () => {
-      if (running || !runtimeCanOperate()) return;
-      running = true;
-      try {
-        const { runAgentApiMaintenance } = await import(
-          "@/lib/agents/public-api/maintenance"
-        );
-        const result = await runAgentApiMaintenance();
-        if (Object.values(result).some((count) => count > 0)) {
-          systemLog(
-            "info",
-            `[agent-api] retained-data cleanup removed ${result.conversations} conversation(s), ` +
-              `${result.runs} response(s), ${result.runtimes} runtime(s), and ` +
-              `${result.usageBuckets} usage bucket(s)`,
-          );
-        }
-      } catch (error) {
-        systemLog("error", "[agent-api] retained-data cleanup failed", error);
-      } finally {
-        running = false;
-      }
-    };
-    const first = setTimeout(() => {
-      void maintain();
-    }, 30_000);
-    first.unref?.();
-    g.__agentApiMaintenanceTimer = setInterval(() => {
-      void maintain();
-    }, 60 * 60_000);
-    g.__agentApiMaintenanceTimer.unref?.();
-  }
-  if (!g.__agentApiIdleMaintenanceTimer) {
+  if (!g.__agentConversationMaintenanceTimer) {
     let idleRunning = false;
     const stopIdleRuntimes = async () => {
       if (idleRunning || !runtimeCanOperate()) return;
       idleRunning = true;
-      try {
-        const { runAgentApiIdleRuntimeMaintenance } = await import(
-          "@/lib/agents/public-api/maintenance"
-        );
-        const stopped = await runAgentApiIdleRuntimeMaintenance();
-        if (stopped > 0) {
-          systemLog(
-            "info",
-            `[agent-api] stopped ${stopped} idle public runtime(s)`,
-          );
-        }
-      } catch (error) {
-        systemLog("error", "[agent-api] idle runtime cleanup failed", error);
-      }
       try {
         await stopIdleAgentConversationSandboxes();
       } catch (error) {
@@ -292,10 +229,10 @@ async function registerNodeOwned() {
       void stopIdleRuntimes();
     }, 60_000);
     firstIdleStop.unref?.();
-    g.__agentApiIdleMaintenanceTimer = setInterval(() => {
+    g.__agentConversationMaintenanceTimer = setInterval(() => {
       void stopIdleRuntimes();
     }, 60_000);
-    g.__agentApiIdleMaintenanceTimer.unref?.();
+    g.__agentConversationMaintenanceTimer.unref?.();
   }
   if (failed)
     throw new Error(

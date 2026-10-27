@@ -10,6 +10,8 @@ import {
   type AgentMarketSetupGuide,
 } from "@/lib/agents/market-setup";
 import { AGENT_ENDPOINT_RUNTIME_MANAGED_BY } from "@/lib/agents/public-api/tool-policy";
+import { AgentRevisionConfigSchema } from "./revision-types";
+import { AGENT_PI_PACKAGES_INCLUDE } from "./pi-package-includes";
 
 export type AgentResourceOption = {
   id: string;
@@ -28,39 +30,8 @@ const INSTALLED_SKILL_INCLUDE = {
   },
 } as const;
 
-export const AGENT_PI_PACKAGES_INCLUDE = {
-  orderBy: { marketInstallId: "asc" },
-  select: {
-    marketInstallId: true,
-    releaseId: true,
-    marketInstall: {
-      select: {
-        id: true,
-        targetWorkspaceId: true,
-        listingId: true,
-        status: true,
-        resourceMap: true,
-        listing: { select: { id: true, kind: true, status: true } },
-      },
-    },
-    release: {
-      select: {
-        id: true,
-        listingId: true,
-        reviewStatus: true,
-        checksum: true,
-        manifest: true,
-      },
-    },
-  },
-} as const;
-
 const TOOL_INCLUDE = {
   piPackages: AGENT_PI_PACKAGES_INCLUDE,
-  modelProviders: {
-    include: { provider: true },
-    orderBy: { provider: { createdAt: "asc" } },
-  },
   servers: { select: { deploymentId: true } },
   skills: {
     select: {
@@ -92,7 +63,6 @@ const TOOL_INCLUDE = {
           slug: true,
           systemPrompt: true,
           runtimeKind: true,
-          runtime: { select: { kind: true } },
         },
       },
     },
@@ -126,11 +96,6 @@ const TOOL_INCLUDE = {
       },
     },
   },
-  runtime: {
-    include: {
-      sandbox: { include: { deployment: true } },
-    },
-  },
   // Internal lifecycle/execution callers need the immutable public revision
   // that owns an isolated runtime. Ordinary list/detail/request queries below
   // explicitly exclude these hidden runtime Agents.
@@ -159,8 +124,8 @@ export type AgentForRun = Prisma.AgentGetPayload<{
 export const ORDINARY_AGENT_FILTER = {
   publicRuntimeAllocation: { is: null },
   NOT: {
-    runtime: {
-      is: {
+    sandboxes: {
+      some: {
         sandbox: {
           config: {
             path: ["managedBy"],
@@ -295,13 +260,6 @@ export async function getAgentPageData(workspaceId: string, agentId: string) {
       model: true,
       maxSteps: true,
       provider: { select: { name: true } },
-      modelProviders: {
-        orderBy: { provider: { createdAt: "asc" } },
-        select: {
-          providerId: true,
-          provider: { select: { name: true, models: true } },
-        },
-      },
       servers: { select: { deploymentId: true } },
       skills: { select: { installedSkillId: true } },
       toolkits: { select: { toolkitId: true } },
@@ -329,25 +287,6 @@ export async function getAgentPageData(workspaceId: string, agentId: string) {
           resourceMap: true,
         },
       },
-      runtime: {
-        select: {
-          id: true,
-          kind: true,
-          image: true,
-          status: true,
-          lastError: true,
-          lastSyncedAt: true,
-          sandboxId: true,
-          sandbox: {
-            select: {
-              id: true,
-              config: true,
-              deploymentId: true,
-              deployment: { select: { status: true } },
-            },
-          },
-        },
-      },
     },
   });
 }
@@ -372,8 +311,6 @@ export async function resolveAgentMarketSetupGuide(
             id: true,
             model: true,
             provider: { select: { format: true } },
-            runtimeKind: true,
-            runtime: { select: { status: true } },
           },
         })
       : Promise.resolve([]),
@@ -394,32 +331,6 @@ export async function listAgents(workspaceId: string) {
     orderBy: [{ pinned: "desc" }, { createdAt: "desc" }],
     include: {
       provider: { select: { name: true } },
-      modelProviders: {
-        orderBy: { provider: { createdAt: "asc" } },
-        select: {
-          providerId: true,
-          provider: { select: { name: true, models: true } },
-        },
-      },
-      runtime: {
-        select: {
-          id: true,
-          kind: true,
-          image: true,
-          status: true,
-          lastError: true,
-          sandbox: {
-            select: {
-              id: true,
-              name: true,
-              kind: true,
-              network: true,
-              deploymentId: true,
-              deployment: { select: { status: true } },
-            },
-          },
-        },
-      },
       sandboxes: {
         select: {
           sandboxId: true,
@@ -491,33 +402,6 @@ export async function getAgentForRequest(agentId: string, userId: string) {
   return agent;
 }
 
-export async function getHermesTerminalForRequest(
-  agentId: string,
-  userId: string,
-) {
-  return db.agent.findFirst({
-    where: {
-      id: agentId,
-      ...ORDINARY_AGENT_FILTER,
-      workspace: {
-        status: "active",
-        OR: [{ ownerId: userId }, { members: { some: { userId } } }],
-      },
-      runtime: { is: { kind: "hermes" } },
-    },
-    select: {
-      id: true,
-      workspaceId: true,
-      runtime: {
-        select: {
-          id: true,
-          sandbox: { select: { deploymentId: true } },
-        },
-      },
-    },
-  });
-}
-
 // Used by the recursive sub-agent runner: loads a sub-agent scoped to the
 // PARENT's workspace, so an agent can only ever delegate to agents in its own
 // workspace. Each nesting level loads the next fresh (no deep nested includes).
@@ -558,7 +442,7 @@ export async function listConversations(
   workspaceId: string,
   agentIds: string[],
 ) {
-  return db.conversation.findMany({
+  const conversations = await db.conversation.findMany({
     where: {
       agentId: { in: agentIds },
       agent: { workspaceId },
@@ -566,6 +450,8 @@ export async function listConversations(
     },
     orderBy: { createdAt: "desc" },
     include: {
+      agent: { select: { runtimeKind: true, retiredAt: true } },
+      agentRevision: { select: { agentId: true } },
       publicApiConversation: { select: { id: true } },
       messages: {
         orderBy: { createdAt: "desc" },
@@ -574,18 +460,76 @@ export async function listConversations(
       },
     },
   });
+  return conversations.map((conversation) => ({
+    ...conversation,
+    readOnly:
+      conversation.agent.runtimeKind !== "pi-sdk" ||
+      Boolean(conversation.agent.retiredAt) ||
+      conversation.legacyRevisionUnresolved ||
+      !conversation.agentRevisionId ||
+      conversation.agentRevision?.agentId !== conversation.agentId,
+  }));
 }
 
 export async function getConversation(
   conversationId: string,
   workspaceId: string,
 ) {
-  return db.conversation.findFirst({
+  const conversation = await db.conversation.findFirst({
     where: { id: conversationId, agent: { workspaceId } },
     include: {
       messages: { orderBy: [{ createdAt: "asc" }, { id: "asc" }] },
       publicApiConversation: { select: { id: true } },
-      workSession: { select: { id: true } },
+      workSession: {
+        select: {
+          id: true,
+          agentRevisionId: true,
+          legacyRevisionUnresolved: true,
+        },
+      },
+      agentRevision: { select: { agentId: true, config: true } },
+      sandbox: {
+        select: {
+          id: true,
+          name: true,
+          kind: true,
+          deploymentId: true,
+          deployment: { select: { status: true } },
+        },
+      },
+      agent: {
+        select: {
+          runtimeKind: true,
+          retiredAt: true,
+        },
+      },
     },
   });
+  if (!conversation) return null;
+  const parsed = AgentRevisionConfigSchema.safeParse(
+    conversation.agentRevision?.config,
+  );
+  const config = parsed.success ? parsed.data : null;
+  const work = conversation.workSession;
+  const readOnly =
+    conversation.agent.runtimeKind !== "pi-sdk" ||
+    Boolean(conversation.agent.retiredAt) ||
+    conversation.legacyRevisionUnresolved ||
+    !conversation.agentRevisionId ||
+    !config ||
+    conversation.agentRevision?.agentId !== conversation.agentId ||
+    Boolean(
+      work &&
+        (work.legacyRevisionUnresolved ||
+          work.agentRevisionId !== conversation.agentRevisionId),
+    );
+  return {
+    ...conversation,
+    readOnly,
+    runtimeKind: config?.runtimeKind ?? null,
+    modelName: config?.model ?? null,
+    contextWindow: null,
+    contextWindowEstimated: null,
+    boundSandbox: conversation.sandbox ?? null,
+  };
 }

@@ -1,7 +1,6 @@
 import { z } from "zod";
 import { resolveRequestUser } from "@/lib/auth/request-user";
 import { getAgentForRequest } from "@/lib/agents/queries";
-import { resolveAgentTools } from "@/lib/agents/resolve";
 import {
   listComposerItems,
   resolveComposerReference,
@@ -11,11 +10,15 @@ import {
   getMcpPromptSources,
   McpPromptRequestError,
 } from "@/lib/process/mcp-prompts";
-import { liveStatus } from "@/lib/process/supervisor";
+import {
+  AgentSessionRequestError,
+  resolveAgentRequestSession,
+} from "@/lib/agents/request-session";
 
 export const runtime = "nodejs";
 type Params = { params: Promise<{ agentId: string }> };
 const scope = {
+  conversationId: z.string().min(1).max(240).optional(),
   sandboxId: z.string().min(1).max(240).optional(),
   workSessionId: z.string().min(1).max(240).optional(),
 };
@@ -39,8 +42,8 @@ const ResolveSchema = z
 async function handle(req: Request, { params }: Params) {
   const user = await resolveRequestUser(req);
   if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
-  const agent = await getAgentForRequest((await params).agentId, user.id);
-  if (!agent) return Response.json({ error: "Not found" }, { status: 404 });
+  const liveAgent = await getAgentForRequest((await params).agentId, user.id);
+  if (!liveAgent) return Response.json({ error: "Not found" }, { status: 404 });
   try {
     if (req.method === "GET") {
       const input = ListSchema.safeParse(
@@ -51,20 +54,21 @@ async function handle(req: Request, { params }: Params) {
           { error: "Invalid composer request" },
           { status: 400 },
         );
+      const { agent, mcpContext } = await resolveAgentRequestSession(
+        liveAgent,
+        input.data,
+      );
       const { section, ...composerInput } = input.data;
       if (section === "mcp") {
         const sources = await getMcpPromptSources(
           agent.workspaceId,
-          resolveAgentTools(agent).deploymentIds,
+          agent.servers.map((grant) => grant.deploymentId),
         );
         return Response.json({
           items: sources.map((source) => ({
             id: source.deploymentId,
             label: source.serverName,
-            status:
-              liveStatus(source.deploymentId) === "running"
-                ? "running"
-                : "unavailable",
+            status: "available",
           })),
         });
       }
@@ -73,24 +77,30 @@ async function handle(req: Request, { params }: Params) {
           agent,
           { ...composerInput, section },
           req.signal,
+          mcpContext,
         ),
       );
     }
     const input = ResolveSchema.safeParse(await req.json().catch(() => null));
     if (!input.success)
       return Response.json({ error: "Invalid reference" }, { status: 400 });
+    const { agent, mcpContext } = await resolveAgentRequestSession(
+      liveAgent,
+      input.data,
+    );
     return Response.json(
-      await resolveComposerReference(agent, input.data, req.signal),
+      await resolveComposerReference(agent, input.data, req.signal, mcpContext),
     );
   } catch (error) {
     if (
       error instanceof ComposerRequestError ||
-      error instanceof McpPromptRequestError
+      error instanceof McpPromptRequestError ||
+      error instanceof AgentSessionRequestError
     )
       return Response.json({ error: error.message }, { status: error.status });
     return Response.json(
-      { error: "Composer resource is unavailable." },
-      { status: 502 },
+      { error: "Session composer resource is unavailable." },
+      { status: 403 },
     );
   }
 }

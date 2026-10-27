@@ -24,8 +24,6 @@ const BUILTINS: Record<string, readonly string[]> = {
   "pi-sdk": ["compact"],
   "claude-code": ["clear", "compact", "context", "usage"],
   dsh: ["compact", "goal"],
-  hermes: ["compact"],
-  "hermes-rpc": ["compact"],
 };
 export const HOST_ONLY_COMMAND_NAMES = [
   "new",

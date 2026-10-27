@@ -1,6 +1,8 @@
 // @vitest-environment node
 import { assertDefined } from "../assert-defined";
 import { createHash, randomUUID } from "node:crypto";
+import { publishFixtureAgentRevision } from "./agent-revision-fixture";
+import { requireAgentRevision } from "@/lib/agents/revisions";
 import {
   beforeAll,
   beforeEach,
@@ -41,7 +43,7 @@ import type { LocalA2AGrant } from "@/lib/a2a/principal";
 import {
   submitTask,
   claimTask as claimStoredTask,
-  bindPiHarnessOperation,
+  projectPiHarnessProgress,
   finishTask,
   getTask,
   getTaskRow,
@@ -54,6 +56,7 @@ import {
   requestLocalInput,
   reconcileLocalWaits,
 } from "@/lib/a2a/local-continuation";
+import { refreshTaskStorage } from "@/lib/a2a/quotas";
 import { textArtifact } from "@/lib/a2a/model";
 import {
   executeA2ATask as executeStoredTask,
@@ -158,12 +161,22 @@ async function child(parent: A2ATask, index = 1, input = request()) {
     }),
   };
 }
-function runtimeToken(parent: A2ATask, index = 0): AgentRuntimeTokenPayload {
+async function runtimeToken(
+  parent: A2ATask,
+  index = 0,
+): Promise<AgentRuntimeTokenPayload> {
+  const authority = parent.grant as unknown as LocalA2AGrant;
+  const revision = await requireAgentRevision(
+    db,
+    agents[index],
+    authority.agentRevisionId,
+  );
   return {
     workspaceId: ws,
     agentId: agents[index],
+    agentRevisionId: revision.id,
     ...taskSandbox(parent),
-    providerId: provider,
+    providerId: assertDefined(revision.config.providerId),
     deploymentIds: [],
     exp: Math.floor(Date.now() / 1000) + 300,
     a2aTaskId: parent.id,
@@ -227,12 +240,12 @@ beforeAll(async () => {
         workspaceId: ws,
         name: `Agent ${i}`,
         slug: `a-${i}`,
-        runtimeKind: ["claude-code", "claude-code", "dsh", "hermes-rpc", "pi"][
-          i
-        ],
+        runtimeKind: "pi-sdk",
         providerId: provider,
         model: "fixture",
-        a2aInternalEnabled: true,
+        a2aInternalEnabled: false,
+        a2aInboundEnabled: true,
+        a2aOutboundEnabled: true,
         sandboxes: { create: { sandboxId: sandbox.id, isDefault: true } },
       },
     });
@@ -254,15 +267,34 @@ beforeEach(async () => {
   });
   await db.agent.updateMany({
     where: { workspaceId: ws },
-    data: { a2aInternalEnabled: true, systemPrompt: null },
+    data: {
+      a2aInternalEnabled: false,
+      a2aInboundEnabled: true,
+      a2aOutboundEnabled: true,
+      a2aPolicy: {
+        schemaVersion: 1,
+        targets: agents.map((targetId) => ({
+          kind: "local",
+          targetId,
+          capabilityIds: [],
+          maxCalls: 128,
+          maxDepth: 3,
+          maxConcurrent: 16,
+          timeoutSeconds: 840,
+          maxInputBytes: 65_536,
+          dataAllowance: "text_only",
+        })),
+      },
+      systemPrompt: null,
+    },
   });
-  // Legacy joins/questions use a non-Pi root; ingress tests explicitly select Pi below.
-  await db.agent.update({
-    where: { id: agents[0] },
-    data: { runtimeKind: "claude-code" },
+  await db.agent.updateMany({
+    where: { id: { in: agents } },
+    data: { runtimeKind: "pi-sdk" },
   });
   await db.workspace.update({ where: { id: ws }, data: { status: "active" } });
   await db.user.update({ where: { id: user }, data: { status: "active" } });
+  for (const agentId of agents) await publishFixtureAgentRevision(ws, agentId);
   grant = await createLocalRootGrant(ws, agents[0], user);
 });
 afterAll(async () => {
@@ -280,7 +312,75 @@ afterAll(async () => {
   await db.$disconnect();
 });
 
-describe("local Agent authorization and legacy continuations", () => {
+describe("local Agent authorization and native continuations", () => {
+  it("rejects a pinned local grant after its live provider is removed", async () => {
+    await db.agent.update({
+      where: { id: agents[0] },
+      data: { providerId: null },
+    });
+    try {
+      await expect(assertLocalGrant(grant)).rejects.toBeInstanceOf(
+        TaskNotFoundError,
+      );
+    } finally {
+      await db.agent.update({
+        where: { id: agents[0] },
+        data: { providerId: provider },
+      });
+    }
+  });
+
+  it("projects bound native progress without spending journal sequence or event storage", async () => {
+    const running = await root();
+    const operationId = randomUUID();
+    const leaseToken = assertDefined(running.leaseToken);
+    await db.a2ATask.update({
+      where: { id: running.id },
+      data: {
+        executionBackend: "pi-harness",
+        nativeOperationId: operationId,
+        sequence: 129,
+      },
+    });
+    const eventCount = await db.a2AEvent.count({
+      where: { taskId: running.id },
+    });
+    await db.$transaction((tx) => refreshTaskStorage(tx, running.id));
+    await projectPiHarnessProgress(
+      running.id,
+      leaseToken,
+      operationId,
+      "Still working",
+    );
+    const projected = await getTaskRow(grant, running.id);
+    expect(projected.sequence).toBe(129);
+    expect(projected.storageBytes).toBeGreaterThan(0);
+    expect(
+      Task.fromJSON(projected.snapshot).status?.message?.parts[0]?.content,
+    ).toEqual({ $case: "text", value: "Still working" });
+    expect(await db.a2AEvent.count({ where: { taskId: running.id } })).toBe(
+      eventCount,
+    );
+    for (const [token, operation] of [
+      ["stale-lease", operationId],
+      [leaseToken, randomUUID()],
+    ] as const) {
+      await projectPiHarnessProgress(
+        running.id,
+        token,
+        operation,
+        "Stale update",
+      );
+      const unchanged = await getTaskRow(grant, running.id);
+      expect(unchanged.snapshot).toEqual(projected.snapshot);
+      expect(unchanged.sequence).toBe(129);
+      expect(unchanged.storageBytes).toBe(projected.storageBytes);
+    }
+    expect(await db.a2AEvent.count({ where: { taskId: running.id } })).toBe(
+      eventCount,
+    );
+  });
+
   it("admits configured execution capacity plus a bounded queue and frees canceled slots", async () => {
     const key = "agents.concurrency";
     const previous = await db.systemSetting.findUnique({ where: { key } });
@@ -341,6 +441,7 @@ describe("local Agent authorization and legacy continuations", () => {
         where: { id: agents[0] },
         data: { systemPrompt: "private-card-instructions" },
       });
+      await publishFixtureAgentRevision(ws, agents[0]);
       const authority = await createLocalRootGrant(ws, agents[0], user);
       await db.agent.update({
         where: { id: agents[0] },
@@ -433,7 +534,7 @@ describe("local Agent authorization and legacy continuations", () => {
       TaskNotFoundError,
     );
   });
-  it("authorizes selected children without their public opt-in and rejects missing edges", async () => {
+  it("ignores the retired internal flag but requires selected child inbound authority and edges", async () => {
     await db.agent.update({
       where: { id: agents[1] },
       data: { a2aInternalEnabled: false },
@@ -443,6 +544,18 @@ describe("local Agent authorization and legacy continuations", () => {
     expect(
       (await getTask(delegated.grant, delegated.row.id)).status?.state,
     ).toBe(TaskState.TASK_STATE_SUBMITTED);
+    await db.agent.update({
+      where: { id: agents[1] },
+      data: { a2aInboundEnabled: false },
+    });
+    await expect(assertLocalGrant(delegated.grant)).rejects.toBeInstanceOf(
+      TaskNotFoundError,
+    );
+    await expect(child(parent)).rejects.toBeInstanceOf(TaskNotFoundError);
+    await db.agent.update({
+      where: { id: agents[1] },
+      data: { a2aInboundEnabled: true },
+    });
     await expect(
       childGrant(parent.id, assertDefined(parent.leaseToken), randomUUID()),
     ).rejects.toThrow();
@@ -716,7 +829,7 @@ describe("local Agent authorization and legacy continuations", () => {
   });
   it("revokes task model/MCP credentials on suspension and prevents stale-lease publication", async () => {
     const parent = await root();
-    const token = runtimeToken(parent);
+    const token = await runtimeToken(parent);
     await assertLocalRuntimeToken(token);
     expect(await isAgentRuntimeGrantCurrent(token)).toBe(true);
     const b = await child(parent);
@@ -737,7 +850,7 @@ describe("local Agent authorization and legacy continuations", () => {
   });
   it("uses the official MCP client/transport with task-scoped credentials", async () => {
     const parent = await root();
-    const token = await createAgentRuntimeToken(runtimeToken(parent));
+    const token = await createAgentRuntimeToken(await runtimeToken(parent));
     const url = `https://toolplane.test/api/v1/agent-runtime/a2a/${parent.id}/mcp`;
     const transport = new StreamableHTTPClientTransport(new URL(url), {
       requestInit: { headers: { authorization: `Bearer ${token}` } },
@@ -752,29 +865,44 @@ describe("local Agent authorization and legacy continuations", () => {
     try {
       await client.connect(transport);
       const tools = await client.listTools();
-      expect(tools.tools).toHaveLength(9);
-      expect(tools.tools.map((tool) => tool.name)).toEqual(
-        expect.arrayContaining([
-          "a2a_list_remote_agents",
-          "a2a_send_remote_message",
-        ]),
-      );
+      expect(tools.tools.map((tool) => tool.name)).toEqual([
+        "pi_a2a_peers",
+        "pi_a2a_submit",
+        "pi_a2a_status",
+        "pi_a2a_cancel",
+      ]);
       const args = {
-        agentId: agents[1],
-        request: SendMessageRequest.toJSON(request()),
+        target: `agent:${agents[1]}`,
+        message: "Do this task",
+        messageId: randomUUID(),
       };
       const result = await client.callTool({
-        name: "a2a_send_message",
+        name: "pi_a2a_submit",
         arguments: args,
       });
       expect(result.isError).toBe(false);
-      expect(JSON.stringify(result)).toContain("TASK_STATE_SUBMITTED");
+      const acceptedContent = result.content as Array<{
+        type: string;
+        text?: string;
+      }>;
+      const accepted = JSON.parse(
+        assertDefined(assertDefined(acceptedContent[0]).text),
+      ) as {
+        taskId: string;
+      };
+      expect(accepted.taskId).toEqual(expect.any(String));
+      const status = await client.callTool({
+        name: "pi_a2a_status",
+        arguments: { target: args.target, taskId: accepted.taskId },
+      });
+      expect(status.isError).toBe(false);
+      expect(JSON.stringify(status)).toContain("TASK_STATE_SUBMITTED");
       expect(JSON.stringify(result)).not.toContain("fixture-secret");
       const event = await db.logEvent.findFirstOrThrow({
         where: {
           workspaceId: ws,
           eventName: "a2a.request",
-          toolName: "a2a_send_message",
+          toolName: "pi_a2a_submit",
         },
         include: { detail: true },
       });
@@ -799,16 +927,29 @@ describe("local Agent authorization and legacy continuations", () => {
         payload: { request: args, response: result, responseComplete: true },
       });
       expect(JSON.stringify(event)).not.toContain(token);
+      const rejectedArgs = {
+        target: `agent:${agents[1]}`,
+        taskId: randomUUID(),
+      };
       const rejected = await client.callTool({
-        name: "a2a_get_task",
-        arguments: { taskId: randomUUID() },
+        name: "pi_a2a_status",
+        arguments: rejectedArgs,
       });
       expect(rejected.isError).toBe(true);
       const failure = await db.logEvent.findFirstOrThrow({
         where: {
           workspaceId: ws,
           eventName: "a2a.request",
-          toolName: "a2a_get_task",
+          toolName: "pi_a2a_status",
+          // The earlier successful status call has the same tool name.
+          detail: {
+            is: {
+              data: {
+                path: ["payload", "request", "taskId"],
+                equals: rejectedArgs.taskId,
+              },
+            },
+          },
         },
         include: { detail: true },
       });
@@ -818,7 +959,7 @@ describe("local Agent authorization and legacy continuations", () => {
         attributes: { data: { a2a: { taskId: parent.id } } },
       });
       expect(failure.detail?.data).toMatchObject({
-        payload: { response: rejected },
+        payload: { request: rejectedArgs, response: rejected },
       });
     } finally {
       await client.close();
@@ -826,7 +967,7 @@ describe("local Agent authorization and legacy continuations", () => {
   });
   it("blocks ordinary runtime tokens and cross-task MCP access", async () => {
     const parent = await root();
-    const payload = runtimeToken(parent);
+    const payload = await runtimeToken(parent);
     const ordinary = {
       ...payload,
       a2aTaskId: undefined,
@@ -836,7 +977,7 @@ describe("local Agent authorization and legacy continuations", () => {
       executeLocalMcpTool(ordinary, "a2a_list_agents", {}),
     ).rejects.toThrow();
     const other = await root();
-    const otherPayload = runtimeToken(other);
+    const otherPayload = await runtimeToken(other);
     for (const invalid of [
       { ...payload, a2aContextId: undefined },
       { ...payload, a2aContextId: other.contextId },
@@ -969,7 +1110,7 @@ describe("local Agent authorization and legacy continuations", () => {
     const parent = await root();
     await db.agent.update({
       where: { id: agents[0] },
-      data: { a2aInternalEnabled: false },
+      data: { a2aInboundEnabled: false },
     });
     await expect(
       finishTask(
@@ -990,39 +1131,41 @@ describe("local Agent authorization and legacy continuations", () => {
     ).toBe(TaskState.TASK_STATE_FAILED);
   });
   it("keeps a busy local sandbox task queued instead of failing or replaying it", async () => {
-    // Reset the worker's stop flag without letting its timer run the fixture.
     await startA2AWorker();
-    const queued = await submitTask(grant, request());
-    let release!: () => void;
-    const lock = withSandboxExecutionLease(
-      (await mapTaskSandbox(await getTaskRow(grant, queued.id))).sandboxId,
-      () =>
-        new Promise<void>((resolve) => {
-          release = resolve;
-        }),
-    );
-    const executor = vi.fn(async () => ({
-      state: TaskState.TASK_STATE_COMPLETED,
-      artifact: textArtifact("done"),
-    }));
     try {
+      const queued = await submitTask(grant, request());
+      let release!: () => void;
+      const lock = withSandboxExecutionLease(
+        (await mapTaskSandbox(await getTaskRow(grant, queued.id))).sandboxId,
+        () =>
+          new Promise<void>((resolve) => {
+            release = resolve;
+          }),
+      );
+      const executor = vi.fn(async () => ({
+        state: TaskState.TASK_STATE_COMPLETED,
+        artifact: textArtifact("done"),
+      }));
+      try {
+        await executeA2ATask(queued.id, executor);
+        expect(executor).not.toHaveBeenCalled();
+        expect(await getTaskRow(grant, queued.id)).toMatchObject({
+          state: TaskState.TASK_STATE_SUBMITTED,
+          phase: "queued",
+          leaseToken: null,
+        });
+      } finally {
+        release();
+        await lock;
+      }
       await executeA2ATask(queued.id, executor);
-      expect(executor).not.toHaveBeenCalled();
-      expect(await getTaskRow(grant, queued.id)).toMatchObject({
-        state: TaskState.TASK_STATE_SUBMITTED,
-        phase: "queued",
-        leaseToken: null,
-      });
+      expect(executor).toHaveBeenCalledTimes(1);
+      expect(
+        assertDefined((await getTask(grant, queued.id)).status).state,
+      ).toBe(TaskState.TASK_STATE_COMPLETED);
     } finally {
-      release();
-      await lock;
+      stopA2AWorker();
     }
-    await executeA2ATask(queued.id, executor);
-    expect(executor).toHaveBeenCalledTimes(1);
-    expect(assertDefined((await getTask(grant, queued.id)).status).state).toBe(
-      TaskState.TASK_STATE_COMPLETED,
-    );
-    stopA2AWorker();
   });
 });
 
@@ -1070,14 +1213,19 @@ describe("console task tree authorization", () => {
       getConsoleTaskTree(actor(), second.id, delegated.row.id),
     ).rejects.toBeInstanceOf(TaskNotFoundError);
   });
-  it("rejects a stale console tree after its selected edge is revoked", async () => {
+  it("restricts a stale console tree to its visible parent after an edge is revoked", async () => {
     const parent = await root();
     const delegated = await child(parent);
     await db.agentSubAgent.delete({
       where: { parentId_childId: { parentId: agents[0], childId: agents[1] } },
     });
-    await expect(getConsoleTaskTree(actor(), parent.id)).rejects.toBeInstanceOf(
-      TaskNotFoundError,
+    const tree = await getConsoleTaskTree(actor(), parent.id);
+    expect(tree.restricted).toBe(true);
+    expect(tree.nodes.map((node) => node.id)).toEqual([parent.id]);
+    expect(tree.selectedTask.id).toBe(parent.id);
+    expect(JSON.stringify(tree)).not.toContain(delegated.row.id);
+    expect(JSON.stringify(tree)).not.toContain(
+      assertDefined(parent.leaseToken),
     );
     await expect(
       getConsoleTaskTree(actor(), parent.id, delegated.row.id),
@@ -1139,7 +1287,7 @@ describe("scoped native task artifacts", () => {
       ],
     });
     const wire = Task.toJSON(await getTask(grant, task.id)) as {
-      artifacts: Array<{ parts: unknown[] }>;
+      artifacts: Array<{ parts: unknown[]; metadata: Record<string, unknown> }>;
     };
     expect(wire.artifacts[0].parts[0]).toMatchObject({
       data: { a: "first", z: "last" },
@@ -1148,6 +1296,17 @@ describe("scoped native task artifacts", () => {
     expect(wire.artifacts[1].parts[0]).toMatchObject({
       raw: Buffer.from("diff --git").toString("base64"),
       mediaType: "text/x-diff",
+    });
+    expect(
+      wire.artifacts[1].metadata["toolplane.dev/provenance"],
+    ).toMatchObject({
+      taskId: task.id,
+      contextId: task.contextId,
+      targetId: agents[0],
+      targetKind: "local",
+      sizeBytes: Buffer.byteLength("diff --git"),
+      digestAlgorithm: "sha256-canonical-parts-json",
+      digest: expect.stringMatching(/^[a-f0-9]{64}$/),
     });
     const reader = await createLocalRootGrant(ws, agents[0], otherUser);
     await expect(getTask(reader, task.id)).rejects.toBeInstanceOf(
@@ -1342,7 +1501,12 @@ describe("native tool approval decisions", () => {
   });
   async function pending() {
     const conversation = await db.conversation.create({
-      data: { agentId: agents[0], title: "Interactive approval" },
+      data: {
+        agentId: agents[0],
+        agentRevisionId: grant.agentRevisionId,
+        legacyRevisionUnresolved: false,
+        title: "Interactive approval",
+      },
     });
     const accepted = await submitNativeEntry({
       workspaceId: ws,
@@ -1355,7 +1519,10 @@ describe("native tool approval decisions", () => {
     });
     grant = accepted.grant;
     const row = assertDefined(await claimTask(accepted.row.id));
-    const token = { ...runtimeToken(row), a2aApprovalRequired: true as const };
+    const token = {
+      ...(await runtimeToken(row)),
+      a2aApprovalRequired: true as const,
+    };
     await checkNativeToolApproval(token, { action: "ready" });
     const input = {
       action: "check" as const,
@@ -1379,7 +1546,10 @@ describe("native tool approval decisions", () => {
   }
   it("blocks model/runtime access until the pre-tool hook is registered", async () => {
     const row = await root();
-    const token = { ...runtimeToken(row), a2aApprovalRequired: true as const };
+    const token = {
+      ...(await runtimeToken(row)),
+      a2aApprovalRequired: true as const,
+    };
     await expect(assertLocalRuntimeToken(token)).rejects.toThrow();
     await checkNativeToolApproval(token, { action: "ready" });
     await expect(assertLocalRuntimeToken(token)).resolves.toBeDefined();
@@ -1481,7 +1651,7 @@ describe("native tool approval decisions", () => {
       ),
     ).rejects.toThrow();
   });
-  it("denies approved calls after cancel, configuration changes or a stale lease", async () => {
+  it("denies approved calls after cancel, live revocation or a stale lease", async () => {
     const value = await pending();
     await decideNativeToolApproval(actor(), {
       rootTaskId: value.row.id,
@@ -1501,9 +1671,18 @@ describe("native tool approval decisions", () => {
       checkNativeToolApproval(value.token, value.input),
     ).rejects.toThrow();
     const second = await pending();
-    await db.agent.update({
-      where: { id: agents[0] },
-      data: { systemPrompt: "Changed authority" },
+    await decideNativeToolApproval(actor(), {
+      rootTaskId: second.row.id,
+      taskId: second.row.id,
+      approvalId: second.result.approvalId,
+      inputHash: second.result.inputHash,
+      decision: "approved",
+    });
+    // Chat admission does not depend on the optional A2A inbound switch.
+    // Revoke the actual initiating principal instead of changing an unrelated flag.
+    await db.user.update({
+      where: { id: user },
+      data: { status: "suspended" },
     });
     await expect(
       checkNativeToolApproval(second.token, second.input),
@@ -1549,7 +1728,10 @@ describe("native tool approval decisions", () => {
   });
   it("authorizes an inbound A2A root tool once without a human and completes with its result", async () => {
     const row = await root();
-    const token = { ...runtimeToken(row), a2aApprovalRequired: true as const };
+    const token = {
+      ...(await runtimeToken(row)),
+      a2aApprovalRequired: true as const,
+    };
     await checkNativeToolApproval(token, { action: "ready" });
     const input = {
       action: "check" as const,
@@ -1592,7 +1774,7 @@ describe("native tool approval decisions", () => {
     async (reason) => {
       const row = await root();
       const token = {
-        ...runtimeToken(row),
+        ...(await runtimeToken(row)),
         a2aApprovalRequired: true as const,
       };
       await checkNativeToolApproval(token, { action: "ready" });
@@ -1601,7 +1783,7 @@ describe("native tool approval decisions", () => {
       if (reason === "configuration")
         await db.agent.update({
           where: { id: agents[0] },
-          data: { a2aInternalEnabled: false },
+          data: { a2aInboundEnabled: false },
         });
       if (reason === "workspace") token.workspaceId = randomUUID();
       if (reason === "expiry")
@@ -1627,7 +1809,7 @@ describe("native tool approval decisions", () => {
     const delegated = await child(parent);
     const row = assertDefined(await claimTask(delegated.row.id));
     const token = {
-      ...runtimeToken(row, 1),
+      ...(await runtimeToken(row, 1)),
       a2aApprovalRequired: true as const,
     };
     await checkNativeToolApproval(token, { action: "ready" });
@@ -1688,7 +1870,7 @@ describe("native tool approval decisions", () => {
       const delegated = await child(parent);
       const row = assertDefined(await claimTask(delegated.row.id));
       const token = {
-        ...runtimeToken(row, 1),
+        ...(await runtimeToken(row, 1)),
         a2aApprovalRequired: true as const,
       };
       await checkNativeToolApproval(token, { action: "ready" });
@@ -1723,7 +1905,7 @@ describe("native tool approval decisions", () => {
       const delegated = await child(parent);
       const row = assertDefined(await claimTask(delegated.row.id));
       const token = {
-        ...runtimeToken(row, 1),
+        ...(await runtimeToken(row, 1)),
         a2aApprovalRequired: true as const,
       };
       await checkNativeToolApproval(token, { action: "ready" });
@@ -1762,23 +1944,45 @@ describe("native tool approval decisions", () => {
 });
 
 describe("unified native ingress mappings", () => {
-  beforeEach(async () => {
+  it("pauses denied collaboration and resumes within the same pinned context", async () => {
     await db.agent.update({
       where: { id: agents[0] },
-      data: { runtimeKind: "pi" },
+      data: { a2aPolicy: { schemaVersion: 1, targets: [] } },
     });
     grant = await createLocalRootGrant(ws, agents[0], user);
+    const running = await root();
+    const denied = await executeLocalMcpTool(
+      await runtimeToken(running),
+      "a2a_send_message",
+      { agentId: agents[1], request: SendMessageRequest.toJSON(request()) },
+    );
+    expect(denied).toMatchObject({ approvalRequired: true, accepted: true });
+    expect(
+      await db.a2ATask.count({ where: { parentTaskId: running.id } }),
+    ).toBe(0);
+    await finishTask(
+      running.id,
+      assertDefined(running.leaseToken),
+      TaskState.TASK_STATE_COMPLETED,
+      undefined,
+      undefined,
+    );
+    const waiting = await getTask(grant, running.id);
+    expect(waiting.status?.state).toBe(TaskState.TASK_STATE_INPUT_REQUIRED);
+    expect(JSON.stringify(waiting)).toContain(
+      "A reply cannot grant permissions",
+    );
+    await submitTask(
+      grant,
+      request("Use only approved work instead", { taskId: running.id }),
+    );
+    const resumed = assertDefined(await claimTask(running.id));
+    expect(resumed.contextId).toBe(running.contextId);
+    expect(resumed.nativeOperationId).toBeNull();
+    expect((resumed.grant as unknown as LocalA2AGrant).agentRevisionId).toBe(
+      grant.agentRevisionId,
+    );
   });
-  // Inject terminal execution only; these admission tests do not run a model or Harness.
-  async function nativeProof(row: A2ATask) {
-    return {
-      nativeOperationId: await bindPiHarnessOperation(
-        row.id,
-        assertDefined(row.leaseToken),
-        randomUUID(),
-      ),
-    };
-  }
   const actor = () => ({
     workspaceId: ws,
     actorId: user,
@@ -1789,6 +1993,8 @@ describe("unified native ingress mappings", () => {
     const conversation = await db.conversation.create({
       data: {
         agentId: agents[0],
+        agentRevisionId: grant.agentRevisionId,
+        legacyRevisionUnresolved: false,
         title: "Existing conversation",
         messages: {
           create: [
@@ -1836,10 +2042,12 @@ describe("unified native ingress mappings", () => {
           data: {
             workspaceId: ws,
             agentId: agents[0],
+            agentRevisionId: grant.agentRevisionId,
+            legacyRevisionUnresolved: false,
             sandboxId: sandboxes[0],
             conversationId: conversation.id,
             a2aActorId: user,
-            runtimeKind: "pi",
+            runtimeKind: "pi-sdk",
             status: "running",
             runtimeSnapshot: {
               workingDirectory: ".",
@@ -1861,19 +2069,23 @@ describe("unified native ingress mappings", () => {
     };
   }
   it.each(["chat", "control", "work"] as const)(
-    "lets ordinary %s delegate, approve and complete with both switches off",
+    "admits ordinary %s with both directions off, then requires explicit collaboration authority",
     async (kind) => {
       const input = await entry(kind);
       await db.agent.updateMany({
         where: { id: { in: [agents[0], agents[1]] } },
-        data: { a2aInternalEnabled: false },
+        data: {
+          a2aInternalEnabled: false,
+          a2aInboundEnabled: false,
+          a2aOutboundEnabled: false,
+        },
       });
       await expect(
         createLocalRootGrant(ws, agents[0], user),
       ).rejects.toBeInstanceOf(TaskNotFoundError);
       const accepted = await submitNativeEntry(input, vi.fn());
       expect(accepted.row.state).toBe(TaskState.TASK_STATE_SUBMITTED);
-      expect(accepted.row.executionBackend).toBe("pi-harness");
+      expect(accepted.row.executionBackend).toBe("pi-sdk");
       expect(accepted.grant.ownerKey).not.toBe(grant.ownerKey);
       expect(
         (await getConsoleTaskTree(actor(), accepted.row.id)).selectedTask.id,
@@ -1883,6 +2095,18 @@ describe("unified native ingress mappings", () => {
       ).rejects.toBeInstanceOf(TaskNotFoundError);
       const claimed = assertDefined(await claimTask(accepted.row.id));
       await assertLocalGrant(accepted.grant);
+      await expect(child(claimed)).rejects.toThrow();
+      // The immutable entry revision already authorizes this edge. Live directions
+      // still need explicit approval before ordinary ingress may delegate.
+      await db.agent.update({
+        where: { id: agents[0] },
+        data: { a2aOutboundEnabled: true },
+      });
+      await expect(child(claimed)).rejects.toThrow();
+      await db.agent.update({
+        where: { id: agents[1] },
+        data: { a2aInboundEnabled: true },
+      });
       const delegated = await child(claimed);
       const childRun = assertDefined(await claimTask(delegated.row.id));
       expect((await getTask(delegated.grant, childRun.id)).status?.state).toBe(
@@ -1896,7 +2120,7 @@ describe("unified native ingress mappings", () => {
         childGrant(claimed.id, assertDefined(claimed.leaseToken), agents[4]),
       ).rejects.toBeInstanceOf(TaskNotFoundError);
       const token = {
-        ...runtimeToken(claimed),
+        ...(await runtimeToken(claimed)),
         a2aApprovalRequired: true as const,
       };
       await checkNativeToolApproval(token, { action: "ready" });
@@ -1947,7 +2171,7 @@ describe("unified native ingress mappings", () => {
         agents: expect.arrayContaining([{ id: agents[1], name: "Agent 1" }]),
       });
       const childToken = {
-        ...runtimeToken(childRun, 1),
+        ...(await runtimeToken(childRun, 1)),
         a2aApprovalRequired: true as const,
       };
       await checkNativeToolApproval(childToken, { action: "ready" });
@@ -1984,7 +2208,6 @@ describe("unified native ingress mappings", () => {
         TaskState.TASK_STATE_COMPLETED,
         undefined,
         textArtifact("Done"),
-        await nativeProof(claimed),
       );
       expect(
         (await getTask(accepted.grant, accepted.row.id)).status?.state,
@@ -1996,10 +2219,14 @@ describe("unified native ingress mappings", () => {
       expect(next.row.contextId).toBe(accepted.row.contextId);
     },
   );
-  it("revokes switches-off descendants and runtime credentials when a selected edge is removed", async () => {
+  it("revokes ordinary-entry descendants and runtime credentials when a selected edge is removed", async () => {
     await db.agent.updateMany({
       where: { id: { in: agents } },
       data: { a2aInternalEnabled: false },
+    });
+    await db.agent.update({
+      where: { id: agents[0] },
+      data: { a2aInboundEnabled: false },
     });
     const accepted = await submitNativeEntry(await entry(), vi.fn());
     const parent = assertDefined(await claimTask(accepted.row.id));
@@ -2007,8 +2234,8 @@ describe("unified native ingress mappings", () => {
     const childRun = assertDefined(await claimTask(delegated.row.id));
     const descendant = await child(childRun, 3);
     const descendantRun = assertDefined(await claimTask(descendant.row.id));
-    const childToken = runtimeToken(childRun, 1),
-      descendantToken = runtimeToken(descendantRun, 3);
+    const childToken = await runtimeToken(childRun, 1),
+      descendantToken = await runtimeToken(descendantRun, 3);
     for (const token of [childToken, descendantToken]) {
       await expect(assertLocalRuntimeToken(token)).resolves.toBeDefined();
       expect(await isAgentRuntimeGrantCurrent(token)).toBe(true);
@@ -2023,7 +2250,7 @@ describe("unified native ingress mappings", () => {
       expect(await isAgentRuntimeGrantCurrent(token)).toBe(false);
     }
     await expect(
-      executeLocalMcpTool(runtimeToken(parent), "a2a_get_task", {
+      executeLocalMcpTool(await runtimeToken(parent), "a2a_get_task", {
         taskId: childRun.id,
       }),
     ).rejects.toBeInstanceOf(TaskNotFoundError);
@@ -2060,16 +2287,19 @@ describe("unified native ingress mappings", () => {
     const input = await entry();
     await db.agent.update({
       where: { id: agents[0] },
-      data: { a2aInternalEnabled: false },
+      data: {
+        a2aInternalEnabled: false,
+        a2aInboundEnabled: false,
+        a2aOutboundEnabled: false,
+      },
     });
     await startA2AWorker();
     try {
       const accepted = await submitNativeEntry(input, vi.fn());
-      expect(accepted.row.executionBackend).toBe("pi-harness");
-      const executor = vi.fn(async (row: A2ATask) => ({
+      expect(accepted.row.executionBackend).toBe("pi-sdk");
+      const executor = vi.fn(async () => ({
         state: TaskState.TASK_STATE_COMPLETED,
         artifact: textArtifact("Chat reply"),
-        ...(await nativeProof(row)),
       }));
       await executeA2ATask(accepted.row.id, executor);
       expect(executor).toHaveBeenCalledTimes(1);
@@ -2092,7 +2322,7 @@ describe("unified native ingress mappings", () => {
       });
       const accepted = await submitNativeEntry(input, vi.fn());
       expect(accepted.row.state).toBe(TaskState.TASK_STATE_SUBMITTED);
-      expect(accepted.row.executionBackend).toBe("pi-harness");
+      expect(accepted.row.executionBackend).toBe("pi-sdk");
       expect(
         (accepted.row.grant as unknown as LocalA2AGrant).entryPolicy?.kind,
       ).toBe(kind);
@@ -2191,7 +2421,7 @@ describe("unified native ingress mappings", () => {
         payload: { response: { task: { id: first.row.id } } },
       });
   });
-  it("replays a pre-upgrade native entry without submitting a second task", async () => {
+  it("replays a durable Pi entry receipt without submitting a second task", async () => {
     const input = await entry();
     const policy = await db.$transaction(async (tx) =>
       createEntryPolicy(tx, grant, {
@@ -2214,10 +2444,6 @@ describe("unified native ingress mappings", () => {
         configuration: { returnImmediately: true },
       }),
     );
-    await db.a2ATask.update({
-      where: { id: original.id },
-      data: { executionBackend: "legacy" },
-    });
     const binding = await db.a2AEntryBinding.create({
       data: {
         ownerKey: localOwnerKey(ws, agents[0], user),
@@ -2239,11 +2465,15 @@ describe("unified native ingress mappings", () => {
     });
     await db.agent.update({
       where: { id: agents[0] },
-      data: { a2aInternalEnabled: false },
+      data: {
+        a2aInternalEnabled: false,
+        a2aInboundEnabled: false,
+        a2aOutboundEnabled: false,
+      },
     });
     const replay = await submitNativeEntry(input, vi.fn());
     expect(replay).toMatchObject({
-      row: { id: original.id, executionBackend: "legacy" },
+      row: { id: original.id, executionBackend: "pi-sdk" },
       replay: true,
     });
     expect(
@@ -2266,7 +2496,6 @@ describe("unified native ingress mappings", () => {
       3,
       undefined,
       textArtifact("completed"),
-      await nativeProof(claimed),
     );
     const next = await submitNativeEntry(
       { ...input, messageId: randomUUID(), text: "Follow up" },
@@ -2277,13 +2506,9 @@ describe("unified native ingress mappings", () => {
     expect((await submitNativeEntry(input, vi.fn())).row.id).toBe(first.row.id);
     expect((await getTask(first.grant, first.row.id)).status?.state).toBe(3);
   });
-  it("continues a historical legacy INPUT_REQUIRED task with the same task and original deadline", async () => {
+  it("continues a pinned Pi INPUT_REQUIRED task with the same task and original deadline", async () => {
     const input = await entry();
     const first = await submitNativeEntry(input, vi.fn());
-    await db.a2ATask.update({
-      where: { id: first.row.id },
-      data: { executionBackend: "legacy" },
-    });
     const claimed = assertDefined(await claimTask(first.row.id));
     await finishTask(
       claimed.id,
@@ -2360,6 +2585,8 @@ describe("unified native ingress mappings", () => {
     const conversation = await db.conversation.create({
       data: {
         agentId: agents[0],
+        agentRevisionId: grant.agentRevisionId,
+        legacyRevisionUnresolved: false,
         runtimeSessionKey: `channel:${channel.id}:telegram:chat`,
       },
     });
@@ -2380,14 +2607,14 @@ describe("unified native ingress mappings", () => {
     });
     await db.agent.update({
       where: { id: agents[0] },
-      data: { a2aInternalEnabled: false },
+      data: { a2aInboundEnabled: false },
     });
     await expect(submitNativeEntry(input, vi.fn())).rejects.toBeInstanceOf(
       TaskNotFoundError,
     );
     await db.agent.update({
       where: { id: agents[0] },
-      data: { a2aInternalEnabled: true },
+      data: { a2aInboundEnabled: true },
     });
     const accepted = await submitNativeEntry(input, vi.fn());
     const claimed = assertDefined(await claimTask(accepted.row.id));
@@ -2396,7 +2623,10 @@ describe("unified native ingress mappings", () => {
       assertDefined(claimed.leaseToken),
       agents[1],
     );
-    const credential = { ...runtimeToken(claimed), a2aApprovalRequired: true };
+    const credential = {
+      ...(await runtimeToken(claimed)),
+      a2aApprovalRequired: true,
+    };
     await checkNativeToolApproval(credential, { action: "ready" });
     await checkNativeToolApproval(credential, {
       action: "check",

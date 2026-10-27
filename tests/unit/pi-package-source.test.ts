@@ -2,6 +2,7 @@ import { assertDefined } from "../assert-defined";
 import { EventEmitter, once } from "node:events";
 import { Duplex, PassThrough, Writable } from "node:stream";
 import { createHash } from "node:crypto";
+import { writeZip } from "@/lib/archives/zip";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type * as Net from "node:net";
 import type * as ChildProcess from "node:child_process";
@@ -50,7 +51,10 @@ vi.mock("@/lib/market/skills", () => ({
     }
   },
 }));
-import { capturePiPackage } from "@/lib/market/pi-package-source";
+import {
+  capturePiPackage,
+  captureGithubRegistryPiPackage,
+} from "@/lib/market/pi-package-source";
 
 class Tunnel extends Duplex {
   written = 0;
@@ -110,7 +114,7 @@ function fixture(requested = "npm:fixture@1.0.0") {
     runtime: {
       kind: "pi-sdk",
       piVersion: "0.87.1",
-      nodeMajor: 24,
+      nodeMajor: 26,
       platform: "linux",
       arch: "arm64",
     },
@@ -185,6 +189,80 @@ afterEach(() => {
 });
 
 describe("Pi package capture trust boundary", () => {
+  it.each([
+    { repository: "https://github.com/team/registry" },
+    { commit: "main" },
+    { path: "../package" },
+    { path: "/package" },
+    { path: "packages//review" },
+    { files: [{ path: "index.ts", data: body }] },
+  ])(
+    "rejects invalid registry capture identity before Docker %j",
+    async (override) => {
+      await expect(
+        captureGithubRegistryPiPackage({
+          repository: "team/registry",
+          commit: "a".repeat(40),
+          path: "packages/review",
+          files: [{ path: "package.json", data: Buffer.from("{}") }],
+          ...override,
+        }),
+      ).rejects.toMatchObject({ code: "package_capture_failed" });
+      expect(transport.spawn).not.toHaveBeenCalled();
+    },
+  );
+
+  it("streams uploaded bytes through bounded stdin frames and binds provenance to their digest", async () => {
+    const archive = writeZip([
+      { path: "payload.bin", data: Buffer.alloc(150_000, 65) },
+    ]);
+    const sha256 = createHash("sha256").update(archive).digest("hex");
+    const expected = {
+      ...fixture(),
+      source: { kind: "zip", requested: `zip:sha256:${sha256}`, sha256 },
+    };
+    start = (child, source) => {
+      expect(source).toBe(expected.source.requested);
+      child.onFrame = (frame) => {
+        if (frame.type === "upload_end") sendSnapshot(child, expected);
+      };
+    };
+    expect(await capturePiPackage("", { archive })).toEqual(expected);
+    const frames = assertDefined(container).frames.filter(
+      (frame) => frame.type === "upload_chunk",
+    );
+    expect(frames).toHaveLength(3);
+    expect(
+      Buffer.concat(
+        frames.map((frame) => Buffer.from(String(frame.data), "base64")),
+      ),
+    ).toEqual(archive);
+    expect(
+      frames.every(
+        (frame) => Buffer.from(String(frame.data), "base64").length <= 65536,
+      ),
+    ).toBe(true);
+  });
+  it("rejects uploaded provenance substitution", async () => {
+    const archive = Buffer.from("uploaded bytes");
+    start = (child) => {
+      child.onFrame = (frame) => {
+        if (frame.type === "upload_end") sendSnapshot(child, fixture());
+      };
+    };
+    await expect(capturePiPackage("", { archive })).rejects.toMatchObject({
+      code: "package_capture_failed",
+    });
+  });
+  it.each([Buffer.alloc(0), Buffer.alloc(32 * 1024 * 1024 + 1)])(
+    "rejects an out-of-bounds upload before Docker",
+    async (archive) => {
+      await expect(capturePiPackage("", { archive })).rejects.toMatchObject({
+        code: "package_capture_failed",
+      });
+      expect(transport.spawn).not.toHaveBeenCalled();
+    },
+  );
   it("returns the complete validated immutable snapshot only after clean exit", async () => {
     start = (child) => sendSnapshot(child);
     expect(await capturePiPackage("npm:fixture@1.0.0")).toEqual(fixture());

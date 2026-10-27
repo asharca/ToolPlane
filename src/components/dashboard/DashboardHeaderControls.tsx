@@ -9,7 +9,6 @@ import {
   Moon,
   Plug,
   Brain,
-  Wrench,
   Boxes,
   Bot,
   BarChart3,
@@ -18,6 +17,7 @@ import {
   Home,
   MessageSquare,
   Settings,
+  Store,
   TerminalSquare,
 } from "lucide-react";
 import { Button } from "@/components/motion/button/base";
@@ -111,11 +111,11 @@ export function DashboardHeaderControls({
           onSelect: go(`${b}/skills`),
         },
         {
-          id: "toolkits",
-          label: t("toolkits"),
-          group: t("groupBuild"),
-          icon: Wrench,
-          onSelect: go(`${b}/toolkits`),
+          id: "agents",
+          label: t("agents"),
+          group: t("groupRun"),
+          icon: Bot,
+          onSelect: go(`${b}/agents`),
         },
         {
           id: "sandboxes",
@@ -130,6 +130,13 @@ export function DashboardHeaderControls({
           group: t("groupRun"),
           icon: MessageSquare,
           onSelect: go(`${b}/chat`),
+        },
+        {
+          id: "market",
+          label: t("market"),
+          group: t("groupRun"),
+          icon: Store,
+          onSelect: go(`${b}/market`),
         },
         {
           id: "work",
@@ -181,13 +188,6 @@ export function DashboardHeaderControls({
           group: t("groupDiscover"),
           icon: Bot,
           onSelect: go(`${b}/market/agents`),
-        },
-        {
-          id: "browse-toolkits",
-          label: t("browseToolkits"),
-          group: t("groupDiscover"),
-          icon: Wrench,
-          onSelect: go(`${b}/market/toolkits`),
         },
       );
     }

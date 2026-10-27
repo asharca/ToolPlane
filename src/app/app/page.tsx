@@ -131,7 +131,7 @@ export default async function AppIndexPage({
     );
   }
   if (agent) {
-    const detail = await getAgentMarketListingByDirectorySlug(agent);
+    const detail = await getAgentMarketListingByDirectorySlug(agent, ws.id);
     const marketPath = `/app/${encodeURIComponent(ws.slug)}/market/agents`;
     redirect(
       detail

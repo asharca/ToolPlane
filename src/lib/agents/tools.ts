@@ -30,6 +30,9 @@ type LogEntry = Parameters<typeof logRequest>[0];
 
 export type ToolDeps = {
   liveStatus: (id: string) => string | null;
+  /** False only when the injected discovery prepares its own authorized connection. */
+  requireRunning?: boolean;
+  onToolExposureDenied?: (deploymentId: string, toolName: string) => never;
   listMcpTools: (id: string) => Promise<McpTool[]>;
   mcpRpc: (
     id: string,
@@ -61,7 +64,11 @@ export async function buildToolSet(
   for (const deploymentId of deploymentIds) {
     const policy = policies.get(deploymentId);
     if (!policy) continue;
-    if (deps.liveStatus(deploymentId) !== "running") continue;
+    if (
+      deps.requireRunning !== false &&
+      deps.liveStatus(deploymentId) !== "running"
+    )
+      continue;
     const tools = filterMcpToolsForAi(
       await deps.listMcpTools(deploymentId),
       policy,
@@ -106,6 +113,7 @@ export async function buildToolSet(
                 }),
               })
               .catch(() => {});
+            deps.onToolExposureDenied?.(deploymentId, t.name);
             return denied;
           }
           const result = await deps.mcpRpc(deploymentId, "tools/call", {

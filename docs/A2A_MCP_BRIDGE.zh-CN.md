@@ -1,6 +1,5 @@
 # 用 MCP 客户端调用原生 A2A 服务
 
-> [English](A2A_MCP_BRIDGE.md)
 
 面向外部 Agent 和客户端集成者。适配入口直接使用原生 A2A 的 Handler、Task、权限与执行器，
 不调用旧 Responses API，也不另外保存一套 MCP 任务。

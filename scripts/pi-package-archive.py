@@ -8,6 +8,8 @@ import posixpath
 import stat
 import sys
 import tarfile
+import zipfile
+import unicodedata
 
 MAX_ENTRIES = 20000
 MAX_FILE = 16 * 1024 * 1024
@@ -175,6 +177,95 @@ def extract(archive, destination, mode):
     inventory(os.path.dirname(destination))
 
 
+def extract_zip(archive, destination):
+    if os.path.lexists(destination) or os.path.getsize(archive) > 32 * 1024 * 1024:
+        raise ValueError('archive_limit')
+    with zipfile.ZipFile(archive) as source:
+        records = source.infolist()
+        if not records or len(records) > MAX_ENTRIES:
+            raise ValueError('entry_limit')
+        names = []
+        for record in records:
+            name = record.filename[:-1] if record.is_dir() else record.filename
+            safe_path(name)
+            if len(name.encode('utf-8')) > 4096 or ':' in name or any(ord(char) < 32 or ord(char) == 127 for char in name):
+                raise ValueError('invalid_path')
+            if record.orig_filename != record.filename:
+                raise ValueError('invalid_path')
+            names.append(name)
+        if len(set(names)) != len(names):
+            raise ValueError('path_collision')
+        roots = {name.split('/')[0] for name in names}
+        wrapper = next(iter(roots)) if len(roots) == 1 else None
+        if wrapper in ('extensions', 'skills', 'prompts', 'themes') or not any('/' in name for name in names):
+            wrapper = None
+        nodes = {}
+        members = {}
+        collisions = set()
+        total = 0
+        for record in records:
+            mode = record.external_attr >> 16
+            if record.flag_bits & 1 or record.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
+                raise ValueError('zip_encoding')
+            if stat.S_IFMT(mode) not in (0, stat.S_IFDIR if record.is_dir() else stat.S_IFREG):
+                raise ValueError('special_file')
+            if record.is_dir() and record.file_size:
+                raise ValueError('directory_payload')
+            if record.is_dir():
+                with source.open(record) as data:
+                    if data.read(1):
+                        raise ValueError('directory_payload')
+        for record, name in zip(records, names):
+            if wrapper:
+                if name == wrapper:
+                    if not record.is_dir():
+                        raise ValueError('root_conflict')
+                    continue
+                name = name[len(wrapper) + 1:]
+            collision = unicodedata.normalize('NFC', name).casefold()
+            if collision in collisions:
+                raise ValueError('path_collision')
+            collisions.add(collision)
+            if record.file_size < 0 or record.file_size > MAX_FILE or record.file_size > max(1, record.compress_size) * 1000:
+                raise ValueError('file_limit')
+            total += record.file_size
+            if total > MAX_TOTAL:
+                raise ValueError('total_limit')
+            nodes[name] = ('directory' if record.is_dir() else 'file', None)
+            members[name] = record
+        check_tree(nodes)
+        # Case/Unicode aliases of implicit parents are collisions too.
+        aliases = {}
+        for name in nodes:
+            parts = name.split('/')
+            for length in range(1, len(parts) + 1):
+                parent = '/'.join(parts[:length])
+                key = unicodedata.normalize('NFC', parent).casefold()
+                if key in aliases and aliases[key] != parent:
+                    raise ValueError('path_collision')
+                aliases[key] = parent
+        os.mkdir(destination, 0o700)
+        for name in sorted(nodes, key=lambda name: (name.count('/'), name)):
+            target = os.path.join(destination, name)
+            os.makedirs(os.path.dirname(target), mode=0o700, exist_ok=True)
+            if nodes[name][0] == 'directory':
+                os.makedirs(target, mode=0o700, exist_ok=True)
+                continue
+            record = members[name]
+            fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o700 if (record.external_attr >> 16) & 0o111 else 0o600)
+            with os.fdopen(fd, 'wb') as out, source.open(record) as data:
+                remaining = record.file_size
+                while remaining:
+                    chunk = data.read(min(65536, remaining))
+                    if not chunk:
+                        raise ValueError('truncated_archive')
+                    out.write(chunk)
+                    remaining -= len(chunk)
+                if data.read(1):
+                    raise ValueError('file_limit')
+    inventory(os.path.dirname(destination))
+
+
 def inventory(root):
     entries = []
     nodes = {}
@@ -265,6 +356,43 @@ def self_test():
         archive_case('fifo', [('pipe', tarfile.FIFOTYPE, '')])
         archive_case('duplicate', [('file', tarfile.REGTYPE, b'x'), ('file', tarfile.REGTYPE, b'y')])
         archive_case('hard_escape', [('hard', tarfile.LNKTYPE, '../escape')])
+        def zip_case(label, records, allowed=False, corrupt=False):
+            archive = os.path.join(temporary, label + '.zip')
+            destination = os.path.join(temporary, label + '-zip')
+            with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as source:
+                for name, payload, mode in records:
+                    info = zipfile.ZipInfo(name)
+                    info.compress_type = zipfile.ZIP_DEFLATED
+                    info.external_attr = mode << 16
+                    source.writestr(info, payload)
+            if corrupt:
+                with open(archive, 'r+b') as source:
+                    data = source.read()
+                    offset = data.index(b'PK\x01\x02') + 16
+                    source.seek(offset)
+                    source.write(b'\0\0\0\0')
+            try:
+                extract_zip(archive, destination)
+            except (ValueError, zipfile.BadZipFile):
+                assert not allowed, label
+            else:
+                assert allowed, label
+                entries = inventory(destination)
+                assert any(entry['path'] == 'index.ts' for entry in entries), label
+        regular = stat.S_IFREG | 0o644
+        zip_case('zip-valid', [('bundle/index.ts', b'export default () => {}', regular), ('bundle/skills/example/SKILL.md', b'Example', regular)], True)
+        zip_case('zip-flat', [('index.ts', b'export default () => {}', regular)], True)
+        zip_case('zip-traversal', [('../escape', b'x', regular)])
+        zip_case('zip-absolute', [('/escape', b'x', regular)])
+        zip_case('zip-drive', [('C:/escape', b'x', regular)])
+        zip_case('zip-link', [('link', b'../../escape', stat.S_IFLNK | 0o777)])
+        zip_case('zip-special', [('pipe', b'', stat.S_IFIFO | 0o600)])
+        zip_case('zip-collision', [('index.ts', b'a', regular), ('INDEX.ts', b'b', regular)])
+        zip_case('zip-parent-case', [('dir/a', b'a', regular), ('DIR/b', b'b', regular)])
+        zip_case('zip-parent-file', [('dir', b'a', regular), ('dir/b', b'b', regular)])
+        zip_case('zip-file-limit', [('index.ts', b'a' * (MAX_FILE + 1), regular)])
+        zip_case('zip-ratio', [('index.ts', b'0' * (2 * 1024 * 1024), regular)])
+        zip_case('zip-crc', [('index.ts', b'hello', regular)], corrupt=True)
     print('archive self-check passed')
 
 
@@ -274,6 +402,8 @@ if __name__ == '__main__':
             self_test()
         elif sys.argv[1] == 'extract':
             extract(sys.argv[2], sys.argv[3], sys.argv[4])
+        elif sys.argv[1] == 'extract-zip':
+            extract_zip(sys.argv[2], sys.argv[3])
         elif sys.argv[1] == 'inventory':
             print(json.dumps(inventory(sys.argv[2]), separators=(',', ':')))
         else:

@@ -336,6 +336,7 @@ async function runNativeSteps(options: NativeRunOptions): Promise<string> {
           if (!localTool) throw new Error(`Unknown tool: ${toolCall.name}`);
           output = await localTool.execute(
             validateToolCall(tools, toolCall) as Record<string, unknown>,
+            { toolCallId: toolCall.id },
           );
         } catch (error) {
           isError = true;

@@ -78,7 +78,7 @@ export function handleSandboxMcpTokens(
       });
       return privateJson({
         tokens,
-        exportable: sandboxMcpExportable(sandbox.kind),
+        exportable: sandboxMcpExportable(sandbox),
         limit: 100,
       });
     }
@@ -97,11 +97,11 @@ export function handleSandboxMcpTokens(
       }
       if (req.method !== "POST" || tokenId)
         return privateJson({ error: "Method not allowed." }, 405);
-      if (!sandboxMcpExportable(sandbox.kind)) {
+      if (!sandboxMcpExportable(sandbox)) {
         return privateJson(
           {
             error:
-              "This sandbox kind is not exportable. Hermes private runtime and legacy host sandboxes remain protected.",
+              "This sandbox kind is not exportable. Legacy host sandboxes remain protected.",
           },
           409,
         );

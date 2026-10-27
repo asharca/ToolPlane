@@ -14,6 +14,7 @@ import {
   updateMcpToolExposureAction,
   type McpToolExposureActionState,
 } from "@/lib/workspace/actions";
+import { McpSharedChangeConfirmation } from "./McpSharedChangeConfirmation";
 
 type ToolSummary = {
   name: string;
@@ -123,6 +124,11 @@ export function McpToolExposureEditor({
       <input type="hidden" name="workspace" value={workspace} />
       <input type="hidden" name="deploymentId" value={deploymentId} />
       <input type="hidden" name="revision" value={revision} />
+      <McpSharedChangeConfirmation
+        workspace={workspace}
+        deploymentId={deploymentId}
+        impactedObjects={state.impactedObjects}
+      />
 
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex min-w-0 items-start gap-2.5">

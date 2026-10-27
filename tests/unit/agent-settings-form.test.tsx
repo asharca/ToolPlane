@@ -1,574 +1,179 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentSettingsForm } from "@/components/dashboard/agents/AgentSettingsForm";
-
-type FormActionMock = (
-  _prev: unknown,
-  formData: FormData,
-) => Promise<{ savedAt: number }>;
-
-vi.mock("next/navigation", () => ({
-  useRouter: () => ({ refresh: vi.fn() }),
-}));
+import type { AgentRevisionConfig } from "@/lib/agents/revision-types";
 
 const actions = vi.hoisted(() => ({
-  stopAgentRuntimeAction: vi.fn(),
-  syncAgentRuntimeAction: vi.fn(),
-  upgradeHermesRuntimeAction: vi.fn<FormActionMock>(async () => ({
-    savedAt: Date.now(),
-  })),
-  updateAgentRuntimeEnvAction: vi.fn<FormActionMock>(async () => ({
-    savedAt: Date.now(),
-  })),
-  updateAgentAction: vi.fn(async () => ({ savedAt: Date.now() })),
+  updateAgentAction: vi.fn(),
+  prepareAgentRevisionAction: vi.fn(),
+  publishAgentRevisionAction: vi.fn(),
+}));
+vi.mock("@/lib/agents/actions", () => actions);
+const credentials = vi.hoisted(() => ({
+  createAgentEnvironmentCredentialAction: vi.fn(),
+  listAgentEnvironmentCredentialsAction: vi.fn(),
+  revokeAgentEnvironmentCredentialAction: vi.fn(),
+}));
+vi.mock("@/lib/agents/environment-credential-actions", () => credentials);
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
+vi.mock("@/components/dashboard/agents/AgentSystemPromptEditor", () => ({
+  AgentSystemPromptEditor: () => null,
+}));
+vi.mock("@/components/dashboard/models/ModelPicker", () => ({
+  ModelPicker: () => null,
 }));
 
-vi.mock("@/lib/agents/actions", () => actions);
-
-const baseProps = {
+const config: AgentRevisionConfig = {
+  schemaVersion: 1,
+  runtimeKind: "pi-sdk",
+  systemPrompt: "Review carefully.",
+  providerId: null,
+  model: null,
+  modelProviderIds: [],
+  maxSteps: 20,
+  disabledBuiltinTools: [],
+  sandboxTemplateId: null,
+  environment: {
+    kind: "docker",
+    image: `example/pi@sha256:${"a".repeat(64)}`,
+    network: "isolated",
+    piVersion: "0.87.1",
+    initialSnapshot: null,
+    resourceLimits: { memoryBytes: 1_073_741_824, cpus: 1, pidsLimit: 128 },
+    credentialReferences: [],
+  },
+  skills: [],
+  knowledgeBaseIds: [],
+  packages: [],
+  mcpGrants: [],
+  a2a: {
+    inboundEnabled: false,
+    outboundEnabled: false,
+    policy: { schemaVersion: 1, targets: [] },
+  },
+};
+const props = {
   slug: "acme",
   agentId: "agent-1",
-  runtimeKind: "pi",
-  name: "Test agent",
+  runtimeKind: "pi-sdk",
+  name: "Researcher",
   systemPrompt: "",
   providerId: null,
-  providerIds: [],
   model: null,
-  maxSteps: 8,
-  providers: [
-    {
-      id: "provider-1",
-      name: "OpenAI",
-      format: "openai",
-      models: ["gpt-4.1", "gpt-4.1-mini"],
-    },
-  ],
+  maxSteps: 20,
+  providers: [],
   deployments: [],
   skills: [],
-  toolkits: [],
   sandboxes: [],
   subAgents: [],
 };
 
-describe("AgentSettingsForm", () => {
-  it("keeps the editable identity, runtime, and model together in Basic", () => {
-    render(
-      <AgentSettingsForm
-        {...baseProps}
-        providerId="provider-1"
-        model="gpt-4.1"
-        activeSection="general"
-        showNavigation={false}
-      />,
-    );
-
-    expect(screen.getByLabelText("Name")).toHaveValue("Test agent");
-    expect(screen.getByLabelText("Runtime")).toHaveTextContent("Pi");
-    expect(
-      screen.getByRole("button", { name: "Model: gpt-4.1" }),
-    ).toBeVisible();
-    expect(screen.getByRole("region", { name: "Basic" })).toBeVisible();
-  });
-
-  it.each([
-    ["pi", ["read", "bash", "edit", "write"], "Glob"],
-    ["claude-code", ["Read", "Bash", "Glob", "Workflow"], "read_image"],
-    ["dsh", ["read_image", "todo_write", "subagent", "web_search"], "Read"],
-    [
-      "hermes-rpc",
-      ["read_file", "terminal", "memory", "session_search"],
-      "browser_navigate",
-    ],
-    [
-      "hermes",
-      ["read_file", "terminal", "browser_navigate", "image_generate"],
-      "todo_write",
-    ],
-  ])(
-    "shows the %s runtime built-in tools",
-    (runtimeKind, expectedTools, absentTool) => {
-      render(
-        <AgentSettingsForm
-          {...baseProps}
-          runtimeKind={runtimeKind}
-          activeSection="builtInTools"
-          showNavigation={false}
-        />,
-      );
-
-      const catalog = screen.getByRole("list", { name: "Built-in tools" });
-      for (const tool of expectedTools)
-        expect(within(catalog).getByText(tool)).toBeVisible();
-      expect(within(catalog).queryByText(absentTool)).not.toBeInTheDocument();
-    },
-  );
-
-  it("keeps the selected model across save-state rerenders", async () => {
-    const view = render(<AgentSettingsForm {...baseProps} />);
-    await userEvent.click(
-      screen.getByRole("button", { name: "Model: Select model" }),
-    );
-    await userEvent.click(screen.getByRole("option", { name: "gpt-4.1-mini" }));
-    view.rerender(<AgentSettingsForm {...baseProps} />);
-    expect(
-      screen.getByRole("button", { name: "Model: gpt-4.1-mini" }),
-    ).toBeVisible();
-  });
-
-  it("previews a system prompt and estimates its tokens", async () => {
-    render(
-      <AgentSettingsForm
-        {...baseProps}
-        workspaceId="workspace-1"
-        providerId="provider-1"
-        model="gpt-4.1"
-        systemPrompt="你好 hello"
-        activeSection="instructions"
-        showNavigation={false}
-      />,
-    );
-
-    expect(screen.getByText("Estimated tokens: 4")).toBeInTheDocument();
-    expect(
-      screen.getByRole("region", { name: "Preview system prompt" }),
-    ).toHaveTextContent("你好 hello");
-    await userEvent.click(
-      screen.getByRole("button", { name: "Edit system prompt" }),
-    );
-    expect(screen.getByLabelText("System prompt")).toHaveValue("你好 hello");
-  });
-
-  it.each(["pi", "claude-code", "dsh", "hermes-rpc"])(
-    "keeps %s on one networked Docker sandbox",
-    async (runtimeKind) => {
-      const user = userEvent.setup();
-      const providerId =
-        runtimeKind === "claude-code" ? "anthropic" : "provider-1";
-      render(
-        <AgentSettingsForm
-          {...baseProps}
-          runtimeKind={runtimeKind}
-          providers={[
-            ...baseProps.providers,
-            {
-              id: "anthropic",
-              name: "Anthropic",
-              format: "anthropic",
-              models: ["claude-sonnet"],
-            },
-          ]}
-          providerId={providerId}
-          model={runtimeKind === "claude-code" ? "claude-sonnet" : "gpt-4.1"}
-          defaultSandboxId="docker-1"
-          sandboxes={[
-            {
-              id: "docker-1",
-              label: "Docker one",
-              kind: "docker",
-              network: "default",
-              checked: true,
-            },
-            {
-              id: "docker-2",
-              label: "Docker two",
-              kind: "docker",
-              network: "default",
-            },
-            {
-              id: "offline",
-              label: "Offline Docker",
-              kind: "docker",
-              network: "none",
-            },
-            { id: "connector", label: "Remote connector", kind: "connector" },
-          ]}
-        />,
-      );
-
-      if (runtimeKind === "claude-code") {
-        await user.click(
-          screen.getByRole("button", { name: "Model: claude-sonnet" }),
-        );
-        expect(
-          screen.getByRole("group", { name: "OpenAI" }),
-        ).toBeInTheDocument();
-      }
-      await user.click(screen.getByRole("button", { name: /^Sandboxes/ }));
-      expect(
-        screen.queryByRole("radio", { name: "Offline Docker" }),
-      ).not.toBeInTheDocument();
-      expect(
-        screen.queryByRole("radio", { name: "Remote connector" }),
-      ).not.toBeInTheDocument();
-      await user.click(screen.getByRole("radio", { name: "Docker two" }));
-      expect(
-        screen.getByRole("radio", { name: "Docker one" }),
-      ).not.toBeChecked();
-      const form = document.querySelector("form");
-      if (!form) throw new Error("Expected settings form.");
-      expect(new FormData(form).getAll("sandboxId")).toEqual(["docker-2"]);
-      expect(new FormData(form).get("defaultSandboxId")).toBeNull();
-    },
-  );
-
-  it("does not expose a ToolPlane system prompt field for Hermes agents", () => {
-    render(
-      <AgentSettingsForm
-        {...baseProps}
-        runtimeKind="hermes"
-        systemPrompt="Legacy ToolPlane prompt"
-        runtime={{
-          kind: "hermes",
-          image: "nousresearch/hermes-agent:latest",
-          status: "running",
-          lastError: null,
-          lastSyncedAt: null,
-          sandboxId: "sandbox-1",
-        }}
-      />,
-    );
-
-    expect(screen.queryByLabelText("System prompt")).not.toBeInTheDocument();
-    expect(document.querySelector('[name="systemPrompt"]')).toBeNull();
-    expect(screen.queryByLabelText("Model")).not.toBeInTheDocument();
-  });
-
-  it("lets Hermes agents select multiple providers without selecting a model", async () => {
-    render(
-      <AgentSettingsForm
-        {...baseProps}
-        runtimeKind="hermes"
-        providers={[
-          ...baseProps.providers,
-          {
-            id: "provider-2",
-            name: "Anthropic",
-            format: "anthropic",
-            models: ["claude-sonnet"],
-          },
-        ]}
-        providerIds={["provider-1"]}
-        runtime={{
-          kind: "hermes",
-          image: "nousresearch/hermes-agent:latest",
-          status: "running",
-          lastError: null,
-          lastSyncedAt: null,
-          sandboxId: "sandbox-1",
-        }}
-      />,
-    );
-
-    expect(
-      screen.getByRole("checkbox", { name: "Select OpenAI" }),
-    ).toBeChecked();
-    await userEvent.click(
-      screen.getByRole("checkbox", { name: "Select Anthropic" }),
-    );
-    expect(document.querySelectorAll('input[name="providerId"]')).toHaveLength(
-      2,
-    );
-    expect(document.querySelector('[name="model"]')).toBeNull();
-  });
-
-  it("edits the Hermes volume environment separately from agent autosave", async () => {
-    render(
-      <AgentSettingsForm
-        {...baseProps}
-        runtimeKind="hermes"
-        runtime={{
-          kind: "hermes",
-          image: "nousresearch/hermes-agent:latest",
-          status: "running",
-          lastError: null,
-          lastSyncedAt: null,
-          sandboxId: "sandbox-1",
-          environment: "EXISTING=value",
-        }}
-      />,
-    );
-
-    const environment = screen.getByLabelText("Environment variables");
-    expect(environment).toHaveValue("EXISTING=value");
-    await userEvent.clear(environment);
-    await userEvent.type(environment, "API_KEY=secret");
-
-    await userEvent.click(screen.getByRole("button", { name: "Advanced" }));
-    await userEvent.click(
-      screen.getByRole("button", { name: "Save environment" }),
-    );
-    await waitFor(() =>
-      expect(actions.updateAgentRuntimeEnvAction).toHaveBeenCalled(),
-    );
-    const formData = actions.updateAgentRuntimeEnvAction.mock.calls.at(-1)?.[1];
-    expect(formData).toBeInstanceOf(FormData);
-    if (!formData) throw new Error("Environment form was not submitted.");
-    expect(formData.get("workspace")).toBe("acme");
-    expect(formData.get("agentId")).toBe("agent-1");
-    expect(formData.get("runtimeEnv")).toBe("API_KEY=secret");
-  });
-
-  it("serializes disabled built-in tool groups for the runtime", async () => {
-    render(
-      <AgentSettingsForm
-        {...baseProps}
-        activeSection="builtInTools"
-        showNavigation={false}
-      />,
-    );
-
-    await userEvent.click(
-      screen.getByRole("checkbox", { name: "Enable Shell tools" }),
-    );
-    const form = document.querySelector("form");
-    if (!form) throw new Error("Expected settings form.");
-    expect(new FormData(form).getAll("disabledBuiltinTool")).toEqual(["bash"]);
-  });
-
-  it("upgrades Hermes with the selected image through its dedicated action", async () => {
-    actions.upgradeHermesRuntimeAction.mockClear();
-    actions.updateAgentAction.mockClear();
-    render(
-      <AgentSettingsForm
-        {...baseProps}
-        runtimeKind="hermes"
-        hermesImages={[
-          "nousresearch/hermes-agent:latest",
-          "nousresearch/hermes-agent:v2026.7.20",
-        ]}
-        runtime={{
-          kind: "hermes",
-          image: "nousresearch/hermes-agent:latest",
-          status: "running",
-          lastError: null,
-          lastSyncedAt: null,
-          sandboxId: "sandbox-1",
-        }}
-      />,
-    );
-
-    await userEvent.click(screen.getByRole("button", { name: "Advanced" }));
-    await userEvent.click(
-      screen.getByRole("combobox", { name: "Hermes version" }),
-    );
-    await userEvent.click(
-      screen.getByRole("option", {
-        name: "nousresearch/hermes-agent:v2026.7.20",
-      }),
-    );
-    await new Promise<void>((resolve) => window.setTimeout(resolve, 800));
-    expect(actions.updateAgentAction).not.toHaveBeenCalled();
-
-    await userEvent.click(
-      screen.getByRole("button", { name: "Upgrade & restart" }),
-    );
-    await waitFor(() =>
-      expect(actions.upgradeHermesRuntimeAction).toHaveBeenCalled(),
-    );
-    const formData = actions.upgradeHermesRuntimeAction.mock.calls.at(-1)?.[1];
-    expect(formData).toBeInstanceOf(FormData);
-    if (!formData) throw new Error("Hermes upgrade form was not submitted.");
-    expect(formData.get("workspace")).toBe("acme");
-    expect(formData.get("agentId")).toBe("agent-1");
-    expect(formData.get("hermesImage")).toBe(
-      "nousresearch/hermes-agent:v2026.7.20",
-    );
-  });
-
-  it("shows pending and completed feedback for Hermes sync and stop actions", async () => {
-    let finishSync: ((state: { savedAt: number }) => void) | undefined;
-    let finishStop: ((state: { savedAt: number }) => void) | undefined;
-    actions.syncAgentRuntimeAction.mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          finishSync = resolve;
-        }),
-    );
-    actions.stopAgentRuntimeAction.mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          finishStop = resolve;
-        }),
-    );
-    render(
-      <AgentSettingsForm
-        {...baseProps}
-        runtimeKind="hermes"
-        runtime={{
-          kind: "hermes",
-          image: "nousresearch/hermes-agent:latest",
-          status: "running",
-          lastError: null,
-          lastSyncedAt: null,
-          sandboxId: "sandbox-1",
-        }}
-      />,
-    );
-
-    await userEvent.click(screen.getByRole("button", { name: "Advanced" }));
-    await userEvent.click(screen.getByRole("button", { name: "Sync / start" }));
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Syncing..." })).toBeDisabled(),
-    );
-    finishSync?.({ savedAt: 1 });
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Synced" })).toBeEnabled(),
-    );
-
-    await userEvent.click(screen.getByRole("button", { name: "Stop" }));
-    await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "Stopping..." }),
-      ).toBeDisabled(),
-    );
-    finishStop?.({ savedAt: 2 });
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Stopped" })).toBeEnabled(),
-    );
-  });
-
-  it("does not save searches but saves resource changes", async () => {
-    const user = userEvent.setup();
-    actions.updateAgentAction.mockClear();
-    render(
-      <AgentSettingsForm
-        {...baseProps}
-        deployments={[
-          {
-            id: "deployment-1",
-            label: "RouterOS MCP",
-            checked: false,
-            description: "Network automation",
-            source: "custom",
-            status: "running",
-          },
-        ]}
-      />,
-    );
-
-    await user.click(screen.getByRole("button", { name: /^MCP/ }));
-    await user.type(
-      screen.getByRole("searchbox", { name: "Search MCP..." }),
-      "router",
-    );
-    await new Promise<void>((resolve) => window.setTimeout(resolve, 800));
-    expect(actions.updateAgentAction).not.toHaveBeenCalled();
-
-    await user.click(
-      screen.getByRole("checkbox", { name: "Select RouterOS MCP" }),
-    );
-    await waitFor(() => expect(actions.updateAgentAction).toHaveBeenCalled(), {
-      timeout: 1_500,
+describe("Agent revision settings", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    actions.updateAgentAction.mockResolvedValue({ savedAt: 1 });
+    actions.prepareAgentRevisionAction.mockResolvedValue({
+      expectedRevisionId: "revision-1",
+      config,
+    });
+    actions.publishAgentRevisionAction.mockResolvedValue({
+      revisionId: "revision-2",
+    });
+    credentials.listAgentEnvironmentCredentialsAction.mockResolvedValue({
+      credentials: [
+        { id: "credential-1", name: "SERVICE_TOKEN", revokedAt: null },
+      ],
     });
   });
 
-  it("flushes a pending autosave before focus leaves the settings form", async () => {
-    actions.updateAgentAction.mockClear();
-    render(
-      <div>
-        <AgentSettingsForm {...baseProps} />
-        <button type="button">Close settings</button>
-      </div>,
-    );
-
-    await userEvent.type(screen.getByLabelText("Name"), " updated");
-    expect(actions.updateAgentAction).not.toHaveBeenCalled();
-    await userEvent.click(
-      screen.getByRole("button", { name: "Close settings" }),
-    );
-
+  it("prepares without publishing, then applies the exact reviewed config with its CAS identity", async () => {
+    const user = userEvent.setup();
+    render(<AgentSettingsForm {...props} />);
+    await user.click(screen.getByRole("button", { name: "Prepare revision" }));
+    expect(actions.publishAgentRevisionAction).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("textbox", { name: "Review prepared revision" }),
+    ).toHaveValue(JSON.stringify(config, null, 2));
+    await user.click(screen.getByRole("button", { name: "Apply as default" }));
     await waitFor(() =>
-      expect(actions.updateAgentAction).toHaveBeenCalledOnce(),
+      expect(actions.publishAgentRevisionAction).toHaveBeenCalledTimes(1),
+    );
+    const submitted = actions.publishAgentRevisionAction.mock
+      .calls[0]?.[0] as FormData;
+    expect(submitted.get("workspace")).toBe("acme");
+    expect(submitted.get("agentId")).toBe("agent-1");
+    expect(submitted.get("expectedRevisionId")).toBe("revision-1");
+    expect(JSON.parse(String(submitted.get("config")))).toEqual(config);
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Revision published",
     );
   });
 
-  it("supports a controlled section with its internal navigation hidden", () => {
-    const props = {
-      ...baseProps,
-      systemPrompt: "Use the workspace tools carefully.",
-      deployments: [
-        { id: "deployment-1", label: "RouterOS MCP", checked: true },
-      ],
-      skills: [{ id: "skill-1", label: "Network skill", checked: true }],
-      activeSection: "mcp" as const,
-      showNavigation: false,
-    };
-    const view = render(<AgentSettingsForm {...props} />);
-
-    expect(screen.getByRole("region", { name: "MCP" })).toBeVisible();
-    expect(
-      screen.getByRole("checkbox", { name: "Select RouterOS MCP" }),
-    ).toBeVisible();
-
-    const form = document.querySelector("form");
-    if (!form) throw new Error("Expected settings form.");
-    expect(new FormData(form).getAll("installedSkillId")).toEqual(["skill-1"]);
-
-    view.rerender(<AgentSettingsForm {...props} activeSection="skills" />);
-    expect(
-      screen.getByRole("checkbox", { name: "Select Network skill" }),
-    ).toBeVisible();
-  });
-
-  it("notifies the parent when a controlled section is selected", async () => {
-    const onSectionChange = vi.fn();
-    render(
-      <AgentSettingsForm
-        {...baseProps}
-        activeSection="mcp"
-        onSectionChange={onSectionChange}
-      />,
+  it("keeps a CAS rejection visible and does not silently replace the reviewed revision", async () => {
+    actions.publishAgentRevisionAction.mockRejectedValue(
+      new Error("Agent revision changed. Prepare again."),
     );
-
-    await userEvent.click(screen.getByRole("button", { name: /^Skills/ }));
-    expect(onSectionChange).toHaveBeenCalledWith("skills");
+    const user = userEvent.setup();
+    render(<AgentSettingsForm {...props} />);
+    await user.click(screen.getByRole("button", { name: "Prepare revision" }));
+    await user.click(screen.getByRole("button", { name: "Apply as default" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Agent revision changed. Prepare again.",
+    );
+    expect(actions.prepareAgentRevisionAction).toHaveBeenCalledTimes(1);
+    expect(
+      screen.getByRole("textbox", { name: "Review prepared revision" }),
+    ).toHaveValue(JSON.stringify(config, null, 2));
   });
 
-  it("keeps form values and resource bindings mounted while navigating settings sections", async () => {
+  it("invalidates a prepared review when the draft changes and requires a draft save", async () => {
+    const user = userEvent.setup();
+    render(<AgentSettingsForm {...props} />);
+    await user.click(screen.getByRole("button", { name: "Prepare revision" }));
+    await user.type(screen.getByRole("textbox", { name: "Name" }), " updated");
+    expect(
+      screen.queryByRole("button", { name: "Apply as default" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Prepare revision" }),
+    ).toBeDisabled();
+    expect(actions.updateAgentAction).not.toHaveBeenCalled();
+    expect(actions.publishAgentRevisionAction).not.toHaveBeenCalled();
+  });
+
+  it("adds only an owner-scoped credential reference to the environment and invalidates review", async () => {
     const user = userEvent.setup();
     render(
       <AgentSettingsForm
-        {...baseProps}
-        systemPrompt="Use the workspace tools carefully."
-        providerId="provider-1"
-        model="gpt-4.1"
-        deployments={[
-          { id: "deployment-1", label: "RouterOS MCP", checked: true },
-        ]}
-        skills={[{ id: "skill-1", label: "Network skill", checked: true }]}
-        toolkits={[{ id: "toolkit-1", label: "Ops toolkit", checked: true }]}
-        sandboxes={[
-          {
-            id: "sandbox-1",
-            label: "Workspace",
-            kind: "docker",
-            network: "isolated",
-            checked: true,
-          },
-        ]}
-        subAgents={[{ id: "agent-2", label: "Reviewer", checked: true }]}
+        {...props}
+        activeSection="sandboxes"
+        canManageCredentials
+        publishedRevision={{ id: "revision-1", version: 1, config }}
       />,
     );
-
-    await user.click(screen.getByRole("button", { name: /^MCP/ }));
-    await user.click(screen.getByRole("button", { name: /^Skills/ }));
-    await user.click(screen.getByRole("button", { name: /^Advanced$/ }));
-
-    const form = document.querySelector("form");
-    if (!form) throw new Error("Expected settings form.");
-    const formData = new FormData(form);
-    expect(formData.get("name")).toBe("Test agent");
-    expect(formData.get("systemPrompt")).toBe(
-      "Use the workspace tools carefully.",
+    await user.click(screen.getByRole("button", { name: "Prepare revision" }));
+    await user.click(screen.getByRole("button", { name: "Load credentials" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Credential reference" }),
     );
-    expect(formData.get("providerId")).toBe("provider-1");
-    expect(formData.get("model")).toBe("gpt-4.1");
-    expect(formData.get("maxSteps")).toBe("8");
-    expect(formData.getAll("deploymentId")).toEqual(["deployment-1"]);
-    expect(formData.getAll("installedSkillId")).toEqual(["skill-1"]);
-    expect(formData.getAll("toolkitId")).toEqual(["toolkit-1"]);
-    expect(formData.getAll("sandboxId")).toEqual(["sandbox-1"]);
-    expect(formData.getAll("subAgentId")).toEqual(["agent-2"]);
+    const environment = JSON.parse(
+      (
+        screen.getByRole("textbox", {
+          name: "Environment definition",
+        }) as HTMLTextAreaElement
+      ).value,
+    );
+    expect(environment.credentialReferences).toEqual([
+      { name: "SERVICE_TOKEN", credentialId: "credential-1" },
+    ]);
+    expect(
+      screen.queryByRole("button", { name: "Apply as default" }),
+    ).not.toBeInTheDocument();
+    expect(actions.publishAgentRevisionAction).not.toHaveBeenCalled();
+    const scope = credentials.listAgentEnvironmentCredentialsAction.mock
+      .calls[0]?.[0] as FormData;
+    expect(scope.get("workspace")).toBe("acme");
+    expect(scope.get("agentId")).toBe("agent-1");
   });
 });

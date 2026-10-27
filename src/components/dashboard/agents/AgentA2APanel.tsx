@@ -1,6 +1,5 @@
 "use client";
 import { Button, ButtonLink } from "@/components/motion/button/base";
-import { Input } from "@/components/motion/input";
 
 import { AnimatedBadge } from "@/components/motion/animated-badge";
 
@@ -46,11 +45,7 @@ export function AgentA2APanel({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
-  const [secret, setSecret] = useState("");
-  const [name, setName] = useState("");
-  const [mode, setMode] = useState<"local" | "public">(
-    runtimeKind === "hermes" ? "public" : "local",
-  );
+  const [mode, setMode] = useState<"local" | "public">("local");
   const flight = useRef(false);
   const mounted = useRef(true);
   const base = `/api/v1/workspaces/${encodeURIComponent(slug)}/agents/${encodeURIComponent(agentId)}/a2a/console`;
@@ -83,11 +78,6 @@ export function AgentA2APanel({
     };
     // Reload only when the target changes, not the translation function identity.
   }, [base]);
-  useEffect(() => {
-    if (!secret) return;
-    const timer = setTimeout(() => setSecret(""), 180_000);
-    return () => clearTimeout(timer);
-  }, [secret]);
 
   async function operation(run: () => Promise<void>) {
     if (flight.current) return;
@@ -113,12 +103,8 @@ export function AgentA2APanel({
         body: JSON.stringify(action),
       });
       if (!response.ok) throw new Error();
-      const result = (await response.json()) as { token?: string };
       if (!mounted.current) return;
-      setSecret(result.token ?? "");
-      setName("");
       setNotice(t("saved"));
-      // A refresh failure must not hide the one-time key returned by the committed write.
       try {
         await load();
       } catch {
@@ -178,6 +164,89 @@ export function AgentA2APanel({
               {t("readOnly")}
             </div>
           ) : null}
+          <section className={cardClass} aria-labelledby="a2a-policy-heading">
+            <h3 id="a2a-policy-heading" className="font-semibold">
+              {t("internalTitle")}
+            </h3>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-3 rounded-lg border border-border p-3">
+                <h4 className="text-sm font-semibold">{t("inboundTitle")}</h4>
+                <p className="text-sm text-muted-foreground">
+                  {t("inboundDescription")}
+                </p>
+                <AnimatedBadge
+                  status={
+                    view.collaboration.inboundEnabled ? "success" : "neutral"
+                  }
+                >
+                  {t(
+                    view.collaboration.inboundEnabled ? "enabled" : "disabled",
+                  )}
+                </AnimatedBadge>
+                <Button
+                  disabled={
+                    locked ||
+                    (runtimeKind !== "pi-sdk" &&
+                      !view.collaboration.inboundEnabled)
+                  }
+                  onClick={() =>
+                    void mutate({
+                      action: "set-inbound",
+                      enabled: !view.collaboration.inboundEnabled,
+                    })
+                  }
+                  variant={
+                    view.collaboration.inboundEnabled ? "secondary" : "primary"
+                  }
+                  className="w-full"
+                >
+                  {t(
+                    view.collaboration.inboundEnabled
+                      ? "disableInbound"
+                      : "enableInbound",
+                  )}
+                </Button>
+              </div>
+              <div className="space-y-3 rounded-lg border border-border p-3">
+                <h4 className="text-sm font-semibold">{t("outboundTitle")}</h4>
+                <p className="text-sm text-muted-foreground">
+                  {t("outboundDescription")}
+                </p>
+                <AnimatedBadge
+                  status={
+                    view.collaboration.outboundEnabled ? "success" : "neutral"
+                  }
+                >
+                  {t(
+                    view.collaboration.outboundEnabled ? "enabled" : "disabled",
+                  )}
+                </AnimatedBadge>
+                <Button
+                  disabled={
+                    locked ||
+                    (runtimeKind !== "pi-sdk" &&
+                      !view.collaboration.outboundEnabled)
+                  }
+                  onClick={() =>
+                    void mutate({
+                      action: "set-outbound",
+                      enabled: !view.collaboration.outboundEnabled,
+                    })
+                  }
+                  variant={
+                    view.collaboration.outboundEnabled ? "secondary" : "primary"
+                  }
+                  className="w-full"
+                >
+                  {t(
+                    view.collaboration.outboundEnabled
+                      ? "disableOutbound"
+                      : "enableOutbound",
+                  )}
+                </Button>
+              </div>
+            </div>
+          </section>
           <section className={cardClass} aria-labelledby="a2a-internal-heading">
             <h3 id="a2a-internal-heading" className="font-semibold">
               {t("internalTitle")}
@@ -213,43 +282,10 @@ export function AgentA2APanel({
               {t("configureTargets")}
             </a>
           </section>
-          <section className={cardClass} aria-labelledby="a2a-local-heading">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <h3 id="a2a-local-heading" className="font-semibold">
-                  {t("localTitle")}
-                </h3>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {t("localDescription")}
-                </p>
-              </div>
-              <AnimatedBadge
-                status={view.local.enabled ? "success" : "neutral"}
-              >
-                {t(view.local.enabled ? "enabled" : "disabled")}
-              </AnimatedBadge>
-            </div>
-            <Button
-              disabled={locked || (!view.local.enabled && !view.local.ready)}
-              onClick={() => {
-                if (
-                  window.confirm(
-                    t(
-                      view.local.enabled
-                        ? "disableLocalConfirm"
-                        : "enableLocalConfirm",
-                    ),
-                  )
-                )
-                  void mutate({
-                    action: "set-local",
-                    enabled: !view.local.enabled,
-                  });
-              }}
-              variant={view.local.enabled ? "secondary" : "primary"}
-            >
-              {t(view.local.enabled ? "disableLocal" : "enableLocal")}
-            </Button>
+          <section
+            className={cardClass}
+            aria-label={t("channelOperator.title")}
+          >
             {view.canManage && view.channels?.length ? (
               <section
                 className={cardClass}
@@ -272,7 +308,8 @@ export function AgentA2APanel({
                     <Button
                       type="button"
                       disabled={
-                        busy || (!channel.enabled && !view.local.enabled)
+                        busy ||
+                        (!channel.enabled && !view.collaboration.inboundEnabled)
                       }
                       onClick={() => {
                         if (window.confirm(t("channelOperator.confirm")))
@@ -299,7 +336,7 @@ export function AgentA2APanel({
           {view.local.supported ? (
             <AgentA2ARemotes key={base} base={base} />
           ) : null}
-          {runtimeKind === "hermes" ? (
+          {view.endpoint ? (
             <section className={cardClass} aria-labelledby="a2a-public-heading">
               <div className="flex items-start justify-between gap-3">
                 <div>
@@ -319,46 +356,9 @@ export function AgentA2APanel({
               <p className="text-sm text-muted-foreground">
                 {t("publicBoundary")}
               </p>
-              {!view.endpoint?.ready ? (
-                <div
-                  role="alert"
-                  className="space-y-2 text-sm text-muted-foreground"
-                >
-                  {t("publishFirst")}{" "}
-                  {runtimeKind === "hermes" ? (
-                    <a className="underline" href="?settings=api">
-                      {t("openPublication")}
-                    </a>
-                  ) : null}
-                </div>
-              ) : (
-                <p className="text-xs text-muted-foreground">
-                  {t("revision", { version: view.endpoint.revision ?? "—" })}
-                </p>
-              )}
-              <Button
-                disabled={
-                  locked || (!view.endpoint?.enabled && !view.endpoint?.ready)
-                }
-                onClick={() => {
-                  if (
-                    window.confirm(
-                      t(
-                        view.endpoint?.enabled
-                          ? "disablePublicConfirm"
-                          : "enablePublicConfirm",
-                      ),
-                    )
-                  )
-                    void mutate({
-                      action: "set-public",
-                      enabled: !view.endpoint?.enabled,
-                    });
-                }}
-                variant={view.endpoint?.enabled ? "secondary" : "primary"}
-              >
-                {t(view.endpoint?.enabled ? "disablePublic" : "enablePublic")}
-              </Button>
+              <p className="text-xs text-muted-foreground">
+                {t("revision", { version: view.endpoint?.revision ?? "—" })}
+              </p>
             </section>
           ) : null}
           {runtimeKind === "pi-sdk" ? (
@@ -378,7 +378,7 @@ export function AgentA2APanel({
                 {t("invalidOrigin")}
               </div>
             ) : null}
-            {runtimeKind === "hermes" ? (
+            {view.endpoint ? (
               <fieldset
                 className="m-0 flex min-w-0 flex-wrap gap-2 border-0 p-0"
                 aria-label={t("connectionMode")}
@@ -423,7 +423,7 @@ export function AgentA2APanel({
               </p>
             )}
           </section>
-          {runtimeKind === "hermes" && view.canManage && view.endpoint ? (
+          {view.canManage && view.endpoint ? (
             <section className={cardClass} aria-labelledby="a2a-keys-heading">
               <h3
                 id="a2a-keys-heading"
@@ -432,60 +432,6 @@ export function AgentA2APanel({
                 <KeyRound className="size-4" />
                 {t("credentials")}
               </h3>
-              <p className="text-sm text-muted-foreground">{t("keyWarning")}</p>
-              {secret ? (
-                <div
-                  role="alert"
-                  className="space-y-2 text-sm text-muted-foreground"
-                >
-                  <p>{t("secretOnce")}</p>
-                  <code className="my-3 block break-all select-all text-xs">
-                    {secret}
-                  </code>
-                  <div className="flex flex-wrap items-center gap-3">
-                    <CopyButton text={secret} label={t("copyKey")} />
-                    <Button
-                      onClick={() => setSecret("")}
-                      variant={"secondary"}
-                      size={"sm"}
-                    >
-                      {t("hideKey")}
-                    </Button>
-                  </div>
-                </div>
-              ) : null}
-              <form
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  void mutate({ action: "create-client", name });
-                }}
-                className="flex flex-wrap items-end gap-3"
-              >
-                <div className="min-w-0 flex-1 text-sm">
-                  <Input
-                    label={t("clientName")}
-                    className="mt-1"
-                    maxLength={100}
-                    value={name}
-                    placeholder={t("clientPlaceholder")}
-                    required
-                    onChange={(value) => setName(value)}
-                  />
-                </div>
-                <Button
-                  type="submit"
-                  disabled={
-                    busy ||
-                    !!secret ||
-                    !name.trim() ||
-                    !view.endpoint.enabled ||
-                    !view.endpoint.ready
-                  }
-                  variant={"ghost"}
-                >
-                  {t("createClient")}
-                </Button>
-              </form>
               {!view.endpoint.clients.length ? (
                 <p className="text-sm text-muted-foreground">
                   {t("noClients")}
@@ -500,25 +446,6 @@ export function AgentA2APanel({
                       <p className="break-all text-sm font-medium">
                         {client.name}
                       </p>
-                      <Button
-                        disabled={
-                          busy ||
-                          !!secret ||
-                          !view.endpoint?.enabled ||
-                          !view.endpoint.ready ||
-                          client.status !== "active"
-                        }
-                        onClick={() =>
-                          void mutate({
-                            action: "create-key",
-                            clientId: client.id,
-                          })
-                        }
-                        variant={"secondary"}
-                        size={"sm"}
-                      >
-                        {t("createKey")}
-                      </Button>
                     </div>
                     {client.keys.map((key) => (
                       <div

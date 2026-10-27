@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { AgentA2APolicySchema } from "@/lib/agents/revision-types";
 import {
   A2ASendSchema,
   A2AGetSchema,
@@ -31,6 +32,16 @@ const documentedSendSchema = A2ASendSchema.extend({
 });
 
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
+const localSettingsSchema = {
+  type: "object",
+  additionalProperties: false,
+  minProperties: 1,
+  properties: {
+    inboundEnabled: { type: "boolean" },
+    outboundEnabled: { type: "boolean" },
+    policy: ref("AgentA2APolicy"),
+  },
+};
 const taskId = { id: "REPLACE_WITH_TASK_ID" };
 const message = {
   messageId: "REPLACE_WITH_UNIQUE_MESSAGE_ID",
@@ -152,7 +163,7 @@ const cardResponse = {
 const localDescription =
   "Enable External A2A & channel access in Agent settings after configuring its model and sandbox. Use an account-level personal Bearer token from Account settings → API tokens, belonging to a user with workspace access. Server-to-server only: every Origin header is rejected, including an empty value. Cookies, Toolkit tokens and published-service keys are not accepted. Never share an account token with third parties. Card and RPC share this URL, using GET and POST respectively.";
 const publicDescription =
-  "Publish an active isolated Hermes Endpoint, enable its A2A access, then create a dedicated client/key in Agent settings → A2A. Requires a service key with a2a:read, a2a:send and/or a2a:cancel scopes for the requested operation; ordinary Responses keys do not grant A2A access. Keep keys server-side. Task access is scoped to the client identity that created the task, not merely knowledge of its ID. Browser Origin requests are rejected.";
+  "Published endpoint execution is unavailable for all currently supported Agent runtimes. Existing task history, cancellation, credentials and management remain available; new publication and task admission are rejected. Local workspace and remote Agent collaboration are independent. Requires a service key with a2a:read, a2a:send and/or a2a:cancel scopes for the requested operation; ordinary Responses keys do not grant A2A access. Keep keys server-side. Task access is scoped to the client identity that created the task. Browser Origin requests are rejected.";
 
 export const a2aOpenApi = {
   tags: [
@@ -192,6 +203,7 @@ export const a2aOpenApi = {
     },
   },
   schemas: {
+    AgentA2APolicy: z.toJSONSchema(AgentA2APolicySchema),
     A2ASendParams: {
       ...z.toJSONSchema(documentedSendSchema),
       description:
@@ -387,26 +399,18 @@ export const a2aOpenApi = {
       put: {
         tags: ["A2A · Account"],
         operationId: "configureLocalA2A",
-        summary: "Enable or disable external account-token access",
+        summary: "Configure inbound, outbound and collaboration authorization",
         description:
-          "Requires workspace owner or administrator. Does not control selected internal sub-agent delegation.",
+          "Requires workspace owner or administrator. Publishes directional settings and policy as a new immutable Agent revision using revision compare-and-swap. Inbound authorization controls account-token and channel admission and delegated target access; outbound authorization and selected policy authorize delegation. Ordinary chat, control and Work entry do not require collaboration opt-in. The retired enabled alias is rejected.",
         security: localSecurity,
         requestBody: {
           required: true,
-          content: jsonContent({
-            type: "object",
-            additionalProperties: false,
-            required: ["enabled"],
-            properties: { enabled: { type: "boolean" } },
-          }),
+          content: jsonContent(localSettingsSchema),
         },
         responses: {
           "200": {
-            description: "Updated access state.",
-            content: jsonContent({
-              type: "object",
-              properties: { enabled: { type: "boolean" } },
-            }),
+            description: "Accepted directional settings and policy changes.",
+            content: jsonContent(localSettingsSchema),
           },
           default: {
             description:

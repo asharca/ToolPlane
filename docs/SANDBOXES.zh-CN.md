@@ -1,6 +1,5 @@
 # Agent 沙箱
 
-> **English**: [SANDBOXES.md](./SANDBOXES.md)
 
 Agent 沙箱为 Agent 提供一个行为类似小型操作环境的工作区。在本项目中，沙箱以 MCP tools
 的形式暴露给 Agent，并以 PTY 终端流的形式暴露给浏览器控制台。应用不会把任意的服务器
@@ -41,7 +40,7 @@ Sandbox row
 默认镜像：
 
 ```txt
-mcr.microsoft.com/devcontainers/javascript-node:24-bookworm
+mcr.microsoft.com/devcontainers/javascript-node:26-bookworm
 ```
 
 容器非特权运行，移除 Linux capabilities，带 pids/cpu/memory 限制，可使用专用的
@@ -91,19 +90,9 @@ mcr.microsoft.com/devcontainers/javascript-node:24-bookworm
 用户 Connector 沙箱不支持克隆或快照操作。Connector 数据留在用户机器上，ToolPlane 不复
 制也不删除它。
 
-Hermes 运行时沙箱在其受管运行时面板中提供重命名、环境变量、快照、恢复和删除快照的控
-制。Hermes 快照复制其持久 `/opt/data` 卷，其中包含工作区以及 Hermes 会话、记忆、附件
-和原生配置。它不包含镜像层变更，也不包含 `Conversation`、`AgentAttachment` 等 ToolPlane
-数据库记录；它是卷快照，不是完整的逻辑 Agent 检查点。Hermes 不支持直接克隆沙箱，因为一
-个 runtime 永久绑定一个 Agent；需要第二个 Hermes runtime 时请使用 Agent 克隆流程。
-
-Hermes 快照和恢复操作会获取 runtime 维护闸门，使聊天和附件写入不会与卷复制竞争。恢复
-后，ToolPlane 会重新投影当前 Agent 持有的 provider、MCP、skill 和环境配置，再重启此前
-正在运行的 runtime。这样即使恢复的卷来自较旧的 runtime 状态，控制面配置也能保持一致。
-
 #### 智能体会话独立沙箱
 
-普通 Pi、Pi SDK、Claude Code、DSH 和 Hermes RPC 智能体将原先绑定的 Docker
+Pi SDK 智能体将已审阅不可变修订中的 Docker
 沙箱作为模板。每个会话首次执行时，从模板复制独立的 `/workspace` 卷并启动独立
 容器；没有控制台会话的委派 A2A context 也有自己的持久映射。后续 turn 复用该映射
 和原生会话状态。文件面板、终端跟随当前会话；打开尚未执行的会话不会展示或创建模板
@@ -116,7 +105,7 @@ Hermes 快照和恢复操作会获取 runtime 维护闸门，使聊天和附件�
 （1–32，默认 1）及平台总数（1–256，默认 16，不能小于单个智能体上限）。限额统计
 正在执行的 turn，而非保存的会话数量。不同会话可以并行，同一会话保持串行。普通请求
 等待空位时可以取消；原生根任务保留排队状态，嵌套委派任务遇满额立即失败，避免父子
-任务互等。调低限额不打断正在执行的任务。托管 Hermes 与公共端点继续使用各自的限额。
+任务互等。调低限额不打断正在执行的任务。公共端点保留独立限额，但当前不接受新发布或执行。
 持久本地/远端任务另有工作区准入边界：平台执行上限加 16 个排队名额，原有存储配额仍生效。
 
 首次复制在模板生命周期锁和执行锁内临时暂停容器，复制后恢复，不终止原有 shell。

@@ -3,7 +3,7 @@
   "version": "0.32.0",
   "private": true,
   "engines": {
-    "node": ">=22.19.0"
+    "node": ">=26.12.1"
   },
   "scripts": {
     "postinstall": "fumadocs-mdx",
@@ -27,11 +27,7 @@
     "db:generate": "prisma generate",
     "db:seed": "tsx scripts/smoke-seed.ts",
     "db:studio": "prisma studio",
-    "db:seed:real": "tsx scripts/seed-real-mcp-skills.ts",
     "account:reset-password": "tsx scripts/reset-user-password.ts",
-    "skills:sync:tp": "node --conditions=react-server --import tsx scripts/sync-tp-skills.ts",
-    "skills:import:anthropic": "tsx scripts/import-anthropic-skills.ts",
-    "mcp:import:common": "tsx scripts/import-common-mcp-servers.ts",
     "connector:dev": "node packages/connector/bin/connector.mjs"
   },
   "dependencies": {
@@ -94,6 +90,7 @@
     "telegram-markdown-v2": "0.0.4",
     "undici": "^7.28.0",
     "ws": "^8.21.0",
+    "yaml": "2.9.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {

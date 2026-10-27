@@ -26,6 +26,19 @@ const gitSourceSchema = z
     requested: z.string().min(1).max(2_000),
     url: z.string().min(1).max(2_000),
     commit: z.string().max(64),
+    path: z
+      .string()
+      .min(1)
+      .max(1_000)
+      .refine(
+        (value) =>
+          // biome-ignore lint/suspicious/noControlCharactersInRegex: Git provenance paths must reject ASCII control bytes.
+          !/[\\\x00-\x1f\x7f]/.test(value) &&
+          value
+            .split("/")
+            .every((part) => part !== "" && part !== "." && part !== ".."),
+      )
+      .optional(),
   })
   .strict();
 
@@ -37,10 +50,18 @@ const toolplaneSourceSchema = z
     version: z.string().min(1).max(240),
   })
   .strict();
+const zipSourceSchema = z
+  .object({
+    kind: z.literal("zip"),
+    requested: z.string().regex(/^zip:sha256:[a-f0-9]{64}$/),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  })
+  .strict();
 const packageSourceSchema = z.discriminatedUnion("kind", [
   npmSourceSchema,
   gitSourceSchema,
   toolplaneSourceSchema,
+  zipSourceSchema,
 ]);
 
 // Single entry in the snapshot
@@ -81,7 +102,7 @@ const piPackageRuntimeSchema = z.union([
     .object({
       kind: z.literal("pi-sdk"),
       piVersion: z.literal("0.87.1"),
-      nodeMajor: z.literal(24),
+      nodeMajor: z.literal(26),
       platform: z.literal("linux"),
       arch: z.enum(["x64", "arm64"]),
     })
@@ -90,7 +111,7 @@ const piPackageRuntimeSchema = z.union([
     .object({
       kind: z.literal("pi-sdk"),
       piVersion: z.literal("0.87.1"),
-      nodeMajor: z.literal(24),
+      nodeMajor: z.literal(26),
       platform: z.literal("any"),
       arch: z.literal("any"),
     })
@@ -129,6 +150,29 @@ const piPackageSnapshotSchema = z
       .object({
         schemaVersion: z.literal(1),
         mcp: piPackageMcpRequirementsSchema,
+        origins: z
+          .array(
+            z
+              .object({
+                kind: z.enum(["extensions", "skills", "prompts", "themes"]),
+                path: z.string(),
+                identity: z.string(),
+                digest: z.string().regex(/^[a-f0-9]{64}$/),
+                sources: z.array(
+                  z
+                    .object({
+                      name: z.string(),
+                      version: z.string().nullable(),
+                      path: z.string(),
+                      digest: z.string(),
+                    })
+                    .strict(),
+                ),
+              })
+              .strict(),
+          )
+          .optional(),
+        reproducibility: z.array(z.string()).optional(),
       })
       .strict()
       .optional(),
@@ -495,6 +539,18 @@ function validateSource(snapshot: PiPackageSnapshotV1): void {
     )
       requested = requested.slice(0, ref);
     if (publicGitUrl(requested) !== normalized) invalid("invalid_source");
+    if (
+      source.path !== undefined &&
+      (!/^https:\/\/github\.com\/[A-Za-z0-9-]+\/[A-Za-z0-9_.-]+\.git$/.test(
+        source.url,
+      ) ||
+        !/^[a-f0-9]{40}$/.test(source.commit) ||
+        source.requested !== `${source.url}#${source.commit}`)
+    )
+      invalid("invalid_source");
+  } else if (source.kind === "zip") {
+    if (source.requested !== `zip:sha256:${source.sha256}`)
+      invalid("invalid_source");
   } else {
     if (
       snapshot.name !== source.name ||

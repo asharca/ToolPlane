@@ -9,6 +9,7 @@ import type { Prisma, A2ATask } from "@prisma/client";
 import {
   Artifact,
   Message,
+  Role,
   SendMessageRequest,
   StreamResponse,
   Task,
@@ -22,6 +23,8 @@ import {
   UnsupportedOperationError,
 } from "@a2a-js/sdk/errors";
 import { db } from "@/lib/db";
+import { requireAgentRevision } from "@/lib/agents/revisions";
+import type { AgentPromptInvocation } from "@/lib/agents/sandbox-runtime";
 import { getAgentConcurrencySettings } from "@/lib/admin/settings";
 import { runtimeEnv } from "@/lib/runtime-env";
 import {
@@ -39,17 +42,21 @@ import {
   settled,
   LOCAL_OUTPUT_MODES,
   acceptsOutput,
+  stampArtifactProvenance,
 } from "./model";
 import {
+  A2AHttpError,
+  assertLiveGrant,
   isLocalGrant,
   isRemoteGrant,
   isWorkspaceGrant,
   type TaskGrant,
 } from "./principal";
 import { assertRemoteGrant } from "./remote-policy";
-import { assertLocalGrant, LOCAL_LIMITS } from "./local-policy";
+import { assertLocalGrant, localTarget, LOCAL_LIMITS } from "./local-policy";
 import { validateSend } from "./validation";
 import {
+  A2AQuotaError,
   refreshTaskStorage,
   assertNativeStorageCapacity,
   reserveNativeExecutionOutput,
@@ -61,6 +68,7 @@ import {
 } from "@/lib/observability/a2a-log";
 import { logHealth } from "@/lib/observability/events";
 
+import { assertCollaborationAdmission } from "./collaboration-policy";
 type Tx = Prisma.TransactionClient;
 const json = (value: unknown) =>
   JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
@@ -68,12 +76,12 @@ const notFound = () => new TaskNotFoundError();
 function isPiHarnessTask(row: A2ATask): boolean {
   if (row.executionBackend === "legacy") return false;
   if (
-    row.executionBackend !== "pi-harness" ||
+    !["pi-sdk", "pi-harness"].includes(row.executionBackend) ||
     !isLocalGrant(row.grant as unknown as TaskGrant)
   ) {
     throw new UnsupportedOperationError("Invalid task execution backend.");
   }
-  return true;
+  return row.executionBackend === "pi-harness";
 }
 function canonical(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonical);
@@ -113,6 +121,7 @@ export const taskScope = (grant: TaskGrant) =>
         };
 const scope = taskScope;
 export async function getTaskRow(grant: TaskGrant, id: string) {
+  await assertLiveGrant(grant, "read");
   const row = await db.a2ATask.findFirst({
     where: { id, context: { ...scope(grant), expiresAt: { gt: new Date() } } },
   });
@@ -149,14 +158,21 @@ export async function persist(
   event: StreamResponse,
   data: Prisma.A2ATaskUpdateInput = {},
 ) {
-  if (
-    Buffer.byteLength(JSON.stringify(jsonTask(task)), "utf8") >
-    A2A_LIMITS.snapshotBytes
-  )
-    throw new UnsupportedOperationError("Task storage limit exceeded.");
   const status = task.status;
   if (!status?.timestamp)
     throw new Error("Task status and timestamp are required.");
+  // Retained payloads may already exceed today's cap; still permit their stop acknowledgement.
+  const failureSettlement = [
+    TaskState.TASK_STATE_FAILED,
+    TaskState.TASK_STATE_CANCELED,
+    TaskState.TASK_STATE_REJECTED,
+  ].includes(status.state);
+  if (
+    !failureSettlement &&
+    Buffer.byteLength(JSON.stringify(jsonTask(task)), "utf8") >
+      A2A_LIMITS.snapshotBytes
+  )
+    throw new A2AQuotaError();
   const sequence = row.sequence + 1;
   const updated = await tx.a2ATask.update({
     where: { id: row.id },
@@ -180,15 +196,7 @@ export async function persist(
   await tx.a2AEvent.create({
     data: { taskId: row.id, sequence, payload: json(jsonEvent(event)) },
   });
-  await refreshTaskStorage(
-    tx,
-    row.id,
-    [
-      TaskState.TASK_STATE_FAILED,
-      TaskState.TASK_STATE_CANCELED,
-      TaskState.TASK_STATE_REJECTED,
-    ].includes(status.state),
-  );
+  await refreshTaskStorage(tx, row.id, failureSettlement);
   return updated;
 }
 export function transition(task: Task, state: TaskState, detail?: string) {
@@ -201,6 +209,39 @@ export function transition(task: Task, state: TaskState, detail?: string) {
   };
   if (task.status.message) task.history.push(task.status.message);
 }
+/** Only the trusted native callback may annotate the admitted user message. */
+export async function recordLocalPromptInvocation(
+  id: string,
+  leaseToken: string,
+  messageId: string,
+  invocation: AgentPromptInvocation,
+): Promise<void> {
+  await db.$transaction(async (tx) => {
+    const row = await lockTask(tx, id);
+    if (
+      row.executionBackend !== "pi-sdk" ||
+      row.leaseToken !== leaseToken ||
+      row.state !== TaskState.TASK_STATE_WORKING
+    )
+      throw new UnsupportedOperationError(
+        "Prompt invocation requires the active SDK claim.",
+      );
+    const task = Task.fromJSON(row.snapshot);
+    const message = task.history.findLast(
+      (entry) => entry.messageId === messageId && entry.role === Role.ROLE_USER,
+    );
+    if (!message)
+      throw new UnsupportedOperationError(
+        "Admitted prompt message unavailable.",
+      );
+    message.metadata = {
+      ...message.metadata,
+      toolplanePromptInvocation: invocation,
+    };
+    await persist(tx, row, task, taskEvent(task));
+  });
+}
+
 /** Admit and queue atomically. No execution or HTTP response lifecycle in this transaction. */
 export async function submitTask(
   grant: TaskGrant,
@@ -218,6 +259,11 @@ export async function submitTaskInTransaction(
   request: SendMessageRequest,
   admission: { parentLeaseToken?: string } = {},
 ) {
+  if (!isWorkspaceGrant(grant))
+    throw new A2AHttpError(
+      410,
+      "Published legacy execution is retired; retained tasks are read-only.",
+    );
   validateSend(
     request,
     isLocalGrant(grant) ? LOCAL_OUTPUT_MODES : ["text/plain"],
@@ -228,39 +274,47 @@ export async function submitTaskInTransaction(
     message: Message.toJSON(message),
     metadata: request.metadata,
   });
-  const workspaceCall = isWorkspaceGrant(grant);
-  if (workspaceCall) {
-    await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${grant.workspaceId} FOR UPDATE`;
-    if (isRemoteGrant(grant)) await assertRemoteGrant(grant, tx);
-    else await assertLocalGrant(grant, tx);
-    if (grant.parentTaskId) {
-      const parent = await tx.a2ATask.findUnique({
-        where: { id: grant.parentTaskId },
-      });
-      if (
-        !parent ||
-        parent.state !== TaskState.TASK_STATE_WORKING ||
-        parent.phase !== "executing" ||
-        !parent.leaseToken ||
-        parent.leaseToken !== admission.parentLeaseToken ||
-        parent.cancelRequestedAt ||
-        parent.waitForTaskIds.length ||
-        parent.pendingQuestion
-      )
-        throw notFound();
-    }
-  } else {
-    await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${grant.workspaceId} FOR UPDATE`;
-    await tx.$queryRaw`SELECT id FROM "AgentEndpoint" WHERE id=${grant.endpointId} FOR UPDATE`;
+  await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${grant.workspaceId} FOR UPDATE`;
+  if (isLocalGrant(grant) && (message.contextId || message.taskId)) {
+    const owned = await tx.a2AContext.findFirst({
+      where: {
+        ...scope(grant),
+        expiresAt: { gt: new Date() },
+        ...(message.contextId
+          ? { id: message.contextId }
+          : { tasks: { some: { id: message.taskId } } }),
+      },
+    });
+    if (!owned?.agentRevisionId || owned.legacyRevisionUnresolved)
+      throw notFound();
+    const target = await localTarget(
+      tx,
+      grant.workspaceId,
+      grant.agentId,
+      grant.ancestorTaskIds.length ? "delegation" : grant.entryPolicy,
+      owned.agentRevisionId,
+    );
+    grant = {
+      ...grant,
+      agentRevisionId: owned.agentRevisionId,
+      targetBinding: target.binding,
+    };
+  }
+  if (isRemoteGrant(grant)) await assertRemoteGrant(grant, tx);
+  else await assertLocalGrant(grant, tx);
+  if (grant.parentTaskId) {
+    const parent = await tx.a2ATask.findUnique({
+      where: { id: grant.parentTaskId },
+    });
     if (
-      !(await tx.agentEndpoint.count({
-        where: {
-          id: grant.endpointId,
-          workspaceId: grant.workspaceId,
-          status: "active",
-          a2aEnabled: true,
-        },
-      }))
+      !parent ||
+      parent.state !== TaskState.TASK_STATE_WORKING ||
+      parent.phase !== "executing" ||
+      !parent.leaseToken ||
+      parent.leaseToken !== admission.parentLeaseToken ||
+      parent.cancelRequestedAt ||
+      parent.waitForTaskIds.length ||
+      parent.pendingQuestion
     )
       throw notFound();
   }
@@ -303,6 +357,12 @@ export async function submitTaskInTransaction(
   if (message.taskId && !previous) throw notFound();
   if (previous && message.contextId && message.contextId !== previous.contextId)
     throw new RequestMalformedError("taskId and contextId do not match.");
+  await assertCollaborationAdmission(
+    tx,
+    grant,
+    Buffer.byteLength(JSON.stringify(Message.toJSON(message)), "utf8"),
+    Boolean(previous),
+  );
   const contextId = previous?.contextId ?? message.contextId;
   let context = contextId
     ? await tx.a2AContext.findFirst({
@@ -314,75 +374,44 @@ export async function submitTaskInTransaction(
       })
     : null;
   if (contextId && !context) throw notFound();
-  if (isWorkspaceGrant(grant)) {
-    const limits = await getAgentConcurrencySettings(tx);
-    const [active, retained, rootCount] = await Promise.all([
-      tx.a2ATask.count({
-        where: {
-          state: { in: ACTIVE },
-          context: {
-            workspaceId: grant.workspaceId,
-            targetKind: { in: ["local", "remote"] },
-          },
+  if (
+    isLocalGrant(grant) &&
+    context &&
+    (context.legacyRevisionUnresolved ||
+      !context.agentRevisionId ||
+      context.agentRevisionId !== grant.agentRevisionId)
+  )
+    throw new UnsupportedOperationError(
+      "Historical local context is read-only. Start a new task.",
+    );
+  if (isLocalGrant(grant))
+    await requireAgentRevision(tx, grant.agentId, grant.agentRevisionId);
+  const limits = await getAgentConcurrencySettings(tx);
+  const [active, retained, rootCount] = await Promise.all([
+    tx.a2ATask.count({
+      where: {
+        state: { in: ACTIVE },
+        context: {
+          workspaceId: grant.workspaceId,
+          targetKind: { in: ["local", "remote"] },
         },
-      }),
-      tx.a2ATask.count({ where: { context: scope(grant) } }),
-      grant.rootTaskId
-        ? tx.a2ATask.count({ where: { rootTaskId: grant.rootTaskId } })
-        : 0,
-    ]);
-    if (
-      active >= limits.maxTotal + LOCAL_LIMITS.queuedPerWorkspace ||
-      retained >= LOCAL_LIMITS.tasksPerOwner ||
-      (!previous && rootCount >= LOCAL_LIMITS.tasksPerRoot)
-    )
-      throw new UnsupportedOperationError("Local task capacity reached.");
-    if (context && context.targetBinding !== grant.targetBinding)
-      throw new UnsupportedOperationError(
-        "The local context configuration changed.",
-      );
-  } else {
-    const endpoint = await tx.agentEndpoint.findUniqueOrThrow({
-      where: { id: grant.endpointId },
-      select: { maxConcurrent: true },
-    });
-    const [
-      endpointActive,
-      clientActive,
-      clientTasks,
-      legacyEndpointActive,
-      legacyClientActive,
-    ] = await Promise.all([
-      tx.a2ATask.count({
-        where: {
-          state: { in: ACTIVE },
-          context: { endpointId: grant.endpointId },
-        },
-      }),
-      tx.a2ATask.count({
-        where: { state: { in: ACTIVE }, context: { clientId: grant.clientId } },
-      }),
-      tx.a2ATask.count({ where: { context: { clientId: grant.clientId } } }),
-      tx.agentRun.count({
-        where: {
-          endpointId: grant.endpointId,
-          status: { in: ["provisioning", "running"] },
-        },
-      }),
-      tx.agentRun.count({
-        where: {
-          clientId: grant.clientId,
-          status: { in: ["provisioning", "running"] },
-        },
-      }),
-    ]);
-    if (
-      endpointActive + legacyEndpointActive >= endpoint.maxConcurrent ||
-      clientActive + legacyClientActive >= grant.maxConcurrent ||
-      clientTasks >= A2A_LIMITS.tasksPerClient
-    )
-      throw new UnsupportedOperationError("Service task capacity reached.");
-  }
+      },
+    }),
+    tx.a2ATask.count({ where: { context: scope(grant) } }),
+    grant.rootTaskId
+      ? tx.a2ATask.count({ where: { rootTaskId: grant.rootTaskId } })
+      : 0,
+  ]);
+  if (
+    active >= limits.maxTotal + LOCAL_LIMITS.queuedPerWorkspace ||
+    retained >= LOCAL_LIMITS.tasksPerOwner ||
+    (!previous && rootCount >= LOCAL_LIMITS.tasksPerRoot)
+  )
+    throw new UnsupportedOperationError("Local task capacity reached.");
+  if (context && context.targetBinding !== grant.targetBinding)
+    throw new UnsupportedOperationError(
+      "The local context configuration changed.",
+    );
   if (
     context &&
     (await tx.a2ATask.count({
@@ -403,9 +432,7 @@ export async function submitTaskInTransaction(
   if (!context) {
     if (
       (await tx.a2AContext.count({
-        where: isWorkspaceGrant(grant)
-          ? scope(grant)
-          : { clientId: grant.clientId },
+        where: scope(grant),
       })) >= A2A_LIMITS.contextsPerClient
     )
       throw new UnsupportedOperationError("Owner context limit reached.");
@@ -420,20 +447,14 @@ export async function submitTaskInTransaction(
               ownerKey: grant.ownerKey,
               targetBinding: grant.targetBinding,
             }
-          : isLocalGrant(grant)
-            ? {
-                targetKind: "local",
-                agentId: grant.agentId,
-                ownerKey: grant.ownerKey,
-                targetBinding: grant.targetBinding,
-              }
-            : {
-                targetKind: "published",
-                endpointId: grant.endpointId,
-                clientId: grant.clientId,
-                ownerKey: grant.ownerKey,
-                revisionId: grant.revisionId,
-              }),
+          : {
+              targetKind: "local",
+              agentId: grant.agentId,
+              agentRevisionId: grant.agentRevisionId,
+              legacyRevisionUnresolved: false,
+              ownerKey: grant.ownerKey,
+              targetBinding: grant.targetBinding,
+            }),
         expiresAt: new Date(
           Date.now() +
             Math.max(1, Math.min(grant.retentionDays, 30)) * 86_400_000,
@@ -470,11 +491,7 @@ export async function submitTaskInTransaction(
       request: json(
         SendMessageRequest.toJSON({ ...request, message: accepted }),
       ),
-      grant: json(
-        isWorkspaceGrant(grant)
-          ? grant
-          : { ...grant, revisionId: context.revisionId },
-      ),
+      grant: json(grant),
     });
   } else {
     const timestamp = new Date().toISOString();
@@ -494,16 +511,7 @@ export async function submitTaskInTransaction(
       grant.expiresAt ?? Infinity,
       context.expiresAt.getTime(),
     );
-    const executionBackend =
-      isLocalGrant(grant) &&
-      (
-        await tx.agent.findFirstOrThrow({
-          where: { id: grant.agentId, workspaceId: grant.workspaceId },
-          select: { runtimeKind: true },
-        })
-      ).runtimeKind === "pi"
-        ? "pi-harness"
-        : "legacy";
+    const executionBackend = isLocalGrant(grant) ? "pi-sdk" : "legacy";
     row = await tx.a2ATask.create({
       data: {
         id,
@@ -515,18 +523,10 @@ export async function submitTaskInTransaction(
         request: json(
           SendMessageRequest.toJSON({ ...request, message: accepted }),
         ),
-        ...(isWorkspaceGrant(grant)
-          ? {
-              rootTaskId: grant.rootTaskId ?? id,
-              parentTaskId: grant.parentTaskId,
-              depth: grant.ancestorTaskIds.length,
-            }
-          : {}),
-        grant: json(
-          isWorkspaceGrant(grant)
-            ? grant
-            : { ...grant, revisionId: context.revisionId },
-        ),
+        rootTaskId: grant.rootTaskId ?? id,
+        parentTaskId: grant.parentTaskId,
+        depth: grant.ancestorTaskIds.length,
+        grant: json(grant),
         deadlineAt: new Date(deadline),
         events: {
           create: { sequence: 1, payload: json(jsonEvent(taskEvent(task))) },
@@ -546,14 +546,16 @@ export async function submitTaskInTransaction(
   return row;
 }
 export async function requestCancellation(grant: TaskGrant, id: string) {
+  await assertLiveGrant(grant, "cancel");
   await getTaskRow(grant, id);
-  return db.$transaction(async (tx) => {
+  const committed = await db.$transaction(async (tx) => {
     const row = await lockTask(tx, id);
     const native = isPiHarnessTask(row);
     const task = Task.fromJSON(row.snapshot);
     if (row.state === TaskState.TASK_STATE_CANCELED && row.cancelRequestedAt)
-      return task;
+      return { task, settledRow: undefined };
     assertCancelable(task);
+    let settledRow: A2ATask | undefined;
     if (
       isRemoteGrant(row.grant as unknown as TaskGrant) &&
       row.remoteDispatchedAt
@@ -573,29 +575,52 @@ export async function requestCancellation(grant: TaskGrant, id: string) {
       });
     } else {
       transition(task, TaskState.TASK_STATE_CANCELED);
-      await persist(tx, row, task, statusEvent(task), {
+      settledRow = await persist(tx, row, task, statusEvent(task), {
         cancelRequestedAt: new Date(),
       });
     }
     if (isLocalGrant(row.grant as unknown as TaskGrant))
       await cancelLocalDescendants(tx, row);
-    return task;
+    return { task, settledRow };
   });
+  if (committed.settledRow) await recordTaskSettled(committed.settledRow);
+  return committed.task;
 }
 export async function claimTask(id: string) {
   return db.$transaction(async (tx) => {
     const row = await lockTask(tx, id);
     const native = isPiHarnessTask(row);
-    const cleanup = !!(
-      native &&
-      row.nativeOperationId &&
-      (row.cancelRequestedAt || row.deadlineAt <= new Date())
-    );
+    if (native && !row.nativeOperationId)
+      throw new UnsupportedOperationError(
+        "Unbound legacy Pi execution is retired.",
+      );
+    const cleanup = native && Boolean(row.nativeOperationId);
     if ((row.cancelRequestedAt || row.deadlineAt <= new Date()) && !cleanup)
       return null;
     const resume =
       row.state === TaskState.TASK_STATE_WORKING && row.phase === "resumable";
     if (row.state !== TaskState.TASK_STATE_SUBMITTED && !resume) return null;
+    const grant = row.grant as unknown as TaskGrant;
+    if (!isWorkspaceGrant(grant))
+      throw new A2AHttpError(
+        410,
+        "Published legacy execution cannot acquire a new lease.",
+      );
+    if (isLocalGrant(grant) && !cleanup) {
+      const context = await tx.a2AContext.findUnique({
+        where: { id: row.contextId },
+      });
+      if (
+        !context?.agentRevisionId ||
+        context.legacyRevisionUnresolved ||
+        context.agentRevisionId !== grant.agentRevisionId
+      )
+        throw new UnsupportedOperationError(
+          "Historical local tasks are read-only.",
+        );
+      await requireAgentRevision(tx, grant.agentId, context.agentRevisionId);
+      await assertLocalGrant(grant, tx);
+    }
     if (!(native && row.nativeOperationId)) {
       await assertNativeStorageCapacity(
         tx,
@@ -624,37 +649,11 @@ export async function claimTask(id: string) {
       waitForTaskIds: [],
       pendingQuestion: null,
       approvalReadyLease: null,
+      ...(cleanup
+        ? { cancelRequestedAt: row.cancelRequestedAt ?? new Date() }
+        : {}),
       ...(resume && !native ? { resumeCount: { increment: 1 } } : {}),
     });
-  });
-}
-export async function bindPiHarnessOperation(
-  taskId: string,
-  leaseToken: string,
-  operationId: string,
-): Promise<string> {
-  if (!operationId.trim())
-    throw new RequestMalformedError("Missing native operation ID.");
-  return db.$transaction(async (tx) => {
-    const row = await lockTask(tx, taskId);
-    if (
-      !isPiHarnessTask(row) ||
-      !leaseToken ||
-      row.leaseToken !== leaseToken ||
-      row.state !== TaskState.TASK_STATE_WORKING ||
-      row.phase !== "executing"
-    )
-      throw notFound();
-    if (row.nativeOperationId) return row.nativeOperationId;
-    if (row.cancelRequestedAt || row.deadlineAt <= new Date())
-      throw new UnsupportedOperationError(
-        "Task execution is no longer permitted.",
-      );
-    await tx.a2ATask.update({
-      where: { id: taskId },
-      data: { nativeOperationId: operationId },
-    });
-    return operationId;
   });
 }
 export async function releasePiHarnessClaim(
@@ -679,7 +678,11 @@ export async function releasePiHarnessClaim(
   });
 }
 
-/** Observer-only projection; native Session state remains the execution truth. */
+/**
+ * Observer-only projection; native Session state remains the execution truth.
+ * Progress updates the live snapshot without appending journal events, so a
+ * long-running task cannot exhaust its stored payload budget on polling.
+ */
 export async function projectPiHarnessProgress(
   taskId: string,
   leaseToken: string,
@@ -701,7 +704,15 @@ export async function projectPiHarnessProgress(
     if (!task.status) throw new Error("Task status is required.");
     task.status.timestamp = new Date().toISOString();
     task.status.message = agentMessage(task, detail.slice(-2048));
-    await persist(tx, row, task, statusEvent(task));
+    await tx.a2ATask.update({
+      where: { id: row.id },
+      data: {
+        statusAt: new Date(task.status.timestamp),
+        snapshot: json(jsonTask(task)),
+      },
+    });
+    // Projection accounting must not fail the durable native operation.
+    await refreshTaskStorage(tx, row.id, true);
   });
 }
 export async function finishTask(
@@ -800,6 +811,19 @@ export async function finishTask(
         artifact = undefined;
       }
     }
+    if (
+      confirmedNative &&
+      local &&
+      row.pendingQuestion &&
+      state === TaskState.TASK_STATE_COMPLETED &&
+      !row.cancelRequestedAt &&
+      row.deadlineAt > new Date()
+    ) {
+      await assertLocalGrant(grant, tx);
+      state = TaskState.TASK_STATE_INPUT_REQUIRED;
+      detail = row.pendingQuestion;
+      artifact = undefined;
+    }
     if (local && state === TaskState.TASK_STATE_COMPLETED && artifact) {
       const modes =
         SendMessageRequest.fromJSON(row.request).configuration
@@ -828,8 +852,31 @@ export async function finishTask(
           : state;
     let current = row;
     if (actual === TaskState.TASK_STATE_COMPLETED && artifact) {
+      const outputCharacters = artifact.parts.reduce(
+        (total, part) =>
+          total +
+          (part.content?.$case === "text" ? part.content.value.length : 0),
+        0,
+      );
+      if (outputCharacters > A2A_LIMITS.outputCharacters)
+        throw new A2AQuotaError();
       if (task.artifacts.length >= A2A_LIMITS.artifactsPerTask)
         throw new UnsupportedOperationError("Artifact limit reached.");
+      const grant = row.grant as unknown as TaskGrant;
+      stampArtifactProvenance(artifact, {
+        taskId: id,
+        contextId: task.contextId,
+        targetId: isWorkspaceGrant(grant)
+          ? isRemoteGrant(grant)
+            ? grant.remoteAgentId
+            : grant.agentId
+          : grant.endpointPublicId,
+        targetKind: isRemoteGrant(grant)
+          ? "remote"
+          : isLocalGrant(grant)
+            ? "local"
+            : "published",
+      });
       task.artifacts.push(artifact);
       const event = StreamResponse.fromJSON({
         artifactUpdate: {
@@ -874,6 +921,15 @@ export async function interruptTask(
       );
     }
     const task = Task.fromJSON(row.snapshot);
+    if (row.remoteDispatchedAt) {
+      task.metadata = {
+        ...task.metadata,
+        toolplaneRemote: {
+          ...(task.metadata?.toolplaneRemote as Record<string, unknown>),
+          outcome: "unknown",
+        },
+      };
+    }
     transition(
       task,
       row.cancelRequestedAt && !row.remoteDispatchedAt
@@ -930,6 +986,7 @@ export async function listTasks(
   grant: TaskGrant,
   params: ListTasksRequest,
 ): Promise<ListTasksResponse> {
+  await assertLiveGrant(grant, "read");
   const pageSize = params.pageSize ?? 50;
   if (!Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 100)
     throw new RequestMalformedError("Invalid pageSize.");

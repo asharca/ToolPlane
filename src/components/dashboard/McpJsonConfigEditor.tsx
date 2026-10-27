@@ -13,6 +13,8 @@ import {
   type McpJsonConfigActionState,
 } from "@/lib/workspace/actions";
 import { SubmitButton } from "@/components/dashboard/SubmitButton";
+import { McpSharedChangeConfirmation } from "./McpSharedChangeConfirmation";
+import { McpHttpConsent } from "./McpHttpConsent";
 import {
   McpNetworkModeControl,
   type McpNetworkMode,
@@ -35,6 +37,7 @@ export function McpJsonConfigEditor({
   warnAboutPackageInstall,
   variablesHref,
   configuredVariables = 0,
+  remote = false,
 }: {
   slug: string;
   deploymentId: string;
@@ -44,6 +47,7 @@ export function McpJsonConfigEditor({
   warnAboutPackageInstall: boolean;
   variablesHref?: string;
   configuredVariables?: number;
+  remote?: boolean;
 }) {
   const t = useTranslations("console.mcp");
   const [state, formAction, isPending] = useActionState<
@@ -117,15 +121,24 @@ export function McpJsonConfigEditor({
             </ButtonLink>
           </div>
         ) : null}
-        <McpNetworkModeControl
-          value={network}
-          onChange={(value) => {
-            setNetwork(value);
-            setLastEditAt(Date.now());
-          }}
-          disabled={isPending}
-          warnAboutPackageInstall={warnAboutPackageInstall}
+        <McpSharedChangeConfirmation
+          workspace={slug}
+          deploymentId={deploymentId}
+          impactedObjects={state.impactedObjects}
         />
+        {remote ? (
+          <McpHttpConsent />
+        ) : (
+          <McpNetworkModeControl
+            value={network}
+            onChange={(value) => {
+              setNetwork(value);
+              setLastEditAt(Date.now());
+            }}
+            disabled={isPending}
+            warnAboutPackageInstall={warnAboutPackageInstall}
+          />
+        )}
         <div>
           <p className="mb-2 text-sm font-semibold text-foreground">
             {t("jsonConfig")}

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { sealMcpEnvironment } from "@/lib/process/mcp-credentials";
 import {
   mcpConfigErrorDetail,
   parseMcpDeploymentConfig,
@@ -7,6 +8,45 @@ import {
 } from "@/lib/workspace/custom-mcp";
 
 describe("MCP configuration trust boundaries", () => {
+  it("never exposes plaintext or encrypted credentials", () => {
+    const { credentialEnvelope } = sealMcpEnvironment({}, "workspace-1", {
+      TOKEN: "private-plaintext",
+      EMPTY: "",
+    });
+    for (const source of ["config", "docker", "remote"] as const) {
+      const serialized = serializeMcpDeploymentConfig({
+        source,
+        sourceRef:
+          source === "remote" ? "https://example.com/mcp" : "example/server",
+        installCfg: {
+          env: { TOKEN: "private-plaintext", EMPTY: "" },
+          credentialEnvelope,
+          command: "npx",
+          args: ["server", "--token", "private-argument"],
+          startCommand: "--token private-command",
+          transport: "streamable-http",
+          authType: "bearer",
+          bearerEnv: "TOKEN",
+        },
+      });
+      expect(serialized).not.toContain("private-");
+      expect(serialized).not.toContain("credentialEnvelope");
+      if (source !== "remote")
+        expect(JSON.parse(serialized).env).toEqual({
+          TOKEN: "********",
+          EMPTY: "",
+        });
+    }
+    const sealed = JSON.parse(
+      serializeMcpDeploymentConfig({
+        source: "npm",
+        sourceRef: "server",
+        installCfg: { env: { TOKEN: "", EMPTY: "" }, credentialEnvelope },
+      }),
+    );
+    expect(sealed.env).toEqual({ TOKEN: "********", EMPTY: "" });
+  });
+
   it.each([
     [{ args: Array(101).fill("x") }, "more than 100"],
     [{ args: ["x".repeat(4001)] }, "each arg"],
@@ -81,7 +121,12 @@ describe("MCP configuration trust boundaries", () => {
           remote: { type: "http", url: "https://example.com/mcp", headers: {} },
         }),
       ).installCfg,
-    ).toEqual({ env: {}, transport: "streamable-http", authType: "none" });
+    ).toEqual({
+      env: {},
+      transport: "streamable-http",
+      allowUnsafeHttp: false,
+      authType: "none",
+    });
   });
 
   it.each([

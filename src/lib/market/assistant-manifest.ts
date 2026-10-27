@@ -3,6 +3,14 @@ import "server-only";
 import { z } from "zod";
 import { AGENT_STEP_BOUNDS } from "@/lib/agents/constants";
 import { marketReleaseChecksum } from "@/lib/market/artifact";
+import {
+  ChatAssistantRevisionConfigSchema,
+  type ChatAssistantRevisionConfig,
+} from "@/lib/chat/revision-types";
+import { ChatAssistantModelParametersSchema } from "@/lib/chat/schemas";
+import type { DeploymentForSpawn } from "@/lib/process/spawn-spec";
+import { assertAssistantRemoteDeployment } from "@/lib/remote-mcp/classification";
+import { mcpDefinitionChecksum } from "@/lib/process/mcp-definition";
 
 export const ASSISTANT_MARKET_MANIFEST_VERSION = 1 as const;
 
@@ -38,12 +46,16 @@ const assistantReleaseManifestSchema = z
           })
           .strict()
           .nullable(),
+        modelParameters: ChatAssistantModelParametersSchema.nullable(),
         mcpRequirements: z
           .array(
             z
               .object({
                 catalogSlug: z.string().min(1).max(120),
                 name: z.string().min(1).max(240),
+                allowedToolNames: z
+                  .array(z.string().min(1).max(240))
+                  .max(1_000),
               })
               .strict(),
           )
@@ -62,14 +74,11 @@ export type AssistantReleaseListingV1 = z.infer<
 
 export type AssistantReleaseSource = {
   name: string;
-  systemPrompt: string | null;
-  model: string | null;
-  maxSteps: number;
+  config: ChatAssistantRevisionConfig;
   modelProvider: { format: string } | null;
   mcpGrants: Array<{
-    deployment: {
-      name: string | null;
-      sourceRef: string | null;
+    deploymentId: string;
+    deployment: DeploymentForSpawn & {
       server: { slug: string; name: string } | null;
     };
   }>;
@@ -89,34 +98,66 @@ export function buildAssistantReleaseManifest(
   source: AssistantReleaseSource,
   listing?: AssistantReleaseListingV1,
 ): AssistantReleaseManifestV1 {
-  const mcpRequirements = [
-    ...new Map(
-      source.mcpGrants.map(({ deployment }, index) => {
-        const name = (
-          deployment.name ||
-          deployment.server?.name ||
-          deployment.sourceRef ||
-          "MCP server"
-        ).slice(0, 240);
-        const catalogSlug = portableSlug(
-          deployment.server?.slug || deployment.sourceRef || name,
-          `mcp-server-${index + 1}`,
-        );
-        return [catalogSlug, { catalogSlug, name }] as const;
-      }),
-    ).values(),
-  ];
+  const config = ChatAssistantRevisionConfigSchema.parse(source.config);
+  if (config.modelProviderId && !source.modelProvider) {
+    throw new Error("The pinned Assistant model provider is unavailable.");
+  }
+  const requirements = new Map<
+    string,
+    { catalogSlug: string; name: string; allowedToolNames: string[] }
+  >();
+  for (const [index, grant] of config.mcpGrants.entries()) {
+    const binding = source.mcpGrants.find(
+      (item) => item.deploymentId === grant.deploymentId,
+    );
+    if (!binding)
+      throw new Error("A pinned Assistant MCP deployment is unavailable.");
+    const { deployment } = binding;
+    assertAssistantRemoteDeployment(deployment);
+    if (mcpDefinitionChecksum(deployment) !== grant.definitionChecksum)
+      throw new Error(
+        "The pinned Assistant MCP connection definition changed.",
+      );
+    if (!deployment.server?.slug) {
+      throw new Error(
+        "Assistant MCP requirements must reference a portable remote catalog server.",
+      );
+    }
+    const name = (
+      deployment.name ||
+      deployment.server.name ||
+      "MCP server"
+    ).slice(0, 240);
+    const catalogSlug = portableSlug(
+      deployment.server.slug,
+      `mcp-server-${index + 1}`,
+    );
+    const existing = requirements.get(catalogSlug);
+    requirements.set(catalogSlug, {
+      catalogSlug,
+      name,
+      allowedToolNames: [
+        ...new Set([
+          ...(existing?.allowedToolNames ?? []),
+          ...grant.allowedToolNames,
+        ]),
+      ],
+    });
+  }
+  const mcpRequirements = [...requirements.values()];
   return parseAssistantReleaseManifest({
     schemaVersion: ASSISTANT_MARKET_MANIFEST_VERSION,
     kind: "assistant",
     ...(listing ? { listing } : {}),
     assistant: {
       name: source.name,
-      systemPrompt: source.systemPrompt,
-      maxSteps: source.maxSteps,
-      modelRequirement: source.modelProvider
-        ? { providerFormat: source.modelProvider.format, model: source.model }
-        : null,
+      systemPrompt: config.systemPrompt,
+      maxSteps: config.maxSteps,
+      modelRequirement:
+        config.modelProviderId && source.modelProvider
+          ? { providerFormat: source.modelProvider.format, model: config.model }
+          : null,
+      modelParameters: config.modelParameters,
       mcpRequirements,
     },
   });
@@ -129,12 +170,16 @@ export function parseAssistantReleaseManifest(
   const parsed = assistantReleaseManifestSchema.safeParse(raw);
   if (!parsed.success)
     throw new Error("The assistant release manifest is invalid.");
-  if (Buffer.byteLength(JSON.stringify(parsed.data), "utf8") > 128 * 1024) {
+  if (
+    Buffer.byteLength(JSON.stringify(parsed.data), "utf8") >
+    24 * 1024 * 1024
+  ) {
     throw new Error("The assistant release manifest is too large.");
   }
   if (
-    expectedChecksum &&
-    assistantReleaseChecksum(parsed.data) !== expectedChecksum
+    expectedChecksum !== undefined &&
+    (!/^[a-f0-9]{64}$/.test(expectedChecksum) ||
+      assistantReleaseChecksum(parsed.data) !== expectedChecksum)
   ) {
     throw new Error("The assistant release checksum does not match.");
   }

@@ -1,10 +1,9 @@
 // @vitest-environment node
 import { assertDefined } from "../assert-defined";
-// Requires real disposable PostgreSQL with current migrations, Node >=22.19 (node:sqlite),
-// and the exact pinned Harness packages installed at the repository root. No paid model is used.
+// Requires real disposable PostgreSQL with current migrations. No paid model is used.
+// Requests use real HTTP sockets and the official MCP/A2A SDK codecs.
 // Run serially: pnpm vitest run tests/integration/pi-agent-communication.test.ts
 import { randomUUID } from "node:crypto";
-import { setTimeout as delay } from "node:timers/promises";
 import {
   beforeAll,
   beforeEach,
@@ -21,6 +20,7 @@ import {
   GetTaskRequest,
   CancelTaskRequest,
   TaskState,
+  Task,
 } from "@a2a-js/sdk";
 import { ClientFactory, JsonRpcTransportFactory } from "@a2a-js/sdk/client";
 import { A2A_ERROR_CODE } from "@a2a-js/sdk/errors";
@@ -35,22 +35,19 @@ import type {
   RemotePeerFixture,
 } from "../fixtures/pi-agent-communication";
 import { db } from "@/lib/db";
+import { publishFixtureAgentRevision } from "./agent-revision-fixture";
+import { requireAgentRevision } from "@/lib/agents/revisions";
 import { createApiToken } from "@/lib/auth/tokens";
 import { createAgentRuntimeToken } from "@/lib/agents/runtime-access";
 import type { AgentRuntimeTokenPayload } from "@/lib/agents/runtime-access";
+import type { LocalA2AGrant } from "@/lib/a2a/principal";
 import { withSandboxExecutionLease } from "@/lib/agents/sandbox-execution-gate";
+import { withAgentExecutionLease } from "@/lib/agents/agent-execution-gate";
 import { handleLocalMcp } from "@/lib/a2a/local-mcp";
 import { handleRuntimeApprovals } from "@/lib/a2a/approval-http";
-import { decideNativeToolApproval } from "@/lib/a2a/tool-approvals";
 import { LOCAL_LIMITS } from "@/lib/a2a/local-policy";
 import { submitNativeEntry } from "@/lib/a2a/ingress";
-import {
-  claimTask as claimStoredTask,
-  finishTask,
-  bindPiHarnessOperation,
-  releasePiHarnessClaim,
-} from "@/lib/a2a/store";
-import { textArtifact } from "@/lib/a2a/model";
+import { claimTask as claimStoredTask, finishTask } from "@/lib/a2a/store";
 import { executeA2ATask, stopA2AWorker } from "@/lib/a2a/worker";
 import { reconcileRemoteTasks } from "@/lib/a2a/remote-executor";
 import { mutateRemoteRegistry } from "@/lib/a2a/remote-registry";
@@ -63,7 +60,6 @@ import { REMOTE_CARD, REMOTE_RPC, remoteCard } from "../fixtures/a2a-remote";
 import {
   httpFixture,
   remotePeerFixture,
-  nativeHostsFixture,
 } from "../fixtures/pi-agent-communication";
 import {
   assertMappedDeployment,
@@ -101,12 +97,12 @@ vi.mock("@/lib/a2a/remote-network", async (original) => ({
       return response;
     },
 }));
-// Deterministic scheduling only: the native delegation test below runs real host A/B subprocesses.
+// Deterministic scheduling only: SDK communication crosses the real protocol and authorization boundary.
 vi.mock("@/lib/a2a/worker", async (original) => ({
   ...(await original<typeof Worker>()),
   wakeA2AWorker: vi.fn(),
 }));
-// Only Docker provisioning is injected; native subprocesses, persisted mappings and authorization remain real.
+// Only Docker provisioning is injected; persisted mappings and authorization remain real.
 vi.mock("@/lib/sandboxes/runtime", async (original) => {
   const runtime = await original<typeof SandboxRuntime>();
   return {
@@ -137,15 +133,8 @@ const agents: string[] = [],
   templateSandboxes: string[] = [],
   tokens: string[] = [];
 const clients: Client[] = [];
-const closePerTest: Array<() => Promise<void>> = [];
 let platform: HttpFixture;
 let peer: RemotePeerFixture;
-const approvals = new Map<string, { name: string; input: unknown }>();
-const mcpRequests: Array<{
-  taskId: string;
-  name?: string;
-  arguments?: Record<string, unknown>;
-}> = [];
 const inboundResponses: Array<{ status: number; body: string }> = [];
 const rawNames = [
   "pi_a2a_peers",
@@ -184,8 +173,15 @@ function assertNoSecrets(value: unknown, extra: string[] = []) {
     expect(serialized).not.toContain(secret);
 }
 async function root(index = 0, actor = actorId) {
+  const revision = await db.$transaction((tx) =>
+    requireAgentRevision(tx, agents[index]),
+  );
   const conversation = await db.conversation.create({
-    data: { agentId: agents[index] },
+    data: {
+      agentId: agents[index],
+      agentRevisionId: revision.id,
+      legacyRevisionUnresolved: false,
+    },
   });
   const accepted = await submitNativeEntry(
     {
@@ -201,13 +197,19 @@ async function root(index = 0, actor = actorId) {
   );
   const row = await claimTask(accepted.row.id);
   if (!row) throw new Error("Could not claim test root");
-  expect(row.executionBackend).toBe("pi-harness");
   return row;
 }
-function payload(row: A2ATask, index = 0): AgentRuntimeTokenPayload {
+async function payload(
+  row: A2ATask,
+  index = 0,
+): Promise<AgentRuntimeTokenPayload> {
+  const context = await db.a2AContext.findUniqueOrThrow({
+    where: { id: row.contextId },
+  });
   return {
     workspaceId,
     agentId: agents[index],
+    agentRevisionId: assertDefined(context.agentRevisionId),
     ...taskSandbox(row),
     providerId,
     deploymentIds: [],
@@ -219,7 +221,7 @@ function payload(row: A2ATask, index = 0): AgentRuntimeTokenPayload {
   };
 }
 async function credential(row: A2ATask, index = 0, ready = true) {
-  const token = await createAgentRuntimeToken(payload(row, index));
+  const token = await createAgentRuntimeToken(await payload(row, index));
   tokens.push(token);
   if (ready) {
     const response = await fetch(
@@ -349,9 +351,6 @@ beforeAll(async () => {
     throw new Error(
       "DATABASE_URL must name a disposable local PostgreSQL test database.",
     );
-  const [major, minor] = process.versions.node.split(".").map(Number);
-  if (major < 22 || (major === 22 && minor < 19))
-    throw new Error("Official Harness requires Node >=22.19 and node:sqlite.");
   vi.stubEnv(
     "AUTH_SECRET",
     process.env.AUTH_SECRET || "pi-communication-disposable-test-secret",
@@ -437,10 +436,12 @@ beforeAll(async () => {
         workspaceId: workspace,
         name: `Agent ${index}`,
         slug: `a-${index}`,
-        runtimeKind: "pi",
+        runtimeKind: "pi-sdk",
         providerId: provider.id,
         model: "controlled",
         a2aInternalEnabled: true,
+        a2aInboundEnabled: true,
+        a2aOutboundEnabled: true,
         sandboxes: { create: { sandboxId: sandbox.id, isDefault: true } },
       },
     });
@@ -466,42 +467,8 @@ beforeAll(async () => {
       /^\/api\/v1\/agent-runtime\/a2a\/([^/]+)\/(mcp|approvals)$/.exec(path);
     if (runtime) {
       if (req.method !== "POST") return new Response(null, { status: 405 });
-      if (runtime[2] === "mcp") {
-        const body = await req.clone().json();
-        mcpRequests.push({
-          taskId: runtime[1],
-          name: body.params?.name,
-          arguments: body.params?.arguments,
-        });
-        return handleLocalMcp(req, runtime[1]);
-      }
-      const input = await req.clone().json();
-      const response = await handleRuntimeApprovals(req, runtime[1]);
-      const result = await response.clone().json();
-      const permitted = approvals.get(runtime[1]);
-      if (result.status === "pending" && permitted) {
-        // An explicit test operator decision through the real authorization/approval service, not a fake allow response.
-        expect(input.toolName).toBe(permitted.name);
-        expect(input.input).toEqual(permitted.input);
-        const row = await db.a2ATask.findUniqueOrThrow({
-          where: { id: runtime[1] },
-        });
-        const root = await db.a2ATask.findUniqueOrThrow({
-          where: { id: assertDefined(row.rootTaskId) },
-        });
-        const grant = root.grant as { agentId: string };
-        await decideNativeToolApproval(
-          { workspaceId, actorId, agentId: grant.agentId, slug },
-          {
-            rootTaskId: root.id,
-            taskId: row.id,
-            approvalId: result.approvalId,
-            inputHash: result.inputHash,
-            decision: "approved",
-          },
-        );
-      }
-      return response;
+      if (runtime[2] === "mcp") return handleLocalMcp(req, runtime[1]);
+      return handleRuntimeApprovals(req, runtime[1]);
     }
     const inbound =
       /^\/api\/v1\/workspaces\/([^/]+)\/agents\/([^/]+)\/a2a\/local$/.exec(
@@ -541,15 +508,13 @@ beforeEach(async () => {
   });
   await db.agent.updateMany({
     where: { id: { in: agents } },
-    data: { a2aInternalEnabled: true },
+    data: { a2aInternalEnabled: false },
   });
   peer.calls.length = 0;
   peer.tasks.clear();
   peer.behavior.state = "TASK_STATE_WORKING";
   peer.behavior.loseSendResponse = false;
-  mcpRequests.length = 0;
   inboundResponses.length = 0;
-  approvals.clear();
   const actor = { workspaceId, actorId, agentId: agents[0], slug };
   remoteId = (
     await mutateRemoteRegistry(actor, {
@@ -583,11 +548,53 @@ beforeEach(async () => {
       allowCurrentAgent: true,
     },
   );
+  for (const [index, agentId] of agents.entries()) {
+    const localTargets = index === 5 ? [agents[5]] : agents.slice(0, 5);
+    const bounds = {
+      maxCalls: 128,
+      maxDepth: 3,
+      maxConcurrent: 16,
+      timeoutSeconds: 840,
+      maxInputBytes: 65_536,
+      dataAllowance: "text_only",
+    };
+    await db.agent.update({
+      where: { id: agentId },
+      data: {
+        a2aInboundEnabled: true,
+        a2aOutboundEnabled: true,
+        a2aPolicy: {
+          schemaVersion: 1,
+          targets: [
+            ...localTargets.map((targetId) => ({
+              ...bounds,
+              kind: "local",
+              targetId,
+              capabilityIds: [],
+            })),
+            ...(index < 2
+              ? [
+                  {
+                    ...bounds,
+                    kind: "remote",
+                    targetId: remoteId,
+                    capabilityIds: remoteCard().skills.map((skill) => skill.id),
+                  },
+                ]
+              : []),
+          ],
+        },
+      },
+    });
+    await publishFixtureAgentRevision(
+      index === 5 ? foreignWorkspaceId : workspaceId,
+      agentId,
+    );
+  }
 });
 afterEach(async () => {
   const results = await Promise.allSettled([
     ...clients.splice(0).map((client) => client.close()),
-    ...closePerTest.splice(0).map((close) => close()),
   ]);
   for (const result of results)
     if (result.status === "rejected") throw result.reason;
@@ -635,33 +642,29 @@ afterAll(async () => {
 });
 
 describe("native communication transport: real PostgreSQL and MCP SDK HTTP", () => {
-  beforeEach(async () => {
-    await db.agent.updateMany({
-      where: { id: { in: agents } },
-      data: { a2aInternalEnabled: false },
-    });
-  });
-  it("lists selected local peers with switches off, hides remotes and denies external submit", async () => {
+  it("intersects pinned collaboration scopes with live outbound authorization", async () => {
     const client = await connect(await root());
     const catalog = await client.listTools();
     expect(catalog.tools.map((tool) => tool.name).sort()).toEqual(
       [...rawNames].sort(),
     );
-    const peers = await call(client, "pi_a2a_peers");
-    expect(peers.peers).toEqual([
-      { target: `agent:${agents[1]}`, name: "Agent 1" },
-    ]);
-    await rejected(client, "pi_a2a_submit", {
-      target: `remote:${remoteId}`,
-      message: "Must stay local",
-      messageId: randomUUID(),
-    });
-    expect(peer.calls).toEqual([]);
     expect(
-      await db.a2ATask.count({
-        where: { context: { workspaceId, targetKind: "remote" } },
-      }),
-    ).toBe(0);
+      (await call(client, "pi_a2a_peers")).peers
+        .map((entry) => entry.target)
+        .sort(),
+    ).toEqual([`agent:${agents[1]}`, `remote:${remoteId}`].sort());
+    await db.agent.update({
+      where: { id: agents[0] },
+      data: { a2aOutboundEnabled: false },
+    });
+    expect((await client.listTools()).tools).toEqual([]);
+    for (const target of [`agent:${agents[1]}`, `remote:${remoteId}`])
+      await rejected(client, "pi_a2a_submit", {
+        target,
+        message: "Revoked live grant",
+        messageId: randomUUID(),
+      });
+    expect(peer.calls).toEqual([]);
     for (const name of [
       ...legacyNames,
       "a2a_call",
@@ -672,7 +675,7 @@ describe("native communication transport: real PostgreSQL and MCP SDK HTTP", () 
       await rejected(client, name, {});
     await db.agent.update({
       where: { id: agents[0] },
-      data: { a2aInternalEnabled: true },
+      data: { a2aOutboundEnabled: true },
     });
     expect(
       (await call(client, "pi_a2a_peers")).peers
@@ -702,7 +705,6 @@ describe("native communication transport: real PostgreSQL and MCP SDK HTTP", () 
     expect(
       await db.a2ATask.findUniqueOrThrow({ where: { id: ids[0] } }),
     ).toMatchObject({
-      executionBackend: "pi-harness",
       parentTaskId: parent.id,
       nativeOperationId: null,
     });
@@ -818,7 +820,7 @@ describe("native communication transport: real PostgreSQL and MCP SDK HTTP", () 
       { a2aContextId: randomUUID() },
     ]) {
       const forged = await createAgentRuntimeToken({
-        ...payload(parent),
+        ...(await payload(parent)),
         ...claims,
       });
       tokens.push(forged);
@@ -836,8 +838,41 @@ describe("native communication transport: real PostgreSQL and MCP SDK HTTP", () 
       );
       expect(response.status).toBe(404);
     }
-    await releasePiHarnessClaim(parent.id, assertDefined(parent.leaseToken));
-    const next = assertDefined(await claimTask(parent.id));
+    await finishTask(
+      parent.id,
+      assertDefined(parent.leaseToken),
+      TaskState.TASK_STATE_INPUT_REQUIRED,
+      "Please provide the next task input.",
+    );
+    const paused = await db.a2ATask.findUniqueOrThrow({
+      where: { id: parent.id },
+    });
+    const pausedTask = Task.fromJSON(paused.snapshot);
+    expect(pausedTask.status?.state).toBe(TaskState.TASK_STATE_INPUT_REQUIRED);
+    expect(pausedTask.status?.message?.parts).toEqual([
+      expect.objectContaining({
+        content: {
+          $case: "text",
+          value: "Please provide the next task input.",
+        },
+      }),
+    ]);
+    expect(pausedTask.artifacts).toEqual([]);
+    const grant = parent.grant as unknown as LocalA2AGrant;
+    const accepted = await submitNativeEntry(
+      {
+        kind: "chat",
+        sourceId: assertDefined(grant.entryPolicy).sourceId,
+        workspaceId,
+        agentId: agents[0],
+        actorId,
+        messageId: randomUUID(),
+        text: "Continue with the approved scope.",
+      },
+      vi.fn(),
+    );
+    const next = assertDefined(await claimTask(accepted.row.id));
+    expect(next.executionBackend).toBe("pi-sdk");
     expect(next.leaseToken).not.toBe(parent.leaseToken);
     expect(taskSandbox(next)).toEqual(taskSandbox(parent));
     await expect(
@@ -849,25 +884,54 @@ describe("native communication transport: real PostgreSQL and MCP SDK HTTP", () 
     await call(await connect(next), "pi_a2a_peers");
   });
 
-  it("fails a busy child promptly without executing or suspending its parent (scheduler boundary)", async () => {
+  it("keeps a busy child queued without executing or suspending its parent (scheduler boundary)", async () => {
     const parent = await root(),
       client = await connect(parent),
       id = await delegate(client);
-    const executor = vi.fn(async () => {
-      throw new Error("A busy child must not enter any executor");
-    });
+    const executor = vi.fn(async () => ({
+      state: TaskState.TASK_STATE_COMPLETED,
+    }));
     const child = await db.a2ATask.findUniqueOrThrow({ where: { id } });
     await mapTaskSandbox(child);
-    await withSandboxExecutionLease(taskSandbox(child).sandboxId, async () => {
+    const assertQueued = async () => {
       await executeA2ATask(id, executor);
       expect(executor).not.toHaveBeenCalled();
       const result = await call(client, "pi_a2a_status", {
         target: `agent:${agents[1]}`,
         taskId: id,
       });
-      expect(result.task.status.state).toBe("TASK_STATE_FAILED");
-      expect(JSON.stringify(result)).toContain("PI_SANDBOX_BUSY");
+      expect(result.task.status.state).toBe("TASK_STATE_SUBMITTED");
+      expect(
+        await db.a2ATask.findUniqueOrThrow({ where: { id } }),
+      ).toMatchObject({
+        state: TaskState.TASK_STATE_SUBMITTED,
+        phase: "queued",
+        leaseToken: null,
+      });
+    };
+    let releaseSession!: () => void;
+    let sessionReady!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      sessionReady = resolve;
     });
+    const session = withAgentExecutionLease(
+      { agentId: agents[1], sessionId: child.contextId, wait: false },
+      async () => {
+        const held = new Promise<void>((resolve) => {
+          releaseSession = resolve;
+        });
+        sessionReady();
+        await held;
+      },
+    );
+    await ready;
+    try {
+      await assertQueued();
+    } finally {
+      releaseSession();
+      await session;
+    }
+    await withSandboxExecutionLease(taskSandbox(child).sandboxId, assertQueued);
     expect(
       await db.a2ATask.findUniqueOrThrow({ where: { id: parent.id } }),
     ).toMatchObject({
@@ -876,184 +940,16 @@ describe("native communication transport: real PostgreSQL and MCP SDK HTTP", () 
       leaseToken: parent.leaseToken,
       waitForTaskIds: [],
     });
-  }, 10_000);
-});
-
-describe("actual native delegation: official host subprocesses, real SQLite and PostgreSQL MCP", () => {
-  it("recovers switches-off internal A after SIGKILL while B has settled, preserving child ID and effect", async () => {
-    await db.agent.updateMany({
-      where: { id: { in: agents } },
-      data: { a2aInternalEnabled: false },
-    });
-    const hosts = await nativeHostsFixture(platform.base);
-    closePerTest.push(() => hosts.close());
-    const parent = await root(),
-      token = await credential(parent, 0, false);
-    const configA = {
-      taskId: parent.id,
-      contextId: parent.contextId,
-      token,
-      target: `agent:${agents[1]}`,
-    };
-    const operationA = await hosts.prepare(configA);
-    await bindPiHarnessOperation(
-      parent.id,
-      assertDefined(parent.leaseToken),
-      operationA,
-    );
-    approvals.set(parent.id, {
-      name: "a2a_call",
-      input: {
-        target: configA.target,
-        message: "Return the counted native output",
+    await executeA2ATask(id, executor);
+    expect(executor).toHaveBeenCalledTimes(1);
+    expect(await db.a2ATask.findUniqueOrThrow({ where: { id } })).toMatchObject(
+      {
+        state: TaskState.TASK_STATE_COMPLETED,
+        phase: "done",
+        leaseToken: null,
       },
-    });
-    const driverA = await hosts.launch({ ...configA, operationId: operationA });
-    let child: A2ATask | null = null;
-    const until = Date.now() + 25_000;
-    while (!child && Date.now() < until) {
-      child = await db.a2ATask.findFirst({
-        where: { parentTaskId: parent.id },
-      });
-      if (!child) await delay(25);
-    }
-    if (!child)
-      throw new Error(
-        "Native A did not submit its child through the real MCP handler",
-      );
-    const runningB = assertDefined(await claimTask(child.id));
-    const configB = {
-      taskId: runningB.id,
-      contextId: runningB.contextId,
-      token: await credential(runningB, 1, false),
-    };
-    const operationB = await hosts.prepare(configB);
-    await bindPiHarnessOperation(
-      runningB.id,
-      assertDefined(runningB.leaseToken),
-      operationB,
     );
-    const resultB = hosts.terminal(
-      await (await hosts.launch({ ...configB, operationId: operationB })).done,
-      "result",
-    );
-    expect(resultB).toMatchObject({ status: "completed", text: hosts.marker });
-    expect(hosts.count).toBe(1);
-    expect(
-      await db.a2AToolApproval.findMany({
-        where: { taskId: runningB.id },
-        select: { status: true, decidedBy: true },
-      }),
-    ).toEqual([{ status: "consumed", decidedBy: null }]);
-    const observedUntil = Date.now() + 10_000;
-    while (
-      !mcpRequests.some(
-        (entry) =>
-          entry.taskId === parent.id &&
-          entry.name === "pi_a2a_status" &&
-          entry.arguments?.taskId === runningB.id,
-      ) &&
-      Date.now() < observedUntil
-    )
-      await delay(25);
-    expect(
-      mcpRequests.some(
-        (entry) =>
-          entry.taskId === parent.id &&
-          entry.name === "pi_a2a_status" &&
-          entry.arguments?.taskId === runningB.id,
-      ),
-    ).toBe(true);
-    // B's actual effect is settled in SQLite; A is still waiting on its platform projection.
-    expect(driverA.child.kill("SIGKILL")).toBe(true);
-    const killed = await driverA.done;
-    expect(killed.signal).toBe("SIGKILL");
-    assertNoSecrets(killed);
-    await releasePiHarnessClaim(parent.id, assertDefined(parent.leaseToken));
-    const resumed = assertDefined(await claimTask(parent.id));
-    expect(resumed).toMatchObject({
-      id: parent.id,
-      contextId: parent.contextId,
-      nativeOperationId: operationA,
-      resumeCount: 0,
-    });
-    expect(resumed.leaseToken).not.toBe(parent.leaseToken);
-    configA.token = await credential(resumed, 0, false);
-    const resumedA = await hosts.launch({
-      ...configA,
-      operationId: operationA,
-    });
-    await finishTask(
-      runningB.id,
-      assertDefined(runningB.leaseToken),
-      TaskState.TASK_STATE_COMPLETED,
-      undefined,
-      textArtifact(assertDefined(resultB.text)),
-      { nativeOperationId: operationB },
-    );
-    const outputA = await resumedA.done,
-      resultA = hosts.terminal(outputA, "result");
-    expect(resultA).toMatchObject({
-      status: "completed",
-      text: `A_RECEIVED_${hosts.marker}`,
-    });
-    await finishTask(
-      parent.id,
-      assertDefined(resumed.leaseToken),
-      TaskState.TASK_STATE_COMPLETED,
-      undefined,
-      textArtifact(assertDefined(resultA.text)),
-      { nativeOperationId: operationA },
-    );
-    expect(hosts.count).toBe(1);
-    const requestCount = hosts.modelRequests.length,
-      submitCount = mcpRequests.filter(
-        (entry) => entry.name === "pi_a2a_submit",
-      ).length;
-    expect(submitCount).toBe(1);
-    expect(
-      hosts.terminal(
-        await (await hosts.launch({ ...configA, operationId: operationA }))
-          .done,
-        "result",
-      ),
-    ).toEqual(resultA);
-    expect(
-      hosts.terminal(
-        await (await hosts.launch({ ...configB, operationId: operationB }))
-          .done,
-        "result",
-      ),
-    ).toEqual(resultB);
-    expect(hosts.count).toBe(1);
-    expect(hosts.modelRequests).toHaveLength(requestCount);
-    expect(
-      mcpRequests.filter((entry) => entry.name === "pi_a2a_submit"),
-    ).toHaveLength(submitCount);
-    expect(await db.a2ATask.count({ where: { rootTaskId: parent.id } })).toBe(
-      2,
-    );
-    expect(
-      (await db.a2ATask.findUniqueOrThrow({ where: { id: parent.id } }))
-        .nativeOperationId,
-    ).toBe(operationA);
-    for (const body of hosts.modelRequests) {
-      const names = body.tools?.map((tool) => tool.function.name) ?? [];
-      expect(names.filter((name) => name.startsWith("a2a_")).sort()).toEqual([
-        "a2a_call",
-        "a2a_cancel",
-        "a2a_peers",
-        "a2a_status",
-      ]);
-      expect(
-        names.some(
-          (name) => name.startsWith("pi_a2a_") || legacyNames.includes(name),
-        ),
-      ).toBe(false);
-      assertNoSecrets(body);
-    }
-    assertNoSecrets(outputA);
-  }, 90_000);
+  }, 10_000);
 });
 
 describe("external SDK boundary and remote receipt ownership", () => {
@@ -1122,13 +1018,11 @@ describe("external SDK boundary and remote receipt ownership", () => {
     }
     await db.agent.update({
       where: { id: agents[0] },
-      data: { a2aInternalEnabled: false },
+      data: { a2aOutboundEnabled: false },
     });
     for (const name of ["pi_a2a_status", "pi_a2a_cancel"])
       await rejected(a, name, { target: `remote:${remoteId}`, taskId: idA });
-    expect((await call(a, "pi_a2a_peers")).peers).toEqual([
-      { target: `agent:${agents[1]}`, name: "Agent 1" },
-    ]);
+    expect((await a.listTools()).tools).toEqual([]);
     expect(
       (
         await call(b, "pi_a2a_status", {
@@ -1207,7 +1101,7 @@ describe("external SDK boundary and remote receipt ownership", () => {
     }
     await db.agent.update({
       where: { id: agents[0] },
-      data: { a2aInternalEnabled: false },
+      data: { a2aInboundEnabled: false },
     });
     const disabled = await inboundClient(personalToken);
     await expect(disabled.sendMessage(request())).rejects.toMatchObject({

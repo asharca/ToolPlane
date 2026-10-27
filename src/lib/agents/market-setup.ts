@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { MAX_AGENT_MARKET_ENV_REQUIREMENTS } from "@/lib/agents/market-limits";
+import { mcpEnvironmentState } from "@/lib/workspace/mcp-environment";
 
 const resourceKeySchema = z.string().min(1).max(80);
 const resourceIdSchema = z.string().min(1).max(200);
@@ -21,14 +22,6 @@ const environmentRequirementSchema = z
     deploymentKey: resourceKeySchema,
     variable: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/),
     required: z.literal(true),
-  })
-  .strict();
-
-const runtimeRequirementSchema = z
-  .object({
-    agentKey: resourceKeySchema,
-    kind: z.literal("hermes"),
-    setupRequired: z.literal(true),
   })
   .strict();
 
@@ -56,7 +49,20 @@ const marketInstallSchema = z
         environment: z
           .array(environmentRequirementSchema)
           .max(MAX_AGENT_MARKET_ENV_REQUIREMENTS),
-        runtimes: z.array(runtimeRequirementSchema).max(64).default([]),
+        legacyToolkitConversions: z
+          .array(
+            z
+              .object({
+                toolkitKey: resourceKeySchema,
+                name: z.string().min(1).max(240),
+                agentKeys: z.array(resourceKeySchema).max(64),
+                requiresPrivatePackageConversion: z.literal(true),
+                requiresReauthorization: z.literal(true),
+              })
+              .strict(),
+          )
+          .max(128)
+          .default([]),
       })
       .strict(),
     resourceMap: resourceMapSchema,
@@ -81,12 +87,14 @@ const marketInstallSchema = z
         });
       }
     }
-    for (const runtime of install.requirements.runtimes) {
-      if (!(runtime.agentKey in install.resourceMap.agents)) {
+    for (const conversion of install.requirements.legacyToolkitConversions) {
+      if (
+        conversion.agentKeys.some((key) => !(key in install.resourceMap.agents))
+      ) {
         context.addIssue({
           code: "custom",
-          path: ["requirements", "runtimes"],
-          message: "Runtime requirement references an unknown agent.",
+          path: ["requirements", "legacyToolkitConversions"],
+          message: "Toolkit conversion references an unknown agent.",
         });
       }
     }
@@ -104,9 +112,12 @@ export type AgentMarketSetupGuide = {
     deploymentId: string;
     variable: string;
   }>;
-  runtimes: Array<{
-    agentId: string;
-    kind: "hermes";
+  legacyToolkitConversions: Array<{
+    toolkitKey: string;
+    name: string;
+    agentIds: string[];
+    requiresPrivatePackageConversion: true;
+    requiresReauthorization: true;
   }>;
 };
 
@@ -115,8 +126,6 @@ export type AgentMarketSetupCurrentState = {
     id: string;
     model: string | null;
     provider: { format: string } | null;
-    runtimeKind?: string;
-    runtime?: { status: string } | null;
   }>;
   deployments: Array<{
     id: string;
@@ -128,19 +137,6 @@ export type AgentMarketSetupResourceIds = {
   agentIds: string[];
   deploymentIds: string[];
 };
-
-function readEnvironment(installCfg: unknown): Record<string, unknown> {
-  if (
-    !installCfg ||
-    typeof installCfg !== "object" ||
-    Array.isArray(installCfg)
-  )
-    return {};
-  const env = (installCfg as Record<string, unknown>).env;
-  return env && typeof env === "object" && !Array.isArray(env)
-    ? (env as Record<string, unknown>)
-    : {};
-}
 
 function guideFromCurrentState(
   install: ParsedMarketInstall,
@@ -183,27 +179,10 @@ function guideFromCurrentState(
       install.resourceMap.deployments[requirement.deploymentKey];
     const deployment = deployments.get(deploymentId);
     if (!deployment) continue;
-    const env = readEnvironment(deployment.installCfg);
-    const value = env[requirement.variable];
-    if (typeof value === "string" && value.trim().length > 0) continue;
+    const env = mcpEnvironmentState(deployment.installCfg);
+    if (env[requirement.variable] === "configured") continue;
     const key = `${deploymentId}\0${requirement.variable}`;
     environment.set(key, { deploymentId, variable: requirement.variable });
-  }
-
-  const runtimes = new Map<string, AgentMarketSetupGuide["runtimes"][number]>();
-  for (const requirement of install.requirements.runtimes) {
-    const agentId = install.resourceMap.agents[requirement.agentKey];
-    const agent = agents.get(agentId);
-    if (!agent) continue;
-    if (
-      agent.runtimeKind === requirement.kind &&
-      agent.runtime?.status !== "setup_required"
-    )
-      continue;
-    runtimes.set(`${agentId}\0${requirement.kind}`, {
-      agentId,
-      kind: requirement.kind,
-    });
   }
 
   const guide = {
@@ -218,23 +197,30 @@ function guideFromCurrentState(
         a.deploymentId.localeCompare(b.deploymentId) ||
         a.variable.localeCompare(b.variable),
     ),
-    runtimes: [...runtimes.values()].sort(
-      (a, b) =>
-        a.agentId.localeCompare(b.agentId) || a.kind.localeCompare(b.kind),
+    legacyToolkitConversions: install.requirements.legacyToolkitConversions.map(
+      (conversion) => ({
+        toolkitKey: conversion.toolkitKey,
+        name: conversion.name,
+        agentIds: conversion.agentKeys
+          .map((key) => install.resourceMap.agents[key])
+          .filter((id) => agents.has(id)),
+        requiresPrivatePackageConversion: true as const,
+        requiresReauthorization: true as const,
+      }),
     ),
   };
 
   return guide.missingProviders.length > 0 ||
     guide.environment.length > 0 ||
-    guide.runtimes.length > 0
+    guide.legacyToolkitConversions.length > 0
     ? guide
     : null;
 }
 
 /**
  * Strictly validates persisted marketplace metadata and derives the setup
- * guide from current, server-only resource state. Secret values in installCfg
- * are used only for presence checks and can never enter the returned DTO.
+ * guide from current resource metadata. Credential presence metadata alone
+ * determines readiness; no secret values are decrypted or returned.
  */
 export function parseAgentMarketSetupGuide(
   input: unknown,
@@ -259,11 +245,13 @@ export function parseAgentMarketSetupResourceIds(
   const agentIds = [
     ...new Set(
       [
-        ...parsed.data.requirements.providers,
-        ...parsed.data.requirements.runtimes,
-      ].map(
-        (requirement) => parsed.data.resourceMap.agents[requirement.agentKey],
-      ),
+        ...parsed.data.requirements.providers.map(
+          (requirement) => requirement.agentKey,
+        ),
+        ...parsed.data.requirements.legacyToolkitConversions.flatMap(
+          (requirement) => requirement.agentKeys,
+        ),
+      ].map((key) => parsed.data.resourceMap.agents[key]),
     ),
   ];
   const deploymentIds = [

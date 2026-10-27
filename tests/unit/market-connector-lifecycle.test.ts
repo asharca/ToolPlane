@@ -47,6 +47,10 @@ vi.mock("@/lib/workspace/mcp-operation", () => ({
 }));
 import { installMcpRelease, updateMarketInstall } from "@/lib/market/resources";
 import { marketReleaseChecksum } from "@/lib/market/artifact";
+import {
+  resolveMcpEnvironment,
+  sealMcpEnvironment,
+} from "@/lib/process/mcp-credentials";
 const manifest = {
   schemaVersion: 1,
   kind: "mcp",
@@ -106,7 +110,7 @@ const install = {
   deployment: {
     id: "d",
     status: "stopped",
-    installCfg: { env: { TOKEN: "secret", OLD: "keep" } },
+    installCfg: sealMcpEnvironment({}, "w", { TOKEN: "secret", OLD: "keep" }),
   },
   listing,
 };
@@ -204,7 +208,7 @@ describe("connector installation trust boundaries", () => {
     });
     expect(await installMcpRelease(input)).toMatchObject({ reused: false });
   });
-  it("rejects checksummed informational server recipes", async () => {
+  it("rejects moving package references even in checksummed releases", async () => {
     const local = {
       ...manifest,
       mcp: { ...manifest.mcp, recipe: { source: "npm", ref: "pkg", env: [] } },
@@ -215,7 +219,97 @@ describe("connector installation trust boundaries", () => {
       checksum: marketReleaseChecksum(local),
     });
     await expect(installMcpRelease(input)).rejects.toMatchObject({
-      code: "listing_unavailable",
+      code: "invalid_manifest",
+    });
+  });
+  it.each([
+    { source: "npm", ref: "@team/pkg@1.2.3", env: [] },
+    {
+      source: "config",
+      ref: "npx",
+      command: "npx",
+      args: ["-y", "@team/pkg@1.2.3", "--read-only"],
+      env: [],
+    },
+    {
+      source: "config",
+      ref: "uvx",
+      command: "uvx",
+      args: ["pkg==1.2.3"],
+      env: [],
+    },
+    {
+      source: "config",
+      ref: "uv",
+      command: "uv",
+      args: ["tool", "run", "pkg==1.2.3"],
+      env: [],
+    },
+    {
+      source: "config",
+      ref: "docker",
+      command: "docker",
+      args: ["run", "-i", `example/mcp@sha256:${"a".repeat(64)}`],
+      env: [],
+    },
+  ])(
+    "installs reviewed stdio recipes without starting a runtime: %j",
+    async (recipe) => {
+      const local = { ...manifest, mcp: { ...manifest.mcp, recipe } };
+      m.release.mockResolvedValue({
+        ...release,
+        manifest: local,
+        checksum: marketReleaseChecksum(local),
+      });
+      const result = await installMcpRelease(input);
+      expect(result.resource).toMatchObject({
+        source: recipe.source,
+        sourceRef: recipe.ref,
+        status: "stopped",
+      });
+      if ("command" in recipe)
+        expect(result.resource.installCfg).toMatchObject({
+          command: recipe.command,
+          args: recipe.args,
+        });
+      expect(result.install.status).toBe("ready");
+      expect(m.operation).not.toHaveBeenCalled();
+    },
+  );
+  it("installs a reviewed standalone recipe using its reviewed tools snapshot", async () => {
+    const local = {
+      ...manifest,
+      mcp: {
+        ...manifest.mcp,
+        recipe: { source: "npm", ref: "pkg@1.2.3", env: [] },
+        toolCatalog: server.installCfg.toolCatalog,
+      },
+    };
+    m.release.mockResolvedValue({
+      ...release,
+      listing: { ...listing, sourceServerId: null },
+      manifest: local,
+      checksum: marketReleaseChecksum(local),
+    });
+    const result = await installMcpRelease(input);
+    expect(result.resource).toMatchObject({
+      serverId: null,
+      mcpAllowedTools: ["search"],
+      status: "stopped",
+    });
+    expect(m.server).not.toHaveBeenCalled();
+  });
+  it("uses the selected release tools snapshot rather than a newer catalog snapshot", async () => {
+    m.release.mockResolvedValue({
+      ...release,
+      releaseSummary: {
+        toolCatalog: [{ name: "untrusted", inputSchema: { type: "object" } }],
+      },
+    });
+    const result = await installMcpRelease(input);
+    expect(result.resource.mcpAllowedTools).toEqual(["untrusted"]);
+    expect(result.resource.installCfg).toMatchObject({
+      toolCatalog: [{ name: "untrusted", inputSchema: { type: "object" } }],
     });
   });
   it("reuses an identical attached installation without duplicating counts", async () => {
@@ -320,6 +414,53 @@ describe("connector installation trust boundaries", () => {
   });
 });
 describe("connector update coordination", () => {
+  it("updates a pinned stdio recipe while preserving target environment and explicit release selection", async () => {
+    const local = {
+      ...manifest,
+      mcp: {
+        ...manifest.mcp,
+        recipe: {
+          source: "config",
+          ref: "uvx",
+          command: "uvx",
+          args: ["pkg==2.0.0"],
+          env: ["TOKEN"],
+        },
+      },
+    };
+    m.release.mockResolvedValue({
+      ...release,
+      manifest: local,
+      checksum: marketReleaseChecksum(local),
+    });
+    await updateMarketInstall({
+      ...update,
+      currentReleaseId: "old",
+      targetReleaseId: "r",
+    });
+    expect(m.stop).toHaveBeenCalledWith("d");
+    expect(m.deploymentUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          source: "config",
+          sourceRef: "uvx",
+          installCfg: expect.objectContaining({
+            command: "uvx",
+            args: ["pkg==2.0.0"],
+            env: { TOKEN: "", OLD: "" },
+            credentialEnvelope:
+              install.deployment.installCfg.credentialEnvelope,
+          }),
+        }),
+      }),
+    );
+    const config = m.deploymentUpdate.mock.calls[0][0].data.installCfg;
+    expect(resolveMcpEnvironment(config, "w")).toEqual({
+      TOKEN: "secret",
+      OLD: "keep",
+    });
+    expect(JSON.stringify(config)).not.toContain("secret");
+  });
   it("does not update unknown install kinds", async () => {
     m.find.mockResolvedValue(null);
     await expect(updateMarketInstall(update)).rejects.toMatchObject({
@@ -391,15 +532,17 @@ describe("connector update coordination", () => {
       expect(m.deploymentUpdate.mock.calls[0][0].data).toMatchObject({
         mcpAllowedTools: ["search"],
         installCfg: {
-          env: expect.objectContaining(
-            env.includes("TOKEN")
-              ? { TOKEN: "secret" }
-              : env.includes("NEW")
-                ? { NEW: "" }
-                : {},
-          ),
+          env: { TOKEN: "", OLD: "" },
+          ...(env.length ? { requiredEnv: env } : {}),
+          credentialEnvelope: install.deployment.installCfg.credentialEnvelope,
         },
       });
+      const config = m.deploymentUpdate.mock.calls[0][0].data.installCfg;
+      expect(resolveMcpEnvironment(config, "w")).toEqual({
+        TOKEN: "secret",
+        OLD: "keep",
+      });
+      expect(JSON.stringify(config)).not.toContain("secret");
       expect(m.stop).toHaveBeenCalledWith("d");
       expect(m.container).toHaveBeenCalledWith("d");
       expect(m.volume).toHaveBeenCalledWith("d");

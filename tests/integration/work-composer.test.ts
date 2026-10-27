@@ -14,13 +14,26 @@ import {
 import { mcpRpc } from "@/lib/process/mcp-client";
 import { workMessageParts } from "@/lib/attachments/work";
 import { uiMessagesToPi } from "@/lib/agents/native";
+import { publishFixtureAgentRevision } from "./agent-revision-fixture";
+import type { SessionMcpContext } from "@/lib/process/session-mcp";
+import type * as SessionMcpModule from "@/lib/process/session-mcp";
+import type * as SupervisorModule from "@/lib/process/supervisor";
 
 const identity = vi.hoisted(() => ({ id: "" }));
+const transport = vi.hoisted(() => ({ resource: vi.fn() }));
 vi.mock("@/lib/auth/request-user", () => ({
   resolveRequestUser: async () => ({ id: identity.id }),
 }));
 vi.mock("@/lib/process/mcp-client", () => ({ mcpRpc: vi.fn() }));
-vi.mock("@/lib/process/supervisor", () => ({ liveStatus: () => "running" }));
+vi.mock("@/lib/process/supervisor", async (original) => ({
+  ...(await original<typeof SupervisorModule>()),
+  liveStatus: () => "running",
+}));
+// Composer authority is real; the scoped MCP transport is a deterministic resource server port.
+vi.mock("@/lib/process/session-mcp", async (original) => ({
+  ...(await original<typeof SessionMcpModule>()),
+  sessionMcpRequest: transport.resource,
+}));
 
 let workspaceId: string,
   agentId: string,
@@ -36,6 +49,7 @@ let conversationId: string,
   excludedConversationId: string,
   foreignConversationId: string;
 let skillId: string, temp: string, root: string;
+let agentRevisionId: string;
 
 const params = (id = agentId) => ({ params: Promise.resolve({ agentId: id }) });
 const request = (body: unknown) =>
@@ -45,11 +59,14 @@ const request = (body: unknown) =>
     body: JSON.stringify(body),
   });
 const resolve = (body: Record<string, unknown>, id = agentId) =>
-  POST(request({ sandboxId, ...body }), params(id));
+  POST(
+    request({ sandboxId, conversationId: excludedConversationId, ...body }),
+    params(id),
+  );
 const list = (query: Record<string, string>, id = agentId) =>
   GET(
     new Request(
-      `http://local/composer?${new URLSearchParams({ sandboxId, section: "references", ...query })}`,
+      `http://local/composer?${new URLSearchParams({ sandboxId, conversationId: excludedConversationId, section: "references", ...query })}`,
     ),
     params(id),
   );
@@ -97,12 +114,30 @@ beforeAll(async () => {
       },
     })
   ).id;
-  const createAgent = async (slug: string, workspace = workspaceId) =>
-    (
+  const createAgent = async (slug: string, workspace = workspaceId) => {
+    const provider = await db.modelProvider.create({
+      data: {
+        workspaceId: workspace,
+        name: `${slug}-model`,
+        format: "openai",
+        baseUrl: "https://model.fixture.invalid/v1",
+        apiKey: "fixture-key",
+        models: ["fixture"],
+      },
+    });
+    return (
       await db.agent.create({
-        data: { workspaceId: workspace, slug, name: slug, runtimeKind: "dsh" },
+        data: {
+          workspaceId: workspace,
+          slug,
+          name: slug,
+          runtimeKind: "pi-sdk",
+          providerId: provider.id,
+          model: "fixture",
+        },
       })
     ).id;
+  };
   agentId = await createAgent("primary");
   otherAgentId = await createAgent("other");
   foreignAgentId = await createAgent("foreign", foreignWorkspaceId);
@@ -124,46 +159,10 @@ beforeAll(async () => {
   sandboxId = sandbox.id;
   sandboxDeploymentId = sandbox.deploymentId;
   otherSandboxId = (await createSandbox("other")).id;
+  const template = await createSandbox("template");
   await db.agentSandbox.create({
-    data: { agentId, sandboxId, isDefault: true },
+    data: { agentId, sandboxId: template.id, isDefault: true },
   });
-  const createSession = async (title: string, sandbox: string) => {
-    const conversation = await db.conversation.create({
-      data: {
-        agentId,
-        title,
-        messages: {
-          create: [
-            { role: "user", parts: [{ type: "text", text: title }] },
-            {
-              role: "assistant",
-              parts: [
-                { type: "text", text: "Preserve the release checklist." },
-              ],
-            },
-          ],
-        },
-      },
-    });
-    await db.workSession.create({
-      data: {
-        agentId,
-        workspaceId,
-        sandboxId: sandbox,
-        conversationId: conversation.id,
-        title,
-        status: "completed",
-        runtimeKind: "dsh",
-      },
-    });
-    return conversation.id;
-  };
-  conversationId = await createSession("Previous task", sandboxId);
-  excludedConversationId = await createSession("Current task", sandboxId);
-  foreignConversationId = await createSession(
-    "Other sandbox task",
-    otherSandboxId,
-  );
   const channel = await db.agentChannelConnection.create({
     data: {
       workspaceId,
@@ -176,23 +175,6 @@ beforeAll(async () => {
       inboundTokenSecret: {},
     },
   });
-  channelConversationId = (
-    await db.conversation.create({
-      data: {
-        agentId,
-        title: "WeChat history",
-        runtimeSessionKey: `channel:${channel.id}:msg:weixin:dm:contact`,
-        messages: {
-          create: [
-            {
-              role: "user",
-              parts: [{ type: "text", text: "Channel request" }],
-            },
-          ],
-        },
-      },
-    })
-  ).id;
   skillId = (
     await db.installedSkill.create({
       data: {
@@ -220,47 +202,138 @@ beforeAll(async () => {
   });
   resourceDeploymentId = (
     await db.deployment.create({
-      data: { workspaceId, name: "Resources", status: "running" },
+      data: {
+        workspaceId,
+        name: "Resources",
+        status: "running",
+        source: "remote",
+        sourceRef: "https://resources.fixture.invalid/mcp",
+        installCfg: { transport: "streamable-http" },
+      },
     })
   ).id;
   await db.agentServer.create({
-    data: { agentId, deploymentId: resourceDeploymentId },
+    data: { agentId, deploymentId: resourceDeploymentId, allowedToolNames: [] },
   });
-  vi.mocked(mcpRpc).mockImplementation(async (deploymentId, method, input) => {
-    if (method === "tools/call") {
-      expect(deploymentId).toBe(sandboxDeploymentId);
-      const args = input?.arguments as { runtime: string; args: string[] };
-      expect(args.runtime).toBe("node");
-      try {
-        const result = await promisify(execFile)(process.execPath, args.args, {
-          cwd: root,
-          timeout: 15_000,
-          maxBuffer: 256 * 1024,
-        });
-        return {
-          content: [
+  agentRevisionId = (await publishFixtureAgentRevision(workspaceId, agentId))
+    .id;
+  const createSession = async (title: string, sandbox: string) => {
+    const conversation = await db.conversation.create({
+      data: {
+        agentId,
+        title,
+        sandboxId: sandbox,
+        agentRevisionId,
+        legacyRevisionUnresolved: false,
+        messages: {
+          create: [
+            { role: "user", parts: [{ type: "text", text: title }] },
             {
-              type: "text",
-              text: JSON.stringify({ exitCode: 0, stdout: result.stdout }),
+              role: "assistant",
+              parts: [
+                { type: "text", text: "Preserve the release checklist." },
+              ],
             },
           ],
-        };
-      } catch {
+        },
+      },
+    });
+    await db.workSession.create({
+      data: {
+        agentId,
+        workspaceId,
+        sandboxId: sandbox,
+        conversationId: conversation.id,
+        agentRevisionId,
+        legacyRevisionUnresolved: false,
+        title,
+        status: "completed",
+        runtimeKind: "pi-sdk",
+      },
+    });
+    return conversation.id;
+  };
+  conversationId = await createSession(
+    "Previous task",
+    (await createSandbox("previous-task")).id,
+  );
+  excludedConversationId = await createSession("Current task", sandboxId);
+  foreignConversationId = await createSession(
+    "Other sandbox task",
+    otherSandboxId,
+  );
+  channelConversationId = (
+    await db.conversation.create({
+      data: {
+        agentId,
+        title: "WeChat history",
+        runtimeSessionKey: `channel:${channel.id}:msg:weixin:dm:contact`,
+        sandboxId: (await createSandbox("channel-history")).id,
+        agentRevisionId,
+        legacyRevisionUnresolved: false,
+        messages: {
+          create: [
+            {
+              role: "user",
+              parts: [{ type: "text", text: "Channel request" }],
+            },
+          ],
+        },
+      },
+    })
+  ).id;
+  transport.resource.mockImplementation(
+    async (
+      context: SessionMcpContext,
+      deploymentId: string,
+      method: string,
+    ) => {
+      expect(context).toEqual({
+        workspaceId,
+        agentId,
+        agentRevisionId,
+        conversationId: excludedConversationId,
+      });
+      expect(deploymentId).toBe(resourceDeploymentId);
+      if (method === "resources/list")
         return {
-          content: [
-            { type: "text", text: JSON.stringify({ exitCode: 1, stdout: "" }) },
+          resources: [{ uri: "test://plan", name: "Release resource" }],
+        };
+      if (method === "resources/read")
+        return {
+          contents: [
+            { uri: "test://plan", text: "Resource release checklist." },
           ],
         };
-      }
-    }
-    expect(deploymentId).toBe(resourceDeploymentId);
-    if (method === "resources/list")
-      return { resources: [{ uri: "test://plan", name: "Release resource" }] };
-    if (method === "resources/read")
+      throw new Error(`Unexpected scoped method ${method}`);
+    },
+  );
+  vi.mocked(mcpRpc).mockImplementation(async (deploymentId, method, input) => {
+    expect(method).toBe("tools/call");
+    expect(deploymentId).toBe(sandboxDeploymentId);
+    const args = input?.arguments as { runtime: string; args: string[] };
+    expect(args.runtime).toBe("node");
+    try {
+      const result = await promisify(execFile)(process.execPath, args.args, {
+        cwd: root,
+        timeout: 15_000,
+        maxBuffer: 256 * 1024,
+      });
       return {
-        contents: [{ uri: "test://plan", text: "Resource release checklist." }],
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({ exitCode: 0, stdout: result.stdout }),
+          },
+        ],
       };
-    throw new Error(`Unexpected method ${method}`);
+    } catch {
+      return {
+        content: [
+          { type: "text", text: JSON.stringify({ exitCode: 1, stdout: "" }) },
+        ],
+      };
+    }
   });
 });
 
@@ -280,14 +353,14 @@ afterAll(async () => {
 });
 
 describe("Agent composer scope and references", () => {
-  it("lists current-sandbox files and both Work and channel conversations, excluding the current one", async () => {
+  it("lists current-session files and associated channel history without exposing other Work sandboxes", async () => {
     const response = await list({
       excludeConversationId: excludedConversationId,
     });
     expect(response.status).toBe(200);
     const { items } = await response.json();
     const ids = items.map((item: { id: string }) => item.id);
-    expect(ids).toContain(conversationId);
+    expect(ids).not.toContain(conversationId);
     expect(ids).toContain(channelConversationId);
     expect(ids).not.toContain(excludedConversationId);
     expect(ids).not.toContain(foreignConversationId);
@@ -311,8 +384,19 @@ describe("Agent composer scope and references", () => {
     expect(JSON.stringify(uiMessagesToPi([{ role: "user", parts }]))).toContain(
       "existing sidebar",
     );
-    const session = await resolve({ kind: "session", id: conversationId });
+    const session = await resolve({
+      kind: "session",
+      id: excludedConversationId,
+    });
     expect((await session.json()).text).toContain("release checklist");
+    expect(
+      (await resolve({ kind: "session", id: conversationId })).status,
+    ).toBe(404);
+    const channel = await resolve({
+      kind: "session",
+      id: channelConversationId,
+    });
+    expect((await channel.json()).text).toContain("Channel request");
     expect(
       (await resolve({ kind: "session", id: foreignConversationId })).status,
     ).toBe(404);
@@ -378,7 +462,7 @@ describe("Agent composer scope and references", () => {
     ).toContain("Resource release checklist");
     const mcp = (await (await list({ section: "mcp" })).json()).items;
     expect(mcp).toEqual([
-      { id: resourceDeploymentId, label: "Resources", status: "running" },
+      { id: resourceDeploymentId, label: "Resources", status: "available" },
     ]);
   });
 
@@ -451,5 +535,79 @@ describe("Agent composer scope and references", () => {
     expect(
       await db.agentComposerPrompt.findUnique({ where: { id } }),
     ).toBeNull();
+  });
+});
+
+describe("Pinned composer session authority", () => {
+  it("rejects missing or unresolved historical pins without falling back to the Agent template", async () => {
+    const beforeFiles = vi.mocked(mcpRpc).mock.calls.length;
+    const beforeResources = transport.resource.mock.calls.length;
+    const missing = await GET(
+      new Request(
+        `http://local/composer?section=references&sandboxId=${sandboxId}`,
+      ),
+      params(),
+    );
+    expect(missing.status).toBe(400);
+    const historyDeployment = await db.deployment.create({
+      data: { workspaceId, name: "Unresolved history", status: "stopped" },
+    });
+    const historySandbox = await db.sandbox.create({
+      data: {
+        workspaceId,
+        name: "Unresolved history",
+        slug: "unresolved-history",
+        kind: "docker",
+        deploymentId: historyDeployment.id,
+      },
+    });
+    const history = await db.conversation.create({
+      data: {
+        agentId,
+        sandboxId: historySandbox.id,
+        title: "Retained unresolved history",
+        agentRevisionId: null,
+        legacyRevisionUnresolved: true,
+      },
+    });
+    expect(
+      (await list({ conversationId: history.id, sandboxId: historySandbox.id }))
+        .status,
+    ).toBe(410);
+    expect(vi.mocked(mcpRpc)).toHaveBeenCalledTimes(beforeFiles);
+    expect(transport.resource).toHaveBeenCalledTimes(beforeResources);
+  });
+
+  it("intersects pinned MCP resource sources with live attachment revocation", async () => {
+    await db.agentServer.delete({
+      where: {
+        agentId_deploymentId: { agentId, deploymentId: resourceDeploymentId },
+      },
+    });
+    try {
+      const resources = await list({ section: "resources" });
+      expect(resources.status).toBe(200);
+      expect((await resources.json()).items).toEqual([]);
+      expect(
+        (
+          await resolve({
+            kind: "resource",
+            id: "test://plan",
+            deploymentId: resourceDeploymentId,
+          })
+        ).status,
+      ).toBe(404);
+      const sources = await list({ section: "mcp" });
+      expect(sources.status).toBe(200);
+      expect((await sources.json()).items).toEqual([]);
+    } finally {
+      await db.agentServer.create({
+        data: {
+          agentId,
+          deploymentId: resourceDeploymentId,
+          allowedToolNames: [],
+        },
+      });
+    }
   });
 });

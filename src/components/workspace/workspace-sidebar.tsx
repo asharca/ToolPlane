@@ -14,6 +14,9 @@ import {
   AnimatedSidebarMenu,
   AnimatedSidebarMenuButton,
   AnimatedSidebarMenuItem,
+  AnimatedSidebarMenuSub,
+  AnimatedSidebarMenuSubButton,
+  AnimatedSidebarMenuSubItem,
   AnimatedSidebarTrigger,
   useAnimatedSidebar,
 } from "@/components/motion/animated-sidebar";
@@ -30,6 +33,8 @@ export interface WorkspaceSidebarItem {
   badge?: ReactNode;
   href?: string;
   disabled?: boolean;
+  /** Exactly one nested level. Parents toggle their children instead of navigating. */
+  children?: Omit<WorkspaceSidebarItem, "children">[];
 }
 export interface WorkspaceSidebarGroup {
   id: string;
@@ -45,6 +50,87 @@ export interface WorkspaceSidebarProps {
   logo?: ReactNode;
   footer?: ReactNode;
   className?: string;
+}
+
+function WorkspaceNavigationItem({
+  item,
+  activeId,
+  onSelect,
+  compact,
+}: {
+  item: WorkspaceSidebarItem;
+  activeId?: string;
+  onSelect?: (id: string) => void;
+  compact: boolean;
+}) {
+  const children = item.children?.length ? item.children : undefined;
+  const activeChild = children?.some((child) => child.id === activeId) ?? false;
+  const [expanded, setExpanded] = useState(activeChild);
+  const [previousActive, setPreviousActive] = useState(activeId);
+  if (previousActive !== activeId) {
+    setPreviousActive(activeId);
+    if (activeChild) setExpanded(true);
+  }
+  return (
+    <AnimatedSidebarMenuItem>
+      <AnimatedSidebarMenuButton
+        isActive={activeId === item.id || (compact && activeChild)}
+        ariaExpanded={children ? !compact && expanded : undefined}
+        onSelect={() =>
+          children
+            ? setExpanded((current) => compact || !current)
+            : onSelect?.(item.id)
+        }
+        href={children ? undefined : item.href}
+        icon={item.icon}
+        badge={item.badge}
+        disabled={item.disabled}
+        className={cn(
+          "min-h-9 gap-2 overflow-visible rounded-lg px-2 text-xs [&>span:first-child:not([aria-hidden])]:rounded-lg [&>span[aria-hidden=true]]:size-5 [&_svg]:size-[18px] [&>span.absolute]:bg-[var(--workspace-surface,var(--background))]",
+          activeChild && !compact && "bg-foreground/5 text-foreground",
+        )}
+      >
+        {item.label}
+      </AnimatedSidebarMenuButton>
+      {children && (
+        <div
+          inert={compact || !expanded || item.disabled}
+          aria-hidden={compact || !expanded || item.disabled}
+        >
+          <AnimatedSidebarMenuSub
+            open={expanded}
+            className="ml-4 gap-1 border-foreground/10 pl-3"
+          >
+            {children.map((child) => (
+              <AnimatedSidebarMenuSubItem key={child.id}>
+                <AnimatedSidebarMenuSubButton
+                  href={child.href}
+                  icon={child.icon}
+                  disabled={item.disabled || child.disabled}
+                  isActive={activeId === child.id}
+                  onSelect={() => onSelect?.(child.id)}
+                  className={cn(
+                    "min-h-9 [&_svg]:size-3.5",
+                    activeId === child.id &&
+                      "bg-[var(--workspace-surface,var(--background))] font-medium hover:bg-[var(--workspace-surface,var(--background))]",
+                  )}
+                >
+                  <span className="flex min-w-0 items-center gap-2">
+                    <span className="truncate">{child.label}</span>
+                    {child.badge != null && (
+                      <span className="ml-auto shrink-0 rounded bg-muted px-1 text-[10px] text-muted-foreground">
+                        {child.badge}
+                      </span>
+                    )}
+                  </span>
+                </AnimatedSidebarMenuSubButton>
+              </AnimatedSidebarMenuSubItem>
+            ))}
+          </AnimatedSidebarMenuSub>
+        </div>
+      )}
+    </AnimatedSidebarMenuItem>
+  );
 }
 
 /** Composition of beUI primitives, not a second copy of the sidebar engine.
@@ -193,31 +279,30 @@ export function WorkspaceSidebar({
           )}
         </motion.div>
       </AnimatedSidebarHeader>
-      <AnimatedSidebarContent className="gap-1 px-3.5 py-2 [scrollbar-width:none]">
+      <AnimatedSidebarContent className="gap-6 px-3.5 py-3 [scrollbar-width:none]">
         {groups.map((group) => (
-          <AnimatedSidebarGroup key={group.id} className="px-0 py-0">
+          <AnimatedSidebarGroup
+            key={group.id}
+            role="group"
+            aria-label={group.title}
+            className="px-0 py-0"
+          >
             <AnimatedSidebarMenu className="gap-1">
               {group.items.map((item) => (
-                <AnimatedSidebarMenuItem key={item.id}>
-                  <AnimatedSidebarMenuButton
-                    isActive={activeId === item.id}
-                    onSelect={() => onSelect?.(item.id)}
-                    href={item.href}
-                    icon={item.icon}
-                    badge={item.badge}
-                    disabled={item.disabled}
-                    className="min-h-9 gap-2 overflow-visible rounded-lg px-2 [&>span:first-child:not([aria-hidden])]:rounded-lg [&>span[aria-hidden=true]]:size-5 [&_svg]:size-[18px] [&>span.absolute]:bg-[var(--workspace-surface,var(--background))]"
-                  >
-                    {item.label}
-                  </AnimatedSidebarMenuButton>
-                </AnimatedSidebarMenuItem>
+                <WorkspaceNavigationItem
+                  key={item.id}
+                  item={item}
+                  activeId={activeId}
+                  onSelect={onSelect}
+                  compact={compact}
+                />
               ))}
             </AnimatedSidebarMenu>
           </AnimatedSidebarGroup>
         ))}
       </AnimatedSidebarContent>
       {footer && (
-        <AnimatedSidebarFooter className="border-0 px-3.5 pb-3">
+        <AnimatedSidebarFooter className="mx-3.5 w-auto border-t border-border/60 px-0 pt-3 pb-3">
           {footer}
         </AnimatedSidebarFooter>
       )}

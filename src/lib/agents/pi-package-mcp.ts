@@ -50,3 +50,17 @@ export function resolvePiPackageMcpPolicy(
   for (const tools of Object.values(result)) tools.sort();
   return result;
 }
+/** A snapshot pins code, not permission: every original capability must remain granted. */
+export function assertPiSessionMcpAccess(
+  requirements: unknown,
+  original: unknown,
+  current: unknown,
+) {
+  const pinned = resolvePiPackageMcpPolicy(requirements, original);
+  const live = resolvePiPackageMcpPolicy(requirements, current);
+  for (const [id, tools] of Object.entries(pinned)) {
+    if (!live[id] || tools.some((tool) => !live[id].includes(tool)))
+      throw new Error("PI_PACKAGE_MCP_BINDING_REQUIRED");
+  }
+  return pinned;
+}

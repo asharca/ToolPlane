@@ -1,32 +1,16 @@
 import "server-only";
 import { writeAudit } from "@/lib/observability/audit";
 
-import type {
-  Prisma,
-  Deployment,
-  MarketInstall,
-  Toolkit,
-} from "@prisma/client";
+import type { Prisma, Deployment, MarketInstall } from "@prisma/client";
 import { z } from "zod";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { createHash } from "node:crypto";
-import { capturePiPackage } from "@/lib/market/pi-package-source";
-import {
-  resolvePiPackageCaptureSource,
-  verifyOfficialPiPackage,
-} from "@/lib/market/pi-package-catalog";
-import {
-  assemblePiPackage,
-  validatePiPackageMcpBindings,
-} from "@/lib/market/pi-package-assembly";
-import type {
-  PiPackageAssemblyInput,
-  PiPackageMcpBindings,
-} from "@/lib/market/pi-package-assembly";
-import type { PiPackageCaptureOptions } from "@/lib/market/pi-package-source";
+import { validatePiPackageMcpBindings } from "@/lib/market/pi-package-assembly";
+import type { PiPackageMcpBindings } from "@/lib/market/pi-package-assembly";
 import { sandboxExecutionBusy } from "@/lib/agents/sandbox-execution-gate";
 import { TERMINAL } from "@/lib/a2a/model";
+import { resolvePiPackageMcpPolicy } from "@/lib/agents/pi-package-mcp";
+import { piPackageBindingsSchema } from "@/lib/pi-packages/installations";
 import {
   parsePiPackageReleaseManifest,
   scanPiPackageReleaseManifest,
@@ -45,12 +29,11 @@ import { stopProcess } from "@/lib/process/supervisor";
 import { removeDeploymentContainer } from "@/lib/process/deployment-runtime-container";
 import { removeDeploymentConfigVolume } from "@/lib/process/deployment-config-volume";
 import { runMcpDeploymentOperation } from "@/lib/workspace/mcp-operation";
+import { sealMcpEnvironment } from "@/lib/process/mcp-credentials";
 import {
-  buildSkillReleaseManifest,
   parseSkillReleaseManifest,
   SKILL_MARKET_MANIFEST_VERSION,
   type SkillReleaseManifestV1,
-  type SkillReleaseSource,
 } from "@/lib/market/skill-manifest";
 import {
   approveMarketRelease,
@@ -58,12 +41,11 @@ import {
   MarketError,
   updateSkillMarketInstall,
 } from "@/lib/market/skills";
-import { isValidMcpRef, type McpSource } from "@/lib/workspace/custom-mcp";
+import { assertPortableMcpRecipe } from "@/lib/market/mcp-portable-recipe";
 import {
   missingRequiredEnvironment,
   parseServerRecipe,
   recipeToDeploymentData,
-  storedRequiredEnvironment,
   type ServerRecipe,
 } from "@/lib/workspace/server-recipe";
 import {
@@ -97,11 +79,13 @@ const sourceUrlSchema = z
   });
 const recipeSchema = z
   .object({
-    source: z.enum(["npm", "pypi", "github", "docker", "remote"]),
+    source: z.enum(["npm", "pypi", "github", "docker", "remote", "config"]),
     ref: z.string().min(1).max(2_000),
     sourceUrl: sourceUrlSchema.optional(),
     env: z.array(environmentName).max(256),
     startCommand: z.string().min(1).max(4_000).optional(),
+    command: z.enum(["npx", "uvx", "uv", "docker"]).optional(),
+    args: z.array(z.string().max(4_000)).max(100).optional(),
     network: z.literal("none").optional(),
     transport: z.enum(["streamable-http", "sse"]).optional(),
     authType: z.enum(["none", "bearer", "headers"]).optional(),
@@ -121,6 +105,7 @@ const recipeSchema = z
     return {
       source: parsed.source,
       ref: parsed.ref,
+      ...(parsed.command ? { command: parsed.command, args: parsed.args } : {}),
       ...(parsed.sourceUrl ? { sourceUrl: parsed.sourceUrl } : {}),
       env: parsed.env,
       ...(parsed.startCommand ? { startCommand: parsed.startCommand } : {}),
@@ -225,105 +210,6 @@ function scanToolkitMarketManifest(
   };
 }
 
-export type ListingInput = {
-  slug?: string;
-  name?: string;
-  summary?: string | null;
-  iconUrl?: string | null;
-  tags?: string[];
-};
-
-type DeploymentSource = {
-  id: string;
-  workspaceId: string;
-  serverId: string | null;
-  name: string | null;
-  source: string | null;
-  sourceRef: string | null;
-  installCfg: unknown;
-  mcpToolExposure: "all" | "allowlist";
-  mcpAllowedTools: string[];
-  server: null | {
-    slug: string;
-    name: string;
-    author: string | null;
-    description: string | null;
-    iconUrl: string | null;
-    installCfg: unknown;
-    verifiedAt: Date | null;
-    verifiedTools: number | null;
-    readme: string | null;
-  };
-};
-
-const DEPLOYMENT_SELECT = {
-  id: true,
-  workspaceId: true,
-  serverId: true,
-  name: true,
-  source: true,
-  sourceRef: true,
-  installCfg: true,
-  mcpToolExposure: true,
-  mcpAllowedTools: true,
-  server: {
-    select: {
-      slug: true,
-      name: true,
-      author: true,
-      description: true,
-      iconUrl: true,
-      installCfg: true,
-      verifiedAt: true,
-      verifiedTools: true,
-      readme: true,
-    },
-  },
-} satisfies Prisma.DeploymentSelect;
-
-const TOOLKIT_SELECT = {
-  id: true,
-  workspaceId: true,
-  name: true,
-  slug: true,
-  servers: {
-    orderBy: { deploymentId: "asc" },
-    select: { deployment: { select: DEPLOYMENT_SELECT } },
-  },
-  skills: {
-    orderBy: { installedSkillId: "asc" },
-    select: {
-      installedSkill: {
-        select: {
-          skillId: true,
-          name: true,
-          slug: true,
-          description: true,
-          content: true,
-          files: true,
-          source: true,
-          sourceRef: true,
-          userInvocable: true,
-          agentInvocable: true,
-          effort: true,
-          skill: {
-            select: {
-              name: true,
-              slug: true,
-              description: true,
-              author: true,
-              content: true,
-              files: true,
-              githubSource: true,
-              sourceSha: true,
-            },
-          },
-        },
-      },
-    },
-  },
-} satisfies Prisma.ToolkitSelect;
-
 function slugify(value: string, fallback: string): string {
   return (
     value
@@ -334,16 +220,6 @@ function slugify(value: string, fallback: string): string {
   );
 }
 
-function cleanTags(values: readonly string[] | undefined): string[] {
-  return [
-    ...new Set(
-      (values ?? [])
-        .map((value) => value.trim().toLocaleLowerCase().slice(0, 40))
-        .filter(Boolean),
-    ),
-  ].slice(0, 20);
-}
-
 function sortedUnique(values: readonly string[]): string[] {
   return [...new Set(values)].sort((a, b) => a.localeCompare(b));
 }
@@ -352,6 +228,7 @@ function portableRecipe(recipe: ServerRecipe) {
   return {
     source: recipe.source,
     ref: recipe.ref,
+    ...(recipe.command ? { command: recipe.command, args: recipe.args } : {}),
     ...(recipe.sourceUrl ? { sourceUrl: recipe.sourceUrl } : {}),
     env: sortedUnique([...recipe.env, ...Object.keys(recipe.envValues ?? {})]),
     ...(recipe.startCommand ? { startCommand: recipe.startCommand } : {}),
@@ -377,97 +254,6 @@ function installConfig(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
-}
-
-function portableMcp(source: DeploymentSource, fallbackAuthor: string) {
-  const catalogRecipe = parseServerRecipe(source.server?.installCfg);
-  let recipe: ServerRecipe | null = catalogRecipe;
-  if (!recipe) {
-    if (
-      !source.source ||
-      !["npm", "pypi", "github", "docker", "remote"].includes(source.source) ||
-      !source.sourceRef ||
-      !isValidMcpRef(source.source as McpSource, source.sourceRef)
-    ) {
-      throw new MarketError(
-        "invalid_manifest",
-        "This MCP does not have a portable package recipe.",
-      );
-    }
-    const config = installConfig(source.installCfg);
-    const env =
-      config.env && typeof config.env === "object" && !Array.isArray(config.env)
-        ? Object.keys(config.env as Record<string, unknown>)
-        : [];
-    recipe = {
-      source: source.source as McpSource,
-      ref: source.sourceRef,
-      env: sortedUnique([
-        ...env,
-        ...storedRequiredEnvironment(source.installCfg),
-      ]),
-      ...(typeof config.startCommand === "string" && config.startCommand.trim()
-        ? { startCommand: config.startCommand.trim() }
-        : {}),
-      ...(config.network === "none" ? { network: "none" as const } : {}),
-      ...(source.source === "remote" && config.transport === "sse"
-        ? { transport: "sse" as const }
-        : source.source === "remote"
-          ? { transport: "streamable-http" as const }
-          : {}),
-      ...(source.source === "remote" &&
-      (config.authType === "bearer" || config.authType === "headers")
-        ? { authType: config.authType }
-        : source.source === "remote"
-          ? { authType: "none" as const }
-          : {}),
-      ...(source.source === "remote" && typeof config.bearerEnv === "string"
-        ? { bearerEnv: config.bearerEnv }
-        : {}),
-      ...(source.source === "remote" &&
-      config.headerEnv &&
-      typeof config.headerEnv === "object"
-        ? { headerEnv: config.headerEnv as Record<string, string> }
-        : {}),
-    };
-  }
-
-  // Environment values are deliberately converted to names. Even values marked
-  // public by a catalog recipe must be re-entered by the installer.
-  const requiredEnvironment = sortedUnique([
-    ...recipe.env,
-    ...Object.keys(recipe.envValues ?? {}),
-  ]);
-  const name = (
-    source.server?.name ||
-    source.name ||
-    source.sourceRef ||
-    "MCP server"
-  ).slice(0, 240);
-  // Runtime tools are untrusted output and may encode configured credentials.
-  // Only the catalog validation snapshot, collected with throwaway values, is publishable.
-  const catalogHasTools = hasVerifiedMcpToolCatalog(source.server);
-  const catalogTools = readMcpToolCatalog(source.server?.installCfg);
-  const catalogToolNames = new Set(
-    catalogTools.map(({ name: toolName }) => toolName),
-  );
-  return mcpDefinitionSchema.parse({
-    name,
-    slug: slugify(source.server?.slug || name, "mcp-server"),
-    description: source.server?.description ?? null,
-    author: source.server?.author ?? fallbackAuthor,
-    iconUrl: source.server?.iconUrl ?? null,
-    readme: source.server?.readme ?? null,
-    ...(source.server ? { catalogSlug: source.server.slug } : {}),
-    recipe: { ...portableRecipe(recipe), env: requiredEnvironment },
-    toolExposure: source.mcpToolExposure,
-    allowedTools: sortedUnique(
-      source.mcpAllowedTools.filter((toolName) =>
-        catalogToolNames.has(toolName),
-      ),
-    ),
-    ...(catalogHasTools ? { toolCatalog: catalogTools } : {}),
-  });
 }
 
 function parseManifest<T>(
@@ -609,30 +395,6 @@ export function projectPublicResourceMarketManifest(
   };
 }
 
-async function assertPublisherAccess(
-  tx: Prisma.TransactionClient,
-  workspaceId: string,
-  userId: string,
-) {
-  const workspace = await tx.workspace.findFirst({
-    where: {
-      id: workspaceId,
-      status: "active",
-      OR: [
-        { ownerId: userId },
-        { members: { some: { userId, role: { in: ["owner", "admin"] } } } },
-      ],
-    },
-    select: { id: true, slug: true, name: true },
-  });
-  if (!workspace)
-    throw new MarketError(
-      "not_authorized",
-      "Only a workspace owner or admin can publish.",
-    );
-  return workspace;
-}
-
 async function assertInstallerAccess(
   tx: Prisma.TransactionClient,
   workspaceId: string,
@@ -670,662 +432,6 @@ async function validatedCategoryIds(
   return ids;
 }
 
-async function uniqueListingSlug(
-  tx: Prisma.TransactionClient,
-  namespace: string,
-  desired: string,
-  existingId?: string,
-) {
-  const base = slugify(desired, "resource");
-  for (let suffix = 0; suffix < 10_000; suffix += 1) {
-    const slug = suffix ? `${base}-${suffix + 1}` : base;
-    const conflict = await tx.marketListing.findFirst({
-      where: {
-        namespace,
-        slug,
-        ...(existingId ? { id: { not: existingId } } : {}),
-      },
-      select: { id: true },
-    });
-    if (!conflict) return slug;
-  }
-  throw new MarketError(
-    "listing_conflict",
-    "Could not allocate a unique market slug.",
-  );
-}
-
-async function submitRelease<T extends ResourceMarketManifestV1>(
-  tx: Prisma.TransactionClient,
-  listing: {
-    id: string;
-    latestVersion: number;
-    latestReleaseId: string | null;
-    pendingReleaseId: string | null;
-    status: string;
-  },
-  manifest: T,
-  summary: Prisma.InputJsonObject,
-  scanResult: MarketSecretScan,
-  categoryIds: string[],
-  releaseNotes?: string | null,
-) {
-  if (listing.pendingReleaseId) {
-    await tx.marketRelease.updateMany({
-      where: { id: listing.pendingReleaseId, reviewStatus: "pending" },
-      data: {
-        reviewStatus: "rejected",
-        reviewedAt: new Date(),
-        reviewNote: "Superseded by a newer publisher submission.",
-      },
-    });
-  }
-  const version = listing.latestVersion + 1;
-  const release = await tx.marketRelease.create({
-    data: {
-      listingId: listing.id,
-      version,
-      manifestVersion: RESOURCE_MARKET_MANIFEST_VERSION,
-      manifest: manifest as Prisma.InputJsonValue,
-      releaseSummary: summary,
-      checksum: marketReleaseChecksum(manifest),
-      releaseNotes: releaseNotes?.trim().slice(0, 10_000) || null,
-      categoryIds,
-      scanResult: scanResult as Prisma.InputJsonValue,
-      reviewStatus: "pending",
-    },
-  });
-  const submitted = await tx.marketListing.update({
-    where: { id: listing.id },
-    data: {
-      latestVersion: version,
-      pendingReleaseId: release.id,
-      status: listing.latestReleaseId ? listing.status : "draft",
-    },
-  });
-  return { listing: submitted, release, manifest };
-}
-
-export async function publishMcpRelease(input: {
-  workspaceId: string;
-  deploymentId: string;
-  publishedById: string;
-  categoryIds: string[];
-  listing?: ListingInput;
-  releaseNotes?: string | null;
-}) {
-  try {
-    return await db.$transaction(
-      async (tx) => {
-        const workspace = await assertPublisherAccess(
-          tx,
-          input.workspaceId,
-          input.publishedById,
-        );
-        const categoryIds = await validatedCategoryIds(tx, input.categoryIds);
-        const source = await tx.deployment.findFirst({
-          where: {
-            id: input.deploymentId,
-            workspaceId: input.workspaceId,
-            OR: [{ source: null }, { source: { not: "sandbox" } }],
-          },
-          select: DEPLOYMENT_SELECT,
-        });
-        if (!source)
-          throw new MarketError(
-            "source_not_found",
-            "The source MCP was not found.",
-          );
-        const existing = await tx.marketListing.findUnique({
-          where: { sourceDeploymentId: source.id },
-        });
-        if (existing && existing.publisherWorkspaceId !== input.workspaceId) {
-          throw new MarketError(
-            "listing_conflict",
-            "This MCP is already listed by another workspace.",
-          );
-        }
-        if (source.serverId && !existing) {
-          throw new MarketError(
-            "listing_conflict",
-            "Catalog MCPs are already represented in the market.",
-          );
-        }
-
-        const mcp = portableMcp(source, workspace.name);
-        const listingSlug = existing?.latestReleaseId
-          ? existing.slug
-          : await uniqueListingSlug(
-              tx,
-              workspace.slug,
-              input.listing?.slug || mcp.slug,
-              existing?.id,
-            );
-        const candidate = listingSchema.parse({
-          slug: listingSlug,
-          name: input.listing?.name?.trim().slice(0, 240) || mcp.name,
-          summary:
-            input.listing?.summary?.trim().slice(0, 4_000) || mcp.description,
-          iconUrl:
-            input.listing?.iconUrl?.trim().slice(0, 2_000) || mcp.iconUrl,
-          tags: cleanTags(input.listing?.tags),
-          author: mcp.author || workspace.name,
-        });
-        const manifest = parseMcpMarketManifest({
-          schemaVersion: RESOURCE_MARKET_MANIFEST_VERSION,
-          kind: "mcp",
-          listing: candidate,
-          mcp,
-        });
-        const scanResult = scanMarketArtifact(manifest, input.releaseNotes);
-        if (scanResult.status === "blocked") {
-          throw new MarketError(
-            "invalid_manifest",
-            "Remove credentials from the MCP before publishing it.",
-          );
-        }
-        const metadata = {
-          author: candidate.author,
-          source: mcp.recipe.source,
-          requiredEnvironmentCount: mcp.recipe.env.length,
-          toolCount: mcp.toolCatalog?.length ?? mcp.allowedTools.length,
-        } satisfies Prisma.InputJsonObject;
-        const listing = existing
-          ? await tx.marketListing.update({
-              where: { id: existing.id },
-              data: {
-                publishedById: input.publishedById,
-                sourceDeploymentId: source.id,
-                ...(!existing.latestReleaseId
-                  ? {
-                      slug: listingSlug,
-                      name: candidate.name,
-                      summary: candidate.summary,
-                      iconUrl: candidate.iconUrl,
-                      tags: candidate.tags,
-                      metadata,
-                      categories: { set: categoryIds.map((id) => ({ id })) },
-                    }
-                  : {}),
-              },
-            })
-          : await tx.marketListing.create({
-              data: {
-                kind: "mcp",
-                namespace: workspace.slug,
-                slug: listingSlug,
-                publisherKind: "workspace",
-                publisherWorkspaceId: workspace.id,
-                publishedById: input.publishedById,
-                sourceDeploymentId: source.id,
-                name: candidate.name,
-                summary: candidate.summary,
-                iconUrl: candidate.iconUrl,
-                tags: candidate.tags,
-                metadata,
-                categories: { connect: categoryIds.map((id) => ({ id })) },
-              },
-            });
-        return submitRelease(
-          tx,
-          listing,
-          manifest,
-          {
-            source: mcp.recipe.source,
-            requiredEnvironmentCount: mcp.recipe.env.length,
-            allowedToolCount: mcp.allowedTools.length,
-          },
-          scanResult,
-          categoryIds,
-          input.releaseNotes,
-        );
-      },
-      { isolationLevel: "Serializable", maxWait: 10_000, timeout: 30_000 },
-    );
-  } catch (error) {
-    if (error instanceof MarketError) throw error;
-    if (isPrismaError(error, ["P2002", "P2034"])) {
-      throw new MarketError(
-        "listing_conflict",
-        "The listing changed while it was being published.",
-      );
-    }
-    throw error;
-  }
-}
-
-export async function publishToolkitRelease(input: {
-  workspaceId: string;
-  toolkitId: string;
-  publishedById: string;
-  categoryIds: string[];
-  listing?: ListingInput;
-  releaseNotes?: string | null;
-}) {
-  try {
-    return await db.$transaction(
-      async (tx) => {
-        const workspace = await assertPublisherAccess(
-          tx,
-          input.workspaceId,
-          input.publishedById,
-        );
-        const categoryIds = await validatedCategoryIds(tx, input.categoryIds);
-        const source = await tx.toolkit.findFirst({
-          where: { id: input.toolkitId, workspaceId: input.workspaceId },
-          select: TOOLKIT_SELECT,
-        });
-        if (!source)
-          throw new MarketError(
-            "source_not_found",
-            "The source toolkit was not found.",
-          );
-        const existing = await tx.marketListing.findUnique({
-          where: { sourceToolkitId: source.id },
-        });
-        if (existing && existing.publisherWorkspaceId !== input.workspaceId) {
-          throw new MarketError(
-            "listing_conflict",
-            "This toolkit is already listed elsewhere.",
-          );
-        }
-        const mcps = source.servers.map(({ deployment }) => {
-          if (!hasVerifiedMcpToolCatalog(deployment.server)) {
-            throw new MarketError(
-              "invalid_manifest",
-              "Toolkits may publish only verified catalog MCPs.",
-            );
-          }
-          const mcp = portableMcp(deployment, workspace.name);
-          if (!mcp.catalogSlug || mcp.toolCatalog === undefined) {
-            throw new MarketError(
-              "invalid_manifest",
-              "Toolkits may publish only catalog MCPs.",
-            );
-          }
-          return { ...mcp, catalogSlug: mcp.catalogSlug };
-        });
-        const skills = source.skills.map(({ installedSkill }) => ({
-          ...(installedSkill.skill?.slug
-            ? { catalogSlug: installedSkill.skill.slug }
-            : {}),
-          snapshot: buildSkillReleaseManifest(
-            installedSkill as SkillReleaseSource,
-          ).skill,
-        }));
-        const listingSlug = existing?.latestReleaseId
-          ? existing.slug
-          : await uniqueListingSlug(
-              tx,
-              workspace.slug,
-              input.listing?.slug || source.slug,
-              existing?.id,
-            );
-        const candidate = listingSchema.parse({
-          slug: listingSlug,
-          name: input.listing?.name?.trim().slice(0, 240) || source.name,
-          summary: input.listing?.summary?.trim().slice(0, 4_000) || null,
-          iconUrl: input.listing?.iconUrl?.trim().slice(0, 2_000) || null,
-          tags: cleanTags(input.listing?.tags),
-          author: workspace.name,
-        });
-        const manifest = parseToolkitMarketManifest({
-          schemaVersion: RESOURCE_MARKET_MANIFEST_VERSION,
-          kind: "toolkit",
-          listing: candidate,
-          toolkit: { name: source.name, slug: source.slug },
-          mcps,
-          skills,
-        });
-        const scanResult = scanToolkitMarketManifest(
-          manifest,
-          input.releaseNotes,
-        );
-        if (scanResult.status === "blocked") {
-          throw new MarketError(
-            "invalid_manifest",
-            "Remove credentials from the toolkit before publishing it.",
-          );
-        }
-        const metadata = {
-          author: workspace.name,
-          mcpCount: mcps.length,
-          skillCount: skills.length,
-        } satisfies Prisma.InputJsonObject;
-        const listing = existing
-          ? await tx.marketListing.update({
-              where: { id: existing.id },
-              data: {
-                publishedById: input.publishedById,
-                ...(!existing.latestReleaseId
-                  ? {
-                      slug: listingSlug,
-                      name: candidate.name,
-                      summary: candidate.summary,
-                      iconUrl: candidate.iconUrl,
-                      tags: candidate.tags,
-                      metadata,
-                      categories: { set: categoryIds.map((id) => ({ id })) },
-                    }
-                  : {}),
-              },
-            })
-          : await tx.marketListing.create({
-              data: {
-                kind: "toolkit",
-                namespace: workspace.slug,
-                slug: listingSlug,
-                publisherKind: "workspace",
-                publisherWorkspaceId: workspace.id,
-                publishedById: input.publishedById,
-                sourceToolkitId: source.id,
-                name: candidate.name,
-                summary: candidate.summary,
-                iconUrl: candidate.iconUrl,
-                tags: candidate.tags,
-                metadata,
-                categories: { connect: categoryIds.map((id) => ({ id })) },
-              },
-            });
-        return submitRelease(
-          tx,
-          listing,
-          manifest,
-          {
-            mcpCount: mcps.length,
-            skillCount: skills.length,
-            toolCount: mcps.length + skills.length,
-          },
-          scanResult,
-          categoryIds,
-          input.releaseNotes,
-        );
-      },
-      { isolationLevel: "Serializable", maxWait: 10_000, timeout: 30_000 },
-    );
-  } catch (error) {
-    if (error instanceof MarketError) throw error;
-    if (isPrismaError(error, ["P2002", "P2034"])) {
-      throw new MarketError(
-        "listing_conflict",
-        "The listing changed while it was being published.",
-      );
-    }
-    throw error;
-  }
-}
-type PiPackagePublishInput = {
-  workspaceId: string;
-  publishedById: string;
-  listingId?: string;
-  categoryIds: string[];
-  listing: ListingInput;
-  releaseNotes?: string | null;
-  visibility?: "private" | "public";
-};
-
-export async function publishPiPackageRelease(
-  input: PiPackagePublishInput & { source: string; sourceId?: string },
-) {
-  return publishPiPackage(input);
-}
-
-export async function publishAssembledPiPackageRelease(
-  input: PiPackagePublishInput & PiPackageAssemblyInput,
-) {
-  return publishPiPackage(input);
-}
-
-async function publishPiPackage(
-  input: PiPackagePublishInput &
-    ({ source: string; sourceId?: string } | PiPackageAssemblyInput),
-) {
-  if (
-    input.visibility !== undefined &&
-    input.visibility !== "private" &&
-    input.visibility !== "public"
-  )
-    throw new MarketError("invalid_manifest", "Invalid package visibility.");
-  if (
-    input.releaseNotes != null &&
-    (typeof input.releaseNotes !== "string" ||
-      input.releaseNotes.length > 10_000)
-  ) {
-    throw new MarketError("invalid_manifest", "The release notes are invalid.");
-  }
-  const check = async (tx: Prisma.TransactionClient) => {
-    const workspace = await assertPublisherAccess(
-      tx,
-      input.workspaceId,
-      input.publishedById,
-    );
-    const categoryIds = await validatedCategoryIds(tx, input.categoryIds);
-    const existing = input.listingId
-      ? await tx.marketListing.findUnique({ where: { id: input.listingId } })
-      : null;
-    if (
-      input.listingId &&
-      (existing?.kind !== "pi-package" ||
-        existing.publisherWorkspaceId !== workspace.id)
-    ) {
-      throw new MarketError(
-        "not_authorized",
-        "This package listing is not owned by the publishing workspace.",
-      );
-    }
-    if (existing && installConfig(existing.metadata).officialPiPackageName)
-      throw new MarketError(
-        "listing_conflict",
-        "Official directory listings cannot be republished as custom packages.",
-      );
-    const candidate = listingSchema.safeParse({
-      slug: existing?.slug || input.listing.slug,
-      name: input.listing.name,
-      summary: input.listing.summary ?? null,
-      iconUrl: input.listing.iconUrl ?? null,
-      tags: input.listing.tags ?? [],
-      author: workspace.name,
-    });
-    if (
-      !candidate.success ||
-      !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(candidate.data.slug)
-    ) {
-      throw new MarketError(
-        "invalid_manifest",
-        "The package listing metadata is invalid.",
-      );
-    }
-    if (
-      !existing &&
-      (await tx.marketListing.findUnique({
-        where: {
-          namespace_slug: {
-            namespace: workspace.slug,
-            slug: candidate.data.slug,
-          },
-        },
-      }))
-    ) {
-      throw new MarketError(
-        "listing_conflict",
-        "This market slug is already in use.",
-      );
-    }
-    if (
-      scanMarketArtifact(candidate.data, input.releaseNotes).status ===
-      "blocked"
-    ) {
-      throw new MarketError(
-        "invalid_manifest",
-        "The listing contains possible credentials.",
-      );
-    }
-    return { workspace, categoryIds, existing, candidate: candidate.data };
-  };
-  try {
-    await db.$transaction(async (tx) => {
-      await check(tx);
-      if (!("source" in input)) await assemblePiPackage(tx, input);
-    });
-    const options: PiPackageCaptureOptions =
-      "source" in input
-        ? await resolvePiPackageCaptureSource({
-            workspaceId: input.workspaceId,
-            userId: input.publishedById,
-            sourceId: input.sourceId,
-            source: input.source,
-          })
-        : {};
-    const captured =
-      "source" in input ? await capturePiPackage(input.source, options) : null;
-    return await db.$transaction(
-      async (tx) => {
-        const { workspace, categoryIds, existing, candidate } = await check(tx);
-        if (options.sourceId) {
-          const source = await tx.piPackageSource.findFirst({
-            where: { id: options.sourceId, workspaceId: input.workspaceId },
-            select: { updatedAt: true },
-          });
-          if (
-            !source ||
-            source.updatedAt.getTime() !== options.sourceUpdatedAt?.getTime()
-          )
-            throw new MarketError(
-              "listing_conflict",
-              "The package source changed during capture.",
-            );
-        }
-        const assembled = !("source" in input)
-          ? await assemblePiPackage(tx, input)
-          : null;
-        const snapshot = captured ?? assembled?.snapshot;
-        if (!snapshot)
-          throw new Error("Package capture or assembly is required.");
-        const manifest = parseResourceMarketManifest({
-          schemaVersion: 1,
-          kind: "pi-package",
-          listing: candidate,
-          package: snapshot,
-        });
-        if (manifest.kind !== "pi-package")
-          throw new MarketError(
-            "invalid_manifest",
-            "The package snapshot is invalid.",
-          );
-        const scanResult = scanPiPackageReleaseManifest(
-          manifest,
-          input.releaseNotes,
-        );
-        if (scanResult.status === "blocked")
-          throw new MarketError(
-            "invalid_manifest",
-            "The package contains possible credentials.",
-          );
-        const metadata = {
-          author: candidate.author,
-          name: snapshot.name,
-          version: snapshot.version,
-        };
-        const listing = existing
-          ? await tx.marketListing.update({
-              where: { id: existing.id },
-              data: {
-                publishedById: input.publishedById,
-                ...(input.visibility ? { visibility: input.visibility } : {}),
-              },
-            })
-          : await tx.marketListing.create({
-              data: {
-                kind: "pi-package",
-                namespace: workspace.slug,
-                slug: candidate.slug,
-                visibility: input.visibility ?? "private",
-                publisherKind: "workspace",
-                publisherWorkspaceId: workspace.id,
-                publishedById: input.publishedById,
-                name: candidate.name,
-                summary: candidate.summary,
-                iconUrl: candidate.iconUrl,
-                tags: candidate.tags,
-                metadata,
-                categories: { connect: categoryIds.map((id) => ({ id })) },
-              },
-            });
-        const submitted = await submitRelease(
-          tx,
-          listing,
-          manifest,
-          metadata,
-          scanResult,
-          categoryIds,
-          input.releaseNotes,
-        );
-        if (assembled) {
-          const oldMetadata = installConfig(existing?.metadata);
-          const previousBindings = installConfig(
-            oldMetadata.piPackageBindingsByRelease,
-          );
-          await tx.marketListing.update({
-            where: { id: listing.id },
-            data: {
-              metadata: {
-                ...metadata,
-                piPackageBindingsByRelease: {
-                  ...previousBindings,
-                  [submitted.release.id]: assembled.bindings,
-                },
-              } as Prisma.InputJsonObject,
-            },
-          });
-        }
-        if ("source" in input) {
-          const previous = await tx.piPackageTracking.findUnique({
-            where: { listingId: listing.id },
-          });
-          const changed =
-            previous?.requested !== input.source ||
-            previous?.sourceId !== (options.sourceId ?? null);
-          await tx.piPackageTracking.upsert({
-            where: { listingId: listing.id },
-            create: {
-              workspaceId: input.workspaceId,
-              listingId: listing.id,
-              sourceId: options.sourceId ?? null,
-              requested: input.source,
-            },
-            update: {
-              sourceId: options.sourceId ?? null,
-              requested: input.source,
-              ...(changed
-                ? {
-                    checkedAt: null,
-                    latestIdentity: null,
-                    latestVersion: null,
-                    errorCode: null,
-                    ignoredIdentity: null,
-                  }
-                : {}),
-            },
-          });
-        } else {
-          await tx.piPackageTracking.deleteMany({
-            where: { listingId: listing.id },
-          });
-        }
-        return submitted;
-      },
-      { isolationLevel: "Serializable", maxWait: 10_000, timeout: 30_000 },
-    );
-  } catch (error) {
-    if (isPrismaError(error, ["P2002", "P2034"]))
-      throw new MarketError(
-        "listing_conflict",
-        "The listing changed while it was being published.",
-      );
-    throw error;
-  }
-}
-
 async function assertPiPackagePlatform(manifest: PiPackageManifestV1) {
   if (manifest.package.runtime.platform === "any") return;
   let domain: string;
@@ -1357,210 +463,6 @@ async function assertPiPackagePlatform(manifest: PiPackageManifestV1) {
       "package_platform_mismatch",
       "The package does not match the Docker runtime platform.",
     );
-  }
-}
-
-export async function installOfficialPiPackage(input: {
-  workspaceId: string;
-  userId: string;
-  name: string;
-  version: string;
-}) {
-  await assertInstallerAccess(db, input.workspaceId, input.userId);
-  const official = await verifyOfficialPiPackage(input.name, input.version);
-  const requested = `npm:${official.name}@${official.version}`;
-  const snapshot = await capturePiPackage(requested);
-  if (
-    snapshot.source.kind !== "npm" ||
-    snapshot.source.name !== official.name ||
-    snapshot.source.version !== official.version ||
-    snapshot.source.requested !== requested ||
-    snapshot.source.integrity !== official.integrity ||
-    (snapshot.source.registry !== undefined &&
-      snapshot.source.registry !== "https://registry.npmjs.org/") ||
-    snapshot.name !== official.name ||
-    snapshot.version !== official.version
-  ) {
-    throw new MarketError(
-      "official_package_unavailable",
-      "Captured package identity does not match the official directory selection.",
-    );
-  }
-  const slug = `pi-official-${createHash("sha256").update(official.name).digest("hex")}`;
-  const manifest = parsePiPackageReleaseManifest({
-    schemaVersion: 1,
-    kind: "pi-package",
-    package: snapshot,
-    listing: {
-      slug,
-      name: official.name,
-      summary: official.description || null,
-      iconUrl: null,
-      tags: [],
-      author: "Pi package directory",
-    },
-  });
-  const scanResult = scanPiPackageReleaseManifest(manifest);
-  if (scanResult.status === "blocked")
-    throw new MarketError(
-      "invalid_manifest",
-      "The package snapshot is unsafe.",
-    );
-  await assertPiPackagePlatform(manifest);
-  const checksum = marketReleaseChecksum(manifest);
-  // Revalidate membership after capture; registry changes cannot substitute different bytes.
-  if (
-    (await verifyOfficialPiPackage(input.name, official.version)).integrity !==
-    official.integrity
-  ) {
-    throw new MarketError(
-      "official_package_unavailable",
-      "The official package changed during capture.",
-    );
-  }
-  try {
-    return await db.$transaction(
-      async (tx) => {
-        await assertInstallerAccess(tx, input.workspaceId, input.userId);
-        const workspace = await tx.workspace.findUniqueOrThrow({
-          where: { id: input.workspaceId },
-          select: { slug: true },
-        });
-        let listing = await tx.marketListing.findUnique({
-          where: { namespace_slug: { namespace: workspace.slug, slug } },
-        });
-        if (
-          listing &&
-          (listing.kind !== "pi-package" ||
-            listing.publisherWorkspaceId !== input.workspaceId ||
-            installConfig(listing.metadata).officialPiPackageName !==
-              official.name ||
-            listing.status !== "published")
-        ) {
-          throw new MarketError(
-            "listing_conflict",
-            "The official package listing is unavailable.",
-          );
-        }
-        if (!listing)
-          listing = await tx.marketListing.create({
-            data: {
-              kind: "pi-package",
-              namespace: workspace.slug,
-              slug,
-              name: official.name,
-              summary: manifest.listing.summary,
-              visibility: "private",
-              publisherKind: "workspace",
-              publisherWorkspaceId: input.workspaceId,
-              publishedById: input.userId,
-              metadata: { officialPiPackageName: official.name },
-            },
-          });
-        let release = await tx.marketRelease.findFirst({
-          where: {
-            listingId: listing.id,
-            releaseSummary: { path: ["version"], equals: official.version },
-          },
-        });
-        if (release) {
-          const saved = parsePiPackageReleaseManifest(
-            release.manifest,
-            release.checksum,
-          );
-          if (
-            release.reviewStatus !== "approved" ||
-            installConfig(release.releaseSummary).reviewPolicy !==
-              "official-directory" ||
-            marketReleaseChecksum(saved.package) !==
-              marketReleaseChecksum(snapshot)
-          ) {
-            throw new MarketError(
-              "listing_conflict",
-              "The official package version changed or is unavailable.",
-            );
-          }
-        } else {
-          release = await tx.marketRelease.create({
-            data: {
-              listingId: listing.id,
-              version: listing.latestVersion + 1,
-              manifestVersion: 1,
-              manifest: manifest as Prisma.InputJsonValue,
-              checksum,
-              scanResult: scanResult as Prisma.InputJsonValue,
-              categoryIds: [],
-              reviewStatus: "approved",
-              publishedAt: new Date(),
-              releaseSummary: {
-                name: official.name,
-                version: official.version,
-                reviewPolicy: "official-directory",
-              },
-            },
-          });
-          await tx.marketListing.update({
-            where: { id: listing.id },
-            data: {
-              latestReleaseId: release.id,
-              latestVersion: release.version,
-              status: "published",
-              publishedAt: new Date(),
-            },
-          });
-        }
-        const idempotencyKey = `official:${listing.id}`;
-        const existing = await tx.marketInstall.findUnique({
-          where: {
-            targetWorkspaceId_idempotencyKey: {
-              targetWorkspaceId: input.workspaceId,
-              idempotencyKey,
-            },
-          },
-        });
-        if (
-          existing &&
-          (existing.listingId !== listing.id || existing.status !== "ready")
-        )
-          throw new MarketError(
-            "listing_conflict",
-            "The package installation is unavailable.",
-          );
-        // An explicit install selection is a manual workspace update, never an Agent binding update.
-        const install = existing
-          ? await tx.marketInstall.update({
-              where: { id: existing.id },
-              data: {
-                currentReleaseId: release.id,
-                requestedReleaseId: release.id,
-                ignoredReleaseId: null,
-                lastError: null,
-              },
-            })
-          : await tx.marketInstall.create({
-              data: {
-                listingId: listing.id,
-                currentReleaseId: release.id,
-                requestedReleaseId: release.id,
-                targetWorkspaceId: input.workspaceId,
-                installedById: input.userId,
-                idempotencyKey,
-                status: "ready",
-                resourceMap: { kind: "pi-package" },
-                requirements: {},
-              },
-            });
-        return { install, release };
-      },
-      { isolationLevel: "Serializable", maxWait: 10_000, timeout: 30_000 },
-    );
-  } catch (error) {
-    if (isPrismaError(error, ["P2002", "P2034"]))
-      throw new MarketError(
-        "listing_conflict",
-        "The package installation changed.",
-      );
-    throw error;
   }
 }
 
@@ -1647,14 +549,15 @@ export async function installPiPackageRelease(input: {
         if (
           existing.requestedReleaseId !== release.id ||
           existing.listingId !== release.listingId ||
-          existing.status !== "ready"
+          !["ready", "uninstalled"].includes(existing.status)
         ) {
           throw new MarketError(
             "idempotency_conflict",
             "This idempotency key has already been used.",
           );
         }
-        return { install: existing, reused: true };
+        if (existing.status === "ready")
+          return { install: existing, reused: true };
       }
       const defaults = installConfig(
         installConfig(release.listing.metadata).piPackageBindingsByRelease,
@@ -1671,6 +574,30 @@ export async function installPiPackageRelease(input: {
         checked.package,
         bindings,
       );
+      const retained = await tx.marketInstall.findUnique({
+        where: {
+          targetWorkspaceId_listingId: {
+            targetWorkspaceId: input.targetWorkspaceId,
+            listingId: release.listingId,
+          },
+        },
+      });
+      if (retained?.status === "uninstalled") {
+        const install = await tx.marketInstall.update({
+          where: { id: retained.id },
+          data: {
+            currentReleaseId: release.id,
+            requestedReleaseId: release.id,
+            ignoredReleaseId: null,
+            status: "ready",
+            installedById: input.installedById,
+            idempotencyKey,
+            resourceMap: { kind: "pi-package", mcpBindings: bindings },
+            lastError: null,
+          },
+        });
+        return { install, reused: false };
+      }
       const install = await tx.marketInstall.create({
         data: {
           listingId: release.listingId,
@@ -1697,6 +624,7 @@ async function updatePiPackageInstall(input: {
   targetReleaseId?: string;
   currentReleaseId?: string;
   force?: boolean;
+  mcpBindings?: PiPackageMcpBindings;
 }) {
   await db.$transaction(async (tx) => {
     await assertInstallerAccess(tx, input.targetWorkspaceId, input.actorId);
@@ -1732,6 +660,7 @@ async function updatePiPackageInstall(input: {
   return db.$transaction(
     async (tx) => {
       await assertInstallerAccess(tx, input.targetWorkspaceId, input.actorId);
+      await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${input.targetWorkspaceId} FOR UPDATE`;
       const install = await tx.marketInstall.findFirst({
         where: {
           id: input.installId,
@@ -1773,7 +702,11 @@ async function updatePiPackageInstall(input: {
           "The package snapshot is unsafe.",
         );
       }
-      if (install.currentReleaseId === release.id) return install;
+      if (
+        install.currentReleaseId === release.id &&
+        input.mcpBindings === undefined
+      )
+        return install;
       if (
         install.currentReleaseId !==
         (input.currentReleaseId ?? candidate.currentReleaseId)
@@ -1783,6 +716,52 @@ async function updatePiPackageInstall(input: {
           "The installed version changed. Refresh and try again.",
         );
       }
+      let bindings = input.mcpBindings;
+      try {
+        // A workspace version change never grants new tools or changes Agent pins.
+        // Retained supersets keep old sessions authorized; the new manifest filters its own tools.
+        resolvePiPackageMcpPolicy(
+          checked.package.toolplane?.mcp,
+          bindings ? { mcpBindings: bindings } : install.resourceMap,
+        );
+        if (!bindings) {
+          // The policy resolver above validated every required persisted binding.
+          const current = installConfig(install.resourceMap)
+            .mcpBindings as PiPackageMcpBindings;
+          bindings = Object.fromEntries(
+            (checked.package.toolplane?.mcp ?? []).map((requirement) => [
+              requirement.key,
+              {
+                deploymentId: current[requirement.key].deploymentId,
+                tools: requirement.tools,
+              },
+            ]),
+          );
+        }
+      } catch {
+        throw new MarketError(
+          "pi_package_mcp_binding_required",
+          "Explicit MCP rebinding is required for this release.",
+        );
+      }
+      await validatePiPackageMcpBindings(
+        tx,
+        input.targetWorkspaceId,
+        checked.package,
+        bindings,
+      );
+      const retainedBindings = piPackageBindingsSchema.parse(
+        installConfig(install.resourceMap).mcpBindings ?? {},
+      );
+      const nextBindings = { ...retainedBindings, ...input.mcpBindings };
+      for (const [key, binding] of Object.entries(input.mcpBindings ?? {})) {
+        const prior = retainedBindings[key];
+        if (prior?.deploymentId === binding.deploymentId)
+          nextBindings[key] = {
+            ...binding,
+            tools: [...new Set([...prior.tools, ...binding.tools])],
+          };
+      }
       return tx.marketInstall.update({
         where: { id: install.id },
         data: {
@@ -1791,6 +770,14 @@ async function updatePiPackageInstall(input: {
           ignoredReleaseId: null,
           lastError: null,
           lastCheckedAt: new Date(),
+          ...(input.mcpBindings !== undefined
+            ? {
+                resourceMap: {
+                  ...installConfig(install.resourceMap),
+                  mcpBindings: nextBindings,
+                } as Prisma.InputJsonValue,
+              }
+            : {}),
         },
       });
     },
@@ -1986,6 +973,7 @@ export async function approveResourceMarketRelease(input: ReviewInput) {
         select: {
           kind: true,
           pendingReleaseId: true,
+          sourceDeploymentId: true,
           sourceServer: {
             select: {
               id: true,
@@ -1999,6 +987,11 @@ export async function approveResourceMarketRelease(input: ReviewInput) {
       },
     },
   });
+  if (reviewCandidate?.listing.kind === "toolkit")
+    throw new MarketError(
+      "invalid_manifest",
+      "Legacy Toolkit releases are retained read-only and cannot be republished.",
+    );
   if (
     !reviewCandidate ||
     !["mcp", "toolkit", "pi-package"].includes(reviewCandidate.listing.kind)
@@ -2061,7 +1054,7 @@ export async function approveResourceMarketRelease(input: ReviewInput) {
         "The source catalog MCP has no valid recipe.",
       );
     }
-    if (sourceRecipe) {
+    if (sourceRecipe && !reviewCandidate.listing.sourceDeploymentId) {
       const currentRecipe = portableRecipe(sourceRecipe);
       const submittedRecipe = portableRecipe(manifest.mcp.recipe);
       if (JSON.stringify(currentRecipe) !== JSON.stringify(submittedRecipe)) {
@@ -2071,12 +1064,17 @@ export async function approveResourceMarketRelease(input: ReviewInput) {
         );
       }
     }
+    assertInstallableMcpRecipe(manifest.mcp.recipe);
     let tools =
-      sourceServer && hasVerifiedMcpToolCatalog(sourceServer)
+      sourceServer &&
+      !reviewCandidate.listing.sourceDeploymentId &&
+      hasVerifiedMcpToolCatalog(sourceServer)
         ? readMcpToolCatalog(sourceServer.installCfg)
         : null;
     if (!tools) {
-      const recipe = sourceRecipe ?? manifest.mcp.recipe;
+      const recipe = reviewCandidate.listing.sourceDeploymentId
+        ? manifest.mcp.recipe
+        : (sourceRecipe ?? manifest.mcp.recipe);
       const result = await validateServerRecipe(recipe);
       const catalog = result.ok
         ? parseMcpToolCatalogResult(result.toolCatalog)
@@ -2253,7 +1251,9 @@ export async function approveResourceMarketRelease(input: ReviewInput) {
             where: { id: server.id },
             data: {
               installCfg: withMcpToolCatalog(
-                server.installCfg,
+                release.listing.sourceDeploymentId
+                  ? manifest.mcp.recipe
+                  : server.installCfg,
                 validatedMcp.tools,
               ) as Prisma.InputJsonValue,
               verifiedAt: server.verifiedAt ?? new Date(),
@@ -2276,58 +1276,10 @@ export async function approveResourceMarketRelease(input: ReviewInput) {
           version: manifest.package.version,
         } as Prisma.InputJsonObject;
       } else {
-        if (!release.listing.sourceToolkitId) {
-          throw new MarketError(
-            "source_not_found",
-            "The source toolkit was not found.",
-          );
-        }
-        const catalogServers = await tx.server.findMany({
-          where: {
-            slug: { in: manifest.mcps.map(({ catalogSlug }) => catalogSlug) },
-          },
-          select: {
-            slug: true,
-            installCfg: true,
-            verifiedAt: true,
-            verifiedTools: true,
-          },
-        });
-        const catalogServerBySlug = new Map(
-          catalogServers.map((server) => [server.slug, server]),
+        throw new MarketError(
+          "unsupported_resource_kind",
+          "Toolkit releases are retired; explicitly freeze convertible content as a private Pi package.",
         );
-        if (
-          manifest.mcps.some(
-            ({ catalogSlug }) =>
-              !hasVerifiedMcpToolCatalog(catalogServerBySlug.get(catalogSlug)),
-          )
-        ) {
-          throw new MarketError(
-            "invalid_manifest",
-            "The toolkit contains an MCP without a verified tool catalog.",
-          );
-        }
-        const updated = await tx.toolkit.updateMany({
-          where: {
-            id: release.listing.sourceToolkitId,
-            workspaceId: release.listing.publisherWorkspaceId ?? undefined,
-          },
-          data: { visibility: "public", enabled: true },
-        });
-        if (updated.count !== 1)
-          throw new MarketError(
-            "source_not_found",
-            "The source toolkit was not found.",
-          );
-        await tx.toolkit.update({
-          where: { id: release.listing.sourceToolkitId },
-          data: { categories: categorySet },
-        });
-        metadata = {
-          author: manifest.listing.author,
-          mcpCount: manifest.mcps.length,
-          skillCount: manifest.skills.length,
-        };
       }
       const publishedAt = new Date();
       await tx.marketRelease.update({
@@ -2338,6 +1290,14 @@ export async function approveResourceMarketRelease(input: ReviewInput) {
           reviewedAt: publishedAt,
           reviewNote: input.reviewNote?.trim().slice(0, 4_000) || null,
           scanResult: scanResult as Prisma.InputJsonValue,
+          ...(validatedMcp
+            ? {
+                releaseSummary: {
+                  ...installConfig(release.releaseSummary),
+                  toolCatalog: validatedMcp.tools,
+                } as Prisma.InputJsonValue,
+              }
+            : {}),
           publishedAt,
         },
       });
@@ -2403,8 +1363,9 @@ async function approvedRelease(
     !release ||
     release.listing.kind !== kind ||
     release.listing.status !== "published" ||
+    !release.listing.latestReleaseId ||
     release.reviewStatus !== "approved" ||
-    release.listing.latestReleaseId !== release.id ||
+    (kind !== "pi-package" && release.listing.latestReleaseId !== release.id) ||
     (release.listing.visibility !== "public" &&
       release.listing.publisherWorkspaceId !== workspaceId)
   ) {
@@ -2423,7 +1384,6 @@ async function reusedInstall(
     targetWorkspaceId: string;
     idempotencyKey: string;
   },
-  resource: "deployment" | "toolkit",
 ) {
   const existing = await tx.marketInstall.findUnique({
     where: {
@@ -2432,11 +1392,10 @@ async function reusedInstall(
         idempotencyKey: input.idempotencyKey,
       },
     },
-    include: { deployment: true, toolkit: true },
+    include: { deployment: true },
   });
   if (!existing) return null;
-  const attached =
-    resource === "deployment" ? existing.deployment : existing.toolkit;
+  const attached = existing.deployment;
   if (existing.requestedReleaseId !== input.releaseId || !attached) {
     throw new MarketError(
       "idempotency_conflict",
@@ -2456,11 +1415,13 @@ function validIdempotencyKey(value: string): string {
   return key;
 }
 
-function assertRemoteMcpRecipe(recipe: Pick<ServerRecipe, "source">) {
-  if (recipe.source !== "remote") {
+function assertInstallableMcpRecipe(recipe: ServerRecipe) {
+  try {
+    assertPortableMcpRecipe(recipe);
+  } catch (error) {
     throw new MarketError(
-      "listing_unavailable",
-      "Market Server entries are informational; only Connectors can be installed.",
+      "invalid_manifest",
+      error instanceof Error ? error.message : "Invalid portable MCP recipe.",
     );
   }
 }
@@ -2491,12 +1452,8 @@ export async function installMcpRelease(input: {
             release.manifest,
             release.checksum,
           );
-          assertRemoteMcpRecipe(manifest.mcp.recipe);
-          const reused = await reusedInstall(
-            tx,
-            { ...input, idempotencyKey },
-            "deployment",
-          );
+          assertInstallableMcpRecipe(manifest.mcp.recipe);
+          const reused = await reusedInstall(tx, { ...input, idempotencyKey });
           if (reused) {
             if (!("installCfg" in reused.resource)) {
               throw new MarketError(
@@ -2519,42 +1476,56 @@ export async function installMcpRelease(input: {
               "already_installed",
               "This market MCP is already installed.",
             );
-          if (!release.listing.sourceServerId) {
-            throw new MarketError(
-              "listing_unavailable",
-              "The reviewed MCP has no catalog identity.",
-            );
-          }
-          const server = await tx.server.findFirst({
-            where: {
-              id: release.listing.sourceServerId,
-              verifiedAt: { not: null },
-            },
-            select: {
-              id: true,
-              installCfg: true,
-              verifiedAt: true,
-              verifiedTools: true,
-            },
-          });
-          if (!server || !hasVerifiedMcpToolCatalog(server)) {
+          const server = release.listing.sourceServerId
+            ? await tx.server.findFirst({
+                where: {
+                  id: release.listing.sourceServerId,
+                  verifiedAt: { not: null },
+                },
+                select: {
+                  id: true,
+                  installCfg: true,
+                  verifiedAt: true,
+                  verifiedTools: true,
+                },
+              })
+            : null;
+          if (
+            release.listing.sourceServerId &&
+            (!server || !hasVerifiedMcpToolCatalog(server))
+          ) {
             throw new MarketError(
               "listing_unavailable",
               "The reviewed catalog MCP is unavailable.",
             );
           }
-          const trustedCatalog = trustedMcpToolCatalog(server.installCfg);
+          const trustedCatalog =
+            trustedMcpToolCatalog(release.releaseSummary) ??
+            (server
+              ? trustedMcpToolCatalog(server.installCfg)
+              : manifest.mcp.toolCatalog);
+          if (trustedCatalog === undefined)
+            throw new MarketError(
+              "listing_unavailable",
+              "The reviewed MCP has no tools/list snapshot.",
+            );
           const data = recipeToDeploymentData({
             ...manifest.mcp.recipe,
             ...(trustedCatalog !== undefined
               ? { toolCatalog: trustedCatalog }
               : {}),
           });
+          const requiresHttpApproval =
+            data.source === "remote" &&
+            data.sourceRef.startsWith("http:") &&
+            data.installCfg.allowUnsafeHttp !== true;
           const requiresSetup =
+            requiresHttpApproval ||
             missingRequiredEnvironment(manifest.mcp.recipe, data.installCfg)
               .length > 0;
           if (
-            await tx.deployment.findUnique({
+            server &&
+            (await tx.deployment.findUnique({
               where: {
                 workspaceId_serverId: {
                   workspaceId: input.targetWorkspaceId,
@@ -2562,7 +1533,7 @@ export async function installMcpRelease(input: {
                 },
               },
               select: { id: true },
-            })
+            }))
           ) {
             throw new MarketError(
               "already_installed",
@@ -2572,15 +1543,20 @@ export async function installMcpRelease(input: {
           const deployment = await tx.deployment.create({
             data: {
               workspaceId: input.targetWorkspaceId,
-              serverId: server.id,
+              serverId: server?.id ?? null,
+              name: manifest.mcp.name,
               source: data.source,
               sourceRef: data.sourceRef,
-              installCfg: data.installCfg as Prisma.InputJsonValue,
+              installCfg: sealMcpEnvironment(
+                data.installCfg,
+                input.targetWorkspaceId,
+                data.installCfg.env,
+              ) as Prisma.InputJsonValue,
               status: requiresSetup ? "setup_required" : "stopped",
               mcpToolExposure: manifest.mcp.toolExposure,
               mcpAllowedTools: trustedMcpAllowedTools(
                 manifest.mcp.allowedTools,
-                server.installCfg,
+                { toolCatalog: trustedCatalog },
               ),
             },
           });
@@ -2594,7 +1570,12 @@ export async function installMcpRelease(input: {
               deploymentId: deployment.id,
               idempotencyKey,
               status: requiresSetup ? "setup_required" : "ready",
-              requirements: { environment: manifest.mcp.recipe.env },
+              requirements: {
+                environment: manifest.mcp.recipe.env,
+                ...(requiresHttpApproval
+                  ? { unsafeHttpConfirmationRequired: true }
+                  : {}),
+              },
               resourceMap: { deploymentId: deployment.id },
               lastCheckedAt: new Date(),
             },
@@ -2604,256 +1585,6 @@ export async function installMcpRelease(input: {
             data: { installCount: { increment: 1 } },
           });
           return { install, resource: deployment, reused: false as const };
-        },
-        { isolationLevel: "Serializable", maxWait: 10_000, timeout: 30_000 },
-      );
-    } catch (error) {
-      if (error instanceof MarketError) throw error;
-      if (!isPrismaError(error, ["P2002", "P2034"]) || attempt === 2)
-        throw error;
-    }
-  }
-  throw new MarketError(
-    "listing_conflict",
-    "The market install changed. Try again.",
-  );
-}
-
-async function uniqueToolkitSlug(
-  tx: Prisma.TransactionClient,
-  workspaceId: string,
-  desired: string,
-) {
-  const base = slugify(desired, "toolkit");
-  for (let suffix = 0; suffix < 10_000; suffix += 1) {
-    const slug = suffix ? `${base}-${suffix + 1}` : base;
-    if (
-      !(await tx.toolkit.findUnique({
-        where: { workspaceId_slug: { workspaceId, slug } },
-        select: { id: true },
-      }))
-    ) {
-      return slug;
-    }
-  }
-  throw new MarketError(
-    "listing_conflict",
-    "Could not allocate a toolkit slug.",
-  );
-}
-
-export async function installToolkitRelease(input: {
-  releaseId: string;
-  targetWorkspaceId: string;
-  installedById: string;
-  idempotencyKey: string;
-}): Promise<{ install: MarketInstall; resource: Toolkit; reused: boolean }> {
-  const idempotencyKey = validIdempotencyKey(input.idempotencyKey);
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    try {
-      return await db.$transaction(
-        async (tx) => {
-          await assertInstallerAccess(
-            tx,
-            input.targetWorkspaceId,
-            input.installedById,
-          );
-          const reused = await reusedInstall(
-            tx,
-            { ...input, idempotencyKey },
-            "toolkit",
-          );
-          if (reused) {
-            if (!("slug" in reused.resource)) {
-              throw new MarketError(
-                "idempotency_conflict",
-                "This idempotency key belongs to another resource.",
-              );
-            }
-            return { ...reused, resource: reused.resource as Toolkit };
-          }
-          const release = await approvedRelease(
-            tx,
-            input.releaseId,
-            "toolkit",
-            input.targetWorkspaceId,
-          );
-          const existing = await tx.marketInstall.findUnique({
-            where: {
-              targetWorkspaceId_listingId: {
-                targetWorkspaceId: input.targetWorkspaceId,
-                listingId: release.listing.id,
-              },
-            },
-          });
-          if (existing)
-            throw new MarketError(
-              "already_installed",
-              "This market toolkit is already installed.",
-            );
-          const manifest = parseToolkitMarketManifest(
-            release.manifest,
-            release.checksum,
-          );
-          const servers = await tx.server.findMany({
-            where: {
-              slug: { in: manifest.mcps.map((mcp) => mcp.catalogSlug) },
-              verifiedAt: { not: null },
-            },
-            select: {
-              id: true,
-              slug: true,
-              installCfg: true,
-              verifiedAt: true,
-              verifiedTools: true,
-            },
-          });
-          if (
-            servers.length !==
-              new Set(manifest.mcps.map((mcp) => mcp.catalogSlug)).size ||
-            servers.some((server) => !hasVerifiedMcpToolCatalog(server))
-          ) {
-            throw new MarketError(
-              "listing_unavailable",
-              "A reviewed toolkit MCP is unavailable.",
-            );
-          }
-          const serverBySlug = new Map(
-            servers.map((server) => [server.slug, server]),
-          );
-          const deploymentIds: string[] = [];
-          const ownedDeploymentIds: string[] = [];
-          let requiresSetup = false;
-          for (const mcp of manifest.mcps) {
-            const server = serverBySlug.get(mcp.catalogSlug);
-            if (!server) {
-              throw new MarketError(
-                "listing_unavailable",
-                "A reviewed toolkit MCP is unavailable.",
-              );
-            }
-            const existingDeployment = await tx.deployment.findUnique({
-              where: {
-                workspaceId_serverId: {
-                  workspaceId: input.targetWorkspaceId,
-                  serverId: server.id,
-                },
-              },
-            });
-            const trustedCatalog = trustedMcpToolCatalog(server.installCfg);
-            const data = existingDeployment
-              ? preservedRecipeConfig(
-                  mcp.recipe,
-                  existingDeployment.installCfg,
-                  trustedCatalog,
-                )
-              : recipeToDeploymentData({
-                  ...mcp.recipe,
-                  ...(trustedCatalog !== undefined
-                    ? { toolCatalog: trustedCatalog }
-                    : {}),
-                });
-            const mcpRequiresSetup =
-              missingRequiredEnvironment(mcp.recipe, data.installCfg).length >
-              0;
-            requiresSetup ||= mcpRequiresSetup;
-            const deployment =
-              existingDeployment ??
-              (await tx.deployment.create({
-                data: {
-                  workspaceId: input.targetWorkspaceId,
-                  serverId: server.id,
-                  source: data.source,
-                  sourceRef: data.sourceRef,
-                  installCfg: data.installCfg as Prisma.InputJsonValue,
-                  status: mcpRequiresSetup ? "setup_required" : "stopped",
-                  mcpToolExposure: mcp.toolExposure,
-                  mcpAllowedTools: trustedMcpAllowedTools(
-                    mcp.allowedTools,
-                    server.installCfg,
-                  ),
-                },
-              }));
-            if (!existingDeployment) ownedDeploymentIds.push(deployment.id);
-            deploymentIds.push(deployment.id);
-          }
-          const installedSkillIds: string[] = [];
-          for (const skill of manifest.skills) {
-            const installed = await tx.installedSkill.create({
-              data: {
-                workspaceId: input.targetWorkspaceId,
-                skillId: null,
-                name: skill.snapshot.name,
-                slug: skill.snapshot.slug,
-                description: skill.snapshot.description,
-                content: skill.snapshot.content,
-                files: skill.snapshot.files as Prisma.InputJsonValue,
-                source: "market",
-                sourceRef: `${release.listing.namespace}/${release.listing.slug}@${release.version}`,
-                status: "published",
-                userInvocable: skill.snapshot.userInvocable,
-                agentInvocable: skill.snapshot.agentInvocable,
-                effort: skill.snapshot.effort,
-              },
-            });
-            installedSkillIds.push(installed.id);
-          }
-          const slug = await uniqueToolkitSlug(
-            tx,
-            input.targetWorkspaceId,
-            manifest.toolkit.slug,
-          );
-          const toolkit = await tx.toolkit.create({
-            data: {
-              workspaceId: input.targetWorkspaceId,
-              name: manifest.toolkit.name,
-              slug,
-              visibility: "private",
-              enabled: true,
-              categories: { connect: release.listing.categories },
-              servers: {
-                create: deploymentIds.map((deploymentId) => ({ deploymentId })),
-              },
-              skills: {
-                create: installedSkillIds.map((installedSkillId) => ({
-                  installedSkillId,
-                })),
-              },
-            },
-          });
-          const install = await tx.marketInstall.create({
-            data: {
-              listingId: release.listing.id,
-              currentReleaseId: release.id,
-              requestedReleaseId: release.id,
-              targetWorkspaceId: input.targetWorkspaceId,
-              installedById: input.installedById,
-              toolkitId: toolkit.id,
-              idempotencyKey,
-              status: requiresSetup ? "setup_required" : "ready",
-              requirements: {
-                environment: manifest.mcps.flatMap((mcp) =>
-                  mcp.recipe.env.map((name) => ({
-                    catalogSlug: mcp.catalogSlug,
-                    name,
-                  })),
-                ),
-              },
-              resourceMap: {
-                deploymentIds,
-                ownedDeploymentIds,
-                installedSkillIds,
-                ownedInstalledSkillIds: installedSkillIds,
-                toolkitId: toolkit.id,
-              },
-              lastCheckedAt: new Date(),
-            },
-          });
-          await tx.marketListing.update({
-            where: { id: release.listing.id },
-            data: { installCount: { increment: 1 } },
-          });
-          return { install, resource: toolkit, reused: false as const };
         },
         { isolationLevel: "Serializable", maxWait: 10_000, timeout: 30_000 },
       );
@@ -2898,15 +1629,6 @@ export async function installMarketRelease(input: {
       reused: result.reused,
     };
   }
-  if (release?.listing.kind === "toolkit") {
-    const result = await installToolkitRelease(input);
-    return {
-      install: result.install,
-      kind: "toolkit" as const,
-      resource: result.resource,
-      reused: result.reused,
-    };
-  }
   if (release?.listing.kind === "pi-package") {
     const result = await installPiPackageRelease(input);
     return { ...result, kind: "pi-package" as const, resource: null };
@@ -2920,42 +1642,25 @@ export async function installMarketRelease(input: {
 function preservedRecipeConfig(
   recipe: McpMarketManifestV1["mcp"]["recipe"],
   current: unknown,
+  workspaceId: string,
   toolCatalog?: McpMarketManifestV1["mcp"]["toolCatalog"],
 ) {
-  const currentConfig = installConfig(current);
-  const currentEnvironment =
-    currentConfig.env &&
-    typeof currentConfig.env === "object" &&
-    !Array.isArray(currentConfig.env)
-      ? (currentConfig.env as Record<string, unknown>)
-      : {};
+  const currentConfig = sealMcpEnvironment(installConfig(current), workspaceId);
   const data = recipeToDeploymentData(recipe);
-  data.installCfg.env = Object.fromEntries(
-    recipe.env.map((name) => [
-      name,
-      typeof currentEnvironment[name] === "string"
-        ? currentEnvironment[name]
-        : "",
-    ]),
-  );
   if (toolCatalog !== undefined) data.installCfg.toolCatalog = toolCatalog;
-  return data;
-}
-
-function resourceIds(value: unknown, key: string): string[] {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
-  const candidate = (value as Record<string, unknown>)[key];
-  return Array.isArray(candidate)
-    ? candidate.filter((id): id is string => typeof id === "string")
-    : [];
-}
-
-function toolkitSkillIdentity(
-  skill: ToolkitMarketManifestV1["skills"][number],
-): string {
-  return skill.catalogSlug
-    ? `catalog:${skill.catalogSlug}`
-    : `snapshot:${skill.snapshot.slug}`;
+  const installCfg = sealMcpEnvironment(
+    {
+      ...data.installCfg,
+      // Preserve the envelope's exact key set. New recipe requirements remain in
+      // requiredEnv until explicitly configured; old keys survive version restores.
+      env: currentConfig.env,
+      ...(currentConfig.credentialEnvelope !== undefined
+        ? { credentialEnvelope: currentConfig.credentialEnvelope }
+        : {}),
+    },
+    workspaceId,
+  );
+  return { ...data, installCfg };
 }
 
 async function updateMcpInstall(input: {
@@ -3008,8 +1713,8 @@ async function updateMcpInstall(input: {
     const releaseId = input.targetReleaseId || install.listing.latestReleaseId;
     if (
       !releaseId ||
-      install.listing.status !== "published" ||
-      releaseId !== install.listing.latestReleaseId
+      !install.listing.latestReleaseId ||
+      install.listing.status !== "published"
     ) {
       throw new MarketError(
         "listing_conflict",
@@ -3029,7 +1734,7 @@ async function updateMcpInstall(input: {
         "release_not_found",
         "The requested update was not found.",
       );
-    assertRemoteMcpRecipe(
+    assertInstallableMcpRecipe(
       parseMcpMarketManifest(release.manifest, release.checksum).mcp.recipe,
     );
     return install.deploymentId;
@@ -3093,8 +1798,8 @@ async function updateMcpInstall(input: {
             input.targetReleaseId || install.listing.latestReleaseId;
           if (
             !releaseId ||
-            install.listing.status !== "published" ||
-            releaseId !== install.listing.latestReleaseId
+            !install.listing.latestReleaseId ||
+            install.listing.status !== "published"
           ) {
             throw new MarketError(
               "listing_conflict",
@@ -3117,7 +1822,7 @@ async function updateMcpInstall(input: {
             release.manifest,
             release.checksum,
           );
-          assertRemoteMcpRecipe(manifest.mcp.recipe);
+          assertInstallableMcpRecipe(manifest.mcp.recipe);
           const server = install.listing.sourceServerId
             ? await tx.server.findFirst({
                 where: {
@@ -3131,18 +1836,37 @@ async function updateMcpInstall(input: {
                 },
               })
             : null;
-          if (!server || !hasVerifiedMcpToolCatalog(server)) {
+          if (
+            install.listing.sourceServerId &&
+            (!server || !hasVerifiedMcpToolCatalog(server))
+          ) {
             throw new MarketError(
               "listing_unavailable",
               "The reviewed catalog MCP is unavailable.",
             );
           }
+          const trustedCatalog =
+            trustedMcpToolCatalog(release.releaseSummary) ??
+            (server
+              ? trustedMcpToolCatalog(server.installCfg)
+              : manifest.mcp.toolCatalog);
+          if (trustedCatalog === undefined)
+            throw new MarketError(
+              "listing_unavailable",
+              "The reviewed MCP has no tools/list snapshot.",
+            );
           const data = preservedRecipeConfig(
             manifest.mcp.recipe,
             install.deployment.installCfg,
-            trustedMcpToolCatalog(server?.installCfg),
+            input.targetWorkspaceId,
+            trustedCatalog,
           );
+          const requiresHttpApproval =
+            data.source === "remote" &&
+            data.sourceRef.startsWith("http:") &&
+            data.installCfg.allowUnsafeHttp !== true;
           const requiresSetup =
+            requiresHttpApproval ||
             missingRequiredEnvironment(manifest.mcp.recipe, data.installCfg)
               .length > 0;
           await tx.deployment.update({
@@ -3154,7 +1878,7 @@ async function updateMcpInstall(input: {
               mcpToolExposure: manifest.mcp.toolExposure,
               mcpAllowedTools: trustedMcpAllowedTools(
                 manifest.mcp.allowedTools,
-                server?.installCfg,
+                { toolCatalog: trustedCatalog },
               ),
               ...(requiresSetup
                 ? { status: "setup_required" }
@@ -3170,7 +1894,12 @@ async function updateMcpInstall(input: {
               requestedReleaseId: release.id,
               ignoredReleaseId: null,
               status: requiresSetup ? "setup_required" : "ready",
-              requirements: { environment: manifest.mcp.recipe.env },
+              requirements: {
+                environment: manifest.mcp.recipe.env,
+                ...(requiresHttpApproval
+                  ? { unsafeHttpConfirmationRequired: true }
+                  : {}),
+              },
               lastCheckedAt: new Date(),
               lastError: null,
             },
@@ -3188,339 +1917,6 @@ async function updateMcpInstall(input: {
   return operation.value;
 }
 
-async function updateToolkitInstall(input: {
-  installId: string;
-  targetWorkspaceId: string;
-  actorId: string;
-  targetReleaseId?: string;
-  currentReleaseId?: string;
-  force?: boolean;
-}) {
-  return db.$transaction(
-    async (tx) => {
-      await assertInstallerAccess(tx, input.targetWorkspaceId, input.actorId);
-      const install = await tx.marketInstall.findFirst({
-        where: {
-          id: input.installId,
-          targetWorkspaceId: input.targetWorkspaceId,
-        },
-        include: {
-          toolkit: true,
-          currentRelease: { select: { manifest: true, checksum: true } },
-          listing: {
-            select: {
-              id: true,
-              kind: true,
-              namespace: true,
-              slug: true,
-              status: true,
-              latestReleaseId: true,
-              categories: { select: { id: true } },
-            },
-          },
-        },
-      });
-      if (!install?.toolkit || install.listing.kind !== "toolkit") {
-        throw new MarketError(
-          "install_not_found",
-          "The installed market toolkit was not found.",
-        );
-      }
-      if (
-        input.currentReleaseId &&
-        install.currentReleaseId !== input.currentReleaseId
-      ) {
-        if (install.currentReleaseId === input.targetReleaseId) return install;
-        throw new MarketError(
-          "listing_conflict",
-          "The installed version changed. Refresh and try again.",
-        );
-      }
-      if (install.status === "modified" && !input.force) {
-        throw new MarketError(
-          "local_changes",
-          "The installed toolkit has local changes.",
-        );
-      }
-      const releaseId =
-        input.targetReleaseId || install.listing.latestReleaseId;
-      if (
-        !releaseId ||
-        install.listing.status !== "published" ||
-        releaseId !== install.listing.latestReleaseId
-      ) {
-        throw new MarketError(
-          "listing_conflict",
-          "The available release changed. Refresh and try again.",
-        );
-      }
-      const release = await tx.marketRelease.findFirst({
-        where: {
-          id: releaseId,
-          listingId: install.listing.id,
-          reviewStatus: "approved",
-        },
-      });
-      if (!release)
-        throw new MarketError(
-          "release_not_found",
-          "The requested update was not found.",
-        );
-      const manifest = parseToolkitMarketManifest(
-        release.manifest,
-        release.checksum,
-      );
-      const servers = await tx.server.findMany({
-        where: {
-          slug: { in: manifest.mcps.map((mcp) => mcp.catalogSlug) },
-          verifiedAt: { not: null },
-        },
-        select: {
-          id: true,
-          slug: true,
-          installCfg: true,
-          verifiedAt: true,
-          verifiedTools: true,
-        },
-      });
-      if (
-        servers.length !==
-          new Set(manifest.mcps.map((mcp) => mcp.catalogSlug)).size ||
-        servers.some((server) => !hasVerifiedMcpToolCatalog(server))
-      ) {
-        throw new MarketError(
-          "listing_unavailable",
-          "A reviewed toolkit MCP is unavailable.",
-        );
-      }
-      const previousManifest = parseToolkitMarketManifest(
-        install.currentRelease.manifest,
-        install.currentRelease.checksum,
-      );
-      const previousOwnedDeploymentIds = new Set(
-        resourceIds(install.resourceMap, "ownedDeploymentIds"),
-      );
-      const previousSkillIds = resourceIds(
-        install.resourceMap,
-        "ownedInstalledSkillIds",
-      );
-      const ownedSkillIds = previousSkillIds.length
-        ? previousSkillIds
-        : resourceIds(install.resourceMap, "installedSkillIds");
-      const existingOwnedSkills = new Set(
-        (
-          await tx.installedSkill.findMany({
-            where: {
-              id: { in: ownedSkillIds },
-              workspaceId: input.targetWorkspaceId,
-            },
-            select: { id: true },
-          })
-        ).map(({ id }) => id),
-      );
-      const previousSkills = new Map<string, string[]>();
-      previousManifest.skills.forEach((skill, index) => {
-        const installedSkillId = ownedSkillIds[index];
-        if (!installedSkillId || !existingOwnedSkills.has(installedSkillId))
-          return;
-        const identity = toolkitSkillIdentity(skill);
-        previousSkills.set(identity, [
-          ...(previousSkills.get(identity) ?? []),
-          installedSkillId,
-        ]);
-      });
-      const serverBySlug = new Map(
-        servers.map((server) => [server.slug, server]),
-      );
-      const deploymentIds: string[] = [];
-      const ownedDeploymentIds: string[] = [];
-      let requiresSetup = false;
-      for (const mcp of manifest.mcps) {
-        const server = serverBySlug.get(mcp.catalogSlug);
-        if (!server) {
-          throw new MarketError(
-            "listing_unavailable",
-            "A reviewed toolkit MCP is unavailable.",
-          );
-        }
-        const current = await tx.deployment.findUnique({
-          where: {
-            workspaceId_serverId: {
-              workspaceId: input.targetWorkspaceId,
-              serverId: server.id,
-            },
-          },
-        });
-        const data = preservedRecipeConfig(
-          mcp.recipe,
-          current?.installCfg,
-          trustedMcpToolCatalog(server.installCfg),
-        );
-        const mcpRequiresSetup =
-          missingRequiredEnvironment(mcp.recipe, data.installCfg).length > 0;
-        requiresSetup ||= mcpRequiresSetup;
-        const deployment =
-          current && previousOwnedDeploymentIds.has(current.id)
-            ? await tx.deployment.update({
-                where: { id: current.id },
-                data: {
-                  source: data.source,
-                  sourceRef: data.sourceRef,
-                  installCfg: data.installCfg as Prisma.InputJsonValue,
-                  mcpToolExposure: mcp.toolExposure,
-                  mcpAllowedTools: trustedMcpAllowedTools(
-                    mcp.allowedTools,
-                    server.installCfg,
-                  ),
-                  ...(mcpRequiresSetup
-                    ? { status: "setup_required" }
-                    : current.status === "setup_required"
-                      ? { status: "stopped" }
-                      : {}),
-                },
-              })
-            : (current ??
-              (await tx.deployment.create({
-                data: {
-                  workspaceId: input.targetWorkspaceId,
-                  serverId: server.id,
-                  source: data.source,
-                  sourceRef: data.sourceRef,
-                  installCfg: data.installCfg as Prisma.InputJsonValue,
-                  status: mcpRequiresSetup ? "setup_required" : "stopped",
-                  mcpToolExposure: mcp.toolExposure,
-                  mcpAllowedTools: trustedMcpAllowedTools(
-                    mcp.allowedTools,
-                    server.installCfg,
-                  ),
-                },
-              })));
-        if (!current || previousOwnedDeploymentIds.has(deployment.id)) {
-          ownedDeploymentIds.push(deployment.id);
-        }
-        deploymentIds.push(deployment.id);
-      }
-      const installedSkillIds: string[] = [];
-      for (const skill of manifest.skills) {
-        const reusableId = previousSkills
-          .get(toolkitSkillIdentity(skill))
-          ?.shift();
-        const data = {
-          workspaceId: input.targetWorkspaceId,
-          name: skill.snapshot.name,
-          slug: skill.snapshot.slug,
-          description: skill.snapshot.description,
-          content: skill.snapshot.content,
-          files: skill.snapshot.files as Prisma.InputJsonValue,
-          source: "market",
-          sourceRef: `${install.listing.namespace}/${install.listing.slug}@${release.version}`,
-          status: "published",
-          userInvocable: skill.snapshot.userInvocable,
-          agentInvocable: skill.snapshot.agentInvocable,
-          effort: skill.snapshot.effort,
-        };
-        const installed = reusableId
-          ? await tx.installedSkill.update({
-              where: { id: reusableId },
-              data: {
-                name: data.name,
-                slug: data.slug,
-                description: data.description,
-                content: data.content,
-                files: data.files,
-                source: data.source,
-                sourceRef: data.sourceRef,
-                status: data.status,
-                userInvocable: data.userInvocable,
-                agentInvocable: data.agentInvocable,
-                effort: data.effort,
-              },
-            })
-          : await tx.installedSkill.create({ data });
-        installedSkillIds.push(installed.id);
-      }
-      await Promise.all([
-        tx.toolkitServer.deleteMany({
-          where: { toolkitId: install.toolkit.id },
-        }),
-        tx.toolkitSkill.deleteMany({
-          where: { toolkitId: install.toolkit.id },
-        }),
-      ]);
-      await tx.toolkit.update({
-        where: { id: install.toolkit.id },
-        data: {
-          name: manifest.toolkit.name,
-          categories: { set: install.listing.categories },
-          servers: {
-            create: deploymentIds.map((deploymentId) => ({ deploymentId })),
-          },
-          skills: {
-            create: installedSkillIds.map((installedSkillId) => ({
-              installedSkillId,
-            })),
-          },
-        },
-      });
-      const removedSkillIds = ownedSkillIds.filter(
-        (id) => !installedSkillIds.includes(id),
-      );
-      if (removedSkillIds.length) {
-        await tx.installedSkill.deleteMany({
-          where: {
-            id: { in: removedSkillIds },
-            workspaceId: input.targetWorkspaceId,
-            agentLinks: { none: {} },
-            toolkitLinks: { none: {} },
-            marketInstall: { is: null },
-          },
-        });
-      }
-      const retainedOwnedSkillIds = removedSkillIds.length
-        ? (
-            await tx.installedSkill.findMany({
-              where: {
-                id: { in: removedSkillIds },
-                workspaceId: input.targetWorkspaceId,
-              },
-              select: { id: true },
-            })
-          ).map(({ id }) => id)
-        : [];
-      return tx.marketInstall.update({
-        where: { id: install.id },
-        data: {
-          currentReleaseId: release.id,
-          requestedReleaseId: release.id,
-          ignoredReleaseId: null,
-          status: requiresSetup ? "setup_required" : "ready",
-          requirements: {
-            environment: manifest.mcps.flatMap((mcp) =>
-              mcp.recipe.env.map((name) => ({
-                catalogSlug: mcp.catalogSlug,
-                name,
-              })),
-            ),
-          },
-          resourceMap: {
-            deploymentIds,
-            ownedDeploymentIds,
-            installedSkillIds,
-            ownedInstalledSkillIds: [
-              ...installedSkillIds,
-              ...retainedOwnedSkillIds,
-            ],
-            toolkitId: install.toolkit.id,
-          },
-          lastCheckedAt: new Date(),
-          lastError: null,
-        },
-      });
-    },
-    { isolationLevel: "Serializable", maxWait: 10_000, timeout: 30_000 },
-  );
-}
-
 export async function updateMarketInstall(input: {
   installId: string;
   targetWorkspaceId: string;
@@ -3528,6 +1924,7 @@ export async function updateMarketInstall(input: {
   targetReleaseId?: string;
   currentReleaseId?: string;
   force?: boolean;
+  mcpBindings?: PiPackageMcpBindings;
 }) {
   const install = await db.marketInstall.findFirst({
     where: { id: input.installId, targetWorkspaceId: input.targetWorkspaceId },
@@ -3535,7 +1932,6 @@ export async function updateMarketInstall(input: {
   });
   if (install?.listing.kind === "skill") return updateSkillMarketInstall(input);
   if (install?.listing.kind === "mcp") return updateMcpInstall(input);
-  if (install?.listing.kind === "toolkit") return updateToolkitInstall(input);
   if (install?.listing.kind === "pi-package")
     return updatePiPackageInstall(input);
   throw new MarketError(

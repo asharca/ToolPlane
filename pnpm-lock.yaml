@@ -11,6 +11,9 @@ importers:
 
   .:
     dependencies:
+      yaml:
+        specifier: 2.9.0
+        version: 2.9.0
       '@a2a-js/sdk':
         specifier: 1.2.0
         version: 1.2.0(express@5.2.1)

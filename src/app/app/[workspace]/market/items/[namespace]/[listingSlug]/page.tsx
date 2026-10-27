@@ -1,4 +1,4 @@
-import { FormCheckbox } from "@/components/ui/FormCheckbox";
+import { storedRequiredEnvironment } from "@/lib/workspace/server-recipe";
 
 import { ButtonLink } from "@/components/motion/button";
 import { randomUUID } from "node:crypto";
@@ -19,7 +19,6 @@ import {
   Puzzle,
   RotateCw,
   ShieldCheck,
-  Wrench,
 } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { db } from "@/lib/db";
@@ -28,13 +27,14 @@ import {
   installMarketResourceAction,
   updateMarketInstallAction,
 } from "@/lib/market/actions";
+import { MarketVersionChangeForm } from "@/components/dashboard/market/MarketVersionChangeForm";
 import { parseAssistantReleaseManifest } from "@/lib/market/assistant-manifest";
-import { getMarketListing } from "@/lib/market/listings";
+import { getMarketListing, listMarketListings } from "@/lib/market/listings";
+import { parsePiPackageReleaseManifest } from "@/lib/market/pi-package-manifest";
 import { parseSkillReleaseManifest } from "@/lib/market/skill-manifest";
-import {
-  parseMcpMarketManifest,
-  parseToolkitMarketManifest,
-} from "@/lib/market/resources";
+import { parseMcpMarketManifest } from "@/lib/market/resources";
+import { getDeployments } from "@/lib/workspace/queries";
+import { deploymentLabel } from "@/lib/workspace/deployment-label";
 import { getWorkspaceForUser } from "@/lib/workspace/queries";
 import {
   hasMcpToolCatalog,
@@ -51,6 +51,8 @@ import { SubmitButton } from "@/components/dashboard/SubmitButton";
 import { McpToolCatalog } from "@/components/dashboard/McpToolCatalog";
 import { SafeStreamdown } from "@/components/dashboard/SafeStreamdown";
 import { PiPackageDetails } from "@/components/dashboard/market/PiPackageDetails";
+import { PiPackageSetupWizard } from "@/components/dashboard/market/PiPackageSetupWizard";
+import { GithubResourceProvenance } from "@/components/dashboard/market/GithubResourceProvenance";
 
 export const dynamic = "force-dynamic";
 
@@ -99,9 +101,7 @@ export default async function MarketItemPage({
   });
   if (
     !listing?.latestRelease ||
-    !["skill", "assistant", "mcp", "toolkit", "pi-package"].includes(
-      listing.kind,
-    )
+    !["skill", "assistant", "mcp", "pi-package"].includes(listing.kind)
   )
     notFound();
   const piPackage = listing.kind === "pi-package" ? listing.piPackage : null;
@@ -112,13 +112,99 @@ export default async function MarketItemPage({
       !Array.isArray(reviewSummary) &&
       reviewSummary.reviewPolicy === "official-directory",
   );
-  const sdkAgents = piPackage
-    ? await db.agent.findMany({
-        where: { workspaceId: workspace.id, runtimeKind: "pi-sdk" },
-        select: { id: true, name: true },
-        orderBy: { name: "asc" },
+  const workspaceOwnerTrusted = Boolean(
+    reviewSummary &&
+      typeof reviewSummary === "object" &&
+      !Array.isArray(reviewSummary) &&
+      reviewSummary.reviewPolicy === "workspace-owner-trust",
+  );
+  const [sdkAgents, mcpListingPage, setupDeployments, setupSandboxes] =
+    await Promise.all([
+      piPackage
+        ? db.agent.findMany({
+            where: {
+              workspaceId: workspace.id,
+              runtimeKind: "pi-sdk",
+              publicRuntimeAllocation: null,
+            },
+            select: {
+              id: true,
+              name: true,
+              currentRevisionVersion: true,
+              sandboxes: { select: { sandboxId: true } },
+            },
+            orderBy: { name: "asc" },
+          })
+        : Promise.resolve([]),
+      piPackage
+        ? listMarketListings({
+            kind: "mcp",
+            pageSize: 50,
+            sort: "name",
+            viewer: { workspaceId: workspace.id, userId: user.id },
+          })
+        : Promise.resolve({ items: [] }),
+      piPackage ? getDeployments(workspace.id) : Promise.resolve([]),
+      piPackage
+        ? db.sandbox.findMany({
+            where: {
+              workspaceId: workspace.id,
+              kind: { in: ["docker", "connector"] },
+            },
+            select: { id: true, name: true },
+            orderBy: { name: "asc" },
+          })
+        : Promise.resolve([]),
+    ]);
+  const currentAgentRevisions = sdkAgents.length
+    ? await db.agentRevision.findMany({
+        where: {
+          OR: sdkAgents.map((agent) => ({
+            agentId: agent.id,
+            version: agent.currentRevisionVersion,
+          })),
+        },
+        select: { id: true, agentId: true },
       })
     : [];
+  const currentRevisionIds = new Map(
+    currentAgentRevisions.map((revision) => [revision.agentId, revision.id]),
+  );
+  const piManifestRecord = piPackage
+    ? await db.marketRelease.findFirst({
+        where: {
+          id: listing.latestRelease.id,
+          listingId: listing.id,
+        },
+        select: { manifest: true, checksum: true },
+      })
+    : null;
+  const piManifest =
+    piPackage && piManifestRecord
+      ? parsePiPackageReleaseManifest(
+          piManifestRecord.manifest,
+          piManifestRecord.checksum,
+        )
+      : null;
+  const piMcpRequirements = piManifest?.package.toolplane?.mcp ?? [];
+  const setupMcpReleases = mcpListingPage.items.flatMap((item) =>
+    item.latestRelease
+      ? [
+          {
+            id: item.latestRelease.id,
+            name: item.name,
+            version: item.latestRelease.version,
+            requiredEnvironment: item.requiredEnvironment,
+          },
+        ]
+      : [],
+  );
+  const setupMcpDeployments = setupDeployments.map((deployment) => ({
+    id: deployment.id,
+    name: deploymentLabel(deployment).name,
+    status: deployment.status,
+    requiredEnvironment: storedRequiredEnvironment(deployment.installCfg),
+  }));
 
   const skillManifest =
     listing.kind === "skill"
@@ -149,13 +235,6 @@ export default async function MarketItemPage({
           authType: mcpManifest.mcp.recipe.authType ?? "none",
         }
       : null;
-  const toolkitManifest =
-    listing.kind === "toolkit"
-      ? parseToolkitMarketManifest(
-          listing.latestRelease.manifest,
-          listing.latestRelease.checksum,
-        )
-      : null;
 
   const install =
     listing.kind !== "assistant"
@@ -177,7 +256,6 @@ export default async function MarketItemPage({
                 installCfg: true,
               },
             },
-            toolkit: { select: { id: true, slug: true, workspaceId: true } },
           },
         })
       : null;
@@ -189,8 +267,6 @@ export default async function MarketItemPage({
     install?.deployment?.workspaceId === workspace.id
       ? install.deployment
       : null;
-  const installedToolkit =
-    install?.toolkit?.workspaceId === workspace.id ? install.toolkit : null;
   const updateAvailable = Boolean(
     install && install.currentReleaseId !== listing.latestRelease.id,
   );
@@ -202,9 +278,7 @@ export default async function MarketItemPage({
         ? "skills"
         : listing.kind === "mcp"
           ? "mcp"
-          : listing.kind === "pi-package"
-            ? "pi-packages"
-            : "toolkits";
+          : "pi-packages";
   const marketBase = `/app/${encodeURIComponent(workspaceSlug)}/market/${marketSection}`;
   const marketBackHref = `${marketBase}${connector ? "?type=connector" : ""}`;
   const publishedAt = listing.latestRelease.publishedAt ?? listing.publishedAt;
@@ -220,9 +294,7 @@ export default async function MarketItemPage({
         ? t("kindSkill")
         : listing.kind === "mcp"
           ? t(connector ? "kindMcpConnector" : "kindMcp")
-          : listing.kind === "pi-package"
-            ? t("kindPiPackage")
-            : t("kindToolkit");
+          : t("kindPiPackage");
   const installedMcpDeployment = mcpManifest ? installedDeployment : null;
   const catalogServer =
     mcpManifest && !connector
@@ -291,39 +363,15 @@ export default async function MarketItemPage({
         </form>
       ) : updateAvailable ? (
         <div className="contents">
-          <form
-            action={updateMarketInstallAction}
-            className="flex min-w-0 flex-wrap items-center gap-2"
-          >
-            <input type="hidden" name="workspace" value={workspaceSlug} />
-            <input type="hidden" name="installId" value={install.id} />
-            <input
-              type="hidden"
-              name="targetReleaseId"
-              value={listing.latestRelease.id}
-            />
-            <input
-              type="hidden"
-              name="currentReleaseId"
-              value={install.currentReleaseId}
-            />
-            {install.status === "modified" ? (
-              <FormCheckbox
-                required
-                name="force"
-                value="yes"
-                label={t("overwriteLocalChangesConfirmation")}
-              />
-            ) : null}
-            <SubmitButton
-              flash={false}
-              pendingLabel={t("updating")}
-              variant="primary"
-              size="md"
-            >
-              <RotateCw className="size-4" /> {t("update")}
-            </SubmitButton>
-          </form>
+          <MarketVersionChangeForm
+            workspace={workspaceSlug}
+            installId={install.id}
+            currentReleaseId={install.currentReleaseId}
+            targetReleaseId={listing.latestRelease.id}
+            targetVersion={listing.latestRelease.version}
+            kind="skill"
+            modified={install.status === "modified"}
+          />
           <form action={ignoreMarketUpdateAction}>
             <input type="hidden" name="workspace" value={workspaceSlug} />
             <input type="hidden" name="installId" value={install.id} />
@@ -448,12 +496,10 @@ export default async function MarketItemPage({
     ? `/app/${encodeURIComponent(workspaceSlug)}/mcp/${encodeURIComponent(installedDeployment.id)}${
         installedDeployment.status === "setup_required" ? "?tab=variables" : ""
       }`
-    : installedToolkit
-      ? `/app/${encodeURIComponent(workspaceSlug)}/toolkits/${encodeURIComponent(installedToolkit.slug)}`
-      : piPackage && install
-        ? `/app/${encodeURIComponent(workspaceSlug)}/market/installed#install-${encodeURIComponent(install.id)}`
-        : null;
-  const resourceCanInstall = Boolean(connector || toolkitManifest || piPackage);
+    : piPackage && install
+      ? `/app/${encodeURIComponent(workspaceSlug)}/market/installed#install-${encodeURIComponent(install.id)}`
+      : null;
+  const resourceCanInstall = Boolean(mcpManifest || piPackage);
   const resourceActions = resourceCanInstall ? (
     <section
       className={
@@ -491,7 +537,20 @@ export default async function MarketItemPage({
           <p>{t("piHeadlessWarning")}</p>
         </div>
       ) : null}
-      {!install ? (
+      {piPackage ? (
+        <PiPackageSetupWizard
+          workspace={workspaceSlug}
+          releaseId={listing.latestRelease.id}
+          requirements={piMcpRequirements}
+          agents={sdkAgents.map((agent) => ({
+            ...agent,
+            currentRevisionId: currentRevisionIds.get(agent.id) ?? null,
+          }))}
+          deployments={setupMcpDeployments}
+          marketMcpReleases={setupMcpReleases}
+          sandboxes={setupSandboxes}
+        />
+      ) : !install ? (
         <form
           action={installMarketResourceAction}
           className={connector ? undefined : "mt-5"}
@@ -519,32 +578,44 @@ export default async function MarketItemPage({
         </form>
       ) : updateAvailable ? (
         <div className={connector ? "contents" : "mt-5 space-y-2"}>
-          <form action={updateMarketInstallAction}>
-            <input type="hidden" name="workspace" value={workspaceSlug} />
-            <input type="hidden" name="installId" value={install.id} />
-            {piPackage ? (
-              <input type="hidden" name="kind" value="pi-package" />
-            ) : null}
-            <input
-              type="hidden"
-              name="targetReleaseId"
-              value={listing.latestRelease.id}
+          {listing.kind === "mcp" ? (
+            <MarketVersionChangeForm
+              workspace={workspaceSlug}
+              installId={install.id}
+              currentReleaseId={install.currentReleaseId}
+              targetReleaseId={listing.latestRelease.id}
+              targetVersion={listing.latestRelease.version}
+              kind="mcp"
+              modified={install.status === "modified"}
             />
-            <input
-              type="hidden"
-              name="currentReleaseId"
-              value={install.currentReleaseId}
-            />
-            <SubmitButton
-              flash={false}
-              pendingLabel={t("updating")}
-              variant="primary"
-              size="md"
-              className={connector ? undefined : "w-full"}
-            >
-              <RotateCw className="size-4" /> {t("update")}
-            </SubmitButton>
-          </form>
+          ) : (
+            <form action={updateMarketInstallAction}>
+              <input type="hidden" name="workspace" value={workspaceSlug} />
+              <input type="hidden" name="installId" value={install.id} />
+              {piPackage ? (
+                <input type="hidden" name="kind" value="pi-package" />
+              ) : null}
+              <input
+                type="hidden"
+                name="targetReleaseId"
+                value={listing.latestRelease.id}
+              />
+              <input
+                type="hidden"
+                name="currentReleaseId"
+                value={install.currentReleaseId}
+              />
+              <SubmitButton
+                flash={false}
+                pendingLabel={t("updating")}
+                variant="primary"
+                size="md"
+                className={connector ? undefined : "w-full"}
+              >
+                <RotateCw className="size-4" /> {t("update")}
+              </SubmitButton>
+            </form>
+          )}
           <form action={ignoreMarketUpdateAction}>
             <input type="hidden" name="workspace" value={workspaceSlug} />
             <input type="hidden" name="installId" value={install.id} />
@@ -626,9 +697,9 @@ export default async function MarketItemPage({
     </section>
   ) : null;
   const resourceInstallPanel =
-    mcpManifest || toolkitManifest || piPackage ? (
+    mcpManifest || piPackage ? (
       <>
-        {!connector ? resourceActions : null}
+        {piPackage ? resourceActions : null}
         <dl
           id={mcpManifest || piPackage ? undefined : "capabilities"}
           className="scroll-mt-24 space-y-3 text-xs"
@@ -670,21 +741,6 @@ export default async function MarketItemPage({
                 </div>
               ) : null}
             </>
-          ) : toolkitManifest ? (
-            <>
-              <div className="flex items-center justify-between gap-4">
-                <dt className="text-muted-foreground">{t("mcp")}</dt>
-                <dd className="font-medium text-foreground">
-                  {toolkitManifest.mcps.length}
-                </dd>
-              </div>
-              <div className="flex items-center justify-between gap-4">
-                <dt className="text-muted-foreground">{t("skills")}</dt>
-                <dd className="font-medium text-foreground">
-                  {toolkitManifest.skills.length}
-                </dd>
-              </div>
-            </>
           ) : null}
         </dl>
       </>
@@ -701,9 +757,7 @@ export default async function MarketItemPage({
               ? t("backToSkills")
               : listing.kind === "mcp"
                 ? t("backToMcp")
-                : piPackage
-                  ? t("piPackages")
-                  : t("toolkits")
+                : t("piPackages")
         }
         iconUrl={listing.iconUrl}
         icon={
@@ -713,10 +767,8 @@ export default async function MarketItemPage({
             <Brain className="size-7" />
           ) : listing.kind === "mcp" ? (
             <Box className="size-7" />
-          ) : piPackage ? (
-            <Puzzle className="size-7" />
           ) : (
-            <Wrench className="size-7" />
+            <Puzzle className="size-7" />
           )
         }
         type={resourceType}
@@ -728,7 +780,7 @@ export default async function MarketItemPage({
           mcpManifest?.mcp.description ||
           t("noDescription")
         }
-        actions={skillActions ?? (connector ? resourceActions : null)}
+        actions={skillActions ?? (mcpManifest ? resourceActions : null)}
         facts={[
           { label: t("version"), value: `v${listing.latestRelease.version}` },
           { label: t("usageCount"), value: listing.installCount },
@@ -778,6 +830,7 @@ export default async function MarketItemPage({
             .map((tag) => ({ label: tag })),
         ]}
       />
+      <GithubResourceProvenance summary={reviewSummary} />
 
       <MarketDetailShell
         navigationLabel={t("detailNavigation")}
@@ -793,16 +846,20 @@ export default async function MarketItemPage({
             <section id="overview" className="scroll-mt-24 space-y-3">
               <h2 className="font-semibold">
                 {t(
-                  officialValidated
-                    ? "piOfficialValidated"
-                    : "piReviewApproved",
+                  workspaceOwnerTrusted
+                    ? "piWorkspaceOwnerTrusted"
+                    : officialValidated
+                      ? "piOfficialValidated"
+                      : "piReviewApproved",
                 )}
               </h2>
               <p className="text-sm leading-6 text-muted-foreground">
                 {t(
-                  officialValidated
-                    ? "piOfficialValidationMeaning"
-                    : "piReviewMeaning",
+                  workspaceOwnerTrusted
+                    ? "piWorkspaceOwnerTrustMeaning"
+                    : officialValidated
+                      ? "piOfficialValidationMeaning"
+                      : "piReviewMeaning",
                 )}
               </p>
               <p className="text-sm text-muted-foreground">
@@ -825,7 +882,7 @@ export default async function MarketItemPage({
                 </p>
               ) : null}
             </section>
-            <section id="capabilities" className="scroll-mt-24">
+            <section id="capabilities" className="scroll-mt-24 space-y-4">
               <PiPackageDetails
                 snapshot={piPackage}
                 checksum={listing.latestRelease.checksum}
@@ -980,46 +1037,6 @@ export default async function MarketItemPage({
               </ButtonLink>
             ) : null}
           </>
-        ) : toolkitManifest ? (
-          <section id="overview" className="scroll-mt-24 space-y-6">
-            <div>
-              <div className="flex items-center gap-2.5">
-                <Plug className="size-[18px] text-muted-foreground" />
-                <h2 className="font-semibold text-foreground">{t("mcp")}</h2>
-              </div>
-              <div className="mt-3 divide-y divide-border/60 border-y border-border/60">
-                {toolkitManifest.mcps.map((mcp) => (
-                  <div
-                    key={mcp.catalogSlug}
-                    className="flex items-center justify-between gap-4 py-3 text-sm"
-                  >
-                    <span className="font-medium text-foreground">
-                      {mcp.name}
-                    </span>
-                    <code className="truncate text-xs text-muted-foreground">
-                      {mcp.catalogSlug}
-                    </code>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <div id="capabilities" className="scroll-mt-24">
-              <div className="flex items-center gap-2.5">
-                <Brain className="size-[18px] text-muted-foreground" />
-                <h2 className="font-semibold text-foreground">{t("skills")}</h2>
-              </div>
-              <div className="mt-3 divide-y divide-border/60 border-y border-border/60">
-                {toolkitManifest.skills.map((skill) => (
-                  <div
-                    key={skill.snapshot.slug}
-                    className="py-3 text-sm font-medium text-foreground"
-                  >
-                    {skill.snapshot.name}
-                  </div>
-                ))}
-              </div>
-            </div>
-          </section>
         ) : null}
       </MarketDetailShell>
     </DashboardPage>

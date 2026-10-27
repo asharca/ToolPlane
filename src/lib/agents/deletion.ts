@@ -1,7 +1,6 @@
 import "server-only";
 
 import { db } from "@/lib/db";
-import { cleanupHermesRuntime } from "@/lib/agents/hermes/runtime";
 import { deleteAgent, getAgentDeleteTargets } from "@/lib/agents/mutations";
 import { cleanupAgentEndpointRuntimesForSource } from "@/lib/agents/public-api/maintenance";
 import { isAgentEndpointRuntimeSandboxConfig } from "@/lib/agents/public-api/tool-policy";
@@ -40,7 +39,7 @@ export async function deleteManagedAgent(input: {
       select: {
         publicRuntimeAllocation: { select: { id: true } },
         publicEndpoints: { take: 1, select: { id: true } },
-        runtime: { select: { sandbox: { select: { config: true } } } },
+        sandboxes: { select: { sandbox: { select: { config: true } } } },
       },
     }),
   ]);
@@ -48,7 +47,9 @@ export async function deleteManagedAgent(input: {
     !workspace ||
     !agent ||
     agent.publicRuntimeAllocation ||
-    isAgentEndpointRuntimeSandboxConfig(agent.runtime?.sandbox.config)
+    agent.sandboxes.some(({ sandbox }) =>
+      isAgentEndpointRuntimeSandboxConfig(sandbox.config),
+    )
   )
     return false;
   if (
@@ -66,17 +67,8 @@ export async function deleteManagedAgent(input: {
     return false;
 
   const targets = await getAgentDeleteTargets(input.workspaceId, input.agentId);
-  for (const targetId of targets.agentIds) {
-    if (!(await cleanupHermesRuntime(input.workspaceId, targetId)))
-      return false;
-  }
   await deleteAgent(input.workspaceId, input.agentId, async () => {
     for (const sandbox of targets.sandboxes) {
-      if (sandbox.kind === "hermes") {
-        for (const volumeName of sandbox.snapshotVolumeNames)
-          await removeDockerVolumeStrict(volumeName);
-        continue;
-      }
       if (sandbox.kind !== "docker") continue;
       await killProcess(sandbox.deploymentId, {
         preventRestart: true,
