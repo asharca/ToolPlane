@@ -168,7 +168,7 @@ application/octet-stream 输出；输入仍只接受 text/plain。本地输出�
 
 ```bash
 pnpm exec prisma generate
-pnpm vitest run tests/unit/a2a-*.test.ts tests/integration/a2a-local.test.ts tests/integration/a2a-native.test.ts
+pnpm vitest run tests/integration/a2a-local.test.ts tests/integration/a2a-native.test.ts
 pnpm exec tsc --noEmit
 ```
 

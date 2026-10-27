@@ -66,7 +66,7 @@ export default async function McpServersPage({
   const anyProvisioning = deploymentItems.some(
     (deployment) => deployment.status === "provisioning",
   );
-  const marketHref = `/app/${encodeURIComponent(slug)}/market/import?type=pi`;
+  const marketHref = `/app/${encodeURIComponent(slug)}/market/mcp`;
 
   return (
     <>

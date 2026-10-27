@@ -92,8 +92,15 @@ export default async function AgentMarketPage({
       ? requestedSort
       : "popular";
   const [categories, result] = await Promise.all([
-    listAgentMarketCategories(),
-    listAgentMarketListings({ page, pageSize: PAGE_SIZE, q, category, sort }),
+    listAgentMarketCategories(workspace.id),
+    listAgentMarketListings({
+      page,
+      pageSize: PAGE_SIZE,
+      q,
+      category,
+      sort,
+      workspaceId: workspace.id,
+    }),
   ]);
   const totalPages = Math.max(1, Math.ceil(result.total / result.pageSize));
   if (category && !categories.some((item) => item.slug === category)) {

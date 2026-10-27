@@ -88,6 +88,51 @@ describe("immutable Pi package manifests", () => {
       "pi_package_invalid_source",
     );
   });
+
+  it("preserves pinned GitHub directory provenance without changing historical Git sources", () => {
+    const manifest = fixture();
+    const url = "https://github.com/team/registry.git";
+    const commit = "a".repeat(40);
+    manifest.package.source = {
+      kind: "git",
+      requested: `${url}#${commit}`,
+      url,
+      commit,
+      path: "packages/review",
+    };
+    expect(parsePiPackageReleaseManifest(manifest).package.source).toEqual(
+      manifest.package.source,
+    );
+    const checksum = marketReleaseChecksum(manifest);
+    manifest.package.source.path = "packages/another";
+    expect(() => parsePiPackageReleaseManifest(manifest, checksum)).toThrow();
+    delete manifest.package.source.path;
+    manifest.package.source.url = "https://git.example.com/team/review.git";
+    manifest.package.source.requested = `${manifest.package.source.url}#main`;
+    expect(parsePiPackageReleaseManifest(manifest).package.source).toEqual(
+      manifest.package.source,
+    );
+  });
+
+  it.each([
+    "../review",
+    "/review",
+    "packages//review",
+    "packages/./review",
+    "packages\\review",
+  ])("rejects unsafe captured directory provenance %s", (path) => {
+    const manifest = fixture();
+    const url = "https://github.com/team/registry.git";
+    const commit = "a".repeat(40);
+    manifest.package.source = {
+      kind: "git",
+      requested: `${url}#${commit}`,
+      url,
+      commit,
+      path,
+    };
+    expect(() => parsePiPackageReleaseManifest(manifest)).toThrow();
+  });
   it("accepts resource-only portable ToolPlane packages without executable placeholders", () => {
     const manifest = fixture();
     manifest.package.source = {

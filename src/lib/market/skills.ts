@@ -3,23 +3,17 @@ import { writeAudit } from "@/lib/observability/audit";
 
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
-import { ChatAssistantRevisionConfigSchema } from "@/lib/chat/revision-types";
+import {
+  visibleListings,
+  type MarketViewer,
+} from "@/lib/market/listing-access";
 import { AgentRevisionConfigSchema } from "@/lib/agents/revision-types";
 import { removeAgentRevisionPackageInTransaction } from "@/lib/agents/revisions";
 import {
-  ASSISTANT_MARKET_MANIFEST_VERSION,
-  assistantReleaseChecksum,
-  buildAssistantReleaseManifest,
   parseAssistantReleaseManifest,
   type AssistantReleaseManifestV1,
 } from "@/lib/market/assistant-manifest";
-import {
-  buildSkillReleaseManifest,
-  parseSkillReleaseManifest,
-  SKILL_MARKET_MANIFEST_VERSION,
-  skillReleaseChecksum,
-  type SkillReleaseManifestV1,
-} from "@/lib/market/skill-manifest";
+import { parseSkillReleaseManifest } from "@/lib/market/skill-manifest";
 import {
   scanMarketArtifact,
   scanSkillReleaseManifest,
@@ -95,114 +89,6 @@ export class MarketError extends Error {
   }
 }
 
-type PublishSkillInput = {
-  workspaceId: string;
-  installedSkillId: string;
-  publishedById: string;
-  categoryIds: string[];
-  listing?: {
-    slug?: string;
-    name?: string;
-    summary?: string | null;
-    iconUrl?: string | null;
-    tags?: string[];
-  };
-  releaseNotes?: string | null;
-};
-
-type PublishAssistantInput = {
-  workspaceId: string;
-  assistantId: string;
-  publishedById: string;
-  categoryIds: string[];
-  listing?: {
-    slug?: string;
-    name?: string;
-    summary?: string | null;
-    iconUrl?: string | null;
-    tags?: string[];
-  };
-  releaseNotes?: string | null;
-};
-
-const SKILL_RELEASE_SELECT = {
-  id: true,
-  workspaceId: true,
-  skillId: true,
-  name: true,
-  slug: true,
-  description: true,
-  content: true,
-  files: true,
-  source: true,
-  sourceRef: true,
-  userInvocable: true,
-  agentInvocable: true,
-  effort: true,
-  skill: {
-    select: {
-      name: true,
-      slug: true,
-      description: true,
-      author: true,
-      content: true,
-      files: true,
-      githubSource: true,
-      sourceSha: true,
-      iconUrl: true,
-    },
-  },
-} satisfies Prisma.InstalledSkillSelect;
-
-const ASSISTANT_RELEASE_SELECT = {
-  id: true,
-  workspaceId: true,
-  name: true,
-  currentRevisionVersion: true,
-  revisions: {
-    orderBy: { version: "desc" },
-    take: 1,
-    select: { version: true, config: true },
-  },
-  mcpGrants: {
-    orderBy: { createdAt: "asc" },
-    select: {
-      deploymentId: true,
-      allowedToolNames: true,
-      deployment: {
-        select: {
-          name: true,
-          sourceRef: true,
-          serverId: true,
-          source: true,
-          installCfg: true,
-          server: { select: { slug: true, name: true, verifiedAt: true } },
-        },
-      },
-    },
-  },
-} satisfies Prisma.ChatAssistantSelect;
-
-function slugify(value: string, fallback = "skill"): string {
-  return (
-    value
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 100) || fallback
-  );
-}
-
-function cleanTags(values: readonly string[] | undefined): string[] {
-  return [
-    ...new Set(
-      (values ?? [])
-        .map((value) => value.trim().toLocaleLowerCase().slice(0, 40))
-        .filter(Boolean),
-    ),
-  ].slice(0, 20);
-}
-
 function isPrismaError(error: unknown, codes: readonly string[]): boolean {
   return Boolean(
     error &&
@@ -211,30 +97,6 @@ function isPrismaError(error: unknown, codes: readonly string[]): boolean {
       typeof error.code === "string" &&
       codes.includes(error.code),
   );
-}
-
-async function assertPublisherAccess(
-  tx: Prisma.TransactionClient,
-  workspaceId: string,
-  userId: string,
-) {
-  const workspace = await tx.workspace.findFirst({
-    where: {
-      id: workspaceId,
-      status: "active",
-      OR: [
-        { ownerId: userId },
-        { members: { some: { userId, role: { in: ["owner", "admin"] } } } },
-      ],
-    },
-    select: { id: true, slug: true, name: true },
-  });
-  if (!workspace)
-    throw new MarketError(
-      "not_authorized",
-      "Only a workspace owner or admin can publish.",
-    );
-  return workspace;
 }
 
 async function validatedCategoryIds(
@@ -273,39 +135,6 @@ async function assertInstallerAccess(
     throw new MarketError("not_authorized", "Workspace access was denied.");
 }
 
-async function uniqueListingSlug(
-  tx: Prisma.TransactionClient,
-  namespace: string,
-  desired: string,
-  existingId?: string,
-): Promise<string> {
-  const base = slugify(desired);
-  for (let suffix = 0; suffix < 10_000; suffix += 1) {
-    const slug = suffix === 0 ? base : `${base}-${suffix + 1}`;
-    const conflict = await tx.marketListing.findFirst({
-      where: {
-        namespace,
-        slug,
-        ...(existingId ? { id: { not: existingId } } : {}),
-      },
-      select: { id: true },
-    });
-    if (!conflict) return slug;
-  }
-  throw new MarketError(
-    "listing_conflict",
-    "Could not allocate a unique market slug.",
-  );
-}
-
-function skillReleaseSummary(manifest: SkillReleaseManifestV1) {
-  return {
-    fileCount: manifest.skill.files.length,
-    source: manifest.skill.source.type,
-    contentBytes: Buffer.byteLength(manifest.skill.content, "utf8"),
-  };
-}
-
 function assistantReleaseSummary(manifest: AssistantReleaseManifestV1) {
   return {
     providerFormat: manifest.assistant.modelRequirement?.providerFormat ?? null,
@@ -313,339 +142,6 @@ function assistantReleaseSummary(manifest: AssistantReleaseManifestV1) {
     mcpCount: manifest.assistant.mcpRequirements.length,
     maxSteps: manifest.assistant.maxSteps,
   };
-}
-
-export async function publishSkillRelease(input: PublishSkillInput) {
-  try {
-    return await db.$transaction(
-      async (tx) => {
-        const workspace = await assertPublisherAccess(
-          tx,
-          input.workspaceId,
-          input.publishedById,
-        );
-        const categoryIds = await validatedCategoryIds(tx, input.categoryIds);
-        const source = await tx.installedSkill.findFirst({
-          where: { id: input.installedSkillId, workspaceId: input.workspaceId },
-          select: SKILL_RELEASE_SELECT,
-        });
-        if (!source)
-          throw new MarketError(
-            "source_not_found",
-            "The source skill was not found.",
-          );
-
-        const baseManifest = buildSkillReleaseManifest(source);
-        const existing = await tx.marketListing.findUnique({
-          where: { sourceInstalledSkillId: source.id },
-        });
-        if (existing && existing.publisherWorkspaceId !== input.workspaceId) {
-          throw new MarketError(
-            "listing_conflict",
-            "This skill is already listed elsewhere.",
-          );
-        }
-
-        const listingSlug = existing?.latestReleaseId
-          ? existing.slug
-          : await uniqueListingSlug(
-              tx,
-              workspace.slug,
-              input.listing?.slug || baseManifest.skill.slug,
-              existing?.id,
-            );
-        const name =
-          input.listing?.name?.trim().slice(0, 240) || baseManifest.skill.name;
-        const summary =
-          input.listing?.summary?.trim().slice(0, 4_000) ||
-          baseManifest.skill.description ||
-          null;
-        const iconUrl =
-          input.listing?.iconUrl?.trim().slice(0, 2_000) ||
-          source.skill?.iconUrl ||
-          null;
-        const tags = cleanTags(input.listing?.tags);
-        const author = source.skill?.author || workspace.name;
-        const manifest = parseSkillReleaseManifest({
-          ...baseManifest,
-          listing: { slug: listingSlug, name, summary, iconUrl, tags, author },
-        });
-        const scanResult = scanSkillReleaseManifest(
-          manifest,
-          input.releaseNotes,
-        );
-        if (scanResult.status === "blocked") {
-          throw new MarketError(
-            "invalid_manifest",
-            "Remove credentials from the Skill before publishing it.",
-          );
-        }
-        const metadata = {
-          author,
-          source: manifest.skill.source.type,
-        } satisfies Prisma.InputJsonObject;
-
-        const listing = existing
-          ? await tx.marketListing.update({
-              where: { id: existing.id },
-              data: {
-                publishedById: input.publishedById,
-                ...(!existing.latestReleaseId
-                  ? {
-                      slug: listingSlug,
-                      name,
-                      summary,
-                      iconUrl,
-                      tags,
-                      metadata,
-                      categories: { set: categoryIds.map((id) => ({ id })) },
-                    }
-                  : {}),
-              },
-            })
-          : await tx.marketListing.create({
-              data: {
-                kind: "skill",
-                namespace: workspace.slug,
-                slug: listingSlug,
-                publisherKind: "workspace",
-                publisherWorkspaceId: workspace.id,
-                publishedById: input.publishedById,
-                sourceInstalledSkillId: source.id,
-                categories: { connect: categoryIds.map((id) => ({ id })) },
-                name,
-                summary,
-                iconUrl,
-                tags,
-                metadata,
-              },
-            });
-
-        if (listing.pendingReleaseId) {
-          await tx.marketRelease.updateMany({
-            where: { id: listing.pendingReleaseId, reviewStatus: "pending" },
-            data: {
-              reviewStatus: "rejected",
-              reviewedAt: new Date(),
-              reviewNote: "Superseded by a newer publisher submission.",
-            },
-          });
-        }
-
-        const version = listing.latestVersion + 1;
-        const release = await tx.marketRelease.create({
-          data: {
-            listingId: listing.id,
-            version,
-            manifestVersion: SKILL_MARKET_MANIFEST_VERSION,
-            manifest: manifest as Prisma.InputJsonValue,
-            releaseSummary: skillReleaseSummary(manifest),
-            checksum: skillReleaseChecksum(manifest),
-            releaseNotes: input.releaseNotes?.trim().slice(0, 10_000) || null,
-            categoryIds,
-            scanResult: scanResult as Prisma.InputJsonValue,
-            reviewStatus: "pending",
-          },
-        });
-        const submitted = await tx.marketListing.update({
-          where: { id: listing.id },
-          data: {
-            latestVersion: version,
-            pendingReleaseId: release.id,
-            status: listing.latestReleaseId ? listing.status : "draft",
-          },
-        });
-        return { listing: submitted, release, manifest };
-      },
-      { isolationLevel: "Serializable", maxWait: 10_000, timeout: 30_000 },
-    );
-  } catch (error) {
-    if (error instanceof MarketError) throw error;
-    if (isPrismaError(error, ["P2002", "P2034"])) {
-      throw new MarketError(
-        "listing_conflict",
-        "The listing changed while it was being published.",
-      );
-    }
-    throw error;
-  }
-}
-
-export async function publishAssistantRelease(input: PublishAssistantInput) {
-  try {
-    return await db.$transaction(
-      async (tx) => {
-        const workspace = await assertPublisherAccess(
-          tx,
-          input.workspaceId,
-          input.publishedById,
-        );
-        const categoryIds = await validatedCategoryIds(tx, input.categoryIds);
-        const source = await tx.chatAssistant.findFirst({
-          where: { id: input.assistantId, workspaceId: input.workspaceId },
-          select: ASSISTANT_RELEASE_SELECT,
-        });
-        if (!source)
-          throw new MarketError(
-            "source_not_found",
-            "The source assistant was not found.",
-          );
-        if (
-          source.mcpGrants.some(
-            ({ deployment }) => !deployment.server?.verifiedAt,
-          )
-        ) {
-          throw new MarketError(
-            "invalid_manifest",
-            "Assistants may publish only verified catalog MCP requirements.",
-          );
-        }
-
-        const revision = source.revisions[0];
-        if (!revision || revision.version !== source.currentRevisionVersion)
-          throw new MarketError(
-            "invalid_manifest",
-            "Publish an immutable Assistant revision before publishing a template.",
-          );
-        const config = ChatAssistantRevisionConfigSchema.parse(revision.config);
-        const pinnedProvider = config.modelProviderId
-          ? await tx.modelProvider.findFirst({
-              where: {
-                id: config.modelProviderId,
-                workspaceId: input.workspaceId,
-              },
-              select: { format: true },
-            })
-          : null;
-        const baseManifest = buildAssistantReleaseManifest({
-          ...source,
-          config,
-          modelProvider: pinnedProvider,
-        });
-        const existing = await tx.marketListing.findUnique({
-          where: { sourceChatAssistantId: source.id },
-        });
-        if (existing && existing.publisherWorkspaceId !== input.workspaceId) {
-          throw new MarketError(
-            "listing_conflict",
-            "This assistant is already listed elsewhere.",
-          );
-        }
-
-        const listingSlug = existing?.latestReleaseId
-          ? existing.slug
-          : await uniqueListingSlug(
-              tx,
-              workspace.slug,
-              input.listing?.slug || source.name,
-              existing?.id,
-            );
-        const name = input.listing?.name?.trim().slice(0, 240) || source.name;
-        const summary = input.listing?.summary?.trim().slice(0, 4_000) || null;
-        const iconUrl = input.listing?.iconUrl?.trim().slice(0, 2_000) || null;
-        const tags = cleanTags(input.listing?.tags);
-        const author = workspace.name;
-        const manifest = parseAssistantReleaseManifest({
-          ...baseManifest,
-          listing: { slug: listingSlug, name, summary, iconUrl, tags, author },
-        });
-        const scanResult = scanMarketArtifact(manifest, input.releaseNotes);
-        if (scanResult.status === "blocked") {
-          throw new MarketError(
-            "invalid_manifest",
-            "Remove credentials from the assistant before publishing it.",
-          );
-        }
-        const metadata = {
-          author,
-          type: "chat",
-          ...assistantReleaseSummary(manifest),
-        } satisfies Prisma.InputJsonObject;
-
-        const listing = existing
-          ? await tx.marketListing.update({
-              where: { id: existing.id },
-              data: {
-                publishedById: input.publishedById,
-                ...(!existing.latestReleaseId
-                  ? {
-                      slug: listingSlug,
-                      name,
-                      summary,
-                      iconUrl,
-                      tags,
-                      metadata,
-                      categories: { set: categoryIds.map((id) => ({ id })) },
-                    }
-                  : {}),
-              },
-            })
-          : await tx.marketListing.create({
-              data: {
-                kind: "assistant",
-                namespace: workspace.slug,
-                slug: listingSlug,
-                publisherKind: "workspace",
-                publisherWorkspaceId: workspace.id,
-                publishedById: input.publishedById,
-                sourceChatAssistantId: source.id,
-                categories: { connect: categoryIds.map((id) => ({ id })) },
-                name,
-                summary,
-                iconUrl,
-                tags,
-                metadata,
-              },
-            });
-
-        if (listing.pendingReleaseId) {
-          await tx.marketRelease.updateMany({
-            where: { id: listing.pendingReleaseId, reviewStatus: "pending" },
-            data: {
-              reviewStatus: "rejected",
-              reviewedAt: new Date(),
-              reviewNote: "Superseded by a newer publisher submission.",
-            },
-          });
-        }
-
-        const version = listing.latestVersion + 1;
-        const release = await tx.marketRelease.create({
-          data: {
-            listingId: listing.id,
-            version,
-            manifestVersion: ASSISTANT_MARKET_MANIFEST_VERSION,
-            manifest: manifest as Prisma.InputJsonValue,
-            releaseSummary: assistantReleaseSummary(manifest),
-            checksum: assistantReleaseChecksum(manifest),
-            releaseNotes: input.releaseNotes?.trim().slice(0, 10_000) || null,
-            categoryIds,
-            scanResult: scanResult as Prisma.InputJsonValue,
-            reviewStatus: "pending",
-          },
-        });
-        const submitted = await tx.marketListing.update({
-          where: { id: listing.id },
-          data: {
-            latestVersion: version,
-            pendingReleaseId: release.id,
-            status: listing.latestReleaseId ? listing.status : "draft",
-          },
-        });
-        return { listing: submitted, release, manifest };
-      },
-      { isolationLevel: "Serializable", maxWait: 10_000, timeout: 30_000 },
-    );
-  } catch (error) {
-    if (error instanceof MarketError) throw error;
-    if (isPrismaError(error, ["P2002", "P2034"])) {
-      throw new MarketError(
-        "listing_conflict",
-        "The listing changed while it was being published.",
-      );
-    }
-    throw error;
-  }
 }
 
 export async function approveMarketRelease(input: {
@@ -1753,12 +1249,15 @@ function assistantTemplate(row: AssistantTemplateRow) {
   }
 }
 
-export async function getAssistantMarketTemplate(releaseId: string) {
+export async function getAssistantMarketTemplate(
+  releaseId: string,
+  viewer?: MarketViewer,
+) {
   const listing = await db.marketListing.findFirst({
     where: {
       kind: "assistant",
       status: "published",
-      visibility: "public",
+      AND: [await visibleListings(viewer)],
       latestReleaseId: releaseId,
       latestRelease: { is: { reviewStatus: "approved" } },
     },
@@ -1782,7 +1281,7 @@ export async function getAssistantMarketTemplate(releaseId: string) {
 }
 
 export async function listAssistantMarketTemplates(
-  input: { q?: string; limit?: number } = {},
+  input: { q?: string; limit?: number; viewer?: MarketViewer } = {},
 ) {
   const term = input.q?.trim().slice(0, 200) ?? "";
   const limit =
@@ -1795,7 +1294,7 @@ export async function listAssistantMarketTemplates(
     where: {
       kind: "assistant",
       status: "published",
-      visibility: "public",
+      AND: [await visibleListings(input.viewer)],
       latestReleaseId: { not: null },
       latestRelease: { is: { reviewStatus: "approved" } },
       ...(term

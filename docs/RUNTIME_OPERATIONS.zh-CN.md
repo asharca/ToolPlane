@@ -80,6 +80,35 @@ Docker MCP 的环境值只通过运行时 stdin 引导传入，不使用 Docker 
 
 生产启动器收到 SIGTERM/SIGINT 后停止接收 HTTP、停止维护任务/coordinator/broker，有界排空或中止已跟踪工作，最后释放独立连接锁。启动器外层退出上限为 50 秒，Compose 提供 60 秒。超时或不确定操作保留 dirty 标记。自定义进程管理器应给予同等宽限并调用受管停机流程。`pnpm dev` 不具备生产启动器的信号编排，异常停止后可能需要显式恢复。
 
+## GitHub 资源中心
+
+资源中心只接受配置过的 GitHub 仓库索引，不接受本地 ZIP/目录上传、手工内容发布或未收录 npm 包的即时导入。工作区私有 Skill 编辑、自定义 MCP 配置、聊天与 Work 附件不是目录发布，不在此次移除范围内。已有不可变版本保持真实来源和 checksum，不伪造 GitHub 历史，也不自动更改 Agent/会话 pins。
+
+工作区 owner/admin 在资源中心登记 `owner/repository`、分支和可见范围，初始官方仓库是 [`asharca/toolplane-resources`](https://github.com/asharca/toolplane-resources)。添加和手动同步会登记持久任务；只有运行时 owner 就绪时后台才处理。目录读取对成员开放，管理操作重新检查工作区角色。私有 GitHub 仓库只能登记为私有来源，凭据在数据库中加密，页面和制品只投影配置状态。
+
+仓库根 `registry.json` 示例：
+
+```json
+{
+  "schemaVersion": 1,
+  "resources": [
+    { "id": "ocrplane-cli", "kind": "skill", "version": "1.0.0", "path": "skills/ocrplane-cli" }
+  ]
+}
+```
+
+支持 `skill`、`mcp`、`pi-package`、`agent`、`assistant`。每个目录提供 `resource.json`；Skill 还包含 `SKILL.md`，Pi 包包含 `package.json` 和可加载文件。描述格式和维护流程以[资源仓库](https://github.com/asharca/toolplane-resources)为准。Agent 沿用可移植 graph manifest 和真实 AgentRelease 安装路径，安装只创建需重新授权的 Pi 草稿，不继承运行时状态。
+
+非远程 MCP 描述必须在 `mcp.toolCatalog` 保存已审查的真实 `tools/list` 响应中的 `result.tools` 数组；每项需有唯一名称和对象形式的 `inputSchema`，可保留 description、outputSchema 与 annotations。仅在真实发现结果为空时使用空数组。同步直接严格校验原始快照，缺失或畸形时显示 `resource_mcp_tool_catalog_invalid` 并保留整个上一版目录，不发布已知无法安装的版本。远程 Connector 沿用连接后的真实发现协议；同步不运行 MCP，也不会因此授予工具权限。
+
+索引以稳定 `id` 标识资源，目录内每个资源独立使用语义版本。可用 `source: { repository, commit, path }` 指向外部仓库的完整 40 位提交；跨仓库引用只允许公开内容，不把主仓库令牌转发给其他仓库。私有资源应直接登记其所属仓库及只读令牌。
+
+同步先解析分支为固定 SHA，再从同一 SHA 读取索引与内容并校验 Git blob；公开内容使用无凭据的固定 raw URL，私有内容通过 GitHub API 读取。禁止下载重定向、越界路径、软链接/submodule 与截断 tree；单文件最多 4 MiB、目录 32 MiB、一次同步 64 MiB，索引最多 200 项。同版本内容变化拒绝发布，未变资源复用原不可变版本。所有准备完成后事务切换可见目录；失败保留上一版，旧任务不能覆盖新一代结果。仓库不可达不等于资源被移除。
+
+自动同步需部署者显式设置高熵 `TOOLPLANE_RESOURCE_REGISTRY_WEBHOOK_SECRET`，它仅是服务端主密钥，绝不能直接填入 GitHub 或下发用户。工作区 owner/admin 点击“获取 Webhook 配置”后，平台按工作区与仓库 ID 派生该仓库独立的签名密钥；将返回的端点 `/api/v1/resource-registries/{registryId}/webhook` 和派生 Secret 配置为 GitHub JSON push Webhook。一个工作区拿到自己的密钥也不能为其他仓库伪造事件。主密钥未配置返回 503，签名错误返回 401，载荷上限 1 MiB；仅匹配已登记仓库和分支的有效 push 排队。GitHub delivery ID 去重；HTTP 202 只代表已排队，不代表发布完成。无 Webhook 时仍可手动同步，不接受未签名请求降级。轮换主密钥后必须重新配置各仓库 Webhook。
+
+移除索引条目或停用来源只撤回目录可发现性，不删除已被引用的制品、会话或工作卷；实时权限及危险版本撤销仍生效。索引撤回使用 draft，管理员安全下架使用 disabled；任何同步或新版本均不得覆盖管理员下架。GitHub PR/CI 审核不是执行授权：用户安装后仍须审阅 receipt、CAS 与准确版本，并明确应用到 Agent。同步服务不在应用宿主机执行仓库脚本。
+
 ## 冻结的 Pi 扩展包
 
 `pi-package` 是不可变 Pi 资源与可选扩展代码的制品。所有新执行统一走固定 Pi SDK；
@@ -98,21 +127,7 @@ docker build --target pi-package-capture -t toolplane-pi-package-capture:0.87.1 
 DNS 和重定向后的私网地址。公开或明确配置凭据的 npm/Git 生产依赖一起冻结，不执行扩展 factory、
 生命周期脚本、Git hooks 或 pnpmfile。需要构建的包须提供可加载产物；超过
 16 MiB 的文件明确拒绝，不跳过。
-上传 Pi ZIP 的原生扩展、Skill、提示词和主题共用隔离捕获、依赖冻结、文件清单及审核流程。
-提交 `sourceType=zip`、`archive` File，并明确勾选 `confirmExecutableCode=on`；
-不可变来源信息记录上传文件的 SHA-256。ZIP 上限为压缩 32 MiB、解压后 64 MiB、
-单文件 16 MiB、20,000 项、单文件压缩比 1,000:1。仅接受 stored/deflate 普通文件和目录；
-路径穿越、链接、特殊文件、大小写/Unicode 冲突、损坏头部和 CRC 不匹配均拒绝。
-支持直接包根目录或外包一层目录。可信脚本更新后须重新构建捕获镜像。
-Npm/Git/ZIP 发布须先以相同来源字段调用 `previewPiPackageSourceAction`，ZIP 预览
-也须明确授权可执行代码。预览实际隔离捕获，仅返回资源/文件元数据、平台/runtime、
-MCP 要求、解析后的固定来源和 `sourceDigest`，不返回文件内容或凭据。发布时向
-`publishPiPackageReleaseAction` 传入该 digest；再次捕获并比较包含依赖的完整快照。
-缺少预览返回 `source_preview_required`；上传变化、Git ref 移动或依赖漂移返回
-`source_changed`，须重新预览。组装发布同样要求已审阅的冻结摘要；目录/service
-调用没有省略摘要的后门。明确指定 `sourceType=release` 则选择所属工作区的准确
-不可变 release，复用重新校验的冻结字节，不抓取上游。预览不创建市场记录、不安装
-代码，需要与捕获相同的 owner/admin 权限和运行时所有权。
+资源中心中的 Pi 包仅从上述固定 GitHub 目录进入隔离捕获，记录仓库、完整提交和目录来源；同资源同版本的内容不得变化。内部受控归档只是捕获传输格式，不提供 ZIP 上传或 npm/Git 直接发布 action。既有冻结制品、客户端分发和受控 Toolkit 转换仍可复用内部捕获/组装能力，不能借此绕过仓库索引新增公开资源。可信捕获脚本更新后须重新构建捕获镜像。
 
 审核重新验证路径、链接、解码后的 secret scan、文件 hash 和整个 release checksum。
 安装只产生 ready `MarketInstall`，不执行代码。工作区升级同时更新两个 install

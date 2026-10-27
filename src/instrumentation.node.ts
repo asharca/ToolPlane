@@ -3,6 +3,7 @@ import { runtimeCanOperate } from "@/lib/runtime/ownership-state";
 import { systemLog } from "@/lib/observability/system";
 import { maintainPiPackageSources } from "@/lib/market/pi-package-catalog";
 import { stopIdleAgentConversationSandboxes } from "@/lib/agents/conversation-sandbox";
+import { runPendingGithubResourceSyncJobs } from "@/lib/market/github-registry";
 // Next.js startup hook. Runs once when the Node server boots to recover MCP
 // processes, channel runners, and sandbox data operations interrupted by a restart.
 export async function registerNode() {
@@ -19,6 +20,7 @@ async function registerNodeOwned() {
     __agentConversationMaintenanceTimer?: NodeJS.Timeout;
     __logMaintenanceTimer?: ReturnType<typeof setInterval>;
     __piPackageSourceMaintenanceTimer?: NodeJS.Timeout;
+    __githubResourceSyncTimer?: NodeJS.Timeout;
   };
   if (g.__mcpReconciled) return;
   g.__mcpReconciled = true;
@@ -27,6 +29,7 @@ async function registerNodeOwned() {
       g.__logMaintenanceTimer,
       g.__agentConversationMaintenanceTimer,
       g.__piPackageSourceMaintenanceTimer,
+      g.__githubResourceSyncTimer,
     ]) {
       if (timer) clearInterval(timer);
     }
@@ -70,6 +73,20 @@ async function registerNodeOwned() {
       void maintain();
     }, 5 * 60_000);
     g.__piPackageSourceMaintenanceTimer.unref?.();
+  }
+  if (!g.__githubResourceSyncTimer) {
+    const synchronize = async () => {
+      if (!runtimeCanOperate()) return;
+      try {
+        await runPendingGithubResourceSyncJobs();
+      } catch {
+        systemLog("error", "GitHub resource registry maintenance failed");
+      }
+    };
+    g.__githubResourceSyncTimer = setInterval(() => {
+      void synchronize();
+    }, 15_000);
+    g.__githubResourceSyncTimer.unref?.();
   }
   const helpersCreatedBefore = new Date();
   // A materializer normally lives for only a few seconds. Unlike the broader

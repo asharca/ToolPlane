@@ -41,7 +41,7 @@ export default async function MarketPublishPage({
           select: { role: true },
         }),
   ]);
-  const canPublish =
+  const canManage =
     workspace.ownerId === user.id || membership?.role === "admin";
   const base = `/app/${encodeURIComponent(workspace.slug)}`;
 
@@ -81,7 +81,7 @@ export default async function MarketPublishPage({
         <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">
           {t("publishDescription")}
         </p>
-        {!canPublish ? (
+        {!canManage ? (
           <p className="mt-2 text-xs text-(--color-warning) dark:text-(--color-warning)">
             {t("publishRequiresManager")}
           </p>
@@ -136,15 +136,6 @@ export default async function MarketPublishPage({
                       {t("viewDetails")}
                     </ButtonLink>
                   ) : null}
-                  {canPublish && listing.kind === "pi-package" ? (
-                    <ButtonLink
-                      href={`${base}/market/import?type=pi&listingId=${encodeURIComponent(listing.id)}`}
-                      variant="secondary"
-                      size="sm"
-                    >
-                      {t("submitNewVersion")}
-                    </ButtonLink>
-                  ) : null}
                 </div>
                 {listing.pendingRelease?.reviewNote ? (
                   <p className="text-sm text-muted-foreground">
@@ -154,7 +145,7 @@ export default async function MarketPublishPage({
                 <PublisherControls
                   listing={listing}
                   workspace={workspace.slug}
-                  canPublish={canPublish}
+                  canManage={canManage}
                   labels={publisherControlLabels}
                 />
               </article>
@@ -169,14 +160,14 @@ export default async function MarketPublishPage({
 
       <section className="space-y-3 rounded-lg border border-border p-4">
         <p className="text-sm leading-6 text-muted-foreground">
-          {t("packageImportOnly")}
+          {t("githubRegistry.publicationHelp")}
         </p>
         <ButtonLink
-          href={`${base}/market/import`}
+          href={`${base}/market/sources`}
           variant="secondary"
           size="sm"
         >
-          {t("intakePi")}
+          {t("githubRegistry.title")}
         </ButtonLink>
       </section>
     </DashboardPage>

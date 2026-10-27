@@ -295,9 +295,24 @@ function ListingForm({
               defaultValue={listing.status}
               label={t("statusColumn")}
               options={[
-                { value: "draft", label: t("agentListingStatusDraft") },
-                { value: "published", label: t("agentListingStatusPublished") },
-                { value: "disabled", label: t("agentListingStatusDisabled") },
+                {
+                  value: listing.status,
+                  label: t(
+                    listing.status === "published"
+                      ? "agentListingStatusPublished"
+                      : listing.status === "disabled"
+                        ? "agentListingStatusDisabled"
+                        : "agentListingStatusDraft",
+                  ),
+                },
+                ...(listing.status !== "disabled"
+                  ? [
+                      {
+                        value: "disabled",
+                        label: t("agentListingStatusDisabled"),
+                      },
+                    ]
+                  : []),
               ]}
             />
           </div>

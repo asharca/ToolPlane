@@ -216,6 +216,7 @@ model Workspace {
   agentListings          AgentListing[]           @relation("AgentListingWorkspace")
   agentInstalls          AgentInstall[]           @relation("AgentInstallWorkspace")
   marketListings         MarketListing[]          @relation("MarketListingPublisherWorkspace")
+  githubResourceRegistries GithubResourceRegistry[]
   marketInstalls         MarketInstall[]          @relation("MarketInstallWorkspace")
   agentEndpoints         AgentEndpoint[]
   skillInvocations       SkillInvocation[]
@@ -653,6 +654,7 @@ model AgentComposerPrompt {
 // The listing points at an immutable release artifact; no runtime secret or
 // workspace-owned tool id is exposed through this model.
 model AgentListing {
+  visibility String @default("public")
   id                   String         @id @default(cuid())
   publisherKind        String         @default("workspace")
   publisherWorkspaceId String?
@@ -680,6 +682,7 @@ model AgentListing {
   publishedAt          DateTime?
   releases             AgentRelease[] @relation("AgentListingReleases")
   categories           Category[]     @relation("AgentListingCategories")
+  githubRegistryResource GithubRegistryResource?
   createdAt            DateTime       @default(now())
   updatedAt            DateTime       @updatedAt
 
@@ -700,6 +703,7 @@ model AgentRelease {
   manifest        Json
   releaseSummary  Json
   checksum        String
+  author          String?
   name            String
   summary         String?
   iconUrl         String?
@@ -714,6 +718,7 @@ model AgentRelease {
   latestFor       AgentListing?  @relation("AgentListingLatestRelease")
   pendingFor      AgentListing?  @relation("AgentListingPendingRelease")
   installs        AgentInstall[]
+  githubRegistryVersion GithubRegistryVersion?
 
   @@unique([listingId, version])
   @@index([listingId, publishedAt])
@@ -792,6 +797,7 @@ model MarketListing {
   publishedAt            DateTime?
   releases               MarketRelease[] @relation("MarketListingReleases")
   installs               MarketInstall[]
+  githubRegistryResource GithubRegistryResource?
   createdAt              DateTime        @default(now())
   updatedAt              DateTime        @updatedAt
 
@@ -833,6 +839,7 @@ model MarketRelease {
   chatAssistants  ChatAssistant[] @relation("ChatAssistantMarketTemplate")
   agentPiPackages AgentPiPackage[]
   piSessionPackages PiSessionPackage[]
+  githubRegistryVersion GithubRegistryVersion?
   createdAt       DateTime        @default(now())
 
   @@unique([listingId, version])
@@ -1997,4 +2004,82 @@ model ChatToolConfirmation {
   @@unique([turnId, toolCallId])
   @@index([turnId, status, createdAt])
   @@index([approverUserId])
+}
+
+// GitHub credentials remain encrypted and server-only; releases contain only pinned provenance.
+model GithubResourceRegistry {
+  id String @id @default(cuid())
+  workspaceId String
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdById String
+  name String
+  repository String
+  branch String @default("main")
+  visibility String @default("private")
+  credentials Json?
+  status String @default("pending")
+  generation Int @default(0)
+  lastAppliedCommit String?
+  lastSyncAt DateTime?
+  error String?
+  leaseToken String?
+  leaseExpiresAt DateTime?
+  jobs GithubResourceSyncJob[]
+  resources GithubRegistryResource[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([workspaceId, repository, branch])
+  @@index([status, leaseExpiresAt])
+}
+
+model GithubResourceSyncJob {
+  id String @id @default(cuid())
+  registryId String
+  registry GithubResourceRegistry @relation(fields: [registryId], references: [id], onDelete: Cascade)
+  generation Int
+  deliveryId String?
+  leaseToken String?
+  status String @default("pending")
+  commit String?
+  error String?
+  startedAt DateTime?
+  finishedAt DateTime?
+  createdAt DateTime @default(now())
+
+  @@unique([registryId, deliveryId])
+  @@index([status, createdAt])
+}
+
+model GithubRegistryResource {
+  id String @id @default(cuid())
+  registryId String
+  registry GithubResourceRegistry @relation(fields: [registryId], references: [id], onDelete: Cascade)
+  resourceId String
+  kind String
+  listingId String? @unique
+  listing MarketListing? @relation(fields: [listingId], references: [id], onDelete: Restrict)
+  agentListingId String? @unique
+  agentListing AgentListing? @relation(fields: [agentListingId], references: [id], onDelete: Restrict)
+  active Boolean @default(true)
+  versions GithubRegistryVersion[]
+
+  @@unique([registryId, resourceId])
+}
+
+model GithubRegistryVersion {
+  id String @id @default(cuid())
+  resourceId String
+  resource GithubRegistryResource @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+  version String
+  digest String
+  sourceRepository String
+  sourceCommit String
+  sourcePath String
+  releaseId String? @unique
+  release MarketRelease? @relation(fields: [releaseId], references: [id], onDelete: Restrict)
+  agentReleaseId String? @unique
+  agentRelease AgentRelease? @relation(fields: [agentReleaseId], references: [id], onDelete: Restrict)
+
+  @@unique([resourceId, version])
 }

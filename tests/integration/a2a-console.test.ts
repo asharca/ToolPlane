@@ -39,7 +39,6 @@ import {
   getA2AConsoleView,
   mutateA2AConsole,
   type ConsoleActor,
-  A2AConsoleAction,
 } from "@/lib/a2a/console-service";
 import {
   createAgentApiKey,
@@ -260,16 +259,6 @@ describe("A2A console directional policy and retained credentials", () => {
         ).rejects.toMatchObject({ status: 403 });
     },
   );
-
-  it("rejects obsolete enablement aliases and published credential issuance at the action boundary", () => {
-    for (const input of [
-      { action: "set-local", enabled: true },
-      { action: "set-public", enabled: true },
-      { action: "create-client", name: "Obsolete" },
-      { action: "create-key", clientId: "old-client" },
-    ])
-      expect(A2AConsoleAction.safeParse(input).success).toBe(false);
-  });
 
   it("rejects disabled users, closing workspaces and foreign targets", async () => {
     await db.user.update({

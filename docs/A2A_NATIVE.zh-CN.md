@@ -124,7 +124,7 @@ agentId 作为授权。读、继续、取消和订阅都限制到 Endpoint、客
 
 ```bash
 pnpm exec prisma generate
-pnpm vitest run tests/unit/a2a-*.test.ts tests/integration/a2a-native.test.ts
+pnpm vitest run tests/integration/a2a-native.test.ts
 pnpm exec tsc --noEmit
 pnpm lint
 ```

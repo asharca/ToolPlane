@@ -8,7 +8,7 @@ import { assertRuntimeOwner } from "@/lib/runtime/ownership-state";
 import { publicRemoteAddress } from "@/lib/a2a/remote-network";
 import { sandboxFlags } from "@/lib/process/sandbox";
 import { MarketError } from "@/lib/market/skills";
-import { readZip } from "@/lib/archives/zip";
+import { readZip, writeZip, type ZipFile } from "@/lib/archives/zip";
 import {
   parsePiPackageReleaseManifest,
   scanPiPackageReleaseManifest,
@@ -230,6 +230,62 @@ export async function capturePiPackage(
   } finally {
     capturing = false;
   }
+}
+
+/** Internal registry intake: bytes have already been read from one pinned GitHub tree. */
+export async function captureGithubRegistryPiPackage(input: {
+  repository: string;
+  commit: string;
+  path: string;
+  files: ZipFile[];
+}): Promise<PiPackageSnapshotV1> {
+  if (
+    !/^[A-Za-z0-9-]+\/[A-Za-z0-9_.-]+$/.test(input.repository) ||
+    !/^[a-f0-9]{40}$/.test(input.commit) ||
+    !input.path ||
+    input.path.length > 1_000 ||
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: Reject ASCII control bytes in the captured Git directory.
+    /[\\\x00-\x1f\x7f]/.test(input.path) ||
+    input.path
+      .split("/")
+      .some((part) => !part || part === "." || part === "..") ||
+    !input.files.length ||
+    input.files.length > 4096 ||
+    !input.files.some((file) => file.path === "package.json")
+  )
+    throw failed();
+  let total = 0;
+  for (const file of input.files) {
+    total += file.data.length;
+    if (file.data.length > 8 * 1024 * 1024 || total > 32 * 1024 * 1024)
+      throw failed();
+  }
+  const snapshot = await capturePiPackage("", {
+    archive: writeZip(input.files),
+  });
+  const url = `https://github.com/${input.repository}.git`;
+  return parsePiPackageReleaseManifest({
+    schemaVersion: 1,
+    kind: "pi-package",
+    listing: {
+      slug: "registry-capture",
+      name: snapshot.name,
+      summary: null,
+      iconUrl: null,
+      tags: [],
+      author: input.repository.split("/")[0],
+    },
+    package: {
+      ...snapshot,
+      source: {
+        kind: "git",
+        requested: `${url}#${input.commit}`,
+        url,
+        commit: input.commit,
+        path: input.path,
+      },
+    },
+  }).package;
 }
 
 type Connection = {

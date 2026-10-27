@@ -8,7 +8,6 @@ import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { nativeApprovalAdapter } from "@/lib/agents/native-tool-approval";
 const closers: Array<() => Promise<void>> = [];
 afterEach(async () => {
   for (const close of closers.splice(0)) await close();
@@ -374,13 +373,5 @@ describe("native pre-tool approval process", () => {
     expect(result.code).toBe(2);
     expect(JSON.parse(result.out).allowed).toBe(false);
     expect(calls).toBe(0);
-  });
-  it("places the native Pi hook before execution with frozen arguments and durable call identity", () => {
-    const pi = nativeApprovalAdapter("/tmp/approval.mjs");
-    expect(pi).toContain("pi.on('tool_call'");
-    expect(pi).toContain("event.toolCallId");
-    expect(pi).toContain("freezeArguments(event.input)");
-    expect(pi).toContain("block: true");
-    expect(pi).toContain("await approvalReady()");
   });
 });

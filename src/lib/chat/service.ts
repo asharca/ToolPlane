@@ -454,7 +454,10 @@ export async function createChatAssistant(
 ) {
   await requireWorkspace(userId, input.workspaceId);
   const template = input.marketTemplateReleaseId
-    ? await getAssistantMarketTemplate(input.marketTemplateReleaseId)
+    ? await getAssistantMarketTemplate(input.marketTemplateReleaseId, {
+        workspaceId: input.workspaceId,
+        userId,
+      })
     : null;
   if (input.marketTemplateReleaseId && !template) {
     throw new ChatServiceError(400, "Assistant market template not found");
@@ -561,7 +564,10 @@ export async function installAssistantMarketRelease(
   },
 ) {
   await requireWorkspace(userId, input.workspaceId);
-  const template = await getAssistantMarketTemplate(input.releaseId);
+  const template = await getAssistantMarketTemplate(input.releaseId, {
+    workspaceId: input.workspaceId,
+    userId,
+  });
   if (!template)
     throw new ChatServiceError(404, "Assistant market template not found");
   const definition = template.manifest.assistant;

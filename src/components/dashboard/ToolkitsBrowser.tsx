@@ -40,11 +40,11 @@ export function ToolkitsBrowser({
       <DashboardToolbar
         actions={
           <ButtonLink
-            href={`${base}/market/compose`}
+            href={`${base}/market/pi-packages`}
             variant="secondary"
             size="sm"
           >
-            {t("newPiPackage")}
+            {t("browsePiPackages")}
           </ButtonLink>
         }
       >

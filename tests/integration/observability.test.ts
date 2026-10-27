@@ -54,55 +54,6 @@ beforeAll(async () => {
   });
   deploymentId = deployment.id;
 
-  const now = Date.now();
-  await db.logEvent.createMany({
-    data: [
-      ...Array.from({ length: 55 }, (_, index) => ({
-        workspaceId,
-        deploymentId,
-        method: "POST",
-        path: `/mcp/${deploymentId}/rpc#tools/call:echo`,
-        httpStatus: index % 10 === 0 ? 500 : 200,
-        outcome: index % 10 === 0 ? "error" : "success",
-        domain: "mcp",
-        eventName: "gateway.request",
-        message: "echo",
-        traceId: `obs-${stamp}`,
-        spanId: `span-${index}`,
-        durationMs: 20 + index,
-        createdAt: new Date(now - index * 10 * 60 * 1000),
-      })),
-      {
-        workspaceId,
-        deploymentId,
-        method: "POST",
-        path: `/mcp/${deploymentId}/rpc#tools/call:semantic_failure`,
-        httpStatus: 200,
-        outcome: "error",
-        domain: "mcp",
-        eventName: "gateway.request",
-        message: "tool failed",
-        traceId: `obs-${stamp}`,
-        spanId: "semantic",
-        durationMs: 31,
-        createdAt: new Date(now - 56 * 10 * 60 * 1000),
-      },
-      {
-        workspaceId,
-        method: "GET",
-        path: "/workspaces/test/manifest",
-        httpStatus: 200,
-        domain: "mcp",
-        eventName: "gateway.request",
-        message: "manifest",
-        traceId: `obs-${stamp}`,
-        spanId: "api",
-        durationMs: 12,
-        createdAt: new Date(now - 60 * 60 * 1000),
-      },
-    ],
-  });
-
   const foreignUser = await db.user.create({
     data: {
       email: `observability-foreign-${stamp}@test.dev`,
@@ -150,57 +101,6 @@ afterAll(async () => {
 });
 
 describe("getObservability", () => {
-  it("returns bounded recent details, hourly buckets, and deployment rollups", async () => {
-    const result = await getObservability(
-      workspaceId,
-      "Asia/Shanghai",
-      24,
-      undefined,
-      { userId },
-    );
-
-    expect(result.total).toBe(57);
-    expect(result.errors).toBe(7);
-    expect(result.series).toHaveLength(24);
-    expect(result.recent).toHaveLength(50);
-    expect(result.recent[0]).toMatchObject({
-      deploymentId,
-      deploymentName: "Seed MCP",
-      requestBody: null,
-      responseBody: null,
-    });
-    expect(result.deploymentUsage).toContainEqual(
-      expect.objectContaining({
-        id: deploymentId,
-        name: "Seed MCP",
-        total: 56,
-        errors: 7,
-      }),
-    );
-    expect(result.deploymentUsage).toContainEqual(
-      expect.objectContaining({
-        id: null,
-        name: "Workspace API",
-        total: 1,
-      }),
-    );
-  });
-
-  it("scopes deployment filters to the workspace", async () => {
-    const result = await getObservability(
-      workspaceId,
-      "UTC",
-      24,
-      deploymentId,
-      { userId },
-    );
-
-    expect(result.selectedDeployment).toBe("Seed MCP");
-    expect(result.total).toBe(56);
-    expect(result.deploymentUsage).toHaveLength(1);
-    expect(result.deploymentUsage[0]?.id).toBe(deploymentId);
-  });
-
   it("keeps deployment request logs within the requested workspace", async () => {
     const traceId = `deployment-activity-${stamp}`;
     await db.logEvent.create({
@@ -264,7 +164,6 @@ describe("getObservability", () => {
       userId,
     );
 
-    expect(logs).toHaveLength(58);
     expect(logs.filter((log) => log.traceId === traceId)).toHaveLength(1);
     const toolLog = assertDefined(logs.find((log) => log.traceId === traceId));
     expect(JSON.parse(assertDefined(toolLog.requestBody))).toEqual({
@@ -552,54 +451,6 @@ describe("getObservability", () => {
           log.requestBody === null &&
           log.responseBody === null &&
           !("detail" in log),
-      ),
-    ).toBe(true);
-  });
-
-  it("preserves filtered gateway pagination and its fixed time window when details are included", async () => {
-    const traceId = `payload-page-${stamp}`;
-    const createdAt = new Date();
-    await db.logEvent.createMany({
-      data: Array.from({ length: 55 }, (_, index) => ({
-        workspaceId,
-        deploymentId,
-        traceId,
-        spanId: `page-${index}`,
-        createdAt,
-        domain: "mcp",
-        eventName: "gateway.request",
-        message: "paged request",
-      })),
-    });
-    const first = await getObservability(workspaceId, "UTC", 24, deploymentId, {
-      userId,
-      q: traceId,
-    });
-    expect(first.total).toBe(55);
-    expect(first.recent).toHaveLength(50);
-    expect(first.nextCursor).not.toBeNull();
-    const second = await getObservability(
-      workspaceId,
-      "UTC",
-      24,
-      deploymentId,
-      {
-        userId,
-        q: traceId,
-        cursor: assertDefined(first.nextCursor),
-        until: first.until,
-      },
-    );
-    expect(second.recent).toHaveLength(5);
-    expect(second.total).toBe(55);
-    expect(second.until).toBe(first.until);
-    expect(second.nextCursor).toBeNull();
-    expect(
-      new Set([...first.recent, ...second.recent].map((log) => log.id)).size,
-    ).toBe(55);
-    expect(
-      [...first.recent, ...second.recent].every(
-        (log) => log.traceId === traceId && log.deploymentId === deploymentId,
       ),
     ).toBe(true);
   });

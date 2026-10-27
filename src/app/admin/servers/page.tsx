@@ -1,7 +1,6 @@
 /* DashboardTable consumes cell arrays as indexed values. */
 
-import { ButtonLink } from "@/components/motion/button";
-import { Plus, Server as ServerIcon } from "lucide-react";
+import { Server as ServerIcon } from "lucide-react";
 import { getLocale, getTranslations } from "next-intl/server";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -64,12 +63,6 @@ export default async function AdminServersPage({
         title={t("directoryServers")}
         description={t("serversDescription")}
         meta={t("serverCount", { count: total.toLocaleString() })}
-        actions={
-          <ButtonLink href="/admin/servers/new" variant="primary" size="md">
-            <Plus className="size-4" aria-hidden="true" />
-            {t("addServer")}
-          </ButtonLink>
-        }
       />
 
       <AdminSearchForm
@@ -87,14 +80,6 @@ export default async function AdminServersPage({
           title={t("noServers")}
           description={
             q ? t("noServersDescription") : t("emptyServersDescription")
-          }
-          actions={
-            q ? null : (
-              <ButtonLink href="/admin/servers/new" variant="primary" size="md">
-                <Plus className="size-4" aria-hidden="true" />
-                {t("addServer")}
-              </ButtonLink>
-            )
           }
         />
       ) : (

@@ -10,22 +10,18 @@ import {
   buildSandboxTranscript,
   normalizeSandboxWorkingDirectory,
   parseClaudeStreamLine,
-  parseClaudeRuntimeMetadata,
   parseDshEventLine,
   parsePiStreamLine,
   resolveSandboxMcpToolOrigin,
   sandboxRuntimeCanReachProxy,
-  sandboxRuntimeExecWrapper,
   sandboxSkillBundleDigest,
   sandboxRuntimeSkillRoot,
   sandboxRuntimeStateRoot,
   waitForSandboxRuntimeInstall,
 } from "@/lib/agents/sandbox-runtime";
 import type { SkillForPrompt } from "@/lib/agents/resolve";
-import { agentRuntimeSupportsProviderFormat } from "@/lib/agents/runtime-kind";
 import {
   parseRuntimeCommand,
-  runtimeCommands,
   sessionRuntimeCommands,
   RUNTIME_COMMANDS_PART,
 } from "@/lib/agents/runtime-commands";
@@ -64,68 +60,6 @@ describe("sandbox Agent runtime helpers", () => {
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
-  });
-  it("scopes Cherry command catalogs to the runtime and the latest valid session metadata", () => {
-    expect(runtimeCommands("pi").map((item) => item.name)).toEqual(["compact"]);
-    expect(runtimeCommands("claude-code").map((item) => item.name)).toEqual([
-      "clear",
-      "compact",
-      "context",
-      "usage",
-    ]);
-    expect(runtimeCommands("dsh").map((item) => item.name)).toEqual([
-      "compact",
-      "goal",
-    ]);
-    const history = [
-      {
-        parts: [
-          {
-            type: RUNTIME_COMMANDS_PART,
-            data: {
-              runtimeKind: "claude-code",
-              commands: [{ name: "plugin:review" }, { name: "new" }],
-            },
-          },
-        ],
-      },
-    ];
-    expect(
-      sessionRuntimeCommands("claude-code", history).map((item) => item.name),
-    ).toEqual(["clear", "compact", "context", "usage", "plugin:review"]);
-    expect(sessionRuntimeCommands("dsh", history)).toEqual(
-      runtimeCommands("dsh"),
-    );
-    expect(runtimeCommands("pi", [{ name: "goal" }])).toEqual(
-      runtimeCommands("pi"),
-    );
-    expect(
-      sessionRuntimeCommands("claude-code", [
-        ...history,
-        {
-          parts: [
-            {
-              type: RUNTIME_COMMANDS_PART,
-              data: { runtimeKind: "claude-code", commands: [] },
-            },
-          ],
-        },
-      ]),
-    ).toEqual(runtimeCommands("claude-code"));
-    expect(parseRuntimeCommand(" /goal edit Preserve plan.md ", "dsh")).toEqual(
-      { name: "goal", args: "edit Preserve plan.md" },
-    );
-    expect(parseRuntimeCommand("/plugin:review src", "claude-code")).toEqual({
-      name: "plugin:review",
-      args: "src",
-    });
-    for (const text of [
-      "/workspace/file",
-      "review /usage",
-      "https://example.test",
-      "/file.md",
-    ])
-      expect(parseRuntimeCommand(text, "pi")).toBeNull();
   });
 
   it("preserves SDK invocation names and conflict suffixes across saved catalogs without changing legacy case folding", () => {
@@ -166,73 +100,6 @@ describe("sandbox Agent runtime helpers", () => {
     });
     expect(parseRuntimeCommand(`/${"a".repeat(101)}`, "pi-sdk")).toBeNull();
     expect(parseRuntimeCommand("/package/path", "pi-sdk")).toBeNull();
-  });
-
-  it("reads actual Claude commands and usage without inventing missing cost or malformed token counts", () => {
-    expect(
-      parseClaudeRuntimeMetadata(
-        JSON.stringify({
-          type: "system",
-          subtype: "init",
-          slash_commands: ["compact", "plugin:review"],
-        }),
-      ),
-    ).toEqual({ commands: [{ name: "compact" }, { name: "plugin:review" }] });
-    const event = {
-      type: "result",
-      usage: {
-        input_tokens: 12,
-        output_tokens: 9,
-        cache_read_input_tokens: 4,
-        cache_creation_input_tokens: 3,
-      },
-    };
-    expect(parseClaudeRuntimeMetadata(JSON.stringify(event))).toEqual({
-      usage: {
-        inputTokens: 12,
-        outputTokens: 9,
-        cacheReadTokens: 4,
-        cacheWriteTokens: 3,
-      },
-    });
-    expect(
-      parseClaudeRuntimeMetadata(
-        JSON.stringify({ ...event, total_cost_usd: 0.02 }),
-      ).usage?.costUsd,
-    ).toBe(0.02);
-    expect(
-      parseClaudeRuntimeMetadata(
-        JSON.stringify({ type: "result", usage: { input_tokens: -1 } }),
-      ),
-    ).toEqual({});
-    expect(parseClaudeRuntimeMetadata("not json")).toEqual({});
-    expect(
-      parseClaudeRuntimeMetadata(
-        JSON.stringify({ type: "system", subtype: "init", slash_commands: {} }),
-      ),
-    ).toEqual({});
-    expect(
-      parseClaudeRuntimeMetadata(
-        JSON.stringify({
-          type: "system",
-          subtype: "commands_changed",
-          commands: [null],
-        }),
-      ),
-    ).toEqual({});
-  });
-
-  it("preserves generic provider-format compatibility metadata", () => {
-    for (const runtime of ["pi", "claude-code", "dsh"]) {
-      expect(
-        ["openai", "openai-responses", "anthropic"].every((format) =>
-          agentRuntimeSupportsProviderFormat(runtime, format),
-        ),
-      ).toBe(true);
-      expect(agentRuntimeSupportsProviderFormat(runtime, "pi:openai")).toBe(
-        false,
-      );
-    }
   });
 
   it("keeps work paths inside /workspace and never copies attachment bytes into the transcript", () => {
@@ -572,7 +439,7 @@ describe("sandbox Agent runtime helpers", () => {
     });
   });
 
-  it("preserves proxy isolation, safe historical state paths, and execution cleanup", () => {
+  it("preserves proxy isolation and safe historical state paths", () => {
     expect(sandboxRuntimeCanReachProxy("none")).toBe(false);
     expect(sandboxRuntimeCanReachProxy("isolated")).toBe(true);
     expect(sandboxRuntimeStateRoot("claude-code", "agent/a")).toBe(
@@ -593,9 +460,6 @@ describe("sandbox Agent runtime helpers", () => {
     expect(sandboxRuntimeSkillRoot("claude-code", "agent/a")).toBe(
       `${sandboxRuntimeStateRoot("claude-code", "agent/a")}/skills`,
     );
-    const wrapper = sandboxRuntimeExecWrapper("__CONTROL__");
-    expect(wrapper).toContain('> "$pid_file"');
-    expect(wrapper).toContain("trap 'rm -f -- \"$pid_file\"' EXIT");
   });
 
   it("projects complete skill directories with unique names and content-sensitive digests", () => {

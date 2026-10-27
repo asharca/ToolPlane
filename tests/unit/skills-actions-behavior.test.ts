@@ -120,31 +120,6 @@ describe("custom skill authorization and editing", () => {
     expect(mocks.transaction).not.toHaveBeenCalled();
     expect(mocks.remove).not.toHaveBeenCalled();
   });
-  it("validates creation and reports persistence failures", async () => {
-    expect(await createCustomSkillAction({}, form())).toEqual({
-      error: "invalidCreateInput",
-    });
-    mocks.create.mockRejectedValueOnce(new Error("db offline"));
-    expect(
-      await createCustomSkillAction({}, form({ name: "My Skill" })),
-    ).toEqual({ error: "formSaveFailed" });
-    await expect(
-      createCustomSkillAction(
-        {},
-        form({ name: "My Skill", description: "Description" }),
-      ),
-    ).rejects.toThrow("REDIRECT:/app/team/skills/created");
-    expect(mocks.create).toHaveBeenLastCalledWith({
-      data: expect.objectContaining({
-        name: "My Skill",
-        slug: "my-skill",
-        description: "Description",
-        source: "custom",
-        skillId: null,
-        status: "published",
-      }),
-    });
-  });
   it("publishes edited content and marks market installs modified atomically", async () => {
     expect(
       await updateSkillContentAction({}, form({ content: "# Updated" })),
@@ -162,40 +137,6 @@ describe("custom skill authorization and editing", () => {
       error: "formSaveFailed",
     });
   });
-  it.each([undefined, "", "Description"])(
-    "updates invocation attributes without unintentionally clearing description %s",
-    async (description) => {
-      await updateSkillAttributesAction(
-        form({
-          userInvocable: "on",
-          effort: "high",
-          ...(description === undefined ? {} : { description }),
-        }),
-      );
-      expect(mocks.update).toHaveBeenCalledWith({
-        where: { id: "skill" },
-        data: {
-          userInvocable: true,
-          agentInvocable: false,
-          effort: "high",
-          status: "published",
-          ...(description === undefined
-            ? {}
-            : { description: description || null }),
-        },
-      });
-      await updateSkillAttributesAction(form({ agentInvocable: "on" }));
-      expect(mocks.update).toHaveBeenLastCalledWith({
-        where: { id: "skill" },
-        data: {
-          userInvocable: false,
-          agentInvocable: true,
-          effort: "default",
-          status: "published",
-        },
-      });
-    },
-  );
   it("preserves market-managed skills but deletes an unlinked custom skill", async () => {
     mocks.market.mockResolvedValueOnce({ id: "install" });
     await deleteCustomSkillAction(form());

@@ -42,11 +42,11 @@ export default async function ToolkitHistoryPage({
             {t("historyTitle")}
           </ButtonLink>
           <ButtonLink
-            href={`${base}/market/compose`}
+            href={`${base}/market/pi-packages`}
             variant="secondary"
             size="sm"
           >
-            {t("newPiPackage")}
+            {t("browsePiPackages")}
           </ButtonLink>
         </div>
       </header>

@@ -73,7 +73,7 @@ pnpm vitest run tests/unit/auth.test.ts        # Focused test file
 pnpm vitest run tests/unit/auth.test.ts -t "verifies a correct password"
 pnpm exec tsc --noEmit
 pnpm lint
-pnpm test                                     # Unit + integration tests
+pnpm test                                     # Core behavior + security boundaries
 pnpm build
 pnpm db:migrate                               # prisma migrate dev
 pnpm db:generate
@@ -90,8 +90,15 @@ Confirm the database is local before migrating or seeding.
 
 ## Verification
 
-- Start with the smallest check that exercises changed behavior. Add a focused
-  regression test for a bug or non-trivial logic; reuse the existing Vitest setup.
+- Keep permanent tests focused on core behavior: auth/workspace isolation, Pi and
+  Assistant execution, immutable revisions/credentials, conversation/Work/A2A
+  lifecycle, MCP access, and file/recovery boundaries. Add a regression only for a
+  plausible consumer-visible failure or an uncovered core invariant; prefer an
+  existing integration test over another mock-heavy unit suite.
+- Do not add permanent tests for ordinary page rendering, styles, wording, seed
+  names, internal forwarding, or exact database query/call shapes. Use actual UI
+  smoke checks for ordinary UI changes. Coverage reports are optional diagnostics,
+  not a repository-wide percentage gate; CI runs the retained core suite.
 - For auth, persistence, runtime, or cross-module changes, include relevant
   integration and negative authorization cases. Run broader lint/test/build
   checks when the impact or requested CI validation warrants them.
@@ -129,6 +136,7 @@ sandboxes, and agents. Route groups do not appear in URLs:
 | MCP runtime/gateway | `src/lib/process/supervisor.ts`, `mcp-client.ts`, `src/app/api/v1/mcp/[deploymentId]/rpc/route.ts` |
 | Auth | `src/lib/auth/request-user.ts`, `session.ts`, `tokens.ts` |
 | Toolkit retirement and client registration | `src/lib/toolkits/cutover.ts`; `docs/TOOLKIT_SYNC.zh-CN.md`; `src/lib/pi-packages/installations.ts`. Legacy execution/tokens are retired; conversion does not grant new authority. |
+| GitHub Resource Center | `src/lib/market/github-registry*.ts`; `docs/RUNTIME_OPERATIONS.zh-CN.md#github-资源中心`. Catalog contents only come from indexed fixed GitHub commits; preserve immutable pins and workspace-private authoring/uploads. No manual catalog publish/ZIP/npm intake paths. |
 | Agent revisions and turns | `src/lib/agents/revisions.ts`, `sandbox-turn.ts`, `conversation-sandbox.ts`; Pi is the only executable kernel (`pi-sdk` internally). New sessions pin an applied revision and receive independent persistent work volumes. |
 | Assistant chat and tools | `src/lib/chat/service.ts`, `run-control.ts`, `tools.ts`; independent Assistant revisions and durable Runs, remote MCP only, no Agent/Skill/package/stdio/A2A execution. |
 | Agent chat and tools | `src/app/api/v1/agents/[agentId]/chat/route.ts`; `src/lib/agents/resolve.ts`, `tools.ts`, `mutations.ts` |

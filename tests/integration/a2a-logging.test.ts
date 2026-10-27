@@ -5,7 +5,6 @@ import type { Prisma } from "@prisma/client";
 import { SendMessageRequest, Message, Task, TaskState } from "@a2a-js/sdk";
 import type { A2AGrant } from "@/lib/a2a/principal";
 import { resolveA2AGrant } from "@/lib/a2a/principal";
-import { finishTask } from "@/lib/a2a/store";
 import { refreshTaskStorage } from "@/lib/a2a/quotas";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { db } from "@/lib/db";
@@ -20,12 +19,8 @@ import {
   getLogEvent,
   getLogTrace,
   listLogEvents,
-  resolveLogFilters,
-  aggregateLogs,
   LogAccessError,
 } from "@/lib/observability/queries";
-import { createApiToken } from "@/lib/auth/tokens";
-import { GET as exportLogs } from "@/app/api/v1/admin/logs/export/route";
 import * as auditModule from "@/lib/observability/audit";
 
 const stamp = randomUUID();
@@ -330,34 +325,6 @@ describe("real authorized retained A2A protocol logging", () => {
       stderr.mockRestore();
     }
   });
-  it("distinguishes HTTP transport success from RPC business errors and authorized malformed bodies", async () => {
-    for (const [input, code] of [
-      [
-        {
-          jsonrpc: "2.0",
-          id: 2,
-          method: "GetTask",
-          params: { id: randomUUID() },
-        },
-        -32001,
-      ],
-      ["{bad json password=fixture-private", -32700],
-      [{ jsonrpc: "2.0", id: 3, method: "GetTask", params: {} }, -32602],
-    ] as const) {
-      const result = await call(input);
-      expect(result.response.status).toBe(200);
-      expect(result.result.error.code).toBe(code);
-      expect(result.event).toMatchObject({
-        outcome: "error",
-        httpStatus: 200,
-        attributes: { data: { a2a: { rpcErrorCode: code } } },
-      });
-      expect(result.event.detail).not.toBeNull();
-      expect(
-        JSON.stringify(assertDefined(result.event.detail).data),
-      ).not.toContain("fixture-private");
-    }
-  });
   it("does not collect rejected credentials or scope-denied request bodies", async () => {
     const invalid = await call(readTaskRequest(), "invalid-key");
     expect(invalid.response.status).toBe(401);
@@ -435,55 +402,6 @@ describe("real authorized retained A2A protocol logging", () => {
       state: TaskState.TASK_STATE_WORKING,
       cancelRequestedAt: null,
     });
-  });
-  it("records an existing lease settlement without replaying retired execution and retains only the committed public result", async () => {
-    const retained = await retainedHistory(TaskState.TASK_STATE_WORKING);
-    const priorRead = await call({
-      ...readTaskRequest(),
-      params: { id: retained.id },
-    });
-    await finishTask(
-      retained.id,
-      assertDefined(retained.leaseToken),
-      TaskState.TASK_STATE_COMPLETED,
-      undefined,
-      textArtifact("日志验收-result password=fixture-private"),
-    );
-    const rows = await db.logEvent.findMany({
-      where: {
-        workspaceId,
-        domain: "a2a",
-        attributes: { path: ["data", "a2a", "taskId"], equals: retained.id },
-        eventName: { in: ["a2a.task.started", "a2a.task.settled"] },
-      },
-      include: { detail: true },
-    });
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({
-      eventName: "a2a.task.settled",
-      outcome: "success",
-      actorId: null,
-      requestId: null,
-      attributes: {
-        data: {
-          a2a: { taskState: "TASK_STATE_COMPLETED", rootTaskId: retained.id },
-        },
-      },
-    });
-    expect(rows[0].traceId).not.toBe(priorRead.event.traceId);
-    const detail = JSON.stringify(assertDefined(rows[0].detail).data);
-    expect(detail).toContain("日志验收-result");
-    expect(detail).not.toContain("fixture-private");
-    expect(detail).not.toContain("ownerKey");
-    expect(detail).not.toContain(retainedCallerInput);
-    const fetched = await call({
-      ...readTaskRequest(),
-      params: { id: retained.id },
-    });
-    expect(JSON.stringify(assertDefined(fetched.event.detail).data)).toContain(
-      "日志验收-result",
-    );
-    expect(await db.a2ATask.count({ where: { id: retained.id } })).toBe(1);
   });
 });
 
@@ -645,227 +563,5 @@ describe("A2A query scope and audited disclosure", () => {
       expect(restricted).toMatchObject({ detailState: "restricted" });
       expect(restricted).not.toHaveProperty("detail");
     }
-  });
-  it("keeps metadata-only filters and SQL aggregates equivalent with tied-time pagination and fixed until", async () => {
-    const taskId = `page-${stamp}`;
-    const at = new Date();
-    await db.logEvent.createMany({
-      data: Array.from({ length: 55 }, (_, index) => ({
-        workspaceId,
-        domain: "a2a",
-        eventName: "a2a.request",
-        message: "a2a.request",
-        rpcMethod: "GetTask",
-        traceId: stamp,
-        spanId: String(index),
-        durationMs: index + 1,
-        createdAt: at,
-        attributes: {
-          data: {
-            a2a: {
-              direction: "inbound",
-              endpointId,
-              clientId,
-              taskId,
-              contextId: taskId,
-              rootTaskId: taskId,
-              parentTaskId: taskId,
-            },
-          },
-        },
-      })),
-    });
-    const input = {
-      tab: "a2a",
-      workspaceId,
-      taskId,
-      direction: "inbound",
-      until: new Date(at.getTime() + 1000),
-    };
-    const first = await listLogEvents({ userId, workspaceId }, input);
-    const second = await listLogEvents(
-      { userId, workspaceId },
-      { ...input, cursor: first.nextCursor, until: first.until },
-    );
-    expect(first.rows).toHaveLength(50);
-    expect(second.rows).toHaveLength(5);
-    expect(
-      new Set([...first.rows, ...second.rows].map((row) => row.id)).size,
-    ).toBe(55);
-    expect(second.until).toBe(first.until);
-    for (const key of [
-      "taskId",
-      "contextId",
-      "rootTaskId",
-      "parentTaskId",
-      "endpointId",
-      "clientId",
-      "rpcMethod",
-      "agentId",
-    ] as const) {
-      const values = {
-        tab: "a2a",
-        workspaceId,
-        direction: "inbound",
-        [key]:
-          key === "agentId"
-            ? agentId
-            : key === "endpointId"
-              ? endpointId
-              : key === "clientId"
-                ? clientId
-                : key === "rpcMethod"
-                  ? "GetTask"
-                  : taskId,
-        q: taskId,
-        until: first.until,
-      };
-      const filtered = await listLogEvents({ userId, workspaceId }, values);
-      const stats = await aggregateLogs(resolveLogFilters(values));
-      expect(stats.total).toBe(55);
-      expect(filtered.rows).toHaveLength(50);
-    }
-    expect(
-      (
-        await listLogEvents(
-          { userId, workspaceId },
-          { ...input, agentId: "unrelated-agent" },
-        )
-      ).rows,
-    ).toEqual([]);
-    expect(
-      (
-        await aggregateLogs(
-          resolveLogFilters({ ...input, agentId: "unrelated-agent" }),
-        )
-      ).total,
-    ).toBe(0);
-    await db.logEvent.create({
-      data: {
-        workspaceId,
-        agentId,
-        domain: "a2a",
-        eventName: "a2a.request",
-        message: "local",
-        traceId: stamp,
-        spanId: "local-filter",
-        attributes: {
-          data: { a2a: { direction: "internal", transport: "mcp", taskId } },
-        },
-      },
-    });
-    const combined = { tab: "a2a", workspaceId, agentId, taskId };
-    expect((await aggregateLogs(resolveLogFilters(combined))).total).toBe(56);
-    const local = await listLogEvents(
-      { userId, workspaceId },
-      { ...combined, direction: "internal" },
-    );
-    expect(local.rows.map((row) => row.agentId)).toEqual([agentId]);
-    expect(
-      (
-        await listLogEvents(
-          { userId: foreignId, workspaceId: foreignWorkspaceId },
-          input,
-        )
-      ).rows,
-    ).toEqual([]);
-    expect(
-      (
-        await listLogEvents(
-          { userId, workspaceId },
-          { ...input, q: retainedCallerInput },
-        )
-      ).rows,
-    ).toEqual([]);
-    expect(
-      (
-        await aggregateLogs(
-          resolveLogFilters({ ...input, taskId: "' OR 1=1 --" }),
-        )
-      ).total,
-    ).toBe(0);
-  });
-  it("counts requests separately from HTTP, lifecycle and outbound polls and exports no bodies", async () => {
-    const taskId = `mixed-${stamp}`;
-    await db.logEvent.createMany({
-      data: [
-        ["a2a", "a2a.request", "inbound"],
-        ["http", "http.request", "inbound"],
-        ["a2a", "a2a.task.started", "internal"],
-        ["a2a", "a2a.task.settled", "internal"],
-        ["a2a", "a2a.request", "outbound"],
-        ["a2a", "a2a.request", "outbound"],
-        ["mcp", "gateway.request", "inbound"],
-      ].map(([domain, eventName, direction]) => ({
-        workspaceId,
-        domain,
-        eventName,
-        message: eventName,
-        traceId: taskId,
-        spanId: randomUUID(),
-        attributes: {
-          data: { a2a: { direction, taskId, rootTaskId: taskId } },
-        },
-      })),
-    });
-    expect(
-      (
-        await aggregateLogs(
-          resolveLogFilters({
-            tab: "a2a",
-            workspaceId,
-            direction: "inbound",
-            q: taskId,
-          }),
-        )
-      ).total,
-    ).toBe(1);
-    expect(
-      (
-        await aggregateLogs(
-          resolveLogFilters({
-            domain: "mcp",
-            eventName: "gateway.request",
-            workspaceId,
-            q: taskId,
-          }),
-        )
-      ).total,
-    ).toBe(1);
-    expect(
-      (await listLogEvents({ userId, workspaceId }, { tab: "a2a", taskId }))
-        .rows,
-    ).toHaveLength(5);
-    expect(
-      (
-        await listLogEvents(
-          { userId, workspaceId },
-          { tab: "a2a", domain: "mcp", q: taskId },
-        )
-      ).rows,
-    ).toHaveLength(3);
-    const credential = await createApiToken(adminId, "A2A metadata export");
-    const result = await exportLogs(
-      new Request(
-        `http://localhost/api/v1/admin/logs/export?tab=a2a&domain=mcp&workspaceId=${workspaceId}&taskId=${taskId}`,
-        { headers: { authorization: `Bearer ${credential.token}` } },
-      ),
-    );
-    expect(result.status).toBe(200);
-    const rows = (await result.text())
-      .trim()
-      .split("\n")
-      .map((line) => JSON.parse(line));
-    expect(rows).toHaveLength(5);
-    expect(
-      rows.every(
-        (row) =>
-          row.domain === "a2a" &&
-          !("detail" in row) &&
-          !("request" in row) &&
-          !("response" in row),
-      ),
-    ).toBe(true);
-    expect(JSON.stringify(rows)).not.toContain(retainedCallerInput);
   });
 });

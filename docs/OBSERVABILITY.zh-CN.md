@@ -112,9 +112,7 @@ UI 使用 50 行的 keyset 分页和有界的、最长 31 天的检索窗口。T
 - 设置页显示保留期内最近一次成功的审计记录，并在离开未保存编辑前警告。没有审计历
   史意味着没有记录到修改者，不一定是设置从未变过。保存失败保留输入；保存一个分区不
   会丢弃另一个分区的未保存修改。
-- Registry 同步报告单个失败路径。重试使用上次结果的来源，且只重试仍存在于该
-  registry 中的路径。失败列表是页面状态，刷新即清空。`pnpm skills:sync:tp` 使用 Node
-  的 `react-server` condition 来运行共享的 server-only 审计写入器。
+- GitHub 资源同步使用持久任务记录状态、固定提交与错误代码；同一提交重复触发不重复发布。同步失败保留上次可见目录，重试重新解析当前分支。Webhook 只排队，资源中心显示最近同步结果；不再使用旧 Skill registry 重试页面或独立同步脚本。
 
 ## 破坏性升级
 
@@ -128,7 +126,7 @@ UI 使用 50 行的 keyset 分页和有界的、最长 31 天的检索窗口。T
 针对性检查：
 
 ```bash
-pnpm vitest run tests/unit/logging.test.ts tests/unit/logging-storage.test.ts tests/unit/agent-runtime-access.test.ts tests/integration/logging.test.ts tests/integration/observability.test.ts
+pnpm vitest run tests/unit/logging.test.ts tests/unit/logging-payload-policy.test.ts tests/integration/logging.test.ts tests/integration/observability.test.ts
 pnpm exec tsc --noEmit
 pnpm lint
 ```

@@ -6,11 +6,16 @@ import { createServer as createHttpServer } from "node:http";
 import { createInterface } from "node:readline";
 import { once } from "node:events";
 import { db } from "@/lib/db";
+import type { Prisma } from "@prisma/client";
+import { marketReleaseChecksum } from "@/lib/market/artifact";
+import {
+  parsePiPackageReleaseManifest,
+  scanPiPackageReleaseManifest,
+  type PiPackageSnapshotV1,
+} from "@/lib/market/pi-package-manifest";
 import {
   approveResourceMarketRelease,
   installMarketRelease,
-  previewPiPackageSource,
-  publishPiPackageRelease,
   updateMarketInstall,
 } from "@/lib/market/resources";
 import { createAgent, updateAgent } from "@/lib/agents/mutations";
@@ -31,6 +36,7 @@ import {
   createPiPackageSource,
   listPiPackageSourceEntries,
   publishPiPackageToRegistry,
+  resolvePiPackageCaptureSource,
 } from "@/lib/market/pi-package-catalog";
 import type * as Net from "node:net";
 
@@ -137,7 +143,10 @@ vi.mock("node:child_process", async (original) => {
   return { ...actual, spawn, default: { ...actual, spawn } };
 });
 import { execFile, spawn } from "node:child_process";
-import { capturePiPackage } from "@/lib/market/pi-package-source";
+import {
+  capturePiPackage,
+  captureGithubRegistryPiPackage,
+} from "@/lib/market/pi-package-source";
 
 const exec = promisify(execFile);
 let directory = "";
@@ -182,6 +191,75 @@ async function tar(
   };
   metadata[name] = value;
   return value;
+}
+
+// Historical artifact fixtures bypass authoring, not capture, review, install, or runtime validation.
+async function frozenReleaseFixture(
+  snapshot: PiPackageSnapshotV1,
+  input: {
+    workspaceId: string;
+    publishedById: string;
+    categoryId: string;
+    slug: string;
+    name: string;
+    listingId?: string;
+  },
+) {
+  return db.$transaction(async (tx) => {
+    const workspace = await tx.workspace.findUniqueOrThrow({
+      where: { id: input.workspaceId },
+    });
+    const listing = input.listingId
+      ? await tx.marketListing.findUniqueOrThrow({
+          where: { id: input.listingId },
+        })
+      : await tx.marketListing.create({
+          data: {
+            kind: "pi-package",
+            namespace: workspace.slug,
+            slug: input.slug,
+            name: input.name,
+            publisherKind: "workspace",
+            publisherWorkspaceId: workspace.id,
+            publishedById: input.publishedById,
+            metadata: {},
+            categories: { connect: { id: input.categoryId } },
+          },
+        });
+    const manifest = parsePiPackageReleaseManifest({
+      schemaVersion: 1,
+      kind: "pi-package",
+      listing: {
+        slug: listing.slug,
+        name: input.name,
+        summary: null,
+        iconUrl: null,
+        tags: [],
+        author: workspace.name,
+      },
+      package: snapshot,
+    });
+    const release = await tx.marketRelease.create({
+      data: {
+        listingId: listing.id,
+        version: listing.latestVersion + 1,
+        manifestVersion: 1,
+        manifest: manifest as Prisma.InputJsonValue,
+        checksum: marketReleaseChecksum(manifest),
+        releaseSummary: {},
+        categoryIds: [input.categoryId],
+        scanResult: scanPiPackageReleaseManifest(
+          manifest,
+        ) as Prisma.InputJsonValue,
+        reviewStatus: "pending",
+      },
+    });
+    await tx.marketListing.update({
+      where: { id: listing.id },
+      data: { pendingReleaseId: release.id, latestVersion: release.version },
+    });
+    return { listing, release };
+  });
 }
 beforeAll(async () => {
   directory = await mkdtemp(join(tmpdir(), "toolplane-capture-ca-"));
@@ -637,18 +715,29 @@ it("discovers private catalogs, explicitly publishes an approved npm artifact, a
       listPiPackageSourceEntries({ ...access, sourceId: wrongCredentials.id }),
     ).rejects.toMatchObject({ code: "source_auth_failed" });
 
-    const source = {
+    const requested = `npm:${name}@latest`;
+    const snapshot = await capturePiPackage(
+      requested,
+      await resolvePiPackageCaptureSource({
+        ...access,
+        sourceId: registry.id,
+        source: requested,
+      }),
+    );
+    const published = await frozenReleaseFixture(snapshot, {
       workspaceId: workspace.id,
       publishedById: user.id,
-      sourceId: registry.id,
-      source: `npm:${name}@latest`,
-    };
-    const preview = await previewPiPackageSource(source);
-    const published = await publishPiPackageRelease({
-      ...source,
-      sourceDigest: preview.sourceDigest,
-      categoryIds: [category.id],
-      listing: { slug: "private-prompt", name: "Private prompt" },
+      categoryId: category.id,
+      slug: "private-prompt",
+      name: "Private prompt",
+    });
+    await db.piPackageTracking.create({
+      data: {
+        workspaceId: workspace.id,
+        listingId: published.listing.id,
+        sourceId: registry.id,
+        requested,
+      },
     });
     await expect(
       publishPiPackageToRegistry({
@@ -1095,27 +1184,40 @@ it("runs approved immutable V1 in Linux SDK, reconnects, and requires explicit A
       { "index.js": "exports.value='DEPENDENCY_V1';" },
     );
     const extension = `import {value} from '${dependencyName}';import {readFileSync,writeFileSync,existsSync} from 'node:fs';export default pi=>pi.registerCommand('Count',{handler:async(_,ctx)=>{const p=ctx.cwd+'/count';const n=existsSync(p)?Number(readFileSync(p,'utf8'))+1:1;writeFileSync(p,String(n));pi.sendMessage({customType:'fixture',content:'dependency='+value+' count='+n,display:true});}});`;
-    await tar(
-      name,
-      {
-        name,
-        version: "1.0.0",
-        pi: { extensions: ["./index.ts"] },
-        dependencies: { [dependencyName]: "1.0.0" },
-      },
-      { "index.ts": extension },
-    );
     const source = {
+      repository: "fixture/registry",
+      commit: "a".repeat(40),
+      path: "packages/runtime",
+      files: [
+        {
+          path: "package.json",
+          data: Buffer.from(
+            JSON.stringify({
+              name,
+              version: "1.0.0",
+              pi: { extensions: ["./index.ts"] },
+              dependencies: { [dependencyName]: "1.0.0" },
+            }),
+          ),
+        },
+        { path: "index.ts", data: Buffer.from(extension), executable: true },
+      ],
+    };
+    const snapshot = await captureGithubRegistryPiPackage(source);
+    expect(snapshot.entries).toContainEqual(
+      expect.objectContaining({ path: "package/index.ts", executable: true }),
+    );
+    expect(snapshot.source).toMatchObject({
+      kind: "git",
+      commit: source.commit,
+      path: source.path,
+    });
+    const published = await frozenReleaseFixture(snapshot, {
       workspaceId: workspace.id,
       publishedById: user.id,
-      source: `npm:${name}@1.0.0`,
-    };
-    const preview = await previewPiPackageSource(source);
-    const published = await publishPiPackageRelease({
-      ...source,
-      sourceDigest: preview.sourceDigest,
-      categoryIds: [category.id],
-      listing: { slug: "runtime", name: "Frozen runtime" },
+      categoryId: category.id,
+      slug: "runtime",
+      name: "Frozen runtime",
     });
     await approveResourceMarketRelease({
       listingId: published.listing.id,
@@ -1418,14 +1520,17 @@ it("runs approved immutable V1 in Linux SDK, reconnects, and requires explicit A
       { name: dependencyName, version: "1.0.0", main: "index.js" },
       { "index.js": "exports.value='DEPENDENCY_V2';" },
     );
-    const updatedPreview = await previewPiPackageSource(source);
-    expect(updatedPreview.sourceDigest).not.toBe(preview.sourceDigest);
-    const v2 = await publishPiPackageRelease({
-      ...source,
-      sourceDigest: updatedPreview.sourceDigest,
+    const updatedSnapshot = await captureGithubRegistryPiPackage(source);
+    expect(marketReleaseChecksum(updatedSnapshot)).not.toBe(
+      marketReleaseChecksum(snapshot),
+    );
+    const v2 = await frozenReleaseFixture(updatedSnapshot, {
+      workspaceId: workspace.id,
+      publishedById: user.id,
       listingId: published.listing.id,
-      categoryIds: [category.id],
-      listing: { slug: "runtime", name: "Frozen runtime" },
+      categoryId: category.id,
+      slug: "runtime",
+      name: "Frozen runtime",
     });
     await approveResourceMarketRelease({
       listingId: v2.listing.id,

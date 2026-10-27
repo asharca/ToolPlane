@@ -1,6 +1,6 @@
 import { inflateRawSync } from "node:zlib";
 
-export type ZipFile = { path: string; data: Buffer };
+export type ZipFile = { path: string; data: Buffer; executable?: boolean };
 export type ZipLimits = {
   maxBytes: number;
   maxFileBytes: number;
@@ -139,7 +139,8 @@ export function readZip(archive: Buffer, limits: ZipLimits): ZipFile[] {
         ? Buffer.from(payload)
         : inflateRawSync(payload, { maxOutputLength: Math.max(1, expanded) });
     if (data.length !== expanded || crc32(data) !== crc) throw invalid();
-    if (!directory) files.push({ path, data });
+    if (!directory)
+      files.push({ path, data, ...(mode & 0o111 ? { executable: true } : {}) });
     cursor = next;
   }
   if (cursor !== end) throw invalid();
@@ -175,7 +176,7 @@ export function writeZip(files: ZipFile[]): Buffer {
   const chunks: Buffer[] = [];
   const central: Buffer[] = [];
   let offset = 0;
-  for (const { path, data } of files) {
+  for (const { path, data, executable } of files) {
     if (!safePath(path)) throw invalid();
     const name = Buffer.from(path);
     const header = Buffer.alloc(30);
@@ -190,7 +191,7 @@ export function writeZip(files: ZipFile[]): Buffer {
     entry.writeUInt32LE(0x02014b50);
     entry.writeUInt16LE(0x314, 4);
     header.copy(entry, 6, 4, 30);
-    entry.writeUInt32LE(0x81a40000, 38);
+    entry.writeUInt32LE(executable ? 0x81ed0000 : 0x81a40000, 38);
     entry.writeUInt32LE(offset, 42);
     chunks.push(header, name, data);
     central.push(entry, name);

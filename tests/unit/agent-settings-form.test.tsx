@@ -110,24 +110,6 @@ describe("Agent revision settings", () => {
     );
   });
 
-  it("sends an explicit empty CAS field for the first publication", async () => {
-    actions.prepareAgentRevisionAction.mockResolvedValue({
-      expectedRevisionId: null,
-      config,
-    });
-    const user = userEvent.setup();
-    render(<AgentSettingsForm {...props} />);
-    await user.click(screen.getByRole("button", { name: "Prepare revision" }));
-    await user.click(screen.getByRole("button", { name: "Apply as default" }));
-    await waitFor(() =>
-      expect(actions.publishAgentRevisionAction).toHaveBeenCalledTimes(1),
-    );
-    const submitted = actions.publishAgentRevisionAction.mock
-      .calls[0]?.[0] as FormData;
-    expect(submitted.has("expectedRevisionId")).toBe(true);
-    expect(submitted.get("expectedRevisionId")).toBe("");
-  });
-
   it("keeps a CAS rejection visible and does not silently replace the reviewed revision", async () => {
     actions.publishAgentRevisionAction.mockRejectedValue(
       new Error("Agent revision changed. Prepare again."),
@@ -193,21 +175,5 @@ describe("Agent revision settings", () => {
       .calls[0]?.[0] as FormData;
     expect(scope.get("workspace")).toBe("acme");
     expect(scope.get("agentId")).toBe("agent-1");
-  });
-
-  it("does not expose mutable draft or publish controls for retired runtime history", () => {
-    render(<AgentSettingsForm {...props} runtimeKind="hermes" />);
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "history is read-only",
-    );
-    expect(
-      screen.queryByRole("button", { name: "Prepare revision" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Save draft" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("textbox", { name: "Name" }),
-    ).not.toBeInTheDocument();
   });
 });

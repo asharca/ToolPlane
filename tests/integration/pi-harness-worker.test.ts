@@ -3,8 +3,6 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { db } from "@/lib/db";
 import { createLocalRootGrant } from "@/lib/a2a/local-policy";
-import { executePublishedTask } from "@/lib/a2a/executor";
-import type { A2ATask } from "@prisma/client";
 
 let workspaceId = "";
 let userId = "";
@@ -106,14 +104,4 @@ describe("retired native Harness and legacy execution", () => {
       ]);
     },
   );
-  it("rejects published legacy execution with 410 before allocating a runtime", async () => {
-    await expect(
-      executePublishedTask({} as A2ATask, new AbortController().signal),
-    ).rejects.toMatchObject({ status: 410 });
-    expect(
-      await db.agentEndpointRuntime.count({
-        where: { endpoint: { workspaceId } },
-      }),
-    ).toBe(0);
-  });
 });

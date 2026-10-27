@@ -122,9 +122,27 @@ export default async function MarketPage({
         <p className="max-w-3xl text-sm text-muted-foreground">
           {t("discoverDescription")}
         </p>
-        <ButtonLink href={`${base}/import`} variant="primary" size="md">
-          {t("importResource")}
+        <ButtonLink href={`${base}/sources`} variant="primary" size="md">
+          {t("githubRegistry.title")}
         </ButtonLink>
+        <nav className="flex flex-wrap gap-2" aria-label={t("resourceTypes")}>
+          {[
+            ["mcp", "kindMcp"],
+            ["skills", "kindSkill"],
+            ["pi-packages", "kindPiPackage"],
+            ["agents", "kindAgent"],
+            ["assistants", "kindAssistant"],
+          ].map(([path, label]) => (
+            <ButtonLink
+              key={path}
+              href={`${base}/${path}`}
+              variant="ghost"
+              size="sm"
+            >
+              {t(label)}
+            </ButtonLink>
+          ))}
+        </nav>
         <form
           action={base}
           method="get"

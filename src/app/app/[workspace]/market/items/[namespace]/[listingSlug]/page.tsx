@@ -52,6 +52,7 @@ import { McpToolCatalog } from "@/components/dashboard/McpToolCatalog";
 import { SafeStreamdown } from "@/components/dashboard/SafeStreamdown";
 import { PiPackageDetails } from "@/components/dashboard/market/PiPackageDetails";
 import { PiPackageSetupWizard } from "@/components/dashboard/market/PiPackageSetupWizard";
+import { GithubResourceProvenance } from "@/components/dashboard/market/GithubResourceProvenance";
 
 export const dynamic = "force-dynamic";
 
@@ -498,7 +499,7 @@ export default async function MarketItemPage({
     : piPackage && install
       ? `/app/${encodeURIComponent(workspaceSlug)}/market/installed#install-${encodeURIComponent(install.id)}`
       : null;
-  const resourceCanInstall = Boolean(connector || piPackage);
+  const resourceCanInstall = Boolean(mcpManifest || piPackage);
   const resourceActions = resourceCanInstall ? (
     <section
       className={
@@ -698,7 +699,7 @@ export default async function MarketItemPage({
   const resourceInstallPanel =
     mcpManifest || piPackage ? (
       <>
-        {!connector ? resourceActions : null}
+        {piPackage ? resourceActions : null}
         <dl
           id={mcpManifest || piPackage ? undefined : "capabilities"}
           className="scroll-mt-24 space-y-3 text-xs"
@@ -779,7 +780,7 @@ export default async function MarketItemPage({
           mcpManifest?.mcp.description ||
           t("noDescription")
         }
-        actions={skillActions ?? (connector ? resourceActions : null)}
+        actions={skillActions ?? (mcpManifest ? resourceActions : null)}
         facts={[
           { label: t("version"), value: `v${listing.latestRelease.version}` },
           { label: t("usageCount"), value: listing.installCount },
@@ -829,6 +830,7 @@ export default async function MarketItemPage({
             .map((tag) => ({ label: tag })),
         ]}
       />
+      <GithubResourceProvenance summary={reviewSummary} />
 
       <MarketDetailShell
         navigationLabel={t("detailNavigation")}

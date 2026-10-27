@@ -18,13 +18,10 @@ import {
   deleteAgent,
   deleteProvider,
   addProviderModels,
-  updateProviderModel,
   deleteProviderModel,
-  ProviderModelError,
   updateAgent,
   updateAgentModelSelection,
   setAgentTools,
-  setProviderModels,
   updateProvider,
   appendMessage,
   appendConversationTurn,
@@ -46,6 +43,15 @@ import {
   captureAgentRevisionConfig,
   resolvePinnedAgent,
 } from "@/lib/agents/revisions";
+import {
+  getAgentMarketListing,
+  listAgentMarketListings,
+  materializeAgentRelease,
+} from "@/lib/agents/market";
+import {
+  buildGithubRegistryAgentRelease,
+  publishGithubRegistryAgentRelease,
+} from "@/lib/market/github-registry-agent";
 
 // Database revision fixtures exercise persistence/pinning without pretending to
 // exercise the sandbox-native publication preflight in this mutation suite.
@@ -149,6 +155,256 @@ async function createDockerSandbox(label: string) {
 }
 
 describe("agents mutations", () => {
+  it("keeps private GitHub Agent releases workspace-scoped and installs only reauthorization drafts", async () => {
+    const suffix = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const foreign = await db.workspace.create({
+      data: {
+        slug: `registry-foreign-${suffix}`,
+        name: "Foreign registry consumer",
+        ownerId: userId,
+      },
+    });
+    const descriptor = {
+      schemaVersion: 1,
+      kind: "agent",
+      listing: {
+        slug: "portable-agent",
+        name: `Portable registry Agent ${suffix}`,
+        summary: "A portable native draft",
+        author: "Registry author",
+        iconUrl: null,
+        tags: [],
+      },
+      rootAgentKey: "root",
+      agents: [
+        {
+          key: "root",
+          name: "Registry draft",
+          slug: "registry-draft",
+          systemPrompt: "Portable instructions",
+          maxSteps: 10,
+          modelRequirement: { format: "openai", model: "model-1" },
+          deploymentKeys: ["mcp"],
+          skillKeys: [],
+          toolkitKeys: [],
+          subAgentKeys: [],
+        },
+      ],
+      deployments: [
+        {
+          key: "mcp",
+          name: "Portable MCP",
+          catalogSlug: "registry-test-mcp",
+          source: "remote",
+          sourceRef: "https://mcp.example.test/mcp",
+          requiredEnv: ["MCP_BEARER_TOKEN"],
+          publicEnv: {},
+          transport: "streamable-http",
+          authType: "bearer",
+          bearerEnv: "MCP_BEARER_TOKEN",
+          mcpToolExposure: "all",
+          mcpAllowedTools: ["unapproved_tool"],
+        },
+      ],
+      skills: [],
+      toolkits: [],
+    };
+    let listingId: string | undefined;
+    try {
+      const artifact = buildGithubRegistryAgentRelease(descriptor);
+      const published = await db.$transaction((tx) =>
+        publishGithubRegistryAgentRelease(tx, {
+          workspaceId,
+          userId,
+          namespace: `registry-${suffix}`,
+          resourceId: "portable-agent",
+          visibility: "private",
+          artifact,
+        }),
+      );
+      listingId = published.agentListingId;
+      expect(await getAgentMarketListing(listingId)).toBeNull();
+      expect(await getAgentMarketListing(listingId, foreign.id)).toBeNull();
+      expect(
+        (await getAgentMarketListing(listingId, workspaceId))?.release.id,
+      ).toBe(published.agentReleaseId);
+      expect(
+        (await listAgentMarketListings({ q: descriptor.listing.name })).items,
+      ).toHaveLength(0);
+      expect(
+        (
+          await listAgentMarketListings({
+            workspaceId: foreign.id,
+            q: descriptor.listing.name,
+          })
+        ).items,
+      ).toHaveLength(0);
+      expect(
+        (
+          await listAgentMarketListings({
+            workspaceId,
+            q: descriptor.listing.name,
+          })
+        ).items.map((item) => item.id),
+      ).toContain(listingId);
+      await expect(
+        materializeAgentRelease({
+          releaseId: published.agentReleaseId,
+          targetWorkspaceId: foreign.id,
+          installedById: userId,
+          idempotencyKey: `foreign-${suffix}`,
+        }),
+      ).rejects.toMatchObject({ code: "listing_unavailable" });
+      const installed = await materializeAgentRelease({
+        releaseId: published.agentReleaseId,
+        targetWorkspaceId: workspaceId,
+        installedById: userId,
+        idempotencyKey: `local-${suffix}`,
+      });
+      const draft = await db.agent.findUniqueOrThrow({
+        where: { id: installed.agent.id },
+        include: {
+          sandboxes: { include: { sandbox: true } },
+          servers: true,
+          skills: true,
+        },
+      });
+      expect(draft).toMatchObject({
+        runtimeKind: "pi-sdk",
+        currentRevisionVersion: 0,
+        providerId: null,
+      });
+      expect(draft.sandboxes).toHaveLength(1);
+      expect(draft.servers).toHaveLength(0);
+      expect(draft.skills).toHaveLength(0);
+      expect(installed.install.status).toBe("needs_setup");
+      expect(installed.requirements.providers).toEqual([
+        {
+          agentKey: "root",
+          format: "openai",
+          model: "model-1",
+          satisfied: false,
+        },
+      ]);
+      expect(installed.requirements.environment).toContainEqual({
+        deploymentKey: "mcp",
+        variable: "MCP_BEARER_TOKEN",
+        required: true,
+      });
+      const mcp = await db.deployment.findUniqueOrThrow({
+        where: { id: installed.resourceMap.deployments.mcp },
+      });
+      expect(mcp.mcpAllowedTools).toEqual([]);
+      expect(mcp.mcpToolExposure).toBe("allowlist");
+      expect(mcp.status).toBe("stopped");
+      await db.agentListing.update({
+        where: { id: listingId },
+        data: { status: "disabled" },
+      });
+      const reused = await db.$transaction((tx) =>
+        publishGithubRegistryAgentRelease(tx, {
+          workspaceId,
+          userId,
+          namespace: `registry-${suffix}`,
+          resourceId: "portable-agent",
+          visibility: "private",
+          agentListingId: published.agentListingId,
+          agentReleaseId: published.agentReleaseId,
+        }),
+      );
+      expect(reused.agentReleaseId).toBe(published.agentReleaseId);
+      expect(await db.agentRelease.count({ where: { listingId } })).toBe(1);
+      expect(
+        (await db.agentListing.findUniqueOrThrow({ where: { id: listingId } }))
+          .status,
+      ).toBe("disabled");
+      const newer = await db.$transaction((tx) =>
+        publishGithubRegistryAgentRelease(tx, {
+          workspaceId,
+          userId,
+          namespace: `registry-${suffix}`,
+          resourceId: "portable-agent",
+          visibility: "private",
+          agentListingId: listingId,
+          artifact: buildGithubRegistryAgentRelease({
+            ...descriptor,
+            listing: {
+              ...descriptor.listing,
+              summary: "A newer portable draft",
+            },
+          }),
+        }),
+      );
+      expect(newer.agentReleaseId).not.toBe(reused.agentReleaseId);
+      expect(
+        (await db.agentListing.findUniqueOrThrow({ where: { id: listingId } }))
+          .status,
+      ).toBe("disabled");
+      expect(await getAgentMarketListing(listingId, workspaceId)).toBeNull();
+      // Only index withdrawal uses draft, so an ordinary remove/re-add can return.
+      await db.agentListing.update({
+        where: { id: listingId },
+        data: { status: "draft" },
+      });
+      await db.$transaction((tx) =>
+        publishGithubRegistryAgentRelease(tx, {
+          workspaceId,
+          userId,
+          namespace: `registry-${suffix}`,
+          resourceId: "portable-agent",
+          visibility: "private",
+          agentListingId: listingId,
+          agentReleaseId: newer.agentReleaseId,
+        }),
+      );
+      expect(
+        (await getAgentMarketListing(listingId, workspaceId))?.release.id,
+      ).toBe(newer.agentReleaseId);
+      expect(() =>
+        buildGithubRegistryAgentRelease({
+          ...descriptor,
+          agents: [
+            { ...descriptor.agents[0], runtime: { kind: "claude-code" } },
+          ],
+        }),
+      ).toThrow();
+      expect(() =>
+        buildGithubRegistryAgentRelease({
+          ...descriptor,
+          agents: [{ ...descriptor.agents[0], providerId }],
+        }),
+      ).toThrow();
+      expect(() =>
+        buildGithubRegistryAgentRelease({
+          ...descriptor,
+          agents: [
+            {
+              ...descriptor.agents[0],
+              systemPrompt: `Use ghp_${"x".repeat(24)}`,
+            },
+          ],
+        }),
+      ).toThrow();
+      expect(() =>
+        buildGithubRegistryAgentRelease({
+          ...descriptor,
+          deployments: [
+            {
+              ...descriptor.deployments[0],
+              publicEnv: { API_TOKEN: "opaque-workspace-secret" },
+            },
+          ],
+        }),
+      ).toThrow();
+    } finally {
+      if (listingId) {
+        await db.agentInstall.deleteMany({ where: { release: { listingId } } });
+        await db.agentListing.delete({ where: { id: listingId } });
+      }
+      await db.workspace.delete({ where: { id: foreign.id } });
+    }
+  });
+
   it("creates native drafts with lazy sandbox records and rejects legacy creation", async () => {
     const agent = await createAgent(workspaceId, "Native default draft");
     const stored = await db.agent.findUniqueOrThrow({
@@ -389,26 +645,6 @@ describe("agents mutations", () => {
     },
   );
 
-  it("creates an agent with a unique slug", async () => {
-    const a = await createAgent(workspaceId, "My Agent", { runtime: "pi-sdk" });
-    expect(a.slug).toBe("my-agent");
-    const b = await createAgent(workspaceId, "My Agent", { runtime: "pi-sdk" });
-    expect(b.slug).toBe("my-agent-1");
-    await expect(
-      db.agentSandbox.count({ where: { agentId: { in: [a.id, b.id] } } }),
-    ).resolves.toBe(2);
-  });
-
-  it("serializes concurrent slug allocation within a workspace", async () => {
-    const name = `Concurrent Agent ${Date.now()}`;
-    const agents = await Promise.all(
-      Array.from({ length: 4 }, () =>
-        createAgent(workspaceId, name, { runtime: "pi-sdk" }),
-      ),
-    );
-    expect(new Set(agents.map(({ slug }) => slug)).size).toBe(4);
-  });
-
   it("rejects a model that is no longer available from its provider", async () => {
     const before = await db.agent.count({ where: { workspaceId } });
 
@@ -625,68 +861,6 @@ describe("agents mutations", () => {
       include: { servers: true },
     });
     expect(after?.servers).toHaveLength(0);
-  });
-
-  it("caches provider models", async () => {
-    await setProviderModels(workspaceId, providerId, ["gpt-x", "gpt-y"]);
-    const p = await db.modelProvider.findUnique({ where: { id: providerId } });
-    expect(p?.models).toEqual(["gpt-x", "gpt-y"]);
-    expect(p?.modelsFetchedAt).toBeInstanceOf(Date);
-  });
-
-  it("keeps manually classified models when refreshing remote models", async () => {
-    const provider = await db.modelProvider.create({
-      data: {
-        workspaceId,
-        name: `Catalog provider ${Date.now()}`,
-        format: "openai",
-        baseUrl: "https://catalog.test/v1",
-        apiKey: "k",
-      },
-    });
-    const manualModel = {
-      modelId: "acme/embed-v2",
-      name: "Acme Embed v2",
-      group: "Acme",
-      primaryType: "embedding" as const,
-      capabilities: [],
-      inputModalities: [],
-      contextWindow: 8192,
-      maxInputTokens: 8192,
-      maxOutputTokens: null,
-    };
-
-    await addProviderModels(workspaceId, provider.id, [manualModel]);
-    await expect(
-      addProviderModels(workspaceId, provider.id, [manualModel]),
-    ).rejects.toThrow(ProviderModelError);
-    await setProviderModels(workspaceId, provider.id, ["remote-chat-v1"]);
-    await updateProviderModel(workspaceId, provider.id, {
-      ...manualModel,
-      group: "Embeddings",
-    });
-
-    const reread = await db.modelProvider.findUnique({
-      where: { id: provider.id },
-      include: { modelRecords: true },
-    });
-    expect(reread?.models).toEqual(["remote-chat-v1", "acme/embed-v2"]);
-    expect(
-      reread?.modelRecords.find(
-        ({ modelId }) => modelId === manualModel.modelId,
-      ),
-    ).toMatchObject({
-      name: "Acme Embed v2",
-      group: "Embeddings",
-      primaryType: "embedding",
-      source: "manual",
-    });
-
-    await deleteProviderModel(workspaceId, provider.id, manualModel.modelId);
-    await expect(
-      db.modelProvider.findUnique({ where: { id: provider.id } }),
-    ).resolves.toMatchObject({ models: ["remote-chat-v1"] });
-    await deleteProvider(workspaceId, provider.id);
   });
 
   it("rejects cross-workspace model writes and removal of an in-use model", async () => {

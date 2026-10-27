@@ -2,6 +2,10 @@ import "server-only";
 
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
+import {
+  visibleListings,
+  type MarketViewer,
+} from "@/lib/market/listing-access";
 import { marketReleaseChecksum } from "@/lib/market/artifact";
 import { parseAssistantReleaseManifest } from "@/lib/market/assistant-manifest";
 import { parseSkillReleaseManifest } from "@/lib/market/skill-manifest";
@@ -29,8 +33,6 @@ const LISTING_KINDS = new Set([
   "pi-package",
 ]);
 
-export type MarketViewer = { workspaceId: string; userId: string };
-
 export type MarketRuntimeCompatibility =
   | {
       runtime: "pi-sdk";
@@ -40,31 +42,6 @@ export type MarketRuntimeCompatibility =
       arch: string;
     }
   | { runtime: "mcp"; transport: "stdio" | "streamable-http" | "sse" };
-
-async function visibleListings(
-  viewer?: MarketViewer,
-): Promise<Prisma.MarketListingWhereInput> {
-  if (!viewer) return { visibility: "public" };
-  const workspace = await db.workspace.findFirst({
-    where: {
-      id: viewer.workspaceId,
-      status: "active",
-      OR: [
-        { ownerId: viewer.userId },
-        { members: { some: { userId: viewer.userId } } },
-      ],
-    },
-    select: { id: true },
-  });
-  return workspace
-    ? {
-        OR: [
-          { visibility: "public" },
-          { visibility: "private", publisherWorkspaceId: workspace.id },
-        ],
-      }
-    : { visibility: "public" };
-}
 
 export async function listMarketListings(
   input: {

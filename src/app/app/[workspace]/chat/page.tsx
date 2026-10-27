@@ -98,9 +98,15 @@ export default async function WorkspaceChatPage({
     listProviders(workspace.id),
     listChatDeploymentOptions(user.id, workspace.id),
     query.newAssistant === "1" && query.template
-      ? getAssistantMarketTemplate(query.template)
+      ? getAssistantMarketTemplate(query.template, {
+          workspaceId: workspace.id,
+          userId: user.id,
+        })
       : Promise.resolve(null),
-    listAssistantMarketTemplates({ limit: 12 }),
+    listAssistantMarketTemplates({
+      limit: 12,
+      viewer: { workspaceId: workspace.id, userId: user.id },
+    }),
     listRunningChatThreadIds(user.id, workspace.id),
   ]);
   const templates =

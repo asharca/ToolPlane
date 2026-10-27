@@ -2,15 +2,9 @@ import "server-only";
 import { writeAudit } from "@/lib/observability/audit";
 
 import type { Prisma } from "@prisma/client";
-import { AGENT_STEP_BOUNDS } from "@/lib/agents/constants";
 import { db } from "@/lib/db";
 import { normalizeAdminPage } from "@/lib/admin/pagination";
-import {
-  ASSISTANT_MARKET_MANIFEST_VERSION,
-  assistantReleaseChecksum,
-  parseAssistantReleaseManifest,
-} from "@/lib/market/assistant-manifest";
-import { scanMarketArtifact } from "@/lib/market/secret-scan";
+import { parseAssistantReleaseManifest } from "@/lib/market/assistant-manifest";
 import { hasVerifiedMcpToolCatalog } from "@/lib/process/mcp-tool-catalog";
 
 const PAGE_SIZE = 25;
@@ -36,42 +30,6 @@ export class AdminMarketCatalogError extends Error {
     super(code);
     this.name = "AdminMarketCatalogError";
   }
-}
-
-export type AdminAssistantTemplateInput = {
-  slug: string;
-  name: string;
-  author: string;
-  summary: string | null;
-  iconUrl: string | null;
-  tags: string[];
-  categoryIds: string[];
-  status: AdminMarketListingStatus;
-  isFeatured: boolean;
-  systemPrompt: string | null;
-  maxSteps: number;
-  modelFormat: string | null;
-  model: string | null;
-  serverIds: string[];
-};
-
-function cleanTags(values: readonly string[]) {
-  return [
-    ...new Set(
-      values
-        .map((value) => value.trim().toLocaleLowerCase().slice(0, 40))
-        .filter(Boolean),
-    ),
-  ].slice(0, 20);
-}
-
-function isUniqueError(error: unknown) {
-  return Boolean(
-    error &&
-      typeof error === "object" &&
-      "code" in error &&
-      error.code === "P2002",
-  );
 }
 
 export async function listAdminMarketListings({
@@ -181,141 +139,6 @@ async function assertCategories(
   return uniqueIds;
 }
 
-export async function createAdminAssistantTemplate(
-  input: AdminAssistantTemplateInput,
-  reviewedById: string,
-) {
-  if (!ADMIN_MARKET_LISTING_STATUSES.includes(input.status)) {
-    throw new AdminMarketCatalogError("invalid_status");
-  }
-  if (input.categoryIds.length === 0)
-    throw new AdminMarketCatalogError("invalid_categories");
-  if (
-    input.maxSteps < AGENT_STEP_BOUNDS.min ||
-    input.maxSteps > AGENT_STEP_BOUNDS.max ||
-    Boolean(input.modelFormat) !== Boolean(input.model)
-  ) {
-    throw new AdminMarketCatalogError("invalid_config");
-  }
-  try {
-    return await db.$transaction(
-      async (tx) => {
-        const categoryIds = await assertCategories(tx, input.categoryIds);
-        const serverIds = [...new Set(input.serverIds)];
-        if (serverIds.length !== input.serverIds.length) {
-          throw new AdminMarketCatalogError("invalid_config");
-        }
-        const servers = await tx.server.findMany({
-          where: { id: { in: serverIds }, verifiedAt: { not: null } },
-          orderBy: { slug: "asc" },
-          select: { id: true, slug: true, name: true },
-        });
-        if (servers.length !== serverIds.length)
-          throw new AdminMarketCatalogError("invalid_config");
-
-        const tags = cleanTags(input.tags);
-        const manifest = parseAssistantReleaseManifest({
-          schemaVersion: ASSISTANT_MARKET_MANIFEST_VERSION,
-          kind: "assistant",
-          assistant: {
-            name: input.name,
-            systemPrompt: input.systemPrompt,
-            maxSteps: input.maxSteps,
-            modelRequirement: input.modelFormat
-              ? { providerFormat: input.modelFormat, model: input.model }
-              : null,
-            modelParameters: null,
-            // Catalog identities are requirements, not fabricated deployment grants.
-            mcpRequirements: servers.map((server) => ({
-              catalogSlug: server.slug,
-              name: server.name,
-              allowedToolNames: [],
-            })),
-          },
-          listing: {
-            slug: input.slug,
-            name: input.name,
-            summary: input.summary,
-            iconUrl: input.iconUrl,
-            tags,
-            author: input.author,
-          },
-        });
-        const scanResult = scanMarketArtifact(manifest);
-        if (scanResult.status === "blocked")
-          throw new AdminMarketCatalogError("invalid_manifest");
-        const releaseSummary = {
-          providerFormat:
-            manifest.assistant.modelRequirement?.providerFormat ?? null,
-          model: manifest.assistant.modelRequirement?.model ?? null,
-          mcpCount: manifest.assistant.mcpRequirements.length,
-          maxSteps: manifest.assistant.maxSteps,
-        } satisfies Prisma.InputJsonObject;
-        const publishedAt = new Date();
-        const listing = await tx.marketListing.create({
-          data: {
-            kind: "assistant",
-            namespace: "toolplane",
-            slug: input.slug,
-            publisherKind: "platform",
-            name: input.name,
-            summary: input.summary,
-            iconUrl: input.iconUrl,
-            tags,
-            metadata: {
-              author: input.author,
-              type: "chat",
-              ...releaseSummary,
-            },
-            status: input.status,
-            curated: true,
-            isFeatured: input.isFeatured,
-            publishedAt: input.status === "published" ? publishedAt : null,
-            categories: { connect: categoryIds.map((id) => ({ id })) },
-          },
-          select: { id: true },
-        });
-        const release = await tx.marketRelease.create({
-          data: {
-            listingId: listing.id,
-            version: 1,
-            manifestVersion: ASSISTANT_MARKET_MANIFEST_VERSION,
-            manifest: manifest as Prisma.InputJsonValue,
-            releaseSummary,
-            checksum: assistantReleaseChecksum(manifest),
-            categoryIds,
-            scanResult: scanResult as Prisma.InputJsonValue,
-            reviewStatus: "approved",
-            reviewedById,
-            reviewedAt: publishedAt,
-            reviewNote: "Created by an administrator.",
-            publishedAt,
-          },
-          select: { id: true },
-        });
-        await tx.marketListing.update({
-          where: { id: listing.id },
-          data: { latestVersion: 1, latestReleaseId: release.id },
-        });
-        await writeAudit(tx, {
-          actorId: reviewedById,
-          action: "market.assistant.created",
-          targetType: "marketListing",
-          targetId: listing.id,
-          changes: { releaseId: release.id, status: input.status, categoryIds },
-        });
-        return { id: listing.id, releaseId: release.id };
-      },
-      { isolationLevel: "Serializable" },
-    );
-  } catch (error) {
-    if (error instanceof AdminMarketCatalogError) throw error;
-    if (isUniqueError(error))
-      throw new AdminMarketCatalogError("slug_conflict");
-    throw error;
-  }
-}
-
 export async function getAdminAssistantTemplate(id: string) {
   const listing = await db.marketListing.findFirst({
     where: { id, kind: "assistant", publisherKind: "platform" },
@@ -343,157 +166,6 @@ export async function getAdminAssistantTemplate(id: string) {
     manifest,
     serverIds: servers.map(({ id: serverId }) => serverId),
   };
-}
-
-export async function updateAdminAssistantTemplate(
-  id: string,
-  input: AdminAssistantTemplateInput,
-  reviewedById: string,
-) {
-  if (!ADMIN_MARKET_LISTING_STATUSES.includes(input.status)) {
-    throw new AdminMarketCatalogError("invalid_status");
-  }
-  if (input.categoryIds.length === 0)
-    throw new AdminMarketCatalogError("invalid_categories");
-  if (
-    input.maxSteps < AGENT_STEP_BOUNDS.min ||
-    input.maxSteps > AGENT_STEP_BOUNDS.max ||
-    Boolean(input.modelFormat) !== Boolean(input.model)
-  ) {
-    throw new AdminMarketCatalogError("invalid_config");
-  }
-  return db.$transaction(
-    async (tx) => {
-      const listing = await tx.marketListing.findFirst({
-        where: { id, kind: "assistant", publisherKind: "platform" },
-        select: {
-          id: true,
-          slug: true,
-          latestVersion: true,
-          pendingReleaseId: true,
-          publishedAt: true,
-        },
-      });
-      if (!listing) throw new AdminMarketCatalogError("not_found");
-      if (listing.slug !== input.slug)
-        throw new AdminMarketCatalogError("slug_conflict");
-      const categoryIds = await assertCategories(tx, input.categoryIds);
-      const serverIds = [...new Set(input.serverIds)];
-      if (serverIds.length !== input.serverIds.length)
-        throw new AdminMarketCatalogError("invalid_config");
-      const servers = await tx.server.findMany({
-        where: { id: { in: serverIds }, verifiedAt: { not: null } },
-        orderBy: { slug: "asc" },
-        select: { id: true, slug: true, name: true },
-      });
-      if (servers.length !== serverIds.length)
-        throw new AdminMarketCatalogError("invalid_config");
-
-      const tags = cleanTags(input.tags);
-      const manifest = parseAssistantReleaseManifest({
-        schemaVersion: ASSISTANT_MARKET_MANIFEST_VERSION,
-        kind: "assistant",
-        assistant: {
-          name: input.name,
-          systemPrompt: input.systemPrompt,
-          maxSteps: input.maxSteps,
-          modelRequirement: input.modelFormat
-            ? { providerFormat: input.modelFormat, model: input.model }
-            : null,
-          modelParameters: null,
-          // Catalog identities are requirements, not fabricated deployment grants.
-          mcpRequirements: servers.map((server) => ({
-            catalogSlug: server.slug,
-            name: server.name,
-            allowedToolNames: [],
-          })),
-        },
-        listing: {
-          slug: listing.slug,
-          name: input.name,
-          summary: input.summary,
-          iconUrl: input.iconUrl,
-          tags,
-          author: input.author,
-        },
-      });
-      const scanResult = scanMarketArtifact(manifest);
-      if (scanResult.status === "blocked")
-        throw new AdminMarketCatalogError("invalid_manifest");
-      if (listing.pendingReleaseId) {
-        await tx.marketRelease.updateMany({
-          where: { id: listing.pendingReleaseId, reviewStatus: "pending" },
-          data: {
-            reviewStatus: "rejected",
-            reviewedById,
-            reviewedAt: new Date(),
-            reviewNote: "Replaced by an administrator.",
-          },
-        });
-      }
-      const releaseSummary = {
-        providerFormat:
-          manifest.assistant.modelRequirement?.providerFormat ?? null,
-        model: manifest.assistant.modelRequirement?.model ?? null,
-        mcpCount: manifest.assistant.mcpRequirements.length,
-        maxSteps: manifest.assistant.maxSteps,
-      } satisfies Prisma.InputJsonObject;
-      const publishedAt = new Date();
-      const release = await tx.marketRelease.create({
-        data: {
-          listingId: listing.id,
-          version: listing.latestVersion + 1,
-          manifestVersion: ASSISTANT_MARKET_MANIFEST_VERSION,
-          manifest: manifest as Prisma.InputJsonValue,
-          releaseSummary,
-          checksum: assistantReleaseChecksum(manifest),
-          categoryIds,
-          scanResult: scanResult as Prisma.InputJsonValue,
-          reviewStatus: "approved",
-          reviewedById,
-          reviewedAt: publishedAt,
-          reviewNote: "Updated by an administrator.",
-          publishedAt,
-        },
-      });
-      await writeAudit(tx, {
-        actorId: reviewedById,
-        action: "market.assistant.updated",
-        targetType: "marketListing",
-        targetId: listing.id,
-        changes: {
-          releaseId: release.id,
-          status: input.status,
-          categoryIds,
-          isFeatured: input.isFeatured,
-        },
-      });
-      return tx.marketListing.update({
-        where: { id: listing.id },
-        data: {
-          name: input.name,
-          summary: input.summary,
-          iconUrl: input.iconUrl,
-          tags,
-          metadata: { author: input.author, type: "chat", ...releaseSummary },
-          status: input.status,
-          curated: true,
-          isFeatured: input.isFeatured,
-          latestVersion: release.version,
-          latestReleaseId: release.id,
-          pendingReleaseId: null,
-          publishedAt:
-            input.status === "published"
-              ? (listing.publishedAt ?? publishedAt)
-              : listing.publishedAt,
-          categories: {
-            set: categoryIds.map((categoryId) => ({ id: categoryId })),
-          },
-        },
-      });
-    },
-    { isolationLevel: "Serializable", maxWait: 10_000, timeout: 30_000 },
-  );
 }
 
 export async function deleteAdminAssistantTemplate(
@@ -548,6 +220,9 @@ export async function updateAdminMarketListing(
     if (!listing) throw new AdminMarketCatalogError("not_found");
     if (listing.kind === "toolkit")
       throw new AdminMarketCatalogError("invalid_config");
+    if (input.status === "published" && listing.status !== "published") {
+      throw new AdminMarketCatalogError("invalid_status");
+    }
     if (
       input.status === "published" &&
       listing.latestRelease?.reviewStatus !== "approved"
@@ -557,6 +232,7 @@ export async function updateAdminMarketListing(
     if (
       input.status === "published" &&
       listing.kind === "mcp" &&
+      listing.sourceServerId !== null &&
       !hasVerifiedMcpToolCatalog(listing.sourceServer)
     ) {
       throw new AdminMarketCatalogError("invalid_config");

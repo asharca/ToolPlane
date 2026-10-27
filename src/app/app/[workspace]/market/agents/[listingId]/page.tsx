@@ -18,6 +18,7 @@ import { getAgentMarketListing } from "@/lib/agents/market";
 import { getWorkspaceForUser } from "@/lib/workspace/queries";
 import { DashboardPage } from "@/components/dashboard/DashboardUI";
 import { AgentMarketInstallForm } from "@/components/dashboard/market/AgentMarketInstallForm";
+import { GithubResourceProvenance } from "@/components/dashboard/market/GithubResourceProvenance";
 import {
   MarketDetailHeader,
   MarketDetailShell,
@@ -50,7 +51,7 @@ export default async function AgentMarketDetailPage({
   const targetWorkspace = await getWorkspaceForUser(slug, user.id);
   if (!targetWorkspace) redirect("/app");
 
-  const detail = await getAgentMarketListing(listingId);
+  const detail = await getAgentMarketListing(listingId, targetWorkspace.id);
   if (!detail) notFound();
   const { listing, release, manifest, workspace: publisherWorkspace } = detail;
   const rootAgent = manifest.agents.find(
@@ -108,6 +109,7 @@ export default async function AgentMarketDetailPage({
           ...listing.tags.map((tag) => ({ label: tag })),
         ]}
       />
+      <GithubResourceProvenance summary={release.releaseSummary} />
 
       <MarketDetailShell
         navigationLabel={marketT("detailNavigation")}

@@ -26,6 +26,19 @@ const gitSourceSchema = z
     requested: z.string().min(1).max(2_000),
     url: z.string().min(1).max(2_000),
     commit: z.string().max(64),
+    path: z
+      .string()
+      .min(1)
+      .max(1_000)
+      .refine(
+        (value) =>
+          // biome-ignore lint/suspicious/noControlCharactersInRegex: Git provenance paths must reject ASCII control bytes.
+          !/[\\\x00-\x1f\x7f]/.test(value) &&
+          value
+            .split("/")
+            .every((part) => part !== "" && part !== "." && part !== ".."),
+      )
+      .optional(),
   })
   .strict();
 
@@ -526,6 +539,15 @@ function validateSource(snapshot: PiPackageSnapshotV1): void {
     )
       requested = requested.slice(0, ref);
     if (publicGitUrl(requested) !== normalized) invalid("invalid_source");
+    if (
+      source.path !== undefined &&
+      (!/^https:\/\/github\.com\/[A-Za-z0-9-]+\/[A-Za-z0-9_.-]+\.git$/.test(
+        source.url,
+      ) ||
+        !/^[a-f0-9]{40}$/.test(source.commit) ||
+        source.requested !== `${source.url}#${source.commit}`)
+    )
+      invalid("invalid_source");
   } else if (source.kind === "zip") {
     if (source.requested !== `zip:sha256:${source.sha256}`)
       invalid("invalid_source");

@@ -340,13 +340,6 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 describe("official Pi SDK headless session host", () => {
-  it("maps zero-based MCP catalog positions to sanitized bounded native tool names", () => {
-    expect(nativePiMcpToolName(0, 0, "search")).toBe("mcp__s1_t1__search");
-    expect(nativePiMcpToolName(1, 2, "wire tool/name")).toBe(
-      "mcp__s2_t3__wire_tool_name",
-    );
-    expect(nativePiMcpToolName(0, 0, "x".repeat(100))).toHaveLength(63);
-  });
   it("returns the native /compact summary and preserves the same session file across restart", async () => {
     const f = await setup();
     f.behavior.tool = "";

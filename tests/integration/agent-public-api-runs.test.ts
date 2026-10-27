@@ -10,7 +10,6 @@ vi.mock("@/lib/observability/http", () => ({
   ) => handler,
 }));
 import { POST as retiredResponse } from "@/app/api/v1/agent-endpoints/[endpointId]/responses/route";
-import { POST as retiredCompletion } from "@/app/api/openai/v1/chat/completions/route";
 
 let userId = "";
 let workspaceId = "";
@@ -135,24 +134,6 @@ describe("retired public Agent execution", () => {
     expect(
       await db.agentRun.count({ where: { endpointId: principal.endpointId } }),
     ).toBe(before);
-    expect(
-      await db.agentEndpointRuntime.count({
-        where: { endpointId: principal.endpointId },
-      }),
-    ).toBe(0);
-  });
-
-  it("cannot materialize a Hermes runtime through the old OpenAI endpoint", async () => {
-    const response = await retiredCompletion(
-      new Request("http://localhost/api/openai/v1/chat/completions", {
-        method: "POST",
-        body: JSON.stringify({
-          model: principal.endpointPublicId,
-          messages: [{ role: "user", content: "hello" }],
-        }),
-      }),
-    );
-    expect(response.status).toBe(410);
     expect(
       await db.agentEndpointRuntime.count({
         where: { endpointId: principal.endpointId },

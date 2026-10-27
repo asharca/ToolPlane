@@ -202,29 +202,6 @@ describe("McpConnectionFlow", () => {
     expect(mocks.fetch).not.toHaveBeenCalled();
   });
 
-  it("offers revision preparation instead of inspecting an unpublished Agent template", () => {
-    render(
-      <McpConnectionFlow
-        workspace="acme"
-        deploymentId="connection-a"
-        targets={[
-          { kind: "agent", id: "agent-draft", name: "Draft", published: false },
-        ]}
-      />,
-    );
-    fireEvent.change(screen.getByRole("combobox"), {
-      target: { value: "agent:agent-draft" },
-    });
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "resourceRevisionPreparationRequired",
-    );
-    expect(
-      screen.getByRole("button", { name: "resourcePreview" }),
-    ).toBeDisabled();
-    expect(mocks.preview).not.toHaveBeenCalled();
-    expect(mocks.inspector).not.toHaveBeenCalled();
-  });
-
   it("does not offer authorization without a checksum-bound discovery result", async () => {
     mocks.discover.mockResolvedValue({ tools: [{ name: "read" }] });
     render(

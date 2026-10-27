@@ -70,7 +70,6 @@ import { stopSandboxAction } from "@/lib/sandboxes/actions";
 import {
   AgentMarketError,
   materializeAgentRelease,
-  publishAgentRelease,
   unpublishAgentListing,
   withdrawPendingAgentRelease,
 } from "@/lib/agents/market";
@@ -755,74 +754,8 @@ export async function cloneAgentAction(formData: FormData) {
   );
 }
 
-function marketTags(value: FormDataEntryValue | null): string[] {
-  if (typeof value !== "string") return [];
-  return [
-    ...new Set(
-      value
-        .split(",")
-        .map((tag) => tag.trim().slice(0, 32))
-        .filter(Boolean),
-    ),
-  ].slice(0, 6);
-}
-
 function marketErrorCode(error: unknown) {
   return error instanceof AgentMarketError ? error.code : "install_failed";
-}
-
-export async function publishAgentReleaseAction(formData: FormData) {
-  const slug = String(formData.get("workspace") ?? "");
-  const agentId = String(formData.get("agentId") ?? "");
-  const ctx = await authorizedWorkspace(slug);
-  if (!ctx || !agentId) return;
-  if (!(await isManageableAgent(ctx.ws.id, agentId))) return;
-
-  const publishPath = `/app/${slug}/agents/${agentId}/publish`;
-  if (ctx.ws.ownerId !== ctx.user.id) {
-    redirect(`${publishPath}?error=owner_only`);
-  }
-  if (formData.get("confirmPublicContents") !== "yes") {
-    redirect(`${publishPath}?error=confirm_required`);
-  }
-
-  const name = String(formData.get("name") ?? "")
-    .trim()
-    .slice(0, 80);
-  const summary = String(formData.get("summary") ?? "")
-    .trim()
-    .slice(0, 360);
-  if (!name || !summary) {
-    redirect(`${publishPath}?error=missing_fields`);
-  }
-
-  let errorCode: string | null = null;
-  try {
-    await publishAgentRelease({
-      workspaceId: ctx.ws.id,
-      agentId,
-      publishedById: ctx.user.id,
-      listing: {
-        slug: String(formData.get("listingSlug") ?? "").trim() || undefined,
-        name,
-        summary,
-        iconUrl:
-          String(formData.get("iconUrl") ?? "")
-            .trim()
-            .slice(0, 2000) || null,
-        tags: marketTags(formData.get("tags")),
-        categoryIds: formData.getAll("categoryIds").map(String).filter(Boolean),
-      },
-    });
-  } catch (error) {
-    errorCode = marketErrorCode(error);
-  }
-  if (errorCode)
-    redirect(`${publishPath}?error=${encodeURIComponent(errorCode)}`);
-
-  revalidatePath(`/app/${slug}/market/agents`);
-  revalidatePath(publishPath);
-  redirect(`${publishPath}?submitted=1`);
 }
 
 export async function unpublishAgentListingAction(formData: FormData) {

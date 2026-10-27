@@ -1,10 +1,5 @@
 import { describe, it, expect } from "vitest";
 import { sandboxFlags, envFlags, MCP_NETWORK } from "@/lib/process/sandbox";
-import {
-  DEFAULT_SANDBOX_IMAGE,
-  SANDBOX_IMAGE_OPTIONS,
-  resolveSandboxImage,
-} from "@/lib/sandboxes/images";
 import { parseSandboxDirectoryText } from "@/lib/sandboxes/file-list";
 import {
   parseSandboxEnvText,
@@ -181,31 +176,6 @@ describe("Docker sandbox volume snapshots", () => {
     expect(volumeName).not.toContain("/");
     expect(volumeName).not.toContain("$");
     expect(volumeName).not.toContain(" ");
-  });
-});
-
-describe("sandbox image catalog", () => {
-  it("includes the default Dev Container image and common language stacks", () => {
-    expect(SANDBOX_IMAGE_OPTIONS[0].image).toBe(DEFAULT_SANDBOX_IMAGE);
-    expect(SANDBOX_IMAGE_OPTIONS.map((option) => option.image)).toEqual(
-      expect.arrayContaining([
-        "mcr.microsoft.com/devcontainers/typescript-node:26-bookworm",
-        "mcr.microsoft.com/devcontainers/python:3.12-bookworm",
-        "mcr.microsoft.com/devcontainers/go:1-bookworm",
-        "mcr.microsoft.com/devcontainers/rust:1-bookworm",
-        "mcr.microsoft.com/devcontainers/universal:2",
-      ]),
-    );
-  });
-
-  it("resolves preset, custom, and empty image choices", () => {
-    expect(resolveSandboxImage("python-312", "")).toBe(
-      "mcr.microsoft.com/devcontainers/python:3.12-bookworm",
-    );
-    expect(resolveSandboxImage("custom", "ghcr.io/acme/sandbox:latest")).toBe(
-      "ghcr.io/acme/sandbox:latest",
-    );
-    expect(resolveSandboxImage("", "")).toBe(DEFAULT_SANDBOX_IMAGE);
   });
 });
 

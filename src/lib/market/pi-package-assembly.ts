@@ -55,60 +55,6 @@ const assemblySelectionSchema = z.object({
   themes: z.array(standaloneResourceSchema).max(64).optional(),
 });
 
-export function readPiAssemblyFormData(
-  formData: FormData,
-): Omit<PiPackageAssemblyInput, "workspaceId"> {
-  try {
-    const mcps = new Map<string, string[]>();
-    const rawTools = formData.getAll("mcpTools");
-    if (rawTools.length > 64 * 256)
-      throw new MarketError("invalid_manifest", "Too many MCP selections.");
-    for (const raw of rawTools) {
-      if (typeof raw !== "string" || raw.length > 2048)
-        throw new MarketError("invalid_manifest", "Invalid MCP selection.");
-      const value: unknown = JSON.parse(raw);
-      if (
-        !Array.isArray(value) ||
-        value.length !== 2 ||
-        value.some((part) => typeof part !== "string")
-      )
-        throw new MarketError("invalid_manifest", "Invalid MCP selection.");
-      const [id, tool] = value as [string, string];
-      mcps.set(id, [...(mcps.get(id) ?? []), tool]);
-    }
-    const resources: Record<string, unknown> = {};
-    for (const field of ["standaloneThemes"]) {
-      const raw = formData.get(field) ?? "[]";
-      if (typeof raw !== "string" || raw.length > 96 * 1024 * 1024)
-        throw new MarketError(
-          "invalid_manifest",
-          "Standalone resource JSON exceeds the package intake limit.",
-        );
-      resources[field] = JSON.parse(raw);
-    }
-    const parsed = assemblySelectionSchema.safeParse({
-      name: formData.get("packageName"),
-      version: formData.get("packageVersion"),
-      installedSkillIds: formData.getAll("installedSkillIds"),
-      packageReleaseIds: formData.getAll("packageReleaseIds"),
-      themes: resources.standaloneThemes,
-      mcps: [...mcps].map(([deploymentId, tools]) => ({ deploymentId, tools })),
-    });
-    if (!parsed.success)
-      throw new MarketError(
-        "invalid_manifest",
-        "Invalid package selections: use arrays of named Prompt/Theme files up to 1 MiB each (at most 64 per resource kind).",
-      );
-    return parsed.data;
-  } catch (error) {
-    if (error instanceof MarketError) throw error;
-    throw new MarketError(
-      "invalid_manifest",
-      "Package selections must contain valid JSON arrays of named resource files.",
-    );
-  }
-}
-
 /** Read selected resources inside the publisher transaction; never serialize their identities. */
 export async function assemblePiPackage(
   tx: Prisma.TransactionClient,

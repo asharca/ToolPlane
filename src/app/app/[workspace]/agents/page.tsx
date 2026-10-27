@@ -43,7 +43,11 @@ export default async function AgentsPage({
       listProviders(ws.id),
       listAgentDeploymentOptions(ws.id),
       listAgentSkillOptions(ws.id),
-      listAgentMarketListings({ pageSize: 12, sort: "popular" }),
+      listAgentMarketListings({
+        pageSize: 12,
+        sort: "popular",
+        workspaceId: ws.id,
+      }),
     ]);
   const defaultModelProviderId = ws.defaultModelProviderId;
   const defaultModelId = ws.defaultModel;

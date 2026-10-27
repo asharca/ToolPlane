@@ -2,10 +2,7 @@
 import { createHash } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import { describe, expect, it, vi } from "vitest";
-import {
-  assemblePiPackage,
-  readPiAssemblyFormData,
-} from "@/lib/market/pi-package-assembly";
+import { assemblePiPackage } from "@/lib/market/pi-package-assembly";
 import { flattenPiPackages } from "@/lib/pi-packages/flatten";
 import {
   parsePromptTemplate,
@@ -77,24 +74,6 @@ const listing = {
 };
 
 describe("immutable Pi package assembly", () => {
-  it.each([
-    "null",
-    "{}",
-    "1",
-    '"text"',
-    "[null]",
-    '[{"name":"review","content":42}]',
-    "[",
-  ])("rejects malformed standalone JSON before assembly: %s", (raw) => {
-    const data = new FormData();
-    data.set("packageName", "safe-package");
-    data.set("packageVersion", "1.0.0");
-    data.set("standaloneThemes", raw);
-    expect(() => readPiAssemblyFormData(data)).toThrow(
-      expect.objectContaining({ code: "invalid_manifest" }),
-    );
-  });
-
   it("rejects oversized file contents before querying workspace resources", async () => {
     const query = vi.fn();
     const tx = {

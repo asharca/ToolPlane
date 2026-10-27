@@ -2,28 +2,19 @@ import "server-only";
 
 import type { Prisma } from "@prisma/client";
 import { z } from "zod";
-import { AGENT_STEP_BOUNDS, resolveMaxSteps } from "@/lib/agents/constants";
+import { AGENT_STEP_BOUNDS } from "@/lib/agents/constants";
 import { db } from "@/lib/db";
 import {
   isPlatformAgentListingOrigin,
-  VISIBLE_AGENT_LISTING_ORIGIN,
+  visibleAgentListingOrigin,
 } from "@/lib/agents/market-visibility";
 import { agentReleaseChecksum as calculateAgentReleaseChecksum } from "@/lib/agents/market-artifact";
 import { createAgentRecords } from "@/lib/agents/mutations";
 import { MAX_AGENT_MARKET_ENV_REQUIREMENTS } from "@/lib/agents/market-limits";
-import {
-  buildInstalledSkillMarkdown,
-  buildSkillMarkdown,
-  installedSkillExtraFiles,
-} from "@/lib/skills/artifact";
 import { parseServerRecipe } from "@/lib/workspace/server-recipe";
-import { scanAgentReleaseManifest } from "@/lib/market/secret-scan";
 import { readMcpToolCatalog } from "@/lib/process/mcp-tool-catalog";
 import { assertPortableMcpRecipe } from "@/lib/market/mcp-portable-recipe";
-import {
-  resolveMcpEnvironment,
-  sealMcpEnvironment,
-} from "@/lib/process/mcp-credentials";
+import { sealMcpEnvironment } from "@/lib/process/mcp-credentials";
 
 export const AGENT_MARKET_MANIFEST_VERSION = 1 as const;
 
@@ -264,39 +255,6 @@ export type AgentInstallResourceMap = z.infer<
   typeof agentInstallResourceMapSchema
 >;
 
-export type AgentPortabilityIssueCode =
-  | "agent_not_found"
-  | "cross_workspace_agent"
-  | "cross_workspace_provider"
-  | "cross_workspace_deployment"
-  | "cross_workspace_skill"
-  | "cross_workspace_toolkit"
-  | "unsupported_runtime"
-  | "external_sandbox"
-  | "custom_mcp"
-  | "unverified_catalog_mcp"
-  | "invalid_catalog_recipe"
-  | "invalid_skill_bundle"
-  | "invalid_definition"
-  | "graph_too_large"
-  | "manifest_too_large";
-
-export type AgentPortabilityIssue = {
-  code: AgentPortabilityIssueCode;
-  path: string;
-  message: string;
-  resourceId?: string;
-};
-
-export type AgentPortabilityAssessment =
-  | {
-      portable: true;
-      issues: [];
-      manifest: AgentReleaseManifestV1;
-      summary: AgentReleaseSummary;
-    }
-  | { portable: false; issues: AgentPortabilityIssue[] };
-
 export type AgentMarketErrorCode =
   | "not_authorized"
   | "agent_not_found"
@@ -371,6 +329,14 @@ export type AgentMarketListingDetail = {
     checksum: string;
     publishedAt: Date;
     summary: AgentReleaseSummary;
+    releaseSummary: {
+      github: {
+        repository: string;
+        commit: string;
+        path: string;
+        version: string;
+      };
+    } | null;
   };
   manifest: AgentReleaseManifestV1;
 };
@@ -413,130 +379,6 @@ export type PublisherAgentListing = {
   };
 };
 
-const MARKET_DEPLOYMENT_SELECT = {
-  id: true,
-  workspaceId: true,
-  serverId: true,
-  installCfg: true,
-  name: true,
-  mcpToolExposure: true,
-  mcpAllowedTools: true,
-  server: {
-    select: {
-      id: true,
-      slug: true,
-      name: true,
-      verifiedAt: true,
-      installCfg: true,
-    },
-  },
-} satisfies Prisma.DeploymentSelect;
-
-const MARKET_INSTALLED_SKILL_SELECT = {
-  id: true,
-  workspaceId: true,
-  skillId: true,
-  name: true,
-  slug: true,
-  description: true,
-  content: true,
-  files: true,
-  userInvocable: true,
-  agentInvocable: true,
-  effort: true,
-  source: true,
-  skill: {
-    select: {
-      id: true,
-      slug: true,
-      name: true,
-      author: true,
-      description: true,
-      content: true,
-      files: true,
-      sourceSha: true,
-    },
-  },
-} satisfies Prisma.InstalledSkillSelect;
-
-const MARKET_TOOLKIT_SELECT = {
-  id: true,
-  workspaceId: true,
-  name: true,
-  slug: true,
-  enabled: true,
-  servers: { select: { deployment: { select: MARKET_DEPLOYMENT_SELECT } } },
-  skills: {
-    select: { installedSkill: { select: MARKET_INSTALLED_SKILL_SELECT } },
-  },
-} satisfies Prisma.ToolkitSelect;
-
-const MARKET_AGENT_SELECT = {
-  id: true,
-  workspaceId: true,
-  name: true,
-  slug: true,
-  runtimeKind: true,
-  systemPrompt: true,
-  model: true,
-  maxSteps: true,
-  provider: { select: { id: true, workspaceId: true, format: true } },
-  sandboxes: {
-    select: {
-      sandbox: {
-        select: { id: true, workspaceId: true, kind: true, network: true },
-      },
-    },
-  },
-  servers: { select: { deployment: { select: MARKET_DEPLOYMENT_SELECT } } },
-  skills: {
-    select: { installedSkill: { select: MARKET_INSTALLED_SKILL_SELECT } },
-  },
-  toolkits: { select: { toolkit: { select: MARKET_TOOLKIT_SELECT } } },
-  subAgents: {
-    select: { child: { select: { id: true, workspaceId: true, name: true } } },
-  },
-} satisfies Prisma.AgentSelect;
-
-type LoadedMarketAgent = Prisma.AgentGetPayload<{
-  select: typeof MARKET_AGENT_SELECT;
-}>;
-type LoadedMarketDeployment = Prisma.DeploymentGetPayload<{
-  select: typeof MARKET_DEPLOYMENT_SELECT;
-}>;
-type LoadedMarketSkill = Prisma.InstalledSkillGetPayload<{
-  select: typeof MARKET_INSTALLED_SKILL_SELECT;
-}>;
-type LoadedMarketToolkit = Prisma.ToolkitGetPayload<{
-  select: typeof MARKET_TOOLKIT_SELECT;
-}>;
-
-type CollectorState = {
-  workspaceId: string;
-  issues: AgentPortabilityIssue[];
-  issueKeys: Set<string>;
-  agentKeys: Map<string, string>;
-  deploymentKeys: Map<string, string | null>;
-  deploymentEnvironments: Map<string, Record<string, string>>;
-  skillKeys: Map<string, string | null>;
-  toolkitKeys: Map<string, string | null>;
-  agents: PortableAgentDefinition[];
-  deployments: PortableDeploymentDefinition[];
-  skills: PortableSkillDefinition[];
-  toolkits: PortableToolkitDefinition[];
-};
-
-function pushIssue(state: CollectorState, issue: AgentPortabilityIssue) {
-  const key = `${issue.code}:${issue.resourceId ?? ""}:${issue.path}`;
-  if (state.issueKeys.has(key)) return;
-  state.issueKeys.add(key);
-  state.issues.push(issue);
-}
-
-function nextKey(prefix: string, size: number): string {
-  return `${prefix}_${size + 1}`;
-}
-
 function slugify(value: string, fallback: string): string {
   const slug = value
     .toLowerCase()
@@ -546,35 +388,8 @@ function slugify(value: string, fallback: string): string {
   return slug || fallback;
 }
 
-async function uniqueDirectorySlug(
-  tx: Prisma.TransactionClient,
-  desired: string,
-): Promise<string> {
-  const base = slugify(desired, "agent");
-  for (let suffix = 0; suffix < 10_000; suffix += 1) {
-    const candidate = suffix === 0 ? base : `${base}-${suffix}`;
-    const conflict = await tx.agentListing.findUnique({
-      where: { directorySlug: candidate },
-      select: { id: true },
-    });
-    if (!conflict) return candidate;
-  }
-  throw new AgentMarketError(
-    "listing_conflict",
-    "Could not allocate a unique agent directory slug.",
-  );
-}
-
 function sortedUnique(values: readonly string[]): string[] {
   return [...new Set(values)].sort((a, b) => a.localeCompare(b));
-}
-
-function sortedRecord(
-  values: Record<string, string> | undefined,
-): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(values ?? {}).sort(([a], [b]) => a.localeCompare(b)),
-  );
 }
 
 export function agentReleaseChecksum(manifest: AgentReleaseManifestV1): string {
@@ -680,657 +495,6 @@ export function summarizeAgentReleaseManifest(
   };
 }
 
-export type CatalogAgentManifestInput = {
-  name: string;
-  slug: string;
-  systemPrompt: string | null;
-  maxSteps: number;
-  modelFormat?: string | null;
-  model?: string | null;
-  serverIds?: readonly string[];
-  skillIds?: readonly string[];
-};
-
-/**
- * Build a portable release exclusively from administrator-managed catalog
- * resources. This is the safe source for an admin-created directory template:
- * no workspace deployment ids, credentials, conversations, or runtime state
- * can enter the artifact.
- */
-export async function buildCatalogAgentManifest(
-  tx: Prisma.TransactionClient,
-  input: CatalogAgentManifestInput,
-): Promise<AgentReleaseManifestV1> {
-  const serverIds = sortedUnique(input.serverIds ?? []);
-  const skillIds = sortedUnique(input.skillIds ?? []);
-  if (serverIds.length + skillIds.length > MAX_GRAPH_RESOURCES) {
-    throw new AgentMarketError(
-      "not_portable",
-      "The template contains too many catalog resources.",
-    );
-  }
-
-  const [servers, skills] = await Promise.all([
-    serverIds.length
-      ? tx.server.findMany({
-          where: { id: { in: serverIds } },
-          orderBy: [{ name: "asc" }, { id: "asc" }],
-          select: {
-            id: true,
-            slug: true,
-            name: true,
-            verifiedAt: true,
-            installCfg: true,
-          },
-        })
-      : Promise.resolve([]),
-    skillIds.length
-      ? tx.skill.findMany({
-          where: { id: { in: skillIds } },
-          orderBy: [{ name: "asc" }, { id: "asc" }],
-          select: {
-            id: true,
-            slug: true,
-            name: true,
-            author: true,
-            description: true,
-            content: true,
-            files: true,
-            sourceSha: true,
-          },
-        })
-      : Promise.resolve([]),
-  ]);
-  if (
-    servers.length !== serverIds.length ||
-    skills.length !== skillIds.length
-  ) {
-    throw new AgentMarketError(
-      "not_portable",
-      "One or more selected catalog resources no longer exist.",
-    );
-  }
-
-  const deployments: PortableDeploymentDefinition[] = servers.map(
-    (server, index) => {
-      const recipe = parseServerRecipe(server.installCfg);
-      if (!server.verifiedAt || !recipe) {
-        throw new AgentMarketError(
-          "not_portable",
-          `Catalog MCP "${server.name}" is not verified with a portable recipe.`,
-        );
-      }
-      const publicEnv = sortedRecord(recipe.envValues);
-      return {
-        key: `deployment_${index + 1}`,
-        name: server.name,
-        catalogSlug: server.slug,
-        source: recipe.source,
-        sourceRef: recipe.ref,
-        ...(recipe.command
-          ? { command: recipe.command, args: recipe.args }
-          : {}),
-        requiredEnv: sortedUnique(recipe.env).filter(
-          (name) => !(name in publicEnv),
-        ),
-        publicEnv,
-        ...(recipe.startCommand ? { startCommand: recipe.startCommand } : {}),
-        ...(recipe.network === "none" ? { network: "none" as const } : {}),
-        ...(recipe.transport ? { transport: recipe.transport } : {}),
-        ...(recipe.authType ? { authType: recipe.authType } : {}),
-        ...(recipe.bearerEnv ? { bearerEnv: recipe.bearerEnv } : {}),
-        ...(recipe.headerEnv ? { headerEnv: recipe.headerEnv } : {}),
-        mcpToolExposure: "all" as const,
-        mcpAllowedTools: [],
-      };
-    },
-  );
-  const portableSkills: PortableSkillDefinition[] = skills.map(
-    (skill, index) => ({
-      key: `skill_${index + 1}`,
-      origin: "catalog" as const,
-      catalogSlug: skill.slug,
-      ...(skill.sourceSha ? { sourceSha: skill.sourceSha } : {}),
-      name: skill.name,
-      slug: skill.slug,
-      description: skill.description,
-      content: buildSkillMarkdown(skill),
-      files: installedSkillExtraFiles({
-        skillId: skill.id,
-        skill,
-        name: null,
-        slug: null,
-        description: null,
-        content: null,
-        files: null,
-      }),
-      userInvocable: true,
-      agentInvocable: true,
-      effort: "default",
-    }),
-  );
-
-  const modelFormat = input.modelFormat?.trim() || null;
-  const model = input.model?.trim() || null;
-  const manifest: AgentReleaseManifestV1 = {
-    schemaVersion: AGENT_MARKET_MANIFEST_VERSION,
-    rootAgentKey: "agent_1",
-    agents: [
-      {
-        key: "agent_1",
-        name: input.name.trim().slice(0, 240),
-        slug: slugify(input.slug, "agent"),
-        systemPrompt: input.systemPrompt?.trim() || null,
-        maxSteps: resolveMaxSteps(input.maxSteps),
-        modelRequirement:
-          modelFormat && model ? { format: modelFormat, model } : null,
-        runtime: { kind: "pi" },
-        deploymentKeys: deployments.map(({ key }) => key),
-        skillKeys: portableSkills.map(({ key }) => key),
-        toolkitKeys: [],
-        subAgentKeys: [],
-      },
-    ],
-    deployments,
-    skills: portableSkills,
-    toolkits: [],
-  };
-  return parseAgentReleaseManifest(manifest);
-}
-
-function invalidResourceCount(state: CollectorState): boolean {
-  return (
-    state.deployments.length + state.skills.length + state.toolkits.length >=
-    MAX_GRAPH_RESOURCES
-  );
-}
-
-function collectDeployment(
-  state: CollectorState,
-  deployment: LoadedMarketDeployment,
-  path: string,
-): string | null {
-  const cached = state.deploymentKeys.get(deployment.id);
-  if (cached !== undefined) return cached;
-  if (invalidResourceCount(state)) {
-    pushIssue(state, {
-      code: "graph_too_large",
-      path,
-      message: `The agent graph contains more than ${MAX_GRAPH_RESOURCES} resources.`,
-    });
-    state.deploymentKeys.set(deployment.id, null);
-    return null;
-  }
-  if (deployment.workspaceId !== state.workspaceId) {
-    pushIssue(state, {
-      code: "cross_workspace_deployment",
-      path,
-      message: "An MCP deployment belongs to another workspace.",
-      resourceId: deployment.id,
-    });
-    state.deploymentKeys.set(deployment.id, null);
-    return null;
-  }
-  if (!deployment.serverId || !deployment.server) {
-    pushIssue(state, {
-      code: "custom_mcp",
-      path,
-      message:
-        "Custom MCP deployments are not portable in agent marketplace v1.",
-      resourceId: deployment.id,
-    });
-    state.deploymentKeys.set(deployment.id, null);
-    return null;
-  }
-  if (!deployment.server.verifiedAt) {
-    pushIssue(state, {
-      code: "unverified_catalog_mcp",
-      path,
-      message: `Catalog MCP "${deployment.server.name}" has not been verified.`,
-      resourceId: deployment.id,
-    });
-    state.deploymentKeys.set(deployment.id, null);
-    return null;
-  }
-  const recipe = parseServerRecipe(deployment.server.installCfg);
-  if (!recipe) {
-    pushIssue(state, {
-      code: "invalid_catalog_recipe",
-      path,
-      message: `Catalog MCP "${deployment.server.name}" has no portable deployment recipe.`,
-      resourceId: deployment.id,
-    });
-    state.deploymentKeys.set(deployment.id, null);
-    return null;
-  }
-
-  const key = nextKey("deployment", state.deployments.length);
-  state.deploymentEnvironments.set(
-    key,
-    resolveMcpEnvironment(deployment.installCfg, state.workspaceId),
-  );
-  const publicEnv = sortedRecord(recipe.envValues);
-  const requiredEnv = sortedUnique(recipe.env).filter(
-    (name) => !(name in publicEnv),
-  );
-  const catalogToolNames = new Set(
-    readMcpToolCatalog(deployment.server.installCfg).map(({ name }) => name),
-  );
-  state.deploymentKeys.set(deployment.id, key);
-  state.deployments.push({
-    key,
-    name: deployment.server.name,
-    catalogSlug: deployment.server.slug,
-    source: recipe.source,
-    sourceRef: recipe.ref,
-    ...(recipe.command ? { command: recipe.command, args: recipe.args } : {}),
-    requiredEnv,
-    publicEnv,
-    ...(recipe.startCommand ? { startCommand: recipe.startCommand } : {}),
-    ...(recipe.network === "none" ? { network: "none" as const } : {}),
-    ...(recipe.transport ? { transport: recipe.transport } : {}),
-    ...(recipe.authType ? { authType: recipe.authType } : {}),
-    ...(recipe.bearerEnv ? { bearerEnv: recipe.bearerEnv } : {}),
-    ...(recipe.headerEnv ? { headerEnv: recipe.headerEnv } : {}),
-    mcpToolExposure: deployment.mcpToolExposure,
-    mcpAllowedTools: sortedUnique(
-      deployment.mcpAllowedTools.filter((name) => catalogToolNames.has(name)),
-    ),
-  });
-  return key;
-}
-
-function collectSkill(
-  state: CollectorState,
-  installed: LoadedMarketSkill,
-  path: string,
-): string | null {
-  const cached = state.skillKeys.get(installed.id);
-  if (cached !== undefined) return cached;
-  if (invalidResourceCount(state)) {
-    pushIssue(state, {
-      code: "graph_too_large",
-      path,
-      message: `The agent graph contains more than ${MAX_GRAPH_RESOURCES} resources.`,
-    });
-    state.skillKeys.set(installed.id, null);
-    return null;
-  }
-  if (installed.workspaceId !== state.workspaceId) {
-    pushIssue(state, {
-      code: "cross_workspace_skill",
-      path,
-      message: "An installed skill belongs to another workspace.",
-      resourceId: installed.id,
-    });
-    state.skillKeys.set(installed.id, null);
-    return null;
-  }
-
-  let content: string;
-  let files: PortableSkillDefinition["files"];
-  try {
-    content = buildInstalledSkillMarkdown(installed);
-    files = installedSkillExtraFiles(installed);
-  } catch (error) {
-    pushIssue(state, {
-      code: "invalid_skill_bundle",
-      path,
-      message:
-        error instanceof Error ? error.message : "The skill bundle is invalid.",
-      resourceId: installed.id,
-    });
-    state.skillKeys.set(installed.id, null);
-    return null;
-  }
-
-  const catalog = installed.skillId && installed.skill ? installed.skill : null;
-  const name = (catalog?.name ?? installed.name ?? "Skill").trim() || "Skill";
-  const skillSlug = slugify(catalog?.slug ?? installed.slug ?? name, "skill");
-  const key = nextKey("skill", state.skills.length);
-  state.skillKeys.set(installed.id, key);
-  state.skills.push({
-    key,
-    origin: catalog ? "catalog" : "custom",
-    ...(catalog ? { catalogSlug: catalog.slug } : {}),
-    ...(catalog?.sourceSha ? { sourceSha: catalog.sourceSha } : {}),
-    name,
-    slug: skillSlug,
-    description: catalog?.description ?? installed.description ?? null,
-    content,
-    files,
-    userInvocable: installed.userInvocable,
-    agentInvocable: installed.agentInvocable,
-    effort: installed.effort || "default",
-  });
-  return key;
-}
-
-function collectToolkit(
-  state: CollectorState,
-  toolkit: LoadedMarketToolkit,
-  path: string,
-): string | null {
-  const cached = state.toolkitKeys.get(toolkit.id);
-  if (cached !== undefined) return cached;
-  if (invalidResourceCount(state)) {
-    pushIssue(state, {
-      code: "graph_too_large",
-      path,
-      message: `The agent graph contains more than ${MAX_GRAPH_RESOURCES} resources.`,
-    });
-    state.toolkitKeys.set(toolkit.id, null);
-    return null;
-  }
-  if (toolkit.workspaceId !== state.workspaceId) {
-    pushIssue(state, {
-      code: "cross_workspace_toolkit",
-      path,
-      message: "A toolkit belongs to another workspace.",
-      resourceId: toolkit.id,
-    });
-    state.toolkitKeys.set(toolkit.id, null);
-    return null;
-  }
-
-  const key = nextKey("toolkit", state.toolkits.length);
-  state.toolkitKeys.set(toolkit.id, key);
-  const deploymentKeys = toolkit.servers
-    .slice()
-    .sort((a, b) => a.deployment.id.localeCompare(b.deployment.id))
-    .map(({ deployment }) =>
-      collectDeployment(state, deployment, `${path}.deployments`),
-    )
-    .filter((value): value is string => Boolean(value));
-  const skillKeys = toolkit.skills
-    .slice()
-    .sort((a, b) => a.installedSkill.id.localeCompare(b.installedSkill.id))
-    .map(({ installedSkill }) =>
-      collectSkill(state, installedSkill, `${path}.skills`),
-    )
-    .filter((value): value is string => Boolean(value));
-  state.toolkits.push({
-    key,
-    name: toolkit.name,
-    slug: slugify(toolkit.slug || toolkit.name, "toolkit"),
-    enabled: toolkit.enabled,
-    deploymentKeys: sortedUnique(deploymentKeys),
-    skillKeys: sortedUnique(skillKeys),
-  });
-  return key;
-}
-
-async function collectPortableManifest(
-  tx: Prisma.TransactionClient,
-  workspaceId: string,
-  rootAgentId: string,
-): Promise<AgentPortabilityAssessment> {
-  const state: CollectorState = {
-    workspaceId,
-    issues: [],
-    issueKeys: new Set(),
-    agentKeys: new Map([[rootAgentId, "agent_1"]]),
-    deploymentKeys: new Map(),
-    deploymentEnvironments: new Map(),
-    skillKeys: new Map(),
-    toolkitKeys: new Map(),
-    agents: [],
-    deployments: [],
-    skills: [],
-    toolkits: [],
-  };
-  const queue = [rootAgentId];
-  const processed = new Set<string>();
-
-  for (let cursor = 0; cursor < queue.length; cursor += 1) {
-    const agentId = queue[cursor];
-    if (processed.has(agentId)) continue;
-    processed.add(agentId);
-    const agent: LoadedMarketAgent | null = await tx.agent.findUnique({
-      where: { id: agentId },
-      select: MARKET_AGENT_SELECT,
-    });
-    const key =
-      state.agentKeys.get(agentId) ?? nextKey("agent", state.agentKeys.size);
-    state.agentKeys.set(agentId, key);
-    const path = `agents.${key}`;
-    if (!agent) {
-      pushIssue(state, {
-        code: "agent_not_found",
-        path,
-        message: "An agent in the delegation graph no longer exists.",
-        resourceId: agentId,
-      });
-      continue;
-    }
-    if (agent.workspaceId !== workspaceId) {
-      pushIssue(state, {
-        code: "cross_workspace_agent",
-        path,
-        message:
-          "An agent in the delegation graph belongs to another workspace.",
-        resourceId: agent.id,
-      });
-      continue;
-    }
-    const isPi = agent.runtimeKind === "pi-sdk" || agent.runtimeKind === "pi";
-    if (!isPi) {
-      pushIssue(state, {
-        code: "unsupported_runtime",
-        path: `${path}.runtime`,
-        message: `Runtime "${agent.runtimeKind}" is not portable in agent marketplace v1.`,
-        resourceId: agent.id,
-      });
-    }
-    if (isPi) {
-      const sandbox = agent.sandboxes[0]?.sandbox;
-      if (
-        agent.sandboxes.length !== 1 ||
-        !sandbox ||
-        sandbox.workspaceId !== workspaceId ||
-        sandbox.kind !== "docker" ||
-        sandbox.network === "none"
-      ) {
-        pushIssue(state, {
-          code: "invalid_definition",
-          path: `${path}.sandboxes`,
-          message:
-            "Pi Agents require exactly one networked Docker sandbox in the published workspace.",
-          resourceId: agent.id,
-        });
-      }
-    } else if (agent.sandboxes.length > 0) {
-      for (const { sandbox } of agent.sandboxes) {
-        pushIssue(state, {
-          code: "external_sandbox",
-          path: `${path}.sandboxes`,
-          message: "Only Pi Agents may attach a portable sandbox.",
-          resourceId: sandbox.id,
-        });
-      }
-    }
-    if (agent.provider && agent.provider.workspaceId !== workspaceId) {
-      pushIssue(state, {
-        code: "cross_workspace_provider",
-        path: `${path}.provider`,
-        message: "The model provider belongs to another workspace.",
-        resourceId: agent.provider.id,
-      });
-    }
-
-    const deploymentKeys = agent.servers
-      .slice()
-      .sort((a, b) => a.deployment.id.localeCompare(b.deployment.id))
-      .map(({ deployment }) =>
-        collectDeployment(state, deployment, `${path}.deployments`),
-      )
-      .filter((value): value is string => Boolean(value));
-    const skillKeys = agent.skills
-      .slice()
-      .sort((a, b) => a.installedSkill.id.localeCompare(b.installedSkill.id))
-      .map(({ installedSkill }) =>
-        collectSkill(state, installedSkill, `${path}.skills`),
-      )
-      .filter((value): value is string => Boolean(value));
-    const toolkitKeys = agent.toolkits
-      .slice()
-      .sort((a, b) => a.toolkit.id.localeCompare(b.toolkit.id))
-      .map(({ toolkit }) => collectToolkit(state, toolkit, `${path}.toolkits`))
-      .filter((value): value is string => Boolean(value));
-    // Toolkit composition is source-only. New releases contain flat portable
-    // Skill/MCP requirements, never an executable Toolkit composite.
-    const toolkitDefinitions = state.toolkits.filter(({ key }) =>
-      toolkitKeys.includes(key),
-    );
-    for (const toolkit of toolkitDefinitions) {
-      deploymentKeys.push(...toolkit.deploymentKeys);
-      skillKeys.push(...toolkit.skillKeys);
-    }
-
-    const subAgentKeys: string[] = [];
-    for (const { child } of agent.subAgents
-      .slice()
-      .sort((a, b) => a.child.id.localeCompare(b.child.id))) {
-      if (child.workspaceId !== workspaceId) {
-        pushIssue(state, {
-          code: "cross_workspace_agent",
-          path: `${path}.subAgents`,
-          message: `Sub-agent "${child.name}" belongs to another workspace.`,
-          resourceId: child.id,
-        });
-        continue;
-      }
-      let childKey = state.agentKeys.get(child.id);
-      if (!childKey) {
-        if (state.agentKeys.size >= MAX_GRAPH_AGENTS) {
-          pushIssue(state, {
-            code: "graph_too_large",
-            path: `${path}.subAgents`,
-            message: `The delegation graph contains more than ${MAX_GRAPH_AGENTS} agents.`,
-          });
-          continue;
-        }
-        childKey = nextKey("agent", state.agentKeys.size);
-        state.agentKeys.set(child.id, childKey);
-        queue.push(child.id);
-      }
-      subAgentKeys.push(childKey);
-    }
-
-    state.agents.push({
-      key,
-      name: agent.name,
-      slug: slugify(agent.slug || agent.name, "agent"),
-      systemPrompt: agent.systemPrompt,
-      maxSteps: resolveMaxSteps(agent.maxSteps),
-      modelRequirement:
-        agent.provider &&
-        agent.provider.workspaceId === workspaceId &&
-        agent.model
-          ? { format: agent.provider.format, model: agent.model }
-          : null,
-      runtime: { kind: "pi" },
-      deploymentKeys: sortedUnique(deploymentKeys),
-      skillKeys: sortedUnique(skillKeys),
-      toolkitKeys: [],
-      subAgentKeys: sortedUnique(subAgentKeys),
-    });
-  }
-
-  if (state.issues.length > 0) return { portable: false, issues: state.issues };
-  const parsedManifest = agentReleaseManifestSchema.safeParse({
-    schemaVersion: AGENT_MARKET_MANIFEST_VERSION,
-    rootAgentKey: state.agentKeys.get(rootAgentId) ?? "agent_1",
-    agents: state.agents,
-    deployments: state.deployments,
-    skills: state.skills,
-    toolkits: [],
-  });
-  if (!parsedManifest.success) {
-    return {
-      portable: false,
-      issues: parsedManifest.error.issues.map((issue) => ({
-        code: "invalid_definition" as const,
-        path: issue.path.join("."),
-        message: issue.message,
-      })),
-    };
-  }
-  const manifest = parsedManifest.data;
-  // Resolve only within the authorized workspace export transaction. Neither
-  // credentials nor their envelopes or value hashes belong in the artifact.
-  const content = JSON.stringify(manifest);
-  for (const [key, environment] of state.deploymentEnvironments) {
-    const definition = manifest.deployments.find(
-      (deployment) => deployment.key === key,
-    );
-    for (const [name, value] of Object.entries(environment)) {
-      if (!value || definition?.publicEnv[name] === value) continue;
-      if (
-        [
-          value,
-          encodeURIComponent(value),
-          Buffer.from(value).toString("base64"),
-        ].some((secret) =>
-          content.includes(JSON.stringify(secret).slice(1, -1)),
-        )
-      ) {
-        return {
-          portable: false,
-          issues: [
-            {
-              code: "invalid_definition",
-              path: "manifest",
-              message:
-                "Portable agent content cannot embed configured MCP environment values.",
-            },
-          ],
-        };
-      }
-    }
-  }
-  if (
-    Buffer.byteLength(JSON.stringify(manifest), "utf8") > MAX_MANIFEST_BYTES
-  ) {
-    return {
-      portable: false,
-      issues: [
-        {
-          code: "manifest_too_large",
-          path: "manifest",
-          message: `The portable agent manifest exceeds ${MAX_MANIFEST_BYTES} bytes.`,
-        },
-      ],
-    };
-  }
-  return {
-    portable: true,
-    issues: [],
-    manifest,
-    summary: summarizeAgentReleaseManifest(manifest),
-  };
-}
-
-export async function assessAgentPortability(input: {
-  workspaceId: string;
-  agentId: string;
-}): Promise<AgentPortabilityAssessment> {
-  return db.$transaction(
-    (tx) => collectPortableManifest(tx, input.workspaceId, input.agentId),
-    { isolationLevel: "RepeatableRead" },
-  );
-}
-
-function cleanListingTags(values: readonly string[] | undefined): string[] {
-  return [
-    ...new Set(
-      (values ?? [])
-        .map((value) => value.trim().toLocaleLowerCase().slice(0, 40))
-        .filter(Boolean),
-    ),
-  ].slice(0, 20);
-}
-
 function isPrismaError(error: unknown, codes: readonly string[]): boolean {
   return Boolean(
     error &&
@@ -1362,204 +526,6 @@ async function assertPublisherAccess(
       "not_authorized",
       "Only a workspace owner or admin can publish agents.",
     );
-  }
-}
-
-async function checkedCategoryIds(
-  tx: Prisma.TransactionClient,
-  values: readonly string[] | undefined,
-): Promise<string[]> {
-  const categoryIds = [
-    ...new Set((values ?? []).map((value) => value.trim()).filter(Boolean)),
-  ];
-  if (categoryIds.length === 0 || categoryIds.length > 20) {
-    throw new AgentMarketError(
-      "invalid_categories",
-      "Select at least one valid category.",
-    );
-  }
-  const count = await tx.category.count({ where: { id: { in: categoryIds } } });
-  if (count !== categoryIds.length) {
-    throw new AgentMarketError(
-      "invalid_categories",
-      "One or more selected categories do not exist.",
-    );
-  }
-  return categoryIds;
-}
-
-export async function publishAgentRelease(input: {
-  workspaceId: string;
-  agentId: string;
-  publishedById: string;
-  listing?: {
-    slug?: string;
-    name?: string;
-    summary?: string | null;
-    iconUrl?: string | null;
-    tags?: string[];
-    categoryIds?: string[];
-  };
-}) {
-  try {
-    return await db.$transaction(
-      async (tx) => {
-        await assertPublisherAccess(tx, input.workspaceId, input.publishedById);
-        const sourceAgent = await tx.agent.findFirst({
-          where: { id: input.agentId, workspaceId: input.workspaceId },
-          select: {
-            id: true,
-            slug: true,
-            name: true,
-            workspace: { select: { slug: true, name: true } },
-          },
-        });
-        if (!sourceAgent) {
-          throw new AgentMarketError(
-            "agent_not_found",
-            "The source agent was not found.",
-          );
-        }
-
-        const assessment = await collectPortableManifest(
-          tx,
-          input.workspaceId,
-          input.agentId,
-        );
-        if (!assessment.portable) {
-          throw new AgentMarketError(
-            "not_portable",
-            "The agent contains resources that cannot be published safely.",
-            { issues: assessment.issues },
-          );
-        }
-
-        const categoryIds = await checkedCategoryIds(
-          tx,
-          input.listing?.categoryIds,
-        );
-
-        const requestedSlug = input.listing?.slug ?? sourceAgent.slug;
-        const listingSlug = slugify(requestedSlug, sourceAgent.slug || "agent");
-        const listingName =
-          input.listing?.name?.trim().slice(0, 240) || sourceAgent.name;
-        const listingSummary =
-          input.listing?.summary?.trim().slice(0, 4000) || null;
-        const iconUrl = input.listing?.iconUrl?.trim().slice(0, 2000) || null;
-        const tags = cleanListingTags(input.listing?.tags);
-        const scan = scanAgentReleaseManifest(
-          assessment.manifest,
-          listingSummary,
-        );
-        if (scan.status === "blocked") {
-          throw new AgentMarketError(
-            "invalid_manifest",
-            "Remove possible credentials from the agent before publishing it.",
-            { findings: scan.findings },
-          );
-        }
-        const existing = await tx.agentListing.findUnique({
-          where: { sourceAgentId: sourceAgent.id },
-        });
-        if (existing && existing.publisherWorkspaceId !== input.workspaceId) {
-          throw new AgentMarketError(
-            "listing_conflict",
-            "The agent is already listed elsewhere.",
-          );
-        }
-        const slugConflict = await tx.agentListing.findFirst({
-          where: {
-            publisherWorkspaceId: input.workspaceId,
-            slug: listingSlug,
-            ...(existing ? { id: { not: existing.id } } : {}),
-          },
-          select: { id: true },
-        });
-        if (slugConflict) {
-          throw new AgentMarketError(
-            "listing_conflict",
-            "Another agent listing in this workspace already uses that slug.",
-          );
-        }
-        const directorySlug =
-          existing?.directorySlug ??
-          (await uniqueDirectorySlug(tx, listingSlug));
-
-        const listing = existing
-          ? await tx.agentListing.update({
-              where: { id: existing.id },
-              data: {
-                publisherKind: "workspace",
-                publishedById: input.publishedById,
-              },
-            })
-          : await tx.agentListing.create({
-              data: {
-                publisherKind: "workspace",
-                publisherWorkspaceId: input.workspaceId,
-                sourceAgentId: sourceAgent.id,
-                publishedById: input.publishedById,
-                slug: listingSlug,
-                directorySlug,
-                name: listingName,
-                author: sourceAgent.workspace.name,
-                summary: listingSummary,
-                iconUrl,
-                tags,
-              },
-            });
-        if (listing.pendingReleaseId) {
-          await tx.agentRelease.updateMany({
-            where: { id: listing.pendingReleaseId, reviewStatus: "pending" },
-            data: {
-              reviewStatus: "rejected",
-              reviewedAt: new Date(),
-              reviewNote: "Superseded by a newer publisher submission.",
-            },
-          });
-        }
-        const version = listing.latestVersion + 1;
-        const checksum = agentReleaseChecksum(assessment.manifest);
-        const release = await tx.agentRelease.create({
-          data: {
-            listingId: listing.id,
-            version,
-            manifestVersion: AGENT_MARKET_MANIFEST_VERSION,
-            manifest: assessment.manifest as Prisma.InputJsonValue,
-            releaseSummary: assessment.summary as Prisma.InputJsonValue,
-            checksum,
-            name: listingName,
-            summary: listingSummary,
-            iconUrl,
-            tags,
-            categoryIds,
-            reviewStatus: "pending",
-          },
-        });
-        const submittedListing = await tx.agentListing.update({
-          where: { id: listing.id },
-          data: {
-            status:
-              listing.status === "published" && listing.latestReleaseId
-                ? "published"
-                : "draft",
-            latestVersion: version,
-            pendingReleaseId: release.id,
-          },
-        });
-        return { listing: submittedListing, release };
-      },
-      { isolationLevel: "Serializable", maxWait: 10_000, timeout: 30_000 },
-    );
-  } catch (error) {
-    if (error instanceof AgentMarketError) throw error;
-    if (isPrismaError(error, ["P2002", "P2034"])) {
-      throw new AgentMarketError(
-        "listing_conflict",
-        "The listing changed while it was being published. Try again.",
-      );
-    }
-    throw error;
   }
 }
 
@@ -1744,6 +710,7 @@ export async function getAgentListingForPublisher(
 }
 
 export type AgentMarketListInput = {
+  workspaceId?: string;
   q?: string;
   page?: number;
   pageSize?: number;
@@ -1775,7 +742,7 @@ export async function listAgentMarketListings(
   const baseWhere: Prisma.AgentListingWhereInput = {
     status: "published",
     latestReleaseId: { not: null },
-    AND: [VISIBLE_AGENT_LISTING_ORIGIN],
+    AND: [visibleAgentListingOrigin(input.workspaceId)],
     latestRelease: { is: { reviewStatus: "approved" } },
     ...(term
       ? {
@@ -1890,14 +857,14 @@ export async function listAgentMarketListings(
   return { items, total, availableTotal, page, pageSize };
 }
 
-export async function listAgentMarketCategories() {
+export async function listAgentMarketCategories(workspaceId?: string) {
   return db.category.findMany({
     where: {
       agentListings: {
         some: {
           status: "published",
           latestReleaseId: { not: null },
-          AND: [VISIBLE_AGENT_LISTING_ORIGIN],
+          AND: [visibleAgentListingOrigin(workspaceId)],
           latestRelease: { is: { reviewStatus: "approved" } },
         },
       },
@@ -1912,7 +879,7 @@ export async function listAgentMarketCategories() {
             where: {
               status: "published",
               latestReleaseId: { not: null },
-              AND: [VISIBLE_AGENT_LISTING_ORIGIN],
+              AND: [visibleAgentListingOrigin(workspaceId)],
               latestRelease: { is: { reviewStatus: "approved" } },
             },
           },
@@ -1924,12 +891,13 @@ export async function listAgentMarketCategories() {
 
 async function findAgentMarketListing(
   identity: Prisma.AgentListingWhereInput,
+  workspaceId?: string,
 ): Promise<AgentMarketListingDetail | null> {
   const row = await db.agentListing.findFirst({
     where: {
       ...identity,
       status: "published",
-      AND: [VISIBLE_AGENT_LISTING_ORIGIN],
+      AND: [visibleAgentListingOrigin(workspaceId)],
       latestReleaseId: { not: null },
       latestRelease: { is: { reviewStatus: "approved" } },
     },
@@ -1963,6 +931,14 @@ async function findAgentMarketListing(
           releaseSummary: true,
           checksum: true,
           publishedAt: true,
+          githubRegistryVersion: {
+            select: {
+              sourceRepository: true,
+              sourceCommit: true,
+              sourcePath: true,
+              version: true,
+            },
+          },
         },
       },
     },
@@ -2018,6 +994,17 @@ async function findAgentMarketListing(
       checksum: agentReleaseChecksum(manifest),
       publishedAt: row.latestRelease.publishedAt,
       summary: parseReleaseSummary(row.latestRelease.releaseSummary),
+      releaseSummary: row.latestRelease.githubRegistryVersion
+        ? {
+            github: {
+              repository:
+                row.latestRelease.githubRegistryVersion.sourceRepository,
+              commit: row.latestRelease.githubRegistryVersion.sourceCommit,
+              path: row.latestRelease.githubRegistryVersion.sourcePath,
+              version: row.latestRelease.githubRegistryVersion.version,
+            },
+          }
+        : null,
     },
     manifest,
   };
@@ -2025,14 +1012,16 @@ async function findAgentMarketListing(
 
 export function getAgentMarketListing(
   listingId: string,
+  workspaceId?: string,
 ): Promise<AgentMarketListingDetail | null> {
-  return findAgentMarketListing({ id: listingId });
+  return findAgentMarketListing({ id: listingId }, workspaceId);
 }
 
 export function getAgentMarketListingByDirectorySlug(
   directorySlug: string,
+  workspaceId?: string,
 ): Promise<AgentMarketListingDetail | null> {
-  return findAgentMarketListing({ directorySlug });
+  return findAgentMarketListing({ directorySlug }, workspaceId);
 }
 
 export type MaterializeAgentReleaseResult = {
@@ -2051,7 +1040,9 @@ export type MaterializeAgentReleaseResult = {
   resourceMap: AgentInstallResourceMap;
 };
 
-function validateManifestReferences(manifest: AgentReleaseManifestV1) {
+export function validateAgentReleaseManifestReferences(
+  manifest: AgentReleaseManifestV1,
+) {
   function uniqueKeys(label: string, keys: string[]) {
     if (new Set(keys).size !== keys.length) {
       throw new AgentMarketError(
@@ -2288,7 +1279,7 @@ async function materializeAgentReleaseTransaction(
   const currentListing = await tx.agentListing.findFirst({
     where: {
       id: release.listing.id,
-      AND: [VISIBLE_AGENT_LISTING_ORIGIN],
+      AND: [visibleAgentListingOrigin(input.targetWorkspaceId)],
     },
     select: { status: true, latestReleaseId: true },
   });
@@ -2335,7 +1326,7 @@ async function materializeAgentReleaseTransaction(
     parsedManifest,
     trustedServers,
   );
-  validateManifestReferences(manifest);
+  validateAgentReleaseManifestReferences(manifest);
 
   const deploymentMap: Record<string, string> = {};
   for (const definition of manifest.deployments) {

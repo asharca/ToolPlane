@@ -13,10 +13,6 @@ import { LogTimestamp } from "@/components/admin/LogUI";
 import { adminHref, adminReturnHref } from "@/lib/admin/navigation";
 import { getTranslations } from "next-intl/server";
 import { notFound } from "next/navigation";
-import {
-  AgentListingForm,
-  type AgentListingFormInitial,
-} from "@/components/admin/AgentListingForm";
 import { AgentReleaseReview } from "@/components/admin/AgentReleaseReview";
 import {
   AdminBadge,
@@ -28,14 +24,12 @@ import { ConfirmDialog } from "@/components/admin/ConfirmDialog";
 import { DashboardTable } from "@/components/dashboard/DashboardUI";
 import {
   getDirectoryAgentListing,
-  listCatalogAgentResources,
   readAgentReleaseManifest,
 } from "@/lib/admin/agent-market";
 import {
   deleteAgentListingAction,
   rejectAgentReleaseAction,
   setAgentListingStatusAction,
-  updateAgentListingAction,
 } from "@/lib/admin/agent-market-actions";
 import { listCategories } from "@/lib/admin/categories";
 import { requireAdmin } from "@/lib/auth/admin";
@@ -61,11 +55,10 @@ export default async function EditAgentListingPage({
 }) {
   const { id } = await params;
   await requireAdmin();
-  const [t, listing, categories, resources] = await Promise.all([
+  const [t, listing, categories] = await Promise.all([
     getTranslations("admin"),
     getDirectoryAgentListing(id),
     listCategories(),
-    listCatalogAgentResources(),
   ]);
   if (!listing) notFound();
   const ops = await getTranslations("adminOps");
@@ -97,72 +90,6 @@ export default async function EditAgentListingPage({
         select: { manifest: true },
       })
     : null;
-
-  const configurationRelease = listing.latestRelease ?? listing.pendingRelease;
-  let manifest: ReturnType<typeof readAgentReleaseManifest> | null = null;
-  if (configurationRelease) {
-    try {
-      manifest = readAgentReleaseManifest(
-        configurationRelease.manifest,
-        configurationRelease.checksum,
-      );
-    } catch {
-      manifest = null;
-    }
-  }
-  const rootAgent =
-    manifest?.agents.find(({ key }) => key === manifest.rootAgentKey) ?? null;
-  const serverIdBySlug = new Map(
-    resources.servers.map((server) => [server.slug, server.id]),
-  );
-  const skillIdBySlug = new Map(
-    resources.skills.map((skill) => [skill.slug, skill.id]),
-  );
-  const selectedServerIds =
-    manifest?.deployments
-      .map(({ catalogSlug }) => serverIdBySlug.get(catalogSlug))
-      .filter((value): value is string => Boolean(value)) ?? [];
-  const selectedSkillIds =
-    manifest?.skills
-      .map(({ catalogSlug }) =>
-        catalogSlug ? skillIdBySlug.get(catalogSlug) : undefined,
-      )
-      .filter((value): value is string => Boolean(value)) ?? [];
-  const configEditable =
-    !listing.pendingRelease &&
-    (!configurationRelease ||
-      Boolean(
-        manifest &&
-          rootAgent &&
-          manifest.agents.length === 1 &&
-          rootAgent.subAgentKeys.length === 0 &&
-          manifest.toolkits.length === 0 &&
-          manifest.skills.every(
-            ({ origin, catalogSlug }) =>
-              origin === "catalog" && Boolean(catalogSlug),
-          ) &&
-          selectedServerIds.length === manifest.deployments.length &&
-          selectedSkillIds.length === manifest.skills.length,
-      ));
-  const initial: AgentListingFormInitial = {
-    id: listing.id,
-    directorySlug: listing.directorySlug,
-    name: listing.name,
-    author: listing.author,
-    summary: listing.summary,
-    iconUrl: listing.iconUrl,
-    tags: listing.tags,
-    curated: listing.curated,
-    isFeatured: listing.isFeatured,
-    categoryIds: listing.categories.map(({ id: categoryId }) => categoryId),
-    status: listing.status,
-    systemPrompt: rootAgent?.systemPrompt ?? null,
-    maxSteps: rootAgent?.maxSteps,
-    modelFormat: rootAgent?.modelRequirement?.format ?? null,
-    model: rootAgent?.modelRequirement?.model ?? null,
-    serverIds: selectedServerIds,
-    skillIds: selectedSkillIds,
-  };
 
   let reviewManifest: ReturnType<typeof readAgentReleaseManifest> | null = null;
   if (reviewRelease) {
@@ -250,15 +177,9 @@ export default async function EditAgentListingPage({
         />
       ) : null}
 
-      <AgentListingForm
-        action={updateAgentListingAction}
-        initial={initial}
-        categories={categories}
-        servers={resources.servers}
-        skills={resources.skills}
-        configEditable={configEditable}
-        submitLabel={t("saveChanges")}
-      />
+      <p className="text-sm text-muted-foreground">
+        {t("githubManagedResources")}
+      </p>
 
       <AdminPanel
         title={t("agentReleaseHistory")}
@@ -367,39 +288,22 @@ export default async function EditAgentListingPage({
       </AdminPanel>
 
       <div className="grid gap-6 lg:grid-cols-2">
-        <AdminPanel
-          title={
-            listing.status === "published"
-              ? t("disableAgentListing")
-              : t("publishAgentListing")
-          }
-          description={
-            listing.status === "published"
-              ? t("disableAgentListingDescription")
-              : t("publishAgentListingDescription")
-          }
-          tone={listing.status === "published" ? "danger" : "default"}
-        >
-          <ConfirmDialog
-            label={
-              listing.status === "published"
-                ? t("disableAgentListing")
-                : t("publishAgentListing")
-            }
-            prompt={
-              listing.status === "published"
-                ? t("disableAgentListingConfirm")
-                : t("publishAgentListingConfirm")
-            }
-            action={setAgentListingStatusAction}
-            hidden={{
-              id: listing.id,
-              status: listing.status === "published" ? "disabled" : "published",
-            }}
-            pendingLabel={t("saving")}
-            tone={listing.status === "published" ? "danger" : "default"}
-          />
-        </AdminPanel>
+        {listing.status === "published" ? (
+          <AdminPanel
+            title={t("disableAgentListing")}
+            description={t("disableAgentListingDescription")}
+            tone="danger"
+          >
+            <ConfirmDialog
+              label={t("disableAgentListing")}
+              prompt={t("disableAgentListingConfirm")}
+              action={setAgentListingStatusAction}
+              hidden={{ id: listing.id, status: "disabled" }}
+              pendingLabel={t("saving")}
+              tone="danger"
+            />
+          </AdminPanel>
+        ) : null}
 
         <AdminPanel
           title={t("dangerZone")}

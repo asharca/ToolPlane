@@ -125,7 +125,7 @@ ToolPlane Task ID 与远端 Task ID 分开。查询与续写使用返回的 **To
 
 ```bash
 pnpm exec prisma generate
-pnpm vitest run tests/unit/a2a-remote-*.test.ts tests/unit/agent-a2a-remotes.test.tsx tests/integration/a2a-remote*.test.ts
+pnpm vitest run tests/integration/a2a-remote.test.ts
 pnpm exec tsc --noEmit
 ```
 

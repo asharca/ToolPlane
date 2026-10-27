@@ -3,13 +3,14 @@ import { ButtonLink } from "@/components/motion/button";
 
 import { usePathname, useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { PackageCheck, Store, Upload } from "lucide-react";
+import { GitBranch, List, PackageCheck, Store } from "lucide-react";
 
 const LIFECYCLE_TABS = [
   { key: "discover", labelKey: "discover", icon: Store },
   { key: "installed", labelKey: "installedResources", icon: PackageCheck },
   { key: "updates", labelKey: "updates", icon: PackageCheck },
-  { key: "publish", labelKey: "publishManagement", icon: Upload },
+  { key: "sources", labelKey: "githubRegistry.title", icon: GitBranch },
+  { key: "publish", labelKey: "ownedPublications", icon: List },
 ] as const;
 
 export function MarketTabs({
@@ -23,14 +24,9 @@ export function MarketTabs({
   const t = useTranslations("console.market");
   const searchParams = useSearchParams();
   const base = `/app/${encodeURIComponent(slug)}/market`;
-  const workspaceResources =
-    pathname === `${base}/installed` ||
-    pathname.startsWith(`${base}/installed/`) ||
-    pathname === `${base}/sources`;
-  const publications =
-    pathname === `${base}/publish` ||
-    pathname.startsWith(`${base}/publish/`) ||
-    pathname === `${base}/compose`;
+  const workspaceResources = pathname.startsWith(`${base}/installed`);
+  const sources = pathname === `${base}/sources`;
+  const publications = pathname.startsWith(`${base}/publish`);
 
   return (
     <div className="min-w-0 max-w-full">
@@ -50,13 +46,16 @@ export function MarketTabs({
             tab.key === "discover"
               ? (pathname === base || pathname.startsWith(`${base}/`)) &&
                 !workspaceResources &&
-                !publications
+                !publications &&
+                !sources
               : tab.key === "updates"
                 ? pathname === `${base}/installed` &&
                   searchParams.get("updates") === "1"
                 : tab.key === "installed"
                   ? workspaceResources && searchParams.get("updates") !== "1"
-                  : publications;
+                  : tab.key === "sources"
+                    ? sources
+                    : publications;
           const Icon = tab.icon;
           return (
             <ButtonLink

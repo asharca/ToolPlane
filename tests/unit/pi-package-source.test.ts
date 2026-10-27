@@ -51,7 +51,10 @@ vi.mock("@/lib/market/skills", () => ({
     }
   },
 }));
-import { capturePiPackage } from "@/lib/market/pi-package-source";
+import {
+  capturePiPackage,
+  captureGithubRegistryPiPackage,
+} from "@/lib/market/pi-package-source";
 
 class Tunnel extends Duplex {
   written = 0;
@@ -186,6 +189,29 @@ afterEach(() => {
 });
 
 describe("Pi package capture trust boundary", () => {
+  it.each([
+    { repository: "https://github.com/team/registry" },
+    { commit: "main" },
+    { path: "../package" },
+    { path: "/package" },
+    { path: "packages//review" },
+    { files: [{ path: "index.ts", data: body }] },
+  ])(
+    "rejects invalid registry capture identity before Docker %j",
+    async (override) => {
+      await expect(
+        captureGithubRegistryPiPackage({
+          repository: "team/registry",
+          commit: "a".repeat(40),
+          path: "packages/review",
+          files: [{ path: "package.json", data: Buffer.from("{}") }],
+          ...override,
+        }),
+      ).rejects.toMatchObject({ code: "package_capture_failed" });
+      expect(transport.spawn).not.toHaveBeenCalled();
+    },
+  );
+
   it("streams uploaded bytes through bounded stdin frames and binds provenance to their digest", async () => {
     const archive = writeZip([
       { path: "payload.bin", data: Buffer.alloc(150_000, 65) },

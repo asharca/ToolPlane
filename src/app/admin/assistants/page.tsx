@@ -1,5 +1,3 @@
-import { ButtonLink } from "@/components/motion/button";
-import { Plus } from "lucide-react";
 import { getTranslations } from "next-intl/server";
 import {
   AdminPage,
@@ -45,12 +43,6 @@ export default async function AdminAssistantsPage({
         meta={t("assistantListingCount", {
           count: result.total.toLocaleString(),
         })}
-        actions={
-          <ButtonLink href="/admin/assistants/new" variant="primary" size="md">
-            <Plus className="size-4" aria-hidden="true" />
-            {t("addAssistantTemplate")}
-          </ButtonLink>
-        }
       />
 
       <AdminSearchForm

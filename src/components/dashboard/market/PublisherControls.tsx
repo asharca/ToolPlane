@@ -16,12 +16,12 @@ export type ListingStatus = {
 export function PublisherControls({
   listing,
   workspace,
-  canPublish,
+  canManage,
   labels,
 }: {
   listing: ListingStatus | undefined;
   workspace: string;
-  canPublish: boolean;
+  canManage: boolean;
   labels: {
     withdraw: string;
     withdrawing: string;
@@ -32,7 +32,7 @@ export function PublisherControls({
     cancel: string;
   };
 }) {
-  if (!listing?.id || !canPublish) return null;
+  if (!listing?.id || !canManage) return null;
   return (
     <div className="flex flex-wrap justify-end gap-2 sm:col-span-4">
       {listing.pendingRelease?.reviewStatus === "pending" ? (
