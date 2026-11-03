@@ -15,20 +15,16 @@ import {
   WorkspaceTransferForm,
 } from "@/components/dashboard/WorkspaceForms";
 import { listProviders } from "@/lib/agents/queries";
-import { listAgentChannelConnections } from "@/lib/agents/channel-connections";
-import { toAgentChannelConnectionClientView } from "@/lib/agents/channel-connection-client";
-import { AgentMessagingPanel } from "@/components/dashboard/agents/AgentMessagingPanel";
 import { ModalSidebarLayout } from "@/components/dashboard/ModalSidebarLayout";
-import { Radio, Settings } from "lucide-react";
+import { DialogBody } from "@/components/dashboard/dialog";
+import { Settings } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
 export default async function SettingsPage({
   params,
-  searchParams,
 }: {
   params: Promise<{ workspace: string }>;
-  searchParams: Promise<{ section?: string }>;
 }) {
   const { workspace: slug } = await params;
   const [t, management] = await Promise.all([
@@ -40,7 +36,7 @@ export default async function SettingsPage({
   const ws = await getWorkspaceForUser(slug, user.id);
   if (!ws) redirect("/app?view=workspaces&notice=unavailable");
   const isOwner = ws.ownerId === user.id;
-  const [providers, members, impact, running, connections] = await Promise.all([
+  const [providers, members, impact, running] = await Promise.all([
     listProviders(ws.id),
     getWorkspaceMembers(ws.id),
     isOwner
@@ -66,20 +62,12 @@ export default async function SettingsPage({
           where: {
             workspaceId: ws.id,
             status: {
-              in: [
-                "queued",
-                "running",
-                "waiting_approval",
-                "waiting_user",
-                "cancelling",
-              ],
+              in: ["queued", "running", "waiting_user", "cancelling"],
             },
           },
         })
       : 0,
-    isOwner ? listAgentChannelConnections(ws.id) : Promise.resolve([]),
   ]);
-  const query = await searchParams;
   const modelSelection = (providerId: string | null, model: string | null) =>
     providerId &&
     model &&
@@ -95,7 +83,7 @@ export default async function SettingsPage({
       label: t("general"),
       icon: <Settings className="size-4" />,
       content: (
-        <div className="space-y-6 p-5 sm:p-6 lg:p-8">
+        <DialogBody>
           <DashboardPanel
             title={t("general")}
             description={management("sharedHint")}
@@ -182,36 +170,15 @@ export default async function SettingsPage({
               <WorkspaceMemberAction slug={slug} kind="leave" />
             </DashboardPanel>
           )}
-        </div>
+        </DialogBody>
       ),
     },
-    ...(isOwner
-      ? [
-          {
-            id: "channels",
-            label: t("channels"),
-            icon: <Radio className="size-4" />,
-            content: (
-              <div className="h-full min-h-0 min-w-0">
-                <AgentMessagingPanel
-                  slug={slug}
-                  connections={connections.map(
-                    toAgentChannelConnectionClientView,
-                  )}
-                />
-              </div>
-            ),
-          },
-        ]
-      : []),
   ];
   return (
     <ModalSidebarLayout
       label={t("title")}
       sections={sections}
-      initialSection={
-        query.section === "channels" && isOwner ? "channels" : "general"
-      }
+      initialSection="general"
     />
   );
 }

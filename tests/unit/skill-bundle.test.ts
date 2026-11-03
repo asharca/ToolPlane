@@ -257,7 +257,9 @@ describe("fetchGithubSkillBundle", () => {
       "fetch",
       vi.fn(async (url: string | URL | Request) => {
         const href = String(url);
-        if (href.includes("/git/trees/HEAD?recursive=1")) {
+        if (href.includes("/commits/"))
+          return Response.json({ sha: "a".repeat(40) });
+        if (href.includes(`/git/trees/${"a".repeat(40)}?recursive=1`)) {
           return Response.json({
             truncated: false,
             tree: [
@@ -303,6 +305,8 @@ describe("fetchGithubSkillBundle", () => {
     const bundle = await fetchGithubSkillBundle("anthropics/skills/skills/pdf");
     expect(bundle.name).toBe("pdf");
     expect(bundle.content).toContain("# PDF");
+    expect(bundle.source.ref).toBe("a".repeat(40));
+    expect(bundle.source.normalized).toContain(`/tree/${"a".repeat(40)}/`);
     expect(bundle.files).toEqual([
       { path: "reference.md", content: "reference" },
       {
@@ -317,7 +321,9 @@ describe("fetchGithubSkillBundle", () => {
   it("imports each SKILL.md subtree from a repository root", async () => {
     const fetchMock = vi.fn(async (url: string | URL | Request) => {
       const href = String(url);
-      if (href.includes("/git/trees/HEAD?recursive=1")) {
+      if (href.includes("/commits/"))
+        return Response.json({ sha: "a".repeat(40) });
+      if (href.includes(`/git/trees/${"a".repeat(40)}?recursive=1`)) {
         return Response.json({
           truncated: false,
           tree: [
@@ -361,8 +367,8 @@ describe("fetchGithubSkillBundle", () => {
     ]);
     expect(bundles[1].files).toEqual([]);
     expect(bundles.map((bundle) => bundle.source.normalized)).toEqual([
-      "https://github.com/tikoci/routeros-skills/tree/HEAD/routeros-firewall",
-      "https://github.com/tikoci/routeros-skills/tree/HEAD/routeros-scripting",
+      `https://github.com/tikoci/routeros-skills/tree/${"a".repeat(40)}/routeros-firewall`,
+      `https://github.com/tikoci/routeros-skills/tree/${"a".repeat(40)}/routeros-scripting`,
     ]);
     expect(
       fetchMock.mock.calls.some(([url]) => String(url).endsWith("/README.md")),
@@ -371,20 +377,22 @@ describe("fetchGithubSkillBundle", () => {
       fetchMock.mock.calls.filter(([url]) =>
         String(url).includes("api.github.com"),
       ),
-    ).toHaveLength(1);
+    ).toHaveLength(2);
   });
 
   it("honors the caller-provided GitHub skill count limit", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () =>
-        Response.json({
-          truncated: false,
-          tree: [
-            { type: "blob", path: "one/SKILL.md", size: 8 },
-            { type: "blob", path: "two/SKILL.md", size: 8 },
-          ],
-        }),
+      vi.fn(async (url: string) =>
+        url.includes("/commits/")
+          ? Response.json({ sha: "a".repeat(40) })
+          : Response.json({
+              truncated: false,
+              tree: [
+                { type: "blob", path: "one/SKILL.md", size: 8 },
+                { type: "blob", path: "two/SKILL.md", size: 8 },
+              ],
+            }),
       ),
     );
 

@@ -1,33 +1,49 @@
 "use client";
-import { AnimatedBadge } from "@/components/motion/animated-badge";
-
-import { RadioGroup } from "@/components/motion/radio";
-import { RadioGroupItem } from "@/components/motion/radio";
-
-import { Button } from "@/components/motion/button";
-import { FormCheckbox } from "@/components/ui/FormCheckbox";
 
 import { useActionState, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
-import { Bot, CheckSquare2, Save, ShieldCheck } from "lucide-react";
+import Link from "next/link";
+import { ChevronRight, Save, Wrench } from "lucide-react";
+import { AnimatedBadge } from "@/components/motion/animated-badge";
+import { BouncyAccordion } from "@/components/motion/bouncy-accordion";
+import { Button } from "@/components/motion/button";
+import { Switch } from "@/components/motion/switch";
+import { Tabs, TabsList, TabsTrigger } from "@/components/motion/tabs";
+import { FormCheckbox } from "@/components/ui/FormCheckbox";
 import {
   updateMcpToolExposureAction,
   type McpToolExposureActionState,
 } from "@/lib/workspace/actions";
+import { notify } from "./Toaster";
+import {
+  McpConnectedChips,
+  type McpConnectedObject,
+} from "./McpConnectedChips";
+
+type Mode = "all" | "allowlist";
 
 type ToolSummary = {
   name: string;
+  title?: string;
   description?: string;
 };
 
-function errorMessage(
-  error: McpToolExposureActionState["error"],
-  t: ReturnType<typeof useTranslations>,
-): string | null {
-  if (!error) return null;
-  return t(error);
+function signature(
+  mode: Mode,
+  selected: Iterable<string>,
+  publicInvocable: boolean,
+) {
+  return JSON.stringify([
+    mode,
+    mode === "allowlist" ? [...selected].sort() : [],
+    publicInvocable,
+  ]);
 }
 
+/**
+ * Deployment-level tool access: the single filter applied to every Agent and
+ * Assistant connected to this MCP.
+ */
 export function McpToolExposureEditor({
   workspace,
   deploymentId,
@@ -35,22 +51,42 @@ export function McpToolExposureEditor({
   initialMode,
   initialAllowedTools,
   initialPublicInvocable = false,
-  running,
+  editable,
+  connected,
+  toolBasePath,
 }: {
   workspace: string;
   deploymentId: string;
   tools: ToolSummary[];
-  initialMode: "all" | "allowlist";
+  initialMode: Mode;
   initialAllowedTools: string[];
   initialPublicInvocable?: boolean;
-  running: boolean;
+  editable: boolean;
+  connected: McpConnectedObject[];
+  toolBasePath: string;
 }) {
   const t = useTranslations("console.mcp");
+  const [saved, setSaved] = useState(() =>
+    signature(initialMode, initialAllowedTools, initialPublicInvocable),
+  );
   const [state, formAction, isPending] = useActionState<
     McpToolExposureActionState,
     FormData
-  >(updateMcpToolExposureAction, {});
-  const [mode, setMode] = useState<"all" | "allowlist">(initialMode);
+  >(async (previous, formData) => {
+    const result = await updateMcpToolExposureAction(previous, formData);
+    if (result.savedAt) {
+      setSaved(
+        signature(
+          formData.get("mode") === "allowlist" ? "allowlist" : "all",
+          formData.getAll("toolName").map(String),
+          formData.get("publicInvocable") === "on",
+        ),
+      );
+      notify(t("toolExposureSaved"));
+    }
+    return result;
+  }, {});
+  const [mode, setMode] = useState<Mode>(initialMode);
   const [selected, setSelected] = useState(
     () =>
       new Set(
@@ -59,238 +95,274 @@ export function McpToolExposureEditor({
           : initialAllowedTools,
       ),
   );
-  const [revision, setRevision] = useState(0);
+  const [publicInvocable, setPublicInvocable] = useState(
+    initialPublicInvocable,
+  );
 
   const entries = useMemo(() => {
     const byName = new Map(
       tools.map((tool) => [tool.name, { ...tool, available: true }]),
     );
-    for (const name of initialAllowedTools) {
-      if (!byName.has(name)) byName.set(name, { name, available: false });
+    if (mode === "allowlist") {
+      for (const name of selected) {
+        if (!byName.has(name)) byName.set(name, { name, available: false });
+      }
     }
     return [...byName.values()];
-  }, [initialAllowedTools, tools]);
+  }, [mode, selected, tools]);
 
-  const currentNames = useMemo(
-    () => new Set(tools.map((tool) => tool.name)),
-    [tools],
-  );
-  const exposedCurrentCount =
+  const enabledCount =
     mode === "all"
       ? tools.length
-      : [...selected].filter((name) => currentNames.has(name)).length;
-  const error = errorMessage(state.error, t);
+      : tools.filter((tool) => selected.has(tool.name)).length;
+  const publicAllowed = mode === "allowlist" && selected.size > 0;
+  const effectivePublic = publicInvocable && publicAllowed;
+  const current = signature(mode, selected, effectivePublic);
+  const dirty = current !== saved;
 
-  const selectMode = (nextMode: "all" | "allowlist") => {
-    if (mode === "all" && nextMode === "allowlist") {
+  const selectMode = (next: Mode) => {
+    if (next === mode) return;
+    if (next === "allowlist")
       setSelected(new Set(tools.map((tool) => tool.name)));
-    }
-    setMode(nextMode);
-    setRevision((current) => current + 1);
+    setMode(next);
   };
   const toggleTool = (name: string) => {
-    setSelected((current) => {
-      const next = new Set(current);
+    if (mode === "all") {
+      setSelected(
+        new Set(
+          tools
+            .map((tool) => tool.name)
+            .filter((toolName) => toolName !== name),
+        ),
+      );
+      setMode("allowlist");
+      return;
+    }
+    setSelected((previous) => {
+      const next = new Set(previous);
       if (next.has(name)) next.delete(name);
       else next.add(name);
       return next;
     });
-    setRevision((current) => current + 1);
   };
 
-  if (!running) {
-    return (
-      <section className="max-w-4xl">
-        <div className="flex min-w-0 items-start gap-2.5">
-          <Bot className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-          <div className="min-w-0">
-            <h3 className="text-sm font-semibold text-foreground">
-              {t("aiToolExposure")}
-            </h3>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {initialMode === "all"
-                ? t("allCurrentAndFutureTools")
-                : t("selectedToolCount", { count: initialAllowedTools.length })}
-            </p>
-          </div>
-        </div>
-      </section>
-    );
-  }
+  const locked = !editable || isPending;
 
   return (
-    <form action={formAction} className="max-w-4xl">
+    <form
+      action={formAction}
+      className="min-w-0 rounded-xl border border-border bg-card"
+    >
       <input type="hidden" name="workspace" value={workspace} />
       <input type="hidden" name="deploymentId" value={deploymentId} />
-      <input type="hidden" name="revision" value={revision} />
+      <input type="hidden" name="mode" value={mode} />
+      {mode === "allowlist"
+        ? [...selected].map((name) => (
+            <input key={name} type="hidden" name="toolName" value={name} />
+          ))
+        : null}
+      {effectivePublic ? (
+        <input type="hidden" name="publicInvocable" value="on" />
+      ) : null}
 
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="flex min-w-0 items-start gap-2.5">
-          <Bot className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-          <div className="min-w-0">
-            <h3 className="text-sm font-semibold text-foreground">
-              {t("aiToolExposure")}
-            </h3>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              {t("toolsExposedSummary", {
-                count: exposedCurrentCount,
-                total: tools.length,
-              })}
-            </p>
-          </div>
+      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-3.5">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <Wrench className="size-4 shrink-0 text-muted-foreground" />
+          <h2 className="text-sm font-semibold text-foreground">
+            {t("toolAccess")}
+          </h2>
+          <span
+            title={t("toolsExposedSummary", {
+              count: enabledCount,
+              total: tools.length,
+            })}
+            className="rounded-full bg-muted px-2 py-0.5 font-mono text-xs tabular-nums text-muted-foreground"
+          >
+            {enabledCount}/{tools.length}
+          </span>
         </div>
-        <Button type="submit" disabled={isPending} variant="primary" size="sm">
-          <Save className="size-3.5" />
-          {isPending ? t("savingToolExposure") : t("saveToolExposure")}
-        </Button>
-      </div>
-
-      <fieldset disabled={isPending} className="mt-4">
-        <legend className="sr-only">{t("aiToolExposure")}</legend>
-        <input type="hidden" name="mode" value={mode} disabled={isPending} />
-        <RadioGroup
-          value={mode}
-          onValueChange={(next) => selectMode(next as "all" | "allowlist")}
-          orientation="horizontal"
-        >
-          {(
-            [
-              ["all", t("allTools"), t("allCurrentAndFutureTools")],
-              ["allowlist", t("selectedTools"), t("onlyCheckedTools")],
-            ] as const
-          ).map(([value, label, description]) => (
-            <div key={value} className="space-y-2">
-              <RadioGroupItem
-                value={value}
-                label={label}
+        {editable ? (
+          <Tabs
+            variant="segment"
+            value={mode}
+            onValueChange={(value) => selectMode(value as Mode)}
+          >
+            <TabsList aria-label={t("toolAccess")} className="bg-muted/60">
+              <TabsTrigger
+                value="all"
                 disabled={isPending}
-              />
-              <p className="text-xs text-muted-foreground">{description}</p>
-            </div>
-          ))}
-        </RadioGroup>
+                className="px-3 py-1 text-xs"
+              >
+                {t("allTools")}
+              </TabsTrigger>
+              <TabsTrigger
+                value="allowlist"
+                disabled={isPending}
+                className="px-3 py-1 text-xs"
+              >
+                {t("selectedTools")}
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+        ) : (
+          <span className="text-xs font-medium text-muted-foreground">
+            {mode === "all" ? t("allTools") : t("selectedTools")}
+          </span>
+        )}
+      </header>
 
-        {mode === "allowlist" ? (
-          <div className="mt-4 max-w-4xl overflow-hidden rounded-md border border-border">
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-muted/30 px-3 py-2">
-              <span className="text-xs text-muted-foreground">
-                {t("selectedToolCount", { count: selected.size })}
-              </span>
-              <div className="flex items-center gap-3">
-                {entries.length > 0 ? (
-                  <Button
-                    type="button"
-                    onClick={() => {
-                      setSelected(
-                        new Set(
-                          entries
-                            .filter((tool) => tool.available)
-                            .map((tool) => tool.name),
-                        ),
-                      );
-                      setRevision((current) => current + 1);
-                    }}
-                    variant="ghost"
-                    size="sm"
-                  >
-                    {t("selectAllTools")}
-                  </Button>
-                ) : null}
-                {selected.size > 0 ? (
-                  <Button
-                    type="button"
-                    onClick={() => {
-                      setSelected(new Set());
-                      setRevision((current) => current + 1);
-                    }}
-                    variant="ghost"
-                    size="sm"
-                  >
-                    {t("clearToolSelection")}
-                  </Button>
-                ) : null}
-              </div>
-            </div>
+      {connected.length ? (
+        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-border px-5 py-3">
+          <span className="text-xs text-muted-foreground">
+            {t("connectedTo")}
+          </span>
+          <McpConnectedChips objects={connected} />
+        </div>
+      ) : null}
 
-            {entries.length > 0 ? (
-              <ul className="max-h-80 divide-y divide-border overflow-y-auto">
-                {entries.map((tool) => (
-                  <li key={tool.name}>
-                    <div className="flex cursor-pointer items-start gap-3 px-3 py-3 hover:bg-muted/30">
-                      <FormCheckbox
-                        name="toolName"
-                        value={tool.name}
-                        checked={selected.has(tool.name)}
-                        onCheckedChange={() => toggleTool(tool.name)}
-                        label={tool.name}
-                      />
-                      <span className="min-w-0 flex-1">
-                        <span className="flex flex-wrap items-center gap-2">
-                          {!tool.available ? (
-                            <AnimatedBadge
-                              status="neutral"
-                              size="sm"
-                              showIcon={false}
-                            >
-                              {t("currentlyUnavailable")}
-                            </AnimatedBadge>
-                          ) : null}
-                        </span>
-                        {tool.description ? (
-                          <span className="mt-1 line-clamp-2 block text-xs leading-5 text-muted-foreground">
-                            {tool.description}
+      {mode === "all" ? (
+        <p className="border-b border-border bg-muted/25 px-5 py-2 text-xs text-muted-foreground">
+          {t("allCurrentAndFutureTools")}
+        </p>
+      ) : editable && entries.length ? (
+        <div className="flex items-center justify-end gap-1 border-b border-border bg-muted/25 px-3 py-1">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            disabled={isPending}
+            onClick={() => setSelected(new Set(tools.map((tool) => tool.name)))}
+          >
+            {t("selectAllTools")}
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            disabled={isPending || selected.size === 0}
+            onClick={() => setSelected(new Set())}
+          >
+            {t("clearToolSelection")}
+          </Button>
+        </div>
+      ) : null}
+
+      {entries.length ? (
+        <ul className="divide-y divide-border">
+          {entries.map((tool) => {
+            const enabled = mode === "all" || selected.has(tool.name);
+            const description = tool.description?.trim();
+            const title =
+              tool.title && tool.title !== tool.name ? tool.title : null;
+            return (
+              <li
+                key={tool.name}
+                className="flex min-w-0 items-center gap-4 px-5 py-2.5"
+              >
+                <Switch
+                  checked={enabled}
+                  onCheckedChange={() => toggleTool(tool.name)}
+                  disabled={locked}
+                  ariaLabel={tool.name}
+                />
+                {tool.available ? (
+                  <Link
+                    href={`${toolBasePath}/${encodeURIComponent(tool.name)}`}
+                    className="group flex min-w-0 flex-1 items-center gap-3 rounded-lg py-1 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span className="flex min-w-0 items-baseline gap-2">
+                        <code
+                          className={`truncate font-mono text-sm font-medium ${enabled ? "text-foreground" : "text-muted-foreground"}`}
+                        >
+                          {tool.name}
+                        </code>
+                        {title ? (
+                          <span className="hidden truncate text-xs text-muted-foreground sm:inline">
+                            {title}
                           </span>
                         ) : null}
                       </span>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="px-3 py-6 text-center text-sm text-muted-foreground">
-                {running ? t("mcpReportedNoTools") : t("startMcpToSelectTools")}
+                      {description ? (
+                        <span
+                          title={description}
+                          className="mt-0.5 block truncate text-xs text-muted-foreground"
+                        >
+                          {description}
+                        </span>
+                      ) : null}
+                    </span>
+                    <ChevronRight className="size-4 shrink-0 text-muted-foreground opacity-40 transition-opacity group-hover:opacity-100" />
+                  </Link>
+                ) : (
+                  <span className="flex min-w-0 flex-1 items-center gap-2 py-1">
+                    <code className="truncate font-mono text-sm text-muted-foreground">
+                      {tool.name}
+                    </code>
+                    <AnimatedBadge status="neutral" size="sm" showIcon={false}>
+                      {t("currentlyUnavailable")}
+                    </AnimatedBadge>
+                  </span>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      ) : (
+        <p className="px-5 py-10 text-center text-sm text-muted-foreground">
+          {editable ? t("mcpReportedNoTools") : t("startMcpToSelectTools")}
+        </p>
+      )}
+
+      {editable ? (
+        <>
+          <BouncyAccordion
+            defaultValue={initialPublicInvocable ? "advanced" : null}
+            className="border-t border-border"
+            classNames={{
+              item: "bg-transparent",
+              trigger: "min-h-11 px-5",
+              title: "text-xs font-medium text-muted-foreground",
+              description: "text-sm",
+            }}
+            items={[
+              {
+                id: "advanced",
+                title: t("advanced"),
+                description: (
+                  <div className="space-y-1.5">
+                    <FormCheckbox
+                      checked={effectivePublic}
+                      onCheckedChange={setPublicInvocable}
+                      disabled={isPending || !publicAllowed}
+                      label={t("publicAgentInvocable")}
+                    />
+                    <p className="pl-8 text-xs leading-5 text-muted-foreground">
+                      {t("publicAgentInvocableHelp")}
+                    </p>
+                  </div>
+                ),
+              },
+            ]}
+          />
+          <div className="sticky bottom-0 z-10 flex flex-wrap items-center justify-end gap-3 rounded-b-xl border-t border-border bg-card/95 px-5 py-3 backdrop-blur">
+            {state.error ? (
+              <p role="alert" className="mr-auto text-sm text-destructive">
+                {t(state.error)}
               </p>
-            )}
+            ) : null}
+            <Button
+              type="submit"
+              disabled={!dirty || isPending}
+              variant="primary"
+              size="sm"
+            >
+              <Save className="size-3.5" />
+              {isPending ? t("savingToolExposure") : t("saveToolExposure")}
+            </Button>
           </div>
-        ) : (
-          <p className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
-            <CheckSquare2 className="size-3.5" />
-            {t("futureToolsAutomaticallyExposed")}
-          </p>
-        )}
-      </fieldset>
-
-      <div className="mt-4 flex items-start gap-3 rounded-md border border-border bg-muted p-3">
-        <FormCheckbox
-          name="publicInvocable"
-          defaultChecked={initialPublicInvocable}
-          disabled={isPending || mode !== "allowlist" || selected.size === 0}
-          label={t("publicAgentInvocable")}
-        />
-        <ShieldCheck className="mt-0.5 size-4 shrink-0 text-(--color-warning) dark:text-(--color-warning)" />
-        <span className="min-w-0">
-          <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">
-            {t("publicAgentInvocableHelp")}
-          </span>
-        </span>
-      </div>
-
-      <div className="mt-3 min-h-5">
-        {error ? (
-          <p
-            className="text-sm text-destructive dark:text-destructive"
-            role="alert"
-          >
-            {error}
-          </p>
-        ) : state.savedAt && state.revision === revision ? (
-          <p role="status">
-            <AnimatedBadge status="success">
-              {t("toolExposureSaved")}
-            </AnimatedBadge>
-          </p>
-        ) : null}
-      </div>
+        </>
+      ) : null}
     </form>
   );
 }

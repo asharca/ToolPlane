@@ -10,7 +10,6 @@ import { cn } from "@/lib/utils";
 
 export interface WorkspaceShellProps extends AnimatedSidebarProviderProps {
   sidebar?: ReactNode;
-  tabBar?: ReactNode;
   mobileHeader?: ReactNode;
   header?: ReactNode;
   footer?: ReactNode;
@@ -21,15 +20,13 @@ export interface WorkspaceShellProps extends AnimatedSidebarProviderProps {
 
 const hasSlot = (node: ReactNode) => node != null && typeof node !== "boolean";
 
-/** The beUI sidebar provider owns navigation state; the host owns tabs and data.
- * Set a height on the shell. Tabs and content share one alignment line, and the
- * first active tab removes only the adjoining top-left corner of the surface.
- * data-workspace-shell identifies this composition without replacing beUI's
- * own data-slot="sidebar-wrapper" or introducing a second layout wrapper.
+/** The beUI sidebar provider owns navigation state; the host owns data.
+ * Set a height on the shell. data-workspace-shell identifies this composition
+ * without replacing beUI's own data-slot="sidebar-wrapper" or introducing a
+ * second layout wrapper.
  */
 export function WorkspaceShell({
   sidebar,
-  tabBar,
   mobileHeader,
   header,
   footer,
@@ -46,7 +43,7 @@ export function WorkspaceShell({
       {...props}
       data-workspace-shell=""
       style={{
-        "--sidebar-width": "14rem",
+        "--sidebar-width": "15rem",
         "--sidebar-width-icon": "4rem",
         ...style,
       }}
@@ -68,24 +65,11 @@ export function WorkspaceShell({
             {mobileHeader}
           </div>
         )}
-        {hasSlot(tabBar) && (
-          <div
-            data-slot="workspace-shell-tabs"
-            className={cn(
-              "peer/workspace-tabs mx-[var(--workspace-gap,0.5rem)] min-w-0 shrink-0",
-              sidebarInset,
-            )}
-          >
-            {tabBar}
-          </div>
-        )}
         <div
           data-slot="workspace-surface"
           className={cn(
             "m-[var(--workspace-gap,0.5rem)] flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-[var(--workspace-radius,0.75rem)] bg-[var(--workspace-surface,var(--background))]",
             sidebarInset,
-            hasSlot(tabBar) &&
-              "mt-0 peer-has-[[data-leading-active=true]]/workspace-tabs:rounded-tl-none",
           )}
         >
           {hasSlot(header) && (
@@ -116,37 +100,4 @@ export function WorkspaceShell({
       </div>
     </AnimatedSidebarProvider>
   );
-}
-
-/** Invoke synchronously from a user action. null means the browser blocked it.
- * Only the host decides whether to remove a tab and what state may be copied.
- */
-export function openWorkspaceWindow(
-  href: string | URL,
-  prepare?: (popup: Window) => void,
-): Window | null {
-  const url = new URL(href, window.location.href);
-  if (
-    !["http:", "https:"].includes(url.protocol) ||
-    url.origin !== window.location.origin ||
-    url.username ||
-    url.password
-  ) {
-    throw new Error("工作区窗口必须使用不含凭据的同源 HTTP(S) 地址。");
-  }
-  const popup = window.open(
-    "about:blank",
-    "_blank",
-    "popup,width=1100,height=760",
-  );
-  if (!popup) return null;
-  try {
-    popup.opener = null;
-    prepare?.(popup);
-    popup.location.replace(url.href);
-    return popup;
-  } catch (error) {
-    popup.close();
-    throw error;
-  }
 }

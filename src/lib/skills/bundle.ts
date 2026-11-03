@@ -176,6 +176,21 @@ export function isTextSkillFile(filePath: string, contentType = ""): boolean {
   );
 }
 
+export function encodeSkillFile(
+  buffer: Buffer,
+  filePath: string,
+  contentType = "",
+): Pick<SkillBundleFile, "content" | "encoding"> {
+  const text = buffer.toString("utf8");
+  if (
+    isTextSkillFile(filePath, contentType) &&
+    !text.includes("\0") &&
+    Buffer.from(text).equals(buffer)
+  )
+    return { content: text };
+  return { content: buffer.toString("base64"), encoding: "base64" };
+}
+
 function directoryName(filePath: string): string | null {
   const idx = filePath.lastIndexOf("/");
   return idx === -1 ? null : filePath.slice(0, idx);
@@ -365,10 +380,11 @@ async function fetchFile(
   const res = await githubFetch(url, {});
   if (!res.ok) throw new Error(`GitHub file download failed (${res.status}).`);
   const buffer = Buffer.from(await res.arrayBuffer());
-  const contentType = res.headers.get("content-type") ?? "";
-  const isText = isTextSkillFile(filePath, contentType);
-  if (isText) return { content: buffer.toString("utf8") };
-  return { content: buffer.toString("base64"), encoding: "base64" };
+  return encodeSkillFile(
+    buffer,
+    filePath,
+    res.headers.get("content-type") ?? "",
+  );
 }
 
 function githubTreeUrl(source: ParsedGithubSkillSource): string {
@@ -416,7 +432,17 @@ export async function fetchGithubSkillBundles(
   rawSource: string,
   maxSkills = DEFAULT_SKILL_IMPORT_SKILLS,
 ): Promise<SkillBundle[]> {
-  const source = parseGithubSkillSource(rawSource);
+  const parsed = parseGithubSkillSource(rawSource);
+  const commit = (await fetchJson(
+    `https://api.github.com/repos/${parsed.owner}/${parsed.repo}/commits/${encodeURIComponent(parsed.ref)}`,
+  )) as { sha?: string };
+  if (!commit.sha || !/^[a-f0-9]{40}$/i.test(commit.sha))
+    throw new Error("GitHub returned an invalid commit.");
+  const source = {
+    ...parsed,
+    ref: commit.sha,
+    normalized: `https://github.com/${parsed.owner}/${parsed.repo}/tree/${commit.sha}${parsed.path ? `/${parsed.path}` : ""}`,
+  };
   const data = (await fetchJson(githubTreeUrl(source))) as GithubTreeResponse;
   if (!Array.isArray(data.tree))
     throw new Error("GitHub returned an invalid repository tree.");

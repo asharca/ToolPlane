@@ -62,7 +62,6 @@ export const MetallicButton = forwardRef<
         "hover:bg-transparent hover:text-foreground",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
         "shadow-[0_8px_22px_rgba(0,0,0,0.16)]",
-        size === "icon" && "rounded-full",
         className,
       )}
       {...rest}

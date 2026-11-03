@@ -19,6 +19,7 @@ import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { dirname, basename, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { resolveOmpPluginResources } from "./omp-plugin-resources.mjs";
 
 const sdkEntry = await realpath(
   "/opt/pi-sdk/node_modules/@earendil-works/pi-coding-agent/dist/index.js",
@@ -51,6 +52,13 @@ let configuration;
 let acceptConfiguration;
 const configured = new Promise((resolve) => {
   acceptConfiguration = resolve;
+});
+const uploadChunks = [];
+let uploadBytes = 0;
+let uploadComplete = false;
+let acceptUpload;
+const uploaded = new Promise((resolve) => {
+  acceptUpload = resolve;
 });
 function fail() {
   stopping = true;
@@ -86,6 +94,31 @@ function decode(data) {
   return bytes;
 }
 async function incoming(message) {
+  if (
+    configuration &&
+    !uploadComplete &&
+    process.argv[2]?.startsWith("zip:sha256:")
+  ) {
+    if (
+      message?.type === "upload_chunk" &&
+      Object.keys(message).sort().join(",") === "data,type"
+    ) {
+      const data = decode(message.data);
+      uploadBytes += data.length;
+      if (uploadBytes > 32 * 1024 * 1024) throw Error("upload_limit");
+      uploadChunks.push(data);
+      return;
+    }
+    if (
+      message?.type === "upload_end" &&
+      Object.keys(message).join(",") === "type"
+    ) {
+      if (!uploadBytes) throw Error("upload_empty");
+      uploadComplete = true;
+      acceptUpload();
+      return;
+    }
+  }
   if (
     message?.type === "configuration" &&
     !configuration &&
@@ -454,6 +487,17 @@ function verifyIntegrity(data, integrity) {
 }
 async function capture(source) {
   await mkdir(ROOT, { recursive: true });
+  if (source.kind === "zip") {
+    await uploaded;
+    const bytes = Buffer.concat(uploadChunks, uploadBytes);
+    uploadChunks.length = 0;
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    if (source.requested !== `zip:sha256:${sha256}`)
+      throw Error("upload_digest_invalid");
+    await writeFile("/tmp/source.zip", bytes);
+    await run("python3", [HELPER, "extract-zip", "/tmp/source.zip", PACKAGE]);
+    return { kind: "zip", requested: source.requested, sha256 };
+  }
   if (source.kind === "npm") {
     const metadata = JSON.parse(
       (
@@ -691,6 +735,20 @@ async function installDependencies() {
     )
   )
     throw Error("bundled_invalid");
+  // Prompt/Skill/Theme-only archives need no package manager. Even an empty
+  // pnpm install may perform update checks, unnecessarily requiring registry
+  // access for an otherwise entirely local artifact. Keep declared dependency
+  // resolution on the existing controlled network path.
+  if (
+    Object.keys(manifest.dependencies ?? {}).length === 0 &&
+    Object.keys(manifest.optionalDependencies ?? {}).length === 0
+  ) {
+    for (const name of bundled) {
+      if (!(await lstat(`${PACKAGE}/node_modules/${name}`).catch(() => null)))
+        throw Error("bundled_missing");
+    }
+    return manifest;
+  }
   // Install in a clean sibling tree: package configs and original lockfiles never reach pnpm.
   await cp(PACKAGE, "/tmp/install", {
     recursive: true,
@@ -785,7 +843,36 @@ async function installDependencies() {
   }
   return manifest;
 }
-async function resources() {
+async function resources(manifest, inventory) {
+  if (manifest.omp) {
+    const files = inventory
+      .filter((entry) => entry.type === "file")
+      .map((entry) => ({
+        path: entry.path.slice("package/".length),
+        content: entry.path.endsWith("/package.json")
+          ? Buffer.from(entry.content, "base64").toString("utf8")
+          : "",
+      }));
+    const native = resolveOmpPluginResources(
+      { path: PACKAGE, manifest },
+      files,
+    );
+    const result = { skills: [], prompts: [], themes: [] };
+    for (const [kind, paths] of Object.entries(native))
+      result[kind] = paths.map((path) => `package/${path}`);
+    for (const kind of ["skills", "prompts", "themes"]) {
+      for (const entry of manifest.omp[kind] ?? []) {
+        if (typeof entry !== "string") throw Error("invalid_omp_resource");
+        const path = resolve(PACKAGE, entry);
+        if (!inside(PACKAGE, path) || !inside(PACKAGE, await realpath(path)))
+          throw Error("resource_escape");
+        result[kind].push(relative(ROOT, path));
+      }
+    }
+    if (!Object.values(result).some((paths) => paths.length))
+      throw Error("omp_resources_missing");
+    return result;
+  }
   const manager = new DefaultPackageManager({
     cwd: PACKAGE,
     agentDir: "/tmp/pi-agent",
@@ -861,7 +948,10 @@ async function main() {
     /\/?$/,
     "/",
   );
-  const source = parseSource(process.argv[2]);
+  const requested = process.argv[2];
+  const source = /^zip:sha256:[a-f0-9]{64}$/.test(requested)
+    ? { kind: "zip", requested }
+    : parseSource(requested);
   captureStage = "download";
   const provenance = await capture(source);
   if (
@@ -882,7 +972,7 @@ async function main() {
     ).toString("utf8"),
   );
   captureStage = "resources";
-  const resourcePaths = await resources();
+  const resourcePaths = await resources(manifest, entries);
   captureStage = "snapshot";
   const snapshot = {
     source: provenance,
@@ -890,21 +980,51 @@ async function main() {
       provenance.kind === "npm"
         ? provenance.name
         : manifest.name ||
-          basename(new URL(provenance.url).pathname).replace(/\.git$/, ""),
+          (provenance.kind === "zip"
+            ? "uploaded-pi-package"
+            : basename(new URL(provenance.url).pathname).replace(/\.git$/, "")),
     version:
       provenance.kind === "npm"
         ? provenance.version
         : (manifest.version ?? null),
-    runtime: {
-      kind: "pi-sdk",
-      piVersion: "0.87.1",
-      nodeMajor: 24,
-      platform: "linux",
-      arch: process.arch,
-    },
+    runtime: manifest.omp
+      ? {
+          kind: "omp",
+          ompVersion: "18.14.0",
+          nodeMajor: 26,
+          platform: "linux",
+          arch: process.arch,
+        }
+      : {
+          kind: "pi-sdk",
+          piVersion: "0.87.1",
+          nodeMajor: 26,
+          platform: "linux",
+          arch: process.arch,
+        },
     root: "package",
     resources: resourcePaths,
     entries,
+    toolplane: {
+      schemaVersion: 1,
+      mcp: manifest.toolplane?.mcp ?? [],
+      ...(manifest.toolplane?.origins
+        ? { origins: manifest.toolplane.origins }
+        : {}),
+      reproducibility: [
+        ...(manifest.toolplane?.reproducibility ?? []),
+        "Dependencies captured with scripts disabled in a clean resolver tree; original source locks are retained for provenance, not executed as resolver configuration.",
+        ...(!entries.some((entry) =>
+          /\/(?:pnpm-lock.yaml|package-lock.json|npm-shrinkwrap.json|yarn.lock)$/.test(
+            entry.path,
+          ),
+        )
+          ? [
+              "No source lockfile; reproducibility is limited to this frozen captured artifact.",
+            ]
+          : []),
+      ],
+    },
   };
   const bytes = Buffer.from(JSON.stringify(snapshot));
   if (bytes.length > MAX_JSON) throw Error("manifest_limit");

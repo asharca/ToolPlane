@@ -1,12 +1,8 @@
 import "server-only";
-import { Prisma } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { writeAudit } from "@/lib/observability/audit";
 import { normalizeAdminPage } from "@/lib/admin/pagination";
-import {
-  parseServerRecipe,
-  type ServerRecipe,
-} from "@/lib/workspace/server-recipe";
 import {
   parseMcpToolCatalogResult,
   withMcpToolCatalog,
@@ -14,33 +10,6 @@ import {
 } from "@/lib/process/mcp-tool-catalog";
 
 const PAGE_SIZE = 25;
-
-export type ServerInput = {
-  slug: string;
-  name: string;
-  author: string | null;
-  description: string | null;
-  iconUrl: string | null;
-  stars: number;
-  isOfficial: boolean;
-  isFeatured: boolean;
-  categoryIds: string[];
-  readme?: string | null;
-  sourceMetadata?: Pick<ServerRecipe, "source" | "ref" | "sourceUrl">;
-};
-
-export type SkillInput = {
-  slug: string;
-  name: string;
-  author: string | null;
-  description: string | null;
-  iconUrl: string | null;
-  githubSource: string | null;
-  content?: string | null;
-  files?: Prisma.InputJsonValue;
-  score: number;
-  categoryIds: string[];
-};
 
 // ---- Servers ----
 
@@ -94,94 +63,6 @@ export function getDirectoryServer(id: string) {
   });
 }
 
-export function createDirectoryServer(input: ServerInput, actorId = "system") {
-  const { categoryIds, sourceMetadata, ...rest } = input;
-  return db.$transaction(async (tx) => {
-    const result = await tx.server.create({
-      data: {
-        ...rest,
-        curated: true,
-        ...(sourceMetadata
-          ? {
-              installCfg: {
-                ...sourceMetadata,
-                env: [],
-              } as Prisma.InputJsonValue,
-            }
-          : {}),
-        categories: { connect: categoryIds.map((id) => ({ id })) },
-      },
-    });
-    await writeAudit(tx, {
-      actorId,
-      action: "catalog.server.created",
-      targetType: "server",
-      targetId: result.id,
-      changes: { name: input.name, categoryIds },
-    });
-    return result;
-  });
-}
-
-export async function updateDirectoryServer(
-  id: string,
-  input: Omit<ServerInput, "slug">,
-  actorId = "system",
-) {
-  return db.$transaction(async (tx) => {
-    const { categoryIds, sourceMetadata, ...rest } = input;
-    const server = sourceMetadata
-      ? await tx.server.findUniqueOrThrow({
-          where: { id },
-          select: { installCfg: true },
-        })
-      : null;
-    const recipe = parseServerRecipe(server?.installCfg);
-    const sameRecipe = Boolean(
-      sourceMetadata &&
-        recipe &&
-        sourceMetadata.source === recipe.source &&
-        sourceMetadata.ref === recipe.ref,
-    );
-    const storedConfig =
-      server?.installCfg &&
-      typeof server.installCfg === "object" &&
-      !Array.isArray(server.installCfg)
-        ? (server.installCfg as Record<string, unknown>)
-        : {};
-    const result = await tx.server.update({
-      where: { id },
-      data: {
-        ...rest,
-        curated: true,
-        ...(sourceMetadata
-          ? {
-              installCfg: (sameRecipe
-                ? { ...storedConfig, sourceUrl: sourceMetadata.sourceUrl }
-                : { ...sourceMetadata, env: [] }) as Prisma.InputJsonValue,
-              ...(!sameRecipe ? { verifiedAt: null, verifiedTools: null } : {}),
-            }
-          : {}),
-        categories: { set: categoryIds.map((cid) => ({ id: cid })) },
-      },
-    });
-    await writeAudit(tx, {
-      actorId,
-      action: "catalog.server.updated",
-      targetType: "server",
-      targetId: id,
-      changes: {
-        name: input.name,
-        categoryIds,
-        isOfficial: input.isOfficial,
-        isFeatured: input.isFeatured,
-        recipeChanged: Boolean(sourceMetadata && !sameRecipe),
-      },
-    });
-    return result;
-  });
-}
-
 export async function deleteDirectoryServer(id: string, actorId = "system") {
   await db.$transaction(
     async (tx) => {
@@ -204,36 +85,6 @@ export async function deleteDirectoryServer(id: string, actorId = "system") {
     },
     { isolationLevel: "Serializable" },
   );
-}
-
-// Store/replace a server's deploy recipe (in installCfg). Changing the recipe
-// clears verification — it must be re-validated before becoming deployable.
-// Passing null removes the recipe entirely.
-export function setServerRecipe(
-  id: string,
-  recipe: ServerRecipe | null,
-  actorId = "system",
-) {
-  return db.$transaction(async (tx) => {
-    const result = await tx.server.update({
-      where: { id },
-      data: {
-        installCfg: recipe
-          ? (recipe as unknown as Prisma.InputJsonValue)
-          : Prisma.DbNull,
-        verifiedAt: null,
-        verifiedTools: null,
-      },
-    });
-    await writeAudit(tx, {
-      actorId,
-      action: "catalog.server.recipe_changed",
-      targetType: "server",
-      targetId: id,
-      changes: { removed: !recipe, source: recipe?.source },
-    });
-    return result;
-  });
 }
 
 // Mark a server's recipe as validated (call after a successful live probe).
@@ -330,58 +181,6 @@ export function getDirectorySkill(id: string) {
       categories: { select: { id: true } },
       _count: { select: { installs: true } },
     },
-  });
-}
-
-export function createDirectorySkill(input: SkillInput, actorId = "system") {
-  const { categoryIds, ...rest } = input;
-  return db.$transaction(async (tx) => {
-    const result = await tx.skill.create({
-      data: {
-        ...rest,
-        curated: true,
-        categories: { connect: categoryIds.map((id) => ({ id })) },
-      },
-    });
-    await writeAudit(tx, {
-      actorId,
-      action: "catalog.skill.created",
-      targetType: "skill",
-      targetId: result.id,
-      changes: { name: input.name, categoryIds },
-    });
-    return result;
-  });
-}
-
-export function updateDirectorySkill(
-  id: string,
-  input: Omit<SkillInput, "slug">,
-  actorId = "system",
-) {
-  const { categoryIds } = input;
-  return db.$transaction(async (tx) => {
-    const result = await tx.skill.update({
-      where: { id },
-      data: {
-        name: input.name,
-        author: input.author,
-        description: input.description,
-        iconUrl: input.iconUrl,
-        githubSource: input.githubSource,
-        score: input.score,
-        curated: true,
-        categories: { set: categoryIds.map((cid) => ({ id: cid })) },
-      },
-    });
-    await writeAudit(tx, {
-      actorId,
-      action: "catalog.skill.updated",
-      targetType: "skill",
-      targetId: id,
-      changes: { name: input.name, score: input.score, categoryIds },
-    });
-    return result;
   });
 }
 

@@ -114,11 +114,6 @@ function validateSnapshot() {
     const digest = crypto.createHash('sha256').update(JSON.stringify({ content: s.content, files: s.files })).digest('hex');
     if (digest.slice(0, 12) !== s.version) fail('skill_hash_mismatch');
     let directory = s.slug;
-    if (cfg.client === 'hermes') {
-      const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---/.exec(s.content);
-      const name = frontmatter && /^name\s*:\s*["']?([^"'\r\n]+)["']?\s*$/m.exec(frontmatter[1]);
-      if (name && NAME.test(name[1].trim())) directory = name[1].trim();
-    }
     directory = prefix + directory;
     safeDirectory(directory);
     if (names.has(directory)) fail('duplicate_skill_directory');

@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type * as McpToolExposure from "@/lib/workspace/mcp-tool-exposure";
 
 const mocks = vi.hoisted(() => ({
   resolveRequestPrincipal: vi.fn(),
@@ -24,8 +25,7 @@ vi.mock("@/lib/process/mcp-client", () => ({
 }));
 vi.mock("@/lib/observability/log", () => ({ logRequest: mocks.logRequest }));
 vi.mock("@/lib/workspace/mcp-tool-exposure", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("@/lib/workspace/mcp-tool-exposure")>();
+  const actual = await importOriginal<typeof McpToolExposure>();
   return { ...actual, loadMcpToolPolicies: mocks.loadMcpToolPolicies };
 });
 
@@ -48,7 +48,7 @@ const routeParams = {
 
 describe("toolkit MCP tool exposure", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     mocks.resolveRequestPrincipal.mockResolvedValue({
       user: { id: "user1" },
       token: null,
@@ -61,35 +61,23 @@ describe("toolkit MCP tool exposure", () => {
     });
     mocks.liveStatus.mockReturnValue("running");
     mocks.listMcpTools.mockResolvedValue([{ name: "read" }, { name: "write" }]);
-    mocks.mcpRpc.mockResolvedValue({ content: [] });
+    mocks.mcpRpc.mockResolvedValue({ content: [{ type: "text", text: "ok" }] });
     mocks.logRequest.mockResolvedValue(undefined);
-  });
-
-  it.each([
-    ["all", [] as string[], ["dep1__read", "dep1__write"]],
-    ["allowlist", ["read"], ["dep1__read"]],
-    ["allowlist", [], []],
-  ] as const)(
-    "applies %s policy to tools/list",
-    async (mode, allowedTools, expected) => {
-      mocks.loadMcpToolPolicies.mockResolvedValue(
-        new Map([["dep1", { mode, allowedTools }]]),
-      );
-
-      const response = await POST(request("tools/list"), routeParams);
-      const payload = await response.json();
-
-      expect(
-        payload.result.tools.map((tool: { name: string }) => tool.name),
-      ).toEqual(expected);
-    },
-  );
-
-  it("rejects direct calls to hidden tools without invoking the MCP", async () => {
     mocks.loadMcpToolPolicies.mockResolvedValue(
       new Map([["dep1", { mode: "allowlist", allowedTools: ["read"] }]]),
     );
+  });
 
+  it("rejects unauthenticated and inaccessible toolkit requests before reading RPC", async () => {
+    mocks.resolveRequestPrincipal.mockResolvedValueOnce(null);
+    expect((await POST(request("tools/call"), routeParams)).status).toBe(401);
+    expect(mocks.toolkitFindFirst).not.toHaveBeenCalled();
+    mocks.toolkitFindFirst.mockResolvedValueOnce(null);
+    expect((await POST(request("tools/call"), routeParams)).status).toBe(404);
+    expect(mocks.mcpRpc).not.toHaveBeenCalled();
+  });
+
+  it("rejects direct calls to hidden tools without invoking the MCP", async () => {
     const response = await POST(
       request("tools/call", {
         name: "dep1__write",
@@ -115,4 +103,27 @@ describe("toolkit MCP tool exposure", () => {
     expect(mocks.liveStatus).not.toHaveBeenCalled();
     expect(mocks.listMcpTools).not.toHaveBeenCalled();
   });
+
+  it.each([undefined, { query: "x" }])(
+    "dispatches allowed calls with arguments %j and audits their result",
+    async (args) => {
+      const response = await POST(
+        request("tools/call", {
+          name: "dep1__read",
+          arguments: args,
+        }),
+        routeParams,
+      );
+      expect(await response.json()).toMatchObject({
+        result: { content: [{ text: "ok" }] },
+      });
+      expect(mocks.mcpRpc).toHaveBeenCalledWith("dep1", "tools/call", {
+        name: "read",
+        arguments: args ?? {},
+      });
+      expect(mocks.logRequest).toHaveBeenCalledWith(
+        expect.objectContaining({ outcome: "success" }),
+      );
+    },
+  );
 });

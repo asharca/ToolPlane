@@ -1,3 +1,4 @@
+import { nativeUiView } from "@/lib/agents/execution/native-ui";
 import "server-only";
 import { Task } from "@a2a-js/sdk";
 import {
@@ -23,6 +24,7 @@ import { remoteTarget } from "./remote-policy";
 import { getTaskRow } from "./store";
 import { historyView, jsonTask } from "./model";
 import type { ConsoleActor } from "./console-service";
+import { collaborationReservation } from "./collaboration-policy";
 
 /** Console-only projection. Phase/ancestry are UI metadata, not new A2A wire fields. */
 export type ConsoleTaskTree = {
@@ -35,11 +37,18 @@ export type ConsoleTaskTree = {
     name: string;
     state: string;
     phase: string;
-    pendingApprovals?: number;
+    pendingUiRequests?: number;
     cancelRequested: boolean;
+    remoteState?: string;
+    remoteOutcome?: "observed" | "unknown";
+    authorizedReservation?: {
+      currency: string;
+      reservedMicros: number;
+      limitMicros: number;
+    };
     resumeCount: number;
     updatedAt: string;
-    executionBackend?: "pi-harness";
+    executionBackend?: "pi-sdk" | "omp" | "pi-harness";
     nativeOperationId?: string | null;
     contextId?: string;
   }>;
@@ -175,6 +184,9 @@ export async function getConsoleTaskTree(
         visible.set(row.id, row);
         const task = Task.fromJSON(row.snapshot),
           status = jsonTask(task).status as { state?: string };
+        const remote = task.metadata?.toolplaneRemote as
+          | { state?: string; outcome?: "observed" | "unknown" }
+          | undefined;
         nodes.push({
           id: row.id,
           parentTaskId: row.parentTaskId,
@@ -183,6 +195,11 @@ export async function getConsoleTaskTree(
           state: status?.state ?? "TASK_STATE_UNSPECIFIED",
           phase: row.phase,
           cancelRequested: Boolean(row.cancelRequestedAt),
+          authorizedReservation: await collaborationReservation(db, grant),
+          remoteState: remote?.state,
+          remoteOutcome:
+            remote?.outcome ??
+            (row.remoteDispatchedAt && row.state === 4 ? "unknown" : undefined),
           resumeCount: row.resumeCount,
           updatedAt: row.statusAt.toISOString(),
         });
@@ -212,16 +229,13 @@ export async function getConsoleTaskTree(
     visible.set(row.id, row);
     const task = Task.fromJSON(row.snapshot);
     const status = jsonTask(task).status as { state?: string } | undefined;
-    const pendingApprovals = row.leaseToken
-      ? await db.a2AToolApproval.count({
-          where: {
-            taskId: row.id,
-            leaseToken: row.leaseToken,
-            status: "pending",
-            expiresAt: { gt: new Date() },
-          },
-        })
-      : 0;
+    const pendingUiRequests = nativeUiView(
+      row.uiProjection,
+      row.leaseToken,
+      row.phase === "executing" &&
+        !row.cancelRequestedAt &&
+        row.deadlineAt > new Date(),
+    ).uiRequests.length;
     nodes.push({
       id: row.id,
       parentTaskId: row.parentTaskId,
@@ -229,15 +243,18 @@ export async function getConsoleTaskTree(
       name: target.name,
       state: status?.state ?? "TASK_STATE_UNSPECIFIED",
       phase: row.phase,
-      pendingApprovals,
-      ...(row.executionBackend === "pi-harness"
+      pendingUiRequests,
+      ...(row.executionBackend === "pi-sdk" ||
+      row.executionBackend === "omp" ||
+      row.executionBackend === "pi-harness"
         ? {
-            executionBackend: "pi-harness" as const,
+            executionBackend: row.executionBackend,
             nativeOperationId: row.nativeOperationId,
             contextId: row.contextId,
           }
         : {}),
       cancelRequested: Boolean(row.cancelRequestedAt),
+      authorizedReservation: await collaborationReservation(db, grant),
       resumeCount: row.resumeCount,
       updatedAt: row.statusAt.toISOString(),
     });

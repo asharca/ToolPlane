@@ -503,14 +503,14 @@ function ResourceRow({
       onDragOver={(event) => onDragOver(event, row)}
       onDrop={onDrop}
       className={cn(
-        "group/resource relative flex min-h-9 min-w-0 cursor-pointer items-center gap-2.5 rounded-xl pr-3 text-sm outline-none",
+        "group/resource relative flex min-h-9 min-w-0 cursor-pointer items-center gap-2.5 rounded-lg pr-3 text-sm outline-none",
         "text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
         "focus-visible:bg-muted/70 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
         "data-[menu-open=true]:bg-muted data-[menu-open=true]:text-foreground",
         "data-[dragging=true]:opacity-40",
         "data-[drop=inside]:bg-muted data-[drop=inside]:ring-1 data-[drop=inside]:ring-primary/45",
-        "data-[drop=before]:before:absolute data-[drop=before]:before:-top-0.5 data-[drop=before]:before:right-2 data-[drop=before]:before:left-2 data-[drop=before]:before:h-0.5 data-[drop=before]:before:rounded-full data-[drop=before]:before:bg-primary",
-        "data-[drop=after]:after:absolute data-[drop=after]:after:-bottom-0.5 data-[drop=after]:after:right-2 data-[drop=after]:after:left-2 data-[drop=after]:after:h-0.5 data-[drop=after]:after:rounded-full data-[drop=after]:after:bg-primary",
+        "data-[drop=before]:before:absolute data-[drop=before]:before:-top-0.5 data-[drop=before]:before:right-2 data-[drop=before]:before:left-2 data-[drop=before]:before:h-0.5 data-[drop=before]:before:rounded-lg data-[drop=before]:before:bg-primary",
+        "data-[drop=after]:after:absolute data-[drop=after]:after:-bottom-0.5 data-[drop=after]:after:right-2 data-[drop=after]:after:left-2 data-[drop=after]:after:h-0.5 data-[drop=after]:after:rounded-lg data-[drop=after]:after:bg-primary",
         !acceptsChildren && active && "bg-muted text-foreground",
         row.item.disabled && "cursor-not-allowed opacity-45",
       )}
@@ -546,7 +546,7 @@ function ResourceRow({
               onRenameCancel();
             }
           }}
-          className="mx-1 h-7 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="mx-1 h-7 min-w-0 flex-1 rounded-lg border border-border bg-background px-2 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
       ) : (
         <MarqueeLabel active={hovered || menuOpen}>
@@ -652,13 +652,16 @@ export function AISidebar({
 
   useEffect(() => {
     if (!menuOpenId) return;
-    const menus = Array.from(
-      document.querySelectorAll<HTMLElement>("[data-sidebar-resource-menu]"),
-    );
-    menus
-      .find((menu) => menu.dataset.sidebarResourceMenu === menuOpenId)
-      ?.querySelector<HTMLElement>("button:not([disabled]), a[href]")
-      ?.focus();
+    const frame = requestAnimationFrame(() => {
+      const menus = Array.from(
+        document.querySelectorAll<HTMLElement>("[data-sidebar-resource-menu]"),
+      );
+      menus
+        .find((menu) => menu.dataset.sidebarResourceMenu === menuOpenId)
+        ?.querySelector<HTMLElement>("button:not([disabled]), a[href]")
+        ?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
   }, [menuOpenId]);
 
   const updateItems = useCallback(

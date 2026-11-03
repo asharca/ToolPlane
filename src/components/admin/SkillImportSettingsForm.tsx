@@ -22,7 +22,7 @@ export function SkillImportSettingsForm({ maxSkills }: { maxSkills: number }) {
       description={t("skillImportsDescription")}
     >
       <form action={action} className="max-w-2xl space-y-5">
-        <div className="flex items-start gap-3 rounded-md border border-border bg-muted/25 p-4">
+        <div className="flex items-start gap-3 rounded-xl border border-border bg-muted/25 p-4">
           <Upload
             className="mt-0.5 size-5 shrink-0 text-muted-foreground"
             aria-hidden="true"

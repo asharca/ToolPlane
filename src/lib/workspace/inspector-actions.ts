@@ -5,14 +5,15 @@ import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { getWorkspaceForUser } from "@/lib/workspace/queries";
 import { effectiveStatus } from "@/lib/process/supervisor";
-import { resolveSpawnSpec, type SpawnSpec } from "@/lib/process/spawn-spec";
+import type { SpawnSpec } from "@/lib/process/spawn-spec";
+import { resolveMcpConnectionSpawnSpec } from "@/lib/process/mcp-credentials";
 import { resolveRemoteMcpPrivateHostsSettings } from "@/lib/admin/settings";
 import {
   listMcpToolsViaSandbox,
   mcpRpcViaSandbox,
   SandboxMcpAuthenticationError,
 } from "@/lib/process/sandbox-mcp-client";
-import { listMcpTools, mcpRpc } from "@/lib/process/mcp-client";
+import { mcpRpc } from "@/lib/process/mcp-client";
 import { logRequest } from "@/lib/observability/log";
 import {
   redactMcpToolCatalogResult,
@@ -27,6 +28,11 @@ import {
   withMcpInspectorConnection,
 } from "@/lib/workspace/inspector-connection";
 import { missingDeploymentRequiredEnvironment } from "@/lib/workspace/server-recipe";
+import {
+  mcpDefinitionChecksum,
+  mcpRuntimeFilesChecksum,
+} from "@/lib/process/mcp-definition";
+import { runMcpDeploymentOperation } from "@/lib/workspace/mcp-operation";
 
 type RemoteSpec = Extract<SpawnSpec, { kind: "remote" }>;
 
@@ -54,6 +60,8 @@ type InspectorContext = {
   sandboxDeploymentId: string;
   remote?: RemoteSpec;
   remotePrivateHosts?: string;
+  definitionChecksum: string;
+  runtimeFilesChecksum: string;
 };
 
 async function inspectorContext(input: {
@@ -132,7 +140,11 @@ async function inspectorContext(input: {
     )
       return { error: "unsupportedTransport" };
     try {
-      const spec = resolveSpawnSpec(deployment);
+      const { spec } = await resolveMcpConnectionSpawnSpec({
+        workspaceId: workspace.id,
+        deploymentId: deployment.id,
+        expectedDefinitionChecksum: mcpDefinitionChecksum(deployment),
+      });
       if (spec.kind !== "remote") return { error: "unsupportedTransport" };
       remote = spec;
       remotePrivateHosts = (await resolveRemoteMcpPrivateHostsSettings()).value;
@@ -146,6 +158,8 @@ async function inspectorContext(input: {
       workspaceId: workspace.id,
       deploymentId: deployment.id,
       deploymentStatus: deployment.status,
+      definitionChecksum: mcpDefinitionChecksum(deployment),
+      runtimeFilesChecksum: await mcpRuntimeFilesChecksum(db, deployment.id),
       ...(connection ? { connectedSandboxId: connection.sandboxId } : {}),
       sandboxId: input.sandboxId,
       sandboxDeploymentId: sandbox.deploymentId,
@@ -180,9 +194,14 @@ async function persistConnection(
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const current = await db.deployment.findFirst({
       where: { id: context.deploymentId, workspaceId: context.workspaceId },
-      select: { installCfg: true, updatedAt: true },
     });
     if (!current) return null;
+    if (
+      mcpDefinitionChecksum(current) !== context.definitionChecksum ||
+      (await mcpRuntimeFilesChecksum(db, context.deploymentId)) !==
+        context.runtimeFilesChecksum
+    )
+      return null;
     const updated = await db.deployment.updateMany({
       where: {
         id: context.deploymentId,
@@ -194,6 +213,10 @@ async function persistConnection(
           current.installCfg,
           catalog.tools,
           context.sandboxId,
+          {
+            definitionChecksum: context.definitionChecksum,
+            runtimeFilesChecksum: context.runtimeFilesChecksum,
+          },
         ) as Prisma.InputJsonValue,
       },
     });
@@ -217,34 +240,51 @@ async function inspectorTools(
     "running"
   )
     return null;
-  return listMcpTools(context.deploymentId);
+  const result = await mcpRpc(context.deploymentId, "tools/list", {});
+  const catalog = redactMcpToolCatalogResult(result?.tools, []);
+  return catalog.ok ? catalog.tools : null;
 }
 
 export async function connectMcpInspectorAction(input: {
   workspace: string;
   deploymentId: string;
   sandboxId: string;
-}): Promise<{ tools?: McpToolDefinition[]; error?: McpInspectorError }> {
+}): Promise<{
+  tools?: McpToolDefinition[];
+  definitionChecksum?: string;
+  error?: McpInspectorError;
+}> {
   const resolved = await inspectorContext(input);
   if (!resolved.context) return { error: resolved.error ?? "connectorFailed" };
-  if (
-    !resolved.context.remote &&
-    effectiveStatus(
-      resolved.context.deploymentId,
-      resolved.context.deploymentStatus,
-    ) !== "running"
-  ) {
-    return { error: "deploymentNotRunning" };
-  }
-  let discovered: McpToolDefinition[] | null;
-  try {
-    discovered = await inspectorTools(resolved.context);
-  } catch (error) {
-    return { error: inspectorFailure(error, "connectorFailed") };
-  }
-  if (!discovered) return { error: "connectorFailed" };
-  const tools = await persistConnection(resolved.context, discovered);
-  return tools ? { tools } : { error: "connectorFailed" };
+  const context = resolved.context;
+  const operation = await runMcpDeploymentOperation(
+    context.workspaceId,
+    context.deploymentId,
+    async (): Promise<{
+      tools?: McpToolDefinition[];
+      definitionChecksum?: string;
+      error?: McpInspectorError;
+    }> => {
+      if (
+        !context.remote &&
+        effectiveStatus(context.deploymentId, context.deploymentStatus) !==
+          "running"
+      )
+        return { error: "deploymentNotRunning" };
+      let discovered: McpToolDefinition[] | null;
+      try {
+        discovered = await inspectorTools(context);
+      } catch (error) {
+        return { error: inspectorFailure(error, "connectorFailed") };
+      }
+      if (!discovered) return { error: "connectorFailed" };
+      const tools = await persistConnection(context, discovered);
+      return tools
+        ? { tools, definitionChecksum: context.definitionChecksum }
+        : { error: "connectorFailed" };
+    },
+  );
+  return operation.accepted ? operation.value : { error: "deploymentNotFound" };
 }
 
 export async function runMcpInspectorToolAction(input: {

@@ -295,6 +295,17 @@
     scrollbar-width: none;
   }
 
+  .sidebar-scroll {
+    scrollbar-width: thin;
+    scrollbar-gutter: stable;
+    scrollbar-color: transparent transparent;
+  }
+
+  .sidebar-scroll[data-scrolling="true"] {
+    scrollbar-color: color-mix(in srgb, var(--foreground) 25%, transparent)
+      transparent;
+  }
+
   .mask-radial-fade {
     mask-image: radial-gradient(ellipse at center, black 40%, transparent 75%);
   }

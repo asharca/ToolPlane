@@ -3,12 +3,11 @@ import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { ORDINARY_AGENT_FILTER } from "@/lib/agents/queries";
-import { isDedicatedSandboxRuntimeKind } from "@/lib/agents/runtime-kind";
+import { agentRuntimeCapabilities } from "@/lib/agents/runtime-kind";
 import {
-  generateAgentApiKey,
-  hashAgentApiKey,
-  agentApiKeyPrefix,
-} from "@/lib/agents/public-api/auth";
+  requireAgentRevision,
+  publishAgentRevisionInTransaction,
+} from "@/lib/agents/revisions";
 import { runtimeEnv } from "@/lib/runtime-env";
 import { writeAudit } from "@/lib/observability/audit";
 import { assertLocalActor, localTarget } from "./local-policy";
@@ -24,22 +23,10 @@ export type ConsoleActor = {
 };
 const Id = z.string().min(1).max(200);
 export const A2AConsoleAction = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("set-inbound"), enabled: z.boolean() }).strict(),
   z
-    .object({
-      action: z.literal("set-channel-operator"),
-      connectionId: Id,
-      enabled: z.boolean(),
-    })
+    .object({ action: z.literal("set-outbound"), enabled: z.boolean() })
     .strict(),
-  z.object({ action: z.literal("set-local"), enabled: z.boolean() }).strict(),
-  z.object({ action: z.literal("set-public"), enabled: z.boolean() }).strict(),
-  z
-    .object({
-      action: z.literal("create-client"),
-      name: z.string().trim().min(1).max(100),
-    })
-    .strict(),
-  z.object({ action: z.literal("create-key"), clientId: Id }).strict(),
   z.object({ action: z.literal("revoke-key"), keyId: Id }).strict(),
 ]);
 export type A2AConsoleAction = z.infer<typeof A2AConsoleAction>;
@@ -84,7 +71,8 @@ export async function getA2AConsoleView(
     },
     select: {
       runtimeKind: true,
-      a2aInternalEnabled: true,
+      a2aInboundEnabled: true,
+      a2aOutboundEnabled: true,
       providerId: true,
       model: true,
       sandboxes: {
@@ -142,30 +130,18 @@ export async function getA2AConsoleView(
   } catch {
     /* Return a safe configuration warning, not Host-derived URLs. */
   }
-  const supported = isDedicatedSandboxRuntimeKind(agent.runtimeKind);
+  const supported =
+    agent.runtimeKind === "pi-sdk" || agent.runtimeKind === "omp";
   const sandbox =
     agent.sandboxes.length === 1 ? agent.sandboxes[0].sandbox : null;
-  const channels =
-    manager && supported
-      ? await db.agentChannelConnection.findMany({
-          where: { workspaceId: ctx.workspaceId, agentId: ctx.agentId },
-          take: 100,
-          orderBy: { name: "asc" },
-          select: { id: true, name: true, platform: true, a2aActorId: true },
-        })
-      : [];
   return {
     canManage: manager,
+    collaboration: {
+      inboundEnabled: agent.a2aInboundEnabled,
+      outboundEnabled: agent.a2aOutboundEnabled,
+    },
     connections,
-    channels: channels.map((channel) => ({
-      id: channel.id,
-      name: channel.name,
-      platform: channel.platform,
-      enabled: Boolean(channel.a2aActorId),
-      mine: channel.a2aActorId === ctx.actorId,
-    })),
     local: {
-      enabled: agent.a2aInternalEnabled,
       supported,
       ready:
         supported &&
@@ -182,7 +158,11 @@ export async function getA2AConsoleView(
           id: endpoint.publicId,
           enabled: endpoint.a2aEnabled,
           ready:
-            endpoint.status === "active" && Boolean(endpoint.currentRevision),
+            Boolean(
+              agentRuntimeCapabilities(agent.runtimeKind)?.publicEndpoint,
+            ) &&
+            endpoint.status === "active" &&
+            Boolean(endpoint.currentRevision),
           revision: endpoint.currentRevision?.version ?? null,
           clients: clients
             .filter((client) => isA2AClient(client.scopes))
@@ -205,7 +185,7 @@ export async function getA2AConsoleView(
 export async function mutateA2AConsole(
   ctx: ConsoleActor,
   input: A2AConsoleAction,
-): Promise<{ token?: string; clientId?: string }> {
+): Promise<Record<string, never>> {
   return db.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${ctx.workspaceId} FOR UPDATE`;
     if (!(await canManage(tx, ctx)))
@@ -216,60 +196,74 @@ export async function mutateA2AConsole(
         id: ctx.agentId,
         workspaceId: ctx.workspaceId,
       },
-      select: { id: true },
+      select: {
+        id: true,
+        runtimeKind: true,
+        currentRevisionVersion: true,
+        subagentMode: true,
+        nativeSubagentMaxConcurrency: true,
+        nativeSubagentMaxDepth: true,
+      },
     });
     if (!agent) throw new A2AHttpError(404, "Agent unavailable.");
-    if (input.action === "set-channel-operator") {
-      const channel = await tx.agentChannelConnection.findFirst({
-        where: {
-          id: input.connectionId,
-          workspaceId: ctx.workspaceId,
-          agentId: ctx.agentId,
-        },
-        select: { id: true },
-      });
-      if (!channel) throw new A2AHttpError(404, "Channel unavailable.");
-      if (input.enabled) await localTarget(tx, ctx.workspaceId, ctx.agentId);
-      await tx.agentChannelConnection.update({
-        where: { id: channel.id },
-        data: { a2aActorId: input.enabled ? ctx.actorId : null },
-      });
-      await writeAudit(tx, {
-        actorId: ctx.actorId,
-        workspaceId: ctx.workspaceId,
-        action: "agent.a2a.channel_operator",
-        targetType: "AgentChannelConnection",
-        targetId: channel.id,
-        changes: {
-          enabled: input.enabled,
-          actorId: input.enabled ? ctx.actorId : null,
-        },
-      });
-      return {};
-    }
-    if (input.action === "set-local") {
+    if (input.action === "set-inbound" || input.action === "set-outbound") {
+      if (
+        input.enabled &&
+        agent.runtimeKind !== "pi-sdk" &&
+        agent.runtimeKind !== "omp"
+      )
+        throw new A2AHttpError(409, "Retired Agent execution is read-only.");
+      const inbound = input.action === "set-inbound";
       await tx.agent.update({
         where: { id: agent.id },
-        data: { a2aInternalEnabled: input.enabled },
+        data: inbound
+          ? { a2aInboundEnabled: input.enabled }
+          : { a2aOutboundEnabled: input.enabled },
       });
-      // Validate after setting within this transaction; invalid capability configuration rolls back.
-      if (input.enabled) {
-        try {
-          await localTarget(tx, ctx.workspaceId, agent.id);
-        } catch {
-          throw new A2AHttpError(
-            409,
-            "Configure a supported runtime, model and exclusive networked Docker sandbox first.",
+      if (
+        (agent.runtimeKind === "pi-sdk" || agent.runtimeKind === "omp") &&
+        agent.currentRevisionVersion > 0
+      ) {
+        const revision = await requireAgentRevision(tx, agent.id);
+        // Direction changes cannot apply a pending mode or widen native limits.
+        const nativePolicy = revision.config.nativeSubagentPolicy;
+        if (
+          (revision.config.subagentMode ?? "platform") === agent.subagentMode &&
+          (!nativePolicy ||
+            (nativePolicy.maxConcurrency <=
+              agent.nativeSubagentMaxConcurrency &&
+              nativePolicy.maxDepth <= agent.nativeSubagentMaxDepth))
+        ) {
+          await publishAgentRevisionInTransaction(
+            tx,
+            ctx.workspaceId,
+            agent.id,
+            {
+              expectedRevisionId: revision.id,
+              config: {
+                ...revision.config,
+                a2a: {
+                  ...revision.config.a2a,
+                  ...(inbound
+                    ? { inboundEnabled: input.enabled }
+                    : { outboundEnabled: input.enabled }),
+                },
+              },
+            },
           );
+          if (inbound && input.enabled)
+            await localTarget(tx, ctx.workspaceId, agent.id);
         }
       }
       await writeAudit(tx, {
         actorId: ctx.actorId,
         workspaceId: ctx.workspaceId,
-        action: "agent.a2a.local.configure",
+        action: "agent.a2a.collaboration.configure",
         targetType: "Agent",
         targetId: agent.id,
-        changes: { enabled: input.enabled },
+        changes: inbound
+          ? { inboundEnabled: input.enabled }
+          : { outboundEnabled: input.enabled },
       });
       return {};
     }
@@ -278,119 +272,31 @@ export async function mutateA2AConsole(
       select: { id: true },
     });
     if (!endpoint)
-      throw new A2AHttpError(409, "Publish an isolated Agent service first.");
+      throw new A2AHttpError(404, "Retained endpoint unavailable.");
     await tx.$queryRaw`SELECT id FROM "AgentEndpoint" WHERE id=${endpoint.id} FOR UPDATE`;
-    const current = await tx.agentEndpoint.findUniqueOrThrow({
-      where: { id: endpoint.id },
-    });
-    const issuing =
-      input.action === "create-client" || input.action === "create-key";
-    if (
-      (issuing || (input.action === "set-public" && input.enabled)) &&
-      (current.status !== "active" || !current.currentRevisionId)
-    ) {
-      throw new A2AHttpError(409, "An active published revision is required.");
-    }
-    if (input.action === "set-public") {
-      await tx.agentEndpoint.update({
-        where: { id: endpoint.id },
-        data: { a2aEnabled: input.enabled },
-      });
-      await writeAudit(tx, {
-        actorId: ctx.actorId,
-        workspaceId: ctx.workspaceId,
-        action: "agent.a2a.configure",
-        targetType: "AgentEndpoint",
-        targetId: endpoint.id,
-        changes: { enabled: input.enabled },
-      });
-      return {};
-    }
-    if (input.action === "revoke-key") {
-      const key = await tx.agentApiKey.findFirst({
-        where: { id: input.keyId, client: { endpointId: endpoint.id } },
-        select: {
-          id: true,
-          revokedAt: true,
-          client: { select: { scopes: true } },
-        },
-      });
-      if (!key || !isA2AClient(key.client.scopes))
-        throw new A2AHttpError(404, "A2A key unavailable.");
-      if (!key.revokedAt) {
-        await tx.agentApiKey.update({
-          where: { id: key.id },
-          data: { revokedAt: new Date() },
-        });
-        await writeAudit(tx, {
-          actorId: ctx.actorId,
-          workspaceId: ctx.workspaceId,
-          action: "agentApiKey.revoked",
-          targetType: "agentApiKey",
-          targetId: key.id,
-        });
-      }
-      return {};
-    }
-    if (!current.a2aEnabled)
-      throw new A2AHttpError(409, "Enable A2A before creating credentials.");
-    let clientId: string;
-    if (input.action === "create-client") {
-      if (
-        (await tx.agentApiClient.count({
-          where: { endpointId: endpoint.id },
-        })) >= 100
-      )
-        throw new A2AHttpError(409, "Client limit reached.");
-      const client = await tx.agentApiClient.create({
-        data: {
-          endpointId: endpoint.id,
-          createdById: ctx.actorId,
-          name: input.name,
-          scopes: [...A2A_SCOPES],
-        },
-      });
-      clientId = client.id;
-      await writeAudit(tx, {
-        actorId: ctx.actorId,
-        workspaceId: ctx.workspaceId,
-        action: "agent.a2a.client.created",
-        targetType: "AgentApiClient",
-        targetId: clientId,
-      });
-    } else {
-      const client = await tx.agentApiClient.findFirst({
-        where: {
-          id: input.clientId,
-          endpointId: endpoint.id,
-          status: "active",
-        },
-        select: { id: true, scopes: true },
-      });
-      if (!client || !isA2AClient(client.scopes))
-        throw new A2AHttpError(404, "A2A client unavailable.");
-      clientId = client.id;
-    }
-    if ((await tx.agentApiKey.count({ where: { clientId } })) >= 50)
-      throw new A2AHttpError(409, "Key limit reached.");
-    // Same established token format/hash as Endpoint auth, atomically with client + audit.
-    const token = generateAgentApiKey();
-    const key = await tx.agentApiKey.create({
-      data: {
-        clientId,
-        name: "A2A service key",
-        tokenHash: hashAgentApiKey(token),
-        prefix: agentApiKeyPrefix(token),
+    const key = await tx.agentApiKey.findFirst({
+      where: { id: input.keyId, client: { endpointId: endpoint.id } },
+      select: {
+        id: true,
+        revokedAt: true,
+        client: { select: { scopes: true } },
       },
     });
-    await writeAudit(tx, {
-      actorId: ctx.actorId,
-      workspaceId: ctx.workspaceId,
-      action: "agentApiKey.created",
-      targetType: "agentApiKey",
-      targetId: key.id,
-      changes: { clientId },
-    });
-    return { token, clientId };
+    if (!key || !isA2AClient(key.client.scopes))
+      throw new A2AHttpError(404, "A2A key unavailable.");
+    if (!key.revokedAt) {
+      await tx.agentApiKey.update({
+        where: { id: key.id },
+        data: { revokedAt: new Date() },
+      });
+      await writeAudit(tx, {
+        actorId: ctx.actorId,
+        workspaceId: ctx.workspaceId,
+        action: "agentApiKey.revoked",
+        targetType: "agentApiKey",
+        targetId: key.id,
+      });
+    }
+    return {};
   });
 }

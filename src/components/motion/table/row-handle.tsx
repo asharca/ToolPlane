@@ -51,7 +51,7 @@ export function RowHandle({
     >
       <TableMenu
         ariaLabel={`Row ${index + 1} options`}
-        triggerClassName="flex h-6 w-2 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-sm transition-colors hover:bg-primary/90"
+        triggerClassName="flex h-6 w-2 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-sm transition-colors hover:bg-primary/90"
         trigger={<MoreVertical className="h-3 w-3" />}
         items={[
           ...(onInsertRow

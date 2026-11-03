@@ -1,12 +1,17 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
+import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import {
   AgentConfigurationError,
   createConfiguredAgent,
+  type ExternalSandboxSelection,
 } from "@/lib/agents/mutations";
-import { syncHermesRuntime } from "@/lib/agents/hermes/runtime";
-import { runWorkspaceAgentMessage } from "@/lib/agents/message-service";
+import { isExternalSandboxCandidate } from "@/lib/sandboxes/external";
+import {
+  runWorkspaceAgentMessage,
+  type AgentMessageResult,
+} from "@/lib/agents/message-service";
 import { effectiveStatus, effectiveStatuses } from "@/lib/process/supervisor";
 import { listMcpTools } from "@/lib/process/mcp-client";
 import {
@@ -16,6 +21,7 @@ import {
 import { deploymentLabel } from "@/lib/workspace/deployment-label";
 import { skillLabel } from "@/lib/workspace/skill-label";
 import type { ImplementedAgentRuntimeKind } from "@/lib/agents/runtime-kind";
+import { McpPinningError } from "@/lib/process/mcp-pinning";
 
 export class AgentControlError extends Error {
   constructor(
@@ -36,14 +42,12 @@ export type CreateAgentFromControlInput = {
   runtime: ImplementedAgentRuntimeKind;
   systemPrompt?: string | null;
   providerId?: string | null;
-  providerIds: string[];
   model?: string | null;
   maxSteps: number;
   deploymentIds: string[];
   installedSkillIds: string[];
   toolkitIds: string[];
-  sandboxIds: string[];
-  subAgentIds: string[];
+  externalSandboxes: ExternalSandboxSelection[];
 };
 
 const AGENT_CONTROL_SELECT = {
@@ -51,6 +55,8 @@ const AGENT_CONTROL_SELECT = {
   name: true,
   slug: true,
   runtimeKind: true,
+  retiredAt: true,
+  currentRevisionVersion: true,
   systemPrompt: true,
   providerId: true,
   model: true,
@@ -58,13 +64,6 @@ const AGENT_CONTROL_SELECT = {
   createdAt: true,
   updatedAt: true,
   provider: { select: { id: true, name: true, format: true } },
-  modelProviders: {
-    orderBy: { provider: { createdAt: "asc" as const } },
-    select: {
-      providerId: true,
-      provider: { select: { name: true, format: true } },
-    },
-  },
   servers: {
     select: {
       deployment: {
@@ -115,90 +114,55 @@ const AGENT_CONTROL_SELECT = {
       },
     },
   },
-  subAgents: {
+  externalSandboxes: {
+    orderBy: { createdAt: "asc" },
     select: {
-      child: { select: { id: true, name: true, slug: true } },
-    },
-  },
-  runtime: {
-    select: {
-      id: true,
-      kind: true,
-      image: true,
-      status: true,
+      access: true,
       sandbox: {
         select: {
+          id: true,
+          name: true,
+          slug: true,
+          kind: true,
           deploymentId: true,
           deployment: { select: { status: true } },
         },
       },
     },
   },
+  subAgents: {
+    select: {
+      child: { select: { id: true, name: true, slug: true } },
+    },
+  },
   _count: { select: { conversations: true } },
 } as const;
 
-function safeRuntimeStatus(
-  runtime: {
-    status: string;
-    sandbox: { deploymentId: string; deployment: { status: string } };
-  } | null,
-): string | null {
-  if (!runtime) return null;
-  if (runtime.status === "error" || runtime.status === "setup_required")
-    return runtime.status;
-  return effectiveStatus(
-    runtime.sandbox.deploymentId,
-    runtime.sandbox.deployment.status,
-  );
-}
+type AgentControlRow = Prisma.AgentGetPayload<{
+  select: typeof AGENT_CONTROL_SELECT;
+}>;
 
-function toSafeAgent(
-  agent: Awaited<ReturnType<typeof loadAgentControlRow>> extends infer T
-    ? NonNullable<T>
-    : never,
-  workspaceSlug: string,
-) {
-  const runtimeStatus = safeRuntimeStatus(agent.runtime);
-  const configured =
-    agent.runtimeKind === "hermes"
-      ? agent.modelProviders.length > 0
-      : Boolean(agent.provider && agent.model);
+function toSafeAgent(agent: AgentControlRow, workspaceSlug: string) {
+  const configured = Boolean(agent.provider && agent.model);
+  const readOnly =
+    (agent.runtimeKind !== "pi-sdk" && agent.runtimeKind !== "omp") ||
+    Boolean(agent.retiredAt);
   return {
     id: agent.id,
     name: agent.name,
     slug: agent.slug,
-    runtime:
-      agent.runtimeKind === "hermes" && agent.runtime
-        ? {
-            kind: agent.runtimeKind,
-            status: runtimeStatus,
-            image: agent.runtime.image,
-          }
-        : { kind: agent.runtimeKind, status: null, image: null },
+    runtime: { kind: agent.runtimeKind, status: null, image: null },
     configured,
-    ready:
-      agent.runtimeKind === "hermes"
-        ? configured && runtimeStatus === "running"
-        : configured,
+    readOnly,
+    ready: !readOnly && configured && agent.currentRevisionVersion > 0,
     systemPrompt: agent.systemPrompt,
-    model:
-      agent.runtimeKind === "hermes"
-        ? {
-            providerIds: agent.modelProviders.map(
-              ({ providerId }) => providerId,
-            ),
-            providers: agent.modelProviders.map(({ provider }) => ({
-              name: provider.name,
-              format: provider.format,
-            })),
-          }
-        : {
-            providerId: agent.providerId,
-            provider: agent.provider
-              ? { name: agent.provider.name, format: agent.provider.format }
-              : null,
-            model: agent.model,
-          },
+    model: {
+      providerId: agent.providerId,
+      provider: agent.provider
+        ? { name: agent.provider.name, format: agent.provider.format }
+        : null,
+      model: agent.model,
+    },
     maxSteps: agent.maxSteps,
     resources: {
       deployments: agent.servers.map(({ deployment }) => {
@@ -228,6 +192,17 @@ function toSafeAgent(
         name: sandbox.name,
         slug: sandbox.slug,
         kind: sandbox.kind,
+        status: effectiveStatus(
+          sandbox.deploymentId,
+          sandbox.deployment.status,
+        ),
+      })),
+      externalSandboxes: agent.externalSandboxes.map(({ access, sandbox }) => ({
+        id: sandbox.id,
+        name: sandbox.name,
+        slug: sandbox.slug,
+        kind: sandbox.kind,
+        access,
         status: effectiveStatus(
           sandbox.deploymentId,
           sandbox.deployment.status,
@@ -302,15 +277,17 @@ export async function listAgentControlResources(workspaceId: string) {
         },
       }),
       db.sandbox.findMany({
-        where: { workspaceId, kind: { not: "hermes" } },
+        where: { workspaceId },
         orderBy: { createdAt: "desc" },
         select: {
           id: true,
           name: true,
           slug: true,
           kind: true,
+          config: true,
           deploymentId: true,
           deployment: { select: { status: true } },
+          _count: { select: { agentLinks: true } },
         },
       }),
     ]);
@@ -349,13 +326,25 @@ export async function listAgentControlResources(workspaceId: string) {
       serverCount: toolkit._count.servers,
       skillCount: toolkit._count.skills,
     })),
-    sandboxes: sandboxes.map((sandbox) => ({
-      id: sandbox.id,
-      name: sandbox.name,
-      slug: sandbox.slug,
-      kind: sandbox.kind,
-      status: effectiveStatus(sandbox.deploymentId, sandbox.deployment.status),
-    })),
+    // Only attachable sandboxes; each Agent's own sandbox is created with it.
+    externalSandboxes: sandboxes
+      .filter((sandbox) =>
+        isExternalSandboxCandidate({
+          kind: sandbox.kind,
+          config: sandbox.config,
+          isAgentTemplate: sandbox._count.agentLinks > 0,
+        }),
+      )
+      .map((sandbox) => ({
+        id: sandbox.id,
+        name: sandbox.name,
+        slug: sandbox.slug,
+        kind: sandbox.kind,
+        status: effectiveStatus(
+          sandbox.deploymentId,
+          sandbox.deployment.status,
+        ),
+      })),
   };
 }
 
@@ -368,24 +357,11 @@ export async function listAgentControlAgents(workspaceId: string) {
       name: true,
       slug: true,
       runtimeKind: true,
+      retiredAt: true,
+      currentRevisionVersion: true,
       providerId: true,
       model: true,
       provider: { select: { name: true } },
-      modelProviders: {
-        select: { providerId: true, provider: { select: { name: true } } },
-      },
-      runtime: {
-        select: {
-          kind: true,
-          status: true,
-          sandbox: {
-            select: {
-              deploymentId: true,
-              deployment: { select: { status: true } },
-            },
-          },
-        },
-      },
       _count: {
         select: {
           servers: true,
@@ -399,26 +375,21 @@ export async function listAgentControlAgents(workspaceId: string) {
     },
   });
   return agents.map((agent) => {
-    const runtimeStatus = safeRuntimeStatus(agent.runtime);
-    const configured =
-      agent.runtimeKind === "hermes"
-        ? agent.modelProviders.length > 0
-        : Boolean(agent.provider && agent.model);
+    const configured = Boolean(agent.provider && agent.model);
+    const readOnly =
+      (agent.runtimeKind !== "pi-sdk" && agent.runtimeKind !== "omp") ||
+      Boolean(agent.retiredAt);
     return {
       id: agent.id,
       name: agent.name,
       slug: agent.slug,
       runtime: agent.runtimeKind,
-      runtimeStatus,
+      runtimeStatus: null,
       configured,
-      ready:
-        agent.runtimeKind === "hermes"
-          ? configured && runtimeStatus === "running"
-          : configured,
+      readOnly,
+      ready: !readOnly && configured && agent.currentRevisionVersion > 0,
       providerId: agent.providerId,
       providerName: agent.provider?.name ?? null,
-      providerIds: agent.modelProviders.map(({ providerId }) => providerId),
-      providerNames: agent.modelProviders.map(({ provider }) => provider.name),
       model: agent.model,
       counts: {
         tools:
@@ -502,19 +473,16 @@ export async function createAgentFromControl(
   workspaceSlug: string,
   input: CreateAgentFromControlInput,
 ) {
-  if (input.runtime === "pi" && input.model && !input.providerId) {
+  if (input.runtime !== "pi-sdk") {
+    throw new AgentControlError(
+      "invalid_arguments",
+      "Historical Agents are read-only. Create a Pi Agent.",
+    );
+  }
+  if (input.model && !input.providerId) {
     throw new AgentControlError(
       "invalid_arguments",
       "A model requires providerId.",
-    );
-  }
-  if (
-    input.runtime === "hermes" &&
-    (input.providerId || input.model || input.systemPrompt)
-  ) {
-    throw new AgentControlError(
-      "invalid_arguments",
-      "Hermes agents use providerIds and do not accept providerId, model, or systemPrompt.",
     );
   }
 
@@ -525,45 +493,29 @@ export async function createAgentFromControl(
       {
         name: input.name,
         systemPrompt: input.systemPrompt?.trim() || null,
-        providerId: input.runtime === "pi" ? (input.providerId ?? null) : null,
-        providerIds: input.runtime === "hermes" ? input.providerIds : [],
-        model: input.runtime === "pi" ? (input.model ?? null) : null,
+        providerId: input.providerId ?? null,
+        model: input.model ?? null,
         maxSteps: input.maxSteps,
       },
       {
         deploymentIds: input.deploymentIds,
         installedSkillIds: input.installedSkillIds,
         toolkitIds: input.toolkitIds,
-        sandboxIds: input.sandboxIds,
-        subAgentIds: input.subAgentIds,
+        externalSandboxes: input.externalSandboxes,
       },
       { runtime: input.runtime },
     );
   } catch (error) {
+    if (error instanceof McpPinningError) {
+      throw new AgentControlError("unavailable", error.code);
+    }
     if (error instanceof AgentConfigurationError) {
       throw new AgentControlError("invalid_arguments", error.message);
     }
     throw error;
   }
 
-  let runtimeSync: { status: string; error?: string } = { status: "pi" };
-  if (input.runtime === "hermes") {
-    try {
-      const result = await syncHermesRuntime(workspaceId, created.id);
-      runtimeSync = result.error
-        ? {
-            status: result.status,
-            error:
-              "Hermes runtime sync failed. Open the Agent console to retry.",
-          }
-        : { status: result.status };
-    } catch {
-      runtimeSync = {
-        status: "error",
-        error: "Hermes runtime sync failed. Open the Agent console to retry.",
-      };
-    }
-  }
+  const runtimeSync = { status: "pi-sdk" };
 
   return {
     created: true,
@@ -578,7 +530,7 @@ export async function sendAgentControlMessage(
   actorId?: string,
 ) {
   const sourceId = randomUUID();
-  let result: Awaited<ReturnType<typeof runWorkspaceAgentMessage>>;
+  let result: AgentMessageResult;
   try {
     result = await runWorkspaceAgentMessage({
       userId: actorId,

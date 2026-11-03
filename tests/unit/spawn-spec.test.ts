@@ -44,9 +44,9 @@ describe("buildSpawnSpec — every custom source runs in a hardened container", 
 
   it("npm/github wrap in node + npx, cache redirected to tmpfs", () => {
     const { args, env } = buildSpawnSpec("npm", "mcp-server-fetch");
-    expect(args).toContain("node:24-bookworm-slim");
+    expect(args).toContain("node:26-bookworm-slim");
     expect(args.slice(-3)).toEqual(["npx", "-y", "mcp-server-fetch"]);
-    expect(args).toContain("npm_config_cache");
+    expect(args).not.toContain("npm_config_cache");
     expect(env.npm_config_cache).toBe("/tmp/.npm");
   });
 
@@ -54,7 +54,7 @@ describe("buildSpawnSpec — every custom source runs in a hardened container", 
     const { args, env } = buildSpawnSpec("pypi", "mcp-server-fetch");
     expect(args.some((a) => a.startsWith("ghcr.io/astral-sh/uv"))).toBe(true);
     expect(args.slice(-2)).toEqual(["uvx", "mcp-server-fetch"]);
-    expect(args).toContain("UV_CACHE_DIR");
+    expect(args).not.toContain("UV_CACHE_DIR");
     expect(env.UV_CACHE_DIR).toBe("/tmp/.uv");
   });
 
@@ -68,8 +68,10 @@ describe("buildSpawnSpec — every custom source runs in a hardened container", 
       TOKEN: "secret",
       HOST: "h",
     });
-    expect(args).toContain("TOKEN");
-    expect(args).toContain("HOST");
+    expect(args).not.toContain("TOKEN");
+    expect(args).not.toContain("HOST");
+    expect(args).not.toContain("-e");
+    expect(args).not.toContain("--env");
     expect(args.join(" ")).not.toContain("secret");
     expect(env).toMatchObject({ TOKEN: "secret", HOST: "h" });
   });
@@ -113,10 +115,12 @@ describe("resolveSpawnSpec", () => {
 
     expect(command).toBe("docker");
     expect(args).toContain("--cap-drop");
-    expect(args).toContain("SSH_PASSWORD");
+    expect(args).not.toContain("SSH_PASSWORD");
+    expect(args).not.toContain("-e");
+    expect(args).not.toContain("--env");
     expect(args.join(" ")).not.toContain("secret");
     expect(env.SSH_PASSWORD).toBe("secret");
-    const imageIndex = args.indexOf("node:24-bookworm-slim");
+    const imageIndex = args.indexOf("node:26-bookworm-slim");
     expect(args.slice(imageIndex + 1)).toEqual(["npx", ...commandArgs]);
   });
 
@@ -159,7 +163,7 @@ describe("resolveSpawnSpec", () => {
     for (const source of npxGitSources) {
       const npxArgs = ["-y", source, "--config-file", "server.json"];
       const npx = buildStdioConfigSpawnSpec("npx", npxArgs);
-      expect(npx.image).toBe("node:24-bookworm");
+      expect(npx.image).toBe("node:26-bookworm");
       expect(npx.args.slice(npx.args.indexOf(npx.image) + 1)).toEqual([
         "npx",
         ...npxArgs,
@@ -187,7 +191,7 @@ describe("resolveSpawnSpec", () => {
     ];
     for (const args of npxPackageArgForms) {
       expect(buildStdioConfigSpawnSpec("npx", args).image).toBe(
-        "node:24-bookworm",
+        "node:26-bookworm",
       );
     }
 
@@ -219,13 +223,13 @@ describe("resolveSpawnSpec", () => {
         "-y",
         "@modelcontextprotocol/server-fetch",
       ]).image,
-    ).toBe("node:24-bookworm-slim");
+    ).toBe("node:26-bookworm-slim");
     expect(
       buildStdioConfigSpawnSpec("npx", [
         "-y",
         "https://downloads.example.test/mcp.tgz",
       ]).image,
-    ).toBe("node:24-bookworm-slim");
+    ).toBe("node:26-bookworm-slim");
     expect(
       buildStdioConfigSpawnSpec("uvx", [
         "--from",
@@ -247,6 +251,7 @@ describe("resolveSpawnSpec", () => {
       command,
       args,
       image: resolvedImage,
+      env,
     } = buildStdioConfigSpawnSpec(
       "docker",
       ["run", "-i", "--rm", image, ...containerArgs],
@@ -263,10 +268,13 @@ describe("resolveSpawnSpec", () => {
         "--read-only",
         "--pull",
         "always",
-        "-e",
-        "API_TOKEN",
       ]),
     );
+    expect(args).not.toContain("-e");
+    expect(args).not.toContain("--env");
+    expect(args).not.toContain("API_TOKEN");
+    expect(JSON.stringify(args)).not.toContain("secret");
+    expect(env.API_TOKEN).toBe("secret");
     expect(args.filter((arg) => arg === "-i")).toHaveLength(1);
     expect(args.filter((arg) => arg === "--rm")).toHaveLength(1);
     const imageIndex = args.indexOf(image);
@@ -420,7 +428,7 @@ describe("resolveSpawnSpec", () => {
     if (spec.kind === "bridge") {
       expect(spec.command).toBe("docker");
       expect(spec.args).toContain("--cap-drop");
-      expect(spec.args).toContain("TOKEN");
+      expect(spec.args).not.toContain("TOKEN");
       expect(spec.args.join(" ")).not.toContain("TOKEN=x");
       expect(spec.containerEnv).toMatchObject({ TOKEN: "x" });
       expect(spec.args.slice(-3)).toEqual(["mcp/slack", "node", "app.js"]);
@@ -465,6 +473,7 @@ describe("resolveSpawnSpec", () => {
       transport: "streamable-http",
       headers: { "X-Api-Key": "secret-value" },
       timeoutMs: 15_000,
+      allowUnsafeHttp: false,
     });
   });
 
@@ -485,6 +494,7 @@ describe("resolveSpawnSpec", () => {
           sourceRef: url,
           installCfg: {
             transport,
+            allowUnsafeHttp: url.startsWith("http:"),
             authType: "bearer",
             env: { TOKEN: "test-token" },
             bearerEnv: "TOKEN",
@@ -497,6 +507,7 @@ describe("resolveSpawnSpec", () => {
         transport,
         headers: { authorization: "Bearer test-token" },
         timeoutMs: 60_000,
+        allowUnsafeHttp: url.startsWith("http:"),
       });
     },
   );
@@ -533,11 +544,11 @@ describe("resolveSpawnSpec", () => {
       server: null,
       name: "Sandbox: Lab",
       source: "sandbox",
-      sourceRef: "mcr.microsoft.com/devcontainers/javascript-node:24-bookworm",
+      sourceRef: "mcr.microsoft.com/devcontainers/javascript-node:26-bookworm",
       installCfg: {
         sandboxId: "sb1",
         kind: "docker",
-        image: "node:24-bookworm-slim",
+        image: "node:26-bookworm-slim",
         volumeName: "vol1",
         network: "none",
         env: { A: "1" },
@@ -548,7 +559,7 @@ describe("resolveSpawnSpec", () => {
       name: "Sandbox: Lab",
       sandboxId: "sb1",
       sandboxKind: "docker",
-      image: "node:24-bookworm-slim",
+      image: "node:26-bookworm-slim",
       volumeName: "vol1",
       network: "none",
       env: { A: "1" },
@@ -599,65 +610,28 @@ describe("resolveSpawnSpec", () => {
     });
   });
 
-  it("sandbox source preserves the scoped Hermes runtime identity", () => {
-    const spec = resolveSpawnSpec({
-      serverId: null,
-      server: null,
-      name: "Hermes runtime: Research",
-      source: "sandbox",
-      sourceRef: "nousresearch/hermes-agent:latest",
-      installCfg: {
-        sandboxId: "sb-hermes",
-        kind: "hermes",
-        image: "nousresearch/hermes-agent:latest",
-        volumeName: "hermes-volume",
-        network: "isolated",
-        runtimeId: "runtime-1",
-        runtimeModelName: "research",
-      },
-    });
-
-    expect(spec).toEqual({
-      kind: "sandbox",
-      name: "Hermes runtime: Research",
-      sandboxId: "sb-hermes",
-      sandboxKind: "hermes",
-      image: "nousresearch/hermes-agent:latest",
-      volumeName: "hermes-volume",
-      network: "isolated",
-      env: {},
-      runtimeId: "runtime-1",
-      runtimeModelName: "research",
-    });
-  });
-
-  it("sandbox source surfaces the opt-in sudo setting", () => {
-    const spec = resolveSpawnSpec({
-      serverId: null,
-      server: null,
-      name: "Hermes runtime: Research",
-      source: "sandbox",
-      sourceRef: "nousresearch/hermes-agent:latest",
-      installCfg: {
-        sandboxId: "sb-hermes",
-        kind: "hermes",
-        image: "nousresearch/hermes-agent:latest",
-        volumeName: "hermes-volume",
-        network: "isolated",
-        runtimeId: "runtime-1",
-        runtimeModelName: "research",
-        allowSudo: true,
-      },
-    });
-
-    expect(spec).toEqual(
-      expect.objectContaining({
-        kind: "sandbox",
-        sandboxId: "sb-hermes",
-        allowSudo: true,
-      }),
-    );
-  });
+  it.each([false, true])(
+    "rejects read-only historical workspace startup (sudo=%s)",
+    (allowSudo) => {
+      expect(() =>
+        resolveSpawnSpec({
+          serverId: null,
+          server: null,
+          name: "Retained historical storage",
+          source: "sandbox",
+          sourceRef: "sandbox:latest",
+          installCfg: {
+            sandboxId: "sb-historical",
+            kind: "docker",
+            readOnly: true,
+            image: "sandbox:latest",
+            volumeName: "historical-volume",
+            allowSudo,
+          },
+        }),
+      ).toThrow("AGENT_RUNTIME_RETIRED");
+    },
+  );
 
   it("generates the one-command WebSocket connector command", () => {
     const connector = buildConnectorConfig(

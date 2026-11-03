@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 import { DashboardTable } from "@/components/dashboard/DashboardUI";
 import { CopyButton } from "@/components/dashboard/CopyButton";
+import { DialogBody, DialogHeader } from "@/components/dashboard/dialog";
 import type { Prisma } from "@prisma/client";
 import { requireAdmin } from "@/lib/auth/admin";
 import { db } from "@/lib/db";
@@ -55,11 +56,15 @@ import { adminHref, adminReturnHref } from "@/lib/admin/navigation";
 import { getLogSettings } from "@/lib/observability/settings";
 import { LogHealth } from "@/components/admin/LogHealth";
 import { LogSettings } from "@/components/admin/LogSettings";
+import { LogExplorer } from "@/components/observability/LogExplorer";
 
 export const dynamic = "force-dynamic";
 
 const tabs = [
   { value: "all", icon: ScrollText },
+  { value: "mcp", icon: Server },
+  { value: "tools", icon: Bot },
+  { value: "internal", icon: Server },
   { value: "http", icon: Activity },
   { value: "a2a", icon: Bot },
   { value: "agent", icon: Bot },
@@ -81,9 +86,39 @@ export default async function AdminLogsPage({
     Object.entries(await searchParams).filter(([, value]) => Boolean(value)),
   );
   const tab = tabs.find(({ value }) => value === raw.tab)?.value ?? "all";
+  const protocol =
+    tab === "mcp" || tab === "a2a" || tab === "internal" || tab === "tools";
+  const protocolDomain =
+    tab === "a2a" ? "a2a" : tab === "tools" ? "agent" : "mcp";
   let filters: LogFilterValues;
   try {
-    filters = resolveLogFilters({ ...raw, tab });
+    const durations: Record<string, number> = {
+      "1h": 3600_000,
+      "24h": 86400_000,
+      "7d": 7 * 86400_000,
+      "30d": 30 * 86400_000,
+    };
+    const until = raw.until ?? new Date().toISOString();
+    if (protocol && !Number.isFinite(Date.parse(until)))
+      throw new z.ZodError([]);
+    filters = resolveLogFilters({
+      ...raw,
+      tab: protocol ? undefined : tab,
+      ...(protocol
+        ? {
+            domain: protocolDomain,
+            cursor: undefined,
+            rpcMethod: raw.method,
+            since:
+              raw.since ??
+              new Date(
+                Date.parse(until) -
+                  (durations[raw.range ?? "24h"] ?? 86400_000),
+              ).toISOString(),
+            until,
+          }
+        : {}),
+    });
   } catch (error) {
     if (!(error instanceof z.ZodError)) throw error;
     return (
@@ -104,7 +139,7 @@ export default async function AdminLogsPage({
   const auditFilter = auditWhere(filters);
   const [events, audits, settings, groups, stats, auditCount] =
     await Promise.all([
-      tab !== "audit" ? listLogEvents(scope, filters) : null,
+      tab !== "audit" && !protocol ? listLogEvents(scope, filters) : null,
       tab === "audit"
         ? db.auditEvent.findMany({
             where: {
@@ -122,6 +157,24 @@ export default async function AdminLogsPage({
       tab !== "audit" ? aggregateLogs(filters) : null,
       tab === "audit" ? db.auditEvent.count({ where: auditFilter }) : 0,
     ]);
+  const [workspaceOptions, deployments, agents] = protocol
+    ? await Promise.all([
+        db.workspace.findMany({
+          select: { id: true, name: true },
+          orderBy: { name: "asc" },
+        }),
+        db.deployment.findMany({
+          where: raw.workspaceId ? { workspaceId: raw.workspaceId } : {},
+          select: { id: true, name: true },
+          orderBy: { name: "asc" },
+        }),
+        db.agent.findMany({
+          where: raw.workspaceId ? { workspaceId: raw.workspaceId } : {},
+          select: { id: true, name: true },
+          orderBy: { name: "asc" },
+        }),
+      ])
+    : [[], [], []];
   const visibleAudits = audits?.slice(0, 50);
   const workspaceIds = [
     ...new Set([
@@ -165,7 +218,11 @@ export default async function AdminLogsPage({
   const query = new URLSearchParams(
     Object.entries(raw) as Array<[string, string]>,
   );
-  if (tab === "a2a") query.set("domain", "a2a");
+  if (protocol) query.set("domain", protocolDomain);
+  if (protocol) {
+    query.delete("cursor");
+    if (raw.method) query.set("rpcMethod", raw.method);
+  }
   query.set("since", filters.since.toISOString());
   query.set("until", filters.until.toISOString());
   const listHref = `/admin/logs?${query}`;
@@ -253,12 +310,14 @@ export default async function AdminLogsPage({
         })}
       </nav>
 
-      <LogFilters
-        tab={tab}
-        raw={raw}
-        filters={filters}
-        observedAt={observedAt}
-      />
+      {!protocol && (
+        <LogFilters
+          tab={tab}
+          raw={raw}
+          filters={filters}
+          observedAt={observedAt}
+        />
+      )}
 
       {stats ? (
         <section
@@ -317,6 +376,7 @@ export default async function AdminLogsPage({
           <div className="divide-y divide-border pb-2">
             {groups.map((group) => {
               const groupQuery = new URLSearchParams(query);
+              groupQuery.set("tab", "all");
               for (const key of ["cursor", "errorType", "errorCode"])
                 groupQuery.delete(key);
               groupQuery.set("eventName", group.eventName);
@@ -364,270 +424,289 @@ export default async function AdminLogsPage({
         </details>
       ) : null}
 
-      <section className="space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="flex items-center gap-2 text-sm font-semibold">
-            {t(tab === "audit" ? "logsTab_audit" : "logsEvents")}
-            <AdminBadge>{number(stats?.total ?? auditCount)}</AdminBadge>
-          </h2>
-          <span className="text-xs text-muted-foreground">
-            {windowFormat.format(filters.since)} -{" "}
-            {windowFormat.format(filters.until)} UTC
-          </span>
-        </div>
-        {rowCount ? (
-          <DashboardTable
-            ariaLabel={t("logsEvents")}
-            minWidth="52rem"
-            className="rounded-md"
-            headers={[
-              { label: t("logsTime"), width: "9rem" },
-              { label: t(tab === "audit" ? "logsResult" : "logsOperation") },
-              {
-                label: t(tab === "audit" ? "logsEvent" : "logsCallerTarget"),
-                width: "15rem",
-              },
-              {
-                label: t(tab === "audit" ? "logsResource" : "logsResult"),
-                width: "8rem",
-              },
-              {
-                label:
-                  tab === "audit" ? t("logFields.actorId") : t("logsDuration"),
-                align: "right",
-              },
-              { label: <span className="sr-only">{t("logsDetails")}</span> },
-            ]}
-            rows={[
-              ...(events?.rows.map((row) => {
-                const a2a = getA2aMetadata(row.attributes);
-                const caller = row.actorId
-                  ? (users.get(row.actorId) ?? row.actorId)
-                  : a2a?.clientId
-                    ? `${t("logsServiceClient")}: ${a2a.clientId}`
-                    : "—";
-                const target =
-                  row.agentId ??
-                  a2a?.endpointId ??
-                  a2a?.remoteAgentId ??
-                  row.deploymentId;
-                return {
+      {protocol ? (
+        <LogExplorer
+          key={tab}
+          kind={tab === "a2a" ? "a2a" : "mcp"}
+          source={tab === "internal" || tab === "tools" ? tab : undefined}
+          admin
+          params={raw}
+          workspaces={workspaceOptions}
+          deployments={deployments.map((item) => ({
+            ...item,
+            name: item.name ?? item.id.slice(0, 12),
+          }))}
+          agents={agents}
+        />
+      ) : (
+        <section className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="flex items-center gap-2 text-sm font-semibold">
+              {t(tab === "audit" ? "logsTab_audit" : "logsEvents")}
+              <AdminBadge>{number(stats?.total ?? auditCount)}</AdminBadge>
+            </h2>
+            <span className="text-xs text-muted-foreground">
+              {windowFormat.format(filters.since)} -{" "}
+              {windowFormat.format(filters.until)} UTC
+            </span>
+          </div>
+          {rowCount ? (
+            <DashboardTable
+              ariaLabel={t("logsEvents")}
+              minWidth="52rem"
+              className="rounded-xl"
+              headers={[
+                { label: t("logsTime"), width: "9rem" },
+                { label: t(tab === "audit" ? "logsResult" : "logsOperation") },
+                {
+                  label: t(tab === "audit" ? "logsEvent" : "logsCallerTarget"),
+                  width: "15rem",
+                },
+                {
+                  label: t(tab === "audit" ? "logsResource" : "logsResult"),
+                  width: "8rem",
+                },
+                {
+                  label:
+                    tab === "audit"
+                      ? t("logFields.actorId")
+                      : t("logsDuration"),
+                  align: "right",
+                },
+                { label: <span className="sr-only">{t("logsDetails")}</span> },
+              ]}
+              rows={[
+                ...(events?.rows.map((row) => {
+                  const a2a = getA2aMetadata(row.attributes);
+                  const caller = row.actorId
+                    ? (users.get(row.actorId) ?? row.actorId)
+                    : a2a?.clientId
+                      ? `${t("logsServiceClient")}: ${a2a.clientId}`
+                      : "—";
+                  const target =
+                    row.agentId ??
+                    a2a?.endpointId ??
+                    a2a?.remoteAgentId ??
+                    row.deploymentId;
+                  return {
+                    id: row.id,
+                    cells: [
+                      <LogTimestamp key="time" date={row.createdAt} />,
+                      <div key="operation" className="min-w-0 max-w-sm">
+                        <Link
+                          href={detailHref(row.id)}
+                          className="block truncate font-medium hover:underline"
+                        >
+                          {row.rpcMethod ?? row.toolName ?? row.eventName}
+                        </Link>
+                        <span className="mt-1 block text-xs text-muted-foreground">
+                          {t.has(`logDomains.${row.domain}`)
+                            ? t(`logDomains.${row.domain}`)
+                            : row.domain}
+                          {a2a
+                            ? ` · ${t(`logsDirections.${a2a.direction}`)}`
+                            : ""}
+                        </span>
+                        {row.requestId ? (
+                          <div className="mt-1 flex items-center gap-2">
+                            <span className="font-mono text-xs">
+                              {row.requestId.slice(0, 12)}
+                            </span>
+                            <CopyButton
+                              text={row.requestId}
+                              label={t("logFields.requestId")}
+                              iconOnly
+                            />
+                          </div>
+                        ) : null}
+                      </div>,
+                      <div
+                        key="caller-target"
+                        className="min-w-0 max-w-60 space-y-1 text-xs"
+                      >
+                        <span className="block truncate">{caller}</span>
+                        <span className="block truncate font-mono text-muted-foreground">
+                          {target ?? t("logsNoTarget")}
+                        </span>
+                        {row.workspaceId ? (
+                          <Link
+                            href={adminHref(
+                              `/admin/workspaces/${row.workspaceId}`,
+                              { returnTo: listHref },
+                            )}
+                            className="block truncate text-muted-foreground hover:underline"
+                          >
+                            {workspaces.get(row.workspaceId) ?? row.workspaceId}
+                          </Link>
+                        ) : null}
+                      </div>,
+                      <div key="outcome">
+                        <LogOutcomeBadge outcome={row.outcome} />
+                        <span className="mt-1 block font-mono text-xs text-muted-foreground">
+                          {row.httpStatus !== null &&
+                          row.httpStatus !== undefined
+                            ? `HTTP ${row.httpStatus}`
+                            : t("logsNoHttp")}
+                        </span>
+                      </div>,
+                      row.durationMs == null
+                        ? "—"
+                        : `${number(row.durationMs)} ms`,
+                      <div key="detail" className="flex items-center gap-2">
+                        {row.detailState !== "unavailable" && (
+                          <AdminBadge>
+                            {t(`logsDetailStates.${row.detailState}`)}
+                          </AdminBadge>
+                        )}
+                        <ButtonLink
+                          href={detailHref(row.id)}
+                          aria-label={t("logsDetails")}
+                          variant="ghost"
+                          size="icon"
+                        >
+                          <ChevronRight className="size-4" aria-hidden="true" />
+                        </ButtonLink>
+                      </div>,
+                    ],
+                  };
+                }) ?? []),
+                ...(visibleAudits?.map((row) => ({
                   id: row.id,
                   cells: [
-                    <LogTimestamp key="time" date={row.createdAt} />,
-                    <div key="operation" className="min-w-0 max-w-sm">
-                      <Link
-                        href={detailHref(row.id)}
-                        className="block truncate font-medium hover:underline"
-                      >
-                        {row.rpcMethod ?? row.toolName ?? row.eventName}
-                      </Link>
-                      <span className="mt-1 block text-xs text-muted-foreground">
-                        {t.has(`logDomains.${row.domain}`)
-                          ? t(`logDomains.${row.domain}`)
-                          : row.domain}
-                        {a2a
-                          ? ` · ${t(`logsDirections.${a2a.direction}`)}`
-                          : ""}
-                      </span>
-                      {row.requestId ? (
-                        <div className="mt-1 flex items-center gap-2">
-                          <span className="font-mono text-xs">
-                            {row.requestId.slice(0, 12)}
-                          </span>
-                          <CopyButton
-                            text={row.requestId}
-                            label={t("logFields.requestId")}
-                            iconOnly
-                          />
-                        </div>
-                      ) : null}
-                    </div>,
-                    <div
-                      key="caller-target"
-                      className="min-w-0 max-w-60 space-y-1 text-xs"
-                    >
-                      <span className="block truncate">{caller}</span>
-                      <span className="block truncate font-mono text-muted-foreground">
-                        {target ?? t("logsNoTarget")}
-                      </span>
-                      {row.workspaceId ? (
-                        <Link
-                          href={adminHref(
-                            `/admin/workspaces/${row.workspaceId}`,
-                            { returnTo: listHref },
-                          )}
-                          className="block truncate text-muted-foreground hover:underline"
-                        >
-                          {workspaces.get(row.workspaceId) ?? row.workspaceId}
-                        </Link>
-                      ) : null}
-                    </div>,
-                    <div key="outcome">
-                      <LogOutcomeBadge outcome={row.outcome} />
-                      <span className="mt-1 block font-mono text-xs text-muted-foreground">
-                        {row.httpStatus !== null && row.httpStatus !== undefined
-                          ? `HTTP ${row.httpStatus}`
-                          : t("logsNoHttp")}
-                      </span>
-                    </div>,
-                    row.durationMs == null
-                      ? "—"
-                      : `${number(row.durationMs)} ms`,
-                    <div key="detail" className="flex items-center gap-2">
-                      <AdminBadge>
-                        {t(`logsDetailStates.${row.detailState}`)}
-                      </AdminBadge>
-                      <ButtonLink
-                        href={detailHref(row.id)}
-                        aria-label={t("logsDetails")}
-                        variant="ghost"
-                        size="icon"
-                      >
-                        <ChevronRight className="size-4" aria-hidden="true" />
-                      </ButtonLink>
-                    </div>,
-                  ],
-                };
-              }) ?? []),
-              ...(visibleAudits?.map((row) => ({
-                id: row.id,
-                cells: [
-                  <>
-                    {" "}
-                    <LogTimestamp date={row.createdAt} />{" "}
-                  </>,
-                  <>
-                    {" "}
-                    <LogOutcomeBadge outcome={row.outcome} />{" "}
-                  </>,
-                  <div key="action" className="min-w-0 max-w-sm">
-                    <CenterMorphModal>
-                      <CenterMorphModalTrigger>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="max-w-full"
-                        >
-                          <span className="truncate">{row.action}</span>
-                        </Button>
-                      </CenterMorphModalTrigger>
-                      <CenterMorphModalContent
-                        ariaLabel={row.action}
-                        closeButtonLabel={t("cancel")}
-                        className="max-w-2xl"
-                      >
-                        <div className="space-y-4 p-6">
-                          <h2 className="pr-8 text-sm font-semibold">
-                            {row.action}
-                          </h2>
-                          <pre
-                            // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users must be able to scroll long audit changes.
-                            tabIndex={0}
-                            className="max-h-[60vh] overflow-auto whitespace-pre-wrap break-all font-mono text-xs leading-6"
+                    <>
+                      {" "}
+                      <LogTimestamp date={row.createdAt} />{" "}
+                    </>,
+                    <>
+                      {" "}
+                      <LogOutcomeBadge outcome={row.outcome} />{" "}
+                    </>,
+                    <div key="action" className="min-w-0 max-w-sm">
+                      <CenterMorphModal>
+                        <CenterMorphModalTrigger>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="max-w-full"
                           >
-                            {JSON.stringify(
-                              {
-                                actorId: row.actorId,
-                                requestId: row.requestId,
-                                traceId: row.traceId,
-                                changes: row.changes,
-                              },
-                              null,
-                              2,
-                            )}
-                          </pre>
-                        </div>
-                      </CenterMorphModalContent>
-                    </CenterMorphModal>
-                  </div>,
-                  <div key="target" className="min-w-0 max-w-48">
-                    {" "}
-                    <span className="block text-xs font-medium">
-                      {row.targetType}
-                    </span>
-                    {row.targetType === "user" && users.has(row.targetId) ? (
-                      <Link
-                        href={adminHref(`/admin/users/${row.targetId}`, {
-                          returnTo: listHref,
-                        })}
-                        className="mt-1 block truncate text-xs hover:underline"
-                      >
-                        {users.get(row.targetId)}
-                      </Link>
-                    ) : row.targetType === "workspace" &&
-                      workspaces.has(row.targetId) ? (
-                      <Link
-                        href={adminHref(`/admin/workspaces/${row.targetId}`, {
-                          returnTo: listHref,
-                        })}
-                        className="mt-1 block truncate text-xs hover:underline"
-                      >
-                        {workspaces.get(row.targetId)}
-                      </Link>
-                    ) : (
-                      <span
-                        className="mt-1 block truncate font-mono text-xs text-muted-foreground"
-                        title={row.targetId}
-                      >
-                        {row.targetId}
+                            <span className="truncate">{row.action}</span>
+                          </Button>
+                        </CenterMorphModalTrigger>
+                        <CenterMorphModalContent
+                          ariaLabel={row.action}
+                          closeButtonLabel={t("cancel")}
+                          className="max-w-2xl"
+                        >
+                          <DialogHeader title={row.action} />
+                          <DialogBody className="pt-0">
+                            <pre
+                              // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users must be able to scroll long audit changes.
+                              tabIndex={0}
+                              className="max-h-[60vh] overflow-auto whitespace-pre-wrap break-all font-mono text-xs leading-6"
+                            >
+                              {JSON.stringify(
+                                {
+                                  actorId: row.actorId,
+                                  requestId: row.requestId,
+                                  traceId: row.traceId,
+                                  changes: row.changes,
+                                },
+                                null,
+                                2,
+                              )}
+                            </pre>
+                          </DialogBody>
+                        </CenterMorphModalContent>
+                      </CenterMorphModal>
+                    </div>,
+                    <div key="target" className="min-w-0 max-w-48">
+                      {" "}
+                      <span className="block text-xs font-medium">
+                        {row.targetType}
                       </span>
-                    )}{" "}
-                  </div>,
-                  <div key="actor" className="min-w-0 max-w-40">
-                    {users.has(row.actorId) ? (
-                      <Link
-                        href={adminHref(`/admin/users/${row.actorId}`, {
-                          returnTo: listHref,
-                        })}
-                        className="hover:underline"
-                      >
-                        {users.get(row.actorId)}
-                      </Link>
-                    ) : (
-                      row.actorId
-                    )}
-                  </div>,
-                  null,
-                ],
-              })) ?? []),
-            ]}
-          />
-        ) : (
-          <AdminEmptyState
-            icon={ScrollText}
-            title={t("logsEmpty")}
-            description={t("logsEmptyHint")}
-            actions={
+                      {row.targetType === "user" && users.has(row.targetId) ? (
+                        <Link
+                          href={adminHref(`/admin/users/${row.targetId}`, {
+                            returnTo: listHref,
+                          })}
+                          className="mt-1 block truncate text-xs hover:underline"
+                        >
+                          {users.get(row.targetId)}
+                        </Link>
+                      ) : row.targetType === "workspace" &&
+                        workspaces.has(row.targetId) ? (
+                        <Link
+                          href={adminHref(`/admin/workspaces/${row.targetId}`, {
+                            returnTo: listHref,
+                          })}
+                          className="mt-1 block truncate text-xs hover:underline"
+                        >
+                          {workspaces.get(row.targetId)}
+                        </Link>
+                      ) : (
+                        <span
+                          className="mt-1 block truncate font-mono text-xs text-muted-foreground"
+                          title={row.targetId}
+                        >
+                          {row.targetId}
+                        </span>
+                      )}{" "}
+                    </div>,
+                    <div key="actor" className="min-w-0 max-w-40">
+                      {users.has(row.actorId) ? (
+                        <Link
+                          href={adminHref(`/admin/users/${row.actorId}`, {
+                            returnTo: listHref,
+                          })}
+                          className="hover:underline"
+                        >
+                          {users.get(row.actorId)}
+                        </Link>
+                      ) : (
+                        row.actorId
+                      )}
+                    </div>,
+                    null,
+                  ],
+                })) ?? []),
+              ]}
+            />
+          ) : (
+            <AdminEmptyState
+              icon={ScrollText}
+              title={t("logsEmpty")}
+              description={t("logsEmptyHint")}
+              actions={
+                <ButtonLink
+                  href={`/admin/logs?tab=${tab}`}
+                  variant="secondary"
+                  size="md"
+                >
+                  {t("logsReset")}
+                </ButtonLink>
+              }
+            />
+          )}
+          <nav
+            aria-label={t("page")}
+            className="flex flex-wrap items-center justify-between gap-3"
+          >
+            <span className="text-xs text-muted-foreground">
+              {t("logsPageCount", { count: rowCount })}
+            </span>
+            {next ? (
               <ButtonLink
-                href={`/admin/logs?tab=${tab}`}
+                href={`/admin/logs?${nextQuery}`}
                 variant="secondary"
                 size="md"
               >
-                {t("logsReset")}
+                {t("logsNext")}
+                <ArrowDown className="size-4" aria-hidden="true" />
               </ButtonLink>
-            }
-          />
-        )}
-        <nav
-          aria-label={t("page")}
-          className="flex flex-wrap items-center justify-between gap-3"
-        >
-          <span className="text-xs text-muted-foreground">
-            {t("logsPageCount", { count: rowCount })}
-          </span>
-          {next ? (
-            <ButtonLink
-              href={`/admin/logs?${nextQuery}`}
-              variant="secondary"
-              size="md"
-            >
-              {t("logsNext")}
-              <ArrowDown className="size-4" aria-hidden="true" />
-            </ButtonLink>
-          ) : null}
-        </nav>
-      </section>
+            ) : null}
+          </nav>
+        </section>
+      )}
 
       <LogHealth adminId={admin.id} />
 

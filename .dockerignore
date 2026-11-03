@@ -12,6 +12,7 @@ coverage
 .worktrees
 .compare
 .playwright-mcp
+.playwright-cli
 dist
 *.tar.gz
 .remember

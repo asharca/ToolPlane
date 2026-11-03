@@ -8,6 +8,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/motion/select";
+import { cn } from "@/lib/utils";
 
 export type FormSelectProps = {
   name?: string;
@@ -22,7 +23,7 @@ export type FormSelectProps = {
   className?: string;
 };
 
-/** HTML form participation for the original, presentation-only beUI Select. */
+/** Keep native form values, validation and reset behind the shared dropdown. */
 export function FormSelect({
   name,
   label,
@@ -36,12 +37,14 @@ export function FormSelect({
   className,
 }: FormSelectProps) {
   const generatedId = useId();
+  const controlId = id ?? generatedId;
   const native = useRef<HTMLSelectElement>(null);
-  const root = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
   const initial =
     defaultValue ?? options.find((option) => !option.disabled)?.value ?? "";
   const [selected, setSelected] = useState(initial);
   const current = value ?? selected;
+  const currentIndex = options.findIndex((option) => option.value === current);
   const update = (next: string) => {
     setSelected(next);
     onValueChange?.(next);
@@ -59,11 +62,11 @@ export function FormSelect({
   }, [initial, value]);
 
   return (
-    <div ref={root} className={className}>
+    <div className={cn("min-w-0", className)}>
       <select
         ref={native}
         name={name}
-        id={id ?? generatedId}
+        id={`${controlId}-native`}
         value={current}
         disabled={disabled}
         required={required}
@@ -71,20 +74,8 @@ export function FormSelect({
         tabIndex={-1}
         className="sr-only"
         onChange={(event) => update(event.target.value)}
-        onFocus={() =>
-          root.current
-            ?.querySelector<HTMLButtonElement>(
-              'button[aria-haspopup="listbox"]',
-            )
-            ?.focus()
-        }
-        onInvalid={() =>
-          root.current
-            ?.querySelector<HTMLButtonElement>(
-              'button[aria-haspopup="listbox"]',
-            )
-            ?.focus()
-        }
+        onFocus={() => trigger.current?.focus()}
+        onInvalid={() => trigger.current?.focus()}
       >
         {options.map((option) => (
           <option
@@ -96,22 +87,37 @@ export function FormSelect({
           </option>
         ))}
       </select>
-      <Select value={current} onValueChange={update} disabled={disabled}>
-        <SelectTrigger aria-label={label} aria-required={required}>
-          <SelectValue placeholder={label} />
+      <Select
+        // UI values are indices, so an empty native value remains selectable
+        // without a magic sentinel that can collide with a caller's value.
+        value={currentIndex < 0 ? "" : String(currentIndex)}
+        onValueChange={(index) => {
+          const option = options[Number(index)];
+          if (option && !option.disabled) update(option.value);
+        }}
+        disabled={disabled}
+      >
+        <SelectTrigger
+          ref={trigger}
+          id={controlId}
+          aria-label={label}
+          aria-required={required}
+        >
+          <SelectValue placeholder={label}>
+            {options[currentIndex]?.label}
+          </SelectValue>
         </SelectTrigger>
         <SelectContent>
-          <div className="max-h-[min(15rem,40dvh)] overflow-y-auto overscroll-contain">
-            {options.map((option) => (
-              <SelectItem
-                key={option.value}
-                value={option.value}
-                disabled={option.disabled}
-              >
-                {option.label}
-              </SelectItem>
-            ))}
-          </div>
+          {options.map((option, index) => (
+            <SelectItem
+              key={option.value}
+              value={String(index)}
+              disabled={option.disabled}
+              textValue={option.label}
+            >
+              {option.label}
+            </SelectItem>
+          ))}
         </SelectContent>
       </Select>
     </div>

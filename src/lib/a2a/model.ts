@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   Artifact,
   Message,
@@ -15,23 +16,42 @@ import {
 
 export const A2A_PROTOCOL_VERSION = "1.0";
 export const A2A_SDK_VERSION = "1.2.0";
+export const A2A_FILE_DELIVERY_EXTENSION = {
+  uri: "https://toolplane.ai/a2a/extensions/file-delivery/v1",
+  description:
+    "Optional ToolPlane file-reception controls; standard raw/url Parts require no extension.",
+  required: false,
+  params: {
+    retry: {
+      method: "GetTask",
+      header: "A2A-Retry-Files",
+      value: "true",
+      effect: "Retry failed file reception only; never replay SendMessage.",
+    },
+    metadata:
+      "toolplaneFileDelivery: {state: pending|failed|ready, remoteState?: TaskState number}",
+  },
+};
 export const LOCAL_OUTPUT_MODES = [
   "text/plain",
   "text/markdown",
   "text/x-diff",
   "application/json",
   "application/octet-stream",
+  "*/*",
 ];
 export const acceptsOutput = (modes: readonly string[], mediaType: string) =>
   !modes.length ||
-  modes.some(
-    (mode) =>
-      mode === "*/*" ||
-      mode === mediaType ||
-      mode === `${mediaType.split("/")[0]}/*`,
-  );
-// ponytail: only character/byte limits read env; counters stay fixed because
-// nothing tunes them yet. Widen when an operator actually asks.
+  modes.some((mode) => {
+    const normalized = mode.toLowerCase(),
+      actual = mediaType.toLowerCase();
+    return (
+      normalized === "*/*" ||
+      normalized === actual ||
+      normalized === `${actual.split("/")[0]}/*`
+    );
+  });
+// Payload limits and task deadlines are operator-configurable; counters stay fixed.
 const DEFAULT_A2A_LIMITS = {
   bodyBytes: 262_144,
   inputCharacters: 20_000,
@@ -55,6 +75,7 @@ const ENV_A2A_LIMIT_KEYS = {
   outputCharacters: "TOOLPLANE_A2A_OUTPUT_CHARACTERS",
   snapshotBytes: "TOOLPLANE_A2A_SNAPSHOT_BYTES",
   publishArtifactBytes: "TOOLPLANE_A2A_PUBLISH_ARTIFACT_BYTES",
+  deadlineSeconds: "TOOLPLANE_A2A_DEADLINE_SECONDS",
 } as const satisfies Partial<Record<keyof A2ALimits, string>>;
 function positiveSafeInteger(value: string | undefined): number | null {
   const parsed = Number(value);
@@ -154,6 +175,71 @@ export function textArtifact(text: string): Artifact {
     parts: [{ mediaType: "text/plain", text }],
   });
 }
+
+function canonicalArtifactValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalArtifactValue);
+  if (value && typeof value === "object")
+    return Object.fromEntries(
+      Object.entries(value)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([key, item]) => [key, canonicalArtifactValue(item)]),
+    );
+  return value;
+}
+export const artifactDigest = (value: Artifact) => {
+  const content = Artifact.toJSON(value) as Record<string, unknown>;
+  delete content.metadata;
+  return createHash("sha256")
+    .update(JSON.stringify(canonicalArtifactValue(content)))
+    .digest("hex");
+};
+
+/** Platform-owned provenance describes inline data and immutable owned file handles, never a download URL. */
+export function stampArtifactProvenance(
+  artifact: Artifact,
+  source: {
+    taskId: string;
+    contextId: string;
+    targetId: string;
+    targetKind: "local" | "remote" | "published";
+  },
+  fileSizes?: ReadonlyMap<string, number>,
+) {
+  const wire = Artifact.toJSON(artifact) as {
+    parts: Array<{ raw?: string; text?: string; data?: unknown }>;
+  };
+  const content = JSON.stringify(canonicalArtifactValue(wire.parts));
+  const sizeBytes = wire.parts.reduce((size, part) => {
+    const fileId =
+      part.data && typeof part.data === "object"
+        ? (part.data as { toolplaneFileId?: unknown }).toolplaneFileId
+        : undefined;
+    const fileSize =
+      typeof fileId === "string" ? fileSizes?.get(fileId) : undefined;
+    return (
+      size +
+      (fileSize ??
+        (part.raw !== undefined
+          ? Buffer.from(part.raw, "base64").length
+          : Buffer.byteLength(
+              part.text ??
+                JSON.stringify(canonicalArtifactValue(part.data ?? null)),
+              "utf8",
+            )))
+    );
+  }, 0);
+  artifact.metadata = {
+    ...artifact.metadata,
+    "toolplane.dev/provenance": {
+      ...source,
+      sizeBytes,
+      digestAlgorithm: "sha256-canonical-parts-json",
+      digest: createHash("sha256").update(content).digest("hex"),
+    },
+  };
+  return artifact;
+}
+
 /** Database and wire payloads always go through official ProtoJSON serializers. */
 export function jsonTask(task: Task) {
   return Task.toJSON(task) as Record<string, unknown>;

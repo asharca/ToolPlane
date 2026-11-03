@@ -6,7 +6,6 @@ import { Store } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { getWorkspaceForUser, getDeployments } from "@/lib/workspace/queries";
 import { effectiveStatus } from "@/lib/process/supervisor";
-import { DeployCustomMcpDialog } from "@/components/dashboard/DeployCustomMcpDialog";
 import { deploymentLabel } from "@/lib/workspace/deployment-label";
 import { ProvisioningRefresher } from "@/components/dashboard/ProvisioningRefresher";
 import {
@@ -15,6 +14,7 @@ import {
 } from "@/components/dashboard/DashboardUI";
 import { McpDeploymentsBrowser } from "@/components/dashboard/McpDeploymentsBrowser";
 import { formatInTimeZone, resolveUserTimeZone } from "@/lib/timezone";
+import { DeployCustomMcpDialog } from "@/components/dashboard/DeployCustomMcpDialog";
 
 export const dynamic = "force-dynamic";
 
@@ -36,7 +36,7 @@ export default async function McpServersPage({
   searchParams,
 }: {
   params: Promise<{ workspace: string }>;
-  searchParams: Promise<{ create?: string }>;
+  searchParams: Promise<{ create?: string; error?: string }>;
 }) {
   const [{ workspace: slug }, query] = await Promise.all([
     params,
@@ -58,7 +58,8 @@ export default async function McpServersPage({
       id: deployment.id,
       name: label.name,
       source: label.source,
-      reference: deployment.server?.slug ?? label.ref,
+      reference:
+        deployment.pinnedPackage ?? deployment.server?.slug ?? label.ref,
       status: effectiveStatus(deployment.id, deployment.status),
       createdAt: formatDate(deployment.createdAt, timeZone, locale),
       iconUrl: deployment.server?.iconUrl ?? null,
@@ -77,14 +78,14 @@ export default async function McpServersPage({
           className="shrink-0"
           actions={
             <>
-              <ButtonLink href={marketHref} variant="secondary" size="md">
-                <Store className="size-4" />
-                {t("browseToolplane")}
-              </ButtonLink>
               <DeployCustomMcpDialog
                 slug={slug}
                 defaultOpen={query.create === "1"}
               />
+              <ButtonLink href={marketHref} variant="secondary" size="md">
+                <Store className="size-4" />
+                {t("browseToolplane")}
+              </ButtonLink>
             </>
           }
         >
@@ -93,6 +94,15 @@ export default async function McpServersPage({
             {t("deploymentCountSummary", { count: deploymentItems.length })}
           </p>
         </DashboardToolbar>
+        {query.error === "unsafeHttpConfirmationRequired" ? (
+          <p role="alert" className="text-sm text-destructive">
+            {t("unsafeHttpConsentDescription")}
+          </p>
+        ) : query.error === "mcpVersionResolutionFailed" ? (
+          <p role="alert" className="text-sm text-destructive">
+            {t("mcpVersionResolutionFailed")}
+          </p>
+        ) : null}
 
         <McpDeploymentsBrowser slug={slug} deployments={deploymentItems} />
       </DashboardPage>

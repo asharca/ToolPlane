@@ -54,14 +54,14 @@ export function DashboardTable({
   );
   return (
     <section
-      className={cn("min-w-0 overflow-x-auto", className, "rounded-2xl")}
+      className={cn("min-w-0 overflow-x-auto", className, "rounded-xl")}
       aria-label={ariaLabel}
       style={{ containerType: "inline-size" }}
     >
       <div style={{ minWidth }}>
         <Table
           className={cn(
-            "rounded-2xl",
+            "rounded-xl",
             height === undefined &&
               "[&>div:first-child]:h-auto! [&>div:first-child]:max-h-[640px]",
           )}

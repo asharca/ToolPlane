@@ -30,6 +30,9 @@ type LogEntry = Parameters<typeof logRequest>[0];
 
 export type ToolDeps = {
   liveStatus: (id: string) => string | null;
+  /** False only when the injected discovery prepares its own authorized connection. */
+  requireRunning?: boolean;
+  onToolExposureDenied?: (deploymentId: string, toolName: string) => never;
   listMcpTools: (id: string) => Promise<McpTool[]>;
   mcpRpc: (
     id: string,
@@ -58,14 +61,30 @@ export async function buildToolSet(
 ): Promise<AgentToolSet> {
   const set: AgentToolSet = {};
   const policies = await deps.loadMcpToolPolicies(deploymentIds, workspaceId);
-  for (const deploymentId of deploymentIds) {
-    const policy = policies.get(deploymentId);
-    if (!policy) continue;
-    if (deps.liveStatus(deploymentId) !== "running") continue;
-    const tools = filterMcpToolsForAi(
-      await deps.listMcpTools(deploymentId),
-      policy,
-    );
+  // Discovery owns deployment operations. Wait for every started operation even
+  // when one fails, then assemble in deployment order rather than completion order.
+  const discoveries = await Promise.allSettled(
+    deploymentIds.map(async (deploymentId) => {
+      const policy = policies.get(deploymentId);
+      if (!policy) return;
+      if (
+        deps.requireRunning !== false &&
+        deps.liveStatus(deploymentId) !== "running"
+      )
+        return;
+      return {
+        deploymentId,
+        tools: filterMcpToolsForAi(
+          await deps.listMcpTools(deploymentId),
+          policy,
+        ),
+      };
+    }),
+  );
+  for (const discovery of discoveries) {
+    if (discovery.status === "rejected") throw discovery.reason;
+    if (!discovery.value) continue;
+    const { deploymentId, tools } = discovery.value;
     for (const t of tools) {
       set[toolKey(deploymentId, t.name)] = agentTool({
         name: toolKey(deploymentId, t.name),
@@ -106,6 +125,7 @@ export async function buildToolSet(
                 }),
               })
               .catch(() => {});
+            deps.onToolExposureDenied?.(deploymentId, t.name);
             return denied;
           }
           const result = await deps.mcpRpc(deploymentId, "tools/call", {

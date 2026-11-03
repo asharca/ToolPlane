@@ -42,14 +42,10 @@ export function WorkspaceWelcome({
         <ButtonLink href={`/app/${slug}/chat`} variant="secondary" size="sm">
           {t("startChat")}
         </ButtonLink>
-        <ButtonLink
-          href={`/app/${slug}/market/agents`}
-          variant="secondary"
-          size="sm"
-        >
+        <ButtonLink href={`/app/${slug}/plugins`} variant="secondary" size="sm">
           {t("findAgent")}
         </ButtonLink>
-        <ButtonLink href={`/app/${slug}/market/mcp`} variant="ghost" size="sm">
+        <ButtonLink href={`/app/${slug}/mcp`} variant="ghost" size="sm">
           {t("connectTools")}
         </ButtonLink>
       </div>

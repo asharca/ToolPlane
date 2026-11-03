@@ -3,24 +3,19 @@
 import {
   ArrowLeft,
   Bell,
-  Bot,
   Brain,
   Building2,
-  ClipboardCheck,
   LayoutDashboard,
   Library,
-  MessageSquare,
   Plug,
   Settings,
   ScrollText,
-  Tags,
   Users,
   type LucideIcon,
 } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
-import { Logo } from "@/components/layout/Logo";
 import { WorkspaceSidebar } from "@/components/workspace/workspace-sidebar";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
 import { useAnimatedSidebar } from "@/components/motion/animated-sidebar";
@@ -33,11 +28,7 @@ type AdminPageLabelKey =
   | "adminNavWorkspaces"
   | "adminNavMcpServers"
   | "adminNavSkills"
-  | "adminNavAgents"
-  | "adminNavAssistants"
-  | "adminNavMarketReviews"
   | "adminNavCatalog"
-  | "adminNavCategories"
   | "adminNavNotifications";
 
 type AdminSectionLabelKey =
@@ -69,11 +60,6 @@ const NAV_SECTIONS: NavSection[] = [
         href: "/admin/notifications",
         icon: Bell,
       },
-      {
-        labelKey: "adminNavMarketReviews",
-        href: "/admin/reviews",
-        icon: ClipboardCheck,
-      },
       { labelKey: "adminNavSettings", href: "/admin/settings", icon: Settings },
     ],
   },
@@ -94,13 +80,6 @@ const NAV_SECTIONS: NavSection[] = [
       { labelKey: "adminNavCatalog", href: "/admin/market", icon: Library },
       { labelKey: "adminNavMcpServers", href: "/admin/servers", icon: Plug },
       { labelKey: "adminNavSkills", href: "/admin/skills", icon: Brain },
-      { labelKey: "adminNavAgents", href: "/admin/agents", icon: Bot },
-      {
-        labelKey: "adminNavAssistants",
-        href: "/admin/assistants",
-        icon: MessageSquare,
-      },
-      { labelKey: "adminNavCategories", href: "/admin/categories", icon: Tags },
     ],
   },
 ];
@@ -131,7 +110,6 @@ export function AdminSidebar() {
   return (
     <WorkspaceSidebar
       title={t("adminConsoleTitle")}
-      logo={<Logo svgSize={28} wordmarkClass="hidden" />}
       groups={NAV_SECTIONS.map((section) => ({
         id: section.labelKey,
         items: section.items.map(({ labelKey, href, icon: Icon }) => ({
@@ -143,11 +121,11 @@ export function AdminSidebar() {
       }))}
       activeId={activeHref}
       footer={
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col gap-0.5">
           <NotificationBell compact={!open && !isMobile} />
           <Link
             href="/app"
-            className="flex min-h-9 items-center gap-2 overflow-hidden rounded-lg px-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground [&_svg]:size-[18px]"
+            className="flex h-9 items-center gap-[9px] overflow-hidden rounded-lg px-[9px] text-sm text-foreground transition-colors hover:bg-foreground/5 [&_svg]:size-[18px]"
           >
             <ArrowLeft aria-hidden="true" className="size-[18px] shrink-0" />
             <span className="truncate group-data-[state=collapsed]/sidebar:hidden">

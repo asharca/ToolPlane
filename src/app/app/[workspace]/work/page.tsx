@@ -31,6 +31,7 @@ import {
 } from "@/lib/sidebar-preferences";
 import { parseSidebarGroupPreferencesCookie } from "@/lib/sidebar-groups";
 import { getConversationWorkspaceSandbox } from "@/lib/agents/conversation-workspace";
+import { getAgentMcpToolsUpdated } from "@/lib/agents/conversation-revisions";
 
 export const dynamic = "force-dynamic";
 
@@ -71,6 +72,13 @@ function serializeWorkSession(session: WorkSummary | WorkDetail) {
     task: session.task,
     acceptanceCriteria: session.acceptanceCriteria,
     runtimeKind: session.runtimeKind,
+    readOnly: session.readOnly,
+    agentRevisionId: session.agentRevisionId,
+    agentRevisionVersion: session.agentRevisionVersion,
+    legacyRevisionUnresolved: session.legacyRevisionUnresolved,
+    modelName: session.modelName,
+    contextWindow: session.contextWindow,
+    contextWindowEstimated: session.contextWindowEstimated,
     status: session.status,
     startedAt: session.startedAt?.toISOString() ?? null,
     completedAt: session.completedAt?.toISOString() ?? null,
@@ -85,9 +93,6 @@ function serializeWorkSession(session: WorkSummary | WorkDetail) {
     conversationId: session.conversationId,
     reasoningEffort:
       normalizeReasoningEffort(detail?.conversation.reasoningEffort) ?? null,
-    hermesProfile: detail?.conversation.hermesProfile ?? null,
-    hermesProvider: detail?.conversation.hermesProvider ?? null,
-    hermesModel: detail?.conversation.hermesModel ?? null,
     workingDirectory: workSessionWorkingDirectory(session.runtimeSnapshot),
     sandbox: session.sandbox
       ? {
@@ -104,14 +109,6 @@ function serializeWorkSession(session: WorkSummary | WorkDetail) {
         }
       : null,
     messages: serializeMessages(detail?.conversation.messages ?? []),
-    approvals:
-      detail?.approvals.map((approval) => ({
-        id: approval.id,
-        toolCallId: approval.toolCallId,
-        toolName: approval.toolName,
-        input: approval.input,
-        status: approval.status,
-      })) ?? [],
   };
 }
 
@@ -179,23 +176,14 @@ export default async function WorkspaceWorkPage({
       `/app/${encodeURIComponent(slug)}/work?w=${encodeURIComponent(conversation.workSession.id)}`,
     );
   const [conversationSandbox, workSandbox] = await Promise.all([
-    conversation &&
-    !conversation.publicApiConversation &&
-    agents.find((agent) => agent.id === conversation.agentId)?.runtimeKind !==
-      "hermes"
-      ? getConversationWorkspaceSandbox({
-          workspaceId: workspace.id,
-          agentId: conversation.agentId,
-          conversationId: conversation.id,
-        })
-      : Promise.resolve(null),
-    selectedSession && selectedSession.runtimeKind !== "hermes"
+    Promise.resolve(conversation?.boundSandbox ?? null),
+    selectedSession && !selectedSession.readOnly
       ? getConversationWorkspaceSandbox({
           workspaceId: workspace.id,
           agentId: selectedSession.agentId,
           conversationId: selectedSession.conversationId,
         })
-      : Promise.resolve(null),
+      : Promise.resolve(selectedSession?.sandbox ?? null),
   ]);
   const source = parseMessagingSessionTitle(conversation?.title);
   const providersById = new Map(
@@ -204,6 +192,17 @@ export default async function WorkspaceWorkPage({
   const conversations = await listConversations(
     workspace.id,
     agents.map((agent) => agent.id),
+  );
+  const mcpToolsUpdated = new Map(
+    await Promise.all(
+      agents.map(
+        async (agent) =>
+          [
+            agent.id,
+            await getAgentMcpToolsUpdated(workspace.id, agent.id),
+          ] as const,
+      ),
+    ),
   );
 
   return (
@@ -228,10 +227,7 @@ export default async function WorkspaceWorkPage({
             ? {
                 ...serializeWorkSession({
                   ...selectedSession,
-                  sandbox:
-                    selectedSession.runtimeKind === "hermes"
-                      ? selectedSession.sandbox
-                      : workSandbox,
+                  sandbox: workSandbox,
                 }),
                 titlePending,
               }
@@ -244,6 +240,14 @@ export default async function WorkspaceWorkPage({
                 agentId: conversation.agentId,
                 title: conversation.title,
                 source,
+                agentRevisionId: conversation.agentRevisionId,
+                agentRevisionVersion: conversation.agentRevisionVersion,
+                legacyRevisionUnresolved: conversation.legacyRevisionUnresolved,
+                runtimeKind: conversation.runtimeKind ?? undefined,
+                modelName: conversation.modelName,
+                contextWindow: conversation.contextWindow,
+                contextWindowEstimated:
+                  conversation.contextWindowEstimated ?? undefined,
                 sandbox: conversationSandbox
                   ? {
                       ...conversationSandbox,
@@ -255,22 +259,26 @@ export default async function WorkspaceWorkPage({
                         ) === "running",
                     }
                   : null,
-                legacyWorkspace:
-                  Boolean(conversation.publicApiConversation) ||
-                  agents.find((agent) => agent.id === conversation.agentId)
-                    ?.runtimeKind === "hermes",
-                readOnly: Boolean(source || conversation.publicApiConversation),
+                readOnly: conversation.readOnly,
                 reasoningEffort: normalizeReasoningEffort(
                   conversation.reasoningEffort,
                 ),
-                hermesProfile: conversation.hermesProfile,
-                hermesProvider: conversation.hermesProvider,
-                hermesModel: conversation.hermesModel,
                 messages: serializeMessages(conversation.messages),
               }
             : null
         }
         requestedAgentId={requestedAgentId}
+        providers={providers.map((provider) => ({
+          id: provider.id,
+          name: provider.name,
+          models: provider.models,
+          modelRecords: provider.modelRecords.map((model) => ({
+            modelId: model.modelId,
+            primaryType: model.primaryType,
+            capabilities: model.capabilities,
+            inputModalities: model.inputModalities,
+          })),
+        }))}
         hasChannels={agents.some((agent) => Boolean(agent._count?.channels))}
         conversations={conversations.map((conversation) => ({
           id: conversation.id,
@@ -278,34 +286,9 @@ export default async function WorkspaceWorkPage({
           title: conversation.title,
           source: parseMessagingSessionTitle(conversation.title),
         }))}
-        providers={providers.map((provider) => ({
-          id: provider.id,
-          name: provider.name,
-          format: provider.format,
-          models: provider.models,
-          modelRecords: (provider.modelRecords ?? []).map((model) => ({
-            modelId: model.modelId,
-            primaryType: model.primaryType,
-            capabilities: model.capabilities,
-            inputModalities: model.inputModalities,
-            cost: model.cost,
-          })),
-        }))}
         agents={agents.map((agent) => {
-          const supportsWork = isWorkRuntimeKind(agent.runtimeKind);
-          const isHermes = agent.runtimeKind === "hermes";
-          const runtimeSandbox =
-            isHermes &&
-            agent.runtime?.kind === "hermes" &&
-            agent.runtime.sandbox.kind === "hermes" &&
-            agent.runtime.sandbox.network !== "none"
-              ? agent.runtime.sandbox
-              : null;
-          const providerIds = isHermes
-            ? agent.modelProviders.map((item) => item.providerId)
-            : agent.providerId
-              ? [agent.providerId]
-              : [];
+          const supportsWork =
+            isWorkRuntimeKind(agent.runtimeKind) && !agent.retiredAt;
           const modelProvider = agent.providerId
             ? providersById.get(agent.providerId)
             : null;
@@ -316,72 +299,48 @@ export default async function WorkspaceWorkPage({
           return {
             id: agent.id,
             name: agent.name,
+            description: agent.description ?? null,
             pinned: agent.pinned,
             supportsWork,
-            ready: Boolean(
+            ready:
               supportsWork &&
-                (isHermes
-                  ? providerIds.length > 0 && runtimeSandbox
-                  : agent.providerId &&
-                    agent.model &&
-                    agent.sandboxes.length === 1 &&
-                    agent.sandboxes[0]?.sandbox.kind === "docker" &&
-                    agent.sandboxes[0]?.sandbox.network !== "none"),
-            ),
+              (agent.runtimeKind === "pi-sdk" || agent.runtimeKind === "omp") &&
+              agent.currentRevisionVersion > 0,
             runtimeKind: agent.runtimeKind,
+            currentRevisionVersion: agent.currentRevisionVersion,
+            mcpToolsUpdated: mcpToolsUpdated.get(agent.id) ?? null,
             providerId: agent.providerId,
-            providerIds,
-            providerLabel: isHermes
-              ? agent.modelProviders
-                  .map((item) => item.provider.name)
-                  .join(", ")
-              : (agent.provider?.name ?? ""),
+            providerLabel: agent.provider?.name ?? "",
             model: agent.model,
             contextWindow: modelContext?.maxTokens ?? null,
             contextWindowEstimated: modelContext?.estimated ?? true,
-            sandboxes: runtimeSandbox
-              ? [runtimeSandbox].map((sandbox) => {
-                  const status = effectiveStatus(
-                    sandbox.deploymentId,
-                    sandbox.deployment.status,
-                  );
-                  return {
-                    id: sandbox.id,
-                    name: sandbox.name,
-                    kind: sandbox.kind,
-                    deploymentId: sandbox.deploymentId,
-                    status,
-                    running: status === "running",
-                    isDefault: true,
-                  };
-                })
-              : agent.sandboxes
-                  .filter(
-                    (link) =>
-                      link.sandbox.kind === "docker" &&
-                      link.sandbox.network !== "none",
-                  )
-                  .map((link) => {
-                    const status = effectiveStatus(
-                      link.sandbox.deploymentId,
-                      link.sandbox.deployment.status,
-                    );
-                    return {
-                      id: link.sandboxId,
-                      name: link.sandbox.name,
-                      kind: link.sandbox.kind,
-                      deploymentId: link.sandbox.deploymentId,
-                      status,
-                      running: status === "running",
-                      isDefault: link.isDefault,
-                    };
-                  }),
+            sandboxes: agent.sandboxes
+              .filter(
+                (link) =>
+                  link.sandbox.kind === "docker" &&
+                  link.sandbox.network !== "none",
+              )
+              .map((link) => {
+                const status = effectiveStatus(
+                  link.sandbox.deploymentId,
+                  link.sandbox.deployment.status,
+                );
+                return {
+                  id: link.sandboxId,
+                  name: link.sandbox.name,
+                  kind: link.sandbox.kind,
+                  deploymentId: link.sandbox.deploymentId,
+                  status,
+                  running: status === "running",
+                  isDefault: link.isDefault,
+                };
+              }),
           };
         })}
         sessions={sessions.map((session) =>
           serializeWorkSession({
             ...session,
-            sandbox: session.runtimeKind === "hermes" ? session.sandbox : null,
+            sandbox: null,
           }),
         )}
       />

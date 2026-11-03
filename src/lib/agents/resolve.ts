@@ -1,6 +1,6 @@
-import { marketReleaseChecksum } from "@/lib/market/artifact";
-import { parsePiPackageReleaseManifest } from "@/lib/market/pi-package-manifest";
-import type { PiPackageManifestV1 } from "@/lib/market/pi-package-manifest";
+import { marketReleaseChecksum } from "@/lib/pi-packages/artifact";
+import { parsePiPackageReleaseManifest } from "@/lib/pi-packages/manifest";
+import type { PiPackageManifestV1 } from "@/lib/pi-packages/manifest";
 import { resolvePiPackageMcpPolicy } from "./pi-package-mcp";
 import type { PiPackageMcpToolPolicy } from "./pi-package-mcp";
 
@@ -15,6 +15,7 @@ export type ResolvedAgentPiPackage = {
 export type LoadedAgentPiPackages = {
   runtimeKind: string;
   workspaceId: string;
+  agentRevisionId?: string;
   piPackages?: Array<{
     marketInstallId: string;
     releaseId: string;
@@ -39,7 +40,7 @@ export type LoadedAgentPiPackages = {
 export function resolveAgentPiPackages(
   agent: LoadedAgentPiPackages,
 ): ResolvedAgentPiPackage[] {
-  if (agent.runtimeKind !== "pi-sdk") return [];
+  if (agent.runtimeKind !== "pi-sdk" && agent.runtimeKind !== "omp") return [];
   if (!Array.isArray(agent.piPackages) || agent.piPackages.length > 16)
     throw new Error("PI_PACKAGE_UNAVAILABLE");
   const seen = new Set<string>();
@@ -51,10 +52,13 @@ export function resolveAgentPiPackages(
         seen.has(binding.marketInstallId) ||
         install.id !== binding.marketInstallId ||
         install.targetWorkspaceId !== agent.workspaceId ||
-        install.status !== "ready" ||
+        (install.status !== "ready" &&
+          (!agent.agentRevisionId || install.status !== "uninstalled")) ||
         install.listing.id !== install.listingId ||
         install.listing.kind !== "pi-package" ||
-        install.listing.status !== "published" ||
+        (agent.agentRevisionId &&
+          !["published", "removed"].includes(install.listing.status)) ||
+        (!agent.agentRevisionId && install.listing.status !== "published") ||
         release.id !== binding.releaseId ||
         release.listingId !== install.listingId ||
         release.reviewStatus !== "approved"
@@ -71,6 +75,8 @@ export function resolveAgentPiPackages(
       } catch {
         throw new Error("PI_PACKAGE_UNAVAILABLE");
       }
+      if (manifest.package.runtime.kind !== agent.runtimeKind)
+        throw new Error("PLUGIN_RUNTIME_MISMATCH");
       const mcpPolicy = resolvePiPackageMcpPolicy(
         manifest.package.toolplane?.mcp,
         install.resourceMap,
@@ -89,6 +95,7 @@ export function resolveAgentPiPackages(
 
 export type SkillForPrompt = {
   skillId: string | null;
+  installedSkillId?: string;
   skill: {
     slug: string;
     name: string;
@@ -129,7 +136,9 @@ export type SubAgentRef = {
 export type LoadedAgentTools = {
   runtimeKind?: string;
   workspaceId?: string;
+  agentRevisionId?: string;
   piPackages?: LoadedAgentPiPackages["piPackages"];
+  mcpToolPolicy?: PiPackageMcpToolPolicy;
   servers: { deploymentId: string }[];
   skills: AttachedSkill[];
   toolkits: {
@@ -173,17 +182,29 @@ export function resolveAgentTools(
     sandboxDepSet.add(s.sandbox.deploymentId);
   }
   for (const s of agent.skills)
-    skillMap.set(s.installedSkill.id, s.installedSkill);
+    skillMap.set(s.installedSkill.id, {
+      ...s.installedSkill,
+      installedSkillId: s.installedSkill.id,
+    });
   for (const tk of agent.toolkits) {
     for (const s of tk.toolkit.servers) depSet.add(s.deploymentId);
     for (const s of tk.toolkit.skills)
-      skillMap.set(s.installedSkill.id, s.installedSkill);
+      skillMap.set(s.installedSkill.id, {
+        ...s.installedSkill,
+        installedSkillId: s.installedSkill.id,
+      });
   }
-  const mcpToolPolicy: PiPackageMcpToolPolicy = {};
-  if (agent.runtimeKind === "pi-sdk") {
+  const mcpToolPolicy: PiPackageMcpToolPolicy = Object.fromEntries(
+    Object.entries(agent.mcpToolPolicy ?? {}).map(([id, names]) => [
+      id,
+      [...names],
+    ]),
+  );
+  if (agent.runtimeKind === "pi-sdk" || agent.runtimeKind === "omp") {
     if (!agent.workspaceId) throw new Error("PI_PACKAGE_UNAVAILABLE");
     const packages = resolveAgentPiPackages({
       runtimeKind: agent.runtimeKind,
+      agentRevisionId: agent.agentRevisionId,
       workspaceId: agent.workspaceId,
       piPackages: agent.piPackages,
     });
@@ -198,6 +219,13 @@ export function resolveAgentTools(
         binding.marketInstall.resourceMap,
       );
       for (const [deploymentId, tools] of Object.entries(policy)) {
+        if (agent.mcpToolPolicy) {
+          // The complete pinned/live owner policy is authoritative. One package
+          // must neither restore revoked tools nor narrow another package's grant.
+          if (Object.hasOwn(agent.mcpToolPolicy, deploymentId))
+            depSet.add(deploymentId);
+          continue;
+        }
         depSet.add(deploymentId);
         if (!directDeployments.has(deploymentId)) {
           mcpToolPolicy[deploymentId] = [
@@ -218,7 +246,7 @@ export function resolveAgentTools(
       id: c.id,
       name: c.name,
       slug: c.slug,
-      description: c.runtimeKind === "hermes" ? null : c.systemPrompt,
+      description: c.systemPrompt,
     });
   }
 

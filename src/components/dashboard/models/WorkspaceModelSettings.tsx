@@ -4,9 +4,10 @@ import { Button } from "@/components/motion/button";
 
 import { useState, useTransition } from "react";
 import { useTranslations } from "next-intl";
-import { ChevronDown, Loader2, RotateCcw } from "lucide-react";
+import { RotateCcw } from "lucide-react";
 import {
   ModelPicker,
+  ModelPickerTrigger,
   type ModelProviderOption,
   type ModelSelection,
 } from "@/components/dashboard/models/ModelPicker";
@@ -72,6 +73,7 @@ function ModelPreferenceRow({
       </div>
       <div className="flex min-w-0 items-center gap-1.5 sm:w-80">
         <ModelPicker
+          className="flex-1"
           providers={providers}
           value={value}
           pending={pending}
@@ -81,29 +83,14 @@ function ModelPreferenceRow({
             window.location.assign(`/app/${encodeURIComponent(slug)}/providers`)
           }
           trigger={
-            <Button
-              type="button"
+            <ModelPickerTrigger
               disabled={pending}
+              pending={pending}
               aria-label={`${title}: ${value?.model ?? emptyLabel}`}
-              variant="outline"
-              size="sm"
-              className="min-w-0 flex-1"
-            >
-              <span
-                aria-hidden="true"
-                className="flex size-5 shrink-0 items-center justify-center rounded-full bg-muted text-[9px] font-semibold text-muted-foreground"
-              >
-                {provider?.name.charAt(0).toUpperCase() || "M"}
-              </span>
-              <span className="min-w-0 flex-1 truncate">
-                {value?.model ?? emptyLabel}
-              </span>
-              {pending ? (
-                <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
-              ) : (
-                <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
-              )}
-            </Button>
+              label={value?.model ?? emptyLabel}
+              placeholder={!value}
+              provider={provider?.name}
+            />
           }
         />
         {value ? (

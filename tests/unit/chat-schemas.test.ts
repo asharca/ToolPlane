@@ -7,7 +7,7 @@ import {
 } from "@/lib/chat/schemas";
 
 describe("chat bounded-context input", () => {
-  it("accepts only chat assistant capabilities and deduplicates direct MCP grants", () => {
+  it("accepts explicit bounded MCP tool grants", () => {
     const result = CreateChatAssistantSchema.parse({
       workspaceId: "ws-1",
       name: "Helper",
@@ -27,15 +27,18 @@ describe("chat bounded-context input", () => {
           },
         ],
       },
-      deploymentIds: ["mcp-1", "mcp-1"],
-      marketTemplateReleaseId: "release-1",
-      skillIds: ["skill-1"],
-      sandboxId: "sandbox-1",
-      runtime: "hermes",
+      mcpGrants: [
+        {
+          deploymentId: "mcp-1",
+        },
+      ],
     });
 
-    expect(result.deploymentIds).toEqual(["mcp-1"]);
-    expect(result.marketTemplateReleaseId).toBe("release-1");
+    expect(result.mcpGrants).toEqual([
+      {
+        deploymentId: "mcp-1",
+      },
+    ]);
     expect(result.description).toBe("Finds primary sources.");
     expect(result.modelParameters).toEqual({
       temperature: 0.4,
@@ -59,6 +62,7 @@ describe("chat bounded-context input", () => {
     expect(UpdateChatAssistantSchema.safeParse({}).success).toBe(false);
     expect(
       UpdateChatAssistantSchema.safeParse({
+        expectedRevision: 1,
         modelProviderId: "provider-2",
         model: "model-2",
       }).success,
@@ -76,6 +80,7 @@ describe("chat bounded-context input", () => {
     ).toBeNull();
     expect(
       parseChatTurn({
+        idempotencyKey: "request-1",
         messages: [
           { id: "u-1", role: "user", parts: [{ type: "text", text: "hello" }] },
         ],
@@ -117,25 +122,36 @@ describe("chat bounded-context input", () => {
   });
 
   it("bounds optional model parameters and accepts clearing them", () => {
-    expect(UpdateChatAssistantSchema.parse({ modelParameters: null })).toEqual({
+    expect(
+      UpdateChatAssistantSchema.parse({
+        expectedRevision: 1,
+        modelParameters: null,
+      }),
+    ).toEqual({
+      expectedRevision: 1,
       modelParameters: null,
     });
     expect(
       UpdateChatAssistantSchema.safeParse({
+        expectedRevision: 1,
         modelParameters: { temperature: 2.1 },
       }).success,
     ).toBe(false);
     expect(
-      UpdateChatAssistantSchema.safeParse({ modelParameters: { topP: -0.1 } })
-        .success,
+      UpdateChatAssistantSchema.safeParse({
+        expectedRevision: 1,
+        modelParameters: { topP: -0.1 },
+      }).success,
     ).toBe(false);
     expect(
       UpdateChatAssistantSchema.safeParse({
+        expectedRevision: 1,
         modelParameters: { maxOutputTokens: 0 },
       }).success,
     ).toBe(false);
     expect(
       UpdateChatAssistantSchema.safeParse({
+        expectedRevision: 1,
         modelParameters: {
           customParameters: [
             { name: "response_format", type: "json", value: "{not-json}" },
@@ -145,6 +161,7 @@ describe("chat bounded-context input", () => {
     ).toBe(false);
     expect(
       UpdateChatAssistantSchema.safeParse({
+        expectedRevision: 1,
         modelParameters: {
           customParameters: [
             { name: "top_k", type: "number", value: 40 },
@@ -155,15 +172,137 @@ describe("chat bounded-context input", () => {
     ).toBe(false);
   });
 
-  it("accepts pinning an assistant and moving a thread", () => {
-    expect(UpdateChatAssistantSchema.parse({ pinned: false })).toEqual({
+  it("requires CAS for assistant edits and rejects thread rebinding", () => {
+    expect(UpdateChatAssistantSchema.safeParse({ pinned: false }).success).toBe(
+      false,
+    );
+    expect(
+      UpdateChatAssistantSchema.safeParse({ expectedRevision: 1 }).success,
+    ).toBe(false);
+    expect(
+      UpdateChatAssistantSchema.parse({ expectedRevision: 1, pinned: false }),
+    ).toEqual({
+      expectedRevision: 1,
       pinned: false,
     });
     expect(
-      UpdateChatThreadSchema.parse({ assistantId: "assistant-2" }),
-    ).toEqual({ assistantId: "assistant-2" });
+      UpdateChatThreadSchema.safeParse({ assistantId: "assistant-2" }).success,
+    ).toBe(false);
     expect(UpdateChatThreadSchema.safeParse({ pinned: true }).success).toBe(
       false,
     );
+  });
+
+  it.each([
+    "deploymentIds",
+    "skillIds",
+    "sandboxId",
+    "runtime",
+    "extensionBindings",
+  ])("rejects obsolete capability field %s", (field) => {
+    expect(
+      CreateChatAssistantSchema.safeParse({
+        workspaceId: "ws-1",
+        name: "Helper",
+        [field]: [],
+      }).success,
+    ).toBe(false);
+    expect(
+      UpdateChatAssistantSchema.safeParse({
+        expectedRevision: 1,
+        name: "Helper",
+        [field]: [],
+      }).success,
+    ).toBe(false);
+  });
+
+  it.each([CreateChatAssistantSchema, UpdateChatAssistantSchema])(
+    "accepts deployment grants and rejects client-owned tool lists and pins",
+    (schema) => {
+      const input =
+        schema === CreateChatAssistantSchema
+          ? { workspaceId: "ws-1", name: "Helper" }
+          : { expectedRevision: 1 };
+      expect(
+        schema.safeParse({ ...input, mcpGrants: [{ deploymentId: "mcp-1" }] })
+          .success,
+      ).toBe(true);
+      expect(
+        schema.safeParse({
+          ...input,
+          mcpGrants: [{ deploymentId: "mcp-1", allowedToolNames: ["search"] }],
+        }).success,
+      ).toBe(false);
+      expect(
+        schema.safeParse({
+          ...input,
+          mcpGrants: [
+            { deploymentId: "mcp-1", definitionChecksum: "a".repeat(64) },
+          ],
+        }).success,
+      ).toBe(false);
+    },
+  );
+
+  it("accepts deployment-only grants and requires a durable request key", () => {
+    expect(
+      CreateChatAssistantSchema.safeParse({
+        workspaceId: "ws-1",
+        name: "Helper",
+        mcpGrants: [{ deploymentId: "mcp-1" }],
+      }).success,
+    ).toBe(true);
+    expect(
+      CreateChatAssistantSchema.safeParse({
+        workspaceId: "ws-1",
+        name: "Helper",
+        mcpGrants: [{ deploymentId: "mcp-1", allowedToolNames: [] }],
+      }).success,
+    ).toBe(false);
+    expect(
+      CreateChatAssistantSchema.safeParse({
+        workspaceId: "ws-1",
+        name: "Helper",
+        mcpGrants: [
+          {
+            deploymentId: "mcp-1",
+            allowedToolNames: ["search"],
+            extensionBindings: [],
+          },
+        ],
+      }).success,
+    ).toBe(false);
+    expect(
+      CreateChatAssistantSchema.safeParse({
+        workspaceId: "ws-1",
+        name: "Helper",
+        mcpGrants: [
+          {
+            deploymentId: "mcp-1",
+            allowedToolNames: ["search"],
+            definitionChecksum: "a".repeat(64),
+          },
+        ],
+      }).success,
+    ).toBe(false);
+    expect(
+      UpdateChatAssistantSchema.safeParse({
+        expectedRevision: 1,
+        mcpGrants: [
+          {
+            deploymentId: "mcp-1",
+            allowedToolNames: ["search"],
+            definitionChecksum: "a".repeat(64),
+          },
+        ],
+      }).success,
+    ).toBe(false);
+    expect(
+      parseChatTurn({
+        messages: [
+          { id: "u", role: "user", parts: [{ type: "text", text: "hello" }] },
+        ],
+      }),
+    ).toBeNull();
   });
 });

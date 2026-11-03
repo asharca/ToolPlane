@@ -11,18 +11,30 @@ import pty from "node-pty";
 import { createSshSandbox } from "./ssh-sandbox-adapter.mjs";
 
 const NAME = process.env.MCP_NAME || "sandbox";
-const KIND = ["connector", "hermes", "ssh"].includes(process.env.SANDBOX_KIND)
+const KIND = ["connector", "ssh"].includes(process.env.SANDBOX_KIND)
   ? process.env.SANDBOX_KIND
   : "docker";
 const SANDBOX_ID = process.env.SANDBOX_ID || "sandbox";
 const IMAGE =
   process.env.SANDBOX_IMAGE ||
-  "mcr.microsoft.com/devcontainers/javascript-node:24-bookworm";
+  "mcr.microsoft.com/devcontainers/javascript-node:26-bookworm";
 const VOLUME =
   process.env.SANDBOX_VOLUME ||
   `toolplane_sandbox_${SANDBOX_ID.replace(/[^a-zA-Z0-9_.-]/g, "_")}`;
 const NETWORK = process.env.SANDBOX_NETWORK === "none" ? "none" : "mcp-sandbox";
-const ALLOW_SUDO = process.env.SANDBOX_ALLOW_SUDO === "true";
+const RESOURCE_LIMITS = process.env.SANDBOX_RESOURCE_LIMITS_JSON
+  ? JSON.parse(process.env.SANDBOX_RESOURCE_LIMITS_JSON)
+  : { memoryBytes: 2 * 1024 ** 3, cpus: 2, pidsLimit: 512 };
+if (
+  !Number.isSafeInteger(RESOURCE_LIMITS.memoryBytes) ||
+  RESOURCE_LIMITS.memoryBytes <= 0 ||
+  !Number.isFinite(RESOURCE_LIMITS.cpus) ||
+  RESOURCE_LIMITS.cpus <= 0 ||
+  !Number.isSafeInteger(RESOURCE_LIMITS.pidsLimit) ||
+  RESOURCE_LIMITS.pidsLimit <= 0
+) {
+  throw new Error("Invalid sandbox resource limits.");
+}
 const CONNECTOR_REMOTE_ROOT =
   (
     process.env.SANDBOX_CONNECTOR_REMOTE_ROOT || "/tmp/toolplane-sandbox"
@@ -40,18 +52,10 @@ const SSH =
         name: NAME,
       })
     : null;
-const HERMES_RUNTIME_ID = process.env.HERMES_RUNTIME_ID || "";
-const HERMES_RUNTIME_API_KEY = process.env.HERMES_RUNTIME_API_KEY || "";
-const HERMES_RUNTIME_DASHBOARD_TOKEN =
-  process.env.HERMES_RUNTIME_DASHBOARD_TOKEN || "";
-const HERMES_RUNTIME_MODEL_NAME =
-  process.env.HERMES_RUNTIME_MODEL_NAME || "hermes-agent";
-const WORKSPACE_ROOT = KIND === "hermes" ? "/opt/data/workspace" : "/workspace";
+const WORKSPACE_ROOT = "/workspace";
 const PROTOCOL_VERSION = "2025-06-18";
 const VERSION = "1.0.0";
 const MAX_BODY = 4_000_000;
-const MAX_HERMES_BODY = 12_000_000;
-const MAX_HERMES_DASHBOARD_BODY = 32_000_000;
 const MAX_OUTPUT = 128_000;
 const MAX_WRITE = 2_000_000;
 const DEFAULT_MAX_RUNTIME_UPLOAD = 1_000_000_000;
@@ -73,9 +77,7 @@ const MAX_PROCESS_ARG_LENGTH = 8_192;
 const MAX_PROCESS_ARG_TOTAL = 24_000;
 const DOCKER_CREATE_TIMEOUT_MS = 15 * 60_000;
 const MAX_TERMINAL_BUFFER = 200;
-// KILL (but not SYS_ADMIN): CAP_DROP ALL would otherwise let root signal only
-// its own uid, blocking root from restarting the non-root Hermes service
-// processes that share the sandbox.
+// Keep bounded filesystem access and process termination without SYS_ADMIN.
 const DOCKER_SANDBOX_CAPS = [
   "CHOWN",
   "DAC_OVERRIDE",
@@ -84,101 +86,6 @@ const DOCKER_SANDBOX_CAPS = [
   "SETUID",
   "KILL",
 ];
-const HERMES_TERMINAL_PATH =
-  "/opt/hermes/.venv/bin:/opt/hermes/bin:/opt/data/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
-const HERMES_TERMINAL_SHELL = String.raw`
-export VIRTUAL_ENV=/opt/hermes/.venv
-export PATH=${HERMES_TERMINAL_PATH}
-# The terminal runs as the image default user (root). The Hermes service owns
-# /opt/data, so the CLI drops back to that user to keep service state files
-# (config, gateway state, channel directory) maintainable by the service.
-hermes_cli() {
-  local hermes_bin
-  hermes_bin="$(command -v hermes 2>/dev/null || true)"
-  if [ -z "$hermes_bin" ]; then
-    echo "hermes: command not found" >&2
-    return 127
-  fi
-  if [ "$(id -u)" = "0" ] && id hermes >/dev/null 2>&1 && command -v setpriv >/dev/null 2>&1; then
-    setpriv --reuid=hermes --regid=hermes --init-groups \
-      env HERMES_HOME=/opt/data HOME=/opt/data "$hermes_bin" "$@"
-  else
-    "$hermes_bin" "$@"
-  fi
-}
-if command -v bash >/dev/null 2>&1; then
-  hermes() {
-    local is_gateway_restart=0
-    local previous_gateway_pid=0
-    if [ "$#" -eq 2 ] && [ "$1" = "gateway" ] && [ "$2" = "restart" ]; then
-      is_gateway_restart=1
-      previous_gateway_pid="$(
-        curl --silent --fail --max-time 2 \
-          http://127.0.0.1:9119/api/status \
-          | /opt/hermes/.venv/bin/python3 -c 'import json, sys; value = json.load(sys.stdin); running = value.get("gateway_running"); pid = int(value.get("gateway_pid") or 0); print(pid if running is True and pid > 0 else 0 if running is False else "")' \
-          2>/dev/null || true
-      )"
-      if [[ ! "$previous_gateway_pid" =~ ^[0-9]+$ ]]; then
-        echo "Hermes gateway status could not be verified before restart." >&2
-        return 1
-      fi
-    fi
-
-    hermes_cli "$@"
-    local command_status=$?
-    if [ "$command_status" -ne 0 ]; then
-      return "$command_status"
-    fi
-    if [ "$is_gateway_restart" -ne 1 ]; then
-      return 0
-    fi
-
-    # Upstream restart is s6-svc -t, which is a successful no-op for a slot
-    # that is already want-down. Follow it with start (-u) and do not return a
-    # successful terminal prompt until the real API gateway is healthy.
-    hermes_cli gateway start >/dev/null || return $?
-    local health_attempt=0
-    while [ "$health_attempt" -lt 60 ]; do
-      local current_gateway_pid
-      current_gateway_pid="$(
-        curl --silent --fail --max-time 2 \
-          http://127.0.0.1:9119/api/status \
-          | /opt/hermes/.venv/bin/python3 -c 'import json, sys; value = json.load(sys.stdin); pid = int(value.get("gateway_pid") or 0); print(pid if value.get("gateway_running") is True and value.get("gateway_state") == "running" and pid > 0 else "")' \
-          2>/dev/null || true
-      )"
-      if [[ "$current_gateway_pid" =~ ^[0-9]+$ ]] \
-        && [ "$current_gateway_pid" -gt 0 ] \
-        && { [ "$previous_gateway_pid" -le 0 ] || [ "$current_gateway_pid" -ne "$previous_gateway_pid" ]; }; then
-        local api_gateway_pid
-        api_gateway_pid="$(
-          curl --silent --fail --max-time 2 \
-            --header "Authorization: Bearer $API_SERVER_KEY" \
-            http://127.0.0.1:8642/health/detailed \
-            | /opt/hermes/.venv/bin/python3 -c 'import json, sys; value = json.load(sys.stdin); pid = int(value.get("pid") or 0); print(pid if value.get("gateway_state") == "running" and pid > 0 else "")' \
-            2>/dev/null || true
-        )"
-        if [ "$api_gateway_pid" = "$current_gateway_pid" ]; then
-          echo "Hermes gateway restarted and is healthy."
-          return 0
-        fi
-      fi
-      health_attempt=$((health_attempt + 1))
-      sleep 0.75
-    done
-    echo "Hermes gateway restart was submitted, but the gateway did not become healthy within 45 seconds." >&2
-    return 1
-  }
-  export -f hermes_cli
-  export -f hermes
-  exec bash
-fi
-exec sh
-`.trim();
-// The official Hermes image restricts unattended writes to /opt/data, while
-// gateway auto-TTS intentionally renders short-lived replies in this precise
-// temp directory. Keep the exception narrow instead of allowing all of /tmp.
-const HERMES_TTS_WRITE_SAFE_ROOT_ENV =
-  "HERMES_WRITE_SAFE_ROOT=/opt/data:/tmp/hermes_voice";
 
 const TOOLS = [
   {
@@ -480,25 +387,6 @@ function readBody(req, max = MAX_BODY) {
   });
 }
 
-function readBuffer(req, max = MAX_BODY) {
-  return new Promise((resolve, reject) => {
-    const chunks = [];
-    let size = 0;
-    req.on("data", (chunk) => {
-      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-      size += buffer.length;
-      if (size > max) {
-        reject(new Error("Request body is too large."));
-        req.destroy();
-        return;
-      }
-      chunks.push(buffer);
-    });
-    req.on("error", reject);
-    req.on("end", () => resolve(Buffer.concat(chunks)));
-  });
-}
-
 function readUploadBuffer(req, max) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -625,40 +513,23 @@ function hasExpectedDockerSandboxCaps(info) {
   const capAdd = new Set(
     (hostConfig.CapAdd ?? []).map((cap) => String(cap).toUpperCase()),
   );
-  // The no-new-privileges opt must match ALLOW_SUDO: sudo needs setuid when
-  // allowed, and disallowed sandboxes keep the stricter legacy flag. A flip
-  // recreates the container on next start.
   const securityOpts = new Set(
     (hostConfig.SecurityOpt ?? []).map((opt) => String(opt)),
   );
   const extraHosts = new Set(
     (hostConfig.ExtraHosts ?? []).map((entry) => String(entry)),
   );
-  const mountTarget = KIND === "hermes" ? "/opt/data" : "/workspace";
+  const mountTarget = "/workspace";
   const expectedMount = (info?.Mounts ?? []).some(
     (mount) => mount?.Destination === mountTarget && mount?.Name === VOLUME,
   );
-  const containerEnv = new Set(info?.Config?.Env ?? []);
-  const hermesRuntimeConfigured =
-    KIND !== "hermes" ||
-    [
-      "HERMES_HOME=/opt/data",
-      "HERMES_DASHBOARD=1",
-      "HERMES_DASHBOARD_HOST=127.0.0.1",
-      "HERMES_DASHBOARD_PORT=9119",
-      `HERMES_DASHBOARD_SESSION_TOKEN=${HERMES_RUNTIME_DASHBOARD_TOKEN}`,
-      "GATEWAY_MULTIPLEX_PROFILES=1",
-      HERMES_TTS_WRITE_SAFE_ROOT_ENV,
-    ].every((entry) => containerEnv.has(entry));
-  const expectsNoNewPrivileges = !(KIND === "hermes" && ALLOW_SUDO);
   return (
     capDrop.has("ALL") &&
     DOCKER_SANDBOX_CAPS.every((cap) => capAdd.has(cap)) &&
-    securityOpts.has("no-new-privileges") === expectsNoNewPrivileges &&
+    securityOpts.has("no-new-privileges") &&
     info?.Config?.Image === IMAGE &&
     expectedMount &&
-    extraHosts.has("host.docker.internal:host-gateway") &&
-    hermesRuntimeConfigured
+    extraHosts.has("host.docker.internal:host-gateway")
   );
 }
 
@@ -677,17 +548,13 @@ function dockerCreateArgs() {
     "--add-host",
     "host.docker.internal:host-gateway",
     "--memory",
-    "2g",
+    String(RESOURCE_LIMITS.memoryBytes),
     "--cpus",
-    "2",
+    String(RESOURCE_LIMITS.cpus),
     "--pids-limit",
-    "512",
-    // no-new-privileges stays on unless this Hermes sandbox opts into sudo:
-    // the service user's setuid sudo needs it lifted, and the interactive
-    // terminal plus the MCP shell/file tools already run as root.
-    ...(KIND === "hermes" && ALLOW_SUDO
-      ? []
-      : ["--security-opt", "no-new-privileges"]),
+    String(RESOURCE_LIMITS.pidsLimit),
+    "--security-opt",
+    "no-new-privileges",
     "--cap-drop",
     "ALL",
     ...DOCKER_SANDBOX_CAPS.flatMap((cap) => ["--cap-add", cap]),
@@ -696,53 +563,6 @@ function dockerCreateArgs() {
       `${key}=${value}`,
     ]),
   ];
-
-  if (KIND === "hermes") {
-    if (!HERMES_RUNTIME_ID || !HERMES_RUNTIME_API_KEY) {
-      throw new Error("Hermes runtime identity is missing.");
-    }
-    return [
-      ...base,
-      "--label",
-      `toolplane.agent-runtime=${HERMES_RUNTIME_ID}`,
-      "--env",
-      "API_SERVER_ENABLED=true",
-      "--env",
-      "HERMES_HOME=/opt/data",
-      "--env",
-      "API_SERVER_HOST=127.0.0.1",
-      "--env",
-      "API_SERVER_PORT=8642",
-      "--env",
-      `API_SERVER_KEY=${HERMES_RUNTIME_API_KEY}`,
-      "--env",
-      `API_SERVER_MODEL_NAME=${HERMES_RUNTIME_MODEL_NAME}`,
-      "--env",
-      "HERMES_DASHBOARD=1",
-      "--env",
-      "HERMES_DASHBOARD_HOST=127.0.0.1",
-      "--env",
-      "HERMES_DASHBOARD_PORT=9119",
-      "--env",
-      `HERMES_DASHBOARD_SESSION_TOKEN=${HERMES_RUNTIME_DASHBOARD_TOKEN}`,
-      "--env",
-      "HERMES_ACCEPT_HOOKS=1",
-      // ToolPlane exposes one fixed gateway API port. A multiplexed default
-      // gateway owns every profile's channel connections without allowing
-      // imported per-profile services to race for that port.
-      "--env",
-      "GATEWAY_MULTIPLEX_PROFILES=1",
-      "--env",
-      HERMES_TTS_WRITE_SAFE_ROOT_ENV,
-      "--env",
-      "HERMES_ENVIRONMENT_HINT=This Hermes instance is managed by ToolPlane. Use only the configured ToolPlane MCP server and the files under /opt/data.",
-      "-v",
-      `${VOLUME}:/opt/data`,
-      IMAGE,
-      "gateway",
-      "run",
-    ];
-  }
 
   return [...base, "-v", `${VOLUME}:/workspace`, IMAGE, "sleep", "infinity"];
 }
@@ -758,55 +578,6 @@ async function createDockerContainer() {
     );
 }
 
-// Opt-in per sandbox via the allowSudo setting: agent shell commands run as
-// the non-root service user and rely on classic sudo. Install it once (best
-// effort when the image lacks apt or egress) and grant the service user
-// passwordless rights so sudo works without a TTY.
-async function ensureHermesSudo() {
-  if (KIND !== "hermes" || !ALLOW_SUDO) return;
-  const probe = await run(
-    "docker",
-    [
-      "exec",
-      CONTAINER,
-      "sh",
-      "-c",
-      'command -v sudo >/dev/null 2>&1 && grep -qs "NOPASSWD:ALL" /etc/sudoers.d/99-toolplane 2>/dev/null && echo ready',
-    ],
-    { env: dockerEnv(), timeoutMs: 15_000 },
-  );
-  if (probe.stdout.includes("ready")) return;
-  const setup = await run(
-    "docker",
-    [
-      "exec",
-      CONTAINER,
-      "sh",
-      "-c",
-      [
-        "id hermes >/dev/null 2>&1 || exit 0",
-        "if ! command -v sudo >/dev/null 2>&1; then",
-        "  if command -v apt-get >/dev/null 2>&1; then",
-        "    apt-get update -qq >/dev/null 2>&1 || true",
-        "    apt-get install -y -qq sudo >/dev/null 2>&1 || exit 0",
-        "  else",
-        "    exit 0",
-        "  fi",
-        "fi",
-        "tmp=$(mktemp /etc/sudoers.d/99-toolplane.XXXXXX)",
-        "printf 'hermes ALL=(ALL) NOPASSWD:ALL\\n' > \"$tmp\"",
-        'chmod 0440 "$tmp" && mv -f "$tmp" /etc/sudoers.d/99-toolplane',
-      ].join("\n"),
-    ],
-    { env: dockerEnv(), timeoutMs: 5 * 60_000 },
-  );
-  if (setup.exitCode !== 0) {
-    process.stderr.write(
-      `Hermes sudo setup skipped: ${truncate(setup.stderr, 2_000)}\n`,
-    );
-  }
-}
-
 async function ensureDockerContainer() {
   const info = await dockerInspectJson();
   if (info) {
@@ -820,9 +591,9 @@ async function ensureDockerContainer() {
           removed.stderr || `docker rm failed (${removed.exitCode})`,
         );
       await createDockerContainer();
-      return ensureHermesSudo();
+      return;
     }
-    if (info.State?.Running === true) return ensureHermesSudo();
+    if (info.State?.Running === true) return;
     const started = await run("docker", ["start", CONTAINER], {
       env: dockerEnv(),
       timeoutMs: 30_000,
@@ -831,11 +602,10 @@ async function ensureDockerContainer() {
       throw new Error(
         started.stderr || `docker start failed (${started.exitCode})`,
       );
-    return ensureHermesSudo();
+    return;
   }
 
   await createDockerContainer();
-  await ensureHermesSudo();
 }
 
 async function ensureRuntime() {
@@ -866,11 +636,7 @@ async function dockerShell({ command, cwd = ".", stdin = "", timeoutMs }) {
 
 function dockerRuntimeCandidates(runtime) {
   if (runtime === "node") return ["node"];
-  if (runtime === "python") {
-    return KIND === "hermes"
-      ? ["/opt/hermes/.venv/bin/python3"]
-      : ["python3", "python"];
-  }
+  if (runtime === "python") return ["python3", "python"];
   return ["bash"];
 }
 
@@ -1198,18 +964,8 @@ function createTerminal(cols = 80, rows = 24, cwd = ".") {
   if (rel === null) throw new Error("Invalid terminal cwd.");
   const workdir = `${WORKSPACE_ROOT}${rel ? `/${rel}` : ""}`;
   const shellCommand =
-    KIND === "hermes"
-      ? HERMES_TERMINAL_SHELL
-      : "if command -v bash >/dev/null 2>&1; then exec bash -l; else exec sh; fi";
-  const shellArgs =
-    KIND === "hermes"
-      ? // The wrapper defines and exports a Bash function. The Hermes image ships
-        // Bash, while its /bin/sh is dash and rejects `export -f`.
-        ["bash", "-lc", shellCommand]
-      : ["sh", "-lc", shellCommand];
-  // No --user: interactive sessions run as the image default user (root in the
-  // Hermes image), matching the MCP shell/file tools. The hermes_cli wrapper
-  // re-drops to the service user for Hermes state changes.
+    "if command -v bash >/dev/null 2>&1; then exec bash -l; else exec sh; fi";
+  const shellArgs = ["sh", "-lc", shellCommand];
   const sshTerminal = SSH?.terminal(cwd);
   const term = pty.spawn(
     sshTerminal?.command ?? "docker",
@@ -1612,7 +1368,6 @@ async function handleRuntimeFiles(req, res) {
     guardParent,
     `test -f ${shQuote(temporary)}`,
     `test ! -L ${shQuote(target)} && test ! -d ${shQuote(target)}`,
-    `if id hermes >/dev/null 2>&1; then chown "$(id -u hermes):$(id -g hermes)" ${shQuote(parent)} ${shQuote(temporary)}; fi`,
     `mv -f ${shQuote(temporary)} ${shQuote(target)}`,
   ].join(" && ");
   const finalized = await run(
@@ -1631,377 +1386,6 @@ async function handleRuntimeFiles(req, res) {
     return true;
   }
   sendJson(res, 201, { path: target, relativePath: rel, size: result.size });
-  return true;
-}
-
-function hermesProxyPath(req) {
-  const url = new URL(req.url || "/", "http://127.0.0.1");
-  if (!url.pathname.startsWith("/hermes/")) return null;
-  const path = url.pathname.slice("/hermes".length);
-  const profilePrefix = "(?:/p/[a-z0-9][a-z0-9_-]{0,63})?";
-  const chatApi =
-    path.startsWith("/v1/") ||
-    /^\/p\/[a-z0-9][a-z0-9_-]{0,63}\/v1\/(?:chat\/completions|capabilities)$/.test(
-      path,
-    );
-  const sessionCreate =
-    req.method === "POST" &&
-    new RegExp(`^${profilePrefix}/api/sessions$`).test(path);
-  const sessionChatStream =
-    req.method === "POST" &&
-    new RegExp(`^${profilePrefix}/api/sessions/[^/]+/chat/stream$`).test(path);
-  const sessionMessages =
-    req.method === "GET" &&
-    new RegExp(`^${profilePrefix}/api/sessions/[^/]+/messages$`).test(path);
-  const sessionDelete =
-    req.method === "DELETE" &&
-    new RegExp(`^${profilePrefix}/api/sessions/[^/]+$`).test(path);
-  if (
-    !(
-      path === "/health" ||
-      path === "/health/detailed" ||
-      chatApi ||
-      sessionCreate ||
-      sessionChatStream ||
-      sessionMessages ||
-      sessionDelete
-    )
-  ) {
-    return false;
-  }
-  return `${path}${url.search}`;
-}
-
-function parseCurlHeaders(
-  raw,
-  allowedNames = [
-    "content-type",
-    "cache-control",
-    "x-hermes-session-id",
-    "x-hermes-session-key",
-  ],
-) {
-  const text = raw.toString("latin1");
-  const lines = text.split(/\r?\n/);
-  const statusMatch = /^HTTP\/\S+\s+(\d+)/.exec(lines[0] || "");
-  const headers = {};
-  const allowed = new Set(allowedNames);
-  for (const line of lines.slice(1)) {
-    const index = line.indexOf(":");
-    if (index < 1) continue;
-    const name = line.slice(0, index).trim().toLowerCase();
-    const value = line.slice(index + 1).trim();
-    if (allowed.has(name)) {
-      headers[name] = value;
-    }
-  }
-  return { status: Number(statusMatch?.[1] || 502), headers };
-}
-
-function streamCurlResponse(req, res, args, body, responseHeaders) {
-  const child = spawn("docker", args, {
-    env: dockerEnv(),
-    stdio: ["pipe", "pipe", "pipe"],
-  });
-  let headerBuffer = Buffer.alloc(0);
-  let responseStarted = false;
-  let responseFinished = false;
-  let childClosed = false;
-  let stderr = "";
-
-  const stopChild = () => {
-    if (!childClosed && child.exitCode === null && child.signalCode === null)
-      child.kill("SIGTERM");
-  };
-  const writeChunk = (chunk) => {
-    if (res.destroyed || responseFinished) {
-      stopChild();
-      return;
-    }
-    try {
-      if (!res.write(chunk)) {
-        child.stdout.pause();
-        res.once("drain", () => child.stdout.resume());
-      }
-    } catch {
-      stopChild();
-    }
-  };
-
-  child.stdout.on("data", (chunk) => {
-    if (responseStarted) {
-      writeChunk(chunk);
-      return;
-    }
-    headerBuffer = Buffer.concat([headerBuffer, chunk]);
-    if (headerBuffer.length > 64 * 1024) {
-      stopChild();
-      responseStarted = true;
-      sendJson(res, 502, {
-        error: "Hermes proxy response headers were too large.",
-      });
-      return;
-    }
-    const marker = headerBuffer.indexOf("\r\n\r\n");
-    const fallbackMarker = marker === -1 ? headerBuffer.indexOf("\n\n") : -1;
-    const splitAt = marker === -1 ? fallbackMarker : marker;
-    if (splitAt === -1) return;
-    const markerLength = marker === -1 ? 2 : 4;
-    const parsed = parseCurlHeaders(
-      headerBuffer.subarray(0, splitAt),
-      responseHeaders,
-    );
-    res.writeHead(parsed.status, parsed.headers);
-    responseStarted = true;
-    const rest = headerBuffer.subarray(splitAt + markerLength);
-    if (rest.length) writeChunk(rest);
-    headerBuffer = Buffer.alloc(0);
-  });
-  child.stderr.on("data", (chunk) => {
-    stderr = truncate(stderr + chunk.toString("utf8"), 8_000);
-  });
-  child.on("error", (error) => {
-    childClosed = true;
-    if (!responseStarted) {
-      responseStarted = true;
-      sendJson(res, 502, { error: error.message });
-    } else {
-      responseFinished = true;
-      res.end();
-    }
-  });
-  child.on("close", (code) => {
-    childClosed = true;
-    if (!responseStarted) {
-      sendJson(res, 502, {
-        error: stderr || `Hermes proxy exited with code ${code}`,
-      });
-      return;
-    }
-    if (!responseFinished) {
-      responseFinished = true;
-      res.end();
-    }
-  });
-  req.once("aborted", stopChild);
-  req.once("error", stopChild);
-  res.once("error", stopChild);
-  res.once("close", () => {
-    if (!responseFinished) stopChild();
-  });
-  child.stdin.on("error", () => undefined);
-  child.stdin.end(body);
-}
-
-async function handleHermesProxy(req, res) {
-  const targetPath = hermesProxyPath(req);
-  if (targetPath === null) return false;
-  if (KIND !== "hermes") {
-    sendJson(res, 404, {
-      error: "Hermes runtime is not enabled for this sandbox.",
-    });
-    return true;
-  }
-  if (targetPath === false) {
-    sendJson(res, 404, { error: "Hermes endpoint is not exposed." });
-    return true;
-  }
-  if (!["GET", "POST", "DELETE"].includes(req.method || "")) {
-    sendJson(res, 405, { error: "method not allowed" });
-    return true;
-  }
-
-  let body = "";
-  if (req.method === "POST") {
-    try {
-      body = await readBody(req, MAX_HERMES_BODY);
-    } catch (error) {
-      sendJson(res, 413, {
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return true;
-    }
-  }
-
-  const args = [
-    "exec",
-    "-i",
-    CONTAINER,
-    "curl",
-    "--silent",
-    "--show-error",
-    "--no-buffer",
-    "--include",
-    "--connect-timeout",
-    "10",
-    "--max-time",
-    "3600",
-    "--request",
-    req.method || "GET",
-    `http://127.0.0.1:8642${targetPath}`,
-    "--header",
-    `Authorization: Bearer ${HERMES_RUNTIME_API_KEY}`,
-    "--header",
-    "Expect:",
-  ];
-  for (const name of ["x-hermes-session-id", "x-hermes-session-key"]) {
-    const value = req.headers[name];
-    if (typeof value === "string" && value) {
-      args.push("--header", `${name}: ${value}`);
-    }
-  }
-  if (body) {
-    args.push(
-      "--header",
-      `Content-Type: ${req.headers["content-type"] || "application/json"}`,
-      "--data-binary",
-      "@-",
-    );
-  }
-
-  streamCurlResponse(req, res, args, body, [
-    "content-type",
-    "cache-control",
-    "x-hermes-session-id",
-    "x-hermes-session-key",
-  ]);
-  return true;
-}
-
-async function handleHermesControl(req, res) {
-  const url = new URL(req.url || "/", "http://127.0.0.1");
-  if (url.pathname !== "/hermes/control/gateway/default/up") return false;
-  if (KIND !== "hermes") {
-    sendJson(res, 404, {
-      error: "Hermes runtime is not enabled for this sandbox.",
-    });
-    return true;
-  }
-  if (req.method !== "POST") {
-    sendJson(res, 405, { error: "method not allowed" });
-    return true;
-  }
-
-  // `hermes gateway restart` maps to s6-svc -t upstream. That signal is a
-  // no-op when the service is already want-down, so explicitly restore the
-  // default slot's want-up state. The Hermes CLI also persists desired_state,
-  // which keeps the repaired gateway enabled across container restarts.
-  const started = await run(
-    "docker",
-    [
-      "exec",
-      "--user",
-      "hermes",
-      "--env",
-      "HERMES_HOME=/opt/data",
-      CONTAINER,
-      "/opt/hermes/.venv/bin/hermes",
-      "gateway",
-      "start",
-    ],
-    { env: dockerEnv(), timeoutMs: 15_000 },
-  );
-  if (started.exitCode !== 0 || started.timedOut) {
-    sendJson(res, 502, {
-      error: "Could not bring the default Hermes gateway online.",
-    });
-    return true;
-  }
-  sendJson(res, 200, { ok: true });
-  return true;
-}
-
-function hermesDashboardProxyPath(req) {
-  const url = new URL(req.url || "/", "http://127.0.0.1");
-  if (
-    url.pathname !== "/hermes-dashboard" &&
-    !url.pathname.startsWith("/hermes-dashboard/")
-  )
-    return null;
-  const targetPath = url.pathname.slice("/hermes-dashboard".length) || "/";
-  return `${targetPath}${url.search}`;
-}
-
-async function handleHermesDashboardProxy(req, res) {
-  const targetPath = hermesDashboardProxyPath(req);
-  if (targetPath === null) return false;
-  if (KIND !== "hermes") {
-    sendJson(res, 404, {
-      error: "Hermes runtime is not enabled for this sandbox.",
-    });
-    return true;
-  }
-  if (
-    !["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"].includes(
-      req.method || "",
-    )
-  ) {
-    sendJson(res, 405, { error: "method not allowed" });
-    return true;
-  }
-
-  let body = Buffer.alloc(0);
-  if (!["GET", "HEAD"].includes(req.method || "")) {
-    try {
-      body = await readBuffer(req, MAX_HERMES_DASHBOARD_BODY);
-    } catch (error) {
-      sendJson(res, 413, {
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return true;
-    }
-  }
-
-  const args = [
-    "exec",
-    "-i",
-    CONTAINER,
-    "curl",
-    "--silent",
-    "--show-error",
-    "--no-buffer",
-    "--include",
-    "--connect-timeout",
-    "10",
-    "--max-time",
-    "3600",
-    "--request",
-    req.method || "GET",
-    `http://127.0.0.1:9119${targetPath}`,
-    "--header",
-    "Expect:",
-  ];
-  for (const name of [
-    "accept",
-    "content-type",
-    "if-modified-since",
-    "if-none-match",
-    "range",
-    "x-hermes-session-token",
-  ]) {
-    const value = req.headers[name];
-    if (typeof value === "string" && value)
-      args.push("--header", `${name}: ${value}`);
-  }
-  const forwardedPrefix = req.headers["x-forwarded-prefix"];
-  if (
-    typeof forwardedPrefix === "string" &&
-    /^\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]+$/.test(forwardedPrefix)
-  ) {
-    args.push("--header", `X-Forwarded-Prefix: ${forwardedPrefix}`);
-  }
-  if (body.length) args.push("--data-binary", "@-");
-
-  streamCurlResponse(req, res, args, body, [
-    "accept-ranges",
-    "cache-control",
-    "content-disposition",
-    "content-range",
-    "content-type",
-    "etag",
-    "last-modified",
-    "location",
-  ]);
   return true;
 }
 
@@ -2033,7 +1417,6 @@ async function sandboxInfoResult() {
     image: KIND === "connector" ? null : IMAGE,
     container: KIND === "connector" ? null : CONTAINER,
     volume: KIND === "connector" ? null : VOLUME,
-    runtimeId: KIND === "hermes" ? HERMES_RUNTIME_ID : null,
     connector:
       KIND === "connector"
         ? {
@@ -2124,9 +1507,6 @@ const server = http.createServer(async (req, res) => {
   }
   try {
     if (await handleRuntimeFiles(req, res)) return;
-    if (await handleHermesDashboardProxy(req, res)) return;
-    if (await handleHermesControl(req, res)) return;
-    if (await handleHermesProxy(req, res)) return;
     if (await handleTerminal(req, res)) return;
   } catch (error) {
     sendJson(res, 500, {
@@ -2178,13 +1558,6 @@ const shutdown = () => {
   SSH?.close();
   for (const session of terminalSessions.values()) session.term.kill();
   server.close();
-  if (KIND === "hermes") {
-    void run("docker", ["stop", "--time", "10", CONTAINER], {
-      env: dockerEnv(),
-      timeoutMs: 30_000,
-    }).finally(() => process.exit(0));
-    return;
-  }
   process.exit(0);
 };
 process.on("SIGTERM", shutdown);

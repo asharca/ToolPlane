@@ -154,8 +154,11 @@ export function Table<T>({
     onSelectionChange,
   });
   const selectedEntries = useMemo(
-    () => sortedRows.filter((entry) => selected.has(entry.id)),
-    [sortedRows, selected],
+    () =>
+      selectable && selectionActions
+        ? sortedRows.filter((entry) => selected.has(entry.id))
+        : [],
+    [selectable, selectionActions, sortedRows, selected],
   );
   const selectionHeader =
     selectable && selectionActions && selectedEntries.length > 0

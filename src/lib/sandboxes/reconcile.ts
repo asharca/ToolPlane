@@ -1,9 +1,7 @@
 import "server-only";
 import { db } from "@/lib/db";
-import { HERMES_ARCHIVE_IMPORT_TIMEOUT_MS } from "@/lib/agents/hermes/archive-limits";
 import {
   removeStaleDockerVolumeCopyHelpers,
-  removeStaleHermesArchiveImportHelpers,
   setDockerSandboxPaused,
 } from "./runtime";
 
@@ -11,7 +9,6 @@ export async function reconcileSandboxVolumeCopies(
   options: { helpersCreatedBefore?: Date } = {},
 ): Promise<{
   helpersRemoved: number;
-  hermesArchiveHelpersRemoved: number;
   copiesInterrupted: number;
   restoresInterrupted: number;
   upgradesInterrupted: number;
@@ -42,11 +39,6 @@ export async function reconcileSandboxVolumeCopies(
   }
   const helpersRemoved =
     await removeStaleDockerVolumeCopyHelpers(interruptedBefore);
-  const hermesArchiveHelpersRemoved =
-    await removeStaleHermesArchiveImportHelpers(
-      interruptedBefore,
-      HERMES_ARCHIVE_IMPORT_TIMEOUT_MS,
-    );
   const copies = await db.deployment.updateMany({
     where: {
       source: "sandbox",
@@ -82,7 +74,6 @@ export async function reconcileSandboxVolumeCopies(
   });
   return {
     helpersRemoved,
-    hermesArchiveHelpersRemoved,
     copiesInterrupted: copies.count,
     restoresInterrupted: restores.count,
     upgradesInterrupted: upgrades.count,

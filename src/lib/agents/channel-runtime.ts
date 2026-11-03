@@ -12,6 +12,10 @@ import { appendAgentChannelLog } from "./channel-runtime-logs";
 import { channelSenderAllowed } from "./channel-access";
 import { getChannelSandbox } from "./channel-sandboxes";
 import { createChannelAdapter } from "./channels/create-adapter";
+import {
+  runAgentChannelMessage,
+  CHANNEL_EXECUTION_FAILURE_MESSAGE,
+} from "./message-service";
 import type {
   ChannelAdapter,
   ChannelCommandEvent,
@@ -117,6 +121,18 @@ async function start(
   }
   if (!row.agentId)
     return { error: "Bind an agent before starting the channel." };
+  const agent = await db.agent.findFirst({
+    where: { id: row.agentId, workspaceId },
+    select: { runtimeKind: true, currentRevisionVersion: true },
+  });
+  if (
+    (agent?.runtimeKind !== "pi-sdk" && agent?.runtimeKind !== "omp") ||
+    !agent.currentRevisionVersion
+  )
+    return {
+      error:
+        "Historical Agents are read-only. Bind a newly authorized Pi Agent.",
+    };
   if (runners().has(connectionId)) return {};
   const platform = getMessagingPlatform(row.platform);
   if (!platform || !hostedRunnerSpec(row.platform))
@@ -247,7 +263,6 @@ async function start(
                 : {}),
             }),
           );
-          const { runAgentChannelMessage } = await import("./message-service");
           const result = await runAgentChannelMessage({
             workspaceId,
             connectionId,
@@ -255,9 +270,16 @@ async function start(
             sandboxId: active.sandboxId,
             attachmentParts,
             signal: controller.signal,
-            onAccepted: async (message) => {
-              if (current())
-                await adapter.sendMessage(event.chatId, message, replyOptions);
+            onUiRequired: async (message) => {
+              if (current() && !controller.signal.aborted)
+                await adapter
+                  .sendMessage(event.chatId, message, replyOptions)
+                  .catch(() =>
+                    log(
+                      "error",
+                      "Native UI notification could not be delivered.",
+                    ),
+                  );
             },
             rawBody: {
               message: event.text.trim() || "Attachment",
@@ -286,10 +308,20 @@ async function start(
                 })),
               ],
             },
+          }).catch(() => {
+            if (!controller.signal.aborted)
+              log("error", "Channel execution failed.");
+            return null;
           });
-          if (!current()) return;
-          if ("error" in result.body) {
-            log("error", result.body.error);
+          if (!current() || controller.signal.aborted) return;
+          if (!result || "error" in result.body) {
+            if (result && "error" in result.body)
+              log("error", "Channel execution was rejected.");
+            await adapter.sendMessage(
+              event.chatId,
+              CHANNEL_EXECUTION_FAILURE_MESSAGE,
+              replyOptions,
+            );
             return;
           }
           if (result.body.delivery === "message")
@@ -299,11 +331,8 @@ async function start(
               replyOptions,
             );
         })
-        .catch((error: unknown) => {
-          log(
-            "error",
-            error instanceof Error ? error.message : "Channel message failed.",
-          );
+        .catch(() => {
+          log("error", "Channel message could not be delivered.");
         })
         .finally(() => {
           active.pendingMessages -= 1;

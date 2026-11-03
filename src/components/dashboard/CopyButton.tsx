@@ -8,7 +8,7 @@ import {
   type ButtonState,
 } from "@/components/motion/button/stateful";
 
-async function copyText(text: string): Promise<boolean> {
+export async function copyText(text: string): Promise<boolean> {
   let timer: number | undefined;
   try {
     if (navigator.clipboard?.writeText) {

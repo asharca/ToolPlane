@@ -26,6 +26,7 @@ const grant: LocalA2AGrant = {
   workspaceId: "ws",
   actorId: "actor",
   agentId: "agent",
+  agentRevisionId: "revision-1",
   targetBinding: "binding",
   ownerKey: "private-owner",
   expiresAt: Date.now() + 60_000,
@@ -232,33 +233,34 @@ describe("typed lazy payload policy", () => {
       "private-key",
     );
   });
-  it.each([{ suppressPayload: true }, { agentId: "agent-1" }])(
-    "does not auto-capture deployment MCP payloads in sensitive context %j",
-    async (context) => {
-      mocks.settings.mockResolvedValue({ detailDays: 7, captures: [] });
-      const detail = vi.fn(() => ({
-        request: "private input",
-        response: "private output",
-      }));
-      await withLogContext({ workspaceId: "ws", ...context }, () =>
-        recordEvent({
-          domain: "mcp",
-          eventName: "mcp.rpc",
-          deploymentId: "deployment-1",
-          detail,
-        }),
-      );
-      expect(detail).not.toHaveBeenCalled();
-      expect(mocks.create.mock.calls[0][0].data.detail).toBeUndefined();
-    },
-  );
-  it("marks explicitly captured Agent and workspace API bodies unavailable to workspace request readers", async () => {
+  it("does not auto-capture deployment MCP payloads in an explicitly suppressed context", async () => {
+    mocks.settings.mockResolvedValue({ detailDays: 7, captures: [] });
+    const detail = vi.fn(() => ({
+      request: "private input",
+      response: "private output",
+    }));
+    await withLogContext({ workspaceId: "ws", suppressPayload: true }, () =>
+      recordEvent({
+        domain: "mcp",
+        eventName: "mcp.rpc",
+        deploymentId: "deployment-1",
+        detail,
+      }),
+    );
+    expect(detail).not.toHaveBeenCalled();
+    expect(mocks.create.mock.calls[0][0].data.detail).toBeUndefined();
+  });
+  it("exposes Agent-session MCP bodies to the workspace but keeps other captured API bodies private", async () => {
     mocks.settings.mockResolvedValue({
       detailDays: 7,
       captures: [capture(true)],
     });
     for (const fields of [
-      { deploymentId: "deployment-1", payloadPolicy: "agent-content" as const },
+      {
+        deploymentId: "deployment-1",
+        agentId: "agent-1",
+        payloadPolicy: "agent-content" as const,
+      },
       { payloadPolicy: "diagnostic" as const },
     ]) {
       await recordEvent({
@@ -269,12 +271,17 @@ describe("typed lazy payload policy", () => {
         detail: { request: "private input", response: "private output" },
       });
     }
-    for (const [entry] of mocks.create.mock.calls) {
-      expect(entry.data.detail.create.data).toMatchObject({
-        workspaceMcpPayload: false,
-        payload: { request: "private input" },
-      });
-    }
+    const [agentCall, apiCall] = mocks.create.mock.calls.map(
+      ([entry]) => entry.data.detail.create.data,
+    );
+    expect(agentCall).toMatchObject({
+      workspaceMcpPayload: true,
+      payload: { request: "private input" },
+    });
+    expect(apiCall).toMatchObject({
+      workspaceMcpPayload: false,
+      payload: { request: "private input" },
+    });
   });
   it("captures authorized request boundaries in a detached span without disabling execution suppression", async () => {
     mocks.settings.mockResolvedValue({

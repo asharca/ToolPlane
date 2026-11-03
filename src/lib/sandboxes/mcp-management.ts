@@ -11,7 +11,7 @@ import {
   sandboxMcpExportable,
 } from "./mcp-policy";
 import { privateJson, readSandboxJson, RequestBodyError } from "./http-body";
-import { sandboxPublicOrigin } from "./oauth-policy";
+import { isSameOriginRequest } from "@/lib/http/origin";
 
 const CreateToken = z
   .object({
@@ -28,18 +28,13 @@ export async function sandboxManagementUser(req: Request) {
   const principal = await resolveRequestPrincipal(req);
   if (!principal || principal.credential === "toolkit-token") return null;
   const origin = req.headers.get("origin");
+  // Same policy as other cookie mutations (including the local-port rule);
+  // a configured public origin that differs from the served port must not
+  // reject the browser that is actually on this instance.
   if (principal.credential === "session" && req.method !== "GET") {
-    try {
-      if (origin !== sandboxPublicOrigin()) return null;
-    } catch {
-      return null;
-    }
-  } else if (origin !== null) {
-    try {
-      if (origin !== sandboxPublicOrigin()) return null;
-    } catch {
-      return null;
-    }
+    if (!isSameOriginRequest(req)) return null;
+  } else if (origin !== null && !isSameOriginRequest(req)) {
+    return null;
   }
   return principal.user;
 }
@@ -78,7 +73,7 @@ export function handleSandboxMcpTokens(
       });
       return privateJson({
         tokens,
-        exportable: sandboxMcpExportable(sandbox.kind),
+        exportable: sandboxMcpExportable(sandbox),
         limit: 100,
       });
     }
@@ -97,11 +92,11 @@ export function handleSandboxMcpTokens(
       }
       if (req.method !== "POST" || tokenId)
         return privateJson({ error: "Method not allowed." }, 405);
-      if (!sandboxMcpExportable(sandbox.kind)) {
+      if (!sandboxMcpExportable(sandbox)) {
         return privateJson(
           {
             error:
-              "This sandbox kind is not exportable. Hermes private runtime and legacy host sandboxes remain protected.",
+              "This sandbox kind is not exportable. Legacy host sandboxes remain protected.",
           },
           409,
         );

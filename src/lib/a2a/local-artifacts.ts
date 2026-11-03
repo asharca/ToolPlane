@@ -1,8 +1,7 @@
 import "server-only";
-import { createHash } from "node:crypto";
-import { z } from "zod";
 import {
   Artifact,
+  Part as StandardPart,
   StreamResponse,
   Task,
   TaskState,
@@ -14,53 +13,43 @@ import {
   UnsupportedOperationError,
 } from "@a2a-js/sdk/errors";
 import { db } from "@/lib/db";
-import { A2A_LIMITS, acceptsOutput } from "./model";
+import {
+  A2A_LIMITS,
+  acceptsOutput,
+  artifactDigest,
+  stampArtifactProvenance,
+} from "./model";
 import { isLocalGrant, type TaskGrant } from "./principal";
 import { assertLocalGrant } from "./local-policy";
 import { lockTask, persist } from "./store";
+import {
+  makeTaskFilePart,
+  listTaskFiles,
+  storeTaskFile,
+  type TaskFile,
+} from "./files";
+import { storeSandboxTaskFile } from "./local-sandbox";
+import { LocalArtifactInput } from "@/lib/agents/execution/tool-inputs";
 
 export const LOCAL_ARTIFACT_BYTES = A2A_LIMITS.publishArtifactBytes;
-const Mime = z.enum([
-  "text/plain",
-  "text/markdown",
-  "text/x-diff",
-  "application/json",
-  "application/octet-stream",
-]);
-const Part = z
-  .object({
-    text: z.string().optional(),
-    data: z.record(z.string(), z.unknown()).optional(),
-    raw: z.string().optional(),
-    mediaType: Mime.optional(),
-  })
-  .strict()
-  .refine(
-    (part) =>
-      [part.text, part.data, part.raw].filter((value) => value !== undefined)
-        .length === 1,
-  );
-export const LocalArtifactInput = z
-  .object({
-    artifactId: z
-      .string()
-      .min(1)
-      .max(128)
-      .regex(/^[\w.:-]+$/),
-    name: z
-      .string()
-      .min(1)
-      .max(100)
-      .regex(/^(?![\s\S]*[\x7f/\\])[\x20-\uFFFF]+$/),
-    description: z.string().max(1000).optional(),
-    parts: z.array(Part).min(1).max(8),
-  })
-  .strict();
 
 export function parseLocalArtifact(raw: unknown): Artifact {
   const value = LocalArtifactInput.parse(raw);
+  if (value.parts.some((part) => "path" in part || "fileId" in part))
+    throw new RequestMalformedError(
+      "File sources must be resolved by the authorized runtime.",
+    );
   let bytes = 0;
   for (const part of value.parts) {
+    if (!("text" in part || "data" in part || "raw" in part))
+      throw new RequestMalformedError("Unresolved file source.");
+    if (
+      part.metadata?.toolplaneFileId !== undefined ||
+      part.data?.toolplaneFileId !== undefined
+    )
+      throw new RequestMalformedError(
+        "Use an owned fileId source instead of constructing an internal file reference.",
+      );
     if (part.raw !== undefined) {
       if (
         !part.mediaType ||
@@ -93,20 +82,6 @@ export function parseLocalArtifact(raw: unknown): Artifact {
     throw new UnsupportedOperationError("Artifact content exceeds 32 KiB.");
   return Artifact.fromJSON(value);
 }
-function canonical(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonical);
-  if (value && typeof value === "object")
-    return Object.fromEntries(
-      Object.entries(value)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([k, v]) => [k, canonical(v)]),
-    );
-  return value;
-}
-const artifactDigest = (value: Artifact) =>
-  createHash("sha256")
-    .update(JSON.stringify(canonical(Artifact.toJSON(value))))
-    .digest("hex");
 
 /** Publish a standard, bounded Artifact to the caller-owned native task, never an arbitrary path or URL. */
 export async function publishLocalArtifact(
@@ -114,7 +89,71 @@ export async function publishLocalArtifact(
   lease: string,
   raw: unknown,
 ) {
-  const artifact = parseLocalArtifact(raw);
+  const input = LocalArtifactInput.parse(raw);
+  const inline = input.parts.filter(
+    (part) => !("fileId" in part || "path" in part),
+  );
+  const validatedParts = inline.length
+    ? parseLocalArtifact({ ...input, parts: inline }).parts
+    : [];
+  let inlineIndex = 0;
+  const resolved = [];
+  const fileSizes = new Map<string, number>();
+  for (const [index, part] of input.parts.entries()) {
+    if (
+      !("fileId" in part || "path" in part) &&
+      !("raw" in part && part.raw !== undefined)
+    ) {
+      resolved.push(StandardPart.toJSON(validatedParts[inlineIndex++]));
+      continue;
+    }
+    const row = await db.a2ATask.findUniqueOrThrow({ where: { id: taskId } });
+    const grant = row.grant as unknown as TaskGrant;
+    if (
+      !isLocalGrant(grant) ||
+      row.state !== TaskState.TASK_STATE_WORKING ||
+      row.phase !== "executing" ||
+      row.leaseToken !== lease ||
+      row.cancelRequestedAt ||
+      row.pendingQuestion ||
+      row.waitForTaskIds.length ||
+      row.deadlineAt <= new Date()
+    )
+      throw new TaskNotFoundError();
+    await assertLocalGrant(grant);
+    let file: TaskFile | undefined;
+    if ("raw" in part && part.raw !== undefined) {
+      const inlinePart = validatedParts[inlineIndex++];
+      const rawBytes = part.raw;
+      file = await storeTaskFile(
+        taskId,
+        `artifact:${input.artifactId}:${index}`,
+        part.filename ?? `${input.artifactId}-${index}.bin`,
+        inlinePart.mediaType,
+        (async function* () {
+          yield Buffer.from(rawBytes, "base64");
+        })(),
+      );
+    } else if ("fileId" in part || "path" in part) {
+      if (part.fileId) {
+        file = (await listTaskFiles(taskId)).find(
+          (file) => file.id === part.fileId,
+        );
+      } else if (part.path) {
+        file = await storeSandboxTaskFile(
+          row,
+          `artifact:${input.artifactId}:${index}`,
+          part.path,
+          part.filename,
+          part.mediaType,
+        );
+      }
+    }
+    if (!file) throw new TaskNotFoundError();
+    fileSizes.set(file.id, file.size);
+    resolved.push(StandardPart.toJSON(makeTaskFilePart(file)));
+  }
+  const artifact = Artifact.fromJSON({ ...input, parts: resolved });
   return db.$transaction(async (tx) => {
     const row = await lockTask(tx, taskId);
     const grant = row.grant as unknown as TaskGrant;
@@ -142,6 +181,16 @@ export async function publishLocalArtifact(
       throw new UnsupportedOperationError(
         "Artifact mediaType was not accepted by the caller.",
       );
+    stampArtifactProvenance(
+      artifact,
+      {
+        taskId: task.id,
+        contextId: task.contextId,
+        targetId: grant.agentId,
+        targetKind: "local",
+      },
+      fileSizes,
+    );
     const previous = task.artifacts.find(
       (item) => item.artifactId === artifact.artifactId,
     );

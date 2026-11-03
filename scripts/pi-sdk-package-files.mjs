@@ -115,14 +115,17 @@ function load(item) {
     pkg.source?.kind === "toolplane" &&
     runtime?.platform === "any" &&
     runtime?.arch === "any";
+  const supported =
+    runtime?.kind === "pi-sdk"
+      ? runtime.piVersion === "0.87.1"
+      : runtime?.kind === "omp" && runtime.ompVersion === "18.14.0";
   if (
-    runtime?.kind !== "pi-sdk" ||
-    runtime.piVersion !== "0.87.1" ||
-    runtime.nodeMajor !== 24 ||
+    !supported ||
+    runtime.nodeMajor !== 26 ||
     (!portable &&
       (runtime.platform !== process.platform ||
         runtime.arch !== process.arch)) ||
-    Number(process.versions.node.split(".")[0]) !== 24
+    Number(process.versions.node.split(".")[0]) !== runtime.nodeMajor
   )
     throw new Error("package_platform_mismatch");
   if (

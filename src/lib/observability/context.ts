@@ -4,6 +4,8 @@ import { randomBytes, randomUUID } from "node:crypto";
 
 export type LogContext = {
   requestId?: string;
+  callId?: string;
+  tokenId?: string;
   traceId: string;
   spanId: string;
   parentSpanId?: string;
@@ -38,6 +40,8 @@ export function withLogContext<T>(
   const identities: Partial<LogContext> = {};
   for (const key of [
     "requestId",
+    "callId",
+    "tokenId",
     "traceId",
     "spanId",
     "parentSpanId",

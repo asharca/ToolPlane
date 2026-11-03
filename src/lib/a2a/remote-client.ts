@@ -16,7 +16,7 @@ import {
   remoteRpcFetch,
 } from "./remote-network";
 import { validateCardWire } from "./remote-wire";
-import { A2A_LIMITS, acceptsOutput, textArtifact } from "./model";
+import { A2A_LIMITS, textArtifact } from "./model";
 
 function decodeRemoteCard(raw: unknown): AgentCard {
   if (
@@ -45,11 +45,15 @@ export function validateRemoteCard(
     !card.version ||
     !card.skills.length ||
     card.skills.length > 100 ||
-    !card.defaultInputModes.includes("text/plain") ||
-    !card.defaultOutputModes.includes("text/plain")
+    !card.defaultInputModes.length ||
+    !card.defaultOutputModes.length ||
+    [...card.defaultInputModes, ...card.defaultOutputModes].some(
+      (mode) =>
+        !/^(?:\*|[a-z0-9!#$&^_.+-]+)\/(?:\*|[a-z0-9!#$&^_.+-]+)$/i.test(mode),
+    )
   )
     throw new RemoteA2AError(
-      "Remote Agent must declare text/plain input and output.",
+      "Remote Agent must declare valid input and output MIME capabilities.",
     );
   const selected = card.supportedInterfaces.filter(
     (item) =>
@@ -156,7 +160,7 @@ export function createRemoteClient(
       }),
     ],
     preferredTransports: ["JSONRPC"],
-    clientConfig: { acceptedOutputModes: ["text/plain"] },
+    clientConfig: { acceptedOutputModes: ["*/*"] },
   }).createFromAgentCard(
     validateRemoteCard(AgentCard.toJSON(card), rpcUrl, Boolean(token)),
   );
@@ -166,12 +170,14 @@ export function remoteText(parts: Message["parts"]) {
     parts.length > 32 ||
     parts.some(
       (part) =>
-        part.content?.$case !== "text" ||
-        !acceptsOutput(["text/plain"], part.mediaType || "text/plain"),
+        !part.content || !["text", "raw", "url"].includes(part.content.$case),
     )
   )
-    throw new RemoteA2AError("Remote output is outside the text-only profile.");
-  const text = parts.map((part) => part.content?.value ?? "").join("\n");
+    throw new RemoteA2AError("Remote output contains an unsupported Part.");
+  const text = parts
+    .filter((part) => part.content?.$case === "text")
+    .map((part) => part.content?.value ?? "")
+    .join("\n");
   if (text.length > A2A_LIMITS.outputCharacters)
     throw new RemoteA2AError("Remote output limit exceeded.");
   return text;
@@ -185,6 +191,14 @@ export function remoteResult(result: SendMessageResult | Task) {
     return {
       state: TaskState.TASK_STATE_COMPLETED,
       text: remoteText(message.parts),
+      artifacts: [
+        {
+          artifactId: `message-${message.messageId}`,
+          name: "result",
+          parts: message.parts,
+        },
+      ],
+      message: undefined,
     };
   }
   const task = result as Task;
@@ -212,6 +226,8 @@ export function remoteResult(result: SendMessageResult | Task) {
     detail: detail.slice(0, 4096),
     taskId: task.id,
     contextId: task.contextId,
+    artifacts: task.artifacts,
+    message: task.status.message,
   };
 }
 export { textArtifact };

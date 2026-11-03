@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { db } from "@/lib/db";
-import { createConfiguredAgent } from "@/lib/agents/mutations";
+import { publishFixtureAgentRevision } from "./agent-revision-fixture";
 import {
   createAgentFromControl,
   getAgentControlAgent,
@@ -20,7 +20,6 @@ let sandboxDeploymentId = "";
 let installedSkillId = "";
 let toolkitId = "";
 let sandboxId = "";
-let childAgentId = "";
 let foreignOwnerId = "";
 let foreignWorkspaceId = "";
 let foreignProviderId = "";
@@ -28,7 +27,6 @@ let foreignDeploymentId = "";
 let foreignSkillId = "";
 let foreignToolkitId = "";
 let foreignSandboxId = "";
-let foreignAgentId = "";
 
 beforeAll(async () => {
   const owner = await db.user.create({
@@ -60,10 +58,15 @@ beforeAll(async () => {
     data: {
       workspaceId,
       name: "Safe MCP",
-      source: "npm",
-      sourceRef: "safe-mcp",
+      source: "remote",
+      sourceRef: "https://safe-mcp.invalid/mcp",
       status: "stopped",
-      installCfg: { env: { TOKEN: "SUPER_SECRET_DEPLOYMENT_ENV" } },
+      installCfg: {
+        transport: "streamable-http",
+        authType: "bearer",
+        bearerEnv: "TOKEN",
+        env: { TOKEN: "SUPER_SECRET_DEPLOYMENT_ENV" },
+      },
     },
   });
   deploymentId = deployment.id;
@@ -74,7 +77,14 @@ beforeAll(async () => {
       slug: `safe-skill-${stamp}`,
       description: "Safe public description",
       content: "# SUPER_SECRET_SKILL_CONTENT",
-      files: { "secret.txt": "SUPER_SECRET_SKILL_FILE" },
+      files: [
+        { path: "secret.txt", content: "SUPER_SECRET_SKILL_FILE" },
+        {
+          path: "scripts/dependency.bin",
+          content: "AAECAw==",
+          encoding: "base64",
+        },
+      ],
       source: "upload",
     },
   });
@@ -109,15 +119,6 @@ beforeAll(async () => {
     },
   });
   sandboxId = sandbox.id;
-  const child = await db.agent.create({
-    data: {
-      workspaceId,
-      name: "Child agent",
-      slug: `child-${stamp}`,
-      runtimeKind: "pi",
-    },
-  });
-  childAgentId = child.id;
 
   const foreignOwner = await db.user.create({
     data: {
@@ -186,15 +187,6 @@ beforeAll(async () => {
     },
   });
   foreignSandboxId = foreignSandbox.id;
-  const foreignAgent = await db.agent.create({
-    data: {
-      workspaceId: foreignWorkspaceId,
-      name: "Foreign agent",
-      slug: `foreign-agent-${stamp}`,
-      runtimeKind: "pi",
-    },
-  });
-  foreignAgentId = foreignAgent.id;
 });
 
 afterAll(async () => {
@@ -210,17 +202,15 @@ function createInput(
 ): CreateAgentFromControlInput {
   return {
     name: `Created agent ${Math.random().toString(36).slice(2)}`,
-    runtime: "pi",
+    runtime: "pi-sdk",
     systemPrompt: "Use the attached tools carefully.",
     providerId,
-    providerIds: [],
     model: "model-safe",
     maxSteps: 12,
     deploymentIds: [deploymentId],
     installedSkillIds: [installedSkillId],
     toolkitIds: [toolkitId],
-    sandboxIds: [sandboxId],
-    subAgentIds: [childAgentId],
+    externalSandboxes: [],
     ...overrides,
   };
 }
@@ -261,7 +251,7 @@ describe("Agent Control service", () => {
     expect(result.agent).toMatchObject({
       name: "Atomic research agent",
       configured: true,
-      ready: true,
+      ready: false,
       systemPrompt: "Use the attached tools carefully.",
       maxSteps: 12,
       model: { providerId, model: "model-safe" },
@@ -283,66 +273,70 @@ describe("Agent Control service", () => {
       installedSkillId,
     ]);
     expect(stored.toolkits.map(({ toolkitId: id }) => id)).toEqual([toolkitId]);
-    expect(stored.sandboxes.map(({ sandboxId: id }) => id)).toEqual([
-      sandboxId,
-    ]);
-    expect(stored.subAgents.map(({ childId: id }) => id)).toEqual([
-      childAgentId,
-    ]);
+    expect(stored.sandboxes).toHaveLength(1);
+    expect(stored.sandboxes[0]?.sandboxId).not.toBe(sandboxId);
 
+    const revision = await publishFixtureAgentRevision(
+      workspaceId,
+      result.agent.id,
+    );
+    expect(revision.config.skills).toMatchObject([
+      {
+        installedSkillId,
+        markdown: expect.stringContaining("# SUPER_SECRET_SKILL_CONTENT"),
+        files: [
+          { path: "secret.txt", content: "SUPER_SECRET_SKILL_FILE" },
+          {
+            path: "scripts/dependency.bin",
+            content: "AAECAw==",
+            encoding: "base64",
+          },
+        ],
+      },
+    ]);
     const safe = await getAgentControlAgent(
       workspaceId,
       workspaceSlug,
       result.agent.id,
     );
+    expect(safe).toMatchObject({ ready: true, readOnly: false });
     expect(JSON.stringify(safe)).not.toContain("SUPER_SECRET");
     expect(
       JSON.stringify(await listAgentControlAgents(workspaceId)),
     ).not.toContain("SUPER_SECRET");
   });
 
-  it("atomically creates Hermes runtime records and multi-provider bindings before Docker sync", async () => {
-    const created = await createConfiguredAgent(
-      workspaceId,
-      {
-        name: "Hermes control agent",
-        systemPrompt: null,
-        providerId: null,
-        providerIds: [providerId],
-        model: null,
+  it("keeps historical agents discoverable but read-only with single-provider metadata", async () => {
+    const created = await db.agent.create({
+      data: {
+        workspaceId,
+        slug: `retained-historical-${stamp}`,
+        name: "Retained historical control agent",
+        runtimeKind: "claude-code",
+        retiredAt: new Date(),
+        providerId,
+        model: "model-safe",
         maxSteps: 20,
       },
-      {
-        deploymentIds: [deploymentId],
-        installedSkillIds: [installedSkillId],
-        toolkitIds: [],
-      },
-      { runtime: "hermes", hermesImage: "nousresearch/hermes-agent:v2026.8.3" },
-    );
+    });
     const stored = await db.agent.findUniqueOrThrow({
       where: { id: created.id },
-      include: { runtime: true, modelProviders: true },
     });
     expect(stored).toMatchObject({
-      providerId: null,
-      model: null,
+      providerId,
+      model: "model-safe",
       systemPrompt: null,
       maxSteps: 20,
-      runtime: {
-        kind: "hermes",
-        image: "nousresearch/hermes-agent:v2026.8.3",
-        status: "setup_required",
-      },
+      currentRevisionVersion: 0,
     });
-    expect(stored.modelProviders.map(({ providerId: id }) => id)).toEqual([
-      providerId,
-    ]);
     await expect(
       getAgentControlAgent(workspaceId, workspaceSlug, created.id),
     ).resolves.toMatchObject({
       configured: true,
       ready: false,
-      runtime: { kind: "hermes", status: "setup_required" },
+      readOnly: true,
+      model: { providerId, model: "model-safe" },
+      runtime: { kind: "claude-code", status: null, image: null },
     });
   });
 
@@ -351,8 +345,13 @@ describe("Agent Control service", () => {
     ["deployment", () => createInput({ deploymentIds: [foreignDeploymentId] })],
     ["skill", () => createInput({ installedSkillIds: [foreignSkillId] })],
     ["toolkit", () => createInput({ toolkitIds: [foreignToolkitId] })],
-    ["sandbox", () => createInput({ sandboxIds: [foreignSandboxId] })],
-    ["sub-agent", () => createInput({ subAgentIds: [foreignAgentId] })],
+    [
+      "sandbox",
+      () =>
+        createInput({
+          externalSandboxes: [{ sandboxId: foreignSandboxId, access: "read" }],
+        }),
+    ],
   ])(
     "rejects a foreign-workspace %s without leaving a partial agent",
     async (_label, buildInput) => {

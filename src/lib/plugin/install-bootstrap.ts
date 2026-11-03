@@ -43,7 +43,6 @@ const roots = {
   'claude-code': path.join(home, '.claude', 'plugins'),
   codex: path.join(process.env.CODEX_HOME || path.join(home, '.codex'), 'toolplane'),
   opencode: path.join(process.env.OPENCODE_CONFIG_DIR || path.join(home, '.config', 'opencode'), 'toolplane'),
-  hermes: path.join(process.env.HERMES_HOME || path.join(home, '.hermes'), 'toolplane'),
 };
 const root = path.join(roots[cfg.client], cfg.name);
 fs.mkdirSync(root, { recursive: true, mode: 0o700 });

@@ -1,12 +1,8 @@
 import { getLocale, getTranslations } from "next-intl/server";
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth/current-user";
-import { db } from "@/lib/db";
 import { getWorkspaceForUser } from "@/lib/workspace/queries";
-import {
-  listToolkits,
-  getOrCreateDefaultToolkit,
-} from "@/lib/toolkits/queries";
+import { listToolkits } from "@/lib/toolkits/queries";
 import { DashboardHeader } from "@/components/dashboard/DashboardHeader";
 import { ToolkitsBrowser } from "@/components/dashboard/ToolkitsBrowser";
 import { formatInTimeZone, resolveUserTimeZone } from "@/lib/timezone";
@@ -28,46 +24,26 @@ function fmt(d: Date, timeZone: string, locale: string) {
 
 export default async function ToolkitsPage({
   params,
-  searchParams,
 }: {
   params: Promise<{ workspace: string }>;
-  searchParams: Promise<{ create?: string }>;
 }) {
   const [t, locale] = await Promise.all([
     getTranslations("console.toolkits"),
     getLocale(),
   ]);
-  const [{ workspace: slug }, query] = await Promise.all([
-    params,
-    searchParams,
-  ]);
+  const { workspace: slug } = await params;
   const user = await getCurrentUser();
   if (!user) redirect("/app/login");
   const timeZone = resolveUserTimeZone(user);
   const ws = await getWorkspaceForUser(slug, user.id);
   if (!ws) redirect("/app");
-  const managerMembership =
-    ws.ownerId === user.id
-      ? null
-      : await db.membership.findUnique({
-          where: {
-            workspaceId_userId: { workspaceId: ws.id, userId: user.id },
-          },
-          select: { role: true },
-        });
-  const canManagePublishing =
-    ws.ownerId === user.id || managerMembership?.role === "admin";
-
-  await getOrCreateDefaultToolkit(ws.id);
   const toolkits = await listToolkits(ws.id);
 
   return (
     <>
-      <DashboardHeader title={t("toolkits")} />
+      <DashboardHeader title={t("historyTitle")} />
       <ToolkitsBrowser
         slug={slug}
-        canManagePublishing={canManagePublishing}
-        startCreating={query.create === "1"}
         toolkits={toolkits.map((t) => ({
           id: t.id,
           name: t.name,

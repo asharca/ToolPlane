@@ -1,13 +1,9 @@
 import { withRequestLogging } from "@/lib/observability/http";
 import { resolveRequestUser } from "@/lib/auth/request-user";
 import { getAgentForRequest } from "@/lib/agents/queries";
-import {
-  AgentConfigurationError,
-  type HermesConversationSelection,
-} from "@/lib/agents/mutations";
 import { normalizeReasoningEffort } from "@/lib/agents/constants";
-import { prepareHermesConversationSelection } from "@/lib/agents/hermes/conversation-selection";
-import { HermesProfileError } from "@/lib/agents/hermes/profiles";
+import { AgentModelOverrideSchema } from "@/lib/agents/chat-body";
+import { AgentModelOverrideError } from "@/lib/agents/turn-model";
 import {
   createWorkSession,
   listWorkSessions,
@@ -43,14 +39,12 @@ export const GET = withRequestLogging(
     return Response.json(
       await Promise.all(
         sessions.map(async (session) => {
-          const sandbox =
-            session.runtimeKind === "hermes"
-              ? session.sandbox
-              : await getConversationWorkspaceSandbox({
-                  workspaceId: agent.workspaceId,
-                  agentId: agent.id,
-                  conversationId: session.conversationId,
-                });
+          const bound = await getConversationWorkspaceSandbox({
+            workspaceId: agent.workspaceId,
+            agentId: agent.id,
+            conversationId: session.conversationId,
+          });
+          const sandbox = bound ?? (session.readOnly ? session.sandbox : null);
           return { ...session, sandboxId: sandbox?.id ?? null, sandbox };
         }),
       ),
@@ -72,9 +66,7 @@ export const POST = withRequestLogging(
       attachmentIds?: unknown;
       references?: unknown;
       reasoningEffort?: unknown;
-      hermesProfile?: unknown;
-      hermesProvider?: unknown;
-      hermesModel?: unknown;
+      modelOverride?: unknown;
     };
     try {
       body = await req.json();
@@ -94,6 +86,11 @@ export const POST = withRequestLogging(
     ) {
       return Response.json({ error: "Invalid task" }, { status: 400 });
     }
+    const modelOverride = AgentModelOverrideSchema.optional().safeParse(
+      body.modelOverride,
+    );
+    if (!modelOverride.success)
+      return Response.json({ error: "modelOverrideInvalid" }, { status: 400 });
     const references = ComposerReferencesSchema.safeParse(body.references);
     if (!references.success)
       return Response.json({ error: "Invalid references" }, { status: 400 });
@@ -133,6 +130,7 @@ export const POST = withRequestLogging(
     if (
       agent &&
       agent.runtimeKind !== "pi-sdk" &&
+      agent.runtimeKind !== "omp" &&
       command &&
       !runtimeCommands(agent.runtimeKind).some(
         (item) => item.name === command.name,
@@ -151,46 +149,14 @@ export const POST = withRequestLogging(
       );
     if (!agent)
       return Response.json({ error: "Agent not found" }, { status: 404 });
-    const hasHermesSelection =
-      body.hermesProfile !== undefined ||
-      body.hermesProvider !== undefined ||
-      body.hermesModel !== undefined;
-    let requestedHermesSelection: HermesConversationSelection | undefined;
-    if (hasHermesSelection) {
-      const provider =
-        body.hermesProvider == null
-          ? null
-          : typeof body.hermesProvider === "string"
-            ? body.hermesProvider.trim() || null
-            : undefined;
-      const model =
-        body.hermesModel == null
-          ? null
-          : typeof body.hermesModel === "string"
-            ? body.hermesModel.trim() || null
-            : undefined;
-      if (
-        agent.runtimeKind !== "hermes" ||
-        agent.runtime?.kind !== "hermes" ||
-        agent.runtime.sandbox.workspaceId !== agent.workspaceId ||
-        agent.runtime.sandbox.kind !== "hermes" ||
-        agent.runtime.sandbox.network === "none" ||
-        (body.sandboxId && body.sandboxId !== agent.runtime.sandboxId) ||
-        typeof body.hermesProfile !== "string" ||
-        provider === undefined ||
-        model === undefined ||
-        (provider === null) !== (model === null)
-      )
-        return Response.json(
-          { error: "Invalid Hermes profile or model" },
-          { status: 400 },
-        );
-      requestedHermesSelection = {
-        profile: body.hermesProfile,
-        provider,
-        model,
-      };
-    }
+    if (
+      (agent.runtimeKind !== "pi-sdk" && agent.runtimeKind !== "omp") ||
+      agent.retiredAt
+    )
+      return Response.json(
+        { error: "Retired Agent history is read-only." },
+        { status: 410 },
+      );
     if (
       Array.isArray(body.attachmentIds) &&
       body.attachmentIds.length &&
@@ -200,31 +166,6 @@ export const POST = withRequestLogging(
         { error: "sandboxId is required for Work attachments" },
         { status: 400 },
       );
-    }
-    let hermesSelection: HermesConversationSelection | undefined;
-    if (requestedHermesSelection) {
-      try {
-        hermesSelection = await prepareHermesConversationSelection(
-          agent,
-          requestedHermesSelection,
-        );
-      } catch (error) {
-        if (
-          error instanceof HermesProfileError ||
-          error instanceof AgentConfigurationError
-        ) {
-          return Response.json(
-            { error: error.message },
-            {
-              status: error instanceof HermesProfileError ? error.status : 400,
-            },
-          );
-        }
-        return Response.json(
-          { error: "Could not prepare the Hermes model" },
-          { status: 502 },
-        );
-      }
     }
     let attachments: Awaited<ReturnType<typeof prepareWorkAttachments>>;
     try {
@@ -256,11 +197,13 @@ export const POST = withRequestLogging(
           ? { acceptanceCriteria: body.acceptanceCriteria }
           : {}),
         ...(reasoningEffort ? { reasoningEffort } : {}),
-        ...(hermesSelection ? { hermesSelection } : {}),
+        modelOverride: modelOverride.data,
         workingDirectory,
         ...(attachments.length ? { uploadedById: user.id, attachments } : {}),
       });
     } catch (error) {
+      if (error instanceof AgentModelOverrideError)
+        return Response.json({ error: error.code }, { status: error.status });
       return error instanceof WorkAttachmentError
         ? Response.json({ error: error.message }, { status: error.status })
         : Response.json(

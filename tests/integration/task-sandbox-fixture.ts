@@ -2,10 +2,11 @@ import { randomUUID } from "node:crypto";
 import type { A2ATask } from "@prisma/client";
 import { db } from "@/lib/db";
 import type { LocalA2AGrant } from "@/lib/a2a/principal";
+import { agentSessionWorkspaceRoot } from "@/lib/agents/session-paths";
 
 const mappings = new Map<
   string,
-  { sandboxId: string; conversationId?: string }
+  { sandboxId: string; conversationId?: string; workspaceRoot: string }
 >();
 
 /** Persist the already-provisioned runtime at the injected executor boundary. */
@@ -14,6 +15,16 @@ export async function mapTaskSandbox(row: A2ATask) {
     where: { id: row.contextId },
   });
   const grant = row.grant as unknown as LocalA2AGrant;
+  if (
+    !context.agentRevisionId ||
+    context.legacyRevisionUnresolved ||
+    context.agentRevisionId !== grant.agentRevisionId ||
+    context.agentId !== grant.agentId ||
+    context.workspaceId !== grant.workspaceId
+  )
+    throw new Error(
+      "Fixture context must retain its authorized native revision.",
+    );
   const entry = !grant.ancestorTaskIds.length ? grant.entryPolicy : undefined;
   const conversationId =
     entry?.kind === "work"
@@ -27,6 +38,19 @@ export async function mapTaskSandbox(row: A2ATask) {
     ? await db.conversation.findUniqueOrThrow({ where: { id: conversationId } })
     : null;
   let sandboxId = context.sandboxId ?? conversation?.sandboxId;
+  if (!sandboxId) {
+    const shared = await db.sandbox.findFirst({
+      where: {
+        workspaceId: grant.workspaceId,
+        AND: [
+          { config: { path: ["scope"], equals: "agent" } },
+          { config: { path: ["agentId"], equals: grant.agentId } },
+        ],
+      },
+      select: { id: true },
+    });
+    sandboxId = shared?.id;
+  }
   if (!sandboxId) {
     const source = await db.agentSandbox.findFirstOrThrow({
       where: { agentId: grant.agentId },
@@ -57,8 +81,10 @@ export async function mapTaskSandbox(row: A2ATask) {
         network: source.sandbox.network,
         config: {
           managedBy: "agent-conversation",
+          scope: "agent",
           agentId: grant.agentId,
           sourceSandboxId: source.sandboxId,
+          agentRevisionId: context.agentRevisionId,
         },
       },
     });
@@ -73,7 +99,14 @@ export async function mapTaskSandbox(row: A2ATask) {
       where: { id: conversationId },
       data: { sandboxId },
     });
-  const mapping = { sandboxId, conversationId: conversationId ?? undefined };
+  const mapping = {
+    sandboxId,
+    conversationId: conversationId ?? undefined,
+    workspaceRoot: agentSessionWorkspaceRoot({
+      conversationId: conversationId ?? undefined,
+      a2aContextId: row.contextId,
+    }),
+  };
   mappings.set(row.contextId, mapping);
   return mapping;
 }

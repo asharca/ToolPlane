@@ -1,22 +1,16 @@
 import { observe, recordEvent } from "@/lib/observability/events";
 import "server-only";
-import { isDedicatedSandboxRuntimeKind } from "./runtime-kind";
-import { bindHermesRpcConversation } from "./hermes-rpc-session-binding";
-import { normalizeSandboxWorkingDirectory } from "./sandbox-runtime";
 import { db } from "@/lib/db";
 import {
   createAgentRuntimeToken,
   runtimeMcpProxyUrl,
   runtimeModelProxyBase,
+  sandboxRuntimeOrigin,
 } from "./runtime-access";
-import {
-  runSandboxAgentTurn,
-  compactPiHarnessSession,
-} from "./sandbox-runtime";
+import { runSandboxAgentTurn } from "./sandbox-runtime";
 import type {
-  PiHarnessOperationResult,
+  AgentPromptInvocation,
   RunSandboxAgentTurnOptions,
-  SandboxAgentRuntimeKind,
   SandboxRuntimeActivity,
   SandboxRuntimeMessage,
   SandboxRuntimeProvider,
@@ -24,7 +18,6 @@ import type {
 import type { ResolvedAgentPiPackage, SkillForPrompt } from "./resolve";
 import type { ContextUsageSnapshot } from "@/lib/context-usage";
 import { resolveModelContext, type ProviderConfig } from "./model";
-import { liveStatus } from "@/lib/process/supervisor";
 import type {
   RuntimeCommand,
   RuntimeCommandResult,
@@ -32,7 +25,16 @@ import type {
 } from "./runtime-commands";
 import { ensureAgentConversationSandbox } from "./conversation-sandbox";
 import { withAgentExecutionLease } from "./agent-execution-gate";
+import { resolvePiSessionPackages } from "./pi-session-packages";
+import { getAgentForRun } from "./queries";
+import { resolvePinnedAgent } from "./revisions";
+import { resolveAgentTools, resolveAgentPiPackages } from "./resolve";
+import type { ReasoningEffort } from "./constants";
+import type { AgentModelOverride } from "./chat-body";
+import { resolveAgentModelOverride } from "./turn-model";
+import { resolveSessionExternalSandboxes } from "./external-sandboxes";
 
+import { withWorkUiLease } from "./execution/work-ui";
 type SandboxTurnAgent = {
   id: string;
   workspaceId: string;
@@ -56,11 +58,12 @@ export type RunDedicatedSandboxTurnInput = {
   workingDirectory?: string | null;
   runtimeSessionId?: string;
   command?: string;
-  nativeCompaction?: {
-    contextId: string;
-    customInstructions: string;
-    onResult: (result: PiHarnessOperationResult) => void;
-  };
+  reasoningEffort?: ReasoningEffort;
+  modelOverride?: AgentModelOverride;
+  historyRequired?: boolean;
+  onPromptInvocation?: (
+    invocation: AgentPromptInvocation,
+  ) => void | Promise<void>;
   signal?: AbortSignal;
   onTextDelta?: (text: string) => void | Promise<void>;
   onActivity?: (activity: SandboxRuntimeActivity) => void | Promise<void>;
@@ -81,6 +84,60 @@ export async function runDedicatedSandboxTurn(
     throw new Error(
       "A conversation or context is required for dedicated execution.",
     );
+  const [liveAgent, conversation, context] = await Promise.all([
+    getAgentForRun(input.agent.id, input.agent.workspaceId),
+    conversationId
+      ? db.conversation.findFirst({
+          where: {
+            id: conversationId,
+            agentId: input.agent.id,
+            agent: { workspaceId: input.agent.workspaceId },
+          },
+        })
+      : null,
+    input.a2aContextId
+      ? db.a2AContext.findFirst({
+          where: {
+            id: input.a2aContextId,
+            agentId: input.agent.id,
+            workspaceId: input.agent.workspaceId,
+            targetKind: "local",
+          },
+        })
+      : null,
+  ]);
+  if (
+    !liveAgent ||
+    (conversationId && !conversation) ||
+    (input.a2aContextId && !context)
+  )
+    throw new Error("Session does not belong to this Agent.");
+  if (
+    conversation &&
+    context &&
+    conversation.agentRevisionId !== context.agentRevisionId
+  )
+    throw new Error("Session revision bindings conflict.");
+  const agent = await resolvePinnedAgent(
+    liveAgent,
+    (conversation ?? context)?.agentRevisionId,
+  );
+  const effective = input.modelOverride
+    ? await resolveAgentModelOverride(
+        agent.workspaceId,
+        input.modelOverride,
+        agent.runtimeKind,
+      )
+    : { provider: agent.provider, model: agent.model };
+  const resolved = resolveAgentTools(agent);
+  input = {
+    ...input,
+    agent: { ...agent, ...effective },
+    systemPrompt: agent.systemPrompt,
+    skills: resolved.skills,
+    piPackages: resolveAgentPiPackages(agent),
+    deploymentIds: resolved.deploymentIds,
+  };
   if (
     runtimeSessionId !== conversationId &&
     runtimeSessionId !== input.a2aContextId
@@ -108,8 +165,8 @@ export async function runDedicatedSandboxTurn(
         },
         async () => {
           const runtimeKind = input.agent.runtimeKind;
-          if (!isDedicatedSandboxRuntimeKind(runtimeKind)) {
-            throw new Error(`Unsupported sandbox runtime: ${runtimeKind}.`);
+          if (runtimeKind !== "pi-sdk" && runtimeKind !== "omp") {
+            throw new Error("Historical Agent sessions are read-only.");
           }
           if (runtimeKind === "pi-sdk" && !input.piPackages)
             throw new Error("PI_PACKAGE_UNAVAILABLE");
@@ -118,6 +175,19 @@ export async function runDedicatedSandboxTurn(
           if (!provider?.id || !modelId)
             throw new Error("This Agent has no configured model.");
           const modelContext = resolveModelContext(provider, modelId);
+          const runtimeModel =
+            runtimeKind === "omp"
+              ? await db.providerModel.findUnique({
+                  where: {
+                    providerId_modelId: { providerId: provider.id, modelId },
+                  },
+                  select: {
+                    inputModalities: true,
+                    maxOutputTokens: true,
+                    contextWindow: true,
+                  },
+                })
+              : null;
 
           const link = await ensureAgentConversationSandbox({
             workspaceId: input.agent.workspaceId,
@@ -126,6 +196,17 @@ export async function runDedicatedSandboxTurn(
             contextId: input.a2aContextId,
             signal: input.signal,
           });
+          const piSession =
+            runtimeKind === "pi-sdk"
+              ? await resolvePiSessionPackages({
+                  workspaceId: input.agent.workspaceId,
+                  agentId: input.agent.id,
+                  sandboxId: link.sandboxId,
+                  conversationId,
+                  contextId: input.a2aContextId,
+                  runtimeSessionId,
+                })
+              : undefined;
           if (conversationId)
             await db.workSession.updateMany({
               where: {
@@ -136,37 +217,56 @@ export async function runDedicatedSandboxTurn(
               data: { sandboxId: link.sandboxId },
             });
 
-          if (runtimeKind === "hermes-rpc" && conversationId) {
-            await bindHermesRpcConversation({
-              workspaceId: input.agent.workspaceId,
-              agentId: input.agent.id,
-              conversationId,
-              sandboxId: link.sandboxId,
-              providerId: provider.id,
-              modelId,
-              providerFormat: provider.format,
-              workingDirectory: normalizeSandboxWorkingDirectory(
-                input.workingDirectory,
-              ),
-            });
-          }
-          const deploymentIds = [...new Set(input.deploymentIds ?? [])].filter(
-            (deploymentId) => liveStatus(deploymentId) === "running",
-          );
+          const deploymentIds = [
+            ...new Set(piSession?.deploymentIds ?? input.deploymentIds ?? []),
+          ];
+          const externalSandboxes = await resolveSessionExternalSandboxes({
+            workspaceId: input.agent.workspaceId,
+            agentId: input.agent.id,
+            pinned: agent.revisionConfig.externalSandboxes,
+          });
           const now = Math.floor(Date.now() / 1000);
           const runtimeAccessToken = await createAgentRuntimeToken({
             workspaceId: input.agent.workspaceId,
+            agentRevisionId: agent.agentRevisionId,
             agentId: input.agent.id,
             sandboxId: link.sandboxId,
             conversationId,
             a2aContextId: input.a2aContextId,
             providerId: provider.id,
+            modelOverride: input.modelOverride,
             deploymentIds,
+            externalSandboxIds: externalSandboxes.map(
+              (entry) => entry.sandboxId,
+            ),
             exp: now + 55 * 60,
           });
 
+          const runningTools = new Map<
+            string,
+            SandboxRuntimeActivity & { startedAt: number }
+          >();
+          const nativePolicy = agent.revisionConfig.nativeSubagentPolicy;
+          if (agent.revisionConfig.subagentMode === "native" && !nativePolicy)
+            throw new Error("OMP_NATIVE_POLICY_REQUIRED");
           const options: RunSandboxAgentTurnOptions = {
-            runtimeKind: runtimeKind as SandboxAgentRuntimeKind,
+            runtimeKind,
+            ...(agent.revisionConfig.runtimeKind === "omp"
+              ? {
+                  ompVersion: agent.revisionConfig.environment.ompVersion,
+                  ompConfig: agent.revisionConfig.ompConfig,
+                }
+              : { piVersion: agent.revisionConfig.environment.piVersion }),
+            ...(runtimeKind === "omp"
+              ? {
+                  modelInput: runtimeModel?.inputModalities.includes("image")
+                    ? (["text", "image"] as const)
+                    : (["text"] as const),
+                  ...(runtimeModel?.maxOutputTokens
+                    ? { maxOutputTokens: runtimeModel.maxOutputTokens }
+                    : {}),
+                }
+              : {}),
             workspaceId: input.agent.workspaceId,
             agentId: input.agent.id,
             sandboxId: link.sandboxId,
@@ -175,38 +275,83 @@ export async function runDedicatedSandboxTurn(
             provider,
             modelId,
             maxSteps: input.agent.maxSteps,
-            contextWindow: modelContext.maxTokens,
-            contextWindowEstimated: modelContext.estimated,
+            contextWindow:
+              runtimeModel?.contextWindow ?? modelContext.maxTokens,
+            contextWindowEstimated: runtimeModel?.contextWindow
+              ? false
+              : modelContext.estimated,
             modelProxyBase: runtimeModelProxyBase(provider.id),
             runtimeAccessToken,
+            nativeUiUrl: `${sandboxRuntimeOrigin()}/api/v1/agent-runtime/sessions/ui`,
             systemPrompt: input.systemPrompt,
             disabledBuiltinTools: input.agent.disabledBuiltinTools,
             messages: input.messages,
             skills: input.skills,
             ...(runtimeKind === "pi-sdk"
-              ? { piPackages: input.piPackages }
+              ? { piPackages: piSession?.packages }
               : {}),
-            mcpServers: deploymentIds.map((deploymentId) => ({
-              deploymentId,
-              url: runtimeMcpProxyUrl(deploymentId),
-            })),
+            ...(runtimeKind === "omp" &&
+            (agent.revisionConfig.subagents !== undefined ||
+              agent.revisionConfig.subagentMode !== undefined)
+              ? {
+                  ompCapabilities: {
+                    mode: agent.revisionConfig.subagentMode,
+                    plugins: resolveAgentPiPackages(agent),
+                    subagents: agent.capabilitySubagents,
+                    nativeRoleModels: agent.nativeRoleModels,
+                    policy: nativePolicy ?? { maxDepth: 4, maxConcurrency: 4 },
+                  },
+                }
+              : {}),
+            mcpServers: [
+              ...deploymentIds.map((deploymentId) => ({
+                deploymentId,
+                url: runtimeMcpProxyUrl(deploymentId),
+              })),
+              ...externalSandboxes,
+            ],
             workingDirectory: input.workingDirectory,
             runtimeSessionId,
+            agentRevisionId: agent.agentRevisionId,
             command: input.command,
+            reasoningEffort: input.reasoningEffort,
+            historyRequired: input.historyRequired,
+            onPromptInvocation: input.onPromptInvocation,
             signal: input.signal,
             onTextDelta: input.onTextDelta,
             onActivity: async (activity) => {
-              if (activity.type === "tool")
-                await recordEvent({
-                  domain: "agent",
-                  eventName: "sandbox.tool",
-                  toolName: activity.toolName,
-                  outcome: activity.status === "failed" ? "error" : "success",
-                  attributes: {
-                    status: activity.status,
-                    toolCallId: activity.toolCallId,
-                  },
-                });
+              if (activity.type === "tool" && activity.toolCallId) {
+                const started = runningTools.get(activity.toolCallId);
+                const merged = {
+                  ...started,
+                  ...activity,
+                  input: activity.input ?? started?.input,
+                };
+                if (activity.status === "running") {
+                  runningTools.set(activity.toolCallId, {
+                    ...merged,
+                    startedAt: started?.startedAt ?? Date.now(),
+                  });
+                } else {
+                  runningTools.delete(activity.toolCallId);
+                  // One record per finished call; workspace members read it in the Agent tool log.
+                  await recordEvent({
+                    domain: "agent",
+                    eventName: "sandbox.tool",
+                    toolName: merged.originalToolName ?? merged.toolName,
+                    deploymentId: merged.deploymentId,
+                    outcome: activity.status === "failed" ? "error" : "success",
+                    durationMs:
+                      activity.durationMs ??
+                      (started ? Date.now() - started.startedAt : undefined),
+                    attributes: { toolCallId: activity.toolCallId },
+                    detail: {
+                      request: merged.input ?? null,
+                      response: activity.output ?? null,
+                    },
+                  });
+                }
+              }
               await input.onActivity?.(activity);
             },
             onContextUsage: input.onContextUsage,
@@ -214,16 +359,20 @@ export async function runDedicatedSandboxTurn(
             onUsage: input.onUsage,
             onCommandResult: input.onCommandResult,
           };
-          if (input.nativeCompaction) {
-            const result = await compactPiHarnessSession(
-              options,
-              input.nativeCompaction.contextId,
-              input.nativeCompaction.customInstructions,
-            );
-            input.nativeCompaction.onResult(result);
-            return result.text;
-          }
-          return runSandboxAgentTurn(options);
+          return withWorkUiLease(
+            {
+              conversationId,
+              workspaceId: agent.workspaceId,
+              agentId: agent.id,
+              agentRevisionId: agent.agentRevisionId,
+            },
+            runtimeAccessToken,
+            (enabled) =>
+              runSandboxAgentTurn({
+                ...options,
+                nativeUiUrl: enabled ? options.nativeUiUrl : undefined,
+              }),
+          );
         },
       ),
   );

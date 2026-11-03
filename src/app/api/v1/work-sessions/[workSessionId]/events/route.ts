@@ -17,12 +17,7 @@ import { workspaceAccessStream } from "@/lib/workspace/access-stream";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const LIVE_STATUSES = new Set([
-  "queued",
-  "running",
-  "waiting_approval",
-  "cancelling",
-]);
+const LIVE_STATUSES = new Set(["queued", "running", "cancelling"]);
 
 function completedOutput(
   messages: Array<{ role: string; parts: unknown }>,
@@ -86,11 +81,9 @@ function completedOutput(
           type: "tool",
           status: isError
             ? "failed"
-            : value.status === "running"
-              ? "running"
-              : value.status === "cancelled"
-                ? "cancelled"
-                : "completed",
+            : value.status === "cancelled" || value.status === "running"
+              ? "cancelled"
+              : "completed",
           toolCallId,
           toolName:
             typeof value.toolName === "string" ? value.toolName : "Tool",
@@ -223,7 +216,9 @@ export const GET = withRequestLogging(
           15_000,
         );
         heartbeat.unref?.();
+        let receivedEvent = false;
         const subscription = subscribeWorkOutput(workSessionId, (event) => {
+          receivedEvent = true;
           enqueue(
             encodeSseEvent(
               event.type,
@@ -241,13 +236,43 @@ export const GET = withRequestLogging(
         });
         unsubscribe = subscription.unsubscribe;
         cleanup = close;
+        const pendingSnapshot: WorkOutputSnapshot = {
+          text: "",
+          activities: [],
+          active: true,
+          done: false,
+          executionStage: work.status === "queued" ? "queued" : "preparing",
+        };
         req.signal.addEventListener("abort", onAbort, { once: true });
-        enqueue(encodeSseEvent("snapshot", subscription.snapshot));
-        if (subscription.snapshot.done) {
-          enqueue(encodeSseEvent("done", subscription.snapshot));
-          enqueue(encodeSseDone());
-          close();
-          return;
+        if (!subscription.snapshot.done) {
+          enqueue(
+            encodeSseEvent(
+              "snapshot",
+              subscription.snapshot.active
+                ? subscription.snapshot
+                : pendingSnapshot,
+            ),
+          );
+        } else {
+          // A queued follow-up can still have the previous turn's retained output.
+          enqueue(encodeSseEvent("snapshot", pendingSnapshot));
+          // Recheck persistence because this turn may also have finished between
+          // the initial Work lookup and subscribing to its output channel.
+          void getWorkSessionForUser(user.id, workSessionId)
+            .then((current) => {
+              if (closed || receivedEvent) return;
+              if (!current) {
+                close();
+                return;
+              }
+              if (LIVE_STATUSES.has(current.status)) return;
+              const snapshot = completedOutput(current.conversation.messages);
+              enqueue(encodeSseEvent("snapshot", snapshot));
+              enqueue(encodeSseEvent("done", snapshot));
+              enqueue(encodeSseDone());
+              close();
+            })
+            .catch(() => close());
         }
       },
       cancel() {

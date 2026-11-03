@@ -1,22 +1,30 @@
 "use client";
-import { AnimatedBadge } from "@/components/motion/animated-badge";
+import { DashboardEmptyState } from "@/components/dashboard/DashboardUI";
 import { Button } from "@/components/motion/button/base";
 import { Input } from "@/components/motion/input";
+import { Tabs, TabsList, TabsTrigger } from "@/components/motion/tabs";
 import { Tooltip } from "@/components/motion/tooltip";
 import { FormSelect } from "@/components/ui/FormSelect";
 import {
   CenterMorphModal,
   CenterMorphModalTrigger,
-  CenterMorphModalClose,
   CenterMorphModalContent,
 } from "@/components/motion/center-morph-modal";
+import {
+  DialogBody,
+  DialogCancel,
+  DialogField,
+  DialogFooter,
+  DialogHeader,
+} from "@/components/dashboard/dialog";
 
 import { useLocale, useTranslations } from "next-intl";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   useActionState,
   useEffect,
   useMemo,
+  useId,
   useRef,
   useState,
   type ReactElement,
@@ -30,7 +38,8 @@ import {
   BrainCircuit,
   ChevronDown,
   ChevronRight,
-  ChevronUp,
+  ChevronsDownUp,
+  ChevronsUpDown,
   Cpu,
   Eye,
   FlaskConical,
@@ -143,6 +152,7 @@ function ProviderDialog({
   onOpenChange,
   trigger,
   title,
+  labelledTrigger = false,
   maxWidth = "max-w-xl",
   children,
 }: {
@@ -150,27 +160,30 @@ function ProviderDialog({
   onOpenChange: (open: boolean) => void;
   trigger: ReactElement;
   title: string;
-  maxWidth?: "max-w-xl" | "max-w-2xl";
+  /** Render the trigger without a tooltip. */
+  labelledTrigger?: boolean;
+  maxWidth?: "max-w-xl" | "max-w-2xl" | "max-w-3xl";
   children: ReactNode;
 }) {
   const t = useTranslations("console.agents");
+  const triggerElement = (
+    <CenterMorphModalTrigger>{trigger}</CenterMorphModalTrigger>
+  );
 
   return (
     <CenterMorphModal open={open} onOpenChange={onOpenChange}>
-      <Tooltip content={title}>
-        <CenterMorphModalTrigger>{trigger}</CenterMorphModalTrigger>
-      </Tooltip>
+      {labelledTrigger ? (
+        triggerElement
+      ) : (
+        <Tooltip content={title}>{triggerElement}</Tooltip>
+      )}
       <CenterMorphModalContent
         ariaLabel={title}
         closeButtonLabel={t("close")}
-        className={maxWidth}
+        className={`flex max-h-[calc(100dvh-4rem)] w-full flex-col ${maxWidth}`}
       >
-        <div className="flex items-center border-b border-border pl-5 pr-16 py-4">
-          <h2 className="text-base font-semibold text-foreground">{title}</h2>
-        </div>
-        <div className="max-h-[calc(100vh-7rem)] overflow-y-auto">
-          {children}
-        </div>
+        <DialogHeader title={title} className="border-b border-border" />
+        {children}
       </CenterMorphModalContent>
     </CenterMorphModal>
   );
@@ -197,15 +210,25 @@ function ModelOptionButton({
       type="button"
       aria-pressed={pressed}
       onClick={onClick}
-      variant={pressed ? "secondary" : "ghost"}
+      variant="outline"
       size="sm"
+      className={
+        pressed
+          ? "border-primary/60 bg-primary/10 text-foreground hover:bg-primary/15"
+          : "text-muted-foreground"
+      }
     >
       {children}
     </Button>
   );
 }
 
+function sameSet(a: readonly string[], b: readonly string[]) {
+  return a.length === b.length && a.every((value) => b.includes(value));
+}
+
 function ModelClassificationControls({
+  initial,
   primaryType,
   capabilities,
   inputModalities,
@@ -213,6 +236,10 @@ function ModelClassificationControls({
   onCapabilitiesChange,
   onInputModalitiesChange,
 }: {
+  initial: Pick<
+    ProviderModelValues,
+    "primaryType" | "capabilities" | "inputModalities"
+  >;
   primaryType: ModelPrimaryType;
   capabilities: ModelCapability[];
   inputModalities: ModelInputModality[];
@@ -241,15 +268,13 @@ function ModelClassificationControls({
     );
 
   return (
-    <div className="space-y-4 rounded-md border border-border bg-muted/20 p-3">
-      <fieldset
-        className="m-0 min-w-0 border-0 p-0"
-        aria-label={t("modelType")}
+    <div className="grid gap-5 sm:grid-cols-2">
+      <DialogField
+        label={t("modelType")}
+        dirty={primaryType !== initial.primaryType}
+        className="sm:col-span-2"
       >
-        <p className="mb-2 text-[11px] font-semibold uppercase text-muted-foreground">
-          {t("modelType")}
-        </p>
-        <div className="flex flex-wrap gap-2">
+        <fieldset aria-label={t("modelType")} className="flex flex-wrap gap-2">
           {(Object.keys(typeLabels) as ModelPrimaryType[]).map((type) => (
             <ModelOptionButton
               key={type}
@@ -260,16 +285,16 @@ function ModelClassificationControls({
               {typeLabels[type]}
             </ModelOptionButton>
           ))}
-        </div>
-      </fieldset>
-      <fieldset
-        className="m-0 min-w-0 border-0 p-0"
-        aria-label={t("modelCapabilities")}
+        </fieldset>
+      </DialogField>
+      <DialogField
+        label={t("modelCapabilities")}
+        dirty={!sameSet(capabilities, initial.capabilities)}
       >
-        <p className="mb-2 text-[11px] font-semibold uppercase text-muted-foreground">
-          {t("modelCapabilities")}
-        </p>
-        <div className="flex flex-wrap gap-2">
+        <fieldset
+          aria-label={t("modelCapabilities")}
+          className="flex flex-wrap gap-2"
+        >
           <ModelOptionButton
             pressed={capabilities.includes("reasoning")}
             onClick={() => toggleCapability("reasoning")}
@@ -284,16 +309,16 @@ function ModelClassificationControls({
             <Wrench className="size-3.5" />
             {t("capabilityTools")}
           </ModelOptionButton>
-        </div>
-      </fieldset>
-      <fieldset
-        className="m-0 min-w-0 border-0 p-0"
-        aria-label={t("inputModalities")}
+        </fieldset>
+      </DialogField>
+      <DialogField
+        label={t("inputModalities")}
+        dirty={!sameSet(inputModalities, initial.inputModalities)}
       >
-        <p className="mb-2 text-[11px] font-semibold uppercase text-muted-foreground">
-          {t("inputModalities")}
-        </p>
-        <div className="flex flex-wrap gap-2">
+        <fieldset
+          aria-label={t("inputModalities")}
+          className="flex flex-wrap gap-2"
+        >
           <ModelOptionButton
             pressed={inputModalities.includes("image")}
             onClick={() => toggleModality("image")}
@@ -315,8 +340,8 @@ function ModelClassificationControls({
             <Video className="size-3.5" />
             {t("modalityVideo")}
           </ModelOptionButton>
-        </div>
-      </fieldset>
+        </fieldset>
+      </DialogField>
       {capabilities.map((capability) => (
         <input
           key={capability}
@@ -339,9 +364,11 @@ function ModelClassificationControls({
 }
 
 function ModelLimits({
+  initial,
   model,
   onChange,
 }: {
+  initial: ProviderModelValues;
   model: ProviderModelValues;
   onChange: (
     values: Partial<
@@ -353,64 +380,52 @@ function ModelLimits({
   ) => void;
 }) {
   const t = useTranslations("console.agents");
-  const setValue = (
-    field: "contextWindow" | "maxInputTokens" | "maxOutputTokens",
-    value: string,
-  ) =>
-    onChange({
-      [field]: value ? Number(value) : null,
-    });
+  const id = useId();
+  const fields = [
+    ["contextWindow", "128000"],
+    ["maxInputTokens", "128000"],
+    ["maxOutputTokens", "65536"],
+  ] as const;
   return (
-    <div className="grid gap-3 sm:grid-cols-3">
-      <Input
-        label={t("contextWindow")}
-        leftIcon={<Cpu />}
-        name="contextWindow"
-        type="number"
-        min="1"
-        max="100000000"
-        placeholder="128000"
-        value={String(model.contextWindow ?? "")}
-        onChange={(value) => setValue("contextWindow", value)}
-        className="w-full"
-      />
-      <Input
-        label={t("maxInputTokens")}
-        leftIcon={<Cpu />}
-        name="maxInputTokens"
-        type="number"
-        min="1"
-        max="100000000"
-        placeholder="128000"
-        value={String(model.maxInputTokens ?? "")}
-        onChange={(value) => setValue("maxInputTokens", value)}
-        className="w-full"
-      />
-      <Input
-        label={t("maxOutputTokens")}
-        leftIcon={<Cpu />}
-        name="maxOutputTokens"
-        type="number"
-        min="1"
-        max="100000000"
-        placeholder="65536"
-        value={String(model.maxOutputTokens ?? "")}
-        onChange={(value) => setValue("maxOutputTokens", value)}
-        className="w-full"
-      />
+    <div className="grid gap-5 sm:grid-cols-3">
+      {fields.map(([field, placeholder]) => (
+        <DialogField
+          key={field}
+          label={t(field)}
+          htmlFor={`${id}-${field}`}
+          dirty={model[field] !== initial[field]}
+        >
+          <Input
+            id={`${id}-${field}`}
+            name={field}
+            type="number"
+            min="1"
+            max="100000000"
+            placeholder={placeholder}
+            value={String(model[field] ?? "")}
+            onChange={(value) =>
+              onChange({ [field]: value ? Number(value) : null })
+            }
+            className="w-full"
+          />
+        </DialogField>
+      ))}
     </div>
   );
 }
 
 function ModelPrices({
+  initial,
   model,
   onChange,
 }: {
+  initial: ProviderModelValues;
   model: ProviderModelValues;
   onChange: (values: Pick<ProviderModelValues, "cost">) => void;
 }) {
   const t = useTranslations("console.agents");
   const numbers = new Intl.NumberFormat(useLocale());
+  const id = useId();
   const fields = [
     ["input", "catalogInputPrice"],
     ["output", "catalogOutputPrice"],
@@ -423,12 +438,15 @@ function ModelPrices({
     cacheRead: 0,
     cacheWrite: 0,
   };
+  const hasTiers = (model.cost?.tiers?.length ?? 0) > 0;
   return (
-    <fieldset className="space-y-3">
-      <legend className="text-xs text-muted-foreground">
-        {t("catalogPriceUnit")}
+    <fieldset className="m-0 min-w-0 space-y-3 border-0 p-0">
+      <legend className="mb-3 text-sm font-medium text-foreground">
+        {t("modelPricing")}
+        <span className="ml-2 text-xs font-normal text-muted-foreground">
+          {t("catalogPriceUnit")}
+        </span>
       </legend>
-      <p className="text-xs text-muted-foreground">{t("catalogTierHint")}</p>
       {[
         { rates: model.cost, label: t("catalogBasePrice"), index: -1 },
         ...(model.cost?.tiers ?? []).map((rates, index) => ({
@@ -439,12 +457,55 @@ function ModelPrices({
           index,
         })),
       ].map(({ rates, label, index }) => (
-        <fieldset key={index} className="space-y-2">
-          <legend className="text-xs font-medium">{label}</legend>
+        <fieldset
+          key={index}
+          aria-label={label}
+          className={
+            index < 0
+              ? "m-0 min-w-0 space-y-3 border-0 p-0"
+              : "m-0 min-w-0 space-y-3 rounded-xl border border-border p-3"
+          }
+        >
+          {hasTiers ? (
+            <div className="flex min-h-8 items-center justify-between gap-2 px-1">
+              <span className="text-xs font-medium text-muted-foreground">
+                {label}
+              </span>
+              {index >= 0 ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  aria-label={t("catalogRemoveTier")}
+                  onClick={() => {
+                    const { tiers, ...rates } = base;
+                    const remaining = (tiers ?? []).filter(
+                      (_, tierIndex) => tierIndex !== index,
+                    );
+                    onChange({
+                      cost: {
+                        ...rates,
+                        ...(remaining.length ? { tiers: remaining } : {}),
+                      },
+                    });
+                  }}
+                >
+                  <Trash2 aria-hidden="true" className="size-4" />
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
           {index >= 0 && rates && "inputTokensAbove" in rates ? (
-            <div className="flex items-end gap-2">
+            <DialogField
+              label={t("catalogTierThreshold")}
+              htmlFor={`${id}-${index}-threshold`}
+              dirty={
+                rates.inputTokensAbove !==
+                initial.cost?.tiers?.[index]?.inputTokensAbove
+              }
+            >
               <Input
-                label={t("catalogTierThreshold")}
+                id={`${id}-${index}-threshold`}
                 type="number"
                 min="0"
                 step="1"
@@ -462,57 +523,49 @@ function ModelPrices({
                     },
                   });
                 }}
-                className="min-w-0 flex-1"
-              />
-              <Button
-                type="button"
-                variant="secondary"
-                size="icon"
-                aria-label={t("catalogRemoveTier")}
-                onClick={() => {
-                  const { tiers, ...rates } = base;
-                  const remaining = (tiers ?? []).filter(
-                    (_, tierIndex) => tierIndex !== index,
-                  );
-                  onChange({
-                    cost: {
-                      ...rates,
-                      ...(remaining.length ? { tiers: remaining } : {}),
-                    },
-                  });
-                }}
-              >
-                <Trash2 aria-hidden="true" className="size-4" />
-              </Button>
-            </div>
-          ) : null}
-          <div className="grid gap-3 sm:grid-cols-2">
-            {fields.map(([field, translation]) => (
-              <Input
-                key={field}
-                label={t(translation)}
-                type="number"
-                min="0"
-                step="any"
-                value={String(rates?.[field] ?? "")}
-                onChange={(value) => {
-                  const price = value ? Number(value) : 0;
-                  onChange({
-                    cost:
-                      index < 0
-                        ? { ...base, [field]: price }
-                        : {
-                            ...base,
-                            tiers: base.tiers?.map((tier, tierIndex) =>
-                              tierIndex === index
-                                ? { ...tier, [field]: price }
-                                : tier,
-                            ),
-                          },
-                  });
-                }}
                 className="w-full"
               />
+            </DialogField>
+          ) : null}
+          <div className="grid grid-cols-2 gap-5 sm:grid-cols-4">
+            {fields.map(([field, translation]) => (
+              <DialogField
+                key={field}
+                label={t(translation)}
+                htmlFor={`${id}-${index}-${field}`}
+                dirty={
+                  (rates?.[field] ?? null) !==
+                  ((index < 0 ? initial.cost : initial.cost?.tiers?.[index])?.[
+                    field
+                  ] ?? null)
+                }
+              >
+                <Input
+                  id={`${id}-${index}-${field}`}
+                  type="number"
+                  min="0"
+                  step="any"
+                  placeholder="0"
+                  value={String(rates?.[field] ?? "")}
+                  onChange={(value) => {
+                    const price = value ? Number(value) : 0;
+                    onChange({
+                      cost:
+                        index < 0
+                          ? { ...base, [field]: price }
+                          : {
+                              ...base,
+                              tiers: base.tiers?.map((tier, tierIndex) =>
+                                tierIndex === index
+                                  ? { ...tier, [field]: price }
+                                  : tier,
+                              ),
+                            },
+                    });
+                  }}
+                  className="w-full"
+                />
+              </DialogField>
             ))}
           </div>
         </fieldset>
@@ -536,60 +589,259 @@ function ModelPrices({
         <Plus aria-hidden="true" className="size-4" />
         {t("catalogAddTier")}
       </Button>
+      {hasTiers ? (
+        <p className="px-1 text-xs leading-5 text-muted-foreground">
+          {t("catalogTierHint")}
+        </p>
+      ) : null}
     </fieldset>
   );
 }
 
-function ModelEditorFields({
-  model,
+/**
+ * Model add/edit form. The dialog unmounts its content when closed, so every
+ * opening starts from `initialModel` with no manual edits recorded.
+ */
+function ModelForm({
+  slug,
+  providerId,
+  initialModel,
   modelIdReadOnly = false,
-  onModelIdChange,
-  onNameChange,
-  onGroupChange,
+  active,
+  state,
+  formAction,
+  submit,
 }: {
-  model: ProviderModelValues;
+  slug: string;
+  providerId: string;
+  initialModel: ProviderModelValues;
   modelIdReadOnly?: boolean;
-  onModelIdChange?: (value: string) => void;
-  onNameChange: (value: string) => void;
-  onGroupChange: (value: string) => void;
+  /** False while the dialog animates closed; stops catalog autofill. */
+  active: boolean;
+  state: ActionState;
+  formAction: (formData: FormData) => void;
+  submit: {
+    icon: ReactNode;
+    label: string;
+    pendingLabel: string;
+    savedLabel: string;
+  };
 }) {
   const t = useTranslations("console.agents");
+  const common = useTranslations("common");
+  const settingsId = useId();
+  const [showMore, setShowMore] = useState(false);
+  const [model, setModel] = useState<ProviderModelValues>(initialModel);
+  const manualFields = useRef(new Set<keyof ProviderModelValues>());
+  const updateModel = (values: Partial<ProviderModelValues>) => {
+    for (const field of Object.keys(values) as Array<keyof ProviderModelValues>)
+      manualFields.current.add(field);
+    setModel((current) => ({ ...current, ...values }));
+  };
+  const typeLabels: Record<ModelPrimaryType, string> = {
+    text: t("modelTypeText"),
+    image: t("modelTypeImage"),
+    embedding: t("modelTypeEmbedding"),
+    rerank: t("modelTypeRerank"),
+  };
+  // Shows catalog-filled settings without expanding the section.
+  const summary = [
+    typeLabels[model.primaryType],
+    model.capabilities.includes("reasoning") && t("capabilityReasoning"),
+    model.capabilities.includes("function_calling") && t("capabilityTools"),
+    model.inputModalities.includes("image") && t("modalityVision"),
+    model.inputModalities.includes("audio") && t("modalityAudio"),
+    model.inputModalities.includes("video") && t("modalityVideo"),
+    model.contextWindow &&
+      `${t("contextWindow")} ${compactTokens.format(model.contextWindow)}`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  const fieldId = useId();
+  // Collapsed settings still flag unsaved edits on the toggle.
+  const advancedDirty =
+    model.primaryType !== initialModel.primaryType ||
+    !sameSet(model.capabilities, initialModel.capabilities) ||
+    !sameSet(model.inputModalities, initialModel.inputModalities) ||
+    model.contextWindow !== initialModel.contextWindow ||
+    model.maxInputTokens !== initialModel.maxInputTokens ||
+    model.maxOutputTokens !== initialModel.maxOutputTokens ||
+    JSON.stringify(model.cost ?? null) !==
+      JSON.stringify(initialModel.cost ?? null);
+
   return (
-    <div className="grid gap-3">
-      <div className="space-y-1.5">
-        <Input
-          label={t("modelId")}
-          leftIcon={<Cpu />}
-          name="modelId"
-          required
-          readOnly={modelIdReadOnly}
-          placeholder="gpt-5.5"
-          value={String(model.modelId)}
-          onChange={(value) => onModelIdChange?.(value)}
-        />
-        <p className="text-xs text-muted-foreground">
-          {!modelIdReadOnly ? t("modelIdBatchHint") : undefined}
-        </p>
-      </div>
-      <Input
-        label={t("modelName")}
-        leftIcon={<Pencil />}
-        name="name"
-        placeholder="GPT-5.5"
-        value={String(model.name)}
-        onChange={(value) => onNameChange(value)}
-        className="w-full"
+    <form
+      action={formAction}
+      // Collapsed settings stay in the form; reveal them if one is invalid.
+      onInvalidCapture={() => setShowMore(true)}
+      className="flex min-h-0 flex-1 flex-col"
+    >
+      <input type="hidden" name="workspace" value={slug} />
+      <input type="hidden" name="providerId" value={providerId} />
+      <input
+        type="hidden"
+        name="cost"
+        value={JSON.stringify(model.cost ?? null)}
       />
-      <Input
-        label={t("modelGroup")}
-        leftIcon={<Boxes />}
-        name="group"
-        placeholder="ChatGPT"
-        value={String(model.group)}
-        onChange={(value) => onGroupChange(value)}
-        className="w-full"
-      />
-    </div>
+      <DialogBody>
+        <div className="space-y-5">
+          <DialogField
+            label={t("modelId")}
+            htmlFor={`${fieldId}-modelId`}
+            dirty={model.modelId !== initialModel.modelId}
+            description={modelIdReadOnly ? undefined : t("modelIdBatchHint")}
+          >
+            <Input
+              id={`${fieldId}-modelId`}
+              leftIcon={<Cpu />}
+              name="modelId"
+              required
+              readOnly={modelIdReadOnly}
+              placeholder="gpt-5.5"
+              value={String(model.modelId)}
+              onChange={(modelId) =>
+                // A new ID reloads defaults but keeps fields the user edited.
+                setModel((current) => ({
+                  ...defaultProviderModel(modelId),
+                  ...Object.fromEntries(
+                    [...manualFields.current].map((field) => [
+                      field,
+                      current[field],
+                    ]),
+                  ),
+                }))
+              }
+              className="w-full"
+              classNames={
+                modelIdReadOnly
+                  ? { field: "bg-muted/40", input: "text-muted-foreground" }
+                  : undefined
+              }
+            />
+          </DialogField>
+          <div className="grid gap-5 sm:grid-cols-2">
+            <DialogField
+              label={t("modelName")}
+              htmlFor={`${fieldId}-name`}
+              dirty={model.name !== initialModel.name}
+            >
+              <Input
+                id={`${fieldId}-name`}
+                leftIcon={<Pencil />}
+                name="name"
+                placeholder="GPT-5.5"
+                value={String(model.name)}
+                onChange={(name) => updateModel({ name })}
+                className="w-full"
+              />
+            </DialogField>
+            <DialogField
+              label={t("modelGroup")}
+              htmlFor={`${fieldId}-group`}
+              dirty={model.group !== initialModel.group}
+            >
+              <Input
+                id={`${fieldId}-group`}
+                leftIcon={<Boxes />}
+                name="group"
+                placeholder="ChatGPT"
+                value={String(model.group)}
+                onChange={(group) => updateModel({ group })}
+                className="w-full"
+              />
+            </DialogField>
+          </div>
+          <ProviderModelAutofill
+            slug={slug}
+            providerId={providerId}
+            modelId={model.modelId}
+            name={model.name}
+            open={active}
+            setModel={setModel}
+            manualFields={manualFields}
+          />
+        </div>
+        <div className="border-t border-border pt-3">
+          <Button
+            type="button"
+            onClick={() => setShowMore((value) => !value)}
+            aria-expanded={showMore}
+            aria-controls={settingsId}
+            variant="ghost"
+            className="h-10 w-full justify-start gap-3 rounded-lg px-2 text-foreground"
+          >
+            <span className="shrink-0 text-sm font-medium">
+              {t("moreSettings")}
+            </span>
+            <span className="min-w-0 flex-1 truncate text-left text-xs font-normal text-muted-foreground">
+              {showMore ? null : summary}
+            </span>
+            {advancedDirty ? (
+              <span
+                className="size-1.5 shrink-0 rounded-full bg-primary"
+                role="img"
+                aria-label={common("modified")}
+              />
+            ) : null}
+            <ChevronDown
+              aria-hidden="true"
+              className={`size-4 shrink-0 text-muted-foreground transition-transform ${showMore ? "rotate-180" : ""}`}
+            />
+          </Button>
+          <div id={settingsId} hidden={!showMore} className="space-y-6 pt-4">
+            <ModelClassificationControls
+              initial={initialModel}
+              primaryType={model.primaryType}
+              capabilities={model.capabilities}
+              inputModalities={model.inputModalities}
+              onPrimaryTypeChange={(primaryType) =>
+                updateModel({ primaryType })
+              }
+              onCapabilitiesChange={(capabilities) =>
+                updateModel({ capabilities })
+              }
+              onInputModalitiesChange={(inputModalities) =>
+                updateModel({ inputModalities })
+              }
+            />
+            <ModelLimits
+              initial={initialModel}
+              model={model}
+              onChange={updateModel}
+            />
+            <ModelPrices
+              initial={initialModel}
+              model={model}
+              onChange={updateModel}
+            />
+          </div>
+        </div>
+        <ActionMessage state={state} />
+      </DialogBody>
+      <DialogFooter cancel={<DialogCancel />}>
+        <SubmitButton
+          error={state.error}
+          pendingLabel={submit.pendingLabel}
+          savedLabel={submit.savedLabel}
+          variant="primary"
+          size="md"
+        >
+          {submit.icon}
+          {submit.label}
+        </SubmitButton>
+      </DialogFooter>
+    </form>
+  );
+}
+
+function providerFormatLabel(
+  format: string,
+  piProviderPresets: ProviderPreset[],
+) {
+  return (
+    [...piProviderPresets, ...customProviderPresets].find(
+      (preset) => preset.format === format,
+    )?.name ?? format
   );
 }
 
@@ -604,14 +856,17 @@ function AddProviderDialog({
   slug,
   piProviderPresets,
   onCreated,
+  iconTrigger = false,
 }: {
   slug: string;
   piProviderPresets: ProviderPreset[];
   onCreated: (providerId: string) => void;
+  /** Compact icon trigger for the provider list; the empty state keeps the labelled button. */
+  iconTrigger?: boolean;
 }) {
   const initialPreset = piProviderPresets[0] ?? customProviderPresets[0];
-  const presets = [...piProviderPresets, ...customProviderPresets];
   const t = useTranslations("console.agents");
+  const common = useTranslations("common");
   const [open, setOpen] = useState(false);
   const [savedAtWhenOpened, setSavedAtWhenOpened] = useState<
     number | undefined
@@ -620,8 +875,27 @@ function AddProviderDialog({
   const [format, setFormat] = useState(initialPreset.format);
   const [name, setName] = useState(initialPreset.name);
   const [baseUrl, setBaseUrl] = useState("");
-  const selectedPreset = presets.find((preset) => preset.format === format);
+  const [query, setQuery] = useState("");
+  const selectedPreset = [...piProviderPresets, ...customProviderPresets].find(
+    (preset) => preset.format === format,
+  );
   const isCustomProvider = !format.startsWith("pi:");
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const presetGroups = [
+    { label: t("builtInProviders"), presets: piProviderPresets },
+    { label: t("compatibleProviders"), presets: customProviderPresets },
+  ]
+    .map((group) => ({
+      ...group,
+      presets: normalizedQuery
+        ? group.presets.filter((preset) =>
+            [preset.name, preset.format, preset.baseUrl].some((value) =>
+              value.toLocaleLowerCase().includes(normalizedQuery),
+            ),
+          )
+        : group.presets,
+    }))
+    .filter((group) => group.presets.length > 0);
   const [state, formAction] = useActionState<ActionState, FormData>(
     createProviderAction,
     {},
@@ -639,113 +913,184 @@ function AddProviderDialog({
     onCreated(state.providerId);
   }, [state.providerId, onCreated]);
 
+  function selectPreset(preset: ProviderPreset) {
+    // Keep a name the user typed; replace only the untouched preset name.
+    if (!name.trim() || name === selectedPreset?.name) setName(preset.name);
+    setFormat(preset.format);
+    setBaseUrl("");
+  }
+
+  const fieldId = useId();
+
   return (
     <ProviderDialog
       open={open && (!state.savedAt || state.savedAt === savedAtWhenOpened)}
       onOpenChange={(next) => {
-        if (next) setSavedAtWhenOpened(state.savedAt);
-        else setApiKey("");
+        if (next) {
+          // A provider was created since the last opening: start a fresh form.
+          if (state.savedAt && state.savedAt !== savedAtWhenOpened) {
+            setFormat(initialPreset.format);
+            setName(initialPreset.name);
+            setBaseUrl("");
+            setQuery("");
+          }
+          setSavedAtWhenOpened(state.savedAt);
+        } else setApiKey("");
         setOpen(next);
       }}
       title={t("addModelProvider")}
+      maxWidth="max-w-3xl"
+      labelledTrigger={!iconTrigger}
       trigger={
-        <Button
-          variant="secondary"
-          size="icon"
-          type="button"
-          aria-label={t("addProvider")}
-        >
-          <Plus aria-hidden="true" className="size-4" />
-        </Button>
+        iconTrigger ? (
+          <Button
+            variant="ghost"
+            size="icon"
+            type="button"
+            aria-label={t("addModelProvider")}
+          >
+            <Plus aria-hidden="true" className="size-4" />
+          </Button>
+        ) : (
+          <Button variant="primary" size="md" type="button">
+            <Plus aria-hidden="true" className="size-4" />
+            {t("addProvider")}
+          </Button>
+        )
       }
     >
-      <form action={formAction} className="grid gap-3 px-5 py-5 xl:grid-cols-2">
+      <form
+        action={formAction}
+        className="flex min-h-0 flex-1 flex-col md:h-[30rem] md:flex-none md:flex-row"
+      >
         <input type="hidden" name="workspace" value={slug} />
-        <Input
-          label={t("name")}
-          leftIcon={<Cpu />}
-          name="name"
-          required
-          value={String(name)}
-          onChange={(value) => setName(value)}
-          className="w-full"
-        />
-        <div className="space-y-1.5">
-          <p className="text-sm font-medium">{t("format")}</p>
-          <FormSelect
-            name="format"
-            value={format}
-            label={t("format")}
-            options={[providerFormatOptions(piProviderPresets)]
-              .flat()
-              .filter((option) => option != null)}
-            onValueChange={(value) => {
-              const preset = presets.find(
-                (candidate) => candidate.format === value,
-              );
-              setFormat(value);
-              if (preset) {
-                setName(preset.name);
-                setBaseUrl("");
-              }
-            }}
-            className="w-full"
-          />
-        </div>
-        <div className="space-y-1.5">
-          <Input
-            label={t("baseUrl")}
-            leftIcon={<Link2 />}
-            name="baseUrl"
-            required={isCustomProvider}
-            placeholder={
-              !isCustomProvider ? selectedPreset?.baseUrl : undefined
-            }
-            value={String(baseUrl)}
-            onChange={(value) => setBaseUrl(value)}
-            className="w-full"
-          />
-          <p className="text-xs text-muted-foreground">
-            {!isCustomProvider && selectedPreset?.baseUrl
-              ? t("leaveBlankToUseDefaultEndpoint", {
-                  endpoint: selectedPreset.baseUrl,
-                })
-              : undefined}
-          </p>
-        </div>
-        <div className={isCustomProvider ? undefined : "xl:col-span-2"}>
-          <Input
-            label={t("apiKey")}
-            leftIcon={<KeyRound />}
-            name="apiKey"
-            type="password"
-            value={apiKey}
-            onChange={setApiKey}
-            placeholder="API key or token"
-            className="w-full"
-          />
-        </div>
-        <div className="xl:col-span-2">
-          <ActionMessage state={state} />
-          <div className="mt-5 flex items-center justify-end gap-2">
-            <CenterMorphModalClose>
-              <Button size="sm" type="button" variant="secondary">
-                {t("cancel")}
-              </Button>
-            </CenterMorphModalClose>
-            <Tooltip content={t("addProvider")}>
-              <SubmitButton
-                error={state.error}
-                pendingLabel=""
-                savedLabel=""
-                ariaLabel={t("addProvider")}
-                variant="primary"
-                size="icon"
-              >
-                <Plus aria-hidden="true" className="size-4" />
-              </SubmitButton>
-            </Tooltip>
+        <input type="hidden" name="format" value={format} />
+        <div className="flex max-h-56 shrink-0 flex-col border-b border-border md:max-h-none md:w-56 md:border-b-0 md:border-r">
+          <div className="p-3 pb-1">
+            <Input
+              leftIcon={<Search />}
+              aria-label={`${common("search")} ${t("format")}`}
+              placeholder={common("search")}
+              value={query}
+              onChange={setQuery}
+              className="w-full"
+            />
           </div>
+          <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3">
+            {presetGroups.length > 0 ? (
+              presetGroups.map((group) => (
+                <fieldset
+                  key={group.label}
+                  className="m-0 min-w-0 border-0 p-0"
+                >
+                  <legend className="px-3 pb-1 pt-3 text-xs font-medium text-muted-foreground">
+                    {group.label}
+                  </legend>
+                  <div className="space-y-1">
+                    {group.presets.map((preset) => {
+                      const selected = preset.format === format;
+                      return (
+                        <Button
+                          key={preset.format}
+                          type="button"
+                          aria-pressed={selected}
+                          onClick={() => selectPreset(preset)}
+                          variant="ghost"
+                          size="md"
+                          className={`h-9 w-full justify-start rounded-lg px-3 text-left text-sm ${selected ? "bg-muted font-medium text-foreground" : "font-normal"}`}
+                        >
+                          <span className="min-w-0 truncate">
+                            {preset.name}
+                          </span>
+                          {selected && format !== initialPreset.format ? (
+                            <span
+                              className="ml-auto size-1.5 shrink-0 rounded-full bg-primary"
+                              role="img"
+                              aria-label={common("modified")}
+                            />
+                          ) : null}
+                        </Button>
+                      );
+                    })}
+                  </div>
+                </fieldset>
+              ))
+            ) : (
+              <p className="px-3 py-6 text-center text-sm text-muted-foreground">
+                {common("noResults")}
+              </p>
+            )}
+          </div>
+        </div>
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <DialogBody>
+            <DialogField
+              label={t("name")}
+              htmlFor={`${fieldId}-name`}
+              dirty={name !== initialPreset.name}
+            >
+              <Input
+                id={`${fieldId}-name`}
+                leftIcon={<Cpu />}
+                name="name"
+                required
+                value={name}
+                onChange={setName}
+                className="w-full"
+              />
+            </DialogField>
+            {/* The placeholder shows the endpoint used when this stays blank. */}
+            <DialogField
+              label={t("baseUrl")}
+              htmlFor={`${fieldId}-baseUrl`}
+              dirty={baseUrl !== ""}
+            >
+              <Input
+                id={`${fieldId}-baseUrl`}
+                leftIcon={<Link2 />}
+                name="baseUrl"
+                required={isCustomProvider}
+                placeholder={
+                  isCustomProvider
+                    ? "https://api.example.com/v1"
+                    : selectedPreset?.baseUrl
+                }
+                value={baseUrl}
+                onChange={setBaseUrl}
+                className="w-full"
+              />
+            </DialogField>
+            <DialogField
+              label={t("apiKey")}
+              htmlFor={`${fieldId}-apiKey`}
+              dirty={apiKey !== ""}
+            >
+              <Input
+                id={`${fieldId}-apiKey`}
+                leftIcon={<KeyRound />}
+                name="apiKey"
+                type="password"
+                autoComplete="off"
+                required={isCustomProvider}
+                value={apiKey}
+                onChange={setApiKey}
+                className="w-full"
+              />
+            </DialogField>
+            <ActionMessage state={state} />
+          </DialogBody>
+          <DialogFooter cancel={<DialogCancel />}>
+            <SubmitButton
+              error={state.error}
+              pendingLabel={t("adding")}
+              savedLabel={t("added")}
+              variant="primary"
+              size="md"
+            >
+              <Plus aria-hidden="true" className="size-4" />
+              {t("add")}
+            </SubmitButton>
+          </DialogFooter>
         </div>
       </form>
     </ProviderDialog>
@@ -764,179 +1109,43 @@ function AddModelDialog({
   const [savedAtWhenOpened, setSavedAtWhenOpened] = useState<
     number | undefined
   >();
-  const [showMore, setShowMore] = useState(false);
-  const [model, setModel] = useState<ProviderModelValues>(() =>
-    defaultProviderModel(""),
-  );
-  const manualFields = useRef(new Set<keyof ProviderModelValues>());
-  const updateModel = (values: Partial<ProviderModelValues>) => {
-    for (const field of Object.keys(values) as Array<keyof ProviderModelValues>)
-      manualFields.current.add(field);
-    setModel((current) => ({ ...current, ...values }));
-  };
   const [state, formAction] = useActionState<ActionState, FormData>(
     addProviderModelAction,
     {},
   );
-
-  function reset() {
-    setModel(defaultProviderModel(""));
-    manualFields.current.clear();
-    setShowMore(false);
-  }
+  const visible = open && state.savedAt === savedAtWhenOpened;
 
   return (
     <ProviderDialog
-      open={open && state.savedAt === savedAtWhenOpened}
+      open={visible}
       onOpenChange={(nextOpen) => {
-        if (nextOpen) {
-          reset();
-          setSavedAtWhenOpened(state.savedAt);
-        }
+        if (nextOpen) setSavedAtWhenOpened(state.savedAt);
         setOpen(nextOpen);
       }}
       title={t("addModel")}
+      maxWidth="max-w-2xl"
+      labelledTrigger
       trigger={
-        <Button
-          size="icon"
-          variant="secondary"
-          type="button"
-          aria-label={t("addModel")}
-        >
-          <Plus aria-hidden="true" className="size-4" />
+        <Button size="sm" variant="secondary" type="button">
+          <Plus aria-hidden="true" className="size-3.5" />
+          {t("addModel")}
         </Button>
       }
     >
-      <form action={formAction} className="px-5 py-5">
-        <input type="hidden" name="workspace" value={slug} />
-        <input type="hidden" name="providerId" value={providerId} />
-        <input
-          type="hidden"
-          name="cost"
-          value={JSON.stringify(model.cost ?? null)}
-        />
-        <ModelEditorFields
-          model={model}
-          onModelIdChange={(modelId) =>
-            setModel((current) => ({
-              ...defaultProviderModel(modelId),
-              ...Object.fromEntries(
-                [...manualFields.current].map((field) => [
-                  field,
-                  current[field],
-                ]),
-              ),
-            }))
-          }
-          onNameChange={(name) => updateModel({ name })}
-          onGroupChange={(group) => updateModel({ group })}
-        />
-        <ProviderModelAutofill
-          slug={slug}
-          providerId={providerId}
-          modelId={model.modelId}
-          name={model.name}
-          open={open && state.savedAt === savedAtWhenOpened}
-          setModel={setModel}
-          manualFields={manualFields}
-        />
-        <Button
-          type="button"
-          onClick={() => setShowMore((value) => !value)}
-          aria-expanded={showMore}
-          variant="ghost"
-          size="sm"
-          className="mt-4"
-        >
-          {t("moreSettings")}
-          {showMore ? (
-            <ChevronUp className="size-3.5" />
-          ) : (
-            <ChevronDown className="size-3.5" />
-          )}
-        </Button>
-        {showMore ? (
-          <div className="mt-3 space-y-3">
-            <ModelClassificationControls
-              primaryType={model.primaryType}
-              capabilities={model.capabilities}
-              inputModalities={model.inputModalities}
-              onPrimaryTypeChange={(primaryType) =>
-                updateModel({ primaryType })
-              }
-              onCapabilitiesChange={(capabilities) =>
-                updateModel({ capabilities })
-              }
-              onInputModalitiesChange={(inputModalities) =>
-                updateModel({ inputModalities })
-              }
-            />
-            <ModelLimits model={model} onChange={updateModel} />
-            <ModelPrices model={model} onChange={updateModel} />
-          </div>
-        ) : (
-          <>
-            <input type="hidden" name="primaryType" value={model.primaryType} />
-            {model.capabilities.map((capability) => (
-              <input
-                key={capability}
-                type="hidden"
-                name="capabilities"
-                value={capability}
-              />
-            ))}
-            {model.inputModalities.map((modality) => (
-              <input
-                key={modality}
-                type="hidden"
-                name="inputModalities"
-                value={modality}
-              />
-            ))}
-            {model.contextWindow ? (
-              <input
-                type="hidden"
-                name="contextWindow"
-                value={model.contextWindow}
-              />
-            ) : null}
-            {model.maxInputTokens ? (
-              <input
-                type="hidden"
-                name="maxInputTokens"
-                value={model.maxInputTokens}
-              />
-            ) : null}
-            {model.maxOutputTokens ? (
-              <input
-                type="hidden"
-                name="maxOutputTokens"
-                value={model.maxOutputTokens}
-              />
-            ) : null}
-          </>
-        )}
-        <ActionMessage state={state} />
-        <div className="mt-5 flex items-center justify-end gap-2 border-t border-border pt-4">
-          <CenterMorphModalClose>
-            <Button size="sm" type="button" variant="secondary">
-              {t("cancel")}
-            </Button>
-          </CenterMorphModalClose>
-          <Tooltip content={t("addModel")}>
-            <SubmitButton
-              error={state.error}
-              pendingLabel=""
-              savedLabel=""
-              ariaLabel={t("addModel")}
-              variant="primary"
-              size="icon"
-            >
-              <Plus aria-hidden="true" className="size-4" />
-            </SubmitButton>
-          </Tooltip>
-        </div>
-      </form>
+      <ModelForm
+        slug={slug}
+        providerId={providerId}
+        initialModel={defaultProviderModel("")}
+        active={visible}
+        state={state}
+        formAction={formAction}
+        submit={{
+          icon: <Plus aria-hidden="true" className="size-4" />,
+          label: t("add"),
+          pendingLabel: t("adding"),
+          savedLabel: t("added"),
+        }}
+      />
     </ProviderDialog>
   );
 }
@@ -955,32 +1164,21 @@ function EditModelDialog({
   const [savedAtWhenOpened, setSavedAtWhenOpened] = useState<
     number | undefined
   >();
-  const [showMore, setShowMore] = useState(false);
-  const [model, setModel] = useState<ProviderModelValues>(initialModel);
-  const manualFields = useRef(new Set<keyof ProviderModelValues>());
-  const updateModel = (values: Partial<ProviderModelValues>) => {
-    for (const field of Object.keys(values) as Array<keyof ProviderModelValues>)
-      manualFields.current.add(field);
-    setModel((current) => ({ ...current, ...values }));
-  };
   const [state, formAction] = useActionState<ActionState, FormData>(
     updateProviderModelAction,
     {},
   );
+  const visible = open && state.savedAt === savedAtWhenOpened;
 
   return (
     <ProviderDialog
-      open={open && state.savedAt === savedAtWhenOpened}
+      open={visible}
       onOpenChange={(nextOpen) => {
-        if (nextOpen) {
-          setModel(initialModel);
-          manualFields.current.clear();
-          setShowMore(false);
-          setSavedAtWhenOpened(state.savedAt);
-        }
+        if (nextOpen) setSavedAtWhenOpened(state.savedAt);
         setOpen(nextOpen);
       }}
       title={t("editModel")}
+      maxWidth="max-w-2xl"
       trigger={
         <Button
           size="icon"
@@ -992,126 +1190,21 @@ function EditModelDialog({
         </Button>
       }
     >
-      <form action={formAction} className="px-5 py-5">
-        <input type="hidden" name="workspace" value={slug} />
-        <input type="hidden" name="providerId" value={providerId} />
-        <input
-          type="hidden"
-          name="cost"
-          value={JSON.stringify(model.cost ?? null)}
-        />
-        <ModelEditorFields
-          model={model}
-          modelIdReadOnly
-          onNameChange={(name) => updateModel({ name })}
-          onGroupChange={(group) => updateModel({ group })}
-        />
-        <ProviderModelAutofill
-          slug={slug}
-          providerId={providerId}
-          modelId={model.modelId}
-          name={model.name}
-          open={open && state.savedAt === savedAtWhenOpened}
-          setModel={setModel}
-          manualFields={manualFields}
-        />
-        <Button
-          type="button"
-          onClick={() => setShowMore((value) => !value)}
-          aria-expanded={showMore}
-          variant="ghost"
-          size="sm"
-          className="mt-4"
-        >
-          {t("moreSettings")}
-          {showMore ? (
-            <ChevronUp className="size-3.5" />
-          ) : (
-            <ChevronDown className="size-3.5" />
-          )}
-        </Button>
-        {showMore ? (
-          <div className="mt-3 space-y-3">
-            <ModelClassificationControls
-              primaryType={model.primaryType}
-              capabilities={model.capabilities}
-              inputModalities={model.inputModalities}
-              onPrimaryTypeChange={(primaryType) =>
-                updateModel({ primaryType })
-              }
-              onCapabilitiesChange={(capabilities) =>
-                updateModel({ capabilities })
-              }
-              onInputModalitiesChange={(inputModalities) =>
-                updateModel({ inputModalities })
-              }
-            />
-            <ModelLimits model={model} onChange={updateModel} />
-            <ModelPrices model={model} onChange={updateModel} />
-          </div>
-        ) : (
-          <>
-            <input type="hidden" name="primaryType" value={model.primaryType} />
-            {model.capabilities.map((capability) => (
-              <input
-                key={capability}
-                type="hidden"
-                name="capabilities"
-                value={capability}
-              />
-            ))}
-            {model.inputModalities.map((modality) => (
-              <input
-                key={modality}
-                type="hidden"
-                name="inputModalities"
-                value={modality}
-              />
-            ))}
-            {model.contextWindow ? (
-              <input
-                type="hidden"
-                name="contextWindow"
-                value={model.contextWindow}
-              />
-            ) : null}
-            {model.maxInputTokens ? (
-              <input
-                type="hidden"
-                name="maxInputTokens"
-                value={model.maxInputTokens}
-              />
-            ) : null}
-            {model.maxOutputTokens ? (
-              <input
-                type="hidden"
-                name="maxOutputTokens"
-                value={model.maxOutputTokens}
-              />
-            ) : null}
-          </>
-        )}
-        <ActionMessage state={state} />
-        <div className="mt-5 flex items-center justify-end gap-2 border-t border-border pt-4">
-          <CenterMorphModalClose>
-            <Button size="sm" type="button" variant="secondary">
-              {t("cancel")}
-            </Button>
-          </CenterMorphModalClose>
-          <Tooltip content={t("saveChanges")}>
-            <SubmitButton
-              error={state.error}
-              pendingLabel=""
-              savedLabel=""
-              ariaLabel={t("saveChanges")}
-              variant="primary"
-              size="icon"
-            >
-              <Save aria-hidden="true" className="size-4" />
-            </SubmitButton>
-          </Tooltip>
-        </div>
-      </form>
+      <ModelForm
+        slug={slug}
+        providerId={providerId}
+        initialModel={initialModel}
+        modelIdReadOnly
+        active={visible}
+        state={state}
+        formAction={formAction}
+        submit={{
+          icon: <Save aria-hidden="true" className="size-4" />,
+          label: t("saveChanges"),
+          pendingLabel: t("saving"),
+          savedLabel: t("saved"),
+        }}
+      />
     </ProviderDialog>
   );
 }
@@ -1145,6 +1238,7 @@ function DeleteModelForm({
         pendingLabel={t("removingModel")}
         triggerVariant="ghost"
         triggerSize="icon"
+        triggerTooltip={false}
         promptClassName="max-w-52 text-xs text-muted-foreground"
       />
       {state.error ? (
@@ -1153,6 +1247,64 @@ function DeleteModelForm({
         </span>
       ) : null}
     </form>
+  );
+}
+
+// Model name | context | max output | input price | output price | actions.
+// Below xl the numeric columns fold into a single line under the name.
+const MODEL_ROW_GRID =
+  "grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 xl:grid-cols-[minmax(0,1fr)_4.5rem_4.5rem_5rem_5rem_6.5rem]";
+
+const compactTokens = new Intl.NumberFormat("en", {
+  notation: "compact",
+  maximumFractionDigits: 1,
+});
+
+function ModelPriceDetails({
+  cost,
+  numbers,
+  prices,
+}: {
+  cost: NonNullable<ProviderModelRow["cost"]>;
+  numbers: Intl.NumberFormat;
+  prices: Intl.NumberFormat;
+}) {
+  const t = useTranslations("console.agents");
+  const rows = [
+    { label: t("catalogBasePrice"), rates: cost },
+    ...(cost.tiers ?? []).map((tier) => ({
+      label: t("catalogTierAbove", {
+        tokens: numbers.format(tier.inputTokensAbove),
+      }),
+      rates: tier,
+    })),
+  ];
+  return (
+    <span className="block space-y-2 text-left text-xs">
+      <span className="block text-muted-foreground">
+        {t("catalogPriceUnit")}
+      </span>
+      {rows.map(({ label, rates }) => (
+        <span key={label} className="block">
+          {rows.length > 1 ? (
+            <span className="block font-medium">{label}</span>
+          ) : null}
+          {(
+            [
+              ["catalogInputPrice", rates.input],
+              ["catalogOutputPrice", rates.output],
+              ["catalogCacheReadPrice", rates.cacheRead],
+              ["catalogCacheWritePrice", rates.cacheWrite],
+            ] as const
+          ).map(([field, price]) => (
+            <span key={field} className="flex justify-between gap-4">
+              <span className="text-muted-foreground">{t(field)}</span>
+              <span className="tabular-nums">{prices.format(price)}</span>
+            </span>
+          ))}
+        </span>
+      ))}
+    </span>
   );
 }
 
@@ -1180,159 +1332,167 @@ function ModelTestRow({
     embedding: t("modelTypeEmbedding"),
     rerank: t("modelTypeRerank"),
   }[model.primaryType];
+  const tags = [
+    model.capabilities.includes("reasoning") && t("capabilityReasoning"),
+    model.capabilities.includes("function_calling") && t("capabilityTools"),
+    model.inputModalities.includes("image") && t("modalityVision"),
+  ].filter((tag): tag is string => Boolean(tag));
+  const cost = model.cost ?? null;
+  const contextTitle =
+    (
+      [
+        [t("contextWindow"), model.contextWindow],
+        [t("maxInputTokens"), model.maxInputTokens],
+      ] as const
+    )
+      .flatMap(([label, value]) =>
+        value === null ? [] : [`${label}: ${numbers.format(value)}`],
+      )
+      .join("\n") || undefined;
+  const meta = [
+    model.contextWindow !== null &&
+      `${t("contextWindow")} ${compactTokens.format(model.contextWindow)}`,
+    model.maxOutputTokens !== null &&
+      `${t("maxOutputTokens")} ${compactTokens.format(model.maxOutputTokens)}`,
+    cost &&
+      `${t("catalogInputPrice")} ${prices.format(cost.input)} · ${t("catalogOutputPrice")} ${prices.format(cost.output)}`,
+  ].filter(Boolean);
+  const priceCells = (
+    <>
+      <span className="text-right">
+        {cost ? prices.format(cost.input) : "—"}
+      </span>
+      <span className="text-right">
+        {cost ? prices.format(cost.output) : "—"}
+      </span>
+    </>
+  );
+  const hasPriceDetails = Boolean(
+    cost && (cost.cacheRead || cost.cacheWrite || cost.tiers?.length),
+  );
 
   return (
     <article
       aria-label={model.name}
-      className="rounded-md px-2.5 py-2 transition-colors hover:bg-muted/60"
+      className={`${MODEL_ROW_GRID} px-4 py-2.5 transition-colors hover:bg-muted/40`}
     >
-      <div className="flex min-w-0 items-center justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-2.5">
+      <div className="flex min-w-0 items-center gap-3">
+        <Tooltip content={typeLabel}>
           <span
-            aria-hidden="true"
-            className="flex size-6 shrink-0 items-center justify-center rounded-full border border-border bg-muted text-[10px] font-semibold text-muted-foreground"
+            role="img"
+            // biome-ignore lint/a11y/noNoninteractiveTabindex: This labeled model icon is a keyboard-focusable tooltip trigger, not an action.
+            tabIndex={0}
+            aria-label={typeLabel}
+            className="flex size-7 shrink-0 items-center justify-center rounded-lg border border-border bg-muted/50 text-muted-foreground"
           >
-            {model.name.charAt(0).toUpperCase() || "M"}
+            <ModelTypeIcon type={model.primaryType} />
           </span>
-          <div className="min-w-0">
-            <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-              <span className="truncate text-sm text-foreground">
-                {model.name}
+        </Tooltip>
+        <div className="min-w-0">
+          <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
+            <span className="min-w-0 max-w-full truncate text-sm font-medium text-foreground">
+              {model.name}
+            </span>
+            {tags.map((tag) => (
+              <span
+                key={tag}
+                className="shrink-0 rounded-lg px-1.5 py-px text-[10px] leading-4 text-muted-foreground ring-1 ring-inset ring-border"
+              >
+                {tag}
               </span>
-              <Tooltip content={typeLabel}>
-                <span
-                  role="img"
-                  // biome-ignore lint/a11y/noNoninteractiveTabindex: This labeled model icon is a keyboard-focusable tooltip trigger, not an action.
-                  tabIndex={0}
-                  aria-label={typeLabel}
-                  className="inline-flex size-6 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground"
-                >
-                  <ModelTypeIcon type={model.primaryType} />
-                </span>
-              </Tooltip>
-              {model.capabilities.includes("reasoning") ? (
-                <AnimatedBadge status="neutral">
-                  {t("capabilityReasoning")}
-                </AnimatedBadge>
-              ) : null}
-              {model.capabilities.includes("function_calling") ? (
-                <AnimatedBadge status="neutral">
-                  {t("capabilityTools")}
-                </AnimatedBadge>
-              ) : null}
-              {model.inputModalities.includes("image") ? (
-                <AnimatedBadge status="neutral">
-                  {t("modalityVision")}
-                </AnimatedBadge>
-              ) : null}
-            </div>
-            {model.name !== model.modelId ? (
-              <p className="truncate text-[11px] text-muted-foreground">
-                {model.modelId}
-              </p>
-            ) : null}
+            ))}
           </div>
-        </div>
-        <div className="flex shrink-0 items-center gap-0.5">
-          {model.primaryType === "text" ? (
-            <form action={testAction}>
-              <input type="hidden" name="workspace" value={slug} />
-              <input type="hidden" name="providerId" value={providerId} />
-              <input type="hidden" name="model" value={model.modelId} />
-              <Tooltip content={t("testModel")}>
-                <SubmitButton
-                  error={state.error}
-                  pendingLabel=""
-                  savedLabel=""
-                  ariaLabel={t("testModel")}
-                  variant="ghost"
-                  size="icon"
-                  icon={<FlaskConical className="size-3.5" />}
-                >
-                  {null}
-                </SubmitButton>
-              </Tooltip>
-            </form>
+          {model.name !== model.modelId ? (
+            <p className="truncate font-mono text-[11px] text-muted-foreground">
+              {model.modelId}
+            </p>
           ) : null}
-          <EditModelDialog
-            slug={slug}
-            providerId={providerId}
-            initialModel={model}
-          />
-          <DeleteModelForm
-            slug={slug}
-            providerId={providerId}
-            modelId={model.modelId}
-          />
+          {meta.length ? (
+            <p className="text-[11px] tabular-nums text-muted-foreground xl:hidden">
+              {meta.join(" · ")}
+            </p>
+          ) : null}
+          {state.error ? (
+            <ActionMessage state={state} />
+          ) : state.savedAt ? (
+            <p className="mt-1 text-xs text-muted-foreground" role="status">
+              {t("modelAvailable")}
+            </p>
+          ) : null}
         </div>
       </div>
-      {model.contextWindow !== null ||
-      model.maxInputTokens !== null ||
-      model.maxOutputTokens !== null ? (
-        <dl className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
-          {(
-            [
-              ["contextWindow", model.contextWindow],
-              ["maxInputTokens", model.maxInputTokens],
-              ["maxOutputTokens", model.maxOutputTokens],
-            ] as const
-          ).map(([label, value]) =>
-            value !== null ? (
-              <div key={label} className="flex gap-1">
-                <dt>{t(label)}:</dt>
-                <dd className="tabular-nums text-foreground">
-                  {numbers.format(value)}
-                </dd>
-              </div>
-            ) : null,
-          )}
-        </dl>
-      ) : null}
-      {model.cost ? (
-        <div className="mt-2 space-y-1 text-[11px] text-muted-foreground">
-          <p>{t("catalogPriceUnit")}</p>
-          {[
-            { label: t("catalogBasePrice"), rates: model.cost },
-            ...(model.cost.tiers ?? []).map((tier) => ({
-              label: t("catalogTierAbove", {
-                tokens: numbers.format(tier.inputTokensAbove),
-              }),
-              rates: tier,
-            })),
-          ].map(({ label, rates }) => (
-            <dl key={label} className="flex flex-wrap gap-x-4 gap-y-1">
-              {model.cost?.tiers?.length ? (
-                <div className="font-medium">{label}</div>
-              ) : null}
-              {(
-                [
-                  ["catalogInputPrice", rates.input],
-                  ["catalogOutputPrice", rates.output],
-                  ["catalogCacheReadPrice", rates.cacheRead],
-                  ["catalogCacheWritePrice", rates.cacheWrite],
-                ] as const
-              ).map(([field, price]) => (
-                <div key={field} className="flex gap-1">
-                  <dt>{t(field)}:</dt>
-                  <dd className="tabular-nums text-foreground">
-                    {prices.format(price)}
-                  </dd>
-                </div>
-              ))}
-            </dl>
-          ))}
-        </div>
-      ) : null}
-      {state.error ? (
-        <ActionMessage state={state} />
-      ) : state.savedAt ? (
-        <p
-          className="mt-2 text-sm text-muted-foreground text-muted-foreground"
-          role="status"
+      <span
+        title={contextTitle}
+        className="hidden text-right text-xs tabular-nums text-foreground xl:block"
+      >
+        {model.contextWindow === null
+          ? "—"
+          : compactTokens.format(model.contextWindow)}
+      </span>
+      <span
+        title={
+          model.maxOutputTokens === null
+            ? undefined
+            : numbers.format(model.maxOutputTokens)
+        }
+        className="hidden text-right text-xs tabular-nums text-foreground xl:block"
+      >
+        {model.maxOutputTokens === null
+          ? "—"
+          : compactTokens.format(model.maxOutputTokens)}
+      </span>
+      {hasPriceDetails && cost ? (
+        <Tooltip
+          content={
+            <ModelPriceDetails cost={cost} numbers={numbers} prices={prices} />
+          }
+          wrapperClassName="hidden xl:col-span-2 xl:grid"
         >
-          {t("modelAvailable")}
-        </p>
-      ) : null}
+          <span
+            // biome-ignore lint/a11y/noNoninteractiveTabindex: The price cells are a keyboard-focusable trigger for the full price table.
+            tabIndex={0}
+            className="grid cursor-help grid-cols-2 gap-x-3 text-xs tabular-nums text-foreground underline decoration-border decoration-dotted underline-offset-4"
+          >
+            {priceCells}
+          </span>
+        </Tooltip>
+      ) : (
+        <span className="hidden grid-cols-2 gap-x-3 text-xs tabular-nums text-foreground xl:col-span-2 xl:grid">
+          {priceCells}
+        </span>
+      )}
+      <div className="flex shrink-0 items-center justify-end gap-0.5">
+        {model.primaryType === "text" ? (
+          <form action={testAction}>
+            <input type="hidden" name="workspace" value={slug} />
+            <input type="hidden" name="providerId" value={providerId} />
+            <input type="hidden" name="model" value={model.modelId} />
+            <Tooltip content={t("testModel")}>
+              <SubmitButton
+                error={state.error}
+                pendingLabel=""
+                savedLabel=""
+                ariaLabel={t("testModel")}
+                variant="ghost"
+                size="icon"
+                icon={<FlaskConical className="size-3.5" />}
+              >
+                {null}
+              </SubmitButton>
+            </Tooltip>
+          </form>
+        ) : null}
+        <EditModelDialog
+          slug={slug}
+          providerId={providerId}
+          initialModel={model}
+        />
+        <DeleteModelForm
+          slug={slug}
+          providerId={providerId}
+          modelId={model.modelId}
+        />
+      </div>
     </article>
   );
 }
@@ -1348,8 +1508,13 @@ function EditProviderDialog({
 }) {
   const t = useTranslations("console.agents");
   const [open, setOpen] = useState(false);
+  const [savedAtWhenOpened, setSavedAtWhenOpened] = useState<
+    number | undefined
+  >();
   const [format, setFormat] = useState(provider.format);
   const [baseUrl, setBaseUrl] = useState(provider.baseUrl);
+  const [name, setName] = useState(provider.name);
+  const fieldId = useId();
   const selectedPreset = piProviderPresets.find(
     (preset) => preset.format === format,
   );
@@ -1367,13 +1532,25 @@ function EditProviderDialog({
 
   return (
     <ProviderDialog
-      open={open}
+      // Close after a clean save; keep a refresh warning visible.
+      open={
+        open &&
+        (updateState.savedAt === savedAtWhenOpened ||
+          Boolean(updateState.warning))
+      }
       onOpenChange={(next) => {
-        if (!next) setApiKey("");
+        if (next) {
+          // Discard edits abandoned in a previous opening.
+          setFormat(provider.format);
+          setBaseUrl(provider.baseUrl);
+          setName(provider.name);
+          setSavedAtWhenOpened(updateState.savedAt);
+        } else setApiKey("");
         setOpen(next);
       }}
       title={t("editProvider")}
       maxWidth="max-w-2xl"
+      labelledTrigger
       trigger={
         <Button
           size="icon"
@@ -1385,93 +1562,132 @@ function EditProviderDialog({
         </Button>
       }
     >
-      <form
-        action={updateAction}
-        className="grid gap-3 px-5 py-5 xl:grid-cols-2"
-      >
+      <form action={updateAction} className="flex min-h-0 flex-1 flex-col">
         <input type="hidden" name="workspace" value={slug} />
         <input type="hidden" name="providerId" value={provider.id} />
-        <Input
-          label={t("name")}
-          leftIcon={<Cpu />}
-          name="name"
-          required
-          defaultValue={String(provider.name)}
-          className="w-full"
-        />
-        <div className="space-y-1.5">
-          <p className="text-sm font-medium">{t("format")}</p>
-          <FormSelect
-            name="format"
-            value={format}
-            label={t("format")}
-            options={[providerFormatOptions(piProviderPresets)]
-              .flat()
-              .filter((option) => option != null)}
-            onValueChange={(value) => {
-              setFormat(value);
-              setBaseUrl("");
-            }}
-            className="w-full"
-          />
-        </div>
-        <div className="space-y-1.5">
-          <Input
-            label={t("baseUrl")}
-            leftIcon={<Link2 />}
-            name="baseUrl"
-            required={isCustomProvider}
-            placeholder={
-              !isCustomProvider ? selectedPreset?.baseUrl : undefined
-            }
-            value={String(baseUrl)}
-            onChange={(value) => setBaseUrl(value)}
-            className="w-full"
-          />
-          <p className="text-xs text-muted-foreground">
-            {!isCustomProvider && selectedPreset?.baseUrl
-              ? t("leaveBlankToUseDefaultEndpoint", {
-                  endpoint: selectedPreset.baseUrl,
-                })
-              : undefined}
-          </p>
-        </div>
-        <div className={isCustomProvider ? undefined : "xl:col-span-2"}>
-          <Input
-            label={t("apiKey")}
-            leftIcon={<KeyRound />}
-            name="apiKey"
-            type="password"
-            value={apiKey}
-            onChange={setApiKey}
-            placeholder={t("leaveBlankToKeepCurrentKey")}
-            className="w-full"
-          />
-        </div>
-        <div className="xl:col-span-2">
-          <ActionMessage state={updateState} />
-          <div className="mt-5 flex items-center justify-end gap-2">
-            <CenterMorphModalClose>
-              <Button size="sm" type="button" variant="secondary">
-                {t("cancel")}
-              </Button>
-            </CenterMorphModalClose>
-            <Tooltip content={t("saveChanges")}>
-              <SubmitButton
-                error={updateState.error}
-                pendingLabel=""
-                savedLabel=""
-                ariaLabel={t("saveChanges")}
-                variant="primary"
-                size="icon"
-              >
-                <Save aria-hidden="true" className="size-4" />
-              </SubmitButton>
-            </Tooltip>
+        <DialogBody>
+          <div className="grid gap-5 sm:grid-cols-2">
+            <DialogField
+              label={t("name")}
+              htmlFor={`${fieldId}-name`}
+              dirty={name !== provider.name}
+            >
+              <Input
+                id={`${fieldId}-name`}
+                leftIcon={<Cpu />}
+                name="name"
+                required
+                defaultValue={String(provider.name)}
+                onChange={setName}
+                className="w-full"
+              />
+            </DialogField>
+            <DialogField label={t("format")} dirty={format !== provider.format}>
+              <FormSelect
+                name="format"
+                value={format}
+                label={t("format")}
+                options={providerFormatOptions(piProviderPresets)}
+                onValueChange={(value) => {
+                  setFormat(value);
+                  setBaseUrl("");
+                }}
+                className="w-full"
+              />
+            </DialogField>
           </div>
-        </div>
+          <DialogField
+            label={t("baseUrl")}
+            htmlFor={`${fieldId}-baseUrl`}
+            dirty={baseUrl !== provider.baseUrl}
+            description={
+              !isCustomProvider && selectedPreset?.baseUrl
+                ? t("leaveBlankToUseDefaultEndpoint", {
+                    endpoint: selectedPreset.baseUrl,
+                  })
+                : undefined
+            }
+          >
+            <Input
+              id={`${fieldId}-baseUrl`}
+              leftIcon={<Link2 />}
+              name="baseUrl"
+              required={isCustomProvider}
+              placeholder={
+                isCustomProvider
+                  ? "https://api.example.com/v1"
+                  : selectedPreset?.baseUrl
+              }
+              value={String(baseUrl)}
+              onChange={(value) => setBaseUrl(value)}
+              className="w-full"
+            />
+          </DialogField>
+          <DialogField
+            label={t("apiKey")}
+            htmlFor={`${fieldId}-apiKey`}
+            dirty={apiKey !== ""}
+          >
+            <Input
+              id={`${fieldId}-apiKey`}
+              leftIcon={<KeyRound />}
+              name="apiKey"
+              type="password"
+              autoComplete="off"
+              value={apiKey}
+              onChange={setApiKey}
+              placeholder={t("leaveBlankToKeepCurrentKey")}
+              className="w-full"
+            />
+          </DialogField>
+          <ActionMessage state={updateState} />
+        </DialogBody>
+        <DialogFooter cancel={<DialogCancel />}>
+          <SubmitButton
+            error={updateState.error}
+            pendingLabel={t("saving")}
+            savedLabel={t("saved")}
+            variant="primary"
+            size="md"
+          >
+            <Save aria-hidden="true" className="size-4" />
+            {t("saveChanges")}
+          </SubmitButton>
+        </DialogFooter>
       </form>
     </ProviderDialog>
+  );
+}
+
+const MODEL_TYPE_ORDER: ModelPrimaryType[] = [
+  "text",
+  "image",
+  "embedding",
+  "rerank",
+];
+
+function endpointHost(endpoint: string) {
+  try {
+    return new URL(endpoint).host;
+  } catch {
+    return endpoint;
+  }
+}
+
+function ProviderMonogram({
+  name,
+  large = false,
+}: {
+  name: string;
+  large?: boolean;
+}) {
+  return (
+    <span
+      aria-hidden="true"
+      className={`flex shrink-0 items-center justify-center rounded-lg border border-border bg-muted font-semibold text-muted-foreground ${large ? "size-10 text-sm" : "size-8 text-xs"}`}
+    >
+      {name.trim().charAt(0).toUpperCase() || "P"}
+    </span>
   );
 }
 
@@ -1552,17 +1768,16 @@ function ProviderDetail({
         )
       : modelRecords;
   }, [modelQuery, modelRecords]);
-  const typeCounts = useMemo(
+  // Offer a type tab only for types this provider actually has, so a
+  // text-only provider is not shown three permanently empty filters.
+  const filterTypes = useMemo(
     () =>
-      Object.fromEntries(
-        (["text", "image", "embedding", "rerank"] as ModelPrimaryType[]).map(
-          (type) => [
-            type,
-            searchedModels.filter((model) => model.primaryType === type).length,
-          ],
-        ),
-      ) as Record<ModelPrimaryType, number>,
-    [searchedModels],
+      MODEL_TYPE_ORDER.filter(
+        (type) =>
+          type === typeFilter ||
+          modelRecords.some((model) => model.primaryType === type),
+      ),
+    [modelRecords, typeFilter],
   );
   const visibleModels = useMemo(
     () =>
@@ -1581,38 +1796,62 @@ function ProviderDetail({
       left.localeCompare(right),
     );
   }, [visibleModels]);
+  const showGroupHeaders = modelGroups.some(([group]) => group !== "");
   const allGroupsExpanded = modelGroups.every(
     ([group]) => !collapsedGroups.has(group),
   );
+  const searching = Boolean(modelQuery.trim());
+  const typeLabels: Record<ModelPrimaryType, string> = {
+    text: t("modelTypeText"),
+    image: t("modelTypeImage"),
+    embedding: t("modelTypeEmbedding"),
+    rerank: t("modelTypeRerank"),
+  };
+  const hasPrices = visibleModels.some((model) => model.cost);
+  const refreshMessage = refreshing
+    ? t("modelsFetching")
+    : refreshState.savedAt
+      ? t("modelsFetchComplete")
+      : null;
 
   return (
-    <section className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
-      <header className="flex shrink-0 flex-wrap items-start justify-between gap-3 border-b border-border px-4 py-4 sm:px-6">
-        <div className="flex min-w-0 flex-1 items-center gap-3">
-          <span
-            aria-hidden="true"
-            className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-border bg-muted text-sm font-semibold text-muted-foreground"
-          >
-            {provider.name.charAt(0).toUpperCase() || "P"}
-          </span>
+    <section
+      aria-label={provider.name}
+      className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+    >
+      <header className="flex min-h-14 shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-3 px-5 py-2">
+        <div className="flex min-w-0 flex-1 basis-64 items-center gap-3">
+          <ProviderMonogram name={provider.name} large />
           <div className="min-w-0">
-            <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <h2 className="truncate text-[15px] font-semibold text-foreground">
+            <div className="flex min-w-0 items-center gap-2">
+              <h2 className="truncate text-base font-semibold text-foreground">
                 {provider.name}
               </h2>
-              <AnimatedBadge status="neutral">{provider.format}</AnimatedBadge>
+              <span className="shrink-0 rounded-lg bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
+                {providerFormatLabel(provider.format, piProviderPresets)}
+              </span>
             </div>
-            <p className="mt-0.5 truncate text-xs text-muted-foreground">
+            <p className="mt-0.5 truncate font-mono text-xs text-muted-foreground">
               {endpoint}
             </p>
-            {provider.modelsFetchedAt ? (
-              <p className="mt-1 text-[11px] text-muted-foreground">
-                {t("lastRefreshedAt", { date: provider.modelsFetchedAt })}
-              </p>
-            ) : null}
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1">
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            disabled={refreshing}
+            aria-busy={refreshing || undefined}
+            onClick={onRefresh}
+            className="mr-1"
+          >
+            <RefreshCw
+              aria-hidden="true"
+              className={`size-3.5 ${refreshing ? "animate-spin" : ""}`}
+            />
+            {t("refreshModels")}
+          </Button>
           <EditProviderDialog
             slug={slug}
             provider={provider}
@@ -1622,7 +1861,7 @@ function ProviderDetail({
             <input type="hidden" name="workspace" value={slug} />
             <input type="hidden" name="providerId" value={provider.id} />
             <ConfirmSubmitButton
-              triggerLabel={<Trash2 className="size-[18px]" />}
+              triggerLabel={<Trash2 className="size-4" />}
               triggerAriaLabel={common("remove")}
               confirmLabel={common("confirm")}
               cancelLabel={common("cancel")}
@@ -1631,107 +1870,65 @@ function ProviderDetail({
               className="items-center justify-end"
               triggerVariant="ghost"
               triggerSize="icon"
+              triggerTooltip={false}
               promptClassName="max-w-sm text-xs text-muted-foreground"
             />
           </form>
         </div>
       </header>
 
-      <div className="flex min-h-0 flex-1 flex-col px-4 pb-4 sm:px-6 sm:pb-6">
-        <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 py-3">
-          <div className="flex min-w-0 items-center gap-2">
-            <h3 className="text-sm font-semibold text-foreground">
-              {t("models")}
-            </h3>
-            <span className="text-xs tabular-nums text-muted-foreground">
-              {provider.modelCount}
-            </span>
-          </div>
-          <div className="flex w-full min-w-0 items-center gap-2 sm:w-auto sm:flex-1 sm:justify-end">
-            <div className="min-w-0 flex-1 sm:max-w-64">
-              <Input
-                leftIcon={<Search />}
-                aria-label={t("searchModels")}
-                placeholder={t("searchModels")}
-                value={modelQuery}
-                onChange={setModelQuery}
-                className="w-full"
-              />
-            </div>
-            <AddModelDialog slug={slug} providerId={provider.id} />
-            <Tooltip content={t("refreshModels")}>
-              <Button
-                type="button"
-                variant="secondary"
-                size="icon"
-                disabled={refreshing}
-                aria-busy={refreshing || undefined}
-                aria-label={t("refreshModels")}
-                onClick={onRefresh}
-              >
-                <RefreshCw
-                  aria-hidden="true"
-                  className={`size-4 ${refreshing ? "animate-spin" : ""}`}
-                />
-              </Button>
-            </Tooltip>
-          </div>
-        </div>
-        <div
-          className="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-border pb-2"
-          role="tablist"
-          aria-label={t("filterModels")}
-        >
-          <Button
-            type="button"
-            role="tab"
-            aria-selected={typeFilter === "all"}
-            onClick={() => setTypeFilter("all")}
-            variant={typeFilter === "all" ? "secondary" : "ghost"}
-            size={"sm"}
+      <div className="flex shrink-0 flex-wrap items-center gap-2 border-y border-border px-4 py-2.5">
+        {filterTypes.length > 1 ? (
+          <Tabs
+            variant="segment"
+            value={typeFilter}
+            onValueChange={(value) =>
+              setTypeFilter(value as "all" | ModelPrimaryType)
+            }
+            className="min-w-0"
           >
-            {t("allModels")}
-            <span className="tabular-nums text-[10px] text-muted-foreground">
-              {searchedModels.length}
-            </span>
-          </Button>
-          {(["text", "image", "embedding", "rerank"] as ModelPrimaryType[]).map(
-            (type) => {
-              const label =
-                type === "text"
-                  ? t("modelTypeText")
-                  : type === "image"
-                    ? t("modelTypeImage")
-                    : type === "embedding"
-                      ? t("modelTypeEmbedding")
-                      : t("modelTypeRerank");
-              return (
-                <Button
+            <TabsList aria-label={t("filterModels")} className="bg-muted/50">
+              <TabsTrigger value="all" className="gap-1.5 px-2.5 py-1 text-xs">
+                {t("allModels")}
+                <span className="tabular-nums opacity-60">
+                  {searchedModels.length}
+                </span>
+              </TabsTrigger>
+              {filterTypes.map((type) => (
+                <TabsTrigger
                   key={type}
-                  type="button"
-                  role="tab"
-                  aria-selected={typeFilter === type}
-                  onClick={() => setTypeFilter(type)}
-                  variant={typeFilter === type ? "secondary" : "ghost"}
-                  size="sm"
+                  value={type}
+                  className="gap-1.5 px-2.5 py-1 text-xs"
                 >
                   <ModelTypeIcon type={type} />
-                  {label}
-                  <span className="tabular-nums text-[10px] text-muted-foreground">
-                    {typeCounts[type]}
+                  {typeLabels[type]}
+                  <span className="tabular-nums opacity-60">
+                    {
+                      searchedModels.filter(
+                        (model) => model.primaryType === type,
+                      ).length
+                    }
                   </span>
-                </Button>
-              );
-            },
-          )}
-          {modelGroups.length ? (
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
+        ) : (
+          <h3 className="px-1 text-sm font-medium text-foreground">
+            {t("model")}
+            <span className="ml-2 tabular-nums text-muted-foreground">
+              {searchedModels.length}
+            </span>
+          </h3>
+        )}
+        <div className="ml-auto flex w-full min-w-0 items-center gap-2 sm:w-auto">
+          {showGroupHeaders && modelGroups.length > 1 && !searching ? (
             <Tooltip
               content={
                 allGroupsExpanded
                   ? t("collapseAllGroups")
                   : t("expandAllGroups")
               }
-              wrapperClassName="ml-auto shrink-0"
             >
               <Button
                 type="button"
@@ -1751,45 +1948,69 @@ function ProviderDetail({
                 size="icon"
               >
                 {allGroupsExpanded ? (
-                  <ChevronUp className="size-3.5" />
+                  <ChevronsDownUp className="size-4" />
                 ) : (
-                  <ChevronDown className="size-3.5" />
+                  <ChevronsUpDown className="size-4" />
                 )}
               </Button>
             </Tooltip>
           ) : null}
+          <div className="min-w-0 flex-1 sm:w-56 sm:flex-none">
+            <Input
+              leftIcon={<Search />}
+              aria-label={t("searchModels")}
+              placeholder={t("searchModels")}
+              value={modelQuery}
+              onChange={setModelQuery}
+              className="w-full"
+            />
+          </div>
+          <AddModelDialog slug={slug} providerId={provider.id} />
         </div>
-        {refreshing ? (
-          <p role="status" className="mt-2 text-sm text-muted-foreground">
-            {t("modelsFetching")}
-          </p>
-        ) : refreshState.savedAt ? (
-          <p role="status" className="mt-2 text-sm text-muted-foreground">
-            {t("modelsFetchComplete")}
-          </p>
-        ) : null}
-        <ActionMessage
-          state={
-            refreshState.error
-              ? {
-                  ...refreshState,
-                  error: `${t("modelsFetchFailedSaved")} ${refreshState.error}`,
-                }
-              : refreshState
-          }
-        />
-        <div className="mt-1 min-h-0 flex-1 overflow-y-auto">
-          {modelGroups.length > 0 ? (
-            <div className="space-y-1 py-1">
-              {modelGroups.map(([group, models]) => {
-                const expanded =
-                  Boolean(modelQuery.trim()) || !collapsedGroups.has(group);
-                return (
-                  <section
-                    key={group || "__ungrouped"}
-                    className="overflow-hidden rounded-md border border-border"
-                  >
-                    <Button
+      </div>
+
+      {refreshMessage || refreshState.error ? (
+        <div className="shrink-0 border-b border-border px-5 py-2">
+          {refreshMessage ? (
+            <p role="status" className="text-xs text-muted-foreground">
+              {refreshMessage}
+            </p>
+          ) : null}
+          {refreshState.error ? (
+            <p role="alert" className="text-xs text-destructive">
+              {`${t("modelsFetchFailedSaved")} ${refreshState.error}`}
+            </p>
+          ) : refreshState.warning ? (
+            <p role="alert" className="text-xs text-muted-foreground">
+              {refreshState.warning}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {modelGroups.length > 0 ? (
+          <>
+            <div
+              aria-hidden="true"
+              className={`${MODEL_ROW_GRID} sticky top-0 z-10 hidden border-b border-border bg-card px-4 py-2 text-[11px] font-medium text-muted-foreground xl:grid`}
+            >
+              <span>{t("model")}</span>
+              <span className="text-right">{t("modelColumnContext")}</span>
+              <span className="text-right">{t("modelColumnMaxOutput")}</span>
+              <span className="text-right">{t("catalogInputPrice")}</span>
+              <span className="text-right">{t("catalogOutputPrice")}</span>
+              <span />
+            </div>
+            {modelGroups.map(([group, models]) => {
+              const expanded = searching || !collapsedGroups.has(group);
+              return (
+                <section
+                  key={group || "__ungrouped"}
+                  aria-label={group || t("ungroupedModels")}
+                >
+                  {showGroupHeaders ? (
+                    <button
                       type="button"
                       aria-expanded={expanded}
                       onClick={() =>
@@ -1800,46 +2021,56 @@ function ProviderDetail({
                           return next;
                         })
                       }
-                      variant="ghost"
-                      size="sm"
-                      className="w-full justify-start rounded-none px-3 text-left"
+                      className="flex w-full items-center gap-2 border-b border-border/60 bg-muted/30 px-4 py-1.5 text-left text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
                     >
                       <ChevronRight
+                        aria-hidden="true"
                         className={`size-3.5 shrink-0 transition-transform ${expanded ? "rotate-90" : ""}`}
                       />
                       <span className="min-w-0 flex-1 truncate">
                         {group || t("ungroupedModels")}
                       </span>
-                      <span className="tabular-nums text-[10px] text-muted-foreground">
-                        {models.length}
-                      </span>
-                    </Button>
-                    {expanded ? (
-                      <div className="divide-y divide-border/70">
-                        {models.map((model) => (
-                          <ModelTestRow
-                            key={model.modelId}
-                            slug={slug}
-                            providerId={provider.id}
-                            model={model}
-                            numbers={numbers}
-                            prices={prices}
-                          />
-                        ))}
-                      </div>
-                    ) : null}
-                  </section>
-                );
-              })}
-            </div>
-          ) : (
-            <div className="flex min-h-40 items-center justify-center px-4 text-center text-sm text-muted-foreground">
-              {provider.models.length > 0
+                      <span className="tabular-nums">{models.length}</span>
+                    </button>
+                  ) : null}
+                  {expanded ? (
+                    <div className="divide-y divide-border/60 border-b border-border/60">
+                      {models.map((model) => (
+                        <ModelTestRow
+                          key={model.modelId}
+                          slug={slug}
+                          providerId={provider.id}
+                          model={model}
+                          numbers={numbers}
+                          prices={prices}
+                        />
+                      ))}
+                    </div>
+                  ) : null}
+                </section>
+              );
+            })}
+            <p className="px-4 py-3 text-[11px] text-muted-foreground">
+              {[
+                t("providerModelCount", { count: provider.models.length }),
+                provider.modelsFetchedAt &&
+                  t("lastRefreshedAt", { date: provider.modelsFetchedAt }),
+                hasPrices && t("catalogPriceUnit"),
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </p>
+          </>
+        ) : (
+          <DashboardEmptyState
+            icon={Boxes}
+            title={
+              provider.models.length > 0
                 ? t("noMatchingModels")
-                : t("noModelsCachedYet")}
-            </div>
-          )}
-        </div>
+                : t("noModelsCachedYet")
+            }
+          />
+        )}
       </div>
     </section>
   );
@@ -1849,19 +2080,18 @@ export function ProvidersPanel({
   slug,
   providers,
   piProviderPresets = [],
-  embedded = false,
 }: {
   slug: string;
   providers: ProviderRow[];
   piProviderPresets?: ProviderPreset[];
-  embedded?: boolean;
 }) {
   const t = useTranslations("console.agents");
   const common = useTranslations("common");
   const router = useRouter();
   const [providerQuery, setProviderQuery] = useState("");
+  const searchParams = useSearchParams();
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(
-    providers[0]?.id ?? null,
+    () => searchParams.get("provider") ?? providers[0]?.id ?? null,
   );
   const [refreshes, setRefreshes] = useState<
     Record<string, { pending: boolean; state: ActionState }>
@@ -1891,8 +2121,16 @@ export function ProvidersPanel({
     }));
   }
 
-  function handleCreated(providerId: string) {
+  // Keep the selection in the URL so reloads and shared links reopen it.
+  function selectProvider(providerId: string) {
     setSelectedProviderId(providerId);
+    const url = new URL(window.location.href);
+    url.searchParams.set("provider", providerId);
+    window.history.replaceState(null, "", url);
+  }
+
+  function handleCreated(providerId: string) {
+    selectProvider(providerId);
     setProviderQuery("");
     void refreshProvider(providerId);
   }
@@ -1909,31 +2147,25 @@ export function ProvidersPanel({
     providers.find((provider) => provider.id === selectedProviderId) ??
     providers[0] ??
     null;
-
-  return (
-    <div
-      className={
-        embedded ? "flex h-full min-h-0" : "flex min-h-0 flex-1 p-3 sm:p-4"
-      }
-    >
-      <div
-        className={`flex min-h-0 w-full flex-col overflow-hidden bg-background md:flex-row ${embedded ? "" : "rounded-lg border border-border"}`}
+  return selectedProvider ? (
+    <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col md:flex-row">
+      <aside
+        aria-label={t("modelProviders")}
+        className="flex max-h-60 shrink-0 flex-col border-b border-border/60 md:max-h-none md:w-64 md:border-b-0 md:border-r"
       >
-        <aside
-          aria-label={t("modelProviders")}
-          className="flex max-h-64 w-full shrink-0 flex-col border-b border-border bg-muted/20 md:max-h-none md:h-full md:w-64 md:border-b-0 md:border-r"
-        >
-          <div className="flex h-16 shrink-0 items-center justify-between gap-2 px-3">
-            <h2 className="min-w-0 truncate text-sm font-semibold">
-              {t("modelProviders")}
-            </h2>
-            <AddProviderDialog
-              slug={slug}
-              piProviderPresets={piProviderPresets}
-              onCreated={handleCreated}
-            />
-          </div>
-          <div className="px-3 pb-2">
+        <div className="flex h-14 shrink-0 items-center justify-between gap-2 pl-4 pr-2">
+          <h1 className="truncate text-sm font-semibold">
+            {t("modelProviders")}
+          </h1>
+          <AddProviderDialog
+            slug={slug}
+            piProviderPresets={piProviderPresets}
+            onCreated={handleCreated}
+            iconTrigger
+          />
+        </div>
+        {providers.length > 5 ? (
+          <div className="px-2 pb-1">
             <Input
               leftIcon={<Search />}
               aria-label={`${common("search")} ${t("modelProviders")}`}
@@ -1943,96 +2175,94 @@ export function ProvidersPanel({
               className="w-full"
             />
           </div>
-          <nav
-            aria-label={t("modelProviders")}
-            className="min-h-0 flex-1 overflow-y-auto px-3 py-1"
-          >
-            {visibleProviders.length > 0 ? (
-              <div className="space-y-1">
-                {visibleProviders.map((provider) => {
-                  const selected = provider.id === selectedProvider?.id;
-                  return (
-                    <Button
-                      key={provider.id}
-                      type="button"
-                      aria-label={provider.name}
-                      aria-pressed={selected}
-                      aria-busy={refreshes[provider.id]?.pending || undefined}
-                      onClick={() => setSelectedProviderId(provider.id)}
-                      variant={selected ? "secondary" : "ghost"}
-                      className="h-auto min-h-14 w-full justify-start gap-3 rounded-lg px-2 py-2 text-left"
+        ) : null}
+        <nav
+          aria-label={t("modelProviders")}
+          className="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-2 pb-2"
+        >
+          {visibleProviders.length > 0 ? (
+            visibleProviders.map((provider) => {
+              const selected = provider.id === selectedProvider.id;
+              const refresh = refreshes[provider.id];
+              return (
+                <button
+                  key={provider.id}
+                  type="button"
+                  aria-label={provider.name}
+                  aria-pressed={selected}
+                  aria-busy={refresh?.pending || undefined}
+                  onClick={() => selectProvider(provider.id)}
+                  className={`flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left transition-colors ${selected ? "bg-foreground/[0.08]" : "hover:bg-foreground/5"}`}
+                >
+                  <ProviderMonogram name={provider.name} />
+                  <span className="min-w-0 flex-1">
+                    <span
+                      className={`block truncate text-sm text-foreground ${selected ? "font-medium" : ""}`}
                     >
-                      <span
-                        aria-hidden="true"
-                        className="flex size-6 shrink-0 items-center justify-center rounded-md border border-border bg-background text-[10px] font-semibold text-muted-foreground"
-                      >
-                        {provider.name.charAt(0).toUpperCase() || "P"}
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span
-                          className={`block truncate text-sm text-foreground ${selected ? "font-medium" : ""}`}
-                        >
-                          {provider.name}
-                        </span>
-                        <span
-                          className={`block truncate text-[11px] ${refreshes[provider.id]?.state.error ? "text-destructive" : "text-muted-foreground"}`}
-                        >
-                          {refreshes[provider.id]?.pending
-                            ? t("modelsFetching")
-                            : refreshes[provider.id]?.state.error
-                              ? t("modelsFetchFailedLabel")
-                              : provider.format}
-                        </span>
-                      </span>
-                      {refreshes[provider.id]?.pending ? (
-                        <RefreshCw
-                          aria-hidden="true"
-                          className="size-3.5 shrink-0 animate-spin text-muted-foreground"
-                        />
-                      ) : (
-                        <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
-                          {provider.modelCount}
-                        </span>
-                      )}
-                    </Button>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="flex h-full min-h-24 items-center justify-center px-3 text-center text-xs text-muted-foreground">
-                {t("noProvidersYet")}
-              </div>
-            )}
-          </nav>
-          <div className="shrink-0 border-t border-border px-3 py-3 text-[11px] text-muted-foreground">
-            {providers.length} {t("providers")}
-          </div>
-        </aside>
-
-        {selectedProvider ? (
-          <ProviderDetail
-            key={selectedProvider.id}
-            slug={slug}
-            provider={selectedProvider}
-            piProviderPresets={piProviderPresets}
-            refreshState={refreshes[selectedProvider.id]?.state ?? {}}
-            refreshing={refreshes[selectedProvider.id]?.pending ?? false}
-            onRefresh={() => {
-              void refreshProvider(selectedProvider.id);
-            }}
-          />
-        ) : (
-          <div className="flex min-h-64 flex-1 flex-col items-center justify-center px-5 text-center">
-            <Cpu className="mb-3 size-8 text-muted-foreground" />
-            <h2 className="text-sm font-semibold text-foreground">
-              {t("noProvidersYet")}
-            </h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {t("noProvidersYetAddOneAboveThenRefreshItsModels")}
+                      {provider.name}
+                    </span>
+                    <span
+                      className={`block truncate text-[11px] ${refresh?.state.error ? "text-destructive" : "text-muted-foreground"}`}
+                    >
+                      {refresh?.pending
+                        ? t("modelsFetching")
+                        : refresh?.state.error
+                          ? t("modelsFetchFailedLabel")
+                          : endpointHost(
+                              providerEndpoint(
+                                provider,
+                                piProviderPresets,
+                                provider.format,
+                              ),
+                            )}
+                    </span>
+                  </span>
+                  {refresh?.pending ? (
+                    <RefreshCw
+                      aria-hidden="true"
+                      className="size-3.5 shrink-0 animate-spin text-muted-foreground"
+                    />
+                  ) : (
+                    <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
+                      {provider.modelCount}
+                    </span>
+                  )}
+                </button>
+              );
+            })
+          ) : (
+            <p className="px-3 py-6 text-center text-xs text-muted-foreground">
+              {common("noResults")}
             </p>
-          </div>
-        )}
-      </div>
+          )}
+        </nav>
+      </aside>
+
+      <ProviderDetail
+        key={selectedProvider.id}
+        slug={slug}
+        provider={selectedProvider}
+        piProviderPresets={piProviderPresets}
+        refreshState={refreshes[selectedProvider.id]?.state ?? {}}
+        refreshing={refreshes[selectedProvider.id]?.pending ?? false}
+        onRefresh={() => {
+          void refreshProvider(selectedProvider.id);
+        }}
+      />
     </div>
+  ) : (
+    <DashboardEmptyState
+      icon={Cpu}
+      title={t("noProvidersYet")}
+      description={t("noProvidersYetAddOneAboveThenRefreshItsModels")}
+      actions={
+        <AddProviderDialog
+          slug={slug}
+          piProviderPresets={piProviderPresets}
+          onCreated={handleCreated}
+        />
+      }
+      className="flex-1"
+    />
   );
 }

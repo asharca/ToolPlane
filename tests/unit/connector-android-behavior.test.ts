@@ -190,7 +190,7 @@ describe("Android connector validation", () => {
     " ",
     "/root\nfile",
     "/root\0file",
-    "/" + "a".repeat(1024),
+    `/${"a".repeat(1024)}`,
   ])("rejects unsafe root %j", (root) => {
     if (root === "") expect(resolveAndroidRoot(root)).toBe("/sdcard/ToolPlane");
     else expect(() => resolveAndroidRoot(root)).toThrow();
@@ -345,7 +345,7 @@ describe("Android connector file and process behavior", () => {
       path: "large.txt",
     });
     if (!("content" in truncated)) throw new Error("Expected file content");
-    expect(truncated.content).toBe("a".repeat(128000) + "\n[output truncated]");
+    expect(truncated.content).toBe(`${"a".repeat(128000)}\n[output truncated]`);
     replies.push({}, { output: Buffer.from([0, 255, 1]) });
     await expect(
       runtime.handle(ws, "download_file", { path: "folder/file.bin" }),
@@ -431,8 +431,8 @@ describe("Android connector file and process behavior", () => {
     if (!("stdout" in result) || !("stderr" in result)) {
       throw new Error("Expected shell output");
     }
-    expect(result.stdout).toBe("x".repeat(128000) + "\n[output truncated]");
-    expect(result.stderr).toBe("e".repeat(128000) + "\n[output truncated]");
+    expect(result.stdout).toBe(`${"x".repeat(128000)}\n[output truncated]`);
+    expect(result.stderr).toBe(`${"e".repeat(128000)}\n[output truncated]`);
     const command = mocks.spawn.mock.calls.at(-1)?.[1].at(-1);
     expect(command).toContain("GOOD");
     expect(command).not.toContain("bad-key");

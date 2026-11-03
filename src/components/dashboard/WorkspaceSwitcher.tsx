@@ -3,13 +3,13 @@
 import { useTranslations } from "next-intl";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
-import { Check, ChevronsUpDown, Plus, Settings } from "lucide-react";
+import { Check, ChevronDown, Plus, Settings } from "lucide-react";
 import { ButtonLink } from "@/components/motion/button/base";
 import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/motion/popover";
+  MorphPopover,
+  MorphPopoverContent,
+  MorphPopoverTrigger,
+} from "@/components/motion/popover-morph";
 import { Tooltip } from "@/components/motion/tooltip";
 import { CreateWorkspaceForm } from "./WorkspaceForms";
 import {
@@ -37,14 +37,12 @@ export function WorkspaceSwitcher({
   const [creating, setCreating] = useState(false);
   const [open, setOpen] = useState(false);
   return (
-    <Popover
+    <MorphPopover
       open={open}
       onOpenChange={(next) => {
         setOpen(next);
         if (!next) setCreating(false);
       }}
-      side="top"
-      align="start"
       className="w-full"
     >
       <Tooltip
@@ -53,25 +51,33 @@ export function WorkspaceSwitcher({
         side="right"
         wrapperClassName="flex w-full"
       >
-        <PopoverTrigger>
+        <MorphPopoverTrigger>
           <button
             type="button"
             aria-label="切换工作区"
-            className="flex h-9 w-full items-center gap-2 overflow-hidden rounded-lg bg-secondary px-1 py-1 text-left text-xs text-muted-foreground outline-none transition-colors hover:bg-secondary/80 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+            className="group flex h-10 w-full min-w-0 items-center gap-2 overflow-hidden rounded-xl px-2 text-left text-sm text-foreground outline-none transition-colors hover:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-foreground/20"
           >
-            <span className="grid size-7 shrink-0 place-items-center rounded-full bg-background text-foreground">
+            <span className="grid size-6 shrink-0 place-items-center rounded-md border border-border/60 bg-background text-[10px] font-semibold text-foreground">
               {workspaceInitials(workspaceName)}
             </span>
             {!compact && (
               <>
                 <span className="min-w-0 flex-1 truncate">{workspaceName}</span>
-                <ChevronsUpDown className="size-3.5 shrink-0" />
+                <ChevronDown
+                  aria-hidden="true"
+                  className="size-4 shrink-0 text-muted-foreground transition-transform duration-150 group-aria-expanded:rotate-180 motion-reduce:transition-none"
+                />
               </>
             )}
           </button>
-        </PopoverTrigger>
+        </MorphPopoverTrigger>
       </Tooltip>
-      <PopoverContent className="w-60 max-w-[calc(100vw-2rem)] p-1.5">
+      <MorphPopoverContent
+        side="top"
+        align="start"
+        sideOffset={10}
+        className="w-60 max-w-[calc(100vw-2rem)] border-foreground/15 p-1.5 text-popover-foreground"
+      >
         <p className="px-2.5 pb-1 pt-2 text-[10px] font-medium text-muted-foreground">
           {t("workspaces")}
         </p>
@@ -130,7 +136,7 @@ export function WorkspaceSwitcher({
             </button>
           )}
         </div>
-      </PopoverContent>
-    </Popover>
+      </MorphPopoverContent>
+    </MorphPopover>
   );
 }

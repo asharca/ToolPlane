@@ -11,6 +11,13 @@ import {
   CenterMorphModalClose,
   CenterMorphModalContent,
 } from "@/components/motion/center-morph-modal";
+import {
+  DialogBody,
+  DialogCancel,
+  DialogField,
+  DialogFooter,
+  DialogHeader,
+} from "@/components/dashboard/dialog";
 
 type Prompt = { id: string; title: string; content: string };
 
@@ -28,6 +35,7 @@ export function ComposerPromptManager({
   const [prompts, setPrompts] = useState<Prompt[]>([]);
   const [query, setQuery] = useState("");
   const [editing, setEditing] = useState<Partial<Prompt> | null>(null);
+  const [editingBase, setEditingBase] = useState<Partial<Prompt> | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -73,6 +81,24 @@ export function ComposerPromptManager({
     }
   }
 
+  function startEditing(prompt: Partial<Prompt>) {
+    setEditing(prompt);
+    setEditingBase(prompt);
+  }
+
+  const formId = `composer-prompt-form-${agentId}`;
+  const titleDirty = Boolean(
+    editing && (editing.title ?? "") !== (editingBase?.title ?? ""),
+  );
+  const contentDirty = Boolean(
+    editing && (editing.content ?? "") !== (editingBase?.content ?? ""),
+  );
+  const errorMessage = error ? (
+    <p role="alert" className="text-sm text-destructive">
+      {error}
+    </p>
+  ) : null;
+
   return (
     <CenterMorphModal
       open
@@ -85,62 +111,81 @@ export function ComposerPromptManager({
         closeButtonLabel={common("close")}
         showCloseButton={!saving}
         dismissible={!saving}
-        className="flex max-h-[calc(100dvh-2rem)] max-w-2xl flex-col gap-3"
+        className="flex max-h-[calc(100dvh-2rem)] max-w-2xl flex-col"
       >
-        <header className="flex min-h-16 items-center gap-3 pl-5 pr-16">
-          <h2 className="text-lg font-semibold">{t("prompts")}</h2>
-        </header>
+        <DialogHeader title={t("prompts")} />
         {editing ? (
-          <form
-            onSubmit={(event) => {
-              event.preventDefault();
-              void mutate({ action: "save", ...editing });
-            }}
-            className="min-h-0 space-y-3 overflow-y-auto"
-          >
-            <div className="block text-xs font-medium">
-              {t("promptTitle")}
-              <Input
-                autoFocus
-                required
-                disabled={saving}
-                maxLength={120}
-                value={String(editing.title ?? "")}
-                label={t("promptTitle")}
-                onChange={(value) => setEditing({ ...editing, title: value })}
-                className="mt-1 w-full"
-              />
-            </div>
-            <label className="block text-xs font-medium">
-              {t("promptContent")}
-              <textarea
-                aria-label={t("promptContent")}
-                required
-                disabled={saving}
-                maxLength={20_000}
-                rows={8}
-                className="min-h-36 w-full resize-y rounded-lg bg-muted/35 p-3 text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                value={editing.content ?? ""}
-                onChange={(event) =>
-                  setEditing({ ...editing, content: event.target.value })
-                }
-              />
-            </label>
-            <div className="flex justify-end gap-2">
-              <Button
-                type="button"
-                disabled={saving}
-                onClick={() => setEditing(null)}
-                variant={"secondary"}
-                size={"sm"}
+          <>
+            <DialogBody>
+              <form
+                id={formId}
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void mutate({ action: "save", ...editing });
+                }}
+                className="space-y-5"
               >
-                {common("cancel")}
-              </Button>
+                <DialogField
+                  label={t("promptTitle")}
+                  htmlFor={`${formId}-title`}
+                  dirty={titleDirty}
+                >
+                  <Input
+                    autoFocus
+                    required
+                    disabled={saving}
+                    maxLength={120}
+                    value={String(editing.title ?? "")}
+                    id={`${formId}-title`}
+                    onChange={(value) =>
+                      setEditing({ ...editing, title: value })
+                    }
+                    className="w-full"
+                  />
+                </DialogField>
+                <DialogField
+                  label={t("promptContent")}
+                  htmlFor={`${formId}-content`}
+                  dirty={contentDirty}
+                >
+                  <textarea
+                    id={`${formId}-content`}
+                    required
+                    disabled={saving}
+                    maxLength={20_000}
+                    rows={8}
+                    className="block min-h-36 w-full resize-y rounded-lg bg-muted/35 p-3 text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    value={editing.content ?? ""}
+                    onChange={(event) =>
+                      setEditing({ ...editing, content: event.target.value })
+                    }
+                  />
+                </DialogField>
+              </form>
+            </DialogBody>
+            <DialogFooter
+              start={errorMessage}
+              cancel={
+                <Button
+                  type="button"
+                  disabled={saving}
+                  onClick={() => {
+                    setEditing(null);
+                    setEditingBase(null);
+                  }}
+                  variant="ghost"
+                  size="md"
+                >
+                  {common("cancel")}
+                </Button>
+              }
+            >
               <Button
                 type="submit"
+                form={formId}
                 disabled={saving}
-                variant={"primary"}
-                size={"sm"}
+                variant="primary"
+                size="md"
               >
                 {saving ? (
                   <Loader2 className="size-4 animate-spin" />
@@ -149,142 +194,141 @@ export function ComposerPromptManager({
                 )}
                 {common("save")}
               </Button>
-            </div>
-          </form>
+            </DialogFooter>
+          </>
         ) : (
           <>
-            <div className="flex items-center gap-2">
-              <div className="relative min-w-0 flex-1">
-                <Input
-                  leftIcon={<Search className="size-4" />}
-                  aria-label={t("searchPrompts")}
-                  placeholder={t("searchPrompts")}
-                  value={String(query)}
-                  onChange={(value) => setQuery(value)}
-                  className="w-full"
-                />
-              </div>
-              <Button
-                type="button"
-                aria-label={t("addPrompt")}
-                title={t("addPrompt")}
-                onClick={() => setEditing({ title: "", content: "" })}
-                variant={"secondary"}
-                size={"icon"}
-              >
-                <Plus className="size-4" />
-              </Button>
-            </div>
-            <div className="min-h-32 overflow-y-auto">
-              {loading ? (
-                <Loader2
-                  className="mx-auto my-10 size-5 animate-spin"
-                  aria-label={common("loading")}
-                />
-              ) : (
-                prompts
-                  .filter((prompt) =>
-                    `${prompt.title} ${prompt.content}`
-                      .toLowerCase()
-                      .includes(query.toLowerCase()),
-                  )
-                  .map((prompt) => (
-                    <div
-                      key={prompt.id}
-                      className="flex items-center gap-1 border-b border-border py-2 last:border-0"
-                    >
-                      <CenterMorphModalClose>
-                        <Button
-                          type="button"
-                          onClick={() => onInsert(prompt.content)}
-                          variant={"ghost"}
-                          size={"sm"}
-                          className="min-w-0 flex-1 text-left"
-                        >
-                          <span className="block truncate text-sm font-medium">
-                            {prompt.title}
-                          </span>
-                          <span className="mt-1 line-clamp-2 break-words text-xs text-muted-foreground">
-                            {prompt.content}
-                          </span>
-                        </Button>
-                      </CenterMorphModalClose>
-                      <Button
-                        type="button"
-                        aria-label={t("editPrompt", { title: prompt.title })}
-                        title={t("editPrompt", { title: prompt.title })}
-                        onClick={() =>
-                          setEditing({
-                            id: prompt.id,
-                            title: prompt.title,
-                            content: prompt.content,
-                          })
-                        }
-                        variant={"ghost"}
-                        size={"icon"}
+            <DialogBody className="space-y-3">
+              <Input
+                leftIcon={<Search className="size-4" />}
+                aria-label={t("searchPrompts")}
+                placeholder={t("searchPrompts")}
+                value={String(query)}
+                onChange={(value) => setQuery(value)}
+                className="w-full"
+              />
+              <div className="min-h-32">
+                {loading ? (
+                  <Loader2
+                    className="mx-auto my-10 size-5 animate-spin"
+                    aria-label={common("loading")}
+                  />
+                ) : (
+                  prompts
+                    .filter((prompt) =>
+                      `${prompt.title} ${prompt.content}`
+                        .toLowerCase()
+                        .includes(query.toLowerCase()),
+                    )
+                    .map((prompt) => (
+                      <div
+                        key={prompt.id}
+                        className="flex items-center gap-1 border-b border-border py-2 last:border-0"
                       >
-                        <Pencil className="size-4" />
-                      </Button>
-                      {deleting === prompt.id ? (
-                        <>
+                        <CenterMorphModalClose>
                           <Button
                             type="button"
-                            disabled={saving}
-                            aria-label={t("confirmDelete")}
-                            title={t("confirmDelete")}
-                            onClick={() =>
-                              void mutate({ action: "delete", id: prompt.id })
-                            }
+                            onClick={() => onInsert(prompt.content)}
                             variant={"ghost"}
-                            size={"icon"}
+                            size={"sm"}
+                            className="h-auto min-w-0 flex-1 flex-col items-start py-2 text-left"
                           >
-                            {saving ? (
-                              <Loader2 className="size-4 animate-spin" />
-                            ) : (
-                              <Check className="size-4" />
-                            )}
+                            <span className="block w-full truncate text-sm font-medium">
+                              {prompt.title}
+                            </span>
+                            <span className="line-clamp-2 w-full break-words text-xs font-normal text-muted-foreground">
+                              {prompt.content}
+                            </span>
                           </Button>
-                          <Button
-                            type="button"
-                            disabled={saving}
-                            aria-label={common("cancel")}
-                            onClick={() => setDeleting(null)}
-                            variant={"ghost"}
-                            size={"icon"}
-                          >
-                            <X className="size-4" />
-                          </Button>
-                        </>
-                      ) : (
+                        </CenterMorphModalClose>
                         <Button
                           type="button"
-                          aria-label={t("deletePrompt", {
-                            title: prompt.title,
-                          })}
-                          title={t("deletePrompt", { title: prompt.title })}
-                          onClick={() => setDeleting(prompt.id)}
+                          aria-label={t("editPrompt", { title: prompt.title })}
+                          title={t("editPrompt", { title: prompt.title })}
+                          onClick={() =>
+                            startEditing({
+                              id: prompt.id,
+                              title: prompt.title,
+                              content: prompt.content,
+                            })
+                          }
                           variant={"ghost"}
                           size={"icon"}
                         >
-                          <Trash2 className="size-4" />
+                          <Pencil className="size-4" />
                         </Button>
-                      )}
-                    </div>
-                  ))
-              )}
-              {!loading && !prompts.length ? (
-                <p className="py-10 text-center text-sm text-muted-foreground">
-                  {t("noPrompts")}
-                </p>
-              ) : null}
-            </div>
+                        {deleting === prompt.id ? (
+                          <>
+                            <Button
+                              type="button"
+                              disabled={saving}
+                              aria-label={common("cancel")}
+                              title={common("cancel")}
+                              onClick={() => setDeleting(null)}
+                              variant={"ghost"}
+                              size={"icon"}
+                            >
+                              <X className="size-4" />
+                            </Button>
+                            <Button
+                              type="button"
+                              disabled={saving}
+                              aria-label={t("confirmDelete")}
+                              title={t("confirmDelete")}
+                              onClick={() =>
+                                void mutate({ action: "delete", id: prompt.id })
+                              }
+                              variant={"ghost"}
+                              size={"icon"}
+                              className="text-destructive"
+                            >
+                              {saving ? (
+                                <Loader2 className="size-4 animate-spin" />
+                              ) : (
+                                <Check className="size-4" />
+                              )}
+                            </Button>
+                          </>
+                        ) : (
+                          <Button
+                            type="button"
+                            aria-label={t("deletePrompt", {
+                              title: prompt.title,
+                            })}
+                            title={t("deletePrompt", { title: prompt.title })}
+                            onClick={() => setDeleting(prompt.id)}
+                            variant={"ghost"}
+                            size={"icon"}
+                          >
+                            <Trash2 className="size-4" />
+                          </Button>
+                        )}
+                      </div>
+                    ))
+                )}
+                {!loading && !prompts.length ? (
+                  <p className="py-10 text-center text-sm text-muted-foreground">
+                    {t("noPrompts")}
+                  </p>
+                ) : null}
+              </div>
+            </DialogBody>
+            <DialogFooter
+              start={errorMessage}
+              cancel={<DialogCancel>{common("close")}</DialogCancel>}
+            >
+              <Button
+                type="button"
+                onClick={() => startEditing({ title: "", content: "" })}
+                variant="primary"
+                size="md"
+              >
+                <Plus className="size-4" />
+                {t("addPrompt")}
+              </Button>
+            </DialogFooter>
           </>
         )}
-        {error ? (
-          <p role="alert" className="text-sm text-destructive">
-            {error}
-          </p>
-        ) : null}
       </CenterMorphModalContent>
     </CenterMorphModal>
   );

@@ -12,32 +12,28 @@ import {
   MIN_ADMIN_ATTACHMENT_MEGABYTES,
   resolveAgentAttachmentLimit,
 } from "@/lib/agents/attachment-limits";
-import {
-  AdminPage,
-  AdminPageHeader,
-  AdminPanel,
-} from "@/components/admin/AdminUI";
+import { AdminPage, AdminPageHeader } from "@/components/admin/AdminUI";
 import { McpRuntimeSettingsForm } from "@/components/admin/McpRuntimeSettingsForm";
 import { AgentConcurrencySettingsForm } from "@/components/admin/AgentConcurrencySettingsForm";
 import { RemoteMcpPrivateHostsSettingsForm } from "@/components/admin/RemoteMcpPrivateHostsSettingsForm";
+import { SshPrivateHostsSettingsForm } from "@/components/admin/SshPrivateHostsSettingsForm";
 import { RuntimeSettingsForm } from "@/components/admin/RuntimeSettingsForm";
 import { SkillImportSettingsForm } from "@/components/admin/SkillImportSettingsForm";
-import { SystemSettingsForm } from "@/components/admin/SystemSettingsForm";
 import {
   AGENT_CONCURRENCY_SETTING_KEY,
   getAgentConcurrencySettings,
   MAX_AGENT_CONCURRENCY,
   MAX_TOTAL_AGENT_CONCURRENCY,
-  getHermesArchiveSettings,
-  HERMES_ARCHIVE_MAX_UPLOAD_MIB_SETTING_KEY,
   MCP_STARTUP_TIMEOUTS_SETTING_KEY,
   REMOTE_MCP_PRIVATE_HOSTS_SETTING_KEY,
   SKILL_IMPORT_MAX_SKILLS_SETTING_KEY,
+  SSH_PRIVATE_HOSTS_SETTING_KEY,
   getSkillImportSettings,
   MAX_MCP_STARTUP_TIMEOUT_MS,
   MIN_MCP_STARTUP_TIMEOUT_MS,
   resolveMcpStartupTimeoutSettings,
   resolveRemoteMcpPrivateHostsSettings,
+  resolveSshPrivateHostsSettings,
 } from "@/lib/admin/settings";
 
 export const dynamic = "force-dynamic";
@@ -47,18 +43,18 @@ export default async function AdminSettingsPage() {
   const [
     t,
     attachmentLimit,
-    hermesArchiveSettings,
     skillImportSettings,
     mcpStartupTimeouts,
     remoteMcpPrivateHosts,
+    sshPrivateHosts,
     agentConcurrency,
   ] = await Promise.all([
     getTranslations("admin"),
     resolveAgentAttachmentLimit(),
-    getHermesArchiveSettings(),
     getSkillImportSettings(),
     resolveMcpStartupTimeoutSettings(),
     resolveRemoteMcpPrivateHostsSettings(),
+    resolveSshPrivateHostsSettings(),
     getAgentConcurrencySettings(),
   ]);
   const [ops, locale, changes] = await Promise.all([
@@ -69,7 +65,7 @@ export default async function AdminSettingsPage() {
       AGENT_ATTACHMENT_LIMIT_SETTING_KEY,
       MCP_STARTUP_TIMEOUTS_SETTING_KEY,
       REMOTE_MCP_PRIVATE_HOSTS_SETTING_KEY,
-      HERMES_ARCHIVE_MAX_UPLOAD_MIB_SETTING_KEY,
+      SSH_PRIVATE_HOSTS_SETTING_KEY,
       SKILL_IMPORT_MAX_SKILLS_SETTING_KEY,
     ]),
   ]);
@@ -150,17 +146,11 @@ export default async function AdminSettingsPage() {
           />,
         )}
         {section(
-          HERMES_ARCHIVE_MAX_UPLOAD_MIB_SETTING_KEY,
-          <AdminPanel
-            title={t("hermesArchiveImports")}
-            description={t("hermesArchiveImportsDescription")}
-          >
-            <SystemSettingsForm
-              hermesArchiveMaxUploadMiB={
-                hermesArchiveSettings.hermesArchiveMaxUploadMiB
-              }
-            />
-          </AdminPanel>,
+          SSH_PRIVATE_HOSTS_SETTING_KEY,
+          <SshPrivateHostsSettingsForm
+            value={sshPrivateHosts.value}
+            source={sshPrivateHosts.source}
+          />,
         )}
         {section(
           SKILL_IMPORT_MAX_SKILLS_SETTING_KEY,

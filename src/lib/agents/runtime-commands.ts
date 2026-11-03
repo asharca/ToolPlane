@@ -22,10 +22,9 @@ export type ParsedRuntimeCommand = { name: string; args: string };
 const BUILTINS: Record<string, readonly string[]> = {
   pi: ["compact"],
   "pi-sdk": ["compact"],
+  omp: ["compact"],
   "claude-code": ["clear", "compact", "context", "usage"],
   dsh: ["compact", "goal"],
-  hermes: ["compact"],
-  "hermes-rpc": ["compact"],
 };
 export const HOST_ONLY_COMMAND_NAMES = [
   "new",
@@ -46,7 +45,8 @@ export function runtimeCommands(
   const extra =
     runtimeKind === "claude-code" ||
     runtimeKind === "dsh" ||
-    runtimeKind === "pi-sdk"
+    runtimeKind === "pi-sdk" ||
+    runtimeKind === "omp"
       ? live
       : [];
   return [
@@ -72,7 +72,10 @@ export function parseRuntimeCommand(
     .match(/^\/([a-z][a-z0-9_:-]{0,99})(?:\s+([\s\S]*))?$/i);
   return match
     ? {
-        name: runtimeKind === "pi-sdk" ? match[1] : match[1].toLowerCase(),
+        name:
+          runtimeKind === "pi-sdk" || runtimeKind === "omp"
+            ? match[1]
+            : match[1].toLowerCase(),
         args: match[2]?.trim() ?? "",
       }
     : null;

@@ -73,7 +73,6 @@ export type MessagingCredential = {
 export type MessagingPairing = {
   type: "qr";
   provider:
-    | "telegram_managed_bot"
     | "wecom_admin_qr"
     | "weixin_ilink_qr"
     | "dingtalk_device_qr"
@@ -219,20 +218,17 @@ export const MESSAGING_PLATFORMS: MessagingPlatform[] = [
     summary: "Telegram Bot API updates, private chats, groups, and topics.",
     requiredEnv: ["TELEGRAM_BOT_TOKEN"],
     setupFlow: "bot_token",
-    primaryAction: "Set up with QR or save BotFather token",
+    primaryAction: "Save BotFather token",
     connectionMode:
       "Hosted runner uses Telegram Bot API polling or webhook delivery.",
     publicEndpointRequired: false,
-    docsUrl:
-      "https://hermes-agent.nousresearch.com/docs/user-guide/messaging/telegram",
     credentials: [
       {
         name: "TELEGRAM_BOT_TOKEN",
         label: "Bot token from @BotFather",
         required: true,
-        requiredAt: "start",
         secret: true,
-        placeholder: "auto-filled by QR or 123456789:ABCdef...",
+        placeholder: "123456789:ABCdef...",
       },
       {
         name: "TELEGRAM_ALLOWED_USERS",
@@ -252,22 +248,9 @@ export const MESSAGING_PLATFORMS: MessagingPlatform[] = [
         defaultValue: "true",
       },
     ],
-    pairing: {
-      type: "qr",
-      provider: "telegram_managed_bot",
-      label: "Telegram managed bot QR",
-      description:
-        "ToolPlane starts the Hermes managed-bot flow, displays the Telegram deep-link QR, then waits for Telegram to return the bot token.",
-      scanTarget: "Telegram mobile app",
-      completion:
-        "After Telegram reports the bot is ready, confirm the allowed numeric user IDs before saving.",
-      requestLabel: "Set up with QR",
-      checkLabel: "Check Telegram setup",
-    },
     setupSteps: [
-      "Start QR setup or create a Telegram bot manually in @BotFather.",
-      "Scan the QR to open Telegram and confirm the managed bot creation.",
-      "When ToolPlane detects the bot token, optionally restrict allowed numeric Telegram user IDs.",
+      "Create a Telegram bot in @BotFather and save its token.",
+      "Optionally restrict allowed numeric Telegram user IDs.",
       "Start the Telegram hosted runner so it can receive updates and deliver replies.",
     ],
     operatorNotes: [
@@ -292,8 +275,6 @@ export const MESSAGING_PLATFORMS: MessagingPlatform[] = [
     primaryAction: "Save Discord bot token",
     connectionMode: "Discord Gateway WebSocket bot connection.",
     publicEndpointRequired: false,
-    docsUrl:
-      "https://hermes-agent.nousresearch.com/docs/user-guide/messaging/discord",
     credentials: [
       {
         name: "DISCORD_BOT_TOKEN",
@@ -354,8 +335,6 @@ export const MESSAGING_PLATFORMS: MessagingPlatform[] = [
     connectionMode:
       "Slack Socket Mode WebSocket; no public Events URL required.",
     publicEndpointRequired: false,
-    docsUrl:
-      "https://hermes-agent.nousresearch.com/docs/user-guide/messaging/slack",
     credentials: [
       {
         name: "SLACK_BOT_TOKEN",
@@ -442,8 +421,6 @@ export const MESSAGING_PLATFORMS: MessagingPlatform[] = [
     primaryAction: "Pair WhatsApp bridge",
     connectionMode: "Unofficial bridge session paired from the phone app.",
     publicEndpointRequired: false,
-    docsUrl:
-      "https://hermes-agent.nousresearch.com/docs/user-guide/messaging/whatsapp",
     credentials: [
       {
         name: "WHATSAPP_ALLOWED_USERS",
@@ -493,8 +470,6 @@ export const MESSAGING_PLATFORMS: MessagingPlatform[] = [
     connectionMode:
       "Meta Cloud API POSTs signed webhook events to a public HTTPS URL.",
     publicEndpointRequired: true,
-    docsUrl:
-      "https://hermes-agent.nousresearch.com/docs/user-guide/messaging/whatsapp-cloud",
     credentials: [
       {
         name: "WHATSAPP_CLOUD_PHONE_NUMBER_ID",
@@ -548,8 +523,6 @@ export const MESSAGING_PLATFORMS: MessagingPlatform[] = [
     primaryAction: "Link signal-cli daemon",
     connectionMode: "Local signal-cli daemon or bridge receives messages.",
     publicEndpointRequired: false,
-    docsUrl:
-      "https://hermes-agent.nousresearch.com/docs/user-guide/messaging/signal",
     credentials: [
       {
         name: "SIGNAL_ALLOWED_USERS",
@@ -842,7 +815,7 @@ export const MESSAGING_PLATFORMS: MessagingPlatform[] = [
       provider: "dingtalk_device_qr",
       label: "DingTalk authorization QR",
       description:
-        "ToolPlane starts the same DingTalk device authorization flow used by Hermes and stores the returned Client ID and Client Secret.",
+        "ToolPlane starts DingTalk device authorization and stores the returned Client ID and Client Secret.",
       scanTarget: "DingTalk mobile app",
       completion:
         "After authorization succeeds, Client ID and Client Secret are saved on this channel automatically.",
@@ -856,7 +829,7 @@ export const MESSAGING_PLATFORMS: MessagingPlatform[] = [
       "Optionally restrict allowed staff IDs or chat IDs before starting the runner.",
     ],
     operatorNotes: [
-      "This follows Hermes Stream Mode, not a public webhook callback. The QR page may be branded OpenClaw because DingTalk exposes that registration bridge.",
+      "This uses Stream Mode, not a public webhook callback. The QR page may be branded OpenClaw because DingTalk exposes that registration bridge.",
     ],
     capabilities: {
       images: true,
@@ -941,8 +914,6 @@ export const MESSAGING_PLATFORMS: MessagingPlatform[] = [
     primaryAction: "Start QR scan setup",
     connectionMode: "WeCom AI Bot WebSocket gateway; no public callback URL.",
     publicEndpointRequired: false,
-    docsUrl:
-      "https://hermes-agent.nousresearch.com/docs/user-guide/messaging/wecom",
     credentials: [
       {
         name: "WECOM_BOT_ID",
@@ -1036,8 +1007,6 @@ export const MESSAGING_PLATFORMS: MessagingPlatform[] = [
     connectionMode:
       "WeCom pushes encrypted XML callbacks to a public HTTPS URL.",
     publicEndpointRequired: true,
-    docsUrl:
-      "https://hermes-agent.nousresearch.com/docs/user-guide/messaging/wecom-callback",
     credentials: [
       { name: "WECOM_CALLBACK_CORP_ID", label: "Corp ID", required: true },
       {
@@ -1079,8 +1048,6 @@ export const MESSAGING_PLATFORMS: MessagingPlatform[] = [
     connectionMode:
       "Tencent iLink long-polling; no public endpoint or webhook.",
     publicEndpointRequired: false,
-    docsUrl:
-      "https://hermes-agent.nousresearch.com/docs/user-guide/messaging/weixin",
     credentials: [
       {
         name: "WEIXIN_ACCOUNT_ID",
@@ -1371,8 +1338,6 @@ export const MESSAGING_PLATFORMS: MessagingPlatform[] = [
     primaryAction: "Configure LINE webhook",
     connectionMode: "LINE Messaging API pushes signed webhook events.",
     publicEndpointRequired: true,
-    docsUrl:
-      "https://hermes-agent.nousresearch.com/docs/user-guide/messaging/line",
     credentials: [
       {
         name: "LINE_CHANNEL_SECRET",

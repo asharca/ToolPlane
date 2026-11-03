@@ -1,98 +1,268 @@
 import "server-only";
+import { isDeepStrictEqual } from "node:util";
 import { db } from "@/lib/db";
 import type { AgentRuntimeTokenPayload } from "./runtime-access";
-import { isDedicatedSandboxRuntimeKind } from "./runtime-kind";
-import { readAgentPiPackageMcpPolicy } from "./pi-package-mcp-access";
 import type { PiPackageMcpToolPolicy } from "./pi-package-mcp";
-import { findAgentConversationSandbox } from "./conversation-sandbox";
+import { requireAgentRevision } from "./revisions";
+import { assertLocalRuntimeToken } from "@/lib/a2a/local-runtime";
+import { assertAgentEnvironmentCredentialReferences } from "./environment-credentials";
+import { resolveAgentModelOverride } from "./turn-model";
+import type { SandboxMcpTool } from "@/lib/sandboxes/mcp-policy";
+import {
+  externalSandboxTools,
+  isExternalSandboxAccess,
+  narrowExternalSandboxAccess,
+} from "@/lib/sandboxes/external";
+import { resolveAuthorizedSubagentModels } from "./subagents";
+import { AgentRevisionConfigSchema } from "./revision-types";
+import { resolveNativeRoleModels } from "./native-role-models";
 
+/** A token identifies a pinned session; it never freezes live authorization. */
 export async function resolveAgentRuntimeGrant(
   token: AgentRuntimeTokenPayload,
-): Promise<{ mcpToolPolicy: PiPackageMcpToolPolicy } | null> {
-  if (token.a2aTaskId) {
-    const { assertLocalRuntimeToken } = await import("@/lib/a2a/local-runtime");
-    try {
-      await assertLocalRuntimeToken(token);
-    } catch {
+  modelTarget?: { providerId: string; model: string },
+): Promise<{
+  mcpToolPolicy: PiPackageMcpToolPolicy;
+  runtimeKind: "pi-sdk" | "omp";
+  model: string | null;
+  /** Attached sandbox ID → tools allowed by both the pinned revision and the live attachment. */
+  externalSandboxTools: Record<string, SandboxMcpTool[]>;
+} | null> {
+  try {
+    if (
+      !token.agentRevisionId ||
+      (!token.conversationId && !token.a2aContextId)
+    )
       return null;
-    }
-  }
-  const agent = await db.agent.findFirst({
-    where: {
-      id: token.agentId,
-      workspaceId: token.workspaceId,
-      workspace: { status: "active" },
-      OR: [
-        { providerId: token.providerId },
-        { modelProviders: { some: { providerId: token.providerId } } },
-      ],
-    },
-    select: {
-      runtimeKind: true,
-      servers: { select: { deploymentId: true } },
-      toolkits: {
-        select: {
-          toolkit: { select: { servers: { select: { deploymentId: true } } } },
-        },
-      },
-      sandboxes: {
-        select: {
-          sandboxId: true,
-          sandbox: { select: { workspaceId: true, kind: true, network: true } },
-        },
-      },
-    },
-  });
-  const link = agent?.sandboxes[0];
-  let mappedSandboxId: string | undefined;
-  if (token.conversationId || token.a2aContextId) {
-    try {
-      mappedSandboxId = (
-        await findAgentConversationSandbox({
+    if (token.a2aTaskId) await assertLocalRuntimeToken(token);
+    return await db.$transaction(async (tx) => {
+      const revision = await requireAgentRevision(
+        tx,
+        token.agentId,
+        token.agentRevisionId,
+      );
+      const agent = await tx.agent.findFirst({
+        where: {
+          id: token.agentId,
           workspaceId: token.workspaceId,
-          agentId: token.agentId,
-          conversationId: token.conversationId,
-          contextId: token.a2aContextId,
-        })
-      )?.sandboxId;
-    } catch {
-      return null;
-    }
-  }
-  const currentDeployments = new Set([
-    ...(agent?.servers.map((server) => server.deploymentId) ?? []),
-    ...(agent?.toolkits.flatMap((entry) =>
-      entry.toolkit.servers.map((server) => server.deploymentId),
-    ) ?? []),
-  ]);
-  let mcpToolPolicy: PiPackageMcpToolPolicy = {};
-  if (agent?.runtimeKind === "pi-sdk") {
-    try {
-      mcpToolPolicy = await readAgentPiPackageMcpPolicy(
-        db,
+          runtimeKind: revision.config.runtimeKind,
+          retiredAt: null,
+          workspace: { status: "active" },
+          providerId: revision.config.providerId,
+        },
+        select: {
+          servers: { select: { deploymentId: true, allowedToolNames: true } },
+          externalSandboxes: {
+            where: { sandbox: { workspaceId: token.workspaceId } },
+            select: { sandboxId: true, access: true },
+          },
+        },
+      });
+      if (!agent) return null;
+      if (token.modelOverride) {
+        if (token.modelOverride.providerId !== token.providerId) return null;
+        await resolveAgentModelOverride(
+          token.workspaceId,
+          token.modelOverride,
+          revision.config.runtimeKind,
+          tx,
+        );
+      } else if (revision.config.providerId !== token.providerId) return null;
+      if (token.conversationId) {
+        const conversation = await tx.conversation.findFirst({
+          where: {
+            id: token.conversationId,
+            agentId: token.agentId,
+            agentRevisionId: token.agentRevisionId,
+            legacyRevisionUnresolved: false,
+            sandboxId: token.sandboxId,
+          },
+          select: { id: true },
+        });
+        if (!conversation) return null;
+      }
+      let contextConversationId: string | undefined;
+      if (token.a2aContextId) {
+        const context = await tx.a2AContext.findFirst({
+          where: {
+            id: token.a2aContextId,
+            workspaceId: token.workspaceId,
+            agentId: token.agentId,
+            targetKind: "local",
+            agentRevisionId: token.agentRevisionId,
+            legacyRevisionUnresolved: false,
+            sandboxId: token.sandboxId,
+          },
+          select: {
+            id: true,
+            entryBindings: { select: { kind: true, sourceId: true } },
+          },
+        });
+        if (!context) return null;
+        const conversations = new Set<string>();
+        for (const entry of context.entryBindings) {
+          if (["chat", "control", "channel"].includes(entry.kind))
+            conversations.add(entry.sourceId);
+          if (entry.kind === "work") {
+            const work = await tx.workSession.findFirst({
+              where: {
+                id: entry.sourceId,
+                workspaceId: token.workspaceId,
+                agentId: token.agentId,
+              },
+              select: { conversationId: true },
+            });
+            if (work?.conversationId) conversations.add(work.conversationId);
+          }
+        }
+        if (conversations.size > 1) return null;
+        contextConversationId = [...conversations][0];
+        if (
+          token.conversationId &&
+          contextConversationId !== token.conversationId
+        )
+          return null;
+        if (
+          contextConversationId &&
+          !token.conversationId &&
+          !(await tx.conversation.findFirst({
+            where: {
+              id: contextConversationId,
+              agentId: token.agentId,
+              agentRevisionId: token.agentRevisionId,
+              legacyRevisionUnresolved: false,
+              sandboxId: token.sandboxId,
+            },
+            select: { id: true },
+          }))
+        )
+          return null;
+      }
+      const sandbox = await tx.sandbox.findFirst({
+        where: {
+          id: token.sandboxId,
+          workspaceId: token.workspaceId,
+          kind: "docker",
+        },
+        select: { config: true },
+      });
+      if (!sandbox) return null;
+      const config =
+        sandbox.config &&
+        typeof sandbox.config === "object" &&
+        !Array.isArray(sandbox.config)
+          ? sandbox.config
+          : {};
+      if (config.readOnly === true) return null;
+      const conversationId = token.conversationId ?? contextConversationId;
+      if (
+        conversationId &&
+        Array.isArray(config.pendingWorkspaceDeletes) &&
+        config.pendingWorkspaceDeletes.includes(conversationId)
+      )
+        return null;
+      if (config.scope === "agent") {
+        if (
+          config.managedBy !== "agent-conversation" ||
+          config.agentId !== token.agentId ||
+          typeof config.agentRevisionId !== "string"
+        )
+          return null;
+        const pinned = await tx.agentRevision.findFirst({
+          where: { id: config.agentRevisionId, agentId: token.agentId },
+          select: { config: true },
+        });
+        if (!pinned) return null;
+        const environmentOwner = AgentRevisionConfigSchema.parse(pinned.config);
+        if (
+          environmentOwner.runtimeKind !== revision.config.runtimeKind ||
+          !isDeepStrictEqual(
+            environmentOwner.environment,
+            revision.config.environment,
+          )
+        )
+          return null;
+      }
+      await assertAgentEnvironmentCredentialReferences(
+        tx,
         token.workspaceId,
         token.agentId,
+        revision.config.environment.credentialReferences,
       );
-    } catch {
-      return null;
-    }
-    for (const id of Object.keys(mcpToolPolicy)) {
-      if (currentDeployments.has(id)) delete mcpToolPolicy[id];
-      else currentDeployments.add(id);
-    }
+      if (
+        modelTarget &&
+        (modelTarget.providerId !== token.providerId ||
+          (revision.config.runtimeKind === "omp" &&
+            modelTarget.model !==
+              (token.modelOverride?.model ?? revision.config.model)))
+      ) {
+        if (revision.config.runtimeKind !== "omp") return null;
+        const models = [
+          ...(revision.config.subagents?.length
+            ? await resolveAuthorizedSubagentModels(
+                tx,
+                token.workspaceId,
+                token.agentId,
+                revision.config,
+              )
+            : []),
+          ...(await resolveNativeRoleModels(
+            tx,
+            token.workspaceId,
+            token.agentId,
+            revision.config,
+          )),
+        ];
+        if (
+          !models.some(
+            (entry) =>
+              entry.providerId === modelTarget.providerId &&
+              entry.model === modelTarget.model,
+          )
+        )
+          return null;
+      }
+      const currentDeployments = new Map<string, string[]>(
+        agent.servers.map((server) => [
+          server.deploymentId,
+          server.allowedToolNames,
+        ]),
+      );
+      const mcpToolPolicy: PiPackageMcpToolPolicy = {};
+      for (const grant of revision.config.mcpGrants) {
+        const liveTools = currentDeployments.get(grant.deploymentId);
+        if (liveTools) {
+          mcpToolPolicy[grant.deploymentId] = grant.allowedToolNames.filter(
+            (name) => liveTools.includes(name),
+          );
+        }
+      }
+      if (token.deploymentIds.some((id) => !Object.hasOwn(mcpToolPolicy, id)))
+        return null;
+      // A detached sandbox loses only its own tools, never the whole session grant.
+      const externalTools: Record<string, SandboxMcpTool[]> = {};
+      for (const pinned of revision.config.externalSandboxes) {
+        const live = agent.externalSandboxes.find(
+          (entry) => entry.sandboxId === pinned.sandboxId,
+        );
+        if (live && isExternalSandboxAccess(live.access))
+          externalTools[pinned.sandboxId] = externalSandboxTools(
+            narrowExternalSandboxAccess(pinned.access, live.access),
+          );
+      }
+      return {
+        mcpToolPolicy,
+        externalSandboxTools: externalTools,
+        runtimeKind: revision.config.runtimeKind,
+        model:
+          modelTarget?.model ??
+          token.modelOverride?.model ??
+          revision.config.model,
+      };
+    });
+  } catch {
+    return null;
   }
-  return agent &&
-    isDedicatedSandboxRuntimeKind(agent.runtimeKind) &&
-    agent.sandboxes.length === 1 &&
-    mappedSandboxId === token.sandboxId &&
-    link?.sandbox.workspaceId === token.workspaceId &&
-    link.sandbox.kind === "docker" &&
-    link.sandbox.network !== "none" &&
-    token.deploymentIds.every((deploymentId) =>
-      currentDeployments.has(deploymentId),
-    )
-    ? { mcpToolPolicy }
-    : null;
 }
 
 export async function isAgentRuntimeGrantCurrent(

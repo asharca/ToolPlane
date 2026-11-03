@@ -303,7 +303,7 @@ export function ToolPlayground({
 
   if (credentialsRequired) {
     return (
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-md bg-muted/45 px-4 py-3">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-muted/45 px-4 py-3">
         <div className="flex min-w-0 items-start gap-2.5">
           <KeyRound className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
           <p className="text-sm text-muted-foreground">
@@ -323,7 +323,7 @@ export function ToolPlayground({
 
   if (!defaultRuntime && sandboxes.length === 0) {
     return (
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-md bg-muted/45 px-4 py-3">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-muted/45 px-4 py-3">
         <div className="flex min-w-0 items-start gap-2.5">
           <Box className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
           <p className="text-sm text-muted-foreground">
@@ -401,7 +401,7 @@ export function ToolPlayground({
       {error && !availableTools.length ? (
         <pre
           role="alert"
-          className="overflow-x-auto rounded-md bg-destructive/10 p-3 text-xs text-destructive"
+          className="overflow-x-auto rounded-xl bg-destructive/10 p-3 text-xs text-destructive"
         >
           {error}
         </pre>
@@ -468,7 +468,7 @@ export function ToolPlayground({
                   <Braces className="size-3.5" />
                   {t("inputSchema")}
                 </p>
-                <pre className="max-h-64 overflow-auto rounded-md bg-muted/55 p-3 font-mono text-xs leading-5 text-foreground">
+                <pre className="max-h-64 overflow-auto rounded-xl bg-muted/55 p-3 font-mono text-xs leading-5 text-foreground">
                   {JSON.stringify(
                     current?.inputSchema ?? { type: "object" },
                     null,
@@ -481,7 +481,7 @@ export function ToolPlayground({
                   <Braces className="size-3.5" />
                   {t("outputSchema")}
                 </p>
-                <pre className="max-h-64 overflow-auto rounded-md bg-muted/55 p-3 font-mono text-xs leading-5 text-foreground">
+                <pre className="max-h-64 overflow-auto rounded-xl bg-muted/55 p-3 font-mono text-xs leading-5 text-foreground">
                   {JSON.stringify(current?.outputSchema ?? {}, null, 2)}
                 </pre>
               </div>
@@ -522,7 +522,7 @@ export function ToolPlayground({
             {error ? (
               <pre
                 role="alert"
-                className="overflow-x-auto rounded-md bg-destructive/10 p-3 text-xs text-destructive"
+                className="overflow-x-auto rounded-xl bg-destructive/10 p-3 text-xs text-destructive"
               >
                 {error}
               </pre>
@@ -534,7 +534,7 @@ export function ToolPlayground({
                 </p>
                 <pre
                   role="status"
-                  className="max-h-96 overflow-auto rounded-md bg-muted/55 p-3 font-mono text-xs leading-5 text-foreground"
+                  className="max-h-96 overflow-auto rounded-xl bg-muted/55 p-3 font-mono text-xs leading-5 text-foreground"
                 >
                   {result}
                 </pre>
@@ -558,7 +558,7 @@ export function ToolPlayground({
                             <p className="mb-1.5 text-xs font-medium text-muted-foreground">
                               {t("request")}
                             </p>
-                            <pre className="max-h-72 overflow-auto rounded-md bg-muted/55 p-3 font-mono text-xs leading-5 text-foreground">
+                            <pre className="max-h-72 overflow-auto rounded-xl bg-muted/55 p-3 font-mono text-xs leading-5 text-foreground">
                               {JSON.stringify(log.request, null, 2)}
                             </pre>
                           </div>
@@ -566,7 +566,7 @@ export function ToolPlayground({
                             <p className="mb-1.5 text-xs font-medium text-muted-foreground">
                               {t("response")}
                             </p>
-                            <pre className="max-h-72 overflow-auto rounded-md bg-muted/55 p-3 font-mono text-xs leading-5 text-foreground">
+                            <pre className="max-h-72 overflow-auto rounded-xl bg-muted/55 p-3 font-mono text-xs leading-5 text-foreground">
                               {JSON.stringify(log.response, null, 2)}
                             </pre>
                           </div>

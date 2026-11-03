@@ -11,15 +11,21 @@ import {
 } from "vitest";
 import { randomUUID } from "node:crypto";
 import { Task, TaskState } from "@a2a-js/sdk";
-import { runNativeEntry } from "@/lib/a2a/ingress";
 import {
-  bindPiHarnessOperation,
-  claimTask,
-  finishTask,
-  getTask,
-} from "@/lib/a2a/store";
+  runAgentEntry,
+  submitAgentEntry,
+} from "@/lib/agents/execution/entries";
+import type * as EntryModule from "@/lib/agents/execution/entries";
+import { claimTask, finishTask, getTask } from "@/lib/a2a/store";
 import { textArtifact } from "@/lib/a2a/model";
 import { db } from "@/lib/db";
+import {
+  applyNativeUiAction,
+  nativeUiProjection,
+} from "@/lib/agents/execution/native-ui";
+import type { Prisma } from "@prisma/client";
+import { encryptSecretText } from "@/lib/security/secrets";
+import { publishFixtureAgentRevision } from "./agent-revision-fixture";
 import { GET, POST } from "@/app/api/v1/workspaces/[slug]/agent-channels/route";
 import {
   createAgentChannelConnection,
@@ -28,33 +34,61 @@ import {
 import {
   runAgentChannelMessage,
   runWorkspaceAgentMessage,
+  CHANNEL_EXECUTION_FAILURE_MESSAGE,
 } from "@/lib/agents/message-service";
 import {
   liveAgentChannelStatus,
   startAgentChannelRunner,
   stopAgentChannelRunner,
 } from "@/lib/agents/channel-runtime";
-import { runDedicatedSandboxTurn } from "@/lib/agents/sandbox-turn";
-import { runNativeAgent } from "@/lib/agents/native";
-import {
-  acquireConversationOperation,
-  operateConversation,
-} from "@/lib/agents/conversation-operations";
-import { activeConversationMessages } from "@/lib/agents/conversation-context";
-import { POST as conversationOperation } from "@/app/api/v1/agents/[agentId]/conversations/[conversationId]/operations/route";
+import { acquireConversationOperation } from "@/lib/agents/conversation-operations";
 import { POST as runtimeCommand } from "@/app/api/v1/agents/[agentId]/conversations/[conversationId]/commands/route";
 import { executeRuntimeCommand } from "@/lib/agents/runtime-command-service";
 import {
-  COMMAND_RESULT_PART,
-  RUNTIME_COMMANDS_PART,
-  RUNTIME_USAGE_PART,
-} from "@/lib/agents/runtime-commands";
-import { kickWorkCoordinator } from "@/lib/work/coordinator";
+  GET as getExecution,
+  POST as decideExecution,
+} from "@/app/api/v1/agents/[agentId]/conversations/[conversationId]/execution/route";
 
-const identity = vi.hoisted(() => ({ user: null as { id: string } | null }));
+function executionRequest(
+  agent: string,
+  conversationId: string,
+  body?: Record<string, unknown>,
+  headers: Record<string, string> = {},
+) {
+  const method = body ? "POST" : "GET";
+  const req = new Request(
+    `http://localhost:3000/api/v1/agents/${agent}/conversations/${conversationId}/execution`,
+    {
+      method,
+      headers: {
+        ...(body
+          ? {
+              "content-type": "application/json",
+              origin: "http://localhost:3000",
+            }
+          : {}),
+        ...headers,
+      },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    },
+  );
+  const context = {
+    params: Promise.resolve({ agentId: agent, conversationId }),
+  };
+  return body ? decideExecution(req, context) : getExecution(req, context);
+}
+
+const identity = vi.hoisted(() => ({
+  user: null as { id: string } | null,
+  credential: "session" as "session" | "personal-token" | "toolkit-token",
+}));
 vi.mock("@/lib/auth/request-user", () => ({
   resolveAccountRequestUser: async () => identity.user,
   resolveRequestUser: async () => identity.user,
+  resolveRequestPrincipal: async () =>
+    identity.user
+      ? { user: identity.user, credential: identity.credential, token: null }
+      : null,
 }));
 vi.mock("@/lib/agents/channel-runtime", () => ({
   liveAgentChannelStatus: vi.fn(() => "stopped"),
@@ -63,47 +97,34 @@ vi.mock("@/lib/agents/channel-runtime", () => ({
   })),
   stopAgentChannelRunner: vi.fn(async () => {}),
 }));
-vi.mock("@/lib/agents/native", () => ({
-  uiMessagesToPi: (value: unknown) => value,
-  runNativeAgent: vi.fn(async () => "Channel reply"),
-}));
-vi.mock("@/lib/agents/run", () => ({ buildAgentToolSet: async () => ({}) }));
-vi.mock("@/lib/agents/sandbox-turn", () => ({
-  runDedicatedSandboxTurn: vi.fn(async () => "Channel reply"),
-}));
-vi.mock("@/lib/work/coordinator", () => ({ kickWorkCoordinator: vi.fn() }));
-// Keep real admission, policy, persistence and receipts; inject only the terminal
-// execution result, with matching Pi operation proof. This is not a model/host test.
-vi.mock("@/lib/a2a/ingress", async (original) => {
-  const actual = await original<typeof import("@/lib/a2a/ingress")>();
+// Keep real published-revision admission, policy, persistence and receipts;
+// inject only terminal SDK output, without legacy Harness operation metadata.
+vi.mock("@/lib/agents/execution/entries", async (original) => {
+  const actual = await original<typeof EntryModule>();
   return {
     ...actual,
-    runNativeEntry: vi.fn(
-      async (input: Parameters<typeof actual.runNativeEntry>[0]) => {
-        const accepted = await actual.submitNativeEntry(input, () => {});
-        const path = `/app/channels/agents/${input.agentId}?settings=a2a&task=${accepted.row.id}`;
-        await input.onAccepted?.(Task.fromJSON(accepted.row.snapshot), path);
+    runAgentEntry: vi.fn(
+      async (input: Parameters<typeof actual.runAgentEntry>[0]) => {
+        const accepted = await actual.submitAgentEntry(input, () => {});
+        const path = `/app/channels/work?agent=${input.agentId}&c=${input.sourceId}`;
         if (!accepted.replay) {
           const running = await claimTask(accepted.row.id);
           if (!running?.leaseToken)
             throw new Error("Native fixture task was not claimed.");
-          const proof =
-            running.executionBackend === "pi-harness"
-              ? {
-                  nativeOperationId: await bindPiHarnessOperation(
-                    running.id,
-                    running.leaseToken,
-                    randomUUID(),
-                  ),
-                }
-              : undefined;
+          expect(running.executionBackend).toBe("pi-sdk");
+          const context = await db.a2AContext.findUniqueOrThrow({
+            where: { id: running.contextId },
+          });
+          const revision = await db.agentRevision.findUniqueOrThrow({
+            where: { id: assertDefined(context.agentRevisionId) },
+          });
+          expect(revision.agentId).toBe(input.agentId);
           await finishTask(
             running.id,
             running.leaseToken,
             TaskState.TASK_STATE_COMPLETED,
             undefined,
             textArtifact("Channel reply"),
-            proof,
           );
         }
         return { task: await getTask(accepted.grant, accepted.row.id), path };
@@ -156,7 +177,7 @@ beforeAll(async () => {
         workspaceId: workspace.id,
         name: "Bound agent",
         slug: "bound-agent",
-        runtimeKind: "pi",
+        runtimeKind: "pi-sdk",
         providerId: provider.id,
         model: "test",
       },
@@ -168,7 +189,7 @@ beforeAll(async () => {
         workspaceId: other.id,
         name: "Other agent",
         slug: "other-agent",
-        runtimeKind: "pi",
+        runtimeKind: "pi-sdk",
       },
     })
   ).id;
@@ -179,10 +200,6 @@ afterEach(() => {
   vi.mocked(startAgentChannelRunner).mockResolvedValue({
     error: "Runner is not configured",
   });
-  vi.mocked(runNativeAgent).mockResolvedValue("Channel reply");
-  vi.mocked(runDedicatedSandboxTurn)
-    .mockReset()
-    .mockResolvedValue("Channel reply");
 });
 afterAll(async () => {
   await db.logEvent.deleteMany({
@@ -193,6 +210,100 @@ afterAll(async () => {
   });
   await db.user.delete({ where: { id: assertDefined(identity.user).id } });
   await db.$disconnect();
+});
+
+it("reads channel history with isolated, gap-free live and older cursors", async () => {
+  const channel = await db.agentChannelConnection.create({
+    data: {
+      workspaceId: workspace.id,
+      agentId,
+      platform: "telegram",
+      name: "History",
+      credentials: {},
+      inboundTokenHash: randomUUID(),
+      inboundTokenSecret: encryptSecretText("history-fixture-token"),
+      inboundTokenPrefix: "history-fixture",
+    },
+  });
+  const conversation = await db.conversation.create({
+    data: {
+      agentId,
+      title: "Channel room",
+      runtimeSessionKey: `channel:${channel.id}:room`,
+    },
+  });
+  const unrelated = await db.conversation.create({
+    data: {
+      agentId,
+      title: "Private console chat",
+      runtimeSessionKey: `channel:${channel.id}-other:room`,
+    },
+  });
+  const time = new Date("2026-10-01T00:00:00Z");
+  const prefix = randomUUID();
+  await db.message.createMany({
+    data: Array.from({ length: 102 }, (_, i) => ({
+      id: `${prefix}-${String(i).padStart(3, "0")}`,
+      conversationId: conversation.id,
+      role: i % 2 ? "assistant" : "user",
+      parts: [{ type: "text", text: `Message ${i}` }],
+      createdAt: time,
+    })),
+  });
+  const privateMessage = await db.message.create({
+    data: {
+      conversationId: unrelated.id,
+      role: "user",
+      parts: [{ type: "text", text: "Private" }],
+    },
+  });
+  const history = (query = "", slug = workspace.slug) =>
+    GET(
+      new Request(
+        `http://localhost/api/v1/workspaces/${slug}/agent-channels?history=${channel.id}${query}`,
+      ),
+      { params: Promise.resolve({ slug }) },
+    );
+  const initial = await history();
+  expect(initial.status).toBe(200);
+  const page = await initial.json();
+  expect(page.messages.map((m: { text: string }) => m.text)).toEqual(
+    Array.from({ length: 100 }, (_, i) => `Message ${i + 2}`),
+  );
+  expect(page.hasMore).toBe(true);
+  const older = await (await history(`&before=${page.messages[0].id}`)).json();
+  expect(older.messages.map((m: { text: string }) => m.text)).toEqual([
+    "Message 0",
+    "Message 1",
+  ]);
+  expect(older.hasMore).toBe(false);
+  await db.message.create({
+    data: {
+      id: `${prefix}-102`,
+      conversationId: conversation.id,
+      role: "assistant",
+      parts: [
+        { type: "text", text: "New reply" },
+        { type: "data-internal", data: "Not conversation text" },
+      ],
+      createdAt: time,
+    },
+  });
+  const live = await (
+    await history(`&after=${page.messages.at(-1).id}`)
+  ).json();
+  expect(live.messages.map((m: { text: string }) => m.text)).toEqual([
+    "New reply",
+  ]);
+  expect((await history(`&after=${privateMessage.id}`)).status).toBe(404);
+  expect((await history("", other.slug)).status).toBe(404);
+  const owner = identity.user;
+  identity.user = null;
+  try {
+    expect((await history()).status).toBe(401);
+  } finally {
+    identity.user = owner;
+  }
 });
 async function command(body: Record<string, unknown>, slug = workspace.slug) {
   return POST(
@@ -221,13 +332,20 @@ async function createSandbox(workspaceId: string, name: string) {
 }
 
 async function enableNativeAgent(id: string, sandboxId?: string) {
-  if (!sandboxId) {
+  const existing = await db.agentSandbox.findFirst({
+    where: { agentId: id, isDefault: true },
+  });
+  if (!sandboxId && !existing) {
     const sandbox = await createSandbox(workspace.id, `Native ${id}`);
     await db.agentSandbox.create({
       data: { agentId: id, sandboxId: sandbox.id, isDefault: true },
     });
   }
-  await db.agent.update({ where: { id }, data: { a2aInternalEnabled: true } });
+  await db.agent.update({
+    where: { id },
+    data: { a2aInternalEnabled: false, a2aInboundEnabled: true },
+  });
+  await publishFixtureAgentRevision(workspace.id, id);
 }
 async function nativeBinding(conversationId: string) {
   return db.a2AEntryBinding.findFirstOrThrow({
@@ -235,13 +353,13 @@ async function nativeBinding(conversationId: string) {
     include: { lastTask: true, context: true },
   });
 }
-async function piCommandChannel(runtimeKind: "pi" | "pi-sdk" = "pi") {
+async function piCommandChannel() {
   const agent = await db.agent.create({
     data: {
       workspaceId: workspace.id,
       slug: `pi-commands-${randomUUID()}`,
       name: "Pi commands",
-      runtimeKind,
+      runtimeKind: "pi-sdk",
       providerId,
       model: "test",
     },
@@ -280,6 +398,111 @@ async function piCommandChannel(runtimeKind: "pi" | "pi-sdk" = "pi") {
 }
 
 describe("workspace channels", () => {
+  it("activates paired WeChat with the adding account without enabling A2A delegation", async () => {
+    const { agent } = await piCommandChannel();
+    await db.agent.update({
+      where: { id: agent.id },
+      data: { a2aInboundEnabled: false, a2aOutboundEnabled: false },
+    });
+    await publishFixtureAgentRevision(workspace.id, agent.id);
+    const created = await command({
+      action: "create",
+      platform: "weixin",
+      agentId: agent.id,
+    });
+    expect(created.status).toBe(200);
+    const { connectionId } = await created.json();
+    const owner = assertDefined(identity.user);
+    const member = await db.user.create({
+      data: {
+        email: `channel-member-${randomUUID()}@test.dev`,
+        passwordHash: "unused",
+      },
+    });
+    await db.membership.create({
+      data: { workspaceId: workspace.id, userId: member.id, role: "member" },
+    });
+    try {
+      identity.user = member;
+      expect((await command({ action: "start", connectionId })).status).toBe(
+        403,
+      );
+      expect(
+        (
+          await command({
+            action: "create",
+            platform: "weixin",
+            agentId: agent.id,
+          })
+        ).status,
+      ).toBe(403);
+      identity.user = owner;
+      expect(
+        await db.agentChannelConnection.findUniqueOrThrow({
+          where: { id: connectionId },
+        }),
+      ).toMatchObject({ a2aActorId: owner.id });
+      vi.stubGlobal(
+        "fetch",
+        vi
+          .fn()
+          .mockResolvedValueOnce(Response.json({ qrcode: "pairing-fixture" }))
+          .mockResolvedValueOnce(
+            Response.json({
+              status: "confirmed",
+              ilink_bot_id: "paired-bot",
+              bot_token: "private-pairing-token",
+            }),
+          ),
+      );
+      vi.mocked(startAgentChannelRunner).mockImplementationOnce(
+        async (workspaceId, id) => {
+          await db.agentChannelConnection.update({
+            where: { id, workspaceId },
+            data: { status: "running" },
+          });
+          return {};
+        },
+      );
+      expect((await command({ action: "pair", connectionId })).status).toBe(
+        200,
+      );
+      const checked = await command({ action: "check", connectionId });
+      expect(checked.status).toBe(200);
+      expect(JSON.stringify(await checked.json())).not.toContain(
+        "private-pairing-token",
+      );
+      const result = await runAgentChannelMessage({
+        workspaceId: workspace.id,
+        agentId: agent.id,
+        connectionId,
+        rawBody: {
+          message: "Hello from WeChat",
+          source: {
+            chatId: "paired-chat",
+            userId: "wechat-user",
+            messageId: randomUUID(),
+          },
+        },
+      });
+      expect(result.status).toBe(200);
+      expect(result.body).toMatchObject({ message: "Channel reply" });
+      const binding = await nativeBinding(
+        (result.body as { conversationId: string }).conversationId,
+      );
+      expect(binding.lastTask.grant).toMatchObject({
+        actorId: owner.id,
+        agentId: agent.id,
+      });
+      expect(
+        await db.agent.findUniqueOrThrow({ where: { id: agent.id } }),
+      ).toMatchObject({ a2aInboundEnabled: false, a2aOutboundEnabled: false });
+    } finally {
+      identity.user = owner;
+      await db.user.delete({ where: { id: member.id } });
+    }
+  });
+
   it("keeps SDK control-message slash input executable instead of wrapping it in messaging context", async () => {
     const agent = await db.agent.create({
       data: {
@@ -320,14 +543,18 @@ describe("workspace channels", () => {
   });
 
   it("admits first SDK slash commands through channel policy and retains the native context until /new", async () => {
-    const { agent, channel, run } = await piCommandChannel("pi-sdk");
+    const { agent, channel, run } = await piCommandChannel();
     const first = await run("/Review:1 Keep Case");
     expect(first.status).toBe(200);
     if (!("conversationId" in first.body))
       throw new Error("Missing SDK conversation");
     const conversationId = first.body.conversationId;
     const firstBinding = await nativeBinding(conversationId);
-    expect(firstBinding.lastTask.executionBackend).toBe("legacy");
+    expect(firstBinding.lastTask.executionBackend).toBe("pi-sdk");
+    const revision = await db.agentRevision.findUniqueOrThrow({
+      where: { id: assertDefined(firstBinding.context.agentRevisionId) },
+    });
+    expect(revision.agentId).toBe(agent.id);
     const messages = await db.message.findMany({
       where: { conversationId },
       orderBy: [{ createdAt: "asc" }, { id: "asc" }],
@@ -337,9 +564,19 @@ describe("workspace channels", () => {
       parts: [{ type: "text", text: "/Review:1 Keep Case" }],
     });
 
+    await db.agent.update({
+      where: { id: agent.id },
+      data: { systemPrompt: "Use the newly reviewed channel instructions." },
+    });
+    const nextRevision = await publishFixtureAgentRevision(
+      workspace.id,
+      agent.id,
+    );
+    expect(nextRevision.id).not.toBe(revision.id);
     await run("/AnotherCommand");
     const secondBinding = await nativeBinding(conversationId);
     expect(secondBinding.contextId).toBe(firstBinding.contextId);
+    expect(secondBinding.context.agentRevisionId).toBe(revision.id);
     expect(secondBinding.lastTaskId).not.toBe(firstBinding.lastTaskId);
     await db.a2ATask.update({
       where: { id: secondBinding.lastTaskId },
@@ -369,6 +606,9 @@ describe("workspace channels", () => {
     expect((await nativeBinding(reset.body.conversationId)).contextId).not.toBe(
       firstBinding.contextId,
     );
+    expect(
+      (await nativeBinding(reset.body.conversationId)).context.agentRevisionId,
+    ).toBe(nextRevision.id);
 
     await db.agentChannelConnection.update({
       where: { id: channel.id },
@@ -381,93 +621,6 @@ describe("workspace channels", () => {
     expect(
       await db.a2ATask.count({ where: { context: { agentId: agent.id } } }),
     ).toBe(taskCount);
-  });
-
-  it("compacts a Pi channel in its existing native context and persists command and usage metadata", async () => {
-    const { agent, run } = await piCommandChannel();
-    const first = await run("Remember the agreed requirements.");
-    expect(first.status).toBe(200);
-    if (!("conversationId" in first.body))
-      throw new Error("Missing native conversation");
-    const id = first.body.conversationId;
-    const binding = await nativeBinding(id);
-    const before = await db.message.findMany({
-      where: { conversationId: id },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-    });
-    const usage = {
-      inputTokens: 100,
-      outputTokens: 20,
-      cacheReadTokens: 10,
-      cacheWriteTokens: 0,
-      costUsd: 0.01,
-    };
-    const operationId = randomUUID();
-    vi.mocked(runDedicatedSandboxTurn).mockImplementationOnce(async (input) => {
-      expect(input.nativeCompaction).toMatchObject({
-        contextId: binding.contextId,
-        customInstructions: "Keep the requirements",
-      });
-      assertDefined(input.nativeCompaction).onResult({
-        status: "completed",
-        operationId,
-        text: "Native context compacted.",
-      });
-      input.onUsage?.(usage);
-      return "Native context compacted.";
-    });
-    expect((await run("/help")).body).toMatchObject({
-      message: expect.stringContaining("/compact"),
-    });
-    expect((await run("/usage")).body).toMatchObject({
-      message: expect.stringContaining(
-        "Legacy runtime commands are unavailable",
-      ),
-    });
-    const nativeCalls = vi.mocked(runNativeEntry).mock.calls.length;
-    expect((await run("/compact Keep the requirements")).body).toMatchObject({
-      conversationId: id,
-      message: "Native context compacted.",
-    });
-    expect(runDedicatedSandboxTurn).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        agent: expect.objectContaining({ id: agent.id }),
-        runtimeSessionId: id,
-      }),
-    );
-    expect(vi.mocked(runNativeEntry).mock.calls).toHaveLength(nativeCalls);
-    expect((await nativeBinding(id)).contextId).toBe(binding.contextId);
-    expect((await nativeBinding(id)).lastTaskId).toBe(binding.lastTaskId);
-    const history = await db.message.findMany({
-      where: { conversationId: id },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-    });
-    expect(history.slice(0, -1)).toEqual(before);
-    expect(history.at(-1)).toMatchObject({
-      role: "assistant",
-      parts: expect.arrayContaining([
-        {
-          type: COMMAND_RESULT_PART,
-          data: {
-            command: "compact",
-            text: "Native context compacted.",
-            status: "completed",
-            operationId,
-            contextId: binding.contextId,
-          },
-        },
-        { type: RUNTIME_USAGE_PART, data: usage },
-        {
-          type: RUNTIME_COMMANDS_PART,
-          data: {
-            runtimeKind: "pi",
-            commands: expect.arrayContaining([
-              expect.objectContaining({ name: "compact" }),
-            ]),
-          },
-        },
-      ]),
-    });
   });
 
   it("rejects a different authenticated actor and active native tasks before driving compaction", async () => {
@@ -496,7 +649,7 @@ describe("workspace channels", () => {
         }),
         { params: Promise.resolve({ agentId: agent.id, conversationId: id }) },
       );
-    const calls = vi.mocked(runDedicatedSandboxTurn).mock.calls.length;
+    const calls = vi.mocked(runAgentEntry).mock.calls.length;
     try {
       identity.user = stranger;
       expect((await request()).status).toBe(404);
@@ -547,27 +700,57 @@ describe("workspace channels", () => {
           message: expect.stringContaining("busy"),
         });
       }
-      expect(vi.mocked(runDedicatedSandboxTurn).mock.calls).toHaveLength(calls);
+      expect(vi.mocked(runAgentEntry).mock.calls).toHaveLength(calls);
       expect(await db.message.count({ where: { conversationId: id } })).toBe(2);
       await db.a2ATask.update({
         where: { id: binding.lastTaskId },
         data: { state: TaskState.TASK_STATE_COMPLETED },
       });
-      vi.mocked(runDedicatedSandboxTurn).mockImplementationOnce(
-        async (input) => {
-          expect(input.nativeCompaction?.contextId).toBe(binding.contextId);
-          assertDefined(input.nativeCompaction).onResult({
-            status: "completed",
-            operationId: randomUUID(),
-            text: "Compacted",
-          });
-          return "Compacted";
-        },
-      );
-      expect(await (await request()).json()).toEqual({
+      await expect(
+        executeRuntimeCommand({
+          workspaceId: workspace.id,
+          agentId: agent.id,
+          conversationId: id,
+          actorId: owner.id,
+          line: "/compact",
+          entry: { kind: "channel", channelId: channel.id },
+        }),
+      ).rejects.toMatchObject({ status: 400, message: "invalidCommand" });
+      expect(vi.mocked(runAgentEntry).mock.calls).toHaveLength(calls);
+      const response = await request();
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({
         kind: "output",
-        text: "Compacted",
+        text: "Channel reply",
       });
+      expect(vi.mocked(runAgentEntry).mock.calls).toHaveLength(calls + 1);
+      const commandInput = assertDefined(
+        vi.mocked(runAgentEntry).mock.calls.at(-1),
+      )[0];
+      expect(commandInput).toMatchObject({
+        kind: "channel",
+        channelId: channel.id,
+        sourceId: id,
+        actorId: owner.id,
+        text: "/compact",
+        messageId: expect.any(String),
+      });
+      const compacted = await nativeBinding(id);
+      expect(compacted.contextId).toBe(binding.contextId);
+      expect(compacted.context.agentRevisionId).toBe(
+        binding.context.agentRevisionId,
+      );
+      expect(compacted.lastTaskId).not.toBe(binding.lastTaskId);
+      expect(
+        await db.a2AEntryReceipt.findUniqueOrThrow({
+          where: {
+            bindingId_messageId: {
+              bindingId: binding.id,
+              messageId: commandInput.messageId,
+            },
+          },
+        }),
+      ).toMatchObject({ taskId: compacted.lastTaskId });
     } finally {
       identity.user = owner;
       await db.agentChannelConnection.update({
@@ -582,550 +765,13 @@ describe("workspace channels", () => {
     }
   });
 
-  it("routes authenticated chat compact commands and conversation operations to the same native context", async () => {
-    const { agent } = await piCommandChannel();
-    const conversation = await db.conversation.create({
-      data: { agentId: agent.id },
-    });
-    const accepted = await runNativeEntry({
-      kind: "chat",
-      sourceId: conversation.id,
-      workspaceId: workspace.id,
-      agentId: agent.id,
-      actorId: assertDefined(identity.user).id,
-      messageId: randomUUID(),
-      text: "Remember the chat decisions.",
-    });
-    const binding = await db.a2AEntryBinding.findFirstOrThrow({
-      where: { kind: "chat", sourceId: conversation.id },
-    });
-    vi.mocked(runDedicatedSandboxTurn).mockImplementation(async (input) => {
-      expect(input.nativeCompaction).toMatchObject({
-        contextId: accepted.task.contextId,
-        customInstructions: "Keep decisions",
-      });
-      assertDefined(input.nativeCompaction).onResult({
-        status: "completed",
-        operationId: randomUUID(),
-        text: "Chat compacted",
-      });
-      return "Chat compacted";
-    });
-    const params = Promise.resolve({
-      agentId: agent.id,
-      conversationId: conversation.id,
-    });
-    const command = await runtimeCommand(
-      new Request("http://localhost/commands", {
-        method: "POST",
-        body: JSON.stringify({ line: "/compact Keep decisions" }),
-      }),
-      { params },
-    );
-    expect(await command.json()).toEqual({
-      kind: "output",
-      text: "Chat compacted",
-    });
-    const operation = await conversationOperation(
-      new Request("http://localhost/operations", {
-        method: "POST",
-        body: JSON.stringify({
-          action: "compact",
-          instructions: "Keep decisions",
-        }),
-      }),
-      { params },
-    );
-    expect(await operation.json()).toEqual({
-      kind: "output",
-      text: "Chat compacted",
-    });
-    expect(
-      await db.a2AEntryBinding.findUniqueOrThrow({ where: { id: binding.id } }),
-    ).toMatchObject({
-      contextId: binding.contextId,
-      lastTaskId: binding.lastTaskId,
-    });
-    expect(
-      await db.message.count({
-        where: { conversationId: conversation.id, role: "assistant" },
-      }),
-    ).toBe(2);
-  });
-
-  it("never falls back to CLI for empty native channels, legacy task bindings or failed native compaction", async () => {
-    const { agent, run } = await piCommandChannel();
-    const calls = vi.mocked(runDedicatedSandboxTurn).mock.calls.length;
-    expect((await run("/compact")).body).toMatchObject({
-      message: "No active conversation to compact.",
-    });
-    await run("/new");
-    await run("/compact");
-    expect(vi.mocked(runDedicatedSandboxTurn).mock.calls).toHaveLength(calls);
-    const first = await run("Create the native session.");
-    if (!("conversationId" in first.body))
-      throw new Error("Missing native conversation");
-    const id = first.body.conversationId;
-    const binding = await nativeBinding(id);
-    const compact = () =>
-      executeRuntimeCommand({
-        workspaceId: workspace.id,
-        agentId: agent.id,
-        conversationId: id,
-        actorId: assertDefined(identity.user).id,
-        line: "/compact",
-      });
-    await db.a2ATask.update({
-      where: { id: binding.lastTaskId },
-      data: { executionBackend: "legacy" },
-    });
-    try {
-      await expect(compact()).rejects.toMatchObject({
-        message: "unsupportedCommand",
-      });
-      expect(vi.mocked(runDedicatedSandboxTurn).mock.calls).toHaveLength(calls);
-    } finally {
-      await db.a2ATask.update({
-        where: { id: binding.lastTaskId },
-        data: { executionBackend: "pi-harness" },
-      });
-    }
-    vi.mocked(runDedicatedSandboxTurn).mockRejectedValueOnce(
-      new Error("PI_SESSION_MISSING"),
-    );
-    await expect(compact()).rejects.toMatchObject({
-      status: 502,
-      message: "PI_SESSION_MISSING",
-    });
-    expect(vi.mocked(runDedicatedSandboxTurn).mock.calls).toHaveLength(
-      calls + 1,
-    );
-    expect(await db.message.count({ where: { conversationId: id } })).toBe(2);
-  });
-
-  it("keeps unbound Pi CLI conversations and Work command queuing independent of native bindings", async () => {
-    const agent = await db.agent.create({
-      data: {
-        workspaceId: workspace.id,
-        slug: `pi-legacy-command-${randomUUID()}`,
-        name: "Pi legacy command",
-        runtimeKind: "pi",
-        providerId,
-        model: "test",
-      },
-    });
-    const conversation = await db.conversation.create({
-      data: { agentId: agent.id },
-    });
-    const compact = () =>
-      executeRuntimeCommand({
-        workspaceId: workspace.id,
-        agentId: agent.id,
-        conversationId: conversation.id,
-        line: "/compact Keep decisions",
-      });
-    expect(await compact()).toEqual({ kind: "output", text: "Channel reply" });
-    const call = assertDefined(
-      vi.mocked(runDedicatedSandboxTurn).mock.calls.at(-1),
-    )[0];
-    expect(call).toMatchObject({
-      command: "/compact Keep decisions",
-      runtimeSessionId: conversation.id,
-    });
-    expect(call.nativeCompaction).toBeUndefined();
-    const work = await db.workSession.create({
-      data: {
-        workspaceId: workspace.id,
-        agentId: agent.id,
-        conversationId: conversation.id,
-        runtimeKind: "pi",
-        task: "Keep working",
-        status: "running",
-      },
-    });
-    const calls = vi.mocked(runDedicatedSandboxTurn).mock.calls.length;
-    await expect(compact()).rejects.toMatchObject({ status: 409 });
-    await db.workSession.update({
-      where: { id: work.id },
-      data: { status: "completed" },
-    });
-    expect(await compact()).toEqual({ kind: "queued", workSessionId: work.id });
-    expect(
-      (await db.workSession.findUniqueOrThrow({ where: { id: work.id } }))
-        .status,
-    ).toBe("queued");
-    expect(kickWorkCoordinator).toHaveBeenCalled();
-    expect(vi.mocked(runDedicatedSandboxTurn).mock.calls).toHaveLength(calls);
-    await db.workSession.update({
-      where: { id: work.id },
-      data: { status: "completed" },
-    });
-  });
-
-  it("dispatches scoped Claude commands to the native session, preserves history, and queues registered native commands", async () => {
-    const agent = await db.agent.create({
-      data: {
-        workspaceId: workspace.id,
-        slug: "claude-commands",
-        name: "Claude commands",
-        runtimeKind: "claude-code",
-        providerId,
-        model: "test",
-      },
-    });
-    const conversation = await db.conversation.create({
-      data: { agentId: agent.id },
-    });
-    await db.message.createMany({
-      data: [
-        {
-          conversationId: conversation.id,
-          role: "user",
-          parts: [{ type: "text", text: "Keep plan.md" }],
-        },
-        {
-          conversationId: conversation.id,
-          role: "assistant",
-          parts: [
-            { type: "text", text: "Measured reply" },
-            {
-              type: RUNTIME_USAGE_PART,
-              data: {
-                inputTokens: 100,
-                outputTokens: 20,
-                cacheReadTokens: 50,
-                cacheWriteTokens: 10,
-                costUsd: 0.03,
-              },
-            },
-          ],
-        },
-        {
-          conversationId: conversation.id,
-          role: "assistant",
-          parts: [{ type: "text", text: "Historical unmeasured reply" }],
-        },
-      ],
-    });
-    const run = (line: string, id = conversation.id, extra = {}) =>
-      runtimeCommand(
-        new Request("http://localhost/commands", {
-          method: "POST",
-          body: JSON.stringify({ line, ...extra }),
-        }),
-        { params: Promise.resolve({ agentId: agent.id, conversationId: id }) },
-      );
-    const runtimeCalls = vi.mocked(runDedicatedSandboxTurn).mock.calls.length;
-    expect(await (await run("/usage")).json()).toEqual({
-      kind: "output",
-      text: "Channel reply",
-    });
-    expect(runDedicatedSandboxTurn).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        command: "/usage",
-        runtimeSessionId: conversation.id,
-      }),
-    );
-    expect(await (await run("/context")).json()).toEqual({
-      kind: "output",
-      text: "Channel reply",
-    });
-    expect(runDedicatedSandboxTurn).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        command: "/context",
-        runtimeSessionId: conversation.id,
-      }),
-    );
-    expect((await run("/goal something")).status).toBe(400);
-    expect(vi.mocked(runDedicatedSandboxTurn).mock.calls).toHaveLength(
-      runtimeCalls + 2,
-    );
-    expect((await run("/usage", "missing")).status).toBe(404);
-    expect(
-      (await run("/usage", conversation.id, { workspaceId: other.id })).status,
-    ).toBe(400);
-    await expect(
-      executeRuntimeCommand({
-        workspaceId: other.id,
-        agentId: agent.id,
-        conversationId: conversation.id,
-        line: "/clear",
-      }),
-    ).rejects.toMatchObject({ status: 404 });
-    const release = assertDefined(
-      acquireConversationOperation(conversation.id),
-    );
-    expect((await run("/clear")).status).toBe(409);
-    release();
-    expect(await (await run("/clear")).json()).toEqual({
-      kind: "output",
-      text: "Channel reply",
-    });
-    expect(runDedicatedSandboxTurn).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        command: "/clear",
-        runtimeSessionId: conversation.id,
-      }),
-    );
-    const history = await db.message.findMany({
-      where: { conversationId: conversation.id },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-    });
-    expect(history).toHaveLength(6);
-    expect(
-      history
-        .slice(-3)
-        .every(
-          (message) =>
-            message.role === "assistant" &&
-            Array.isArray(message.parts) &&
-            message.parts.some(
-              (part) =>
-                part &&
-                typeof part === "object" &&
-                "type" in part &&
-                part.type === "text",
-            ),
-        ),
-    ).toBe(true);
-    expect(activeConversationMessages(history)).toEqual([]);
-    expect(await (await run("/context")).json()).toEqual({
-      kind: "output",
-      text: "Channel reply",
-    });
-    expect(runDedicatedSandboxTurn).toHaveBeenLastCalledWith(
-      expect.objectContaining({ command: "/context", messages: [] }),
-    );
-    vi.mocked(runDedicatedSandboxTurn).mockRejectedValueOnce(
-      new Error("Native context is unavailable."),
-    );
-    const failed = await run("/context");
-    expect(failed.status).toBe(502);
-    expect(await failed.json()).toEqual({
-      error: "Native context is unavailable.",
-    });
-    expect(
-      await db.message.count({ where: { conversationId: conversation.id } }),
-    ).toBe(7);
-    const work = await db.workSession.create({
-      data: {
-        workspaceId: workspace.id,
-        agentId: agent.id,
-        conversationId: conversation.id,
-        runtimeKind: "claude-code",
-        task: "Test",
-        status: "running",
-      },
-    });
-    expect((await run("/clear")).status).toBe(409);
-    await db.workSession.update({
-      where: { id: work.id },
-      data: { status: "completed" },
-    });
-    expect(await (await run("/usage")).json()).toEqual({
-      kind: "queued",
-      workSessionId: work.id,
-    });
-    await db.workSession.update({
-      where: { id: work.id },
-      data: { status: "completed" },
-    });
-    await db.message.create({
-      data: {
-        conversationId: conversation.id,
-        role: "assistant",
-        parts: [
-          {
-            type: RUNTIME_COMMANDS_PART,
-            data: {
-              runtimeKind: "claude-code",
-              commands: [{ name: "plugin:review" }],
-            },
-          },
-        ],
-      },
-    });
-    expect(await (await run("/plugin:review src")).json()).toEqual({
-      kind: "queued",
-      workSessionId: work.id,
-    });
-    expect(
-      await db.workSession.findUnique({ where: { id: work.id } }),
-    ).toMatchObject({ status: "queued" });
-    expect(kickWorkCoordinator).toHaveBeenCalled();
-    await db.workSession.update({
-      where: { id: work.id },
-      data: { status: "completed" },
-    });
-  });
-
-  it("does not advertise or dispatch legacy commands from native A2A channels", async () => {
-    const agent = await db.agent.create({
-      data: {
-        workspaceId: workspace.id,
-        slug: "dsh-commands",
-        name: "DSH commands",
-        runtimeKind: "dsh",
-        providerId,
-        model: "test",
-      },
-    });
-    await enableNativeAgent(agent.id);
-    const channel = assertDefined(
-      (
-        await createAgentChannelConnection({
-          workspaceId: workspace.id,
-          agentId: agent.id,
-          platform: "weixin",
-          name: "DSH commands",
-          credentials: {},
-        })
-      ).connection,
-    );
-    await db.agentChannelConnection.update({
-      where: { id: channel.id },
-      data: { status: "running", a2aActorId: assertDefined(identity.user).id },
-    });
-    const run = (message: string) =>
-      runAgentChannelMessage({
-        workspaceId: workspace.id,
-        connectionId: channel.id,
-        agentId: agent.id,
-        rawBody: {
-          message,
-          source: {
-            chatId: "commands-user",
-            userId: "commands-user",
-            messageId: randomUUID(),
-          },
-        },
-      });
-    const first = await run("Hello");
-    expect(first.status).toBe(200);
-    const id = (first.body as { conversationId: string }).conversationId;
-    const binding = await nativeBinding(id);
-    const legacyCalls = vi.mocked(runDedicatedSandboxTurn).mock.calls.length;
-    const nativeCalls = vi.mocked(runNativeEntry).mock.calls.length;
-    const help = await run("/help");
-    expect(help.body).toMatchObject({
-      message: expect.stringContaining("/new"),
-    });
-    expect(help.body).toMatchObject({
-      message: expect.stringContaining("/whoami"),
-    });
-    expect(help.body).not.toMatchObject({
-      message: expect.stringContaining("/goal"),
-    });
-    for (const line of [
-      "/plan",
-      "/goal pause",
-      "/goal Finish the checklist",
-      "/compact",
-    ]) {
-      expect((await run(line)).body).toMatchObject({ conversationId: id });
-    }
-    expect(vi.mocked(runDedicatedSandboxTurn).mock.calls).toHaveLength(
-      legacyCalls,
-    );
-    expect(vi.mocked(runNativeEntry).mock.calls).toHaveLength(nativeCalls);
-    expect((await nativeBinding(id)).lastTaskId).toBe(binding.lastTaskId);
-    expect(await db.message.count({ where: { conversationId: id } })).toBe(2);
-  });
-
-  it("preserves native channel history, refuses legacy compaction and starts a new A2A context on /new", async () => {
-    const agent = await db.agent.create({
-      data: {
-        workspaceId: workspace.id,
-        slug: `compact-${Date.now()}`,
-        name: "DSH compaction",
-        runtimeKind: "dsh",
-        providerId,
-        model: "test",
-      },
-    });
-    await enableNativeAgent(agent.id);
-    const channel = assertDefined(
-      (
-        await createAgentChannelConnection({
-          workspaceId: workspace.id,
-          agentId: agent.id,
-          platform: "weixin",
-          name: "Compact test",
-          credentials: {},
-        })
-      ).connection,
-    );
-    await db.agentChannelConnection.update({
-      where: { id: channel.id },
-      data: { status: "running", a2aActorId: assertDefined(identity.user).id },
-    });
-    const run = (message: string) =>
-      runAgentChannelMessage({
-        workspaceId: workspace.id,
-        connectionId: channel.id,
-        agentId: agent.id,
-        rawBody: {
-          message,
-          source: {
-            chatId: "compact-user",
-            userId: "compact-user",
-            messageId: randomUUID(),
-          },
-        },
-      });
-    const legacyCalls = vi.mocked(runDedicatedSandboxTurn).mock.calls.length;
-    const first = await run("Old detailed requirements. ".repeat(500));
-    if (first.status !== 200 || !("conversationId" in first.body))
-      throw new Error("Missing conversation");
-    const id = first.body.conversationId;
-    const initial = await nativeBinding(id);
-    await run("Keep this latest exchange exactly.");
-    const before = await db.message.findMany({
-      where: { conversationId: id },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-    });
-    expect((await run("/compact")).body).toMatchObject({ conversationId: id });
-    expect(
-      await db.message.findMany({
-        where: { conversationId: id },
-        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-      }),
-    ).toEqual(before);
-    await run("Continue without replaying history");
-    const continued = await nativeBinding(id);
-    expect(continued.contextId).toBe(initial.contextId);
-    expect(continued.lastTaskId).not.toBe(initial.lastTaskId);
-    const count = await db.message.count({ where: { conversationId: id } });
-    const reset = await run("/new");
-    expect(reset.body).toMatchObject({
-      conversationId: expect.not.stringMatching(id),
-    });
-    const next = await run("Only the new conversation");
-    if (next.status !== 200 || !("conversationId" in next.body))
-      throw new Error("Missing new conversation");
-    const fresh = await nativeBinding(next.body.conversationId);
-    expect(fresh.contextId).not.toBe(initial.contextId);
-    const history = Task.fromJSON(
-      assertDefined(fresh.lastTask).snapshot,
-    ).history;
-    expect(history.filter((message) => message.role === 1)).toHaveLength(1);
-    expect(JSON.stringify(history)).toContain("Only the new conversation");
-    expect(JSON.stringify(history)).not.toContain("Old detailed requirements");
-    expect(await db.message.count({ where: { conversationId: id } })).toBe(
-      count,
-    );
-    expect(vi.mocked(runDedicatedSandboxTurn).mock.calls).toHaveLength(
-      legacyCalls,
-    );
-  });
-
   it("requires explicit channel authority and stable message IDs, and deduplicates accepted native tasks", async () => {
     const agent = await db.agent.create({
       data: {
         workspaceId: workspace.id,
         slug: "channel-authority",
         name: "Channel authority",
-        runtimeKind: "dsh",
+        runtimeKind: "pi-sdk",
         providerId,
         model: "test",
       },
@@ -1192,6 +838,13 @@ describe("workspace channels", () => {
     expect(first.status).toBe(200);
     const replay = await run();
     expect(replay.body).toMatchObject({ message: "Channel reply" });
+    const firstConversationId =
+      "conversationId" in first.body ? first.body.conversationId : "";
+    expect(
+      await db.message.count({
+        where: { conversationId: firstConversationId },
+      }),
+    ).toBe(2);
     expect(
       await db.a2ATask.count({ where: { context: { agentId: agent.id } } }),
     ).toBe(1);
@@ -1201,9 +854,7 @@ describe("workspace channels", () => {
     expect(binding.lastTask.grant).toMatchObject({
       actorId: assertDefined(identity.user).id,
     });
-    await expect(run("Changed content")).rejects.toThrow(
-      "reused with different content",
-    );
+    expect((await run("Changed content")).status).toBe(400);
     await db.agentChannelConnection.update({
       where: { id: channel.id },
       data: { a2aActorId: null },
@@ -1214,68 +865,7 @@ describe("workspace channels", () => {
     ).toBe(1);
   });
 
-  it("keeps compaction scoped, rejects busy conversations, and leaves history unchanged on model failure", async () => {
-    const conversation = await db.conversation.create({
-      data: {
-        agentId,
-        messages: {
-          create: [
-            {
-              role: "user",
-              parts: [{ type: "text", text: "Details ".repeat(1000) }],
-            },
-            {
-              role: "assistant",
-              parts: [{ type: "text", text: "The current plan." }],
-            },
-          ],
-        },
-      },
-    });
-    const operate = () =>
-      operateConversation({
-        workspaceId: workspace.id,
-        agentId,
-        conversationId: conversation.id,
-        action: "compact",
-      });
-    await expect(
-      operateConversation({
-        workspaceId: other.id,
-        agentId,
-        conversationId: conversation.id,
-        action: "compact",
-      }),
-    ).rejects.toMatchObject({ code: "notFound" });
-    const release = assertDefined(
-      acquireConversationOperation(conversation.id),
-    );
-    await expect(operate()).rejects.toMatchObject({ code: "busy" });
-    release();
-    vi.mocked(runNativeAgent).mockRejectedValueOnce(
-      new Error("Summary unavailable"),
-    );
-    await expect(operate()).rejects.toThrow("Summary unavailable");
-    expect(
-      await db.message.count({ where: { conversationId: conversation.id } }),
-    ).toBe(2);
-    expect(await operate()).toMatchObject({ compacted: true });
-    const foreign = await conversationOperation(
-      new Request("http://localhost/operations", {
-        method: "POST",
-        body: JSON.stringify({ action: "compact" }),
-      }),
-      {
-        params: Promise.resolve({
-          agentId: foreignAgentId,
-          conversationId: conversation.id,
-        }),
-      },
-    );
-    expect(foreign.status).toBe(404);
-  });
-
-  it("isolates sandbox configuration, migrates credentials, and routes DSH turns to the target sandbox", async () => {
+  it("isolates sandbox configuration, migrates credentials, and routes pinned SDK turns to the target Agent session", async () => {
     const sandboxes = await Promise.all(
       ["Source", "Target"].map(async (name) => {
         const sandbox = await createSandbox(workspace.id, name);
@@ -1284,7 +874,7 @@ describe("workspace channels", () => {
             workspaceId: workspace.id,
             name,
             slug: name.toLowerCase(),
-            runtimeKind: "dsh",
+            runtimeKind: "pi-sdk",
             providerId,
             model: "test",
           },
@@ -1298,6 +888,7 @@ describe("workspace channels", () => {
     );
     const [source, target] = sandboxes;
     const foreign = await createSandbox(other.id, "Foreign sandbox");
+    vi.mocked(startAgentChannelRunner).mockResolvedValue({});
     const rawCreate = await command({
       action: "create",
       platform: "weixin",
@@ -1433,7 +1024,7 @@ describe("workspace channels", () => {
     expect((await nativeBinding(historyId)).context.agentId).toBe(
       source.agent.id,
     );
-    expect(runNativeEntry).toHaveBeenLastCalledWith(
+    expect(runAgentEntry).toHaveBeenLastCalledWith(
       expect.objectContaining({
         kind: "channel",
         channelId: connectionId,
@@ -1576,18 +1167,19 @@ describe("workspace channels", () => {
         })
       ).status,
     ).toBe(400);
-    for (const action of [
-      "update",
-      "start",
-      "stop",
-      "delete",
-      "pair",
-      "check",
-      "apply",
+    const moveTarget = await createSandbox(other.id, "Foreign move target");
+    for (const input of [
+      { action: "update", connectionId },
+      { action: "start", connectionId },
+      { action: "stop", connectionId },
+      { action: "delete", connectionId },
+      { action: "pair", connectionId },
+      { action: "check", connectionId },
+      { action: "move", connectionId, sandboxId: moveTarget.id },
     ]) {
-      expect((await command({ action, connectionId }, other.slug)).status).toBe(
-        404,
-      );
+      const response = await command(input, other.slug);
+      expect(response.status).toBe(404);
+      expect(await response.json()).toEqual({ error: "Channel not found" });
     }
     const logs = await GET(
       new Request(`http://localhost?logs=${connectionId}`),
@@ -1775,5 +1367,383 @@ describe("workspace channels", () => {
         })
       ).status,
     ).toBe(409);
+  });
+});
+
+describe("channel execution delivery and conversation approvals", () => {
+  it.each(["failed-task", "observer-error"])(
+    "persists a safe failed assistant reply without successful artifacts or replay (%s)",
+    async (mode) => {
+      const { agent, channel } = await piCommandChannel();
+      vi.mocked(runAgentEntry).mockImplementationOnce(async (input) => {
+        const accepted = await submitAgentEntry(input, () => {});
+        const running = assertDefined(await claimTask(accepted.row.id));
+        await finishTask(
+          running.id,
+          assertDefined(running.leaseToken),
+          TaskState.TASK_STATE_FAILED,
+          "PI_SDK_REQUEST_FAILED: Bearer super-secret /internal/runtime/session.json at executor.stack:1 HTTP 406",
+        );
+        if (mode === "observer-error")
+          throw new Error(
+            "Bearer super-secret /internal/runtime/session.json stack trace",
+          );
+        return {
+          task: await getTask(accepted.grant, accepted.row.id),
+          path: `/app/${workspace.slug}/work?agent=${input.agentId}&c=${input.sourceId}`,
+        };
+      });
+      const onUiRequired = vi.fn(async () => {});
+      const rawBody = {
+        message: "hi",
+        source: {
+          chatId: "failure-chat",
+          userId: "sender",
+          messageId: randomUUID(),
+        },
+      };
+      const run = () =>
+        runAgentChannelMessage({
+          workspaceId: workspace.id,
+          connectionId: channel.id,
+          agentId: agent.id,
+          rawBody,
+          onUiRequired,
+        });
+      const result = await run();
+      expect(result.body).toMatchObject({
+        delivery: "message",
+        message: CHANNEL_EXECUTION_FAILURE_MESSAGE,
+      });
+      expect(onUiRequired).not.toHaveBeenCalled();
+      if (!("conversationId" in result.body))
+        throw new Error("Expected conversation reply");
+      const conversationId = result.body.conversationId;
+      const messages = await db.message.findMany({
+        where: { conversationId },
+        orderBy: { createdAt: "asc" },
+      });
+      expect(messages).toHaveLength(2);
+      expect(
+        messages.find((message) => message.role === "assistant")?.parts,
+      ).toEqual([
+        { type: "text", text: CHANNEL_EXECUTION_FAILURE_MESSAGE },
+        {
+          type: "data-agent-execution",
+          data: {
+            status: "failed",
+            error: {
+              code: "AGENT_EXECUTION_FAILED",
+              message: CHANNEL_EXECUTION_FAILURE_MESSAGE,
+            },
+          },
+        },
+      ]);
+      const execution = await executionRequest(agent.id, conversationId);
+      expect(execution.status).toBe(200);
+      const executionBody = await execution.json();
+      expect(executionBody.execution).toMatchObject({
+        status: "failed",
+        error: { code: "PI_SDK_REQUEST_FAILED" },
+        uiRequests: [],
+        todos: [],
+        uiEvents: [],
+      });
+      expect(JSON.stringify(executionBody)).not.toMatch(
+        /super-secret|internal\/runtime|executor.stack|Bearer/,
+      );
+      const calls = vi.mocked(runAgentEntry).mock.calls.length;
+      expect((await run()).body).toMatchObject({
+        message: CHANNEL_EXECUTION_FAILURE_MESSAGE,
+      });
+      expect(vi.mocked(runAgentEntry).mock.calls).toHaveLength(calls);
+      expect(await db.message.count({ where: { conversationId } })).toBe(2);
+      expect(
+        await db.a2ATask.count({ where: { context: { agentId: agent.id } } }),
+      ).toBe(1);
+    },
+  );
+
+  it("notifies native dialogs and accepts only the initiating session's native response", async () => {
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", "http://localhost:3000");
+    const { agent, channel } = await piCommandChannel();
+    const notices: string[] = [];
+    const owner = assertDefined(identity.user);
+    const otherActor = await db.user.create({
+      data: {
+        email: `approval-actor-${randomUUID()}@test.dev`,
+        passwordHash: "unused",
+      },
+    });
+    await db.membership.create({
+      data: {
+        workspaceId: workspace.id,
+        userId: otherActor.id,
+        role: "member",
+      },
+    });
+    try {
+      vi.mocked(runAgentEntry).mockImplementationOnce(async (input) => {
+        expect(notices).toEqual([]);
+        const accepted = await submitAgentEntry(input, () => {});
+        const running = assertDefined(await claimTask(accepted.row.id));
+        const request = {
+          type: "extension_ui_request" as const,
+          id: randomUUID(),
+          method: "input" as const,
+          title: "Native input",
+          placeholder: "Name",
+        };
+        const { projection } = applyNativeUiAction(
+          {},
+          assertDefined(running.leaseToken),
+          running.deadlineAt.getTime(),
+          { action: "request", request },
+        );
+        await db.a2ATask.update({
+          where: { id: running.id },
+          data: {
+            uiProjection: projection as unknown as Prisma.InputJsonValue,
+          },
+        });
+        const path = `/app/${workspace.slug}/work?agent=${input.agentId}&c=${input.sourceId}`;
+        await input.onUiRequired?.(path);
+        expect(notices).toHaveLength(1);
+        expect(notices[0]).toContain(path);
+        expect(notices[0]).not.toMatch(/A2A|Native|accepted|settings=/);
+        const view = await executionRequest(agent.id, input.sourceId);
+        expect(view.status).toBe(200);
+        expect((await view.json()).execution).toMatchObject({
+          id: running.id,
+          status: "input-required",
+          uiRequests: [request],
+        });
+        const decision = {
+          type: "extension_ui_response",
+          id: request.id,
+          value: "Native answer",
+        };
+        expect(
+          (
+            await executionRequest(agent.id, input.sourceId, {
+              ...decision,
+              taskId: running.id,
+            })
+          ).status,
+        ).toBe(400);
+        expect(
+          (
+            await executionRequest(agent.id, input.sourceId, {
+              ...decision,
+              id: randomUUID(),
+            })
+          ).status,
+        ).toBe(409);
+        for (const authorization of [
+          "Bearer personal",
+          "Bearer toolkit",
+          "Bearer runtime",
+          "Bearer invalid",
+        ]) {
+          expect(
+            (
+              await executionRequest(agent.id, input.sourceId, decision, {
+                authorization,
+              })
+            ).status,
+          ).toBe(401);
+          expect(
+            (
+              await executionRequest(agent.id, input.sourceId, undefined, {
+                authorization,
+              })
+            ).status,
+          ).toBe(401);
+        }
+        for (const headers of Array.of<Record<string, string>>(
+          { origin: "https://evil.example" },
+          { origin: "null" },
+          { origin: "" },
+          { origin: "http://localhost:3000/" },
+          { "sec-fetch-site": "cross-site" },
+        ))
+          expect(
+            (
+              await executionRequest(
+                agent.id,
+                input.sourceId,
+                decision,
+                headers,
+              )
+            ).status,
+          ).toBe(403);
+        expect(
+          (
+            await executionRequest(agent.id, input.sourceId, undefined, {
+              "sec-fetch-site": "cross-site",
+            })
+          ).status,
+        ).toBe(403);
+        const missingOrigin = await decideExecution(
+          new Request(
+            `http://localhost:3000/api/v1/agents/${agent.id}/conversations/${input.sourceId}/execution`,
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify(decision),
+            },
+          ),
+          {
+            params: Promise.resolve({
+              agentId: agent.id,
+              conversationId: input.sourceId,
+            }),
+          },
+        );
+        expect(missingOrigin.status).toBe(403);
+        const arbitraryTask = await getExecution(
+          new Request(
+            `http://localhost:3000/api/v1/agents/${agent.id}/conversations/${input.sourceId}/execution?taskId=${running.id}`,
+          ),
+          {
+            params: Promise.resolve({
+              agentId: agent.id,
+              conversationId: input.sourceId,
+            }),
+          },
+        );
+        expect(arbitraryTask.status).toBe(400);
+        identity.user = null;
+        expect((await executionRequest(agent.id, input.sourceId)).status).toBe(
+          401,
+        );
+        identity.user = otherActor;
+        expect((await executionRequest(agent.id, input.sourceId)).status).toBe(
+          403,
+        );
+        expect(
+          (await executionRequest(agent.id, input.sourceId, decision)).status,
+        ).toBe(403);
+        identity.user = owner;
+        for (const credential of ["personal-token", "toolkit-token"] as const) {
+          identity.credential = credential;
+          expect(
+            (await executionRequest(agent.id, input.sourceId, decision)).status,
+          ).toBe(401);
+        }
+        identity.credential = "session";
+        expect(
+          (await executionRequest(foreignAgentId, input.sourceId)).status,
+        ).toBe(404);
+        const unrelated = await db.conversation.create({
+          data: { agentId: agent.id, title: "No execution" },
+        });
+        expect(
+          await (await executionRequest(agent.id, unrelated.id)).json(),
+        ).toEqual({ execution: null });
+        expect(
+          (await executionRequest(agent.id, unrelated.id, decision)).status,
+        ).toBe(404);
+        expect(
+          nativeUiProjection(
+            (await db.a2ATask.findUniqueOrThrow({ where: { id: running.id } }))
+              .uiProjection,
+          ).dialogs[0].response,
+        ).toBeUndefined();
+        // Local dev ports use the shared origin policy, without accepting cross-site origins.
+        vi.stubEnv("NEXT_PUBLIC_APP_URL", "http://localhost:3007");
+        const decided = await executionRequest(
+          agent.id,
+          input.sourceId,
+          decision,
+        );
+        vi.stubEnv("NEXT_PUBLIC_APP_URL", "http://localhost:3000");
+        expect(decided.status).toBe(200);
+        expect(await decided.json()).toEqual({ ok: true });
+        expect(
+          nativeUiProjection(
+            (await db.a2ATask.findUniqueOrThrow({ where: { id: running.id } }))
+              .uiProjection,
+          ).dialogs[0].response,
+        ).toEqual(decision);
+        expect(
+          (await executionRequest(agent.id, input.sourceId, decision)).status,
+        ).toBe(409);
+        await finishTask(
+          running.id,
+          assertDefined(running.leaseToken),
+          TaskState.TASK_STATE_COMPLETED,
+          undefined,
+          textArtifact("Approved reply"),
+        );
+        return { task: await getTask(accepted.grant, running.id), path };
+      });
+      const result = await runAgentChannelMessage({
+        workspaceId: workspace.id,
+        agentId: agent.id,
+        connectionId: channel.id,
+        rawBody: {
+          message: "Read notes",
+          source: {
+            chatId: "approval-chat",
+            userId: "sender",
+            messageId: randomUUID(),
+          },
+        },
+        onUiRequired: async (message) => {
+          notices.push(message);
+        },
+      });
+      expect(result.body).toMatchObject({
+        delivery: "message",
+        message: "Approved reply",
+      });
+    } finally {
+      identity.user = owner;
+      identity.credential = "session";
+      vi.unstubAllEnvs();
+      await db.membership.deleteMany({ where: { userId: otherActor.id } });
+      await db.user.delete({ where: { id: otherActor.id } });
+    }
+  });
+
+  it("detaches aborted observers without inventing a failed assistant message", async () => {
+    const { agent, channel } = await piCommandChannel();
+    const controller = new AbortController();
+    let conversationId = "";
+    let taskId = "";
+    vi.mocked(runAgentEntry).mockImplementationOnce(async (input) => {
+      const accepted = await submitAgentEntry(input, () => {});
+      conversationId = input.sourceId;
+      taskId = accepted.row.id;
+      controller.abort();
+      input.signal?.throwIfAborted();
+      throw new Error("Expected aborted signal");
+    });
+    await expect(
+      runAgentChannelMessage({
+        workspaceId: workspace.id,
+        agentId: agent.id,
+        connectionId: channel.id,
+        signal: controller.signal,
+        rawBody: {
+          message: "hi",
+          source: {
+            chatId: "abort-chat",
+            userId: "sender",
+            messageId: randomUUID(),
+          },
+        },
+      }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(
+      await db.message.count({ where: { conversationId, role: "assistant" } }),
+    ).toBe(0);
+    expect(
+      await db.a2ATask.findUniqueOrThrow({ where: { id: taskId } }),
+    ).toMatchObject({
+      state: TaskState.TASK_STATE_SUBMITTED,
+      cancelRequestedAt: null,
+    });
   });
 });

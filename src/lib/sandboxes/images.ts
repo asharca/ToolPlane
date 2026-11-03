@@ -11,13 +11,13 @@ export type SandboxImageOption = {
 };
 
 export const DEFAULT_SANDBOX_IMAGE =
-  "mcr.microsoft.com/devcontainers/javascript-node:24-bookworm";
+  "mcr.microsoft.com/devcontainers/javascript-node:26-bookworm";
 
 export const SANDBOX_IMAGE_OPTIONS = [
   {
     id: "javascript-node-24",
     image: DEFAULT_SANDBOX_IMAGE,
-    name: "JavaScript Node 24",
+    name: "JavaScript Node 26",
     summary: "Node.js and frontend tooling on Debian Bookworm.",
     bestFor: "Next.js, React, frontend apps",
     badge: "Default",
@@ -25,8 +25,8 @@ export const SANDBOX_IMAGE_OPTIONS = [
   },
   {
     id: "typescript-node-24",
-    image: "mcr.microsoft.com/devcontainers/typescript-node:24-bookworm",
-    name: "TypeScript Node 24",
+    image: "mcr.microsoft.com/devcontainers/typescript-node:26-bookworm",
+    name: "TypeScript Node 26",
     summary: "TypeScript-ready Node.js development image.",
     bestFor: "TypeScript services and full-stack apps",
     badge: "TypeScript",

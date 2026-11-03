@@ -7,6 +7,11 @@ import { FormSelect } from "@/components/ui/FormSelect";
 
 import { Button } from "@/components/motion/button";
 import { Input } from "@/components/motion/input";
+import {
+  DialogCancel,
+  DialogField,
+  DialogFooter,
+} from "@/components/dashboard/dialog";
 
 import { useActionState, useId, useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
@@ -33,14 +38,27 @@ export function WorkspaceActionForm({
   children,
   label,
   danger = false,
+  cancelable = false,
 }: {
   action: Action;
   children: ReactNode;
   label: string;
   danger?: boolean;
+  /** Settings-dialog forms put Cancel and submit in a section footer. */
+  cancelable?: boolean;
 }) {
   const t = useTranslations("console.workspaces");
   const [state, formAction, pending] = useActionState(action, {});
+  const submit = (
+    <Button
+      type="submit"
+      disabled={pending}
+      variant={danger ? "secondary" : "primary"}
+      size="md"
+    >
+      {pending ? t("working") : label}
+    </Button>
+  );
   return (
     <form
       action={formAction}
@@ -56,13 +74,7 @@ export function WorkspaceActionForm({
         className="min-w-0 space-y-3 disabled:opacity-60"
       >
         {children}
-        <Button
-          type="submit"
-          variant={danger ? "secondary" : "primary"}
-          size="md"
-        >
-          {pending ? t("working") : label}
-        </Button>
+        {cancelable ? null : submit}
       </fieldset>
       {state.error ? (
         <p role="alert" className="text-sm text-destructive">
@@ -73,6 +85,14 @@ export function WorkspaceActionForm({
         <p role="status">
           <AnimatedBadge status="success">{state.success}</AnimatedBadge>
         </p>
+      ) : null}
+      {cancelable ? (
+        <DialogFooter
+          cancel={<DialogCancel disabled={pending} />}
+          className="static -mx-5 -mb-4 mt-5 bg-transparent px-5"
+        >
+          {submit}
+        </DialogFooter>
       ) : null}
     </form>
   );
@@ -120,23 +140,37 @@ export function RenameWorkspaceForm({
 }) {
   const t = useTranslations("console.workspaces");
   const id = useId();
+  const [value, setValue] = useState(name);
+  const [savedName, setSavedName] = useState(name);
+  if (savedName !== name) {
+    setSavedName(name);
+    setValue(name);
+  }
   return canManage ? (
-    <WorkspaceActionForm action={renameWorkspaceAction} label={t("save")}>
+    <WorkspaceActionForm
+      action={renameWorkspaceAction}
+      label={t("save")}
+      cancelable
+    >
       <input type="hidden" name="workspace" value={slug} />
-      <label htmlFor={id} className="block text-sm font-medium">
-        {t("name")}
-      </label>
-      <Input
-        id={id}
-        name="name"
-        defaultValue={name}
-        required
-        maxLength={80}
-        className="w-full"
-      />
-      <p className="break-all text-xs text-muted-foreground">
-        {t("stableAddress", { slug })}
-      </p>
+      <DialogField
+        label={t("name")}
+        htmlFor={id}
+        dirty={value !== name}
+        description={
+          <span className="break-all">{t("stableAddress", { slug })}</span>
+        }
+      >
+        <Input
+          id={id}
+          name="name"
+          value={value}
+          onChange={setValue}
+          required
+          maxLength={80}
+          className="w-full"
+        />
+      </DialogField>
     </WorkspaceActionForm>
   ) : (
     <div className="space-y-2">

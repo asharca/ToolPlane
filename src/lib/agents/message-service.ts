@@ -1,55 +1,30 @@
-import {
-  runNativeEntry,
-  latestEntryText,
-  nativeEntryResult,
-  nativeEntryRuntimeParts,
-} from "@/lib/a2a/ingress";
-import type { NativeEntryRuntimePart } from "@/lib/a2a/ingress";
-import type { NormalizedMessagingSource } from "@/lib/agents/messaging";
-import type { AgentForRun } from "@/lib/agents/queries";
 import "server-only";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { UIMessage } from "ai";
 import { db } from "@/lib/db";
-import { getAgent, getAgentForRequest } from "@/lib/agents/queries";
 import {
-  appendConversationTurn,
-  createConversation,
-  ensureConversationRuntimeSession,
-} from "@/lib/agents/mutations";
-import { resolveAgentTools } from "@/lib/agents/resolve";
-import { assembleSystemPrompt } from "@/lib/agents/system-prompt";
-import { buildAgentToolSet } from "@/lib/agents/run";
-import { uiMessagesToPi, runNativeAgent } from "@/lib/agents/native";
-import {
-  parseAgentMessageBody,
-  type AgentMessageBody,
-} from "@/lib/agents/chat-body";
-import {
-  isSilentAgentReply,
-  normalizeAgentMessageEvent,
-} from "@/lib/agents/messaging";
+  runAgentEntry,
+  latestEntryText,
+  agentEntryResult,
+  agentEntryRuntimeParts,
+} from "./execution/entries";
+import type { NormalizedMessagingSource } from "./messaging";
+import type { AgentForRun } from "./queries";
+import { getAgent, getAgentForRequest } from "./queries";
+import { createConversation } from "./mutations";
+import { parseAgentMessageBody, type AgentMessageBody } from "./chat-body";
+import { isSilentAgentReply, normalizeAgentMessageEvent } from "./messaging";
 import {
   decryptChannelCredentials,
   touchAgentChannelEvent,
-} from "@/lib/agents/channel-connections";
-import { channelSenderAllowed } from "@/lib/agents/channel-access";
-import { getChannelSandbox } from "@/lib/agents/channel-sandboxes";
-import { runHermesText } from "@/lib/agents/hermes/client";
-import {
-  acquireHermesRuntimeWriteLease,
-  HERMES_RUNTIME_COPY_IN_PROGRESS_ERROR,
-} from "@/lib/agents/hermes/runtime";
-import {
-  implementedAgentRuntimeKind,
-  isDedicatedSandboxRuntimeKind,
-} from "@/lib/agents/runtime-kind";
-import { activeConversationMessages } from "./conversation-context";
+} from "./channel-connections";
+import { channelSenderAllowed } from "./channel-access";
+import { getChannelSandbox } from "./channel-sandboxes";
 import {
   acquireConversationOperation,
   waitForConversationOperation,
   ConversationOperationError,
-  operateConversation,
+  rotateChannelConversation,
 } from "./conversation-operations";
 import {
   executeRuntimeCommand,
@@ -59,6 +34,11 @@ import {
   parseRuntimeCommand,
   sessionRuntimeCommands,
 } from "./runtime-commands";
+import { AgentRevisionError, resolvePinnedAgent } from "./revisions";
+import { persistAgentPromptInvocation } from "./prompt-invocation";
+
+export const CHANNEL_EXECUTION_FAILURE_MESSAGE =
+  "本次执行未能完成，未自动重试。请在工作区查看会话执行状态，检查模型或工具连接后再发送新消息。";
 
 export type AgentMessageResult =
   | { status: number; body: { error: string } }
@@ -94,9 +74,6 @@ export async function runAgentMessage(params: {
   });
 }
 
-// Workspace-scoped variant for authenticated control-plane integrations. The
-// URL workspace remains a hard boundary even when the caller can access more
-// than one workspace.
 export async function runWorkspaceAgentMessage(params: {
   userId?: string;
   workspaceId: string;
@@ -123,7 +100,7 @@ export async function runAgentChannelMessage(params: {
   defaults?: Partial<AgentMessageBody>;
   attachmentParts?: UIMessage["parts"];
   signal?: AbortSignal;
-  onAccepted?: (message: string) => Promise<void>;
+  onUiRequired?: (message: string) => Promise<void>;
 }): Promise<AgentMessageResult> {
   const channel = await db.agentChannelConnection.findFirst({
     where: {
@@ -149,9 +126,8 @@ export async function runAgentChannelMessage(params: {
         },
       };
   }
-  if (!["running", "starting", "waiting_callback"].includes(channel.status)) {
+  if (!["running", "starting", "waiting_callback"].includes(channel.status))
     return { status: 409, body: { error: "Channel is stopped" } };
-  }
   const body = parseAgentMessageBody(params.rawBody);
   if (!body) return { status: 400, body: { error: "Bad request" } };
   body.source = { ...body.source, platform: channel.platform };
@@ -163,47 +139,42 @@ export async function runAgentChannelMessage(params: {
       event.source,
       body.metadata?.roleIds,
     )
-  ) {
+  )
     return { status: 403, body: { error: "Sender or chat is not allowed" } };
-  }
   const agent = await getAgent(params.workspaceId, params.agentId);
   if (!agent) return { status: 404, body: { error: "Agent not found" } };
-  const sessionKey = `channel:${channel.id}:${event.sessionKey}`;
-  if (isDedicatedSandboxRuntimeKind(agent.runtimeKind) && !channel.a2aActorId)
+  if (agent.runtimeKind !== "pi-sdk" && agent.runtimeKind !== "omp")
+    return {
+      status: 410,
+      body: {
+        error: "Historical Agents are read-only. Create a new Pi Agent.",
+      },
+    };
+  if (!channel.a2aActorId)
     return {
       status: 409,
       body: {
         error:
-          "Authorize a native channel operator in Agent A2A settings first.",
+          "Channel execution identity is unavailable. Re-enable the channel to bind your account.",
       },
     };
+  const sessionKey = `channel:${channel.id}:${event.sessionKey}`;
   const command = body.message
     .trim()
     .match(/^\/([a-z][a-z0-9_:-]{0,99})(?:@\w+)?(?:\s+([\s\S]*))?$/i);
   if (command) {
-    const name =
-      agent.runtimeKind === "pi-sdk" ? command[1] : command[1].toLowerCase();
+    const name = command[1];
     const prior = await db.conversation.findFirst({
       where: { agentId: agent.id, runtimeSessionKey: sessionKey },
       orderBy: { createdAt: "desc" },
       include: { messages: { orderBy: [{ createdAt: "asc" }, { id: "asc" }] } },
     });
-    // SDK commands use the same authorized native entry as channel messages.
-    const commands = sessionRuntimeCommands(
-      agent.runtimeKind,
-      prior?.messages ?? [],
-    ).filter(
-      (item) =>
-        !isDedicatedSandboxRuntimeKind(agent.runtimeKind) ||
-        agent.runtimeKind === "pi-sdk" ||
-        (agent.runtimeKind === "pi" && item.name === "compact"),
-    );
     let conversationId = prior?.id ?? "";
     let message: string;
     if (name === "help") {
       message = [
         "/new - Start a new conversation",
-        ...commands.map(
+        ...sessionRuntimeCommands(agent.runtimeKind, prior?.messages ?? []).map(
           (item) =>
             `/${item.name}${item.description ? ` - ${item.description}` : ""}`,
         ),
@@ -213,80 +184,18 @@ export async function runAgentChannelMessage(params: {
     } else if (name === "whoami") {
       message = `User ID: ${event.source.userId ?? "-"}\nChat ID: ${event.source.chatId ?? "-"}\nPlatform: ${channel.platform}`;
     } else if (
-      isDedicatedSandboxRuntimeKind(agent.runtimeKind) &&
-      agent.runtimeKind !== "pi-sdk" &&
-      name !== "new" &&
-      !(agent.runtimeKind === "pi" && name === "compact")
-    ) {
-      message =
-        "Legacy runtime commands are unavailable through native A2A ingress. Use Agent settings → A2A integration.";
-    } else if (name === "compact" && !prior) {
-      message = "No active conversation to compact.";
-    } else if (
-      name !== "new" &&
-      agent.runtimeKind !== "pi-sdk" &&
-      !commands.some((item) => item.name === name)
-    ) {
-      message =
-        "This command is not supported by the current runtime. Send /help to see available commands.";
-    } else if (
       body.message.length > 2000 ||
       body.attachments.length ||
       params.attachmentParts?.length
     ) {
       message = "Commands accept at most 2,000 characters and no attachments.";
-    } else if (
-      agent.runtimeKind === "pi-sdk" &&
-      name !== "new" &&
-      !event.source.messageId
-    ) {
+    } else if (name !== "new" && !event.source.messageId) {
       message =
         "A stable channel message ID is required for native task deduplication.";
-    } else if (
-      name !== "new" &&
-      (name !== "compact" || agent.runtimeKind !== "hermes")
-    ) {
+    } else {
       try {
         if (!prior) {
           const release = acquireConversationOperation(sessionKey);
-          if (!release) throw new RuntimeCommandError("busy", 409);
-          try {
-            const created = await createConversation(
-              params.workspaceId,
-              agent.id,
-              event.conversationTitle,
-              { runtimeSessionKey: sessionKey },
-            );
-            if (!created) throw new RuntimeCommandError("notFound", 404);
-            conversationId = created.id;
-          } finally {
-            release();
-          }
-        }
-        const result = await executeRuntimeCommand({
-          workspaceId: params.workspaceId,
-          agentId: agent.id,
-          conversationId,
-          actorId: channel.a2aActorId ?? undefined,
-          sandboxId: channel.sandboxId ?? undefined,
-          line: `/${name}${command[2] ? ` ${command[2]}` : ""}`,
-          signal: params.signal,
-          entry: { kind: "channel", channelId: channel.id },
-          messageId: event.source.messageId,
-        });
-        message = result.kind === "output" ? result.text : "Command completed.";
-      } catch (error) {
-        message =
-          error instanceof RuntimeCommandError && error.message === "busy"
-            ? "This conversation is busy. Please wait for the current operation to finish."
-            : error instanceof RuntimeCommandError && error.status === 502
-              ? error.message
-              : "The runtime command failed. Send /help to see available commands.";
-      }
-    } else {
-      try {
-        if (name === "new" && !prior) {
-          const release = acquireConversationOperation(sessionKey, "new");
           if (!release) throw new ConversationOperationError("busy");
           try {
             const created = await createConversation(
@@ -300,30 +209,40 @@ export async function runAgentChannelMessage(params: {
           } finally {
             release();
           }
+        }
+        if (name === "new") {
+          if (prior) {
+            const result = await rotateChannelConversation({
+              workspaceId: params.workspaceId,
+              agentId: agent.id,
+              conversationId: prior.id,
+            });
+            conversationId = result.conversationId;
+          }
           message = "New conversation started.";
         } else {
-          if (!prior) throw new ConversationOperationError("notFound", 404);
-          const result = await operateConversation({
+          const result = await executeRuntimeCommand({
             workspaceId: params.workspaceId,
             agentId: agent.id,
-            conversationId: prior.id,
-            action: name as "new" | "compact",
-            instructions: command[2]?.trim().slice(0, 2000),
+            conversationId,
+            actorId: channel.a2aActorId,
+            line: `/${name}${command[2] ? ` ${command[2]}` : ""}`,
             signal: params.signal,
+            entry: { kind: "channel", channelId: channel.id },
+            messageId: event.source.messageId,
           });
-          conversationId = result.conversationId;
           message =
-            name === "new"
-              ? "New conversation started."
-              : result.compacted
-                ? `Conversation compacted. Estimated context: ${result.beforeTokens} -> ${result.afterTokens} tokens. History is preserved.`
-                : "The current context is already short enough; no history was changed.";
+            result.kind === "output" ? result.text : "Command completed.";
         }
       } catch (error) {
         message =
-          error instanceof ConversationOperationError && error.code === "busy"
+          (error instanceof ConversationOperationError &&
+            error.code === "busy") ||
+          (error instanceof RuntimeCommandError && error.message === "busy")
             ? "This conversation is busy. Please wait for the current operation to finish."
-            : "The conversation operation failed. Your history has not been changed.";
+            : error instanceof RuntimeCommandError && error.status === 502
+              ? error.message
+              : "The runtime command failed. Your history has not been changed.";
       }
     }
     await touchAgentChannelEvent(channel.id);
@@ -348,9 +267,8 @@ export async function runAgentChannelMessage(params: {
     rawBody: body,
     defaults: params.defaults,
     connectionId: channel.id,
-    actorId: channel.a2aActorId ?? undefined,
-    onAccepted: params.onAccepted,
-    sandboxId: channel.sandboxId ?? undefined,
+    actorId: channel.a2aActorId,
+    onUiRequired: params.onUiRequired,
     attachmentParts: params.attachmentParts,
     signal: params.signal,
   });
@@ -361,275 +279,69 @@ export async function runAgentChannelMessage(params: {
 async function runLoadedAgentMessage(params: {
   agent: AgentForRun;
   actorId?: string;
-  onAccepted?: (message: string) => Promise<void>;
+  onUiRequired?: (message: string) => Promise<void>;
   rawBody: unknown;
   defaults?: Partial<AgentMessageBody>;
   connectionId?: string;
-  sandboxId?: string;
   attachmentParts?: UIMessage["parts"];
   signal?: AbortSignal;
 }): Promise<AgentMessageResult> {
-  const { agent } = params;
-  const runtimeKind = implementedAgentRuntimeKind(agent.runtimeKind);
-  if (!runtimeKind) {
+  const agent = params.agent;
+  if (agent.runtimeKind !== "pi-sdk" && agent.runtimeKind !== "omp")
     return {
-      status: 400,
-      body: { error: `Agent runtime "${agent.runtimeKind}" is not available.` },
+      status: 410,
+      body: {
+        error: "Historical Agents are read-only. Create a new Pi Agent.",
+      },
     };
-  }
-  const isHermes = runtimeKind === "hermes";
-  if (
-    isHermes
-      ? agent.modelProviders.length === 0
-      : !agent.provider || !agent.model
-  ) {
+  const body = parseAgentMessageBody({
+    ...params.defaults,
+    ...(params.rawBody as object),
+  });
+  if (!body) return { status: 400, body: { error: "Bad request" } };
+  if (!params.actorId)
+    return {
+      status: 403,
+      body: { error: "An authenticated native execution actor is required." },
+    };
+  if (body.attachments.length || params.attachmentParts?.length)
+    return {
+      status: 415,
+      body: { error: "Native message ingress accepts text only." },
+    };
+  const event = normalizeAgentMessageEvent(body);
+  if (params.connectionId)
+    event.sessionKey = `channel:${params.connectionId}:${event.sessionKey}`;
+  if (params.connectionId && !event.source.messageId)
     return {
       status: 400,
       body: {
-        error: isHermes
-          ? "This Hermes agent has no model provider configured. Open Settings and select one or more providers."
-          : "This agent has no model configured. Open Settings and pick a provider + model.",
+        error:
+          "A stable channel message ID is required for native task deduplication.",
       },
     };
-  }
-
-  const hermesWriteLease = isHermes
-    ? acquireHermesRuntimeWriteLease(agent.workspaceId, agent.id)
-    : null;
-  if (isHermes && !hermesWriteLease) {
+  const command = parseRuntimeCommand(body.message, agent.runtimeKind);
+  if (command && body.message.length > 2000)
     return {
-      status: 503,
-      body: { error: HERMES_RUNTIME_COPY_IN_PROGRESS_ERROR },
+      status: 400,
+      body: { error: "Commands accept at most 2,000 characters." },
     };
-  }
-
+  const operationKey = params.connectionId
+    ? event.sessionKey
+    : (body.conversationId ?? `agent-message:${agent.id}:${event.sessionKey}`);
   let releaseConversation: (() => void) | null = null;
-  try {
-    const body = parseAgentMessageBody({
-      ...params.defaults,
-      ...(params.rawBody as object),
-    });
-    if (!body) return { status: 400, body: { error: "Bad request" } };
-
-    const event = normalizeAgentMessageEvent(body);
-    if (params.connectionId)
-      event.sessionKey = `channel:${params.connectionId}:${event.sessionKey}`;
-    const operationKey = params.connectionId
-      ? event.sessionKey
-      : (body.conversationId ??
-        (isDedicatedSandboxRuntimeKind(runtimeKind)
-          ? `agent-message:${agent.id}:${event.sessionKey}`
-          : undefined));
-    if (operationKey) {
-      if (
-        body.conversationId &&
-        !(await db.conversation.count({
-          where: {
-            id: body.conversationId,
-            agentId: agent.id,
-            agent: { workspaceId: agent.workspaceId },
-          },
-        }))
-      )
-        return { status: 404, body: { error: "Conversation not found" } };
-      releaseConversation = isDedicatedSandboxRuntimeKind(runtimeKind)
-        ? await waitForConversationOperation(operationKey, params.signal)
-        : acquireConversationOperation(operationKey);
-      if (!releaseConversation)
-        return { status: 409, body: { error: "This conversation is busy." } };
-    }
-    const loadedConversation = await db.conversation.findFirst({
-      where: {
-        agentId: agent.id,
-        ...(body.conversationId
-          ? { id: body.conversationId }
-          : params.connectionId
-            ? {}
-            : { title: event.conversationTitle }),
-        ...(params.connectionId ? { runtimeSessionKey: event.sessionKey } : {}),
-      },
-      include: { messages: { orderBy: [{ createdAt: "asc" }, { id: "asc" }] } },
-      orderBy: { createdAt: "desc" },
-    });
-    if (body.conversationId && !loadedConversation) {
-      return { status: 404, body: { error: "Conversation not found" } };
-    }
-    const createdConversation = loadedConversation
-      ? null
-      : await createConversation(
-          agent.workspaceId,
-          agent.id,
-          event.conversationTitle,
-          {
-            runtimeSessionKey: event.sessionKey,
-          },
-        );
-    const conversation = loadedConversation ?? createdConversation;
-    if (!conversation)
-      return { status: 404, body: { error: "Conversation not found" } };
-    if (
-      isDedicatedSandboxRuntimeKind(runtimeKind) &&
-      operationKey !== conversation.id
-    ) {
-      const releaseSession = await waitForConversationOperation(
-        conversation.id,
-        params.signal,
-      );
-      const releaseRouting = releaseConversation;
-      releaseConversation = () => {
-        releaseSession();
-        releaseRouting?.();
-      };
-    }
-
-    const runtimeSession = isHermes
-      ? await ensureConversationRuntimeSession(
-          agent.workspaceId,
-          agent.id,
-          conversation.id,
-          { runtimeSessionKey: event.sessionKey },
-        )
-      : null;
-    if (isHermes && !runtimeSession) {
-      return { status: 404, body: { error: "Conversation not found" } };
-    }
-
-    const priorMessages: UIMessage[] = activeConversationMessages(
-      loadedConversation?.messages ?? [],
-    ).map((m) => ({
-      id: m.id,
-      role: m.role as UIMessage["role"],
-      parts: m.parts as UIMessage["parts"],
-    }));
-    const sdkCommand =
-      runtimeKind === "pi-sdk" &&
-      parseRuntimeCommand(body.message, runtimeKind);
-    if (sdkCommand && body.message.length > 2000)
-      return {
-        status: 400,
-        body: { error: "Commands accept at most 2,000 characters." },
-      };
-    const userMessage: UIMessage = {
-      id: event.source.messageId ?? randomUUID(),
-      role: "user",
-      parts: [
-        {
-          type: "text",
-          text: sdkCommand ? body.message.trim() : event.promptText,
-        },
-        ...(params.attachmentParts ?? []),
-      ],
-    };
-
-    let text: string;
-    let runtimeParts: NativeEntryRuntimePart[] = [];
-    if (isHermes && runtimeSession) {
-      try {
-        text = await runHermesText({
-          agent,
-          messages: [...priorMessages, userMessage],
-          sessionId: runtimeSession.runtimeSessionId,
-          sessionKey: runtimeSession.runtimeSessionKey,
-          writeLease: hermesWriteLease ?? undefined,
-          signal: params.signal,
-        });
-      } catch (error) {
-        return {
-          status: 502,
-          body: {
-            error:
-              error instanceof Error
-                ? error.message
-                : "Hermes runtime request failed.",
-          },
-        };
-      }
-    } else {
-      if (!agent.provider || !agent.model) {
-        return {
-          status: 400,
-          body: { error: "This agent has no model configured." },
-        };
-      }
-      const resolved = resolveAgentTools(agent);
-      if (isDedicatedSandboxRuntimeKind(runtimeKind)) {
-        if (!params.actorId)
-          return {
-            status: 403,
-            body: {
-              error: "An authenticated native execution actor is required.",
-            },
-          };
-        if (body.attachments.length || params.attachmentParts?.length)
-          return {
-            status: 415,
-            body: { error: "Native message ingress accepts text only." },
-          };
-        if (params.connectionId && !event.source.messageId)
-          return {
-            status: 400,
-            body: {
-              error:
-                "A stable channel message ID is required for native task deduplication.",
-            },
-          };
-        const result = await runNativeEntry({
-          kind: params.connectionId
-            ? "channel"
-            : event.source.platform === "mcp"
-              ? "control"
-              : "chat",
-          sourceId: conversation.id,
-          channelId: params.connectionId,
-          workspaceId: agent.workspaceId,
-          agentId: agent.id,
-          actorId: params.actorId,
-          messageId: userMessage.id,
-          text: latestEntryText(userMessage),
-          signal: params.signal,
-          onAccepted: (_task, path) =>
-            params.onAccepted?.(
-              `Native task accepted. Approvals and progress (authorized console operator only): ${path}`,
-            ),
-        });
-        text = nativeEntryResult(result.task, result.path);
-        runtimeParts = nativeEntryRuntimeParts(result.task);
-      } else {
-        const tools = await buildAgentToolSet(resolved, {
-          workspaceId: agent.workspaceId,
-          depth: 0,
-          visited: new Set([agent.id]),
-        });
-        const system = assembleSystemPrompt(
-          agent.systemPrompt,
-          resolved.skills,
-          Boolean(resolved.knowledgeBases?.length),
-        );
-        text = await runNativeAgent({
-          provider: agent.provider,
-          modelId: agent.model,
-          systemPrompt: system,
-          messages: uiMessagesToPi([...priorMessages, userMessage]),
-          tools,
-          maxSteps: agent.maxSteps,
-          signal: params.signal,
-        });
-      }
-    }
+  let persistedConversationId: string | null = null;
+  let assistantMessageId: string = randomUUID();
+  const response = (
+    conversationId: string,
+    text: string,
+  ): AgentMessageResult => {
     const silent = isSilentAgentReply(text);
-
-    params.signal?.throwIfAborted();
-    await appendConversationTurn(
-      conversation.id,
-      userMessage.parts as never,
-      [{ type: "text", text }, ...runtimeParts] as never,
-    );
-
     return {
       status: 200,
       body: {
         agentId: agent.id,
-        conversationId: conversation.id,
+        conversationId,
         delivery: silent ? "silent" : "message",
         message: silent ? "" : text,
         rawMessage: text,
@@ -640,8 +352,211 @@ async function runLoadedAgentMessage(params: {
         channelId: event.source.chatId ?? null,
       },
     };
+  };
+  try {
+    if (
+      body.conversationId &&
+      !(await db.conversation.count({
+        where: {
+          id: body.conversationId,
+          agentId: agent.id,
+          agent: { workspaceId: agent.workspaceId },
+        },
+      }))
+    )
+      return { status: 404, body: { error: "Conversation not found" } };
+    releaseConversation = await waitForConversationOperation(
+      operationKey,
+      params.signal,
+    );
+    const loaded = await db.conversation.findFirst({
+      where: {
+        agentId: agent.id,
+        ...(body.conversationId
+          ? { id: body.conversationId }
+          : params.connectionId
+            ? {}
+            : { title: event.conversationTitle }),
+        ...(params.connectionId ? { runtimeSessionKey: event.sessionKey } : {}),
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    if (body.conversationId && !loaded)
+      return { status: 404, body: { error: "Conversation not found" } };
+    const conversation =
+      loaded ??
+      (await createConversation(
+        agent.workspaceId,
+        agent.id,
+        event.conversationTitle,
+        { runtimeSessionKey: event.sessionKey },
+      ));
+    if (!conversation)
+      return { status: 404, body: { error: "Conversation not found" } };
+    if (conversation.legacyRevisionUnresolved)
+      return {
+        status: 410,
+        body: {
+          error:
+            "This conversation has no executable immutable revision and is read-only.",
+        },
+      };
+    const pinned = await resolvePinnedAgent(
+      agent,
+      conversation.agentRevisionId,
+    );
+    if (!pinned.provider || !pinned.model)
+      return {
+        status: 409,
+        body: { error: "The pinned Agent revision has no available model." },
+      };
+    if (operationKey !== conversation.id) {
+      const releaseSession = await waitForConversationOperation(
+        conversation.id,
+        params.signal,
+      );
+      const releaseRouting = releaseConversation;
+      releaseConversation = () => {
+        releaseSession();
+        releaseRouting?.();
+      };
+    }
+    const projectionKey =
+      params.connectionId && event.source.messageId
+        ? createHash("sha256")
+            .update(
+              JSON.stringify([
+                params.connectionId,
+                conversation.id,
+                event.source.messageId,
+              ]),
+            )
+            .digest("hex")
+        : null;
+    if (projectionKey) assistantMessageId = `channel-reply-${projectionKey}`;
+    const userMessageId = projectionKey
+      ? `channel-message-${projectionKey}`
+      : randomUUID();
+    const previousUser = projectionKey
+      ? await db.message.findUnique({ where: { id: userMessageId } })
+      : null;
+    const text = command ? body.message : event.promptText;
+    if (previousUser && latestEntryText(previousUser) !== text.trim())
+      return {
+        status: 400,
+        body: {
+          error: "Channel message ID was reused with different content.",
+        },
+      };
+    // A failed transport send may retry the same saved reply, but never the execution/history.
+    const previousReply = projectionKey
+      ? await db.message.findUnique({ where: { id: assistantMessageId } })
+      : null;
+    if (previousReply?.conversationId === conversation.id) {
+      const parts = previousReply.parts as Array<{
+        type?: string;
+        text?: string;
+      }>;
+      return response(
+        conversation.id,
+        parts
+          .filter(
+            (part) => part.type === "text" && typeof part.text === "string",
+          )
+          .map((part) => part.text)
+          .join("\n"),
+      );
+    }
+    const userParts = [
+      {
+        type: "text" as const,
+        text,
+      },
+    ];
+    const userMessage: UIMessage = {
+      id: userMessageId,
+      role: "user",
+      parts: userParts,
+    };
+    const savedUser = await db.message.upsert({
+      where: { id: userMessage.id },
+      update: {},
+      create: {
+        id: userMessage.id,
+        conversationId: conversation.id,
+        role: "user",
+        parts: userParts,
+      },
+    });
+    persistedConversationId = conversation.id;
+    const result = await runAgentEntry({
+      kind: params.connectionId
+        ? "channel"
+        : event.source.platform === "mcp"
+          ? "control"
+          : "chat",
+      sourceId: conversation.id,
+      channelId: params.connectionId,
+      workspaceId: agent.workspaceId,
+      agentId: agent.id,
+      actorId: params.actorId,
+      messageId: event.source.messageId ?? userMessage.id,
+      text: latestEntryText(userMessage),
+      signal: params.signal,
+      onPromptInvocation: (invocation) =>
+        persistAgentPromptInvocation({
+          conversationId: conversation.id,
+          messageId: savedUser.id,
+          invocation,
+        }),
+      onUiRequired: (path) =>
+        params.onUiRequired?.(`Pi 扩展需要你的输入，请打开会话：${path}`),
+    });
+    const replyText = agentEntryResult(result.task, result.path);
+    const runtimeParts = agentEntryRuntimeParts(result.task);
+    params.signal?.throwIfAborted();
+    await db.message.create({
+      data: {
+        id: assistantMessageId,
+        conversationId: conversation.id,
+        role: "assistant",
+        parts: [{ type: "text", text: replyText }, ...runtimeParts],
+      },
+    });
+    return response(conversation.id, replyText);
+  } catch (error) {
+    // Aborting a channel observer (including shutdown) is not a failed execution.
+    if (params.signal?.aborted) throw error;
+    if (persistedConversationId) {
+      await db.message.create({
+        data: {
+          id: assistantMessageId,
+          conversationId: persistedConversationId,
+          role: "assistant",
+          parts: [
+            { type: "text", text: CHANNEL_EXECUTION_FAILURE_MESSAGE },
+            {
+              type: "data-agent-execution",
+              data: {
+                status: "failed",
+                error: {
+                  code: "AGENT_EXECUTION_FAILED",
+                  message: CHANNEL_EXECUTION_FAILURE_MESSAGE,
+                },
+              },
+            },
+          ],
+        },
+      });
+      return response(
+        persistedConversationId,
+        CHANNEL_EXECUTION_FAILURE_MESSAGE,
+      );
+    }
+    if (error instanceof AgentRevisionError)
+      return { status: 409, body: { error: error.code } };
+    throw error;
   } finally {
     releaseConversation?.();
-    hermesWriteLease?.release();
   }
 }

@@ -4,10 +4,8 @@ import { db } from "@/lib/db";
 import { resolveAgentControlRequestUser } from "@/lib/auth/request-user";
 import { getWorkspaceForUser } from "@/lib/workspace/queries";
 import { parseJson } from "@/lib/agents/public-api/body";
-import { createAgentApiKey } from "@/lib/agents/public-api/auth";
 import { writeAudit } from "@/lib/observability/audit";
 import { withLogContext } from "@/lib/observability/context";
-import { A2A_SCOPES } from "./principal";
 
 const Input = z
   .object({
@@ -84,41 +82,30 @@ export async function manageA2AService(
         { error: "Publish an active isolated Agent service first." },
         409,
       );
+    if (parsed.value.enabled) {
+      return reply(
+        {
+          error:
+            "This Agent runtime does not support public endpoint execution.",
+          code: "runtime_unsupported",
+        },
+        409,
+      );
+    }
     try {
-      const client = await db.$transaction(async (tx) => {
+      await db.$transaction(async (tx) => {
         await tx.$queryRaw`SELECT id FROM "AgentEndpoint" WHERE id=${endpoint.id} FOR UPDATE`;
         const current = await tx.agentEndpoint.findFirst({
           where: {
             id: endpoint.id,
             workspaceId: workspace.id,
-            ...(parsed.value.enabled
-              ? { status: "active", currentRevisionId: { not: null } }
-              : {}),
           },
         });
         if (!current) throw new Error("Publication changed");
-        if (
-          parsed.value.clientName &&
-          (await tx.agentApiClient.count({
-            where: { endpointId: endpoint.id },
-          })) >= 100
-        )
-          throw new Error("Client limit");
         await tx.agentEndpoint.update({
           where: { id: endpoint.id },
-          data: { a2aEnabled: parsed.value.enabled },
+          data: { a2aEnabled: false },
         });
-        const created =
-          parsed.value.enabled && parsed.value.clientName
-            ? await tx.agentApiClient.create({
-                data: {
-                  endpointId: endpoint.id,
-                  createdById: user.id,
-                  name: parsed.value.clientName,
-                  scopes: [...A2A_SCOPES],
-                },
-              })
-            : null;
         await writeAudit(tx, {
           actorId: user.id,
           workspaceId: workspace.id,
@@ -126,31 +113,15 @@ export async function manageA2AService(
           targetType: "AgentEndpoint",
           targetId: endpoint.id,
           changes: {
-            enabled: parsed.value.enabled,
-            clientId: created?.id ?? null,
+            enabled: false,
           },
         });
-        return created;
       });
-      // Plaintext is returned once by the established credential service, never in audit data.
-      const key = client
-        ? await createAgentApiKey({
-            actorId: user.id,
-            clientId: client.id,
-            endpointPublicId: endpoint.publicId,
-            workspaceId: workspace.id,
-            sourceAgentId: agentId,
-            name: "A2A service key",
-          })
-        : null;
       return reply({
-        enabled: parsed.value.enabled,
+        enabled: false,
         endpointId: endpoint.publicId,
         rpcPath: `/api/v1/agent-endpoints/${endpoint.publicId}/a2a`,
         agentCardPath: `/api/v1/agent-endpoints/${endpoint.publicId}/a2a/.well-known/agent-card.json`,
-        ...(client && key
-          ? { clientId: client.id, token: key.token, scopes: [...A2A_SCOPES] }
-          : {}),
       });
     } catch {
       return reply(

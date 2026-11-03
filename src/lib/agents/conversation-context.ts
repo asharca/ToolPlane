@@ -21,6 +21,25 @@ export type ConversationCompaction = {
 
 export type ContextMessage = { id: string; role: string; parts: unknown };
 
+/** Admission failures have UI metadata but never established a native session. */
+export function hasNativeConversationHistory(
+  messages: readonly Pick<ContextMessage, "role" | "parts">[],
+): boolean {
+  return messages.some((message) => {
+    if (message.role !== "assistant") return false;
+    if (!Array.isArray(message.parts)) return true;
+    return message.parts.some((part) => {
+      if (!part || typeof part !== "object") return true;
+      if (part.type === "work-runtime")
+        return part.status !== "failed" && part.status !== "cancelled";
+      return (
+        part.type !== "data-agent-turn-model" &&
+        part.type !== "data-work-timing"
+      );
+    });
+  });
+}
+
 export function messageCompaction(
   message: ContextMessage,
 ): ConversationCompaction | null {

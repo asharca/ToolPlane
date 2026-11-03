@@ -11,41 +11,25 @@ import {
 } from "vitest";
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
-import { findAgentConversationSandbox } from "@/lib/agents/conversation-sandbox";
+import * as sandboxRuntime from "@/lib/sandboxes/runtime";
+import * as agentRuntime from "@/lib/agents/sandbox-runtime";
 import {
   cloneAgent,
-  cloneHermesVolumeData,
   createAgent,
   createConfiguredAgent,
   deleteAgent,
   deleteProvider,
   addProviderModels,
-  updateProviderModel,
   deleteProviderModel,
-  ProviderModelError,
   updateAgent,
   updateAgentModelSelection,
-  bindHermesAgentModelProvider,
   setAgentTools,
-  setProviderModels,
-  setHermesRuntimeEnv,
   updateProvider,
   appendMessage,
   appendConversationTurn,
   createConversation,
-  setHermesConversationSelection,
   ensureConversationRuntimeSession,
 } from "@/lib/agents/mutations";
-import {
-  listManagedAgentRuntimes,
-  listSandboxes,
-} from "@/lib/sandboxes/queries";
-import { hermesProviderName } from "@/lib/agents/hermes/config";
-import { readSandboxEnv } from "@/lib/sandboxes/env";
-import {
-  DEFAULT_SANDBOX_IMAGE,
-  sandboxVolumeName,
-} from "@/lib/sandboxes/runtime";
 import {
   createAgentChannelConnection,
   deleteAgentChannelConnection,
@@ -54,10 +38,50 @@ import {
   updateAgentChannelConnectionCredentials,
 } from "@/lib/agents/channel-connections";
 import {
-  applyAgentChannelPairing,
   checkAgentChannelPairing,
   requestAgentChannelPairing,
 } from "@/lib/agents/channel-pairing";
+import {
+  captureAgentRevisionConfig,
+  prepareAgentRevisionMcpDeployments,
+  resolvePinnedAgent,
+} from "@/lib/agents/revisions";
+import { resolveAgentRuntimeGrant } from "@/lib/agents/runtime-grant";
+import { AgentRevisionConfigSchema } from "@/lib/agents/revision-types";
+
+// Database revision fixtures exercise persistence/pinning without pretending to
+// exercise the sandbox-native publication preflight in this mutation suite.
+async function seedPublishedRevision(agentId: string) {
+  const owner = await db.agent.findUniqueOrThrow({
+    where: { id: agentId },
+    select: { workspaceId: true },
+  });
+  await prepareAgentRevisionMcpDeployments(owner.workspaceId, agentId);
+  return db.$transaction(async (tx) => {
+    const agent = await tx.agent.findUniqueOrThrow({ where: { id: agentId } });
+    const config = await captureAgentRevisionConfig(tx, agentId, {
+      kind: "docker",
+      image: `toolplane-test@sha256:${"0".repeat(64)}`,
+      network: "isolated",
+      piVersion: "0.87.1",
+      initialSnapshot: null,
+      resourceLimits: { memoryBytes: 536870912, cpus: 1, pidsLimit: 128 },
+      credentialReferences: [],
+    });
+    const revision = await tx.agentRevision.create({
+      data: {
+        agentId,
+        version: agent.currentRevisionVersion + 1,
+        config: config as Prisma.InputJsonValue,
+      },
+    });
+    await tx.agent.update({
+      where: { id: agentId },
+      data: { currentRevisionVersion: revision.version },
+    });
+    return revision;
+  });
+}
 
 let workspaceId = "";
 let userId = "";
@@ -82,7 +106,13 @@ beforeAll(async () => {
     data: { slug: `srv-${Date.now()}`, name: "Srv" },
   });
   const dep = await db.deployment.create({
-    data: { workspaceId, serverId: server.id },
+    data: {
+      workspaceId,
+      serverId: server.id,
+      source: "remote",
+      sourceRef: "https://mcp.example.test/mcp",
+      installCfg: { transport: "streamable-http", authType: "none" },
+    },
   });
   deploymentId = dep.id;
   const provider = await db.modelProvider.create({
@@ -106,6 +136,7 @@ afterAll(async () => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 async function createDockerSandbox(label: string) {
@@ -126,171 +157,351 @@ async function createDockerSandbox(label: string) {
 }
 
 describe("agents mutations", () => {
-  it("keeps conversation mappings workspace-scoped and prevents template reassignment or data detachment", async () => {
-    const agent = await createAgent(workspaceId, "Isolated conversation", {
-      runtime: "pi",
+  it("creates an enabled Agent whose first conversation pins the selected configuration", async () => {
+    // External Docker boundaries only; persistence, authorization, and pinning are real.
+    vi.spyOn(sandboxRuntime, "resolveDockerImageDigest").mockResolvedValue(
+      `fixture@sha256:${"a".repeat(64)}`,
+    );
+    vi.spyOn(agentRuntime, "preflightPiSdkCapabilities").mockResolvedValue({
+      commands: [],
+      tools: [],
+      skills: [],
+      prompts: [],
     });
-    const assigned = await db.agentSandbox.findFirstOrThrow({
-      where: { agentId: agent.id },
+    const agent = await createConfiguredAgent(
+      workspaceId,
+      {
+        name: "Ready on creation",
+        providerId,
+        model: "model-1",
+        systemPrompt: "Selected instructions",
+        maxSteps: 8,
+      },
+      { deploymentIds: [], installedSkillIds: [], toolkitIds: [] },
+      { runtime: "pi-sdk", enable: true },
+    );
+    const current = await db.agent.findUniqueOrThrow({
+      where: { id: agent.id },
     });
-    const isolated = await createDockerSandbox("Conversation files");
-    const replacement = await createDockerSandbox("Replacement template");
-    await db.sandbox.update({
-      where: { id: isolated.id },
-      data: {
-        config: {
-          managedBy: "agent-conversation",
-          agentId: agent.id,
-          sourceSandboxId: assigned.sandboxId,
+    expect(current.currentRevisionVersion).toBe(1);
+    const conversation = await createConversation(workspaceId, agent.id);
+    if (!conversation)
+      throw new Error("Created Agent must accept a conversation");
+    const pinned = await resolvePinnedAgent(
+      current,
+      conversation.agentRevisionId,
+    );
+    expect(pinned).toMatchObject({
+      providerId,
+      model: "model-1",
+      systemPrompt: "Selected instructions",
+      maxSteps: 8,
+    });
+  });
+
+  it("rolls back the Agent and sandbox when initial capability preflight fails", async () => {
+    vi.spyOn(sandboxRuntime, "resolveDockerImageDigest").mockResolvedValue(
+      `fixture@sha256:${"a".repeat(64)}`,
+    );
+    vi.spyOn(agentRuntime, "preflightPiSdkCapabilities").mockRejectedValue(
+      new Error("PI_CAPABILITY_CONFLICT"),
+    );
+    const before = {
+      agents: await db.agent.count({ where: { workspaceId } }),
+      sandboxes: await db.sandbox.count({ where: { workspaceId } }),
+      deployments: await db.deployment.count({ where: { workspaceId } }),
+    };
+    await expect(
+      createConfiguredAgent(
+        workspaceId,
+        {
+          name: "Rejected creation",
+          providerId,
+          model: "model-1",
+          systemPrompt: null,
+          maxSteps: 8,
         },
+        { deploymentIds: [], installedSkillIds: [], toolkitIds: [] },
+        { runtime: "pi-sdk", enable: true },
+      ),
+    ).rejects.toThrow("PI_CAPABILITY_CONFLICT");
+    expect({
+      agents: await db.agent.count({ where: { workspaceId } }),
+      sandboxes: await db.sandbox.count({ where: { workspaceId } }),
+      deployments: await db.deployment.count({ where: { workspaceId } }),
+    }).toEqual(before);
+  });
+
+  it("rejects enabling a new Agent with another workspace's model provider", async () => {
+    const foreign = await db.workspace.create({
+      data: {
+        name: "Foreign creation",
+        slug: `foreign-create-${Date.now()}`,
+        ownerId: userId,
       },
     });
-    const conversation = await db.conversation.create({
-      data: { agentId: agent.id, sandboxId: isolated.id },
-    });
-    const binding = {
-      workspaceId,
-      agentId: agent.id,
-      conversationId: conversation.id,
-    };
     try {
-      await expect(findAgentConversationSandbox(binding)).resolves.toEqual({
-        sandboxId: isolated.id,
-        deploymentId: isolated.deploymentId,
-      });
       await expect(
-        findAgentConversationSandbox({
-          ...binding,
-          workspaceId: "another-workspace",
-        }),
-      ).rejects.toThrow();
-      await expect(
-        findAgentConversationSandbox({ ...binding, agentId: "another-agent" }),
-      ).rejects.toThrow();
-      await expect(
-        setAgentTools(workspaceId, agent.id, {
-          deploymentIds: [],
-          installedSkillIds: [],
-          toolkitIds: [],
-          sandboxIds: [replacement.id],
-        }),
-      ).rejects.toThrow(/conversation/i);
+        createConfiguredAgent(
+          foreign.id,
+          {
+            name: "Unauthorized creation",
+            providerId,
+            model: "model-1",
+            systemPrompt: null,
+            maxSteps: 8,
+          },
+          { deploymentIds: [], installedSkillIds: [], toolkitIds: [] },
+          { runtime: "pi-sdk", enable: true },
+        ),
+      ).rejects.toThrow("Unknown model provider");
+      expect(await db.agent.count({ where: { workspaceId: foreign.id } })).toBe(
+        0,
+      );
       expect(
-        (
-          await db.agentSandbox.findFirstOrThrow({
-            where: { agentId: agent.id },
-          })
-        ).sandboxId,
-      ).toBe(assigned.sandboxId);
-      await expect(
-        db.sandbox.delete({ where: { id: isolated.id } }),
-      ).rejects.toMatchObject({ code: "P2003" });
-      expect(
-        (
-          await db.conversation.findUniqueOrThrow({
-            where: { id: conversation.id },
-          })
-        ).sandboxId,
-      ).toBe(isolated.id);
+        await db.sandbox.count({ where: { workspaceId: foreign.id } }),
+      ).toBe(0);
     } finally {
-      await db.conversation.delete({ where: { id: conversation.id } });
+      await db.workspace.delete({ where: { id: foreign.id } });
     }
   });
 
-  it("creates an agent with a unique slug", async () => {
-    const a = await createAgent(workspaceId, "My Agent", { runtime: "pi" });
-    expect(a.slug).toBe("my-agent");
-    const b = await createAgent(workspaceId, "My Agent", { runtime: "pi" });
-    expect(b.slug).toBe("my-agent-1");
-    await expect(
-      db.agentSandbox.count({ where: { agentId: { in: [a.id, b.id] } } }),
-    ).resolves.toBe(2);
-  });
-
-  it("serializes concurrent slug allocation within a workspace", async () => {
-    const name = `Concurrent Agent ${Date.now()}`;
-    const agents = await Promise.all(
-      Array.from({ length: 4 }, () =>
-        createAgent(workspaceId, name, { runtime: "pi" }),
-      ),
+  it("creates native drafts with lazy sandbox records and rejects legacy creation", async () => {
+    const agent = await createAgent(workspaceId, "Native default draft");
+    const stored = await db.agent.findUniqueOrThrow({
+      where: { id: agent.id },
+      include: {
+        sandboxes: { include: { sandbox: { include: { deployment: true } } } },
+      },
+    });
+    expect(stored.runtimeKind).toBe("pi-sdk");
+    expect(stored.currentRevisionVersion).toBe(0);
+    expect(stored.sandboxes).toHaveLength(1);
+    expect(stored.sandboxes[0].sandbox.deployment.status).toBe("stopped");
+    await expect(createConversation(workspaceId, agent.id)).rejects.toThrow(
+      "AGENT_REVISION_UNRESOLVED",
     );
-    expect(new Set(agents.map(({ slug }) => slug)).size).toBe(4);
+    for (const runtime of ["pi", "claude-code", "dsh"] as const) {
+      await expect(
+        createAgent(workspaceId, `Retired ${runtime}`, { runtime }),
+      ).rejects.toThrow("Only native Pi");
+    }
   });
 
-  it.each([
-    ["pi", "openai"],
-    ["claude-code", "anthropic"],
-    ["dsh", "openai"],
-  ] as const)(
-    "creates a %s agent with an automatic exclusive Docker sandbox",
-    async (runtime, format) => {
-      const suffix = `${runtime}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-      const provider =
-        format === "openai"
-          ? { id: providerId }
-          : await db.modelProvider.create({
-              data: {
-                workspaceId,
-                name: `Provider ${suffix}`,
-                format,
-                baseUrl: "https://provider.test/v1",
-                apiKey: "secret",
-                models: ["model-1"],
-              },
-            });
-      const created = await createConfiguredAgent(
+  it("copies historical configuration into a fresh native draft with no authority", async () => {
+    const source = await db.agent.create({
+      data: {
+        workspaceId,
+        name: "Historical clone source",
+        slug: `history-copy-${Date.now()}`,
+        runtimeKind: "pi",
+        retiredAt: new Date(),
+        systemPrompt: "Convertible instructions",
+        a2aInboundEnabled: true,
+        a2aOutboundEnabled: true,
+        servers: { create: { deploymentId } },
+      },
+    });
+    const history = await db.conversation.create({
+      data: {
+        agentId: source.id,
+        messages: {
+          create: {
+            role: "user",
+            parts: [{ type: "text", text: "Historical task" }],
+          },
+        },
+      },
+    });
+    const cloned = assertDefined(
+      await cloneAgent(workspaceId, source.id, undefined, {
+        copyConversations: true,
+      }),
+    );
+    const target = await db.agent.findUniqueOrThrow({
+      where: { id: cloned.id },
+      include: {
+        servers: true,
+        skills: true,
+        toolkits: true,
+        piPackages: true,
+        subAgents: true,
+        sandboxes: true,
+        conversations: { include: { messages: true } },
+      },
+    });
+    expect(target).toMatchObject({
+      runtimeKind: "pi-sdk",
+      retiredAt: null,
+      currentRevisionVersion: 0,
+      systemPrompt: "Convertible instructions",
+      a2aInboundEnabled: false,
+      a2aOutboundEnabled: false,
+    });
+    for (const grants of [
+      target.servers,
+      target.skills,
+      target.toolkits,
+      target.piPackages,
+      target.subAgents,
+    ])
+      expect(grants).toHaveLength(0);
+    expect(target.sandboxes).toHaveLength(1);
+    expect(target.conversations[0]).toMatchObject({
+      agentRevisionId: null,
+      legacyRevisionUnresolved: true,
+    });
+    expect(target.conversations[0].messages[0].parts).toEqual([
+      { type: "text", text: "Historical task" },
+    ]);
+    expect(
+      await db.conversation.findUnique({ where: { id: history.id } }),
+    ).not.toBeNull();
+    await expect(
+      cloneAgent(workspaceId, source.id, undefined, { copyMcp: true }),
+    ).rejects.toThrow("fresh capability authorization");
+    await expect(
+      updateAgent(workspaceId, source.id, {
+        name: source.name,
+        systemPrompt: null,
+        providerId: null,
+        model: null,
+        maxSteps: 8,
+      }),
+    ).rejects.toThrow("read-only");
+  });
+
+  it("pins published defaults without rebinding existing or unresolved conversations", async () => {
+    const agent = await createAgent(workspaceId, "Pinned conversation agent");
+    const legacy = await db.conversation.create({
+      data: { agentId: agent.id },
+    });
+    const first = await seedPublishedRevision(agent.id);
+    const conversation = assertDefined(
+      await createConversation(workspaceId, agent.id),
+    );
+    expect(conversation).toMatchObject({
+      agentRevisionId: first.id,
+      legacyRevisionUnresolved: false,
+    });
+    await updateAgent(workspaceId, agent.id, {
+      name: agent.name,
+      systemPrompt: "Draft changed",
+      providerId: null,
+      model: null,
+      maxSteps: 8,
+    });
+    expect(
+      (await db.agent.findUniqueOrThrow({ where: { id: agent.id } }))
+        .currentRevisionVersion,
+    ).toBe(first.version);
+    const second = await seedPublishedRevision(agent.id);
+    expect(await createConversation(workspaceId, agent.id)).toMatchObject({
+      agentRevisionId: second.id,
+      legacyRevisionUnresolved: false,
+    });
+    expect(
+      await db.conversation.findUnique({ where: { id: conversation.id } }),
+    ).toMatchObject({ agentRevisionId: first.id });
+    expect(
+      await db.conversation.findUnique({ where: { id: legacy.id } }),
+    ).toMatchObject({ agentRevisionId: null, legacyRevisionUnresolved: true });
+  });
+
+  it.each(["config", "model"] as const)(
+    "preserves immutable provider pins and requires current reauthorization after native default changes through %s",
+    async (editPath) => {
+      const prior = await db.modelProvider.create({
+        data: {
+          workspaceId,
+          name: `Prior pin ${editPath} ${Date.now()}`,
+          format: "openai",
+          baseUrl: "https://models.example.test/v1",
+          apiKey: "fixture",
+          models: ["prior-model"],
+        },
+      });
+      const next = await db.modelProvider.create({
+        data: {
+          workspaceId,
+          name: `Next pin ${editPath} ${Date.now()}`,
+          format: "openai",
+          baseUrl: "https://models.example.test/v1",
+          apiKey: "fixture",
+          models: ["next-model"],
+        },
+      });
+      const agent = await createConfiguredAgent(
         workspaceId,
         {
-          name: `Agent ${suffix}`,
-          systemPrompt: "Work carefully.",
-          providerId: provider.id,
-          model: "model-1",
+          name: `Provider pin ${editPath}`,
+          systemPrompt: "Published instructions",
+          providerId: prior.id,
+          model: "prior-model",
           maxSteps: 8,
         },
         {
           deploymentIds: [],
           installedSkillIds: [],
           toolkitIds: [],
-          sandboxIds: [],
         },
-        { runtime },
+        { runtime: "pi-sdk" },
       );
+      const published = await seedPublishedRevision(agent.id);
+      const conversation = assertDefined(
+        await createConversation(workspaceId, agent.id),
+      );
+      if (editPath === "config") {
+        await updateAgent(workspaceId, agent.id, {
+          name: agent.name,
+          systemPrompt: "Unpublished draft",
+          providerId: next.id,
+          model: "next-model",
+          maxSteps: 8,
+        });
+      } else {
+        await updateAgentModelSelection(
+          workspaceId,
+          agent.id,
+          next.id,
+          "next-model",
+        );
+      }
+      const changed = await db.agent.findUniqueOrThrow({
+        where: { id: agent.id },
+      });
+      expect(changed.providerId).toBe(next.id);
+      expect(changed.currentRevisionVersion).toBe(published.version);
       await expect(
-        cloneAgent(workspaceId, created.id, `Clone ${suffix}`),
-      ).rejects.toThrow("cannot be cloned without a new sandbox");
-      const stored = await db.agent.findUniqueOrThrow({
-        where: { id: created.id },
-        include: {
-          sandboxes: {
-            include: { sandbox: { include: { deployment: true } } },
-          },
-        },
+        resolvePinnedAgent(changed, conversation.agentRevisionId),
+      ).rejects.toThrow("AGENT_PROVIDER_REVOKED");
+      await updateAgentModelSelection(
+        workspaceId,
+        agent.id,
+        prior.id,
+        "prior-model",
+      );
+      expect(
+        await resolvePinnedAgent(changed, conversation.agentRevisionId),
+      ).toMatchObject({
+        providerId: prior.id,
+        model: "prior-model",
+        systemPrompt: "Published instructions",
       });
-
-      expect(stored.runtimeKind).toBe(runtime);
-      expect(stored.providerId).toBe(provider.id);
-      expect(stored.sandboxes).toHaveLength(1);
-      const link = stored.sandboxes[0];
-      expect(link).toMatchObject({ isDefault: true });
-      expect(link.sandbox).toMatchObject({
-        kind: "docker",
-        image: DEFAULT_SANDBOX_IMAGE,
-        network: "isolated",
-        deployment: {
-          status: "stopped",
-          source: "sandbox",
-          sourceRef: DEFAULT_SANDBOX_IMAGE,
-        },
-      });
-      expect(link.sandbox.deployment.installCfg).toMatchObject({
-        sandboxId: link.sandboxId,
-        kind: "docker",
-        image: DEFAULT_SANDBOX_IMAGE,
-        network: "isolated",
-        volumeName: sandboxVolumeName(link.sandboxId),
-        env: {},
-        allowSudo: false,
-      });
+      await updateAgentModelSelection(workspaceId, agent.id, null, null);
+      await expect(
+        resolvePinnedAgent(changed, conversation.agentRevisionId),
+      ).rejects.toThrow("AGENT_PROVIDER_REVOKED");
+      await updateAgentModelSelection(
+        workspaceId,
+        agent.id,
+        prior.id,
+        "prior-model",
+      );
+      await deleteProvider(workspaceId, prior.id, userId);
+      await expect(
+        resolvePinnedAgent(changed, conversation.agentRevisionId),
+      ).rejects.toThrow("AGENT_PROVIDER_REVOKED");
     },
   );
 
@@ -311,9 +522,8 @@ describe("agents mutations", () => {
           deploymentIds: [],
           installedSkillIds: [],
           toolkitIds: [],
-          sandboxIds: [],
         },
-        { runtime: "pi" },
+        { runtime: "pi-sdk" },
       ),
     ).rejects.toThrow("Unknown or unavailable model: stale-model");
 
@@ -326,7 +536,7 @@ describe("agents mutations", () => {
     const agent = await createAgent(
       workspaceId,
       `Edit stale model ${Date.now()}`,
-      { runtime: "pi" },
+      { runtime: "pi-sdk" },
     );
     const config = {
       name: agent.name,
@@ -343,7 +553,7 @@ describe("agents mutations", () => {
       updateAgentModelSelection(
         workspaceId,
         agent.id,
-        [providerId],
+        providerId,
         config.model,
       ),
     ).rejects.toThrow("Unknown or unavailable model: stale-model");
@@ -361,7 +571,7 @@ describe("agents mutations", () => {
     const agent = await createAgent(
       workspaceId,
       `Disposable sandbox ${Date.now()}`,
-      { runtime: "pi" },
+      { runtime: "pi-sdk" },
     );
     const sandbox = await db.sandbox.findFirstOrThrow({
       where: { workspaceId, agentLinks: { some: { agentId: agent.id } } },
@@ -378,829 +588,137 @@ describe("agents mutations", () => {
     ).resolves.toBeNull();
   });
 
-  it("rejects invalid sandbox and provider bindings for sandbox harness runtimes atomically", async () => {
-    const suffix = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    async function sandbox(kind: string, network: string) {
-      const deployment = await db.deployment.create({
-        data: {
-          workspaceId,
-          name: `Invalid sandbox ${suffix}`,
-          source: "sandbox",
-          status: "stopped",
-        },
+  it("shares external sandboxes across Agents and narrows pinned access to the live attachment", async () => {
+    const owner = await createAgent(workspaceId, "External owner", {
+      runtime: "pi-sdk",
+    });
+    const peer = await createAgent(workspaceId, "External peer", {
+      runtime: "pi-sdk",
+    });
+    const ownSandbox = await db.agentSandbox.findMany({
+      where: { agentId: owner.id },
+    });
+    const peerOwn = await db.agentSandbox.findFirstOrThrow({
+      where: { agentId: peer.id },
+    });
+    const shared = await createDockerSandbox("Shared external");
+    const archived = await createDockerSandbox("Archived external");
+    const sessionCopy = await createDockerSandbox("Session copy");
+    await db.sandbox.update({
+      where: { id: archived.id },
+      data: { config: { readOnly: true } },
+    });
+    const none = { deploymentIds: [], installedSkillIds: [], toolkitIds: [] };
+    try {
+      await setAgentTools(workspaceId, owner.id, {
+        ...none,
+        externalSandboxes: [{ sandboxId: shared.id, access: "full" }],
       });
-      return db.sandbox.create({
-        data: {
-          workspaceId,
-          deploymentId: deployment.id,
-          name: `Invalid sandbox ${suffix}`,
-          slug: `invalid-${kind}-${network}-${deployment.id}`,
-          kind,
-          network,
-        },
+      await setAgentTools(workspaceId, peer.id, {
+        ...none,
+        externalSandboxes: [{ sandboxId: shared.id, access: "read" }],
       });
-    }
-    const dockerOne = await sandbox("docker", "isolated");
-    const dockerTwo = await sandbox("docker", "isolated");
-    const connector = await sandbox("connector", "isolated");
-    const offline = await sandbox("docker", "none");
-    const anthropic = await db.modelProvider.create({
-      data: {
-        workspaceId,
-        name: `Anthropic ${suffix}`,
-        format: "anthropic",
-        baseUrl: "https://anthropic.test",
-        apiKey: "secret",
-        models: ["model-1"],
-      },
-    });
-    const piProvider = await db.modelProvider.create({
-      data: {
-        workspaceId,
-        name: `Pi ${suffix}`,
-        format: "pi:openai",
-        baseUrl: "https://pi.test",
-        apiKey: "secret",
-      },
-    });
-    const cfg = (selectedProviderId: string) => ({
-      name: `Invalid harness ${suffix}`,
-      systemPrompt: null,
-      providerId: selectedProviderId,
-      model: "model-1",
-      maxSteps: 8,
-    });
-    const tools = (sandboxIds: string[]) => ({
-      deploymentIds: [],
-      installedSkillIds: [],
-      toolkitIds: [],
-      sandboxIds,
-    });
-    const before = await db.agent.count({ where: { workspaceId } });
-
-    for (const runtime of ["pi", "claude-code", "dsh", "hermes-rpc"] as const) {
-      const selectedProviderId =
-        runtime === "claude-code" ? anthropic.id : providerId;
+      // Another Agent's own sandbox and read-only rows are never attachable.
+      for (const sandboxId of [peerOwn.sandboxId, archived.id])
+        await expect(
+          setAgentTools(workspaceId, owner.id, {
+            ...none,
+            externalSandboxes: [{ sandboxId, access: "read" }],
+          }),
+        ).rejects.toThrow("Only SSH, connector or standalone Docker");
+      // Omitting the selection keeps attachments; the own sandbox never moves.
+      await setAgentTools(workspaceId, owner.id, none);
       await expect(
-        createConfiguredAgent(
-          workspaceId,
-          cfg(selectedProviderId),
-          tools([dockerOne.id, dockerTwo.id]),
-          { runtime },
-        ),
-      ).rejects.toThrow("requires exactly one Docker sandbox");
-      await expect(
-        createConfiguredAgent(
-          workspaceId,
-          cfg(selectedProviderId),
-          tools([connector.id]),
-          { runtime },
-        ),
-      ).rejects.toThrow("requires exactly one Docker sandbox");
-      await expect(
-        createConfiguredAgent(
-          workspaceId,
-          cfg(selectedProviderId),
-          tools([offline.id]),
-          { runtime },
-        ),
-      ).rejects.toThrow("requires a networked Docker sandbox");
-    }
-    const claudeWithOpenAi = await createConfiguredAgent(
-      workspaceId,
-      cfg(providerId),
-      tools([dockerOne.id]),
-      { runtime: "claude-code" },
-    );
-    expect(claudeWithOpenAi.runtimeKind).toBe("claude-code");
-    await db.agent.delete({ where: { id: claudeWithOpenAi.id } });
-    await expect(
-      createConfiguredAgent(
-        workspaceId,
-        cfg(piProvider.id),
-        tools([dockerOne.id]),
-        { runtime: "dsh" },
-      ),
-    ).rejects.toThrow('does not support provider format "pi:openai"');
-    await expect(
-      createConfiguredAgent(
-        workspaceId,
-        cfg(piProvider.id),
-        tools([dockerOne.id]),
-        { runtime: "pi" },
-      ),
-    ).rejects.toThrow('does not support provider format "pi:openai"');
-    expect(await db.agent.count({ where: { workspaceId } })).toBe(before);
-  });
-
-  it("preserves dedicated sandbox bindings when settings submit incompatible values", async () => {
-    const suffix = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const provider = await db.modelProvider.create({
-      data: {
-        workspaceId,
-        name: `Claude provider ${suffix}`,
-        format: "anthropic",
-        baseUrl: "https://anthropic.test",
-        apiKey: "secret",
-        models: ["claude-sonnet"],
-      },
-    });
-    const deployment = await db.deployment.create({
-      data: {
-        workspaceId,
-        name: `Claude sandbox ${suffix}`,
-        source: "sandbox",
-        status: "stopped",
-      },
-    });
-    const sandbox = await db.sandbox.create({
-      data: {
-        workspaceId,
-        deploymentId: deployment.id,
-        name: `Claude sandbox ${suffix}`,
-        slug: `claude-sandbox-${suffix}`,
-        kind: "docker",
-        network: "isolated",
-      },
-    });
-    const agent = await createConfiguredAgent(
-      workspaceId,
-      {
-        name: `Claude agent ${suffix}`,
-        systemPrompt: null,
-        providerId: provider.id,
-        model: "claude-sonnet",
-        maxSteps: 8,
-      },
-      {
-        deploymentIds: [],
-        installedSkillIds: [],
-        toolkitIds: [],
-        sandboxIds: [sandbox.id],
-      },
-      { runtime: "claude-code" },
-    );
-
-    const piProvider = await db.modelProvider.create({
-      data: {
-        workspaceId,
-        name: `Pi native provider ${suffix}`,
-        format: "pi:openai",
-        baseUrl: "https://pi.test",
-        apiKey: "secret",
-      },
-    });
-
-    await expect(
-      setAgentTools(workspaceId, agent.id, {
-        deploymentIds: [],
-        installedSkillIds: [],
-        toolkitIds: [],
-        sandboxIds: [],
-      }),
-    ).rejects.toThrow("requires exactly one Docker sandbox");
-    await expect(
-      updateAgent(workspaceId, agent.id, {
-        name: agent.name,
-        systemPrompt: null,
-        providerId,
-        model: "gpt-4.1",
-        maxSteps: 8,
-      }),
-    ).resolves.toBeUndefined();
-    await expect(
-      updateAgentModelSelection(
-        workspaceId,
-        agent.id,
-        [piProvider.id],
-        "gpt-native",
-      ),
-    ).rejects.toThrow('does not support provider format "pi:openai"');
-    await expect(
-      db.agentSandbox.count({
-        where: { agentId: agent.id, sandboxId: sandbox.id },
-      }),
-    ).resolves.toBe(1);
-    await expect(
-      createConfiguredAgent(
-        workspaceId,
-        {
-          name: `Pi agent ${suffix}`,
-          systemPrompt: null,
-          providerId,
-          model: "gpt-4.1",
-          maxSteps: 8,
-        },
-        {
-          deploymentIds: [],
-          installedSkillIds: [],
-          toolkitIds: [],
-          sandboxIds: [sandbox.id],
-        },
-        { runtime: "pi" },
-      ),
-    ).rejects.toThrow("already assigned to agent");
-
-    const piSandbox = await createDockerSandbox("Pi agent workspace");
-    const piAgent = await createConfiguredAgent(
-      workspaceId,
-      {
-        name: `Pi agent ${suffix}`,
-        systemPrompt: null,
-        providerId,
-        model: "gpt-4.1",
-        maxSteps: 8,
-      },
-      {
-        deploymentIds: [],
-        installedSkillIds: [],
-        toolkitIds: [],
-        sandboxIds: [piSandbox.id],
-      },
-      { runtime: "pi" },
-    );
-    await expect(
-      setAgentTools(workspaceId, piAgent.id, {
-        deploymentIds: [],
-        installedSkillIds: [],
-        toolkitIds: [],
-        sandboxIds: [],
-      }),
-    ).rejects.toThrow("requires exactly one Docker sandbox");
-    await expect(
-      setAgentTools(workspaceId, piAgent.id, {
-        deploymentIds: [],
-        installedSkillIds: [],
-        toolkitIds: [],
-        sandboxIds: [sandbox.id],
-      }),
-    ).rejects.toThrow("already assigned to agent");
-    await expect(
-      updateAgentModelSelection(
-        workspaceId,
-        piAgent.id,
-        [piProvider.id],
-        "gpt-native",
-      ),
-    ).rejects.toThrow('does not support provider format "pi:openai"');
-    await expect(
-      db.agentSandbox.findMany({ where: { agentId: piAgent.id } }),
-    ).resolves.toEqual([
-      expect.objectContaining({ sandboxId: piSandbox.id, isDefault: true }),
-    ]);
-  });
-
-  it("clones reusable configuration and bindings without copying agent history", async () => {
-    const suffix = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const source = await createAgent(workspaceId, "Clone source", {
-      runtime: "hermes",
-    });
-    const child = await createAgent(workspaceId, "Clone child", {
-      runtime: "hermes",
-    });
-    const skill = await db.installedSkill.create({
-      data: {
-        workspaceId,
-        name: "Clone skill",
-        slug: `clone-skill-${suffix}`,
-        content: "# Clone skill",
-      },
-    });
-    const toolkit = await db.toolkit.create({
-      data: {
-        workspaceId,
-        name: "Clone toolkit",
-        slug: `clone-toolkit-${suffix}`,
-      },
-    });
-    await updateAgent(workspaceId, source.id, {
-      name: source.name,
-      systemPrompt: "Clone these instructions",
-      providerId,
-      providerIds: [providerId],
-      model: "gpt-clone",
-      maxSteps: 13,
-    });
-    await setAgentTools(workspaceId, source.id, {
-      deploymentIds: [deploymentId],
-      installedSkillIds: [skill.id],
-      toolkitIds: [toolkit.id],
-      sandboxIds: [],
-      subAgentIds: [child.id],
-    });
-    const conversation = await createConversation(
-      workspaceId,
-      source.id,
-      "Do not clone",
-    );
-    await appendMessage(assertDefined(conversation).id, "user", [
-      { type: "text", text: "history" },
-    ]);
-    await db.agentAttachment.create({
-      data: {
-        workspaceId,
-        agentId: source.id,
-        conversationId: assertDefined(conversation).id,
-        name: "private.txt",
-        mimeType: "text/plain",
-        size: 7,
-        storagePath: "/private.txt",
-      },
-    });
-    await db.agentChannelConnection.create({
-      data: {
-        workspaceId,
-        agentId: source.id,
-        platform: "telegram",
-        name: "Private channel",
-        credentials: { encrypted: "secret" },
-        inboundTokenHash: `clone-hash-${suffix}`,
-        inboundTokenSecret: { encrypted: "token" },
-        inboundTokenPrefix: "tpchan_clone",
-      },
-    });
-
-    const cloned = await cloneAgent(workspaceId, source.id, "Clone target");
-    expect(cloned?.runtimeKind).toBe("hermes");
-    const reread = await db.agent.findUnique({
-      where: { id: assertDefined(cloned).id },
-      include: {
-        servers: true,
-        skills: true,
-        toolkits: true,
-        sandboxes: true,
-        subAgents: true,
-        modelProviders: true,
-        conversations: true,
-        channels: true,
-        attachments: true,
-      },
-    });
-
-    expect(reread).toMatchObject({
-      name: "Clone target",
-      slug: "clone-target",
-      systemPrompt: null,
-      providerId: null,
-      model: null,
-      maxSteps: 13,
-    });
-    expect(reread?.servers.map((link) => link.deploymentId)).toEqual([
-      deploymentId,
-    ]);
-    expect(reread?.skills.map((link) => link.installedSkillId)).toEqual([
-      skill.id,
-    ]);
-    expect(reread?.toolkits.map((link) => link.toolkitId)).toEqual([
-      toolkit.id,
-    ]);
-    expect(reread?.sandboxes).toHaveLength(0);
-    expect(reread?.subAgents.map((link) => link.childId)).toEqual([child.id]);
-    expect(reread?.modelProviders.map((link) => link.providerId)).toEqual([
-      providerId,
-    ]);
-    expect(reread?.conversations).toHaveLength(0);
-    expect(reread?.channels).toHaveLength(0);
-    expect(reread?.attachments).toHaveLength(0);
-  });
-
-  it("does not reuse an attached sandbox while cloning Hermes", async () => {
-    const source = await createAgent(workspaceId, "Clone source with sandbox", {
-      runtime: "hermes",
-    });
-    const sandbox = await createDockerSandbox("Clone source workspace");
-    await setAgentTools(workspaceId, source.id, {
-      deploymentIds: [],
-      installedSkillIds: [],
-      toolkitIds: [],
-      sandboxIds: [sandbox.id],
-    });
-    await expect(
-      cloneAgent(workspaceId, source.id, "Clone without sandbox reuse"),
-    ).rejects.toThrow("Sandboxes are exclusive to one agent");
-  });
-
-  it("rejects Hermes conversation copies without the matching persistent volume", async () => {
-    const source = await createAgent(workspaceId, "Scoped clone source", {
-      runtime: "hermes",
-    });
-    const conversation = await createConversation(
-      workspaceId,
-      source.id,
-      "Keep this history",
-    );
-    await appendMessage(assertDefined(conversation).id, "user", [
-      { type: "text", text: "Copied question" },
-    ]);
-
-    await expect(
-      cloneAgent(workspaceId, source.id, "Scoped clone target", {
-        copyMcp: false,
-        copySkills: false,
-        copyToolkits: false,
-        copySandboxes: false,
-        copySubAgents: false,
-        copyConversations: true,
-      }),
-    ).rejects.toThrow("only be cloned with the Hermes persistent volume");
-  });
-
-  it("copies Hermes environment without copying conversations when the volume is not copied", async () => {
-    const source = await createAgent(workspaceId, "Hermes clone data source", {
-      runtime: "hermes",
-    });
-    await setHermesRuntimeEnv(workspaceId, source.id, {
-      PRIVATE_TOKEN: "source-secret",
-      REGION: "cn",
-    });
-    const conversation = await createConversation(
-      workspaceId,
-      source.id,
-      "Hermes state",
-    );
-    await appendMessage(assertDefined(conversation).id, "user", [
-      { type: "text", text: "Remember this" },
-    ]);
-
-    const cloned = await cloneAgent(
-      workspaceId,
-      source.id,
-      "Hermes clone data target",
-      {
-        copyHermesEnvironment: true,
-      },
-    );
-    const [targetRuntime, targetConversationCount] = await Promise.all([
-      db.agentRuntime.findUniqueOrThrow({
-        where: { agentId: assertDefined(cloned).id },
-        include: { sandbox: { include: { deployment: true } } },
-      }),
-      db.conversation.count({ where: { agentId: assertDefined(cloned).id } }),
-    ]);
-
-    expect(readSandboxEnv(targetRuntime.sandbox.config)).toEqual({
-      PRIVATE_TOKEN: "source-secret",
-      REGION: "cn",
-    });
-    expect(targetRuntime.sandbox.deployment.installCfg).toMatchObject({
-      env: { PRIVATE_TOKEN: "source-secret", REGION: "cn" },
-    });
-    expect(targetConversationCount).toBe(0);
-    expect(cloned?.conversationIds).toEqual([]);
-  });
-
-  it("clones Hermes attachment records only onto the copied runtime", async () => {
-    const source = await createAgent(workspaceId, "Hermes attachment source", {
-      runtime: "hermes",
-    });
-    const conversation = await createConversation(
-      workspaceId,
-      source.id,
-      "Attachment conversation",
-    );
-    const sourceRuntime = await db.agentRuntime.findUniqueOrThrow({
-      where: { agentId: source.id },
-    });
-    await db.agentAttachment.create({
-      data: {
-        workspaceId,
-        agentId: source.id,
-        conversationId: assertDefined(conversation).id,
-        runtimeId: sourceRuntime.id,
-        name: "research.pdf",
-        mimeType: "application/pdf",
-        size: 42,
-        storage: "hermes-volume",
-        storagePath: `attachments/${assertDefined(conversation).id}/research.pdf`,
-      },
-    });
-    const cloned = await cloneAgent(
-      workspaceId,
-      source.id,
-      "Hermes attachment target",
-      {
-        copyHermesVolume: true,
-      },
-    );
-    expect(cloned?.conversationsDeferred).toBe(true);
-    const copied = await cloneHermesVolumeData(
-      workspaceId,
-      source.id,
-      assertDefined(cloned).id,
-    );
-    const [targetRuntime, targetAttachment, targetConversation] =
-      await Promise.all([
-        db.agentRuntime.findUniqueOrThrow({
-          where: { agentId: assertDefined(cloned).id },
+        db.agentExternalSandbox.findMany({
+          where: { sandboxId: shared.id },
+          orderBy: { access: "asc" },
+          select: { agentId: true, access: true },
         }),
-        db.agentAttachment.findFirstOrThrow({
-          where: { agentId: assertDefined(cloned).id },
-        }),
-        db.conversation.findFirstOrThrow({
-          where: { agentId: assertDefined(cloned).id },
-        }),
+      ).resolves.toEqual([
+        { agentId: owner.id, access: "full" },
+        { agentId: peer.id, access: "read" },
       ]);
+      await expect(
+        db.agentSandbox.findMany({ where: { agentId: owner.id } }),
+      ).resolves.toEqual(ownSandbox);
 
-    expect(copied.attachmentCount).toBe(1);
-    expect(targetAttachment).toMatchObject({
-      runtimeId: targetRuntime.id,
-      conversationId: targetConversation.id,
-      name: "research.pdf",
-      storagePath: `attachments/${assertDefined(conversation).id}/research.pdf`,
-    });
-  });
-
-  it("recovers a legacy messaging session key while cloning Hermes volume data", async () => {
-    const source = await createAgent(
-      workspaceId,
-      "Hermes legacy message source",
-      { runtime: "hermes" },
-    );
-    const legacy = await db.conversation.create({
-      data: { agentId: source.id, title: "msg:slack:dm:U123" },
-    });
-    const cloned = await cloneAgent(
-      workspaceId,
-      source.id,
-      "Hermes legacy message target",
-      {
-        copyHermesVolume: true,
-      },
-    );
-
-    await cloneHermesVolumeData(
-      workspaceId,
-      source.id,
-      assertDefined(cloned).id,
-    );
-    const copiedConversation = await db.conversation.findFirstOrThrow({
-      where: { agentId: assertDefined(cloned).id },
-    });
-
-    expect(copiedConversation).toMatchObject({
-      runtimeSessionId: legacy.id,
-      runtimeSessionKey: "msg:slack:dm:U123",
-    });
-  });
-
-  it("clones a Hermes agent into a distinct managed runtime", async () => {
-    const secondProvider = await db.modelProvider.create({
-      data: {
+      await updateAgent(workspaceId, owner.id, {
+        name: "External owner",
+        systemPrompt: null,
+        providerId,
+        model: "gpt-x",
+        maxSteps: 5,
+      });
+      const revision = await seedPublishedRevision(owner.id);
+      expect(
+        AgentRevisionConfigSchema.parse(revision.config).externalSandboxes,
+      ).toEqual([{ sandboxId: shared.id, access: "full" }]);
+      const conversation = await db.conversation.create({
+        data: {
+          agentId: owner.id,
+          agentRevisionId: revision.id,
+          legacyRevisionUnresolved: false,
+          sandboxId: sessionCopy.id,
+        },
+      });
+      const token = {
         workspaceId,
-        name: `Hermes clone provider ${Date.now()}`,
-        format: "anthropic",
-        baseUrl: "https://anthropic.example/v1",
-        apiKey: "k2",
-      },
-    });
-    const source = await createAgent(workspaceId, "Hermes clone source", {
-      runtime: "hermes",
-      hermesImage: "nousresearch/hermes-agent:v-clone",
-    });
-    await updateAgent(workspaceId, source.id, {
-      name: source.name,
-      systemPrompt: null,
-      providerId: null,
-      providerIds: [providerId, secondProvider.id],
-      model: null,
-      maxSteps: 9,
-    });
-
-    const cloned = await cloneAgent(
-      workspaceId,
-      source.id,
-      "Hermes clone target",
-    );
-    expect(cloned?.runtimeKind).toBe("hermes");
-    const [sourceRuntime, clonedRuntime, clonedAgent] = await Promise.all([
-      db.agentRuntime.findUniqueOrThrow({ where: { agentId: source.id } }),
-      db.agentRuntime.findUniqueOrThrow({
-        where: { agentId: assertDefined(cloned).id },
-      }),
-      db.agent.findUniqueOrThrow({
-        where: { id: assertDefined(cloned).id },
-        include: { modelProviders: true },
-      }),
-    ]);
-
-    expect(clonedRuntime.id).not.toBe(sourceRuntime.id);
-    expect(clonedRuntime.sandboxId).not.toBe(sourceRuntime.sandboxId);
-    expect(clonedRuntime.image).toBe(sourceRuntime.image);
-    expect(clonedRuntime.status).toBe("setup_required");
-    expect(clonedAgent).toMatchObject({
-      providerId: null,
-      model: null,
-      maxSteps: 9,
-      systemPrompt: null,
-    });
-    expect(
-      clonedAgent.modelProviders.map((link) => link.providerId).sort(),
-    ).toEqual([providerId, secondProvider.id].sort());
-
-    await deleteAgent(workspaceId, source.id);
-    await deleteAgent(workspaceId, assertDefined(cloned).id);
-  });
-
-  it("creates a Hermes agent with one managed runtime sandbox", async () => {
-    const agent = await createAgent(workspaceId, "Hermes Research", {
-      runtime: "hermes",
-      hermesImage: "nousresearch/hermes-agent:v2026.6.5",
-    });
-    const runtime = await db.agentRuntime.findUnique({
-      where: { agentId: agent.id },
-      include: { sandbox: { include: { deployment: true } } },
-    });
-
-    expect(runtime?.workspaceId).toBe(workspaceId);
-    expect(runtime?.kind).toBe("hermes");
-    expect(runtime?.status).toBe("setup_required");
-    expect(runtime?.image).toBe("nousresearch/hermes-agent:v2026.6.5");
-    expect(runtime?.sandbox.kind).toBe("hermes");
-    expect(runtime?.sandbox.deployment.source).toBe("sandbox");
-    expect(runtime?.sandbox.deployment.installCfg).toMatchObject({
-      runtimeId: runtime?.id,
-      kind: "hermes",
-    });
-
-    const [userSandboxes, managedRuntimes] = await Promise.all([
-      listSandboxes(workspaceId),
-      listManagedAgentRuntimes(workspaceId),
-    ]);
-    expect(
-      userSandboxes.some((sandbox) => sandbox.id === runtime?.sandboxId),
-    ).toBe(false);
-    expect(managedRuntimes).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: runtime?.id,
-          agent: expect.objectContaining({ id: agent.id }),
-          sandbox: expect.objectContaining({ id: runtime?.sandboxId }),
-        }),
-      ]),
-    );
-
-    await expect(
-      setHermesRuntimeEnv(workspaceId, agent.id, {
-        OPENROUTER_API_KEY: "secret",
-        FEATURE_FLAG: "enabled",
-        TELEGRAM_BOT_TOKEN: "legacy-channel-token",
-      }),
-    ).resolves.toBe(true);
-    await expect(
-      setHermesRuntimeEnv("other-workspace", agent.id, {
-        LEAKED: "no",
-      }),
-    ).resolves.toBe(false);
-    const updatedSandbox = await db.sandbox.findUniqueOrThrow({
-      where: { id: assertDefined(runtime).sandboxId },
-      select: { config: true, deployment: { select: { installCfg: true } } },
-    });
-    expect(updatedSandbox.config).toMatchObject({
-      managedBy: "agent-runtime",
-      env: {
-        OPENROUTER_API_KEY: "secret",
-        FEATURE_FLAG: "enabled",
-        TELEGRAM_BOT_TOKEN: "legacy-channel-token",
-      },
-    });
-    expect(updatedSandbox.deployment.installCfg).toMatchObject({
-      runtimeId: runtime?.id,
-      kind: "hermes",
-    });
-    expect(
-      (updatedSandbox.deployment.installCfg as { env?: unknown }).env,
-    ).toEqual({
-      OPENROUTER_API_KEY: "secret",
-      FEATURE_FLAG: "enabled",
-    });
-
-    await deleteAgent(workspaceId, agent.id);
-    expect(
-      await db.agentRuntime.findUnique({
-        where: { id: assertDefined(runtime).id },
-      }),
-    ).toBeNull();
-    expect(
-      await db.sandbox.findUnique({
-        where: { id: assertDefined(runtime).sandboxId },
-      }),
-    ).toBeNull();
-  });
-
-  it("does not attach a managed Hermes runtime as another agent sandbox", async () => {
-    const runtimeAgent = await createAgent(workspaceId, "Runtime owner", {
-      runtime: "hermes",
-    });
-    const nativeAgent = await createAgent(workspaceId, "Native consumer", {
-      runtime: "pi",
-    });
-    const nativeSandbox = await createDockerSandbox(
-      "Native consumer workspace",
-    );
-    await setAgentTools(workspaceId, nativeAgent.id, {
-      deploymentIds: [],
-      installedSkillIds: [],
-      toolkitIds: [],
-      sandboxIds: [nativeSandbox.id],
-    });
-    const runtime = await db.agentRuntime.findUniqueOrThrow({
-      where: { agentId: runtimeAgent.id },
-      select: { sandboxId: true },
-    });
-
-    await expect(
-      setAgentTools(workspaceId, nativeAgent.id, {
+        agentId: owner.id,
+        agentRevisionId: revision.id,
+        sandboxId: sessionCopy.id,
+        conversationId: conversation.id,
+        providerId,
         deploymentIds: [],
-        installedSkillIds: [],
-        toolkitIds: [],
-        sandboxIds: [runtime.sandboxId],
-      }),
-    ).rejects.toThrow("requires exactly one Docker sandbox");
-
-    await expect(
-      db.agentSandbox.findMany({ where: { agentId: nativeAgent.id } }),
-    ).resolves.toEqual([
-      expect.objectContaining({ sandboxId: nativeSandbox.id, isDefault: true }),
-    ]);
-    await deleteAgent(workspaceId, runtimeAgent.id);
-    await deleteAgent(workspaceId, nativeAgent.id);
-  });
-
-  it("does not attach a sandbox with an incomplete data lifecycle operation", async () => {
-    const agent = await createAgent(workspaceId, "Blocked sandbox consumer", {
-      runtime: "pi",
-    });
-    const activeSandbox = await createDockerSandbox(
-      "Active sandbox consumer workspace",
-    );
-    await setAgentTools(workspaceId, agent.id, {
-      deploymentIds: [],
-      installedSkillIds: [],
-      toolkitIds: [],
-      sandboxIds: [activeSandbox.id],
-    });
-    const deployment = await db.deployment.create({
-      data: {
-        workspaceId,
-        name: "Interrupted clone",
-        source: "sandbox",
-        status: "copy_failed",
-      },
-    });
-    const sandbox = await db.sandbox.create({
-      data: {
-        workspaceId,
-        deploymentId: deployment.id,
-        name: "Interrupted clone",
-        slug: `interrupted-clone-${Date.now()}`,
-        kind: "docker",
-        image: "alpine:3.20",
-      },
-    });
-
-    await expect(
-      setAgentTools(workspaceId, agent.id, {
-        deploymentIds: [],
-        installedSkillIds: [],
-        toolkitIds: [],
-        sandboxIds: [sandbox.id],
-      }),
-    ).rejects.toThrow("requires exactly one Docker sandbox");
-
-    await expect(
-      db.agentSandbox.findMany({ where: { agentId: agent.id } }),
-    ).resolves.toEqual([
-      expect.objectContaining({ sandboxId: activeSandbox.id, isDefault: true }),
-    ]);
-    await deleteAgent(workspaceId, agent.id);
-    await db.deployment.delete({ where: { id: deployment.id } });
-  });
-
-  it("does not overwrite a Hermes-owned system prompt through ToolPlane updates", async () => {
-    const agent = await createAgent(workspaceId, "Hermes Prompt Owner", {
-      runtime: "hermes",
-    });
-    await db.agent.update({
-      where: { id: agent.id },
-      data: { systemPrompt: "Legacy ToolPlane value" },
-    });
-
-    await updateAgent(workspaceId, agent.id, {
-      name: "Hermes Prompt Owner",
-      systemPrompt: "Attempted ToolPlane override",
-      providerId: null,
-      model: null,
-      maxSteps: 8,
-    });
-
-    const reread = await db.agent.findUnique({ where: { id: agent.id } });
-    expect(reread?.systemPrompt).toBe("Legacy ToolPlane value");
-    await deleteAgent(workspaceId, agent.id);
+        externalSandboxIds: [shared.id],
+        exp: Math.floor(Date.now() / 1000) + 600,
+      };
+      const grantFor = async () =>
+        (await resolveAgentRuntimeGrant(token))?.externalSandboxTools;
+      await expect(grantFor()).resolves.toEqual({
+        [shared.id]: expect.arrayContaining(["shell_exec", "write_file"]),
+      });
+      await setAgentTools(workspaceId, owner.id, {
+        ...none,
+        externalSandboxes: [{ sandboxId: shared.id, access: "read" }],
+      });
+      await expect(grantFor()).resolves.toEqual({
+        [shared.id]: ["sandbox_info", "list_dir", "read_file", "download_file"],
+      });
+      // Detaching revokes only that sandbox, not the session grant.
+      await setAgentTools(workspaceId, owner.id, {
+        ...none,
+        externalSandboxes: [],
+      });
+      await expect(grantFor()).resolves.toEqual({});
+    } finally {
+      await deleteAgent(workspaceId, owner.id);
+      await deleteAgent(workspaceId, peer.id);
+      await db.deployment.deleteMany({
+        where: {
+          id: {
+            in: [
+              shared.deploymentId,
+              archived.deploymentId,
+              sessionCopy.deploymentId,
+            ],
+          },
+        },
+      });
+    }
   });
 
   it("updates config and replaces the attached tools", async () => {
-    const a = await createAgent(workspaceId, "Cfg", { runtime: "pi" });
-    const sandbox = await createDockerSandbox("Config workspace");
+    const a = await createAgent(workspaceId, "Cfg", { runtime: "pi-sdk" });
+    await db.deployment.update({
+      where: { id: deploymentId },
+      data: {
+        installCfg: {
+          transport: "streamable-http",
+          authType: "none",
+          toolCatalog: [{ name: "read" }, { name: "write" }],
+        },
+      },
+    });
     await updateAgent(workspaceId, a.id, {
       name: "Cfg2",
       systemPrompt: "sp",
@@ -1212,7 +730,6 @@ describe("agents mutations", () => {
       deploymentIds: [deploymentId],
       installedSkillIds: [],
       toolkitIds: [],
-      sandboxIds: [sandbox.id],
     });
     const reread = await db.agent.findUnique({
       where: { id: a.id },
@@ -1221,80 +738,27 @@ describe("agents mutations", () => {
     expect(reread?.name).toBe("Cfg2");
     expect(reread?.model).toBe("gpt-x");
     expect(reread?.servers).toHaveLength(1);
+    expect(reread?.servers[0]?.allowedToolNames).toEqual(["read", "write"]);
+    await setAgentTools(workspaceId, a.id, {
+      deploymentIds: [deploymentId],
+      installedSkillIds: [],
+      toolkitIds: [],
+    });
+    const retainedGrant = await db.agentServer.findUniqueOrThrow({
+      where: { agentId_deploymentId: { agentId: a.id, deploymentId } },
+    });
+    expect(retainedGrant.allowedToolNames).toEqual(["read", "write"]);
 
     await setAgentTools(workspaceId, a.id, {
       deploymentIds: [],
       installedSkillIds: [],
       toolkitIds: [],
-      sandboxIds: [sandbox.id],
     });
     const after = await db.agent.findUnique({
       where: { id: a.id },
       include: { servers: true },
     });
     expect(after?.servers).toHaveLength(0);
-  });
-
-  it("caches provider models", async () => {
-    await setProviderModels(workspaceId, providerId, ["gpt-x", "gpt-y"]);
-    const p = await db.modelProvider.findUnique({ where: { id: providerId } });
-    expect(p?.models).toEqual(["gpt-x", "gpt-y"]);
-    expect(p?.modelsFetchedAt).toBeInstanceOf(Date);
-  });
-
-  it("keeps manually classified models when refreshing remote models", async () => {
-    const provider = await db.modelProvider.create({
-      data: {
-        workspaceId,
-        name: `Catalog provider ${Date.now()}`,
-        format: "openai",
-        baseUrl: "https://catalog.test/v1",
-        apiKey: "k",
-      },
-    });
-    const manualModel = {
-      modelId: "acme/embed-v2",
-      name: "Acme Embed v2",
-      group: "Acme",
-      primaryType: "embedding" as const,
-      capabilities: [],
-      inputModalities: [],
-      contextWindow: 8192,
-      maxInputTokens: 8192,
-      maxOutputTokens: null,
-    };
-
-    await addProviderModels(workspaceId, provider.id, [manualModel]);
-    await expect(
-      addProviderModels(workspaceId, provider.id, [manualModel]),
-    ).rejects.toThrow(ProviderModelError);
-    await setProviderModels(workspaceId, provider.id, ["remote-chat-v1"]);
-    await updateProviderModel(workspaceId, provider.id, {
-      ...manualModel,
-      group: "Embeddings",
-    });
-
-    const reread = await db.modelProvider.findUnique({
-      where: { id: provider.id },
-      include: { modelRecords: true },
-    });
-    expect(reread?.models).toEqual(["remote-chat-v1", "acme/embed-v2"]);
-    expect(
-      reread?.modelRecords.find(
-        ({ modelId }) => modelId === manualModel.modelId,
-      ),
-    ).toMatchObject({
-      name: "Acme Embed v2",
-      group: "Embeddings",
-      primaryType: "embedding",
-      source: "manual",
-    });
-
-    await deleteProviderModel(workspaceId, provider.id, manualModel.modelId);
-    await expect(
-      db.modelProvider.findUnique({ where: { id: provider.id } }),
-    ).resolves.toMatchObject({ models: ["remote-chat-v1"] });
-    await deleteProvider(workspaceId, provider.id);
   });
 
   it("rejects cross-workspace model writes and removal of an in-use model", async () => {
@@ -1323,7 +787,7 @@ describe("agents mutations", () => {
     ).rejects.toThrow("Provider not found.");
     await addProviderModels(workspaceId, provider.id, [model]);
     const agent = await createAgent(workspaceId, "Protected model agent", {
-      runtime: "pi",
+      runtime: "pi-sdk",
     });
     await updateAgent(workspaceId, agent.id, {
       name: agent.name,
@@ -1353,15 +817,8 @@ describe("agents mutations", () => {
       },
     });
     const agent = await createAgent(workspaceId, "Disposable provider agent", {
-      runtime: "pi",
+      runtime: "pi-sdk",
     });
-    const hermesAgent = await createAgent(
-      workspaceId,
-      "Disposable Hermes provider agent",
-      {
-        runtime: "hermes",
-      },
-    );
     await updateAgent(workspaceId, agent.id, {
       name: agent.name,
       systemPrompt: null,
@@ -1369,27 +826,16 @@ describe("agents mutations", () => {
       model: "gpt-disposable",
       maxSteps: 8,
     });
-    await updateAgent(workspaceId, hermesAgent.id, {
-      name: hermesAgent.name,
-      systemPrompt: null,
-      providerId: null,
-      providerIds: [provider.id],
-      model: null,
-      maxSteps: 8,
-    });
 
     await deleteProvider(workspaceId, provider.id);
 
-    const [deletedProvider, rereadAgent, hermesProviderLinks] =
-      await Promise.all([
-        db.modelProvider.findUnique({ where: { id: provider.id } }),
-        db.agent.findUnique({ where: { id: agent.id } }),
-        db.agentModelProvider.count({ where: { agentId: hermesAgent.id } }),
-      ]);
+    const [deletedProvider, rereadAgent] = await Promise.all([
+      db.modelProvider.findUnique({ where: { id: provider.id } }),
+      db.agent.findUnique({ where: { id: agent.id } }),
+    ]);
     expect(deletedProvider).toBeNull();
     expect(rereadAgent?.providerId).toBeNull();
     expect(rereadAgent?.model).toBeNull();
-    expect(hermesProviderLinks).toBe(0);
 
     await updateAgent(workspaceId, agent.id, {
       name: agent.name,
@@ -1404,218 +850,6 @@ describe("agents mutations", () => {
     expect(afterStaleSave?.providerId).toBeNull();
     expect(afterStaleSave?.model).toBeNull();
 
-    await deleteAgent(workspaceId, agent.id);
-    await deleteAgent(workspaceId, hermesAgent.id);
-  });
-
-  it("clears Hermes conversation overrides when linked providers or models disappear", async () => {
-    const provider = await db.modelProvider.create({
-      data: {
-        workspaceId,
-        name: `Hermes override provider ${Date.now()}`,
-        format: "openai",
-        baseUrl: "https://hermes-overrides.test/v1",
-        apiKey: "k",
-      },
-    });
-    await setProviderModels(workspaceId, provider.id, ["model-a", "model-b"]);
-    const agent = await createAgent(workspaceId, "Hermes provider overrides", {
-      runtime: "hermes",
-    });
-    await updateAgent(workspaceId, agent.id, {
-      name: agent.name,
-      systemPrompt: null,
-      providerId: null,
-      providerIds: [provider.id],
-      model: null,
-      maxSteps: 8,
-    });
-    const [plain, custom] = await Promise.all([
-      createConversation(workspaceId, agent.id, "Plain provider alias"),
-      createConversation(workspaceId, agent.id, "Custom provider alias"),
-    ]);
-    const providerName = hermesProviderName(provider.id);
-    await setHermesConversationSelection(
-      workspaceId,
-      agent.id,
-      assertDefined(plain).id,
-      {
-        profile: "default",
-        provider: providerName,
-        model: "model-a",
-      },
-    );
-    await setHermesConversationSelection(
-      workspaceId,
-      agent.id,
-      assertDefined(custom).id,
-      {
-        profile: "default",
-        provider: `custom:${providerName}`,
-        model: "model-b",
-      },
-    );
-
-    await setProviderModels(workspaceId, provider.id, ["model-a"]);
-    await expect(
-      db.conversation.findUnique({ where: { id: assertDefined(custom).id } }),
-    ).resolves.toMatchObject({
-      hermesProvider: null,
-      hermesModel: null,
-    });
-    await expect(
-      db.conversation.findUnique({ where: { id: assertDefined(plain).id } }),
-    ).resolves.toMatchObject({
-      hermesProvider: providerName,
-      hermesModel: "model-a",
-    });
-
-    await updateAgentModelSelection(workspaceId, agent.id, [], null);
-    await expect(
-      db.conversation.findUnique({ where: { id: assertDefined(plain).id } }),
-    ).resolves.toMatchObject({
-      hermesProvider: null,
-      hermesModel: null,
-    });
-    await deleteProvider(workspaceId, provider.id);
-    await deleteAgent(workspaceId, agent.id);
-  });
-
-  it("adds one selected ToolPlane provider to a Hermes agent without replacing existing bindings", async () => {
-    const suffix = Date.now();
-    const [existingProvider, selectedProvider] = await Promise.all([
-      db.modelProvider.create({
-        data: {
-          workspaceId,
-          name: `Existing Hermes provider ${suffix}`,
-          format: "openai",
-          baseUrl: "https://existing-hermes.test/v1",
-          apiKey: "k",
-          models: ["model-existing"],
-        },
-      }),
-      db.modelProvider.create({
-        data: {
-          workspaceId,
-          name: `Selected Hermes provider ${suffix}`,
-          format: "openai",
-          baseUrl: "https://selected-hermes.test/v1",
-          apiKey: "k",
-          models: ["model-selected"],
-        },
-      }),
-    ]);
-    const agent = await createAgent(
-      workspaceId,
-      `Hermes chat binding ${suffix}`,
-      { runtime: "hermes" },
-    );
-    await updateAgentModelSelection(
-      workspaceId,
-      agent.id,
-      [existingProvider.id],
-      null,
-    );
-
-    const alias = hermesProviderName(selectedProvider.id);
-    await expect(
-      bindHermesAgentModelProvider(
-        workspaceId,
-        agent.id,
-        alias,
-        "model-selected",
-      ),
-    ).resolves.toBe(alias);
-    await expect(
-      bindHermesAgentModelProvider(
-        workspaceId,
-        agent.id,
-        alias,
-        "model-selected",
-      ),
-    ).resolves.toBe(alias);
-
-    await expect(
-      db.agentModelProvider.findMany({
-        where: { agentId: agent.id },
-        orderBy: { providerId: "asc" },
-        select: { providerId: true },
-      }),
-    ).resolves.toEqual(
-      [
-        { providerId: existingProvider.id },
-        { providerId: selectedProvider.id },
-      ].sort((a, b) => a.providerId.localeCompare(b.providerId)),
-    );
-    await expect(
-      bindHermesAgentModelProvider(
-        workspaceId,
-        agent.id,
-        alias,
-        "missing-model",
-      ),
-    ).rejects.toThrow("The selected ToolPlane model is not available.");
-
-    await deleteAgent(workspaceId, agent.id);
-    await Promise.all([
-      deleteProvider(workspaceId, existingProvider.id),
-      deleteProvider(workspaceId, selectedProvider.id),
-    ]);
-  });
-
-  it("protects a Hermes conversation override until its provider is deleted", async () => {
-    const provider = await db.modelProvider.create({
-      data: {
-        workspaceId,
-        name: `Hermes protected override ${Date.now()}`,
-        format: "openai",
-        baseUrl: "https://hermes-protected.test/v1",
-        apiKey: "k",
-      },
-    });
-    await setProviderModels(workspaceId, provider.id, ["model-a"]);
-    const agent = await createAgent(
-      workspaceId,
-      "Hermes protected override agent",
-      { runtime: "hermes" },
-    );
-    await updateAgentModelSelection(workspaceId, agent.id, [provider.id], null);
-    const conversation = await createConversation(
-      workspaceId,
-      agent.id,
-      "Protected override",
-    );
-    await setHermesConversationSelection(
-      workspaceId,
-      agent.id,
-      assertDefined(conversation).id,
-      {
-        profile: "default",
-        provider: `custom:${hermesProviderName(provider.id)}`,
-        model: "model-a",
-      },
-    );
-
-    await expect(
-      deleteProviderModel(workspaceId, provider.id, "model-a"),
-    ).rejects.toThrow("This model is in use and cannot be removed.");
-    const runtime = await db.agentRuntime.findUniqueOrThrow({
-      where: { agentId: agent.id },
-    });
-    await expect(deleteProvider(workspaceId, provider.id)).resolves.toEqual([
-      {
-        agentId: agent.id,
-        sandboxId: runtime.sandboxId,
-      },
-    ]);
-    await expect(
-      db.conversation.findUnique({
-        where: { id: assertDefined(conversation).id },
-      }),
-    ).resolves.toMatchObject({
-      hermesProvider: null,
-      hermesModel: null,
-    });
     await deleteAgent(workspaceId, agent.id);
   });
 
@@ -1687,7 +921,8 @@ describe("agents mutations", () => {
   });
 
   it("creates a conversation and appends messages", async () => {
-    const a = await createAgent(workspaceId, "Chat", { runtime: "pi" });
+    const a = await createAgent(workspaceId, "Chat", { runtime: "pi-sdk" });
+    await seedPublishedRevision(a.id);
     const conv = await createConversation(workspaceId, a.id);
     await appendMessage(assertDefined(conv).id, "user", [
       { type: "text", text: "hi" },
@@ -1752,146 +987,11 @@ describe("agents mutations", () => {
     });
   });
 
-  it("stores Hermes conversation selection and forks when a populated conversation changes profile", async () => {
-    const agent = await createAgent(workspaceId, "Hermes profile chat", {
-      runtime: "hermes",
-    });
-    const conversation = await createConversation(workspaceId, agent.id);
-    const selected = await setHermesConversationSelection(
-      workspaceId,
-      agent.id,
-      assertDefined(conversation).id,
-      { profile: "research", provider: null, model: null },
-    );
-    expect(selected).toEqual({
-      conversationId: assertDefined(conversation).id,
-      created: false,
-    });
-    await expect(
-      db.conversation.findUnique({
-        where: { id: assertDefined(conversation).id },
-      }),
-    ).resolves.toMatchObject({
-      hermesProfile: "research",
-      hermesProvider: null,
-      hermesModel: null,
-    });
-
-    await appendMessage(assertDefined(conversation).id, "user", [
-      { type: "text", text: "Keep this profile isolated." },
-    ]);
-    const forked = await setHermesConversationSelection(
-      workspaceId,
-      agent.id,
-      assertDefined(conversation).id,
-      { profile: "default", provider: "openrouter", model: "model-a" },
-    );
-    expect(forked).toMatchObject({ created: true });
-    expect(forked?.conversationId).not.toBe(assertDefined(conversation).id);
-    await expect(
-      db.conversation.findUnique({
-        where: { id: assertDefined(forked).conversationId },
-      }),
-    ).resolves.toMatchObject({
-      hermesProfile: null,
-      hermesProvider: "openrouter",
-      hermesModel: "model-a",
-    });
-
-    await appendMessage(assertDefined(forked).conversationId, "user", [
-      { type: "text", text: "Stay on default." },
-    ]);
-    await expect(
-      setHermesConversationSelection(
-        workspaceId,
-        agent.id,
-        assertDefined(forked).conversationId,
-        { profile: "default", provider: "openrouter", model: "model-b" },
-      ),
-    ).resolves.toEqual({
-      conversationId: assertDefined(forked).conversationId,
-      created: false,
-    });
-
-    const workConversation = await createConversation(
-      workspaceId,
-      agent.id,
-      "Hermes Work",
-    );
-    await appendMessage(assertDefined(workConversation).id, "user", [
-      { type: "text", text: "Keep this Work conversation." },
-    ]);
-    const workSession = await db.workSession.create({
-      data: {
-        workspaceId,
-        agentId: agent.id,
-        conversationId: assertDefined(workConversation).id,
-        runtimeKind: "hermes",
-        status: "idle",
-      },
-    });
-    const conversationCount = await db.conversation.count({
-      where: { agentId: agent.id },
-    });
-    await expect(
-      setHermesConversationSelection(
-        workspaceId,
-        agent.id,
-        assertDefined(workConversation).id,
-        { profile: "research", provider: "openrouter", model: "model-a" },
-      ),
-    ).resolves.toEqual({
-      conversationId: assertDefined(workConversation).id,
-      created: false,
-    });
-    await expect(
-      db.conversation.count({ where: { agentId: agent.id } }),
-    ).resolves.toBe(conversationCount);
-    await expect(
-      db.conversation.findUnique({
-        where: { id: assertDefined(workConversation).id },
-      }),
-    ).resolves.toMatchObject({
-      hermesProfile: "research",
-      hermesProvider: "openrouter",
-      hermesModel: "model-a",
-    });
-    await db.workSession.update({
-      where: { id: workSession.id },
-      data: { status: "running" },
-    });
-    await expect(
-      setHermesConversationSelection(
-        workspaceId,
-        agent.id,
-        assertDefined(workConversation).id,
-        { profile: "default", provider: null, model: null },
-      ),
-    ).resolves.toBeNull();
-
-    const messaging = await createConversation(
-      workspaceId,
-      agent.id,
-      "msg:slack:dm:U123",
-    );
-    await expect(
-      setHermesConversationSelection(
-        workspaceId,
-        agent.id,
-        assertDefined(messaging).id,
-        {
-          profile: "default",
-          provider: null,
-          model: null,
-        },
-      ),
-    ).resolves.toBeNull();
-  });
-
   it("persists a generated user/assistant turn atomically and in order", async () => {
     const agent = await createAgent(workspaceId, "Atomic turn", {
-      runtime: "pi",
+      runtime: "pi-sdk",
     });
+    await seedPublishedRevision(agent.id);
     const conversation = await createConversation(workspaceId, agent.id);
     await appendConversationTurn(
       assertDefined(conversation).id,
@@ -1925,8 +1025,9 @@ describe("agents mutations", () => {
 
   it("atomically derives a title when the first user messages race", async () => {
     const agent = await createAgent(workspaceId, "Concurrent title", {
-      runtime: "pi",
+      runtime: "pi-sdk",
     });
+    await seedPublishedRevision(agent.id);
     const conversation = await createConversation(workspaceId, agent.id);
 
     await Promise.all([
@@ -1950,8 +1051,8 @@ describe("agents mutations", () => {
   });
 
   it("initializes legacy runtime session aliases once without replacing them", async () => {
-    const agent = await createAgent(workspaceId, "Legacy Hermes chat", {
-      runtime: "pi",
+    const agent = await createAgent(workspaceId, "Legacy runtime chat", {
+      runtime: "pi-sdk",
     });
     const legacy = await db.conversation.create({
       data: { agentId: agent.id },
@@ -1978,6 +1079,12 @@ describe("agents mutations", () => {
       },
     );
     expect(retained).toEqual(initialized);
+    expect(
+      await db.conversation.findUnique({ where: { id: legacy.id } }),
+    ).toMatchObject({
+      agentRevisionId: null,
+      legacyRevisionUnresolved: true,
+    });
   });
 
   it("drops cross-workspace tool ids in setAgentTools", async () => {
@@ -1995,13 +1102,11 @@ describe("agents mutations", () => {
     const fdep = await db.deployment.create({
       data: { workspaceId: other.id, serverId: fserver.id },
     });
-    const a = await createAgent(workspaceId, "Scope", { runtime: "pi" });
-    const sandbox = await createDockerSandbox("Scoped tools workspace");
+    const a = await createAgent(workspaceId, "Scope", { runtime: "pi-sdk" });
     await setAgentTools(workspaceId, a.id, {
       deploymentIds: [deploymentId, fdep.id],
       installedSkillIds: [],
       toolkitIds: [],
-      sandboxIds: [sandbox.id],
     });
     const reread = await db.agent.findUnique({
       where: { id: a.id },
@@ -2029,7 +1134,9 @@ describe("agents mutations", () => {
         apiKey: "k",
       },
     });
-    const a = await createAgent(workspaceId, "ProvScope", { runtime: "pi" });
+    const a = await createAgent(workspaceId, "ProvScope", {
+      runtime: "pi-sdk",
+    });
     await updateAgent(workspaceId, a.id, {
       name: "ProvScope",
       systemPrompt: null,
@@ -2040,21 +1147,29 @@ describe("agents mutations", () => {
     const reread = await db.agent.findUnique({ where: { id: a.id } });
     expect(reread?.providerId).toBeNull();
 
-    const hermes = await createAgent(workspaceId, "Hermes provider scope", {
-      runtime: "hermes",
+    const linked = await createAgent(workspaceId, "Native provider scope", {
+      runtime: "pi-sdk",
     });
-    await updateAgent(workspaceId, hermes.id, {
-      name: hermes.name,
+    await updateAgent(workspaceId, linked.id, {
+      name: linked.name,
       systemPrompt: null,
-      providerId: null,
-      providerIds: [providerId, fprov.id],
+      providerId,
       model: null,
       maxSteps: 8,
     });
-    const links = await db.agentModelProvider.findMany({
-      where: { agentId: hermes.id },
+    await expect(
+      db.agent.findUniqueOrThrow({ where: { id: linked.id } }),
+    ).resolves.toMatchObject({ providerId });
+    await updateAgent(workspaceId, linked.id, {
+      name: linked.name,
+      systemPrompt: null,
+      providerId: fprov.id,
+      model: null,
+      maxSteps: 8,
     });
-    expect(links.map((link) => link.providerId)).toEqual([providerId]);
+    await expect(
+      db.agent.findUniqueOrThrow({ where: { id: linked.id } }),
+    ).resolves.toMatchObject({ providerId: null });
     await db.workspace.delete({ where: { id: other.id } });
   });
 
@@ -2086,7 +1201,7 @@ describe("agents mutations", () => {
   });
 
   it("creates encrypted platform-owned channel connections", async () => {
-    const a = await createAgent(workspaceId, "Channels", { runtime: "pi" });
+    const a = await createAgent(workspaceId, "Channels", { runtime: "pi-sdk" });
     const result = await createAgentChannelConnection({
       workspaceId,
       agentId: a.id,
@@ -2127,7 +1242,7 @@ describe("agents mutations", () => {
   });
 
   it("creates QR setup channels before scan-returned credentials exist", async () => {
-    const a = await createAgent(workspaceId, "WeCom QR", { runtime: "pi" });
+    const a = await createAgent(workspaceId, "WeCom QR", { runtime: "pi-sdk" });
     const result = await createAgentChannelConnection({
       workspaceId,
       agentId: a.id,
@@ -2163,7 +1278,7 @@ describe("agents mutations", () => {
 
   it("requests WeCom QR and saves scan-returned credentials", async () => {
     const a = await createAgent(workspaceId, "WeCom active QR", {
-      runtime: "pi",
+      runtime: "pi-sdk",
     });
     const result = await createAgentChannelConnection({
       workspaceId,
@@ -2230,111 +1345,9 @@ describe("agents mutations", () => {
     await deleteAgentChannelConnection(workspaceId, connectionId);
   });
 
-  it("requests Telegram managed-bot QR and clears prior restrictions when applying an empty allowlist", async () => {
-    const a = await createAgent(workspaceId, "Telegram active QR", {
-      runtime: "pi",
-    });
-    const result = await createAgentChannelConnection({
-      workspaceId,
-      agentId: a.id,
-      platform: "telegram",
-      name: "Telegram active setup",
-      credentials: {
-        TELEGRAM_ALLOWED_USERS: "987654321",
-        TELEGRAM_ALLOW_ALL_USERS: "false",
-      },
-    });
-    expect(result.error).toBeUndefined();
-    expect(result.connection?.status).toBe("setup_required");
-    const connectionId = assertDefined(result.connection).id;
-
-    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
-      if (url.endsWith("/v1/telegram/pairings") && init?.method === "POST") {
-        return new Response(
-          JSON.stringify({
-            pairing_id: "tg-pair-1",
-            poll_token: "poll-secret",
-            suggested_username: "toolplane_pair_bot",
-            deep_link: "https://t.me/newbot/HermesSetupBot/toolplane_pair_bot",
-            qr_payload: "https://t.me/newbot/HermesSetupBot/toolplane_pair_bot",
-            expires_at: "2027-05-18T00:00:00.000Z",
-          }),
-          { status: 200 },
-        );
-      }
-      if (url.endsWith("/v1/telegram/pairings/tg-pair-1")) {
-        expect(init?.headers).toEqual(
-          expect.objectContaining({
-            Authorization: "Bearer poll-secret",
-          }),
-        );
-        return new Response(
-          JSON.stringify({
-            status: "ready",
-            token: "123456:SECRETabcdefghijklmnopqrstuvwxyz1234",
-            bot_username: "toolplane_pair_bot",
-            owner_user_id: 123456789,
-          }),
-          { status: 200 },
-        );
-      }
-      return new Response("{}", { status: 404 });
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
-    const requested = await requestAgentChannelPairing(
-      workspaceId,
-      connectionId,
-    );
-    expect(requested.error).toBeUndefined();
-    expect(requested.pairing?.provider).toBe("telegram_managed_bot");
-    expect(requested.pairing?.qrPayload).toBe(
-      "https://t.me/newbot/HermesSetupBot/toolplane_pair_bot",
-    );
-
-    const checked = await checkAgentChannelPairing(workspaceId, connectionId);
-    expect(checked.error).toBeUndefined();
-
-    const afterReady = await listAgentChannelConnections(workspaceId, a.id);
-    expect(afterReady[0].pairing?.status).toBe("ready");
-    expect(afterReady[0].pairing?.extra?.botUsername).toBe(
-      "toolplane_pair_bot",
-    );
-    expect(afterReady[0].pairing?.extra?.ownerUserId).toBe("123456789");
-    expect(afterReady[0].missingStartCredentialNames).toEqual([
-      "TELEGRAM_BOT_TOKEN",
-    ]);
-
-    const applied = await applyAgentChannelPairing(
-      workspaceId,
-      connectionId,
-      "",
-    );
-    expect("error" in applied ? applied.error : undefined).toBeUndefined();
-
-    const afterApply = await listAgentChannelConnections(workspaceId, a.id);
-    expect(afterApply[0].status).toBe("stopped");
-    expect(afterApply[0].missingStartCredentialNames).toEqual([]);
-    expect(afterApply[0].credentialNames).toEqual([
-      "TELEGRAM_ALLOW_ALL_USERS",
-      "TELEGRAM_BOT_TOKEN",
-    ]);
-    expect(afterApply[0].credentialValues).toEqual({
-      TELEGRAM_ALLOW_ALL_USERS: "true",
-    });
-
-    const raw = await db.agentChannelConnection.findUnique({
-      where: { id: connectionId },
-    });
-    expect(JSON.stringify(raw?.credentials)).not.toContain("SECRET");
-    expect(JSON.stringify(raw?.config)).not.toContain("poll-secret");
-
-    await deleteAgentChannelConnection(workspaceId, connectionId);
-  });
-
   it("requests Weixin QR and saves confirmed login credentials", async () => {
     const a = await createAgent(workspaceId, "Weixin active QR", {
-      runtime: "pi",
+      runtime: "pi-sdk",
     });
     const result = await createAgentChannelConnection({
       workspaceId,
@@ -2412,7 +1425,7 @@ describe("agents mutations", () => {
 
   it("requests DingTalk device QR and saves registered credentials", async () => {
     const a = await createAgent(workspaceId, "DingTalk active QR", {
-      runtime: "pi",
+      runtime: "pi-sdk",
     });
     const result = await createAgentChannelConnection({
       workspaceId,

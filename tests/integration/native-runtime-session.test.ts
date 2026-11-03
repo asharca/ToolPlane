@@ -1,461 +1,161 @@
 // @vitest-environment node
-import { assertDefined } from "../assert-defined";
-import { execFile, spawn } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { once } from "node:events";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { createServer } from "node:http";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { expect, it } from "vitest";
-import {
-  buildDshPatch,
-  buildPiModelsConfig,
-  dshEventTapSource,
-  SANDBOX_RUNTIME_PACKAGES,
-} from "@/lib/agents/sandbox-runtime";
+import { stopNativeSessionHosts } from "../../scripts/native-runtime-stop.mjs";
 
-const container = process.env.TOOLPLANE_NATIVE_COMMAND_SANDBOX;
-const kind =
-  process.env.TOOLPLANE_NATIVE_COMMAND_KIND === "dsh"
-    ? "dsh"
-    : process.env.TOOLPLANE_NATIVE_COMMAND_KIND === "pi"
-      ? "pi"
-      : "claude-code";
-it.runIf(Boolean(container))(
-  `executes ${kind} commands in its real persistent CLI with no external model calls`,
-  async () => {
-    const dir = await mkdtemp(join(tmpdir(), "toolplane-native-command-"));
-    const docker = async (...args: string[]) =>
-      (
-        await promisify(execFile)("docker", args, {
-          timeout: 60_000,
-          maxBuffer: 4 * 1024 * 1024,
-        })
-      ).stdout;
-    const requests: string[] = [];
-    let modelRequests = 0;
-    const server = createServer(async (req, res) => {
-      let body = "";
-      for await (const chunk of req) body += chunk;
-      requests.push(body);
-      if (/\/(messages|chat\/completions)$/.test(req.url ?? ""))
-        modelRequests++;
-      if (req.url?.includes("count_tokens")) {
-        res.setHeader("Content-Type", "application/json");
-        res.end(JSON.stringify({ input_tokens: 123 }));
-        return;
-      }
-      const content =
-        body.includes("Summariz") || body.includes("summariz")
-          ? "Native summary: preserve plan.md and continue the release."
-          : "Native reply from the test provider.";
-      res.setHeader("Content-Type", "text/event-stream");
-      if (kind === "claude-code") {
-        for (const event of [
-          {
-            type: "message_start",
-            message: {
-              id: "msg_test",
-              type: "message",
-              role: "assistant",
-              model: "claude-sonnet-4-6",
-              content: [],
-              stop_reason: null,
-              stop_sequence: null,
-              usage: { input_tokens: 123, output_tokens: 0 },
-            },
-          },
-          {
-            type: "content_block_start",
-            index: 0,
-            content_block: { type: "text", text: "" },
-          },
-          {
-            type: "content_block_delta",
-            index: 0,
-            delta: { type: "text_delta", text: content },
-          },
-          { type: "content_block_stop", index: 0 },
-          {
-            type: "message_delta",
-            delta: { stop_reason: "end_turn", stop_sequence: null },
-            usage: { output_tokens: 12 },
-          },
-          { type: "message_stop" },
-        ])
-          res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
-      } else {
-        for (const chunk of [
-          {
-            choices: [
-              {
-                index: 0,
-                delta: { role: "assistant", content },
-                finish_reason: null,
-              },
-            ],
-          },
-          {
-            choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
-            usage: {
-              prompt_tokens: 123,
-              completion_tokens: 12,
-              total_tokens: 135,
-            },
-          },
-        ])
-          res.write(
-            `data: ${JSON.stringify({ id: "chat_test", object: "chat.completion.chunk", created: 1, model: "test", ...chunk })}\n\n`,
-          );
-        res.write("data: [DONE]\n\n");
-      }
-      res.end();
-    });
-    await new Promise<void>((resolve) => server.listen(0, "0.0.0.0", resolve));
-    try {
-      const inspect = JSON.parse(
-        await docker("inspect", assertDefined(container)),
-      )[0];
-      const gateway = (
-        Object.values(inspect.NetworkSettings.Networks)[0] as {
-          Gateway: string;
-        }
-      ).Gateway;
-      const host =
-        process.platform === "linux" ? gateway : "host.docker.internal";
-      const base = `http://${host}:${(server.address() as { port: number }).port}`;
-      const root = SANDBOX_RUNTIME_PACKAGES[kind].directory;
-      const model = kind === "pi" ? "test" : "claude-sonnet-4-6";
-      await docker(
-        "exec",
-        assertDefined(container),
-        "mkdir",
-        "-p",
-        `${dir}/state/sessions`,
-      );
-      await writeFile(
-        join(dir, "driver.mjs"),
-        await readFile(
-          `scripts/${kind === "dsh" ? "dsh-runtime-driver" : "native-runtime-session"}.mjs`,
-          "utf8",
+it("stops only one conversation's resident SDK host while preserving its sibling and saved native state", async () => {
+  const root = await mkdtemp(join(tmpdir(), "toolplane-session-stop-"));
+  const driver = join(process.cwd(), "scripts/native-runtime-session.mjs");
+  const host = join(process.cwd(), "scripts/pi-sdk-session.mjs");
+  const daemons: ChildProcess[] = [];
+  const environment = {
+    ...process.env,
+    NODE_CHANNEL_FD: undefined,
+    NODE_CHANNEL_SERIALIZATION_MODE: undefined,
+  };
+  const prepare = async (name: string) => {
+    const cwd = join(root, name, "workspace");
+    const stateRoot = join(root, name, ".toolplane", "runtime");
+    const configPath = join(stateRoot, "host", "native.json");
+    const statePath = join(stateRoot, "sessions", "native.json");
+    const socketPath = `/tmp/toolplane-runtime-${createHash("sha256").update(statePath).digest("hex").slice(0, 32)}.sock`;
+    await Promise.all(
+      [cwd, join(stateRoot, "host"), join(stateRoot, "sessions", "native")].map(
+        (path) => mkdir(path, { recursive: true }),
+      ),
+    );
+    const extension = join(cwd, "counter.mjs");
+    const factory = join(stateRoot, "host", "mcp.mjs");
+    await writeFile(
+      extension,
+      "export default pi => { let count=0; pi.registerCommand('Ping',{handler:async()=>{ pi.sendMessage({customType:'counter',content:'count='+ ++count,display:true}); }}); };",
+    );
+    await writeFile(
+      factory,
+      "export async function createPiMcpTools(){ return []; }",
+    );
+    const model = {
+      id: "test",
+      name: "Test",
+      api: "openai-completions",
+      provider: "toolplane",
+      baseUrl: "http://127.0.0.1:1/v1",
+      reasoning: false,
+      input: ["text"],
+      contextWindow: 32768,
+      maxTokens: 1024,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    };
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        sdkVersion: "0.87.1",
+        packageRoot: process.cwd(),
+        cwd,
+        agentDir: stateRoot,
+        sessionsDir: join(stateRoot, "sessions", "native"),
+        statePath,
+        packageSetChecksum: "empty",
+        agentRevisionId: "pinned",
+        model,
+        systemPrompt: "Counter fixture",
+        defaultTools: [],
+        excludeTools: [],
+        packages: [],
+        resources: {
+          extensions: [extension],
+          skills: [],
+          prompts: [],
+          themes: [],
+        },
+        packageVerifierPath: join(
+          process.cwd(),
+          "scripts/pi-sdk-package-files.mjs",
         ),
+        mcpFactoryPath: factory,
+        hostOnlyCommands: [],
+      }),
+    );
+    const inputPath = join(root, name, "request.json");
+    await writeFile(
+      inputPath,
+      JSON.stringify({
+        kind: "pi-sdk",
+        binary: process.execPath,
+        args: [host, configPath],
+        cwd,
+        statePath,
+        signature: name,
+        command: "/Ping",
+        context: {
+          runtimeToken: `token-${name}`,
+          model,
+          mcpConfig: { servers: [] },
+        },
+      }),
+    );
+    const daemon = spawn(process.execPath, [driver, inputPath, "serve"], {
+      stdio: "ignore",
+      env: environment,
+    });
+    daemons.push(daemon);
+    await expect
+      .poll(() => existsSync(socketPath), { timeout: 10000 })
+      .toBe(true);
+    const request = async () => {
+      const { stdout } = await promisify(execFile)(
+        process.execPath,
+        [driver, inputPath],
+        { timeout: 20000, env: environment },
       );
-      await writeFile(
-        join(dir, "models.json"),
-        buildPiModelsConfig({
-          provider: { id: "test", name: "Test", format: "openai" },
-          modelId: model,
-          modelProxyBase: `${base}/v1`,
-        }),
-      );
-      await docker("cp", `${dir}/driver.mjs`, `${container}:${dir}/driver.mjs`);
-      await docker(
-        "cp",
-        `${dir}/models.json`,
-        `${container}:${dir}/state/models.json`,
-      );
-      if (kind === "dsh") {
-        await writeFile(
-          join(dir, "events.mjs"),
-          dshEventTapSource("__TOOLPLANE_DSH_EVENT__"),
-        );
-        await writeFile(
-          join(dir, "patch.yml"),
-          buildDshPatch({
-            provider: { id: "test", name: "Test", format: "openai" },
-            modelId: model,
-            modelProxyBase: `${base}/v1`,
-            systemPrompt: "Native command test",
-            skillRoot: `${dir}/skills`,
-            eventPluginPath: `${dir}/events.mjs`,
-            driverPluginPath: `${dir}/driver.mjs`,
-          }),
-        );
-        await docker(
-          "cp",
-          `${dir}/events.mjs`,
-          `${container}:${dir}/events.mjs`,
-        );
-        await docker("cp", `${dir}/patch.yml`, `${container}:${dir}/patch.yml`);
-      }
-      const args =
-        kind === "pi"
-          ? [
-              "--mode",
-              "rpc",
-              "--no-approve",
-              "--offline",
-              "--no-extensions",
-              "--no-skills",
-              "--no-prompt-templates",
-              "--no-themes",
-              "--no-context-files",
-              "--provider",
-              "toolplane",
-              "--model",
-              model,
-            ]
-          : [
-              "--bare",
-              "--print",
-              "--verbose",
-              "--output-format",
-              "stream-json",
-              "--input-format",
-              "stream-json",
-              "--include-partial-messages",
-              "--dangerously-skip-permissions",
-              "--model",
-              model,
-            ];
-      let signature = "test";
-      const run = async (
-        command?: string,
-        message = "Continue with the current plan.",
-        history = [
-          { role: "user", text: "Keep plan.md" },
-          { role: "assistant", text: "Previous native-imported plan." },
-          ...(kind !== "claude-code"
-            ? [
-                { role: "user", text: "Recent context detail. ".repeat(6000) },
-                { role: "assistant", text: "The current plan is ready." },
-              ]
-            : []),
-        ],
-        allowError = false,
-      ) => {
-        await writeFile(
-          join(dir, "input.json"),
-          JSON.stringify(
-            kind === "dsh"
-              ? {
-                  packageRoot: root,
-                  prefix: "__TOOLPLANE_DSH_EVENT__",
-                  sessionId: "test-session",
-                  command,
-                  history: history
-                    .map((item) => `${item.role}: ${item.text}`)
-                    .join("\n"),
-                  message,
-                }
-              : {
-                  kind,
-                  args,
-                  model,
-                  api: "openai-completions",
-                  packageRoot: root,
-                  binary: `${root}/node_modules/.bin/${SANDBOX_RUNTIME_PACKAGES[kind].binary}`,
-                  statePath: `${dir}/state/sessions/session.json`,
-                  signature,
-                  command,
-                  history,
-                  message,
-                  prompt: message,
-                },
-          ),
-        );
-        await docker(
-          "cp",
-          `${dir}/input.json`,
-          `${container}:${dir}/input.json`,
-        );
-        await docker(
-          "exec",
-          assertDefined(container),
-          "chown",
-          "-R",
-          "1000:1000",
-          dir,
-        );
-        const output = await docker(
-          "exec",
-          "--user",
-          kind === "claude-code" ? "1000:1000" : "0:0",
-          "-w",
-          dir,
-          "-e",
-          `HOME=${dir}/state`,
-          "-e",
-          `CLAUDE_CONFIG_DIR=${dir}/state`,
-          "-e",
-          "ANTHROPIC_API_KEY=test-only",
-          "-e",
-          "ANTHROPIC_AUTH_TOKEN=test-only",
-          "-e",
-          `ANTHROPIC_BASE_URL=${base}`,
-          "-e",
-          "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",
-          "-e",
-          `PI_CODING_AGENT_DIR=${dir}/state`,
-          "-e",
-          "TOOLPLANE_RUNTIME_TOKEN=test-only",
-          "-e",
-          "PI_OFFLINE=1",
-          "-e",
-          "PI_TELEMETRY=0",
-          "-e",
-          `DSH_HOME=${dir}/state`,
-          "-e",
-          `TOOLPLANE_DSH_INPUT=${dir}/input.json`,
-          "-e",
-          "DSH_TELEMETRY_DISABLED=1",
-          "-e",
-          "DSH_TOOLS_MODE=native",
-          assertDefined(container),
-          ...(kind === "dsh"
-            ? [
-                `${root}/node_modules/.bin/dsh`,
-                "--profile",
-                "headless",
-                "--patch",
-                `${dir}/patch.yml`,
-                "ignored",
-              ]
-            : ["node", `${dir}/driver.mjs`, `${dir}/input.json`]),
-        );
-        const events = output
-          .split("\n")
-          .filter((line) =>
-            kind === "dsh"
-              ? line.startsWith("__TOOLPLANE_DSH_EVENT__")
-              : Boolean(line),
-          )
-          .map((line) =>
-            JSON.parse(
-              kind === "dsh"
-                ? line.slice("__TOOLPLANE_DSH_EVENT__".length)
-                : line,
-            ),
-          );
-        if (!allowError)
-          expect(
-            events.filter(
-              (event) =>
-                event.type === "toolplane_command_result" && event.isError,
-            ),
-          ).toEqual([]);
-        expect(
-          events.filter((event) => event.type === "command" && event.isError),
-        ).toEqual([]);
-        if (!allowError)
-          expect(
-            events.find((event) => event.type === "result")?.is_error,
-          ).not.toBe(true);
-        return events;
-      };
-      const first = await run();
-      if (kind === "dsh")
-        expect(first).toEqual(
-          expect.arrayContaining([
-            expect.objectContaining({
-              type: "text",
-              delta: expect.stringContaining("Native reply"),
-            }),
-          ]),
-        );
-      expect(requests.join("\n"), JSON.stringify(first)).toContain(
-        "Keep plan.md",
-      );
-      const turns = requests.length;
-      if (kind === "claude-code") {
-        const usage = await run("/usage");
-        expect(
-          usage.find((event) => event.type === "result")?.result,
-        ).toContain("Total duration (API)");
-        expect(
-          usage.find((event) => event.type === "result")?.result,
-        ).toContain("123 input");
-        expect(requests).toHaveLength(turns);
-        const context = await run("/context");
-        expect(
-          context.find((event) => event.type === "result")?.result,
-        ).toContain("Context Usage");
-        const compact = await run("/compact Preserve exact file paths");
-        expect(
-          compact.some(
-            (event) =>
-              event.type === "system" && event.subtype === "compact_boundary",
-          ),
-        ).toBe(true);
-        requests.length = 0;
-        signature = "reconnected";
-        await run(undefined, "Continue after native compaction and reconnect.");
-        expect(requests.join("\n")).toContain("Native summary");
-        await run("/clear");
-        requests.length = 0;
-        await run(undefined, "Fresh request after clear.");
-        expect(requests.join("\n")).not.toContain("Keep plan.md");
-      } else if (kind === "pi") {
-        const compact = await run("/compact Keep exact paths");
-        expect(compact).toEqual(
-          expect.arrayContaining([
-            expect.objectContaining({
-              type: "toolplane_command_result",
-              isError: false,
-              text: "Conversation compacted.",
-            }),
-          ]),
-        );
-        requests.length = 0;
-        signature = "reconnected";
-        await run(undefined, "Continue after compaction.");
-        expect(requests.join("\n")).toContain("Native summary");
-      } else {
-        await run(undefined, "Keep going.");
-        const compact = await run("/compact");
-        expect(
-          compact.find((event) => event.type === "command")?.text,
-        ).toContain("Compacted");
-        requests.length = 0;
-        await run(undefined, "Continue after compaction.");
-        expect(requests.join("\n")).toContain("Native summary");
-        expect(requests.join("\n")).not.toContain("Recent context detail.");
-      }
-      if (kind !== "dsh") {
-        const state = JSON.parse(
-          await docker(
-            "exec",
-            assertDefined(container),
-            "cat",
-            `${dir}/state/sessions/session.json`,
-          ),
-        );
-        const nativePath =
-          kind === "pi"
-            ? `${dir}/state/sessions/session.json.jsonl`
-            : `${dir}/state/projects/${dir.replace(/[^a-zA-Z0-9]/g, "-")}/${state.id}.jsonl`;
-        await docker("exec", assertDefined(container), "rm", "--", nativePath);
-        signature = "missing-native-history";
-        const requestsBefore = modelRequests;
-        const missing = await run(undefined, "Continue.", undefined, true);
-        expect(missing.some((event) => event.isError || event.is_error)).toBe(
-          true,
-        );
-        expect(JSON.stringify(missing)).toMatch(
-          /Native session history is missing|No conversation found/,
-        );
-        expect(modelRequests).toBe(requestsBefore);
-      }
-    } finally {
-      // Only this test's process group and temporary state, never the user's runtime sessions.
-      await docker(
-        "exec",
-        assertDefined(container),
-        "pkill",
-        "-f",
-        `${dir}/driver.mjs`,
-      ).catch(() => {});
-      await docker("exec", assertDefined(container), "rm", "-rf", "--", dir);
-      await rm(dir, { recursive: true, force: true });
-      await new Promise<void>((resolve) => server.close(() => resolve()));
-    }
-  },
-  180_000,
-);
+      const result = stdout.trim().split("\n").at(-1);
+      if (!result) throw new Error("Native runtime returned no response");
+      return JSON.parse(result);
+    };
+    return { stateRoot, statePath, socketPath, daemon, request };
+  };
+  try {
+    const first = await prepare("first");
+    const second = await prepare("second");
+    expect(await first.request()).toMatchObject({
+      success: true,
+      result: { text: expect.stringContaining("count=1") },
+    });
+    expect(await second.request()).toMatchObject({
+      success: true,
+      result: { text: expect.stringContaining("count=1") },
+    });
+    const stopped = once(first.daemon, "exit");
+    await stopNativeSessionHosts(first.stateRoot);
+    await stopped;
+    expect(existsSync(first.socketPath)).toBe(false);
+    expect(existsSync(first.statePath)).toBe(true);
+    expect(existsSync(second.socketPath)).toBe(true);
+    expect(await second.request()).toMatchObject({
+      success: true,
+      result: { text: expect.stringContaining("count=2") },
+    });
+    await stopNativeSessionHosts(first.stateRoot);
+  } finally {
+    await Promise.all(
+      daemons.map(async (daemon) => {
+        if (daemon.exitCode !== null || daemon.signalCode !== null) return;
+        const stopped = once(daemon, "exit");
+        daemon.kill("SIGTERM");
+        await stopped;
+      }),
+    );
+    await rm(root, { recursive: true, force: true });
+  }
+}, 60000);
 
 it("settles real SDK commands without agent_end, rotates context, and kills disconnected process groups", async () => {
   const dir = await mkdtemp(join(tmpdir(), "toolplane-sdk-daemon-"));
@@ -545,7 +245,11 @@ export default function(pi) {
     command: "/Case",
     message: "",
     history: [{ role: "user", text: "never seeded" }],
-    context: { runtimeToken: "first-test-token", mcpConfig: { servers: [] } },
+    context: {
+      runtimeToken: "first-test-token",
+      mcpConfig: { servers: [] },
+      model: JSON.parse(await readFile(configPath, "utf8")).model,
+    },
   };
   await writeFile(inputPath, JSON.stringify(job));
   let daemon = spawn(process.execPath, [driver, inputPath, "serve"], {
@@ -581,13 +285,18 @@ export default function(pi) {
       (event) => event.type === "toolplane_sdk_response",
     );
     expect(response).toHaveLength(1);
-    expect(response[0]).toMatchObject({
+    expect(response[0], JSON.stringify(response[0])).toMatchObject({
       success: true,
       result: {
         text: expect.stringContaining("count=1"),
         commands: expect.arrayContaining([
           { name: "Case", description: "real command" },
         ]),
+        commandResult: {
+          command: "Case",
+          text: expect.stringContaining("count=1"),
+          status: "completed",
+        },
       },
     });
     expect(response[0].result).not.toHaveProperty("state");
@@ -600,13 +309,36 @@ export default function(pi) {
       sessionPersisted: false,
     });
     expect(sdkState).not.toHaveProperty("seeded");
+    // Command lookup is case-sensitive and failures use the SDK response envelope.
+    job.command = "/case";
+    const unsupported = await run();
+    expect(unsupported).toEqual([
+      {
+        type: "toolplane_sdk_response",
+        id: expect.any(String),
+        success: false,
+        error: {
+          code: "PI_SDK_COMMAND_UNKNOWN",
+          message: "PI_SDK_COMMAND_UNKNOWN",
+        },
+      },
+    ]);
+    expect(JSON.parse(await readFile(statePath, "utf8"))).toEqual(sdkState);
+    job.command = "/Case";
     job.context.runtimeToken = "second-test-token";
     const second = await run();
     expect(
       second.find((event) => event.type === "toolplane_sdk_response"),
     ).toMatchObject({
       success: true,
-      result: { text: expect.stringContaining("count=2") },
+      result: {
+        text: expect.stringContaining("count=2"),
+        commandResult: {
+          command: "Case",
+          text: expect.stringContaining("count=2"),
+          status: "completed",
+        },
+      },
     });
     expect(await readFile(join(dir, "context"), "utf8")).toBe(
       "second-test-token",
@@ -620,10 +352,11 @@ export default function(pi) {
     // A second socket must not attach to an already-running SDK request.
     const busy = await run();
     expect(busy).toEqual([
-      expect.objectContaining({
-        isError: true,
-        text: "This native session is busy.",
-      }),
+      {
+        type: "toolplane_sdk_response",
+        success: false,
+        error: { code: "PI_SDK_BUSY", message: "PI_SDK_BUSY" },
+      },
     ]);
     const stopped = once(daemon, "exit");
     socket.destroy();
@@ -647,8 +380,25 @@ export default function(pi) {
       lost.find((event) => event.type === "toolplane_sdk_response"),
     ).toMatchObject({
       success: false,
-      error: { code: "PI_SDK_SESSION_MISSING" },
+      error: {
+        code: "PI_SDK_SESSION_MISSING",
+        message: "PI_SDK_SESSION_MISSING",
+      },
     });
+    // A revision participates in the production signature. An idle old broker
+    // must stop before a changed toolset can reach its already-created SDK host.
+    const upgradeSocket = createConnection(socketPath);
+    await once(upgradeSocket, "connect");
+    const upgradeResponse = once(upgradeSocket, "data");
+    const upgradedHostStopped = once(daemon, "exit");
+    upgradeSocket.write(
+      `${JSON.stringify({ ...job, signature: "sdk-new-revision" })}\n`,
+    );
+    expect(JSON.parse(String((await upgradeResponse)[0]).trim())).toEqual({
+      type: "toolplane_session_restart",
+    });
+    await upgradedHostStopped;
+    expect(existsSync(socketPath)).toBe(false);
   } finally {
     // Ask the daemon to stop its detached host process group before removing files.
     if (daemon.exitCode === null && daemon.signalCode === null) {

@@ -7,6 +7,7 @@ import {
   recipeToDeploymentData,
   storedRequiredEnvironment,
 } from "@/lib/workspace/server-recipe";
+import { sealMcpEnvironment } from "@/lib/process/mcp-credentials";
 
 describe("parseServerRecipe", () => {
   it("parses a valid npm recipe with env keys", () => {
@@ -194,10 +195,29 @@ describe("recipeToDeploymentData", () => {
         env: { MCP_BEARER_TOKEN: "" },
         requiredEnv: ["MCP_BEARER_TOKEN"],
         transport: "streamable-http",
+        allowUnsafeHttp: false,
         authType: "bearer",
         bearerEnv: "MCP_BEARER_TOKEN",
       },
     });
+  });
+
+  it("requires deployment-local approval rather than trusting recipe approval", () => {
+    const recipe = parseServerRecipe({
+      source: "remote",
+      ref: "http://mcp.example.com/mcp",
+      env: [],
+      allowUnsafeHttp: true,
+    });
+    expect(recipe).not.toBeNull();
+    if (!recipe) throw new Error("expected a valid public recipe");
+    expect(recipeToDeploymentData(recipe).installCfg.allowUnsafeHttp).toBe(
+      false,
+    );
+    expect(
+      recipeToDeploymentData(recipe, { allowUnsafeHttp: true }).installCfg
+        .allowUnsafeHttp,
+    ).toBe(true);
   });
 });
 
@@ -208,20 +228,36 @@ describe("missingRequiredEnvironment", () => {
     env: ["FIRECRAWL_API_KEY", "OTHER"],
   };
 
-  it("treats empty and whitespace-only values as missing", () => {
+  it("treats encrypted empty and whitespace-only values as missing", () => {
     expect(
-      missingRequiredEnvironment(recipe, {
-        env: { FIRECRAWL_API_KEY: "", OTHER: "   " },
-      }),
+      missingRequiredEnvironment(
+        recipe,
+        sealMcpEnvironment({}, "workspace-1", {
+          FIRECRAWL_API_KEY: "",
+          OTHER: "   ",
+        }),
+      ),
     ).toEqual(["FIRECRAWL_API_KEY", "OTHER"]);
   });
 
-  it("accepts non-empty values for every required key", () => {
+  it("accepts configured encrypted values for every required key", () => {
+    expect(
+      missingRequiredEnvironment(
+        recipe,
+        sealMcpEnvironment({}, "workspace-1", {
+          FIRECRAWL_API_KEY: "secret",
+          OTHER: "configured",
+        }),
+      ),
+    ).toEqual([]);
+  });
+
+  it("does not treat legacy plaintext as migrated credential state", () => {
     expect(
       missingRequiredEnvironment(recipe, {
         env: { FIRECRAWL_API_KEY: "secret", OTHER: "configured" },
       }),
-    ).toEqual([]);
+    ).toEqual(["FIRECRAWL_API_KEY", "OTHER"]);
   });
 
   it("carries and enforces required key names after a deployment is detached", () => {

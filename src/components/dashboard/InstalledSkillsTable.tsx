@@ -24,7 +24,6 @@ export type InstalledSkillListItem = {
   name: string;
   slug: string;
   description: string | null;
-  marketManaged: boolean;
   iconUrl: string | null;
   createdAt: string;
 };
@@ -62,7 +61,6 @@ export function InstalledSkillsTable({
     (currentPage - 1) * PAGE_SIZE,
     currentPage * PAGE_SIZE,
   );
-  const marketHref = `/app/${slug}/market/installed`;
 
   return (
     <section className="min-w-0 space-y-4">
@@ -81,50 +79,36 @@ export function InstalledSkillsTable({
         <DashboardTable
           selectedRowIds={activeSelectedIds}
           onSelectionChange={setSelectedIds}
-          selectionActions={({ selectedRowIds }) =>
-            skills.some(
-              (skill) =>
-                skill.marketManaged && selectedRowIds.includes(skill.id),
-            ) ? (
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-xs text-muted-foreground">
-                  {t("managedSelectionHint")}
-                </span>
-                <ButtonLink href={marketHref} variant="secondary" size="sm">
-                  {t("manageMarketInstall")}
-                </ButtonLink>
-              </div>
-            ) : (
-              <form
-                action={uninstallSkillAction}
-                className="flex items-center gap-2"
-              >
-                <input type="hidden" name="workspace" value={slug} />
-                {selectedRowIds.map((id) => (
-                  <input key={id} type="hidden" name="installId" value={id} />
-                ))}
-                <ConfirmSubmitButton
-                  triggerLabel={
-                    <>
-                      <Trash2 className="size-3.5" />
-                      {t("uninstall")} ({selectedRowIds.length})
-                    </>
-                  }
-                  confirmLabel={common("confirm")}
-                  cancelLabel={common("cancel")}
-                  prompt={`${t("uninstall")} (${selectedRowIds.length})?`}
-                  pendingLabel={`${t("uninstall")}…`}
-                  className="items-center"
-                  triggerVariant="secondary"
-                  triggerSize="sm"
-                  confirmVariant="primary"
-                  confirmSize="sm"
-                  cancelVariant="ghost"
-                  cancelSize="sm"
-                />
-              </form>
-            )
-          }
+          selectionActions={({ selectedRowIds }) => (
+            <form
+              action={uninstallSkillAction}
+              className="flex items-center gap-2"
+            >
+              <input type="hidden" name="workspace" value={slug} />
+              {selectedRowIds.map((id) => (
+                <input key={id} type="hidden" name="installId" value={id} />
+              ))}
+              <ConfirmSubmitButton
+                triggerLabel={
+                  <>
+                    <Trash2 className="size-3.5" />
+                    {t("uninstall")} ({selectedRowIds.length})
+                  </>
+                }
+                confirmLabel={common("confirm")}
+                cancelLabel={common("cancel")}
+                prompt={`${t("uninstall")} (${selectedRowIds.length})?`}
+                pendingLabel={`${t("uninstall")}…`}
+                className="items-center"
+                triggerVariant="secondary"
+                triggerSize="sm"
+                confirmVariant="primary"
+                confirmSize="sm"
+                cancelVariant="ghost"
+                cancelSize="sm"
+              />
+            </form>
+          )}
           headers={[
             { label: t("skillColumn") },
             { label: t("added") },
@@ -148,7 +132,7 @@ export function InstalledSkillsTable({
                     alt=""
                     width={32}
                     height={32}
-                    className="size-8 shrink-0 rounded object-cover"
+                    className="size-8 shrink-0 rounded-lg object-cover"
                   />
                 ) : (
                   <Brain className="size-5 shrink-0 text-muted-foreground" />
@@ -188,41 +172,31 @@ export function InstalledSkillsTable({
                     </Button>
                   </PopoverTrigger>
                   <PopoverContent className="w-64 max-w-[calc(100vw-2rem)] p-2">
-                    {skill.marketManaged ? (
-                      <ButtonLink href={marketHref} variant="ghost" size="sm">
-                        {t("manageMarketInstall")}
-                      </ButtonLink>
-                    ) : (
-                      <form action={uninstallSkillAction}>
-                        <input type="hidden" name="workspace" value={slug} />
-                        <input
-                          type="hidden"
-                          name="installId"
-                          value={skill.id}
-                        />
-                        <ConfirmSubmitButton
-                          triggerLabel={
-                            <>
-                              <Trash2 className="size-3.5" />
-                              {t("uninstall")}
-                            </>
-                          }
-                          triggerAriaLabel={`${t("uninstall")}: ${skill.name}`}
-                          confirmLabel={common("confirm")}
-                          cancelLabel={common("cancel")}
-                          prompt={`${t("uninstall")} ${skill.name}?`}
-                          pendingLabel={`${t("uninstall")}…`}
-                          promptClassName="break-words text-xs text-muted-foreground"
-                          className="flex-wrap"
-                          triggerVariant="ghost"
-                          triggerSize="sm"
-                          confirmVariant="primary"
-                          confirmSize="sm"
-                          cancelVariant="ghost"
-                          cancelSize="sm"
-                        />
-                      </form>
-                    )}
+                    <form action={uninstallSkillAction}>
+                      <input type="hidden" name="workspace" value={slug} />
+                      <input type="hidden" name="installId" value={skill.id} />
+                      <ConfirmSubmitButton
+                        triggerLabel={
+                          <>
+                            <Trash2 className="size-3.5" />
+                            {t("uninstall")}
+                          </>
+                        }
+                        triggerAriaLabel={`${t("uninstall")}: ${skill.name}`}
+                        confirmLabel={common("confirm")}
+                        cancelLabel={common("cancel")}
+                        prompt={`${t("uninstall")} ${skill.name}?`}
+                        pendingLabel={`${t("uninstall")}…`}
+                        promptClassName="break-words text-xs text-muted-foreground"
+                        className="flex-wrap"
+                        triggerVariant="ghost"
+                        triggerSize="sm"
+                        confirmVariant="primary"
+                        confirmSize="sm"
+                        cancelVariant="ghost"
+                        cancelSize="sm"
+                      />
+                    </form>
                   </PopoverContent>
                 </Popover>
               </div>,

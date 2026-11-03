@@ -252,7 +252,7 @@ async function authorizeGet(req: Request) {
   if (principal.credential !== "session")
     return callback(redirectUri, state, { error: "access_denied" });
   const sandbox = await ownedSandbox(consent.sandboxId, principal.user.id);
-  if (!sandbox || !sandboxMcpExportable(sandbox.kind))
+  if (!sandbox || !sandboxMcpExportable(sandbox))
     return callback(redirectUri, state, { error: "access_denied" });
   admit(`authorize:${principal.user.id}`, 120);
   const signed = await new SignJWT(consent)
@@ -336,7 +336,7 @@ async function authorizePost(req: Request) {
       callback(consent.redirectUri, consent.state, { error: "invalid_scope" }),
     );
   const sandbox = await ownedSandbox(consent.sandboxId, principal.user.id);
-  if (!sandbox || !sandboxMcpExportable(sandbox.kind))
+  if (!sandbox || !sandboxMcpExportable(sandbox))
     return finishConsent(
       callback(consent.redirectUri, consent.state, { error: "access_denied" }),
     );
@@ -440,7 +440,7 @@ async function exchange(req: Request) {
     )
       fail("invalid_grant");
     const sandbox = await ownedSandbox(code.sandboxId, code.userId);
-    if (!sandbox || !sandboxMcpExportable(sandbox.kind)) fail("invalid_grant");
+    if (!sandbox || !sandboxMcpExportable(sandbox)) fail("invalid_grant");
     const release = beginWorkspaceOperation(sandbox.workspaceId);
     if (!release) fail("temporarily_unavailable", 409);
     try {
@@ -515,7 +515,7 @@ async function exchange(req: Request) {
     fail("invalid_grant");
   const grant = record.grant;
   const sandbox = await ownedSandbox(grant.sandboxId, grant.userId);
-  if (!sandbox || !sandboxMcpExportable(sandbox.kind)) fail("invalid_grant");
+  if (!sandbox || !sandboxMcpExportable(sandbox)) fail("invalid_grant");
   let scopes = grant.oauthScopes;
   if (form.has("scope")) {
     try {

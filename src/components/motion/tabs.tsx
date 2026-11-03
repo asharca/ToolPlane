@@ -11,6 +11,8 @@ import {
   type Transition,
 } from "motion/react";
 import {
+  type ButtonHTMLAttributes,
+  type HTMLAttributes,
   createContext,
   useCallback,
   useContext,
@@ -98,7 +100,7 @@ export function Tabs({
 }
 
 const listClasses: Record<Variant, string> = {
-  pill: "inline-flex items-center gap-1 rounded-full bg-card p-1",
+  pill: "inline-flex items-center gap-1 rounded-xl bg-card p-1",
   underline: "inline-flex items-center gap-1 border-b border-border",
   segment: "inline-flex items-center gap-0 rounded-lg bg-card p-0.5",
 };
@@ -107,11 +109,10 @@ export function TabsList({
   children,
   className,
   wrapperClassName,
+  ...props
 }: {
-  children: ReactNode;
-  className?: string;
   wrapperClassName?: string;
-}) {
+} & HTMLAttributes<HTMLDivElement>) {
   const { variant, value } = useTabs();
   const reduce = useReducedMotion();
   const rootRef = useRef<HTMLDivElement>(null);
@@ -283,7 +284,7 @@ export function TabsList({
     "absolute inset-y-0 z-20 inline-flex w-9 items-center justify-center text-foreground transition-opacity hover:opacity-70 focus-visible:outline-2 focus-visible:-outline-offset-4 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-0";
   const surfaceClass =
     variant === "pill"
-      ? "rounded-full bg-card"
+      ? "rounded-xl bg-card"
       : variant === "segment"
         ? "rounded-lg bg-card"
         : "";
@@ -333,6 +334,7 @@ export function TabsList({
         }}
       >
         <div
+          {...props}
           ref={listRef}
           role="tablist"
           className={cn(listClasses[variant], "w-max", className)}
@@ -373,12 +375,12 @@ export function TabsTrigger({
   children,
   className,
   indicatorClassName,
+  onClick,
+  ...props
 }: {
   value: string;
-  children: ReactNode;
-  className?: string;
   indicatorClassName?: string;
-}) {
+} & Omit<ButtonHTMLAttributes<HTMLButtonElement>, "value">) {
   const { value: current, setValue, layoutId, variant } = useTabs();
   const active = current === value;
   // React owns the initial mask only; TabsList synchronizes subsequent masks.
@@ -389,10 +391,14 @@ export function TabsTrigger({
   if (variant === "underline") {
     return (
       <button
+        {...props}
         type="button"
         role="tab"
         aria-selected={active}
-        onClick={() => setValue(value)}
+        onClick={(event) => {
+          onClick?.(event);
+          if (!event.defaultPrevented) setValue(value);
+        }}
         className={cn(
           "relative isolate px-3 pb-2.5 pt-1 -mb-px text-sm font-medium transition-colors min-h-[44px] inline-flex items-center whitespace-nowrap shrink-0",
           active
@@ -416,7 +422,7 @@ export function TabsTrigger({
     );
   }
 
-  const radius = variant === "pill" ? "rounded-full" : "rounded-md";
+  const radius = variant === "pill" ? "rounded-lg" : "rounded-md";
 
   return (
     <div className="relative shrink-0">
@@ -434,11 +440,15 @@ export function TabsTrigger({
         />
       ) : null}
       <button
+        {...props}
         type="button"
         role="tab"
         aria-selected={active}
         data-tabs-value={value}
-        onClick={() => setValue(value)}
+        onClick={(event) => {
+          onClick?.(event);
+          if (!event.defaultPrevented) setValue(value);
+        }}
         className={cn(
           "relative z-10 inline-flex items-center justify-center whitespace-nowrap bg-transparent px-3.5 py-1.5 text-sm font-medium outline-none",
           "text-muted-foreground hover:text-foreground",

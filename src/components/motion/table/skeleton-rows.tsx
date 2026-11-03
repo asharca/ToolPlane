@@ -32,7 +32,7 @@ export function SkeletonRows<T>({
             >
               <div
                 className={cn(
-                  "h-3 animate-pulse rounded-full bg-muted",
+                  "h-3 animate-pulse rounded-lg bg-muted",
                   column.align === "right" ? "ml-auto w-10" : "w-2/3",
                 )}
               />

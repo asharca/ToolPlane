@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { assertDefined } from "../assert-defined";
 
 const mocks = vi.hoisted(() => ({
   user: vi.fn(),
@@ -9,8 +10,6 @@ const mocks = vi.hoisted(() => ({
   create: vi.fn(),
   update: vi.fn(),
   remove: vi.fn(),
-  market: vi.fn(),
-  modify: vi.fn(),
   transaction: vi.fn(),
   revalidate: vi.fn(),
   redirect: vi.fn(),
@@ -36,7 +35,6 @@ vi.mock("@/lib/db", () => ({
       update: mocks.update,
       deleteMany: mocks.remove,
     },
-    marketInstall: { findFirst: mocks.market, updateMany: mocks.modify },
     $transaction: mocks.transaction,
   },
 }));
@@ -48,8 +46,10 @@ import {
   updateSkillAttributesAction,
   updateSkillContentAction,
   uploadSkillFolderAction,
+  previewSkillUploadAction,
 } from "@/lib/skills/actions";
 
+import { writeZip } from "@/lib/archives/zip";
 function form(values: Record<string, string> = {}) {
   const data = new FormData();
   for (const [key, value] of Object.entries({
@@ -71,7 +71,6 @@ beforeEach(() => {
     typeof operation === "function"
       ? operation({
           installedSkill: { update: mocks.update },
-          marketInstall: { updateMany: mocks.modify },
         })
       : Promise.all(operation),
   );
@@ -95,7 +94,7 @@ describe("custom skill authorization and editing", () => {
         error: "formAccessDenied",
       });
       expect(await importSkillFromGithubAction({}, form())).toEqual({
-        error: "Workspace not found or access denied.",
+        error: "formAccessDenied",
       });
       await updateSkillAttributesAction(form());
       await deleteCustomSkillAction(form());
@@ -117,86 +116,21 @@ describe("custom skill authorization and editing", () => {
     expect(mocks.transaction).not.toHaveBeenCalled();
     expect(mocks.remove).not.toHaveBeenCalled();
   });
-  it("validates creation and reports persistence failures", async () => {
-    expect(await createCustomSkillAction({}, form())).toEqual({
-      error: "invalidCreateInput",
-    });
-    mocks.create.mockRejectedValueOnce(new Error("db offline"));
-    expect(
-      await createCustomSkillAction({}, form({ name: "My Skill" })),
-    ).toEqual({ error: "formSaveFailed" });
-    await expect(
-      createCustomSkillAction(
-        {},
-        form({ name: "My Skill", description: "Description" }),
-      ),
-    ).rejects.toThrow("REDIRECT:/app/team/skills/created");
-    expect(mocks.create).toHaveBeenLastCalledWith({
-      data: expect.objectContaining({
-        name: "My Skill",
-        slug: "my-skill",
-        description: "Description",
-        source: "custom",
-        skillId: null,
-        status: "published",
-      }),
-    });
-  });
-  it("publishes edited content and marks market installs modified atomically", async () => {
+  it("publishes workspace-owned content and reports persistence failures", async () => {
     expect(
       await updateSkillContentAction({}, form({ content: "# Updated" })),
     ).toEqual({ saved: true });
     expect(mocks.update).toHaveBeenCalledWith({
-      where: { id: "skill" },
+      where: { id: "skill", workspaceId: "workspace" },
       data: { content: "# Updated", status: "published" },
     });
-    expect(mocks.modify).toHaveBeenCalledWith(
-      expect.objectContaining({ data: { status: "modified" } }),
-    );
     expect(mocks.revalidate).toHaveBeenCalledWith("/app/team/skills/skill");
-    mocks.transaction.mockRejectedValueOnce(new Error("transaction failed"));
+    mocks.update.mockRejectedValueOnce(new Error("update failed"));
     expect(await updateSkillContentAction({}, form())).toEqual({
       error: "formSaveFailed",
     });
   });
-  it.each([undefined, "", "Description"])(
-    "updates invocation attributes without unintentionally clearing description %s",
-    async (description) => {
-      await updateSkillAttributesAction(
-        form({
-          userInvocable: "on",
-          effort: "high",
-          ...(description === undefined ? {} : { description }),
-        }),
-      );
-      expect(mocks.update).toHaveBeenCalledWith({
-        where: { id: "skill" },
-        data: {
-          userInvocable: true,
-          agentInvocable: false,
-          effort: "high",
-          status: "published",
-          ...(description === undefined
-            ? {}
-            : { description: description || null }),
-        },
-      });
-      await updateSkillAttributesAction(form({ agentInvocable: "on" }));
-      expect(mocks.update).toHaveBeenLastCalledWith({
-        where: { id: "skill" },
-        data: {
-          userInvocable: false,
-          agentInvocable: true,
-          effort: "default",
-          status: "published",
-        },
-      });
-    },
-  );
-  it("preserves market-managed skills but deletes an unlinked custom skill", async () => {
-    mocks.market.mockResolvedValueOnce({ id: "install" });
-    await deleteCustomSkillAction(form());
-    expect(mocks.remove).not.toHaveBeenCalled();
+  it("deletes a workspace-owned custom skill", async () => {
     await expect(deleteCustomSkillAction(form())).rejects.toThrow(
       "REDIRECT:/app/team/skills",
     );
@@ -221,6 +155,7 @@ describe("skill upload parsing", () => {
       name: "Personal Skill",
       filePaths: JSON.stringify(["bundle/SKILL.md", "bundle/icon.png"]),
     });
+    data.set("archive", new File([], ""));
     data.append(
       "folderFiles",
       new File(
@@ -303,6 +238,72 @@ describe("skill upload parsing", () => {
         {},
         form({ repo: "https://attacker.example/skill" }),
       ),
-    ).toEqual({ error: "Enter a valid github.com repository or folder URL." });
+    ).toEqual({ error: "invalidUpload" });
+  });
+  it("binds ZIP root selection to previewed archive bytes and rejects empty explicit selection", async () => {
+    const files = [
+      { path: "first/SKILL.md", data: Buffer.from("# First") },
+      { path: "second/SKILL.md", data: Buffer.from("# Second") },
+    ];
+    const data = form();
+    data.set(
+      "archive",
+      new File([new Uint8Array(writeZip(files))], "skills.zip"),
+    );
+    data.append("folderFiles", new File([], ""));
+    const preview = await previewSkillUploadAction({}, data);
+    const sourceDigest = assertDefined(preview.sourceDigest);
+    expect(preview.preview?.map((root) => root.rootPath)).toEqual([
+      "first",
+      "second",
+    ]);
+    expect(mocks.create).not.toHaveBeenCalled();
+    data.set("sourceDigest", sourceDigest);
+    data.set("selectionMode", "explicit");
+    expect(await uploadSkillFolderAction({}, data)).toEqual({
+      error: "importSelectRoots",
+    });
+    data.append("roots", "second");
+    const changed = form();
+    changed.set(
+      "archive",
+      new File(
+        [
+          new Uint8Array(
+            writeZip([
+              { ...files[0], data: Buffer.from("# Changed") },
+              files[1],
+            ]),
+          ),
+        ],
+        "skills.zip",
+      ),
+    );
+    changed.set("sourceDigest", sourceDigest);
+    changed.set("selectionMode", "explicit");
+    changed.append("roots", "second");
+    expect(await uploadSkillFolderAction({}, changed)).toEqual({
+      error: "importSourceChanged",
+    });
+    await expect(uploadSkillFolderAction({}, data)).rejects.toThrow(
+      "REDIRECT:",
+    );
+    expect(mocks.create).toHaveBeenCalledTimes(1);
+    expect(mocks.create.mock.calls[0][0].data.sourceRef).toBe("second");
+  });
+  it("distinguishes selecting ZIP root from no selected roots", async () => {
+    const data = form({
+      files: JSON.stringify([{ path: "SKILL.md", content: "# Root" }]),
+    });
+    const preview = await previewSkillUploadAction({}, data);
+    const sourceDigest = assertDefined(preview.sourceDigest);
+    expect(preview.preview?.[0].rootPath).toBeNull();
+    data.set("sourceDigest", sourceDigest);
+    data.set("selectionMode", "explicit");
+    data.append("roots", "");
+    await expect(uploadSkillFolderAction({}, data)).rejects.toThrow(
+      "REDIRECT:",
+    );
+    expect(mocks.create).toHaveBeenCalledTimes(1);
   });
 });

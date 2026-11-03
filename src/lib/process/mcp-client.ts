@@ -1,4 +1,5 @@
 import "server-only";
+import { randomUUID } from "node:crypto";
 import {
   assertRuntimeOwner,
   runtimeAbortSignal,
@@ -6,11 +7,12 @@ import {
 import { liveMcpRuntimeSnapshot, livePort } from "./supervisor";
 import {
   parseMcpToolCatalogResult,
+  redactMcpToolCatalogResult,
   type McpToolDefinition,
 } from "./mcp-tool-catalog";
 import { persistDeploymentMcpToolCatalog } from "./mcp-tool-catalog-store";
 import { recordEvent } from "@/lib/observability/events";
-import { withLogContext } from "@/lib/observability/context";
+import { getLogContext, withLogContext } from "@/lib/observability/context";
 
 export type McpTool = McpToolDefinition;
 
@@ -53,6 +55,16 @@ export type McpRpcOptions = {
   maxRequestBytes?: number;
   maxResponseBytes?: number;
   onResponseBytes?: (bytes: number) => void;
+  /**
+   * Platform plumbing (file listing, document storage, sandbox inspection) that merely
+   * uses MCP as transport. Logged as `mcp.internal` and listed under its own log tab.
+   */
+  internal?: boolean;
+};
+
+export type McpToolCatalogOptions = McpRpcOptions & {
+  persistCatalog?: boolean;
+  requireValidCatalog?: boolean;
 };
 
 const MAX_PROMPT_PAGES = 10;
@@ -195,6 +207,8 @@ async function mcpRpcAtPort(
   options: McpRpcOptions = {},
 ): Promise<Record<string, unknown> | null> {
   assertRuntimeOwner();
+  const actorId = await sessionActorId();
+  const caller = actorId ? { actorId } : {};
   const start = performance.now();
   let httpStatus: number | undefined;
   const request = {
@@ -243,8 +257,9 @@ async function mcpRpcAtPort(
       throw error;
     }
     await recordEvent({
+      ...caller,
       domain: "mcp",
-      eventName: "mcp.rpc",
+      eventName: options.internal ? "mcp.internal" : "mcp.rpc",
       rpcMethod: method,
       toolName: typeof params?.name === "string" ? params.name : undefined,
       httpStatus,
@@ -255,8 +270,9 @@ async function mcpRpcAtPort(
     return json?.result ?? null;
   } catch (error) {
     await recordEvent({
+      ...caller,
       domain: "mcp",
-      eventName: "mcp.rpc",
+      eventName: options.internal ? "mcp.internal" : "mcp.rpc",
       rpcMethod: method,
       toolName: typeof params?.name === "string" ? params.name : undefined,
       httpStatus,
@@ -266,6 +282,22 @@ async function mcpRpcAtPort(
     });
     if (error instanceof McpPayloadTooLargeError) throw error;
     return null;
+  }
+}
+
+/**
+ * Pages and server actions run outside request logging. Attribute their calls to
+ * the verified session user; background work has no request scope and stays unattributed.
+ */
+async function sessionActorId(): Promise<string | undefined> {
+  const context = getLogContext();
+  if (context?.actorId || context?.agentId || context?.tokenId)
+    return undefined;
+  try {
+    const { getSessionUserId } = await import("@/lib/auth/session");
+    return (await getSessionUserId()) ?? undefined;
+  } catch {
+    return undefined;
   }
 }
 
@@ -280,26 +312,43 @@ export async function mcpRpc(
   return withLogContext(
     {
       deploymentId,
+      callId: getLogContext()?.callId ?? randomUUID(),
       secrets: liveMcpRuntimeSnapshot(deploymentId)?.redactionValues,
     },
     async () => {
       if (port) return mcpRpcAtPort(port, method, params, timeoutMs, options);
+      const actorId = await sessionActorId();
       await recordEvent({
+        ...(actorId ? { actorId } : {}),
         domain: "mcp",
-        eventName: "mcp.rpc",
+        eventName: options.internal ? "mcp.internal" : "mcp.rpc",
         rpcMethod: method,
+        toolName: typeof params?.name === "string" ? params.name : undefined,
         error: new Error("MCP deployment is not running"),
         errorCode: "deployment_unavailable",
         httpStatus: 503,
+        detail: {
+          request: {
+            jsonrpc: "2.0",
+            method,
+            ...(params === undefined ? {} : { params }),
+          },
+          response: null,
+        },
       });
       return null;
     },
   );
 }
 
+function invalidToolCatalog(options: McpToolCatalogOptions): McpTool[] {
+  if (options.requireValidCatalog) throw new Error("MCP_CATALOG_INVALID");
+  return [];
+}
+
 export async function listMcpTools(
   deploymentId: string,
-  options: McpRpcOptions = {},
+  options: McpToolCatalogOptions = {},
 ): Promise<McpTool[]> {
   let tools: McpTool[] = [];
   let cursor: string | undefined;
@@ -311,7 +360,7 @@ export async function listMcpTools(
   const deadline = Date.now() + MAX_TOOLS_TOTAL_MS;
   for (let page = 0; page < MAX_TOOL_PAGES; page += 1) {
     const remainingMs = deadline - Date.now();
-    if (remainingMs <= 0) return [];
+    if (remainingMs <= 0) return invalidToolCatalog(options);
     const before = liveMcpRuntimeSnapshot(deploymentId);
     if (
       !before ||
@@ -319,7 +368,7 @@ export async function listMcpTools(
         before.generation !== requestGeneration) ||
       (requestPort !== undefined && before.port !== requestPort)
     )
-      return [];
+      return invalidToolCatalog(options);
     requestGeneration ??= before.generation;
     requestPort ??= before.port;
     for (const secret of before.redactionValues)
@@ -349,7 +398,8 @@ export async function listMcpTools(
           ),
       );
     } catch (error) {
-      if (error instanceof McpPayloadTooLargeError) return [];
+      if (error instanceof McpPayloadTooLargeError)
+        return invalidToolCatalog(options);
       throw error;
     }
     const after = liveMcpRuntimeSnapshot(deploymentId);
@@ -358,24 +408,32 @@ export async function listMcpTools(
       after.generation !== before.generation ||
       after.port !== before.port
     )
-      return [];
+      return invalidToolCatalog(options);
     // Never replace a complete snapshot with a partial pagination result.
     remainingResponseBytes -= responseBytes;
-    if (!result || !Array.isArray(result.tools)) return [];
-    if (result.tools.length > MAX_TOOLS - tools.length) return [];
+    if (!result || !Array.isArray(result.tools))
+      return invalidToolCatalog(options);
+    if (result.tools.length > MAX_TOOLS - tools.length)
+      return invalidToolCatalog(options);
     const pageCatalog = parseMcpToolCatalogResult(result.tools);
-    if (!pageCatalog.ok) return [];
+    if (!pageCatalog.ok) return invalidToolCatalog(options);
     const combined = parseMcpToolCatalogResult([
       ...tools,
       ...pageCatalog.tools,
     ]);
-    if (!combined.ok) return [];
+    if (!combined.ok) return invalidToolCatalog(options);
     tools = combined.tools;
 
     if (result.nextCursor === undefined) {
+      if (options.persistCatalog === false) {
+        const redacted = redactMcpToolCatalogResult(tools, [
+          ...requestRedactionValues,
+        ]);
+        return redacted.ok ? redacted.tools : invalidToolCatalog(options);
+      }
       return persistDeploymentMcpToolCatalog(deploymentId, tools, [
         ...requestRedactionValues,
-      ]).catch(() => []);
+      ]).catch(() => invalidToolCatalog(options));
     }
     const nextCursor = result.nextCursor;
     if (
@@ -387,11 +445,11 @@ export async function listMcpTools(
       tools.length >= MAX_TOOLS ||
       remainingResponseBytes <= 0
     )
-      return [];
+      return invalidToolCatalog(options);
     seenCursors.add(nextCursor);
     cursor = nextCursor;
   }
-  return [];
+  return invalidToolCatalog(options);
 }
 
 export async function listMcpPrompts(

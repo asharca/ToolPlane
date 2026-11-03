@@ -13,6 +13,8 @@ import {
   type McpJsonConfigActionState,
 } from "@/lib/workspace/actions";
 import { SubmitButton } from "@/components/dashboard/SubmitButton";
+import { McpSharedChangeConfirmation } from "./McpSharedChangeConfirmation";
+import { McpHttpConsent } from "./McpHttpConsent";
 import {
   McpNetworkModeControl,
   type McpNetworkMode,
@@ -35,6 +37,7 @@ export function McpJsonConfigEditor({
   warnAboutPackageInstall,
   variablesHref,
   configuredVariables = 0,
+  remote = false,
 }: {
   slug: string;
   deploymentId: string;
@@ -44,6 +47,7 @@ export function McpJsonConfigEditor({
   warnAboutPackageInstall: boolean;
   variablesHref?: string;
   configuredVariables?: number;
+  remote?: boolean;
 }) {
   const t = useTranslations("console.mcp");
   const [state, formAction, isPending] = useActionState<
@@ -95,7 +99,7 @@ export function McpJsonConfigEditor({
       </header>
       <div className="space-y-5 px-5 py-5">
         {variablesHref ? (
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border bg-muted/25 px-3 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-muted/25 px-3 py-3">
             <div className="flex min-w-0 items-start gap-2.5">
               <KeyRound className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
               <div>
@@ -117,15 +121,24 @@ export function McpJsonConfigEditor({
             </ButtonLink>
           </div>
         ) : null}
-        <McpNetworkModeControl
-          value={network}
-          onChange={(value) => {
-            setNetwork(value);
-            setLastEditAt(Date.now());
-          }}
-          disabled={isPending}
-          warnAboutPackageInstall={warnAboutPackageInstall}
+        <McpSharedChangeConfirmation
+          workspace={slug}
+          deploymentId={deploymentId}
+          impactedObjects={state.impactedObjects}
         />
+        {remote ? (
+          <McpHttpConsent />
+        ) : (
+          <McpNetworkModeControl
+            value={network}
+            onChange={(value) => {
+              setNetwork(value);
+              setLastEditAt(Date.now());
+            }}
+            disabled={isPending}
+            warnAboutPackageInstall={warnAboutPackageInstall}
+          />
+        )}
         <div>
           <p className="mb-2 text-sm font-semibold text-foreground">
             {t("jsonConfig")}
@@ -153,7 +166,7 @@ export function McpJsonConfigEditor({
                 aria-label={t("jsonConfig")}
                 // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users must be able to scroll masked configuration without revealing secrets.
                 tabIndex={0}
-                className="h-[min(28rem,50dvh)] w-full overflow-auto overscroll-contain whitespace-pre-wrap [overflow-wrap:anywhere] rounded-md border border-border bg-background p-4 font-mono text-xs leading-5 text-foreground"
+                className="h-[min(28rem,50dvh)] w-full overflow-auto overscroll-contain whitespace-pre-wrap [overflow-wrap:anywhere] rounded-xl border border-border bg-background p-4 font-mono text-xs leading-5 text-foreground"
               >
                 {maskedConfig}
               </section>

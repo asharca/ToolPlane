@@ -9,6 +9,11 @@ import {
   CenterMorphModalContent,
 } from "@/components/motion/center-morph-modal";
 import { Checkbox } from "@/components/motion/checkbox";
+import {
+  DialogCancel,
+  DialogFooter,
+  DialogHeader,
+} from "@/components/dashboard/dialog";
 
 export function ComposerToolbarCustomizer({
   open,
@@ -18,6 +23,7 @@ export function ComposerToolbarCustomizer({
   options,
   pinnedIds,
   onChange,
+  defaultPinnedIds = [],
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -26,6 +32,7 @@ export function ComposerToolbarCustomizer({
   options: readonly { id: string; label: string; icon: LucideIcon }[];
   pinnedIds: readonly string[];
   onChange: (ids: string[]) => void;
+  defaultPinnedIds?: readonly string[];
 }) {
   const common = useTranslations("common");
   const checkboxId = useId();
@@ -51,9 +58,7 @@ export function ComposerToolbarCustomizer({
         closeButtonLabel={common("close")}
         className="flex max-h-[calc(100dvh-6rem)] max-w-md flex-col"
       >
-        <header className="flex shrink-0 items-center gap-3 border-b border-border pl-5 pr-16 py-4">
-          <h2 className="min-w-0 text-lg font-semibold">{title}</h2>
-        </header>
+        <DialogHeader title={title} className="border-b border-border" />
         <div className="min-h-0 overflow-y-auto px-5 py-2">
           {orderedOptions.map((option) => {
             const index = pinnedIds.indexOf(option.id);
@@ -132,18 +137,24 @@ export function ComposerToolbarCustomizer({
             );
           })}
         </div>
-        <footer className="flex shrink-0 justify-end border-t border-border px-5 py-4">
-          <Button
-            type="button"
-            disabled={!pinnedIds.length}
-            onClick={() => onChange([])}
-            variant="secondary"
-            size="sm"
-          >
-            <RotateCcw className="size-3.5" />
-            {resetLabel}
-          </Button>
-        </footer>
+        <DialogFooter
+          start={
+            <Button
+              type="button"
+              disabled={
+                pinnedIds.length === defaultPinnedIds.length &&
+                pinnedIds.every((id, index) => id === defaultPinnedIds[index])
+              }
+              onClick={() => onChange([...defaultPinnedIds])}
+              variant="secondary"
+              size="md"
+            >
+              <RotateCcw className="size-4" />
+              {resetLabel}
+            </Button>
+          }
+          cancel={<DialogCancel>{common("close")}</DialogCancel>}
+        />
       </CenterMorphModalContent>
     </CenterMorphModal>
   );

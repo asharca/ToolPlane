@@ -9,6 +9,7 @@ import { KeyRound, Copy, Check, Trash2 } from "lucide-react";
 import { createTokenAction, revokeTokenAction } from "@/lib/auth/actions";
 import type { TokenState } from "@/lib/auth/actions";
 import { DashboardEmptyState, DashboardPanel } from "./DashboardUI";
+import { DialogField } from "./dialog";
 
 export type TokenView = {
   id: string;
@@ -32,12 +33,12 @@ function NewTokenReveal({ token }: { token: string }) {
   const t = useTranslations("console.tokens");
   const [copied, setCopied] = useState(false);
   return (
-    <div className="rounded-md border border-border bg-muted p-3 border-border bg-muted">
+    <div className="rounded-xl border border-border bg-muted p-3 border-border bg-muted">
       <p className="mb-2 text-xs font-medium text-(--color-success) dark:text-(--color-success)">
         {t("copyThisTokenNowYouWontBeAbleToSeeItAgain")}
       </p>
       <div className="flex items-center gap-2">
-        <code className="min-w-0 flex-1 truncate rounded bg-card px-2 py-1.5 font-mono text-sm text-foreground">
+        <code className="min-w-0 flex-1 truncate rounded-lg bg-card px-2 py-1.5 font-mono text-sm text-foreground">
           {token}
         </code>
         <Button
@@ -76,6 +77,14 @@ export function TokenManager({
     createTokenAction,
     {},
   );
+  const [tokenName, setTokenName] = useState("");
+  const [savedName, setSavedName] = useState("");
+  const [createdToken, setCreatedToken] = useState(state.token);
+  if (createdToken !== state.token) {
+    // A newly created token commits the typed name as the clean baseline.
+    setCreatedToken(state.token);
+    if (state.token) setSavedName(tokenName);
+  }
 
   return (
     <DashboardPanel
@@ -89,20 +98,21 @@ export function TokenManager({
 
         <form action={formAction} className="flex flex-wrap items-end gap-2">
           <input type="hidden" name="workspace" value={workspaceSlug} />
-          <div className="flex-1 space-y-1.5">
-            <label
-              htmlFor="token-name"
-              className="text-sm font-medium text-foreground"
-            >
-              {t("tokenName")}
-            </label>
+          <DialogField
+            label={t("tokenName")}
+            htmlFor="token-name"
+            dirty={tokenName !== savedName}
+            className="flex-1"
+          >
             <Input
               id="token-name"
               name="name"
               type="text"
+              value={tokenName}
+              onChange={setTokenName}
               placeholder={t("egMyLaptop")}
             />
-          </div>
+          </DialogField>
           <CreateButton />
         </form>
         {state.error ? (
@@ -122,14 +132,14 @@ export function TokenManager({
             className="min-h-48"
           />
         ) : (
-          <ul className="divide-y divide-border overflow-hidden rounded-md border border-border">
+          <ul className="divide-y divide-border overflow-hidden rounded-xl border border-border">
             {tokens.map((token) => (
               <li
                 key={token.id}
                 className="flex items-center justify-between gap-3 px-3.5 py-3"
               >
                 <div className="flex min-w-0 items-center gap-3">
-                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
                     <KeyRound className="h-4 w-4" />
                   </span>
                   <div className="min-w-0">

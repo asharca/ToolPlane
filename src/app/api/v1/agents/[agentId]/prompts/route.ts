@@ -1,17 +1,18 @@
 import { withRequestLogging } from "@/lib/observability/http";
-import { NextResponse } from "next/server";
 import { z } from "zod";
 import { resolveRequestUser } from "@/lib/auth/request-user";
 import { getAgentForRequest } from "@/lib/agents/queries";
-import { resolveAgentTools } from "@/lib/agents/resolve";
 import {
-  listAttachedMcpPrompts,
-  McpPromptRequestError,
-  resolveAttachedMcpPromptText,
-} from "@/lib/process/mcp-prompts";
+  AgentSessionRequestError,
+  resolveAgentRequestSession,
+} from "@/lib/agents/request-session";
+import {
+  listAgentSessionPrompts,
+  resolveAgentSessionPrompt,
+} from "@/lib/agents/session-resources";
+import { McpPromptRequestError } from "@/lib/process/mcp-prompts";
 
 export const runtime = "nodejs";
-
 const PromptRequestSchema = z
   .object({
     deploymentId: z.string().trim().min(1).max(240),
@@ -21,76 +22,48 @@ const PromptRequestSchema = z
       .default({}),
   })
   .strict();
+type Params = { params: Promise<{ agentId: string }> };
 
-async function requestAgent(agentId: string, req: Request) {
+async function handle(req: Request, { params }: Params) {
   const user = await resolveRequestUser(req);
-  if (!user) return null;
-  const agent = await getAgentForRequest(agentId, user.id);
-  return agent;
-}
-
-export const GET = withRequestLogging(
-  "/api/v1/agents/[agentId]/prompts",
-  async function GET(
-    req: Request,
-    { params }: { params: Promise<{ agentId: string }> },
-  ) {
-    const { agentId } = await params;
-    const agent = await requestAgent(agentId, req);
-    if (!agent)
-      return NextResponse.json({ error: "Agent not found." }, { status: 404 });
-    const resolved = resolveAgentTools(agent);
-    const prompts = await listAttachedMcpPrompts({
-      workspaceId: agent.workspaceId,
-      deploymentIds: resolved.deploymentIds,
-      signal: req.signal,
+  if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
+  const liveAgent = await getAgentForRequest((await params).agentId, user.id);
+  if (!liveAgent)
+    return Response.json({ error: "Agent not found." }, { status: 404 });
+  try {
+    const query = new URL(req.url).searchParams;
+    const { agent, mcpContext } = await resolveAgentRequestSession(liveAgent, {
+      conversationId: query.get("conversationId"),
+      workSessionId: query.get("workSessionId"),
     });
-    return NextResponse.json({ prompts });
-  },
-);
-
-export const POST = withRequestLogging(
-  "/api/v1/agents/[agentId]/prompts",
-  async function POST(
-    req: Request,
-    { params }: { params: Promise<{ agentId: string }> },
-  ) {
-    const { agentId } = await params;
-    const agent = await requestAgent(agentId, req);
-    if (!agent)
-      return NextResponse.json({ error: "Agent not found." }, { status: 404 });
-    let input: z.infer<typeof PromptRequestSchema>;
-    try {
-      input = PromptRequestSchema.parse(await req.json());
-    } catch {
-      return NextResponse.json(
+    const deploymentIds = agent.servers.map((grant) => grant.deploymentId);
+    if (req.method === "GET")
+      return Response.json({
+        prompts: await listAgentSessionPrompts(mcpContext, deploymentIds),
+      });
+    const parsed = PromptRequestSchema.safeParse(
+      await req.json().catch(() => null),
+    );
+    if (!parsed.success)
+      return Response.json(
         { error: "Invalid MCP prompt request." },
         { status: 400 },
       );
-    }
-
-    try {
-      const resolved = resolveAgentTools(agent);
-      const prompt = await resolveAttachedMcpPromptText({
-        workspaceId: agent.workspaceId,
-        deploymentIds: resolved.deploymentIds,
-        deploymentId: input.deploymentId,
-        name: input.name,
-        argumentsValue: input.arguments,
-        signal: req.signal,
-      });
-      return NextResponse.json(prompt);
-    } catch (error) {
-      if (error instanceof McpPromptRequestError) {
-        return NextResponse.json(
-          { error: error.message },
-          { status: error.status },
-        );
-      }
-      return NextResponse.json(
-        { error: "MCP prompt is unavailable." },
-        { status: 502 },
-      );
-    }
-  },
-);
+    return Response.json(
+      await resolveAgentSessionPrompt(mcpContext, deploymentIds, parsed.data),
+    );
+  } catch (error) {
+    if (
+      error instanceof AgentSessionRequestError ||
+      error instanceof McpPromptRequestError
+    )
+      return Response.json({ error: error.message }, { status: error.status });
+    return Response.json(
+      { error: "Session MCP prompt is unavailable." },
+      { status: 403 },
+    );
+  }
+}
+const route = "/api/v1/agents/[agentId]/prompts";
+export const GET = withRequestLogging(route, handle);
+export const POST = withRequestLogging(route, handle);

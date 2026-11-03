@@ -1,3 +1,4 @@
+import { resolvePiSessionPackages } from "@/lib/agents/pi-session-packages";
 // @vitest-environment node
 import { createHash, randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -5,14 +6,16 @@ import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { getAgentForRun } from "@/lib/agents/queries";
 import { resolveAgentPiPackages } from "@/lib/agents/resolve";
-import { runAgentTurn } from "@/lib/agents/run";
-import { updateAgent } from "@/lib/agents/mutations";
+import { runDedicatedSandboxTurn } from "@/lib/agents/sandbox-turn";
+import { createConversation, updateAgent } from "@/lib/agents/mutations";
+import { publishAgentRevision } from "@/lib/agents/revisions";
+import { publishFixtureAgentRevision } from "./agent-revision-fixture";
 import {
   assertWorkPiPackageSnapshot,
   createWorkSession,
 } from "@/lib/work/sessions";
-import { marketReleaseChecksum } from "@/lib/market/artifact";
-import type { PiPackageManifestV1 } from "@/lib/market/pi-package-manifest";
+import { marketReleaseChecksum } from "@/lib/pi-packages/artifact";
+import type { PiPackageManifestV1 } from "@/lib/pi-packages/manifest";
 
 const stamp = randomUUID();
 let workspaceId = "",
@@ -21,8 +24,11 @@ let workspaceId = "",
 let sequence = 0;
 
 function manifest(name: string, version: number): PiPackageManifestV1 {
+  const arch = process.arch;
+  if (arch !== "x64" && arch !== "arm64")
+    throw new Error(`Unsupported native fixture architecture: ${arch}`);
   const bytes = Buffer.from(
-    `export default function(pi) { pi.registerCommand("Version", { handler: async () => pi.sendMessage({ customType: "version", content: "${version}", display: true }) }); }`,
+    `export default function(pi) { pi.registerCommand("${name}-version", { handler: async () => pi.sendMessage({ customType: "version", content: "${version}", display: true }) }); }`,
   );
   return {
     schemaVersion: 1,
@@ -49,9 +55,9 @@ function manifest(name: string, version: number): PiPackageManifestV1 {
       runtime: {
         kind: "pi-sdk",
         piVersion: "0.87.1",
-        nodeMajor: 24,
+        nodeMajor: 26,
         platform: "linux",
-        arch: "arm64",
+        arch,
       },
       resources: {
         extensions: ["package/index.ts"],
@@ -136,7 +142,6 @@ async function fixture() {
         listingId: listing.id,
         targetWorkspaceId: workspaceId,
         currentReleaseId: releases[0].id,
-        requestedReleaseId: releases[0].id,
         status: "ready",
         idempotencyKey: name,
         resourceMap: { kind: "pi-package" },
@@ -151,6 +156,18 @@ async function fixture() {
     });
     packages.push({ listing, install, v1: releases[0], v2: releases[1] });
   }
+  await publishAgentRevision(workspaceId, agent.id, {
+    expectedRevisionId: null,
+    environment: {
+      kind: "docker",
+      image: `fixture@sha256:${"a".repeat(64)}`,
+      network: "isolated",
+      piVersion: "0.87.1",
+      initialSnapshot: null,
+      resourceLimits: { memoryBytes: 536870912, cpus: 1, pidsLimit: 128 },
+      credentialReferences: [],
+    },
+  });
   return { agent, sandbox, packages };
 }
 
@@ -228,7 +245,6 @@ describe.sequential("Pi SDK resource consumers", () => {
       where: { id: upgraded.install.id },
       data: {
         currentReleaseId: upgraded.v2.id,
-        requestedReleaseId: upgraded.v2.id,
       },
     });
     assertWorkPiPackageSnapshot(
@@ -261,10 +277,50 @@ describe.sequential("Pi SDK resource consumers", () => {
         releaseId: install.id === upgraded.install.id ? upgraded.v2.id : v1.id,
       })),
     });
+    await publishFixtureAgentRevision(workspaceId, agent.id);
     const current = await enabled(agent.id);
     expect(() =>
       assertWorkPiPackageSnapshot("pi-sdk", work.runtimeSnapshot, current),
     ).toThrow("PI_SDK_PACKAGE_SET_CHANGED");
+    const restored = await resolvePiSessionPackages({
+      workspaceId,
+      agentId: agent.id,
+      conversationId: work.conversationId,
+    });
+    assertWorkPiPackageSnapshot(
+      "pi-sdk",
+      work.runtimeSnapshot,
+      restored.packages,
+    );
+    expect(
+      restored.packages.map(({ marketInstallId, releaseId, checksum }) => ({
+        marketInstallId,
+        releaseId,
+        checksum,
+      })),
+    ).toEqual(original);
+    await db.piSessionPackageSet.update({
+      where: { conversationId: work.conversationId },
+      data: {
+        legacy: true,
+        packages: { updateMany: { where: {}, data: { resourceMap: {} } } },
+      },
+    });
+    await expect(
+      resolvePiSessionPackages({
+        workspaceId,
+        agentId: agent.id,
+        conversationId: work.conversationId,
+      }),
+    ).rejects.toThrow("AGENT_REVISION_UNRESOLVED");
+    const unresolved = await db.piSessionPackageSet.findUniqueOrThrow({
+      where: { conversationId: work.conversationId },
+      include: { packages: true },
+    });
+    expect(unresolved.legacy).toBe(true);
+    expect(unresolved.packages.map((entry) => entry.resourceMap)).toEqual(
+      packages.map(() => ({})),
+    );
     const next = await createWorkSession({
       workspaceId,
       agentId: agent.id,
@@ -283,10 +339,15 @@ describe.sequential("Pi SDK resource consumers", () => {
     ).toEqual(work.runtimeSnapshot);
   });
 
-  it.each(["release-revoked", "listing-disabled", "bytes-tampered"] as const)(
-    "revalidates fresh Work and sub-agent resources after %s",
+  it.each(["release-revoked", "listing-withdrawn", "bytes-tampered"] as const)(
+    "revalidates fresh Work and pinned native session resources after %s",
     async (change) => {
       const { agent, packages } = await fixture();
+      const conversation = await createConversation(workspaceId, agent.id);
+      const loaded = await getAgentForRun(agent.id, workspaceId);
+      if (!conversation || !loaded)
+        throw new Error("Missing pinned native session fixture");
+      const revisionId = conversation.agentRevisionId;
       const selected = packages[0];
       expect(
         (await enabled(agent.id)).find(
@@ -296,12 +357,12 @@ describe.sequential("Pi SDK resource consumers", () => {
       if (change === "release-revoked")
         await db.marketRelease.update({
           where: { id: selected.v1.id },
-          data: { reviewStatus: "rejected" },
+          data: { reviewStatus: "revoked" },
         });
-      if (change === "listing-disabled")
+      if (change === "listing-withdrawn")
         await db.marketListing.update({
           where: { id: selected.listing.id },
-          data: { status: "disabled" },
+          data: { status: "withdrawn" },
         });
       if (change === "bytes-tampered")
         await db.marketRelease.update({
@@ -319,21 +380,47 @@ describe.sequential("Pi SDK resource consumers", () => {
           agentId: agent.id,
           task: "Must not execute",
         }),
-      ).rejects.toThrow("PI_PACKAGE_UNAVAILABLE");
+      ).rejects.toThrow(
+        change !== "bytes-tampered"
+          ? "A pinned capability release is unavailable or security-revoked."
+          : "PI_PACKAGE_UNAVAILABLE",
+      );
       await expect(
-        runAgentTurn(agent.id, "Must not execute", {
-          workspaceId,
-          depth: 1,
-          visited: new Set(["parent-agent"]),
+        runDedicatedSandboxTurn({
+          agent: loaded,
+          conversationId: conversation.id,
+          messages: [
+            {
+              role: "user",
+              parts: [{ type: "text", text: "Must not execute" }],
+            },
+          ],
         }),
-      ).resolves.toContain("PI_PACKAGE_UNAVAILABLE");
+      ).rejects.toThrow(
+        change !== "bytes-tampered"
+          ? "A pinned capability release is unavailable or security-revoked."
+          : "PI_PACKAGE_UNAVAILABLE",
+      );
+      expect(
+        await db.conversation.findUniqueOrThrow({
+          where: { id: conversation.id },
+        }),
+      ).toMatchObject({ agentRevisionId: revisionId, sandboxId: null });
+      expect(
+        await db.sandbox.count({
+          where: {
+            workspaceId,
+            config: { path: ["managedBy"], equals: "agent-conversation" },
+          },
+        }),
+      ).toBe(0);
       expect(await db.workSession.count({ where: { agentId: agent.id } })).toBe(
         0,
       );
     },
   );
 
-  it("does not silently continue an old Work after removing its packages, while a fresh package-free Work is valid", async () => {
+  it("restores old Work packages after removing defaults while fresh package-free Work stays empty", async () => {
     const { agent } = await fixture();
     const work = await createWorkSession({
       workspaceId,
@@ -353,10 +440,22 @@ describe.sequential("Pi SDK resource consumers", () => {
       maxSteps: agent.maxSteps,
       piPackages: [],
     });
+    await publishFixtureAgentRevision(workspaceId, agent.id);
     const current = await enabled(agent.id);
     expect(() =>
       assertWorkPiPackageSnapshot("pi-sdk", work.runtimeSnapshot, current),
     ).toThrow("PI_SDK_PACKAGE_SET_CHANGED");
+    const restored = await resolvePiSessionPackages({
+      workspaceId,
+      agentId: agent.id,
+      conversationId: work.conversationId,
+    });
+    assertWorkPiPackageSnapshot(
+      "pi-sdk",
+      work.runtimeSnapshot,
+      restored.packages,
+    );
+    expect(restored.packages.length).toBeGreaterThan(0);
     expect(() => assertWorkPiPackageSnapshot("pi-sdk", {}, current)).toThrow(
       "PI_SDK_PACKAGE_SET_CHANGED",
     );
@@ -367,5 +466,72 @@ describe.sequential("Pi SDK resource consumers", () => {
     });
     expect(next?.runtimeSnapshot).toMatchObject({ piPackages: [] });
     assertWorkPiPackageSnapshot("pi-sdk", next?.runtimeSnapshot, current);
+  });
+
+  it("starts Pi without MCP servers whose grant exposes no tools", async () => {
+    const { agent } = await fixture();
+    const [granted, empty] = await Promise.all(
+      ["granted", "empty"].map(() =>
+        db.deployment.create({ data: { workspaceId, source: "config" } }),
+      ),
+    );
+    await db.agentServer.createMany({
+      data: [
+        {
+          agentId: agent.id,
+          deploymentId: granted.id,
+          allowedToolNames: ["search"],
+        },
+        { agentId: agent.id, deploymentId: empty.id, allowedToolNames: [] },
+      ],
+    });
+    const base = await db.agentRevision.findUniqueOrThrow({
+      where: {
+        agentId_version: {
+          agentId: agent.id,
+          version: (
+            await db.agent.findUniqueOrThrow({ where: { id: agent.id } })
+          ).currentRevisionVersion,
+        },
+      },
+    });
+    const grant = (deploymentId: string, allowedToolNames: string[]) => ({
+      deploymentId,
+      definitionChecksum: "a".repeat(64),
+      runtimeImageDigest: null,
+      runtimeFilesChecksum: "b".repeat(64),
+      allowedToolNames,
+    });
+    const revision = await db.agentRevision.create({
+      data: {
+        agentId: agent.id,
+        version: base.version + 1,
+        config: {
+          ...(base.config as Prisma.JsonObject),
+          mcpGrants: [grant(empty.id, []), grant(granted.id, ["search"])],
+        },
+      },
+    });
+    await db.agent.update({
+      where: { id: agent.id },
+      data: { currentRevisionVersion: revision.version },
+    });
+    const work = await createWorkSession({
+      workspaceId,
+      agentId: agent.id,
+      task: "List MCP tools",
+    });
+    if (!work) throw new Error("Work was not created");
+    // Session MCP rejects discovery for a tool-less grant, which would abort the
+    // whole Pi session before the first model call.
+    expect(
+      (
+        await resolvePiSessionPackages({
+          workspaceId,
+          agentId: agent.id,
+          conversationId: work.conversationId,
+        })
+      ).deploymentIds,
+    ).toEqual([granted.id]);
   });
 });

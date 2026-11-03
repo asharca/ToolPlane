@@ -12,6 +12,7 @@ export type AgentApiErrorCode =
   | "concurrency_limit_exceeded"
   | "runtime_maintenance"
   | "runtime_unavailable"
+  | "runtime_unsupported"
   | "upstream_error"
   | "request_timeout"
   | "cancelled"
@@ -58,6 +59,8 @@ export function publicErrorMessage(code: AgentApiErrorCode): string {
       return "The Agent runtime is temporarily under maintenance.";
     case "runtime_unavailable":
       return "The Agent runtime is temporarily unavailable.";
+    case "runtime_unsupported":
+      return "This Agent runtime does not support public endpoint execution.";
     case "upstream_error":
       return "The Agent could not complete this response.";
     case "request_timeout":
@@ -85,6 +88,7 @@ const AGENT_API_ERROR_CODES = new Set<AgentApiErrorCode>([
   "concurrency_limit_exceeded",
   "runtime_maintenance",
   "runtime_unavailable",
+  "runtime_unsupported",
   "upstream_error",
   "request_timeout",
   "cancelled",
@@ -144,6 +148,7 @@ function statusForCode(code: AgentApiErrorCode): number {
   if (code === "endpoint_disabled") return 403;
   if (code === "request_too_large") return 413;
   if (code === "response_too_large") return 502;
+  if (code === "runtime_unsupported") return 409;
   if (code === "conversation_not_found" || code === "not_found") return 404;
   if (code === "conversation_busy" || code === "idempotency_conflict")
     return 409;

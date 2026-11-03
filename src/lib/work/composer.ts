@@ -2,10 +2,8 @@ import "server-only";
 import type { Prisma } from "@prisma/client";
 import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import { db } from "@/lib/db";
-import {
-  type getAgentForRequest,
-  ORDINARY_AGENT_FILTER,
-} from "@/lib/agents/queries";
+import { agentSessionWorkspaceRoot } from "@/lib/agents/session-paths";
+import { type AgentForRun, ORDINARY_AGENT_FILTER } from "@/lib/agents/queries";
 import { resolveAgentTools } from "@/lib/agents/resolve";
 import {
   activeConversationMessages,
@@ -15,14 +13,15 @@ import { displayMessagingUserText } from "@/lib/agents/messaging";
 import { skillLabel } from "@/lib/workspace/skill-label";
 import { buildInstalledSkillMarkdown } from "@/lib/skills/artifact";
 import { mcpRpc } from "@/lib/process/mcp-client";
-import {
-  listAttachedMcpResources,
-  readAttachedMcpResource,
-} from "@/lib/process/mcp-resources";
-import { normalizeWorkDirectory } from "./sessions";
 import type { ComposerItem, ComposerReference } from "./composer-types";
+import { normalizeWorkDirectory } from "./sessions";
 
-type Agent = NonNullable<Awaited<ReturnType<typeof getAgentForRequest>>>;
+type Agent = AgentForRun;
+import type { SessionMcpContext } from "@/lib/process/session-mcp";
+import {
+  listAgentSessionResources,
+  readAgentSessionResource,
+} from "@/lib/agents/session-resources";
 export class ComposerRequestError extends Error {
   constructor(
     readonly status: number,
@@ -56,6 +55,7 @@ async function sandboxForComposer(
   agent: Agent,
   sandboxId?: string,
   workSessionId?: string,
+  context?: SessionMcpContext,
 ) {
   if (workSessionId) {
     const work = await db.workSession.findFirst({
@@ -71,25 +71,47 @@ async function sandboxForComposer(
     sandboxId = work.sandboxId;
   }
   if (
-    !sandboxId ||
-    (!agent.sandboxes.some((link) => link.sandboxId === sandboxId) &&
-      agent.runtime?.sandboxId !== sandboxId)
-  ) {
-    throw new ComposerRequestError(
-      404,
-      "Sandbox is not attached to this Agent.",
-    );
-  }
+    !context?.conversationId ||
+    context.agentId !== agent.id ||
+    context.workspaceId !== agent.workspaceId
+  )
+    throw new ComposerRequestError(400, "A pinned conversation is required.");
+  const session = await db.conversation.findFirst({
+    where: {
+      id: context.conversationId,
+      agentId: agent.id,
+      agentRevisionId: context.agentRevisionId,
+      legacyRevisionUnresolved: false,
+    },
+    select: { sandboxId: true },
+  });
+  if (!session?.sandboxId || (sandboxId && sandboxId !== session.sandboxId))
+    throw new ComposerRequestError(404, "Session sandbox not found.");
+  sandboxId = session.sandboxId;
   const sandbox = await db.sandbox.findFirst({
     where: { id: sandboxId, workspaceId: agent.workspaceId },
-    select: { id: true, deploymentId: true, kind: true },
+    select: { id: true, deploymentId: true, kind: true, config: true },
   });
   if (!sandbox) throw new ComposerRequestError(404, "Sandbox not found.");
-  return sandbox;
+  const config = sandbox.config;
+  const shared =
+    config &&
+    typeof config === "object" &&
+    !Array.isArray(config) &&
+    config.scope === "agent";
+  if (shared && config.agentId !== agent.id)
+    throw new ComposerRequestError(404, "Session sandbox not found.");
+  return {
+    ...sandbox,
+    workspaceRoot: shared
+      ? agentSessionWorkspaceRoot({ conversationId: context.conversationId })
+      : "/workspace",
+  };
 }
 
 async function sandboxFiles(
   deploymentId: string,
+  workspaceRoot: string,
   input: { query?: string; read?: string },
   signal?: AbortSignal,
 ) {
@@ -101,12 +123,12 @@ async function sandboxFiles(
       arguments: {
         runtime: "node",
         args: ["-e", FILES_SCRIPT, JSON.stringify(input)],
-        cwd: ".",
+        cwd: workspaceRoot.replace(/^\/workspace\/?/, "") || ".",
         timeoutMs: 10_000,
       },
     },
     15_000,
-    { signal, maxResponseBytes: 256 * 1024 },
+    { signal, maxResponseBytes: 256 * 1024, internal: true },
   );
   const parsed = CallToolResultSchema.safeParse(result);
   const first = parsed.success
@@ -138,6 +160,7 @@ async function sessionScope(
     agent: { workspaceId: agent.workspaceId, ...ORDINARY_AGENT_FILTER },
     publicApiConversation: { is: null },
     OR: [
+      { agentId: agent.id, sandboxId },
       {
         workSession: {
           is: {
@@ -181,6 +204,7 @@ export async function listComposerItems(
     excludeConversationId?: string;
   },
   signal?: AbortSignal,
+  context?: SessionMcpContext,
 ): Promise<{ items: ComposerItem[]; filesUnavailable?: boolean }> {
   if (input.section === "skills") {
     return {
@@ -193,11 +217,12 @@ export async function listComposerItems(
     };
   }
   if (input.section === "resources") {
-    const resources = await listAttachedMcpResources({
-      workspaceId: agent.workspaceId,
-      deploymentIds: resolveAgentTools(agent).deploymentIds,
-      signal,
-    });
+    if (!context)
+      throw new ComposerRequestError(400, "A pinned conversation is required.");
+    const resources = await listAgentSessionResources(
+      context,
+      resolveAgentTools(agent).deploymentIds,
+    );
     return {
       items: resources.map((resource) => ({
         kind: "resource",
@@ -212,11 +237,15 @@ export async function listComposerItems(
     agent,
     input.sandboxId,
     input.workSessionId,
+    context,
   );
   const [files, sessions] = await Promise.all([
-    sandboxFiles(sandbox.deploymentId, { query: input.query }, signal).catch(
-      () => null,
-    ),
+    sandboxFiles(
+      sandbox.deploymentId,
+      sandbox.workspaceRoot,
+      { query: input.query },
+      signal,
+    ).catch(() => null),
     db.conversation.findMany({
       where: {
         ...(await sessionScope(agent, sandbox.id)),
@@ -257,6 +286,7 @@ export async function resolveComposerReference(
     workSessionId?: string;
   },
   signal?: AbortSignal,
+  context?: SessionMcpContext,
 ): Promise<ComposerReference> {
   let label: string;
   let text: string;
@@ -272,13 +302,14 @@ export async function resolveComposerReference(
   } else if (input.kind === "resource") {
     if (!input.deploymentId)
       throw new ComposerRequestError(400, "MCP deployment is required.");
-    const result = await readAttachedMcpResource({
-      workspaceId: agent.workspaceId,
-      deploymentIds: resolveAgentTools(agent).deploymentIds,
-      deploymentId: input.deploymentId,
-      uri: input.id,
-      signal,
-    });
+    if (!context)
+      throw new ComposerRequestError(400, "A pinned conversation is required.");
+    const result = await readAgentSessionResource(
+      context,
+      resolveAgentTools(agent).deploymentIds,
+      input.deploymentId,
+      input.id,
+    );
     label = result.resource.name;
     text = `${input.id}\n${result.text}`;
   } else {
@@ -286,6 +317,7 @@ export async function resolveComposerReference(
       agent,
       input.sandboxId,
       input.workSessionId,
+      context,
     );
     if (input.kind === "file") {
       const path = normalizeWorkDirectory(input.id);
@@ -293,13 +325,14 @@ export async function resolveComposerReference(
         throw new ComposerRequestError(400, "Invalid file path.");
       const result = await sandboxFiles(
         sandbox.deploymentId,
+        sandbox.workspaceRoot,
         { read: path },
         signal,
       );
       if (typeof result.text !== "string")
         throw new ComposerRequestError(422, "No readable file content.");
       label = path;
-      text = `${sandbox.kind === "hermes" ? "/opt/data/workspace" : "/workspace"}/${path}\n${result.text}`;
+      text = `${sandbox.workspaceRoot}/${path}\n${result.text}`;
     } else {
       const session = await db.conversation.findFirst({
         where: { ...(await sessionScope(agent, sandbox.id)), id: input.id },

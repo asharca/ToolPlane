@@ -1,70 +1,45 @@
 import "server-only";
 import { db } from "@/lib/db";
-import { isAgentEndpointRuntimeSandboxConfig } from "@/lib/agents/public-api/tool-policy";
+
+// Never select credential envelopes for pages.
+const SSH_SERVER_PUBLIC_FIELDS = {
+  host: true,
+  port: true,
+  username: true,
+  root: true,
+  authType: true,
+} as const;
 
 export async function listSandboxes(workspaceId: string) {
   return db.sandbox.findMany({
-    where: { workspaceId, kind: { not: "hermes" } },
+    where: { workspaceId },
     orderBy: { createdAt: "desc" },
     include: {
       deployment: true,
       agentLinks: { select: { agent: { select: { id: true, name: true } } } },
-      _count: { select: { agentLinks: true, snapshots: true } },
-    },
-  });
-}
-
-export async function listManagedAgentRuntimes(workspaceId: string) {
-  const runtimes = await db.agentRuntime.findMany({
-    where: {
-      workspaceId,
-      kind: "hermes",
-      agent: { publicRuntimeAllocation: { is: null } },
-    },
-    orderBy: { createdAt: "desc" },
-    select: {
-      id: true,
-      image: true,
-      status: true,
-      lastError: true,
-      lastSyncedAt: true,
-      agent: {
-        select: { id: true, name: true },
+      sshServer: { select: SSH_SERVER_PUBLIC_FIELDS },
+      externalAgentLinks: {
+        select: { access: true, agent: { select: { id: true, name: true } } },
+        orderBy: { createdAt: "asc" },
       },
-      sandbox: {
-        select: {
-          id: true,
-          name: true,
-          slug: true,
-          createdAt: true,
-          config: true,
-          deploymentId: true,
-          deployment: { select: { status: true } },
-          snapshots: {
-            orderBy: { createdAt: "desc" },
-            select: {
-              id: true,
-              name: true,
-              status: true,
-              error: true,
-              createdAt: true,
-            },
-          },
-        },
+      _count: {
+        select: { agentLinks: true, externalAgentLinks: true, snapshots: true },
       },
     },
   });
-  return runtimes.filter(
-    (runtime) => !isAgentEndpointRuntimeSandboxConfig(runtime.sandbox.config),
-  );
 }
 
 export async function getSandbox(workspaceId: string, sandboxId: string) {
   return db.sandbox.findFirst({
-    where: { id: sandboxId, workspaceId, kind: { not: "hermes" } },
+    where: { id: sandboxId, workspaceId },
     include: {
       deployment: true,
       agentLinks: { include: { agent: { select: { id: true, name: true } } } },
+      sshServer: { select: SSH_SERVER_PUBLIC_FIELDS },
+      externalAgentLinks: {
+        select: { access: true, agent: { select: { id: true, name: true } } },
+        orderBy: { createdAt: "asc" },
+      },
       snapshots: { orderBy: { createdAt: "desc" } },
     },
   });

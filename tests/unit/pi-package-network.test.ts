@@ -19,8 +19,8 @@ vi.mock("node:https", async (original) => ({
   ...(await original<typeof Https>()),
   request: transport.request,
 }));
-vi.mock("@/lib/market/skills", () => ({
-  MarketError: class extends Error {
+vi.mock("@/lib/plugins/catalog", () => ({
+  PluginError: class extends Error {
     constructor(
       readonly code: string,
       message: string,
@@ -33,7 +33,7 @@ import {
   piSourceRequest,
   piSourceUrl,
   sourceAuthorization,
-} from "@/lib/market/pi-package-network";
+} from "@/lib/pi-packages/network";
 
 beforeEach(() => {
   vi.clearAllMocks();

@@ -1,18 +1,19 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { marketReleaseChecksum } from "@/lib/market/artifact";
+import { marketReleaseChecksum } from "@/lib/pi-packages/artifact";
 import {
   parsePiPackageReleaseManifest,
   scanPiPackageReleaseManifest,
   type PiPackageEntryV1,
   type PiPackageManifestV1,
-} from "@/lib/market/pi-package-manifest";
+} from "@/lib/pi-packages/manifest";
+import { readPluginChangelog } from "@/lib/plugins/changelog";
 
 function file(
   path: string,
-  content = "export default function () {}",
+  content: string | Buffer = "export default function () {}",
 ): PiPackageEntryV1 {
-  const bytes = Buffer.from(content);
+  const bytes = typeof content === "string" ? Buffer.from(content) : content;
   return {
     type: "file",
     path,
@@ -48,7 +49,7 @@ function fixture(): PiPackageManifestV1 {
       runtime: {
         kind: "pi-sdk",
         piVersion: "0.87.1",
-        nodeMajor: 24,
+        nodeMajor: 26,
         platform: "linux",
         arch: "arm64",
       },
@@ -74,6 +75,65 @@ function withEntries(entries: PiPackageEntryV1[]): PiPackageManifestV1 {
 }
 
 describe("immutable Pi package manifests", () => {
+  it("accepts upload digest provenance and rejects mismatched requested identity", () => {
+    const manifest = fixture();
+    const sha256 = "a".repeat(64);
+    manifest.package.source = {
+      kind: "zip",
+      requested: `zip:sha256:${sha256}`,
+      sha256,
+    };
+    expect(parsePiPackageReleaseManifest(manifest)).toEqual(manifest);
+    manifest.package.source.requested = `zip:sha256:${"b".repeat(64)}`;
+    expect(() => parsePiPackageReleaseManifest(manifest)).toThrow(
+      "pi_package_invalid_source",
+    );
+  });
+
+  it("preserves pinned GitHub directory provenance without changing historical Git sources", () => {
+    const manifest = fixture();
+    const url = "https://github.com/team/registry.git";
+    const commit = "a".repeat(40);
+    manifest.package.source = {
+      kind: "git",
+      requested: `${url}#${commit}`,
+      url,
+      commit,
+      path: "packages/review",
+    };
+    expect(parsePiPackageReleaseManifest(manifest).package.source).toEqual(
+      manifest.package.source,
+    );
+    const checksum = marketReleaseChecksum(manifest);
+    manifest.package.source.path = "packages/another";
+    expect(() => parsePiPackageReleaseManifest(manifest, checksum)).toThrow();
+    delete manifest.package.source.path;
+    manifest.package.source.url = "https://git.example.com/team/review.git";
+    manifest.package.source.requested = `${manifest.package.source.url}#main`;
+    expect(parsePiPackageReleaseManifest(manifest).package.source).toEqual(
+      manifest.package.source,
+    );
+  });
+
+  it.each([
+    "../review",
+    "/review",
+    "packages//review",
+    "packages/./review",
+    "packages\\review",
+  ])("rejects unsafe captured directory provenance %s", (path) => {
+    const manifest = fixture();
+    const url = "https://github.com/team/registry.git";
+    const commit = "a".repeat(40);
+    manifest.package.source = {
+      kind: "git",
+      requested: `${url}#${commit}`,
+      url,
+      commit,
+      path,
+    };
+    expect(() => parsePiPackageReleaseManifest(manifest)).toThrow();
+  });
   it("accepts resource-only portable ToolPlane packages without executable placeholders", () => {
     const manifest = fixture();
     manifest.package.source = {
@@ -85,7 +145,7 @@ describe("immutable Pi package manifests", () => {
     manifest.package.runtime = {
       kind: "pi-sdk",
       piVersion: "0.87.1",
-      nodeMajor: 24,
+      nodeMajor: 26,
       platform: "any",
       arch: "any",
     };
@@ -546,5 +606,221 @@ describe("immutable Pi package manifests", () => {
     } catch (error) {
       expect((error as Error).message).toBe("pi_package_invalid_path");
     }
+  });
+});
+
+describe("immutable plugin changelog attribution", () => {
+  function changelog(text: string | Buffer, name = "CHANGELOG.md") {
+    return parsePiPackageReleaseManifest(
+      withEntries([file(`package/${name}`, text)]),
+    ).package;
+  }
+
+  it.each([
+    "## [1.2.3] - 2026-11-04",
+    "## v1.2.3",
+    "## [v1.2.3]",
+    "## 1.2.3 ###",
+    "## [1.2.3] - date",
+    "## [1.2.3](https://example.com/compare) - 2026-11-04",
+  ])(
+    "extracts only the exact release section %s and retains nested content",
+    (heading) => {
+      const snapshot = changelog(
+        `# Changelog\n\n## [Unreleased]\nFuture\n\n${heading}\nCurrent\n\n### Fixed\nDetail\n\n~~~md\n## 9.0.0\nExample\n~~~\n\n## 1.2.2\nOlder`,
+      );
+      expect(readPluginChangelog(snapshot)).toEqual({
+        text: "Current\n\n### Fixed\nDetail\n\n~~~md\n## 9.0.0\nExample\n~~~",
+        sourceUrl: null,
+        kind: "release-notes",
+      });
+    },
+  );
+
+  it("does not attribute Unreleased, similar versions or code examples to the current version", () => {
+    const text = [
+      "# Changelog",
+      "## Unreleased",
+      "Future",
+      "```md",
+      "## 1.2.3",
+      "Example only",
+      "````",
+      "    ## 1.2.3",
+      "<pre>",
+      "```",
+      "## 1.2.3",
+      "HTML code only",
+      "</pre>",
+      "<!--",
+      "## 1.2.3",
+      "Hidden example",
+      "-->",
+      "## 1.2.30",
+      "Other patch",
+      "## 1.2.3-beta.1",
+      "Prerelease",
+      "## 1.2.3+build",
+      "Different build",
+      "## [1.2.2] - 2026-10-01",
+      "Older",
+    ].join("\n");
+    expect(readPluginChangelog(changelog(text))).toEqual({
+      text,
+      sourceUrl: null,
+      kind: "changelog",
+    });
+  });
+
+  it("uses stable root-file priority, ignores dependency docs, and prefers explicit release notes", () => {
+    const snapshot = parsePiPackageReleaseManifest(
+      withEntries([
+        file("package/HISTORY.md", "History"),
+        file("package/node_modules/other/CHANGELOG.md", "Dependency"),
+        file("package/CHANGELOG.txt", "Plain text"),
+        file("package/cHaNgElOg.MD", "## 1.2.3\nCurrent"),
+      ]),
+    ).package;
+    expect(readPluginChangelog(snapshot)?.text).toBe("Current");
+    expect(readPluginChangelog(snapshot, "Authored release notes")).toEqual({
+      text: "Authored release notes",
+      sourceUrl: null,
+      kind: "release-notes",
+    });
+    expect(
+      readPluginChangelog(parsePiPackageReleaseManifest(fixture()).package),
+    ).toBeNull();
+    expect(readPluginChangelog(changelog(" \n\t"), " \n")).toBeNull();
+  });
+
+  it.each(["HISTORY", "history.markdown", "Changelog.txt"])(
+    "supports the documented alternate root filename %s",
+    (name) =>
+      expect(
+        readPluginChangelog(changelog("History snapshot", name))?.kind,
+      ).toBe("changelog"),
+  );
+
+  it.each([
+    Buffer.from([0xc3, 0x28]),
+    Buffer.from("Binary\0payload"),
+    Buffer.from("Control\u001b[31m"),
+    Buffer.from("x".repeat(256 * 1024 + 1)),
+    Buffer.from("界".repeat(90_000)),
+  ])("rejects oversized, binary or invalid UTF-8 documents", (bytes) => {
+    expect(readPluginChangelog(changelog(bytes))).toBeNull();
+  });
+
+  it("accepts valid UTF-8 up to the exact byte boundary", () => {
+    const text = `更新\n${"x".repeat(256 * 1024 - 7)}`;
+    expect(readPluginChangelog(changelog(text))?.text).toBe(text);
+  });
+
+  it("pins source links to the frozen commit and encoded package path, including persisted extracted notes", () => {
+    const manifest = withEntries([
+      file("package/CHANGELOG.md", "## 1.2.3\nCurrent"),
+    ]);
+    const url = "https://github.com/team/registry.git";
+    const commit = "a".repeat(40);
+    manifest.package.source = {
+      kind: "git",
+      url,
+      commit,
+      requested: `${url}#${commit}`,
+      path: "packages/review notes#1",
+    };
+    const snapshot = parsePiPackageReleaseManifest(manifest).package;
+    const expected = `https://github.com/team/registry/blob/${commit}/packages/review%20notes%231/CHANGELOG.md`;
+    expect(readPluginChangelog(snapshot)?.sourceUrl).toBe(expected);
+    expect(readPluginChangelog(snapshot, "Current")?.sourceUrl).toBe(expected);
+    expect(
+      readPluginChangelog(snapshot, "Independent notes")?.sourceUrl,
+    ).toBeNull();
+    expect(
+      readPluginChangelog(changelog("Full snapshot"))?.sourceUrl,
+    ).toBeNull();
+  });
+
+  it.each([
+    "https://github.com.evil.test/team/repo.git",
+    "https://code.example/team/repo.git",
+  ])("does not create GitHub links from an unrelated source %s", (url) => {
+    const manifest = withEntries([
+      file("package/CHANGELOG.md", "## 1.2.3\nCurrent"),
+    ]);
+    manifest.package.source = {
+      kind: "git",
+      url,
+      requested: url,
+      commit: "a".repeat(40),
+    };
+    expect(
+      readPluginChangelog(parsePiPackageReleaseManifest(manifest).package)
+        ?.sourceUrl,
+    ).toBeNull();
+  });
+
+  it.each([
+    "ssh://git@github.com/team/repo.git",
+    "https://credential@github.com/team/repo.git",
+    "https://github.com/team/repo.git?token=secret",
+    "https://github.com/team/repo.git#main",
+  ])(
+    "rejects unsafe snapshot provenance before changelog derivation %s",
+    (url) => {
+      const manifest = withEntries([
+        file("package/CHANGELOG.md", "## 1.2.3\nCurrent"),
+      ]);
+      manifest.package.source = {
+        kind: "git",
+        url,
+        requested: url,
+        commit: "a".repeat(40),
+      };
+      expect(() => parsePiPackageReleaseManifest(manifest)).toThrow(
+        "pi_package_invalid_source",
+      );
+    },
+  );
+
+  it("keeps historical content checksum-bound rather than following newer changelog bytes", () => {
+    const old = withEntries([
+      file("package/CHANGELOG.md", "## 1.2.3\nOriginal"),
+    ]);
+    const checksum = marketReleaseChecksum(old);
+    const latest = withEntries([
+      file("package/CHANGELOG.md", "## 1.2.3\nChanged later"),
+    ]);
+    expect(
+      readPluginChangelog(parsePiPackageReleaseManifest(old, checksum).package)
+        ?.text,
+    ).toBe("Original");
+    expect(() => parsePiPackageReleaseManifest(latest, checksum)).toThrow(
+      "pi_package_checksum_mismatch",
+    );
+  });
+
+  it("scans both extracted notes and the entire file even when no matching version exists", () => {
+    const secret = `sk-${"x".repeat(40)}`;
+    const manifest = withEntries([
+      file("package/CHANGELOG.md", `## 1.2.3\n${secret}`),
+    ]);
+    const notes = readPluginChangelog(
+      parsePiPackageReleaseManifest(manifest).package,
+    );
+    const scan = scanPiPackageReleaseManifest(manifest, notes?.text);
+    expect(scan.status).toBe("blocked");
+    expect(scan.findings).toContainEqual({
+      kind: "openai_key",
+      path: "releaseNotes",
+    });
+    const unmatched = withEntries([
+      file("package/HISTORY", `## Unreleased\n${secret}`),
+    ]);
+    expect(
+      readPluginChangelog(parsePiPackageReleaseManifest(unmatched).package)
+        ?.kind,
+    ).toBe("changelog");
+    expect(scanPiPackageReleaseManifest(unmatched).status).toBe("blocked");
   });
 });

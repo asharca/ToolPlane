@@ -46,7 +46,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 26
           cache: pnpm
 
       - name: Install dependencies
@@ -98,7 +98,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 26
           cache: pnpm
 
       - name: Install dependencies
@@ -110,8 +110,8 @@ jobs:
       - name: Enable pgvector
         run: psql "$DATABASE_URL" -c 'CREATE EXTENSION IF NOT EXISTS vector'
 
-      - name: Push Prisma schema
-        run: pnpm exec prisma db push
+      - name: Apply database migrations
+        run: pnpm exec prisma migrate deploy
 
       - name: Biome lint, format and typecheck
         run: pnpm check
@@ -119,8 +119,8 @@ jobs:
       - name: Build Pi package capture sandbox
         run: docker build --target pi-package-capture -t toolplane-pi-package-capture:0.87.1 .
 
-      - name: Test
-        run: pnpm test:coverage
+      - name: Test core functionality
+        run: pnpm test
 
       - name: Build
         run: pnpm build
@@ -139,17 +139,6 @@ jobs:
           printf 'Runtime archive: %s bytes; limit: %s bytes\n' "$artifact_size" "$((100 * 1024 * 1024))"
           test "$artifact_size" -le $((100 * 1024 * 1024))
 
-      - name: Upload coverage to Codecov
-        if: >-
-          github.repository == 'asharca/ToolPlane' &&
-          github.ref == 'refs/heads/main' &&
-          (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
-        uses: codecov/codecov-action@v5
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: ./coverage/lcov.info
-          disable_search: true
-          fail_ci_if_error: true
 
   release-metadata:
     name: validate

@@ -1,12 +1,11 @@
 {
   "name": "toolplane",
-  "version": "0.32.0",
+  "version": "0.33.0",
   "private": true,
   "engines": {
-    "node": ">=22.19.0"
+    "node": ">=26.12.1"
   },
   "scripts": {
-    "postinstall": "fumadocs-mdx",
     "prepare": "node -e \"if(require('node:fs').existsSync('.git')) import('./scripts/install-git-hooks.mjs')\"",
     "hooks:install": "node scripts/install-git-hooks.mjs",
     "check:staged": "node scripts/check-staged.mjs",
@@ -27,11 +26,7 @@
     "db:generate": "prisma generate",
     "db:seed": "tsx scripts/smoke-seed.ts",
     "db:studio": "prisma studio",
-    "db:seed:real": "tsx scripts/seed-real-mcp-skills.ts",
     "account:reset-password": "tsx scripts/reset-user-password.ts",
-    "skills:sync:tp": "node --conditions=react-server --import tsx scripts/sync-tp-skills.ts",
-    "skills:import:anthropic": "tsx scripts/import-anthropic-skills.ts",
-    "mcp:import:common": "tsx scripts/import-common-mcp-servers.ts",
     "connector:dev": "node packages/connector/bin/connector.mjs"
   },
   "dependencies": {
@@ -63,9 +58,6 @@
     "clsx": "^2.1.1",
     "dotenv": "^17.4.2",
     "file-type": "22.0.1",
-    "fumadocs-core": "^16.15.18",
-    "fumadocs-mdx": "^15.4.6",
-    "fumadocs-ui": "^16.15.18",
     "geist": "^1.7.2",
     "grammy": "1.41.1",
     "jose": "^6.2.3",
@@ -94,6 +86,7 @@
     "telegram-markdown-v2": "0.0.4",
     "undici": "^7.28.0",
     "ws": "^8.21.0",
+    "yaml": "2.9.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {

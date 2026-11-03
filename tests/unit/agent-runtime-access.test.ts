@@ -25,6 +25,8 @@ describe("Agent runtime access grants", () => {
   const payload = {
     workspaceId: "workspace-1",
     agentId: "agent-1",
+    agentRevisionId: "revision-1",
+    conversationId: "conversation-1",
     sandboxId: "sandbox-1",
     providerId: "provider-1",
     deploymentIds: ["deployment-1", "deployment-1"],
@@ -55,6 +57,17 @@ describe("Agent runtime access grants", () => {
     await expect(
       verifyAgentRuntimeToken(token, now + 301_000),
     ).resolves.toBeNull();
+  });
+
+  it("refuses unresolved revision credentials", async () => {
+    await expect(
+      createAgentRuntimeToken({ ...payload, agentRevisionId: "" }, now),
+    ).rejects.toThrow("payload is invalid");
+  });
+  it("refuses a revision credential without a persisted session identity", async () => {
+    await expect(
+      createAgentRuntimeToken({ ...payload, conversationId: undefined }, now),
+    ).rejects.toThrow("payload is invalid");
   });
 
   it("does not mint grants beyond the short lifetime ceiling", async () => {

@@ -1,6 +1,8 @@
 import "server-only";
 import { createHash } from "node:crypto";
 import {
+  Artifact,
+  Part,
   AgentCard,
   Message,
   SendMessageRequest,
@@ -19,11 +21,7 @@ import {
 } from "@/lib/runtime/ownership-state";
 import { beginWorkspaceOperation } from "@/lib/workspace/operation-gate";
 import { withLogContext } from "@/lib/observability/context";
-import {
-  createRemoteClient,
-  remoteResult,
-  textArtifact,
-} from "./remote-client";
+import { createRemoteClient, remoteResult } from "./remote-client";
 import { remoteCredential } from "./remote-registry";
 import { assertRemoteGrant } from "./remote-policy";
 import { isRemoteGrant, type TaskGrant } from "./principal";
@@ -35,18 +33,34 @@ import {
   interruptTask,
   recordTaskSettled,
 } from "./store";
-import { terminal, settled, taskEvent } from "./model";
-import type { TaskExecutor } from "./executor";
+import {
+  terminal,
+  settled,
+  taskEvent,
+  acceptsOutput,
+  stampArtifactProvenance,
+} from "./model";
+import type { TaskExecutor } from "@/lib/agents/execution/executor";
+import { prepareTaskFileParts, stageTaskFileTransfers } from "./task-files";
+import { assertTaskFileReadAuthority, hydrateTaskParts } from "./files";
+import { runtimeEnv } from "@/lib/runtime-env";
+import { validateSend } from "./validation";
 
-async function clientFor(row: A2ATask, cancellation = false) {
+async function clientFor(
+  row: A2ATask,
+  cancellation = false,
+  fileReception = false,
+) {
   const grant = row.grant as unknown as TaskGrant;
   if (!isRemoteGrant(grant)) throw new RemoteA2AError();
-  await assertRemoteGrant(grant, db, cancellation);
+  if (fileReception) await assertTaskFileReadAuthority(row.id);
+  else await assertRemoteGrant(grant, db, cancellation);
   const remote = await db.remoteA2AAgent.findFirstOrThrow({
     where: { id: grant.remoteAgentId, workspaceId: grant.workspaceId },
   });
   // Check again after loading: a concurrent reconfiguration must not send a previous task to a new identity.
-  await assertRemoteGrant(grant, db, cancellation);
+  if (fileReception) await assertTaskFileReadAuthority(row.id);
+  else await assertRemoteGrant(grant, db, cancellation);
   const binding = createHash("sha256")
     .update(
       JSON.stringify([
@@ -72,6 +86,15 @@ async function clientFor(row: A2ATask, cancellation = false) {
     },
   );
 }
+/** Poll observations persist an event only when the projected task content changes. */
+function observationFingerprint(task: Task) {
+  return JSON.stringify([
+    task.status?.state,
+    task.status?.message ? Message.toJSON(task.status.message) : null,
+    task.artifacts.map((artifact) => Artifact.toJSON(artifact)),
+    task.metadata ?? null,
+  ]);
+}
 async function recordObservation(
   id: string,
   result: SendMessageResult,
@@ -79,6 +102,7 @@ async function recordObservation(
   expectedMessageId?: string,
 ) {
   const observation = remoteResult(result);
+  let receiveFiles = false;
   const committed = await db.$transaction(async (tx) => {
     const row = await lockTask(tx, id);
     if (
@@ -98,55 +122,144 @@ async function recordObservation(
       (row.remoteContextId && row.remoteContextId !== observation.contextId)
     )
       throw new RemoteA2AError("Remote task binding changed.");
+    const remote = await tx.remoteA2AAgent.findFirstOrThrow({
+      where: { id: grant.remoteAgentId, workspaceId: grant.workspaceId },
+    });
+    const card = AgentCard.fromJSON(remote.card);
+    const acceptedModes =
+      SendMessageRequest.fromJSON(row.request).configuration
+        ?.acceptedOutputModes ?? [];
+    const allParts = [
+      ...observation.artifacts.flatMap((artifact) => artifact.parts),
+      ...(observation.message?.parts ?? []),
+    ];
+    if (
+      allParts.some(
+        (part) =>
+          !acceptsOutput(
+            card.defaultOutputModes,
+            part.mediaType || "text/plain",
+          ) || !acceptsOutput(acceptedModes, part.mediaType || "text/plain"),
+      )
+    )
+      throw new RemoteA2AError("Remote output MIME type was not negotiated.");
+    const context = await tx.a2AContext.findUniqueOrThrow({
+      where: { id: row.contextId },
+    });
     const task = Task.fromJSON(row.snapshot);
-    const state =
+    const previous = observationFingerprint(task);
+    for (const remoteArtifact of observation.artifacts) {
+      const artifactId = createHash("sha256")
+        .update(
+          JSON.stringify([
+            "remote-artifact",
+            row.id,
+            observation.taskId,
+            remoteArtifact.artifactId,
+          ]),
+        )
+        .digest("hex");
+      const parts = await prepareTaskFileParts(
+        tx,
+        id,
+        grant.workspaceId,
+        remoteArtifact.parts,
+        `output:artifact:${artifactId}`,
+        context.expiresAt,
+      );
+      const artifact = stampArtifactProvenance(
+        Artifact.fromJSON({
+          artifactId,
+          name: remoteArtifact.name || "result",
+          parts: parts.map((part) => Part.toJSON(part)),
+        }),
+        {
+          taskId: id,
+          contextId: task.contextId,
+          targetId: grant.remoteAgentId,
+          targetKind: "remote",
+        },
+      );
+      const index = task.artifacts.findIndex(
+        (value) => value.artifactId === artifactId,
+      );
+      if (index < 0) task.artifacts.push(artifact);
+      else task.artifacts[index] = artifact;
+    }
+    if (task.artifacts.length > 16)
+      throw new RemoteA2AError("Remote artifact limit exceeded.");
+    let statusMessage: Message | undefined;
+    if (observation.message) {
+      const messageId = createHash("sha256")
+        .update(JSON.stringify([row.id, observation.message.messageId]))
+        .digest("hex");
+      const parts = await prepareTaskFileParts(
+        tx,
+        id,
+        grant.workspaceId,
+        observation.message.parts,
+        `output:message:${messageId}`,
+        context.expiresAt,
+      );
+      statusMessage = Message.fromJSON({
+        messageId,
+        taskId: id,
+        contextId: row.contextId,
+        role: "ROLE_AGENT",
+        parts: parts.map((part) => Part.toJSON(part)),
+      });
+    }
+    const hasFiles = allParts.some((part) => part.content?.$case !== "text");
+    receiveFiles =
+      hasFiles &&
+      !!(await tx.a2ATaskFile.count({
+        where: { taskId: id, status: { not: "ready" } },
+      }));
+    const observedState =
       observation.state === TaskState.TASK_STATE_SUBMITTED
         ? TaskState.TASK_STATE_WORKING
         : observation.state;
-    if (!terminal(state) && !observation.taskId) throw new RemoteA2AError();
-    // A cancellation request never fabricates confirmation. The remote's completed/failed/canceled result wins.
-    const detail = observation.detail || undefined;
-    const nextPhase = terminal(state) ? "done" : "remote-waiting";
+    const state = receiveFiles ? TaskState.TASK_STATE_WORKING : observedState;
+    if (!terminal(observedState) && !observation.taskId)
+      throw new RemoteA2AError();
     if (!task.status) throw new RemoteA2AError();
-    const changed =
-      task.status?.state !== state ||
-      task.status?.message?.parts
-        .map((part) => part.content?.value)
-        .join("\n") !== detail;
-    if (task.status?.state !== state) {
+    if (task.status.state !== state) {
       // A peer may resume externally resolved input/auth without a local model round.
       if (
         [6, 8].includes(task.status.state) &&
         state === TaskState.TASK_STATE_WORKING
       )
         transition(task, TaskState.TASK_STATE_SUBMITTED);
-      transition(task, state, detail);
-    } else if (changed) {
-      task.status = {
-        ...task.status,
-        state,
-        timestamp: new Date().toISOString(),
-        message: detail
-          ? Message.fromJSON({
-              messageId: crypto.randomUUID(),
-              taskId: id,
-              contextId: row.contextId,
-              role: "ROLE_AGENT",
-              parts: [{ text: detail }],
-            })
-          : undefined,
-      };
+      transition(task, state);
     }
-    if (state === TaskState.TASK_STATE_COMPLETED && observation.text) {
-      task.artifacts.push(textArtifact(observation.text));
-    }
+    task.status = { ...task.status, state, message: statusMessage };
+    // Keep the peer's actual state separate from the local scheduling projection.
+    task.metadata = {
+      ...task.metadata,
+      toolplaneRemote: {
+        state: TaskState[observation.state],
+        outcome: "observed",
+      },
+      toolplaneFileDelivery: {
+        state: receiveFiles ? "pending" : "ready",
+        remoteState: observedState,
+      },
+    };
+    const changed = observationFingerprint(task) !== previous;
+    if (changed) task.status.timestamp = new Date().toISOString();
     const fields = {
       remoteTaskId: observation.taskId,
       remoteContextId: observation.contextId,
+      remoteObservedState: observedState,
+      remoteFilesStatus: receiveFiles ? "pending" : "ready",
       remotePollAt: new Date(Date.now() + 2000),
       remotePollFailures: 0,
       leaseToken: null,
-      phase: nextPhase,
+      phase: receiveFiles
+        ? "remote-file-receiving"
+        : terminal(state)
+          ? "done"
+          : "remote-waiting",
     };
     const updated =
       changed || terminal(state) || expectedLease
@@ -154,6 +267,7 @@ async function recordObservation(
         : await tx.a2ATask.update({ where: { id }, data: fields });
     if (row.state !== updated.state && settled(updated.state)) return updated;
   });
+  if (receiveFiles) await stageTaskFileTransfers(id);
   if (committed) await recordTaskSettled(committed);
 }
 /** Submit exactly once per accepted local message. Subsequent work uses GetTask, not SendMessage retries. */
@@ -169,6 +283,25 @@ export const executeRemoteTask: TaskExecutor = async (row, signal) => {
       JSON.stringify(["a2a-remote-message", grant.ownerKey, message.messageId]),
     )
     .digest("hex");
+  const remote = await db.remoteA2AAgent.findFirstOrThrow({
+    where: { id: grant.remoteAgentId, workspaceId: grant.workspaceId },
+  });
+  const card = AgentCard.fromJSON(remote.card);
+  validateSend(input, card.defaultOutputModes);
+  if (
+    message.parts.some(
+      (part) =>
+        !acceptsOutput(card.defaultInputModes, part.mediaType || "text/plain"),
+    )
+  )
+    throw new RemoteA2AError(
+      "Remote Agent does not accept an input MIME type.",
+    );
+  const parts = await hydrateTaskParts(
+    row.id,
+    message.parts,
+    runtimeEnv("NEXT_PUBLIC_APP_URL") || "http://localhost:3000",
+  );
   await db.$transaction(async (tx) => {
     const current = await lockTask(tx, row.id);
     await assertRemoteGrant(grant, tx);
@@ -194,7 +327,7 @@ export const executeRemoteTask: TaskExecutor = async (row, signal) => {
     message: {
       messageId: outboundId,
       role: "ROLE_USER",
-      parts: message.parts.map((part) => ({ text: part.content?.value })),
+      parts: parts.map((part) => Part.toJSON(part)),
       ...(row.remoteTaskId
         ? { taskId: row.remoteTaskId, contextId: row.remoteContextId }
         : {}),
@@ -202,13 +335,90 @@ export const executeRemoteTask: TaskExecutor = async (row, signal) => {
     configuration: {
       returnImmediately: true,
       historyLength: 0,
-      acceptedOutputModes: ["text/plain"],
+      acceptedOutputModes: input.configuration?.acceptedOutputModes.length
+        ? input.configuration.acceptedOutputModes
+        : ["*/*"],
     },
   });
   const result = await client.sendMessage(request, { signal });
   await recordObservation(row.id, result, row.leaseToken);
   return { state: TaskState.TASK_STATE_WORKING, deferred: true };
 };
+
+/** File retry may refresh expiring sources through GetTask, but never calls SendMessage. */
+export async function refreshRemoteTaskFileSources(
+  row: A2ATask,
+  signal?: AbortSignal,
+) {
+  if (!row.remoteTaskId || row.remoteObservedState == null) return;
+  const client = await clientFor(row, false, true);
+  const result = await client.getTask(
+    GetTaskRequest.fromJSON({ id: row.remoteTaskId, historyLength: 0 }),
+    { signal },
+  );
+  const observation = remoteResult(result);
+  if (
+    observation.taskId !== row.remoteTaskId ||
+    observation.contextId !== row.remoteContextId ||
+    (terminal(row.remoteObservedState) &&
+      observation.state !== row.remoteObservedState)
+  )
+    throw new RemoteA2AError("Remote file source binding changed.");
+  await assertTaskFileReadAuthority(row.id);
+  await db.$transaction(async (tx) => {
+    const current = await lockTask(tx, row.id);
+    if (
+      current.phase !== "remote-file-failed" ||
+      current.remoteMessageId !== row.remoteMessageId ||
+      terminal(current.state)
+    )
+      throw new RemoteA2AError();
+    const grant = current.grant as unknown as TaskGrant;
+    if (!isRemoteGrant(grant)) throw new RemoteA2AError();
+    const context = await tx.a2AContext.findUniqueOrThrow({
+      where: { id: row.contextId },
+    });
+    for (const artifact of observation.artifacts) {
+      const artifactId = createHash("sha256")
+        .update(
+          JSON.stringify([
+            "remote-artifact",
+            row.id,
+            observation.taskId,
+            artifact.artifactId,
+          ]),
+        )
+        .digest("hex");
+      await prepareTaskFileParts(
+        tx,
+        row.id,
+        grant.workspaceId,
+        artifact.parts,
+        `output:artifact:${artifactId}`,
+        context.expiresAt,
+        row.id,
+        undefined,
+        true,
+      );
+    }
+    if (observation.message) {
+      const messageId = createHash("sha256")
+        .update(JSON.stringify([row.id, observation.message.messageId]))
+        .digest("hex");
+      await prepareTaskFileParts(
+        tx,
+        row.id,
+        grant.workspaceId,
+        observation.message.parts,
+        `output:message:${messageId}`,
+        context.expiresAt,
+        row.id,
+        undefined,
+        true,
+      );
+    }
+  });
+}
 let polling = false;
 /** Separate bounded observer loop: remote waiting does not occupy a native model execution slot. */
 export async function reconcileRemoteTasks() {

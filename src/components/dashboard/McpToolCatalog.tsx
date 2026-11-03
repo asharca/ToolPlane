@@ -1,9 +1,6 @@
-import { ButtonLink } from "@/components/motion/button";
-
 import { AnimatedBadge } from "@/components/motion/animated-badge";
 import { BouncyAccordion } from "@/components/motion/bouncy-accordion";
-import Link from "next/link";
-import { ArrowRight, Braces, Wrench } from "lucide-react";
+import { Braces, Wrench } from "lucide-react";
 import type { McpToolDefinition } from "@/lib/process/mcp-tool-catalog";
 import { DashboardTable } from "@/components/dashboard/DashboardTable";
 
@@ -52,82 +49,10 @@ function formattedValue(value: unknown): string | null {
 export function McpToolCatalog({
   tools,
   labels,
-  hrefForTool,
-  compact = false,
 }: {
   tools: McpToolDefinition[];
   labels: Labels;
-  hrefForTool?: (toolName: string) => string;
-  compact?: boolean;
 }) {
-  if (compact) {
-    return (
-      <section className="min-w-0 max-w-full overflow-hidden">
-        <header className="flex flex-wrap items-start justify-between gap-3 px-5 py-4">
-          <div className="flex min-w-0 items-start gap-2.5">
-            <Wrench className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-            <div>
-              <h2 className="text-sm font-semibold text-foreground">
-                {labels.title}
-              </h2>
-              <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                {labels.description}
-              </p>
-            </div>
-          </div>
-          <AnimatedBadge status="neutral" size="sm" showIcon={false}>
-            {labels.count}
-          </AnimatedBadge>
-        </header>
-        <div className="divide-y divide-border px-3 pb-3 sm:px-5 sm:pb-5">
-          {tools.map((tool) => {
-            const description = tool.description?.trim();
-            const content = (
-              <>
-                <span className="min-w-0 flex-1">
-                  <code className="break-all font-mono text-sm font-semibold text-foreground">
-                    {tool.name}
-                  </code>
-                  {tool.title && tool.title !== tool.name ? (
-                    <span className="ml-2 text-xs text-muted-foreground">
-                      {tool.title}
-                    </span>
-                  ) : null}
-                  <span className="mt-1 block [overflow-wrap:anywhere] text-xs leading-5 text-muted-foreground">
-                    {description
-                      ? `${description.slice(0, 240)}${description.length > 240 ? "…" : ""}`
-                      : labels.noDescription}
-                  </span>
-                </span>
-                {hrefForTool ? (
-                  <ArrowRight className="size-3.5 shrink-0 text-muted-foreground" />
-                ) : null}
-              </>
-            );
-            const className =
-              "flex min-w-0 items-start gap-3 rounded-md px-3 py-3 hover:bg-muted/35";
-            return hrefForTool ? (
-              <ButtonLink
-                key={tool.name}
-                href={hrefForTool(tool.name)}
-                aria-label={tool.name}
-                variant="secondary"
-                size="lg"
-                className="w-full justify-start text-left"
-              >
-                {content}
-              </ButtonLink>
-            ) : (
-              <div key={tool.name} className={className}>
-                {content}
-              </div>
-            );
-          })}
-        </div>
-      </section>
-    );
-  }
-
   return (
     <section className="min-w-0 max-w-full overflow-hidden">
       <header className="flex flex-wrap items-start justify-between gap-3 px-5 py-4">
@@ -187,16 +112,6 @@ export function McpToolCatalog({
                   ),
                   description: (
                     <>
-                      {hrefForTool ? (
-                        <Link
-                          href={hrefForTool(tool.name)}
-                          aria-label={tool.name}
-                          className="absolute right-3 top-2.5 rounded-md p-1 text-muted-foreground hover:bg-background hover:text-foreground"
-                        >
-                          <ArrowRight className="size-3.5" />
-                        </Link>
-                      ) : null}
-
                       <div className="min-w-0 space-y-5 px-3 pb-4 sm:px-4 sm:pl-10">
                         <section>
                           <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -290,7 +205,7 @@ export function McpToolCatalog({
                                     <pre
                                       // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users must be able to scroll the schema viewport.
                                       tabIndex={0}
-                                      className="mt-2 max-h-[min(24rem,50dvh)] max-w-full overflow-auto overscroll-contain rounded-md bg-background/70 p-3 font-mono text-xs leading-5 text-foreground"
+                                      className="mt-2 max-h-[min(24rem,50dvh)] max-w-full overflow-auto overscroll-contain rounded-xl bg-background/70 p-3 font-mono text-xs leading-5 text-foreground"
                                     >
                                       {JSON.stringify(schema, null, 2)}
                                     </pre>

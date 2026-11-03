@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { readFileSync } from "node:fs";
 // Personal account token stays in the process environment, not command argv.
 const raw = process.argv.slice(2);
 const args = raw.filter((item) => !item.startsWith("--"));
@@ -25,8 +26,10 @@ let method = "GET",
   route,
   body;
 switch (command) {
-  case "targets":
-    route = `/api/v1/workspaces/${enc(id)}/sandboxes/ssh`;
+  case "host-keys":
+    route = `/api/v1/workspaces/${enc(id)}/sandboxes/ssh/host-keys`;
+    method = "POST";
+    body = { host: second, port: third ? Number(third) : 22 };
     break;
   case "create-ssh":
     if (!raw.includes("--acknowledge-host-access"))
@@ -35,7 +38,12 @@ switch (command) {
       );
     route = `/api/v1/workspaces/${enc(id)}/sandboxes/ssh`;
     method = "POST";
-    body = { targetId: second, name: third, acknowledgeHostAccess: true };
+    // Credentials come from a local JSON file, never from argv.
+    if (!second) throw new Error("A server JSON file is required.");
+    body = {
+      ...JSON.parse(readFileSync(second, "utf8")),
+      acknowledgeHostAccess: true,
+    };
     break;
   case "issue-token": {
     route = `/api/v1/sandboxes/${enc(id)}/mcp-tokens`;
@@ -65,7 +73,7 @@ switch (command) {
     break;
   default:
     throw new Error(
-      "Usage: targets WORKSPACE_ID | create-ssh WORKSPACE_ID TARGET_ID NAME --acknowledge-host-access | issue-token SANDBOX_ID NAME [--write] [--execute] | tokens SANDBOX_ID | revoke SANDBOX_ID TOKEN_ID",
+      "Usage: host-keys WORKSPACE_ID HOST [PORT] | create-ssh WORKSPACE_ID SERVER_JSON_FILE --acknowledge-host-access | issue-token SANDBOX_ID NAME [--write] [--execute] | tokens SANDBOX_ID | revoke SANDBOX_ID TOKEN_ID",
     );
 }
 const response = await fetch(new URL(route, base), {

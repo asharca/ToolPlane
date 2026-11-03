@@ -1,5 +1,4 @@
-import { ButtonLink } from "@/components/motion/button";
-import { GitBranch, Plus, Wrench } from "lucide-react";
+import { Wrench } from "lucide-react";
 import { getTranslations } from "next-intl/server";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -13,13 +12,11 @@ import {
   AdminSearchForm,
   AdminTableLink,
 } from "@/components/admin/AdminUI";
-import { SkillRegistrySync } from "@/components/admin/SkillRegistrySync";
 import { DashboardTable } from "@/components/dashboard/DashboardUI";
 import { listDirectorySkills } from "@/lib/admin/market";
 import { normalizeAdminPage } from "@/lib/admin/pagination";
 import { adminHref } from "@/lib/admin/navigation";
 import { requireAdmin } from "@/lib/auth/admin";
-import { defaultTpSkillsSource } from "@/lib/skills/registry";
 
 export const dynamic = "force-dynamic";
 
@@ -44,7 +41,6 @@ export default async function AdminSkillsPage({
     page: currentPage,
     pageSize,
   } = await listDirectorySkills({ page: requestedPage, q });
-  const tpSkillsSource = defaultTpSkillsSource();
 
   const hrefForPage = (targetPage: number) => {
     const query = new URLSearchParams({ page: String(targetPage) });
@@ -62,25 +58,7 @@ export default async function AdminSkillsPage({
         title={t("directorySkills")}
         description={t("skillsDescription")}
         meta={t("skillCount", { count: total.toLocaleString() })}
-        actions={
-          <>
-            <ButtonLink
-              href="/admin/skills/import"
-              variant="secondary"
-              size="md"
-            >
-              <GitBranch className="size-4" aria-hidden="true" />
-              {t("importFromGithub")}
-            </ButtonLink>
-            <ButtonLink href="/admin/skills/new" variant="primary" size="md">
-              <Plus className="size-4" aria-hidden="true" />
-              {t("addSkill")}
-            </ButtonLink>
-          </>
-        }
       />
-
-      <SkillRegistrySync source={tpSkillsSource} />
 
       <AdminSearchForm
         defaultValue={q}
@@ -97,14 +75,6 @@ export default async function AdminSkillsPage({
           title={t("noSkills")}
           description={
             q ? t("noSkillsDescription") : t("emptySkillsDescription")
-          }
-          actions={
-            q ? null : (
-              <ButtonLink href="/admin/skills/new" variant="primary" size="md">
-                <Plus className="size-4" aria-hidden="true" />
-                {t("addSkill")}
-              </ButtonLink>
-            )
           }
         />
       ) : (

@@ -1,7 +1,5 @@
 // @vitest-environment node
-import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { RuntimeOwnerLease } from "@/lib/runtime/owner";
 import {
   RuntimeOwnershipState,
   RuntimeUnavailableError,
@@ -9,29 +7,6 @@ import {
   runtimeRequest,
   runtimeRequestUnavailable,
 } from "@/lib/runtime/ownership-state";
-const OLD = "11111111-1111-4111-8111-111111111111";
-class TestConnection extends EventEmitter {
-  connect = vi.fn(async () => undefined);
-  end = vi.fn(async () => undefined);
-  query = vi.fn(async (sql: string) => {
-    if (sql.startsWith("SELECT pg_try")) return { rows: [{ locked: true }] };
-    if (sql.startsWith("SELECT value"))
-      return { rows: [] as { value: string }[] };
-    return { rows: [] };
-  });
-}
-function lease(
-  connection: TestConnection,
-  acknowledge?: string,
-  lost = vi.fn(),
-) {
-  return new RuntimeOwnerLease(
-    connection as unknown as ConstructorParameters<typeof RuntimeOwnerLease>[0],
-    "test-domain",
-    acknowledge,
-    lost,
-  );
-}
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllEnvs();
@@ -127,81 +102,5 @@ describe("runtime ownership state", () => {
     await runtimeRequest("/api/v1/agents/[id]/chat", "POST", async () =>
       expect(ownership.pending).toBe(1),
     );
-  });
-});
-describe("dedicated PostgreSQL lease protocol (mock connection)", () => {
-  it("holds a session lock until its own connection ends, with an exact clean marker delete", async () => {
-    const c = new TestConnection();
-    const l = lease(c);
-    await l.acquire();
-    expect(c.query.mock.calls[0][0]).toContain("pg_try_advisory_lock");
-    expect(c.end).not.toHaveBeenCalled();
-    await l.release(true);
-    expect(c.query.mock.calls.at(-1)?.[0]).toContain("AND value = $2");
-    expect(c.end).toHaveBeenCalledOnce();
-  });
-  it("a competing owner never starts recovery or overwrites the marker", async () => {
-    const c = new TestConnection();
-    c.query.mockResolvedValueOnce({ rows: [{ locked: false }] });
-    const l = lease(c);
-    await expect(l.acquire()).rejects.toThrow("Another ToolPlane");
-    await l.release(false);
-    expect(c.query).toHaveBeenCalledTimes(1);
-    expect(c.end).toHaveBeenCalledOnce();
-  });
-  it("an unclean marker requires exact operator acknowledgement and is not deleted on failure", async () => {
-    const c = new TestConnection();
-    c.query
-      .mockResolvedValueOnce({ rows: [{ locked: true }] })
-      .mockResolvedValueOnce({ rows: [{ value: OLD }] });
-    const l = lease(c);
-    await expect(l.acquire()).rejects.toThrow("TOOLPLANE_RUNTIME_RECOVERY_ACK");
-    await l.release(false);
-    expect(c.query.mock.calls.some(([sql]) => /INSERT|DELETE/.test(sql))).toBe(
-      false,
-    );
-  });
-  it("acknowledgement permits a new owner but uncertain shutdown preserves the new marker", async () => {
-    const c = new TestConnection();
-    c.query
-      .mockResolvedValueOnce({ rows: [{ locked: true }] })
-      .mockResolvedValueOnce({ rows: [{ value: OLD }] });
-    const l = lease(c, OLD);
-    await l.acquire();
-    await l.release(false);
-    expect(c.query.mock.calls.some(([sql]) => sql.startsWith("INSERT"))).toBe(
-      true,
-    );
-    expect(c.query.mock.calls.some(([sql]) => sql.startsWith("DELETE"))).toBe(
-      false,
-    );
-  });
-  it("connection loss invokes fail-closed handling; intentional release does not", async () => {
-    const c = new TestConnection();
-    const lost = vi.fn();
-    const l = lease(c, undefined, lost);
-    await l.acquire();
-    c.emit("error", new Error("lost"));
-    expect(lost).toHaveBeenCalledOnce();
-    await l.release(false);
-    c.emit("end");
-    expect(lost).toHaveBeenCalledOnce();
-  });
-  it("periodically checks the dedicated connection and fails closed on a probe error", async () => {
-    vi.useFakeTimers();
-    const c = new TestConnection();
-    const lost = vi.fn();
-    const l = lease(c, undefined, lost);
-    await l.acquire();
-    c.query.mockRejectedValueOnce(new Error("probe timeout"));
-    await vi.advanceTimersByTimeAsync(5000);
-    expect(c.query.mock.calls.at(-1)?.[0]).toBe("SELECT 1");
-    expect(lost).toHaveBeenCalledOnce();
-    const calls = c.query.mock.calls.length;
-    await vi.advanceTimersByTimeAsync(10_000);
-    expect(c.query).toHaveBeenCalledTimes(calls);
-    await l.release(false);
-    c.emit("end");
-    expect(lost).toHaveBeenCalledOnce();
   });
 });

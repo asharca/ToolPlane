@@ -1,0 +1,94 @@
+"use server";
+
+import { revalidatePath } from "next/cache";
+import { getCurrentUser } from "@/lib/auth/current-user";
+import { getWorkspaceForUser } from "@/lib/workspace/queries";
+import { listPlugins, PluginError } from "./catalog";
+import {
+  addPlugin,
+  updatePlugin,
+  removePlugin,
+  pluginMcpBindingsSchema,
+} from "./installs";
+import {
+  createPluginSource,
+  updatePluginSource,
+  deletePluginSource,
+  syncPluginSource,
+  GithubRegistryError,
+} from "./sources";
+
+export type PluginActionState = { error?: string; success?: boolean };
+
+async function context(slug: string) {
+  const user = await getCurrentUser();
+  if (!user) throw new PluginError("not_authorized", "Sign in required.", 401);
+  const workspace = await getWorkspaceForUser(slug, user.id);
+  if (!workspace)
+    throw new PluginError("not_authorized", "Workspace access denied.", 403);
+  return { user, workspace };
+}
+
+export async function pluginUpdateCountAction(slug: string) {
+  const { workspace, user } = await context(slug);
+  return (await listPlugins(workspace.id, user.id, { installedOnly: true }))
+    .updateCount;
+}
+
+export async function pluginAction(
+  _previous: PluginActionState,
+  form: FormData,
+): Promise<PluginActionState> {
+  const slug = String(form.get("workspace") ?? "");
+  try {
+    const { workspace, user } = await context(slug);
+    const operation = String(form.get("operation") ?? "");
+    const id = String(form.get("id") ?? "");
+    if (operation === "add" || operation === "update") {
+      const bindings = pluginMcpBindingsSchema.parse(
+        JSON.parse(String(form.get("mcpBindings") ?? "{}")),
+      );
+      if (operation === "add")
+        await addPlugin(workspace.id, user.id, id, bindings);
+      else
+        await updatePlugin(
+          workspace.id,
+          user.id,
+          id,
+          String(form.get("releaseId") ?? ""),
+          bindings,
+        );
+    } else if (operation === "remove") {
+      await removePlugin(workspace.id, user.id, id);
+    } else if (operation === "source-add") {
+      const visibility =
+        form.get("visibility") === "private" ? "private" : "public";
+      await createPluginSource(workspace.id, user.id, {
+        name: String(form.get("name") ?? ""),
+        repository: String(form.get("repository") ?? ""),
+        branch: String(form.get("branch") ?? "main"),
+        visibility,
+        token: String(form.get("token") ?? ""),
+      });
+    } else if (operation === "source-credentials") {
+      await updatePluginSource(workspace.id, user.id, id, {
+        token: String(form.get("token") ?? ""),
+      });
+    } else if (operation === "source-delete") {
+      await deletePluginSource(workspace.id, user.id, id);
+    } else if (operation === "source-sync") {
+      await syncPluginSource(workspace.id, user.id, id);
+    } else return { error: "invalid_input" };
+    revalidatePath(`/app/${slug}`, "layout");
+    return { success: true };
+  } catch (error) {
+    if (error instanceof PluginError || error instanceof GithubRegistryError)
+      return { error: error.code };
+    if (
+      error instanceof SyntaxError ||
+      (error instanceof Error && error.name === "ZodError")
+    )
+      return { error: "invalid_input" };
+    return { error: "operation_failed" };
+  }
+}

@@ -1,6 +1,8 @@
 import { withRequestLogging } from "@/lib/observability/http";
 import { resolveRequestUser } from "@/lib/auth/request-user";
 import { normalizeReasoningEffort } from "@/lib/agents/constants";
+import { AgentModelOverrideSchema } from "@/lib/agents/chat-body";
+import { AgentModelOverrideError } from "@/lib/agents/turn-model";
 import {
   appendWorkSessionInput,
   getWorkSessionForUser,
@@ -36,6 +38,7 @@ export const POST = withRequestLogging(
       attachmentIds?: unknown;
       reasoningEffort?: unknown;
       references?: unknown;
+      modelOverride?: unknown;
     };
     try {
       body = await req.json();
@@ -49,6 +52,11 @@ export const POST = withRequestLogging(
     ) {
       return Response.json({ error: "Invalid input" }, { status: 400 });
     }
+    const modelOverride = AgentModelOverrideSchema.optional().safeParse(
+      body.modelOverride,
+    );
+    if (!modelOverride.success)
+      return Response.json({ error: "modelOverrideInvalid" }, { status: 400 });
     const references = ComposerReferencesSchema.safeParse(body.references);
     if (!references.success)
       return Response.json({ error: "Invalid references" }, { status: 400 });
@@ -66,6 +74,11 @@ export const POST = withRequestLogging(
     const { workSessionId } = await params;
     const work = await getWorkSessionForUser(user.id, workSessionId);
     if (!work) return Response.json({ error: "Not found" }, { status: 404 });
+    if (work.readOnly)
+      return Response.json(
+        { error: "Historical Agent sessions are read-only." },
+        { status: 410 },
+      );
     if (parseRuntimeCommand(body.input, work.runtimeKind)) {
       if (
         references.data.length ||
@@ -79,10 +92,14 @@ export const POST = withRequestLogging(
             agentId: work.agentId,
             conversationId: work.conversationId,
             line: body.input,
+            modelOverride: modelOverride.data,
+            actorId: user.id,
             signal: req.signal,
           }),
         );
       } catch (error) {
+        if (error instanceof AgentModelOverrideError)
+          return Response.json({ error: error.code }, { status: error.status });
         if (error instanceof RuntimeCommandError)
           return Response.json(
             { error: error.message },
@@ -123,9 +140,12 @@ export const POST = withRequestLogging(
           ...(references.data.length ? { references: references.data } : {}),
           ...(attachments.length ? { uploadedById: user.id, attachments } : {}),
           ...(reasoningEffort ? { reasoningEffort } : {}),
+          modelOverride: modelOverride.data,
         },
       );
     } catch (error) {
+      if (error instanceof AgentModelOverrideError)
+        return Response.json({ error: error.code }, { status: error.status });
       return error instanceof WorkAttachmentError
         ? Response.json({ error: error.message }, { status: error.status })
         : Response.json(

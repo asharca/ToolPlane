@@ -1,10 +1,6 @@
 "use client";
-import {
-  MorphPopover,
-  MorphPopoverContent,
-  MorphPopoverTrigger,
-} from "@/components/motion/popover-morph";
-import { ButtonLink } from "@/components/motion/button";
+import { SidebarToolbar } from "@/components/dashboard/SidebarToolbar";
+import { useSidebarScroll } from "@/components/dashboard/useSidebarScroll";
 
 import { Button } from "@/components/motion/button";
 
@@ -13,6 +9,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type FormEvent,
 } from "react";
@@ -20,28 +17,21 @@ import { useTranslations } from "next-intl";
 
 import {
   Bot,
+  CircleAlert,
   Boxes,
-  ChevronDown,
-  ChevronsDownUp,
-  ChevronsUpDown,
   Circle,
   Clock3,
   Minimize2,
-  Cpu,
   FileText,
   FileOutput,
   Folder,
-  FolderPlus,
-  ListFilter,
-  MessageSquare,
   MessageSquarePlus,
+  Pin,
   PanelLeft,
-  Plus,
-  Radio,
-  Settings2,
   TerminalSquare,
-  UserRound,
 } from "lucide-react";
+import { Tooltip } from "@/components/motion/tooltip";
+import { useRuntimeErrorText } from "@/components/dashboard/useRuntimeErrorText";
 import {
   AISidebar,
   type SidebarResource,
@@ -59,39 +49,58 @@ import {
   AnimatedSidebarInset,
   AnimatedSidebarRail,
 } from "@/components/motion/animated-sidebar";
-import { AgentModelDialog } from "@/components/dashboard/agents/AgentModelDialog";
 import { AgentConversation } from "@/components/dashboard/agents/AgentConversation";
-import type { HermesUIMessage } from "@/lib/agents/hermes/message-segments";
-import { ReasoningEffortControl } from "@/components/dashboard/agents/ReasoningEffortControl";
-import type { ModelProviderOption } from "@/components/dashboard/models/ModelPicker";
-import { ConversationContextUsage } from "@/components/dashboard/ConversationComposer";
+import {
+  RevisionUpgradeNotice,
+  McpToolsUpdatedNote,
+} from "@/components/dashboard/RevisionUpgradeNotice";
+import type { RevisionMcpToolChange } from "@/lib/revisions/upgrade-diff";
+import type { AgentUIMessage } from "@/lib/agents/message-segments";
+import { AgentPromptProvenance } from "@/components/dashboard/agents/AgentPromptProvenance";
+import {
+  ConversationContextUsage,
+  conversationComposerDockClassName,
+} from "@/components/dashboard/ConversationComposer";
 import { WorkComposer } from "./WorkComposer";
+import { ConversationExecution } from "./ConversationExecution";
+import { createWorkCompletionTransition } from "./completion-transition";
+import { useWorkCompletionNotification } from "./useWorkCompletionNotification";
+import {
+  ComposerModelSelect,
+  type ModelProviderOption,
+  type ModelSelection,
+} from "@/components/dashboard/ComposerModelSelect";
 import type { ComposerReference } from "@/lib/work/composer-types";
 import { CopyButton } from "@/components/dashboard/CopyButton";
 import { SidebarGroupDialog } from "@/components/dashboard/SidebarGroupDialog";
-import { AssistantMarkdown } from "@/components/dashboard/ConversationMessage";
+import { sidebarHoverActionsClassName } from "@/components/dashboard/sidebarHoverActions";
 import {
-  Message,
-  MessageAvatar,
+  AssistantMarkdown,
+  ConversationMessageShell,
+  conversationUserBubbleClassName,
+  ConversationActivity,
+  ToolPayload,
+  toolOutputText,
+  toolResultUnboundedHeight,
+} from "@/components/dashboard/ConversationMessage";
+import {
   MessageBubble,
   MessageBubbleContent,
-  MessageContent,
   MessageFooter,
   MessageGroup,
-  MessageHeader,
 } from "@/components/agents/message";
 import { StreamingResponse } from "@/components/agents/streaming-response";
 import { MessageScroller } from "@/components/agents/message-scroller";
-import { AgentActivity } from "@/components/agents/agent-activity";
-import { ToolResult, ToolResultOutput } from "@/components/agents/tool-result";
-import { ToolApproval } from "@/components/agents/tool-approval";
+import { ToolResult } from "@/components/agents/tool-result";
 import { SandboxConsole } from "@/components/dashboard/sandboxes/SandboxConsole";
 import { resolveContextUsage } from "@/lib/context-usage";
 import { deleteAgentAction, pinAgentAction } from "@/lib/agents/actions";
+import type { ReasoningEffort } from "@/lib/agents/constants";
 import {
-  normalizeReasoningEffort,
-  type ReasoningEffort,
-} from "@/lib/agents/constants";
+  SubagentActivity,
+  type SubagentSource,
+} from "../agents/SubagentActivity";
+import { HookActivity, HookActivitySchema } from "../agents/HookActivity";
 import {
   displayMessagingUserText,
   type ParsedMessagingSession,
@@ -106,6 +115,9 @@ import {
   parseRuntimeCommand,
   sessionRuntimeCommands,
 } from "@/lib/agents/runtime-commands";
+import { isExecutableAgentRuntimeKind } from "@/lib/agents/runtime-kind";
+import type { AgentExecutionStage } from "@/lib/agents/execution-stages";
+
 import {
   usePersistentBoolean,
   usePersistentBooleanRecord,
@@ -126,19 +138,37 @@ import { usePersistentSidebarGroups } from "@/lib/use-persistent-sidebar-groups"
 import { SubmitButton } from "@/components/dashboard/SubmitButton";
 import {
   CenterMorphModal,
-  CenterMorphModalClose,
   CenterMorphModalContent,
 } from "@/components/motion/center-morph-modal";
+import {
+  DialogHeader,
+  DialogBody,
+  DialogFooter,
+  DialogCancel,
+} from "@/components/dashboard/dialog";
+
+const executionStageKeys = {
+  queued: "executionQueued",
+  preparing: "executionPreparing",
+  "waiting-model": "executionWaitingModel",
+  generating: "executionGenerating",
+  "tool-running": "executionToolRunning",
+} as const;
 
 type WorkAgent = {
   id: string;
   name: string;
+  description?: string | null;
   pinned: boolean;
   supportsWork: boolean;
   ready: boolean;
   runtimeKind: string | null;
+  currentRevisionVersion?: number;
+  mcpToolsUpdated?: {
+    added: RevisionMcpToolChange[];
+    removed: RevisionMcpToolChange[];
+  } | null;
   providerId?: string | null;
-  providerIds?: string[];
   providerLabel?: string;
   model?: string | null;
   contextWindow?: number | null;
@@ -171,6 +201,7 @@ type WorkPart = {
   status?: "running" | "completed" | "failed" | "cancelled";
   runtimeKind?: string;
   data?: unknown;
+  source?: SubagentSource;
   reference?: Omit<ComposerReference, "text">;
 };
 
@@ -188,6 +219,7 @@ type WorkActivity = {
   input?: unknown;
   output?: unknown;
   isError?: boolean;
+  source?: SubagentSource;
 };
 
 type WorkMessage = {
@@ -204,13 +236,16 @@ type ConversationSummary = {
 };
 type ConversationDetail = ConversationSummary & {
   sandbox?: WorkItem["sandbox"];
-  legacyWorkspace?: boolean;
+  runtimeKind?: string;
+  modelName?: string | null;
+  contextWindow?: number | null;
+  agentRevisionId?: string | null;
+  agentRevisionVersion?: number | null;
+  legacyRevisionUnresolved?: boolean;
+  contextWindowEstimated?: boolean;
   readOnly: boolean;
   messages: WorkMessage[];
   reasoningEffort?: ReasoningEffort | null;
-  hermesProfile?: string | null;
-  hermesProvider?: string | null;
-  hermesModel?: string | null;
 };
 
 type WorkSidebarAgent = {
@@ -227,14 +262,6 @@ type WorkTiming = {
   modelName?: string;
 };
 
-type WorkApproval = {
-  id: string;
-  toolCallId: string;
-  toolName: string;
-  input: unknown;
-  status: string;
-};
-
 type WorkPanel = "files" | "terminal";
 
 type WorkItem = {
@@ -242,9 +269,18 @@ type WorkItem = {
   agentId: string;
   title: string | null;
   titlePending?: boolean;
+  /** Client-only placeholder shown before the server list includes it. */
+  optimistic?: boolean;
   task: string | null;
   acceptanceCriteria: string | null;
   runtimeKind: string;
+  readOnly?: boolean;
+  agentRevisionId?: string | null;
+  agentRevisionVersion?: number | null;
+  legacyRevisionUnresolved?: boolean;
+  modelName?: string | null;
+  contextWindow?: number | null;
+  contextWindowEstimated?: boolean;
   status: string;
   startedAt?: string | null;
   completedAt?: string | null;
@@ -254,9 +290,6 @@ type WorkItem = {
   artifacts: string[];
   conversationId: string;
   reasoningEffort?: ReasoningEffort | null;
-  hermesProfile?: string | null;
-  hermesProvider?: string | null;
-  hermesModel?: string | null;
   workingDirectory?: string;
   sandbox: {
     id: string;
@@ -267,15 +300,9 @@ type WorkItem = {
     running: boolean;
   } | null;
   messages: WorkMessage[];
-  approvals: WorkApproval[];
 };
 
-const ACTIVE_STATUSES = new Set([
-  "queued",
-  "running",
-  "waiting_approval",
-  "cancelling",
-]);
+const ACTIVE_STATUSES = new Set(["queued", "running", "cancelling"]);
 const MESSAGEABLE_STATUSES = new Set([
   "idle",
   "waiting_user",
@@ -309,38 +336,66 @@ function sidebarIssueTone(
     ].includes(status)
   )
     return "error";
-  if (
-    ["setup_required", "stopped", "waiting_user", "waiting_approval"].includes(
-      status,
-    )
-  )
-    return "warning";
+  // Sandboxes stop while idle and start on demand; only actionable states warn.
+  if (["setup_required", "waiting_user"].includes(status)) return "warning";
   if (status === "running") return "running";
   return null;
 }
 
-function agentSidebarIssueTone(
+type AgentSidebarIssue =
+  | { kind: "notConfigured" }
+  | { kind: "sandboxFailed" | "sandboxSetup"; name: string }
+  | {
+      kind: "waitingUser";
+      sessionId: string;
+      title: string;
+    };
+
+/** Everything that needs the user's attention, most severe first. */
+function agentSidebarStatus(
   agent: WorkAgent | undefined,
-  hasRunningSession: boolean,
-): "error" | "warning" | "running" | null {
-  if (!agent) return null;
-  const sandboxTones = agent.sandboxes
-    .map((sandbox) => sidebarIssueTone(sandbox.status ?? ""))
-    .filter((tone) => tone !== "running");
-  if (sandboxTones.includes("error")) return "error";
-  if (sandboxTones.includes("warning") || (agent.supportsWork && !agent.ready))
-    return "warning";
-  if (hasRunningSession) return "running";
-  return null;
+  sessions: readonly WorkItem[],
+): {
+  tone: "error" | "warning" | "running" | null;
+  issues: AgentSidebarIssue[];
+  running: number;
+} {
+  if (!agent) return { tone: null, issues: [], running: 0 };
+  const issues: AgentSidebarIssue[] = [];
+  // Readiness comes from the published Agent revision, not a live sandbox.
+  if (agent.supportsWork && !agent.ready)
+    issues.push({ kind: "notConfigured" });
+  for (const sandbox of agent.sandboxes) {
+    const sandboxTone = sidebarIssueTone(sandbox.status ?? "");
+    if (sandboxTone === "error")
+      issues.unshift({ kind: "sandboxFailed", name: sandbox.name });
+    else if (sandboxTone === "warning")
+      issues.push({ kind: "sandboxSetup", name: sandbox.name });
+  }
+  let running = 0;
+  for (const session of sessions) {
+    if (session.agentId !== agent.id) continue;
+    const title = session.title || session.task || session.id;
+    if (session.status === "waiting_user")
+      issues.push({ kind: "waitingUser", sessionId: session.id, title });
+    else if (session.status === "running") running += 1;
+  }
+  const tone = issues.some((issue) => issue.kind === "sandboxFailed")
+    ? "error"
+    : issues.length
+      ? "warning"
+      : running
+        ? "running"
+        : null;
+  return { tone, issues, running };
 }
 
 function runtimeLabel(kind: string | null | undefined): string {
-  if (kind === "pi-sdk") return "Pi SDK";
+  if (kind === "pi-sdk") return "Pi";
+  if (kind === "omp") return "OMP";
   if (kind === "claude-code") return "Claude Code";
   if (kind === "dsh") return "DeepSeek Harness";
-  if (kind === "hermes") return "Hermes";
-  if (kind === "hermes-rpc") return "Hermes RPC";
-  return "Pi";
+  return kind === "pi" ? "Pi" : "—";
 }
 
 function formatWorkDuration(durationMs: number | undefined): string | null {
@@ -498,8 +553,13 @@ function workHref(slug: string, id: string) {
   return `/app/${encodeURIComponent(slug)}/work?w=${encodeURIComponent(id)}`;
 }
 
-function agentSettingsHref(slug: string, agentId: string, returnTo: string) {
-  return `/app/${encodeURIComponent(slug)}/agents/${encodeURIComponent(agentId)}?settings=agent&returnTo=${encodeURIComponent(returnTo)}`;
+function agentSettingsHref(
+  slug: string,
+  agentId: string,
+  returnTo: string,
+  section = "agent",
+) {
+  return `/app/${encodeURIComponent(slug)}/agents/${encodeURIComponent(agentId)}?settings=${encodeURIComponent(section)}&returnTo=${encodeURIComponent(returnTo)}`;
 }
 
 function formatValue(value: unknown) {
@@ -547,6 +607,7 @@ function WorkTranscript({
   streamStartedAt,
   streamRuntimeKind,
   streamModelName,
+  executionStage,
   sessionStartedAt,
   sessionCompletedAt,
   streaming,
@@ -559,6 +620,7 @@ function WorkTranscript({
   streamStartedAt?: number;
   streamRuntimeKind?: string;
   streamModelName?: string;
+  executionStage: AgentExecutionStage;
   sessionStartedAt?: string | null;
   sessionCompletedAt?: string | null;
   streaming: boolean;
@@ -567,7 +629,7 @@ function WorkTranscript({
   const agentsT = useTranslations("console.agents");
   const common = useTranslations("common");
   const messageActionClassName =
-    "size-7 rounded-md border-0 bg-transparent text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-3.5";
+    "size-7 rounded-lg border-0 bg-transparent text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-3.5";
   const streamPersisted =
     streamStartedAt !== undefined &&
     messages.some(
@@ -590,6 +652,7 @@ function WorkTranscript({
                 if (activity.type === "tool") {
                   return {
                     type: "work-tool",
+                    source: activity.source,
                     toolCallId: activity.toolCallId,
                     toolName: activity.toolName,
                     deploymentName: activity.deploymentName,
@@ -604,12 +667,14 @@ function WorkTranscript({
                 if (activity.type === "reasoning") {
                   return {
                     type: "reasoning",
+                    source: activity.source,
                     text: activity.text,
                     status: activity.status,
                   };
                 }
                 return {
                   type: "work-runtime",
+                  source: activity.source,
                   runtimeKind: activity.runtimeKind,
                   status: activity.status,
                 };
@@ -646,7 +711,10 @@ function WorkTranscript({
   }
 
   return (
-    <MessageGroup spacing="default" className="mx-auto w-full max-w-3xl p-4">
+    <MessageGroup
+      spacing="default"
+      className="mx-auto w-full max-w-3xl gap-6 px-4 py-8 sm:px-6"
+    >
       {transcript.map((message, messageIndex) => {
         if (messageCompaction(message))
           return <CompactionNote key={message.id} message={message} />;
@@ -674,7 +742,18 @@ function WorkTranscript({
               }
             : null;
         const messageTiming = persistedTiming ?? fallbackTiming;
+        const turnModelData = message.parts.find(
+          (part) => part.type === "data-agent-turn-model",
+        )?.data;
+        const turnModel =
+          turnModelData &&
+          typeof turnModelData === "object" &&
+          "model" in turnModelData &&
+          typeof turnModelData.model === "string"
+            ? turnModelData.model
+            : null;
         const messageModelName =
+          turnModel ??
           messageTiming?.modelName ??
           resolveContextUsage([message])?.modelName ??
           fallbackModelName;
@@ -698,13 +777,33 @@ function WorkTranscript({
             : isStreamingMessage
               ? rawText
               : rawText.trim();
-        const processParts = message.parts.filter(
-          (part) =>
-            part.type === "reasoning" ||
-            part.type === "work-tool" ||
-            (part.type === "work-runtime" &&
-              (part.status === "failed" || part.status === "cancelled")),
-        );
+        const hookRecords = message.parts.flatMap((part) => {
+          if (
+            part.type !== "hook-activity" &&
+            part.type !== "data-hook-activity"
+          )
+            return [];
+          const parsed = HookActivitySchema.safeParse(part.data);
+          return parsed.success ? [parsed.data] : [];
+        });
+        const processParts = message.parts
+          .filter(
+            (part) =>
+              part.type === "reasoning" ||
+              part.type === "work-tool" ||
+              (part.type === "work-runtime" &&
+                (part.status === "failed" || part.status === "cancelled")),
+          )
+          .map(
+            (part): WorkPart =>
+              !isStreamingMessage && part.status === "running"
+                ? {
+                    ...part,
+                    status:
+                      part.type === "reasoning" ? "completed" : "cancelled",
+                  }
+                : part,
+          );
         const visibleProcessParts = processParts.filter(
           (part) =>
             part.type !== "work-runtime" ||
@@ -732,7 +831,7 @@ function WorkTranscript({
                 key={`${part.url}-${index}`}
                 href={part.url}
                 download={part.filename ?? agentsT("attachment")}
-                className={`inline-flex min-w-0 max-w-56 items-center gap-1.5 rounded-md bg-muted/70 px-2 py-1.5 text-xs text-foreground hover:bg-muted ${part.mediaType?.startsWith("image/") ? "flex-wrap" : "flex-nowrap"}`}
+                className={`inline-flex min-w-0 max-w-56 items-center gap-1.5 rounded-lg bg-muted/70 px-2 py-1.5 text-xs text-foreground hover:bg-muted ${part.mediaType?.startsWith("image/") ? "flex-wrap" : "flex-nowrap"}`}
               >
                 {part.mediaType?.startsWith("image/") ? (
                   // biome-ignore lint/performance/noImgElement: Authorized attachment URLs and base64 data must render directly without the Next image optimizer or layout sizing changes.
@@ -754,6 +853,9 @@ function WorkTranscript({
         const messageBody = (
           <>
             {attachmentLinks}
+            {message.role === "user" ? (
+              <AgentPromptProvenance parts={message.parts} />
+            ) : null}
             {message.parts
               .filter((part) => part.reference)
               .map((part, index) =>
@@ -772,13 +874,13 @@ function WorkTranscript({
             {message.role !== "user" &&
             (isStreamingMessage || visibleProcessParts.length) ? (
               <div data-ui="work-process" className="w-full">
-                <AgentActivity
+                <ConversationActivity
                   status={isStreamingMessage ? "working" : "complete"}
                   defaultOpen={processFailed || processCancelled}
                   collapseOnComplete={!processFailed && !processCancelled}
                   activeLabel={
                     <>
-                      {t("processing")}{" "}
+                      {t(executionStageKeys[executionStage])}{" "}
                       <WorkElapsed
                         timing={messageTiming}
                         live
@@ -788,13 +890,16 @@ function WorkTranscript({
                   }
                   summary={
                     <>
-                      {processFailed
-                        ? t("processFailed")
-                        : processCancelled
-                          ? t("processCancelled")
-                          : t("processed")}{" "}
+                      {isStreamingMessage
+                        ? t(executionStageKeys[executionStage])
+                        : processFailed
+                          ? t("processFailed")
+                          : processCancelled
+                            ? t("processCancelled")
+                            : t("processed")}{" "}
                       <WorkElapsed
                         timing={messageTiming}
+                        live={isStreamingMessage}
                         dataUi="work-process-duration"
                       />
                     </>
@@ -802,87 +907,97 @@ function WorkTranscript({
                   items={visibleProcessParts.map((part, index) => ({
                     id: part.toolCallId ?? `${message.id}:${index}`,
                     type: "text" as const,
-                    content:
-                      part.type === "reasoning" ? (
-                        <div>
-                          <p className="text-xs text-muted-foreground">
-                            {part.status === "running"
-                              ? t("thinking")
-                              : t("thought")}
-                          </p>
-                          <pre className="whitespace-pre-wrap break-words text-xs">
-                            {part.text}
-                          </pre>
-                        </div>
-                      ) : part.type === "work-runtime" ? (
+                    content: part.source ? (
+                      <SubagentActivity
+                        value={{
+                          ...part,
+                          type:
+                            part.type === "reasoning" ? "reasoning" : "tool",
+                        }}
+                      />
+                    ) : part.type === "reasoning" ? (
+                      <div>
                         <p className="text-xs text-muted-foreground">
-                          {part.status === "cancelled"
-                            ? t("runtimeCancelled", {
-                                runtime: runtimeLabel(part.runtimeKind),
-                              })
-                            : runtimeLabel(part.runtimeKind)}
+                          {part.status === "running"
+                            ? t("thinking")
+                            : t("thought")}
                         </p>
-                      ) : (
-                        <ToolResult
-                          tool={workToolLabel(part)}
-                          title={
-                            part.status === "running"
-                              ? t("toolRunning")
-                              : part.isError || part.status === "failed"
-                                ? t("toolFailed")
-                                : part.status === "cancelled"
-                                  ? t("toolCancelled")
-                                  : t("toolCompleted")
-                          }
-                          status={
-                            part.isError || part.status === "failed"
-                              ? "error"
+                        <pre className="whitespace-pre-wrap break-words text-xs">
+                          {part.text}
+                        </pre>
+                      </div>
+                    ) : part.type === "work-runtime" ? (
+                      <p className="text-xs text-muted-foreground">
+                        {part.status === "cancelled"
+                          ? t("runtimeCancelled", {
+                              runtime: runtimeLabel(part.runtimeKind),
+                            })
+                          : runtimeLabel(part.runtimeKind)}
+                      </p>
+                    ) : (
+                      <ToolResult
+                        className="rounded-xl border-border/60 bg-background"
+                        tool={workToolLabel(part)}
+                        title={
+                          part.status === "running"
+                            ? t("toolRunning")
+                            : part.isError || part.status === "failed"
+                              ? t("toolFailed")
                               : part.status === "cancelled"
-                                ? "cancelled"
-                                : part.status === "running"
-                                  ? "running"
-                                  : "success"
-                          }
-                          meta={formatWorkDuration(part.durationMs)}
-                          defaultOpen={
-                            part.status === "running" ||
-                            part.isError ||
-                            part.status === "failed"
-                          }
-                          copyText={
-                            part.output === undefined
-                              ? undefined
-                              : formatValue(part.output)
-                          }
+                                ? t("toolCancelled")
+                                : t("toolCompleted")
+                        }
+                        status={
+                          part.isError || part.status === "failed"
+                            ? "error"
+                            : part.status === "cancelled"
+                              ? "cancelled"
+                              : part.status === "running"
+                                ? "running"
+                                : "success"
+                        }
+                        meta={formatWorkDuration(part.durationMs)}
+                        defaultOpen={
+                          part.status === "running" ||
+                          part.isError ||
+                          part.status === "failed"
+                        }
+                        copyText={
+                          part.output === undefined
+                            ? undefined
+                            : (toolOutputText(part.output) ??
+                              formatValue(part.output))
+                        }
+                        maxHeight={toolResultUnboundedHeight}
+                      >
+                        <ToolPayload
+                          label={agentsT("toolInput")}
+                          language="json"
                         >
-                          <p className="text-xs text-muted-foreground">
-                            {agentsT("toolInput")}
-                          </p>
-                          <ToolResultOutput language="json">
-                            {formatValue(part.input)}
-                          </ToolResultOutput>
-                          {part.output !== undefined ? (
-                            <>
-                              <p className="text-xs text-muted-foreground">
-                                {agentsT("toolOutput")}
-                              </p>
-                              <ToolResultOutput
-                                language={
-                                  typeof part.output === "string"
-                                    ? "text"
-                                    : "json"
-                                }
-                              >
-                                {formatValue(part.output)}
-                              </ToolResultOutput>
-                            </>
-                          ) : null}
-                        </ToolResult>
-                      ),
+                          {formatValue(part.input)}
+                        </ToolPayload>
+                        {part.output !== undefined ? (
+                          <ToolPayload
+                            label={agentsT("toolOutput")}
+                            language={
+                              toolOutputText(part.output) !== undefined
+                                ? "text"
+                                : "json"
+                            }
+                          >
+                            {toolOutputText(part.output) ??
+                              formatValue(part.output)}
+                          </ToolPayload>
+                        ) : null}
+                      </ToolResult>
+                    ),
                   }))}
                 />
               </div>
             ) : null}
+            {hookRecords.map((hook) => (
+              <HookActivity key={hook.id} value={hook} />
+            ))}
             {text ? (
               message.role === "user" ? (
                 <span className="whitespace-pre-wrap">{text}</span>
@@ -892,30 +1007,75 @@ function WorkTranscript({
             ) : null}
           </>
         );
+        const showIdentity =
+          messageIndex === 0 ||
+          transcript[messageIndex - 1]?.role !== "assistant";
+        const replyMetadata =
+          message.role !== "user" ? (
+            <div
+              className={`flex min-w-0 flex-wrap items-center gap-2 text-[11px] font-normal text-muted-foreground ${actionVisibility}`}
+            >
+              {messageModelName ? (
+                <span
+                  data-ui="assistant-reply-model"
+                  title={messageModelName}
+                  className="truncate"
+                >
+                  {messageModelName}
+                </span>
+              ) : null}
+              {messageTime ? (
+                <time
+                  data-ui="work-message-time"
+                  dateTime={message.createdAt}
+                  title={messageTime.title}
+                >
+                  {messageTime.label}
+                </time>
+              ) : null}
+              <WorkElapsed
+                timing={messageTiming}
+                live={isStreamingMessage}
+                dataUi="work-message-duration"
+              />
+            </div>
+          ) : null;
         return (
-          <Message
+          <ConversationMessageShell
             key={message.id}
             from={message.role === "user" ? "user" : "assistant"}
+            name={agentName}
+            showIdentity={showIdentity}
+            metadata={replyMetadata}
             data-message-id={message.id}
             aria-busy={isStreamingMessage || undefined}
           >
-            <MessageAvatar>
-              {message.role === "user" ? <UserRound /> : <Bot />}
-            </MessageAvatar>
-            <MessageContent>
-              <MessageHeader>
-                <span>
-                  {message.role === "user" ? agentsT("user") : agentName}
-                </span>
-                {messageModelName && message.role !== "user" ? (
-                  <span
-                    data-ui="assistant-reply-model"
-                    title={messageModelName}
-                    className="truncate"
-                  >
-                    {messageModelName}
-                  </span>
-                ) : null}
+            {showIdentity ? null : replyMetadata}
+            {message.role === "user" ? (
+              <MessageBubble
+                variant="soft"
+                className={conversationUserBubbleClassName}
+              >
+                <MessageBubbleContent>{messageBody}</MessageBubbleContent>
+              </MessageBubble>
+            ) : (
+              <StreamingResponse
+                status={
+                  isStreamingMessage
+                    ? "streaming"
+                    : processFailed
+                      ? "error"
+                      : "complete"
+                }
+                copyText={text}
+                announce={false}
+                actionsClassName={actionVisibility}
+              >
+                {messageBody}
+              </StreamingResponse>
+            )}
+            {message.role === "user" && text ? (
+              <MessageFooter className={`gap-0.5 ${actionVisibility}`}>
                 {messageTime ? (
                   <time
                     data-ui="work-message-time"
@@ -925,56 +1085,29 @@ function WorkTranscript({
                     {messageTime.label}
                   </time>
                 ) : null}
-                <WorkElapsed
-                  timing={messageTiming}
-                  live={isStreamingMessage}
-                  dataUi="work-message-duration"
+                <CopyButton
+                  text={text}
+                  label={common("copy")}
+                  iconOnly
+                  className={messageActionClassName}
                 />
-              </MessageHeader>
-              {message.role === "user" ? (
-                <MessageBubble variant="soft">
-                  <MessageBubbleContent>{messageBody}</MessageBubbleContent>
-                </MessageBubble>
-              ) : (
-                <StreamingResponse
-                  status={
-                    isStreamingMessage
-                      ? "streaming"
-                      : processFailed
-                        ? "error"
-                        : "complete"
-                  }
-                  copyText={text}
-                  announce={false}
-                  actionsClassName={actionVisibility}
-                >
-                  {messageBody}
-                </StreamingResponse>
-              )}
-              {message.role === "user" && text ? (
-                <MessageFooter className={`gap-0.5 ${actionVisibility}`}>
-                  <CopyButton
-                    text={text}
-                    label={common("copy")}
-                    iconOnly
-                    className={messageActionClassName}
-                  />
-                </MessageFooter>
-              ) : null}
-            </MessageContent>
-          </Message>
+              </MessageFooter>
+            ) : null}
+          </ConversationMessageShell>
         );
       })}
     </MessageGroup>
   );
 }
 
+const NO_PIN_OVERRIDES: Record<string, boolean> = {};
+
 export function WorkspaceWork({
   slug,
   workspaceId,
-  agents,
+  agents: serverAgents,
+  providers,
   sessions,
-  providers = [],
   selectedWorkSessionId,
   selectedSession,
   requestedAgentId,
@@ -988,8 +1121,8 @@ export function WorkspaceWork({
   slug: string;
   workspaceId: string;
   agents: WorkAgent[];
+  providers: ModelProviderOption[];
   sessions: WorkItem[];
-  providers?: Array<ModelProviderOption & { format: string }>;
   selectedWorkSessionId: string | null;
   selectedSession?: WorkItem | null;
   requestedAgentId?: string;
@@ -1007,12 +1140,43 @@ export function WorkspaceWork({
   const tSandboxes = useTranslations("console.sandboxes");
   const common = useTranslations("common");
   const router = useRouter();
+  const { control: completionNotificationControl, notifyCompletion } =
+    useWorkCompletionNotification(workspaceId, slug);
+  // Pin toggles apply immediately; overrides drop once refreshed props arrive.
+  const [pinState, setPinState] = useState<{
+    source: WorkAgent[];
+    values: Record<string, boolean>;
+  }>({ source: serverAgents, values: {} });
+  const pinOverrides =
+    pinState.source === serverAgents ? pinState.values : NO_PIN_OVERRIDES;
+  const agents = useMemo(
+    () =>
+      serverAgents.map((item) =>
+        item.id in pinOverrides
+          ? { ...item, pinned: pinOverrides[item.id] }
+          : item,
+      ),
+    [serverAgents, pinOverrides],
+  );
   const initialSelected =
     selectedSession ??
     sessions.find((item) => item.id === selectedWorkSessionId) ??
     null;
   const workAgents = agents.filter((item) => item.supportsWork);
   const [items, setItems] = useState(sessions);
+  // Server lists are authoritative after navigation/refresh; optimistic
+  // entries survive until the server returns them.
+  const [syncedSessions, setSyncedSessions] = useState(sessions);
+  if (syncedSessions !== sessions) {
+    setSyncedSessions(sessions);
+    setItems((current) => {
+      const known = new Set(sessions.map((item) => item.id));
+      return [
+        ...current.filter((item) => item.optimistic && !known.has(item.id)),
+        ...sessions,
+      ];
+    });
+  }
   const [liveSelected, setLiveSelected] = useState<WorkItem | null>(null);
   const selectionKey = selectedConversation?.id ?? selectedWorkSessionId;
   const [draftSelectionKey, setDraftSelectionKey] = useState<string | null>(
@@ -1024,6 +1188,7 @@ export function WorkspaceWork({
   const conversation = creatingMode ? null : selectedConversation;
   const [conversationBusy, setConversationBusy] = useState(false);
   const [listOptionsOpen, setListOptionsOpen] = useState(false);
+  const [sidebarSearch, setSidebarSearch] = useState("");
   const [mobilePane, setMobilePane] = useState<"sessions" | "work">("work");
   const [sidebarOpen, setSidebarOpen] = usePersistentBoolean(
     `toolplane:work-sidebar:${workspaceId}`,
@@ -1053,35 +1218,10 @@ export function WorkspaceWork({
     workAgents[0]?.id ??
     "";
   const [agentId, setAgentId] = useState(initialAgentId);
-  const reasoningScope = conversation?.id ?? selected?.id ?? `agent:${agentId}`;
-  const [reasoningSelection, setReasoningSelection] = useState<{
-    scope: string;
-    value: ReasoningEffort;
-  }>({
-    scope: initialSelected?.id ?? `agent:${initialAgentId}`,
-    value:
-      normalizeReasoningEffort(initialSelected?.reasoningEffort) ?? "default",
-  });
-  const reasoningEffort =
-    reasoningSelection.scope === reasoningScope
-      ? reasoningSelection.value
-      : (normalizeReasoningEffort(
-          conversation?.reasoningEffort ?? selected?.reasoningEffort,
-        ) ?? "default");
-  const setReasoningEffort = (value: ReasoningEffort) => {
-    setReasoningSelection({ scope: reasoningScope, value });
-  };
-  const [hermesDraftSelection, setHermesDraftSelection] = useState<{
-    agentId: string;
-    profile: string;
-    provider: string | null;
-    model: string | null;
-  } | null>(null);
   const [sandboxId, setSandboxId] = useState("");
   const [workingDirectory, setWorkingDirectory] = useState(
     initialSelected?.workingDirectory ?? ".",
   );
-  const [modelDialogOpen, setModelDialogOpen] = useState(false);
   const [deleteAgentTarget, setDeleteAgentTarget] = useState<WorkAgent | null>(
     null,
   );
@@ -1090,12 +1230,17 @@ export function WorkspaceWork({
     name: string;
   } | null>(null);
   const [draft, setDraft] = useState("");
+  const [modelChoices, setModelChoices] = useState<
+    Record<string, ModelSelection | null>
+  >({});
   const [attachments, setAttachments] = useState<File[]>([]);
   const [referenceSelection, setReferenceSelection] = useState<{
     scope: string;
     items: ComposerReference[];
   }>({ scope: "", items: [] });
   const [composerPending, setComposerPending] = useState(false);
+  const [belowEditorElement, setBelowEditorElement] =
+    useState<HTMLDivElement | null>(null);
   const commandsT = useTranslations("console.runtimeCommands");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -1108,6 +1253,7 @@ export function WorkspaceWork({
     startedAt?: number;
     runtimeKind?: string;
     modelName?: string;
+    executionStage?: AgentExecutionStage;
   }>({ workSessionId: "", text: "", activities: [] });
   const agent = useMemo(
     () => agents.find((item) => item.id === agentId) ?? null,
@@ -1129,17 +1275,11 @@ export function WorkspaceWork({
     sandboxOptions.find((item) => item.id === activeSandboxId) ?? null;
   const controlAgent = selectedAgent ?? agent;
   const controlSandbox = conversation
-    ? conversation.legacyWorkspace
-      ? (selectedAgent?.sandboxes.find((sandbox) => sandbox.isDefault) ??
-        selectedAgent?.sandboxes[0] ??
-        null)
-      : (conversation.sandbox ?? null)
+    ? (conversation.sandbox ?? null)
     : selected
       ? selected.sandbox
-      : activeSandbox;
-  const conversationWorkspace =
-    Boolean(conversation && !conversation.legacyWorkspace) ||
-    Boolean(selected && selected.runtimeKind !== "hermes");
+      : null;
+  const conversationWorkspace = Boolean(conversation || selected);
   const workspacePending =
     controlSandbox &&
     ["copying", "provisioning"].includes(controlSandbox.status ?? "");
@@ -1149,63 +1289,47 @@ export function WorkspaceWork({
       : workspacePending
         ? t("conversationWorkspaceProvisioning")
         : t("noSandbox");
-  const controlHermesSelection =
-    controlAgent?.runtimeKind === "hermes"
-      ? conversation
-        ? {
-            profile: conversation.hermesProfile ?? "default",
-            provider: conversation.hermesProvider ?? null,
-            model: conversation.hermesModel ?? null,
-          }
-        : selected
-          ? {
-              profile: selected.hermesProfile ?? "default",
-              provider: selected.hermesProvider ?? null,
-              model: selected.hermesModel ?? null,
-            }
-          : hermesDraftSelection?.agentId === controlAgent.id
-            ? hermesDraftSelection
-            : {
-                agentId: controlAgent.id,
-                profile: "default",
-                provider: null,
-                model: null,
-              }
-      : null;
-  const controlWorkspaceRoot =
-    controlSandbox?.kind === "hermes" ? "/opt/data/workspace" : "/workspace";
+  const controlWorkspaceRoot = "/workspace";
   const composerScope = `${controlAgent?.id}:${controlSandbox?.id}:${selected?.id ?? conversation?.id ?? "new"}`;
   const references =
     referenceSelection.scope === composerScope ? referenceSelection.items : [];
-  const commandRuntimeKind =
-    selected?.runtimeKind ?? controlAgent?.runtimeKind ?? "";
-  const commands = sessionRuntimeCommands(
-    commandRuntimeKind,
-    selected?.messages ?? [],
+  const commandRuntimeKind = conversation
+    ? (conversation.runtimeKind ?? "")
+    : selected
+      ? selected.runtimeKind
+      : (controlAgent?.runtimeKind ?? "");
+  const sessionReadOnly = conversation
+    ? conversation.readOnly ||
+      !isExecutableAgentRuntimeKind(conversation.runtimeKind)
+    : selected
+      ? selected.readOnly !== false ||
+        !isExecutableAgentRuntimeKind(selected.runtimeKind)
+      : !isExecutableAgentRuntimeKind(controlAgent?.runtimeKind);
+  // Channel history is written by its channel; the console only observes it
+  // and answers native extension dialogs.
+  const channelConversation = Boolean(conversation?.source);
+  const unappliedDraft = Boolean(
+    !selected &&
+      !conversation &&
+      isExecutableAgentRuntimeKind(agent?.runtimeKind) &&
+      agent?.currentRevisionVersion === 0,
   );
-  const conversationWorkspaceApiBase =
-    conversation && !conversation.legacyWorkspace
-      ? `/api/v1/agents/${conversation.agentId}/conversations/${conversation.id}/sandbox`
-      : undefined;
+  const commands = sessionReadOnly
+    ? []
+    : sessionRuntimeCommands(commandRuntimeKind, selected?.messages ?? []);
+  const conversationWorkspaceApiBase = conversation
+    ? `/api/v1/agents/${conversation.agentId}/conversations/${conversation.id}/sandbox`
+    : undefined;
   const workspaceRpcApiBase = selected
     ? `/api/v1/work-sessions/${selected.id}/sandbox/rpc`
     : conversationWorkspaceApiBase
       ? `${conversationWorkspaceApiBase}/rpc`
-      : controlSandbox
-        ? `/api/v1/mcp/${controlSandbox.deploymentId}/rpc`
-        : undefined;
+      : undefined;
   const workspaceTerminalApiBase = selected
     ? `/api/v1/work-sessions/${selected.id}/sandbox/terminal`
     : conversationWorkspaceApiBase
       ? `${conversationWorkspaceApiBase}/terminal`
-      : controlAgent?.runtimeKind === "hermes"
-        ? `/api/v1/agents/${controlAgent.id}/terminal`
-        : controlSandbox
-          ? `/api/v1/mcp/${controlSandbox.deploymentId}/terminal`
-          : undefined;
-  const controlModelLabel = controlHermesSelection
-    ? `${controlHermesSelection.profile} · ${controlHermesSelection.model ?? tAgents("profileDefault")}`
-    : controlAgent?.model || t("selectModel");
+      : undefined;
   const activeWorkingDirectory = conversation
     ? "."
     : (selected?.workingDirectory ?? workingDirectory);
@@ -1214,12 +1338,14 @@ export function WorkspaceWork({
     : selected
       ? workHref(slug, selected.id)
       : `/app/${encodeURIComponent(slug)}/work`;
-  const pendingApprovals =
-    selected?.approvals.filter((approval) => approval.status === "pending") ??
-    [];
   const selectedStatus = selected?.status;
   const visibleError = error ?? selected?.error;
-  const runtimeErrorCode = visibleError?.match(/\bPI_[A-Z_]+\b/)?.[0];
+  const describeRuntimeError = useRuntimeErrorText();
+  const runtimeError = describeRuntimeError(visibleError);
+  const configurationError = /no configured model/i.test(visibleError ?? "");
+  const showConfigurationNotice =
+    configurationError ||
+    (!selected && !conversation && agent && !agent.ready && !unappliedDraft);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: Selection changes reset the existing provisioning poll.
   useEffect(() => {
@@ -1267,6 +1393,33 @@ export function WorkspaceWork({
     streamOutput.workSessionId === selectedWorkSessionId
       ? streamOutput.modelName
       : undefined;
+  const executionStage =
+    streamOutput.workSessionId === selectedWorkSessionId
+      ? (streamOutput.executionStage ??
+        (selectedStatus === "queued" ? "queued" : "preparing"))
+      : selectedStatus === "queued"
+        ? "queued"
+        : "preparing";
+  const sessionContextWindow =
+    conversation?.contextWindow ?? selected?.contextWindow;
+  const sessionModelName = conversation?.modelName ?? selected?.modelName;
+  const sessionContextEstimated =
+    conversation?.contextWindowEstimated ?? selected?.contextWindowEstimated;
+  const renderedHookIds = useMemo(
+    () =>
+      (conversation?.messages ?? selected?.messages ?? []).flatMap((message) =>
+        message.parts.flatMap((part) => {
+          if (
+            part.type !== "hook-activity" &&
+            part.type !== "data-hook-activity"
+          )
+            return [];
+          const parsed = HookActivitySchema.safeParse(part.data);
+          return parsed.success ? [`native-hook:${parsed.data.id}`] : [];
+        }),
+      ),
+    [conversation?.messages, selected?.messages],
+  );
   const contextUsage = useMemo(
     () =>
       resolveContextUsage(
@@ -1276,16 +1429,16 @@ export function WorkspaceWork({
           parts: Array.isArray(message.parts) ? message.parts : [],
         })),
         {
-          maxTokens: controlAgent?.contextWindow,
-          modelName: controlAgent?.model,
+          maxTokens: sessionContextWindow,
+          modelName: sessionModelName,
           context: streamText,
-          estimated: controlAgent?.contextWindowEstimated,
+          estimated: sessionContextEstimated,
         },
       ),
     [
-      controlAgent?.contextWindow,
-      controlAgent?.contextWindowEstimated,
-      controlAgent?.model,
+      sessionContextWindow,
+      sessionContextEstimated,
+      sessionModelName,
       selected?.messages,
       conversation?.messages,
       streamText,
@@ -1387,6 +1540,18 @@ export function WorkspaceWork({
       },
     ];
   }, [groupPreferences.groups.length, groupedAgents, t, visibleAgents]);
+  const filteredSidebarResources = useMemo(() => {
+    const query = sidebarSearch.trim().toLocaleLowerCase();
+    if (!query) return sidebarResources;
+    const filter = (resources: SidebarResource[]): SidebarResource[] =>
+      resources.flatMap((resource) => {
+        if (resource.label.toLocaleLowerCase().includes(query))
+          return [resource];
+        const children = resource.children ? filter(resource.children) : [];
+        return children.length ? [{ ...resource, children }] : [];
+      });
+    return filter(sidebarResources);
+  }, [sidebarResources, sidebarSearch]);
   const activeResourceId = conversation
     ? `conversation:${conversation.id}`
     : selected
@@ -1520,17 +1685,28 @@ export function WorkspaceWork({
     return () => window.clearInterval(interval);
   }, [refreshSelected, selected?.titlePending]);
 
+  const outputSubscription = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    if (creatingMode || !selectedWorkSessionId) return;
+    return () => {
+      outputSubscription.current?.();
+      outputSubscription.current = null;
+    };
+  }, [creatingMode, selectedWorkSessionId]);
+
   useEffect(() => {
     if (
       !selectedWorkSessionId ||
       creatingMode ||
       !selectedActive ||
+      outputSubscription.current ||
       typeof EventSource === "undefined"
     )
       return undefined;
 
     let disposed = false;
     let finishing = false;
+    const completion = createWorkCompletionTransition();
     const source = new EventSource(
       `/api/v1/work-sessions/${encodeURIComponent(selectedWorkSessionId)}/events`,
     );
@@ -1554,6 +1730,7 @@ export function WorkspaceWork({
           activities: [],
         });
       }
+      dispose();
     };
 
     source.addEventListener("snapshot", (event) => {
@@ -1565,12 +1742,15 @@ export function WorkspaceWork({
         startedAt?: number;
         runtimeKind?: string;
         modelName?: string;
+        executionStage?: AgentExecutionStage;
       }>(event);
       if (!next) return;
+      completion.observe("snapshot", next);
       setStreamOutput({
         workSessionId: selectedWorkSessionId,
         text: next.text ?? "",
         activities: Array.isArray(next.activities) ? next.activities : [],
+        executionStage: next.executionStage,
         ...(typeof next.startedAt === "number"
           ? { startedAt: next.startedAt }
           : {}),
@@ -1588,14 +1768,19 @@ export function WorkspaceWork({
     });
     source.addEventListener("start", (event) => {
       const next = payload<{
+        active?: boolean;
+        done?: boolean;
         startedAt?: number;
         runtimeKind?: string;
         modelName?: string;
+        executionStage?: AgentExecutionStage;
       }>(event);
+      if (next) completion.observe("start", next);
       setStreamOutput({
         workSessionId: selectedWorkSessionId,
         text: "",
         activities: [],
+        executionStage: next?.executionStage,
         ...(typeof next?.startedAt === "number"
           ? { startedAt: next.startedAt }
           : {}),
@@ -1607,6 +1792,16 @@ export function WorkspaceWork({
           : {}),
       });
       void refreshSelected();
+    });
+    source.addEventListener("stage", (event) => {
+      const next = payload<{ executionStage?: AgentExecutionStage }>(event);
+      if (!next) return;
+      setStreamOutput((current) => ({
+        ...(current.workSessionId === selectedWorkSessionId
+          ? current
+          : { workSessionId: selectedWorkSessionId, text: "", activities: [] }),
+        executionStage: next.executionStage,
+      }));
     });
     source.addEventListener("delta", (event) => {
       const next = payload<{ delta?: string }>(event);
@@ -1621,6 +1816,10 @@ export function WorkspaceWork({
           current.workSessionId === selectedWorkSessionId
             ? current.activities
             : [],
+        executionStage:
+          current.workSessionId === selectedWorkSessionId
+            ? current.executionStage
+            : undefined,
         ...(current.workSessionId === selectedWorkSessionId &&
         current.startedAt !== undefined
           ? { startedAt: current.startedAt }
@@ -1642,6 +1841,10 @@ export function WorkspaceWork({
         text:
           current.workSessionId === selectedWorkSessionId ? current.text : "",
         activities: next.activities ?? [],
+        executionStage:
+          current.workSessionId === selectedWorkSessionId
+            ? current.executionStage
+            : undefined,
         ...(current.workSessionId === selectedWorkSessionId &&
         current.startedAt !== undefined
           ? { startedAt: current.startedAt }
@@ -1654,23 +1857,38 @@ export function WorkspaceWork({
           ? { modelName: current.modelName }
           : {}),
       }));
-      if (
-        next.activities.some(
-          (activity) =>
-            activity.toolName === "Hermes approval" &&
-            activity.status === "running",
-        )
-      ) {
-        void refreshSelected();
-      }
     });
-    source.addEventListener("done", () => void finish());
+    source.addEventListener("error", () => completion.disconnect());
+    source.addEventListener("done", (event) => {
+      if (disposed) return;
+      const next = payload<{
+        active?: boolean;
+        done?: boolean;
+        startedAt?: number;
+      }>(event);
+      const startedAt = next ? completion.observe("done", next) : null;
+      if (startedAt !== null)
+        notifyCompletion(selectedWorkSessionId, startedAt);
+      void finish();
+    });
 
-    return () => {
+    function dispose() {
       disposed = true;
+      completion.disconnect();
       source.close();
-    };
-  }, [creatingMode, refreshSelected, selectedActive, selectedWorkSessionId]);
+      if (outputSubscription.current === dispose)
+        outputSubscription.current = null;
+    }
+    // REST status becomes terminal before the coordinator publishes SSE done.
+    // Only the stream itself or a selection/unmount may dispose this listener.
+    outputSubscription.current = dispose;
+  }, [
+    creatingMode,
+    refreshSelected,
+    selectedActive,
+    selectedWorkSessionId,
+    notifyCompletion,
+  ]);
 
   function openAgentGroup(nextAgentId: string) {
     setGroupPreferences((current) => {
@@ -1693,8 +1911,6 @@ export function WorkspaceWork({
     setDraft("");
     setAttachments([]);
     setReferenceSelection({ scope: "", items: [] });
-    setReasoningSelection({ scope: `agent:${nextAgentId}`, value: "default" });
-    setHermesDraftSelection(null);
     setWorkingDirectory(".");
     setError(null);
     window.history.replaceState(
@@ -1751,7 +1967,15 @@ export function WorkspaceWork({
   }
 
   async function createWork() {
-    if (!agentId || !activeSandboxId || !draft.trim()) return;
+    if (
+      !agent ||
+      !isExecutableAgentRuntimeKind(agent?.runtimeKind) ||
+      !agentId ||
+      !activeSandboxId ||
+      !draft.trim()
+    )
+      return;
+    const runtimeKind = agent.runtimeKind;
     setBusy("create");
     setError(null);
     let attachmentIds: string[] = [];
@@ -1764,21 +1988,12 @@ export function WorkspaceWork({
           agentId,
           sandboxId: activeSandboxId,
           task: draft.trim(),
+          ...(modelChoices[composerScope]
+            ? { modelOverride: modelChoices[composerScope] }
+            : {}),
           ...(references.length ? { references } : {}),
           workingDirectory,
           attachmentIds,
-          ...(agent?.runtimeKind === "hermes"
-            ? {
-                reasoningEffort,
-                ...(hermesDraftSelection?.agentId === agent.id
-                  ? {
-                      hermesProfile: hermesDraftSelection.profile,
-                      hermesProvider: hermesDraftSelection.provider,
-                      hermesModel: hermesDraftSelection.model,
-                    }
-                  : {}),
-              }
-            : {}),
         }),
       });
       const body = (await response.json()) as {
@@ -1787,7 +2002,38 @@ export function WorkspaceWork({
       };
       if (!response.ok || !body.workSessionId)
         throw new Error(body.error || t("createError"));
-      window.location.assign(workHref(slug, body.workSessionId));
+      const nextScope = `${agentId}:${activeSandboxId}:${body.workSessionId}`;
+      setModelChoices((choices) => ({
+        ...choices,
+        [nextScope]: choices[composerScope] ?? null,
+      }));
+      setItems((current) => [
+        {
+          id: body.workSessionId as string,
+          agentId,
+          title: null,
+          titlePending: true,
+          optimistic: true,
+          task: draft.trim(),
+          acceptanceCriteria: null,
+          runtimeKind,
+          status: "queued",
+          waitingQuestion: null,
+          result: null,
+          error: null,
+          artifacts: [],
+          conversationId: "",
+          sandbox: null,
+          messages: [],
+        },
+        ...current,
+      ]);
+      setDraft("");
+      setAttachments([]);
+      setReferenceSelection({ scope: "", items: [] });
+      setDraftSelectionKey(null);
+      setBusy(null);
+      router.push(workHref(slug, body.workSessionId));
     } catch (cause) {
       await discardUploaded(attachmentIds);
       setError(cause instanceof Error ? cause.message : t("createError"));
@@ -1828,13 +2074,14 @@ export function WorkspaceWork({
 
   async function sendMessage(event?: FormEvent) {
     event?.preventDefault();
-    if (conversation || busy || running || composerPending) return;
+    if (sessionReadOnly || conversation || busy || running || composerPending)
+      return;
     const input = draft.trim();
     if (!input) return;
     const command = parseRuntimeCommand(input, commandRuntimeKind);
     if (command && command.name !== "new") {
       if (
-        commandRuntimeKind !== "pi-sdk" &&
+        !isExecutableAgentRuntimeKind(commandRuntimeKind) &&
         !commands.some((item) => item.name === command.name)
       ) {
         setError(commandsT("unsupportedCommand"));
@@ -1849,7 +2096,8 @@ export function WorkspaceWork({
         return;
       }
       if (!selected) {
-        if (commandRuntimeKind === "pi-sdk" && canSend) return createWork();
+        if (isExecutableAgentRuntimeKind(commandRuntimeKind) && canSend)
+          return createWork();
         setError(commandsT("needsConversation"));
         return;
       }
@@ -1861,7 +2109,12 @@ export function WorkspaceWork({
           {
             method: "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ line: input }),
+            body: JSON.stringify({
+              line: input,
+              ...(modelChoices[composerScope]
+                ? { modelOverride: modelChoices[composerScope] }
+                : {}),
+            }),
           },
         );
         const result = (await response.json()) as { error?: string };
@@ -1903,8 +2156,10 @@ export function WorkspaceWork({
     if (
       await postAction("input", {
         input,
+        ...(modelChoices[composerScope]
+          ? { modelOverride: modelChoices[composerScope] }
+          : {}),
         ...(references.length ? { references } : {}),
-        ...(selected.runtimeKind === "hermes" ? { reasoningEffort } : {}),
         ...(attachmentIds.length ? { attachmentIds } : {}),
       })
     ) {
@@ -1916,13 +2171,6 @@ export function WorkspaceWork({
     }
   }
 
-  async function decideApproval(
-    approvalId: string,
-    decision: "allow" | "deny",
-  ) {
-    await postAction(`approvals/${approvalId}`, { decision });
-  }
-
   async function archiveWork(id: string) {
     const response = await fetch(`/api/v1/work-sessions/${id}`, {
       method: "DELETE",
@@ -1932,12 +2180,82 @@ export function WorkspaceWork({
   }
 
   async function toggleAgentPin(item: WorkAgent) {
+    const pinned = !item.pinned;
+    const setOverride = (value?: boolean) =>
+      setPinState((current) => {
+        const values = {
+          ...(current.source === serverAgents ? current.values : {}),
+        };
+        if (value === undefined) delete values[item.id];
+        else values[item.id] = value;
+        return { source: serverAgents, values };
+      });
+    setOverride(pinned);
     const formData = new FormData();
     formData.set("workspace", slug);
     formData.set("agentId", item.id);
-    formData.set("pinned", String(!item.pinned));
-    await pinAgentAction(formData);
-    router.refresh();
+    formData.set("pinned", String(pinned));
+    try {
+      await pinAgentAction(formData);
+      router.refresh();
+    } catch {
+      setOverride();
+    }
+  }
+
+  function agentIssueLabel(issue: AgentSidebarIssue) {
+    switch (issue.kind) {
+      case "notConfigured":
+        return t("agentIssueNotConfigured");
+      case "sandboxFailed":
+        return t("agentIssueSandboxFailed", { name: issue.name });
+      case "sandboxSetup":
+        return t("agentIssueSandboxSetup", { name: issue.name });
+      case "waitingUser":
+        return t("agentIssueWaitingUser", { title: issue.title });
+    }
+  }
+
+  /** Opens the place where the issue is fixed: a waiting session or the relevant settings section. */
+  function resolveAgentIssue(item: WorkAgent, issue: AgentSidebarIssue) {
+    if (issue.kind === "waitingUser") {
+      router.push(workHref(slug, issue.sessionId));
+      return;
+    }
+    router.push(
+      agentSettingsHref(
+        slug,
+        item.id,
+        workReturnTo,
+        issue.kind === "notConfigured" ? "agent" : "sandboxes",
+      ),
+    );
+  }
+
+  function agentStatusTooltip(status: ReturnType<typeof agentSidebarStatus>) {
+    return (
+      <div className="max-w-64 space-y-1 text-left">
+        {status.issues.length ? (
+          <>
+            <p className="font-medium">
+              {t("agentIssuesTitle", { count: status.issues.length })}
+            </p>
+            <ul className="space-y-0.5">
+              {status.issues.map((issue) => (
+                <li
+                  key={`${issue.kind}:${"sessionId" in issue ? issue.sessionId : "name" in issue ? issue.name : ""}`}
+                >
+                  · {agentIssueLabel(issue)}
+                </li>
+              ))}
+            </ul>
+          </>
+        ) : null}
+        {status.running ? (
+          <p>{t("agentRunningCount", { count: status.running })}</p>
+        ) : null}
+      </div>
+    );
   }
 
   function setAllAgentSections(collapsed: boolean) {
@@ -2002,17 +2320,14 @@ export function WorkspaceWork({
   }
 
   const running = Boolean(selected && ACTIVE_STATUSES.has(selected.status));
-  const draftHermesModelReady =
-    agent?.runtimeKind === "hermes" &&
-    hermesDraftSelection?.agentId === agent.id &&
-    Boolean(hermesDraftSelection.provider && hermesDraftSelection.model);
-  const canSend = selected
-    ? MESSAGEABLE_STATUSES.has(selected.status)
-    : Boolean(
-        (agent?.ready || draftHermesModelReady) &&
-          activeSandbox &&
-          (activeSandbox.running || agent?.runtimeKind === "hermes"),
-      );
+  const canSend =
+    !sessionReadOnly &&
+    !unappliedDraft &&
+    (selected
+      ? MESSAGEABLE_STATUSES.has(selected.status)
+      : Boolean(
+          agent?.ready && isExecutableAgentRuntimeKind(agent.runtimeKind),
+        ));
   const localCommand = Boolean(parseRuntimeCommand(draft, commandRuntimeKind));
 
   function togglePanel(panel: WorkPanel) {
@@ -2026,73 +2341,7 @@ export function WorkspaceWork({
     setMobilePanel(panel);
   }
 
-  const modelPicker = controlAgent ? (
-    <AgentModelDialog
-      key={`${controlAgent.id}:${controlAgent.model ?? ""}`}
-      open={modelDialogOpen}
-      onOpenChange={setModelDialogOpen}
-      slug={slug}
-      agent={{
-        ...controlAgent,
-        providerId: controlAgent.providerId ?? null,
-        providerIds: controlAgent.providerIds ?? [],
-        model: controlAgent.model ?? null,
-      }}
-      providers={providers}
-      confirmationMessage={
-        conversation?.messages.length || selected?.messages.length
-          ? t("modelSwitchConfirm")
-          : undefined
-      }
-      hermesConversation={
-        controlAgent.runtimeKind === "hermes"
-          ? {
-              id: conversation?.id ?? selected?.conversationId ?? null,
-              profile: controlHermesSelection?.profile ?? "default",
-              provider: controlHermesSelection?.provider ?? null,
-              model: controlHermesSelection?.model ?? null,
-              hasMessages: Boolean(
-                conversation?.messages.length || selected?.messages.length,
-              ),
-              editable: conversation
-                ? !conversation.readOnly
-                : !selected || MESSAGEABLE_STATUSES.has(selected.status),
-              forkOnProfileChange: false,
-            }
-          : undefined
-      }
-      onHermesDraftChange={
-        !selected && !conversation
-          ? (selection) =>
-              setHermesDraftSelection({
-                agentId: controlAgent.id,
-                ...selection,
-              })
-          : undefined
-      }
-      onHermesSelectionSaved={
-        conversation
-          ? async () => router.refresh()
-          : selected
-            ? refreshSelected
-            : undefined
-      }
-      trigger={
-        <Button
-          type="button"
-          aria-label={`${t("model")}: ${controlModelLabel}`}
-          title={controlModelLabel}
-          variant="ghost"
-          size="sm"
-          className="h-8 min-w-0 max-w-52 gap-1.5 rounded-xl px-2 text-xs text-muted-foreground"
-        >
-          <Cpu className="size-3.5 shrink-0" />
-          <span className="min-w-0 truncate">{controlModelLabel}</span>
-          <ChevronDown className="size-3 shrink-0" />
-        </Button>
-      }
-    />
-  ) : null;
+  const onSidebarScroll = useSidebarScroll();
 
   return (
     <ChatApp
@@ -2107,103 +2356,56 @@ export function WorkspaceWork({
           ariaLabel={tAgents("agents")}
           collapsible="offcanvas"
           className="h-full shrink-0"
-          panelClassName="h-full min-h-0"
+          panelClassName="h-full min-h-0 bg-muted/30"
         >
-          <AnimatedSidebarContent className="gap-3 overflow-hidden px-2 py-3">
+          <AnimatedSidebarContent className="gap-3 overflow-hidden px-3 py-4">
             <AnimatedSidebarGroup className="min-h-0 flex-1 p-0">
-              <div className="flex h-9 shrink-0 items-center justify-between px-1">
-                <ButtonLink
-                  href={`/app/${encodeURIComponent(slug)}/agents?create=1&returnTo=${encodeURIComponent(workReturnTo)}`}
-                  aria-label={tAgents("addAgent")}
-                  title={tAgents("addAgent")}
-                  variant="ghost"
-                  size="icon"
-                  className="shrink-0"
-                >
-                  <Plus className="size-4" />
-                </ButtonLink>
-                <MorphPopover
-                  open={listOptionsOpen}
-                  onOpenChange={setListOptionsOpen}
-                >
-                  <MorphPopoverTrigger>
-                    <Button
-                      type="button"
-                      aria-label={t("listOptions")}
-                      variant={"ghost"}
-                      size={"icon"}
-                      className="flex shrink-0 items-center justify-center"
-                    >
-                      <ListFilter className="size-3.5" />
-                    </Button>
-                  </MorphPopoverTrigger>
-                  <MorphPopoverContent
-                    side="bottom"
-                    align="end"
-                    sideOffset={4}
-                    className="z-50 w-52 p-1.5"
-                  >
-                    <ButtonLink
-                      href={`/app/${encodeURIComponent(slug)}/agents?tab=management&returnTo=${encodeURIComponent(workReturnTo)}`}
-                      onClick={() => setListOptionsOpen(false)}
-                      variant="ghost"
-                      size="sm"
-                      className="w-full justify-start rounded-md px-2.5 text-left text-sm gap-2"
-                    >
-                      <Settings2 className="size-4 shrink-0" />
-                      <span>{tAgents("agentManagement")}</span>
-                    </ButtonLink>
-                    <div className="my-1 h-px bg-border" />
-                    {agents.length ? (
-                      <>
-                        <Button
-                          type="button"
-                          onClick={() => setAllAgentSections(false)}
-                          variant="ghost"
-                          size="sm"
-                          className="w-full justify-start rounded-md px-2.5 text-left text-sm gap-2"
-                        >
-                          <ChevronsUpDown className="size-4 shrink-0" />
-                          <span>{t("expandAll")}</span>
-                        </Button>
-                        <Button
-                          type="button"
-                          onClick={() => setAllAgentSections(true)}
-                          variant="ghost"
-                          size="sm"
-                          className="w-full justify-start rounded-md px-2.5 text-left text-sm gap-2"
-                        >
-                          <ChevronsDownUp className="size-4 shrink-0" />
-                          <span>{t("collapseAll")}</span>
-                        </Button>
-                      </>
-                    ) : null}
-                    <div className="my-1 h-px bg-border" />
-                    <Button
-                      type="button"
-                      onClick={() => setGroupEditor({ id: null, name: "" })}
-                      variant="ghost"
-                      size="sm"
-                      className="w-full justify-start rounded-md px-2.5 text-left text-sm gap-2"
-                    >
-                      <FolderPlus className="size-4 shrink-0" />
-                      <span>{t("newGroup")}</span>
-                    </Button>
-                  </MorphPopoverContent>
-                </MorphPopover>
-              </div>
-              <AnimatedSidebarGroupContent className="min-h-0 flex-1 overflow-y-auto">
-                {sidebarResources.length ? (
+              <SidebarToolbar
+                title={tAgents("agents")}
+                searchLabel={t("search")}
+                searchPlaceholder={common("search")}
+                search={sidebarSearch}
+                onSearchChange={setSidebarSearch}
+                addLabel={tAgents("newAgent")}
+                onAdd={() =>
+                  router.push(
+                    `/app/${encodeURIComponent(slug)}/agents?create=1&returnTo=${encodeURIComponent(workReturnTo)}`,
+                  )
+                }
+                moreLabel={t("listOptions")}
+                moreOpen={listOptionsOpen}
+                onMoreOpenChange={setListOptionsOpen}
+                hasItems={agents.length > 0}
+                expandLabel={t("expandAll")}
+                collapseLabel={t("collapseAll")}
+                newGroupLabel={t("newGroup")}
+                onExpandAll={() => setAllAgentSections(false)}
+                onCollapseAll={() => setAllAgentSections(true)}
+                onNewGroup={() => setGroupEditor({ id: null, name: "" })}
+              />
+              <AnimatedSidebarGroupContent
+                onScroll={onSidebarScroll}
+                className="sidebar-scroll min-h-0 flex-1 !w-auto -mr-3 overflow-y-auto overscroll-contain pr-3"
+              >
+                {filteredSidebarResources.length ? (
                   <AISidebar
                     key={JSON.stringify([
                       groupPreferences.collapsed,
                       expandedAgents,
+                      sidebarSearch.trim(),
                     ])}
-                    items={sidebarResources}
+                    items={filteredSidebarResources}
                     activeId={activeResourceId}
                     ariaLabel={tAgents("agents")}
-                    className="px-1"
+                    className={`px-0 [&_[role=treeitem]]:rounded-lg [&_[role=treeitem]]:min-h-10 [&_[aria-selected=true]]:bg-muted [&_[role=treeitem]>span[aria-hidden=true]:empty]:ml-1 [&_[role=treeitem]>span[aria-hidden=true]:empty]:w-0 [&_[role=treeitem]>span[aria-hidden=true]:has(>[data-sidebar-dot])]:ml-1 [&_[role=treeitem]>span[aria-hidden=true]:has(>[data-sidebar-dot])]:w-0 ${sidebarHoverActionsClassName}`}
                     defaultExpandedIds={[
+                      ...(sidebarSearch.trim()
+                        ? filteredSidebarResources.flatMap((resource) => [
+                            resource.id,
+                            ...(resource.children?.map((child) => child.id) ??
+                              []),
+                          ])
+                        : []),
                       ...groupPreferences.groups
                         .filter(
                           (group) => !groupPreferences.collapsed[group.id],
@@ -2253,55 +2455,146 @@ export function WorkspaceWork({
                         kind === "agent"
                           ? agents.find((item) => item.id === id)
                           : null;
-                      if (!itemAgent?.supportsWork) return null;
-                      return (
+                      if (!itemAgent) return null;
+                      const pinButton = (
                         <button
                           type="button"
                           draggable={false}
-                          aria-label={`${t("newWork")} ${itemAgent.name}`}
-                          title={t("newWork")}
+                          aria-pressed={itemAgent.pinned}
+                          data-sidebar-reveal={
+                            itemAgent.pinned ? undefined : ""
+                          }
+                          aria-label={`${itemAgent.pinned ? tAgents("unpinAgent") : tAgents("pinAgent")} ${itemAgent.name}`}
+                          title={
+                            itemAgent.pinned
+                              ? tAgents("unpinAgent")
+                              : tAgents("pinAgent")
+                          }
                           onClick={(event) => {
                             event.stopPropagation();
-                            startNewWork(itemAgent.id);
+                            void toggleAgentPin(itemAgent);
                           }}
-                          className="grid size-7 shrink-0 place-items-center rounded-lg outline-none opacity-0 transition-opacity hover:bg-foreground/5 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring group-hover/resource:opacity-100 group-data-[menu-open=true]/resource:opacity-100"
+                          className={cx(
+                            "grid size-7 shrink-0 place-items-center rounded-lg outline-none transition-opacity hover:bg-foreground/5 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring group-hover/resource:opacity-100 group-data-[menu-open=true]/resource:opacity-100",
+                            itemAgent.pinned
+                              ? "text-foreground opacity-100"
+                              : "text-muted-foreground opacity-0",
+                          )}
                         >
-                          <MessageSquarePlus
+                          <Pin
                             aria-hidden="true"
-                            className="size-3.5"
+                            className={cx(
+                              "size-3.5 rotate-45",
+                              itemAgent.pinned && "fill-current",
+                            )}
                           />
                         </button>
+                      );
+                      const status = agentSidebarStatus(itemAgent, items);
+                      const firstIssue = status.issues[0];
+                      const resolveButton = firstIssue ? (
+                        <Tooltip
+                          content={
+                            <div className="space-y-1">
+                              {agentStatusTooltip(status)}
+                              <p className="text-muted-foreground">
+                                {t("agentResolveIssue", {
+                                  issue: agentIssueLabel(firstIssue),
+                                })}
+                              </p>
+                            </div>
+                          }
+                          side="right"
+                        >
+                          <button
+                            type="button"
+                            draggable={false}
+                            aria-label={`${t("agentIssuesTitle", { count: status.issues.length })}: ${agentIssueLabel(firstIssue)}`}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              resolveAgentIssue(itemAgent, firstIssue);
+                            }}
+                            className={cx(
+                              "grid size-7 shrink-0 place-items-center rounded-lg outline-none hover:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-ring",
+                              status.tone === "error"
+                                ? "text-destructive"
+                                : "text-warning",
+                            )}
+                          >
+                            <CircleAlert
+                              aria-hidden="true"
+                              className="size-3.5"
+                            />
+                          </button>
+                        </Tooltip>
+                      ) : null;
+                      if (!itemAgent.supportsWork)
+                        return (
+                          <>
+                            {resolveButton}
+                            {pinButton}
+                          </>
+                        );
+                      return (
+                        <>
+                          {resolveButton}
+                          {pinButton}
+                          <button
+                            type="button"
+                            draggable={false}
+                            data-sidebar-reveal=""
+                            aria-label={`${t("newWork")} ${itemAgent.name}`}
+                            title={t("newWork")}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              startNewWork(itemAgent.id);
+                            }}
+                            className="grid size-7 shrink-0 place-items-center rounded-lg outline-none opacity-0 transition-opacity hover:bg-foreground/5 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring group-hover/resource:opacity-100 group-data-[menu-open=true]/resource:opacity-100"
+                          >
+                            <MessageSquarePlus
+                              aria-hidden="true"
+                              className="size-3.5"
+                            />
+                          </button>
+                        </>
                       );
                     }}
                     renderIcon={(resource) => {
                       const [kind, id] = resource.id.split(":", 2);
                       if (kind === "agent") {
                         const itemAgent = agents.find((item) => item.id === id);
-                        const hasRunningSession = items.some(
-                          (session) =>
-                            session.agentId === id &&
-                            session.status === "running",
-                        );
-                        const tone = agentSidebarIssueTone(
-                          itemAgent,
-                          hasRunningSession,
-                        );
-                        return (
-                          <span className="relative grid size-5 place-items-center">
-                            <Bot className="size-4" />
+                        const status = agentSidebarStatus(itemAgent, items);
+                        const { tone } = status;
+                        const avatar = (
+                          <span className="relative grid size-5 place-items-center rounded-md bg-muted text-[10px] font-semibold text-foreground ring-1 ring-border">
+                            {itemAgent?.name
+                              .slice(0, 1)
+                              .toLocaleUpperCase() || (
+                              <Bot className="size-3.5" />
+                            )}
                             {tone ? (
                               <span
                                 className={cx(
-                                  "absolute right-0 top-0 size-2 rounded-full ring-1 ring-background",
+                                  "absolute -right-0.5 -top-0.5 size-1.5 rounded-full ring-2 ring-background",
                                   tone === "error"
                                     ? "bg-destructive"
                                     : tone === "warning"
-                                      ? "bg-amber-500"
-                                      : "bg-green-500",
+                                      ? "bg-warning"
+                                      : "bg-primary",
                                 )}
                               />
                             ) : null}
                           </span>
+                        );
+                        return tone ? (
+                          <Tooltip
+                            content={agentStatusTooltip(status)}
+                            side="right"
+                          >
+                            {avatar}
+                          </Tooltip>
+                        ) : (
+                          avatar
                         );
                       }
                       if (kind === "session") {
@@ -2309,24 +2602,22 @@ export function WorkspaceWork({
                         const tone = sidebarIssueTone(item?.status ?? "");
                         return tone ? (
                           <Circle
+                            data-sidebar-dot=""
                             className={cx(
                               "size-2 fill-current",
                               tone === "error"
                                 ? "text-destructive"
                                 : tone === "warning"
-                                  ? "text-amber-500"
-                                  : "text-green-500",
+                                  ? "text-warning"
+                                  : "text-primary",
                             )}
                           />
-                        ) : null;
-                      }
-                      if (kind === "conversation")
-                        return conversations.find((item) => item.id === id)
-                          ?.source ? (
-                          <Radio className="size-4" />
                         ) : (
-                          <MessageSquare className="size-4" />
+                          false
                         );
+                      }
+                      // Second-level conversations show no icon; `false` suppresses the sidebar default.
+                      if (kind === "conversation") return false;
                       return <Folder className="size-4" />;
                     }}
                     renderMenu={(resource, controls) => {
@@ -2367,16 +2658,6 @@ export function WorkspaceWork({
                         if (!itemAgent) return null;
                         return (
                           <>
-                            {itemAgent.supportsWork
-                              ? action(t("newWork"), () =>
-                                  startNewWork(itemAgent.id),
-                                )
-                              : null}
-                            {action(tAgents("chat"), () =>
-                              router.push(
-                                `/app/${encodeURIComponent(slug)}/work?agent=${encodeURIComponent(itemAgent.id)}`,
-                              ),
-                            )}
                             {action(tAgents("configureAgent"), () =>
                               router.push(
                                 agentSettingsHref(
@@ -2386,11 +2667,15 @@ export function WorkspaceWork({
                                 ),
                               ),
                             )}
-                            {action(
-                              itemAgent.pinned
-                                ? tAgents("unpinAgent")
-                                : tAgents("pinAgent"),
-                              () => void toggleAgentPin(itemAgent),
+                            {itemAgent.supportsWork
+                              ? action(t("newWork"), () =>
+                                  startNewWork(itemAgent.id),
+                                )
+                              : null}
+                            {action(tAgents("chat"), () =>
+                              router.push(
+                                `/app/${encodeURIComponent(slug)}/work?agent=${encodeURIComponent(itemAgent.id)}`,
+                              ),
                             )}
                             {action(tAgents("deleteAgent"), () =>
                               setDeleteAgentTarget(itemAgent),
@@ -2416,7 +2701,9 @@ export function WorkspaceWork({
                   />
                 ) : (
                   <p className="px-3 py-8 text-center text-xs text-muted-foreground">
-                    {tAgents("noAgentsYet")}
+                    {sidebarSearch.trim()
+                      ? t("noSearchResults")
+                      : tAgents("noAgentsYet")}
                   </p>
                 )}
               </AnimatedSidebarGroupContent>
@@ -2427,29 +2714,30 @@ export function WorkspaceWork({
 
         <AnimatedSidebarInset className="h-full min-h-0 min-w-0 flex-1 overflow-hidden">
           <main className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col bg-background">
-            <header className="flex min-h-14 shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border px-3 py-2 sm:px-4">
-              <div className="flex min-w-0 flex-1 basis-40 items-center gap-2.5">
+            <header className="flex h-12 shrink-0 items-center justify-between gap-2 px-3 sm:px-5">
+              <div className="flex min-w-0 flex-1 items-center gap-2.5">
                 <ChatAppSidebarTrigger
                   openLabel={t("showSidebar")}
                   closeLabel={t("hideSidebar")}
                 >
                   <PanelLeft className="size-4" />
                 </ChatAppSidebarTrigger>
-                <div className="min-w-0">
+                <div className="flex min-w-0 items-center gap-2">
                   <p className="truncate text-sm font-medium text-foreground">
-                    {selected?.title ||
+                    {conversation?.title ||
+                      selected?.title ||
                       selected?.task ||
-                      controlAgent?.name ||
-                      t("title")}
+                      tAgents("newChat")}
                   </p>
-                  <p className="truncate text-[11px] text-muted-foreground">
-                    {controlAgent
-                      ? `${controlAgent.name} · ${runtimeLabel(selected?.runtimeKind ?? agent?.runtimeKind)}`
-                      : t("emptyDescription")}
-                  </p>
+                  {controlAgent ? (
+                    <span className="hidden max-w-40 truncate rounded-full bg-muted px-2.5 py-1 text-[11px] text-muted-foreground sm:inline-block">
+                      {controlAgent.name}
+                    </span>
+                  ) : null}
                 </div>
               </div>
               <div className="flex shrink-0 items-center gap-1">
+                {completionNotificationControl}
                 {controlSandbox || conversationWorkspace ? (
                   <>
                     <Button
@@ -2465,6 +2753,7 @@ export function WorkspaceWork({
                     </Button>
                     <Button
                       type="button"
+                      disabled={sessionReadOnly}
                       onClick={() => togglePanel("terminal")}
                       aria-label={tSandboxes("terminal")}
                       title={tSandboxes("terminal")}
@@ -2478,52 +2767,103 @@ export function WorkspaceWork({
                 ) : null}
               </div>
             </header>
-
-            {conversation?.readOnly ? (
-              <div className="mx-auto w-full max-w-3xl px-4 py-2">
-                {modelPicker}
-              </div>
-            ) : null}
-            {visibleError ? (
+            {(selected || conversation) && sessionReadOnly ? (
               <p
-                role="alert"
-                className="shrink-0 border-b border-destructive/20 bg-destructive/5 px-4 py-2 text-xs text-destructive"
+                role="status"
+                className="border-b border-border px-4 py-3 text-sm text-muted-foreground"
               >
-                {runtimeErrorCode
-                  ? commandsT(
-                      commandsT.has(runtimeErrorCode)
-                        ? runtimeErrorCode
-                        : "sdkExecutionFailed",
-                    )
-                  : visibleError}
+                {t("sessionHistoryReadOnly")}
               </p>
             ) : null}
-            {conversation && !conversation.readOnly && controlAgent ? (
+            {selected &&
+            !sessionReadOnly &&
+            controlAgent &&
+            selected.agentRevisionVersion &&
+            controlAgent.currentRevisionVersion &&
+            selected.agentRevisionVersion <
+              controlAgent.currentRevisionVersion ? (
+              <RevisionUpgradeNotice
+                url={`/api/v1/agents/${controlAgent.id}/conversations/${selected.conversationId}/revision`}
+                fromVersion={selected.agentRevisionVersion}
+                targetVersion={controlAgent.currentRevisionVersion}
+                disabled={selectedActive || Boolean(busy) || composerPending}
+                onUpgraded={() => {
+                  void refreshSelected();
+                  router.refresh();
+                }}
+              />
+            ) : null}
+
+            {conversation &&
+            !sessionReadOnly &&
+            !channelConversation &&
+            controlAgent ? (
               <AgentConversation
                 key={conversation.id}
                 activeConversationId={conversation.id}
                 agentId={controlAgent.id}
                 agentName={controlAgent.name}
-                ready={controlAgent.ready}
-                runtimeKind={controlAgent.runtimeKind}
-                modelName={controlHermesSelection?.model ?? controlAgent.model}
-                modelPicker={modelPicker}
+                settingsHref={agentSettingsHref(
+                  slug,
+                  controlAgent.id,
+                  workReturnTo,
+                )}
+                composerNotice={(
+                  setEditorText,
+                  widgetTarget,
+                  renderedActivityIds,
+                ) => (
+                  <ConversationExecution
+                    key={`${controlAgent.id}:${conversation.id}`}
+                    endpoint={`/api/v1/agents/${encodeURIComponent(controlAgent.id)}/conversations/${encodeURIComponent(conversation.id)}/execution`}
+                    showStatus={false}
+                    active={conversationBusy}
+                    onSetEditorText={setEditorText}
+                    belowEditorElement={widgetTarget}
+                    renderedActivityIds={renderedActivityIds}
+                    className="mb-3"
+                    onChange={() => router.refresh()}
+                  />
+                )}
+                ready={!sessionReadOnly}
+                runtimeKind={conversation.runtimeKind ?? null}
+                agentRevisionVersion={conversation.agentRevisionVersion}
+                currentRevisionVersion={controlAgent.currentRevisionVersion}
+                mcpToolsUpdated={controlAgent.mcpToolsUpdated}
+                modelName={conversation.modelName}
+                modelOverride={modelChoices[composerScope] ?? null}
+                modelPicker={
+                  <ComposerModelSelect
+                    providers={providers}
+                    defaultSelection={
+                      controlAgent.providerId && controlAgent.model
+                        ? {
+                            providerId: controlAgent.providerId,
+                            model: controlAgent.model,
+                          }
+                        : null
+                    }
+                    value={modelChoices[composerScope] ?? null}
+                    onChange={(value) =>
+                      setModelChoices((choices) => ({
+                        ...choices,
+                        [composerScope]: value,
+                      }))
+                    }
+                  />
+                }
                 initialMessages={
                   conversation.messages.filter(
                     (message) => !messageCompaction(message),
-                  ) as HermesUIMessage[]
+                  ) as AgentUIMessage[]
                 }
                 initialReasoningEffort={
                   conversation.reasoningEffort ?? "default"
                 }
-                reasoningAvailable={controlAgent.runtimeKind === "hermes"}
+                reasoningAvailable={false}
                 creatingConversation={false}
                 ensureConversation={async () => conversation.id}
-                attachmentUploadUrl={
-                  controlAgent.runtimeKind === "hermes"
-                    ? undefined
-                    : `/api/v1/workspaces/${workspaceId}/attachments`
-                }
+                attachmentUploadUrl={`/api/v1/workspaces/${workspaceId}/attachments`}
                 mcpPromptApiPath={`/api/v1/agents/${controlAgent.id}/prompts`}
                 mcpResourceApiPath={`/api/v1/agents/${controlAgent.id}/composer`}
                 onBusyChange={setConversationBusy}
@@ -2536,17 +2876,18 @@ export function WorkspaceWork({
                 data-ui="work.transcript"
                 busy={selectedActive}
                 navigation="rail"
-                className="min-h-0 flex-1"
+                className={
+                  selected || conversation
+                    ? "min-h-0 flex-1"
+                    : "mt-auto min-h-0 flex-none"
+                }
               >
                 {selected || conversation ? (
                   <>
                     <WorkTranscript
                       agentName={controlAgent?.name ?? t("agent")}
                       modelName={
-                        conversation?.hermesModel ??
-                        selected?.hermesModel ??
-                        selectedAgent?.model ??
-                        null
+                        conversation?.modelName ?? selected?.modelName ?? null
                       }
                       messages={
                         conversation?.messages ?? selected?.messages ?? []
@@ -2556,6 +2897,7 @@ export function WorkspaceWork({
                       streamStartedAt={streamStartedAt}
                       streamRuntimeKind={streamRuntimeKind}
                       streamModelName={streamModelName}
+                      executionStage={executionStage}
                       sessionStartedAt={selected?.startedAt}
                       sessionCompletedAt={selected?.completedAt}
                       streaming={selectedActive}
@@ -2575,137 +2917,214 @@ export function WorkspaceWork({
                     ) : null}
                   </>
                 ) : (
-                  <div className="flex h-full min-h-64 items-center justify-center px-6 text-center">
-                    <div>
-                      <span className="mx-auto flex size-11 items-center justify-center rounded-full bg-muted text-muted-foreground">
-                        <Bot className="size-5" />
+                  <div className="flex items-center justify-center px-6 pb-7 pt-10 text-center">
+                    <div className="max-w-lg">
+                      <span className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-muted text-foreground ring-1 ring-border/50">
+                        <Bot className="size-6" />
                       </span>
-                      <h2 className="mt-3 text-base font-medium">
-                        {t("emptyTitle")}
-                      </h2>
                       {agent ? (
-                        <p className="mt-1 text-xs text-muted-foreground">
+                        <p className="mt-4 text-sm font-medium text-muted-foreground">
                           {agent.name}
                         </p>
+                      ) : null}
+                      <h2 className="mt-2 text-2xl font-medium tracking-tight sm:text-3xl">
+                        {t("emptyTitle")}
+                      </h2>
+                      {agent?.description &&
+                      agent.description.trim() !== agent.name.trim() ? (
+                        <p className="mx-auto mt-3 max-w-md text-sm leading-6 text-muted-foreground">
+                          {agent.description}
+                        </p>
+                      ) : null}
+                      {agent?.mcpToolsUpdated ? (
+                        <McpToolsUpdatedNote {...agent.mcpToolsUpdated} />
                       ) : null}
                     </div>
                   </div>
                 )}
+                {visibleError && !configurationError ? (
+                  <div
+                    role="alert"
+                    className="mx-auto my-4 w-[calc(100%_-_2rem)] max-w-[736px] rounded-2xl border border-border bg-muted/40 p-4 text-sm text-muted-foreground"
+                  >
+                    {runtimeError ? runtimeError.text : visibleError}
+                    {runtimeError?.code === "PI_MCP_TOOLS_UNAVAILABLE" &&
+                    controlAgent ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="ml-3 rounded-full"
+                        onClick={() =>
+                          router.push(
+                            agentSettingsHref(
+                              slug,
+                              controlAgent.id,
+                              workReturnTo,
+                              "mcp",
+                            ),
+                          )
+                        }
+                      >
+                        {tAgents("configureAgent")}
+                      </Button>
+                    ) : null}
+                  </div>
+                ) : null}
               </MessageScroller>
             )}
+            {conversation && channelConversation ? (
+              <ConversationExecution
+                key={`${conversation.agentId}:${conversation.id}`}
+                endpoint={`/api/v1/agents/${encodeURIComponent(conversation.agentId)}/conversations/${encodeURIComponent(conversation.id)}/execution`}
+                showStatus
+                renderedActivityIds={renderedHookIds}
+                settingsHref={agentSettingsHref(
+                  slug,
+                  conversation.agentId,
+                  workReturnTo,
+                  "mcp",
+                )}
+                className={conversationComposerDockClassName}
+                onChange={() => router.refresh()}
+              />
+            ) : null}
+            {unappliedDraft && agent ? (
+              <div
+                role="status"
+                className="mx-auto mb-2 flex w-[calc(100%_-_2rem)] max-w-[736px] flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-muted/40 px-4 py-3 text-sm"
+              >
+                <p className="text-muted-foreground">
+                  {t("agentDraftUnapplied")}
+                </p>
+                <Button
+                  onClick={() =>
+                    router.push(agentSettingsHref(slug, agent.id, workReturnTo))
+                  }
+                  variant="outline"
+                  size="sm"
+                  className="rounded-full"
+                >
+                  {t("agentDraftReview")}
+                </Button>
+              </div>
+            ) : null}
+            {showConfigurationNotice && controlAgent ? (
+              <div
+                role="alert"
+                className="mx-auto mb-2 flex w-[calc(100%_-_2rem)] max-w-[736px] flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-muted/40 px-4 py-3 text-sm"
+              >
+                <span className="text-muted-foreground">
+                  {t("configureAgent")}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="rounded-full"
+                  onClick={() =>
+                    router.push(
+                      agentSettingsHref(slug, controlAgent.id, workReturnTo),
+                    )
+                  }
+                >
+                  {tAgents("configureAgent")}
+                </Button>
+              </div>
+            ) : null}
 
-            {!conversation && (
-              <div className="mx-auto w-full max-w-3xl shrink-0 px-4 pb-2">
+            {!conversation && (!sessionReadOnly || selectedActive) && (
+              <div
+                className={`${conversationComposerDockClassName} ${!selected ? "mb-auto before:hidden" : ""} ${showConfigurationNotice || unappliedDraft ? "before:hidden" : ""}`}
+              >
                 <div>
-                  {pendingApprovals.length ? (
-                    <div className="space-y-3">
-                      {pendingApprovals.map((approval) => (
-                        <ToolApproval
-                          key={approval.id}
-                          tool={approval.toolName}
-                          title={t("approvalRequired")}
-                          status={busy ? "approving" : "pending"}
-                          parameters={[
-                            {
-                              id: "input",
-                              label: t("details"),
-                              value: (
-                                <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words">
-                                  {formatValue(approval.input)}
-                                </pre>
-                              ),
-                            },
-                          ]}
-                          onApprove={() => {
-                            if (!busy)
-                              void decideApproval(approval.id, "allow");
-                          }}
-                          onDeny={() => {
-                            if (!busy) void decideApproval(approval.id, "deny");
-                          }}
-                        />
-                      ))}
-                    </div>
-                  ) : (
-                    <WorkComposer
-                      key={composerScope}
-                      agentId={controlAgent?.id}
-                      sandboxId={controlSandbox?.id}
-                      workSessionId={selected?.id}
-                      conversationId={selected?.conversationId}
-                      commands={commands}
-                      runtimeKind={commandRuntimeKind}
-                      draft={draft}
-                      onDraftChange={setDraft}
-                      attachments={attachments}
-                      onAttachmentsChange={setAttachments}
-                      references={references}
-                      onReferencesChange={(items) =>
-                        setReferenceSelection({ scope: composerScope, items })
-                      }
-                      supportsAttachments={
-                        controlSandbox?.kind === "docker" ||
-                        controlSandbox?.kind === "hermes"
-                      }
-                      onError={setError}
-                      onPendingChange={setComposerPending}
-                      waitingQuestion={selected?.waitingQuestion}
-                      toolbarStart={
-                        <>
-                          {modelPicker}
-                          {controlAgent?.runtimeKind === "hermes" ? (
-                            <ReasoningEffortControl
-                              value={reasoningEffort}
-                              disabled={Boolean(busy) || running}
-                              onChange={setReasoningEffort}
-                            />
-                          ) : null}
-                          <span className="flex min-w-0 items-center gap-1.5 truncate px-1 text-[11px] text-muted-foreground">
-                            <TerminalSquare className="size-3.5 shrink-0" />
-                            {runtimeLabel(
-                              selected?.runtimeKind ?? agent?.runtimeKind,
-                            )}
-                          </span>
-                        </>
-                      }
-                      disabled={
-                        Boolean(busy) ||
-                        running ||
-                        (!canSend && !localCommand) ||
-                        composerPending
-                      }
-                      loading={running}
-                      onStop={
-                        selected && busy !== "cancel"
-                          ? () => void postAction("cancel")
-                          : undefined
-                      }
-                      onSubmit={() => void sendMessage()}
-                      toolbarEnd={
+                  {selected && !sessionReadOnly ? (
+                    <ConversationExecution
+                      key={selected.id}
+                      endpoint={`/api/v1/workspaces/${encodeURIComponent(slug)}/work-sessions/${encodeURIComponent(selected.id)}/ui`}
+                      showStatus={false}
+                      showActivities={false}
+                      active={selectedActive}
+                      onSetEditorText={setDraft}
+                      belowEditorElement={belowEditorElement}
+                      renderedActivityIds={renderedHookIds}
+                      onChange={() => void refreshSelected()}
+                      className="mb-3"
+                    />
+                  ) : null}
+                  <WorkComposer
+                    key={composerScope}
+                    agentId={controlAgent?.id}
+                    sandboxId={controlSandbox?.id}
+                    workSessionId={selected?.id}
+                    conversationId={selected?.conversationId}
+                    commands={commands}
+                    runtimeKind={commandRuntimeKind}
+                    draft={draft}
+                    onDraftChange={setDraft}
+                    attachments={attachments}
+                    onAttachmentsChange={setAttachments}
+                    references={references}
+                    onReferencesChange={(items) =>
+                      setReferenceSelection({ scope: composerScope, items })
+                    }
+                    supportsAttachments={
+                      !sessionReadOnly &&
+                      (selected
+                        ? controlSandbox?.kind
+                        : activeSandbox?.kind) === "docker"
+                    }
+                    onError={setError}
+                    onPendingChange={setComposerPending}
+                    waitingQuestion={selected?.waitingQuestion}
+                    toolbarStart={null}
+                    disabled={
+                      sessionReadOnly ||
+                      unappliedDraft ||
+                      Boolean(busy) ||
+                      running ||
+                      (!canSend && !localCommand) ||
+                      composerPending
+                    }
+                    loading={running}
+                    onStop={
+                      selected && busy !== "cancel"
+                        ? () => void postAction("cancel")
+                        : undefined
+                    }
+                    onSubmit={() => void sendMessage()}
+                    toolbarEnd={
+                      <>
                         <ConversationContextUsage
                           busy={running}
                           usage={contextUsage}
                         />
-                      }
-                    />
-                  )}
-                  {!selected && agent && !agent.ready ? (
-                    <p className="px-2 pt-2 text-xs text-muted-foreground text-muted-foreground">
-                      {t("configureAgent")}
-                    </p>
-                  ) : null}
+                        <ComposerModelSelect
+                          providers={providers}
+                          defaultSelection={
+                            controlAgent?.providerId && controlAgent.model
+                              ? {
+                                  providerId: controlAgent.providerId,
+                                  model: controlAgent.model,
+                                }
+                              : null
+                          }
+                          value={modelChoices[composerScope] ?? null}
+                          onChange={(value) =>
+                            setModelChoices((choices) => ({
+                              ...choices,
+                              [composerScope]: value,
+                            }))
+                          }
+                        />
+                      </>
+                    }
+                  />
+                  <div
+                    ref={setBelowEditorElement}
+                    className="space-y-3 empty:hidden"
+                  />
                   {!selected && agent?.ready && !sandboxOptions.length ? (
-                    <p className="px-2 pt-2 text-xs text-muted-foreground text-muted-foreground">
+                    <p className="px-3 pt-3 text-center text-[11px] text-muted-foreground">
                       {t("attachSandbox")}
-                    </p>
-                  ) : null}
-                  {!selected &&
-                  activeSandbox &&
-                  !activeSandbox.running &&
-                  activeSandbox.status !== "provisioning" &&
-                  agent?.runtimeKind !== "hermes" ? (
-                    <p className="px-2 pt-2 text-xs text-muted-foreground text-muted-foreground">
-                      {t("stopped")}
                     </p>
                   ) : null}
                 </div>
@@ -2721,6 +3140,7 @@ export function WorkspaceWork({
                 key={`${conversation?.id ?? selected?.id ?? "new"}:${controlSandbox.id}`}
                 compact
                 filesOnly={desktopPanel === "files"}
+                readOnly={sessionReadOnly}
                 terminalOnly={desktopPanel === "terminal"}
                 deploymentId={controlSandbox.deploymentId}
                 running={controlSandbox.running}
@@ -2758,24 +3178,27 @@ export function WorkspaceWork({
             closeButtonLabel={t("closeWorkspace")}
             className="flex h-[calc(100dvh-2rem)] w-full max-w-5xl flex-col"
           >
-            <header className="flex h-16 shrink-0 items-center pl-3 pr-16">
-              <span className="flex items-center gap-2 text-sm font-medium">
-                {mobilePanel === "files" ? (
+            <DialogHeader
+              title={
+                mobilePanel === "files"
+                  ? tSandboxes("files")
+                  : tSandboxes("terminal")
+              }
+              icon={
+                mobilePanel === "files" ? (
                   <Folder className="size-4" />
                 ) : (
                   <TerminalSquare className="size-4" />
-                )}
-                {mobilePanel === "files"
-                  ? tSandboxes("files")
-                  : tSandboxes("terminal")}
-              </span>
-            </header>
+                )
+              }
+            />
             <div className="min-h-0 flex-1 overflow-hidden">
               {controlSandbox && !workspacePending ? (
                 <SandboxConsole
                   key={`${conversation?.id ?? selected?.id ?? "new"}:${controlSandbox.id}`}
                   compact
                   filesOnly={mobilePanel === "files"}
+                  readOnly={sessionReadOnly}
                   terminalOnly={mobilePanel === "terminal"}
                   deploymentId={controlSandbox.deploymentId}
                   running={controlSandbox.running}
@@ -2821,13 +3244,13 @@ export function WorkspaceWork({
           closeButtonLabel={tAgents("close")}
           className="max-w-md"
         >
-          <h2 className="pr-16 text-lg font-semibold">
-            {tAgents("deleteAgent")}
-          </h2>
-          <p className="text-sm text-muted-foreground">
-            {tAgents("deleteThisAgentAndItsSandboxesAndAllItsConversations")}
-          </p>
-          <form action={deleteAgentAction} className="flex justify-end gap-2">
+          <DialogHeader title={tAgents("deleteAgent")} />
+          <DialogBody>
+            <p className="text-sm text-muted-foreground">
+              {tAgents("deleteThisAgentAndItsSandboxesAndAllItsConversations")}
+            </p>
+          </DialogBody>
+          <form action={deleteAgentAction}>
             <input type="hidden" name="workspace" value={slug} />
             <input
               type="hidden"
@@ -2835,14 +3258,16 @@ export function WorkspaceWork({
               value={deleteAgentTarget?.id ?? ""}
             />
             <input type="hidden" name="returnTo" value={`/app/${slug}/work`} />
-            <CenterMorphModalClose>
-              <Button type="button" variant={"secondary"} size={"sm"}>
-                {tAgents("cancel")}
-              </Button>
-            </CenterMorphModalClose>
-            <SubmitButton pendingLabel={tAgents("deleting")}>
-              {tAgents("confirmDelete")}
-            </SubmitButton>
+            <DialogFooter cancel={<DialogCancel />}>
+              <SubmitButton
+                size="md"
+                variant="primary"
+                className="bg-destructive text-white hover:bg-destructive/90"
+                pendingLabel={tAgents("deleting")}
+              >
+                {tAgents("confirmDelete")}
+              </SubmitButton>
+            </DialogFooter>
           </form>
         </CenterMorphModalContent>
       </CenterMorphModal>

@@ -67,7 +67,7 @@ beforeAll(async () => {
       endpointId: endpoint.id,
       version: 1,
       systemPrompt: "Safe public prompt",
-      runtimeImage: "nousresearch/hermes-agent:v2026.8.3",
+      runtimeImage: "historical-runtime-image",
       toolPolicy: {},
     },
   });

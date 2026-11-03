@@ -42,12 +42,15 @@ export function AgentBuiltInTools({
         : null}
       <ul
         aria-label={t("builtInTools")}
-        className="m-0 grid list-none gap-x-8 gap-y-5 p-0 sm:grid-cols-2"
+        className="m-0 grid list-none gap-3 p-0 sm:grid-cols-2"
       >
         {groups.map((group) => {
           const enabled = group.tools.every((tool) => !disabledTools.has(tool));
           return (
-            <li key={group.category} className="min-w-0">
+            <li
+              key={group.category}
+              className="min-w-0 rounded-xl border border-border/60 bg-muted/15 p-4"
+            >
               {selectable ? (
                 <div className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-foreground">
                   <FormCheckbox
@@ -70,9 +73,12 @@ export function AgentBuiltInTools({
                   {labels[group.category]}
                 </p>
               )}
-              <div className="mt-2 flex flex-wrap gap-x-4 gap-y-2">
+              <div className="mt-3 flex flex-wrap gap-2">
                 {group.tools.map((tool) => (
-                  <code key={tool} className="text-xs text-foreground">
+                  <code
+                    key={tool}
+                    className="rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground"
+                  >
                     {tool}
                   </code>
                 ))}
@@ -81,11 +87,6 @@ export function AgentBuiltInTools({
           );
         })}
       </ul>
-      {!selectable ? (
-        <p className="text-xs leading-5 text-muted-foreground">
-          {t("hermesBuiltInToolsDescription")}
-        </p>
-      ) : null}
     </div>
   );
 }

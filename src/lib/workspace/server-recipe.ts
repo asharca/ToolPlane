@@ -1,4 +1,10 @@
-import { isValidMcpRef, type McpSource } from "./custom-mcp";
+import { mcpEnvironmentState } from "./mcp-environment";
+import {
+  isValidMcpRef,
+  parseMcpJsonConfig,
+  type McpSource,
+  type StdioMcpCommand,
+} from "./custom-mcp";
 import {
   hasMcpToolCatalog,
   readMcpToolCatalog,
@@ -10,10 +16,12 @@ import {
 // environment-variable NAMES (values are filled in per workspace at deploy
 // time, never stored on the directory row).
 export type ServerRecipe = {
-  source: McpSource;
+  source: McpSource | "config";
   ref: string;
   sourceUrl?: string;
   startCommand?: string;
+  command?: StdioMcpCommand;
+  args?: string[];
   env: string[];
   // Preset fixed env values baked into the recipe (infra wiring like a
   // self-hosted API URL, or a dummy key a package demands even when unused).
@@ -21,6 +29,7 @@ export type ServerRecipe = {
   envValues?: Record<string, string>;
   network?: "none";
   transport?: "streamable-http" | "sse";
+  allowUnsafeHttp?: boolean;
   authType?: "none" | "bearer" | "headers";
   bearerEnv?: string;
   headerEnv?: Record<string, string>;
@@ -80,10 +89,31 @@ export function parseServerRecipe(installCfg: unknown): ServerRecipe | null {
   const c = installCfg as Record<string, unknown>;
 
   const source = c.source;
-  if (typeof source !== "string" || !SOURCES.includes(source as McpSource))
+  if (
+    typeof source !== "string" ||
+    (source !== "config" && !SOURCES.includes(source as McpSource))
+  )
     return null;
   const ref = typeof c.ref === "string" ? c.ref.trim() : "";
-  if (!ref || !isValidMcpRef(source as McpSource, ref)) return null;
+  let command: StdioMcpCommand | undefined;
+  let args: string[] | undefined;
+  if (source === "config") {
+    try {
+      const parsed = parseMcpJsonConfig(
+        JSON.stringify({ command: c.command, args: c.args }),
+      );
+      if (
+        !parsed.installCfg ||
+        !("command" in parsed.installCfg) ||
+        ref !== parsed.ref
+      )
+        return null;
+      command = parsed.installCfg.command;
+      args = parsed.installCfg.args;
+    } catch {
+      return null;
+    }
+  } else if (!ref || !isValidMcpRef(source as McpSource, ref)) return null;
 
   const env = Array.isArray(c.env)
     ? c.env.filter((k): k is string => typeof k === "string" && ENV_KEY.test(k))
@@ -136,14 +166,18 @@ export function parseServerRecipe(installCfg: unknown): ServerRecipe | null {
   ];
 
   return {
-    source: source as McpSource,
+    source: source as ServerRecipe["source"],
     ref,
+    ...(command ? { command, args } : {}),
     env: requiredEnv,
     ...(sourceUrl ? { sourceUrl } : {}),
     ...(Object.keys(envValues).length ? { envValues } : {}),
     ...(startCommand ? { startCommand } : {}),
     ...(network ? { network } : {}),
     ...(transport ? { transport } : {}),
+    ...(source === "remote" && c.allowUnsafeHttp === true
+      ? { allowUnsafeHttp: true }
+      : {}),
     ...(authType ? { authType } : {}),
     ...(bearerEnv ? { bearerEnv } : {}),
     ...(Object.keys(headerEnv).length ? { headerEnv } : {}),
@@ -158,8 +192,11 @@ export type DeploymentRecipeData = {
     env: Record<string, string>;
     requiredEnv?: string[];
     startCommand?: string;
+    command?: StdioMcpCommand;
+    args?: string[];
     network?: "none";
     transport?: "streamable-http" | "sse";
+    allowUnsafeHttp?: boolean;
     authType?: "none" | "bearer" | "headers";
     bearerEnv?: string;
     headerEnv?: Record<string, string>;
@@ -203,11 +240,7 @@ export function missingRequiredEnvironment(
   ) {
     return [...recipe.env];
   }
-  const rawEnv = (installCfg as Record<string, unknown>).env;
-  const env =
-    rawEnv && typeof rawEnv === "object" && !Array.isArray(rawEnv)
-      ? (rawEnv as Record<string, unknown>)
-      : {};
+  const env = mcpEnvironmentState(installCfg);
   return recipe.env.filter(
     (key) => typeof env[key] !== "string" || !(env[key] as string).trim(),
   );
@@ -227,6 +260,7 @@ export function missingDeploymentRequiredEnvironment(
 // deployment lifecycle checks those required keys before starting a runtime.
 export function recipeToDeploymentData(
   recipe: ServerRecipe,
+  options: { allowUnsafeHttp?: boolean } = {},
 ): DeploymentRecipeData {
   // Preset values first; then declared keys default to empty (without clobbering
   // a preset of the same name) for the user to fill in the Variables editor.
@@ -237,9 +271,14 @@ export function recipeToDeploymentData(
     ...(recipe.env.length ? { requiredEnv: [...recipe.env] } : {}),
   };
   if (recipe.startCommand) installCfg.startCommand = recipe.startCommand;
+  if (recipe.command) {
+    installCfg.command = recipe.command;
+    installCfg.args = recipe.args ?? [];
+  }
   if (recipe.network === "none") installCfg.network = "none";
   if (recipe.source === "remote") {
     installCfg.transport = recipe.transport ?? "streamable-http";
+    installCfg.allowUnsafeHttp = options.allowUnsafeHttp === true;
     installCfg.authType = recipe.authType ?? "none";
     if (recipe.bearerEnv) installCfg.bearerEnv = recipe.bearerEnv;
     if (recipe.headerEnv) installCfg.headerEnv = recipe.headerEnv;

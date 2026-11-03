@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { assertDefined } from "../assert-defined";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   beforeAll,
   beforeEach,
@@ -25,7 +25,8 @@ import {
   remoteRegistryView,
 } from "@/lib/a2a/remote-registry";
 import { remoteChildGrant, assertRemoteGrant } from "@/lib/a2a/remote-policy";
-import { createLocalRootGrant } from "@/lib/a2a/local-policy";
+import { publishFixtureAgentRevision } from "./agent-revision-fixture";
+import { createLocalRootGrant, childGrant } from "@/lib/a2a/local-policy";
 import {
   submitTask,
   claimTask,
@@ -34,7 +35,12 @@ import {
   getTaskRow,
   interruptTask,
   requestCancellation,
+  deferTaskFileStaging,
+  completeTaskFileStaging,
 } from "@/lib/a2a/store";
+import { retryTaskFileReception } from "@/lib/a2a/store";
+import { stageTaskFileTransfers } from "@/lib/a2a/task-files";
+import { listTaskFiles, openTaskFile } from "@/lib/a2a/files";
 import {
   requestLocalWait,
   reconcileLocalWaits,
@@ -44,17 +50,63 @@ import {
   reconcileRemoteTasks,
 } from "@/lib/a2a/remote-executor";
 import {
-  executeA2ATask,
-  startA2AWorker,
-  stopA2AWorker,
-} from "@/lib/a2a/worker";
+  executeAgentTask,
+  startAgentWorker,
+  stopAgentWorker,
+} from "@/lib/agents/execution/worker";
 import { getConsoleTaskTree } from "@/lib/a2a/console-tasks";
 import type { ConsoleActor } from "@/lib/a2a/console-service";
+import type * as Worker from "@/lib/agents/execution/worker";
 import type { LocalA2AGrant } from "@/lib/a2a/principal";
 import type { A2ALogBinding } from "@/lib/observability/a2a-log";
 import { withLogContext } from "@/lib/observability/context";
 
-const network = vi.hoisted(() => ({ discover: vi.fn(), rpc: vi.fn() }));
+import type * as AttachmentStorage from "@/lib/attachments/storage";
+const network = vi.hoisted(() => ({
+  discover: vi.fn(),
+  rpc: vi.fn(),
+  files: vi.fn(),
+  objects: new Map<string, Uint8Array>(),
+}));
+vi.mock("@/lib/attachments/storage", async (original) => ({
+  ...(await original<typeof AttachmentStorage>()),
+  writeWorkspaceAttachment: async (input: {
+    workspaceId: string;
+    filename: string;
+    body: ReadableStream<Uint8Array>;
+    objectId: string;
+    maxBytes: number;
+  }) => {
+    const bytes = new Uint8Array(await new Response(input.body).arrayBuffer());
+    if (bytes.byteLength > input.maxBytes)
+      throw new Error("fixture storage limit");
+    const storagePath = `objects/${input.objectId}-${input.filename}`;
+    network.objects.set(`${input.workspaceId}/${storagePath}`, bytes);
+    return {
+      storagePath,
+      size: bytes.byteLength,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+    };
+  },
+  readWorkspaceAttachment: (workspaceId: string, storagePath: string) =>
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        const bytes = network.objects.get(`${workspaceId}/${storagePath}`);
+        if (!bytes) {
+          controller.error(new Error("fixture file missing"));
+          return;
+        }
+        controller.enqueue(bytes);
+        controller.close();
+      },
+    }),
+  deleteWorkspaceAttachmentFile: async (
+    workspaceId: string,
+    storagePath: string,
+  ) => {
+    network.objects.delete(`${workspaceId}/${storagePath}`);
+  },
+}));
 vi.mock("@/lib/db", async (original) => {
   if (process.env.TOOLPLANE_TEST_PGLITE !== "1") return original();
   const { PrismaClient } = await import("@prisma/client");
@@ -71,6 +123,7 @@ vi.mock("@/lib/db", async (original) => {
 vi.mock("@/lib/a2a/remote-network", async (original) => ({
   ...(await original<typeof import("@/lib/a2a/remote-network")>()),
   fetchRemoteJson: network.discover,
+  fetchRemoteFile: network.files,
   // Only the network boundary is replaced; the official ClientFactory/JSONRPC transport remains unchanged.
   remoteRpcFetch:
     (url: string, token: string | undefined, _binding: A2ALogBinding) =>
@@ -84,9 +137,9 @@ vi.mock("@/lib/a2a/remote-network", async (original) => ({
       return Response.json(result);
     },
 }));
-vi.mock("@/lib/a2a/worker", async (original) => ({
-  ...(await original<typeof import("@/lib/a2a/worker")>()),
-  wakeA2AWorker: vi.fn(),
+vi.mock("@/lib/agents/execution/worker", async (original) => ({
+  ...(await original<typeof Worker>()),
+  wakeAgentWorker: vi.fn(),
 }));
 
 let user: string,
@@ -215,10 +268,12 @@ beforeAll(async () => {
             workspaceId: ws,
             name: `Local ${i}`,
             slug: `local-${i}`,
-            runtimeKind: "claude-code",
+            runtimeKind: "pi-sdk",
             model: "fixture",
             providerId: provider.id,
             a2aInternalEnabled: true,
+            a2aInboundEnabled: true,
+            a2aOutboundEnabled: true,
             sandboxes: { create: { sandboxId: sandbox.id, isDefault: true } },
           },
         })
@@ -230,6 +285,8 @@ beforeAll(async () => {
 });
 beforeEach(async () => {
   vi.clearAllMocks();
+  network.objects.clear();
+  network.files.mockReset();
   peerState = "TASK_STATE_WORKING";
   peerDetail = undefined;
   network.discover
@@ -247,11 +304,19 @@ beforeEach(async () => {
   );
   await db.a2AContext.deleteMany({ where: { workspaceId: ws } });
   await db.remoteA2AAgent.deleteMany({ where: { workspaceId: ws } });
+  await db.agentSubAgent.deleteMany({
+    where: { parentId: { in: [agent, otherAgent] } },
+  });
   await db.agent.updateMany({
     where: { workspaceId: ws },
-    data: { a2aInternalEnabled: true, systemPrompt: null },
+    data: {
+      a2aInternalEnabled: true,
+      a2aInboundEnabled: true,
+      a2aOutboundEnabled: true,
+      systemPrompt: null,
+      a2aPolicy: { schemaVersion: 1, targets: [] },
+    },
   });
-  grant = await createLocalRootGrant(ws, agent, user);
   remote = (
     await mutateRemoteRegistry(ctx, {
       action: "register",
@@ -259,9 +324,33 @@ beforeEach(async () => {
       token: "fixture-peer-key",
     })
   ).id;
+  await db.agent.update({
+    where: { id: agent },
+    data: {
+      a2aPolicy: {
+        schemaVersion: 1,
+        targets: [
+          {
+            kind: "remote",
+            targetId: remote,
+            capabilityIds: remoteCard().skills.map((skill) => skill.id),
+            maxCalls: 128,
+            maxDepth: 3,
+            maxConcurrent: 16,
+            timeoutSeconds: 840,
+            maxInputBytes: 65_536,
+            dataAllowance: "text_only",
+          },
+        ],
+      },
+    },
+  });
+  for (const id of [agent, otherAgent])
+    await publishFixtureAgentRevision(ws, id);
+  grant = await createLocalRootGrant(ws, agent, user);
 });
 afterAll(async () => {
-  stopA2AWorker();
+  stopAgentWorker();
   vi.unstubAllEnvs();
   if (ws) {
     await db.auditEvent.deleteMany({ where: { workspaceId: ws } });
@@ -275,6 +364,443 @@ afterAll(async () => {
 });
 
 describe("registered remote Agents in the native task core", () => {
+  it("externalizes raw input before persistence and stages storage before model admission", async () => {
+    const request = SendMessageRequest.fromJSON({
+      message: {
+        messageId: randomUUID(),
+        role: "ROLE_USER",
+        parts: [
+          {
+            raw: Buffer.from("input-file-body").toString("base64"),
+            filename: "input.csv",
+            mediaType: "text/csv",
+          },
+        ],
+      },
+      configuration: {
+        returnImmediately: true,
+        acceptedOutputModes: ["image/png"],
+      },
+    });
+    const row = await submitTask(grant, request);
+    expect(row.phase).toBe("file-receiving");
+    expect(
+      SendMessageRequest.fromJSON(row.request).configuration
+        ?.acceptedOutputModes,
+    ).toEqual(["image/png"]);
+    expect(await claimTask(row.id)).toBeNull();
+    expect(JSON.stringify([row.request, row.snapshot])).not.toContain(
+      Buffer.from("input-file-body").toString("base64"),
+    );
+    const source = await db.a2ATaskFile.findFirstOrThrow({
+      where: { taskId: row.id },
+    });
+    expect(source.status).toBe("pending");
+    expect(JSON.stringify(source.source)).not.toContain("input-file-body");
+    expect(await stageTaskFileTransfers(row.id)).toBe(true);
+    const stored = (await listTaskFiles(row.id))[0];
+    expect(
+      await new Response((await openTaskFile(row.id, stored.id)).body).text(),
+    ).toBe("input-file-body");
+    expect((await submitTask(grant, request)).id).toBe(row.id);
+    expect(await claimTask(row.id)).not.toBeNull();
+    expect(network.rpc).not.toHaveBeenCalled();
+  });
+  it("refuses unsupported file input or output MIME requirements before dispatch to a text-only peer", async () => {
+    const parent = await root();
+    const count = await db.a2ATask.count({
+      where: { parentTaskId: parent.id },
+    });
+    expect(count).toBe(0);
+    for (const request of [
+      {
+        message: {
+          messageId: randomUUID(),
+          role: "ROLE_USER",
+          parts: [
+            { raw: "YQ==", filename: "image.png", mediaType: "image/png" },
+          ],
+        },
+        configuration: { returnImmediately: true },
+      },
+      {
+        message: {
+          messageId: randomUUID(),
+          role: "ROLE_USER",
+          parts: [{ text: "Return an image file" }],
+        },
+        configuration: {
+          returnImmediately: true,
+          acceptedOutputModes: ["image/png"],
+        },
+      },
+    ])
+      await expect(
+        submitTask(
+          await remoteChildGrant(
+            parent.id,
+            assertDefined(parent.leaseToken),
+            remote,
+          ),
+          SendMessageRequest.fromJSON(request),
+          {
+            parentLeaseToken: assertDefined(parent.leaseToken),
+          },
+        ),
+      ).rejects.toThrow(/input file MIME|output media types/);
+    expect(await db.a2ATask.count({ where: { parentTaskId: parent.id } })).toBe(
+      count,
+    );
+    expect(network.rpc).not.toHaveBeenCalled();
+  });
+  it("retries sandbox preparation without a continuation message or another business submission", async () => {
+    const row = await submitTask(grant, message());
+    const run = assertDefined(await claimTask(row.id));
+    const lease = assertDefined(run.leaseToken);
+    const before = Task.fromJSON(run.snapshot).history.length;
+    await deferTaskFileStaging(row.id, lease);
+    expect(await claimTask(row.id)).toBeNull();
+    const retry = await retryTaskFileReception(grant, { taskId: row.id });
+    expect(retry.status?.state).toBe(2);
+    const claimed = assertDefined(await claimTask(row.id));
+    expect(claimed.resumeCount).toBe(run.resumeCount);
+    expect(Task.fromJSON(claimed.snapshot).history).toHaveLength(before);
+    expect(claimed.leaseToken).not.toBe(lease);
+    await completeTaskFileStaging(
+      claimed.id,
+      assertDefined(claimed.leaseToken),
+    );
+    expect(
+      Task.fromJSON((await getTaskRow(grant, row.id)).snapshot).metadata
+        ?.toolplaneFileDelivery,
+    ).toMatchObject({ state: "ready", stage: "sandbox" });
+    expect(network.rpc).not.toHaveBeenCalled();
+  });
+  it("retains an observed remote terminal outcome until required files arrive, then wakes the parent without resending work", async () => {
+    const remoteDefinition = {
+      ...remoteCard(),
+      defaultInputModes: ["text/plain", "*/*"],
+      defaultOutputModes: ["text/plain", "*/*"],
+    };
+    await db.remoteA2AAgent.update({
+      where: { id: remote },
+      data: { card: remoteDefinition },
+    });
+    network.files.mockRejectedValueOnce(
+      new Error("secret-ticket-source-failed"),
+    );
+    network.files.mockImplementationOnce(async () =>
+      new Blob(["remote-file-body"]).stream(),
+    );
+    network.rpc.mockImplementation(
+      async (rpc: { id: unknown; method: string }) => {
+        const task = {
+          ...remoteTask("TASK_STATE_COMPLETED"),
+          metadata: { bearer: "secret-peer-metadata" },
+          artifacts: [
+            {
+              artifactId: "report",
+              name: "report",
+              parts: [
+                {
+                  url: `https://agent.example/report?signature=${rpc.method === "SendMessage" ? "old-secret-ticket" : "fresh-secret-ticket"}`,
+                  filename: "报告 report 2026.csv",
+                  mediaType: "text/csv",
+                  metadata: { secret: "secret-part-metadata" },
+                },
+              ],
+            },
+          ],
+        };
+        return {
+          jsonrpc: "2.0",
+          id: rpc.id,
+          result: rpc.method === "SendMessage" ? { task } : task,
+        };
+      },
+    );
+    const parent = await root();
+    const delegated = await sendChild(parent);
+    const failed = await db.a2ATask.findUniqueOrThrow({
+      where: { id: delegated.row.id },
+    });
+    expect(failed).toMatchObject({
+      state: 2,
+      remoteObservedState: 3,
+      remoteFilesStatus: "failed",
+      phase: "remote-file-failed",
+    });
+    expect(
+      Task.fromJSON(failed.snapshot).metadata?.toolplaneFileDelivery,
+    ).toMatchObject({ state: "failed", remoteState: 3 });
+    expect(JSON.stringify([failed.snapshot, failed.request])).not.toMatch(
+      /old-secret-ticket|secret-peer-metadata|secret-part-metadata|secret-ticket-source-failed/,
+    );
+    await waiting(parent, delegated.row.id);
+    await reconcileLocalWaits();
+    expect((await getTaskRow(grant, parent.id)).phase).toBe("waiting");
+    const expiredGrant = { ...delegated.grant, expiresAt: Date.now() - 1000 };
+    await db.a2ATask.update({
+      where: { id: failed.id },
+      data: { deadlineAt: new Date(0), grant: expiredGrant },
+    });
+    const recovered = await retryTaskFileReception(expiredGrant, {
+      taskId: failed.id,
+    });
+    expect(recovered.status?.state).toBe(3);
+    expect(recovered.metadata?.toolplaneFileDelivery).toMatchObject({
+      state: "ready",
+      remoteState: 3,
+    });
+    const [file] = await listTaskFiles(failed.id);
+    expect(file.filename).toBe("report-2026.csv");
+    expect(
+      await new Response((await openTaskFile(failed.id, file.id)).body).text(),
+    ).toBe("remote-file-body");
+    await reconcileLocalWaits();
+    expect((await getTaskRow(grant, parent.id)).phase).toBe("resumable");
+    expect(network.rpc.mock.calls.map(([rpc]) => rpc.method)).toEqual([
+      "SendMessage",
+      "GetTask",
+    ]);
+    expect(network.files).toHaveBeenCalledTimes(2);
+    expect(network.files.mock.calls[1][0]).toContain("fresh-secret-ticket");
+    await expect(
+      retryTaskFileReception(expiredGrant, { taskId: failed.id }),
+    ).rejects.toThrow();
+    expect(
+      network.rpc.mock.calls.filter(([rpc]) => rpc.method === "SendMessage"),
+    ).toHaveLength(1);
+  });
+  async function localRelay(maxDepth: number) {
+    const limits = {
+      maxCalls: 128,
+      maxDepth,
+      maxConcurrent: 16,
+      timeoutSeconds: 840,
+      maxInputBytes: 65_536,
+      dataAllowance: "text_only",
+    };
+    const ancestorPolicy = {
+      schemaVersion: 1,
+      targets: [
+        { ...limits, kind: "local", targetId: otherAgent, capabilityIds: [] },
+      ],
+    };
+    const relayPolicy = {
+      schemaVersion: 1,
+      targets: [
+        {
+          ...limits,
+          maxDepth: 3,
+          kind: "remote",
+          targetId: remote,
+          capabilityIds: remoteCard().skills.map((skill) => skill.id),
+        },
+      ],
+    };
+    await db.agentSubAgent.create({
+      data: { parentId: agent, childId: otherAgent },
+    });
+    await db.agent.update({
+      where: { id: agent },
+      data: { a2aPolicy: ancestorPolicy },
+    });
+    await db.agent.update({
+      where: { id: otherAgent },
+      data: { a2aPolicy: relayPolicy },
+    });
+    await mutateRemoteRegistry(
+      { ...ctx, agentId: otherAgent },
+      {
+        action: "configure",
+        id: remote,
+        revision: 1,
+        allowCurrentAgent: true,
+      },
+    );
+    for (const id of [agent, otherAgent])
+      await publishFixtureAgentRevision(ws, id);
+    grant = await createLocalRootGrant(ws, agent, user);
+    const ancestor = await root();
+    const authority = await childGrant(
+      ancestor.id,
+      assertDefined(ancestor.leaseToken),
+      otherAgent,
+    );
+    const relay = assertDefined(
+      await claimTask(
+        (
+          await submitTask(authority, message(), {
+            parentLeaseToken: assertDefined(ancestor.leaseToken),
+          })
+        ).id,
+      ),
+    );
+    return { relay, ancestorPolicy, relayPolicy };
+  }
+
+  it("includes the remote leaf in every ancestor's pinned depth after live expansion", async () => {
+    const { relay, ancestorPolicy } = await localRelay(1);
+    await expect(
+      remoteChildGrant(relay.id, assertDefined(relay.leaseToken), remote),
+    ).rejects.toThrow();
+    await db.agent.update({
+      where: { id: agent },
+      data: {
+        a2aPolicy: {
+          ...ancestorPolicy,
+          targets: ancestorPolicy.targets.map((policy) => ({
+            ...policy,
+            maxDepth: 3,
+          })),
+        },
+      },
+    });
+    await expect(
+      remoteChildGrant(relay.id, assertDefined(relay.leaseToken), remote),
+    ).rejects.toThrow();
+    expect(network.rpc).not.toHaveBeenCalled();
+  });
+
+  it.each(["ancestor", "remote-leaf"] as const)(
+    "revalidates live %s depth before admitting or using an issued remote grant",
+    async (edge) => {
+      const { relay, ancestorPolicy, relayPolicy } = await localRelay(3);
+      const delegated = await remoteChildGrant(
+        relay.id,
+        assertDefined(relay.leaseToken),
+        remote,
+      );
+      expect(delegated.ancestorTaskIds).toHaveLength(2);
+      await expect(assertRemoteGrant(delegated)).resolves.toBeUndefined();
+      const previous = edge === "ancestor" ? ancestorPolicy : relayPolicy;
+      await db.agent.update({
+        where: { id: edge === "ancestor" ? agent : otherAgent },
+        data: {
+          a2aPolicy: {
+            ...previous,
+            targets: previous.targets.map((policy) => ({
+              ...policy,
+              maxDepth: 1,
+            })),
+          },
+        },
+      });
+      const before = await db.a2ATask.count({
+        where: { context: { workspaceId: ws } },
+      });
+      await expect(
+        remoteChildGrant(relay.id, assertDefined(relay.leaseToken), remote),
+      ).rejects.toThrow();
+      await expect(assertRemoteGrant(delegated)).rejects.toThrow();
+      await expect(
+        submitTask(delegated, message(), {
+          parentLeaseToken: assertDefined(relay.leaseToken),
+        }),
+      ).rejects.toThrow();
+      expect(
+        await db.a2ATask.count({ where: { context: { workspaceId: ws } } }),
+      ).toBe(before);
+      expect(network.rpc).not.toHaveBeenCalled();
+    },
+  );
+
+  it("requires independent inbound and outbound approval", async () => {
+    await db.agent.update({
+      where: { id: agent },
+      data: { a2aInboundEnabled: false },
+    });
+    await expect(createLocalRootGrant(ws, agent, user)).rejects.toThrow();
+    await db.agent.update({
+      where: { id: agent },
+      data: { a2aInboundEnabled: true, a2aOutboundEnabled: false },
+    });
+    grant = await createLocalRootGrant(ws, agent, user);
+    const parent = await root();
+    await expect(child(parent)).rejects.toThrow(/approved policy/);
+    expect(network.rpc).not.toHaveBeenCalled();
+  });
+  it.each(["calls", "authorized-cost", "input", "capabilities"] as const)(
+    "enforces the approved %s scope before remote side effects",
+    async (limit) => {
+      const policy = {
+        kind: "remote",
+        targetId: remote,
+        capabilityIds: ["review"],
+        maxCalls: limit === "calls" ? 1 : 16,
+        maxDepth: 3,
+        maxConcurrent: 4,
+        timeoutSeconds: 30,
+        maxInputBytes: limit === "input" ? 1 : 65_536,
+        dataAllowance: "text_only",
+        ...(limit === "authorized-cost"
+          ? {
+              budget: {
+                currency: "USD",
+                maxAuthorizedCostMicros: 100,
+                authorizedCostPerCallMicros: 100,
+              },
+            }
+          : {}),
+      };
+      if (limit === "capabilities") policy.capabilityIds = [];
+      await db.agent.update({
+        where: { id: agent },
+        data: { a2aPolicy: { schemaVersion: 1, targets: [policy] } },
+      });
+      grant = await createLocalRootGrant(ws, agent, user);
+      const parent = await root();
+      if (limit === "calls" || limit === "authorized-cost") {
+        const delegated = await sendChild(parent);
+        // Unknown/failed outcomes never refund an authorized reservation.
+        await interruptTask(delegated.row.id, "Observation lost.");
+      }
+      const sent = network.rpc.mock.calls.length;
+      await expect(child(parent)).rejects.toThrow();
+      expect(network.rpc).toHaveBeenCalledTimes(sent);
+    },
+  );
+  it("charges continuation admission against the same authorized reservation budget", async () => {
+    await db.agent.update({
+      where: { id: agent },
+      data: {
+        a2aPolicy: {
+          schemaVersion: 1,
+          targets: [
+            {
+              kind: "remote",
+              targetId: remote,
+              capabilityIds: ["review"],
+              maxCalls: 16,
+              maxDepth: 3,
+              maxConcurrent: 4,
+              timeoutSeconds: 840,
+              maxInputBytes: 65_536,
+              dataAllowance: "text_only",
+              budget: {
+                currency: "USD",
+                maxAuthorizedCostMicros: 100,
+                authorizedCostPerCallMicros: 100,
+              },
+            },
+          ],
+        },
+      },
+    });
+    grant = await createLocalRootGrant(ws, agent, user);
+    const parent = await root();
+    peerState = "TASK_STATE_INPUT_REQUIRED";
+    const delegated = await sendChild(parent);
+    await expect(
+      submitTask(
+        delegated.grant,
+        message("Additional input", { taskId: delegated.row.id }),
+        { parentLeaseToken: assertDefined(parent.leaseToken) },
+      ),
+    ).rejects.toThrow(/authorized cost reservation/);
+    expect(network.rpc).toHaveBeenCalledTimes(1);
+  });
   it("registers enabled for only the current Agent, encrypts credentials and exposes no secret", async () => {
     await db.agent.update({
       where: { id: agent },
@@ -714,20 +1240,29 @@ describe("registered remote Agents in the native task core", () => {
     expect((await getTask(grant, parent.id)).status?.state).toBe(5);
     peerState = "TASK_STATE_CANCELED";
     await due(delegated.row.id);
+    await expect(getTask(delegated.grant, delegated.row.id)).rejects.toThrow();
     expect(
-      (await getTask(delegated.grant, delegated.row.id)).status?.state,
-    ).toBe(5);
+      (await db.a2ATask.findUniqueOrThrow({ where: { id: delegated.row.id } }))
+        .state,
+    ).toBe(TaskState.TASK_STATE_CANCELED);
   });
   it("fails an uncertain submission without automatic resend or false cancellation", async () => {
     const parent = await root(),
       delegated = await child(parent);
     network.rpc.mockRejectedValueOnce(new Error("secret upstream exception"));
-    await executeA2ATask(delegated.row.id);
+    await executeAgentTask(delegated.row.id);
     const task = await getTask(delegated.grant, delegated.row.id);
     expect(task.status?.state).toBe(4);
     expect(JSON.stringify(task)).not.toContain("secret upstream exception");
     expect(JSON.stringify(task)).toContain("may still");
-    await executeA2ATask(delegated.row.id);
+    expect(task.metadata?.toolplaneRemote).toMatchObject({
+      outcome: "unknown",
+    });
+    const view = await getConsoleTaskTree(ctx, parent.id, delegated.row.id);
+    expect(
+      view.nodes.find((node) => node.id === delegated.row.id),
+    ).toMatchObject({ remoteOutcome: "unknown" });
+    await executeAgentTask(delegated.row.id);
     await due(delegated.row.id);
     expect(network.rpc).toHaveBeenCalledTimes(1);
     const events = await settledEvents(delegated.row.id);
@@ -751,9 +1286,11 @@ describe("registered remote Agents in the native task core", () => {
     });
     await expect(assertRemoteGrant(delegated.grant)).rejects.toThrow();
     await due(delegated.row.id);
+    await expect(getTask(delegated.grant, delegated.row.id)).rejects.toThrow();
     expect(
-      (await getTask(delegated.grant, delegated.row.id)).status?.state,
-    ).toBe(4);
+      (await db.a2ATask.findUniqueOrThrow({ where: { id: delegated.row.id } }))
+        .state,
+    ).toBe(TaskState.TASK_STATE_FAILED);
     expect(network.rpc).toHaveBeenCalledTimes(1);
     await expect(
       getConsoleTaskTree(ctx, parent.id, delegated.row.id),
@@ -857,8 +1394,8 @@ describe("registered remote Agents in the native task core", () => {
         remotePollAt: new Date(0),
       },
     });
-    await startA2AWorker();
-    stopA2AWorker();
+    await startAgentWorker();
+    stopAgentWorker();
     expect(await getTaskRow(delegated.grant, delegated.row.id)).toMatchObject({
       phase: "remote-waiting",
       leaseToken: null,

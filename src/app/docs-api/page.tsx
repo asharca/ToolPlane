@@ -11,8 +11,11 @@ export default function ApiReferencePage() {
   return (
     <main>
       <nav aria-label="Documentation" className="border-b px-6 py-3 text-sm">
-        <Link href="/docs/en" className="hover:underline">
-          Back to documentation
+        <Link
+          href="https://asharca.github.io/toolplane-docs/docs/zh"
+          className="hover:underline"
+        >
+          开发文档 / Development documentation
         </Link>
       </nav>
       <Reference />

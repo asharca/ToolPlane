@@ -7,4 +7,4 @@ public/images/channels/LICENSE.cherry-studio.
 
 ToolPlane adaptations replace Electron IPC/networking and local credential
 files with Node networking, encrypted database credentials, and the existing
-workspace/Agent execution boundary. No Hermes platform adapter is used.
+workspace/Agent execution boundary.

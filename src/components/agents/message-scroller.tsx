@@ -144,6 +144,7 @@ export function MessageScroller({
     onWheel: onViewportWheel,
     onTouchStart: onViewportTouchStart,
     onKeyDown: onViewportKeyDown,
+    onClickCapture: onViewportClickCapture,
     ...restViewportProps
   } = viewportProps ?? {};
 
@@ -416,6 +417,24 @@ export function MessageScroller({
       ref={setViewportRef}
       aria-label={label}
       {...restViewportProps}
+      onClickCapture={(event) => {
+        onViewportClickCapture?.(event);
+        const target = event.target;
+        if (
+          event.defaultPrevented ||
+          !(target instanceof Element) ||
+          !target.closest("button[aria-expanded][aria-controls], summary")
+        )
+          return;
+
+        // A disclosure resize is a reading action, not new streamed output.
+        // Pause before its click handler runs so the resize observer cannot
+        // pull the opened content past the reader to the end of the transcript.
+        setFollowing(false);
+        leaveLiveEdge();
+        const viewport = viewportRef.current;
+        viewport?.scrollTo({ top: viewport.scrollTop, behavior: "auto" });
+      }}
       onScroll={(event) => {
         handleScroll();
         onViewportScroll?.(event);
@@ -440,7 +459,6 @@ export function MessageScroller({
           ? "[-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
           : "[scrollbar-gutter:stable]",
         viewportClassName,
-        navigation === "rail" && railOverflowing && "pr-10",
       )}
     >
       <div

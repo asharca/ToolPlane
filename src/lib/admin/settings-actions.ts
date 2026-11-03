@@ -21,17 +21,13 @@ import {
   MIN_MCP_STARTUP_TIMEOUT_MS,
   resetMcpStartupTimeoutSettings,
   resetRemoteMcpPrivateHostsSettings,
-  updateHermesArchiveSettings,
+  resetSshPrivateHostsSettings,
   updateMcpStartupTimeoutSettings,
   updateRemoteMcpPrivateHostsSettings,
   updateSkillImportSettings,
+  updateSshPrivateHostsSettings,
 } from "@/lib/admin/settings";
 import { parseRemoteMcpPrivateHosts } from "../../../scripts/remote-mcp-private-hosts.mjs";
-import {
-  isValidHermesArchiveMaxUploadMiB,
-  MAX_HERMES_ARCHIVE_MAX_UPLOAD_MIB,
-  MIN_HERMES_ARCHIVE_MAX_UPLOAD_MIB,
-} from "@/lib/agents/hermes/archive-limits";
 import {
   isValidSkillImportMaxSkills,
   MAX_SKILL_IMPORT_SKILLS,
@@ -107,35 +103,6 @@ export async function updateAgentAttachmentLimitAction(
       }
       await setAgentAttachmentLimitBytes(megabytes * 1_000_000, admin.id);
     }
-  } catch {
-    return { error: t("errorActionFailed") };
-  }
-
-  revalidatePath("/admin/settings");
-  return { ok: true };
-}
-
-export async function updateHermesArchiveUploadLimitAction(
-  _prev: AdminSettingsActionState,
-  formData: FormData,
-): Promise<AdminSettingsActionState> {
-  const admin = await requireAdmin();
-  const t = await getTranslations("admin");
-  const hermesArchiveMaxUploadMiB = parseWholeNumber(
-    formData,
-    "hermesArchiveMaxUploadMiB",
-  );
-  if (!isValidHermesArchiveMaxUploadMiB(hermesArchiveMaxUploadMiB)) {
-    return {
-      error: t("errorHermesArchiveMaxUploadMiB", {
-        min: MIN_HERMES_ARCHIVE_MAX_UPLOAD_MIB,
-        max: MAX_HERMES_ARCHIVE_MAX_UPLOAD_MIB,
-      }),
-    };
-  }
-
-  try {
-    await updateHermesArchiveSettings(hermesArchiveMaxUploadMiB, admin.id);
   } catch {
     return { error: t("errorActionFailed") };
   }
@@ -233,6 +200,31 @@ export async function updateRemoteMcpPrivateHostsSettingsAction(
         return { error: t("errorRemoteMcpPrivateHosts") };
       }
       await updateRemoteMcpPrivateHostsSettings(value, admin.id);
+    }
+  } catch {
+    return { error: t("errorActionFailed") };
+  }
+
+  revalidatePath("/admin/settings");
+  return { ok: true };
+}
+
+export async function updateSshPrivateHostsSettingsAction(
+  _prev: AdminSettingsActionState,
+  formData: FormData,
+): Promise<AdminSettingsActionState> {
+  const admin = await requireAdmin();
+  const t = await getTranslations("admin");
+
+  try {
+    if (String(formData.get("intent") ?? "") === "reset") {
+      await resetSshPrivateHostsSettings(admin.id);
+    } else {
+      const value = formData.get("sshPrivateHosts");
+      if (typeof value !== "string" || !parseRemoteMcpPrivateHosts(value)) {
+        return { error: t("errorSshPrivateHosts") };
+      }
+      await updateSshPrivateHostsSettings(value, admin.id);
     }
   } catch {
     return { error: t("errorActionFailed") };

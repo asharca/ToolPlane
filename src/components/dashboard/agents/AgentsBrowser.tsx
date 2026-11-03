@@ -1,24 +1,25 @@
 "use client";
 import { AnimatedBadge } from "@/components/motion/animated-badge";
 import { Button, ButtonLink } from "@/components/motion/button/base";
-import { RadioGroup, RadioGroupItem } from "@/components/motion/radio";
 import { Input } from "@/components/motion/input";
-import { FormSelect } from "@/components/ui/FormSelect";
+import { CenterMorphModalClose } from "@/components/motion/center-morph-modal";
+import {
+  DialogHeader,
+  DialogBody,
+  DialogFooter,
+  DialogField,
+} from "@/components/dashboard/dialog";
 
 import { useTranslations } from "next-intl";
-import { useState } from "react";
-import Image from "next/image";
+import { Fragment, useActionState, useState } from "react";
 import Link from "next/link";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import {
-  Blocks,
   Box,
   Bot,
   CheckCircle2,
   CircleAlert,
-  Container,
   Cpu,
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
   MessageSquare,
@@ -26,8 +27,6 @@ import {
   Plus,
   Server,
   Settings2,
-  Store,
-  Zap,
   Wrench,
   Users,
   X,
@@ -39,29 +38,30 @@ import {
 } from "@/components/dashboard/DashboardUI";
 import { AgentResourceSelect } from "@/components/dashboard/agents/AgentResourceSelect";
 import type { AgentResourceOption } from "@/components/dashboard/agents/AgentResourceSelect";
-import { HermesImageSelector } from "@/components/dashboard/agents/HermesImageSelector";
-import { ModelPicker } from "@/components/dashboard/models/ModelPicker";
+import {
+  ModelPicker,
+  ModelPickerTrigger,
+} from "@/components/dashboard/models/ModelPicker";
 import type { ModelProviderOption } from "@/components/dashboard/models/ModelPicker";
 import { SubmitButton } from "@/components/dashboard/SubmitButton";
 import { CloneAgentButton } from "@/components/dashboard/agents/CloneAgentButton";
 import { DeleteAgentButton } from "@/components/dashboard/agents/DeleteAgentButton";
 import { ConnectDialog } from "@/components/dashboard/ConnectDialog";
-import { AgentMarketInstallForm } from "@/components/dashboard/market/AgentMarketInstallForm";
 import { AGENT_STEP_BOUNDS } from "@/lib/agents/constants";
 import {
   agentRuntimeDisplayName,
   agentRuntimeSupportsProviderFormat,
-  isDedicatedSandboxRuntimeKind,
+  isExecutableAgentRuntimeKind,
 } from "@/lib/agents/runtime-kind";
-import type { AgentRuntimeKind } from "@/lib/agents/runtime-kind";
 import { AgentBuiltInTools } from "@/components/dashboard/agents/AgentBuiltInTools";
-import { AgentSystemPromptEditor } from "@/components/dashboard/agents/AgentSystemPromptEditor";
+import { FormSelect } from "@/components/ui/FormSelect";
+import { SystemPromptEditor } from "@/components/dashboard/SystemPromptEditor";
+import { OmpImport } from "@/components/dashboard/agents/OmpImport";
 
 export type AgentRow = {
   id: string;
   name: string;
   providerName: string | null;
-  providerNames: string[];
   model: string | null;
   toolCount: number;
   subAgentCount: number;
@@ -75,33 +75,9 @@ type CreateOptions = {
   defaultModel?: { providerId: string; model: string } | null;
   deployments: AgentResourceOption[];
   skills: AgentResourceOption[];
-  toolkits: AgentResourceOption[];
-  sandboxes?: AgentResourceOption[];
 };
 
-export type AgentMarketOption = {
-  id: string;
-  releaseId: string;
-  idempotencyKey: string;
-  name: string;
-  summary: string | null;
-  iconUrl: string | null;
-  publisher: string | null;
-  tags: string[];
-  runtimes: string[];
-  resourceCount: number;
-  sandboxCount: number;
-  installCount: number;
-};
-
-type CreateStep =
-  | "basic"
-  | "instructions"
-  | "builtInTools"
-  | "mcp"
-  | "skills"
-  | "toolkits";
-type CreateSource = "blank" | "market";
+type CreateStep = "basic" | "instructions" | "builtInTools" | "mcp" | "skills";
 
 function cx(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
@@ -110,11 +86,10 @@ function cx(...classes: Array<string | false | null | undefined>) {
 function isAgentReady(
   agent: Pick<
     AgentRow,
-    "providerName" | "providerNames" | "model" | "runtimeKind" | "sandboxReady"
+    "providerName" | "model" | "runtimeKind" | "sandboxReady"
   >,
 ) {
-  if (agent.runtimeKind === "hermes") return agent.providerNames.length > 0;
-  if (isDedicatedSandboxRuntimeKind(agent.runtimeKind)) {
+  if (isExecutableAgentRuntimeKind(agent.runtimeKind)) {
     return Boolean(agent.providerName && agent.model && agent.sandboxReady);
   }
   return false;
@@ -144,33 +119,33 @@ export function AgentsBrowser({
   agentControlEndpoint,
   agents,
   createOptions,
-  hermesImages,
-  marketAgents = [],
 }: {
   slug: string;
   workspaceId?: string;
   agentControlEndpoint?: string;
   agents: AgentRow[];
   createOptions: CreateOptions;
-  hermesImages?: string[];
-  marketAgents?: AgentMarketOption[];
 }) {
   const t = useTranslations("console.agents");
-  const marketT = useTranslations("agentMarket");
-  const router = useRouter();
   const pathname = usePathname() ?? `/app/${encodeURIComponent(slug)}/agents`;
   const searchParams = useSearchParams();
   const query = searchParams.toString();
   const returnTo = `${pathname}${query ? `?${query}` : ""}`;
   const requestedReturnTo = searchParams.get("returnTo") ?? "";
   const createOnly = searchParams.get("create") === "1";
+  const CancelContainer = createOnly ? CenterMorphModalClose : Fragment;
+  const [createState, createAction, createPending] = useActionState(
+    createAgentAction,
+    {},
+  );
+  const [runtime, setRuntime] = useState<"pi-sdk" | "omp">("pi-sdk");
   const configuredDefaultNativeModel =
     createOptions.defaultModel &&
     createOptions.providers.some(
       (provider) =>
         provider.id === createOptions.defaultModel?.providerId &&
         provider.models.includes(createOptions.defaultModel.model) &&
-        agentRuntimeSupportsProviderFormat("pi", provider.format),
+        agentRuntimeSupportsProviderFormat(runtime, provider.format),
     )
       ? createOptions.defaultModel
       : null;
@@ -179,71 +154,44 @@ export function AgentsBrowser({
     (() => {
       const provider = createOptions.providers.find(
         (option) =>
-          agentRuntimeSupportsProviderFormat("pi", option.format) &&
+          agentRuntimeSupportsProviderFormat(runtime, option.format) &&
           option.models.length > 0,
       );
       const model = provider?.models[0];
       return provider && model ? { providerId: provider.id, model } : null;
     })();
   const [creating, setCreating] = useState(createOnly);
-  const [createSource, setCreateSource] = useState<CreateSource>(
-    createOnly && searchParams.get("source") === "market" ? "market" : "blank",
-  );
+  const [importingOmp, setImportingOmp] = useState(false);
   const [createStep, setCreateStep] = useState<CreateStep>("basic");
   const [agentName, setAgentName] = useState("");
   const [agentDescription, setAgentDescription] = useState("");
   const [systemPrompt, setSystemPrompt] = useState("");
-  const [runtime, setRuntime] = useState<AgentRuntimeKind>(
-    createOnly && searchParams.get("runtime") === "pi-sdk" ? "pi-sdk" : "pi",
-  );
+  const [maxSteps, setMaxSteps] = useState(String(AGENT_STEP_BOUNDS.default));
   const [providerId, setProviderId] = useState(
     defaultNativeModel?.providerId ?? "",
   );
   const [modelId, setModelId] = useState(defaultNativeModel?.model ?? "");
-  const [selectedProviderIds, setSelectedProviderIds] = useState<Set<string>>(
-    () =>
-      new Set(
-        createOptions.defaultModel?.providerId
-          ? [createOptions.defaultModel.providerId]
-          : [],
-      ),
-  );
   const [selectedDeploymentIds, setSelectedDeploymentIds] = useState<
     Set<string>
   >(() => new Set());
   const [selectedSkillIds, setSelectedSkillIds] = useState<Set<string>>(
     () => new Set(),
   );
-  const [selectedToolkitIds, setSelectedToolkitIds] = useState<Set<string>>(
-    () => new Set(),
-  );
-  const [sandboxId, setSandboxId] = useState("");
   const [disabledBuiltinTools, setDisabledBuiltinTools] = useState<Set<string>>(
     () => new Set(),
   );
   const setupCount = agents.filter((agent) => !isAgentReady(agent)).length;
   const hasProviders = createOptions.providers.length > 0;
-  const compatibleProviders = createOptions.providers.filter(
-    (provider) =>
-      !runtime || agentRuntimeSupportsProviderFormat(runtime, provider.format),
+  const compatibleProviders = createOptions.providers.filter((provider) =>
+    agentRuntimeSupportsProviderFormat(runtime, provider.format),
   );
   const selectedProvider =
     compatibleProviders.find((provider) => provider.id === providerId) ?? null;
   const createReady =
     Boolean(agentName.trim()) &&
-    (runtime === "hermes"
-      ? selectedProviderIds.size > 0
-      : Boolean(
-          selectedProvider &&
-            modelId &&
-            selectedProvider.models.includes(modelId),
-        ));
-  const providerOptions = createOptions.providers.map((provider) => ({
-    id: provider.id,
-    label: provider.name,
-    description: t("providerModelCount", { count: provider.models.length }),
-    keywords: provider.models,
-  }));
+    Boolean(
+      selectedProvider && modelId && selectedProvider.models.includes(modelId),
+    );
   const createSteps: Array<{
     id: CreateStep;
     label: string;
@@ -254,15 +202,11 @@ export function AgentsBrowser({
       label: t("basic"),
       description: t("generalSettingsDescription"),
     },
-    ...(runtime === "hermes"
-      ? []
-      : [
-          {
-            id: "instructions" as const,
-            label: t("instructions"),
-            description: t("instructionsSettingsDescription"),
-          },
-        ]),
+    {
+      id: "instructions",
+      label: t("instructions"),
+      description: t("instructionsSettingsDescription"),
+    },
     {
       id: "builtInTools",
       label: t("builtInTools"),
@@ -276,11 +220,6 @@ export function AgentsBrowser({
       label: t("skills"),
       description: t("skillsSettingsDescription"),
     },
-    {
-      id: "toolkits",
-      label: t("toolkits"),
-      description: t("toolkitsSettingsDescription"),
-    },
   ];
   const createStepIndex = Math.max(
     0,
@@ -288,53 +227,20 @@ export function AgentsBrowser({
   );
   const activeCreateStep = createSteps[createStepIndex]?.id ?? "basic";
   const lastCreateStep = createStepIndex === createSteps.length - 1;
-  const marketReturnParams = new URLSearchParams(searchParams.toString());
-  marketReturnParams.set("create", "1");
-  marketReturnParams.set("source", "market");
-  marketReturnParams.delete("cloneError");
-  const marketReturnTo = `${pathname}?${marketReturnParams}`;
-  const cloneError = searchParams.get("cloneError");
-
-  function selectRuntime(nextRuntime: AgentRuntimeKind) {
-    setRuntime(nextRuntime);
-    const selectedProvider = createOptions.providers.find(
-      (provider) => provider.id === providerId,
-    );
-    if (
-      selectedProvider &&
-      !agentRuntimeSupportsProviderFormat(nextRuntime, selectedProvider.format)
-    ) {
-      setProviderId("");
-      setModelId("");
-    }
-  }
 
   function closeCreateForm() {
-    if (createOnly) {
-      router.push(requestedReturnTo || `/app/${encodeURIComponent(slug)}/work`);
-      return;
-    }
     setCreating(false);
-    setCreateSource("blank");
+    setImportingOmp(false);
     setCreateStep("basic");
     setAgentName("");
     setAgentDescription("");
     setSystemPrompt("");
-    setRuntime("pi");
+    setMaxSteps(String(AGENT_STEP_BOUNDS.default));
     setProviderId(defaultNativeModel?.providerId ?? "");
     setModelId(defaultNativeModel?.model ?? "");
-    setSelectedProviderIds(
-      new Set(
-        createOptions.defaultModel?.providerId
-          ? [createOptions.defaultModel.providerId]
-          : [],
-      ),
-    );
     setSelectedDeploymentIds(new Set());
     setSelectedSkillIds(new Set());
-    setSelectedToolkitIds(new Set());
     setDisabledBuiltinTools(new Set());
-    setSandboxId("");
   }
 
   return (
@@ -360,29 +266,16 @@ export function AgentsBrowser({
                 variant="outline"
               />
             ) : null}
-            {!createOnly ? (
-              <ButtonLink
-                href={`/app/${encodeURIComponent(slug)}/market/agents`}
-                variant="secondary"
-              >
-                <Store className="size-[18px] shrink-0" />
-                {t("browseAgentMarket")}
-              </ButtonLink>
-            ) : null}
             <Button
               type="button"
+              disabled={importingOmp}
               onClick={() => {
                 if (creating) closeCreateForm();
                 else {
-                  setCreateSource("blank");
                   setCreating(true);
                 }
               }}
-              aria-controls={
-                createSource === "market"
-                  ? "agent-market-source"
-                  : "agent-create-form"
-              }
+              aria-controls="agent-create-form"
               aria-expanded={creating}
               variant={"primary"}
             >
@@ -398,7 +291,7 @@ export function AgentsBrowser({
       ) : null}
 
       {!hasProviders && !creating ? (
-        <div className="flex flex-col gap-3 rounded-md border border-border bg-muted px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-3 rounded-xl border border-border bg-muted px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex min-w-0 items-start gap-3">
             <CircleAlert className="mt-0.5 size-5 shrink-0 text-muted-foreground text-muted-foreground" />
             <div>
@@ -421,195 +314,97 @@ export function AgentsBrowser({
         </div>
       ) : null}
 
-      {creating && createSource === "market" ? (
-        <section
-          id="agent-market-source"
-          className={cx(
-            "flex min-h-0 flex-col overflow-hidden bg-background",
-            createOnly
-              ? "h-full"
-              : "rounded-2xl border border-border bg-card min-h-[38rem] max-h-[calc(100dvh-10rem)]",
-          )}
-        >
-          <header className="flex shrink-0 items-start gap-3 px-5 py-4 sm:px-6">
-            <Button
-              type="button"
-              onClick={() => setCreateSource("blank")}
-              aria-label={t("back")}
-              variant={"ghost"}
-              size={"icon"}
-              className="shrink-0"
-            >
-              <ChevronLeft className="size-4" />
-            </Button>
-            <div className="min-w-0 flex-1">
-              <h3 className="text-lg font-semibold text-foreground">
-                {t("chooseFromAgentMarket")}
-              </h3>
-              <p className="mt-1 text-sm text-muted-foreground">
-                {t("chooseFromAgentMarketDescription")}
-              </p>
-            </div>
-          </header>
-
-          <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-6 [scrollbar-width:none] sm:px-6 [&::-webkit-scrollbar]:hidden">
-            {cloneError ? (
-              <p role="alert" className="text-sm text-destructive">
-                {cloneError === "release_not_found" ||
-                cloneError === "listing_unavailable"
-                  ? marketT("releaseUnavailable")
-                  : marketT("invalidInstall")}
-              </p>
-            ) : null}
-            {marketAgents.length ? (
-              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                {marketAgents.map((agent) => (
-                  <article
-                    key={agent.id}
-                    className="flex min-w-0 flex-col rounded-lg border border-border bg-card p-4"
-                  >
-                    <div className="flex items-start gap-3">
-                      {agent.iconUrl ? (
-                        <Image
-                          unoptimized
-                          src={agent.iconUrl}
-                          alt=""
-                          width={40}
-                          height={40}
-                          className="size-10 rounded-lg object-cover"
-                        />
-                      ) : (
-                        <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted font-semibold text-accent-foreground">
-                          {Array.from(agent.name.trim())[0]?.toUpperCase() ??
-                            "A"}
-                        </span>
-                      )}
-                      <div className="min-w-0 flex-1">
-                        <h4 className="truncate text-sm font-semibold text-foreground">
-                          {agent.name}
-                        </h4>
-                        <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                          {agent.publisher ??
-                            agent.runtimes
-                              .map(agentRuntimeDisplayName)
-                              .join(" · ")}
-                        </p>
-                      </div>
-                    </div>
-                    <p className="mt-3 line-clamp-2 min-h-10 text-xs leading-5 text-muted-foreground">
-                      {agent.summary ?? t("chooseFromAgentMarketDescription")}
-                    </p>
-                    <div className="mt-3 flex flex-wrap gap-1.5">
-                      {agent.runtimes.map((runtimeKind) => (
-                        <AnimatedBadge key={runtimeKind} status="neutral">
-                          {agentRuntimeDisplayName(runtimeKind)}
-                        </AnimatedBadge>
-                      ))}
-                      {agent.tags.slice(0, 2).map((tag) => (
-                        <AnimatedBadge key={tag} status="neutral">
-                          {tag}
-                        </AnimatedBadge>
-                      ))}
-                    </div>
-                    <dl className="mt-4 grid grid-cols-3 gap-2 text-[11px] text-muted-foreground">
-                      <div>
-                        <dt>{marketT("resources")}</dt>
-                        <dd className="mt-0.5 font-semibold text-foreground">
-                          {agent.resourceCount}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt>{marketT("sandboxes")}</dt>
-                        <dd className="mt-0.5 font-semibold text-foreground">
-                          {agent.sandboxCount}
-                        </dd>
-                      </div>
-                      <div className="text-right">
-                        <dt>{marketT("clones")}</dt>
-                        <dd className="mt-0.5 font-semibold text-foreground">
-                          {agent.installCount}
-                        </dd>
-                      </div>
-                    </dl>
-                    <div className="mt-auto pt-4">
-                      <AgentMarketInstallForm
-                        workspace={slug}
-                        releaseId={agent.releaseId}
-                        idempotencyKey={agent.idempotencyKey}
-                        returnTo={marketReturnTo}
-                        labels={{
-                          submit: marketT("cloneAgent"),
-                          pending: marketT("cloningAgent"),
-                        }}
-                      />
-                    </div>
-                  </article>
-                ))}
-              </div>
-            ) : (
-              <DashboardEmptyState
-                icon={Store}
-                title={marketT("emptyTitle")}
-                description={marketT("emptyDescription")}
-              />
-            )}
-          </div>
-
-          <footer className="flex shrink-0 justify-end border-t border-border/60 px-4 py-3 sm:px-6">
-            <Button
-              type="button"
-              onClick={closeCreateForm}
-              variant={"secondary"}
-            >
-              <X className="size-4 shrink-0" />
-              {t("cancel")}
-            </Button>
-          </footer>
-        </section>
+      {creating && importingOmp ? (
+        <OmpImport
+          slug={slug}
+          providers={createOptions.providers}
+          defaultModel={createOptions.defaultModel}
+          createOnly={createOnly}
+          onBack={() => setImportingOmp(false)}
+          onCancel={closeCreateForm}
+        />
       ) : creating ? (
         <form
           id="agent-create-form"
-          action={createAgentAction}
+          action={createAction}
           className={cx(
-            "flex min-h-0 flex-col overflow-hidden bg-background",
+            "flex min-h-0 flex-col overflow-hidden bg-background text-foreground",
             createOnly
               ? "h-full"
-              : "rounded-2xl border border-border bg-card min-h-[38rem] max-h-[calc(100dvh-10rem)]",
+              : "min-h-[38rem] max-h-[calc(100dvh-10rem)] rounded-3xl border border-border bg-card shadow-sm",
           )}
         >
+          {!createOnly ? <DialogHeader title={t("createAgent")} /> : null}
           <input type="hidden" name="workspace" value={slug} />
           <input type="hidden" name="returnTo" value={requestedReturnTo} />
           <div className="flex min-h-0 flex-1 flex-col sm:flex-row">
             <nav
               aria-label={t("configurationNavigation")}
-              className="shrink-0 border-b border-border/60 bg-muted/20 sm:w-48 sm:border-b-0 sm:border-r"
+              className="shrink-0 border-b border-border/60 bg-muted/25 sm:w-44 sm:border-b-0 sm:border-r"
             >
-              <ol className="flex gap-1 overflow-x-auto p-2 sm:block sm:space-y-1 sm:p-3">
+              <div className="hidden px-5 pb-3 pt-6 text-xs font-medium text-muted-foreground sm:block">
+                {createStepIndex + 1} / {createSteps.length}
+                <span className="mx-2 text-border">·</span>
+                {agentRuntimeDisplayName(runtime)}
+              </div>
+              <ol className="grid grid-cols-5 gap-1 p-3 sm:flex sm:flex-col sm:gap-1.5 sm:px-3 sm:pb-6 sm:pt-0">
                 {createSteps.map((step, index) => {
                   const active = index === createStepIndex;
+                  const dirty =
+                    step.id === "basic"
+                      ? agentName !== "" ||
+                        agentDescription !== "" ||
+                        maxSteps !== String(AGENT_STEP_BOUNDS.default) ||
+                        providerId !== (defaultNativeModel?.providerId ?? "") ||
+                        modelId !== (defaultNativeModel?.model ?? "")
+                      : step.id === "instructions"
+                        ? systemPrompt !== ""
+                        : step.id === "builtInTools"
+                          ? disabledBuiltinTools.size > 0
+                          : step.id === "mcp"
+                            ? selectedDeploymentIds.size > 0
+                            : selectedSkillIds.size > 0;
                   const done = index < createStepIndex;
                   return (
-                    <li key={step.id} className="shrink-0 sm:w-full">
+                    <li key={step.id} className="min-w-0">
                       <Button
                         type="button"
                         aria-current={active ? "step" : undefined}
+                        aria-label={step.label}
                         disabled={index > createStepIndex}
                         onClick={() => {
                           if (done) setCreateStep(step.id);
                         }}
                         variant={active ? "secondary" : "ghost"}
+                        className={cx(
+                          "h-auto w-full flex-col gap-1.5 rounded-xl px-1 py-2 text-sm sm:flex-row sm:justify-start sm:gap-3 sm:px-3 sm:py-2.5",
+                          active &&
+                            "bg-background font-medium shadow-sm ring-1 ring-border/60",
+                        )}
                       >
                         <span
                           className={cx(
-                            "flex size-5 shrink-0 items-center justify-center rounded-full text-[11px] font-medium",
-                            active
+                            "flex size-6 shrink-0 items-center justify-center rounded-full text-[11px] font-medium",
+                            active || done
                               ? "bg-foreground text-background"
                               : "border border-border text-muted-foreground",
                           )}
                         >
-                          {index + 1}
+                          {done ? (
+                            <CheckCircle2 className="size-3.5" />
+                          ) : (
+                            index + 1
+                          )}
                         </span>
-                        <span>{step.label}</span>
+                        <span className="max-w-full truncate">
+                          {step.label}
+                        </span>
+                        {dirty ? (
+                          <span
+                            aria-hidden="true"
+                            className="size-1.5 shrink-0 rounded-full bg-primary"
+                          />
+                        ) : null}
                       </Button>
                     </li>
                   );
@@ -617,16 +412,16 @@ export function AgentsBrowser({
               </ol>
             </nav>
 
-            <div className="min-h-0 min-w-0 flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            <DialogBody className="flex min-w-0 flex-col overscroll-contain !p-0 !space-y-0 [scrollbar-width:thin]">
               <section
                 hidden={activeCreateStep !== "basic"}
                 aria-labelledby="agent-create-basic-title"
-                className="mx-auto max-w-3xl space-y-6 px-5 py-6 sm:px-8"
+                className="space-y-6 px-6 py-5"
               >
                 <div>
                   <h3
                     id="agent-create-basic-title"
-                    className="text-base font-semibold text-foreground"
+                    className="text-xl font-semibold tracking-tight text-foreground"
                   >
                     {t("basic")}
                   </h3>
@@ -635,33 +430,24 @@ export function AgentsBrowser({
                   </p>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2 rounded-lg bg-muted/35 p-2">
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-muted/20 p-4">
+                  <p className="min-w-0 flex-1 text-xs leading-5 text-muted-foreground">
+                    {t("ompImport.entryHelp")}
+                  </p>
                   <Button
                     type="button"
-                    aria-pressed={createSource === "blank"}
-                    onClick={() => setCreateSource("blank")}
-                    variant={"secondary"}
-                    size={"sm"}
+                    variant="secondary"
+                    disabled={createPending}
+                    onClick={() => setImportingOmp(true)}
                   >
-                    <Plus className="size-3.5" />
-                    {t("createBlankAgent")}
-                  </Button>
-                  <Button
-                    type="button"
-                    aria-pressed={createSource === "market"}
-                    onClick={() => setCreateSource("market")}
-                    variant={"secondary"}
-                    size={"sm"}
-                  >
-                    <Store className="size-3.5" />
-                    {t("chooseFromAgentMarket")}
+                    {t("ompImport.title")}
                   </Button>
                 </div>
 
                 {!hasProviders ? (
-                  <div className="flex items-start gap-3 rounded-md bg-muted px-4 py-3">
-                    <CircleAlert className="mt-0.5 size-5 shrink-0 text-muted-foreground text-muted-foreground" />
-                    <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-start gap-3 rounded-2xl border border-border/60 bg-muted/30 px-4 py-3">
+                    <CircleAlert className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
+                    <div className="min-w-40 flex-1">
                       <p className="text-sm font-semibold text-foreground">
                         {t("modelProviderRequired")}
                       </p>
@@ -680,9 +466,13 @@ export function AgentsBrowser({
                   </div>
                 ) : null}
 
-                <div className="block">
+                <DialogField
+                  label={t("name")}
+                  htmlFor="agent-create-name"
+                  dirty={agentName !== ""}
+                >
                   <Input
-                    label={t("name")}
+                    id="agent-create-name"
                     name="name"
                     autoFocus
                     required
@@ -691,13 +481,89 @@ export function AgentsBrowser({
                     value={String(agentName)}
                     onChange={(value) => setAgentName(value)}
                     className="w-full"
+                    classNames={{
+                      label: "px-0 text-xs font-semibold",
+                      field: "rounded-xl bg-muted/20",
+                      input: "text-sm",
+                    }}
                   />
-                </div>
-                <label className="block">
-                  <span className="mb-1.5 block text-xs font-semibold text-foreground">
-                    {t("description")}
-                  </span>
+                </DialogField>
+                <DialogField label={t("runtime")}>
+                  <FormSelect
+                    label={t("runtime")}
+                    name="runtime"
+                    value={runtime}
+                    disabled={createPending}
+                    options={[
+                      { value: "pi-sdk", label: "Pi" },
+                      { value: "omp", label: "OMP" },
+                    ]}
+                    onValueChange={(value) => {
+                      const next = value === "omp" ? "omp" : "pi-sdk";
+                      setRuntime(next);
+                      setDisabledBuiltinTools(new Set());
+                      const compatible = createOptions.providers.filter(
+                        (item) =>
+                          agentRuntimeSupportsProviderFormat(next, item.format),
+                      );
+                      if (
+                        !compatible.some(
+                          (item) =>
+                            item.id === providerId &&
+                            item.models.includes(modelId),
+                        )
+                      ) {
+                        setProviderId(compatible[0]?.id ?? "");
+                        setModelId(compatible[0]?.models[0] ?? "");
+                      }
+                    }}
+                  />
+                </DialogField>
+                <DialogField
+                  label={t("model")}
+                  dirty={
+                    providerId !== (defaultNativeModel?.providerId ?? "") ||
+                    modelId !== (defaultNativeModel?.model ?? "")
+                  }
+                >
+                  <input type="hidden" name="providerId" value={providerId} />
+                  <input type="hidden" name="model" value={modelId} />
+
+                  <ModelPicker
+                    className="flex w-full"
+                    providers={compatibleProviders}
+                    value={
+                      providerId && modelId
+                        ? { providerId, model: modelId }
+                        : null
+                    }
+                    onSelect={(selection) => {
+                      setProviderId(selection.providerId);
+                      setModelId(selection.model);
+                    }}
+                    onConfigure={() => {
+                      window.location.assign(
+                        `/app/${encodeURIComponent(slug)}/providers`,
+                      );
+                    }}
+                    trigger={
+                      <ModelPickerTrigger
+                        aria-label={`${t("model")}: ${modelId || t("selectModel")}`}
+                        label={modelId || t("selectModel")}
+                        placeholder={!modelId}
+                        provider={selectedProvider?.name}
+                        note={selectedProvider?.name}
+                      />
+                    }
+                  />
+                </DialogField>
+                <DialogField
+                  label={t("description")}
+                  htmlFor="agent-create-description"
+                  dirty={agentDescription !== ""}
+                >
                   <textarea
+                    id="agent-create-description"
                     name="description"
                     value={agentDescription}
                     onChange={(event) =>
@@ -706,211 +572,53 @@ export function AgentsBrowser({
                     maxLength={500}
                     rows={3}
                     placeholder={t("agentDescriptionPlaceholder")}
-                    className="min-h-36 w-full resize-y rounded-lg bg-muted/35 p-3 text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    className="min-h-24 w-full resize-y rounded-xl border border-border/60 bg-muted/20 px-3.5 py-3 text-sm leading-6 outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/20"
                   />
-                </label>
+                </DialogField>
 
-                <fieldset>
-                  <legend className="mb-1.5 text-xs font-semibold text-foreground">
-                    {t("runtime")}
-                  </legend>
-                  <RadioGroup
-                    value={runtime}
-                    onValueChange={(next) =>
-                      selectRuntime(next as AgentRuntimeKind)
-                    }
-                  >
-                    {[
-                      {
-                        value: "pi" as const,
-                        label: t("piRuntime"),
-                        description: t("piRuntimeDescription"),
-                        icon: Zap,
-                      },
-                      {
-                        value: "pi-sdk" as const,
-                        label: t("piSdkRuntime"),
-                        description: t("piSdkRuntimeDescription"),
-                        icon: PackageCheck,
-                      },
-                    ].map((option) => {
-                      const Icon = option.icon;
-                      const selected = runtime === option.value;
-                      return (
-                        <div
-                          key={option.value}
-                          className={cx(
-                            "relative flex min-h-16 cursor-pointer items-start gap-3 rounded-md border px-3.5 py-3 text-left transition-colors hover:bg-muted/40",
-                            selected
-                              ? "border-foreground/20 bg-muted/60"
-                              : "border-border",
-                          )}
-                        >
-                          <input
-                            type="radio"
-                            name="runtime"
-                            value={option.value}
-                            checked={selected}
-                            required
-                            onChange={() => selectRuntime(option.value)}
-                            className="sr-only"
-                            tabIndex={-1}
-                            aria-hidden="true"
-                            aria-label={option.label}
-                          />
-                          <RadioGroupItem
-                            value={option.value}
-                            label={option.label}
-                          />
-                          <Icon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-                          <span className="min-w-0 flex-1">
-                            <span className="mt-0.5 block text-xs leading-4 text-muted-foreground">
-                              {option.description}
-                            </span>
-                          </span>
-                          <CheckCircle2
-                            className={cx(
-                              "mt-0.5 size-4 shrink-0",
-                              selected ? "text-foreground" : "invisible",
-                            )}
-                          />
-                        </div>
-                      );
-                    })}
-                  </RadioGroup>
-                </fieldset>
-                {runtime === "pi-sdk" ? (
-                  <div className="space-y-2 rounded-lg border border-border p-3 text-xs leading-5 text-muted-foreground">
+                <div className="flex items-start gap-2 text-xs leading-5 text-muted-foreground">
+                  <Box className="mt-0.5 size-4 shrink-0" />
+                  <p>{t("automaticSandboxHelp")}</p>
+                </div>
+                {runtime !== "omp" ? (
+                  <div className="space-y-2 rounded-2xl border border-border/60 bg-muted/20 p-4 text-xs leading-relaxed text-muted-foreground">
                     <p>{t("piPackageSecurity")}</p>
                     <p>{t("piPackageHeadless")}</p>
                     <p>{t("piSdkCreateHelp")}</p>
-                    <p>{t("piSdkUnsupportedEntrypoints")}</p>
                   </div>
                 ) : null}
-
-                {runtime === "hermes" ? (
-                  <HermesImageSelector
-                    id="create-hermes-version"
-                    images={hermesImages}
-                  />
-                ) : null}
-
-                {runtime === "hermes" ? (
-                  <div className="space-y-2">
-                    <AgentResourceSelect
-                      icon={Cpu}
-                      label={t("modelProviders")}
-                      name="providerId"
-                      options={providerOptions}
-                      selectedIds={selectedProviderIds}
-                      onSelectionChange={setSelectedProviderIds}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      {t("hermesProviderSelectionHelp")}
-                    </p>
-                  </div>
-                ) : runtime ? (
-                  <div>
-                    <input type="hidden" name="providerId" value={providerId} />
-                    <input type="hidden" name="model" value={modelId} />
-                    <span className="mb-1.5 flex items-center gap-2 text-xs font-semibold text-foreground">
-                      <Cpu className="size-4 text-muted-foreground" />{" "}
-                      {t("model")}
-                    </span>
-                    <ModelPicker
-                      providers={compatibleProviders}
-                      value={
-                        providerId && modelId
-                          ? { providerId, model: modelId }
-                          : null
-                      }
-                      onSelect={(selection) => {
-                        setProviderId(selection.providerId);
-                        setModelId(selection.model);
-                      }}
-                      onConfigure={() => {
-                        window.location.assign(
-                          `/app/${encodeURIComponent(slug)}/providers`,
-                        );
-                      }}
-                      trigger={
-                        <Button
-                          variant="secondary"
-                          type="button"
-                          aria-label={`${t("model")}: ${modelId || t("selectModel")}`}
-                          className="w-full text-left"
-                        >
-                          <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-semibold text-muted-foreground">
-                            {selectedProvider?.name.charAt(0).toUpperCase() ||
-                              "M"}
-                          </span>
-                          <span className="min-w-0 flex-1 truncate">
-                            {modelId || t("selectModel")}
-                          </span>
-                          <span className="hidden max-w-44 truncate text-xs text-muted-foreground sm:block">
-                            {selectedProvider?.name}
-                          </span>
-                          <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
-                        </Button>
-                      }
-                    />
-                  </div>
-                ) : null}
-
-                {runtime === "hermes-rpc" ? (
-                  <div className="block">
-                    <span className="mb-1.5 block text-xs font-semibold text-foreground">
-                      {t("hermesRpcSandbox")}
-                    </span>
-                    <FormSelect
-                      name={sandboxId ? "sandboxId" : undefined}
-                      value={sandboxId}
-                      label={t("hermesRpcSandbox")}
-                      options={[
-                        { value: "", label: t("hermesRpcNewSandbox") },
-                        (createOptions.sandboxes ?? []).map((sandbox) => ({
-                          value: sandbox.id,
-                          label: sandbox.label,
-                        })),
-                      ]
-                        .flat()
-                        .filter((option) => option != null)}
-                      onValueChange={(value) => setSandboxId(value)}
-                      className="w-full"
-                    />
-                    <span className="mt-1.5 block text-xs text-muted-foreground">
-                      {t("hermesRpcSandboxHelp")}
-                    </span>
-                  </div>
-                ) : null}
-                {runtime && runtime !== "hermes" && runtime !== "hermes-rpc" ? (
-                  <div className="flex items-start gap-2 text-xs leading-5 text-muted-foreground">
-                    <Box className="mt-0.5 size-4 shrink-0" />
-                    <p>{t("automaticSandboxHelp")}</p>
-                  </div>
-                ) : null}
-                <div className="block max-w-48 text-xs font-medium text-muted-foreground">
+                <DialogField
+                  label={t("maxToolSteps")}
+                  htmlFor="agent-create-max-steps"
+                  dirty={maxSteps !== String(AGENT_STEP_BOUNDS.default)}
+                >
                   <Input
-                    label={t("maxToolSteps")}
+                    id="agent-create-max-steps"
                     name="maxSteps"
                     type="number"
                     min={AGENT_STEP_BOUNDS.min}
                     max={AGENT_STEP_BOUNDS.max}
-                    defaultValue={String(AGENT_STEP_BOUNDS.default)}
+                    value={maxSteps}
+                    onChange={setMaxSteps}
                     className="mt-1.5 w-full"
+                    classNames={{
+                      label: "px-0 text-xs font-semibold",
+                      field: "rounded-xl bg-muted/20",
+                      input: "text-sm",
+                    }}
                   />
-                </div>
+                </DialogField>
               </section>
 
               <section
                 hidden={activeCreateStep !== "instructions"}
                 aria-labelledby="agent-create-instructions-title"
-                className="mx-auto max-w-3xl space-y-6 px-5 py-6 sm:px-8"
+                className="flex flex-1 flex-col gap-6 px-6 py-5"
               >
                 <div>
                   <h3
                     id="agent-create-instructions-title"
-                    className="text-base font-semibold text-foreground"
+                    className="text-xl font-semibold tracking-tight text-foreground"
                   >
                     {t("instructions")}
                   </h3>
@@ -918,7 +626,7 @@ export function AgentsBrowser({
                     {t("instructionsSettingsDescription")}
                   </p>
                 </div>
-                <AgentSystemPromptEditor
+                <SystemPromptEditor
                   workspaceId={workspaceId}
                   name={agentName}
                   description={agentDescription}
@@ -926,18 +634,21 @@ export function AgentsBrowser({
                   model={modelId}
                   value={systemPrompt}
                   onChange={setSystemPrompt}
+                  maxLength={100_000}
+                  placeholder={t("youAreAHelpfulAssistant")}
+                  dirty={systemPrompt !== ""}
                 />
               </section>
 
               <section
                 hidden={activeCreateStep !== "builtInTools"}
                 aria-labelledby="agent-create-built-in-tools-title"
-                className="mx-auto max-w-3xl space-y-6 px-5 py-6 sm:px-8"
+                className="space-y-6 px-6 py-5"
               >
                 <div>
                   <h3
                     id="agent-create-built-in-tools-title"
-                    className="text-base font-semibold text-foreground"
+                    className="text-xl font-semibold tracking-tight text-foreground"
                   >
                     {t("builtInTools")}
                   </h3>
@@ -947,22 +658,27 @@ export function AgentsBrowser({
                     })}
                   </p>
                 </div>
-                <AgentBuiltInTools
-                  runtimeKind={runtime}
-                  disabledTools={disabledBuiltinTools}
-                  onDisabledToolsChange={setDisabledBuiltinTools}
-                />
+                <DialogField
+                  label={t("builtInTools")}
+                  dirty={disabledBuiltinTools.size > 0}
+                >
+                  <AgentBuiltInTools
+                    runtimeKind={runtime}
+                    disabledTools={disabledBuiltinTools}
+                    onDisabledToolsChange={setDisabledBuiltinTools}
+                  />
+                </DialogField>
               </section>
 
               <section
                 hidden={activeCreateStep !== "mcp"}
                 aria-labelledby="agent-create-mcp-title"
-                className="mx-auto max-w-3xl space-y-6 px-5 py-6 sm:px-8"
+                className="space-y-6 px-6 py-5"
               >
                 <div>
                   <h3
                     id="agent-create-mcp-title"
-                    className="text-base font-semibold text-foreground"
+                    className="text-xl font-semibold tracking-tight text-foreground"
                   >
                     {t("mcp")}
                   </h3>
@@ -970,25 +686,30 @@ export function AgentsBrowser({
                     {t("mcpSettingsDescription")}
                   </p>
                 </div>
-                <AgentResourceSelect
-                  icon={Server}
+                <DialogField
                   label={t("mcp")}
-                  name="deploymentId"
-                  options={createOptions.deployments}
-                  selectedIds={selectedDeploymentIds}
-                  onSelectionChange={setSelectedDeploymentIds}
-                />
+                  dirty={selectedDeploymentIds.size > 0}
+                >
+                  <AgentResourceSelect
+                    icon={Server}
+                    label={t("mcp")}
+                    name="deploymentId"
+                    options={createOptions.deployments}
+                    selectedIds={selectedDeploymentIds}
+                    onSelectionChange={setSelectedDeploymentIds}
+                  />
+                </DialogField>
               </section>
 
               <section
                 hidden={activeCreateStep !== "skills"}
                 aria-labelledby="agent-create-skills-title"
-                className="mx-auto max-w-3xl space-y-6 px-5 py-6 sm:px-8"
+                className="space-y-6 px-6 py-5"
               >
                 <div>
                   <h3
                     id="agent-create-skills-title"
-                    className="text-base font-semibold text-foreground"
+                    className="text-xl font-semibold tracking-tight text-foreground"
                   >
                     {t("skills")}
                   </h3>
@@ -996,79 +717,82 @@ export function AgentsBrowser({
                     {t("skillsSettingsDescription")}
                   </p>
                 </div>
-                <AgentResourceSelect
-                  icon={PackageCheck}
+                <DialogField
                   label={t("skills")}
-                  name="installedSkillId"
-                  options={createOptions.skills}
-                  selectedIds={selectedSkillIds}
-                  onSelectionChange={setSelectedSkillIds}
-                />
+                  dirty={selectedSkillIds.size > 0}
+                >
+                  <AgentResourceSelect
+                    icon={PackageCheck}
+                    label={t("skills")}
+                    name="installedSkillId"
+                    options={createOptions.skills}
+                    selectedIds={selectedSkillIds}
+                    onSelectionChange={setSelectedSkillIds}
+                  />
+                </DialogField>
               </section>
-
-              <section
-                hidden={activeCreateStep !== "toolkits"}
-                aria-labelledby="agent-create-toolkits-title"
-                className="mx-auto max-w-3xl space-y-6 px-5 py-6 sm:px-8"
-              >
-                <div>
-                  <h3
-                    id="agent-create-toolkits-title"
-                    className="text-base font-semibold text-foreground"
-                  >
-                    {t("toolkits")}
-                  </h3>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {t("toolkitsSettingsDescription")}
-                  </p>
-                </div>
-                <AgentResourceSelect
-                  icon={Blocks}
-                  label={t("toolkits")}
-                  name="toolkitId"
-                  options={createOptions.toolkits}
-                  selectedIds={selectedToolkitIds}
-                  onSelectionChange={setSelectedToolkitIds}
-                />
-              </section>
-            </div>
+            </DialogBody>
           </div>
-
-          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-border/60 px-4 py-3 sm:px-6">
-            <Button
-              type="button"
-              onClick={closeCreateForm}
-              variant={"secondary"}
+          {lastCreateStep ? (
+            <p className="mx-4 mb-3 rounded-xl bg-muted/50 px-4 py-3 text-xs leading-relaxed text-muted-foreground sm:mx-6">
+              {t("createReadyHelp")}
+            </p>
+          ) : null}
+          {createState.error ? (
+            <p
+              role="alert"
+              className="mx-4 mb-3 rounded-xl border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm leading-relaxed text-destructive sm:mx-6"
             >
-              <X className="size-4 shrink-0" />
-              {t("cancel")}
-            </Button>
-            {createStepIndex > 0 ? (
-              <Button
-                type="button"
-                onClick={() => {
-                  const previous = createSteps[createStepIndex - 1];
-                  if (previous) setCreateStep(previous.id);
-                }}
-                variant={"secondary"}
-              >
-                <ChevronLeft className="size-4 shrink-0" />
-                {t("back")}
-              </Button>
-            ) : null}
+              {t("createFailed", { reason: createState.error })}
+            </p>
+          ) : null}
+
+          <DialogFooter
+            start={
+              createStepIndex > 0 ? (
+                <Button
+                  type="button"
+                  size="md"
+                  onClick={() => {
+                    const previous = createSteps[createStepIndex - 1];
+                    if (previous) setCreateStep(previous.id);
+                  }}
+                  variant="secondary"
+                >
+                  <ChevronLeft className="size-4 shrink-0" />
+                  {t("back")}
+                </Button>
+              ) : undefined
+            }
+            cancel={
+              <CancelContainer>
+                <Button
+                  type="button"
+                  size="md"
+                  onClick={createOnly ? undefined : closeCreateForm}
+                  variant="ghost"
+                >
+                  {t("cancel")}
+                </Button>
+              </CancelContainer>
+            }
+          >
             {lastCreateStep ? (
               <SubmitButton
+                size="md"
                 pendingLabel={t("creatingAgent")}
                 savedLabel={t("agentCreated")}
-                disabled={!createReady}
+                disabled={!createReady || createPending}
                 variant="primary"
+                className="rounded-full px-3 sm:px-5"
               >
                 <Plus className="size-[18px] shrink-0" />
-                {t("createAgent")}
+                {t("createAndEnable")}
               </SubmitButton>
             ) : (
               <Button
                 type="button"
+                size="md"
                 disabled={activeCreateStep === "basic" && !createReady}
                 onClick={() => {
                   const form = document.getElementById(
@@ -1084,12 +808,13 @@ export function AgentsBrowser({
                   if (next) setCreateStep(next.id);
                 }}
                 variant={"primary"}
+                className="rounded-full px-3 sm:px-5"
               >
                 {t("next")}
                 <ChevronRight className="size-4 shrink-0" />
               </Button>
             )}
-          </div>
+          </DialogFooter>
         </form>
       ) : null}
 
@@ -1139,17 +864,9 @@ export function AgentsBrowser({
                 const ready = isAgentReady(agent);
                 const agentsHref = `/app/${encodeURIComponent(slug)}/agents`;
                 const detailsHref = `${agentsHref}/${encodeURIComponent(agent.id)}?returnTo=${encodeURIComponent(returnTo)}`;
-                const model =
-                  agent.runtimeKind === "hermes"
-                    ? agent.providerNames.length > 0
-                      ? t("providerSummary", {
-                          count: agent.providerNames.length,
-                          names: agent.providerNames.join(", "),
-                        })
-                      : t("noProviderSelected")
-                    : agent.providerName
-                      ? `${agent.providerName} / ${agent.model ?? t("noModelSelected")}`
-                      : t("noProviderSelected");
+                const model = agent.providerName
+                  ? `${agent.providerName} / ${agent.model ?? t("noModelSelected")}`
+                  : t("noProviderSelected");
 
                 return (
                   <li
@@ -1190,21 +907,16 @@ export function AgentsBrowser({
                               )}
                               {ready
                                 ? t("ready")
-                                : isDedicatedSandboxRuntimeKind(
+                                : isExecutableAgentRuntimeKind(
                                       agent.runtimeKind,
                                     ) && !agent.sandboxReady
                                   ? t("needsSandbox")
-                                  : agent.runtimeKind === "hermes" ||
-                                      !agent.providerName
+                                  : !agent.providerName
                                     ? t("needsProvider")
                                     : t("needsModel")}
                             </AnimatedBadge>
                             <AnimatedBadge status="neutral">
-                              {agent.runtimeKind === "hermes" ? (
-                                <Container className="size-3.5" />
-                              ) : (
-                                <Bot className="size-3.5" />
-                              )}
+                              <Bot className="size-3.5" />
                               {agentRuntimeDisplayName(agent.runtimeKind)}
                               {agent.runtimeStatus
                                 ? ` · ${agent.runtimeStatus}`
@@ -1212,10 +924,7 @@ export function AgentsBrowser({
                             </AnimatedBadge>
                           </div>
                           <p className="mt-1 truncate text-sm text-muted-foreground">
-                            {agent.runtimeKind === "hermes"
-                              ? t("modelProviders")
-                              : t("model")}
-                            : {model}
+                            {t("model")}: {model}
                           </p>
                           <div className="mt-2 flex flex-wrap gap-3">
                             <CountPill
@@ -1259,7 +968,6 @@ export function AgentsBrowser({
                           slug={slug}
                           agentId={agent.id}
                           agentName={agent.name}
-                          runtimeKind={agent.runtimeKind}
                         />
                         <DeleteAgentButton slug={slug} agentId={agent.id} />
                       </div>

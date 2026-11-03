@@ -4,7 +4,7 @@ import { db } from "@/lib/db";
 
 export const DEFAULT_MAX_AGENT_ATTACHMENT_BYTES = 1_000_000_000;
 export const MIN_ADMIN_ATTACHMENT_MEGABYTES = 1;
-// AgentAttachment.size is a Prisma Int. Never admit a value it cannot store.
+// Keep attachment sizes within the supported persisted integer range.
 export const ABSOLUTE_MAX_AGENT_ATTACHMENT_BYTES = 2_000_000_000;
 export const MAX_ADMIN_ATTACHMENT_MEGABYTES =
   ABSOLUTE_MAX_AGENT_ATTACHMENT_BYTES / 1_000_000;

@@ -5,7 +5,7 @@ import { db } from "@/lib/db";
 export const LOG_SETTINGS_KEY = "observability.settings";
 export const logSettingsSchema = z.object({
   eventDays: z.number().int().min(1).max(365).default(30),
-  detailDays: z.number().int().min(1).max(30).default(7),
+  detailDays: z.number().int().min(1).max(30).default(30),
   auditDays: z.number().int().min(30).max(3650).default(180),
   captures: z
     .array(

@@ -5,6 +5,7 @@ import {
   Check,
   ChevronDown,
   CircleAlert,
+  Clock,
   LoaderCircle,
   ShieldCheck,
   X,
@@ -33,7 +34,8 @@ export type ToolApprovalStatus =
   | "denied"
   | "running"
   | "complete"
-  | "error";
+  | "error"
+  | "expired";
 
 export interface ToolApprovalParameter {
   id: string;
@@ -53,13 +55,26 @@ export interface ToolApprovalProps {
   description?: ReactNode;
   parameters?: ToolApprovalParameter[];
   status?: ToolApprovalStatus;
+  /** ISO timestamp; while status is "pending" renders a live countdown and flips the badge once elapsed. */
+  expiresAt?: string | null;
   open?: boolean;
   defaultOpen?: boolean;
   onOpenChange?: (open: boolean) => void;
   onApprove?: () => void;
   onAlwaysAllow?: () => void;
   onDeny?: () => void;
+  /** Expired approvals cannot be revived; this starts a new attempt instead. */
+  onReopen?: () => void;
+  expiredLabel?: ReactNode;
+  reopenLabel?: ReactNode;
   className?: string;
+}
+
+function formatCountdown(remainingMs: number) {
+  const totalSeconds = Math.max(0, Math.ceil(remainingMs / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
 function getStatusCopy(status: ToolApprovalStatus) {
@@ -69,6 +84,7 @@ function getStatusCopy(status: ToolApprovalStatus) {
   if (status === "running") return "Running";
   if (status === "complete") return "Completed";
   if (status === "error") return "Failed";
+  if (status === "expired") return "Expired";
   return "Approval required";
 }
 
@@ -81,6 +97,9 @@ function getStatusBadgeClass(status: ToolApprovalStatus) {
   }
   if (status === "approved" || status === "complete") {
     return "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400";
+  }
+  if (status === "expired") {
+    return "border-border/60 bg-muted/50 text-muted-foreground";
   }
   return "border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400";
 }
@@ -110,12 +129,16 @@ export function ToolApproval({
   description,
   parameters = [],
   status = "pending",
+  expiresAt,
   open,
   defaultOpen = false,
   onOpenChange,
   onApprove,
   onAlwaysAllow,
   onDeny,
+  onReopen,
+  expiredLabel,
+  reopenLabel = "Reopen",
   className,
 }: ToolApprovalProps) {
   const reduce = useReducedMotion() ?? false;
@@ -134,6 +157,24 @@ export function ToolApproval({
   const busy = status === "approving" || status === "running";
   const pending = status === "pending";
   const error = status === "error";
+  const expired = status === "expired";
+
+  const [remainingMs, setRemainingMs] = useState<number | null>(null);
+  useEffect(() => {
+    if (!pending || !expiresAt) {
+      setRemainingMs(null);
+      return undefined;
+    }
+    const deadline = Date.parse(expiresAt);
+    if (Number.isNaN(deadline)) {
+      setRemainingMs(null);
+      return undefined;
+    }
+    const update = () => setRemainingMs(deadline - Date.now());
+    update();
+    const timer = window.setInterval(update, 1_000);
+    return () => window.clearInterval(timer);
+  }, [pending, expiresAt]);
 
   useEffect(() => {
     if (previousStatus.current === "pending" && status !== "pending") {
@@ -147,7 +188,7 @@ export function ToolApproval({
       data-state={status}
       aria-busy={busy}
       className={cn(
-        "w-full overflow-hidden rounded-2xl border border-border/60 bg-muted/20 text-sm",
+        "w-full overflow-hidden rounded-xl border border-border/60 bg-muted/20 text-sm",
         className,
       )}
     >
@@ -163,6 +204,8 @@ export function ToolApproval({
             <LoaderCircle className={cn("size-4", !reduce && "animate-spin")} />
           ) : error ? (
             <CircleAlert className="size-4" />
+          ) : expired ? (
+            <Clock className="size-4" />
           ) : status === "denied" ? (
             <X className="size-4" />
           ) : status === "approved" || status === "complete" ? (
@@ -182,16 +225,23 @@ export function ToolApproval({
             </div>
             <span
               className={cn(
-                "shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors",
+                "shrink-0 rounded-lg border px-2 py-0.5 text-[11px] font-medium transition-colors",
                 getStatusBadgeClass(status),
               )}
             >
-              {getStatusCopy(status)}
+              {expired
+                ? (expiredLabel ?? getStatusCopy(status))
+                : getStatusCopy(status)}
             </span>
           </div>
           {description ? (
             <p className="mt-2 leading-5 text-muted-foreground">
               {description}
+            </p>
+          ) : null}
+          {pending && remainingMs !== null ? (
+            <p className="mt-1 text-[11px] tabular-nums text-muted-foreground">
+              Expires in {formatCountdown(remainingMs)}
             </p>
           ) : null}
 
@@ -201,7 +251,7 @@ export function ToolApproval({
               aria-expanded={currentOpen}
               aria-controls={detailsId}
               onClick={() => setOpen(!currentOpen)}
-              className="mt-2 inline-flex items-center gap-1 rounded-md text-xs font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+              className="mt-2 inline-flex items-center gap-1 rounded-lg text-xs font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
             >
               View details
               <motion.span
@@ -246,7 +296,7 @@ export function ToolApproval({
               onClick={onApprove}
               whileTap={reduce ? undefined : { scale: 0.97 }}
               transition={SPRING_PRESS}
-              className="rounded-xl bg-foreground px-3 py-1.5 text-xs font-medium text-background outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              className="rounded-lg bg-foreground px-3 py-1.5 text-xs font-medium text-background outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
             >
               Allow once
             </motion.button>
@@ -256,7 +306,7 @@ export function ToolApproval({
                 onClick={onAlwaysAllow}
                 whileTap={reduce ? undefined : { scale: 0.97 }}
                 transition={SPRING_PRESS}
-                className="rounded-xl border border-border/60 bg-background px-3 py-1.5 text-xs font-medium text-foreground outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
+                className="rounded-lg border border-border/60 bg-background px-3 py-1.5 text-xs font-medium text-foreground outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
               >
                 Always allow
               </motion.button>
@@ -264,9 +314,25 @@ export function ToolApproval({
             <button
               type="button"
               onClick={onDeny}
-              className="rounded-xl px-3 py-1.5 text-xs font-medium text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+              className="rounded-lg px-3 py-1.5 text-xs font-medium text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
             >
               Deny
+            </button>
+          </motion.div>
+        ) : expired && onReopen ? (
+          <motion.div
+            initial={reduce ? { opacity: 0 } : { opacity: 0, y: 4 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: reduce ? 0.12 : 0.22, ease: EASE_OUT }}
+            className="flex flex-wrap items-center gap-2 border-t border-border/60 px-4 py-3"
+          >
+            <button
+              type="button"
+              onClick={onReopen}
+              className="rounded-lg border border-border/60 bg-background px-3 py-1.5 text-xs font-medium text-foreground outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              {reopenLabel}
             </button>
           </motion.div>
         ) : null}

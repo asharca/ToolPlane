@@ -30,6 +30,8 @@ export type ConfirmSubmitButtonProps = {
   triggerSize?: ButtonSize;
   confirmSize?: ButtonSize;
   cancelSize?: ButtonSize;
+  /** Icon triggers get a tooltip unless disabled here. */
+  triggerTooltip?: boolean;
 };
 
 export function ConfirmSubmitButton({
@@ -50,8 +52,9 @@ export function ConfirmSubmitButton({
   confirmVariant = "primary",
   cancelVariant = "ghost",
   triggerSize = "md",
-  confirmSize = "md",
-  cancelSize = "md",
+  confirmSize = "sm",
+  cancelSize = "sm",
+  triggerTooltip = true,
 }: ConfirmSubmitButtonProps) {
   const [confirming, setConfirming] = useState(false);
   const { pending } = useFormStatus();
@@ -117,6 +120,16 @@ export function ConfirmSubmitButton({
           <span id={promptId} className={promptClassName}>
             {prompt}
           </span>
+          <Button
+            type="button"
+            disabled={disabled || pending}
+            onClick={cancel}
+            variant={cancelVariant}
+            size={cancelSize}
+            className={cancelClassName}
+          >
+            {cancelLabel}
+          </Button>
           <StatefulButton
             ref={confirm}
             type="submit"
@@ -131,18 +144,8 @@ export function ConfirmSubmitButton({
           >
             {confirmLabel}
           </StatefulButton>
-          <Button
-            type="button"
-            disabled={disabled || pending}
-            onClick={cancel}
-            variant={cancelVariant}
-            size={cancelSize}
-            className={cancelClassName}
-          >
-            {cancelLabel}
-          </Button>
         </>
-      ) : triggerSize === "icon" ? (
+      ) : triggerSize === "icon" && triggerTooltip ? (
         <Tooltip content={triggerTitle ?? triggerAriaLabel ?? triggerLabel}>
           {triggerButton}
         </Tooltip>

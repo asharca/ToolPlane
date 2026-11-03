@@ -55,6 +55,40 @@ describe("managed deployment container cleanup", () => {
     await expect(removeDeploymentContainer("dep1")).resolves.toBeUndefined();
   });
 
+  it("waits for in-progress auto-removal before reporting cleanup complete", async () => {
+    const observingRemoval = Promise.withResolvers<void>();
+    const pending = Object.assign(new EventEmitter(), {
+      stdout: new EventEmitter(),
+      stderr: new EventEmitter(),
+      kill: vi.fn(),
+    });
+    mocks.spawn
+      .mockImplementationOnce(() =>
+        dockerChild({
+          code: 1,
+          stderr:
+            "Error response from daemon: removal of container toolplane-mcp-dep1 is already in progress",
+        }),
+      )
+      .mockImplementationOnce(() => {
+        observingRemoval.resolve();
+        return pending;
+      });
+    let completed = false;
+    const cleanup = removeDeploymentContainer("dep1").then(() => {
+      completed = true;
+    });
+    await observingRemoval.promise;
+    expect(completed).toBe(false);
+    pending.stderr.emit(
+      "data",
+      Buffer.from("No such container: toolplane-mcp-dep1"),
+    );
+    pending.emit("close", 1, null);
+    await cleanup;
+    expect(completed).toBe(true);
+  });
+
   it("preserves Docker cleanup failures other than a missing container", async () => {
     mocks.spawn.mockImplementation(() =>
       dockerChild({

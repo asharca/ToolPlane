@@ -74,7 +74,7 @@ export default async function SkillsPage({
         actions={
           <>
             <ButtonLink
-              href={`/app/${slug}/market/skills`}
+              href={`/app/${slug}/plugins`}
               variant="secondary"
               size="md"
             >
@@ -146,9 +146,6 @@ export default async function SkillsPage({
             name: skillLabel(skill).name,
             slug: skillLabel(skill).slug,
             description: skill.skill?.description ?? skill.description,
-            marketManaged: Boolean(
-              skill.marketInstall || skill.toolkitLinks.length,
-            ),
             iconUrl: skill.skill?.iconUrl ?? null,
             createdAt: fmt(skill.createdAt, timeZone, locale),
           }))}

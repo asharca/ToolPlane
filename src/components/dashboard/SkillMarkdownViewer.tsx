@@ -53,7 +53,7 @@ export function SkillMarkdownViewer({
           </h2>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <div className="inline-flex rounded-md border border-border bg-muted/30 p-0.5">
+          <div className="inline-flex rounded-xl border border-border bg-muted/30 p-0.5">
             <Button
               type="button"
               disabled={isPending}
@@ -77,10 +77,20 @@ export function SkillMarkdownViewer({
           </div>
           <CopyButton text={draft} label={t("copy")} />
           {downloadHref ? (
-            <ButtonLink href={downloadHref} variant="secondary" size="md">
-              <Download className="size-4" />
-              {t("downloadSkillmd")}
-            </ButtonLink>
+            <>
+              <ButtonLink href={downloadHref} variant="secondary" size="md">
+                <Download className="size-4" />
+                {t("downloadSkillBundle")}
+              </ButtonLink>
+              <ButtonLink
+                href={`${downloadHref}?format=markdown`}
+                variant="ghost"
+                size="md"
+              >
+                <Download className="size-4" />
+                {t("downloadSkillmd")}
+              </ButtonLink>
+            </>
           ) : null}
         </div>
       </div>

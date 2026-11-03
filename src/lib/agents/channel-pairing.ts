@@ -12,8 +12,6 @@ import {
   encryptSecretRecord,
 } from "@/lib/security/secrets";
 
-const TELEGRAM_ONBOARDING_DEFAULT_URL =
-  "https://setup.hermes-agent.nousresearch.com";
 const WECOM_QR_GENERATE_URL = "https://work.weixin.qq.com/ai/qc/generate";
 const WECOM_QR_QUERY_URL = "https://work.weixin.qq.com/ai/qc/query_result";
 const WECOM_QR_CODE_PAGE =
@@ -68,14 +66,6 @@ function numberValue(value: unknown, fallback: number) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-function telegramOnboardingBaseUrl() {
-  return (
-    process.env.TELEGRAM_ONBOARDING_URL || TELEGRAM_ONBOARDING_DEFAULT_URL
-  )
-    .trim()
-    .replace(/\/$/, "");
-}
-
 function dingtalkRegistrationBaseUrl() {
   return (
     process.env.DINGTALK_REGISTRATION_BASE_URL ||
@@ -120,114 +110,6 @@ async function updatePairing(
     },
   });
   return updated;
-}
-
-async function requestTelegramPairing(): Promise<{
-  pairing: AgentChannelPairingState;
-  secrets: Record<string, string>;
-}> {
-  const raw = await jsonFetch(
-    `${telegramOnboardingBaseUrl()}/v1/telegram/pairings`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "User-Agent": "ToolPlane/1.0",
-      },
-      body: JSON.stringify({ bot_name: "ToolPlane Agent" }),
-    },
-  );
-  const pairingId = text(raw.pairing_id);
-  const pollToken = text(raw.poll_token);
-  const expiresAt = text(raw.expires_at);
-  const deepLink = text(raw.deep_link);
-  const qrPayload = text(raw.qr_payload) || deepLink;
-  const suggestedUsername = text(raw.suggested_username);
-  if (!pairingId || !pollToken || !expiresAt || !deepLink || !qrPayload) {
-    throw new Error("Telegram setup service returned an incomplete response.");
-  }
-  return {
-    pairing: {
-      provider: "telegram_managed_bot",
-      status: "waiting",
-      qrPayload,
-      scanUrl: deepLink,
-      providerSessionId: pairingId,
-      requestedAt: new Date().toISOString(),
-      expiresAt,
-      message:
-        "Scan this QR in Telegram to create the managed bot, then check setup status.",
-      extra: {
-        deepLink,
-        suggestedUsername,
-      },
-    },
-    secrets: { pollToken },
-  };
-}
-
-async function checkTelegramPairing(
-  row: ChannelRow,
-  pairing: AgentChannelPairingState,
-) {
-  const pairingId = pairing.providerSessionId;
-  if (!pairingId)
-    throw new Error("Telegram pairing session is missing pairing id.");
-  const secrets = pairingSecrets(row);
-  const pollToken = secrets.pollToken;
-  if (!pollToken)
-    throw new Error("Telegram pairing session is missing poll token.");
-
-  const raw = await jsonFetch(
-    `${telegramOnboardingBaseUrl()}/v1/telegram/pairings/${encodeURIComponent(pairingId)}`,
-    {
-      headers: {
-        Authorization: `Bearer ${pollToken}`,
-        "User-Agent": "ToolPlane/1.0",
-      },
-    },
-  );
-  const status = text(raw.status);
-  if (status === "ready") {
-    const botToken = text(raw.token);
-    const botUsername = text(raw.bot_username);
-    const ownerUserId = text(raw.owner_user_id);
-    if (!botToken)
-      throw new Error("Telegram setup service did not return a bot token.");
-    await updatePairing(
-      row,
-      {
-        ...pairing,
-        status: "ready",
-        lastCheckedAt: new Date().toISOString(),
-        message: ownerUserId
-          ? "Telegram bot is ready. Confirm the allowed user ID below before saving."
-          : "Telegram bot is ready. Add at least one numeric Telegram user ID before saving.",
-        error: undefined,
-        extra: {
-          ...pairing.extra,
-          botUsername,
-          ownerUserId,
-        },
-      },
-      { ...secrets, botToken },
-    );
-    return;
-  }
-  await updatePairing(
-    row,
-    {
-      ...pairing,
-      status:
-        Date.parse(pairing.expiresAt ?? "") < Date.now()
-          ? "expired"
-          : "waiting",
-      lastCheckedAt: new Date().toISOString(),
-      message: "Waiting for Telegram managed bot confirmation.",
-      error: undefined,
-    },
-    secrets,
-  );
 }
 
 async function requestWeComPairing(): Promise<AgentChannelPairingState> {
@@ -682,21 +564,19 @@ export async function requestAgentChannelPairing(
     const requested =
       platform.pairing.provider === "feishu_device_qr"
         ? await requestFeishuPairing(row)
-        : platform.pairing.provider === "telegram_managed_bot"
-          ? await requestTelegramPairing()
-          : platform.pairing.provider === "wecom_admin_qr"
-            ? { pairing: await requestWeComPairing(), secrets: undefined }
-            : platform.pairing.provider === "weixin_ilink_qr"
-              ? { pairing: await requestWeixinPairing(), secrets: undefined }
-              : platform.pairing.provider === "dingtalk_device_qr"
-                ? {
-                    pairing: await requestDingTalkPairing(),
-                    secrets: undefined,
-                  }
-                : {
-                    pairing: unsupportedPairing(platform.slug),
-                    secrets: undefined,
-                  };
+        : platform.pairing.provider === "wecom_admin_qr"
+          ? { pairing: await requestWeComPairing(), secrets: undefined }
+          : platform.pairing.provider === "weixin_ilink_qr"
+            ? { pairing: await requestWeixinPairing(), secrets: undefined }
+            : platform.pairing.provider === "dingtalk_device_qr"
+              ? {
+                  pairing: await requestDingTalkPairing(),
+                  secrets: undefined,
+                }
+              : {
+                  pairing: unsupportedPairing(platform.slug),
+                  secrets: undefined,
+                };
     await updatePairing(row, requested.pairing, requested.secrets);
     const pairing = requested.pairing;
     return { pairing };
@@ -746,8 +626,6 @@ export async function checkAgentChannelPairing(
   try {
     if (pairing.provider === "feishu_device_qr") {
       await checkFeishuPairing(row, pairing);
-    } else if (pairing.provider === "telegram_managed_bot") {
-      await checkTelegramPairing(row, pairing);
     } else if (pairing.provider === "wecom_admin_qr") {
       await checkWeComPairing(row, pairing);
     } else if (pairing.provider === "weixin_ilink_qr") {
@@ -773,72 +651,4 @@ export async function checkAgentChannelPairing(
     });
     return { error: message };
   }
-}
-
-export async function applyAgentChannelPairing(
-  workspaceId: string,
-  connectionId: string,
-  allowedUserIdsText: string,
-): Promise<AgentChannelPairingResult> {
-  const row = await db.agentChannelConnection.findFirst({
-    where: { id: connectionId, workspaceId },
-  });
-  if (!row) return { error: "Channel connection not found." };
-  const platform = getMessagingPlatform(row.platform);
-  if (platform?.slug !== "telegram")
-    return { error: "Only Telegram QR setup needs an apply step." };
-  const pairing = pairingFromConfig(row.config);
-  if (pairing?.provider !== "telegram_managed_bot")
-    return { error: "Request Telegram QR setup first." };
-  if (pairing.status !== "ready")
-    return { error: "Telegram setup is not ready yet." };
-  const secrets = pairingSecrets(row);
-  const botToken = secrets.botToken;
-  if (!botToken)
-    return { error: "Telegram setup token is missing. Start a new QR setup." };
-
-  const allowedUserIds = Array.from(
-    new Set(
-      allowedUserIdsText
-        .split(",")
-        .map((value) => value.trim())
-        .filter(Boolean),
-    ),
-  );
-  const invalid = allowedUserIds.find((value) => !/^\d+$/.test(value));
-  if (invalid)
-    return { error: `Allowed Telegram user IDs must be numeric: ${invalid}` };
-
-  const updated = await updateAgentChannelConnectionCredentials({
-    workspaceId: row.workspaceId,
-    connectionId: row.id,
-    credentials: {
-      TELEGRAM_BOT_TOKEN: botToken,
-      TELEGRAM_ALLOWED_USERS: allowedUserIds.join(","),
-      TELEGRAM_ALLOW_ALL_USERS: String(allowedUserIds.length === 0),
-    },
-  });
-  if (updated.error) return updated;
-  const latest = await db.agentChannelConnection.findUniqueOrThrow({
-    where: { id: row.id },
-  });
-  await updatePairing(
-    latest,
-    {
-      ...pairing,
-      status: "ready",
-      qrPayload: undefined,
-      lastCheckedAt: new Date().toISOString(),
-      message: "Telegram setup saved. Start the hosted runner when ready.",
-      error: undefined,
-      extra: {
-        ...pairing.extra,
-        ...(allowedUserIds.length
-          ? { allowedUserIds: allowedUserIds.join(",") }
-          : { allowedUserIds: "*" }),
-      },
-    },
-    {},
-  );
-  return {};
 }

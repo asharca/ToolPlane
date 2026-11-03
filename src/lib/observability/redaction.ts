@@ -30,6 +30,12 @@ export function redactText(
     );
 }
 
+/**
+ * Protocol bodies keep their full nesting. Each level spends 32 bytes of the byte
+ * budget, so recursion stays bounded by `maxBytes` rather than a depth cap.
+ */
+export const PROTOCOL_BODY_DEPTH = Number.POSITIVE_INFINITY;
+
 export function sanitizeLog(
   value: unknown,
   secrets: readonly string[] = [],

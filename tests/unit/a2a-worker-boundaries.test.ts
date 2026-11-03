@@ -22,6 +22,8 @@ const state = vi.hoisted(() => ({
   log: vi.fn(),
   execute: vi.fn(),
   admit: vi.fn(),
+  stageFiles: vi.fn(),
+  deferFiles: vi.fn(),
 }));
 vi.mock("@/lib/agents/agent-execution-gate", () => ({
   AgentExecutionBusyError: class AgentExecutionBusyError extends Error {},
@@ -59,6 +61,7 @@ vi.mock("@/lib/a2a/store", () => ({
   finishTask: state.finish,
   interruptTask: state.interrupt,
   releasePiHarnessClaim: state.releaseClaim,
+  deferTaskFileStaging: state.deferFiles,
 }));
 vi.mock("@/lib/runtime/ownership-state", () => ({
   assertRuntimeOwner: () => {
@@ -76,7 +79,7 @@ vi.mock("@/lib/a2a/principal", () => ({
   isLocalGrant: (grant: { kind?: string }) => grant.kind === "local",
   isRemoteGrant: (grant: { kind?: string }) => grant.kind === "remote",
   isWorkspaceGrant: (grant: { kind?: string }) =>
-    grant.kind === "local" || grant.kind === "published",
+    grant.kind === "local" || grant.kind === "remote",
 }));
 vi.mock("@/lib/a2a/local-policy", () => ({ localTarget: state.target }));
 vi.mock("@/lib/a2a/local-continuation", () => ({
@@ -85,7 +88,9 @@ vi.mock("@/lib/a2a/local-continuation", () => ({
 vi.mock("@/lib/a2a/remote-executor", () => ({
   reconcileRemoteTasks: state.remoteWaits,
 }));
-vi.mock("@/lib/a2a/executor", () => ({ executeTask: state.execute }));
+vi.mock("@/lib/agents/execution/executor", () => ({
+  executeTask: state.execute,
+}));
 vi.mock("@/lib/agents/pi-harness", () => ({
   PiRuntimeInterruptedError: class PiRuntimeInterruptedError extends Error {},
 }));
@@ -94,21 +99,28 @@ vi.mock("@/lib/observability/a2a-log", () => ({
   recordA2AEvent: vi.fn(),
   taskStateName: (name: string) => name,
 }));
+vi.mock("@/lib/a2a/files", () => ({ cleanupTaskFiles: vi.fn(async () => 0) }));
+vi.mock("@/lib/a2a/task-files", () => ({
+  stageTaskFileTransfers: state.stageFiles,
+}));
 import { db } from "@/lib/db";
 import { A2AQuotaError } from "@/lib/a2a/quotas";
 import { A2A_LIMITS } from "@/lib/a2a/model";
 import { PiRuntimeInterruptedError } from "@/lib/agents/pi-harness";
 import { AgentExecutionBusyError } from "@/lib/agents/agent-execution-gate";
 import {
-  executeA2ATask,
-  startA2AWorker,
-  stopA2AWorker,
-  tickA2AWorker,
-  wakeA2AWorker,
-} from "@/lib/a2a/worker";
+  executeAgentTask,
+  startAgentWorker,
+  stopAgentWorker,
+  tickAgentWorker,
+} from "@/lib/agents/execution/worker";
 import { withSandboxExecutionLease } from "@/lib/agents/sandbox-execution-gate";
 
-function task(kind = "local", backend = "legacy", bound = false) {
+function task(
+  kind = "local",
+  backend = kind === "local" ? "pi-sdk" : "legacy",
+  bound = false,
+) {
   const row = {
     id: "task",
     contextId: "context",
@@ -122,6 +134,9 @@ function task(kind = "local", backend = "legacy", bound = false) {
       kind,
       workspaceId: "workspace",
       agentId: "agent",
+      agentRevisionId: "revision-1",
+      sourceAgentId: "agent",
+      remoteAgentId: "remote",
       ownerKey: "owner",
       ancestorTaskIds: [],
       entryPolicy: "delegation",
@@ -143,6 +158,11 @@ beforeEach(async () => {
   state.target.mockResolvedValue({ sandboxId: "sandbox" });
   state.remoteWaits.mockResolvedValue(undefined);
   state.localWaits.mockResolvedValue(undefined);
+  state.deferFiles.mockImplementation(async (id) => {
+    const row = state.rows.get(id);
+    if (row)
+      Object.assign(row, { phase: "file-staging-failed", leaseToken: null });
+  });
   state.claim.mockImplementation(async (id) => state.rows.get(id) ?? null);
   state.finish.mockImplementation(async (id, leaseToken, terminal, message) => {
     const row = state.rows.get(id);
@@ -166,16 +186,42 @@ beforeEach(async () => {
         phase: "resumable",
       });
   });
-  await startA2AWorker();
+  await startAgentWorker();
   vi.clearAllTimers();
 });
 afterEach(() => {
-  stopA2AWorker();
+  stopAgentWorker();
   vi.useRealTimers();
 });
 
 describe("A2A worker admission and recovery boundaries", () => {
-  it("keeps public and remote work pooled without capping local sandboxes", async () => {
+  it("does not admit an executor while input file reception is pending or failed", async () => {
+    const row = task();
+    row.phase = "file-receiving";
+    state.stageFiles.mockResolvedValue(false);
+    const executor = vi.fn();
+    await executeAgentTask(row.id, executor);
+    expect(state.claim).not.toHaveBeenCalled();
+    expect(executor).not.toHaveBeenCalled();
+    row.phase = "file-transfer-failed";
+    await executeAgentTask(row.id, executor);
+    expect(executor).not.toHaveBeenCalled();
+  });
+  it("keeps sandbox file preparation failure nonterminal without replaying the model", async () => {
+    const row = task();
+    const executor = vi.fn(async () => {
+      throw Object.assign(new Error("sandbox file copy failed"), {
+        code: "A2A_SANDBOX_FILE_STAGING_FAILED",
+      });
+    });
+    await executeAgentTask(row.id, executor);
+    expect(state.finish).not.toHaveBeenCalled();
+    expect(state.interrupt).not.toHaveBeenCalled();
+    expect(row.phase).toBe("file-staging-failed");
+    await executeAgentTask(row.id, executor);
+    expect(executor).toHaveBeenCalledOnce();
+  });
+  it("keeps remote observations pooled without capping local SDK sandboxes", async () => {
     const released = Promise.withResolvers<void>();
     const running: Promise<void>[] = [];
     function row(id: string, kind: string) {
@@ -187,9 +233,9 @@ describe("A2A worker admission and recovery boundaries", () => {
     }
     try {
       for (let index = 0; index < A2A_LIMITS.workerConcurrency; index++) {
-        const held = row(`pooled-${index}`, index % 2 ? "remote" : "published");
+        const held = row(`pooled-${index}`, "remote");
         const entered = Promise.withResolvers<void>();
-        const execution = executeA2ATask(held.id, async () => {
+        const execution = executeAgentTask(held.id, async () => {
           entered.resolve();
           await released.promise;
           return { state: TaskState.TASK_STATE_COMPLETED };
@@ -202,16 +248,16 @@ describe("A2A worker admission and recovery boundaries", () => {
           }),
         ]);
       }
-      const queued = row("pooled-waiting", "published");
+      const queued = row("pooled-waiting", "remote");
       const result = { state: TaskState.TASK_STATE_COMPLETED };
-      await executeA2ATask(queued.id, async () => result);
+      await executeAgentTask(queued.id, async () => result);
       expect(queued.state).toBe(TaskState.TASK_STATE_SUBMITTED);
       const local = row("local-running", "local");
-      await executeA2ATask(local.id, async () => result);
+      await executeAgentTask(local.id, async () => result);
       expect(local.state).toBe(TaskState.TASK_STATE_COMPLETED);
       released.resolve();
       await Promise.all(running);
-      await executeA2ATask(queued.id, async () => result);
+      await executeAgentTask(queued.id, async () => result);
       expect(queued.state).toBe(TaskState.TASK_STATE_COMPLETED);
     } finally {
       released.resolve();
@@ -219,20 +265,53 @@ describe("A2A worker admission and recovery boundaries", () => {
     }
   });
   it.each([false, true])(
-    "keeps full-capacity roots queued and rejects children (child=%s)",
+    "keeps full-capacity tasks unclaimed and resumes after admission (child=%s)",
     async (child) => {
       const row = task();
+      row.leaseToken = null;
       row.grant = {
         ...(row.grant as object),
         ancestorTaskIds: child ? ["parent"] : [],
       };
       state.admit.mockRejectedValue(new AgentExecutionBusyError());
-      await executeA2ATask(row.id);
-      expect(row.state).toBe(
-        child ? TaskState.TASK_STATE_FAILED : TaskState.TASK_STATE_SUBMITTED,
-      );
+      await executeAgentTask(row.id);
+      expect(row).toMatchObject({
+        state: TaskState.TASK_STATE_SUBMITTED,
+        phase: "queued",
+        leaseToken: null,
+      });
       expect(state.claim).not.toHaveBeenCalled();
       expect(state.target).not.toHaveBeenCalled();
+      expect(state.execute).not.toHaveBeenCalled();
+      expect(state.finish).not.toHaveBeenCalled();
+      expect(state.interrupt).not.toHaveBeenCalled();
+      expect(state.releaseClaim).not.toHaveBeenCalled();
+      expect(state.release).not.toHaveBeenCalled();
+
+      state.admit.mockImplementation((_input, run) => run());
+      state.claim.mockImplementationOnce(async () => {
+        row.leaseToken = "resumed-lease";
+        return row;
+      });
+      state.execute.mockResolvedValue({
+        state: TaskState.TASK_STATE_COMPLETED,
+      });
+      await executeAgentTask(row.id);
+      expect(state.claim).toHaveBeenCalledExactlyOnceWith(row.id);
+      expect(state.execute).toHaveBeenCalledOnce();
+      expect(state.finish).toHaveBeenCalledWith(
+        row.id,
+        "resumed-lease",
+        TaskState.TASK_STATE_COMPLETED,
+        undefined,
+        undefined,
+        undefined,
+      );
+      expect(row).toMatchObject({
+        state: TaskState.TASK_STATE_COMPLETED,
+        leaseToken: null,
+      });
+      expect(state.release).toHaveBeenCalledOnce();
     },
   );
   it("does not execute duplicate concurrent claims or operate after owner loss", async () => {
@@ -244,39 +323,39 @@ describe("A2A worker admission and recovery boundaries", () => {
       await done.promise;
       return { state: TaskState.TASK_STATE_COMPLETED };
     });
-    const first = executeA2ATask("task", executor);
+    const first = executeAgentTask("task", executor);
     await ready.promise;
-    await executeA2ATask("task", executor);
+    await executeAgentTask("task", executor);
     expect(executor).toHaveBeenCalledOnce();
     done.resolve();
     await first;
     state.owner = false;
-    await executeA2ATask("task", executor);
+    await executeAgentTask("task", executor);
     expect(executor).toHaveBeenCalledOnce();
   });
 
-  it.each(["legacy", "pi-harness"])(
+  it.each(["pi-sdk", "pi-harness"])(
     "quota exhaustion does not replay a %s operation",
     async (backend) => {
       const row = task("local", backend, backend === "pi-harness");
       state.claim.mockRejectedValue(new A2AQuotaError());
       if (backend === "pi-harness")
-        await expect(executeA2ATask(row.id)).rejects.toBeInstanceOf(
+        await expect(executeAgentTask(row.id)).rejects.toBeInstanceOf(
           A2AQuotaError,
         );
       else {
-        await executeA2ATask(row.id);
+        await executeAgentTask(row.id);
         expect(row.state).toBe(TaskState.TASK_STATE_FAILED);
       }
       expect(state.execute).not.toHaveBeenCalled();
     },
   );
 
-  it.each(["remote", "published"])(
+  it.each(["remote", "local"])(
     "settles unavailable execution for a %s target without disclosing errors",
     async (kind) => {
       const row = task(kind);
-      await executeA2ATask(row.id, async () => {
+      await executeAgentTask(row.id, async () => {
         throw new Error("credential=secret");
       });
       expect(row.state).toBe(TaskState.TASK_STATE_FAILED);
@@ -291,7 +370,7 @@ describe("A2A worker admission and recovery boundaries", () => {
     "allows deferred observations only for remote targets (remote=%s)",
     async (remote) => {
       const row = task(remote ? "remote" : "local");
-      await executeA2ATask(row.id, async () => ({
+      await executeAgentTask(row.id, async () => ({
         state: TaskState.TASK_STATE_WORKING,
         deferred: true,
       }));
@@ -303,10 +382,10 @@ describe("A2A worker admission and recovery boundaries", () => {
   );
 
   it.each([TaskState.TASK_STATE_WORKING, TaskState.TASK_STATE_CANCELED])(
-    "rejects invalid legacy terminal state %s",
+    "rejects invalid SDK terminal state %s",
     async (terminal) => {
       const row = task();
-      await executeA2ATask(row.id, async () => ({ state: terminal }));
+      await executeAgentTask(row.id, async () => ({ state: terminal }));
       expect(row.state).toBe(TaskState.TASK_STATE_FAILED);
     },
   );
@@ -316,24 +395,41 @@ describe("A2A worker admission and recovery boundaries", () => {
     "PI_MODEL_UNAVAILABLE",
     "unexpected secret",
     17,
-  ])("sanitizes native failure %# to fixed error codes", async (message) => {
+  ])(
+    "sanitizes retired drain failure %# to fixed error codes",
+    async (message) => {
+      const row = task("local", "pi-harness", true);
+      await executeAgentTask(row.id, async () => {
+        throw typeof message === "string" ? new Error(message) : message;
+      });
+      expect(row.state).toBe(TaskState.TASK_STATE_FAILED);
+      expect(state.messages.get(row.id)).toMatch(
+        /^(PI_SESSION_MISSING|PI_MODEL_UNAVAILABLE|PI_EXECUTION_FAILED):/,
+      );
+      expect(state.messages.get(row.id)).not.toContain("secret");
+      expect(state.finish.mock.calls[0][5]).toEqual({
+        nativeOperationId: "operation",
+      });
+    },
+  );
+  it.each([
+    [new A2AQuotaError(), "PI_STORAGE_QUOTA_EXCEEDED"],
+    [
+      new Error("PI_OUTPUT_TRUNCATED: model stopped at its output limit"),
+      "PI_OUTPUT_TRUNCATED",
+    ],
+  ])("preserves bounded native failure code %s", async (error, code) => {
     const row = task("local", "pi-harness", true);
-    await executeA2ATask(row.id, async () => {
-      throw typeof message === "string" ? new Error(message) : message;
+    await executeAgentTask(row.id, async () => {
+      throw error;
     });
     expect(row.state).toBe(TaskState.TASK_STATE_FAILED);
-    expect(state.messages.get(row.id)).toMatch(
-      /^(PI_SESSION_MISSING|PI_MODEL_UNAVAILABLE|PI_EXECUTION_FAILED):/,
-    );
-    expect(state.messages.get(row.id)).not.toContain("secret");
-    expect(state.finish.mock.calls[0][5]).toEqual({
-      nativeOperationId: "operation",
-    });
+    expect(state.messages.get(row.id)).toMatch(new RegExp(`^${code}:`));
   });
 
-  it("releases an interrupted native claim for recovery without recording task failure", async () => {
+  it("releases an interrupted retired bound-operation drain without recording task failure", async () => {
     const row = task("local", "pi-harness", true);
-    await executeA2ATask(row.id, async () => {
+    await executeAgentTask(row.id, async () => {
       throw new PiRuntimeInterruptedError("owner lost");
     });
     expect(row).toMatchObject({
@@ -351,14 +447,14 @@ describe("A2A worker admission and recovery boundaries", () => {
       state.assigned.mockResolvedValue([]);
       state.target.mockRejectedValue(new Error("private provider error"));
       if (bound) {
-        await expect(executeA2ATask(row.id)).rejects.toBeInstanceOf(
+        await expect(executeAgentTask(row.id)).rejects.toBeInstanceOf(
           PiRuntimeInterruptedError,
         );
         expect(row.state).toBe(TaskState.TASK_STATE_SUBMITTED);
         expect(state.finish).not.toHaveBeenCalled();
         expect(state.claim).not.toHaveBeenCalled();
       } else {
-        await executeA2ATask(row.id);
+        await executeAgentTask(row.id);
         expect(row.state).toBe(TaskState.TASK_STATE_FAILED);
         expect(state.messages.get(row.id)).toMatch(/^PI_TARGET_UNAVAILABLE:/);
       }
@@ -367,22 +463,45 @@ describe("A2A worker admission and recovery boundaries", () => {
   );
 
   it.each([false, true])(
-    "queues busy roots but fails busy child work promptly (child=%s)",
+    "keeps sandbox-busy tasks unclaimed and resumes after release (child=%s)",
     async (child) => {
       const row = task();
+      row.leaseToken = null;
       if (child)
         row.grant = {
-          kind: "local",
-          workspaceId: "workspace",
-          agentId: "agent",
+          ...(row.grant as object),
           ancestorTaskIds: ["parent"],
         };
-      await withSandboxExecutionLease("sandbox", () => executeA2ATask(row.id));
-      expect(row.state).toBe(
-        child ? TaskState.TASK_STATE_FAILED : TaskState.TASK_STATE_SUBMITTED,
+      await withSandboxExecutionLease("sandbox", () =>
+        executeAgentTask(row.id),
       );
+      expect(row).toMatchObject({
+        state: TaskState.TASK_STATE_SUBMITTED,
+        phase: "queued",
+        leaseToken: null,
+      });
       expect(state.execute).not.toHaveBeenCalled();
       expect(state.claim).not.toHaveBeenCalled();
+      expect(state.finish).not.toHaveBeenCalled();
+      expect(state.interrupt).not.toHaveBeenCalled();
+      expect(state.releaseClaim).not.toHaveBeenCalled();
+      expect(state.release).not.toHaveBeenCalled();
+
+      state.claim.mockImplementationOnce(async () => {
+        row.leaseToken = "resumed-lease";
+        return row;
+      });
+      state.execute.mockResolvedValue({
+        state: TaskState.TASK_STATE_COMPLETED,
+      });
+      await executeAgentTask(row.id);
+      expect(state.claim).toHaveBeenCalledExactlyOnceWith(row.id);
+      expect(state.execute).toHaveBeenCalledOnce();
+      expect(row).toMatchObject({
+        state: TaskState.TASK_STATE_COMPLETED,
+        leaseToken: null,
+      });
+      expect(state.release).toHaveBeenCalledOnce();
     },
   );
 
@@ -397,7 +516,7 @@ describe("A2A worker admission and recovery boundaries", () => {
       signal.throwIfAborted();
       return { state: TaskState.TASK_STATE_COMPLETED };
     });
-    const operation = executeA2ATask(row.id, executor);
+    const operation = executeAgentTask(row.id, executor);
     await ready.promise;
     state.rows.delete(row.id);
     await vi.advanceTimersByTimeAsync(1_000);
@@ -418,7 +537,7 @@ describe("A2A worker admission and recovery boundaries", () => {
     vi.mocked(db.a2AContext.findMany).mockResolvedValueOnce([
       { id: "expired-context" },
     ] as never);
-    await tickA2AWorker();
+    await tickAgentWorker();
     expect(row.state).toBe(TaskState.TASK_STATE_FAILED);
     expect(state.messages.get(row.id)).toBe("Task deadline exceeded.");
     expect(state.log).toHaveBeenCalledWith(
@@ -431,17 +550,7 @@ describe("A2A worker admission and recovery boundaries", () => {
       }),
     );
     const calls = vi.mocked(db.a2AContext.findMany).mock.calls.length;
-    await tickA2AWorker();
+    await tickAgentWorker();
     expect(db.a2AContext.findMany).toHaveBeenCalledTimes(calls);
-  });
-
-  it("logs wake admission errors without leaking task content", async () => {
-    state.localWaits.mockRejectedValue(new Error("private task"));
-    wakeA2AWorker();
-    await vi.advanceTimersByTimeAsync(0);
-    expect(state.log).toHaveBeenCalledWith(
-      "error",
-      "A2A admission wake failed.",
-    );
   });
 });

@@ -208,6 +208,10 @@ export function CenterMorphModalContent({
     context.open,
   );
   const panelRef = useRef<HTMLDivElement>(null);
+  const exitCompleted = useRef(false);
+  useEffect(() => {
+    if (context.open) exitCompleted.current = false;
+  }, [context.open]);
 
   useEffect(() => setMounted(true), []);
 
@@ -223,9 +227,12 @@ export function CenterMorphModalContent({
   useEffect(() => {
     if (!mounted || !context.open) return;
     setBackgroundScrollLocked(true);
-    const [firstFocusable] = getFocusableElements(panelRef.current);
-    (firstFocusable ?? panelRef.current)?.focus({ preventScroll: true });
+    const focusFrame = requestAnimationFrame(() => {
+      const [firstFocusable] = getFocusableElements(panelRef.current);
+      (firstFocusable ?? panelRef.current)?.focus({ preventScroll: true });
+    });
     return () => {
+      cancelAnimationFrame(focusFrame);
       document
         .getElementById(context.triggerId)
         ?.focus({ preventScroll: true });
@@ -264,14 +271,7 @@ export function CenterMorphModalContent({
   if (!mounted) return null;
 
   return createPortal(
-    <AnimatePresence
-      onExitComplete={() => {
-        if (!context.open) {
-          setBackgroundScrollLocked(false);
-          onExitComplete?.();
-        }
-      }}
-    >
+    <AnimatePresence>
       {context.open ? (
         <PresenceGate>
           {({ isPresent, gate }) => (
@@ -340,6 +340,12 @@ export function CenterMorphModalContent({
                           }
                     }
                     {...gate}
+                    onAnimationComplete={() => {
+                      if (isPresent || exitCompleted.current) return;
+                      exitCompleted.current = true;
+                      setBackgroundScrollLocked(false);
+                      onExitComplete?.();
+                    }}
                     transition={
                       reduce
                         ? { duration: 0.14, ease: EASE_OUT }
@@ -373,7 +379,7 @@ export function CenterMorphModalContent({
                           duration: reduce ? 0.12 : 0.2,
                           ease: EASE_OUT,
                         }}
-                        className="absolute right-4 top-4 inline-flex h-8 w-8 items-center justify-center rounded-full bg-foreground/[0.05] text-muted-foreground transition-colors hover:bg-foreground/[0.08] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [opacity:var(--modal-opacity)]"
+                        className="absolute right-4 top-4 inline-flex h-8 w-8 items-center justify-center rounded-lg bg-foreground/[0.05] text-muted-foreground transition-colors hover:bg-foreground/[0.08] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [opacity:var(--modal-opacity)]"
                       >
                         <X className="h-4 w-4" aria-hidden="true" />
                       </motion.button>

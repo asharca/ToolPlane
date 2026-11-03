@@ -15,7 +15,6 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import {
-  FileText,
   MoreHorizontal,
   Pause,
   Play,
@@ -131,10 +130,6 @@ function McpDeploymentActions({
           </SubmitButton>
         </form>
       )}
-      <ButtonLink href={`${base}?tab=logs`} variant="ghost" size="sm">
-        <FileText className="size-3.5" />
-        {t("logs")}
-      </ButtonLink>
       <Popover align="end" side={actionSide}>
         <PopoverTrigger>
           <Button
@@ -317,10 +312,10 @@ function DeploymentIdentity({
           alt=""
           width={32}
           height={32}
-          className="size-8 shrink-0 rounded-md border border-border bg-card object-cover"
+          className="size-8 shrink-0 rounded-lg border border-border bg-card object-cover"
         />
       ) : (
-        <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted text-primary">
+        <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-primary">
           <Plug className="size-4" />
         </span>
       )}

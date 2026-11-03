@@ -40,13 +40,9 @@ export async function getSystemOverview() {
     servers,
     skills,
     clients,
-    agentListings,
-    categories,
     deploymentRows,
     logs,
     recentUsers,
-    pendingMarket,
-    pendingAgents,
     recentFailures,
     unavailableWorkspaces,
     a2aRequests,
@@ -65,8 +61,6 @@ export async function getSystemOverview() {
     db.server.count(),
     db.skill.count(),
     db.client.count(),
-    db.agentListing.count(),
-    db.category.count(),
     db.deployment.findMany({
       select: {
         id: true,
@@ -88,12 +82,6 @@ export async function getSystemOverview() {
         status: true,
         createdAt: true,
       },
-    }),
-    db.marketListing.count({
-      where: { pendingRelease: { is: { reviewStatus: "pending" } } },
-    }),
-    db.agentListing.count({
-      where: { pendingRelease: { is: { reviewStatus: "pending" } } },
     }),
     db.logEvent.findMany({
       where: {
@@ -175,8 +163,6 @@ export async function getSystemOverview() {
       servers,
       skills,
       clients,
-      agentListings,
-      categories,
       deployments,
     },
     requests: { total, errors, avgMs, p95Ms },
@@ -184,7 +170,6 @@ export async function getSystemOverview() {
     recentRequests,
     recentUsers,
     attention: {
-      pendingReviews: pendingMarket + pendingAgents,
       abnormalCount: abnormalDeployments.length,
       abnormalDeployments: abnormalDeployments.slice(0, 8),
       recentFailures,

@@ -1,21 +1,8 @@
 "use client";
 
-import Link from "next/link";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import {
-  ChevronDown,
-  ChevronLeft,
-  ChevronRight,
-  Eye,
-  Loader2,
-  Pencil,
-  Plus,
-  RotateCcw,
-  Sparkles,
-  Store,
-  Trash2,
-} from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/motion/button";
 import { Input } from "@/components/motion/input";
 import { FormCheckbox } from "@/components/ui/FormCheckbox";
@@ -23,20 +10,26 @@ import { FormSelect } from "@/components/ui/FormSelect";
 import {
   CenterMorphModal,
   CenterMorphModalContent,
-  CenterMorphModalClose,
 } from "@/components/motion/center-morph-modal";
 import {
+  DialogBody,
+  DialogCancel,
+  DialogField,
+  DialogFooter,
+  DialogHeader,
+  DialogNav,
+  useDirtyFields,
+} from "@/components/dashboard/dialog";
+import { RevisionChangelog } from "@/components/dashboard/RevisionChangelog";
+import {
   ModelPicker,
+  ModelPickerTrigger,
   type ModelProviderOption,
 } from "@/components/dashboard/models/ModelPicker";
-import { AssistantMarkdown } from "@/components/dashboard/ConversationMessage";
+import { SystemPromptEditor } from "@/components/dashboard/SystemPromptEditor";
 import { AGENT_STEP_BOUNDS } from "@/lib/agents/constants";
-import { estimatePromptTokens } from "@/lib/prompt-tokens";
 import { cn as cx } from "@/lib/utils";
-import type {
-  AssistantMarketTemplate,
-  ChatAssistantItem,
-} from "./WorkspaceAssistantChat";
+import type { ChatAssistantItem } from "./WorkspaceAssistantChat";
 
 type ProviderOption = ModelProviderOption & { format: string };
 type McpOption = {
@@ -44,19 +37,21 @@ type McpOption = {
   name: string;
   status: string;
   keywords?: string[];
+  available?: boolean;
 };
 type AssistantCreateStep =
   | "basic"
   | "instructions"
   | "modelParameters"
-  | "tools";
+  | "tools"
+  | "changelog";
 type AssistantModelParameters = NonNullable<
   ChatAssistantItem["modelParameters"]
 >;
 type AssistantCustomParameter = NonNullable<
   AssistantModelParameters["customParameters"]
 >[number];
-const inputClassNames = { field: "rounded-xl", input: "text-sm" };
+const inputClassNames = { field: "rounded-lg", input: "text-sm" };
 function defaultCustomParameterValue(
   type: AssistantCustomParameter["type"],
 ): AssistantCustomParameter["value"] {
@@ -77,12 +72,9 @@ function hasValidJson(value: string): boolean {
 export function AssistantEditor({
   assistant,
   deployments,
-  marketTemplate,
-  marketTemplates,
   onClose,
   onDelete,
   onSaved,
-  onTemplateSelect,
   open,
   providers,
   slug,
@@ -90,12 +82,9 @@ export function AssistantEditor({
 }: {
   assistant: ChatAssistantItem | null;
   deployments: McpOption[];
-  marketTemplate: AssistantMarketTemplate | null;
-  marketTemplates: AssistantMarketTemplate[];
   onClose: () => void;
   onDelete: (assistantId: string) => Promise<void>;
   onSaved: (assistantId: string, created: boolean) => Promise<void>;
-  onTemplateSelect: (template: AssistantMarketTemplate | null) => void;
   open: boolean;
   providers: ProviderOption[];
   slug: string;
@@ -106,31 +95,15 @@ export function AssistantEditor({
   const creating = !assistant;
   const [closing, setClosing] = useState(false);
   const [createStep, setCreateStep] = useState<AssistantCreateStep>("basic");
-  const [name, setName] = useState(
-    assistant?.name ?? marketTemplate?.name ?? "",
-  );
+  const [name, setName] = useState(assistant?.name ?? "");
   const [description, setDescription] = useState(assistant?.description ?? "");
-  const templateProvider = marketTemplate?.providerFormat
-    ? providers.find(
-        (provider) =>
-          provider.format === marketTemplate.providerFormat &&
-          (!marketTemplate.model ||
-            provider.models.includes(marketTemplate.model)),
-      )
-    : null;
   const initialProviderId =
-    assistant?.modelProviderId ??
-    templateProvider?.id ??
-    providers[0]?.id ??
-    "";
+    assistant?.modelProviderId ?? providers[0]?.id ?? "";
   const [providerId, setProviderId] = useState(initialProviderId);
   const selectedProvider =
     providers.find((provider) => provider.id === providerId) ?? null;
   const [model, setModel] = useState(
-    assistant?.model ??
-      (templateProvider ? marketTemplate?.model : null) ??
-      selectedProvider?.models[0] ??
-      "",
+    assistant?.model ?? selectedProvider?.models[0] ?? "",
   );
   const initialModelParameters = assistant?.modelParameters ?? {};
   const [temperatureEnabled, setTemperatureEnabled] = useState(
@@ -157,25 +130,78 @@ export function AssistantEditor({
       key: crypto.randomUUID(),
     })),
   );
-  const initialSystemPrompt =
-    assistant?.systemPrompt ?? marketTemplate?.systemPrompt ?? "";
+  const initialSystemPrompt = assistant?.systemPrompt ?? "";
   const [systemPrompt, setSystemPrompt] = useState(initialSystemPrompt);
-  const [showPromptPreview, setShowPromptPreview] = useState(
-    Boolean(initialSystemPrompt.trim()),
-  );
-  const [generatingPrompt, setGeneratingPrompt] = useState(false);
-  const [promptRestore, setPromptRestore] = useState<{
-    previous: string;
-    generated: string;
-  } | null>(null);
-  const [showMarketTemplates, setShowMarketTemplates] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const createSteps: Array<{ id: AssistantCreateStep; label: string }> = [
-    { id: "basic", label: t("basic") },
-    { id: "instructions", label: t("systemPrompt") },
-    { id: "modelParameters", label: t("modelParameters") },
-    { id: "tools", label: t("mcpAccess") },
+  const [selectedDeployments, setSelectedDeployments] = useState<string[]>(() =>
+    (assistant?.mcpGrants ?? []).map((grant) => grant.deploymentId),
+  );
+  const toolsDirty =
+    JSON.stringify([...selectedDeployments].sort()) !==
+    JSON.stringify(
+      (assistant?.mcpGrants ?? []).map((grant) => grant.deploymentId).sort(),
+    );
+  const formRef = useRef<HTMLFormElement>(null);
+  const { dirtyNames, reset: resetNativeDirty } = useDirtyFields(formRef);
+  const nativeDirty = [...dirtyNames].some(
+    (fieldName) => fieldName === "maxSteps",
+  );
+  const initialModel =
+    assistant?.model ??
+    providers.find((provider) => provider.id === initialProviderId)
+      ?.models[0] ??
+    "";
+  const nameDirty = name !== (assistant?.name ?? "");
+  const descriptionDirty = description !== (assistant?.description ?? "");
+  const modelDirty = providerId !== initialProviderId || model !== initialModel;
+  const promptDirty = systemPrompt !== initialSystemPrompt;
+  const temperatureDirty =
+    temperatureEnabled !== (initialModelParameters.temperature !== undefined) ||
+    temperature !== (initialModelParameters.temperature ?? 1);
+  const topPDirty =
+    topPEnabled !== (initialModelParameters.topP !== undefined) ||
+    topP !== (initialModelParameters.topP ?? 1);
+  const maxOutputTokensDirty =
+    maxOutputTokensEnabled !==
+      (initialModelParameters.maxOutputTokens !== undefined) ||
+    maxOutputTokens !== (initialModelParameters.maxOutputTokens ?? 4096);
+  const customParametersDirty =
+    customParameters.length !==
+      (initialModelParameters.customParameters?.length ?? 0) ||
+    customParameters.some((parameter, index) => {
+      const initial = initialModelParameters.customParameters?.[index];
+      return (
+        !initial ||
+        parameter.name !== initial.name ||
+        parameter.type !== initial.type ||
+        parameter.value !== initial.value
+      );
+    });
+  const basicDirty = nameDirty || descriptionDirty || modelDirty;
+  const parametersDirty =
+    temperatureDirty ||
+    topPDirty ||
+    maxOutputTokensDirty ||
+    customParametersDirty;
+  const dirty =
+    basicDirty || promptDirty || parametersDirty || nativeDirty || toolsDirty;
+  const createSteps: Array<{
+    id: AssistantCreateStep;
+    label: string;
+    dirty: boolean;
+  }> = [
+    { id: "basic", label: t("basic"), dirty: basicDirty },
+    { id: "instructions", label: t("systemPrompt"), dirty: promptDirty },
+    {
+      id: "modelParameters",
+      label: t("modelParameters"),
+      dirty: parametersDirty,
+    },
+    { id: "tools", label: t("mcpAccess"), dirty: nativeDirty || toolsDirty },
+    ...(assistant
+      ? [{ id: "changelog" as const, label: t("changelog"), dirty: false }]
+      : []),
   ];
   const createStepIndex = createSteps.findIndex(
     (step) => step.id === createStep,
@@ -183,47 +209,13 @@ export function AssistantEditor({
   const lastCreateStep = createStepIndex === createSteps.length - 1;
   const basicComplete = Boolean(name.trim() && providerId && model);
 
-  async function generateSystemPrompt() {
-    if (!basicComplete || generatingPrompt) return;
-    setGeneratingPrompt(true);
-    setError(null);
-    try {
-      const response = await fetch("/api/v1/chat/assistants/generate-prompt", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          workspaceId,
-          name: name.trim(),
-          description: description.trim() || null,
-          systemPrompt: systemPrompt.trim() || null,
-          modelProviderId: providerId,
-          model,
-        }),
-      });
-      const body = (await response.json().catch(() => ({}))) as {
-        prompt?: string;
-        error?: string;
-      };
-      if (!response.ok || !body.prompt?.trim())
-        throw new Error(body.error || t("promptGenerationError"));
-      const generated = body.prompt.trim();
-      setPromptRestore({ previous: systemPrompt, generated });
-      setSystemPrompt(generated);
-      setShowPromptPreview(false);
-    } catch (cause) {
-      setError(
-        cause instanceof Error ? cause.message : t("promptGenerationError"),
-      );
-    } finally {
-      setGeneratingPrompt(false);
-    }
-  }
-
   async function submit(formData: FormData) {
     setSaving(true);
     setError(null);
     try {
-      const deploymentIds = formData.getAll("deploymentIds").map(String);
+      const mcpGrants = selectedDeployments.map((deploymentId) => ({
+        deploymentId,
+      }));
       const selectedCustomParameters = customParameters
         .filter((parameter) => parameter.name.trim())
         .map(({ name, type, value }) => ({ name: name.trim(), type, value }));
@@ -252,6 +244,7 @@ export function AssistantEditor({
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             ...(!assistant ? { workspaceId } : {}),
+            ...(assistant ? { expectedRevision: assistant.revision } : {}),
             name: String(formData.get("name") ?? "").trim(),
             description: description.trim() || null,
             systemPrompt: systemPrompt.trim() || null,
@@ -263,10 +256,7 @@ export function AssistantEditor({
             maxSteps: Number(
               formData.get("maxSteps") ?? AGENT_STEP_BOUNDS.default,
             ),
-            deploymentIds,
-            ...(!assistant && marketTemplate
-              ? { marketTemplateReleaseId: marketTemplate.releaseId }
-              : {}),
+            mcpGrants,
           }),
         },
       );
@@ -279,6 +269,7 @@ export function AssistantEditor({
       const assistantId = body.assistant?.id ?? body.id ?? assistant?.id;
       if (!assistantId) throw new Error(t("saveError"));
       await onSaved(assistantId, !assistant);
+      resetNativeDirty();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t("saveError"));
     } finally {
@@ -297,202 +288,90 @@ export function AssistantEditor({
         ariaLabel={assistant ? t("editAssistant") : t("newAssistant")}
         closeButtonLabel={common("close")}
         onExitComplete={onClose}
-        className="z-[51] flex max-h-[calc(100dvh-4rem)] max-w-3xl flex-col gap-0 overflow-hidden"
+        className="z-[51] flex h-[min(48rem,calc(100dvh-2rem))] max-h-[calc(100dvh-2rem)] max-w-5xl flex-col gap-0 overflow-hidden rounded-2xl p-0"
       >
-        <header className="flex shrink-0 items-start gap-3 border-b border-border pl-5 pr-16 py-4">
-          <div className="min-w-0 flex-1">
-            <h2 className="text-lg font-semibold">
-              {assistant ? t("editAssistant") : t("newAssistant")}
-            </h2>
-            <p className="text-sm text-muted-foreground">
-              {t("boundaryDescription")}
-            </p>
-          </div>
-        </header>
+        <DialogHeader
+          title={assistant ? t("editAssistant") : t("newAssistant")}
+          description={t("boundaryDescription")}
+          className="border-b border-border"
+        />
         <form
+          ref={formRef}
           onSubmit={(event) => {
             event.preventDefault();
             void submit(new FormData(event.currentTarget));
           }}
           className="flex min-h-0 flex-1 flex-col"
         >
-          <div className="flex min-h-0 flex-1 flex-col sm:flex-row">
-            <nav
-              aria-label={t("configurationNavigation")}
-              className="shrink-0 border-b border-border/60 bg-muted/20 sm:w-48 sm:border-b-0 sm:border-r"
-            >
-              <ol className="flex gap-1 overflow-x-auto p-2 sm:block sm:space-y-1 sm:p-3">
-                {createSteps.map((step, index) => {
-                  const active = index === createStepIndex;
-                  const done = index < createStepIndex;
-                  return (
-                    <li key={step.id} className="shrink-0 sm:w-full">
-                      <Button
-                        type="button"
-                        aria-label={step.label}
-                        aria-current={
-                          active ? (creating ? "step" : "page") : undefined
-                        }
-                        disabled={creating && index > createStepIndex}
-                        onClick={() => {
-                          if (!creating || done) setCreateStep(step.id);
-                        }}
-                        variant="ghost"
-                        size="sm"
-                        className="flex min-w-max justify-start rounded-lg text-left items-center gap-2 sm:w-full"
-                      >
-                        {creating ? (
-                          <span
-                            className={cx(
-                              "flex size-5 shrink-0 items-center justify-center rounded-full text-[11px] font-medium",
-                              active
-                                ? "bg-foreground text-background"
-                                : "border border-border text-muted-foreground",
-                            )}
-                          >
-                            {index + 1}
-                          </span>
-                        ) : null}
-                        <span>{step.label}</span>
-                      </Button>
-                    </li>
-                  );
-                })}
-              </ol>
-            </nav>
+          <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+            <DialogNav
+              label={t("configurationNavigation")}
+              items={createSteps.map((step, index) => ({
+                id: step.id,
+                label: creating ? `${index + 1}. ${step.label}` : step.label,
+                dirty: step.dirty,
+              }))}
+              active={createStep}
+              onSelect={(id) => {
+                const index = createSteps.findIndex((step) => step.id === id);
+                if (!creating || index < createStepIndex)
+                  setCreateStep(id as AssistantCreateStep);
+              }}
+            />
 
-            <div className="min-h-0 min-w-0 flex-1 overflow-y-auto">
+            <DialogBody className="flex min-w-0 flex-col overscroll-contain">
               <section
                 hidden={createStep !== "basic"}
-                aria-labelledby={
-                  creating ? "assistant-create-basic-title" : undefined
-                }
-                className="mx-auto max-w-2xl space-y-5 px-5 py-6 sm:px-8"
+                aria-labelledby="assistant-create-basic-title"
+                className="space-y-5"
               >
-                {creating ? (
-                  <>
-                    <div>
-                      <h3
-                        id="assistant-create-basic-title"
-                        className="text-base font-semibold text-foreground"
-                      >
-                        {t("basic")}
-                      </h3>
-                      <p className="mt-1 text-sm text-muted-foreground">
-                        {t("boundaryDescription")}
-                      </p>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2 rounded-lg bg-muted/35 p-2">
-                      <Button
-                        type="button"
-                        onClick={() => onTemplateSelect(null)}
-                        variant={"secondary"}
-                        size={"sm"}
-                      >
-                        <Plus className="size-3.5" />
-                        {t("blankAssistant")}
-                      </Button>
-                      <Button
-                        type="button"
-                        onClick={() =>
-                          setShowMarketTemplates((current) => !current)
-                        }
-                        variant={"secondary"}
-                        size={"sm"}
-                      >
-                        <Store className="size-3.5" />
-                        {marketTemplate
-                          ? t("marketTemplateSelected")
-                          : t("chooseFromMarket")}
-                      </Button>
-                      {marketTemplate ? (
-                        <span
-                          className="min-w-0 flex-1 truncate px-1 text-xs text-muted-foreground"
-                          title={marketTemplate.summary ?? marketTemplate.name}
-                        >
-                          {marketTemplate.name}
-                        </span>
-                      ) : null}
-                    </div>
-                    {showMarketTemplates ? (
-                      marketTemplates.length ? (
-                        <div className="grid gap-2 sm:grid-cols-2">
-                          {marketTemplates.map((template) => (
-                            <Button
-                              key={template.releaseId}
-                              type="button"
-                              aria-pressed={
-                                marketTemplate?.releaseId === template.releaseId
-                              }
-                              onClick={() => onTemplateSelect(template)}
-                              variant={"ghost"}
-                              size={"sm"}
-                              className="min-w-0 text-left"
-                            >
-                              <span className="block truncate text-sm font-semibold text-foreground">
-                                {template.name}
-                              </span>
-                              <span className="mt-1 line-clamp-2 block min-h-10 text-xs leading-5 text-muted-foreground">
-                                {template.summary ?? t("boundaryDescription")}
-                              </span>
-                              <span className="mt-2 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
-                                {template.model ? (
-                                  <span className="rounded bg-muted px-1.5 py-0.5">
-                                    {template.model}
-                                  </span>
-                                ) : null}
-                                {template.tags.slice(0, 2).map((tag) => (
-                                  <span
-                                    key={tag}
-                                    className="rounded bg-muted px-1.5 py-0.5"
-                                  >
-                                    {tag}
-                                  </span>
-                                ))}
-                              </span>
-                            </Button>
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="rounded-lg bg-muted/35 px-3 py-4 text-sm text-muted-foreground">
-                          {t("noMarketTemplates")}
-                        </p>
-                      )
-                    ) : null}
-                  </>
-                ) : null}
+                <h3
+                  id="assistant-create-basic-title"
+                  className="text-base font-semibold text-foreground"
+                >
+                  {t("basic")}
+                </h3>
 
-                <div className="block text-xs font-medium text-muted-foreground">
+                <DialogField
+                  label={t("name")}
+                  htmlFor="assistant-settings-name"
+                  dirty={nameDirty}
+                >
                   <Input
                     name="name"
+                    id="assistant-settings-name"
+                    aria-label={t("name")}
                     required
                     maxLength={100}
                     autoFocus
                     placeholder={t("namePlaceholder")}
                     value={String(name)}
-                    label={t("name")}
                     onChange={(value) => setName(value)}
-                    className="mt-1.5 w-full"
+                    className="w-full"
                     classNames={inputClassNames}
                   />
-                </div>
+                </DialogField>
 
-                <label className="block text-xs font-medium text-muted-foreground">
-                  {t("description")}
+                <DialogField
+                  label={t("description")}
+                  htmlFor="assistant-settings-description"
+                  dirty={descriptionDirty}
+                >
                   <textarea
+                    id="assistant-settings-description"
                     name="description"
                     value={description}
                     onChange={(event) => setDescription(event.target.value)}
                     rows={2}
                     maxLength={500}
-                    className="mt-1.5 min-h-24 w-full resize-y rounded-xl border border-border bg-background p-3 text-sm font-normal leading-6 text-foreground outline-none placeholder:text-muted-foreground/60 focus-visible:ring-2 focus-visible:ring-ring"
+                    className="min-h-24 w-full resize-y rounded-lg border border-border bg-background p-3 text-sm font-normal leading-6 text-foreground outline-none placeholder:text-muted-foreground/60 focus-visible:ring-2 focus-visible:ring-ring"
                     placeholder={t("descriptionPlaceholder")}
                   />
-                </label>
+                </DialogField>
 
-                <div className="block text-xs font-medium text-muted-foreground">
-                  <span>{t("model")}</span>
+                <DialogField label={t("model")} dirty={modelDirty}>
                   <ModelPicker
+                    className="flex w-full"
                     providers={providers}
                     value={providerId && model ? { providerId, model } : null}
                     onSelect={(selection) => {
@@ -505,164 +384,56 @@ export function AssistantEditor({
                       );
                     }}
                     trigger={
-                      <Button
-                        type="button"
+                      <ModelPickerTrigger
                         aria-label={`${t("model")}: ${model || t("selectModel")}`}
-                        variant="outline"
-                        size="sm"
-                        className="mt-1.5 flex h-11 w-full justify-start rounded-xl items-center gap-2 text-left"
-                      >
-                        <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-semibold text-muted-foreground">
-                          {selectedProvider?.name.charAt(0).toUpperCase() ||
-                            "M"}
-                        </span>
-                        <span className="min-w-0 flex-1 truncate">
-                          {model || t("selectModel")}
-                        </span>
-                        <span className="hidden max-w-36 truncate text-xs text-muted-foreground sm:block">
-                          {selectedProvider?.name}
-                        </span>
-                        <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
-                      </Button>
+                        label={model || t("selectModel")}
+                        placeholder={!model}
+                        provider={selectedProvider?.name}
+                        note={selectedProvider?.name}
+                      />
                     }
                   />
-                </div>
+                </DialogField>
               </section>
 
               <section
                 hidden={createStep !== "instructions"}
-                aria-labelledby={
-                  creating ? "assistant-create-instructions-title" : undefined
-                }
-                className="mx-auto max-w-2xl space-y-5 px-5 py-6 sm:px-8"
+                aria-labelledby="assistant-create-instructions-title"
+                className="flex flex-1 flex-col gap-5"
               >
-                {creating ? (
-                  <div>
-                    <h3
-                      id="assistant-create-instructions-title"
-                      className="text-base font-semibold text-foreground"
-                    >
-                      {t("systemPrompt")}
-                    </h3>
-                  </div>
-                ) : null}
-                <div className="block text-xs font-medium text-muted-foreground">
-                  <div className="flex items-center justify-between gap-3">
-                    <span>{t("systemPrompt")}</span>
-                    <div className="flex shrink-0 items-center gap-1.5">
-                      <Button
-                        type="button"
-                        onClick={() =>
-                          setShowPromptPreview((current) => !current)
-                        }
-                        aria-label={
-                          showPromptPreview
-                            ? t("editSystemPrompt")
-                            : t("previewSystemPrompt")
-                        }
-                        title={
-                          showPromptPreview
-                            ? t("editSystemPrompt")
-                            : t("previewSystemPrompt")
-                        }
-                        variant={"ghost"}
-                        size={"icon"}
-                      >
-                        {showPromptPreview ? (
-                          <Pencil className="size-3.5" />
-                        ) : (
-                          <Eye className="size-3.5" />
-                        )}
-                      </Button>
-                      {promptRestore?.generated === systemPrompt ? (
-                        <Button
-                          type="button"
-                          onClick={() => {
-                            setSystemPrompt(promptRestore.previous);
-                            setPromptRestore(null);
-                          }}
-                          aria-label={common("undo")}
-                          title={common("undo")}
-                          variant={"ghost"}
-                          size={"icon"}
-                        >
-                          <RotateCcw className="size-3.5" />
-                        </Button>
-                      ) : null}
-                      <Button
-                        type="button"
-                        disabled={!basicComplete || generatingPrompt}
-                        onClick={() => void generateSystemPrompt()}
-                        variant={"secondary"}
-                        size={"sm"}
-                        className="gap-1.5"
-                      >
-                        {generatingPrompt ? (
-                          <Loader2 className="size-3.5 animate-spin" />
-                        ) : (
-                          <Sparkles className="size-3.5" />
-                        )}
-                        {systemPrompt.trim()
-                          ? t("improvePrompt")
-                          : t("generatePrompt")}
-                      </Button>
-                    </div>
-                  </div>
-                  {showPromptPreview ? (
-                    <div className="mt-1.5 min-h-64 overflow-auto rounded-xl border border-border bg-background p-3 text-sm leading-6 text-foreground">
-                      {systemPrompt.trim() ? (
-                        <AssistantMarkdown text={systemPrompt} />
-                      ) : (
-                        <p className="text-muted-foreground">
-                          {t("systemPromptPlaceholder")}
-                        </p>
-                      )}
-                    </div>
-                  ) : (
-                    <textarea
-                      name="systemPrompt"
-                      value={systemPrompt}
-                      aria-label={t("systemPrompt")}
-                      onChange={(event) => {
-                        setSystemPrompt(event.target.value);
-                        setPromptRestore(null);
-                      }}
-                      rows={10}
-                      maxLength={20_000}
-                      className="mt-1.5 min-h-64 w-full resize-y rounded-xl border border-border bg-background p-3 text-sm font-normal leading-6 text-foreground outline-none placeholder:text-muted-foreground/60 focus-visible:ring-2 focus-visible:ring-ring"
-                      placeholder={t("systemPromptPlaceholder")}
-                    />
-                  )}
-                  <p
-                    aria-live="polite"
-                    className="mt-1.5 text-right text-xs font-normal text-muted-foreground"
-                  >
-                    {t("estimatedTokens", {
-                      count: estimatePromptTokens(systemPrompt),
-                    })}
-                  </p>
-                </div>
+                <h3
+                  id="assistant-create-instructions-title"
+                  className="text-base font-semibold text-foreground"
+                >
+                  {t("systemPrompt")}
+                </h3>
+                <SystemPromptEditor
+                  workspaceId={workspaceId}
+                  name={name}
+                  description={description}
+                  providerId={providerId}
+                  model={model}
+                  value={systemPrompt}
+                  onChange={setSystemPrompt}
+                  maxLength={20_000}
+                  placeholder={t("systemPromptPlaceholder")}
+                  dirty={promptDirty}
+                />
               </section>
 
               <section
                 hidden={createStep !== "modelParameters"}
-                aria-labelledby={
-                  creating
-                    ? "assistant-create-model-parameters-title"
-                    : undefined
-                }
-                className="mx-auto max-w-2xl space-y-5 px-5 py-6 sm:px-8"
+                aria-labelledby="assistant-create-model-parameters-title"
+                className="space-y-5"
               >
-                {creating ? (
-                  <h3
-                    id="assistant-create-model-parameters-title"
-                    className="text-base font-semibold text-foreground"
-                  >
-                    {t("modelParameters")}
-                  </h3>
-                ) : null}
-                <div className="divide-y divide-border border-y border-border">
-                  <div className="flex min-h-14 flex-col items-start gap-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
+                <h3
+                  id="assistant-create-model-parameters-title"
+                  className="text-base font-semibold text-foreground"
+                >
+                  {t("modelParameters")}
+                </h3>
+                <DialogField label={t("temperature")} dirty={temperatureDirty}>
+                  <div className="flex flex-col items-start gap-3 px-1 py-1 sm:flex-row sm:items-center sm:justify-between">
                     <div className="flex min-w-0 items-center gap-2 text-sm text-foreground">
                       <FormCheckbox
                         checked={temperatureEnabled}
@@ -689,7 +460,9 @@ export function AssistantEditor({
                       className="w-24 shrink-0"
                     />
                   </div>
-                  <div className="flex min-h-14 flex-col items-start gap-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
+                </DialogField>
+                <DialogField label={t("topP")} dirty={topPDirty}>
+                  <div className="flex flex-col items-start gap-3 px-1 py-1 sm:flex-row sm:items-center sm:justify-between">
                     <div className="flex min-w-0 items-center gap-2 text-sm text-foreground">
                       <FormCheckbox
                         checked={topPEnabled}
@@ -714,7 +487,12 @@ export function AssistantEditor({
                       className="w-24 shrink-0"
                     />
                   </div>
-                  <div className="flex min-h-14 flex-col items-start gap-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
+                </DialogField>
+                <DialogField
+                  label={t("maxOutputTokens")}
+                  dirty={maxOutputTokensDirty}
+                >
+                  <div className="flex flex-col items-start gap-3 px-1 py-1 sm:flex-row sm:items-center sm:justify-between">
                     <div className="flex min-w-0 items-center gap-2 text-sm text-foreground">
                       <FormCheckbox
                         checked={maxOutputTokensEnabled}
@@ -741,290 +519,263 @@ export function AssistantEditor({
                       className="w-28 shrink-0"
                     />
                   </div>
-                </div>
-                <div className="border-b border-border pb-5">
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <h4 className="text-sm font-medium text-foreground">
-                        {t("customParameters")}
-                      </h4>
-                      <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                        {t("customParametersHint")}
-                      </p>
+                </DialogField>
+                <DialogField
+                  label={t("customParameters")}
+                  description={t("customParametersHint")}
+                  dirty={customParametersDirty}
+                >
+                  <div>
+                    <div className="flex justify-end">
+                      <Button
+                        type="button"
+                        onClick={() =>
+                          setCustomParameters((current) => [
+                            ...current,
+                            {
+                              name: "",
+                              type: "string",
+                              value: "",
+                              key: crypto.randomUUID(),
+                            },
+                          ])
+                        }
+                        variant={"secondary"}
+                        size={"sm"}
+                        className="shrink-0 gap-1.5"
+                      >
+                        <Plus className="size-3.5" />
+                        {t("addCustomParameter")}
+                      </Button>
                     </div>
-                    <Button
-                      type="button"
-                      onClick={() =>
-                        setCustomParameters((current) => [
-                          ...current,
-                          {
-                            name: "",
-                            type: "string",
-                            value: "",
-                            key: crypto.randomUUID(),
-                          },
-                        ])
-                      }
-                      variant={"secondary"}
-                      size={"sm"}
-                      className="shrink-0 gap-1.5"
-                    >
-                      <Plus className="size-3.5" />
-                      {t("addCustomParameter")}
-                    </Button>
-                  </div>
-                  {customParameters.length ? (
-                    <div className="mt-3 space-y-3">
-                      {customParameters.map((parameter, index) => {
-                        const valueLabel = t("customParameterValue", {
-                          name: parameter.name.trim() || String(index + 1),
-                        });
-                        const updateParameter = (
-                          patch: Partial<AssistantCustomParameter>,
-                        ) => {
-                          setCustomParameters((current) =>
-                            current.map((currentParameter, currentIndex) => {
-                              if (currentIndex !== index)
-                                return currentParameter;
-                              if (
-                                patch.type &&
-                                patch.type !== currentParameter.type
-                              ) {
-                                return {
-                                  ...currentParameter,
-                                  ...patch,
-                                  value: defaultCustomParameterValue(
-                                    patch.type,
-                                  ),
-                                };
-                              }
-                              return { ...currentParameter, ...patch };
-                            }),
-                          );
-                        };
-                        return (
-                          <div
-                            key={parameter.key}
-                            className="border-t border-border pt-3"
-                          >
-                            <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_7rem_minmax(0,1fr)_2rem]">
-                              <Input
-                                classNames={inputClassNames}
-                                aria-label={t("customParameterName")}
-                                placeholder="top_k"
-                                value={String(parameter.name)}
-                                onChange={(value) =>
-                                  updateParameter({ name: value })
+                    {customParameters.length ? (
+                      <div className="mt-3 space-y-3">
+                        {customParameters.map((parameter, index) => {
+                          const valueLabel = t("customParameterValue", {
+                            name: parameter.name.trim() || String(index + 1),
+                          });
+                          const updateParameter = (
+                            patch: Partial<AssistantCustomParameter>,
+                          ) => {
+                            setCustomParameters((current) =>
+                              current.map((currentParameter, currentIndex) => {
+                                if (currentIndex !== index)
+                                  return currentParameter;
+                                if (
+                                  patch.type &&
+                                  patch.type !== currentParameter.type
+                                ) {
+                                  return {
+                                    ...currentParameter,
+                                    ...patch,
+                                    value: defaultCustomParameterValue(
+                                      patch.type,
+                                    ),
+                                  };
                                 }
-                                className="w-full"
-                              />
-                              <FormSelect
-                                label={t("customParameterType")}
-                                value={parameter.type}
-                                onValueChange={(value) =>
-                                  updateParameter({
-                                    type: value as AssistantCustomParameter["type"],
-                                  })
-                                }
-                                options={[
-                                  "string",
-                                  "number",
-                                  "boolean",
-                                  "json",
-                                ].map((value) => ({ value, label: value }))}
-                              />
-                              {parameter.type === "number" ? (
+                                return { ...currentParameter, ...patch };
+                              }),
+                            );
+                          };
+                          return (
+                            <div
+                              key={parameter.key}
+                              className="border-t border-border pt-3"
+                            >
+                              <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_7rem_minmax(0,1fr)_2rem]">
                                 <Input
                                   classNames={inputClassNames}
-                                  aria-label={valueLabel}
-                                  type="number"
-                                  value={String(
-                                    typeof parameter.value === "number"
-                                      ? parameter.value
-                                      : 0,
-                                  )}
+                                  aria-label={t("customParameterName")}
+                                  placeholder="top_k"
+                                  value={String(parameter.name)}
                                   onChange={(value) =>
-                                    updateParameter({
-                                      value: Number.isFinite(
-                                        Number.parseFloat(value),
-                                      )
-                                        ? Number.parseFloat(value)
-                                        : 0,
-                                    })
+                                    updateParameter({ name: value })
                                   }
                                   className="w-full"
                                 />
-                              ) : parameter.type === "boolean" ? (
                                 <FormSelect
-                                  label={valueLabel}
-                                  value={String(parameter.value)}
+                                  label={t("customParameterType")}
+                                  value={parameter.type}
                                   onValueChange={(value) =>
                                     updateParameter({
-                                      value: value === "true",
+                                      type: value as AssistantCustomParameter["type"],
                                     })
                                   }
                                   options={[
-                                    { value: "true", label: "true" },
-                                    { value: "false", label: "false" },
-                                  ]}
+                                    "string",
+                                    "number",
+                                    "boolean",
+                                    "json",
+                                  ].map((value) => ({ value, label: value }))}
                                 />
-                              ) : parameter.type === "json" ? (
-                                <span className="hidden sm:block" />
-                              ) : (
-                                <Input
-                                  classNames={inputClassNames}
-                                  aria-label={valueLabel}
-                                  value={String(parameter.value)}
-                                  onChange={(value) =>
-                                    updateParameter({ value })
-                                  }
-                                  className="w-full"
-                                />
-                              )}
-                              <Button
-                                type="button"
-                                onClick={() =>
-                                  setCustomParameters((current) =>
-                                    current.filter(
-                                      (_, currentIndex) =>
-                                        currentIndex !== index,
-                                    ),
-                                  )
-                                }
-                                aria-label={common("delete")}
-                                title={common("delete")}
-                                variant={"ghost"}
-                                size={"icon"}
-                              >
-                                <Trash2 className="size-3.5" />
-                              </Button>
-                            </div>
-                            {parameter.type === "json" ? (
-                              <textarea
-                                value={String(parameter.value)}
-                                onChange={(event) =>
-                                  updateParameter({
-                                    value: event.target.value,
-                                  })
-                                }
-                                aria-label={valueLabel}
-                                rows={3}
-                                spellCheck={false}
-                                className="mt-1.5 min-h-36 w-full resize-y rounded-xl border border-border bg-background p-3 text-sm font-normal leading-6 text-foreground outline-none placeholder:text-muted-foreground/60 focus-visible:ring-2 focus-visible:ring-ring"
-                                placeholder={t(
-                                  "customParameterJsonPlaceholder",
+                                {parameter.type === "number" ? (
+                                  <Input
+                                    classNames={inputClassNames}
+                                    aria-label={valueLabel}
+                                    type="number"
+                                    value={String(
+                                      typeof parameter.value === "number"
+                                        ? parameter.value
+                                        : 0,
+                                    )}
+                                    onChange={(value) =>
+                                      updateParameter({
+                                        value: Number.isFinite(
+                                          Number.parseFloat(value),
+                                        )
+                                          ? Number.parseFloat(value)
+                                          : 0,
+                                      })
+                                    }
+                                    className="w-full"
+                                  />
+                                ) : parameter.type === "boolean" ? (
+                                  <FormSelect
+                                    label={valueLabel}
+                                    value={String(parameter.value)}
+                                    onValueChange={(value) =>
+                                      updateParameter({
+                                        value: value === "true",
+                                      })
+                                    }
+                                    options={[
+                                      { value: "true", label: "true" },
+                                      { value: "false", label: "false" },
+                                    ]}
+                                  />
+                                ) : parameter.type === "json" ? (
+                                  <span className="hidden sm:block" />
+                                ) : (
+                                  <Input
+                                    classNames={inputClassNames}
+                                    aria-label={valueLabel}
+                                    value={String(parameter.value)}
+                                    onChange={(value) =>
+                                      updateParameter({ value })
+                                    }
+                                    className="w-full"
+                                  />
                                 )}
-                              />
-                            ) : null}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : null}
-                </div>
+                                <Button
+                                  type="button"
+                                  onClick={() =>
+                                    setCustomParameters((current) =>
+                                      current.filter(
+                                        (_, currentIndex) =>
+                                          currentIndex !== index,
+                                      ),
+                                    )
+                                  }
+                                  aria-label={common("delete")}
+                                  title={common("delete")}
+                                  variant={"ghost"}
+                                  size={"icon"}
+                                >
+                                  <Trash2 className="size-3.5" />
+                                </Button>
+                              </div>
+                              {parameter.type === "json" ? (
+                                <textarea
+                                  value={String(parameter.value)}
+                                  onChange={(event) =>
+                                    updateParameter({
+                                      value: event.target.value,
+                                    })
+                                  }
+                                  aria-label={valueLabel}
+                                  rows={3}
+                                  spellCheck={false}
+                                  className="mt-1.5 min-h-36 w-full resize-y rounded-lg border border-border bg-background p-3 text-sm font-normal leading-6 text-foreground outline-none placeholder:text-muted-foreground/60 focus-visible:ring-2 focus-visible:ring-ring"
+                                  placeholder={t(
+                                    "customParameterJsonPlaceholder",
+                                  )}
+                                />
+                              ) : null}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : null}
+                  </div>
+                </DialogField>
               </section>
 
               <section
                 hidden={createStep !== "tools"}
-                aria-labelledby={
-                  creating ? "assistant-create-tools-title" : undefined
-                }
-                className="mx-auto max-w-2xl space-y-5 px-5 py-6 sm:px-8"
+                aria-labelledby="assistant-create-tools-title"
+                className="space-y-5"
               >
-                {creating ? (
-                  <div>
-                    <h3
-                      id="assistant-create-tools-title"
-                      className="text-base font-semibold text-foreground"
-                    >
-                      {t("mcpAccess")}
-                    </h3>
-                    <p className="mt-1 text-sm text-muted-foreground">
-                      {t("mcpDescription")}
-                    </p>
-                  </div>
-                ) : null}
+                <div>
+                  <h3
+                    id="assistant-create-tools-title"
+                    className="text-base font-semibold text-foreground"
+                  >
+                    {t("mcpAccess")}
+                  </h3>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {t("mcpDescription")}
+                  </p>
+                </div>
 
-                <div className="block max-w-44 text-xs font-medium text-muted-foreground">
+                <DialogField
+                  label={t("maxToolSteps")}
+                  htmlFor="assistant-settings-max-steps"
+                  className="max-w-44"
+                >
                   <Input
                     classNames={inputClassNames}
+                    id="assistant-settings-max-steps"
                     name="maxSteps"
                     min={AGENT_STEP_BOUNDS.min}
                     max={AGENT_STEP_BOUNDS.max}
                     type="number"
                     defaultValue={String(
-                      assistant?.maxSteps ??
-                        marketTemplate?.maxSteps ??
-                        AGENT_STEP_BOUNDS.default,
+                      assistant?.maxSteps ?? AGENT_STEP_BOUNDS.default,
                     )}
-                    label={t("maxToolSteps")}
+                    aria-label={t("maxToolSteps")}
                     className="w-full"
                   />
-                </div>
+                </DialogField>
 
-                <fieldset>
-                  <legend
-                    className={
-                      creating
-                        ? "sr-only"
-                        : "text-xs font-medium text-muted-foreground"
-                    }
-                  >
-                    {t("mcpAccess")}
-                  </legend>
-                  {!creating ? (
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {t("mcpDescription")}
-                    </p>
-                  ) : null}
-                  {marketTemplate?.missingMcpNames?.length ? (
-                    <p
-                      role="alert"
-                      className="mt-2 text-xs leading-5 text-muted-foreground text-muted-foreground"
-                    >
-                      {t("marketTemplateMissingMcp", {
-                        names: marketTemplate.missingMcpNames.join(", "),
-                      })}{" "}
-                      <Link
-                        href={`/app/${encodeURIComponent(slug)}/market/mcp`}
-                        className="font-medium underline"
-                      >
-                        {t("browseMcpMarket")}
-                      </Link>
-                    </p>
-                  ) : null}
-                  <div className="mt-2 divide-y divide-border border-y border-border">
+                <fieldset className="space-y-3">
+                  <legend className="sr-only">{t("mcpAccess")}</legend>
+                  <div className="space-y-4">
                     {deployments.length ? (
                       deployments.map((deployment) => (
-                        <div
+                        <DialogField
                           key={deployment.id}
-                          className="flex min-h-10 items-center gap-3 py-2 text-sm"
+                          label={
+                            <>
+                              {deployment.name}
+                              <span
+                                className={cx(
+                                  "text-xs font-normal",
+                                  deployment.status === "running"
+                                    ? "text-primary"
+                                    : "text-muted-foreground",
+                                )}
+                              >
+                                {deployment.status}
+                              </span>
+                            </>
+                          }
                         >
                           <FormCheckbox
-                            name="deploymentIds"
-                            value={deployment.id}
-                            defaultChecked={
-                              assistant?.deploymentIds.includes(
-                                deployment.id,
-                              ) ||
-                              marketTemplate?.deploymentIds.includes(
-                                deployment.id,
+                            checked={selectedDeployments.includes(
+                              deployment.id,
+                            )}
+                            onCheckedChange={(checked) =>
+                              setSelectedDeployments((current) =>
+                                checked
+                                  ? [...current, deployment.id]
+                                  : current.filter(
+                                      (id) => id !== deployment.id,
+                                    ),
                               )
                             }
-                            label={deployment.name}
+                            label={t("mcpEnabled")}
                           />
-
-                          <span
-                            className={cx(
-                              "text-[11px]",
-                              deployment.status === "running"
-                                ? "text-primary text-primary"
-                                : "text-muted-foreground",
-                            )}
-                          >
-                            {deployment.status}
-                          </span>
-                        </div>
+                        </DialogField>
                       ))
                     ) : (
                       <p className="py-4 text-sm text-muted-foreground">
@@ -1035,97 +786,110 @@ export function AssistantEditor({
                 </fieldset>
               </section>
 
+              {assistant && createStep === "changelog" ? (
+                <RevisionChangelog
+                  url={`/api/v1/chat/assistants/${encodeURIComponent(assistant.id)}/revisions`}
+                  title={t("changelog")}
+                  className="space-y-5"
+                />
+              ) : null}
+
               {error ? (
-                <p
-                  role="alert"
-                  className="mx-auto max-w-2xl px-5 text-sm text-destructive sm:px-8"
-                >
+                <p role="alert" className="text-sm text-destructive">
                   {error}
                 </p>
               ) : null}
-            </div>
+            </DialogBody>
           </div>
-          <footer
-            className={cx(
-              "flex shrink-0 flex-wrap items-center gap-3 border-t border-border/60 px-5 py-3",
-              creating ? "justify-end" : "justify-between",
-            )}
+          <DialogFooter
+            start={
+              assistant ? (
+                <>
+                  <p
+                    role="status"
+                    className="flex items-center gap-2 text-xs text-muted-foreground"
+                  >
+                    <span
+                      className={cx(
+                        "size-1.5 rounded-full",
+                        dirty ? "bg-primary" : "bg-muted-foreground/50",
+                      )}
+                    />
+                    {saving
+                      ? t("saving")
+                      : dirty
+                        ? common("unsavedChanges")
+                        : common("noChanges")}
+                  </p>
+                  <Button
+                    type="button"
+                    onClick={() => void onDelete(assistant.id)}
+                    variant={"secondary"}
+                    size={"md"}
+                  >
+                    <Trash2 className="size-4" />
+                    {common("delete")}
+                  </Button>
+                </>
+              ) : undefined
+            }
+            cancel={<DialogCancel />}
           >
-            {assistant ? (
-              <div>
-                <Button
-                  type="button"
-                  onClick={() => void onDelete(assistant.id)}
-                  variant={"secondary"}
-                  size={"sm"}
-                >
-                  <Trash2 className="size-4" />
-                  {common("delete")}
-                </Button>
-              </div>
+            {creating && createStepIndex > 0 ? (
+              <Button
+                type="button"
+                onClick={() => {
+                  const previousStep = createSteps[createStepIndex - 1];
+                  if (previousStep) setCreateStep(previousStep.id);
+                }}
+                variant={"secondary"}
+                size={"md"}
+                className="gap-2"
+              >
+                <ChevronLeft className="size-4" />
+                {t("back")}
+              </Button>
             ) : null}
-            <div className="flex gap-2">
-              <CenterMorphModalClose>
-                <Button type="button" variant={"secondary"} size={"sm"}>
-                  {common("cancel")}
-                </Button>
-              </CenterMorphModalClose>
-              {creating && createStepIndex > 0 ? (
-                <Button
-                  type="button"
-                  onClick={() => {
-                    const previousStep = createSteps[createStepIndex - 1];
-                    if (previousStep) setCreateStep(previousStep.id);
-                  }}
-                  variant={"secondary"}
-                  size={"sm"}
-                  className="gap-2"
-                >
-                  <ChevronLeft className="size-4" />
-                  {t("back")}
-                </Button>
-              ) : null}
-              {creating && !lastCreateStep ? (
-                <Button
-                  type="button"
-                  disabled={createStep === "basic" && !basicComplete}
-                  onClick={(event) => {
-                    if (!event.currentTarget.form?.reportValidity()) return;
-                    const nextStep = createSteps[createStepIndex + 1];
-                    if (nextStep) setCreateStep(nextStep.id);
-                  }}
-                  variant={"primary"}
-                  size={"sm"}
-                  className="gap-2"
-                >
-                  {t("next")}
-                  <ChevronRight className="size-4" />
-                </Button>
-              ) : null}
-              {creating && lastCreateStep ? (
-                <Button
-                  type="submit"
-                  disabled={saving || !basicComplete}
-                  variant={"primary"}
-                  size={"sm"}
-                  className="gap-2"
-                >
-                  <Plus className="size-4" />
-                  {saving ? t("saving") : t("createAssistant")}
-                </Button>
-              ) : null}
-              {!creating ? (
-                <Button
-                  type="submit"
-                  disabled={saving}
-                  variant={"primary"}
-                  size={"sm"}
-                >
-                  {saving ? t("saving") : common("save")}
-                </Button>
-              ) : null}
-            </div>
-          </footer>
+            {creating && !lastCreateStep ? (
+              <Button
+                type="button"
+                disabled={createStep === "basic" && !basicComplete}
+                onClick={(event) => {
+                  if (!event.currentTarget.form?.reportValidity()) return;
+                  const nextStep = createSteps[createStepIndex + 1];
+                  if (nextStep) setCreateStep(nextStep.id);
+                }}
+                variant={"primary"}
+                size={"md"}
+                className="gap-2"
+              >
+                {t("next")}
+                <ChevronRight className="size-4" />
+              </Button>
+            ) : null}
+            {creating && lastCreateStep ? (
+              <Button
+                type="submit"
+                disabled={saving || !basicComplete}
+                variant={"primary"}
+                size={"md"}
+                className="gap-2"
+              >
+                <Plus className="size-4" />
+                {saving ? t("saving") : t("createAssistant")}
+              </Button>
+            ) : null}
+            {!creating ? (
+              <Button
+                type="submit"
+                disabled={saving}
+                variant={"primary"}
+                size={"md"}
+              >
+                {saving ? t("saving") : common("save")}
+              </Button>
+            ) : null}
+          </DialogFooter>
         </form>
       </CenterMorphModalContent>
     </CenterMorphModal>

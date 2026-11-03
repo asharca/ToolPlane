@@ -1,3 +1,4 @@
+import { ResourceEnablePanel } from "@/components/dashboard/ResourceEnablePanel";
 /* DashboardTable consumes cell arrays as indexed values. */
 
 import { AnimatedBadge } from "@/components/motion/animated-badge";
@@ -162,7 +163,7 @@ function DetailItem({
 }) {
   return (
     <div
-      className={`min-w-0 rounded-md border border-border bg-muted/20 p-3 ${className}`}
+      className={`min-w-0 rounded-xl border border-border bg-muted/20 p-3 ${className}`}
     >
       <div className="mb-1 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
         {icon}
@@ -220,12 +221,6 @@ export default async function SkillInspectorPage({
   const install = await db.installedSkill.findFirst({
     where: { id: installId, workspaceId: ws.id },
     include: {
-      marketInstall: { select: { id: true } },
-      toolkitLinks: {
-        where: { toolkit: { marketInstall: { isNot: null } } },
-        select: { toolkitId: true },
-        take: 1,
-      },
       skill: {
         select: {
           slug: true,
@@ -242,9 +237,6 @@ export default async function SkillInspectorPage({
   if (!install) notFound();
 
   const isCustom = !install.skillId;
-  const marketManaged = Boolean(
-    install.marketInstall || install.toolkitLinks.length,
-  );
   const label = skillLabel(install);
   const markdown = buildInstalledSkillMarkdown(install);
   const markdownDescription = frontmatterValue(markdown, "description");
@@ -330,6 +322,11 @@ export default async function SkillInspectorPage({
             : undefined
         }
       />
+      <ResourceEnablePanel
+        workspace={slug}
+        workspaceId={ws.id}
+        resourceId={install.id}
+      />
 
       <BouncyAccordion
         items={[
@@ -390,17 +387,6 @@ export default async function SkillInspectorPage({
                     label={`${t("agent")}: ${t(install.agentInvocable ? "invocationEnabled" : "invocationDisabled")}`}
                   />
                 </div>
-                {!isCustom && marketManaged ? (
-                  <div className="px-5 pb-4">
-                    <ButtonLink
-                      href={`/app/${slug}/market/installed`}
-                      variant="secondary"
-                      size="sm"
-                    >
-                      {t("manageMarketInstall")}
-                    </ButtonLink>
-                  </div>
-                ) : null}
 
                 {isCustom ? (
                   <div className="border-t border-border px-5 py-4 sm:px-6">
@@ -409,37 +395,23 @@ export default async function SkillInspectorPage({
                         {t("workspaceControls")}
                       </p>
                       <div className="flex flex-wrap gap-2">
-                        {marketManaged ? (
-                          <ButtonLink
-                            href={`/app/${slug}/market/installed`}
-                            variant="secondary"
-                            size="sm"
-                          >
-                            {t("manageMarketInstall")}
-                          </ButtonLink>
-                        ) : (
-                          <form action={deleteCustomSkillAction}>
-                            <input
-                              type="hidden"
-                              name="workspace"
-                              value={slug}
-                            />
-                            <input
-                              type="hidden"
-                              name="installId"
-                              value={install.id}
-                            />
-                            <ConfirmSubmitButton
-                              triggerLabel={t("delete")}
-                              confirmLabel={common("confirm")}
-                              cancelLabel={common("cancel")}
-                              prompt={`${t("delete")} ${label.name}?`}
-                              pendingLabel={`${t("delete")}…`}
-                              triggerVariant="secondary"
-                              triggerSize="sm"
-                            />
-                          </form>
-                        )}
+                        <form action={deleteCustomSkillAction}>
+                          <input type="hidden" name="workspace" value={slug} />
+                          <input
+                            type="hidden"
+                            name="installId"
+                            value={install.id}
+                          />
+                          <ConfirmSubmitButton
+                            triggerLabel={t("delete")}
+                            confirmLabel={common("confirm")}
+                            cancelLabel={common("cancel")}
+                            prompt={`${t("delete")} ${label.name}?`}
+                            pendingLabel={`${t("delete")}…`}
+                            triggerVariant="secondary"
+                            triggerSize="sm"
+                          />
+                        </form>
                       </div>
                     </div>
 
@@ -453,14 +425,14 @@ export default async function SkillInspectorPage({
                         name="installId"
                         value={install.id}
                       />
-                      <div className="inline-flex h-9 items-center gap-2 rounded-md border border-border px-3 text-sm text-foreground">
+                      <div className="inline-flex h-9 items-center gap-2 rounded-lg border border-border px-3 text-sm text-foreground">
                         <FormCheckbox
                           name="userInvocable"
                           defaultChecked={install.userInvocable}
                           label={t("user")}
                         />
                       </div>
-                      <div className="inline-flex h-9 items-center gap-2 rounded-md border border-border px-3 text-sm text-foreground">
+                      <div className="inline-flex h-9 items-center gap-2 rounded-lg border border-border px-3 text-sm text-foreground">
                         <FormCheckbox
                           name="agentInvocable"
                           defaultChecked={install.agentInvocable}

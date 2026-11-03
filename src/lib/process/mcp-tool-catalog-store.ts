@@ -10,6 +10,16 @@ import {
   type McpToolDefinition,
 } from "@/lib/process/mcp-tool-catalog";
 import { liveRedactionValues } from "@/lib/process/supervisor";
+import { resolveMcpEnvironment } from "./mcp-credentials";
+
+/** Grant sync may publish revisions (slow, imports Agent/Assistant services); never block the listing on it. */
+function followCatalog(deploymentId: string) {
+  void import("./mcp-grant-sync")
+    .then(({ syncDeploymentMcpGrants }) =>
+      syncDeploymentMcpGrants(deploymentId),
+    )
+    .catch(() => undefined);
+}
 
 /** Persist a runtime snapshot without overwriting a concurrent config/env edit. */
 export async function persistDeploymentMcpToolCatalog(
@@ -21,22 +31,17 @@ export async function persistDeploymentMcpToolCatalog(
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const deployment = await db.deployment.findUnique({
       where: { id: deploymentId },
-      select: { installCfg: true, updatedAt: true, source: true },
+      select: {
+        installCfg: true,
+        updatedAt: true,
+        source: true,
+        workspaceId: true,
+      },
     });
     if (!deployment || deployment.source === "sandbox") return [];
-    const config =
-      deployment.installCfg &&
-      typeof deployment.installCfg === "object" &&
-      !Array.isArray(deployment.installCfg)
-        ? (deployment.installCfg as Record<string, unknown>)
-        : {};
-    const env =
-      config.env && typeof config.env === "object" && !Array.isArray(config.env)
-        ? Object.values(config.env as Record<string, unknown>).filter(
-            (entry): entry is string =>
-              typeof entry === "string" && entry.length >= 4,
-          )
-        : [];
+    const env = Object.values(
+      resolveMcpEnvironment(deployment.installCfg, deployment.workspaceId),
+    ).filter(Boolean);
     const currentRedactionValues = liveRedactionValues(deploymentId);
     if (currentRedactionValues === null && requestRedactionValues.length === 0)
       return [];
@@ -47,8 +52,11 @@ export async function persistDeploymentMcpToolCatalog(
     ]);
     if (!redacted.ok) return [];
     tools = redacted.tools;
-    if (isDeepStrictEqual(readMcpToolCatalog(deployment.installCfg), tools))
+    const previousTools = readMcpToolCatalog(deployment.installCfg);
+    if (isDeepStrictEqual(previousTools, tools)) {
+      followCatalog(deploymentId);
       return tools;
+    }
     const updated = await db.deployment.updateMany({
       where: { id: deploymentId, updatedAt: deployment.updatedAt },
       data: {
@@ -58,7 +66,10 @@ export async function persistDeploymentMcpToolCatalog(
         ) as Prisma.InputJsonValue,
       },
     });
-    if (updated.count === 1) return tools;
+    if (updated.count === 1) {
+      followCatalog(deploymentId);
+      return tools;
+    }
   }
   return tools;
 }

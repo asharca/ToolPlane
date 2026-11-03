@@ -2,25 +2,100 @@
 import { Button } from "@/components/motion/button/base";
 
 import { useTranslations } from "next-intl";
+import { useState } from "react";
 
 export type A2AWirePart = {
   text?: string;
   data?: Record<string, unknown>;
   raw?: string;
   mediaType?: string;
+  filename?: string;
+  metadata?: Record<string, unknown>;
 };
+
+function StoredArtifactDownload({
+  taskId,
+  fileId,
+  name,
+}: {
+  taskId: string;
+  fileId: string;
+  name: string;
+}) {
+  const t = useTranslations("console.agents.a2a");
+  const [pending, setPending] = useState(false);
+  const [failed, setFailed] = useState(false);
+  return (
+    <div className="space-y-2">
+      <Button
+        variant="secondary"
+        size="sm"
+        disabled={pending}
+        onClick={async () => {
+          setPending(true);
+          setFailed(false);
+          try {
+            const response = await fetch(
+              `/api/v1/a2a/files/${encodeURIComponent(fileId)}/download?${new URLSearchParams({ task: taskId })}`,
+              {
+                credentials: "same-origin",
+                cache: "no-store",
+                signal: AbortSignal.timeout(60_000),
+              },
+            );
+            if (!response.ok) throw new Error("File unavailable");
+            const blob = await response.blob();
+            const url = URL.createObjectURL(blob);
+            const anchor = document.createElement("a");
+            anchor.href = url;
+            anchor.download =
+              name.replace(/[^\x20-\uFFFF]|[\x7f/\\]/g, "_").slice(0, 120) ||
+              "artifact.bin";
+            anchor.rel = "noopener";
+            anchor.click();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+          } catch {
+            setFailed(true);
+          } finally {
+            setPending(false);
+          }
+        }}
+      >
+        {t("downloadArtifact")}
+      </Button>
+      {failed ? (
+        <p role="alert" className="text-sm text-destructive">
+          {t("artifactDownloadFailed")}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 /** Files are explicit downloads, never active previews or arbitrary remote URLs. */
 export function A2AArtifactParts({
   name,
   parts,
+  taskId,
 }: {
   name: string;
   parts: A2AWirePart[];
+  taskId: string;
 }) {
   const t = useTranslations("console.agents.a2a");
   return (
     <>
       {parts.map((part, index) => {
+        const fileId = part.metadata?.toolplaneFileId;
+        if (typeof fileId === "string" && /^[A-Za-z0-9_-]{1,200}$/.test(fileId))
+          return (
+            <StoredArtifactDownload
+              key={fileId}
+              taskId={taskId}
+              fileId={fileId}
+              name={part.filename || name}
+            />
+          );
         if (typeof part.text === "string")
           return (
             <pre

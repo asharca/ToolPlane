@@ -38,8 +38,10 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
-import { ConversationFilePreview } from "@/components/dashboard/ConversationComposer";
-import { PromptInput } from "@/components/agents/prompt-input";
+import {
+  ConversationFilePreview,
+  ConversationComposer,
+} from "@/components/dashboard/ConversationComposer";
 import { McpPromptPickerButton } from "@/components/dashboard/McpPromptPickerButton";
 import { ComposerPromptManager } from "./ComposerPromptManager";
 import {
@@ -179,9 +181,10 @@ export function WorkComposer({
   useEffect(() => {
     inputRef.current = formRef.current?.querySelector("textarea") ?? null;
   }, []);
-  const endpoint = agentId
-    ? `/api/v1/agents/${encodeURIComponent(agentId)}/composer`
-    : "";
+  const endpoint =
+    agentId && (conversationId || workSessionId)
+      ? `/api/v1/agents/${encodeURIComponent(agentId)}/composer`
+      : "";
   const section = panel?.view !== "root" ? panel?.view : undefined;
   const query = panel?.query ?? "";
   const requestKey = section
@@ -206,7 +209,9 @@ export function WorkComposer({
           query,
           ...(sandboxId ? { sandboxId } : {}),
           ...(workSessionId ? { workSessionId } : {}),
-          ...(conversationId ? { excludeConversationId: conversationId } : {}),
+          ...(conversationId
+            ? { conversationId, excludeConversationId: conversationId }
+            : {}),
         });
         void fetch(`${endpoint}?${params}`, {
           signal: controller.signal,
@@ -338,6 +343,7 @@ export function WorkComposer({
           ...(item.deploymentId ? { deploymentId: item.deploymentId } : {}),
           ...(sandboxId ? { sandboxId } : {}),
           ...(workSessionId ? { workSessionId } : {}),
+          ...(conversationId ? { conversationId } : {}),
         }),
       });
       if (!response.ok) throw new Error(t("referenceFailed"));
@@ -376,15 +382,15 @@ export function WorkComposer({
       id: "mcp-prompts",
       label: agentsT("mcpPrompts"),
       icon: ScrollText,
-      disabled: !agentId,
+      disabled: !endpoint,
     },
     {
       id: "resources",
       label: t("resources"),
       icon: Database,
-      disabled: !agentId,
+      disabled: !endpoint,
     },
-    { id: "skills", label: t("skills"), icon: Sparkles, disabled: !agentId },
+    { id: "skills", label: t("skills"), icon: Sparkles, disabled: !endpoint },
   ];
   let pinnedIds: string[] = [];
   try {
@@ -666,7 +672,7 @@ export function WorkComposer({
                           index: 0,
                         })
                       }
-                      className="h-9 min-w-0 flex-1 rounded-sm bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                      className="h-9 min-w-0 flex-1 rounded-lg bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                     />
                   ) : (
                     <span className="flex h-9 items-center text-xs font-medium text-muted-foreground">
@@ -791,67 +797,6 @@ export function WorkComposer({
           {waitingQuestion ? (
             <p className="mb-2 text-sm font-medium">{waitingQuestion}</p>
           ) : null}
-          {attachments.length || references.length || resolving ? (
-            <div className="mb-2 flex flex-wrap items-center gap-3">
-              {attachments.map((file, index) => {
-                let key = attachmentKeys.get(file);
-                if (!key) {
-                  key = crypto.randomUUID();
-                  attachmentKeys.set(file, key);
-                }
-                return (
-                  <ConversationFilePreview
-                    key={key}
-                    file={file}
-                    name={file.name}
-                    removeLabel={agentsT("removeAttachment", {
-                      name: file.name,
-                    })}
-                    onRemove={() =>
-                      onAttachmentsChange(
-                        attachments.filter((_, position) => position !== index),
-                      )
-                    }
-                  />
-                );
-              })}
-              {references.map((reference, index) => {
-                const Icon = referenceIcon[reference.kind];
-                return (
-                  <div
-                    key={`${reference.kind}:${reference.deploymentId ?? ""}:${reference.id}`}
-                    className="flex max-w-full items-center gap-2"
-                  >
-                    <Icon className="size-4 text-muted-foreground" />
-                    <span className="truncate text-sm">{reference.label}</span>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      aria-label={t("removeReference", {
-                        name: reference.label,
-                      })}
-                      onClick={() =>
-                        onReferencesChange(
-                          references.filter(
-                            (_, position) => position !== index,
-                          ),
-                        )
-                      }
-                    >
-                      <X className="size-4" />
-                    </Button>
-                  </div>
-                );
-              })}
-              {resolving ? (
-                <Loader2
-                  aria-label={common("loading")}
-                  className="size-4 animate-spin text-muted-foreground"
-                />
-              ) : null}
-            </div>
-          ) : null}
           <input
             ref={fileRef}
             type="file"
@@ -869,8 +814,74 @@ export function WorkComposer({
               focusInput();
             }}
           />
-          <PromptInput
-            className="bg-transparent"
+          <ConversationComposer
+            attachments={
+              attachments.length || references.length || resolving ? (
+                <div className="mb-2 flex flex-wrap items-center gap-3">
+                  {attachments.map((file, index) => {
+                    let key = attachmentKeys.get(file);
+                    if (!key) {
+                      key = crypto.randomUUID();
+                      attachmentKeys.set(file, key);
+                    }
+                    return (
+                      <ConversationFilePreview
+                        key={key}
+                        file={file}
+                        name={file.name}
+                        removeLabel={agentsT("removeAttachment", {
+                          name: file.name,
+                        })}
+                        onRemove={() =>
+                          onAttachmentsChange(
+                            attachments.filter(
+                              (_, position) => position !== index,
+                            ),
+                          )
+                        }
+                      />
+                    );
+                  })}
+                  {references.map((reference, index) => {
+                    const Icon = referenceIcon[reference.kind];
+                    return (
+                      <div
+                        key={`${reference.kind}:${reference.deploymentId ?? ""}:${reference.id}`}
+                        className="flex max-w-full items-center gap-2"
+                      >
+                        <Icon className="size-4 text-muted-foreground" />
+                        <span className="truncate text-sm">
+                          {reference.label}
+                        </span>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          aria-label={t("removeReference", {
+                            name: reference.label,
+                          })}
+                          onClick={() =>
+                            onReferencesChange(
+                              references.filter(
+                                (_, position) => position !== index,
+                              ),
+                            )
+                          }
+                        >
+                          <X className="size-4" />
+                        </Button>
+                      </div>
+                    );
+                  })}
+                  {resolving ? (
+                    <Loader2
+                      aria-label={common("loading")}
+                      className="size-4 animate-spin text-muted-foreground"
+                    />
+                  ) : null}
+                </div>
+              ) : null
+            }
             value={draft}
             role="combobox"
             aria-label={workT("taskPlaceholder")}
@@ -912,8 +923,8 @@ export function WorkComposer({
               if (!resolving) onSubmit();
             }}
             placeholder={t("hint")}
-            minRows={2}
-            maxRows={8}
+            minRows={1}
+            maxRows={12}
             leadingAction={
               <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
                 <MorphPopoverTrigger>
@@ -953,11 +964,13 @@ export function WorkComposer({
                       onClick={() => activateOption(option)}
                       variant="ghost"
                       size="icon"
+                      className="size-8 rounded-full"
                     >
                       <Icon className="size-4" />
                     </Button>
                   );
                 })}
+                <span className="flex-1" />
                 {toolbarStart}
                 {toolbarEnd}
               </div>
@@ -965,9 +978,9 @@ export function WorkComposer({
           />
         </MorphPopover>
       </div>
-      {agentId && (
+      {agentId && (conversationId || workSessionId) && (
         <McpPromptPickerButton
-          apiPath={`/api/v1/agents/${encodeURIComponent(agentId)}/prompts`}
+          apiPath={`/api/v1/agents/${encodeURIComponent(agentId)}/prompts?${new URLSearchParams({ ...(conversationId ? { conversationId } : {}), ...(workSessionId ? { workSessionId } : {}) })}`}
           disabled={disabled}
           open={mcpOpen}
           onOpenChange={setMcpOpen}

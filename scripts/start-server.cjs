@@ -60,7 +60,7 @@ const requestTimeout =
     : 4 * 60 * 60 * 1000;
 
 // Next creates the HTTP server internally. Wrap that one creation so large
-// raw-body Hermes imports are not cut off by Node's five-minute default. Header
+// raw-body uploads are not cut off by Node's five-minute default. Header
 // parsing keeps Node's normal, separate header timeout limit.
 const servers = new Set();
 const originalCreateServer = http.createServer;

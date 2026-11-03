@@ -34,7 +34,7 @@ async function startServer(): Promise<{ process: ChildProcess; port: number }> {
       env: {
         ...process.env,
         SANDBOX_ID: sandboxId,
-        SANDBOX_IMAGE: "node:24-bookworm-slim",
+        SANDBOX_IMAGE: "node:26-bookworm-slim",
         SANDBOX_NETWORK: "none",
         MCP_PORT: "0",
       },

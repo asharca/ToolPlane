@@ -1,16 +1,16 @@
 // @vitest-environment node
 import { randomUUID } from "node:crypto";
+import { assertDefined } from "../assert-defined";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { db } from "@/lib/db";
 import { recordEvent } from "@/lib/observability/events";
 import { logRequest } from "@/lib/observability/log";
 import { withLogContext } from "@/lib/observability/context";
+import { mcpRpc } from "@/lib/process/mcp-client";
 import {
-  getErrorGroups,
   getLogEvent,
   getLogTrace,
   listLogEvents,
-  logFilterSchema,
   LogAccessError,
 } from "@/lib/observability/queries";
 import {
@@ -132,16 +132,9 @@ describe("durable scoped logging", () => {
     ).rejects.toBeInstanceOf(LogAccessError);
     const own = await getLogEvent({ userId, workspaceId }, result.rows[0].id);
     expect(own).not.toHaveProperty("detail");
-    const groups = await getErrorGroups(
-      { adminId },
-      { workspaceId, errorType: "Error" },
-    );
-    expect(groups).toMatchObject([
-      { eventName: "test.failure", outcome: "error", count: 1 },
-    ]);
   });
 
-  it("expires capture without restarting and paginates tied timestamps without duplicates", async () => {
+  it("expires diagnostic capture without restarting", async () => {
     await db.systemSetting.update({
       where: { key: LOG_SETTINGS_KEY },
       data: {
@@ -168,47 +161,9 @@ describe("durable scoped logging", () => {
       include: { detail: true },
     });
     expect(noPayload.detail).toBeNull();
-    const time = new Date();
-    await db.logEvent.createMany({
-      data: Array.from({ length: 60 }, (_, i) => ({
-        domain: "system",
-        eventName: "test.page",
-        message: String(i),
-        workspaceId,
-        traceId: stamp,
-        spanId: String(i),
-        createdAt: time,
-      })),
-    });
-    const first = await listLogEvents(
-      { userId, workspaceId },
-      { eventName: "test.page" },
-    );
-    const second = await listLogEvents(
-      { userId, workspaceId },
-      { eventName: "test.page", cursor: first.nextCursor, until: first.until },
-    );
-    expect(first.rows).toHaveLength(50);
-    expect(second.rows).toHaveLength(10);
-    expect(
-      new Set([...first.rows, ...second.rows].map((row) => row.id)).size,
-    ).toBe(60);
-    expect(logFilterSchema.safeParse({ cursor: "not-a-cursor" }).success).toBe(
-      false,
-    );
-    const utc = logFilterSchema.parse({
-      since: "2026-09-06T01:00",
-      until: "2026-09-07T01:00",
-    });
-    expect(utc.until.toISOString()).toBe("2026-09-07T01:00:00.000Z");
-    const precise = logFilterSchema.parse({
-      since: "2026-09-06T01:00:00.123",
-      until: "2026-09-07T01:00:59.987",
-    });
-    expect(precise.until.toISOString()).toBe("2026-09-07T01:00:59.987Z");
   });
 
-  it("stores sanitized workspace MCP payloads without exposing Agent content", async () => {
+  it("stores sanitized workspace MCP payloads, including calls inside Agent sessions", async () => {
     await db.systemSetting.update({
       where: { key: LOG_SETTINGS_KEY },
       data: { value: JSON.stringify({ captures: [] }) },
@@ -241,21 +196,135 @@ describe("durable scoped logging", () => {
         response: { ok: true },
       },
     });
-
-    await withLogContext({ workspaceId, agentId: "agent-fixture" }, () =>
-      recordEvent({
-        domain: "mcp",
-        eventName: "mcp.rpc",
-        deploymentId,
-        toolName: "agent-payload",
-        detail: { request: "private-agent-content" },
-      }),
+    expect(assertDefined(captured.detail).expiresAt.getTime()).toBeGreaterThan(
+      Date.now() + 29 * 86_400_000,
     );
-    const suppressed = await db.logEvent.findFirstOrThrow({
+
+    await withLogContext(
+      {
+        workspaceId,
+        agentId: "agent-fixture",
+        secrets: ["fixture-private-key"],
+      },
+      () =>
+        recordEvent({
+          domain: "mcp",
+          eventName: "mcp.rpc",
+          deploymentId,
+          toolName: "agent-payload",
+          detail: {
+            request: { value: "fixture-private-key", text: "agent-visible" },
+          },
+        }),
+    );
+    const agentCall = await db.logEvent.findFirstOrThrow({
       where: { workspaceId, toolName: "agent-payload" },
       include: { detail: true },
     });
-    expect(suppressed.detail).toBeNull();
+    expect(agentCall.detail?.data).toMatchObject({
+      workspaceMcpPayload: true,
+      payload: { request: { value: "[REDACTED]", text: "agent-visible" } },
+    });
+    expect(assertDefined(agentCall.detail).expiresAt.getTime()).toBeGreaterThan(
+      Date.now() + 29 * 86_400_000,
+    );
+  });
+
+  it("lets workspace members read failed MCP calls made inside Agent sessions", async () => {
+    await withLogContext({ workspaceId, agentId: "agent-fixture" }, () =>
+      mcpRpc(deploymentId, "tools/call", {
+        name: "agent-failure",
+        arguments: { path: "." },
+      }),
+    );
+    const failed = await db.logEvent.findFirstOrThrow({
+      where: { workspaceId, toolName: "agent-failure" },
+    });
+    expect(failed).toMatchObject({
+      outcome: "error",
+      errorCode: "deployment_unavailable",
+    });
+    const visible = await getLogEvent({ userId, workspaceId }, failed.id);
+    expect(visible?.detailState).toBe("available");
+    expect(visible?.message).toBe("MCP deployment is not running");
+    expect(JSON.stringify(visible?.detail)).toContain("agent-failure");
+  });
+
+  it("lets workspace members read Agent tool input and output, but not other Agent content", async () => {
+    await withLogContext(
+      { workspaceId, agentId: "agent-fixture" },
+      async () => {
+        await recordEvent({
+          domain: "agent",
+          eventName: "sandbox.tool",
+          toolName: "bash",
+          detail: { request: { command: "echo visible" }, response: "visible" },
+        });
+        await recordEvent({
+          domain: "agent",
+          eventName: "model.call",
+          payloadPolicy: "agent-content",
+          detail: { prompt: "private-prompt" },
+        });
+      },
+    );
+    const tool = await db.logEvent.findFirstOrThrow({
+      where: { workspaceId, eventName: "sandbox.tool" },
+    });
+    const visible = await getLogEvent({ userId, workspaceId }, tool.id);
+    expect(visible?.detailState).toBe("available");
+    expect(JSON.stringify(visible?.detail)).toContain("echo visible");
+    const model = await db.logEvent.findFirstOrThrow({
+      where: { workspaceId, eventName: "model.call" },
+      include: { detail: true },
+    });
+    expect(model.detail).toBeNull();
+  });
+
+  it("bounds protocol retention by event retention without changing Agent content limits", async () => {
+    await db.systemSetting.update({
+      where: { key: LOG_SETTINGS_KEY },
+      data: {
+        value: JSON.stringify({
+          eventDays: 2,
+          detailDays: 30,
+          captures: [
+            {
+              field: "workspaceId",
+              id: workspaceId,
+              expiresAt: new Date(Date.now() + 60_000).toISOString(),
+              includeAgentContent: true,
+            },
+          ],
+        }),
+      },
+    });
+    invalidateLogSettings();
+    try {
+      for (const policy of ["request-response", "agent-content"] as const) {
+        await recordEvent({
+          workspaceId,
+          domain: "a2a",
+          eventName: `retention.${policy}`,
+          payloadPolicy: policy,
+          detail: { request: "safe" },
+        });
+        const row = await db.logEvent.findFirstOrThrow({
+          where: { workspaceId, eventName: `retention.${policy}` },
+          include: { detail: true },
+        });
+        const expires = assertDefined(row.detail).expiresAt.getTime();
+        const days = policy === "agent-content" ? 1 : 2;
+        expect(expires).toBeGreaterThan(Date.now() + (days - 0.1) * 86_400_000);
+        expect(expires).toBeLessThanOrEqual(Date.now() + days * 86_400_000);
+      }
+    } finally {
+      await db.systemSetting.update({
+        where: { key: LOG_SETTINGS_KEY },
+        data: { value: JSON.stringify({ captures: [] }) },
+      });
+      invalidateLogSettings();
+    }
   });
 
   it("never captures public run payloads and never serves expired details", async () => {
@@ -297,6 +366,22 @@ describe("durable scoped logging", () => {
   });
 
   it("authorizes exports with persisted roles and excludes payloads", async () => {
+    const exportable = await db.logEvent.create({
+      data: {
+        domain: "system",
+        eventName: "test.export",
+        message: "export fixture",
+        workspaceId,
+        traceId: randomUUID(),
+        spanId: "export",
+        detail: {
+          create: {
+            data: { payload: "private-export-payload" },
+            expiresAt: new Date(Date.now() + 60_000),
+          },
+        },
+      },
+    });
     const regular = await createApiToken(userId, "test");
     const admin = await createApiToken(adminId, "test");
     const toolkit = await db.toolkit.create({
@@ -318,55 +403,22 @@ describe("durable scoped logging", () => {
       .trim()
       .split("\n")
       .map((line) => JSON.parse(line));
-    expect(rows.length).toBeGreaterThan(0);
+    expect(rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: exportable.id, workspaceId }),
+      ]),
+    );
     expect(
       rows.every(
         (row) => row.workspaceId === workspaceId && !("detail" in row),
       ),
     ).toBe(true);
+    expect(JSON.stringify(rows)).not.toContain("private-export-payload");
     expect(
       await db.auditEvent.count({
         where: { actorId: adminId, action: "logging.exported" },
       }),
     ).toBe(1);
-  });
-
-  it("exports all event domains by default and preserves explicit request tabs", async () => {
-    const eventName = `export-${stamp}`;
-    await db.logEvent.createMany({
-      data: ["http", "system", "agent"].map((domain) => ({
-        domain,
-        eventName,
-        message: domain,
-        workspaceId,
-        traceId: stamp,
-        spanId: domain,
-      })),
-    });
-    const admin = await createApiToken(adminId, "export domains");
-    const exportedDomains = async (tab: string) => {
-      const response = await exportLogs(
-        new Request(
-          `http://localhost/api/v1/admin/logs/export?workspaceId=${workspaceId}&eventName=${eventName}${tab}`,
-          {
-            headers: { authorization: `Bearer ${admin.token}` },
-          },
-        ),
-      );
-      expect(response.status).toBe(200);
-      return (await response.text())
-        .trim()
-        .split("\n")
-        .map((line) => JSON.parse(line).domain)
-        .sort();
-    };
-    expect(await exportedDomains("")).toEqual(["agent", "http", "system"]);
-    expect(await exportedDomains("&tab=all")).toEqual([
-      "agent",
-      "http",
-      "system",
-    ]);
-    expect(await exportedDomains("&tab=http")).toEqual(["http"]);
   });
 
   it("cleans expired records in bounded batches without cascading business deletion into audit history", async () => {

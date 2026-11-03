@@ -7,6 +7,11 @@ import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { getWorkspaceForUser } from "@/lib/workspace/queries";
 import {
+  connectionImpact,
+  confirmedConnectionImpact,
+} from "@/lib/workspace/mcp-connection-impact";
+import type { McpConnectionImpact } from "@/lib/workspace/mcp-connection-impact";
+import {
   startProcess,
   stopProcess,
   restartProcess,
@@ -14,7 +19,12 @@ import {
   liveStatus,
 } from "@/lib/process/supervisor";
 import { removeDeploymentContainer } from "@/lib/process/deployment-runtime-container";
-import { resolveSpawnSpec, type SpawnSpec } from "@/lib/process/spawn-spec";
+import type { DeploymentForSpawn, SpawnSpec } from "@/lib/process/spawn-spec";
+import {
+  resolveMcpConnectionSpawnSpec,
+  resolveMcpEnvironment,
+  sealMcpEnvironment,
+} from "@/lib/process/mcp-credentials";
 import { listMcpTools, mcpRpc, type McpTool } from "@/lib/process/mcp-client";
 import { logRequest } from "@/lib/observability/log";
 import {
@@ -52,6 +62,15 @@ import {
 } from "@/lib/process/mcp-result-redaction";
 import { newRequestId, withLogContext } from "@/lib/observability/context";
 import { MAX_TOOLKIT_BATCH_ITEMS } from "@/lib/toolkits/limits";
+import { syncDeploymentMcpGrants } from "@/lib/process/mcp-grant-sync";
+import {
+  McpPinningError,
+  resolvePinnedMcpRecipe,
+} from "@/lib/process/mcp-pinning";
+import {
+  mcpRunsInAgentSandbox,
+  supportsAgentSandboxPlacement,
+} from "@/lib/process/mcp-definition";
 
 const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const MAX_DEPLOYMENT_ENV_VARS = 100;
@@ -60,13 +79,21 @@ const MAX_DEPLOYMENT_ENV_LENGTH = 64_000;
 const MAX_DEPLOYMENT_ID_LENGTH = 128;
 const MAX_INSTALLED_SKILL_ID_LENGTH = 128;
 
-function mcpProcessOptions(workspaceId: string, deploymentId: string) {
+function mcpProcessOptions(
+  ctx: { user: { id: string }; ws: { id: string } },
+  deploymentId: string,
+) {
   return {
     awaitReady: false,
-    workspaceId,
-    onReady: async () => {
-      await listMcpTools(deploymentId);
-    },
+    workspaceId: ctx.ws.id,
+    // The catalog refresh runs after the action returns; keep it attributed to the user who started it.
+    onReady: () =>
+      withLogContext(
+        { workspaceId: ctx.ws.id, deploymentId, actorId: ctx.user.id },
+        async () => {
+          await listMcpTools(deploymentId);
+        },
+      ),
   };
 }
 
@@ -104,12 +131,6 @@ async function deploymentInWorkspace(
     },
     include: {
       server: { select: { name: true, slug: true, installCfg: true } },
-      marketInstall: { select: { id: true } },
-      toolkitLinks: {
-        where: { toolkit: { marketInstall: { isNot: null } } },
-        select: { toolkitId: true },
-        take: 1,
-      },
     },
   });
 }
@@ -140,12 +161,6 @@ async function selectedDeploymentsInWorkspace(
     },
     include: {
       server: { select: { name: true, slug: true, installCfg: true } },
-      marketInstall: { select: { id: true } },
-      toolkitLinks: {
-        where: { toolkit: { marketInstall: { isNot: null } } },
-        select: { toolkitId: true },
-        take: 1,
-      },
     },
   });
   return deployments.length === deploymentIds.length ? deployments : null;
@@ -157,7 +172,7 @@ async function removeWorkspaceDeployment(
 ) {
   return runMcpDeploymentOperation(workspaceId, deploymentId, async () => {
     const dep = await deploymentInWorkspace(deploymentId, workspaceId);
-    if (!dep || dep.marketInstall || dep.toolkitLinks?.length) return null;
+    if (!dep) return null;
 
     await killProcess(dep.id, { preventRestart: true });
     if (dep.source) {
@@ -197,9 +212,20 @@ async function markDeploymentSetupRequired(
 async function deploymentEnvironmentIsReady(deployment: {
   id: string;
   installCfg: unknown;
+  source?: string | null;
+  sourceRef?: string | null;
   server?: { installCfg?: unknown } | null;
 }): Promise<boolean> {
-  if (missingDeploymentEnvironment(deployment).length === 0) return true;
+  const needsHttpApproval =
+    deployment.source === "remote" &&
+    deployment.sourceRef?.startsWith("http:") &&
+    (deployment.installCfg as Record<string, unknown> | null)
+      ?.allowUnsafeHttp !== true;
+  if (
+    !needsHttpApproval &&
+    missingDeploymentEnvironment(deployment).length === 0
+  )
+    return true;
   await markDeploymentSetupRequired(deployment.id);
   return false;
 }
@@ -221,9 +247,46 @@ export async function deployServerAction(formData: FormData) {
   const recipe = parseServerRecipe(server.installCfg);
   if (!recipe || !server.verifiedAt) return;
 
-  const data = recipeToDeploymentData(recipe);
+  const data = recipeToDeploymentData(recipe, {
+    allowUnsafeHttp: formData.get("allowUnsafeHttp") === "true",
+  });
+  const sealedInstallCfg = sealMcpEnvironment(
+    data.installCfg,
+    ctx.ws.id,
+    data.installCfg.env,
+  );
+  const requiresHttpApproval =
+    recipe.source === "remote" &&
+    new URL(recipe.ref).protocol === "http:" &&
+    data.installCfg.allowUnsafeHttp !== true;
   const requiresSetup =
-    missingRequiredEnvironment(recipe, data.installCfg).length > 0;
+    requiresHttpApproval ||
+    missingRequiredEnvironment(recipe, sealedInstallCfg).length > 0;
+  const existing = await db.deployment.findUnique({
+    where: { workspaceId_serverId: { workspaceId: ctx.ws.id, serverId } },
+    select: { id: true },
+  });
+  // Only a first install persists recipe fields; resolve mutable package
+  // selectors before that write and outside any transaction.
+  let pinned: { sourceRef: string | null; installCfg: unknown } = {
+    sourceRef: data.sourceRef,
+    installCfg: sealedInstallCfg,
+  };
+  if (!existing) {
+    const recipeDeployment: DeploymentForSpawn = {
+      serverId,
+      name: null,
+      source: data.source,
+      sourceRef: data.sourceRef,
+      installCfg: sealedInstallCfg,
+    };
+    try {
+      pinned = await resolvePinnedMcpRecipe(recipeDeployment);
+    } catch (error) {
+      if (!(error instanceof McpPinningError)) throw error;
+      redirect(`/app/${slug}/mcp?error=${error.code}`);
+    }
+  }
   // `update: {}` on re-deploy intentionally preserves the deployment's existing
   // installCfg — so a user's filled-in env values are not wiped by the recipe's
   // empty seeds. Only the first create seeds from the recipe.
@@ -235,8 +298,8 @@ export async function deployServerAction(formData: FormData) {
       serverId,
       status: requiresSetup ? "setup_required" : "provisioning",
       source: data.source,
-      sourceRef: data.sourceRef,
-      installCfg: data.installCfg as Prisma.InputJsonValue,
+      sourceRef: pinned.sourceRef,
+      installCfg: pinned.installCfg as Prisma.InputJsonValue,
     },
   });
 
@@ -248,6 +311,15 @@ export async function deployServerAction(formData: FormData) {
       // edited concurrently between the upsert above and process launch.
       const current = await deploymentInWorkspace(dep.id, ctx.ws.id);
       if (!current) return "missing" as const;
+      if (
+        current.source === "remote" &&
+        new URL(current.sourceRef ?? "").protocol === "http:" &&
+        (current.installCfg as Record<string, unknown> | null)
+          ?.allowUnsafeHttp !== true
+      ) {
+        await markDeploymentSetupRequired(current.id);
+        return "unsafe_http_confirmation_required" as const;
+      }
       const currentRecipe =
         parseServerRecipe(current.server?.installCfg) ?? recipe;
       if (
@@ -258,16 +330,27 @@ export async function deployServerAction(formData: FormData) {
       }
       await startProcess(
         current.id,
-        resolveSpawnSpec(current),
-        mcpProcessOptions(ctx.ws.id, current.id),
+        (
+          await resolveMcpConnectionSpawnSpec({
+            workspaceId: ctx.ws.id,
+            deploymentId: current.id,
+          })
+        ).spec,
+        mcpProcessOptions(ctx, current.id),
       );
       return "started" as const;
     },
   );
 
   revalidatePath(`/app/${slug}/mcp`);
-  revalidatePath(`/app/${slug}/market/mcp`);
-  revalidatePath(`/app/${slug}/market/mcp/${server.slug}`);
+  if (
+    operation.accepted &&
+    operation.value === "unsafe_http_confirmation_required"
+  ) {
+    return redirect(
+      `/app/${slug}/mcp/${dep.id}?error=unsafeHttpConfirmationRequired`,
+    );
+  }
   if (operation.accepted && operation.value === "setup_required") {
     return redirect(`/app/${slug}/mcp/${dep.id}?tab=variables`);
   }
@@ -277,7 +360,13 @@ export async function deployServerAction(formData: FormData) {
   redirect(`/app/${slug}/mcp/${dep.id}`);
 }
 
-export async function deployCustomServerAction(formData: FormData) {
+export type DeployCustomMcpActionState = {
+  error?: "mcpVersionResolutionFailed";
+};
+
+export async function deployCustomServerAction(
+  formData: FormData,
+): Promise<DeployCustomMcpActionState | undefined> {
   const slug = String(formData.get("workspace") ?? "");
   if (!slug) return;
   const ctx = await authorizedWorkspace(slug);
@@ -292,10 +381,34 @@ export async function deployCustomServerAction(formData: FormData) {
       source: "config",
       config: String(formData.get("config") ?? ""),
       network: String(formData.get("network") ?? "isolated"),
+      allowUnsafeHttp: formData.get("allowUnsafeHttp") === "true",
     });
     runtimeFiles = parseRuntimeTextFiles(formData.get("runtimeFiles"));
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("HTTP is unencrypted"))
+      redirect(`/app/${slug}/mcp?error=unsafeHttpConfirmationRequired`);
     return;
+  }
+
+  const sealedInstallCfg = sealMcpEnvironment(
+    parsed.installCfg,
+    ctx.ws.id,
+    (parsed.installCfg as { env?: Record<string, string> } | undefined)?.env ??
+      {},
+  );
+  const customDeployment: DeploymentForSpawn = {
+    serverId: null,
+    name: parsed.name,
+    source: parsed.source,
+    sourceRef: parsed.ref,
+    installCfg: sealedInstallCfg,
+  };
+  let pinned: { sourceRef: string | null; installCfg: unknown };
+  try {
+    pinned = await resolvePinnedMcpRecipe(customDeployment);
+  } catch (error) {
+    if (error instanceof McpPinningError) return { error: error.code };
+    throw error;
   }
 
   const dep = await db.deployment.create({
@@ -304,8 +417,8 @@ export async function deployCustomServerAction(formData: FormData) {
       serverId: null,
       name: parsed.name,
       source: parsed.source,
-      sourceRef: parsed.ref,
-      installCfg: parsed.installCfg ?? undefined,
+      sourceRef: pinned.sourceRef,
+      installCfg: pinned.installCfg as Prisma.InputJsonValue,
       status: "provisioning",
       ...(runtimeFiles.length
         ? {
@@ -326,19 +439,35 @@ export async function deployCustomServerAction(formData: FormData) {
 
   await startProcess(
     dep.id,
-    resolveSpawnSpec({
-      serverId: null,
-      server: null,
-      name: dep.name,
-      source: dep.source,
-      sourceRef: dep.sourceRef,
-      installCfg: dep.installCfg,
-    }),
-    mcpProcessOptions(ctx.ws.id, dep.id),
+    (
+      await resolveMcpConnectionSpawnSpec({
+        workspaceId: ctx.ws.id,
+        deploymentId: dep.id,
+      })
+    ).spec,
+    mcpProcessOptions(ctx, dep.id),
   );
 
   revalidatePath(`/app/${slug}/mcp`);
   redirect(`/app/${slug}/mcp/${dep.id}`);
+}
+
+export type { McpConnectionImpact } from "@/lib/workspace/mcp-connection-impact";
+
+export async function getMcpConnectionImpactAction(
+  workspace: string,
+  deploymentId: string,
+): Promise<McpConnectionImpact | null> {
+  const ctx = await authorizedWorkspace(workspace);
+  if (
+    !ctx ||
+    !(await db.deployment.findFirst({
+      where: { id: deploymentId, workspaceId: ctx.ws.id },
+      select: { id: true },
+    }))
+  )
+    return null;
+  return connectionImpact(ctx.ws.id, deploymentId);
 }
 
 export type McpJsonConfigActionState = {
@@ -346,10 +475,62 @@ export type McpJsonConfigActionState = {
     | "invalidJsonConfig"
     | "notAuthorized"
     | "deploymentNotFound"
-    | "rebuildFailed";
+    | "rebuildFailed"
+    | "sharedChangeConfirmationRequired"
+    | "mcpVersionResolutionFailed";
   savedAt?: number;
   requiresSetup?: boolean;
+  impactedObjects?: McpConnectionImpact;
 };
+
+/** A recipe author's HTTP declaration is not the installing operator's consent. */
+export async function approveUnsafeRemoteMcpHttpAction(
+  formData: FormData,
+): Promise<McpJsonConfigActionState> {
+  const workspace = String(formData.get("workspace") ?? "");
+  const deploymentId = String(formData.get("deploymentId") ?? "");
+  const ctx = await authorizedWorkspace(workspace);
+  if (!ctx) return { error: "notAuthorized" };
+  if (formData.get("allowUnsafeHttp") !== "true")
+    return { error: "invalidJsonConfig" };
+  const operation = await runMcpDeploymentOperation(
+    ctx.ws.id,
+    deploymentId,
+    async () => {
+      const deployment = await db.deployment.findFirst({
+        where: { id: deploymentId, workspaceId: ctx.ws.id, source: "remote" },
+      });
+      if (
+        !deployment?.sourceRef ||
+        new URL(deployment.sourceRef).protocol !== "http:"
+      )
+        return { error: "deploymentNotFound" } as const;
+      const impactedObjects = await connectionImpact(ctx.ws.id, deploymentId);
+      if (!confirmedConnectionImpact(formData, impactedObjects))
+        return {
+          error: "sharedChangeConfirmationRequired",
+          impactedObjects,
+        } as const;
+      const installCfg = {
+        ...sealMcpEnvironment(deployment.installCfg, ctx.ws.id),
+        allowUnsafeHttp: true,
+      };
+      await stopProcess(deploymentId);
+      const requiresSetup =
+        missingDeploymentRequiredEnvironment(installCfg).length > 0;
+      await db.deployment.update({
+        where: { id: deploymentId },
+        data: {
+          installCfg: installCfg as Prisma.InputJsonValue,
+          status: requiresSetup ? "setup_required" : "stopped",
+        },
+      });
+      return { savedAt: Date.now(), requiresSetup };
+    },
+  );
+  revalidatePath(`/app/${workspace}/mcp/${deploymentId}`);
+  return operation.accepted ? operation.value : { error: "deploymentNotFound" };
+}
 
 export type McpJsonConfigRevealResult = {
   config?: string;
@@ -409,6 +590,13 @@ export async function updateMcpJsonConfigAction(
       if (!deployment || !isEditableMcpSource(deployment.source)) {
         return { error: "deploymentNotFound" } as const;
       }
+      const impactedObjects = await connectionImpact(ctx.ws.id, deploymentId);
+      if (!confirmedConnectionImpact(formData, impactedObjects)) {
+        return {
+          error: "sharedChangeConfirmationRequired",
+          impactedObjects,
+        } as const;
+      }
 
       let parsed: ParsedMcpDeploymentConfig;
       try {
@@ -417,13 +605,51 @@ export async function updateMcpJsonConfigAction(
           deployment.source,
           deployment.name ?? undefined,
           network === null ? undefined : String(network),
-          { allowEnvironment: false },
+          {
+            allowEnvironment: false,
+            allowUnsafeHttp:
+              formData.get("allowUnsafeHttp") === "true" ||
+              (deployment.installCfg as Record<string, unknown> | null)
+                ?.allowUnsafeHttp === true,
+          },
         );
       } catch {
         return { error: "invalidJsonConfig" } as const;
       }
+      if (parsed.source === "remote") {
+        const approved =
+          formData.get("allowUnsafeHttp") === "true" ||
+          (parsed.ref === deployment.sourceRef &&
+            (deployment.installCfg as Record<string, unknown> | null)
+              ?.allowUnsafeHttp === true);
+        if (new URL(parsed.ref).protocol === "http:" && !approved)
+          return { error: "invalidJsonConfig" } as const;
+        (parsed.installCfg as Record<string, unknown>).allowUnsafeHttp =
+          approved;
+      }
       if (deployment.serverId && parsed.ref !== deployment.sourceRef) {
         return { error: "invalidJsonConfig" } as const;
+      }
+      // Resolve registry selectors before stopping the process or persisting;
+      // only the package selector changes, every other edited field is kept.
+      const editedDeployment: DeploymentForSpawn = {
+        serverId: deployment.serverId,
+        name: deployment.name,
+        source: parsed.source,
+        sourceRef: parsed.ref,
+        installCfg: parsed.installCfg,
+      };
+      try {
+        const pinned = await resolvePinnedMcpRecipe(editedDeployment);
+        parsed = {
+          ...parsed,
+          ref: pinned.sourceRef ?? parsed.ref,
+          installCfg: pinned.installCfg as typeof parsed.installCfg,
+        } as ParsedMcpDeploymentConfig;
+      } catch (error) {
+        if (error instanceof McpPinningError)
+          return { error: error.code } as const;
+        throw error;
       }
       const catalogServer = deployment.serverId
         ? await db.server.findUnique({
@@ -433,14 +659,24 @@ export async function updateMcpJsonConfigAction(
         : null;
       const recipe = parseServerRecipe(catalogServer?.installCfg);
       const requiredEnvironment =
-        recipe?.env ?? storedRequiredEnvironment(deployment.installCfg);
+        recipe?.env ??
+        (parsed.source === "remote"
+          ? "requiredEnv" in parsed.installCfg
+            ? (parsed.installCfg.requiredEnv ?? [])
+            : []
+          : storedRequiredEnvironment(deployment.installCfg));
       const toolCatalog = readMcpToolCatalog(deployment.installCfg);
       const nextInstallCfg = {
+        ...sealMcpEnvironment(deployment.installCfg, ctx.ws.id),
         ...parsed.installCfg,
         // Credentials have a dedicated Variables view. Keep their current
         // values while a user updates launch/configuration fields so two tabs
         // cannot silently overwrite one another.
-        env: deploymentEnvironmentValues(deployment.installCfg),
+        env:
+          (deployment.installCfg as Record<string, unknown> | null)?.env ?? {},
+        credentialEnvelope: (
+          deployment.installCfg as Record<string, unknown> | null
+        )?.credentialEnvelope,
         ...(requiredEnvironment.length
           ? { requiredEnv: requiredEnvironment }
           : {}),
@@ -451,6 +687,8 @@ export async function updateMcpJsonConfigAction(
           .length > 0;
       if (requiresSetup) {
         await markDeploymentSetupRequired(deployment.id);
+      } else {
+        await stopProcess(deployment.id);
       }
       const updated = await db.$transaction(async (tx) => {
         const value = await tx.deployment.update({
@@ -463,19 +701,6 @@ export async function updateMcpJsonConfigAction(
           },
           include: { server: { select: { name: true } } },
         });
-        await tx.marketInstall.updateMany({
-          where: {
-            OR: [
-              { deploymentId: deployment.id },
-              {
-                toolkit: {
-                  is: { servers: { some: { deploymentId: deployment.id } } },
-                },
-              },
-            ],
-          },
-          data: { status: "modified" },
-        });
         return value;
       });
 
@@ -484,8 +709,14 @@ export async function updateMcpJsonConfigAction(
       try {
         await restartProcess(
           updated.id,
-          resolveSpawnSpec(updated, true),
-          mcpProcessOptions(ctx.ws.id, updated.id),
+          (
+            await resolveMcpConnectionSpawnSpec({
+              workspaceId: ctx.ws.id,
+              deploymentId: updated.id,
+              rebuild: true,
+            })
+          ).spec,
+          mcpProcessOptions(ctx, updated.id),
         );
       } catch {
         await db.deployment.update({
@@ -506,7 +737,6 @@ export async function updateMcpJsonConfigAction(
 export type McpToolExposureActionState = {
   error?: "notAuthorized" | "deploymentNotFound" | "invalidToolSelection";
   savedAt?: number;
-  revision?: number;
 };
 
 const MAX_ALLOWED_MCP_TOOLS = 500;
@@ -534,9 +764,6 @@ export async function updateMcpToolExposureAction(
   const slug = String(formData.get("workspace") ?? "");
   const deploymentId = String(formData.get("deploymentId") ?? "");
   const mode = String(formData.get("mode") ?? "");
-  const rawRevision = Number(formData.get("revision") ?? 0);
-  const revision =
-    Number.isSafeInteger(rawRevision) && rawRevision >= 0 ? rawRevision : 0;
   if (!slug || !deploymentId || (mode !== "all" && mode !== "allowlist")) {
     return { error: "invalidToolSelection" };
   }
@@ -561,31 +788,63 @@ export async function updateMcpToolExposureAction(
     return { error: "invalidToolSelection" };
   }
 
-  await db.$transaction(async (tx) => {
-    await tx.deployment.update({
-      where: { id: deployment.id },
-      data: {
-        mcpToolExposure: mode,
-        mcpAllowedTools: mode === "allowlist" ? selected : [],
-        publicInvocable,
-      },
-    });
-    await tx.marketInstall.updateMany({
-      where: {
-        OR: [
-          { deploymentId: deployment.id },
-          {
-            toolkit: {
-              is: { servers: { some: { deploymentId: deployment.id } } },
-            },
-          },
-        ],
-      },
-      data: { status: "modified" },
-    });
+  await db.deployment.update({
+    where: { id: deployment.id },
+    data: {
+      mcpToolExposure: mode,
+      mcpAllowedTools: mode === "allowlist" ? selected : [],
+      publicInvocable,
+    },
   });
+  void syncDeploymentMcpGrants(deploymentId);
   revalidatePath(`/app/${slug}/mcp/${deployment.id}`);
-  return { savedAt: Date.now(), revision };
+  return { savedAt: Date.now() };
+}
+
+export type McpSandboxPlacementActionState = {
+  error?: "notAuthorized" | "deploymentNotFound" | "unsupported";
+  savedAt?: number;
+};
+
+/** Opt an MCP into running inside each Agent's session sandbox (or back out). */
+export async function updateMcpSandboxPlacementAction(
+  _previous: McpSandboxPlacementActionState,
+  formData: FormData,
+): Promise<McpSandboxPlacementActionState> {
+  const slug = String(formData.get("workspace") ?? "");
+  const deploymentId = String(formData.get("deploymentId") ?? "");
+  const enabled = formData.get("runInAgentSandbox") === "on";
+  const ctx = await authorizedWorkspace(slug);
+  if (!ctx) return { error: "notAuthorized" };
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const deployment = await db.deployment.findFirst({
+      where: { id: deploymentId, workspaceId: ctx.ws.id },
+    });
+    if (!deployment) return { error: "deploymentNotFound" };
+    if (enabled && !supportsAgentSandboxPlacement(deployment))
+      return { error: "unsupported" };
+    if (mcpRunsInAgentSandbox(deployment) === enabled)
+      return { savedAt: Date.now() };
+    const cfg =
+      deployment.installCfg &&
+      typeof deployment.installCfg === "object" &&
+      !Array.isArray(deployment.installCfg)
+        ? { ...(deployment.installCfg as Record<string, unknown>) }
+        : {};
+    if (enabled) cfg.runInAgentSandbox = true;
+    else delete cfg.runInAgentSandbox;
+    // Compare-and-swap: never overwrite a concurrent config or catalog write.
+    const updated = await db.deployment.updateMany({
+      where: { id: deployment.id, updatedAt: deployment.updatedAt },
+      data: { installCfg: cfg as Prisma.InputJsonValue },
+    });
+    if (updated.count === 1) {
+      // Placement applies live on each session's next MCP request.
+      revalidatePath(`/app/${slug}/mcp/${deployment.id}`);
+      return { savedAt: Date.now() };
+    }
+  }
+  return { error: "deploymentNotFound" };
 }
 
 export type McpConsoleToolResult = {
@@ -639,7 +898,9 @@ export async function runMcpConsoleToolAction(input: {
   const deployment = await deploymentInWorkspace(deploymentId, ctx.ws.id);
   if (!deployment) return { error: "deploymentNotFound" };
   const remoteSpec =
-    deployment.source === "remote" ? remoteMcpSpec(deployment) : null;
+    deployment.source === "remote"
+      ? await remoteMcpSpec(ctx.ws.id, deployment.id)
+      : null;
   if (deployment.source === "remote" && !remoteSpec)
     return { error: "toolCallFailed" };
   if (liveStatus(deployment.id) !== "running")
@@ -704,11 +965,15 @@ export async function runMcpConsoleToolAction(input: {
 
 const MAX_DEPLOYMENT_NAME_LENGTH = 80;
 
-function remoteMcpSpec(
-  deployment: Parameters<typeof resolveSpawnSpec>[0],
-): Extract<SpawnSpec, { kind: "remote" }> | null {
+async function remoteMcpSpec(
+  workspaceId: string,
+  deploymentId: string,
+): Promise<Extract<SpawnSpec, { kind: "remote" }> | null> {
   try {
-    const spec = resolveSpawnSpec(deployment);
+    const { spec } = await resolveMcpConnectionSpawnSpec({
+      workspaceId,
+      deploymentId,
+    });
     return spec.kind === "remote" ? spec : null;
   } catch {
     return null;
@@ -719,17 +984,6 @@ type DeploymentEnvironmentPatch = {
   set: Record<string, string>;
   remove: string[];
 };
-
-function deploymentEnvironmentValues(value: unknown): Record<string, string> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  const raw = (value as Record<string, unknown>).env;
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
-  const env: Record<string, string> = {};
-  for (const [key, entry] of Object.entries(raw as Record<string, unknown>)) {
-    if (ENV_KEY.test(key) && typeof entry === "string") env[key] = entry;
-  }
-  return env;
-}
 
 function validDeploymentEnvironment(env: Record<string, string>): boolean {
   const entries = Object.entries(env);
@@ -813,6 +1067,7 @@ function cloneInstallCfg(
     configuration.requiredEnv = [...requiredEnvironment];
   }
   if (!copyEnvironmentVariables) {
+    delete configuration.credentialEnvelope;
     if (requiredEnvironment.length > 0) {
       configuration.env = Object.fromEntries(
         requiredEnvironment.map((key) => [key, ""]),
@@ -824,12 +1079,25 @@ function cloneInstallCfg(
   return configuration as Prisma.InputJsonValue;
 }
 
-export async function setDeploymentEnvAction(formData: FormData) {
+export type DeploymentEnvActionState = {
+  error?:
+    | "invalidEnvironment"
+    | "notAuthorized"
+    | "deploymentNotFound"
+    | "sharedChangeConfirmationRequired";
+  savedAt?: number;
+  requiresSetup?: boolean;
+  impactedObjects?: McpConnectionImpact;
+};
+
+export async function setDeploymentEnvAction(
+  formData: FormData,
+): Promise<DeploymentEnvActionState> {
   const slug = String(formData.get("workspace") ?? "");
   const deploymentId = String(formData.get("deploymentId") ?? "");
-  if (!slug || !deploymentId) return;
+  if (!slug || !deploymentId) return { error: "deploymentNotFound" };
   const ctx = await authorizedWorkspace(slug);
-  if (!ctx) return;
+  if (!ctx) return { error: "notAuthorized" };
 
   const patch = formData.has("changes")
     ? parseDeploymentEnvironmentPatch(formData.get("changes"))
@@ -846,64 +1114,82 @@ export async function setDeploymentEnvAction(formData: FormData) {
         if (!row.key || !ENV_KEY.test(row.key)) continue;
         next[row.key] = String(row.value ?? "");
       }
-      if (!validDeploymentEnvironment(next)) return;
+      if (!validDeploymentEnvironment(next))
+        return { error: "invalidEnvironment" };
       legacyEnv = next;
     } catch {
-      return;
+      return { error: "invalidEnvironment" };
     }
   }
-  if (formData.has("changes") && !patch) return;
+  if (formData.has("changes") && !patch) return { error: "invalidEnvironment" };
 
-  await runMcpDeploymentOperation(ctx.ws.id, deploymentId, async () => {
-    const dep = await db.deployment.findFirst({
-      where: {
-        id: deploymentId,
-        workspaceId: ctx.ws.id,
-        OR: [{ source: null }, { source: { not: "sandbox" } }],
-      },
-      select: {
-        id: true,
-        installCfg: true,
-        status: true,
-        server: { select: { installCfg: true } },
-      },
-    });
-    if (!dep) return;
+  const operation = await runMcpDeploymentOperation(
+    ctx.ws.id,
+    deploymentId,
+    async () => {
+      const dep = await db.deployment.findFirst({
+        where: {
+          id: deploymentId,
+          workspaceId: ctx.ws.id,
+          OR: [{ source: null }, { source: { not: "sandbox" } }],
+        },
+        select: {
+          id: true,
+          installCfg: true,
+          source: true,
+          sourceRef: true,
+          status: true,
+          server: { select: { installCfg: true } },
+        },
+      });
+      if (!dep) return { error: "deploymentNotFound" } as const;
+      const impactedObjects = await connectionImpact(ctx.ws.id, deploymentId);
+      if (!confirmedConnectionImpact(formData, impactedObjects))
+        return {
+          error: "sharedChangeConfirmationRequired",
+          impactedObjects,
+        } as const;
 
-    const env = legacyEnv
-      ? legacyEnv
-      : {
-          ...deploymentEnvironmentValues(dep.installCfg),
-          ...patch?.set,
-        };
-    for (const key of patch?.remove ?? []) delete env[key];
-    if (!validDeploymentEnvironment(env)) return;
+      const env = legacyEnv
+        ? legacyEnv
+        : {
+            ...resolveMcpEnvironment(dep.installCfg, ctx.ws.id),
+            ...patch?.set,
+          };
+      for (const key of patch?.remove ?? []) delete env[key];
+      if (!validDeploymentEnvironment(env))
+        return { error: "invalidEnvironment" } as const;
 
-    const next: Record<string, unknown> = {
-      ...((dep.installCfg ?? {}) as Record<string, unknown>),
-      env,
-    };
-    const missing = missingDeploymentEnvironment({ ...dep, installCfg: next });
-    if (missing.length > 0) {
-      // Stop first. If termination fails, retain the old persisted credentials
-      // instead of claiming they were removed while their process still runs.
-      await markDeploymentSetupRequired(dep.id);
-    }
-    const nextStatus =
-      missing.length > 0
-        ? "setup_required"
-        : dep.status === "setup_required"
-          ? "stopped"
-          : null;
-    await db.deployment.update({
-      where: { id: deploymentId },
-      data: {
-        installCfg: next as Prisma.InputJsonValue,
-        ...(nextStatus ? { status: nextStatus } : {}),
-      },
-    });
-  });
+      const next = sealMcpEnvironment(dep.installCfg, ctx.ws.id, env);
+      const missing = missingDeploymentEnvironment({
+        ...dep,
+        installCfg: next,
+      });
+      const requiresSetup =
+        missing.length > 0 ||
+        (dep.source === "remote" &&
+          dep.sourceRef?.startsWith("http:") === true &&
+          next.allowUnsafeHttp !== true);
+      if (requiresSetup) {
+        // Stop first. If termination fails, retain the old persisted credentials
+        // instead of claiming they were removed while their process still runs.
+        await markDeploymentSetupRequired(dep.id);
+      }
+      const nextStatus = requiresSetup ? "setup_required" : "stopped";
+      // Every rotation/revocation stops the old process before persisting new values.
+      await stopProcess(dep.id);
+      await db.deployment.update({
+        where: { id: deploymentId },
+        data: {
+          installCfg: next as Prisma.InputJsonValue,
+          ...(nextStatus ? { status: nextStatus } : {}),
+        },
+      });
+      return { savedAt: Date.now(), requiresSetup };
+    },
+  );
   revalidatePath(`/app/${slug}/mcp/${deploymentId}`);
+  return operation.accepted ? operation.value : { error: "deploymentNotFound" };
 }
 
 export async function renameDeploymentAction(formData: FormData) {
@@ -951,6 +1237,13 @@ export async function cloneDeploymentAction(formData: FormData) {
     async () => {
       const source = await deploymentInWorkspace(deploymentId, ctx.ws.id);
       if (!source) return null;
+      let pinned: { sourceRef: string | null; installCfg: unknown };
+      try {
+        pinned = await resolvePinnedMcpRecipe(source);
+      } catch (error) {
+        if (error instanceof McpPinningError) return { error: error.code };
+        throw error;
+      }
 
       const defaultName = `${deploymentLabel(source)
         .name.slice(0, MAX_DEPLOYMENT_NAME_LENGTH - 5)
@@ -964,7 +1257,7 @@ export async function cloneDeploymentAction(formData: FormData) {
       const requiredEnvironment =
         sourceRecipe?.env ?? storedRequiredEnvironment(source.installCfg);
       const clonedInstallCfg = cloneInstallCfg(
-        source.installCfg,
+        sealMcpEnvironment(pinned.installCfg, ctx.ws.id) as Prisma.JsonValue,
         copyEnvironmentVariables,
         requiredEnvironment,
       );
@@ -993,7 +1286,7 @@ export async function cloneDeploymentAction(formData: FormData) {
           serverId: null,
           name,
           source: source.source,
-          sourceRef: source.sourceRef,
+          sourceRef: pinned.sourceRef,
           installCfg: clonedInstallCfg,
           status: cloneRequiresSetup ? "setup_required" : "provisioning",
           mcpToolExposure: source.mcpToolExposure,
@@ -1033,8 +1326,13 @@ export async function cloneDeploymentAction(formData: FormData) {
           }
           await startProcess(
             current.id,
-            resolveSpawnSpec(current),
-            mcpProcessOptions(ctx.ws.id, current.id),
+            (
+              await resolveMcpConnectionSpawnSpec({
+                workspaceId: ctx.ws.id,
+                deploymentId: current.id,
+              })
+            ).spec,
+            mcpProcessOptions(ctx, current.id),
           );
           return { id: cloned.id, setupRequired: false };
         },
@@ -1043,6 +1341,10 @@ export async function cloneDeploymentAction(formData: FormData) {
     },
   );
   if (!operation.accepted || !operation.value) return;
+  if ("error" in operation.value)
+    redirect(
+      `/app/${slug}/mcp/${deploymentId}?tab=settings&error=${operation.value.error}`,
+    );
   revalidatePath(`/app/${slug}/mcp`);
   redirect(
     `/app/${slug}/mcp/${operation.value.id}${operation.value.setupRequired ? "?tab=variables" : ""}`,
@@ -1058,10 +1360,6 @@ export async function removeDeploymentAction(formData: FormData) {
   const operation = await removeWorkspaceDeployment(ctx.ws.id, deploymentId);
   if (!operation.accepted || !operation.value) return;
   revalidatePath(`/app/${slug}/mcp`);
-  revalidatePath(`/app/${slug}/market/mcp`);
-  if (operation.value.serverSlug) {
-    revalidatePath(`/app/${slug}/market/mcp/${operation.value.serverSlug}`);
-  }
   // Redirect to the list: this action also fires from the deployment detail
   // page, which would otherwise re-render against the now-deleted row → 404.
   redirect(`/app/${slug}/mcp`);
@@ -1077,11 +1375,7 @@ export async function removeDeploymentsAction(formData: FormData) {
     deploymentIds,
     ctx.ws.id,
   );
-  if (
-    !deployments ||
-    deployments.some((dep) => dep.marketInstall || dep.toolkitLinks.length)
-  )
-    return;
+  if (!deployments) return;
 
   const removed = [] as Array<{ serverSlug: string | null }>;
   for (const deployment of deployments) {
@@ -1091,12 +1385,6 @@ export async function removeDeploymentsAction(formData: FormData) {
   if (!removed.length) return;
 
   revalidatePath(`/app/${slug}/mcp`);
-  revalidatePath(`/app/${slug}/market/mcp`);
-  for (const serverSlug of new Set(
-    removed.map(({ serverSlug }) => serverSlug).filter(Boolean),
-  )) {
-    revalidatePath(`/app/${slug}/market/mcp/${serverSlug}`);
-  }
 }
 
 export async function startDeploymentAction(formData: FormData) {
@@ -1110,8 +1398,13 @@ export async function startDeploymentAction(formData: FormData) {
     if (!dep || !(await deploymentEnvironmentIsReady(dep))) return;
     await startProcess(
       dep.id,
-      resolveSpawnSpec(dep),
-      mcpProcessOptions(ctx.ws.id, dep.id),
+      (
+        await resolveMcpConnectionSpawnSpec({
+          workspaceId: ctx.ws.id,
+          deploymentId: dep.id,
+        })
+      ).spec,
+      mcpProcessOptions(ctx, dep.id),
     );
   });
   revalidatePath(`/app/${slug}/mcp`);
@@ -1136,8 +1429,13 @@ export async function startDeploymentsAction(formData: FormData) {
       if (!current || !(await deploymentEnvironmentIsReady(current))) return;
       await startProcess(
         current.id,
-        resolveSpawnSpec(current),
-        mcpProcessOptions(ctx.ws.id, current.id),
+        (
+          await resolveMcpConnectionSpawnSpec({
+            workspaceId: ctx.ws.id,
+            deploymentId: current.id,
+          })
+        ).spec,
+        mcpProcessOptions(ctx, current.id),
       );
     });
   }
@@ -1209,8 +1507,13 @@ export async function restartDeploymentAction(formData: FormData) {
         return "setup_required" as const;
       await restartProcess(
         dep.id,
-        resolveSpawnSpec(dep),
-        mcpProcessOptions(ctx.ws.id, dep.id),
+        (
+          await resolveMcpConnectionSpawnSpec({
+            workspaceId: ctx.ws.id,
+            deploymentId: dep.id,
+          })
+        ).spec,
+        mcpProcessOptions(ctx, dep.id),
       );
       return "restarted" as const;
     },
@@ -1242,8 +1545,14 @@ export async function rebuildDeploymentAction(formData: FormData) {
         return "setup_required" as const;
       await restartProcess(
         dep.id,
-        resolveSpawnSpec(dep, true),
-        mcpProcessOptions(ctx.ws.id, dep.id),
+        (
+          await resolveMcpConnectionSpawnSpec({
+            workspaceId: ctx.ws.id,
+            deploymentId: dep.id,
+            rebuild: true,
+          })
+        ).spec,
+        mcpProcessOptions(ctx, dep.id),
       );
       return "rebuilt" as const;
     },
@@ -1278,8 +1587,6 @@ export async function installSkillAction(formData: FormData) {
     create: { workspaceId: ctx.ws.id, skillId },
   });
   revalidatePath(`/app/${slug}/skills`);
-  revalidatePath(`/app/${slug}/market/skills`);
-  revalidatePath(`/app/${slug}/market/skills/${skill.slug}`);
 }
 
 export async function uninstallSkillAction(formData: FormData) {
@@ -1295,26 +1602,14 @@ export async function uninstallSkillAction(formData: FormData) {
       select: {
         id: true,
         skill: { select: { slug: true } },
-        marketInstall: { select: { id: true } },
-        toolkitLinks: {
-          where: { toolkit: { marketInstall: { isNot: null } } },
-          select: { toolkitId: true },
-          take: 1,
-        },
       },
     });
-    if (
-      selected.length !== installIds.length ||
-      selected.some((skill) => skill.marketInstall || skill.toolkitLinks.length)
-    )
-      return null;
+    if (selected.length !== installIds.length) return null;
 
     const deleted = await tx.installedSkill.deleteMany({
       where: {
         id: { in: installIds },
         workspaceId: ctx.ws.id,
-        marketInstall: { is: null },
-        toolkitLinks: { none: { toolkit: { marketInstall: { isNot: null } } } },
       },
     });
     if (deleted.count !== installIds.length)
@@ -1323,9 +1618,4 @@ export async function uninstallSkillAction(formData: FormData) {
   });
   if (!installed) return;
   revalidatePath(`/app/${slug}/skills`);
-  revalidatePath(`/app/${slug}/market/skills`);
-  for (const skill of installed) {
-    if (skill.skill?.slug)
-      revalidatePath(`/app/${slug}/market/skills/${skill.skill.slug}`);
-  }
 }

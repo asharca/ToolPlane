@@ -2,19 +2,29 @@
 import { BouncyAccordion } from "@/components/motion/bouncy-accordion";
 import { Button } from "@/components/motion/button/base";
 import { Input } from "@/components/motion/input";
+import { SafeStreamdown } from "@/components/dashboard/SafeStreamdown";
+import { displayMessagingUserText } from "@/lib/agents/messaging";
 import { FormSelect } from "@/components/ui/FormSelect";
 import { Switch } from "@/components/motion/switch";
 import { AnimatedBadge } from "@/components/motion/animated-badge";
 import {
   CenterMorphModal,
-  CenterMorphModalClose,
   CenterMorphModalContent,
 } from "@/components/motion/center-morph-modal";
+import {
+  DialogBody,
+  DialogCancel,
+  DialogField,
+  DialogFooter,
+  DialogHeader,
+} from "@/components/dashboard/dialog";
 
 import Image from "next/image";
 import {
   useCallback,
   useEffect,
+  useId,
+  useLayoutEffect,
   useRef,
   useState,
   type ReactNode,
@@ -23,6 +33,7 @@ import { useTranslations } from "next-intl";
 import {
   ArrowRightLeft,
   FileText,
+  MessagesSquare,
   LoaderCircle,
   Pencil,
   Plus,
@@ -35,6 +46,8 @@ import { CopyButton } from "@/components/dashboard/CopyButton";
 import { QrPairingDisplay } from "@/components/dashboard/agents/QrPairingDisplay";
 import type { AgentChannelConnectionClientView as Channel } from "@/lib/agents/channel-connection-client";
 import type { AgentChannelLogEntry } from "@/lib/agents/channel-runtime-logs";
+import { LiveControls } from "@/components/observability/LiveToggle";
+import { RelativeTime } from "@/components/observability/LogPrimitives";
 import {
   getMessagingPlatform,
   hasBuiltInPairingProvider,
@@ -94,7 +107,6 @@ type Command = {
     | "stop"
     | "pair"
     | "check"
-    | "apply"
     | "move";
   connectionId?: string;
   platform?: string;
@@ -102,7 +114,6 @@ type Command = {
   agentId?: string | null;
   sandboxId?: string;
   credentials?: Record<string, string>;
-  allowedUserIds?: string;
 };
 type ChannelResponse = {
   connections?: Channel[];
@@ -121,7 +132,7 @@ function PlatformIcon({ platform }: { platform: string }) {
       alt=""
       width={20}
       height={20}
-      className="size-5 shrink-0 rounded-sm object-contain"
+      className="size-5 shrink-0 rounded-lg object-contain"
     />
   ) : (
     <Radio className="size-5 shrink-0 text-muted-foreground" />
@@ -150,14 +161,196 @@ function ChannelDialog({
       <CenterMorphModalContent
         ariaLabel={title}
         closeButtonLabel={t("close")}
-        className={wide ? "max-w-2xl" : "max-w-lg"}
+        className={`flex max-h-[calc(100dvh-4rem)] flex-col ${wide ? "max-w-2xl" : "max-w-lg"}`}
       >
-        <header className="mb-4 flex min-h-16 min-w-0 items-center gap-3 pl-5 pr-16">
-          <h2 className="text-base font-semibold text-foreground">{title}</h2>
-        </header>
+        <DialogHeader title={title} />
         {children}
       </CenterMorphModalContent>
     </CenterMorphModal>
+  );
+}
+
+type ChannelHistoryMessage = {
+  id: string;
+  role: string;
+  text: string;
+  createdAt: string;
+  conversation: { id: string; title: string | null };
+};
+
+function ChannelHistory({
+  endpoint,
+  channel,
+  onClose,
+}: {
+  endpoint: string;
+  channel: Channel;
+  onClose: () => void;
+}) {
+  const t = useTranslations("console.agentMessaging");
+  const [messages, setMessages] = useState<ChannelHistoryMessage[]>([]);
+  const [error, setError] = useState("");
+  const [hasOlder, setHasOlder] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const scroller = useRef<HTMLDivElement>(null);
+  const pinned = useRef(true);
+  const olderHeight = useRef<number | null>(null);
+  const latest = useRef<string | null>(null);
+  const merge = useCallback((incoming: ChannelHistoryMessage[]) => {
+    if (!incoming.length) return;
+    setMessages((current) =>
+      [
+        ...new Map([...current, ...incoming].map((m) => [m.id, m])).values(),
+      ].sort(
+        (a, b) =>
+          a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
+      ),
+    );
+  }, []);
+  useLayoutEffect(() => {
+    const node = scroller.current;
+    if (!node || !messages.length) return;
+    if (olderHeight.current !== null) {
+      node.scrollTop += node.scrollHeight - olderHeight.current;
+      olderHeight.current = null;
+    } else if (pinned.current) node.scrollTop = node.scrollHeight;
+  }, [messages]);
+  useEffect(() => {
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
+    let active = false;
+    async function refresh() {
+      if (active || controller.signal.aborted) return;
+      clearTimeout(timer);
+      active = true;
+      try {
+        if (!document.hidden) {
+          const response = await fetch(
+            `${endpoint}?history=${encodeURIComponent(channel.id)}${latest.current ? `&after=${encodeURIComponent(latest.current)}` : ""}`,
+            { cache: "no-store", signal: controller.signal },
+          );
+          if (!response.ok) throw new Error(t("requestFailed"));
+          const data = (await response.json()) as {
+            messages: ChannelHistoryMessage[];
+            hasMore: boolean;
+          };
+          if (!controller.signal.aborted) {
+            if (!latest.current) setHasOlder(data.hasMore);
+            latest.current = data.messages.at(-1)?.id ?? latest.current;
+            merge(data.messages);
+            setError("");
+          }
+        }
+      } catch (error) {
+        if (!controller.signal.aborted)
+          setError(error instanceof Error ? error.message : t("requestFailed"));
+      } finally {
+        active = false;
+        if (!controller.signal.aborted) timer = setTimeout(refresh, 1000);
+      }
+    }
+    void refresh();
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      controller.abort();
+      clearTimeout(timer);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [endpoint, channel.id, merge, t]);
+  async function loadOlder() {
+    if (!messages.length || loadingOlder) return;
+    setLoadingOlder(true);
+    try {
+      const response = await fetch(
+        `${endpoint}?history=${encodeURIComponent(channel.id)}&before=${encodeURIComponent(messages[0].id)}`,
+        { cache: "no-store" },
+      );
+      if (!response.ok) throw new Error(t("requestFailed"));
+      const data = (await response.json()) as {
+        messages: ChannelHistoryMessage[];
+        hasMore: boolean;
+      };
+      olderHeight.current = scroller.current?.scrollHeight ?? null;
+      setHasOlder(data.hasMore);
+      merge(data.messages);
+      setError("");
+    } catch (error) {
+      setError(error instanceof Error ? error.message : t("requestFailed"));
+    } finally {
+      setLoadingOlder(false);
+    }
+  }
+  return (
+    <ChannelDialog
+      title={`${channel.name} · ${t("conversationHistory")}`}
+      onClose={onClose}
+      wide
+    >
+      <p className="px-6 pb-3 text-xs text-muted-foreground">
+        {t("historyLiveReadOnly")}
+      </p>
+      {error ? (
+        <p role="alert" className="px-6 pb-3 text-sm text-destructive">
+          {error}
+        </p>
+      ) : null}
+      <div
+        ref={scroller}
+        role="log"
+        aria-label={t("conversationHistory")}
+        aria-live="polite"
+        className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 pb-6"
+        onScroll={() => {
+          const node = scroller.current;
+          if (node)
+            pinned.current =
+              node.scrollHeight - node.scrollTop - node.clientHeight < 48;
+        }}
+      >
+        {hasOlder ? (
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={loadingOlder}
+            onClick={loadOlder}
+          >
+            {t("historyLoadOlder")}
+          </Button>
+        ) : null}
+        {!messages.length && !error ? (
+          <p className="py-8 text-center text-sm text-muted-foreground">
+            {t("historyEmpty")}
+          </p>
+        ) : null}
+        {messages.map((message) => (
+          <article
+            key={message.id}
+            className="min-w-0 rounded-lg border border-border p-3"
+          >
+            <div className="mb-2 flex flex-wrap gap-x-2 text-xs text-muted-foreground">
+              <span>{message.conversation.title}</span>
+              <span>
+                {t(
+                  message.role === "user" ? "historyUser" : "historyAssistant",
+                )}
+              </span>
+              <RelativeTime value={message.createdAt} />
+            </div>
+            <div className="break-words text-sm [overflow-wrap:anywhere]">
+              {message.role === "assistant" ? (
+                <SafeStreamdown mode="static" parseIncompleteMarkdown={false}>
+                  {message.text}
+                </SafeStreamdown>
+              ) : (
+                <p className="whitespace-pre-wrap">
+                  {displayMessagingUserText(message.text)}
+                </p>
+              )}
+            </div>
+          </article>
+        ))}
+      </div>
+    </ChannelDialog>
   );
 }
 
@@ -171,10 +364,21 @@ function ChannelLogs({
   onClose: () => void;
 }) {
   const t = useTranslations("console.agentMessaging");
+  const viewer = useTranslations("console.observability.viewer");
+  const levelId = useId();
+  const searchId = useId();
   const [logs, setLogs] = useState<AgentChannelLogEntry[]>([]);
   const [error, setError] = useState("");
-  const requestFailed = t("requestFailed");
+  const [level, setLevel] = useState("");
+  const [search, setSearch] = useState("");
+  const [paused, setPaused] = useState(false);
+  const [pendingCount, setPendingCount] = useState(0);
+  const [connected, setConnected] = useState(false);
+  const pausedRef = useRef(false);
+  const displayed = useRef<AgentChannelLogEntry[]>([]);
+  const latest = useRef<AgentChannelLogEntry[]>([]);
   const tail = useRef<HTMLDivElement>(null);
+  const requestFailed = t("requestFailed");
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
@@ -188,12 +392,34 @@ function ChannelLogs({
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || requestFailed);
         if (!cancelled) {
-          setLogs(data.logs);
+          const snapshot = data.logs as AgentChannelLogEntry[];
+          latest.current = snapshot;
+          if (!pausedRef.current) {
+            displayed.current = snapshot;
+            setLogs(snapshot);
+          } else {
+            const previous = new Map<string, number>();
+            for (const entry of displayed.current) {
+              const key = JSON.stringify(entry);
+              previous.set(key, (previous.get(key) ?? 0) + 1);
+            }
+            let count = 0;
+            for (const entry of snapshot) {
+              const key = JSON.stringify(entry);
+              const remaining = previous.get(key) ?? 0;
+              if (remaining) previous.set(key, remaining - 1);
+              else count++;
+            }
+            setPendingCount(count);
+          }
+          setConnected(true);
           setError("");
         }
-      } catch (error) {
-        if (!cancelled)
-          setError(error instanceof Error ? error.message : requestFailed);
+      } catch (cause) {
+        if (!cancelled) {
+          setConnected(false);
+          setError(cause instanceof Error ? cause.message : requestFailed);
+        }
       }
       if (!cancelled) timer = setTimeout(poll, 2000);
     }
@@ -206,13 +432,26 @@ function ChannelLogs({
   }, [endpoint, channel.id, requestFailed]);
   const lastTimestamp = logs.at(-1)?.timestamp;
   useEffect(() => {
-    void lastTimestamp; // Scroll only when a new log timestamp arrives.
-    tail.current?.scrollIntoView({ block: "nearest" });
-  }, [lastTimestamp]);
-  const text = logs
+    void lastTimestamp;
+    if (!paused) tail.current?.scrollIntoView({ block: "nearest" });
+  }, [lastTimestamp, paused]);
+  const visible = logs.filter(
+    (entry) =>
+      (!level || entry.level === level) &&
+      (!search ||
+        entry.message.toLocaleLowerCase().includes(search.toLocaleLowerCase())),
+  );
+  const occurrences = new Map<string, number>();
+  const keyedLogs = visible.map((entry) => {
+    const identity = JSON.stringify(entry);
+    const occurrence = occurrences.get(identity) ?? 0;
+    occurrences.set(identity, occurrence + 1);
+    return { entry, key: `${identity}:${occurrence}` };
+  });
+  const text = visible
     .map(
       (entry) =>
-        `${new Date(entry.timestamp).toLocaleTimeString()} [${entry.level.toUpperCase()}] ${entry.message}`,
+        `${new Date(entry.timestamp).toLocaleString()} [${entry.level.toUpperCase()}] ${entry.message}`,
     )
     .join("\n");
   return (
@@ -221,36 +460,99 @@ function ChannelLogs({
       onClose={onClose}
       wide
     >
-      <div className="mb-2 flex justify-end">
-        <CopyButton text={text} label={t("copyLogs")} iconOnly />
-      </div>
-      {error && (
-        <p role="alert" className="mb-2 text-sm text-destructive">
-          {error}
-        </p>
-      )}
-      <div
-        className="h-80 overflow-auto rounded-md bg-muted/50 p-3 font-mono text-xs leading-5"
-        role="log"
-        aria-label={t("logs")}
-      >
-        {!logs.length && (
-          <p className="py-12 text-center text-muted-foreground">
-            {t("noLogs")}
+      <DialogBody>
+        <div className="flex flex-wrap items-end gap-3">
+          <DialogField
+            label={t("logLevel")}
+            htmlFor={levelId}
+            className="w-full sm:w-40"
+          >
+            <FormSelect
+              id={levelId}
+              value={level}
+              label={t("logLevel")}
+              options={[
+                { value: "", label: viewer("all") },
+                { value: "info", label: t("logInfo") },
+                { value: "error", label: t("logError") },
+              ]}
+              onValueChange={setLevel}
+              className="w-full"
+            />
+          </DialogField>
+          <DialogField
+            label={viewer("search")}
+            htmlFor={searchId}
+            className="min-w-0 flex-1 basis-48"
+          >
+            <Input
+              id={searchId}
+              value={search}
+              onChange={setSearch}
+              className="w-full"
+            />
+          </DialogField>
+          <div className="flex h-11 items-center gap-2">
+            <LiveControls
+              paused={paused}
+              count={pendingCount}
+              connected={connected}
+              onToggle={() => {
+                const next = !pausedRef.current;
+                pausedRef.current = next;
+                setPaused(next);
+                if (!next) {
+                  displayed.current = latest.current;
+                  setLogs(latest.current);
+                  setPendingCount(0);
+                }
+              }}
+            />
+            <CopyButton text={text} label={t("copyLogs")} iconOnly />
+          </div>
+        </div>
+        {error && (
+          <p role="alert" className="text-sm text-destructive">
+            {error}
           </p>
         )}
-        {logs.map((entry, index) => (
-          <div
-            // biome-ignore lint/suspicious/noArrayIndexKey: The log snapshot has no event IDs and may contain identical entries at the same timestamp.
-            key={`${entry.timestamp}:${index}`}
-            className={`whitespace-pre-wrap break-all ${entry.level === "error" ? "text-destructive text-destructive" : "text-muted-foreground"}`}
-          >
-            {new Date(entry.timestamp).toLocaleTimeString()} [
-            {entry.level.toUpperCase()}] {entry.message}
-          </div>
-        ))}
-        <div ref={tail} />
-      </div>
+        <div
+          className="h-80 overflow-auto rounded-xl border border-border"
+          role="log"
+          aria-live={paused ? "off" : "polite"}
+          aria-label={t("logs")}
+        >
+          {!visible.length && (
+            <p className="py-12 text-center text-sm text-muted-foreground">
+              {t("noLogs")}
+            </p>
+          )}
+          <ol className="divide-y divide-border">
+            {keyedLogs.map(({ entry, key }) => (
+              <li
+                key={key}
+                className="grid gap-2 p-3 text-xs sm:grid-cols-[9rem_4rem_minmax(0,1fr)]"
+              >
+                <RelativeTime value={new Date(entry.timestamp).toISOString()} />
+                <span
+                  className={
+                    entry.level === "error"
+                      ? "font-medium text-destructive"
+                      : "text-muted-foreground"
+                  }
+                >
+                  {t(entry.level === "error" ? "logError" : "logInfo")}
+                </span>
+                <p className="whitespace-pre-wrap break-words font-mono">
+                  {entry.message}
+                </p>
+              </li>
+            ))}
+          </ol>
+          <div ref={tail} />
+        </div>
+      </DialogBody>
+      <DialogFooter cancel={<DialogCancel>{t("close")}</DialogCancel>} />
     </ChannelDialog>
   );
 }
@@ -259,10 +561,10 @@ function ChannelCommands() {
   const t = useTranslations("console.agentMessaging");
   return (
     <section
-      className="border-t border-border pt-3"
+      className="border-t border-border pt-4"
       aria-label={t("supportedCommands")}
     >
-      <h3 className="mb-2 text-xs font-medium">{t("supportedCommands")}</h3>
+      <h3 className="mb-2 text-sm font-medium">{t("supportedCommands")}</h3>
       <dl className="space-y-2 text-xs">
         {(["new", "compact", "help", "whoami"] as const).map((command) => (
           <div
@@ -307,14 +609,10 @@ function ChannelEditor({
   const [name, setName] = useState(channel.name);
   const [agentId, setAgentId] = useState(channel.agentId ?? "");
   const [values, setValues] = useState<Record<string, string>>({});
-  const [allowedUsers, setAllowedUsers] = useState<string | null>(null);
+  const idPrefix = useId();
   const pairing = channel.pairing;
   const waiting =
     pairing?.status === "waiting" || pairing?.status === "scanned";
-  const needsApply =
-    pairing?.provider === "telegram_managed_bot" &&
-    pairing.status === "ready" &&
-    !pairing.extra?.allowedUserIds;
   const credentialValue = (key: string, fallback = "") =>
     values[key] ?? channel.credentialValues[key] ?? fallback;
   const update = (changes: Omit<Command, "action" | "connectionId">) =>
@@ -352,12 +650,23 @@ function ChannelEditor({
       : field.label;
     const value = credentialValue(field.name, field.defaultValue);
     const boolean = field.inputType === "boolean";
+    const id = `${idPrefix}-${field.name}`;
+    const dirty =
+      values[field.name] !== undefined &&
+      values[field.name] !==
+        (channel.credentialValues[field.name] ?? field.defaultValue ?? "");
     return (
-      <div
+      <DialogField
         key={field.name}
-        className={`block space-y-1.5 text-xs ${boolean || field.secret || field.name.includes("ALLOWED") ? "sm:col-span-2" : ""}`}
+        label={label}
+        htmlFor={boolean ? undefined : id}
+        dirty={dirty}
+        className={
+          boolean || field.secret || field.name.includes("ALLOWED")
+            ? "sm:col-span-2"
+            : undefined
+        }
       >
-        <span className="font-medium">{label}</span>
         {boolean ? (
           <Switch
             checked={value === "true"}
@@ -372,6 +681,7 @@ function ChannelEditor({
           />
         ) : field.options ? (
           <FormSelect
+            id={id}
             value={value}
             label={label}
             options={[
@@ -390,10 +700,10 @@ function ChannelEditor({
           />
         ) : (
           <Input
+            id={id}
             type={field.secret ? "password" : "text"}
             autoComplete={field.secret ? "new-password" : "off"}
             maxLength={8000}
-            aria-label={label}
             placeholder={
               field.secret && channel.credentialNames.includes(field.name)
                 ? t("secretSaved")
@@ -407,13 +717,13 @@ function ChannelEditor({
             }
           />
         )}
-      </div>
+      </DialogField>
     );
   };
   return (
     <ChannelDialog title={channel.name} onClose={onClose}>
       <form
-        className="space-y-4"
+        className="flex min-h-0 flex-col"
         onSubmit={async (event) => {
           event.preventDefault();
           if (
@@ -426,163 +736,141 @@ function ChannelEditor({
             onClose();
         }}
       >
-        <div className="block space-y-1.5 text-xs font-medium">
-          <Input
+        <DialogBody>
+          <DialogField
             label={t("connectionName")}
-            autoFocus
-            required
-            maxLength={120}
-            onBlur={() => {
-              if (name.trim() && name.trim() !== channel.name)
-                void update({ name: name.trim() });
-            }}
-            value={String(name)}
-            className="w-full"
-            onChange={(value) => setName(value)}
-          />
-        </div>
-        <div className="block space-y-1.5 text-xs font-medium">
-          <span>{t("bindAgent")}</span>
-          <FormSelect
-            disabled={Boolean(channel.sandboxId)}
-            value={channel.sandboxId ? (channel.agentId ?? "") : agentId}
+            htmlFor={`${idPrefix}-name`}
+            dirty={name.trim() !== channel.name}
+          >
+            <Input
+              id={`${idPrefix}-name`}
+              autoFocus
+              required
+              maxLength={120}
+              onBlur={() => {
+                if (name.trim() && name.trim() !== channel.name)
+                  void update({ name: name.trim() });
+              }}
+              value={String(name)}
+              className="w-full"
+              onChange={(value) => setName(value)}
+            />
+          </DialogField>
+          <DialogField
             label={t("bindAgent")}
-            options={[
-              { value: "", label: t("noAgent") },
-              agents.map((agent) => ({ value: agent.id, label: agent.name })),
-            ]
-              .flat()
-              .filter((option) => option != null)}
-            onValueChange={(value) => {
-              setAgentId(value);
-              void update({ agentId: value || null });
-            }}
-            className="w-full"
-          />
-        </div>
-        {hasBuiltInPairingProvider(platform) && (
-          <section className="space-y-3 border-y border-border py-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="text-xs text-muted-foreground">
-                {waiting
-                  ? t(
-                      pairing.status === "scanned"
-                        ? "statusScanned"
-                        : "statusWaiting",
-                    )
-                  : channel.missingStartCredentialNames.length
-                    ? t("qrSetup")
-                    : t("setupComplete")}
-              </span>
-              <Button
-                type="button"
-                disabled={pending}
-                onClick={() =>
-                  void send({ action: "pair", connectionId: channel.id })
-                }
-                variant={"secondary"}
-                size={"sm"}
-              >
-                {pending ? (
-                  <LoaderCircle className="size-3.5 animate-spin" />
-                ) : (
-                  <QrCode className="size-3.5" />
-                )}
-                {pairing ? t("reauthenticate") : t("requestQr")}
-              </Button>
-            </div>
-            {waiting && pairing.qrPayload && (
-              <div className="mx-auto w-56 max-w-full">
-                <QrPairingDisplay
-                  payload={pairing.qrPayload}
-                  label={t(`platforms.${channel.platform}`)}
-                  emptyLabel={t("requestQr")}
-                  errorLabel={t("qrRenderFailed")}
-                />
-              </div>
-            )}
-            {pairing?.status === "expired" && (
-              <p
-                role="status"
-                className="text-xs text-muted-foreground text-muted-foreground"
-              >
-                {t("statusExpired")}
-              </p>
-            )}
-            {pairing?.error && (
-              <p role="alert" className="break-words text-xs text-destructive">
-                {pairing.error}
-              </p>
-            )}
-            {needsApply && (
-              <div className="space-y-2">
-                <div className="block space-y-1 text-xs">
-                  <Input
-                    label={t("allowedTelegramUserIdsOptional")}
-                    value={String(
-                      allowedUsers ?? pairing.extra?.ownerUserId ?? "",
-                    )}
-                    className="w-full"
-                    onChange={(value) => setAllowedUsers(value)}
-                  />
-                </div>
+            htmlFor={`${idPrefix}-agent`}
+            dirty={!channel.sandboxId && agentId !== (channel.agentId ?? "")}
+          >
+            <FormSelect
+              id={`${idPrefix}-agent`}
+              disabled={Boolean(channel.sandboxId)}
+              value={channel.sandboxId ? (channel.agentId ?? "") : agentId}
+              label={t("bindAgent")}
+              options={[
+                { value: "", label: t("noAgent") },
+                agents.map((agent) => ({ value: agent.id, label: agent.name })),
+              ]
+                .flat()
+                .filter((option) => option != null)}
+              onValueChange={(value) => {
+                setAgentId(value);
+                void update({ agentId: value || null });
+              }}
+              className="w-full"
+            />
+          </DialogField>
+          {hasBuiltInPairingProvider(platform) && (
+            <section className="space-y-3 border-y border-border py-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-xs text-muted-foreground">
+                  {waiting
+                    ? t(
+                        pairing.status === "scanned"
+                          ? "statusScanned"
+                          : "statusWaiting",
+                      )
+                    : channel.missingStartCredentialNames.length
+                      ? t("qrSetup")
+                      : t("setupComplete")}
+                </span>
                 <Button
                   type="button"
                   disabled={pending}
                   onClick={() =>
-                    void send({
-                      action: "apply",
-                      connectionId: channel.id,
-                      allowedUserIds:
-                        allowedUsers ?? pairing.extra?.ownerUserId ?? "",
-                    })
+                    void send({ action: "pair", connectionId: channel.id })
                   }
                   variant={"secondary"}
                   size={"sm"}
                 >
-                  {t("saveTelegramSetup")}
+                  {pending ? (
+                    <LoaderCircle className="size-3.5 animate-spin" />
+                  ) : (
+                    <QrCode className="size-3.5" />
+                  )}
+                  {pairing ? t("reauthenticate") : t("requestQr")}
                 </Button>
               </div>
-            )}
-          </section>
-        )}
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          {fields.map(renderField)}
-        </div>
-        <ChannelCommands />
-        {advanced.length > 0 && (
-          <BouncyAccordion
-            items={[
-              {
-                id: "details",
-                title: <>{t("advanced")}</>,
-                description: (
-                  <>
-                    <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                      {advanced.map(renderField)}
-                    </div>
-                  </>
-                ),
-              },
-            ]}
-          />
-        )}
-        {error && (
-          <p role="alert" className="break-words text-sm text-destructive">
-            {error}
-          </p>
-        )}
-        <div className="flex justify-end border-t border-border pt-3">
-          <Button
-            type="submit"
-            aria-busy={pending}
-            variant={"primary"}
-            size={"sm"}
-          >
+              {waiting && pairing.qrPayload && (
+                <div className="mx-auto w-56 max-w-full">
+                  <QrPairingDisplay
+                    payload={pairing.qrPayload}
+                    label={t(`platforms.${channel.platform}`)}
+                    emptyLabel={t("requestQr")}
+                    errorLabel={t("qrRenderFailed")}
+                  />
+                </div>
+              )}
+              {pairing?.status === "expired" && (
+                <p
+                  role="status"
+                  className="text-xs text-muted-foreground text-muted-foreground"
+                >
+                  {t("statusExpired")}
+                </p>
+              )}
+              {pairing?.error && (
+                <p
+                  role="alert"
+                  className="break-words text-xs text-destructive"
+                >
+                  {pairing.error}
+                </p>
+              )}
+            </section>
+          )}
+          <div className="grid grid-cols-1 gap-x-4 gap-y-5 sm:grid-cols-2">
+            {fields.map(renderField)}
+          </div>
+          <ChannelCommands />
+          {advanced.length > 0 && (
+            <BouncyAccordion
+              items={[
+                {
+                  id: "details",
+                  title: <>{t("advanced")}</>,
+                  description: (
+                    <>
+                      <div className="mt-3 grid grid-cols-1 gap-x-4 gap-y-5 sm:grid-cols-2">
+                        {advanced.map(renderField)}
+                      </div>
+                    </>
+                  ),
+                },
+              ]}
+            />
+          )}
+          {error && (
+            <p role="alert" className="break-words text-sm text-destructive">
+              {error}
+            </p>
+          )}
+        </DialogBody>
+        <DialogFooter cancel={<DialogCancel />}>
+          <Button type="submit" aria-busy={pending} variant="primary" size="md">
             {pending && <LoaderCircle className="size-4 animate-spin" />}
             {t("saveCredentials")}
           </Button>
-        </div>
+        </DialogFooter>
       </form>
     </ChannelDialog>
   );
@@ -610,8 +898,10 @@ export function AgentMessagingPanel({
   const [sandboxes, setSandboxes] = useState<Sandbox[]>([]);
   const [moveId, setMoveId] = useState<string | null>(null);
   const [targetSandboxId, setTargetSandboxId] = useState("");
+  const targetSandboxFieldId = useId();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [logId, setLogId] = useState<string | null>(null);
+  const [historyId, setHistoryId] = useState<string | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [pending, setPending] = useState(0);
   const [error, setError] = useState("");
@@ -743,6 +1033,9 @@ export function AgentMessagingPanel({
       : (getMessagingPlatform(platform)?.label ?? platform);
   const deleteChannel = connections.find((channel) => channel.id === deleteId);
   const logChannel = connections.find((channel) => channel.id === logId);
+  const historyChannel = connections.find(
+    (channel) => channel.id === historyId,
+  );
   const moveChannel = connections.find((channel) => channel.id === moveId);
   const targetSandbox = sandboxes.find(
     (sandbox) => sandbox.id === targetSandboxId,
@@ -778,10 +1071,10 @@ export function AgentMessagingPanel({
     }
   }
   return (
-    <div className="flex h-full min-h-0 min-w-0 flex-col sm:flex-row">
+    <div className="flex h-full min-h-0 min-w-0 flex-col">
       <nav
         aria-label={t("platformNavigation")}
-        className="flex shrink-0 gap-1 overflow-x-auto border-b border-border/60 p-3 sm:w-40 sm:flex-col sm:overflow-y-auto sm:border-b-0 sm:border-r"
+        className="flex shrink-0 gap-1 overflow-x-auto border-b border-border/60 bg-muted/15 p-3"
       >
         {platforms.map((platform) => (
           <Button
@@ -791,16 +1084,16 @@ export function AgentMessagingPanel({
             onClick={() => setSelected(platform)}
             variant={selected === platform ? "secondary" : "ghost"}
             size="sm"
-            className="justify-start text-left"
+            className="shrink-0 justify-start rounded-xl text-left"
           >
             <PlatformIcon platform={platform} />
             <span className="whitespace-nowrap">{platformName(platform)}</span>
           </Button>
         ))}
       </nav>
-      <section className="min-h-0 min-w-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6">
-        <header className="mb-2 flex items-center justify-between gap-3 border-b border-border pb-4">
-          <h2 className="flex min-w-0 items-center gap-2 text-sm font-semibold">
+      <section className="min-h-0 w-full min-w-0 flex-1 overflow-y-auto px-6 py-5">
+        <header className="mb-6 flex items-center justify-between gap-3 border-b border-border/60 pb-5">
+          <h2 className="flex min-w-0 items-center gap-2 text-lg font-semibold tracking-tight">
             <PlatformIcon platform={selected} />
             {platformName(selected)}
           </h2>
@@ -880,6 +1173,14 @@ export function AgentMessagingPanel({
                 <div className="ml-auto flex shrink-0 items-center gap-0.5">
                   <Button
                     variant="ghost"
+                    onClick={() => setHistoryId(channel.id)}
+                    size="icon"
+                    aria-label={t("conversationHistory")}
+                  >
+                    <MessagesSquare className="size-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
                     onClick={() => setLogId(channel.id)}
                     size="icon"
                     aria-label={t("logs")}
@@ -952,6 +1253,14 @@ export function AgentMessagingPanel({
           onClose={() => setLogId(null)}
         />
       )}
+      {historyChannel && (
+        <ChannelHistory
+          key={historyChannel.id}
+          endpoint={endpoint}
+          channel={historyChannel}
+          onClose={() => setHistoryId(null)}
+        />
+      )}
       {moveChannel && (
         <ChannelDialog
           title={t("migrateTitle", { name: moveChannel.name })}
@@ -959,57 +1268,51 @@ export function AgentMessagingPanel({
             if (!pending) setMoveId(null);
           }}
         >
-          <div className="block space-y-2 text-sm">
-            <span>{t("targetSandbox")}</span>
-            <FormSelect
-              value={targetSandboxId}
-              disabled={Boolean(pending)}
+          <DialogBody>
+            <DialogField
               label={t("targetSandbox")}
-              options={[
-                { value: "", label: t("selectSandbox") },
-                sandboxes
-                  .filter((sandbox) => sandbox.id !== moveChannel.sandboxId)
-                  .map((sandbox) => ({
-                    value: sandbox.id,
-                    label: [
-                      sandbox.name,
-                      "/",
-                      sandbox.agentName ?? t("noAgent"),
-                    ].join(" "),
-                  })),
-              ]
-                .flat()
-                .filter((option) => option != null)}
-              onValueChange={(value) => setTargetSandboxId(value)}
-              className="w-full"
-            />
-          </div>
-          <p className="mt-3 text-sm text-muted-foreground">
-            {t("migrateConfirmation")}
-          </p>
-          {targetSandbox && !targetSandbox.agentId && (
-            <p className="mt-2 text-sm text-muted-foreground text-muted-foreground">
-              {t("targetHasNoAgent")}
-            </p>
-          )}
-          {error && (
-            <p
-              role="alert"
-              className="mt-2 break-words text-sm text-destructive"
+              htmlFor={targetSandboxFieldId}
+              dirty={targetSandboxId !== ""}
             >
-              {error}
-            </p>
-          )}
-          <div className="mt-5 flex justify-end gap-2">
-            <CenterMorphModalClose>
-              <Button
-                type="button"
+              <FormSelect
+                id={targetSandboxFieldId}
+                value={targetSandboxId}
                 disabled={Boolean(pending)}
-                variant={"secondary"}
-              >
-                {t("cancel")}
-              </Button>
-            </CenterMorphModalClose>
+                label={t("targetSandbox")}
+                options={[
+                  { value: "", label: t("selectSandbox") },
+                  sandboxes
+                    .filter((sandbox) => sandbox.id !== moveChannel.sandboxId)
+                    .map((sandbox) => ({
+                      value: sandbox.id,
+                      label: [
+                        sandbox.name,
+                        "/",
+                        sandbox.agentName ?? t("noAgent"),
+                      ].join(" "),
+                    })),
+                ]
+                  .flat()
+                  .filter((option) => option != null)}
+                onValueChange={(value) => setTargetSandboxId(value)}
+                className="w-full"
+              />
+            </DialogField>
+            <p className="text-sm text-muted-foreground">
+              {t("migrateConfirmation")}
+            </p>
+            {targetSandbox && !targetSandbox.agentId && (
+              <p className="text-sm text-muted-foreground">
+                {t("targetHasNoAgent")}
+              </p>
+            )}
+            {error && (
+              <p role="alert" className="break-words text-sm text-destructive">
+                {error}
+              </p>
+            )}
+          </DialogBody>
+          <DialogFooter cancel={<DialogCancel disabled={Boolean(pending)} />}>
             <Button
               type="button"
               disabled={Boolean(pending) || !targetSandbox}
@@ -1023,12 +1326,13 @@ export function AgentMessagingPanel({
                 )
                   setMoveId(null);
               }}
-              variant={"primary"}
+              variant="primary"
+              size="md"
             >
               <ArrowRightLeft className="size-4" />
               {t("migrate")}
             </Button>
-          </div>
+          </DialogFooter>
         </ChannelDialog>
       )}
       {deleteChannel && (
@@ -1036,19 +1340,12 @@ export function AgentMessagingPanel({
           title={t("deleteTitle", { name: deleteChannel.name })}
           onClose={() => setDeleteId(null)}
         >
-          <p className="text-sm text-muted-foreground">
-            {t("deleteConfirmation")}
-          </p>
-          <div className="mt-5 flex justify-end gap-2">
-            <CenterMorphModalClose>
-              <Button
-                type="button"
-                disabled={Boolean(pending)}
-                variant={"secondary"}
-              >
-                {t("cancel")}
-              </Button>
-            </CenterMorphModalClose>
+          <DialogBody>
+            <p className="text-sm text-muted-foreground">
+              {t("deleteConfirmation")}
+            </p>
+          </DialogBody>
+          <DialogFooter cancel={<DialogCancel disabled={Boolean(pending)} />}>
             <Button
               type="button"
               disabled={Boolean(pending)}
@@ -1061,11 +1358,14 @@ export function AgentMessagingPanel({
                 )
                   setDeleteId(null);
               }}
-              variant={"secondary"}
+              variant="primary"
+              size="md"
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
+              <Trash2 className="size-4" />
               {t("delete")}
             </Button>
-          </div>
+          </DialogFooter>
         </ChannelDialog>
       )}
     </div>

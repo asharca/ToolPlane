@@ -15,6 +15,11 @@ export const POST = withRequestLogging(
     const { workSessionId } = await params;
     const work = await getWorkSessionForUser(user.id, workSessionId);
     if (!work) return Response.json({ error: "Not found" }, { status: 404 });
+    if (work.readOnly)
+      return Response.json(
+        { error: "Historical Agent sessions are read-only." },
+        { status: 410 },
+      );
     const result = await resumeWorkSession(work.workspaceId, work.id, user.id);
     if (!result.ok) {
       return Response.json(

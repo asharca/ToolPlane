@@ -1,9 +1,13 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { getTranslations } from "next-intl/server";
 import { requireAdmin } from "@/lib/auth/admin";
 import { CopyButton } from "@/components/dashboard/CopyButton";
-import { LogPayload } from "@/components/dashboard/LogPayload";
+import {
+  BodyNotice,
+  JsonPanel,
+} from "@/components/observability/ProtocolContent";
+import type { JsonValue } from "@/lib/observability/views/types";
 import { ChevronDown, ChevronRight, GitBranch } from "lucide-react";
 import {
   AdminBadge,
@@ -39,6 +43,16 @@ export default async function LogDetailPage({
   );
   const selfHref = adminHref(`/admin/logs/${event.id}`, { returnTo: backHref });
   const a2a = getA2aMetadata(event.attributes);
+  if (event.domain === "mcp")
+    redirect(
+      adminHref(`/admin/logs/mcp/${event.callId ?? event.id}`, {
+        returnTo: backHref,
+      }),
+    );
+  if (a2a?.taskId)
+    redirect(
+      adminHref(`/admin/logs/a2a/${a2a.taskId}`, { returnTo: backHref }),
+    );
   const [workspace, actor, agent, endpoint] = await Promise.all([
     event.workspaceId
       ? db.workspace.findUnique({
@@ -87,57 +101,10 @@ export default async function LogDetailPage({
     "errorCode",
   ] as const;
   const context = contextKeys.filter((key) => event[key] !== null);
-  const data =
-    detail?.data &&
-    typeof detail.data === "object" &&
-    !Array.isArray(detail.data)
-      ? (detail.data as Record<string, unknown>)
+  const errorDetail =
+    event.errorType || event.errorCode
+      ? { type: event.errorType, code: event.errorCode }
       : null;
-  const candidate =
-    data?.payload &&
-    typeof data.payload === "object" &&
-    !Array.isArray(data.payload)
-      ? (data.payload as Record<string, unknown>)
-      : null;
-  const payload =
-    candidate &&
-    ["request", "response", "responseKind"].some((key) =>
-      Object.hasOwn(candidate, key),
-    )
-      ? candidate
-      : null;
-  const readable =
-    event.detailState === "available" || event.detailState === "truncated";
-  const bodyUnavailable = t(
-    event.detailState === "expired"
-      ? "logsBodyExpired"
-      : event.detailState === "restricted"
-        ? "logsBodyRestricted"
-        : "logsBodyUnavailable",
-  );
-  const requestBody =
-    readable && payload && Object.hasOwn(payload, "request")
-      ? JSON.stringify(payload.request, null, 2)
-      : null;
-  const responseBody =
-    readable && payload && Object.hasOwn(payload, "response")
-      ? JSON.stringify(payload.response, null, 2)
-      : null;
-  const responseUnavailable =
-    payload?.responseKind === "none"
-      ? t(
-          payload.responseComplete
-            ? "logsNoResponseBody"
-            : "logsNoResponseReceived",
-        )
-      : bodyUnavailable;
-  const errorResponse =
-    payload?.response &&
-    typeof payload.response === "object" &&
-    "error" in payload.response
-      ? payload.response.error
-      : null;
-  const errorDetail = data?.error ?? errorResponse;
   const httpEntry = event.requestId
     ? trace.find(
         (row) =>
@@ -300,84 +267,22 @@ export default async function LogDetailPage({
 
       <div className="grid items-start gap-8 xl:grid-cols-[minmax(0,1.6fr)_minmax(18rem,1fr)]">
         <div className="min-w-0 space-y-6">
-          <AdminPanel
-            title={t("logsDiagnosticDetail")}
-            actions={
-              <AdminBadge
-                tone={event.detailState === "truncated" ? "warning" : "neutral"}
-              >
-                {t(`logsDetailStates.${event.detailState}`)}
-              </AdminBadge>
-            }
-          >
-            {payload || event.eventName === "a2a.request" ? (
-              <div
-                className={`grid min-w-0 gap-6 ${event.eventName === "a2a.request" || requestBody !== null ? "xl:grid-cols-2" : ""}`}
-              >
-                {event.eventName === "a2a.request" || requestBody !== null ? (
-                  <LogPayload
-                    label={t("logsRequestBody")}
-                    value={requestBody}
-                    copyLabel={t("logsCopyPayload", {
-                      label: t("logsRequestBody"),
-                    })}
-                    unavailableText={bodyUnavailable}
-                  />
-                ) : null}
-                <div className="min-w-0 space-y-3">
-                  {payload?.responseKind === "sse" ? (
-                    <p className="text-xs text-muted-foreground">
-                      {t("logsSseResponse")} ·{" "}
-                      {t(
-                        detail?.truncated
-                          ? "logsResponseTruncated"
-                          : payload.responseComplete
-                            ? "logsResponseComplete"
-                            : "logsResponseDisconnected",
-                      )}
-                    </p>
-                  ) : null}
-                  <LogPayload
-                    label={t("logsResponseBody")}
-                    value={responseBody}
-                    copyLabel={t("logsCopyPayload", {
-                      label: t("logsResponseBody"),
-                    })}
-                    unavailableText={responseUnavailable}
-                  />
-                </div>
-              </div>
-            ) : detail ? (
-              <LogPayload
-                label={t("logsDiagnosticDetail")}
-                value={JSON.stringify(detail.data, null, 2)}
-                copyLabel={t("logsCopyPayload", {
-                  label: t("logsDiagnosticDetail"),
-                })}
-                unavailableText={bodyUnavailable}
-              />
-            ) : (
-              <p className="py-6 text-sm text-muted-foreground">
-                {bodyUnavailable}
-              </p>
-            )}
-            {detail ? (
-              <p className="mt-4 break-words text-xs text-muted-foreground">
-                {t("logsExpires")}: {detail.expiresAt.toISOString()}
-              </p>
-            ) : null}
-          </AdminPanel>
+          {/* Most events record metadata only; show the body panel only when a body exists or was lost. */}
+          {event.detailState !== "unavailable" && (
+            <AdminPanel title={t("logsDiagnosticDetail")}>
+              <BodyNotice state={event.detailState} />
+              {detail && (
+                <JsonPanel
+                  title={t("logsDiagnosticDetail")}
+                  value={detail.data as JsonValue}
+                />
+              )}
+            </AdminPanel>
+          )}
 
           {errorDetail !== null && errorDetail !== undefined ? (
             <AdminPanel title={t("logsErrorDetail")}>
-              <LogPayload
-                label={t("logsErrorDetail")}
-                value={JSON.stringify(errorDetail, null, 2)}
-                copyLabel={t("logsCopyPayload", {
-                  label: t("logsErrorDetail"),
-                })}
-                unavailableText={bodyUnavailable}
-              />
+              <JsonPanel title={t("logsErrorDetail")} value={errorDetail} />
             </AdminPanel>
           ) : a2a?.rpcErrorCode !== undefined ? (
             <AdminPanel title={t("logsErrorDetail")}>
@@ -420,7 +325,7 @@ export default async function LogDetailPage({
                       returnTo: backHref,
                     })}
                     aria-current={row.id === event.id ? "step" : undefined}
-                    className={`block rounded-md p-3 transition-colors hover:bg-muted/50 ${row.id === event.id ? "bg-muted/50 ring-1 ring-border" : ""}`}
+                    className={`block rounded-lg p-3 transition-colors hover:bg-muted/50 ${row.id === event.id ? "bg-muted/50 ring-1 ring-border" : ""}`}
                   >
                     <span className="flex flex-wrap items-center justify-between gap-2">
                       <LogTimestamp date={row.createdAt} compact />
@@ -455,7 +360,7 @@ export default async function LogDetailPage({
               <pre
                 // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users must be able to scroll long attributes.
                 tabIndex={0}
-                className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-all rounded-md bg-muted/50 p-4 font-mono text-xs leading-6"
+                className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-all rounded-xl bg-muted/50 p-4 font-mono text-xs leading-6"
               >
                 {JSON.stringify(event.attributes, null, 2)}
               </pre>
@@ -547,7 +452,7 @@ export default async function LogDetailPage({
             <pre
               // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users must be able to scroll long metadata.
               tabIndex={0}
-              className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap break-all rounded-md bg-muted/50 p-4 font-mono text-xs leading-6"
+              className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap break-all rounded-xl bg-muted/50 p-4 font-mono text-xs leading-6"
             >
               {JSON.stringify({ ...metadata, a2a }, null, 2)}
             </pre>

@@ -56,7 +56,7 @@ export function QrPairingDisplay({
   const error = current && result.payload === current ? result.error : null;
 
   return (
-    <div className="flex min-h-56 items-center justify-center rounded-md border border-border bg-card p-3">
+    <div className="flex min-h-56 items-center justify-center rounded-xl border border-border bg-card p-3">
       {svg ? (
         <div className="space-y-2 text-center">
           <Image
@@ -72,7 +72,7 @@ export function QrPairingDisplay({
           </div>
         </div>
       ) : (
-        <div className="flex size-[184px] flex-col items-center justify-center rounded-sm border border-dashed border-border text-center text-xs text-muted-foreground">
+        <div className="flex size-[184px] flex-col items-center justify-center rounded-xl border border-dashed border-border text-center text-xs text-muted-foreground">
           <QrCode className="mb-2 size-8 text-muted-foreground" />
           {error ?? emptyLabel}
         </div>

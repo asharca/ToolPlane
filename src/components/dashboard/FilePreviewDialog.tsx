@@ -249,16 +249,16 @@ function PreviewContent({
     );
   return (
     <>
-      <header className="flex shrink-0 items-center gap-3 border-b border-border py-4 pl-4 pr-16 sm:pl-6">
+      <header className="flex shrink-0 items-center gap-3 border-b border-border pt-5 pb-4 pl-4 pr-14 sm:pl-6">
         <FileText
           className="size-5 shrink-0 text-muted-foreground"
           aria-hidden="true"
         />
         <div className="min-w-0 flex-1">
-          <h2 className="truncate text-sm font-medium" title={name}>
+          <h2 className="truncate text-base font-semibold" title={name}>
             {name}
           </h2>
-          <p className="truncate text-xs text-muted-foreground">
+          <p className="mt-0.5 truncate text-sm text-muted-foreground">
             {size ||
               (file?.blob
                 ? `${file.blob.size.toLocaleString()} B`

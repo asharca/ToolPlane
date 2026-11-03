@@ -93,8 +93,14 @@ describe("scoped sandbox MCP authentication", () => {
     mocks.findSandbox.mockResolvedValue(null);
     expect(await resolveSandboxMcpGrant("sb1", secret)).toBeNull();
   });
-  it("does not export protected Hermes credentials", async () => {
-    mocks.findSandbox.mockResolvedValue({ id: "sb1", kind: "hermes" });
+  it("revokes execution authority for a retained read-only Docker workspace", async () => {
+    mocks.findSandbox.mockResolvedValue({
+      id: "sb1",
+      kind: "docker",
+      config: { readOnly: true },
+      workspaceId: "ws1",
+      deploymentId: "dep1",
+    });
     expect(await resolveSandboxMcpGrant("sb1", secret)).toBeNull();
   });
 });

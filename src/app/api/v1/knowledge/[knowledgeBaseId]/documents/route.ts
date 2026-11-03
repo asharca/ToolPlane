@@ -104,7 +104,7 @@ export const POST = withRequestLogging(
         },
       },
       30_000,
-      { maxRequestBytes: MAX_UPLOAD_BYTES * 2 },
+      { maxRequestBytes: MAX_UPLOAD_BYTES * 2, internal: true },
     );
     if (!write || (write as { isError?: unknown }).isError)
       return Response.json(

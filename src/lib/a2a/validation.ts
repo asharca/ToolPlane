@@ -1,5 +1,9 @@
 import { z } from "zod";
-import { A2A_LIMITS, acceptsOutput } from "./model";
+import {
+  A2A_LIMITS,
+  acceptsOutput,
+  A2A_FILE_DELIVERY_EXTENSION,
+} from "./model";
 import {
   ContentTypeNotSupportedError,
   RequestMalformedError,
@@ -14,15 +18,27 @@ const Metadata = z.record(z.string(), z.unknown());
 const Part = z
   .object({
     text: z.string().max(A2A_LIMITS.inputCharacters).optional(),
-    raw: z.string().optional(),
-    url: z.string().optional(),
-    data: z.unknown().optional(),
+    raw: z.string().max(43_692).optional(),
+    url: z.string().min(1).max(8192).optional(),
+    data: z.object({ toolplaneFileId: Id }).strict().optional(),
     metadata: Metadata.optional(),
     filename: z.string().max(200).optional(),
     mediaType: z.string().max(200).optional(),
   })
   .strict()
   .superRefine((part, ctx) => {
+    if (
+      part.raw !== undefined &&
+      (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
+        part.raw,
+      ) ||
+        Buffer.from(part.raw, "base64").length > 32_768 ||
+        Buffer.from(part.raw, "base64").toString("base64") !== part.raw)
+    )
+      ctx.addIssue({
+        code: "custom",
+        message: "Inline files require canonical base64 and at most 32 KiB.",
+      });
     const keys = ["text", "raw", "url", "data"].filter((key) =>
       Object.hasOwn(part, key),
     );
@@ -150,31 +166,118 @@ export function validateSend(
     throw new RequestMalformedError(
       "A user message with messageId and parts is required.",
     );
-  if (request.configuration?.taskPushNotificationConfig)
-    throw new PushNotificationNotSupportedError();
-  if (message.extensions.length)
-    throw new ExtensionSupportRequiredError(
-      "This service does not support message extensions.",
-    );
   if (
-    message.parts.some(
-      (part) =>
-        part.content?.$case !== "text" ||
-        (part.mediaType && part.mediaType !== "text/plain"),
+    [
+      request.metadata,
+      message.metadata,
+      ...message.parts.map((part) => part.metadata),
+    ].some(
+      (metadata) =>
+        metadata && Object.hasOwn(metadata, "toolplanePromptInvocation"),
     )
   )
-    throw new ContentTypeNotSupportedError(
-      "This service accepts text/plain only.",
+    throw new RequestMalformedError(
+      "Native prompt invocation metadata is server-owned.",
     );
-  const text = message.parts
-    .map((part) => part.content?.value ?? "")
-    .join("\n");
-  if (!text.trim() || text.length > A2A_LIMITS.inputCharacters)
+  if (request.configuration?.taskPushNotificationConfig)
+    throw new PushNotificationNotSupportedError();
+  if (message.extensions.some((uri) => uri !== A2A_FILE_DELIVERY_EXTENSION.uri))
+    throw new ExtensionSupportRequiredError(
+      "This service does not support the requested message extension.",
+    );
+  let characters = 0;
+  let files = 0;
+  for (const part of message.parts) {
+    if (
+      part.metadata?.toolplaneFileId !== undefined &&
+      (part.content?.$case !== "data" ||
+        part.metadata.toolplaneFileId !== part.content.value.toolplaneFileId)
+    )
+      throw new RequestMalformedError(
+        "Reserved file metadata must match an owned file handle.",
+      );
+    const content = part.content;
+    if (content?.$case === "text") {
+      if (part.mediaType && part.mediaType !== "text/plain")
+        throw new ContentTypeNotSupportedError(
+          "Text Parts require text/plain.",
+        );
+      characters += content.value.length;
+    } else if (
+      content?.$case === "raw" ||
+      content?.$case === "url" ||
+      content?.$case === "data"
+    ) {
+      files++;
+      if (
+        !part.mediaType ||
+        !/^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/i.test(part.mediaType)
+      )
+        throw new ContentTypeNotSupportedError(
+          "File Parts require a concrete MIME type.",
+        );
+      if (part.filename && /[\p{Cc}/\\]/u.test(part.filename))
+        throw new RequestMalformedError("Invalid file name.");
+      if (content.$case === "raw" && content.value.byteLength > 32_768)
+        throw new RequestMalformedError(
+          "Inline files exceed the 32 KiB limit; use a URL.",
+        );
+      if (content.$case === "url") {
+        try {
+          const url = new URL(content.value);
+          if (
+            url.protocol !== "https:" ||
+            url.username ||
+            url.password ||
+            url.hash
+          )
+            throw new Error();
+        } catch {
+          throw new RequestMalformedError(
+            "File URLs require HTTPS without credentials or fragments.",
+          );
+        }
+      }
+      if (
+        content.$case === "data" &&
+        (typeof content.value.toolplaneFileId !== "string" ||
+          Object.keys(content.value).length !== 1)
+      )
+        throw new ContentTypeNotSupportedError(
+          "Only owned file handles are supported as internal data Parts.",
+        );
+    } else throw new ContentTypeNotSupportedError("Unsupported Part content.");
+  }
+  if (
+    (!files &&
+      !message.parts.some(
+        (part) => part.content?.$case === "text" && part.content.value.trim(),
+      )) ||
+    characters > A2A_LIMITS.inputCharacters ||
+    files > 20
+  )
     throw new RequestMalformedError(
       "Input is empty or exceeds the service input limit.",
     );
   const modes = request.configuration?.acceptedOutputModes ?? [];
-  if (!outputModes.some((mode) => acceptsOutput(modes, mode)))
+  if (
+    modes.some(
+      (mode) =>
+        !/^(?:\*\/\*|[a-z0-9!#$&^_.+-]+\/(?:\*|[a-z0-9!#$&^_.+-]+))$/i.test(
+          mode,
+        ),
+    )
+  )
+    throw new ContentTypeNotSupportedError(
+      "Requested output modes must be MIME types or MIME wildcards.",
+    );
+  if (
+    !outputModes.some(
+      (mode) =>
+        acceptsOutput(modes, mode) ||
+        modes.some((accepted) => acceptsOutput([mode], accepted)),
+    )
+  )
     throw new ContentTypeNotSupportedError(
       "Requested output media types are not supported by this service.",
     );

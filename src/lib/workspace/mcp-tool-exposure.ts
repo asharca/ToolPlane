@@ -1,5 +1,6 @@
 import "server-only";
 import { db } from "@/lib/db";
+import { readMcpToolCatalog } from "@/lib/process/mcp-tool-catalog";
 
 export type McpToolPolicy = {
   mode: "all" | "allowlist";
@@ -36,6 +37,29 @@ export function filterMcpToolsForAi<T extends { name: string }>(
   policy: McpToolPolicy | undefined,
 ): T[] {
   return tools.filter((tool) => isMcpToolExposedToAi(policy, tool.name));
+}
+
+/** Granted names that the stored catalog still lists and exposure permits. */
+export function exposedMcpToolNames(
+  deployment: StoredMcpToolPolicy & { installCfg: unknown },
+  allowedToolNames: readonly string[],
+): string[] {
+  const catalog = new Set(
+    readMcpToolCatalog(deployment.installCfg).map((tool) => tool.name),
+  );
+  const policy = mcpToolPolicyFromStored(deployment);
+  return allowedToolNames.filter(
+    (name) => catalog.has(name) && isMcpToolExposedToAi(policy, name),
+  );
+}
+
+export function sameToolNames(
+  left: readonly string[],
+  right: readonly string[],
+): boolean {
+  return (
+    left.length === right.length && left.every((name) => right.includes(name))
+  );
 }
 
 export async function loadMcpToolPolicies(

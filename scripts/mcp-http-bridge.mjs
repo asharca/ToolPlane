@@ -47,6 +47,8 @@ function parseConfig() {
   }
   if (url.protocol !== "https:" && url.protocol !== "http:")
     invalidConfig("URL must use HTTP or HTTPS");
+  if (url.protocol === "http:" && value.allowUnsafeHttp !== true)
+    invalidConfig("HTTP requires explicit plaintext-risk approval");
   if (
     url.username ||
     url.password ||
@@ -96,6 +98,7 @@ function parseConfig() {
     transport: value.transport,
     timeoutMs: value.timeoutMs,
     headers,
+    allowUnsafeHttp: value.allowUnsafeHttp === true,
   };
 }
 
@@ -229,6 +232,7 @@ function allowlistedPrivateIp(hostname, address) {
 function validateRemoteUrl(url, allowQuery = false) {
   if (
     (url.protocol !== "https:" && url.protocol !== "http:") ||
+    (url.protocol === "http:" && !CONFIG.allowUnsafeHttp) ||
     url.username ||
     url.password ||
     url.port === "0" ||
@@ -309,6 +313,12 @@ const transport =
         requestInit,
         fetch: safeFetch,
       });
+let negotiatedProtocolVersion;
+const setProtocolVersion = transport.setProtocolVersion.bind(transport);
+transport.setProtocolVersion = (version) => {
+  negotiatedProtocolVersion = version;
+  setProtocolVersion(version);
+};
 const client = new Client(
   { name: "toolplane-http-bridge", version: "1.0.0" },
   { capabilities: {} },
@@ -445,13 +455,41 @@ async function start() {
       if (timer) clearTimeout(timer);
     }
     if (shuttingDown) return;
+    const capabilities = client.getServerCapabilities();
+    const serverInfo = client.getServerVersion();
+    if (
+      !negotiatedProtocolVersion ||
+      !capabilities ||
+      !serverInfo?.name ||
+      !serverInfo?.version
+    ) {
+      throw new Error("Remote MCP handshake returned invalid server metadata.");
+    }
+    if (capabilities.tools) {
+      const names = new Set();
+      const cursors = new Set();
+      let cursor;
+      for (let page = 0; page < 10; page += 1) {
+        const catalog = await client.listTools(
+          cursor ? { cursor } : undefined,
+          { timeout: CONFIG.timeoutMs },
+        );
+        for (const tool of catalog.tools) {
+          if (!tool.name || names.has(tool.name) || names.size >= 1000)
+            throw new Error("Remote MCP catalog is invalid.");
+          names.add(tool.name);
+        }
+        if (!catalog.nextCursor) break;
+        if (cursors.has(catalog.nextCursor) || page === 9)
+          throw new Error("Remote MCP catalog pagination is invalid.");
+        cursor = catalog.nextCursor;
+        cursors.add(cursor);
+      }
+    }
     initResult = {
-      protocolVersion: transport.protocolVersion ?? "2025-06-18",
-      capabilities: client.getServerCapabilities() ?? {},
-      serverInfo: client.getServerVersion() ?? {
-        name: NAME,
-        version: "unknown",
-      },
+      protocolVersion: negotiatedProtocolVersion,
+      capabilities,
+      serverInfo,
       ...(client.getInstructions()
         ? { instructions: client.getInstructions() }
         : {}),

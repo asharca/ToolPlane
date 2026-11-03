@@ -9,6 +9,9 @@ import {
   remoteRpcFetch,
   RemoteA2AError,
   REMOTE_RESPONSE_BYTES,
+  fetchRemoteFile,
+  remoteFileUrl,
+  REMOTE_FILE_BYTES,
 } from "@/lib/a2a/remote-network";
 import { REMOTE_CARD, REMOTE_RPC, remoteTask } from "../fixtures/a2a-remote";
 import type { A2ALogBinding } from "@/lib/observability/a2a-log";
@@ -98,6 +101,8 @@ beforeEach(() => {
           statusCode: status,
           headers,
           complete: true,
+          pause: vi.fn(),
+          resume: vi.fn(),
           destroy: vi.fn(),
         });
         receive(res);
@@ -115,6 +120,73 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 describe("remote HTTPS egress boundary", () => {
+  it("streams file bytes over pinned HTTPS without forwarding peer bearer credentials", async () => {
+    body = "file bytes";
+    headers = { "content-type": "application/octet-stream" };
+    const source =
+      "https://agent.example/files/report?signature=transport-secret";
+    expect(remoteFileUrl(source).href).toBe(source);
+    expect(() => remoteUrl(source)).toThrow();
+    const stream = await fetchRemoteFile(source);
+    expect(await new Response(stream).text()).toBe("file bytes");
+    expect(options.headers).toEqual({
+      accept: "*/*",
+      "accept-encoding": "identity",
+    });
+    expect(options.agent).toBe(false);
+    expect(options.rejectUnauthorized).not.toBe(false);
+    expect(mocks.create).not.toHaveBeenCalled();
+  });
+  it.each([301, 302, 307, 401, 500])(
+    "rejects file HTTP %s without redirects or retry",
+    async (code) => {
+      status = code;
+      headers.location = "https://agent.example/other-file";
+      await expect(
+        fetchRemoteFile("https://agent.example/file?signature=secret"),
+      ).rejects.toThrow();
+      expect(mocks.request).toHaveBeenCalledTimes(1);
+    },
+  );
+  it("bounds file bytes, rejecting a large content length before consumption", async () => {
+    headers["content-length"] = String(REMOTE_FILE_BYTES + 1);
+    await expect(
+      fetchRemoteFile("https://agent.example/file"),
+    ).rejects.toThrow();
+    expect(mocks.request).toHaveBeenCalledTimes(1);
+  });
+  it("pins only exact admin private-file IPs without weakening RPC policy", async () => {
+    vi.stubEnv(
+      "TOOLPLANE_A2A_FILE_PRIVATE_ORIGINS",
+      JSON.stringify({ "https://files.internal": ["10.0.0.8"] }),
+    );
+    expect(() => remoteUrl("https://files.internal/rpc")).toThrow();
+    const stream = await fetchRemoteFile(
+      "https://files.internal/file?signature=private-ticket",
+    );
+    await new Response(stream).text();
+    expect(mocks.lookup).not.toHaveBeenCalled();
+    const callback = vi.fn();
+    (
+      options.lookup as (
+        host: string,
+        opts: { all: boolean },
+        cb: typeof callback,
+      ) => void
+    )("files.internal", { all: false }, callback);
+    expect(callback).toHaveBeenCalledWith(null, "10.0.0.8", 4);
+    expect(options.headers).not.toHaveProperty("authorization");
+  });
+  it.each(["127.0.0.1", "169.254.169.254", "::1", "fe80::1", "100.64.1.1"])(
+    "never permits unsafe private-file destination %s",
+    (address) => {
+      vi.stubEnv(
+        "TOOLPLANE_A2A_FILE_PRIVATE_ORIGINS",
+        JSON.stringify({ "https://files.internal": [address] }),
+      );
+      expect(() => remoteFileUrl("https://files.internal/file")).toThrow();
+    },
+  );
   it.each([
     "127.0.0.1",
     "10.0.0.2",

@@ -6,6 +6,7 @@ import {
   compactionTranscript,
   compactedConversationSeed,
   needsCompactionSeed,
+  hasNativeConversationHistory,
 } from "@/lib/agents/conversation-context";
 
 const text = (id: string, role: string, content: string) => ({
@@ -159,5 +160,40 @@ describe("conversation compaction context", () => {
     expect(input).toContain("/api/v1/attachments/report");
     expect(input).toContain("Keep this result");
     expect(input).not.toContain("PRIVATE_PAYLOAD");
+  });
+});
+
+describe("native conversation recovery", () => {
+  const admissionFailure = {
+    role: "assistant",
+    parts: [
+      { type: "data-agent-turn-model", data: { model: "fixture" } },
+      { type: "work-runtime", status: "failed", runtimeKind: "omp" },
+      { type: "data-work-timing", data: { durationMs: 500 } },
+    ],
+  };
+
+  it("allows the first native session after failed admission and another explicit user request", () => {
+    expect(
+      hasNativeConversationHistory([
+        text("first", "user", "First request"),
+        admissionFailure,
+        text("retry", "user", "New request"),
+      ]),
+    ).toBe(false);
+  });
+
+  it.each([
+    { type: "text", text: "Partial answer" },
+    { type: "reasoning", text: "In progress" },
+    { type: "work-tool", toolName: "bash", status: "failed" },
+    { type: "work-runtime", status: "completed", runtimeKind: "omp" },
+  ])("still requires native recovery after execution produced %j", (part) => {
+    expect(
+      hasNativeConversationHistory([
+        { ...admissionFailure, parts: [...admissionFailure.parts, part] },
+        text("next", "user", "Continue"),
+      ]),
+    ).toBe(true);
   });
 });

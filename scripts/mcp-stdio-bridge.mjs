@@ -7,6 +7,10 @@
 import http from "node:http";
 import { spawn } from "node:child_process";
 import { buildBridgeChildEnv } from "./bridge-env.mjs";
+import {
+  secretEnvironmentLine,
+  withSecretEnvironmentBootstrap,
+} from "./mcp-secret-bootstrap.mjs";
 
 const NAME = process.env.MCP_NAME || "mcp";
 const COMMAND = process.env.MCP_COMMAND;
@@ -54,11 +58,15 @@ if (!COMMAND) {
   process.exitCode = 1;
 }
 
-// COMMAND is normally docker. ARGS contains only `-e KEY`; values arrive here
-// separately so they never appear in the host process argv.
+// The Docker CLI receives only its connection allowlist. Configured values
+// travel on stdin after container creation, never Docker Config.Env.
 let childEnv = {};
+let runtimeEnv = {};
+let runtimeEnvironmentLine = "";
 try {
-  childEnv = buildBridgeChildEnv(process.env, process.env.MCP_CHILD_ENV);
+  childEnv = buildBridgeChildEnv(process.env, "{}");
+  runtimeEnv = buildBridgeChildEnv({}, process.env.MCP_CHILD_ENV);
+  delete process.env.MCP_CHILD_ENV;
 } catch (error) {
   process.stderr.write(
     "mcp-stdio-bridge: " +
@@ -179,7 +187,10 @@ function createStartupWatchdog(idleTimeoutMs, maxTimeoutMs) {
   };
 }
 
-function runDockerCli(args) {
+function runDockerCli(
+  args,
+  { timeoutMs = DOCKER_INSPECT_TIMEOUT_MS, progress } = {},
+) {
   return new Promise((resolve) => {
     let cli;
     let stdout = "";
@@ -204,11 +215,12 @@ function runDockerCli(args) {
     }
 
     cli.stdout.on("data", (chunk) => {
+      progress?.();
       stdout += chunk.toString();
     });
     // Docker diagnostic output is intentionally not copied into lifecycle
     // events. The actual MCP container stderr is captured from the run child.
-    cli.stderr.on("data", () => {});
+    cli.stderr.on("data", () => progress?.());
     cli.once("error", (error) => finish(null, messageFor(error)));
     cli.once("close", (code) => finish(code));
     timer = setTimeout(() => {
@@ -218,7 +230,7 @@ function runDockerCli(args) {
         // The inspect command may already have exited.
       }
       finish(null, "docker inspect timed out");
-    }, DOCKER_INSPECT_TIMEOUT_MS);
+    }, timeoutMs);
   });
 }
 
@@ -416,6 +428,10 @@ function launchChild(watchdog) {
     throw startupFailure(`spawn failed: ${messageFor(error)}`);
   }
   attachChildListeners(watchdog);
+  if (runtimeEnvironmentLine) {
+    child.stdin.write(runtimeEnvironmentLine);
+    runtimeEnvironmentLine = "";
+  }
 }
 
 function waitForContainerRunning(watchdog, imageState) {
@@ -612,6 +628,51 @@ async function startBridge() {
         });
       }
       startupWatchdog.progress();
+    }
+
+    if (IS_DOCKER_BRIDGE && Object.keys(runtimeEnv).length) {
+      if (!MCP_IMAGE)
+        throw startupFailure(
+          "MCP runtime image is required for credential delivery.",
+        );
+      const dockerOptions = ARGS.slice(0, ARGS.indexOf(MCP_IMAGE, 1));
+      const forcePull = dockerOptions.some(
+        (arg, index) =>
+          arg === "--pull=always" ||
+          (arg === "--pull" && dockerOptions[index + 1] === "always"),
+      );
+      if (imageState === "pulling" || forcePull) {
+        const pulled = await startupWatchdog.race(
+          runDockerCli(["pull", MCP_IMAGE], {
+            timeoutMs: STARTUP_MAX_TIMEOUT_MS,
+            progress: () => startupWatchdog.progress(),
+          }),
+        );
+        if (pulled.code !== 0)
+          throw startupFailure("MCP runtime image pull failed.");
+      }
+      const inspected = await startupWatchdog.race(
+        runDockerCli(["image", "inspect", "--format", "{{json .}}", MCP_IMAGE]),
+      );
+      if (inspected.code !== 0)
+        throw startupFailure("MCP runtime image inspection failed.");
+      let metadata;
+      try {
+        metadata = JSON.parse(inspected.stdout);
+      } catch {
+        throw startupFailure("MCP runtime image metadata is invalid.");
+      }
+      if (!/^sha256:[a-f0-9]{64}$/i.test(metadata?.Id) || !metadata.Config) {
+        throw startupFailure("MCP runtime image metadata is invalid.");
+      }
+      ARGS = withSecretEnvironmentBootstrap(ARGS, MCP_IMAGE, metadata.Config);
+      // Pin the inspected image so tag drift cannot change its exec contract.
+      ARGS[ARGS.indexOf(MCP_IMAGE, 1)] = metadata.Id;
+      runtimeEnvironmentLine = secretEnvironmentLine(runtimeEnv);
+      runtimeEnv = {};
+    } else if (!IS_DOCKER_BRIDGE) {
+      childEnv = { ...childEnv, ...runtimeEnv };
+      runtimeEnv = {};
     }
 
     runtimePhase("starting-container", {

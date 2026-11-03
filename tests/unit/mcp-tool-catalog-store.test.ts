@@ -4,11 +4,15 @@ const mocks = vi.hoisted(() => ({
   findUnique: vi.fn(),
   updateMany: vi.fn(),
   liveRedactionValues: vi.fn(),
+  agentServerFindMany: vi.fn(),
+  assistantGrantFindMany: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => ({
   db: {
     deployment: { findUnique: mocks.findUnique, updateMany: mocks.updateMany },
+    agentServer: { findMany: mocks.agentServerFindMany },
+    chatAssistantMcpGrant: { findMany: mocks.assistantGrantFindMany },
   },
 }));
 vi.mock("@/lib/process/supervisor", () => ({
@@ -16,22 +20,27 @@ vi.mock("@/lib/process/supervisor", () => ({
 }));
 
 import { persistDeploymentMcpToolCatalog } from "@/lib/process/mcp-tool-catalog-store";
+import { sealMcpEnvironment } from "@/lib/process/mcp-credentials";
 
 describe("persistDeploymentMcpToolCatalog", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.liveRedactionValues.mockReturnValue([]);
+    mocks.agentServerFindMany.mockResolvedValue([]);
+    mocks.assistantGrantFindMany.mockResolvedValue([]);
   });
 
   it("updates only the tool snapshot while preserving private deployment config", async () => {
     const updatedAt = new Date();
+    const installCfg = sealMcpEnvironment({ command: "npx" }, "workspace-1", {
+      API_KEY: "private-value",
+      GITHUB_TOOLSETS: "all",
+    });
     mocks.findUnique.mockResolvedValue({
       source: "config",
       updatedAt,
-      installCfg: {
-        command: "npx",
-        env: { API_KEY: "private-value", GITHUB_TOOLSETS: "all" },
-      },
+      workspaceId: "workspace-1",
+      installCfg,
     });
     mocks.updateMany.mockResolvedValue({ count: 1 });
 
@@ -39,7 +48,7 @@ describe("persistDeploymentMcpToolCatalog", () => {
       persistDeploymentMcpToolCatalog("dep-1", [
         {
           name: "search",
-          description: "Search all safely; never echo private-value.",
+          description: "Search safely; never echo private-value.",
           inputSchema: { type: "object" },
           env: { API_KEY: "leak" },
         },
@@ -47,7 +56,7 @@ describe("persistDeploymentMcpToolCatalog", () => {
     ).resolves.toEqual([
       {
         name: "search",
-        description: "Search all safely; never echo [REDACTED].",
+        description: "Search safely; never echo [REDACTED].",
         inputSchema: { type: "object" },
       },
     ]);
@@ -56,12 +65,11 @@ describe("persistDeploymentMcpToolCatalog", () => {
       where: { id: "dep-1", updatedAt },
       data: {
         installCfg: {
-          command: "npx",
-          env: { API_KEY: "private-value", GITHUB_TOOLSETS: "all" },
+          ...installCfg,
           toolCatalog: [
             {
               name: "search",
-              description: "Search all safely; never echo [REDACTED].",
+              description: "Search safely; never echo [REDACTED].",
               inputSchema: { type: "object" },
             },
           ],
@@ -74,10 +82,12 @@ describe("persistDeploymentMcpToolCatalog", () => {
     mocks.findUnique.mockResolvedValue({
       source: "config",
       updatedAt: new Date(),
-      installCfg: {
-        env: { API_KEY: "credential-name" },
-        toolCatalog: [{ name: "previous-tool" }],
-      },
+      workspaceId: "workspace-1",
+      installCfg: sealMcpEnvironment(
+        { toolCatalog: [{ name: "previous-tool" }] },
+        "workspace-1",
+        { API_KEY: "credential-name" },
+      ),
     });
 
     await expect(
@@ -163,5 +173,39 @@ describe("persistDeploymentMcpToolCatalog", () => {
     expect(JSON.stringify(mocks.updateMany.mock.calls)).not.toContain(
       "response-after-exit-secret",
     );
+  });
+
+  it("refuses legacy plaintext rather than copying it into a new snapshot", async () => {
+    mocks.findUnique.mockResolvedValue({
+      source: "config",
+      workspaceId: "workspace-1",
+      installCfg: { env: { API_KEY: "legacy-secret" } },
+      updatedAt: new Date(),
+    });
+    await expect(
+      persistDeploymentMcpToolCatalog("dep-1", [
+        { name: "search", inputSchema: { type: "object" } },
+      ]),
+    ).rejects.toThrow("MCP_CREDENTIAL_MIGRATION_REQUIRED");
+    expect(mocks.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("does not publish a catalog containing a short configured value", async () => {
+    mocks.findUnique.mockResolvedValue({
+      source: "config",
+      workspaceId: "workspace-1",
+      installCfg: sealMcpEnvironment({}, "workspace-1", { TOKEN: "all" }),
+      updatedAt: new Date(),
+    });
+    await expect(
+      persistDeploymentMcpToolCatalog("dep-1", [
+        {
+          name: "search",
+          description: "Search all resources",
+          inputSchema: { type: "object" },
+        },
+      ]),
+    ).resolves.toEqual([]);
+    expect(mocks.updateMany).not.toHaveBeenCalled();
   });
 });

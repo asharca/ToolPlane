@@ -1,16 +1,10 @@
 import { redirect } from "next/navigation";
-import {
-  legacyMarketRedirectTarget,
-  type MarketSearchParams,
-} from "@/lib/workspace/market-url";
 
-export default async function LegacyMcpMarketRedirect({
+export default async function NewMcpPage({
   params,
-  searchParams,
 }: {
   params: Promise<{ workspace: string }>;
-  searchParams: Promise<MarketSearchParams>;
 }) {
-  const [{ workspace }, query] = await Promise.all([params, searchParams]);
-  redirect(legacyMarketRedirectTarget(workspace, "mcp", query));
+  const { workspace } = await params;
+  redirect(`/app/${encodeURIComponent(workspace)}/mcp?create=1`);
 }

@@ -37,6 +37,7 @@ export async function ownedSandbox(sandboxId: string, userId: string) {
       id: true,
       name: true,
       kind: true,
+      config: true,
       workspaceId: true,
       deploymentId: true,
       deployment: {
@@ -69,6 +70,6 @@ export async function resolveSandboxMcpGrant(sandboxId: string, token: string) {
   )
     return null;
   const sandbox = await ownedSandbox(sandboxId, grant.userId);
-  if (!sandbox || !sandboxMcpExportable(sandbox.kind)) return null;
+  if (!sandbox || !sandboxMcpExportable(sandbox)) return null;
   return { ...grant, sandbox };
 }

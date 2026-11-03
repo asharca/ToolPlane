@@ -60,7 +60,7 @@ export function Citation({
       href={`#${citationTargetId(idPrefix, citationId)}`}
       aria-label={`View citation ${index}`}
       className={cn(
-        "mx-0.5 inline-flex min-w-4 -translate-y-0.5 items-center justify-center rounded-md bg-muted/60 px-1 py-0.5 text-[10px] font-semibold leading-none text-muted-foreground no-underline outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring",
+        "mx-0.5 inline-flex min-w-4 -translate-y-0.5 items-center justify-center rounded-lg bg-muted/60 px-1 py-0.5 text-[10px] font-semibold leading-none text-muted-foreground no-underline outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring",
         className,
       )}
     >
@@ -95,7 +95,7 @@ export function CitationFavicon({
           width={16}
           height={16}
           referrerPolicy="no-referrer"
-          className="size-4 rounded-sm object-contain"
+          className="size-4 rounded-lg object-contain"
         />
       ) : (
         <Globe2 className="size-3.5" />
@@ -145,7 +145,7 @@ function CitationRow({
         ) : null}
       </span>
       <span className="flex shrink-0 items-center gap-1.5">
-        <span className="grid size-5 place-items-center rounded-md bg-foreground/[0.05] text-[10px] font-semibold tabular-nums text-muted-foreground">
+        <span className="grid size-5 place-items-center rounded-lg bg-foreground/[0.05] text-[10px] font-semibold tabular-nums text-muted-foreground">
           {index}
         </span>
         {citation.url ? (
@@ -155,7 +155,7 @@ function CitationRow({
     </>
   );
   const className =
-    "group/citation flex items-center gap-2 rounded-md px-1.5 py-1 outline-none focus-visible:ring-2 focus-visible:ring-ring";
+    "group/citation flex items-center gap-2 rounded-lg px-1.5 py-1 outline-none focus-visible:ring-2 focus-visible:ring-ring";
   const id = citationTargetId(idPrefix, citation.id);
 
   return citation.url ? (

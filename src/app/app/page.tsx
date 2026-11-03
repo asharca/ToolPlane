@@ -1,7 +1,6 @@
 import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
 import { getCurrentUser } from "@/lib/auth/current-user";
-import { getAgentMarketListingByDirectorySlug } from "@/lib/agents/market";
 import {
   getDefaultWorkspace,
   getWorkspaceForUser,
@@ -25,11 +24,6 @@ export default async function AppIndexPage({
   searchParams,
 }: {
   searchParams: Promise<{
-    server?: string | string[];
-    skill?: string | string[];
-    agent?: string | string[];
-    market?: string | string[];
-    q?: string | string[];
     view?: string;
     workspace?: string;
     notice?: string;
@@ -38,29 +32,7 @@ export default async function AppIndexPage({
   }>;
 }) {
   const query = await searchParams;
-  const server = intentSlug(query.server);
-  const skill = intentSlug(query.skill);
-  const agent = intentSlug(query.agent);
-  const rawMarket = Array.isArray(query.market)
-    ? query.market[0]
-    : query.market;
-  const market = ["mcp", "skills", "assistants", "toolkits"].includes(
-    rawMarket ?? "",
-  )
-    ? (rawMarket as "mcp" | "skills" | "assistants" | "toolkits")
-    : null;
-  const rawTerm = Array.isArray(query.q) ? query.q[0] : query.q;
-  const term = rawTerm?.trim().slice(0, 160) ?? "";
-  const marketIntent = market
-    ? `/app?market=${market}${term ? `&q=${encodeURIComponent(term)}` : ""}`
-    : null;
-  const intent = server
-    ? `/app?server=${encodeURIComponent(server)}`
-    : skill
-      ? `/app?skill=${encodeURIComponent(skill)}`
-      : agent
-        ? `/app?agent=${encodeURIComponent(agent)}`
-        : (marketIntent ?? "/app");
+  const intent = "/app";
   const user = await getCurrentUser();
   if (query.view === "notifications") {
     const page = normalizeAdminPage(Number(query.page ?? 1));
@@ -120,28 +92,5 @@ export default async function AppIndexPage({
         notice={selectedSlug ? "unavailable" : ""}
       />
     );
-  if (server) {
-    redirect(
-      `/app/${encodeURIComponent(ws.slug)}/market/mcp/${encodeURIComponent(server)}`,
-    );
-  }
-  if (skill) {
-    redirect(
-      `/app/${encodeURIComponent(ws.slug)}/market/skills/${encodeURIComponent(skill)}`,
-    );
-  }
-  if (agent) {
-    const detail = await getAgentMarketListingByDirectorySlug(agent);
-    const marketPath = `/app/${encodeURIComponent(ws.slug)}/market/agents`;
-    redirect(
-      detail
-        ? `${marketPath}/${encodeURIComponent(detail.listing.id)}#install`
-        : marketPath,
-    );
-  }
-  if (market) {
-    const marketPath = `/app/${encodeURIComponent(ws.slug)}/market/${market}`;
-    redirect(`${marketPath}${term ? `?q=${encodeURIComponent(term)}` : ""}`);
-  }
   redirect(`/app/${encodeURIComponent(ws.slug)}/chat`);
 }

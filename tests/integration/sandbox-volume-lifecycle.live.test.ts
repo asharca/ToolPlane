@@ -4,16 +4,22 @@ import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   copyDockerVolume,
+  createDockerVolume,
+  digestDockerVolume,
+  initializeDockerSessionWorkspace,
+  removeDockerSessionWorkspace,
   removeDockerVolumeStrict,
 } from "@/lib/sandboxes/runtime";
 
+import { agentSessionWorkspaceRoot } from "@/lib/agents/session-paths";
 const RUN = process.env.SANDBOX_DOCKER_SMOKE === "1";
 const execFileAsync = promisify(execFile);
 const suffix = `${process.pid}-${Date.now()}`;
 const sourceVolume = `toolplane_test_source_${suffix}`;
 const snapshotVolume = `toolplane_test_snapshot_${suffix}`;
 const cloneVolume = `toolplane_test_clone_${suffix}`;
-const volumes = [sourceVolume, snapshotVolume, cloneVolume];
+const sharedVolume = `toolplane_test_shared_${suffix}`;
+const volumes = [sourceVolume, snapshotVolume, cloneVolume, sharedVolume];
 
 async function docker(args: string[]): Promise<string> {
   const result = await execFileAsync("docker", args, { timeout: 120_000 });
@@ -50,6 +56,9 @@ async function alpine(volume: string, script: string): Promise<string> {
           "printf 'locked' > /data/locked",
           "chmod 000 /data/locked",
           "ln -s 'file with spaces.txt' /data/link",
+          "ln -s '/workspace/.hidden' /data/absolute-link",
+          "mkdir -p /data/.toolplane/runtimes/pi-sdk/agents/retained",
+          'printf \'%s\' \'{"type":"session","cwd":"/workspace"}\' > /data/.toolplane/runtimes/pi-sdk/agents/retained/session.jsonl',
         ].join("; "),
       );
     }, 120_000);
@@ -103,6 +112,85 @@ async function alpine(volume: string, script: string): Promise<string> {
       expect(
         await alpine(cloneVolume, "cat '/data/file with spaces.txt'"),
       ).toBe("clone");
+    }, 120_000);
+
+    it("migrates complete legacy workspaces idempotently without replacing edits or source history", async () => {
+      await createDockerVolume(sharedVolume);
+      const first = agentSessionWorkspaceRoot({
+        conversationId: "first",
+      }).slice("/workspace/".length);
+      const second = agentSessionWorkspaceRoot({
+        conversationId: "second",
+      }).slice("/workspace/".length);
+      const checksum = await digestDockerVolume(sourceVolume);
+      const source = {
+        volumeName: sourceVolume,
+        checksum,
+        sourceSandboxId: "legacy",
+      };
+      await initializeDockerSessionWorkspace(sharedVolume, first, source);
+      expect(
+        await alpine(
+          sharedVolume,
+          `cat '/data/${first}/file with spaces.txt'; printf '|'; cat '/data/${first}/.hidden'; printf '|'; cat '/data/${first}/.toolplane/runtimes/pi-sdk/agents/retained/session.jsonl'`,
+        ),
+      ).toBe('original|hidden|{"type":"session","cwd":"/workspace"}');
+      expect(
+        await alpine(sharedVolume, `readlink '/data/${first}/absolute-link'`),
+      ).toBe(`/workspace/${first}/.hidden`);
+      await alpine(
+        sharedVolume,
+        `printf 'retained-edit' > '/data/${first}/file with spaces.txt'`,
+      );
+      await initializeDockerSessionWorkspace(sharedVolume, first, source);
+      expect(
+        await alpine(sharedVolume, `cat '/data/${first}/file with spaces.txt'`),
+      ).toBe("retained-edit");
+      expect(await digestDockerVolume(sourceVolume)).toBe(checksum);
+      await initializeDockerSessionWorkspace(sharedVolume, second, source);
+      expect(
+        await alpine(
+          sharedVolume,
+          `cat '/data/${second}/file with spaces.txt'`,
+        ),
+      ).toBe("original");
+      await expect(
+        initializeDockerSessionWorkspace(sharedVolume, first, {
+          ...source,
+          checksum: "0".repeat(64),
+        }),
+      ).rejects.toThrow();
+      expect(
+        await alpine(sharedVolume, `cat '/data/${first}/file with spaces.txt'`),
+      ).toBe("retained-edit");
+      const failed = agentSessionWorkspaceRoot({
+        a2aContextId: "failed",
+      }).slice("/workspace/".length);
+      await expect(
+        initializeDockerSessionWorkspace(sharedVolume, failed, {
+          ...source,
+          checksum: "0".repeat(64),
+        }),
+      ).rejects.toThrow();
+      expect(
+        await alpine(
+          sharedVolume,
+          `test ! -e '/data/${failed}' && printf 'unpublished'`,
+        ),
+      ).toBe("unpublished");
+      await alpine(
+        sharedVolume,
+        "mkdir -p /data/.toolplane/runtime-packages; printf 'shared-install' > /data/.toolplane/runtime-packages/retained",
+      );
+      await removeDockerSessionWorkspace(sharedVolume, first);
+      expect(
+        await alpine(
+          sharedVolume,
+          `test ! -e '/data/${first}' && cat '/data/${second}/file with spaces.txt'; printf '|'; cat /data/.toolplane/runtime-packages/retained`,
+        ),
+      ).toBe("original|shared-install");
+      expect(await digestDockerVolume(sourceVolume)).toBe(checksum);
+      await removeDockerSessionWorkspace(sharedVolume, first);
     }, 120_000);
   },
 );
