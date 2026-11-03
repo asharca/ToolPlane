@@ -2,7 +2,7 @@ import "server-only";
 import { createHash } from "node:crypto";
 import { db } from "@/lib/db";
 import { AgentRevisionConfigSchema } from "@/lib/agents/revision-types";
-import { assertMarketReleasesExecutable } from "@/lib/market/revocation";
+import { assertMarketReleasesExecutable } from "@/lib/pi-packages/revocation";
 import { assertAgentEnvironmentCredentialReferences } from "@/lib/agents/environment-credentials";
 import { assertRuntimeOwner } from "@/lib/runtime/ownership-state";
 import { resolveMcpConnectionSpawnSpec } from "./mcp-credentials";
@@ -10,6 +10,7 @@ import {
   mcpDefinitionChecksum,
   assertSessionMcpRecipePinned,
   mcpRuntimeFilesChecksum,
+  mcpRunsInAgentSandbox,
 } from "./mcp-definition";
 import {
   startProcess,
@@ -24,9 +25,15 @@ import {
   sessionMcpPackageLaunch,
   validateSessionMcpRuntimeImage,
 } from "./mcp-runtime-image";
+import { agentSandboxCompanionArgs } from "./sandbox";
+import {
+  dockerSandboxRuntimeUser,
+  sandboxContainerName,
+  sandboxVolumeName,
+} from "@/lib/sandboxes/runtime";
+import { ensureAgentConversationSandbox } from "@/lib/agents/conversation-sandbox";
 import { remoteMcpConnectionIdentity } from "@/lib/remote-mcp/classification";
 import { runMcpDeploymentOperation } from "@/lib/workspace/mcp-operation";
-import { parsePendingToolChanges } from "./mcp-tool-signature";
 
 export type SessionMcpContext = {
   workspaceId: string;
@@ -40,6 +47,7 @@ export type SessionMcpContext = {
 export function sessionMcpProcessId(
   context: SessionMcpContext,
   deploymentId: string,
+  inAgentSandbox = false,
 ): string {
   if (Boolean(context.conversationId) === Boolean(context.a2aContextId))
     throw new Error("MCP_SESSION_REQUIRED");
@@ -52,6 +60,7 @@ export function sessionMcpProcessId(
         context.conversationId ?? null,
         context.a2aContextId ?? null,
         deploymentId,
+        ...(inAgentSandbox ? ["agent-sandbox"] : []),
       ]),
     )
     .digest("hex")}`;
@@ -69,11 +78,11 @@ async function authorizeSession(context: SessionMcpContext, stopping = false) {
         ? {}
         : {
             retiredAt: null,
-            runtimeKind: "pi-sdk",
+            runtimeKind: { in: ["pi-sdk", "omp"] },
             workspace: { status: "active" },
           }),
     },
-    select: { id: true },
+    select: { id: true, runtimeKind: true },
   });
   if (!agent) throw new Error("MCP_SESSION_FORBIDDEN");
   const where = {
@@ -102,6 +111,8 @@ async function authorizeSession(context: SessionMcpContext, stopping = false) {
   });
   if (!revision) throw new Error("MCP_REVISION_FORBIDDEN");
   const config = AgentRevisionConfigSchema.parse(revision.config);
+  if (!stopping && config.runtimeKind !== agent.runtimeKind)
+    throw new Error("MCP_REVISION_FORBIDDEN");
   if (!stopping) {
     await assertMarketReleasesExecutable(
       db,
@@ -142,14 +153,10 @@ async function resolveSessionMcp(
     (await mcpRuntimeFilesChecksum(db, deploymentId))
   )
     throw new Error("MCP_RUNTIME_FILES_CHANGED");
-  const pendingToolChanges = parsePendingToolChanges(
-    binding.pendingToolChanges,
-  );
   const allowed = new Set(
     grant.allowedToolNames.filter(
       (name) =>
         binding.allowedToolNames.includes(name) &&
-        !(name in pendingToolChanges) &&
         (deployment.mcpToolExposure !== "allowlist" ||
           deployment.mcpAllowedTools.includes(name)),
     ),
@@ -171,6 +178,8 @@ async function resolveSessionMcp(
       spec.args[0] !== "run")
   )
     throw new Error("MCP_SESSION_RECIPE_UNSUPPORTED");
+  const inAgentSandbox =
+    spec.kind === "bridge" && mcpRunsInAgentSandbox(deployment);
   if (spec.kind === "bridge") {
     assertSessionMcpRecipePinned(deployment);
     if (!grant.runtimeImageDigest)
@@ -190,13 +199,42 @@ async function resolveSessionMcp(
         spec.args.length - imageIndex - 1,
         ...launch.args,
       );
+    if (inAgentSandbox) {
+      // Explicit user opt-in: the Agent sandbox shares this process, its files
+      // and its environment (including credentials).
+      const sandbox = await ensureAgentConversationSandbox({
+        workspaceId: context.workspaceId,
+        agentId: context.agentId,
+        conversationId: context.conversationId,
+        contextId: context.a2aContextId,
+      });
+      spec.args = agentSandboxCompanionArgs(
+        spec.args,
+        imageIndex,
+        {
+          container: sandboxContainerName(sandbox.sandboxId),
+          volume: sandboxVolumeName(sandbox.sandboxId),
+          user: await dockerSandboxRuntimeUser(sandbox.sandboxId),
+        },
+        spec.configWorkingDirectory === true,
+      );
+    }
   }
   const processId =
     spec.kind === "remote"
       ? deploymentId
-      : sessionMcpProcessId(context, deploymentId);
-  // Only the recipe's explicit environment is delivered. The spawn builder
-  // supplies hardened Docker flags and tmpfs caches, never an Agent work mount.
+      : sessionMcpProcessId(context, deploymentId, inAgentSandbox);
+  // Placement is a live deployment setting: retire the sidecar from the other
+  // placement so a toggle takes effect on the next request.
+  const otherPlacement = sessionMcpProcessId(
+    context,
+    deploymentId,
+    !inAgentSandbox,
+  );
+  if (spec.kind === "bridge" && liveMcpRuntimeSnapshot(otherPlacement))
+    await stopProcess(otherPlacement);
+  // Only the recipe's explicit environment is delivered. Unless the user opted
+  // into Agent-sandbox placement, the spawn builder never adds a work mount.
   await startProcess(processId, spec, {
     workspaceId: context.workspaceId,
     configSourceDeploymentId: deploymentId,
@@ -237,7 +275,9 @@ export async function listSessionMcpTools(
   return runSessionMcpOperation(context, deploymentId, async () => {
     const runtime = await resolveSessionMcp(context, deploymentId);
     const tools = await listMcpTools(runtime.processId, {
-      persistCatalog: false,
+      // A shared remote connection is the deployment itself: keep its catalog
+      // current so grant sync can publish the next revision.
+      persistCatalog: runtime.processId === deploymentId,
     });
     return tools.filter((tool) => runtime.allowed.has(tool.name));
   });
@@ -314,9 +354,12 @@ export async function stopSessionMcp(
 ): Promise<void> {
   const revision = await authorizeSession(context, true);
   await Promise.all(
-    revision.mcpGrants.map(async (grant) => {
-      const processId = sessionMcpProcessId(context, grant.deploymentId);
-      await stopProcess(processId);
-    }),
+    revision.mcpGrants.flatMap((grant) =>
+      [false, true].map((inAgentSandbox) =>
+        stopProcess(
+          sessionMcpProcessId(context, grant.deploymentId, inAgentSandbox),
+        ),
+      ),
+    ),
   );
 }

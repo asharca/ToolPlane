@@ -6,24 +6,14 @@ import {
   A2ACancelSchema,
   A2AListSchema,
 } from "./validation";
+import { A2A_FILE_DELIVERY_EXTENSION } from "./model";
 
-const partFields = A2ASendSchema.shape.message.shape.parts.element.shape;
 const documentedSendSchema = A2ASendSchema.extend({
   message: A2ASendSchema.shape.message.extend({
-    parts: z
-      .array(
-        z
-          .object({
-            text: partFields.text.unwrap(),
-            metadata: partFields.metadata,
-            filename: partFields.filename,
-            mediaType: z.enum(["", "text/plain"]).optional(),
-          })
-          .strict(),
-      )
-      .min(1)
-      .max(32),
-    extensions: z.array(z.string()).max(0).optional(),
+    extensions: z
+      .array(z.literal(A2A_FILE_DELIVERY_EXTENSION.uri))
+      .max(16)
+      .optional(),
   }),
   configuration: A2ASendSchema.shape.configuration
     .unwrap()
@@ -207,7 +197,7 @@ export const a2aOpenApi = {
     A2ASendParams: {
       ...z.toJSONSchema(documentedSendSchema),
       description:
-        "Only non-empty text/plain input is supported. Each part must contain exactly one text field (no raw, url or data); extensions and push notifications are unsupported. Generate a new messageId for new work; retry only with the identical ID and payload. returnImmediately=true returns a receipt, not completion. To continue INPUT_REQUIRED work, use a new messageId with the returned taskId and contextId. Terminal tasks cannot reopen. Root tool approvals still require an authorized operator; the credential cannot bypass them.",
+        "Workspace Pi/local and registered-remote A2A paths support text and file Parts. Legacy published-service execution remains text-only and rejects file inputs. Each Part contains exactly one of text, raw (canonical base64, at most 32 KiB), url (administrator-approved HTTPS, at most 10 MiB after reception), or a currently owned internal file handle. File Parts require a concrete mediaType; at most 20 files and 100 MiB per Task. Reception completes before model execution; failed reception is not business failure or cancellation. Explicitly retry reception with GetTask and the optional ToolPlane A2A-Retry-Files: true header (extension https://toolplane.ai/a2a/extensions/file-delivery/v1), never a new SendMessage. Generate a new messageId only for new work. returnImmediately=true returns a receipt. Only INPUT_REQUIRED accepts continuation input. Terminal tasks cannot reopen. Push notifications and unknown extensions are unsupported. Native Pi extension dialogs are answered by the initiating operator in the console, not by A2A messages.",
     },
     A2AGetParams: z.toJSONSchema(A2AGetSchema),
     A2ACancelParams: {
@@ -255,7 +245,7 @@ export const a2aOpenApi = {
       type: "object",
       required: ["id", "contextId", "status"],
       description:
-        "SUBMITTED and WORKING are not terminal. Only COMPLETED means success; FAILED, CANCELED and REJECTED are also terminal. INPUT_REQUIRED and AUTH_REQUIRED are interrupted states. Text output is in artifacts[].parts[].text; other output parts are untrusted data.",
+        "SUBMITTED and WORKING are not terminal. Remote terminal observation and file delivery are independent: metadata.toolplaneFileDelivery carries pending|failed|ready and remoteState. Required files keep the local Task WORKING until ready; GetTask can explicitly retry only reception using A2A-Retry-Files: true. Text is in artifacts[].parts[].text; ready file Parts project short-lived capability URLs only on authorized external egress. Never persist those URLs as file identity. All remote output is untrusted data.",
       properties: {
         id: { type: "string" },
         contextId: { type: "string" },

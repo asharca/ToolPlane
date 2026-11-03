@@ -66,7 +66,7 @@ export function TiltCard({
       onMouseLeave={onLeave}
       style={{ transform, transformStyle: "preserve-3d" }}
       className={cn(
-        "relative overflow-hidden rounded-2xl will-change-transform",
+        "relative overflow-hidden rounded-xl will-change-transform",
         className,
       )}
     >

@@ -29,7 +29,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import type { A2ATask } from "@prisma/client";
 import type * as RemoteNetwork from "@/lib/a2a/remote-network";
 import type { A2ALogBinding } from "@/lib/observability/a2a-log";
-import type * as Worker from "@/lib/a2a/worker";
+import type * as Worker from "@/lib/agents/execution/worker";
 import type {
   HttpFixture,
   RemotePeerFixture,
@@ -43,12 +43,15 @@ import type { AgentRuntimeTokenPayload } from "@/lib/agents/runtime-access";
 import type { LocalA2AGrant } from "@/lib/a2a/principal";
 import { withSandboxExecutionLease } from "@/lib/agents/sandbox-execution-gate";
 import { withAgentExecutionLease } from "@/lib/agents/agent-execution-gate";
-import { handleLocalMcp } from "@/lib/a2a/local-mcp";
-import { handleRuntimeApprovals } from "@/lib/a2a/approval-http";
+import { handleRuntimeTools } from "@/lib/agents/execution/runtime-tools";
+import { handleRuntimeUi } from "@/lib/agents/execution/ui-http";
 import { LOCAL_LIMITS } from "@/lib/a2a/local-policy";
-import { submitNativeEntry } from "@/lib/a2a/ingress";
+import { submitAgentEntry } from "@/lib/agents/execution/entries";
 import { claimTask as claimStoredTask, finishTask } from "@/lib/a2a/store";
-import { executeA2ATask, stopA2AWorker } from "@/lib/a2a/worker";
+import {
+  executeAgentTask,
+  stopAgentWorker,
+} from "@/lib/agents/execution/worker";
 import { reconcileRemoteTasks } from "@/lib/a2a/remote-executor";
 import { mutateRemoteRegistry } from "@/lib/a2a/remote-registry";
 import { validateRemoteResponse } from "@/lib/a2a/remote-wire";
@@ -98,9 +101,9 @@ vi.mock("@/lib/a2a/remote-network", async (original) => ({
     },
 }));
 // Deterministic scheduling only: SDK communication crosses the real protocol and authorization boundary.
-vi.mock("@/lib/a2a/worker", async (original) => ({
+vi.mock("@/lib/agents/execution/worker", async (original) => ({
   ...(await original<typeof Worker>()),
-  wakeA2AWorker: vi.fn(),
+  wakeAgentWorker: vi.fn(),
 }));
 // Only Docker provisioning is injected; persisted mappings and authorization remain real.
 vi.mock("@/lib/sandboxes/runtime", async (original) => {
@@ -136,12 +139,6 @@ const clients: Client[] = [];
 let platform: HttpFixture;
 let peer: RemotePeerFixture;
 const inboundResponses: Array<{ status: number; body: string }> = [];
-const rawNames = [
-  "pi_a2a_peers",
-  "pi_a2a_submit",
-  "pi_a2a_status",
-  "pi_a2a_cancel",
-];
 const legacyNames = [
   "a2a_list_agents",
   "a2a_list_remote_agents",
@@ -183,7 +180,7 @@ async function root(index = 0, actor = actorId) {
       legacyRevisionUnresolved: false,
     },
   });
-  const accepted = await submitNativeEntry(
+  const accepted = await submitAgentEntry(
     {
       kind: "chat",
       sourceId: conversation.id,
@@ -216,28 +213,12 @@ async function payload(
     a2aTaskId: row.id,
     a2aContextId: row.contextId,
     a2aLeaseToken: assertDefined(row.leaseToken),
-    a2aApprovalRequired: true,
     exp: Math.floor(Date.now() / 1000) + 300,
   };
 }
-async function credential(row: A2ATask, index = 0, ready = true) {
+async function credential(row: A2ATask, index = 0) {
   const token = await createAgentRuntimeToken(await payload(row, index));
   tokens.push(token);
-  if (ready) {
-    const response = await fetch(
-      `${platform.base}/api/v1/agent-runtime/a2a/${row.id}/approvals`,
-      {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${token}`,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({ action: "ready" }),
-      },
-    );
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ status: "ready" });
-  }
   return token;
 }
 async function connect(row: A2ATask, index = 0, token?: string) {
@@ -248,7 +229,7 @@ async function connect(row: A2ATask, index = 0, token?: string) {
   clients.push(client);
   await client.connect(
     new StreamableHTTPClientTransport(
-      new URL(`${platform.base}/api/v1/agent-runtime/a2a/${row.id}/mcp`),
+      new URL(`${platform.base}/api/v1/agent-runtime/tasks/${row.id}/tools`),
       {
         requestInit: {
           headers: {
@@ -299,6 +280,7 @@ async function delegate(
     target: `agent:${agents[index]}`,
     message,
     messageId,
+    wait: false,
   });
   expect(result.taskId).toEqual(expect.any(String));
   return result.taskId;
@@ -309,6 +291,7 @@ async function remoteSubmit(client: Client, messageId = randomUUID()) {
       target: `remote:${remoteId}`,
       message: "Review only the supplied public text",
       messageId,
+      wait: false,
     })
   ).taskId;
 }
@@ -464,11 +447,11 @@ beforeAll(async () => {
   platform = await httpFixture(async (req) => {
     const path = new URL(req.url).pathname;
     const runtime =
-      /^\/api\/v1\/agent-runtime\/a2a\/([^/]+)\/(mcp|approvals)$/.exec(path);
+      /^\/api\/v1\/agent-runtime\/tasks\/([^/]+)\/(tools|ui)$/.exec(path);
     if (runtime) {
       if (req.method !== "POST") return new Response(null, { status: 405 });
-      if (runtime[2] === "mcp") return handleLocalMcp(req, runtime[1]);
-      return handleRuntimeApprovals(req, runtime[1]);
+      if (runtime[2] === "tools") return handleRuntimeTools(req, runtime[1]);
+      return handleRuntimeUi(req, runtime[1]);
     }
     const inbound =
       /^\/api\/v1\/workspaces\/([^/]+)\/agents\/([^/]+)\/a2a\/local$/.exec(
@@ -600,7 +583,7 @@ afterEach(async () => {
     if (result.status === "rejected") throw result.reason;
 });
 afterAll(async () => {
-  stopA2AWorker();
+  stopAgentWorker();
   const servers = await Promise.allSettled([platform?.close(), peer?.close()]);
   vi.unstubAllEnvs();
   if (workspaceId) {
@@ -643,11 +626,8 @@ afterAll(async () => {
 
 describe("native communication transport: real PostgreSQL and MCP SDK HTTP", () => {
   it("intersects pinned collaboration scopes with live outbound authorization", async () => {
-    const client = await connect(await root());
-    const catalog = await client.listTools();
-    expect(catalog.tools.map((tool) => tool.name).sort()).toEqual(
-      [...rawNames].sort(),
-    );
+    const parent = await root();
+    const client = await connect(parent);
     expect(
       (await call(client, "pi_a2a_peers")).peers
         .map((entry) => entry.target)
@@ -657,7 +637,32 @@ describe("native communication transport: real PostgreSQL and MCP SDK HTTP", () 
       where: { id: agents[0] },
       data: { a2aOutboundEnabled: false },
     });
-    expect((await client.listTools()).tools).toEqual([]);
+    // Discovery keeps immutable catalog positions; live authority gates calls.
+    await rejected(client, "pi_a2a_peers", {});
+    const artifactId = randomUUID();
+    await call(client, "a2a_publish_artifact", {
+      artifactId,
+      name: "Independent runtime result",
+      parts: [
+        { text: "Artifact publication survives communication revocation" },
+      ],
+    });
+    const saved = await db.a2ATask.findUniqueOrThrow({
+      where: { id: parent.id },
+    });
+    const snapshot = Task.toJSON(Task.fromJSON(saved.snapshot)) as {
+      artifacts: unknown[];
+    };
+    expect(snapshot.artifacts).toContainEqual(
+      expect.objectContaining({
+        artifactId,
+        parts: expect.arrayContaining([
+          expect.objectContaining({
+            text: "Artifact publication survives communication revocation",
+          }),
+        ]),
+      }),
+    );
     for (const target of [`agent:${agents[1]}`, `remote:${remoteId}`])
       await rejected(client, "pi_a2a_submit", {
         target,
@@ -805,11 +810,9 @@ describe("native communication transport: real PostgreSQL and MCP SDK HTTP", () 
     );
   });
 
-  it("requires approval readiness and exact runtime scope, rejects forged claims, and invalidates old credentials on a new lease", async () => {
+  it("requires exact runtime scope without a platform tool gate, rejects forged claims, and invalidates old credentials on a new lease", async () => {
     const parent = await root(),
-      token = await credential(parent, 0, false);
-    await expect(connect(parent, 0, token)).rejects.toThrow();
-    await credential(parent);
+      token = await credential(parent);
     const client = await connect(parent, 0, token);
     await call(client, "pi_a2a_peers");
     expect(taskSandbox(parent).sandboxId).not.toBe(templateSandboxes[0]);
@@ -826,14 +829,14 @@ describe("native communication transport: real PostgreSQL and MCP SDK HTTP", () 
       tokens.push(forged);
       await expect(connect(parent, 0, forged)).rejects.toThrow();
       const response = await fetch(
-        `${platform.base}/api/v1/agent-runtime/a2a/${parent.id}/approvals`,
+        `${platform.base}/api/v1/agent-runtime/tasks/${parent.id}/ui`,
         {
           method: "POST",
           headers: {
             authorization: `Bearer ${forged}`,
             "content-type": "application/json",
           },
-          body: JSON.stringify({ action: "ready" }),
+          body: JSON.stringify({ action: "todos", todos: [] }),
         },
       );
       expect(response.status).toBe(404);
@@ -859,7 +862,7 @@ describe("native communication transport: real PostgreSQL and MCP SDK HTTP", () 
     ]);
     expect(pausedTask.artifacts).toEqual([]);
     const grant = parent.grant as unknown as LocalA2AGrant;
-    const accepted = await submitNativeEntry(
+    const accepted = await submitAgentEntry(
       {
         kind: "chat",
         sourceId: assertDefined(grant.entryPolicy).sourceId,
@@ -878,9 +881,6 @@ describe("native communication transport: real PostgreSQL and MCP SDK HTTP", () 
     await expect(
       client.callTool({ name: "pi_a2a_peers", arguments: {} }),
     ).rejects.toThrow();
-    await expect(
-      connect(next, 0, await credential(next, 0, false)),
-    ).rejects.toThrow();
     await call(await connect(next), "pi_a2a_peers");
   });
 
@@ -894,7 +894,7 @@ describe("native communication transport: real PostgreSQL and MCP SDK HTTP", () 
     const child = await db.a2ATask.findUniqueOrThrow({ where: { id } });
     await mapTaskSandbox(child);
     const assertQueued = async () => {
-      await executeA2ATask(id, executor);
+      await executeAgentTask(id, executor);
       expect(executor).not.toHaveBeenCalled();
       const result = await call(client, "pi_a2a_status", {
         target: `agent:${agents[1]}`,
@@ -940,7 +940,7 @@ describe("native communication transport: real PostgreSQL and MCP SDK HTTP", () 
       leaseToken: parent.leaseToken,
       waitForTaskIds: [],
     });
-    await executeA2ATask(id, executor);
+    await executeAgentTask(id, executor);
     expect(executor).toHaveBeenCalledTimes(1);
     expect(await db.a2ATask.findUniqueOrThrow({ where: { id } })).toMatchObject(
       {
@@ -960,8 +960,8 @@ describe("external SDK boundary and remote receipt ownership", () => {
       b = await connect(second, 1);
     const idA = await remoteSubmit(a),
       idB = await remoteSubmit(b);
-    await executeA2ATask(idA);
-    await executeA2ATask(idB);
+    await executeAgentTask(idA);
+    await executeAgentTask(idB);
     for (const name of ["pi_a2a_status", "pi_a2a_cancel"]) {
       await rejected(b, name, { target: `remote:${remoteId}`, taskId: idA });
       await rejected(a, name, { target: `remote:${remoteId}`, taskId: idB });
@@ -1022,7 +1022,6 @@ describe("external SDK boundary and remote receipt ownership", () => {
     });
     for (const name of ["pi_a2a_status", "pi_a2a_cancel"])
       await rejected(a, name, { target: `remote:${remoteId}`, taskId: idA });
-    expect((await a.listTools()).tools).toEqual([]);
     expect(
       (
         await call(b, "pi_a2a_status", {
@@ -1043,7 +1042,7 @@ describe("external SDK boundary and remote receipt ownership", () => {
     const client = await connect(await root()),
       id = await remoteSubmit(client);
     peer.behavior.loseSendResponse = true;
-    await executeA2ATask(id);
+    await executeAgentTask(id);
     expect(peer.tasks.size).toBe(1);
     expect(peer.calls.map((entry) => entry.method)).toEqual(["SendMessage"]);
     const result = await call(client, "pi_a2a_status", {
@@ -1052,7 +1051,7 @@ describe("external SDK boundary and remote receipt ownership", () => {
     });
     expect(result.task.status.state).toBe("TASK_STATE_FAILED");
     expect(JSON.stringify(result)).toContain("may still");
-    await executeA2ATask(id);
+    await executeAgentTask(id);
     await reconcileRemoteTasks();
     expect(peer.calls.map((entry) => entry.method)).toEqual(["SendMessage"]);
     expect(

@@ -31,6 +31,7 @@ import {
 } from "@/lib/sidebar-preferences";
 import { parseSidebarGroupPreferencesCookie } from "@/lib/sidebar-groups";
 import { getConversationWorkspaceSandbox } from "@/lib/agents/conversation-workspace";
+import { getAgentMcpToolsUpdated } from "@/lib/agents/conversation-revisions";
 
 export const dynamic = "force-dynamic";
 
@@ -73,6 +74,7 @@ function serializeWorkSession(session: WorkSummary | WorkDetail) {
     runtimeKind: session.runtimeKind,
     readOnly: session.readOnly,
     agentRevisionId: session.agentRevisionId,
+    agentRevisionVersion: session.agentRevisionVersion,
     legacyRevisionUnresolved: session.legacyRevisionUnresolved,
     modelName: session.modelName,
     contextWindow: session.contextWindow,
@@ -107,14 +109,6 @@ function serializeWorkSession(session: WorkSummary | WorkDetail) {
         }
       : null,
     messages: serializeMessages(detail?.conversation.messages ?? []),
-    approvals:
-      detail?.approvals.map((approval) => ({
-        id: approval.id,
-        toolCallId: approval.toolCallId,
-        toolName: approval.toolName,
-        input: approval.input,
-        status: approval.status,
-      })) ?? [],
   };
 }
 
@@ -199,6 +193,17 @@ export default async function WorkspaceWorkPage({
     workspace.id,
     agents.map((agent) => agent.id),
   );
+  const mcpToolsUpdated = new Map(
+    await Promise.all(
+      agents.map(
+        async (agent) =>
+          [
+            agent.id,
+            await getAgentMcpToolsUpdated(workspace.id, agent.id),
+          ] as const,
+      ),
+    ),
+  );
 
   return (
     <>
@@ -236,6 +241,7 @@ export default async function WorkspaceWorkPage({
                 title: conversation.title,
                 source,
                 agentRevisionId: conversation.agentRevisionId,
+                agentRevisionVersion: conversation.agentRevisionVersion,
                 legacyRevisionUnresolved: conversation.legacyRevisionUnresolved,
                 runtimeKind: conversation.runtimeKind ?? undefined,
                 modelName: conversation.modelName,
@@ -262,6 +268,17 @@ export default async function WorkspaceWorkPage({
             : null
         }
         requestedAgentId={requestedAgentId}
+        providers={providers.map((provider) => ({
+          id: provider.id,
+          name: provider.name,
+          models: provider.models,
+          modelRecords: provider.modelRecords.map((model) => ({
+            modelId: model.modelId,
+            primaryType: model.primaryType,
+            capabilities: model.capabilities,
+            inputModalities: model.inputModalities,
+          })),
+        }))}
         hasChannels={agents.some((agent) => Boolean(agent._count?.channels))}
         conversations={conversations.map((conversation) => ({
           id: conversation.id,
@@ -282,14 +299,16 @@ export default async function WorkspaceWorkPage({
           return {
             id: agent.id,
             name: agent.name,
+            description: agent.description ?? null,
             pinned: agent.pinned,
             supportsWork,
             ready:
               supportsWork &&
-              agent.runtimeKind === "pi-sdk" &&
+              (agent.runtimeKind === "pi-sdk" || agent.runtimeKind === "omp") &&
               agent.currentRevisionVersion > 0,
             runtimeKind: agent.runtimeKind,
             currentRevisionVersion: agent.currentRevisionVersion,
+            mcpToolsUpdated: mcpToolsUpdated.get(agent.id) ?? null,
             providerId: agent.providerId,
             providerLabel: agent.provider?.name ?? "",
             model: agent.model,

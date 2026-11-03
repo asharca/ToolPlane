@@ -7,6 +7,7 @@ import {
   remoteResult,
 } from "@/lib/a2a/remote-client";
 import { validateRemoteResponse } from "@/lib/a2a/remote-wire";
+import { fileSafeLogPayload } from "@/lib/a2a/remote-wire";
 import {
   REMOTE_CARD,
   REMOTE_RPC,
@@ -118,10 +119,100 @@ describe("strict A2A 1.0 remote profile", () => {
     });
   });
   it.each([
+    {
+      raw: "YQ==",
+      filename: "report.bin",
+      mediaType: "application/octet-stream",
+    },
+    {
+      url: "https://agent.example/files/report?signature=secret",
+      filename: "report.csv",
+      mediaType: "text/csv",
+    },
+  ])(
+    "accepts standard file results without interpreting them as text",
+    (part) => {
+      const message = {
+        messageId: "file-result",
+        role: "ROLE_AGENT",
+        parts: [part],
+      };
+      expect(() =>
+        validateRemoteResponse(request, response({ message })),
+      ).not.toThrow();
+      const result = remoteResult(Message.fromJSON(message));
+      expect(result.text).toBe("");
+      expect(result.artifacts[0].parts[0].content?.$case).not.toBe("text");
+    },
+  );
+  it("omits file capabilities and peer metadata in nested transport diagnostics", () => {
+    const payload = {
+      result: {
+        task: {
+          metadata: {
+            signedLink: "secret-ticket",
+            bearer: "secret-peer-token",
+          },
+          history: [
+            {
+              parts: [
+                {
+                  raw: "c2VjcmV0LWJ5dGVz",
+                  mediaType: "application/octet-stream",
+                },
+              ],
+              metadata: { signedLink: "secret-history-ticket" },
+            },
+          ],
+          status: {
+            message: {
+              parts: [
+                {
+                  url: "https://agent.example/file?ticket=secret",
+                  mediaType: "application/pdf",
+                },
+              ],
+            },
+          },
+          artifacts: [
+            {
+              parts: [
+                {
+                  text: "safe",
+                  metadata: { capability: "secret-part-ticket" },
+                },
+              ],
+            },
+          ],
+        },
+      },
+    };
+    const safe = JSON.stringify(fileSafeLogPayload(payload));
+    expect(safe).toContain("safe");
+    for (const secret of [
+      "secret-ticket",
+      "secret-peer-token",
+      "c2VjcmV0LWJ5dGVz",
+      "secret-history-ticket",
+      "https://agent.example/file",
+      "secret-part-ticket",
+    ])
+      expect(safe).not.toContain(secret);
+  });
+  it.each([
     { text: "ok", raw: "eA==" },
     { text: 17 },
     { url: "http://169.254.169.254" },
     { data: {} },
+    { raw: "YR==", mediaType: "application/octet-stream" },
+    {
+      raw: Buffer.alloc(32_769).toString("base64"),
+      mediaType: "application/octet-stream",
+    },
+    {
+      url: "https://user:pass@agent.example/file",
+      mediaType: "application/octet-stream",
+    },
     { text: "<script>x</script>", mediaType: "text/html" },
     {},
   ])("rejects unsupported or lossy decoded parts", (part) => {

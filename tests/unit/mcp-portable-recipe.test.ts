@@ -1,6 +1,5 @@
 // @vitest-environment node
-import { describe, expect, it } from "vitest";
-import { assertPortableMcpRecipe } from "@/lib/market/mcp-portable-recipe";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   parseServerRecipe,
   recipeToDeploymentData,
@@ -12,48 +11,169 @@ import {
   isValidDockerImageRef,
   parseDockerJsonArgs,
 } from "@/lib/workspace/docker-json-command";
+import { resolvePinnedMcpRecipe } from "@/lib/process/mcp-pinning";
+import { assertSessionMcpRecipePinned } from "@/lib/process/mcp-definition";
 
 describe("portable MCP recipes", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
   it.each([
-    ["npm", "pkg"],
-    ["npm", "pkg@latest"],
-    ["pypi", "pkg"],
-    ["github", "https://github.com/team/repo#main"],
-    ["docker", "example/mcp:latest"],
-  ])("rejects mutable %s package %s", (source, ref) => {
-    expect(() =>
-      assertPortableMcpRecipe({ source, ref, env: [] } as ServerRecipe),
-    ).toThrow();
-  });
-  it.each([
-    ["npx", ["-c", "echo unsafe"]],
-    ["npx", ["-y", "pkg@latest"]],
-    ["uv", ["run", "script.py"]],
-    ["uvx", ["--with", "dependency", "pkg==1.2.3"]],
-    ["docker", ["run", "--privileged", "example/mcp:latest"]],
-    ["npx", ["pkg@1.2.3", "--package", "other@latest"]],
-    ["npx", ["pkg@1.2.3", "--", "--package=other@latest"]],
-    ["npx", ["pkg@1.2.3", "-pother@latest"]],
-    ["npx", ["pkg@1.2.3", "--call=sh"]],
-    ["uvx", ["pkg==1.2.3", "--with", "other"]],
-    ["uvx", ["pkg==1.2.3", "--with=other"]],
-    ["uvx", ["pkg==1.2.3", "--with-requirements", "requirements.txt"]],
-    ["uvx", ["pkg==1.2.3", "--with-executables-from=other"]],
-    ["npx", ["pkg@1.2.3", "--pack=other@latest"]],
-    ["uv", ["tool", "run", "pkg==1.2.3", "--from", "other"]],
-    ["uvx", [`git+https://127.0.0.1/repo.git#${"a".repeat(40)}`]],
-    ["uvx", [`git+https://unreviewed.example/repo.git#${"a".repeat(40)}`]],
-  ])("rejects nonportable %s command options", (command, args) => {
-    expect(() =>
-      assertPortableMcpRecipe({
+    {
+      command: "npx",
+      args: ["-y", "@team/mcp", "--label", "two words"],
+      expected: ["-y", "@team/mcp@1.2.3", "--label", "two words"],
+    },
+    {
+      command: "npx",
+      args: ["--package=@team/mcp", "mcp"],
+      expected: ["--package=@team/mcp@1.2.3", "mcp"],
+    },
+    {
+      command: "uvx",
+      args: ["mcp-time", "--timezone", "UTC"],
+      expected: ["mcp-time==1.2.3", "--timezone", "UTC"],
+    },
+    {
+      command: "uv",
+      args: ["tool", "run", "--from", "mcp-time", "--with=dependency", "mcp"],
+      expected: [
+        "tool",
+        "run",
+        "--from",
+        "mcp-time==1.2.3",
+        "--with=dependency==1.2.3",
+        "mcp",
+      ],
+    },
+  ])(
+    "pins $command package selectors without changing executable arguments",
+    async ({ command, args, expected }) => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () =>
+          Response.json({
+            "dist-tags": { latest: "1.2.3" },
+            info: { version: "1.2.3" },
+          }),
+        ),
+      );
+      const recipe = {
         source: "config",
-        ref: command,
+        sourceRef: command,
+        installCfg: { command, args, env: { TOKEN: "unchanged" } },
+      };
+      const pinned = await resolvePinnedMcpRecipe(recipe);
+      expect(pinned.installCfg).toEqual({
         command,
-        args,
-        env: [],
-      } as ServerRecipe),
-    ).toThrow();
+        args: expected,
+        env: { TOKEN: "unchanged" },
+      });
+      expect(recipe.installCfg.args).toEqual(args);
+      expect(() =>
+        assertSessionMcpRecipePinned({
+          ...recipe,
+          ...pinned,
+          serverId: null,
+          name: null,
+        }),
+      ).not.toThrow();
+    },
+  );
+
+  it("keeps exact package versions and Git commits without registry access", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    for (const [source, sourceRef] of [
+      ["npm", "@team/mcp@1.2.3-beta.1"],
+      ["pypi", "mcp-time[extra]==1.2.3"],
+      ["github", `https://github.com/team/mcp#${"a".repeat(40)}`],
+    ]) {
+      expect(
+        await resolvePinnedMcpRecipe({ source, sourceRef, installCfg: {} }),
+      ).toEqual({ sourceRef, installCfg: {} });
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it("resolves a floating GitHub repository to the default-branch commit", async () => {
+    const fetchMock = vi.fn(async () => Response.json({ sha: "a".repeat(40) }));
+    vi.stubGlobal("fetch", fetchMock);
+    const pinned = await resolvePinnedMcpRecipe({
+      source: "github",
+      sourceRef: "https://github.com/team/mcp",
+      installCfg: {},
+    });
+    expect(pinned.sourceRef).toBe(
+      `https://github.com/team/mcp#${"a".repeat(40)}`,
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.github.com/repos/team/mcp/commits/HEAD",
+      expect.objectContaining({
+        redirect: "error",
+        signal: expect.any(AbortSignal),
+      }),
+    );
+  });
+
+  it.each(["github:team/mcp", "team/mcp", "git+https://github.com/team/mcp"])(
+    "pins npm GitHub selector %s",
+    async (ref) => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => Response.json({ sha: "a".repeat(40) })),
+      );
+      const pinned = await resolvePinnedMcpRecipe({
+        source: "config",
+        sourceRef: "npx",
+        installCfg: { command: "npx", args: ["-y", ref] },
+      });
+      expect(pinned.installCfg).toEqual({
+        command: "npx",
+        args: ["-y", `https://github.com/team/mcp#${"a".repeat(40)}`],
+      });
+    },
+  );
+
+  it.each([
+    { command: "uv", args: ["run", "--with", "mcp-time", "mcp"] },
+    {
+      command: "uvx",
+      args: ["--from", "git+https://example.com/team/mcp@v1", "mcp"],
+    },
+    { command: "npx", args: ["git+https://example.com/team/mcp#v1"] },
+  ])(
+    "preserves nonregistry $command deployment recipes without bypassing the session boundary",
+    async (installCfg) => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+      const recipe = {
+        source: "config",
+        sourceRef: installCfg.command,
+        installCfg,
+      };
+      expect(await resolvePinnedMcpRecipe(recipe)).toEqual({
+        sourceRef: recipe.sourceRef,
+        installCfg,
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(() =>
+        assertSessionMcpRecipePinned({ ...recipe, serverId: null, name: null }),
+      ).toThrow("MCP_EXACT_PACKAGE_VERSION_REQUIRED");
+    },
+  );
+
+  it("retains the immutable session boundary for floating selectors", () => {
+    expect(() =>
+      assertSessionMcpRecipePinned({
+        source: "npm",
+        sourceRef: "@team/mcp",
+        installCfg: {},
+        serverId: null,
+        name: null,
+      }),
+    ).toThrow("MCP_EXACT_PACKAGE_VERSION_REQUIRED");
+  });
+
   it("round-trips JSON argv and launches only through the hardened Docker bridge", () => {
     const recipe = parseServerRecipe({
       source: "config",
@@ -64,7 +184,6 @@ describe("portable MCP recipes", () => {
     });
     expect(recipe).not.toBeNull();
     if (!recipe) throw new Error("Expected parsed recipe");
-    assertPortableMcpRecipe(recipe);
     const data = recipeToDeploymentData(recipe);
     expect(data.installCfg).toMatchObject({
       command: "npx",
@@ -98,7 +217,6 @@ describe("portable MCP recipes", () => {
       network: "none",
       env: [],
     };
-    assertPortableMcpRecipe(recipe);
     const data = recipeToDeploymentData(recipe);
     const spec = resolveSpawnSpec({ ...data, serverId: null, name: "Git MCP" });
     if (spec.kind !== "bridge") throw new Error("Expected bridge");
@@ -145,7 +263,6 @@ describe("portable MCP recipes", () => {
         }),
       ]) {
         if (!recipe) throw new Error("Expected digest recipe");
-        assertPortableMcpRecipe(recipe);
         const spec = resolveSpawnSpec({
           ...recipeToDeploymentData(recipe),
           serverId: null,

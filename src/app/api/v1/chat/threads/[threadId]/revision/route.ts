@@ -46,7 +46,7 @@ export const GET = withRequestLogging(
   },
 );
 
-/** Explicitly upgrade this thread's pinned Assistant revision. Blocked while a Run is in progress. */
+/** Upgrade this thread in place, preserving its history and attachments. */
 export const POST = withRequestLogging(
   "/api/v1/chat/threads/[threadId]/revision",
   async function POST(

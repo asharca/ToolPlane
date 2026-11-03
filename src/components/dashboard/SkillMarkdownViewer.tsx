@@ -53,7 +53,7 @@ export function SkillMarkdownViewer({
           </h2>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <div className="inline-flex rounded-md border border-border bg-muted/30 p-0.5">
+          <div className="inline-flex rounded-xl border border-border bg-muted/30 p-0.5">
             <Button
               type="button"
               disabled={isPending}

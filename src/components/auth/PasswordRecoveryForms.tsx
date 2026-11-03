@@ -17,6 +17,11 @@ import { ButtonLink } from "@/components/motion/button";
 import { Input } from "@/components/motion/input";
 import { AnimatedBadge } from "@/components/motion/animated-badge";
 import { SubmitButton } from "@/components/dashboard/SubmitButton";
+import {
+  DialogCancel,
+  DialogField,
+  DialogFooter,
+} from "@/components/dashboard/dialog";
 
 function ActionMessage({ state }: { state: AuthState }) {
   if (state.error) {
@@ -46,7 +51,7 @@ export function ForgotPasswordForm() {
 
   return (
     <div className="mx-auto w-full max-w-sm px-4 py-16">
-      <div className="rounded-2xl border border-border bg-card p-5 sm:p-6">
+      <div className="rounded-xl border border-border bg-card p-5 sm:p-6">
         <h1 className="mb-1 text-2xl font-bold tracking-tight text-foreground">
           {t("forgotPasswordTitle")}
         </h1>
@@ -94,7 +99,7 @@ export function ResetPasswordForm({ token }: { token: string }) {
 
   return (
     <div className="mx-auto w-full max-w-sm px-4 py-16">
-      <div className="rounded-2xl border border-border bg-card p-5 sm:p-6">
+      <div className="rounded-xl border border-border bg-card p-5 sm:p-6">
         <h1 className="mb-1 text-2xl font-bold tracking-tight text-foreground">
           {t("resetPasswordTitle")}
         </h1>
@@ -180,55 +185,69 @@ export function ChangePasswordForm() {
   }, [state]);
 
   return (
-    <form action={action} className="max-w-md space-y-4">
-      <Input
-        label={t("currentPassword")}
-        id="current-password"
-        name="currentPassword"
-        type="password"
-        value={currentPassword}
-        onChange={setCurrentPassword}
-        required
-        maxLength={PASSWORD_MAX_LENGTH}
-        autoComplete="current-password"
-      />
-      <div className="space-y-1.5">
-        <Input
+    <form action={action} className="space-y-5">
+      <div className="max-w-md space-y-5">
+        <DialogField
+          label={t("currentPassword")}
+          htmlFor="current-password"
+          dirty={currentPassword !== ""}
+        >
+          <Input
+            id="current-password"
+            name="currentPassword"
+            type="password"
+            value={currentPassword}
+            onChange={setCurrentPassword}
+            required
+            maxLength={PASSWORD_MAX_LENGTH}
+            autoComplete="current-password"
+          />
+        </DialogField>
+        <DialogField
           label={t("newPassword")}
-          id="settings-new-password"
-          name="newPassword"
-          type="password"
-          value={newPassword}
-          onChange={setNewPassword}
-          required
-          minLength={PASSWORD_MIN_LENGTH}
-          maxLength={PASSWORD_MAX_LENGTH}
-          autoComplete="new-password"
-        />
-        <p className="text-xs text-muted-foreground">
-          {t("passwordHint", { min: PASSWORD_MIN_LENGTH })}
-        </p>
+          htmlFor="settings-new-password"
+          description={t("passwordHint", { min: PASSWORD_MIN_LENGTH })}
+          dirty={newPassword !== ""}
+        >
+          <Input
+            id="settings-new-password"
+            name="newPassword"
+            type="password"
+            value={newPassword}
+            onChange={setNewPassword}
+            required
+            minLength={PASSWORD_MIN_LENGTH}
+            maxLength={PASSWORD_MAX_LENGTH}
+            autoComplete="new-password"
+          />
+        </DialogField>
+        <DialogField
+          label={t("confirmPassword")}
+          htmlFor="settings-password-confirmation"
+          dirty={confirmation !== ""}
+        >
+          <Input
+            id="settings-password-confirmation"
+            name="passwordConfirmation"
+            type="password"
+            value={confirmation}
+            onChange={setConfirmation}
+            required
+            minLength={PASSWORD_MIN_LENGTH}
+            maxLength={PASSWORD_MAX_LENGTH}
+            autoComplete="new-password"
+          />
+        </DialogField>
+        <ActionMessage state={state} />
       </div>
-      <Input
-        label={t("confirmPassword")}
-        id="settings-password-confirmation"
-        name="passwordConfirmation"
-        type="password"
-        value={confirmation}
-        onChange={setConfirmation}
-        required
-        minLength={PASSWORD_MIN_LENGTH}
-        maxLength={PASSWORD_MAX_LENGTH}
-        autoComplete="new-password"
-      />
-      <ActionMessage state={state} />
-      <SubmitButton
-        pendingLabel={t("pending")}
-        flash={false}
-        className="w-full"
+      <DialogFooter
+        cancel={<DialogCancel />}
+        className="static -mx-5 -mb-4 bg-transparent px-5"
       >
-        {t("changePassword")}
-      </SubmitButton>
+        <SubmitButton pendingLabel={t("pending")} flash={false} size="md">
+          {t("changePassword")}
+        </SubmitButton>
+      </DialogFooter>
     </form>
   );
 }

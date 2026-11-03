@@ -20,7 +20,7 @@ export function ComposerToolsButton({
       variant="ghost"
       size="icon"
       {...props}
-      className={cn("size-8 rounded-full", className)}
+      className={cn("size-8 rounded-lg", className)}
     >
       <motion.span
         aria-hidden="true"

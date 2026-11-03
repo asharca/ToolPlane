@@ -4,6 +4,12 @@ export const AGENT_PI_PACKAGES_INCLUDE = {
   select: {
     marketInstallId: true,
     releaseId: true,
+    syncStatus: true,
+    targetReleaseId: true,
+    syncError: true,
+    targetRelease: {
+      select: { id: true, version: true, releaseSummary: true },
+    },
     marketInstall: {
       select: {
         id: true,
@@ -18,6 +24,8 @@ export const AGENT_PI_PACKAGES_INCLUDE = {
       select: {
         id: true,
         listingId: true,
+        version: true,
+        releaseSummary: true,
         reviewStatus: true,
         checksum: true,
         manifest: true,

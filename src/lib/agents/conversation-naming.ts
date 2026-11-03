@@ -101,7 +101,7 @@ async function generateConversationTitle(
     return null;
   const liveAgent = await getAgentForRun(agentId, workspaceId);
   if (
-    liveAgent?.runtimeKind !== "pi-sdk" ||
+    (liveAgent?.runtimeKind !== "pi-sdk" && liveAgent?.runtimeKind !== "omp") ||
     liveAgent.retiredAt ||
     conversation.legacyRevisionUnresolved ||
     !conversation.agentRevisionId

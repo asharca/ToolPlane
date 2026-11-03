@@ -10,6 +10,8 @@ import {
   executeRuntimeCommand,
   RuntimeCommandError,
 } from "@/lib/agents/runtime-command-service";
+import { AgentModelOverrideSchema } from "@/lib/agents/chat-body";
+import { AgentModelOverrideError } from "@/lib/agents/turn-model";
 
 export const runtime = "nodejs";
 export const maxDuration = 900;
@@ -37,6 +39,11 @@ export const POST = withRequestLogging(
     ) {
       return Response.json({ error: "Bad request" }, { status: 400 });
     }
+    const modelOverride = AgentModelOverrideSchema.optional().safeParse(
+      body.modelOverride,
+    );
+    if (!modelOverride.success)
+      return Response.json({ error: "modelOverrideInvalid" }, { status: 400 });
     try {
       if (body.action === "compact")
         return Response.json(
@@ -47,6 +54,7 @@ export const POST = withRequestLogging(
             actorId: user.id,
             line: `/compact${body.instructions ? ` ${body.instructions}` : ""}`,
             signal: req.signal,
+            modelOverride: modelOverride.data,
           }),
         );
       return Response.json(
@@ -57,6 +65,8 @@ export const POST = withRequestLogging(
         }),
       );
     } catch (error) {
+      if (error instanceof AgentModelOverrideError)
+        return Response.json({ error: error.code }, { status: error.status });
       if (error instanceof RuntimeCommandError)
         return Response.json(
           { error: error.message },

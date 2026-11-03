@@ -43,6 +43,24 @@ describe("system update route", () => {
     expect(mocks.applySystemUpdate).not.toHaveBeenCalled();
   });
 
+  it.each([
+    [{ role: "user" }, 403],
+    [null, 401],
+  ])("rejects update installation for principal %j", async (user, status) => {
+    mocks.getCurrentUser.mockResolvedValue(user);
+    mocks.isSameOriginRequest.mockReturnValue(true);
+
+    const response = await POST(
+      new Request("https://toolplane.test/api/v1/admin/system/update", {
+        method: "POST",
+        headers: { origin: "https://toolplane.test" },
+      }),
+    );
+
+    expect(response.status).toBe(status);
+    expect(mocks.applySystemUpdate).not.toHaveBeenCalled();
+  });
+
   it("lets an authenticated member check for updates", async () => {
     mocks.getCurrentUser.mockResolvedValue({ role: "user" });
     mocks.getSystemUpdateStatus.mockResolvedValue({ updateAvailable: false });

@@ -2,7 +2,7 @@ import "server-only";
 import { lookup } from "node:dns/promises";
 import { request } from "node:https";
 import { BlockList, isIP } from "node:net";
-import { validateRemoteResponse } from "./remote-wire";
+import { validateRemoteResponse, fileSafeLogPayload } from "./remote-wire";
 import { runtimeEnv } from "@/lib/runtime-env";
 import { TaskState } from "@a2a-js/sdk";
 import {
@@ -350,8 +350,8 @@ export function remoteRpcFetch(
         httpStatus,
         outcome,
         durationMs: performance.now() - started,
-        request: requestPayload,
-        response: responsePayload,
+        request: fileSafeLogPayload(requestPayload),
+        response: fileSafeLogPayload(responsePayload),
         responseKind: responsePayload === undefined ? "none" : "json",
         responseComplete,
         secrets: token ? [token] : undefined,
@@ -371,5 +371,199 @@ export async function fetchRemoteJson(
     return await fetchPinnedRemoteJson(...args);
   } finally {
     inflight--;
+  }
+}
+
+export const REMOTE_FILE_BYTES = 10 * 1024 * 1024;
+/** Signed query strings are accepted only by the file transport, never Card/RPC. */
+export function remoteFileUrl(value: string): URL {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new RemoteA2AError("Invalid file HTTPS address.");
+  }
+  if (
+    value !== value.trim() ||
+    value.length > 8192 ||
+    /[^\x21-\uFFFF]|[\x7f\\]/.test(value) ||
+    url.protocol !== "https:" ||
+    url.username ||
+    url.password ||
+    url.hash
+  )
+    throw new RemoteA2AError(
+      "File addresses require HTTPS without credentials or fragment.",
+    );
+  const privateAddresses = privateFileAddresses(url.origin);
+  if (!privateAddresses) {
+    const clean = new URL(url);
+    clean.search = "";
+    remoteUrl(clean.href);
+  }
+  return url;
+}
+function privateFileAddresses(origin: string): string[] | undefined {
+  let configured: unknown;
+  try {
+    configured = JSON.parse(
+      runtimeEnv("TOOLPLANE_A2A_FILE_PRIVATE_ORIGINS") || "{}",
+    );
+  } catch {
+    throw new RemoteA2AError("Invalid private file origin configuration.");
+  }
+  if (
+    !configured ||
+    typeof configured !== "object" ||
+    Array.isArray(configured) ||
+    Object.keys(configured).length > 100
+  )
+    throw new RemoteA2AError("Invalid private file origin configuration.");
+  const values = (configured as Record<string, unknown>)[origin];
+  if (values === undefined) return undefined;
+  // This opt-in permits exact RFC1918/ULA addresses, never metadata/link-local/loopback.
+  const privateV4 = new BlockList();
+  privateV4.addSubnet("10.0.0.0", 8, "ipv4");
+  privateV4.addSubnet("172.16.0.0", 12, "ipv4");
+  privateV4.addSubnet("192.168.0.0", 16, "ipv4");
+  const privateV6 = new BlockList();
+  privateV6.addSubnet("fc00::", 7, "ipv6");
+  if (
+    !Array.isArray(values) ||
+    !values.length ||
+    values.length > 32 ||
+    values.some(
+      (address) =>
+        typeof address !== "string" ||
+        !(isIP(address) === 4
+          ? privateV4.check(address, "ipv4")
+          : isIP(address) === 6 && privateV6.check(address, "ipv6")),
+    )
+  )
+    throw new RemoteA2AError(
+      "Private file origins require exact private addresses.",
+    );
+  return values as string[];
+}
+/** Stream bytes directly to storage. No redirects, auth forwarding, proxy, or payload logging. */
+export async function fetchRemoteFile(
+  value: string,
+  signal?: AbortSignal,
+): Promise<ReadableStream<Uint8Array>> {
+  const url = remoteFileUrl(value);
+  if (inflight >= 16)
+    throw new RemoteA2AError("Remote connection capacity reached.");
+  inflight++;
+  let released = false;
+  const release = () => {
+    if (!released) {
+      released = true;
+      inflight--;
+    }
+  };
+  try {
+    const abortSignal = AbortSignal.any([
+      AbortSignal.timeout(15_000),
+      ...(signal ? [signal] : []),
+    ]);
+    const host = url.hostname.replace(/^\[|\]$/g, "");
+    const approved = privateFileAddresses(url.origin);
+    let pinned: { address: string; family: number };
+    if (approved) {
+      // Pin an administrator-specified address, not a fresh potentially rebinding DNS answer.
+      if (isIP(host) && !approved.includes(host))
+        throw new RemoteA2AError("Private file address is not approved.");
+      pinned = { address: approved[0], family: isIP(approved[0]) };
+    } else pinned = await addresses(host, abortSignal);
+    abortSignal.throwIfAborted();
+    const { promise, resolve, reject } =
+      Promise.withResolvers<ReadableStream<Uint8Array>>();
+    const req = request(
+      url,
+      {
+        method: "GET",
+        agent: false,
+        signal: abortSignal,
+        maxHeaderSize: 16_384,
+        family: pinned.family,
+        lookup: (_host, options, callback) => {
+          if (options.all) callback(null, [pinned]);
+          else callback(null, pinned.address, pinned.family);
+        },
+        headers: { accept: "*/*", "accept-encoding": "identity" },
+      },
+      (res) => {
+        if (
+          (res.statusCode ?? 0) !== 200 ||
+          (res.headers["content-encoding"] &&
+            res.headers["content-encoding"] !== "identity") ||
+          Number(res.headers["content-length"]) > REMOTE_FILE_BYTES
+        ) {
+          res.destroy();
+          req.destroy();
+          release();
+          reject(new RemoteA2AError("File download was rejected."));
+          return;
+        }
+        let bytes = 0;
+        let ended = false;
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            const fail = () => {
+              if (!ended) {
+                ended = true;
+                release();
+                controller.error(new RemoteA2AError("File download failed."));
+              }
+            };
+            res.on("data", (chunk: Buffer) => {
+              if (ended) return;
+              bytes += chunk.byteLength;
+              if (bytes > REMOTE_FILE_BYTES) {
+                fail();
+                res.destroy();
+                req.destroy();
+                return;
+              }
+              controller.enqueue(chunk);
+              if ((controller.desiredSize ?? 0) <= 0) res.pause();
+            });
+            res.on("error", fail);
+            res.on("aborted", fail);
+            req.on("error", fail);
+            res.on("end", () => {
+              if (!res.complete) {
+                fail();
+                return;
+              }
+              if (!ended) {
+                ended = true;
+                release();
+                controller.close();
+              }
+            });
+          },
+          pull() {
+            res.resume();
+          },
+          cancel() {
+            ended = true;
+            res.destroy();
+            req.destroy();
+            release();
+          },
+        });
+        resolve(body);
+      },
+    );
+    req.on("error", () => {
+      release();
+      reject(new RemoteA2AError("File download failed."));
+    });
+    req.end();
+    return await promise;
+  } catch (error) {
+    release();
+    throw error;
   }
 }

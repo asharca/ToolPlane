@@ -142,7 +142,7 @@ function ColumnHandle<T>({
     >
       <TableMenu
         ariaLabel={`${column.key} column options`}
-        triggerClassName="flex h-2 w-6 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-sm transition-colors hover:bg-primary/90"
+        triggerClassName="flex h-2 w-6 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-sm transition-colors hover:bg-primary/90"
         trigger={<MoreHorizontal className="h-3 w-3" />}
         items={columnMenuItems(column, index, onInsertColumn, onDeleteColumn)}
       />
@@ -344,7 +344,7 @@ export function TableHeader<T>({
                         onColumnRename(column.key, e.target.value)
                       }
                       className={cn(
-                        "min-w-0 flex-1 truncate appearance-none rounded-md border-0 bg-transparent px-4 font-medium text-muted-foreground outline-none transition-colors focus:bg-muted focus:text-foreground",
+                        "min-w-0 flex-1 truncate appearance-none rounded-lg border-0 bg-transparent px-4 font-medium text-muted-foreground outline-none transition-colors focus:bg-muted focus:text-foreground",
                         alignText(column.align),
                       )}
                     />

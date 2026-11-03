@@ -309,7 +309,11 @@ const SANDBOX_SERVER = path.join(
   "scripts",
   "sandbox-mcp-server.mjs",
 );
-import { resolveSshTargetForWorkspace } from "@/lib/sandboxes/ssh-targets";
+import {
+  prepareSshRuntime,
+  removeSshRuntimeDirectory,
+  sshRuntimeDirectory,
+} from "@/lib/sandboxes/ssh-servers";
 const REGISTRY_DIR =
   process.env.TOOLPLANE_SUPERVISOR_DIR ||
   path.join(os.tmpdir(), "toolplane-supervisor");
@@ -1742,13 +1746,7 @@ async function launchProcess(
           })
         )?.workspaceId)
       : undefined;
-  const sshTarget =
-    spec.kind === "sandbox" && spec.sandboxKind === "ssh"
-      ? resolveSshTargetForWorkspace(
-          spec.sshTargetId ?? "",
-          sshWorkspaceId ?? "",
-        )
-      : null;
+  let sshRuntime: Awaited<ReturnType<typeof prepareSshRuntime>> | null = null;
   if (launchPrevented(deploymentId, workspaceId)) return { ready: null };
   const releaseLaunchLock = acquireLaunchLock(deploymentId);
   if (!releaseLaunchLock) {
@@ -1790,6 +1788,14 @@ async function launchProcess(
   let configRedactionValues: string[] = [];
   let launchSpec = spec;
   try {
+    // Credentials are written only by the launch-lock holder: a concurrent
+    // launch must never rewrite files a live child is reading.
+    if (spec.kind === "sandbox" && spec.sandboxKind === "ssh")
+      sshRuntime = await prepareSshRuntime({
+        sandboxId: spec.sandboxId,
+        workspaceId: sshWorkspaceId ?? "",
+        deploymentId,
+      });
     if (
       spec.kind === "bridge" &&
       spec.command === "docker" &&
@@ -1810,11 +1816,15 @@ async function launchProcess(
     }
   } catch (error) {
     releaseLaunchLock();
+    if (spec.kind === "sandbox" && spec.sandboxKind === "ssh")
+      await removeSshRuntimeDirectory(sshRuntimeDirectory(deploymentId));
     await persist(deploymentId, "error");
     throw error;
   }
-  if (launchPrevented(deploymentId, workspaceId))
+  if (launchPrevented(deploymentId, workspaceId)) {
+    if (sshRuntime) await removeSshRuntimeDirectory(sshRuntime.directory);
     return releaseLockAndReturn({ ready: null });
+  }
   const managedSpec: SpawnSpec =
     launchSpec.kind === "bridge" &&
     launchSpec.command === "docker" &&
@@ -1907,7 +1917,9 @@ async function launchProcess(
               MCP_NAME: managedSpec.name,
               SANDBOX_ID: managedSpec.sandboxId,
               SANDBOX_KIND: managedSpec.sandboxKind,
-              SANDBOX_SSH_CONFIG: sshTarget ? JSON.stringify(sshTarget) : "",
+              SANDBOX_SSH_CONFIG: sshRuntime
+                ? JSON.stringify(sshRuntime.config)
+                : "",
               SANDBOX_IMAGE: managedSpec.image ?? "",
               SANDBOX_VOLUME: managedSpec.volumeName ?? "",
               SANDBOX_NETWORK: managedSpec.network,
@@ -1937,6 +1949,7 @@ async function launchProcess(
     });
   } catch (error) {
     releaseLaunchLock();
+    if (sshRuntime) await removeSshRuntimeDirectory(sshRuntime.directory);
     throw error;
   }
 
@@ -2038,6 +2051,10 @@ async function launchProcess(
   });
 
   child.on("exit", (code, signal) => {
+    // Remove materialized SSH credentials unless a newer launch now owns them.
+    const current = store().get(deploymentId);
+    if (sshRuntime && (!current || current === entry))
+      void removeSshRuntimeDirectory(sshRuntime.directory);
     void recordEvent({
       domain: "runtime",
       eventName: "runtime.exit",

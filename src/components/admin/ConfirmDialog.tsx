@@ -2,8 +2,15 @@
 
 import { useTranslations } from "next-intl";
 import { useActionState, useEffect, useId, useState } from "react";
-import { AlertTriangle, Check, ShieldCheck, X } from "lucide-react";
+import { AlertTriangle, Check, ShieldCheck } from "lucide-react";
 import { SubmitButton } from "@/components/dashboard/SubmitButton";
+import {
+  DialogHeader,
+  DialogBody,
+  DialogFooter,
+  DialogCancel,
+  DialogField,
+} from "@/components/dashboard/dialog";
 import type { AdminActionState } from "@/lib/admin/user-actions";
 import { Button } from "@/components/motion/button";
 import { Input } from "@/components/motion/input";
@@ -11,7 +18,6 @@ import {
   CenterMorphModal,
   CenterMorphModalContent,
   CenterMorphModalTrigger,
-  CenterMorphModalClose,
 } from "@/components/motion/center-morph-modal";
 
 // Destructive submissions retain their typed confirmation and server validation.
@@ -43,6 +49,7 @@ export function ConfirmDialog({
   const confirmationId = useId();
   const promptId = `${confirmationId}-prompt`;
   const danger = tone === "danger";
+  const [confirmation, setConfirmation] = useState("");
   const TriggerIcon = danger ? AlertTriangle : ShieldCheck;
 
   useEffect(() => {
@@ -82,48 +89,56 @@ export function ConfirmDialog({
           <form
             id={confirmationId}
             action={formAction}
-            className="space-y-4 p-6"
+            className="flex min-h-0 flex-col"
             aria-labelledby={promptId}
             aria-busy={isPending}
           >
             {Object.entries(hidden).map(([k, v]) => (
               <input key={k} type="hidden" name={k} value={v} />
             ))}
-            <p id={promptId} className="pr-10 text-sm font-medium">
-              {prompt}
-            </p>
-            {confirmWord ? (
-              <Input
-                name="confirm"
-                placeholder={confirmWord}
-                aria-label={`${prompt} ${confirmWord}`}
-                autoComplete="off"
-                autoCapitalize="none"
-                spellCheck={false}
-                required
-              />
-            ) : null}
-            <div className="flex flex-wrap items-center gap-2">
+            <DialogHeader
+              title={label}
+              description={<span id={promptId}>{prompt}</span>}
+            />
+            <DialogBody>
+              {confirmWord ? (
+                <DialogField label={confirmWord} dirty={confirmation !== ""}>
+                  <Input
+                    name="confirm"
+                    placeholder={confirmWord}
+                    value={confirmation}
+                    onChange={setConfirmation}
+                    aria-label={`${prompt} ${confirmWord}`}
+                    autoComplete="off"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    required
+                  />
+                </DialogField>
+              ) : null}
+              {state.error ? (
+                <p className="text-sm text-destructive" role="alert">
+                  {state.error}
+                </p>
+              ) : null}
+            </DialogBody>
+            <DialogFooter cancel={<DialogCancel disabled={isPending} />}>
               <SubmitButton
                 error={state.error}
                 flash={false}
                 pendingLabel={pendingLabel ?? t("saving")}
+                variant="primary"
+                className={
+                  danger
+                    ? "bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    : undefined
+                }
+                size="md"
               >
                 <Check className="size-4" aria-hidden="true" />
                 {t("confirm")}
               </SubmitButton>
-              <CenterMorphModalClose>
-                <Button type="button" variant="ghost" disabled={isPending}>
-                  <X className="size-4" aria-hidden="true" />
-                  {t("cancel")}
-                </Button>
-              </CenterMorphModalClose>
-            </div>
-            {state.error ? (
-              <p className="text-sm text-destructive" role="alert">
-                {state.error}
-              </p>
-            ) : null}
+            </DialogFooter>
           </form>
         </CenterMorphModalContent>
       </CenterMorphModal>

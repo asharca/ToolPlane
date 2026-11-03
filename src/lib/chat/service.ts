@@ -3,24 +3,34 @@ import { Prisma, type ChatTurn } from "@prisma/client";
 import { createHash } from "node:crypto";
 import { assertAssistantRemoteDeployment } from "@/lib/remote-mcp/classification";
 import { mcpDefinitionChecksum } from "@/lib/process/mcp-definition";
+import { catalogToolNames } from "@/lib/process/mcp-grant-sync";
 import {
-  parseApprovedToolSignatures,
-  parsePendingToolChanges,
-} from "@/lib/process/mcp-tool-signature";
+  buildRevisionChangelogPage,
+  diffRevisionMcpGrants,
+  REVISION_CHANGELOG_PAGE_SIZE,
+  revisionGrantsNewPermissions,
+  type RevisionChangelogPage,
+  type RevisionUpgradeDiff,
+} from "@/lib/revisions/upgrade-diff";
 import type { DeploymentForSpawn } from "@/lib/process/spawn-spec";
 import { runMcpDeploymentOperation } from "@/lib/workspace/mcp-operation";
+import {
+  exposedMcpToolNames,
+  sameToolNames,
+} from "@/lib/workspace/mcp-tool-exposure";
 import {
   ChatAssistantRevisionConfigSchema,
   type ChatAssistantRevisionConfig,
 } from "./revision-types";
-import { canonicalJson } from "@/lib/market/artifact";
+import { canonicalJson } from "@/lib/pi-packages/artifact";
+import { chatExecutionProgressChunk } from "./execution-stage";
 import { db } from "@/lib/db";
 import {
   attachmentIdsFromParts,
   claimWorkspaceAttachments,
 } from "@/lib/attachments/messages";
 import { AGENT_STEP_BOUNDS } from "@/lib/agents/constants";
-import { getAssistantMarketTemplate } from "@/lib/market/skills";
+import { inferModelPrimaryType } from "@/lib/agents/model-catalog";
 import {
   chatBranchNavigation,
   chatMessagePath,
@@ -52,7 +62,6 @@ const grantForClient = {
   select: {
     deploymentId: true,
     allowedToolNames: true,
-    pendingToolChanges: true,
     deployment: {
       select: {
         id: true,
@@ -201,7 +210,6 @@ async function withChatDeploymentLocks<T>(
 async function validateAssistantResources(
   workspaceId: string,
   input: Pick<UpdateChatAssistantInput, "modelProviderId" | "mcpGrants">,
-  previousGrants: ChatAssistantRevisionConfig["mcpGrants"] = [],
 ) {
   if (input.modelProviderId) {
     const provider = await db.modelProvider.findFirst({
@@ -237,40 +245,22 @@ async function validateAssistantResources(
       );
     }
     const definitionChecksums: Record<string, string> = {};
-    for (const deployment of deployments) {
+    const grants = deployments.map((deployment) => {
       requireChatRemoteDeployment(deployment);
       const grant = input.mcpGrants?.find(
         (candidate) => candidate.deploymentId === deployment.id,
       );
       if (!grant) throw new ChatServiceError(400, "MCP grant is missing");
-      const actual = mcpDefinitionChecksum(deployment);
-      const previous = previousGrants.find(
-        (candidate) => candidate.deploymentId === deployment.id,
-      );
-      if (grant.expectedDefinitionChecksum !== undefined) {
-        if (grant.expectedDefinitionChecksum !== actual)
-          throw new ChatServiceError(
-            409,
-            "MCP connection changed; discover and approve it again",
-          );
-        definitionChecksums[deployment.id] = actual;
-      } else if (
-        previous &&
-        previous.allowedToolNames.length === grant.allowedToolNames.length &&
-        grant.allowedToolNames.every((name) =>
-          previous.allowedToolNames.includes(name),
-        )
-      ) {
-        definitionChecksums[deployment.id] = previous.definitionChecksum;
-      } else
-        throw new ChatServiceError(
-          400,
-          "Discover and approve the MCP connection before adding or changing its tool grant",
-        );
-    }
-    return { deployments, definitionChecksums };
+      const catalog = catalogToolNames(deployment.installCfg);
+      definitionChecksums[deployment.id] = mcpDefinitionChecksum(deployment);
+      return {
+        deploymentId: deployment.id,
+        allowedToolNames: catalog,
+      };
+    });
+    return { grants, definitionChecksums };
   }
-  return { deployments: [], definitionChecksums: {} };
+  return { grants: [], definitionChecksums: {} };
 }
 
 function revisionConfig(
@@ -309,6 +299,11 @@ export async function listChatAssistantsForWorkspace(workspaceId: string) {
     include: {
       modelProvider: providerForClient,
       mcpGrants: grantForClient,
+      revisions: {
+        orderBy: { version: "desc" },
+        take: 2,
+        select: { version: true, config: true },
+      },
       threads: {
         orderBy: { updatedAt: "desc" },
         take: 50,
@@ -453,37 +448,14 @@ export async function createChatAssistant(
   input: CreateChatAssistantInput,
 ) {
   await requireWorkspace(userId, input.workspaceId);
-  const template = input.marketTemplateReleaseId
-    ? await getAssistantMarketTemplate(input.marketTemplateReleaseId, {
-        workspaceId: input.workspaceId,
-        userId,
-      })
-    : null;
-  if (input.marketTemplateReleaseId && !template) {
-    throw new ChatServiceError(400, "Assistant market template not found");
-  }
   return withChatDeploymentLocks(
     input.workspaceId,
     (input.mcpGrants ?? []).map((grant) => grant.deploymentId),
     async () => {
-      const { deployments, definitionChecksums } =
-        await validateAssistantResources(input.workspaceId, input);
-      if (template) {
-        const selectedSlugs = new Set(
-          deployments.flatMap(({ server }) =>
-            server?.slug && server.verifiedAt ? [server.slug] : [],
-          ),
-        );
-        const missing = template.manifest.assistant.mcpRequirements.filter(
-          ({ catalogSlug }) => !selectedSlugs.has(catalogSlug),
-        );
-        if (missing.length) {
-          throw new ChatServiceError(
-            400,
-            `Install and select the required MCP servers: ${missing.map(({ name }) => name).join(", ")}`,
-          );
-        }
-      }
+      const { definitionChecksums, grants } = await validateAssistantResources(
+        input.workspaceId,
+        input,
+      );
       const data = {
         workspaceId: input.workspaceId,
         name: input.name,
@@ -495,14 +467,8 @@ export async function createChatAssistant(
           ? (input.modelParameters as Prisma.InputJsonValue)
           : Prisma.DbNull,
         maxSteps: input.maxSteps ?? AGENT_STEP_BOUNDS.default,
-        marketTemplateReleaseId: input.marketTemplateReleaseId ?? null,
         mcpGrants: {
-          create: (input.mcpGrants ?? []).map(
-            ({ deploymentId, allowedToolNames }) => ({
-              deploymentId,
-              allowedToolNames,
-            }),
-          ),
+          create: grants,
         },
       };
       return db.$transaction(async (tx) => {
@@ -531,115 +497,10 @@ export async function createChatAssistant(
             mcpGrants: grantForClient,
           },
         });
-        if (!template) return published;
-        const attributed = await tx.marketListing.updateMany({
-          where: {
-            kind: "assistant",
-            status: "published",
-            latestReleaseId: template.releaseId,
-            latestRelease: { is: { reviewStatus: "approved" } },
-          },
-          data: { installCount: { increment: 1 } },
-        });
-        if (attributed.count !== 1)
-          throw new ChatServiceError(
-            400,
-            "Assistant market template not found",
-          );
         return published;
       });
     },
   );
-}
-
-export async function installAssistantMarketRelease(
-  userId: string,
-  input: Omit<
-    CreateChatAssistantInput,
-    "workspaceId" | "marketTemplateReleaseId" | "name"
-  > & {
-    workspaceId: string;
-    releaseId: string;
-    name?: string;
-  },
-) {
-  await requireWorkspace(userId, input.workspaceId);
-  const template = await getAssistantMarketTemplate(input.releaseId, {
-    workspaceId: input.workspaceId,
-    userId,
-  });
-  if (!template)
-    throw new ChatServiceError(404, "Assistant market template not found");
-  const definition = template.manifest.assistant;
-  const model =
-    input.model !== undefined
-      ? input.model
-      : (definition.modelRequirement?.model ?? null);
-  let modelProviderId = input.modelProviderId ?? null;
-  if (modelProviderId) {
-    const provider = await db.modelProvider.findFirst({
-      where: { id: modelProviderId, workspaceId: input.workspaceId },
-      select: { id: true, format: true, models: true },
-    });
-    if (
-      !provider ||
-      (definition.modelRequirement &&
-        input.model === undefined &&
-        provider.format !== definition.modelRequirement.providerFormat) ||
-      (model && provider.models.length > 0 && !provider.models.includes(model))
-    ) {
-      throw new ChatServiceError(
-        400,
-        "Model provider does not support the selected model",
-      );
-    }
-  } else if (definition.modelRequirement) {
-    const providers = await db.modelProvider.findMany({
-      where: {
-        workspaceId: input.workspaceId,
-        format: definition.modelRequirement.providerFormat,
-      },
-      orderBy: { createdAt: "asc" },
-      select: { id: true, models: true },
-    });
-    modelProviderId =
-      providers.find(
-        (provider) =>
-          !model ||
-          provider.models.length === 0 ||
-          provider.models.includes(model),
-      )?.id ?? null;
-    if (!modelProviderId) {
-      throw new ChatServiceError(
-        409,
-        "Install a compatible model provider before installing this assistant",
-      );
-    }
-  }
-  if (model && !modelProviderId) {
-    throw new ChatServiceError(
-      400,
-      "Select a model provider for the selected model",
-    );
-  }
-
-  return createChatAssistant(userId, {
-    workspaceId: input.workspaceId,
-    marketTemplateReleaseId: input.releaseId,
-    name: input.name?.trim() || definition.name,
-    systemPrompt:
-      input.systemPrompt !== undefined
-        ? input.systemPrompt
-        : definition.systemPrompt,
-    modelProviderId,
-    model,
-    modelParameters:
-      input.modelParameters !== undefined
-        ? input.modelParameters
-        : definition.modelParameters,
-    maxSteps: input.maxSteps ?? definition.maxSteps,
-    mcpGrants: input.mcpGrants,
-  });
 }
 
 export async function updateChatAssistant(
@@ -666,9 +527,46 @@ export async function updateChatAssistant(
       409,
       "Assistant revision changed; reload before publishing",
     );
-  const previous = assistant.revisions[0]
-    ? ChatAssistantRevisionConfigSchema.parse(assistant.revisions[0].config)
-    : null;
+  // Name, description and pin state are not part of the executable revision; changing them
+  // must not make existing conversations look outdated.
+  const changesRevision =
+    input.systemPrompt !== undefined ||
+    input.modelProviderId !== undefined ||
+    input.model !== undefined ||
+    input.modelParameters !== undefined ||
+    input.maxSteps !== undefined ||
+    input.mcpGrants !== undefined;
+  if (!changesRevision) {
+    const access = {
+      status: "active" as const,
+      OR: [{ ownerId: userId }, { members: { some: { userId } } }],
+    };
+    const claimed = await db.chatAssistant.updateMany({
+      where: {
+        id: assistantId,
+        currentRevisionVersion: input.expectedRevision,
+        workspace: access,
+      },
+      data: {
+        ...(input.name !== undefined ? { name: input.name } : {}),
+        ...(input.pinned !== undefined ? { pinned: input.pinned } : {}),
+        ...(input.description !== undefined
+          ? { description: input.description }
+          : {}),
+      },
+    });
+    if (claimed.count !== 1)
+      throw new ChatServiceError(
+        409,
+        "Assistant revision changed; reload before publishing",
+      );
+    const updated = await db.chatAssistant.findFirst({
+      where: { id: assistantId, workspace: access },
+      include: { modelProvider: providerForClient, mcpGrants: grantForClient },
+    });
+    if (!updated) throw new ChatServiceError(404, "Chat assistant not found");
+    return updated;
+  }
   const grantsToPublish = input.mcpGrants ?? assistant.mcpGrants;
   return withChatDeploymentLocks(
     assistant.workspaceId,
@@ -676,10 +574,9 @@ export async function updateChatAssistant(
       (grant) => grant.deploymentId,
     ),
     async () => {
-      const { definitionChecksums } = await validateAssistantResources(
+      const { definitionChecksums, grants } = await validateAssistantResources(
         assistant.workspaceId,
         { ...input, mcpGrants: grantsToPublish },
-        previous?.mcpGrants,
       );
 
       return db.$transaction(async (tx) => {
@@ -701,14 +598,9 @@ export async function updateChatAssistant(
           );
         if (input.mcpGrants !== undefined) {
           await tx.chatAssistantMcpGrant.deleteMany({ where: { assistantId } });
-          const grants = input.mcpGrants;
           if (grants.length)
             await tx.chatAssistantMcpGrant.createMany({
-              data: grants.map(({ deploymentId, allowedToolNames }) => ({
-                assistantId,
-                deploymentId,
-                allowedToolNames,
-              })),
+              data: grants.map((grant) => ({ assistantId, ...grant })),
             });
         }
         const updated = await tx.chatAssistant.update({
@@ -771,6 +663,74 @@ export async function updateChatAssistant(
   );
 }
 
+/**
+ * Follow MCP catalog, exposure and connection changes for grants the current
+ * assistant revision holds by publishing the next revision with only those
+ * grants refreshed. Returns the new version, or null when already current.
+ */
+export async function refreshAssistantRevisionMcpGrants(assistantId: string) {
+  return db.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "ChatAssistant" WHERE id=${assistantId} FOR UPDATE`;
+    const assistant = await tx.chatAssistant.findUnique({
+      where: { id: assistantId },
+      select: {
+        currentRevisionVersion: true,
+        mcpGrants: { include: { deployment: true } },
+      },
+    });
+    if (!assistant?.currentRevisionVersion) return null;
+    const current = await tx.chatAssistantRevision.findUnique({
+      where: {
+        assistantId_version: {
+          assistantId,
+          version: assistant.currentRevisionVersion,
+        },
+      },
+    });
+    if (!current) return null;
+    const applied = ChatAssistantRevisionConfigSchema.parse(current.config);
+    let stale = false;
+    const mcpGrants = applied.mcpGrants.map((grant) => {
+      const live = assistant.mcpGrants.find(
+        (entry) => entry.deploymentId === grant.deploymentId,
+      );
+      // A removed grant is a revocation; runtime already narrows it.
+      if (!live) return grant;
+      const next = {
+        deploymentId: grant.deploymentId,
+        definitionChecksum: mcpDefinitionChecksum(live.deployment),
+        allowedToolNames: exposedMcpToolNames(
+          live.deployment,
+          live.allowedToolNames,
+        ),
+      };
+      if (
+        next.definitionChecksum !== grant.definitionChecksum ||
+        !sameToolNames(next.allowedToolNames, grant.allowedToolNames)
+      )
+        stale = true;
+      return next;
+    });
+    if (!stale) return null;
+    const version = assistant.currentRevisionVersion + 1;
+    await tx.chatAssistantRevision.create({
+      data: {
+        assistantId,
+        version,
+        config: ChatAssistantRevisionConfigSchema.parse({
+          ...applied,
+          mcpGrants,
+        }) as Prisma.InputJsonValue,
+      },
+    });
+    await tx.chatAssistant.update({
+      where: { id: assistantId },
+      data: { currentRevisionVersion: version },
+    });
+    return { version };
+  });
+}
+
 export async function copyChatAssistant(
   userId: string,
   assistantId: string,
@@ -786,7 +746,7 @@ export async function copyChatAssistant(
     source.workspaceId,
     input.mcpGrants.map((grant) => grant.deploymentId),
     async () => {
-      const { definitionChecksums } = await validateAssistantResources(
+      const { definitionChecksums, grants } = await validateAssistantResources(
         source.workspaceId,
         { mcpGrants: input.mcpGrants },
       );
@@ -828,12 +788,7 @@ export async function copyChatAssistant(
               : Prisma.DbNull,
             maxSteps: config.maxSteps,
             mcpGrants: {
-              create: input.mcpGrants.map(
-                ({ deploymentId, allowedToolNames }) => ({
-                  deploymentId,
-                  allowedToolNames,
-                }),
-              ),
+              create: grants,
             },
           },
           include: {
@@ -847,13 +802,11 @@ export async function copyChatAssistant(
             version: 1,
             config: {
               ...config,
-              mcpGrants: input.mcpGrants.map(
-                ({ deploymentId, allowedToolNames }) => ({
-                  deploymentId,
-                  allowedToolNames,
-                  definitionChecksum: definitionChecksums[deploymentId],
-                }),
-              ),
+              mcpGrants: grants.map(({ deploymentId, allowedToolNames }) => ({
+                deploymentId,
+                allowedToolNames,
+                definitionChecksum: definitionChecksums[deploymentId],
+              })),
             } as Prisma.InputJsonValue,
           },
         });
@@ -926,7 +879,6 @@ export async function deleteChatAssistant(userId: string, assistantId: string) {
       },
       select: {
         id: true,
-        marketTemplateRelease: { select: { listingId: true } },
       },
     });
     if (!assistant) throw new ChatServiceError(404, "Chat assistant not found");
@@ -935,15 +887,6 @@ export async function deleteChatAssistant(userId: string, assistantId: string) {
     );
     await assertChatRunsDeletable(tx, { thread: { assistantId } });
     await tx.chatAssistant.delete({ where: { id: assistant.id } });
-    if (assistant.marketTemplateRelease) {
-      await tx.marketListing.updateMany({
-        where: {
-          id: assistant.marketTemplateRelease.listingId,
-          installCount: { gt: 0 },
-        },
-        data: { installCount: { decrement: 1 } },
-      });
-    }
   });
 }
 
@@ -1090,71 +1033,40 @@ export async function updateChatThread(
   });
 }
 
-export type ChatAssistantRevisionDiff = {
-  fromVersion: number | null;
-  toVersion: number;
-  systemPromptChanged: boolean;
-  modelChanged: boolean;
-  modelParametersChanged: boolean;
-  maxStepsChanged: boolean;
-  mcpGrantsAdded: Array<{ deploymentId: string; allowedToolNames: string[] }>;
-  mcpGrantsRemoved: Array<{ deploymentId: string }>;
-  mcpToolsAdded: Array<{ deploymentId: string; tools: string[] }>;
-  mcpToolsRemoved: Array<{ deploymentId: string; tools: string[] }>;
-  grantsNewPermissions: boolean;
-};
-
 function diffAssistantRevisionConfigs(
   from: { version: number; config: ChatAssistantRevisionConfig } | null,
   to: { version: number; config: ChatAssistantRevisionConfig },
-): ChatAssistantRevisionDiff {
-  const fromGrants = new Map(
-    (from?.config.mcpGrants ?? []).map((grant) => [grant.deploymentId, grant]),
+  name: (deploymentId: string) => string | null,
+): RevisionUpgradeDiff {
+  const changedFields: RevisionUpgradeDiff["changedFields"] = [];
+  if (from?.config.systemPrompt !== to.config.systemPrompt)
+    changedFields.push("systemPrompt");
+  if (
+    from?.config.modelProviderId !== to.config.modelProviderId ||
+    from?.config.model !== to.config.model
+  )
+    changedFields.push("model");
+  if (
+    canonicalJson(from?.config.modelParameters ?? null) !==
+    canonicalJson(to.config.modelParameters)
+  )
+    changedFields.push("modelParameters");
+  if (from?.config.maxSteps !== to.config.maxSteps)
+    changedFields.push("maxSteps");
+  const mcp = diffRevisionMcpGrants(
+    from?.config.mcpGrants ?? [],
+    to.config.mcpGrants,
+    name,
   );
-  const toGrants = new Map(
-    to.config.mcpGrants.map((grant) => [grant.deploymentId, grant]),
-  );
-  const mcpGrantsAdded = [...toGrants.values()]
-    .filter((grant) => !fromGrants.has(grant.deploymentId))
-    .map((grant) => ({
-      deploymentId: grant.deploymentId,
-      allowedToolNames: grant.allowedToolNames,
-    }));
-  const mcpGrantsRemoved = [...fromGrants.values()]
-    .filter((grant) => !toGrants.has(grant.deploymentId))
-    .map((grant) => ({ deploymentId: grant.deploymentId }));
-  const mcpToolsAdded: Array<{ deploymentId: string; tools: string[] }> = [];
-  const mcpToolsRemoved: Array<{ deploymentId: string; tools: string[] }> = [];
-  for (const [deploymentId, toGrant] of toGrants) {
-    const fromGrant = fromGrants.get(deploymentId);
-    if (!fromGrant) continue;
-    const fromTools = new Set(fromGrant.allowedToolNames);
-    const toTools = new Set(toGrant.allowedToolNames);
-    const added = toGrant.allowedToolNames.filter(
-      (name) => !fromTools.has(name),
-    );
-    const removed = fromGrant.allowedToolNames.filter(
-      (name) => !toTools.has(name),
-    );
-    if (added.length) mcpToolsAdded.push({ deploymentId, tools: added });
-    if (removed.length) mcpToolsRemoved.push({ deploymentId, tools: removed });
-  }
   return {
     fromVersion: from?.version ?? null,
     toVersion: to.version,
-    systemPromptChanged: from?.config.systemPrompt !== to.config.systemPrompt,
-    modelChanged:
-      from?.config.modelProviderId !== to.config.modelProviderId ||
-      from?.config.model !== to.config.model,
-    modelParametersChanged:
-      canonicalJson(from?.config.modelParameters ?? null) !==
-      canonicalJson(to.config.modelParameters),
-    maxStepsChanged: from?.config.maxSteps !== to.config.maxSteps,
-    mcpGrantsAdded,
-    mcpGrantsRemoved,
-    mcpToolsAdded,
-    mcpToolsRemoved,
-    grantsNewPermissions: mcpGrantsAdded.length > 0 || mcpToolsAdded.length > 0,
+    changedFields,
+    ...mcp,
+    skillsAdded: [],
+    skillsRemoved: [],
+    skillsUpdated: [],
+    grantsNewPermissions: revisionGrantsNewPermissions(mcp),
   };
 }
 
@@ -1176,10 +1088,23 @@ export async function previewChatThreadRevisionUpgrade(
     },
     select: {
       assistantId: true,
+      workspaceId: true,
+      legacyRevisionUnresolved: true,
+      assistant: { select: { currentRevisionVersion: true } },
       assistantRevision: { select: { version: true, config: true } },
     },
   });
   if (!thread) throw new ChatServiceError(404, "Chat thread not found");
+  if (thread.legacyRevisionUnresolved || !thread.assistantRevision)
+    throw new ChatServiceError(
+      409,
+      "Legacy conversation revision is unresolved",
+    );
+  if (targetVersion !== thread.assistant.currentRevisionVersion)
+    throw new ChatServiceError(
+      409,
+      "Only the current Assistant revision can be applied",
+    );
   const target = await db.chatAssistantRevision.findUnique({
     where: {
       assistantId_version: {
@@ -1198,12 +1123,90 @@ export async function previewChatThreadRevisionUpgrade(
         ),
       }
     : null;
-  return diffAssistantRevisionConfigs(from, {
-    version: target.version,
-    config: ChatAssistantRevisionConfigSchema.parse(target.config),
+  const deployments = await db.deployment.findMany({
+    where: { workspaceId: thread.workspaceId },
+    select: { id: true, name: true, server: { select: { name: true } } },
   });
+  const names = new Map(
+    deployments.map((entry) => [
+      entry.id,
+      entry.name || entry.server?.name || null,
+    ]),
+  );
+  return diffAssistantRevisionConfigs(
+    from,
+    {
+      version: target.version,
+      config: ChatAssistantRevisionConfigSchema.parse(target.config),
+    },
+    (id) => names.get(id) ?? null,
+  );
 }
 
+/** Newest first; each entry compares a revision with the one published before it. */
+export async function listChatAssistantRevisionChangelog(
+  userId: string,
+  assistantId: string,
+  beforeVersion?: number,
+): Promise<RevisionChangelogPage> {
+  const assistant = await db.chatAssistant.findFirst({
+    where: {
+      id: assistantId,
+      workspace: {
+        status: "active",
+        OR: [
+          { ownerId: userId, owner: { status: "active" } },
+          { members: { some: { userId, user: { status: "active" } } } },
+        ],
+      },
+    },
+    select: { workspaceId: true, currentRevisionVersion: true },
+  });
+  if (!assistant) throw new ChatServiceError(404, "Chat assistant not found");
+  const rows = await db.chatAssistantRevision.findMany({
+    where: {
+      assistantId,
+      ...(beforeVersion ? { version: { lt: beforeVersion } } : {}),
+    },
+    orderBy: { version: "desc" },
+    take: REVISION_CHANGELOG_PAGE_SIZE + 1,
+    select: { version: true, config: true, createdAt: true },
+  });
+  const revisions = rows.map((row) => ({
+    version: row.version,
+    createdAt: row.createdAt,
+    config: ChatAssistantRevisionConfigSchema.parse(row.config),
+  }));
+  const deployments = await db.deployment.findMany({
+    where: {
+      workspaceId: assistant.workspaceId,
+      id: {
+        in: [
+          ...new Set(
+            revisions.flatMap((revision) =>
+              revision.config.mcpGrants.map((grant) => grant.deploymentId),
+            ),
+          ),
+        ],
+      },
+    },
+    select: { id: true, name: true, server: { select: { name: true } } },
+  });
+  const names = new Map(
+    deployments.map((entry) => [
+      entry.id,
+      entry.name || entry.server?.name || null,
+    ]),
+  );
+  return buildRevisionChangelogPage(
+    assistant.currentRevisionVersion,
+    revisions,
+    (from, to) =>
+      diffAssistantRevisionConfigs(from, to, (id) => names.get(id) ?? null),
+  );
+}
+
+/** Upgrade the revision pin in place, serialized with turn admission on the thread row. */
 export async function upgradeChatThreadRevision(
   userId: string,
   threadId: string,
@@ -1224,6 +1227,34 @@ export async function upgradeChatThreadRevision(
       select: { id: true, assistantId: true },
     });
     if (!authorized) throw new ChatServiceError(404, "Chat thread not found");
+    await tx.$queryRaw(
+      Prisma.sql`SELECT "id" FROM "ChatAssistant" WHERE "id" = ${authorized.assistantId} FOR UPDATE`,
+    );
+    await tx.$queryRaw(
+      Prisma.sql`SELECT "id" FROM "ChatThread" WHERE "id" = ${threadId} FOR UPDATE`,
+    );
+    const thread = await tx.chatThread.findUniqueOrThrow({
+      where: { id: threadId },
+      select: {
+        assistantId: true,
+        assistantRevisionId: true,
+        legacyRevisionUnresolved: true,
+      },
+    });
+    if (thread.legacyRevisionUnresolved || !thread.assistantRevisionId)
+      throw new ChatServiceError(
+        409,
+        "Legacy conversation revision is unresolved",
+      );
+    const assistant = await tx.chatAssistant.findUniqueOrThrow({
+      where: { id: thread.assistantId },
+      select: { currentRevisionVersion: true },
+    });
+    if (targetVersion !== assistant.currentRevisionVersion)
+      throw new ChatServiceError(
+        409,
+        "Only the current Assistant revision can be applied",
+      );
     const active = await tx.chatTurn.findFirst({
       where: { threadId, status: "pending" },
       select: { id: true },
@@ -1236,43 +1267,19 @@ export async function upgradeChatThreadRevision(
     const target = await tx.chatAssistantRevision.findUnique({
       where: {
         assistantId_version: {
-          assistantId: authorized.assistantId,
+          assistantId: thread.assistantId,
           version: targetVersion,
         },
       },
-      select: { id: true, version: true, config: true },
+      select: { id: true },
     });
     if (!target)
       throw new ChatServiceError(404, "Assistant revision not found");
-    const current = await tx.chatThread.findUnique({
+    await tx.chatThread.update({
       where: { id: threadId },
-      select: {
-        assistantRevision: { select: { version: true, config: true } },
-      },
+      data: { assistantRevisionId: target.id },
     });
-    const diff = diffAssistantRevisionConfigs(
-      current?.assistantRevision
-        ? {
-            version: current.assistantRevision.version,
-            config: ChatAssistantRevisionConfigSchema.parse(
-              current.assistantRevision.config,
-            ),
-          }
-        : null,
-      {
-        version: target.version,
-        config: ChatAssistantRevisionConfigSchema.parse(target.config),
-      },
-    );
-    const updated = await tx.chatThread.update({
-      where: { id: threadId },
-      data: {
-        assistantRevisionId: target.id,
-        legacyRevisionUnresolved: false,
-      },
-      select: { id: true, assistantRevisionId: true },
-    });
-    return { thread: updated, diff };
+    return { thread: { id: threadId } };
   });
 }
 
@@ -1547,6 +1554,57 @@ export async function getChatThreadForExecution(
   });
 }
 
+/** Resolve a turn-local model without rebinding the thread's immutable revision. */
+export async function resolveChatTurnModel(
+  workspaceId: string,
+  selection: { providerId: string; model: string },
+  requirements: { tools: boolean; reasoning: boolean; modalities: string[] },
+) {
+  const provider = await db.modelProvider.findFirst({
+    where: { id: selection.providerId, workspaceId },
+    include: { modelRecords: true },
+  });
+  if (!provider?.apiKey.trim())
+    throw new ChatServiceError(400, "CHAT_MODEL_PROVIDER_UNAVAILABLE");
+  if (!provider.models.includes(selection.model))
+    throw new ChatServiceError(400, "CHAT_MODEL_NOT_AVAILABLE");
+  const record = provider.modelRecords.find(
+    (model) => model.modelId === selection.model,
+  );
+  if (
+    (record?.primaryType ?? inferModelPrimaryType(selection.model)) !==
+      "text" ||
+    (record &&
+      ((requirements.tools &&
+        !record.capabilities.includes("function_calling")) ||
+        (requirements.reasoning &&
+          !record.capabilities.includes("reasoning")) ||
+        requirements.modalities.some(
+          (modality) => !record.inputModalities.includes(modality),
+        )))
+  )
+    throw new ChatServiceError(400, "CHAT_MODEL_CAPABILITY_UNSUPPORTED");
+  return { provider, modelId: selection.model };
+}
+
+function preserveChatModelPart(
+  saved: Prisma.JsonValue,
+  parts: Array<Record<string, unknown>>,
+) {
+  const modelPart = Array.isArray(saved)
+    ? saved.find(
+        (part) =>
+          part &&
+          typeof part === "object" &&
+          !Array.isArray(part) &&
+          part.type === "data-model",
+      )
+    : undefined;
+  return modelPart && !parts.some((part) => part.type === "data-model")
+    ? [modelPart, ...parts]
+    : parts;
+}
+
 function messageTitle(parts: Array<Record<string, unknown>>): string | null {
   const text = parts
     .filter((part) => part.type === "text" && typeof part.text === "string")
@@ -1566,7 +1624,9 @@ export async function beginChatTurn(
     messageId?: string;
     clientLastMessageId?: string;
     modelId?: string;
+    modelProviderId?: string;
     expectedAssistantId?: string;
+    expectedAssistantRevisionId?: string;
     idempotencyKey?: string;
     requestHash?: string;
   } = {},
@@ -1627,6 +1687,7 @@ export async function beginChatTurn(
               trigger,
               messageId: request.messageId ?? null,
               modelId: request.modelId ?? null,
+              modelProviderId: request.modelProviderId ?? null,
             }),
           )
           .digest("hex");
@@ -1671,6 +1732,14 @@ export async function beginChatTurn(
           "Chat assistant changed; retry the message",
         );
       }
+      if (
+        request.expectedAssistantRevisionId &&
+        thread.assistantRevisionId !== request.expectedAssistantRevisionId
+      )
+        throw new ChatServiceError(
+          409,
+          "Chat revision changed; retry the message",
+        );
 
       const targetId =
         request.messageId ??
@@ -1764,7 +1833,18 @@ export async function beginChatTurn(
               role: "assistant",
               status: "pending",
               modelId: request.modelId ?? null,
-              parts: [] as Prisma.InputJsonValue,
+              parts:
+                request.modelProviderId && request.modelId
+                  ? [
+                      {
+                        type: "data-model",
+                        data: {
+                          providerId: request.modelProviderId,
+                          model: request.modelId,
+                        },
+                      },
+                    ]
+                  : [],
             },
           });
           assistantMessageId = assistantMessage.id;
@@ -1835,11 +1915,31 @@ export async function beginChatTurn(
             role: "assistant",
             status: "pending",
             modelId: request.modelId ?? null,
-            parts: [] as Prisma.InputJsonValue,
+            parts:
+              request.modelProviderId && request.modelId
+                ? [
+                    {
+                      type: "data-model",
+                      data: {
+                        providerId: request.modelProviderId,
+                        model: request.modelId,
+                      },
+                    },
+                  ]
+                : [],
           },
         });
         assistantMessageId = assistantMessage.id;
       }
+
+      await tx.chatRunEvent.create({
+        data: {
+          turnId: turn.id,
+          generation: turn.generation,
+          sequence: 1,
+          payload: chatExecutionProgressChunk(turn.id, "queued", 1),
+        },
+      });
 
       await tx.chatThread.update({
         where: { id: threadId },
@@ -1938,6 +2038,10 @@ export async function completeChatTurn(
         where: { id: turnId },
         data: { status: "cancelled" },
       });
+    const savedMessage = await tx.chatMessage.findUniqueOrThrow({
+      where: { id: assistantMessageId },
+      select: { parts: true },
+    });
     const message = await tx.chatMessage.updateMany({
       where: {
         id: assistantMessageId,
@@ -1948,7 +2052,10 @@ export async function completeChatTurn(
       },
       data: {
         status: persisted.stopRequestedAt ? "cancelled" : "success",
-        parts: parts as Prisma.InputJsonValue,
+        parts: preserveChatModelPart(
+          savedMessage.parts,
+          parts,
+        ) as Prisma.InputJsonValue,
       },
     });
     if (message.count !== 1)
@@ -2002,11 +2109,22 @@ export async function finishChatTurn(
       select: { generation: true, lastEventSequence: true },
     });
     if (assistantMessageId) {
+      const savedMessage = await tx.chatMessage.findUniqueOrThrow({
+        where: { id: assistantMessageId },
+        select: { parts: true },
+      });
       const message = await tx.chatMessage.updateMany({
         where: { id: assistantMessageId, threadId, turnId, status: "pending" },
         data: {
           status,
-          ...(parts ? { parts: parts as Prisma.InputJsonValue } : {}),
+          ...(parts
+            ? {
+                parts: preserveChatModelPart(
+                  savedMessage.parts,
+                  parts,
+                ) as Prisma.InputJsonValue,
+              }
+            : {}),
         },
       });
       if (message.count !== 1)
@@ -2027,45 +2145,5 @@ export async function finishChatTurn(
       },
     });
     return true;
-  });
-}
-
-// Re-approving a drifted tool is an operational acknowledgment, not a
-// revision change: it clears the pause recorded by syncMcpToolApprovalState
-// once the workspace has reviewed the before/after diff.
-export async function approveChatAssistantMcpToolChanges(
-  workspaceId: string,
-  assistantId: string,
-  deploymentId: string,
-  toolNames?: readonly string[],
-) {
-  return db.$transaction(async (tx) => {
-    const row = await tx.chatAssistantMcpGrant.findFirst({
-      where: { assistantId, deploymentId, assistant: { workspaceId } },
-      select: {
-        assistantId: true,
-        deploymentId: true,
-        approvedToolSignatures: true,
-        pendingToolChanges: true,
-      },
-    });
-    if (!row) throw new ChatServiceError(404, "Assistant MCP grant not found");
-    const approved = parseApprovedToolSignatures(row.approvedToolSignatures);
-    const pending = parsePendingToolChanges(row.pendingToolChanges);
-    const targets = toolNames ?? Object.keys(pending);
-    for (const name of targets) {
-      const change = pending[name];
-      if (!change) continue;
-      approved[name] = change.currentSignature;
-      delete pending[name];
-    }
-    await tx.chatAssistantMcpGrant.update({
-      where: { assistantId_deploymentId: { assistantId, deploymentId } },
-      data: {
-        approvedToolSignatures: approved as Prisma.InputJsonValue,
-        pendingToolChanges: pending as Prisma.InputJsonValue,
-      },
-    });
-    return { approvedToolSignatures: approved, pendingToolChanges: pending };
   });
 }

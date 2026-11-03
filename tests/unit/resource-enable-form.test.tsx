@@ -6,7 +6,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ResourceEnableForm } from "@/components/dashboard/market/ResourceEnableForm";
+import { ResourceEnableForm } from "@/components/dashboard/ResourceEnableForm";
 
 const mocks = vi.hoisted(() => ({ preview: vi.fn(), apply: vi.fn() }));
 vi.mock("@/lib/agents/actions", () => ({
@@ -30,27 +30,21 @@ const skill = {
   agentInvocable: false,
   effort: "default",
 };
-const prepared = (kind: "skill" | "mcp" = "skill") => ({
+const prepared = () => ({
   agentId: "agent-a",
   resourceId: "resource-a",
-  resourceKind: kind,
+  resourceKind: "skill",
   expectedRevisionId: "revision-current",
   reviewReceipt: "server-signed-review",
   expiresAt: new Date(Date.now() + 900_000).toISOString(),
   sourceChecksum: "a".repeat(64),
-  ...(kind === "skill"
-    ? { skill }
-    : {
-        tested: true,
-        tools: [{ name: "read", description: "Read only" }, { name: "write" }],
-      }),
+  skill,
 });
-function mount(kind: "skill" | "mcp" = "skill") {
+function mount() {
   return render(
     <ResourceEnableForm
       workspace="acme"
       resourceId="resource-a"
-      kind={kind}
       agents={agents}
     />,
   );
@@ -70,9 +64,9 @@ async function previewSource() {
   fireEvent.click(screen.getByRole("button", { name: "resourcePreview" }));
   await waitForControlsIdle();
 }
-async function review(kind: "skill" | "mcp" = "skill") {
-  mocks.preview.mockResolvedValue(prepared(kind));
-  mount(kind);
+async function review() {
+  mocks.preview.mockResolvedValue(prepared());
+  mount();
   fireEvent.change(screen.getByRole("combobox"), {
     target: { value: "agent-a" },
   });
@@ -149,36 +143,14 @@ describe("single-resource revision application", () => {
     });
   });
 
-  it("keeps MCP handshake separate from explicit tool selection and never sends a client catalog", async () => {
-    await review("mcp");
-    expect(screen.getByRole("checkbox", { name: /read/i })).not.toBeChecked();
-    expect(screen.getByRole("checkbox", { name: "write" })).not.toBeChecked();
-    expect(mocks.apply).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("checkbox", { name: /read/i }));
-    await approveAndApply();
-    await screen.findByRole("status");
-    expect(Object.fromEntries(mocks.apply.mock.calls[0][1])).toEqual({
-      workspace: "acme",
-      agentId: "agent-a",
-      resourceKind: "mcp",
-      resourceId: "resource-a",
-      expectedRevisionId: "revision-current",
-      reviewReceipt: "server-signed-review",
-      confirm: "yes",
-      allowedToolNames: '["read"]',
-    });
-  });
-
-  it("preserves reviewed source, selection and consent on a transient refusal and retries explicitly", async () => {
+  it("preserves reviewed source and consent on a transient refusal and retries explicitly", async () => {
     mocks.apply.mockResolvedValueOnce({ error: "resource_binding_busy" });
-    await review("mcp");
-    fireEvent.click(screen.getByRole("checkbox", { name: "write" }));
+    await review();
     await approveAndApply();
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "resourceBindingBusy",
     );
     expect(screen.getByRole("combobox")).toHaveValue("agent-a");
-    expect(screen.getByRole("checkbox", { name: "write" })).toBeChecked();
     expect(
       screen.getByRole("checkbox", { name: "resourceReviewConsent" }),
     ).toBeChecked();
@@ -200,44 +172,30 @@ describe("single-resource revision application", () => {
     "reviewExpired",
     "resourceChanged",
     "AGENT_REVISION_CONFLICT",
-    "MCP_DEFINITION_CHANGED",
-    "MCP_RUNTIME_FILES_CHANGED",
-    "MCP_CONNECTION_RESTART_REQUIRED",
-    "MCP_DISCOVERY_REQUIRED",
-    "MCP_TOOL_SELECTION_CHANGED",
-  ])(
-    "invalidates %s reviews without discarding choices or retrying automatically",
-    async (error) => {
-      mocks.apply.mockResolvedValueOnce({ error });
-      await review("mcp");
-      fireEvent.click(screen.getByRole("checkbox", { name: "write" }));
-      await approveAndApply();
-      expect(await screen.findByRole("alert")).toHaveTextContent(
-        "resourcePreviewExpired",
-      );
-      expect(screen.getByRole("checkbox", { name: "write" })).toBeChecked();
-      expect(
-        screen.getByRole("button", { name: "resourceApplyRevision" }),
-      ).toBeDisabled();
-      expect(mocks.apply).toHaveBeenCalledTimes(1);
-      await previewSource();
-      await waitFor(() =>
-        expect(
-          screen.getByRole("checkbox", { name: "write" }),
-        ).not.toBeChecked(),
-      );
+  ])("invalidates %s reviews without retrying automatically", async (error) => {
+    mocks.apply.mockResolvedValueOnce({ error });
+    await review();
+    await approveAndApply();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "resourcePreviewExpired",
+    );
+    expect(
+      screen.getByRole("button", { name: "resourceApplyRevision" }),
+    ).toBeDisabled();
+    expect(mocks.apply).toHaveBeenCalledTimes(1);
+    await previewSource();
+    await waitFor(() =>
       expect(
         screen.getByRole("checkbox", { name: "resourceReviewConsent" }),
-      ).not.toBeChecked();
-      expect(
-        screen.getByRole("button", { name: "resourceApplyRevision" }),
-      ).toBeDisabled();
-    },
-  );
+      ).not.toBeChecked(),
+    );
+    expect(
+      screen.getByRole("button", { name: "resourceApplyRevision" }),
+    ).toBeDisabled();
+  });
 
-  it("clears the previous target review and selection when choosing another Agent", async () => {
-    await review("mcp");
-    fireEvent.click(screen.getByRole("checkbox", { name: "write" }));
+  it("clears the previous target review when choosing another Agent", async () => {
+    await review();
     fireEvent.change(screen.getByRole("combobox"), {
       target: { value: "agent-draft" },
     });

@@ -1,77 +1,68 @@
-import { ButtonLink } from "@/components/motion/button";
-import { ClipboardCheck } from "lucide-react";
 import { getTranslations } from "next-intl/server";
+import { requireAdmin } from "@/lib/auth/admin";
+import { db } from "@/lib/db";
+import {
+  withdrawPluginListing,
+  revokePluginRelease,
+} from "@/lib/admin/plugin-actions";
 import {
   AdminPage,
   AdminPageHeader,
-  AdminSearchForm,
+  AdminPanel,
 } from "@/components/admin/AdminUI";
-import { MarketCatalogManagement } from "@/components/admin/MarketCatalogManagement";
-import { listCategories } from "@/lib/admin/categories";
-import {
-  listAdminMarketListings,
-  listAdminPublicToolkits,
-} from "@/lib/admin/market-catalog";
-import { requireAdmin } from "@/lib/auth/admin";
+import { Button } from "@/components/motion/button";
 
 export const dynamic = "force-dynamic";
 
-export default async function AdminMarketPage({
-  searchParams = Promise.resolve({}),
-}: {
-  searchParams?: Promise<{
-    q?: string;
-    listingPage?: string;
-    toolkitPage?: string;
-  }>;
-} = {}) {
+export default async function AdminPluginsPage() {
   await requireAdmin();
-  const [t, ops, query] = await Promise.all([
-    getTranslations("admin"),
-    getTranslations("adminOps"),
-    searchParams,
-  ]);
-  const q = typeof query.q === "string" ? query.q.trim().slice(0, 200) : "";
-  const [listings, toolkits, categories] = await Promise.all([
-    listAdminMarketListings({ page: Number(query.listingPage), q }),
-    listAdminPublicToolkits({ page: Number(query.toolkitPage), q }),
-    listCategories(),
-  ]);
+  const t = await getTranslations("admin");
+  const listings = await db.marketListing.findMany({
+    where: { kind: "pi-package" },
+    orderBy: { updatedAt: "desc" },
+    include: { releases: { orderBy: { createdAt: "desc" } } },
+  });
   return (
     <AdminPage>
-      <AdminPageHeader
-        title={ops("catalog")}
-        meta={t("marketAdministrationCount", {
-          listings: listings.total,
-          toolkits: toolkits.total,
-        })}
-        actions={
-          <ButtonLink href="/admin/reviews" variant="secondary" size="md">
-            <ClipboardCheck className="size-4" />
-            {ops("reviewQueue")}
-          </ButtonLink>
-        }
-      />
-      <AdminSearchForm
-        defaultValue={q}
-        placeholder={t("marketCatalogSearchPlaceholder")}
-        label={t("marketCatalogSearchLabel")}
-        searchLabel={t("search")}
-        clearLabel={t("clear")}
-        clearHref="/admin/market"
-      />
-      <MarketCatalogManagement
-        categories={categories}
-        listings={listings.items}
-        toolkits={toolkits.items}
-        listingPage={listings.page}
-        listingPageSize={listings.pageSize}
-        listingTotal={listings.total}
-        toolkitPage={toolkits.page}
-        toolkitPageSize={toolkits.pageSize}
-        toolkitTotal={toolkits.total}
-        q={q}
-      />
+      <AdminPageHeader title={t("adminNavCatalog")} />
+      {listings.map((listing) => (
+        <AdminPanel key={listing.id} title={listing.name}>
+          <p className="text-sm text-muted-foreground">
+            {listing.namespace}/{listing.slug} · {listing.status}
+          </p>
+          {listing.status === "published" && (
+            <form action={withdrawPluginListing} className="mt-3">
+              <input type="hidden" name="listingId" value={listing.id} />
+              <Button type="submit" variant="secondary">
+                {t("pluginWithdraw")}
+              </Button>
+            </form>
+          )}
+          <ul className="mt-4 divide-y divide-border">
+            {listing.releases.map((release) => (
+              <li
+                key={release.id}
+                className="flex items-center justify-between gap-4 py-3"
+              >
+                <span>
+                  {release.version} · {release.reviewStatus}
+                </span>
+                {release.reviewStatus === "approved" && (
+                  <form action={revokePluginRelease}>
+                    <input type="hidden" name="releaseId" value={release.id} />
+                    <Button type="submit" variant="secondary">
+                      {t("pluginRevoke")}
+                    </Button>
+                  </form>
+                )}
+              </li>
+            ))}
+          </ul>
+        </AdminPanel>
+      ))}
+      {!listings.length && (
+        <p className="text-muted-foreground">{t("pluginEmpty")}</p>
+      )}
     </AdminPage>
   );
 }

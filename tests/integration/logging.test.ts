@@ -1,10 +1,12 @@
 // @vitest-environment node
 import { randomUUID } from "node:crypto";
+import { assertDefined } from "../assert-defined";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { db } from "@/lib/db";
 import { recordEvent } from "@/lib/observability/events";
 import { logRequest } from "@/lib/observability/log";
 import { withLogContext } from "@/lib/observability/context";
+import { mcpRpc } from "@/lib/process/mcp-client";
 import {
   getLogEvent,
   getLogTrace,
@@ -161,7 +163,7 @@ describe("durable scoped logging", () => {
     expect(noPayload.detail).toBeNull();
   });
 
-  it("stores sanitized workspace MCP payloads without exposing Agent content", async () => {
+  it("stores sanitized workspace MCP payloads, including calls inside Agent sessions", async () => {
     await db.systemSetting.update({
       where: { key: LOG_SETTINGS_KEY },
       data: { value: JSON.stringify({ captures: [] }) },
@@ -194,21 +196,135 @@ describe("durable scoped logging", () => {
         response: { ok: true },
       },
     });
-
-    await withLogContext({ workspaceId, agentId: "agent-fixture" }, () =>
-      recordEvent({
-        domain: "mcp",
-        eventName: "mcp.rpc",
-        deploymentId,
-        toolName: "agent-payload",
-        detail: { request: "private-agent-content" },
-      }),
+    expect(assertDefined(captured.detail).expiresAt.getTime()).toBeGreaterThan(
+      Date.now() + 29 * 86_400_000,
     );
-    const suppressed = await db.logEvent.findFirstOrThrow({
+
+    await withLogContext(
+      {
+        workspaceId,
+        agentId: "agent-fixture",
+        secrets: ["fixture-private-key"],
+      },
+      () =>
+        recordEvent({
+          domain: "mcp",
+          eventName: "mcp.rpc",
+          deploymentId,
+          toolName: "agent-payload",
+          detail: {
+            request: { value: "fixture-private-key", text: "agent-visible" },
+          },
+        }),
+    );
+    const agentCall = await db.logEvent.findFirstOrThrow({
       where: { workspaceId, toolName: "agent-payload" },
       include: { detail: true },
     });
-    expect(suppressed.detail).toBeNull();
+    expect(agentCall.detail?.data).toMatchObject({
+      workspaceMcpPayload: true,
+      payload: { request: { value: "[REDACTED]", text: "agent-visible" } },
+    });
+    expect(assertDefined(agentCall.detail).expiresAt.getTime()).toBeGreaterThan(
+      Date.now() + 29 * 86_400_000,
+    );
+  });
+
+  it("lets workspace members read failed MCP calls made inside Agent sessions", async () => {
+    await withLogContext({ workspaceId, agentId: "agent-fixture" }, () =>
+      mcpRpc(deploymentId, "tools/call", {
+        name: "agent-failure",
+        arguments: { path: "." },
+      }),
+    );
+    const failed = await db.logEvent.findFirstOrThrow({
+      where: { workspaceId, toolName: "agent-failure" },
+    });
+    expect(failed).toMatchObject({
+      outcome: "error",
+      errorCode: "deployment_unavailable",
+    });
+    const visible = await getLogEvent({ userId, workspaceId }, failed.id);
+    expect(visible?.detailState).toBe("available");
+    expect(visible?.message).toBe("MCP deployment is not running");
+    expect(JSON.stringify(visible?.detail)).toContain("agent-failure");
+  });
+
+  it("lets workspace members read Agent tool input and output, but not other Agent content", async () => {
+    await withLogContext(
+      { workspaceId, agentId: "agent-fixture" },
+      async () => {
+        await recordEvent({
+          domain: "agent",
+          eventName: "sandbox.tool",
+          toolName: "bash",
+          detail: { request: { command: "echo visible" }, response: "visible" },
+        });
+        await recordEvent({
+          domain: "agent",
+          eventName: "model.call",
+          payloadPolicy: "agent-content",
+          detail: { prompt: "private-prompt" },
+        });
+      },
+    );
+    const tool = await db.logEvent.findFirstOrThrow({
+      where: { workspaceId, eventName: "sandbox.tool" },
+    });
+    const visible = await getLogEvent({ userId, workspaceId }, tool.id);
+    expect(visible?.detailState).toBe("available");
+    expect(JSON.stringify(visible?.detail)).toContain("echo visible");
+    const model = await db.logEvent.findFirstOrThrow({
+      where: { workspaceId, eventName: "model.call" },
+      include: { detail: true },
+    });
+    expect(model.detail).toBeNull();
+  });
+
+  it("bounds protocol retention by event retention without changing Agent content limits", async () => {
+    await db.systemSetting.update({
+      where: { key: LOG_SETTINGS_KEY },
+      data: {
+        value: JSON.stringify({
+          eventDays: 2,
+          detailDays: 30,
+          captures: [
+            {
+              field: "workspaceId",
+              id: workspaceId,
+              expiresAt: new Date(Date.now() + 60_000).toISOString(),
+              includeAgentContent: true,
+            },
+          ],
+        }),
+      },
+    });
+    invalidateLogSettings();
+    try {
+      for (const policy of ["request-response", "agent-content"] as const) {
+        await recordEvent({
+          workspaceId,
+          domain: "a2a",
+          eventName: `retention.${policy}`,
+          payloadPolicy: policy,
+          detail: { request: "safe" },
+        });
+        const row = await db.logEvent.findFirstOrThrow({
+          where: { workspaceId, eventName: `retention.${policy}` },
+          include: { detail: true },
+        });
+        const expires = assertDefined(row.detail).expiresAt.getTime();
+        const days = policy === "agent-content" ? 1 : 2;
+        expect(expires).toBeGreaterThan(Date.now() + (days - 0.1) * 86_400_000);
+        expect(expires).toBeLessThanOrEqual(Date.now() + days * 86_400_000);
+      }
+    } finally {
+      await db.systemSetting.update({
+        where: { key: LOG_SETTINGS_KEY },
+        data: { value: JSON.stringify({ captures: [] }) },
+      });
+      invalidateLogSettings();
+    }
   });
 
   it("never captures public run payloads and never serves expired details", async () => {

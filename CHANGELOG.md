@@ -6,12 +6,20 @@
 * add administrator-configurable per-Agent and platform execution limits, isolated persistent conversation sandboxes, cancellable admission, conversation-scoped files and nonblocking terminals with live access revalidation, and idle container cleanup with preserved volumes
 * add selected-sandbox batch start, stop and restart with disruptive-action confirmation, workspace-scoped lifecycle guards and per-sandbox results
 * add request-level A2A debugging across HTTP, MCP and native entries, with redacted 24-hour administrator-only bodies, committed task timelines, and workspace-scoped metadata views
+* rename the Resource Center to Plugin Center and the official repository to `asharca/toolplane-plugins`; preserve fixed releases and safely follow GitHub's same-API permanent repository-ID redirects without forwarding credentials to arbitrary destinations
 * make GitHub registries the Resource Center's only content-publishing path for Skills, MCP configurations, Pi packages, Agents and Assistants; resolve fixed commits into immutable releases with atomic synchronization, workspace-scoped credentials and webhook signatures, preserved session pins, and explicit installation/application; remove local uploads, inline authoring and direct npm/Git/ZIP publication while preserving private Skill editing and chat/Work attachments
+* distribute GitHub resources as unified versioned composite packages, with stable member identities, explicit selection and permission review, atomic installation, provenance-aware unchanged-member reuse, safe update/removal behavior and preserved historical pins; group discovery, installed packages, updates and sources under the Resource Center sidebar submenu while retaining independent Skill/MCP management
 
 ### Documentation
 * add an evidence-based repository lessons notebook, require coding agents to read and maintain it, and promote recurring lessons into durable guidance
 
 ### Bug Fixes
+* restore missing Resource Center error and version-comparison pagination translations in both languages, and allow loopback development hot reload without admitting untrusted origins
+* create fully configured Agents with their first authorized immutable revision in one operation, enter the ready work composer on success, and preserve form input while rolling back incomplete Agent/sandbox records on preparation failure
+* apply ordinary Agent setting changes on Save, request consent only for additional execution authority, and retain revision CAS and existing conversation pins; stop showing normal idle sandboxes as yellow warnings while preserving pending approvals and real errors
+* remove the duplicate workspace settings link from the main sidebar while retaining settings in the workspace menu
+* restore independent Skill and MCP management links and active states in the workspace sidebar, separate from Resource Center discovery and installation
+* restore Add MCP on the workspace MCP page and route `/mcp/new` to the existing configuration dialog, preserving private deployment validation separately from Resource Center publishing
 * preserve indexed package and configuration context in staged checks so React/Next rules remain enabled without rejecting valid suppressions or reading unstaged dependency changes
 * serialize terminal input requests and drain pending writes before closing a session, preventing keystroke reordering through asynchronous sandbox proxies
 * focus permanent tests and CI on core behavior and security boundaries; remove implementation-detail, wording and duplicate suites, retire the global 80% coverage gate and Codecov upload, and retain optional coverage diagnostics

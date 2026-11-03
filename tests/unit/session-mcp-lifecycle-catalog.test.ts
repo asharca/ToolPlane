@@ -17,6 +17,8 @@ const mocks = vi.hoisted(() => ({
   stop: vi.fn(),
   save: vi.fn(),
   query: vi.fn(),
+  pinUpdate: vi.fn(),
+  transactionDepth: 0,
 }));
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/db", () => {
@@ -32,6 +34,7 @@ vi.mock("@/lib/db", () => {
       findFirst: mocks.deployment,
       findUnique: mocks.persistedDeployment,
       update: mocks.save,
+      updateMany: mocks.pinUpdate,
     },
     deploymentConfigFile: { findMany: mocks.files },
     $queryRaw: mocks.query,
@@ -41,7 +44,14 @@ vi.mock("@/lib/db", () => {
       ...client,
       $transaction: async (
         operation: (tx: typeof client) => Promise<unknown>,
-      ) => operation(client),
+      ) => {
+        mocks.transactionDepth += 1;
+        try {
+          return await operation(client);
+        } finally {
+          mocks.transactionDepth -= 1;
+        }
+      },
     },
   };
 });
@@ -56,7 +66,7 @@ vi.mock("@/lib/agents/revision-types", () => ({
 vi.mock("@/lib/agents/environment-credentials", () => ({
   assertAgentEnvironmentCredentialReferences: vi.fn(),
 }));
-vi.mock("@/lib/market/revocation", () => ({
+vi.mock("@/lib/pi-packages/revocation", () => ({
   assertMarketReleasesExecutable: vi.fn(),
 }));
 vi.mock("@/lib/process/mcp-credentials", () => ({
@@ -85,6 +95,9 @@ vi.mock("@/lib/observability/events", () => ({
   recordEvent: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock("@/lib/process/mcp-grant-sync", () => ({
+  syncDeploymentMcpGrants: vi.fn(),
+}));
 import {
   callSessionMcpTool,
   listSessionMcpTools,
@@ -143,6 +156,8 @@ beforeEach(() => {
   mocks.stop.mockReset().mockResolvedValue(undefined);
   mocks.save.mockReset().mockResolvedValue({});
   mocks.query.mockReset().mockResolvedValue([]);
+  mocks.pinUpdate.mockReset().mockResolvedValue({ count: 1 });
+  mocks.transactionDepth = 0;
   mocks.revision.mockResolvedValue({
     config: {
       packages: [],
@@ -273,7 +288,7 @@ describe("Agent target controlled MCP inspection", () => {
     userId: "owner",
   };
 
-  it("discovers a stopped recipe through disposable instances and saves only redacted evidence, never a grant", async () => {
+  it("discovers a stopped recipe through disposable instances and saves only redacted catalog evidence", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
       .mockImplementation(async () => rpcResult({ tools: [approved] }));
@@ -329,11 +344,83 @@ describe("Agent target controlled MCP inspection", () => {
   it("rechecks authority after artifact preparation before resolving secrets", async () => {
     mocks.user
       .mockResolvedValueOnce({ role: "member" })
+      .mockResolvedValueOnce({ role: "member" })
       .mockResolvedValueOnce(null);
     await expect(inspectAgentMcpConnection(input)).rejects.toThrow(
       "MCP_CONNECTION_NOT_AUTHORIZED",
     );
     expect(mocks.prepare).toHaveBeenCalledOnce();
+    expect(mocks.resolve).not.toHaveBeenCalled();
+    expect(mocks.start).not.toHaveBeenCalled();
+  });
+
+  it("pins a floating npm recipe before discovery checksums and keeps registry calls outside transactions", async () => {
+    let deployment = {
+      ...recipe,
+      source: "npm",
+      sourceRef: "@fixture/inspection-mcp",
+      installCfg: { env: { KEEP: "preserved" } },
+      updatedAt: new Date(),
+    };
+    mocks.deployment.mockImplementation(async () => deployment);
+    mocks.pinUpdate.mockImplementation(async ({ data }) => {
+      deployment = { ...deployment, ...data };
+      return { count: 1 };
+    });
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+      if (String(url).startsWith("https://registry.npmjs.org/")) {
+        expect(mocks.transactionDepth).toBe(0);
+        return new Response(
+          JSON.stringify({ "dist-tags": { latest: "3.2.1" } }),
+          {
+            headers: { "content-type": "application/json" },
+          },
+        );
+      }
+      return rpcResult({ tools: [approved] });
+    });
+    const inspected = await inspectAgentMcpConnection(input);
+    expect(deployment.sourceRef).toBe("@fixture/inspection-mcp@3.2.1");
+    expect(inspected.definitionChecksum).toBe(
+      mcpDefinitionChecksum(deployment),
+    );
+    expect(mocks.prepare.mock.calls[0][0]).toMatchObject({
+      sourceRef: deployment.sourceRef,
+    });
+    expect(deployment.installCfg).toEqual({ env: { KEEP: "preserved" } });
+    expect(
+      mocks.save.mock.calls[0][0].data.installCfg.mcpInspector
+        .definitionChecksum,
+    ).toBe(inspected.definitionChecksum);
+  });
+
+  it("reports resolution failures without preparing an image, resolving secrets, or starting an instance", async () => {
+    mocks.deployment.mockResolvedValue({
+      ...recipe,
+      source: "npm",
+      sourceRef: "@fixture/unavailable",
+    });
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(
+      new Error("private upstream failure"),
+    );
+    await expect(inspectAgentMcpConnection(input)).rejects.toMatchObject({
+      code: "mcpVersionResolutionFailed",
+      message: "mcpVersionResolutionFailed",
+    });
+    expect(mocks.prepare).not.toHaveBeenCalled();
+    expect(mocks.resolve).not.toHaveBeenCalled();
+    expect(mocks.start).not.toHaveBeenCalled();
+    expect(mocks.save).not.toHaveBeenCalled();
+  });
+
+  it("rechecks authority after pinning before preparing an artifact", async () => {
+    mocks.user
+      .mockResolvedValueOnce({ role: "member" })
+      .mockResolvedValueOnce(null);
+    await expect(inspectAgentMcpConnection(input)).rejects.toThrow(
+      "MCP_CONNECTION_NOT_AUTHORIZED",
+    );
+    expect(mocks.prepare).not.toHaveBeenCalled();
     expect(mocks.resolve).not.toHaveBeenCalled();
     expect(mocks.start).not.toHaveBeenCalled();
   });

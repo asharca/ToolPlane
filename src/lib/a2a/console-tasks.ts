@@ -1,3 +1,4 @@
+import { nativeUiView } from "@/lib/agents/execution/native-ui";
 import "server-only";
 import { Task } from "@a2a-js/sdk";
 import {
@@ -36,7 +37,7 @@ export type ConsoleTaskTree = {
     name: string;
     state: string;
     phase: string;
-    pendingApprovals?: number;
+    pendingUiRequests?: number;
     cancelRequested: boolean;
     remoteState?: string;
     remoteOutcome?: "observed" | "unknown";
@@ -47,7 +48,7 @@ export type ConsoleTaskTree = {
     };
     resumeCount: number;
     updatedAt: string;
-    executionBackend?: "pi-sdk" | "pi-harness";
+    executionBackend?: "pi-sdk" | "omp" | "pi-harness";
     nativeOperationId?: string | null;
     contextId?: string;
   }>;
@@ -228,16 +229,13 @@ export async function getConsoleTaskTree(
     visible.set(row.id, row);
     const task = Task.fromJSON(row.snapshot);
     const status = jsonTask(task).status as { state?: string } | undefined;
-    const pendingApprovals = row.leaseToken
-      ? await db.a2AToolApproval.count({
-          where: {
-            taskId: row.id,
-            leaseToken: row.leaseToken,
-            status: "pending",
-            expiresAt: { gt: new Date() },
-          },
-        })
-      : 0;
+    const pendingUiRequests = nativeUiView(
+      row.uiProjection,
+      row.leaseToken,
+      row.phase === "executing" &&
+        !row.cancelRequestedAt &&
+        row.deadlineAt > new Date(),
+    ).uiRequests.length;
     nodes.push({
       id: row.id,
       parentTaskId: row.parentTaskId,
@@ -245,8 +243,9 @@ export async function getConsoleTaskTree(
       name: target.name,
       state: status?.state ?? "TASK_STATE_UNSPECIFIED",
       phase: row.phase,
-      pendingApprovals,
+      pendingUiRequests,
       ...(row.executionBackend === "pi-sdk" ||
+      row.executionBackend === "omp" ||
       row.executionBackend === "pi-harness"
         ? {
             executionBackend: row.executionBackend,

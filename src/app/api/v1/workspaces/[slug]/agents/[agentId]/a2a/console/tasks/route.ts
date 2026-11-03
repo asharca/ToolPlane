@@ -12,3 +12,4 @@ export const GET = withRequestLogging(
     return handleA2AConsoleTasks(request, slug, agentId);
   },
 );
+export const POST = GET;

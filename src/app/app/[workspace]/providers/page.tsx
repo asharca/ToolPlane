@@ -1,7 +1,6 @@
 import type { ModelCost } from "@earendil-works/pi-ai";
 import { redirect } from "next/navigation";
 import { getLocale, getTranslations } from "next-intl/server";
-import { DashboardHeader } from "@/components/dashboard/DashboardHeader";
 import { ProvidersPanel } from "@/components/dashboard/agents/ProvidersPanel";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { listProviders } from "@/lib/agents/queries";
@@ -18,10 +17,7 @@ export default async function ProvidersPage({
   params: Promise<{ workspace: string }>;
 }) {
   const { workspace: slug } = await params;
-  const [t, locale] = await Promise.all([
-    getTranslations("console.agents"),
-    getLocale(),
-  ]);
+  const locale = await getLocale();
   const user = await getCurrentUser();
   if (!user) redirect("/app/login");
 
@@ -30,12 +26,9 @@ export default async function ProvidersPage({
   if (ws.ownerId !== user.id) {
     const management = await getTranslations("console.workspaces");
     return (
-      <>
-        <DashboardHeader title={t("modelProviders")} />
-        <p className="p-6 text-sm text-muted-foreground">
-          {management("ownerOnly")}
-        </p>
-      </>
+      <p className="p-6 text-sm text-muted-foreground">
+        {management("ownerOnly")}
+      </p>
     );
   }
 
@@ -45,41 +38,38 @@ export default async function ProvidersPage({
   const presets = piProviderPresets();
 
   return (
-    <>
-      <DashboardHeader title={t("modelProviders")} />
-      <ProvidersPanel
-        slug={slug}
-        piProviderPresets={presets}
-        providers={providers.map((provider) => ({
-          id: provider.id,
-          name: provider.name,
-          format: provider.format,
-          baseUrl: provider.baseUrl,
-          modelCount: provider.models.length,
-          models: provider.models,
-          modelRecords: provider.modelRecords.map((model) => ({
-            modelId: model.modelId,
-            name: model.name,
-            group: model.group,
-            primaryType: model.primaryType,
-            capabilities: model.capabilities,
-            inputModalities: model.inputModalities,
-            contextWindow: model.contextWindow,
-            maxInputTokens: model.maxInputTokens,
-            maxOutputTokens: model.maxOutputTokens,
-            cost: model.cost as ModelCost | null,
-            source: model.source,
-          })),
-          modelsFetchedAt: provider.modelsFetchedAt
-            ? formatInTimeZone(
-                provider.modelsFetchedAt,
-                timeZone,
-                { dateStyle: "medium", timeStyle: "short" },
-                locale,
-              )
-            : null,
-        }))}
-      />
-    </>
+    <ProvidersPanel
+      slug={slug}
+      piProviderPresets={presets}
+      providers={providers.map((provider) => ({
+        id: provider.id,
+        name: provider.name,
+        format: provider.format,
+        baseUrl: provider.baseUrl,
+        modelCount: provider.models.length,
+        models: provider.models,
+        modelRecords: provider.modelRecords.map((model) => ({
+          modelId: model.modelId,
+          name: model.name,
+          group: model.group,
+          primaryType: model.primaryType,
+          capabilities: model.capabilities,
+          inputModalities: model.inputModalities,
+          contextWindow: model.contextWindow,
+          maxInputTokens: model.maxInputTokens,
+          maxOutputTokens: model.maxOutputTokens,
+          cost: model.cost as ModelCost | null,
+          source: model.source,
+        })),
+        modelsFetchedAt: provider.modelsFetchedAt
+          ? formatInTimeZone(
+              provider.modelsFetchedAt,
+              timeZone,
+              { dateStyle: "medium", timeStyle: "short" },
+              locale,
+            )
+          : null,
+      }))}
+    />
   );
 }

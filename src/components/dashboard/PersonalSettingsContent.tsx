@@ -10,6 +10,7 @@ import { LocaleSwitcher } from "@/components/layout/LocaleSwitcher";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { ChangePasswordForm } from "@/components/auth/PasswordRecoveryForms";
 import { DashboardPanel } from "./DashboardUI";
+import { DialogBody } from "./dialog";
 import { TokenManager } from "./TokenManager";
 import type { WorkspaceAccountUser } from "./WorkspaceAccountPage";
 
@@ -39,7 +40,7 @@ export async function PersonalSettingsContent({
       label: t("preferences"),
       icon: <Settings className="size-4" />,
       content: (
-        <div className="space-y-6 p-5 sm:p-6 lg:p-8">
+        <DialogBody>
           <p className="text-sm text-muted-foreground">
             {workspacesT("accountHint")}
           </p>
@@ -47,17 +48,19 @@ export async function PersonalSettingsContent({
             <div className="space-y-5">
               <p className="break-all text-sm">{user.email}</p>
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <span>{t("language")}</span>
+                <span className="text-sm font-medium">{t("language")}</span>
                 <LocaleSwitcher />
               </div>
               <div className="flex items-center justify-between gap-3">
-                <span>{workspacesT("appearance")}</span>
+                <span className="text-sm font-medium">
+                  {workspacesT("appearance")}
+                </span>
                 <ThemeToggle />
               </div>
               <TimeZoneSettings timeZoneOverride={user.timeZoneOverride} />
             </div>
           </DashboardPanel>
-        </div>
+        </DialogBody>
       ),
     },
     {
@@ -65,7 +68,7 @@ export async function PersonalSettingsContent({
       label: t("security"),
       icon: <LockKeyhole className="size-4" />,
       content: (
-        <div className="space-y-6 p-5 sm:p-6 lg:p-8">
+        <DialogBody>
           <p className="text-sm text-muted-foreground">
             {workspacesT("accountHint")}
           </p>
@@ -75,7 +78,7 @@ export async function PersonalSettingsContent({
           >
             <ChangePasswordForm />
           </DashboardPanel>
-        </div>
+        </DialogBody>
       ),
     },
     {
@@ -83,7 +86,7 @@ export async function PersonalSettingsContent({
       label: t("tokens"),
       icon: <KeyRound className="size-4" />,
       content: (
-        <div className="space-y-6 p-5 sm:p-6 lg:p-8">
+        <DialogBody>
           <p className="text-sm text-muted-foreground">
             {workspacesT("accountHint")}
           </p>
@@ -96,7 +99,7 @@ export async function PersonalSettingsContent({
               lastUsedAt: date(token.lastUsedAt),
             }))}
           />
-        </div>
+        </DialogBody>
       ),
     },
   ];

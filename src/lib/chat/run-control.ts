@@ -13,6 +13,11 @@ import {
   completeChatTurn,
   finishChatTurn,
 } from "./service";
+import {
+  chatExecutionProgressChunk,
+  readChatExecutionProgress,
+  type ChatExecutionStage,
+} from "./execution-stage";
 
 export type ChatRunFence = { leaseToken: string; generation: number };
 export type ChatRunScope = {
@@ -146,6 +151,25 @@ export async function appendChatRunEvent(
         generation: fence.generation,
         sequence: turn.lastEventSequence + 1,
         payload: json(payload),
+      },
+    });
+  });
+}
+
+export async function appendChatExecutionStage(
+  scope: ChatRunScope,
+  fence: ChatRunFence,
+  stage: ChatExecutionStage,
+) {
+  await db.$transaction(async (tx) => {
+    const turn = await lockChatRun(tx, scope.turnId, fence);
+    const sequence = turn.lastEventSequence + 1;
+    await tx.chatRunEvent.create({
+      data: {
+        turnId: scope.turnId,
+        generation: fence.generation,
+        sequence,
+        payload: chatExecutionProgressChunk(scope.turnId, stage, sequence),
       },
     });
   });
@@ -581,6 +605,12 @@ export async function getChatRunSnapshot(
     },
     orderBy: { createdAt: "desc" },
     include: {
+      events: {
+        where: { payload: { path: ["type"], equals: "data-chat-execution" } },
+        orderBy: { sequence: "desc" },
+        take: 1,
+        select: { payload: true },
+      },
       confirmations: { orderBy: { createdAt: "asc" } },
       messages: {
         orderBy: [{ createdAt: "asc" }, { id: "asc" }],
@@ -595,6 +625,14 @@ export async function getChatRunSnapshot(
     },
   });
   if (!turn) return null;
+  const latestExecution = turn.events[0]?.payload;
+  const execution = readChatExecutionProgress(
+    latestExecution &&
+      typeof latestExecution === "object" &&
+      !Array.isArray(latestExecution)
+      ? latestExecution.data
+      : null,
+  );
   const phase = turn.confirmations.some(
     (item) => item.status === "execution_unknown",
   )
@@ -610,14 +648,13 @@ export async function getChatRunSnapshot(
           ? "tool_calling"
           : turn.confirmations.some((item) => item.status === "awaiting_user")
             ? "awaiting_user"
-            : turn.startedAt
-              ? "generating"
-              : "queued";
+            : (execution?.stage ?? (turn.startedAt ? "preparing" : "queued"));
   return {
     runId: turn.id,
     turnId: turn.id,
     status: turn.status,
     phase,
+    execution,
     cursor: turn.lastEventSequence,
     generation: turn.generation,
     stopRequested: !!turn.stopRequestedAt,

@@ -99,7 +99,7 @@ export function McpJsonConfigEditor({
       </header>
       <div className="space-y-5 px-5 py-5">
         {variablesHref ? (
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border bg-muted/25 px-3 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-muted/25 px-3 py-3">
             <div className="flex min-w-0 items-start gap-2.5">
               <KeyRound className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
               <div>
@@ -166,7 +166,7 @@ export function McpJsonConfigEditor({
                 aria-label={t("jsonConfig")}
                 // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users must be able to scroll masked configuration without revealing secrets.
                 tabIndex={0}
-                className="h-[min(28rem,50dvh)] w-full overflow-auto overscroll-contain whitespace-pre-wrap [overflow-wrap:anywhere] rounded-md border border-border bg-background p-4 font-mono text-xs leading-5 text-foreground"
+                className="h-[min(28rem,50dvh)] w-full overflow-auto overscroll-contain whitespace-pre-wrap [overflow-wrap:anywhere] rounded-xl border border-border bg-background p-4 font-mono text-xs leading-5 text-foreground"
               >
                 {maskedConfig}
               </section>

@@ -9,93 +9,16 @@ import {
   withMcpToolCatalog,
   type McpToolDefinition,
 } from "@/lib/process/mcp-tool-catalog";
-import { reconcileMcpToolApproval } from "@/lib/process/mcp-tool-signature";
 import { liveRedactionValues } from "@/lib/process/supervisor";
 import { resolveMcpEnvironment } from "./mcp-credentials";
 
-/** For every grant row referencing this deployment, detect per-tool
- * description/schema drift against its last-approved signature and pause
- * drifted tools until explicit re-approval. First-time approvals (no stored
- * baseline yet) are silently baselined, never flagged. */
-async function syncMcpToolApprovalState(
-  deploymentId: string,
-  previousTools: readonly McpToolDefinition[],
-  liveTools: readonly McpToolDefinition[],
-): Promise<void> {
-  const previous = new Map(previousTools.map((tool) => [tool.name, tool]));
-  const live = new Map(liveTools.map((tool) => [tool.name, tool]));
-  const [agentServers, assistantGrants] = await Promise.all([
-    db.agentServer.findMany({
-      where: { deploymentId },
-      select: {
-        agentId: true,
-        deploymentId: true,
-        allowedToolNames: true,
-        approvedToolSignatures: true,
-        pendingToolChanges: true,
-      },
-    }),
-    db.chatAssistantMcpGrant.findMany({
-      where: { deploymentId },
-      select: {
-        assistantId: true,
-        deploymentId: true,
-        allowedToolNames: true,
-        approvedToolSignatures: true,
-        pendingToolChanges: true,
-      },
-    }),
-  ]);
-  await Promise.all([
-    ...agentServers.map((row) => {
-      const result = reconcileMcpToolApproval({
-        allowedToolNames: row.allowedToolNames,
-        liveTools: live,
-        previousTools: previous,
-        approvedToolSignatures: row.approvedToolSignatures,
-        pendingToolChanges: row.pendingToolChanges,
-      });
-      if (!result.changed) return Promise.resolve();
-      return db.agentServer.update({
-        where: {
-          agentId_deploymentId: {
-            agentId: row.agentId,
-            deploymentId: row.deploymentId,
-          },
-        },
-        data: {
-          approvedToolSignatures:
-            result.approvedToolSignatures as Prisma.InputJsonValue,
-          pendingToolChanges:
-            result.pendingToolChanges as Prisma.InputJsonValue,
-        },
-      });
-    }),
-    ...assistantGrants.map((row) => {
-      const result = reconcileMcpToolApproval({
-        allowedToolNames: row.allowedToolNames,
-        liveTools: live,
-        previousTools: previous,
-        approvedToolSignatures: row.approvedToolSignatures,
-        pendingToolChanges: row.pendingToolChanges,
-      });
-      if (!result.changed) return Promise.resolve();
-      return db.chatAssistantMcpGrant.update({
-        where: {
-          assistantId_deploymentId: {
-            assistantId: row.assistantId,
-            deploymentId: row.deploymentId,
-          },
-        },
-        data: {
-          approvedToolSignatures:
-            result.approvedToolSignatures as Prisma.InputJsonValue,
-          pendingToolChanges:
-            result.pendingToolChanges as Prisma.InputJsonValue,
-        },
-      });
-    }),
-  ]);
+/** Grant sync may publish revisions (slow, imports Agent/Assistant services); never block the listing on it. */
+function followCatalog(deploymentId: string) {
+  void import("./mcp-grant-sync")
+    .then(({ syncDeploymentMcpGrants }) =>
+      syncDeploymentMcpGrants(deploymentId),
+    )
+    .catch(() => undefined);
 }
 
 /** Persist a runtime snapshot without overwriting a concurrent config/env edit. */
@@ -131,7 +54,7 @@ export async function persistDeploymentMcpToolCatalog(
     tools = redacted.tools;
     const previousTools = readMcpToolCatalog(deployment.installCfg);
     if (isDeepStrictEqual(previousTools, tools)) {
-      await syncMcpToolApprovalState(deploymentId, previousTools, tools);
+      followCatalog(deploymentId);
       return tools;
     }
     const updated = await db.deployment.updateMany({
@@ -144,7 +67,7 @@ export async function persistDeploymentMcpToolCatalog(
       },
     });
     if (updated.count === 1) {
-      await syncMcpToolApprovalState(deploymentId, previousTools, tools);
+      followCatalog(deploymentId);
       return tools;
     }
   }

@@ -41,8 +41,8 @@ vi.mock("node:net", async (original) => {
 vi.mock("@/lib/runtime/ownership-state", () => ({
   assertRuntimeOwner: transport.owner,
 }));
-vi.mock("@/lib/market/skills", () => ({
-  MarketError: class extends Error {
+vi.mock("@/lib/plugins/catalog", () => ({
+  PluginError: class extends Error {
     constructor(
       readonly code: string,
       message: string,
@@ -54,7 +54,7 @@ vi.mock("@/lib/market/skills", () => ({
 import {
   capturePiPackage,
   captureGithubRegistryPiPackage,
-} from "@/lib/market/pi-package-source";
+} from "@/lib/pi-packages/source";
 
 class Tunnel extends Duplex {
   written = 0;

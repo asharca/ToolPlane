@@ -169,18 +169,30 @@ describe("release metadata boundaries", () => {
     );
   });
   it.each(["disabled", "unconfigured", "unwritable"])(
-    "does not fetch releases when runtime is %s",
+    "shows release information without allowing installation when runtime is %s",
     async (state) => {
       if (state === "disabled") vi.stubEnv("TOOLPLANE_UPDATE_ENABLED", "false");
       if (state === "unconfigured") vi.stubEnv("TOOLPLANE_RUNTIME_ROOT", "");
       if (state === "unwritable")
         vi.stubEnv("TOOLPLANE_RUNTIME_ROOT", path.join(root, "missing"));
-      expect(await getSystemUpdateStatus()).toMatchObject({ canUpdate: false });
+      fetchMock.mockResolvedValue(
+        Response.json({
+          tag_name: "v2",
+          body: "## Changes\n- Improved updates",
+          assets: [{ name: artifact }],
+        }),
+      );
+      expect(await getSystemUpdateStatus()).toMatchObject({
+        canUpdate: false,
+        currentVersion: "v1",
+        latestVersion: "v2",
+        repository: "acme/runtime",
+        releaseNotes: "## Changes\n- Improved updates",
+      });
       expect(await applySystemUpdate()).toMatchObject({
         ok: false,
         status: state === "disabled" ? "disabled" : "unavailable",
       });
-      expect(fetchMock).not.toHaveBeenCalled();
     },
   );
   it.each(["downloading", "applying", "restarting"] as const)(

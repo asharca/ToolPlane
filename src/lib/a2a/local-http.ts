@@ -1,5 +1,5 @@
 import "server-only";
-import { LOCAL_OUTPUT_MODES } from "./model";
+import { LOCAL_OUTPUT_MODES, A2A_FILE_DELIVERY_EXTENSION } from "./model";
 import { AgentCard } from "@a2a-js/sdk";
 import { z } from "zod";
 import { db } from "@/lib/db";
@@ -138,8 +138,11 @@ export async function localAgentCard(grant: LocalA2AGrant) {
         protocolVersion: A2A_PROTOCOL_VERSION,
       },
     ],
-    capabilities: { streaming: true },
-    defaultInputModes: ["text/plain"],
+    capabilities: {
+      streaming: true,
+      extensions: [A2A_FILE_DELIVERY_EXTENSION],
+    },
+    defaultInputModes: ["text/plain", "*/*"],
     defaultOutputModes: LOCAL_OUTPUT_MODES,
     skills,
     securitySchemes: {
@@ -242,11 +245,19 @@ export async function handleLocalA2A(
             id: agentId,
             workspaceId: workspace.id,
           },
-          select: { id: true, runtimeKind: true, currentRevisionVersion: true },
+          select: {
+            id: true,
+            runtimeKind: true,
+            currentRevisionVersion: true,
+            subagentMode: true,
+            nativeSubagentMaxConcurrency: true,
+            nativeSubagentMaxDepth: true,
+          },
         });
         if (!agent) throw new A2AHttpError(404, "Agent unavailable.");
         if (
           agent.runtimeKind !== "pi-sdk" &&
+          agent.runtimeKind !== "omp" &&
           (parsed.value.inboundEnabled ||
             parsed.value.outboundEnabled ||
             parsed.value.policy)
@@ -270,29 +281,42 @@ export async function handleLocalA2A(
         });
         if (!changed.count) throw new A2AHttpError(404, "Agent unavailable.");
         if (
-          agent.runtimeKind === "pi-sdk" &&
+          (agent.runtimeKind === "pi-sdk" || agent.runtimeKind === "omp") &&
           agent.currentRevisionVersion > 0 &&
           (parsed.value.inboundEnabled !== undefined ||
             parsed.value.outboundEnabled !== undefined ||
             parsed.value.policy)
         ) {
           const revision = await requireAgentRevision(tx, agentId);
-          await publishAgentRevisionInTransaction(tx, workspace.id, agentId, {
-            expectedRevisionId: revision.id,
-            config: {
-              ...revision.config,
-              a2a: {
-                ...revision.config.a2a,
-                ...(parsed.value.inboundEnabled !== undefined
-                  ? { inboundEnabled: parsed.value.inboundEnabled }
-                  : {}),
-                ...(parsed.value.outboundEnabled !== undefined
-                  ? { outboundEnabled: parsed.value.outboundEnabled }
-                  : {}),
-                ...(parsed.value.policy ? { policy: parsed.value.policy } : {}),
+          // Direction changes cannot apply a pending mode or widen native limits.
+          const nativePolicy = revision.config.nativeSubagentPolicy;
+          if (
+            (revision.config.subagentMode ?? "platform") ===
+              agent.subagentMode &&
+            (!nativePolicy ||
+              (nativePolicy.maxConcurrency <=
+                agent.nativeSubagentMaxConcurrency &&
+                nativePolicy.maxDepth <= agent.nativeSubagentMaxDepth))
+          ) {
+            await publishAgentRevisionInTransaction(tx, workspace.id, agentId, {
+              expectedRevisionId: revision.id,
+              config: {
+                ...revision.config,
+                a2a: {
+                  ...revision.config.a2a,
+                  ...(parsed.value.inboundEnabled !== undefined
+                    ? { inboundEnabled: parsed.value.inboundEnabled }
+                    : {}),
+                  ...(parsed.value.outboundEnabled !== undefined
+                    ? { outboundEnabled: parsed.value.outboundEnabled }
+                    : {}),
+                  ...(parsed.value.policy
+                    ? { policy: parsed.value.policy }
+                    : {}),
+                },
               },
-            },
-          });
+            });
+          }
         }
         await writeAudit(tx, {
           actorId: user.id,

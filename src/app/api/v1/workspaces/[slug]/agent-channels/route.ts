@@ -1,5 +1,6 @@
 import { systemLog } from "@/lib/observability/system";
 import { withRequestLogging } from "@/lib/observability/http";
+import { writeAudit } from "@/lib/observability/audit";
 import { z } from "zod";
 import { resolveAccountRequestUser } from "@/lib/auth/request-user";
 import { getWorkspaceForUser } from "@/lib/workspace/queries";
@@ -63,14 +64,21 @@ const commandSchema = z
   .strict()
   .refine((input) => input.action !== "move" || Boolean(input.sandboxId));
 
-async function authorize(req: Request, slug: string) {
+async function authorize(req: Request, slug: string, manage = false) {
   const user = await resolveAccountRequestUser(req);
   if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
   const workspace = await getWorkspaceForUser(slug, user.id);
-  return (
-    workspace ??
-    Response.json({ error: "Workspace not found" }, { status: 404 })
-  );
+  if (!workspace)
+    return Response.json({ error: "Workspace not found" }, { status: 404 });
+  if (
+    manage &&
+    workspace.ownerId !== user.id &&
+    !(await db.membership.count({
+      where: { workspaceId: workspace.id, userId: user.id, role: "admin" },
+    }))
+  )
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  return { ...workspace, actorId: user.id };
 }
 
 async function channelList(
@@ -100,6 +108,91 @@ export const GET = withRequestLogging(
     const sandboxId = query.get("sandboxId") || undefined;
     if (sandboxId && !(await getChannelSandbox(workspace.id, sandboxId))) {
       return Response.json({ error: "Sandbox not found" }, { status: 404 });
+    }
+    const historyId = query.get("history");
+    if (historyId) {
+      const channel = await db.agentChannelConnection.findFirst({
+        where: { id: historyId, workspaceId: workspace.id },
+        select: { id: true, agentId: true, sandboxId: true },
+      });
+      if (!channel || (sandboxId && channel.sandboxId !== sandboxId)) {
+        return Response.json({ error: "Channel not found" }, { status: 404 });
+      }
+      const scope = {
+        conversation: {
+          agentId: channel.agentId ?? "",
+          agent: { workspaceId: workspace.id },
+          runtimeSessionKey: { startsWith: `channel:${channel.id}:` },
+        },
+        role: { in: ["user", "assistant"] },
+      };
+      const after = query.get("after");
+      const before = query.get("before");
+      const cursorId = after || before;
+      const cursor = cursorId
+        ? await db.message.findFirst({
+            where: { ...scope, id: cursorId },
+            select: { id: true, createdAt: true },
+          })
+        : null;
+      if (cursorId && !cursor) {
+        return Response.json({ error: "Message not found" }, { status: 404 });
+      }
+      const direction = after ? ("asc" as const) : ("desc" as const);
+      const rows = await db.message.findMany({
+        where: {
+          ...scope,
+          ...(cursor
+            ? {
+                OR: [
+                  {
+                    createdAt: after
+                      ? { gt: cursor.createdAt }
+                      : { lt: cursor.createdAt },
+                  },
+                  {
+                    createdAt: cursor.createdAt,
+                    id: after ? { gt: cursor.id } : { lt: cursor.id },
+                  },
+                ],
+              }
+            : {}),
+        },
+        orderBy: [{ createdAt: direction }, { id: direction }],
+        take: 101,
+        select: {
+          id: true,
+          role: true,
+          parts: true,
+          createdAt: true,
+          conversation: { select: { id: true, title: true } },
+        },
+      });
+      const page = rows.slice(0, 100);
+      if (!after) page.reverse();
+      return Response.json(
+        {
+          messages: page.map(({ parts, ...row }) => ({
+            ...row,
+            text: Array.isArray(parts)
+              ? parts
+                  .flatMap((part) =>
+                    part &&
+                    typeof part === "object" &&
+                    "type" in part &&
+                    part.type === "text" &&
+                    "text" in part &&
+                    typeof part.text === "string"
+                      ? [part.text]
+                      : [],
+                  )
+                  .join("\n\n")
+              : "",
+          })),
+          hasMore: rows.length > 100,
+        },
+        { headers: { "Cache-Control": "no-store" } },
+      );
     }
     const logId = query.get("logs");
     if (logId) {
@@ -133,7 +226,7 @@ export const POST = withRequestLogging(
     req: Request,
     { params }: { params: Promise<{ slug: string }> },
   ) {
-    const workspace = await authorize(req, (await params).slug);
+    const workspace = await authorize(req, (await params).slug, true);
     if (workspace instanceof Response) return workspace;
     if (
       req.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !==
@@ -190,6 +283,30 @@ export const POST = withRequestLogging(
       );
 
     const execute = async () => {
+      const bindOperator = async (id: string, replace = false) => {
+        await db.$transaction(async (tx) => {
+          const changed = await tx.agentChannelConnection.updateMany({
+            where: {
+              id,
+              workspaceId: workspace.id,
+              ...(replace ? {} : { a2aActorId: null }),
+            },
+            data: { a2aActorId: workspace.actorId },
+          });
+          if (changed.count)
+            await writeAudit(tx, {
+              actorId: workspace.actorId,
+              workspaceId: workspace.id,
+              action: "agent.channel.operator.bind",
+              targetType: "AgentChannelConnection",
+              targetId: id,
+              changes: { actorId: workspace.actorId },
+            });
+        });
+      };
+      if (existing && !["stop", "delete"].includes(input.action)) {
+        await bindOperator(existing.id, input.action === "start");
+      }
       let result: { error?: string } = {};
       if (input.action === "create") {
         const created = await createAgentChannelConnection({
@@ -203,6 +320,16 @@ export const POST = withRequestLogging(
         });
         result = created;
         connectionId = created.connection?.id;
+        if (connectionId) {
+          await bindOperator(connectionId);
+          if (
+            platform.slug === "weixin" &&
+            created.connection?.agentId &&
+            !created.connection.missingStartCredentialNames.length
+          ) {
+            result = await startAgentChannelRunner(workspace.id, connectionId);
+          }
+        }
       } else {
         if (!existing)
           return Response.json({ error: "Channel not found" }, { status: 404 });
@@ -245,6 +372,22 @@ export const POST = withRequestLogging(
               workspace.id,
               existingConnectionId,
             );
+            if (
+              !result.error &&
+              platform.slug === "weixin" &&
+              existing.pairing?.status !== "ready"
+            ) {
+              const paired = await getAgentChannelConnection(
+                workspace.id,
+                existingConnectionId,
+              );
+              if (paired?.pairing?.status === "ready" && paired.agentId) {
+                result = await startAgentChannelRunner(
+                  workspace.id,
+                  existingConnectionId,
+                );
+              }
+            }
             break;
           case "move":
             if (!input.sandboxId)

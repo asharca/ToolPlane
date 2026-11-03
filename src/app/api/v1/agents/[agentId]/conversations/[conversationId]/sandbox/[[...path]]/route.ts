@@ -39,7 +39,7 @@ async function proxy(req: Request, { params }: Params) {
   if (!agent || !conversation)
     return Response.json({ error: "Not found" }, { status: 404 });
   const historical =
-    agent.runtimeKind !== "pi-sdk" ||
+    (agent.runtimeKind !== "pi-sdk" && agent.runtimeKind !== "omp") ||
     agent.retiredAt ||
     conversation.legacyRevisionUnresolved ||
     !conversation.agentRevisionId;
@@ -64,7 +64,7 @@ async function proxy(req: Request, { params }: Params) {
         legacyRevisionUnresolved: false,
         agent: {
           retiredAt: null,
-          runtimeKind: "pi-sdk",
+          runtimeKind: agent.runtimeKind,
           workspace: {
             status: "active",
             OR: [
@@ -84,7 +84,13 @@ async function proxy(req: Request, { params }: Params) {
     });
     if (!mapping) return null;
     const port = livePort(mapping.deploymentId);
-    return port ? { port, sandboxId: mapping.sandboxId } : null;
+    return port
+      ? {
+          port,
+          sandboxId: mapping.sandboxId,
+          workspaceRoot: mapping.workspaceRoot,
+        }
+      : null;
   });
 }
 const route =

@@ -353,13 +353,30 @@ export async function getLogEvent(
   if (!row) return null;
   const { detail: summary, ...metadata } = row;
   const workspaceReadable = workspaceA2aEvent(row);
-  const state = detailState(scope, summary, workspaceReadable);
-  if ("workspaceId" in scope && !workspaceReadable)
+  const workspaceMcp =
+    (row.domain === "mcp" &&
+      ["gateway.request", "mcp.rpc", "mcp.internal"].includes(row.eventName) &&
+      Boolean(row.deploymentId)) ||
+    (row.domain === "agent" && row.eventName === "sandbox.tool");
+  // Fetch the marker only after ownership is established; rows without it (legacy) stay restricted.
+  const mcpDetail = workspaceMcp
+    ? await db.logDetail.findUnique({ where: { eventId: id } })
+    : null;
+  const mcpData = mcpDetail?.data;
+  const mcpReadable =
+    !!mcpData &&
+    typeof mcpData === "object" &&
+    !Array.isArray(mcpData) &&
+    mcpData.workspaceMcpPayload === true;
+  const readable = workspaceReadable || mcpReadable;
+  const state = detailState(scope, summary, readable);
+  if ("workspaceId" in scope && !readable)
     return { ...metadata, detailState: state };
   if (state !== "available" && state !== "truncated")
     return { ...metadata, detailState: state, detail: null };
-  const detail = await db.logDetail.findUnique({ where: { eventId: id } });
-  const beforeAudit = detailState(scope, detail, workspaceReadable);
+  const detail =
+    mcpDetail ?? (await db.logDetail.findUnique({ where: { eventId: id } }));
+  const beforeAudit = detailState(scope, detail, readable);
   if (!detail || beforeAudit === "expired")
     return { ...metadata, detailState: beforeAudit, detail: null };
   // Workspace readers receive only the sanitized protocol envelope, never diagnostic data.
@@ -388,7 +405,7 @@ export async function getLogEvent(
     targetType: "logEvent",
     targetId: id,
   });
-  const afterAudit = detailState(scope, detail, workspaceReadable);
+  const afterAudit = detailState(scope, detail, readable);
   return {
     ...metadata,
     detailState: afterAudit,

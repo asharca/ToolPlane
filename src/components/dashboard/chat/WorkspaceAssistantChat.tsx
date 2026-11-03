@@ -1,9 +1,7 @@
 "use client";
-import {
-  MorphPopover,
-  MorphPopoverContent,
-  MorphPopoverTrigger,
-} from "@/components/motion/popover-morph";
+import { SidebarToolbar } from "@/components/dashboard/SidebarToolbar";
+import { useSidebarScroll } from "@/components/dashboard/useSidebarScroll";
+import { notify } from "@/components/dashboard/Toaster";
 
 import { Button } from "@/components/motion/button";
 
@@ -17,17 +15,14 @@ import {
   useTransition,
 } from "react";
 import { useTranslations } from "next-intl";
+import { cn } from "@/lib/utils";
 
 import {
   Bot,
-  ChevronsDownUp,
-  ChevronsUpDown,
   Folder,
-  FolderPlus,
   GitBranch,
-  ListFilter,
-  MessageSquare,
   MessageSquarePlus,
+  Pin,
   Pencil,
   PanelLeft,
   Plus,
@@ -58,11 +53,13 @@ import {
   type ChatBranchState,
 } from "@/components/dashboard/chat/ChatBranchFlow";
 import type { ModelProviderOption } from "@/components/dashboard/models/ModelPicker";
+import type { ModelSelection } from "@/components/dashboard/ComposerModelSelect";
 import {
   CenterMorphModal,
   CenterMorphModalContent,
 } from "@/components/motion/center-morph-modal";
 import { SidebarGroupDialog } from "@/components/dashboard/SidebarGroupDialog";
+import { sidebarHoverActionsClassName } from "@/components/dashboard/sidebarHoverActions";
 import {
   usePersistentBoolean,
   usePersistentBooleanRecord,
@@ -81,6 +78,8 @@ import {
 } from "@/lib/sidebar-groups";
 import { usePersistentSidebarGroups } from "@/lib/use-persistent-sidebar-groups";
 import type { AgentUIMessage } from "@/lib/agents/message-segments";
+import type { RevisionMcpToolChange } from "@/lib/revisions/upgrade-diff";
+import { McpToolsUpdatedNote } from "@/components/dashboard/RevisionUpgradeNotice";
 
 type ProviderOption = ModelProviderOption & { format: string };
 type McpOption = {
@@ -89,8 +88,6 @@ type McpOption = {
   status: string;
   keywords?: string[];
   available?: boolean;
-  definitionChecksum?: string;
-  tools?: Array<{ name: string; description: string }>;
 };
 type AssistantModelParameters = {
   temperature?: number;
@@ -104,19 +101,6 @@ type AssistantCustomParameter = {
   value: string | number | boolean;
 };
 
-export type AssistantMarketTemplate = {
-  releaseId: string;
-  name: string;
-  summary: string | null;
-  tags: string[];
-  systemPrompt: string | null;
-  maxSteps: number;
-  providerFormat: string | null;
-  model: string | null;
-  deploymentIds: string[];
-  missingMcpNames?: string[];
-};
-
 export type ChatAssistantItem = {
   id: string;
   name: string;
@@ -126,27 +110,11 @@ export type ChatAssistantItem = {
   mcpGrants?: Array<{
     deploymentId: string;
     allowedToolNames: string[];
-    pendingToolChanges?: Record<
-      string,
-      {
-        previousSignature: string;
-        currentSignature: string;
-        previous: {
-          description?: string | null;
-          inputSchema?: unknown;
-          outputSchema?: unknown;
-          annotations?: unknown;
-        };
-        current: {
-          description?: string | null;
-          inputSchema?: unknown;
-          outputSchema?: unknown;
-          annotations?: unknown;
-        };
-        detectedAt: string;
-      }
-    > | null;
   }>;
+  mcpToolChanges?: {
+    added: RevisionMcpToolChange[];
+    removed: RevisionMcpToolChange[];
+  };
   systemPrompt: string | null;
   modelProviderId: string | null;
   model: string | null;
@@ -180,14 +148,15 @@ function chatHref(slug: string, assistantId: string, threadId?: string) {
 
 export { estimatePromptTokens } from "@/lib/prompt-tokens";
 
+const NO_PIN_OVERRIDES: Record<string, boolean> = {};
+
 export function WorkspaceAssistantChat({
   assistants: serverAssistants,
   branch = null,
   deployments,
   initialMessages,
-  marketTemplate = null,
-  marketTemplates = [],
   providers,
+  defaultModelSelection = null,
   reasoningAvailable,
   selectedAssistantId,
   selectedThreadId,
@@ -204,9 +173,8 @@ export function WorkspaceAssistantChat({
   branch?: ChatBranchState | null;
   deployments: McpOption[];
   initialMessages: AgentUIMessage[];
-  marketTemplate?: AssistantMarketTemplate | null;
-  marketTemplates?: AssistantMarketTemplate[];
   providers: ProviderOption[];
+  defaultModelSelection?: ModelSelection | null;
   reasoningAvailable: boolean;
   selectedAssistantId: string | null;
   selectedThreadId: string | null;
@@ -223,7 +191,29 @@ export function WorkspaceAssistantChat({
   const common = useTranslations("common");
   const workT = useTranslations("console.work");
   const router = useRouter();
-  const assistants = serverAssistants;
+  // Thread/branch refreshes remount the conversation; keep its unsaved model choice here.
+  const [composerModels, setComposerModels] = useState<
+    Record<string, ModelSelection | null>
+  >({});
+  const [composerDrafts, setComposerDrafts] = useState<Record<string, string>>(
+    {},
+  );
+  // Pin toggles apply immediately; overrides drop once refreshed props arrive.
+  const [pinState, setPinState] = useState<{
+    source: typeof serverAssistants;
+    values: Record<string, boolean>;
+  }>({ source: serverAssistants, values: {} });
+  const pinOverrides =
+    pinState.source === serverAssistants ? pinState.values : NO_PIN_OVERRIDES;
+  const assistants = useMemo(
+    () =>
+      serverAssistants.map((assistant) =>
+        assistant.id in pinOverrides
+          ? { ...assistant, pinned: pinOverrides[assistant.id] }
+          : assistant,
+      ),
+    [serverAssistants, pinOverrides],
+  );
   const activeAssistant =
     assistants.find((assistant) => assistant.id === selectedAssistantId) ??
     assistants[0] ??
@@ -313,9 +303,8 @@ export function WorkspaceAssistantChat({
   const [editing, setEditing] = useState<ChatAssistantItem | null | "new">(
     startCreating ? "new" : startEditing ? activeAssistant : null,
   );
-  const [selectedMarketTemplate, setSelectedMarketTemplate] =
-    useState(marketTemplate);
   const [busy, setBusy] = useState(false);
+  const [search, setSearch] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [treeResetKey, setTreeResetKey] = useState(0);
   const [groupEditor, setGroupEditor] = useState<{
@@ -485,7 +474,15 @@ export function WorkspaceAssistantChat({
       openAssistantGroup(assistantId);
       window.location.assign(chatHref(slug, assistantId, threadId));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : t("threadCreateError"));
+      setError(
+        cause instanceof Error &&
+          cause.message ===
+            "Publish an Assistant revision before creating a thread"
+          ? t("revisionRequired")
+          : cause instanceof Error
+            ? cause.message
+            : t("threadCreateError"),
+      );
       setBusy(false);
     }
   }
@@ -519,15 +516,24 @@ export function WorkspaceAssistantChat({
   }
 
   async function toggleAssistantPin(assistant: ChatAssistantItem) {
-    if (busy) return;
-    setBusy(true);
+    const pinned = !assistant.pinned;
+    const setOverride = (value?: boolean) =>
+      setPinState((current) => {
+        const values = {
+          ...(current.source === serverAssistants ? current.values : {}),
+        };
+        if (value === undefined) delete values[assistant.id];
+        else values[assistant.id] = value;
+        return { source: serverAssistants, values };
+      });
+    setOverride(pinned);
     setError(null);
     try {
       const response = await fetch(`/api/v1/chat/assistants/${assistant.id}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          pinned: !assistant.pinned,
+          pinned,
           expectedRevision: assistant.revision,
         }),
       });
@@ -537,18 +543,19 @@ export function WorkspaceAssistantChat({
       if (!response.ok) throw new Error(body.error || t("saveError"));
       refreshChat();
     } catch (cause) {
+      setOverride();
       setError(cause instanceof Error ? cause.message : t("saveError"));
-    } finally {
-      setBusy(false);
     }
   }
 
   async function assistantSaved(assistantId: string, created: boolean) {
     setEditing(null);
     if (created) {
+      notify(t("created"));
       await createThread(assistantId);
       return;
     }
+    notify(t("savedForNewThreads"), { afterReload: true });
     window.location.assign(chatHref(slug, assistantId, activeThread?.id));
   }
 
@@ -658,6 +665,19 @@ export function WorkspaceAssistantChat({
       },
     ];
   }, [groupPreferences.groups, groupedAssistants, t, sortedAssistants]);
+
+  const filteredSidebarResources = useMemo(() => {
+    const query = search.trim().toLocaleLowerCase();
+    if (!query) return sidebarResources;
+    function filter(items: SidebarResource[]): SidebarResource[] {
+      return items.flatMap((item) => {
+        if (item.label.toLocaleLowerCase().includes(query)) return [item];
+        const children = item.children ? filter(item.children) : [];
+        return children.length ? [{ ...item, children }] : [];
+      });
+    }
+    return filter(sidebarResources);
+  }, [search, sidebarResources]);
 
   async function handleResourceMove(move: SidebarResourceMove) {
     const sourceAssistantId = move.itemId.startsWith("assistant:")
@@ -828,18 +848,18 @@ export function WorkspaceAssistantChat({
     if (item.id.startsWith("group:")) return <Folder className="size-4" />;
     const assistant = item.id.startsWith("assistant:");
     const running = isResourceRunning(item);
-    const Icon = assistant ? Bot : MessageSquare;
-    return (
-      <span className="relative grid size-5 place-items-center">
-        <Icon className="size-4" />
-        {running ? (
-          <span
-            title={workT("statusRunning")}
-            className="absolute right-0 top-0 size-2 animate-pulse rounded-full bg-green-500 ring-1 ring-background motion-reduce:animate-none"
-          />
-        ) : null}
-      </span>
-    );
+    // Second-level threads show only a running dot; `false` suppresses the sidebar default icon.
+    if (!assistant)
+      return running ? (
+        <span
+          data-sidebar-dot=""
+          title={workT("statusRunning")}
+          className="size-1.5 animate-pulse rounded-full bg-primary motion-reduce:animate-none"
+        />
+      ) : (
+        false
+      );
+    return <Bot className="size-4" />;
   }
 
   function renderResourceMenu(
@@ -908,18 +928,6 @@ export function WorkspaceAssistantChat({
           >
             <Pencil className="size-3.5" />
             {common("edit")}
-          </Button>
-          <Button
-            type="button"
-            onClick={() => {
-              close();
-              void toggleAssistantPin(assistant);
-            }}
-            variant="ghost"
-            size="sm"
-            className="flex w-full justify-start gap-2"
-          >
-            {assistant.pinned ? t("unpinAssistant") : t("pinAssistant")}
           </Button>
           <Button
             type="button"
@@ -1002,6 +1010,8 @@ export function WorkspaceAssistantChat({
     setTreeResetKey((key) => key + 1);
   }
 
+  const onSidebarScroll = useSidebarScroll();
+
   return (
     <>
       <ChatApp
@@ -1016,105 +1026,62 @@ export function WorkspaceAssistantChat({
             ariaLabel={t("assistants")}
             collapsible="offcanvas"
             className="h-full shrink-0"
-            panelClassName="h-full min-h-0"
+            panelClassName="h-full min-h-0 border-r border-border/50 bg-muted/25"
           >
             <AnimatedSidebarContent className="gap-3 overflow-hidden px-2 py-3">
               <AnimatedSidebarGroup className="min-h-0 flex-1 p-0">
-                <div className="flex h-9 shrink-0 items-center justify-between px-1">
-                  <Button
-                    type="button"
-                    aria-label={t("newAssistant")}
-                    title={t("newAssistant")}
-                    variant="ghost"
-                    size="icon"
-                    className="shrink-0"
-                    onClick={() => {
-                      setSelectedMarketTemplate(null);
-                      setEditing("new");
-                    }}
-                  >
-                    <Plus className="size-4" />
-                  </Button>
-                  <MorphPopover
-                    open={listOptionsOpen}
-                    onOpenChange={setListOptionsOpen}
-                  >
-                    <MorphPopoverTrigger>
-                      <Button
-                        type="button"
-                        aria-label={t("listOptions")}
-                        title={t("listOptions")}
-                        variant={"ghost"}
-                        size={"icon"}
-                        className="flex shrink-0 items-center justify-center"
-                      >
-                        <ListFilter className="size-3.5" />
-                      </Button>
-                    </MorphPopoverTrigger>
-                    <MorphPopoverContent
-                      side="bottom"
-                      align="end"
-                      sideOffset={4}
-                      className="z-50 w-52 p-1.5"
-                    >
-                      {assistants.length ? (
-                        <>
-                          <Button
-                            type="button"
-                            onClick={() => {
-                              setAllAssistantSections(false);
-                              setListOptionsOpen(false);
-                            }}
-                            variant="ghost"
-                            size="sm"
-                            className="w-full justify-start rounded-md px-2.5 text-left text-sm gap-2"
-                          >
-                            <ChevronsUpDown className="size-4 shrink-0" />
-                            <span>{t("expandAll")}</span>
-                          </Button>
-                          <Button
-                            type="button"
-                            onClick={() => {
-                              setAllAssistantSections(true);
-                              setListOptionsOpen(false);
-                            }}
-                            variant="ghost"
-                            size="sm"
-                            className="w-full justify-start rounded-md px-2.5 text-left text-sm gap-2"
-                          >
-                            <ChevronsDownUp className="size-4 shrink-0" />
-                            <span>{t("collapseAll")}</span>
-                          </Button>
-                        </>
-                      ) : null}
-                      <div className="my-1 h-px bg-border" />
-                      <Button
-                        type="button"
-                        onClick={() => {
-                          setGroupEditor({ id: null, name: "" });
-                          setListOptionsOpen(false);
-                        }}
-                        variant="ghost"
-                        size="sm"
-                        className="w-full justify-start rounded-md px-2.5 text-left text-sm gap-2"
-                      >
-                        <FolderPlus className="size-4 shrink-0" />
-                        <span>{t("newGroup")}</span>
-                      </Button>
-                    </MorphPopoverContent>
-                  </MorphPopover>
-                </div>
-                <AnimatedSidebarGroupContent className="min-h-0 flex-1 overflow-y-auto">
-                  {sortedAssistants.length ? (
+                <SidebarToolbar
+                  title={t("assistants")}
+                  searchLabel={t("search")}
+                  searchPlaceholder={t("search")}
+                  search={search}
+                  onSearchChange={setSearch}
+                  addLabel={t("newAssistant")}
+                  onAdd={() => setEditing("new")}
+                  moreLabel={t("listOptions")}
+                  moreOpen={listOptionsOpen}
+                  onMoreOpenChange={setListOptionsOpen}
+                  hasItems={assistants.length > 0}
+                  expandLabel={t("expandAll")}
+                  collapseLabel={t("collapseAll")}
+                  newGroupLabel={t("newGroup")}
+                  onExpandAll={() => {
+                    setAllAssistantSections(false);
+                    setListOptionsOpen(false);
+                  }}
+                  onCollapseAll={() => {
+                    setAllAssistantSections(true);
+                    setListOptionsOpen(false);
+                  }}
+                  onNewGroup={() => {
+                    setGroupEditor({ id: null, name: "" });
+                    setListOptionsOpen(false);
+                  }}
+                />
+                <AnimatedSidebarGroupContent
+                  onScroll={onSidebarScroll}
+                  className="sidebar-scroll min-h-0 flex-1 !w-auto -mr-2 overflow-y-auto overscroll-contain pr-2 pb-4"
+                >
+                  {filteredSidebarResources.length ? (
                     <AISidebar
-                      key={treeResetKey}
+                      key={`${treeResetKey}:${search.trim()}`}
                       ariaLabel={t("assistants")}
-                      className="px-1"
-                      items={sidebarResources}
+                      className={`px-0 [&_[role=treeitem]]:rounded-lg [&_[role=treeitem]]:text-[13px] [&_[role=treeitem]>span[aria-hidden=true]:empty]:ml-1 [&_[role=treeitem]>span[aria-hidden=true]:empty]:w-0 [&_[role=treeitem]>span[aria-hidden=true]:has(>[data-sidebar-dot])]:ml-1 [&_[role=treeitem]>span[aria-hidden=true]:has(>[data-sidebar-dot])]:w-0 ${sidebarHoverActionsClassName}`}
+                      items={filteredSidebarResources}
                       activeId={
                         activeThread ? `thread:${activeThread.id}` : null
                       }
                       defaultExpandedIds={[
+                        ...(search.trim()
+                          ? assistants.map(
+                              (assistant) => `assistant:${assistant.id}`,
+                            )
+                          : []),
+                        ...(search.trim()
+                          ? groupPreferences.groups.map(
+                              (group) => `group:${group.id}`,
+                            )
+                          : []),
                         ...assistants
                           .filter(
                             (assistant) =>
@@ -1144,12 +1111,50 @@ export function WorkspaceAssistantChat({
                           </span>
                         ) : null;
                         if (!item.id.startsWith("assistant:")) return status;
+                        const assistant = assistants.find(
+                          (entry) => entry.id === item.id.slice(10),
+                        );
                         return (
                           <>
                             {status}
+                            {assistant ? (
+                              <button
+                                type="button"
+                                draggable={false}
+                                aria-pressed={assistant.pinned}
+                                data-sidebar-reveal={
+                                  assistant.pinned ? undefined : ""
+                                }
+                                aria-label={`${assistant.pinned ? t("unpinAssistant") : t("pinAssistant")} ${item.label}`}
+                                title={
+                                  assistant.pinned
+                                    ? t("unpinAssistant")
+                                    : t("pinAssistant")
+                                }
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  void toggleAssistantPin(assistant);
+                                }}
+                                className={cn(
+                                  "grid size-7 shrink-0 place-items-center rounded-lg outline-none transition-opacity hover:bg-foreground/5 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring group-hover/resource:opacity-100 group-data-[menu-open=true]/resource:opacity-100",
+                                  assistant.pinned
+                                    ? "text-foreground opacity-100"
+                                    : "text-muted-foreground opacity-0",
+                                )}
+                              >
+                                <Pin
+                                  aria-hidden="true"
+                                  className={cn(
+                                    "size-3.5 rotate-45",
+                                    assistant.pinned && "fill-current",
+                                  )}
+                                />
+                              </button>
+                            ) : null}
                             <button
                               type="button"
                               draggable={false}
+                              data-sidebar-reveal=""
                               disabled={busy}
                               aria-label={`${t("newChat")} ${item.label}`}
                               title={t("newChat")}
@@ -1185,7 +1190,7 @@ export function WorkspaceAssistantChat({
 
           <AnimatedSidebarInset className="h-full min-h-0 min-w-0 flex-1 overflow-hidden">
             <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
-              <header className="flex min-h-14 shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border bg-background px-3 py-2 sm:px-4">
+              <header className="flex h-12 shrink-0 items-center justify-between gap-2 bg-background px-3 sm:px-4">
                 <div className="flex min-w-0 flex-1 items-center gap-1.5">
                   <ChatAppSidebarTrigger
                     openLabel={t("showSidebar")}
@@ -1201,19 +1206,23 @@ export function WorkspaceAssistantChat({
                       title={t("settings")}
                       variant="ghost"
                       size="sm"
-                      className="min-w-0 gap-2"
+                      className="min-w-0 gap-2 rounded-lg px-2 text-muted-foreground"
                     >
                       <Bot className="size-4 shrink-0" />
-                      <span className="min-w-0 text-left">
-                        <span className="block max-w-32 truncate text-xs font-medium sm:max-w-44">
+                      <span
+                        className="max-w-36 truncate text-sm font-medium text-foreground sm:max-w-56"
+                        title={activeThread?.title || activeAssistant.name}
+                      >
+                        {activeThread?.title || activeAssistant.name}
+                      </span>
+                      {activeThread ? (
+                        <span
+                          className="hidden max-w-36 truncate rounded-full bg-muted px-2 py-0.5 text-[11px] sm:block"
+                          title={activeAssistant.name}
+                        >
                           {activeAssistant.name}
                         </span>
-                        {activeThread ? (
-                          <span className="block max-w-32 truncate text-[11px] font-normal text-muted-foreground sm:max-w-44">
-                            {activeThread.title || t("newChat")}
-                          </span>
-                        ) : null}
-                      </span>
+                      ) : null}
                     </Button>
                   ) : null}
                 </div>
@@ -1242,9 +1251,19 @@ export function WorkspaceAssistantChat({
               {error ? (
                 <p
                   role="alert"
-                  className="mx-4 mt-3 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive"
+                  className="mx-auto mt-3 w-[calc(100%-2rem)] max-w-3xl rounded-2xl border border-destructive/15 bg-destructive/5 px-4 py-3 text-sm text-destructive"
                 >
                   {error}
+                  {activeAssistant && error === t("revisionRequired") ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="ml-2 h-auto px-2 py-1 text-xs underline underline-offset-4"
+                      onClick={() => setEditing(activeAssistant)}
+                    >
+                      {t("settings")}
+                    </Button>
+                  ) : null}
                 </p>
               ) : null}
 
@@ -1252,30 +1271,58 @@ export function WorkspaceAssistantChat({
                 <AssistantConversation
                   key={`${activeThread.id}:${branch?.activeMessageId ?? "root"}`}
                   threadId={activeThread.id}
+                  draftText={composerDrafts[activeThread.id] ?? ""}
+                  onDraftTextChange={(text) =>
+                    setComposerDrafts((previous) => ({
+                      ...previous,
+                      [activeThread.id]:
+                        typeof text === "function"
+                          ? text(previous[activeThread.id] ?? "")
+                          : text,
+                    }))
+                  }
                   revision={activeAssistant.revision}
-                  revisionId={activeThread.revisionId ?? null}
                   pinnedRevision={activeThread.revision}
+                  assistantName={activeAssistant.name}
+                  assistantDescription={activeAssistant.description}
+                  mcpToolChanges={
+                    activeThread.revision === activeAssistant.revision
+                      ? activeAssistant.mcpToolChanges
+                      : undefined
+                  }
+                  providers={providers}
+                  defaultModelSelection={defaultModelSelection}
+                  modelSelection={composerModels[activeThread.id] ?? null}
+                  onModelChange={(selection) =>
+                    setComposerModels((previous) => ({
+                      ...previous,
+                      [activeThread.id]: selection,
+                    }))
+                  }
                   reasoningAvailable={reasoningAvailable}
                   attachmentUploadUrl={`/api/v1/workspaces/${workspaceId}/attachments`}
                   readOnly={activeThread.legacyRevisionUnresolved === true}
                   initialMessages={initialMessages}
                   onConversationChanged={refreshChat}
-                  onBranchChange={(messageId) => void switchBranch(messageId)}
                   onStartBranch={(messageId) => void startBranch(messageId)}
+                  onThreadUpgraded={refreshChat}
                 />
               ) : (
-                <div className="m-auto max-w-md px-6 text-center">
-                  <div className="mx-auto mb-4 flex size-11 items-center justify-center rounded-full bg-muted text-muted-foreground">
-                    <Bot className="size-5" />
+                <div className="m-auto w-full max-w-xl px-6 pb-16 text-center">
+                  <div className="mx-auto mb-5 grid size-14 place-items-center rounded-2xl bg-muted text-foreground">
+                    <Bot className="size-7" strokeWidth={1.5} />
                   </div>
-                  <h2 className="text-base font-medium">
-                    {activeAssistant ? t("noThreadTitle") : t("emptyTitle")}
+                  <h2 className="text-2xl font-medium tracking-tight sm:text-3xl">
+                    {activeAssistant ? activeAssistant.name : t("emptyTitle")}
                   </h2>
-                  <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                    {activeAssistant
-                      ? t("noThreadDescription")
-                      : t("emptyDescription")}
-                  </p>
+                  {activeAssistant?.mcpToolChanges ? (
+                    <McpToolsUpdatedNote {...activeAssistant.mcpToolChanges} />
+                  ) : null}
+                  {activeAssistant?.description || !activeAssistant ? (
+                    <p className="mx-auto mt-3 max-w-md text-sm leading-6 text-muted-foreground">
+                      {activeAssistant?.description || t("emptyDescription")}
+                    </p>
+                  ) : null}
                   <Button
                     type="button"
                     onClick={() =>
@@ -1285,7 +1332,8 @@ export function WorkspaceAssistantChat({
                     }
                     variant={"primary"}
                     size={"sm"}
-                    className="mt-4"
+                    className="mt-6 gap-2 rounded-full px-5"
+                    disabled={busy}
                   >
                     <Plus className="size-4" />
                     {activeAssistant ? t("newChat") : t("newAssistant")}
@@ -1296,7 +1344,7 @@ export function WorkspaceAssistantChat({
           </AnimatedSidebarInset>
 
           {branchOpen && !branchMaximized && activeThread && branch ? (
-            <aside className="hidden w-80 shrink-0 min-h-0 flex-col overflow-hidden border-l border-border bg-background xl:flex">
+            <aside className="hidden w-80 shrink-0 min-h-0 flex-col overflow-hidden border-l border-border/60 bg-muted/15 xl:flex">
               <ChatBranchPanel
                 branch={branch}
                 busy={branchBusy}
@@ -1368,19 +1416,12 @@ export function WorkspaceAssistantChat({
 
       {editing ? (
         <AssistantEditor
-          key={
-            editing === "new"
-              ? `new:${selectedMarketTemplate?.releaseId ?? "blank"}`
-              : editing.id
-          }
+          key={editing === "new" ? "new" : editing.id}
           assistant={editing === "new" ? null : editing}
           deployments={deployments}
-          marketTemplate={editing === "new" ? selectedMarketTemplate : null}
-          marketTemplates={marketTemplates}
           onClose={() => setEditing(null)}
           onDelete={deleteAssistant}
           onSaved={assistantSaved}
-          onTemplateSelect={setSelectedMarketTemplate}
           open
           providers={providers}
           slug={slug}

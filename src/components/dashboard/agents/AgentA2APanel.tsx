@@ -25,9 +25,10 @@ import { AgentA2ATaskMonitor } from "./AgentA2ATaskMonitor";
 import { CopyButton } from "@/components/dashboard/CopyButton";
 import type { A2AConsoleView } from "@/lib/a2a/connection-info";
 import type { A2AConsoleAction } from "@/lib/a2a/console-service";
+import { isExecutableAgentRuntimeKind } from "@/lib/agents/runtime-kind";
 
 const cardClass =
-  "space-y-4 rounded-xl border border-border bg-background p-4 sm:p-5";
+  "space-y-4 rounded-xl border border-border/60 bg-background p-4 sm:p-5";
 
 export function AgentA2APanel({
   slug,
@@ -120,8 +121,8 @@ export function AgentA2APanel({
   const locked = busy || !view?.canManage;
 
   return (
-    <div className="mx-auto max-w-4xl space-y-5 px-4 py-6 sm:px-6">
-      <header className="flex flex-wrap items-start justify-between gap-3">
+    <div className="space-y-6 px-6 py-5">
+      <header className="flex flex-wrap items-start justify-between gap-3 border-b border-border/60 pb-5">
         <div>
           <div className="mb-2 flex items-center gap-2">
             <Network className="size-5" />
@@ -186,7 +187,7 @@ export function AgentA2APanel({
                 <Button
                   disabled={
                     locked ||
-                    (runtimeKind !== "pi-sdk" &&
+                    (!isExecutableAgentRuntimeKind(runtimeKind) &&
                       !view.collaboration.inboundEnabled)
                   }
                   onClick={() =>
@@ -224,7 +225,7 @@ export function AgentA2APanel({
                 <Button
                   disabled={
                     locked ||
-                    (runtimeKind !== "pi-sdk" &&
+                    (!isExecutableAgentRuntimeKind(runtimeKind) &&
                       !view.collaboration.outboundEnabled)
                   }
                   onClick={() =>
@@ -282,57 +283,6 @@ export function AgentA2APanel({
               {t("configureTargets")}
             </a>
           </section>
-          <section
-            className={cardClass}
-            aria-label={t("channelOperator.title")}
-          >
-            {view.canManage && view.channels?.length ? (
-              <section
-                className={cardClass}
-                aria-labelledby="a2a-channel-operator-heading"
-              >
-                <h3 id="a2a-channel-operator-heading" className="font-semibold">
-                  {t("channelOperator.title")}
-                </h3>
-                <p className="text-sm text-muted-foreground">
-                  {t("channelOperator.hint")}
-                </p>
-                {view.channels.map((channel) => (
-                  <div
-                    key={channel.id}
-                    className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border p-3"
-                  >
-                    <span className="text-sm">
-                      {channel.name} · {channel.platform}
-                    </span>
-                    <Button
-                      type="button"
-                      disabled={
-                        busy ||
-                        (!channel.enabled && !view.collaboration.inboundEnabled)
-                      }
-                      onClick={() => {
-                        if (window.confirm(t("channelOperator.confirm")))
-                          void mutate({
-                            action: "set-channel-operator",
-                            connectionId: channel.id,
-                            enabled: !channel.enabled,
-                          });
-                      }}
-                      variant={"secondary"}
-                      size={"sm"}
-                    >
-                      {t(
-                        channel.enabled
-                          ? "channelOperator.disable"
-                          : "channelOperator.enable",
-                      )}
-                    </Button>
-                  </div>
-                ))}
-              </section>
-            ) : null}
-          </section>
           {view.local.supported ? (
             <AgentA2ARemotes key={base} base={base} />
           ) : null}
@@ -361,7 +311,7 @@ export function AgentA2APanel({
               </p>
             </section>
           ) : null}
-          {runtimeKind === "pi-sdk" ? (
+          {isExecutableAgentRuntimeKind(runtimeKind) ? (
             <p className={`${cardClass} text-sm text-muted-foreground`}>
               {t("piSdkPublicUnsupported")}
             </p>

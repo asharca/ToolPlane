@@ -526,7 +526,11 @@ export function PopoverContent({ children, className }: PopoverContentProps) {
   const clipRef = useRef<HTMLDivElement>(null);
   const geoRef = useRef<Geo | null>(null);
   const supportsShapeRef = useRef(false);
-  const layout = usePopoverPortalPosition(triggerRef, measureRef, portalReady);
+  const layout = usePopoverPortalPosition(
+    triggerRef,
+    measureRef,
+    portalReady && open,
+  );
 
   useEffect(() => setPortalReady(true), []);
 

@@ -37,18 +37,22 @@ export const PI_RESERVED_TOOLS = [
 ];
 export class PiCapabilityConflictError extends Error {
   code = "PI_CAPABILITY_CONFLICT";
-  constructor() {
+  /** Conflicting native name, e.g. `skill:web-research` or `tool:search`. */
+  conflict;
+  constructor(conflict) {
     super("PI_CAPABILITY_CONFLICT");
     this.name = "PiCapabilityConflictError";
+    this.conflict = conflict;
   }
 }
 export function assertNativeSkillDiagnostics(diagnostics) {
-  if (
-    diagnostics.some(
-      (item) => item.type === "collision" || item.type === "error",
-    )
-  )
-    throw new PiCapabilityConflictError();
+  const failure = diagnostics.find(
+    (item) => item.type === "collision" || item.type === "error",
+  );
+  if (failure)
+    throw new PiCapabilityConflictError(
+      failure.collision ? `skill:${failure.collision.name}` : undefined,
+    );
 }
 export function enforceNativeNamespaces({
   extensions,
@@ -65,7 +69,13 @@ export function enforceNativeNamespaces({
   );
   const claim = (map, name, owner) => {
     if (map.has(name) && map.get(name) !== owner)
-      throw new PiCapabilityConflictError();
+      throw new PiCapabilityConflictError(
+        map === tools
+          ? `tool:${name}`
+          : name.startsWith("skill:")
+            ? name
+            : `command:${name}`,
+      );
     map.set(name, owner);
   };
   for (const skill of skills) claim(commands, `skill:${skill.name}`, skill);

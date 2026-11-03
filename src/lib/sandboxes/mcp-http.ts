@@ -3,26 +3,21 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import {
   CallToolRequestSchema,
-  CallToolResultSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { listMcpTools, mcpRpc } from "@/lib/process/mcp-client";
-import { effectiveStatus } from "@/lib/process/supervisor";
 import { enrichLogContext, withLogContext } from "@/lib/observability/context";
-import { beginWorkspaceOperation } from "@/lib/workspace/operation-gate";
-import { withSandboxExecutionLease } from "@/lib/agents/sandbox-execution-gate";
-import {
-  isMcpToolExposedToAi,
-  mcpToolPolicyFromStored,
-} from "@/lib/workspace/mcp-tool-exposure";
 import { resolveSandboxMcpGrant, sandboxBearer } from "./mcp-access";
-import { isSandboxMcpTool } from "./mcp-policy";
 import {
   sandboxAuthChallenge,
   sandboxToolAnnotations,
   toolOAuthScope,
 } from "./oauth-policy";
 import { privateJson, readSandboxJson, RequestBodyError } from "./http-body";
+import {
+  callSandboxTool,
+  listSandboxTools,
+  sandboxToolError,
+} from "./tool-dispatch";
 
 const counters = new Map<string, { until: number; count: number }>();
 function admit(id: string) {
@@ -38,14 +33,6 @@ function admit(id: string) {
   }
   return ++entry.count <= 120;
 }
-const toolError = (message: string) => ({
-  content: [{ type: "text" as const, text: message }],
-  isError: true,
-});
-const unconfirmedReply = () =>
-  toolError(
-    "Sandbox reply unavailable. The operation may have executed; inspect state before retrying. Do not retry mutations blindly.",
-  );
 
 // Machine-to-machine, stateless Streamable HTTP. This is NOT an arbitrary
 // reverse proxy to the sandbox's terminal, private runtime or dashboard routes.
@@ -114,102 +101,39 @@ export function handleSandboxMcp(
     server.setRequestHandler(ListToolsRequestSchema, async () => {
       const grant = await resolveSandboxMcpGrant(sandboxId, token);
       if (!grant) return { tools: [] };
-      if (
-        effectiveStatus(
-          grant.sandbox.deploymentId,
-          grant.sandbox.deployment.status,
-        ) !== "running"
-      )
-        return { tools: [] };
-      const policy = mcpToolPolicyFromStored(grant.sandbox.deployment);
-      const tools = await listMcpTools(grant.sandbox.deploymentId, {
-        signal: req.signal,
-      });
+      const tools = await listSandboxTools(
+        grant.sandbox,
+        grant.allowedTools,
+        req.signal,
+      );
       return {
-        tools: tools
-          .filter(
-            (tool) =>
-              isSandboxMcpTool(tool.name) &&
-              grant.allowedTools.includes(tool.name) &&
-              isMcpToolExposedToAi(policy, tool.name),
-          )
-          .map((tool) => ({
-            ...tool,
-            annotations: sandboxToolAnnotations(tool.name),
+        tools: tools.map((tool) => ({
+          ...tool,
+          annotations: sandboxToolAnnotations(tool.name),
+          securitySchemes: [
+            { type: "oauth2", scopes: [toolOAuthScope(tool.name)] },
+          ],
+          // Export authorization metadata is owned by the gateway, not the
+          // upstream runtime. McpToolDefinition deliberately exposes no _meta.
+          _meta: {
             securitySchemes: [
               { type: "oauth2", scopes: [toolOAuthScope(tool.name)] },
             ],
-            // Export authorization metadata is owned by the gateway, not the
-            // upstream runtime. McpToolDefinition deliberately exposes no _meta.
-            _meta: {
-              securitySchemes: [
-                { type: "oauth2", scopes: [toolOAuthScope(tool.name)] },
-              ],
-            },
-          })),
+          },
+        })),
       };
     });
     server.setRequestHandler(CallToolRequestSchema, async (request) => {
       // Recheck revocation, expiry, issuer membership and the deployment policy
       // at the point of execution. A handshake grants no permanent authority.
       const grant = await resolveSandboxMcpGrant(sandboxId, token);
-      const name = request.params.name;
-      if (
-        !grant ||
-        !isSandboxMcpTool(name) ||
-        !grant.allowedTools.includes(name) ||
-        !isMcpToolExposedToAi(
-          mcpToolPolicyFromStored(grant.sandbox.deployment),
-          name,
-        )
-      ) {
-        return toolError("Tool not authorized.");
-      }
-      if (
-        effectiveStatus(
-          grant.sandbox.deploymentId,
-          grant.sandbox.deployment.status,
-        ) !== "running"
-      ) {
-        return toolError(
-          "Sandbox is stopped, unavailable or under maintenance. No command was submitted.",
-        );
-      }
-      const release = beginWorkspaceOperation(grant.sandbox.workspaceId);
-      if (!release)
-        return toolError("Workspace is unavailable. No command was submitted.");
-      let dispatchAttempted = false;
-      try {
-        return await withSandboxExecutionLease(sandboxId, async () => {
-          // Never automatically retry shell/file mutations after a lost reply.
-          // The underlying runtime bounds commands to 120 seconds; leave room
-          // for its cleanup instead of cutting the public request at 30 seconds.
-          // A rejected RPC does not prove the remote operation never started.
-          dispatchAttempted = true;
-          const result = await mcpRpc(
-            grant.sandbox.deploymentId,
-            "tools/call",
-            {
-              name,
-              arguments: request.params.arguments ?? {},
-            },
-            180_000,
-            { maxRequestBytes: 4_000_000, maxResponseBytes: 8_000_000 },
-          );
-          const parsed = CallToolResultSchema.safeParse(result);
-          return parsed.success ? parsed.data : unconfirmedReply();
-        });
-      } catch {
-        // Only pre-dispatch rejection can safely promise no command was sent.
-        // Never expose raw transport errors, credentials or remote paths.
-        return dispatchAttempted
-          ? unconfirmedReply()
-          : toolError(
-              "Sandbox is busy or unavailable. No command was submitted.",
-            );
-      } finally {
-        release();
-      }
+      if (!grant) return sandboxToolError("Tool not authorized.");
+      return callSandboxTool(
+        grant.sandbox,
+        grant.allowedTools,
+        request.params.name,
+        request.params.arguments ?? {},
+      );
     });
     const transport = new WebStandardStreamableHTTPServerTransport({
       sessionIdGenerator: undefined,

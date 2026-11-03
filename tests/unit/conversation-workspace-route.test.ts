@@ -103,6 +103,7 @@ beforeEach(() => {
   m.mapping.mockResolvedValue({
     sandboxId: "isolated",
     deploymentId: "isolated-deployment",
+    workspaceRoot: "/workspace",
   });
   m.port.mockReturnValue(4312);
   m.begin.mockReturnValue(m.release);

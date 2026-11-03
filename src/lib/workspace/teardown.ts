@@ -36,13 +36,7 @@ export async function killWorkspaceProcesses(
     where: {
       workspaceId,
       status: {
-        in: [
-          "queued",
-          "running",
-          "waiting_approval",
-          "waiting_user",
-          "cancelling",
-        ],
+        in: ["queued", "running", "waiting_user", "cancelling"],
       },
     },
     select: { id: true },

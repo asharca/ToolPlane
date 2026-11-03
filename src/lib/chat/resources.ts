@@ -4,6 +4,9 @@ import { isRemoteMcpDeployment } from "@/lib/remote-mcp/classification";
 import { listPinnedRemoteMcpTools } from "@/lib/remote-mcp/pinned-connection";
 import { liveStatus } from "@/lib/process/supervisor";
 import { mcpDefinitionChecksum } from "@/lib/process/mcp-definition";
+import { persistDeploymentMcpToolCatalog } from "@/lib/process/mcp-tool-catalog-store";
+import { resolveMcpConnectionSpawnSpec } from "@/lib/process/mcp-credentials";
+import { mcpHeaderSecrets } from "@/lib/process/mcp-result-redaction";
 import {
   filterMcpToolsForAi,
   loadMcpToolPolicies,
@@ -43,14 +46,23 @@ export async function listChatDeploymentOptions(
       const definitionChecksum = mcpDefinitionChecksum(deployment);
       if (available && policy) {
         try {
-          tools = filterMcpToolsForAi(
-            await listPinnedRemoteMcpTools({
+          const catalog = await listPinnedRemoteMcpTools({
+            workspaceId,
+            deploymentId: deployment.id,
+            definitionChecksum,
+          });
+          const { spec, redactionValues } = await resolveMcpConnectionSpawnSpec(
+            {
               workspaceId,
               deploymentId: deployment.id,
-              definitionChecksum,
-            }),
-            policy,
-          ).map((tool) => ({
+              expectedDefinitionChecksum: definitionChecksum,
+            },
+          );
+          await persistDeploymentMcpToolCatalog(deployment.id, catalog, [
+            ...redactionValues,
+            ...(spec.kind === "remote" ? mcpHeaderSecrets(spec.headers) : []),
+          ]);
+          tools = filterMcpToolsForAi(catalog, policy).map((tool) => ({
             name: tool.name,
             description: tool.description ?? tool.name,
           }));
@@ -64,7 +76,6 @@ export async function listChatDeploymentOptions(
         status,
         available,
         tools,
-        definitionChecksum,
       };
     }),
   );

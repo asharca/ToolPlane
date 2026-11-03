@@ -1,31 +1,44 @@
 "use client";
 
 import { Button } from "@/components/motion/button";
+import { useRuntimeErrorText } from "@/components/dashboard/useRuntimeErrorText";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import {
+  RevisionUpgradeNotice,
+  McpToolsUpdatedNote,
+} from "@/components/dashboard/RevisionUpgradeNotice";
+import type { RevisionMcpToolChange } from "@/lib/revisions/upgrade-diff";
 import { ComposerToolbarCustomizer } from "@/components/dashboard/ComposerToolbarCustomizer";
 import { ComposerToolsButton } from "@/components/dashboard/ComposerToolsButton";
 import {
-  Message,
-  MessageAvatar,
   MessageBubble,
   MessageBubbleContent,
-  MessageContent,
   MessageFooter,
   MessageGroup,
-  MessageHeader,
   MessageTyping,
 } from "@/components/agents/message";
 import { MessageScroller } from "@/components/agents/message-scroller";
-import { PromptInput } from "@/components/agents/prompt-input";
+import {
+  ConversationComposer as PromptInput,
+  conversationComposerDockClassName,
+} from "@/components/dashboard/ConversationComposer";
 import { StreamingResponse } from "@/components/agents/streaming-response";
-import { AgentActivity } from "@/components/agents/agent-activity";
-import { ToolApproval } from "@/components/agents/tool-approval";
-import { ToolResult, ToolResultOutput } from "@/components/agents/tool-result";
+import { ToolResult } from "@/components/agents/tool-result";
 import {
   MorphPopover,
   MorphPopoverContent,
   MorphPopoverTrigger,
 } from "@/components/motion/popover-morph";
-import { AssistantMarkdown } from "@/components/dashboard/ConversationMessage";
+import {
+  AssistantMarkdown,
+  ConversationActivity,
+  ConversationMessageShell,
+  conversationUserBubbleClassName,
+  ToolPayload,
+  toolOutputText,
+  toolResultUnboundedHeight,
+} from "@/components/dashboard/ConversationMessage";
 import { ConversationFilePreview } from "@/components/dashboard/ConversationComposer";
 import { CopyButton } from "@/components/dashboard/CopyButton";
 
@@ -65,7 +78,6 @@ import {
   ChevronRight,
   GitBranch,
   Pencil,
-  UserRound,
   Database,
   Eraser,
   Globe2,
@@ -95,6 +107,13 @@ import {
   sessionRuntimeCommands,
   type RuntimeCommand,
 } from "@/lib/agents/runtime-commands";
+import { isExecutableAgentRuntimeKind } from "@/lib/agents/runtime-kind";
+import {
+  SubagentActivity,
+  SubagentActivitySchema,
+  subagentSourceKey,
+} from "./SubagentActivity";
+import { HookActivity, HookActivitySchema } from "./HookActivity";
 
 const MAX_ATTACHMENTS = 5;
 const ATTACHMENT_ERROR_PART = "data-toolplane-attachment-error";
@@ -906,7 +925,7 @@ function ConversationReasoning({
     return () => cancelAnimationFrame(frame);
   }, [working]);
   return (
-    <AgentActivity
+    <ConversationActivity
       contentType="text"
       status={working ? "working" : "complete"}
       duration={duration}
@@ -927,12 +946,14 @@ export function AgentConversation({
   activeConversationId,
   agentId,
   agentName,
+  settingsHref,
   allowEdit = false,
   allowRegenerate = true,
   apiPath,
   attachmentUploadUrl,
   branchBusy = false,
   branchNavigation = [],
+  composerNotice,
   contextBaseText,
   contextWindow,
   contextWindowEstimated = true,
@@ -943,6 +964,7 @@ export function AgentConversation({
   initialMessages,
   modelName,
   modelPicker,
+  modelOverride,
   mcpPromptApiPath,
   mcpResourceApiPath,
   onBranchChange,
@@ -954,6 +976,9 @@ export function AgentConversation({
   reasoningAvailable = false,
   runtimeKind,
   readOnly = false,
+  agentRevisionVersion,
+  currentRevisionVersion,
+  mcpToolsUpdated,
   supportsAttachments,
   serverManaged = false,
   webSearchAvailable,
@@ -962,12 +987,21 @@ export function AgentConversation({
   activeConversationId: string | null;
   agentId: string;
   agentName: string;
+  settingsHref?: string;
   allowEdit?: boolean;
   allowRegenerate?: boolean;
   apiPath?: string;
   attachmentUploadUrl?: string;
   branchBusy?: boolean;
   branchNavigation?: ChatBranchNavigation[];
+  /** Rendered above the composer; native editor events can update its draft. */
+  composerNotice?:
+    | ReactNode
+    | ((
+        setEditorText: (text: string) => void,
+        belowEditorElement: HTMLDivElement | null,
+        renderedActivityIds: readonly string[],
+      ) => ReactNode);
   contextBaseText?: string | null;
   contextWindow?: number | null;
   contextWindowEstimated?: boolean;
@@ -978,6 +1012,7 @@ export function AgentConversation({
   initialMessages: AgentUIMessage[];
   modelName?: string | null;
   modelPicker?: ReactNode;
+  modelOverride?: { providerId: string; model: string } | null;
   mcpPromptApiPath?: string;
   mcpResourceApiPath?: string;
   onBranchChange?: (messageId: string) => void | Promise<void>;
@@ -989,18 +1024,27 @@ export function AgentConversation({
   reasoningAvailable?: boolean;
   runtimeKind: string | null;
   readOnly?: boolean;
+  agentRevisionVersion?: number | null;
+  currentRevisionVersion?: number;
+  mcpToolsUpdated?: {
+    added: RevisionMcpToolChange[];
+    removed: RevisionMcpToolChange[];
+  } | null;
   supportsAttachments?: boolean;
   serverManaged?: boolean;
   webSearchAvailable?: boolean;
   workSessionId?: string;
 }) {
+  const router = useRouter();
   const t = useTranslations("console.agents");
   const common = useTranslations("common");
   const work = useTranslations("console.work");
   const chatAssistants = useTranslations("console.chatAssistants");
   const commandsT = useTranslations("console.runtimeCommands");
   const ready =
-    configuredReady && !readOnly && (serverManaged || runtimeKind === "pi-sdk");
+    configuredReady &&
+    !readOnly &&
+    (serverManaged || isExecutableAgentRuntimeKind(runtimeKind));
   const sessionQuery = new URLSearchParams({
     ...(activeConversationId ? { conversationId: activeConversationId } : {}),
     ...(workSessionId ? { workSessionId } : {}),
@@ -1109,9 +1153,11 @@ export function AgentConversation({
     }
   }, [apiPath, getServerResponse, serverManaged, stopLocalChat, work]);
   const chatBusy = chat.status === "submitted" || chat.status === "streaming";
-  const runtimeErrorCode = (submitError || chat.error?.message)?.match(
-    /\bPI_[A-Z_]+\b/,
-  )?.[0];
+  const describeRuntimeError = useRuntimeErrorText();
+  const runtimeError = describeRuntimeError(submitError || chat.error?.message);
+  const configurationError = /no configured model/i.test(
+    submitError || chat.error?.message || "",
+  );
   const busy = chatBusy || commandBusy;
   useEffect(() => {
     onBusyChange?.(busy);
@@ -1138,9 +1184,23 @@ export function AgentConversation({
     () => expandAssistantMessages(chat.messages),
     [chat.messages],
   );
+  const renderedActivityIds = useMemo(
+    () =>
+      chat.messages.flatMap((message) =>
+        message.parts.flatMap((part) =>
+          (part.type === "data-subagent-activity" ||
+            part.type === "data-hook-activity") &&
+          "id" in part &&
+          typeof part.id === "string"
+            ? [part.id]
+            : [],
+        ),
+      ),
+    [chat.messages],
+  );
   const runtimeCommands = useMemo(
     () =>
-      runtimeKind === "pi-sdk"
+      isExecutableAgentRuntimeKind(runtimeKind)
         ? sessionRuntimeCommands(runtimeKind, chat.messages)
         : [],
     [chat.messages, runtimeKind],
@@ -1201,7 +1261,7 @@ export function AgentConversation({
         : null;
       if (command) {
         if (
-          runtimeKind !== "pi-sdk" &&
+          !isExecutableAgentRuntimeKind(runtimeKind) &&
           !runtimeCommands.some((item) => item.name === command.name)
         ) {
           setSubmitError(commandsT("unsupportedCommand"));
@@ -1225,7 +1285,10 @@ export function AgentConversation({
             {
               method: "POST",
               headers: { "content-type": "application/json" },
-              body: JSON.stringify({ line: commandLine.trim() }),
+              body: JSON.stringify({
+                line: commandLine.trim(),
+                ...(modelOverride ? { modelOverride } : {}),
+              }),
             },
           );
           const result = (await response.json().catch(() => ({}))) as {
@@ -1269,6 +1332,7 @@ export function AgentConversation({
         ...options,
         body: {
           ...options?.body,
+          ...(modelOverride ? { modelOverride } : {}),
           ...(includeConversationIdInBody
             ? { conversationId: nextConversationId }
             : {}),
@@ -1288,6 +1352,7 @@ export function AgentConversation({
       commandsT,
       ensureConversation,
       includeConversationIdInBody,
+      modelOverride,
       onConversationChanged,
       reasoningAvailable,
       ready,
@@ -1318,6 +1383,7 @@ export function AgentConversation({
         ...options,
         body: {
           ...options?.body,
+          ...(modelOverride ? { modelOverride } : {}),
           ...(includeConversationIdInBody
             ? { conversationId: nextConversationId }
             : {}),
@@ -1335,6 +1401,7 @@ export function AgentConversation({
       branchBusy,
       ensureConversation,
       includeConversationIdInBody,
+      modelOverride,
       reasoningAvailable,
       ready,
       reasoningEffort,
@@ -1386,7 +1453,7 @@ export function AgentConversation({
   const composerDisabled =
     branchBusy || commandBusy || creatingConversation || uploadingAttachments;
   const attachmentsEnabled =
-    (serverManaged || runtimeKind === "pi-sdk") &&
+    (serverManaged || isExecutableAgentRuntimeKind(runtimeKind)) &&
     (supportsAttachments ?? Boolean(attachmentUploadUrl));
   const composerStatus = !ready
     ? t("chooseAModelBeforeSending")
@@ -1407,7 +1474,8 @@ export function AgentConversation({
   );
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
-  const [approvalBusy, setApprovalBusy] = useState<string | null>(null);
+  const [belowEditorElement, setBelowEditorElement] =
+    useState<HTMLDivElement | null>(null);
   const blocked = !ready || composerDisabled || busy;
   const runAction = async (action: () => void | Promise<void>) => {
     try {
@@ -1424,24 +1492,58 @@ export function AgentConversation({
     url.startsWith("/api/v1/attachments/") ||
     /^data:[\w.+-]+\/[\w.+-]+;base64,/.test(url);
   const messageActionClassName =
-    "size-7 rounded-md border-0 bg-transparent text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-3.5";
+    "size-7 rounded-lg border-0 bg-transparent text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-3.5";
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
       <div className="flex min-h-0 flex-1 flex-col">
+        {!readOnly &&
+        activeConversationId &&
+        agentRevisionVersion &&
+        currentRevisionVersion &&
+        agentRevisionVersion < currentRevisionVersion ? (
+          <RevisionUpgradeNotice
+            url={`/api/v1/agents/${agentId}/conversations/${activeConversationId}/revision`}
+            fromVersion={agentRevisionVersion}
+            targetVersion={currentRevisionVersion}
+            disabled={busy || branchBusy}
+            onUpgraded={() => {
+              router.refresh();
+              void onConversationChanged?.();
+            }}
+          />
+        ) : null}
         <MessageScroller
           label={agentName}
           busy={chatBusy}
           followOutput={followingOutput}
           onFollowChange={setFollowingOutput}
           navigation="rail"
-          className="min-h-0 flex-1"
-          contentClassName="mx-auto w-full max-w-3xl p-4"
+          className={
+            thread.messages.length
+              ? "min-h-0 flex-1"
+              : "mt-auto min-h-0 flex-none"
+          }
+          contentClassName="mx-auto w-full max-w-3xl px-4 py-8 sm:px-6"
         >
           {thread.messages.length ? (
-            <MessageGroup spacing="default">
+            <MessageGroup spacing="default" className="gap-6">
               {thread.messages.map((message, messageIndex) => {
                 const from = message.role === "user" ? "user" : "assistant";
+                const turnModelPart = chat.messages
+                  .find((entry) => entry.id === message.id)
+                  ?.parts.find((part) => part.type === "data-agent-turn-model");
+                const turnModelData =
+                  turnModelPart && "data" in turnModelPart
+                    ? turnModelPart.data
+                    : null;
+                const turnModel =
+                  turnModelData &&
+                  typeof turnModelData === "object" &&
+                  "model" in turnModelData &&
+                  typeof turnModelData.model === "string"
+                    ? turnModelData.model
+                    : null;
                 const messageRuntime = runtime.thread.getMessageById(
                   message.id,
                 );
@@ -1502,6 +1604,11 @@ export function AgentConversation({
                   ) : null;
                 const messageBody = (
                   <>
+                    {from === "assistant" && turnModel ? (
+                      <div className="mb-1 text-[11px] text-muted-foreground">
+                        {turnModel}
+                      </div>
+                    ) : null}
                     {from === "user" ? (
                       <AgentPromptProvenance
                         parts={
@@ -1511,6 +1618,49 @@ export function AgentConversation({
                       />
                     ) : null}
                     {message.content.map((part, index) => {
+                      if (
+                        part.type === "data" &&
+                        part.name === "hook-activity"
+                      ) {
+                        const hook = HookActivitySchema.safeParse(part.data);
+                        return hook.success ? (
+                          <HookActivity key={hook.data.id} value={hook.data} />
+                        ) : null;
+                      }
+                      if (
+                        part.type === "data" &&
+                        part.name === "subagent-activity"
+                      ) {
+                        const activity = SubagentActivitySchema.safeParse(
+                          part.data,
+                        );
+                        if (!activity.success) return null;
+                        const activityPart = displayMessages
+                          .find((entry) => entry.id === message.id)
+                          ?.parts.find(
+                            (candidate) =>
+                              candidate.type === "data-subagent-activity" &&
+                              candidate.data === part.data,
+                          );
+                        const activityId =
+                          activityPart && "id" in activityPart
+                            ? activityPart.id
+                            : undefined;
+                        return (
+                          <SubagentActivity
+                            key={
+                              activityId ??
+                              JSON.stringify([
+                                message.id,
+                                subagentSourceKey(activity.data.source),
+                                activity.data.type,
+                                activity.data.toolCallId,
+                              ])
+                            }
+                            value={part.data}
+                          />
+                        );
+                      }
                       if (part.type === "text")
                         return from === "user" ? (
                           // biome-ignore lint/suspicious/noArrayIndexKey: ID-less message parts occupy persistent stream slots; text changes and duplicates are valid.
@@ -1565,10 +1715,6 @@ export function AgentConversation({
                       const partRuntime =
                         messageRuntime.getMessagePartByIndex(index);
                       const partState = partRuntime.getState();
-                      const awaiting =
-                        part.approval &&
-                        part.approval.approved === undefined &&
-                        !part.approval.resolution;
                       const tool =
                         /^(?:mcp__)?tp_\d+_[A-Za-z0-9_-]+__(.+)$/.exec(
                           part.toolName,
@@ -1578,49 +1724,13 @@ export function AgentConversation({
                         (partState.status.type === "incomplete" &&
                           partState.status.reason === "error");
                       const cancelled =
-                        part.approval?.approved === false ||
-                        (partState.status.type === "incomplete" &&
-                          partState.status.reason === "cancelled");
+                        partState.status.type === "incomplete" &&
+                        partState.status.reason === "cancelled";
                       const runningTool = partState.status.type === "running";
-                      if (awaiting) {
-                        const decide = (approved: boolean) => {
-                          if (approvalBusy) return;
-                          setApprovalBusy(part.toolCallId);
-                          void runAction(() =>
-                            partRuntime.respondToToolApproval({ approved }),
-                          ).finally(() => setApprovalBusy(null));
-                        };
-                        return (
-                          <ToolApproval
-                            key={part.toolCallId}
-                            tool={tool}
-                            title={t("toolAwaitingApproval")}
-                            description={t("toolApprovalDescription")}
-                            status={
-                              approvalBusy === part.toolCallId
-                                ? "approving"
-                                : "pending"
-                            }
-                            parameters={[
-                              {
-                                id: "input",
-                                label: t("toolInput"),
-                                value: (
-                                  <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words">
-                                    {part.argsText?.trim() ||
-                                      formatToolValue(part.args)}
-                                  </pre>
-                                ),
-                              },
-                            ]}
-                            onApprove={() => decide(true)}
-                            onDeny={() => decide(false)}
-                          />
-                        );
-                      }
                       return (
                         <ToolResult
                           key={part.toolCallId}
+                          className="w-full rounded-2xl border border-border/60 bg-muted/20 shadow-none"
                           tool={tool}
                           title={
                             runningTool
@@ -1639,30 +1749,28 @@ export function AgentConversation({
                                   : "success"
                           }
                           defaultOpen={runningTool || failed}
-                          copyText={formatToolValue(part.result)}
+                          copyText={
+                            toolOutputText(part.result) ??
+                            formatToolValue(part.result)
+                          }
+                          maxHeight={toolResultUnboundedHeight}
                         >
-                          <p className="text-xs text-muted-foreground">
-                            {t("toolInput")}
-                          </p>
-                          <ToolResultOutput language="json">
+                          <ToolPayload label={t("toolInput")} language="json">
                             {part.argsText?.trim() ||
                               formatToolValue(part.args)}
-                          </ToolResultOutput>
+                          </ToolPayload>
                           {part.result !== undefined ? (
-                            <>
-                              <p className="text-xs text-muted-foreground">
-                                {t("toolOutput")}
-                              </p>
-                              <ToolResultOutput
-                                language={
-                                  typeof part.result === "string"
-                                    ? "text"
-                                    : "json"
-                                }
-                              >
-                                {formatToolValue(part.result)}
-                              </ToolResultOutput>
-                            </>
+                            <ToolPayload
+                              label={t("toolOutput")}
+                              language={
+                                toolOutputText(part.result) !== undefined
+                                  ? "text"
+                                  : "json"
+                              }
+                            >
+                              {toolOutputText(part.result) ??
+                                formatToolValue(part.result)}
+                            </ToolPayload>
                           ) : null}
                         </ToolResult>
                       );
@@ -1695,156 +1803,158 @@ export function AgentConversation({
                   </>
                 );
                 return (
-                  <Message
+                  <ConversationMessageShell
                     key={message.id}
                     id={`chat-message-${message.id}`}
                     from={from}
+                    name={agentName}
+                    showIdentity={
+                      messageIndex === 0 ||
+                      thread.messages[messageIndex - 1]?.role !== "assistant"
+                    }
                     aria-busy={streaming || undefined}
                   >
-                    <MessageAvatar>
-                      {from === "user" ? <UserRound /> : <Bot />}
-                    </MessageAvatar>
-                    <MessageContent>
-                      <MessageHeader>
-                        {from === "user" ? t("user") : agentName}
-                      </MessageHeader>
-                      {editingId === message.id ? (
-                        <div className="w-full">
-                          <PromptInput
-                            value={editText}
-                            autoFocus
-                            disabled={blocked}
-                            aria-label={t("messageThisAgent")}
-                            onValueChange={(value) => {
-                              setEditText(value);
-                              messageRuntime.composer.setText(value);
-                            }}
-                            onSubmit={() => {
-                              messageRuntime.composer.send();
-                              setEditingId(null);
-                            }}
-                            leadingAction={
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => {
-                                  messageRuntime.composer.cancel();
-                                  setEditingId(null);
-                                }}
-                              >
-                                {common("cancel")}
-                              </Button>
-                            }
-                          />
-                        </div>
-                      ) : from === "assistant" ? (
-                        <StreamingResponse
-                          status={
-                            streaming
-                              ? "streaming"
-                              : message.status?.type === "incomplete" &&
-                                  message.status.reason === "error"
-                                ? "error"
-                                : "complete"
-                          }
-                          copyText={text}
-                          onRetry={
-                            allowRegenerate && !blocked
-                              ? () =>
-                                  void runAction(() =>
-                                    includeConversationIdInBody
-                                      ? messageRuntime.reload()
-                                      : regenerate({ messageId: message.id }),
-                                  )
-                              : undefined
-                          }
-                          announce={false}
-                          actionsClassName={actionVisibility}
-                          actions={
-                            <>
-                              {branchActions}
-                              {onStartBranch ? (
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="icon"
-                                  className={messageActionClassName}
-                                  disabled={blocked}
-                                  aria-label={chatAssistants("newBranch")}
-                                  onClick={() =>
-                                    void runAction(() =>
-                                      onStartBranch(message.id),
-                                    )
-                                  }
-                                >
-                                  <GitBranch className="size-3.5" />
-                                </Button>
-                              ) : null}
-                            </>
-                          }
-                        >
-                          {messageBody}
-                        </StreamingResponse>
-                      ) : (
-                        <MessageBubble variant="soft">
-                          <MessageBubbleContent>
-                            {messageBody}
-                          </MessageBubbleContent>
-                        </MessageBubble>
-                      )}
-                      {from === "user" && editingId !== message.id ? (
-                        <MessageFooter
-                          className={`gap-0.5 ${actionVisibility}`}
-                        >
-                          {branchActions}
-                          {text ? (
-                            <CopyButton
-                              text={displayMessagingUserText(text)}
-                              label={common("copy")}
-                              className={messageActionClassName}
-                              iconOnly
-                            />
-                          ) : null}
-                          {allowEdit ? (
+                    {editingId === message.id ? (
+                      <div className="w-full">
+                        <PromptInput
+                          value={editText}
+                          autoFocus
+                          disabled={blocked}
+                          aria-label={t("messageThisAgent")}
+                          onValueChange={(value) => {
+                            setEditText(value);
+                            messageRuntime.composer.setText(value);
+                          }}
+                          onSubmit={() => {
+                            messageRuntime.composer.send();
+                            setEditingId(null);
+                          }}
+                          leadingAction={
                             <Button
                               type="button"
                               variant="ghost"
-                              size="icon"
-                              className={messageActionClassName}
-                              disabled={blocked}
-                              aria-label={common("edit")}
+                              size="sm"
                               onClick={() => {
-                                messageRuntime.composer.beginEdit();
-                                setEditText(text);
-                                setEditingId(message.id);
+                                messageRuntime.composer.cancel();
+                                setEditingId(null);
                               }}
                             >
-                              <Pencil className="size-3.5" />
+                              {common("cancel")}
                             </Button>
-                          ) : null}
-                        </MessageFooter>
-                      ) : null}
-                    </MessageContent>
-                  </Message>
+                          }
+                        />
+                      </div>
+                    ) : from === "assistant" ? (
+                      <StreamingResponse
+                        status={
+                          streaming
+                            ? "streaming"
+                            : message.status?.type === "incomplete" &&
+                                message.status.reason === "error"
+                              ? "error"
+                              : "complete"
+                        }
+                        copyText={text}
+                        onRetry={
+                          allowRegenerate && !blocked
+                            ? () =>
+                                void runAction(() =>
+                                  includeConversationIdInBody
+                                    ? messageRuntime.reload()
+                                    : regenerate({ messageId: message.id }),
+                                )
+                            : undefined
+                        }
+                        announce={false}
+                        actionsClassName={actionVisibility}
+                        actions={
+                          <>
+                            {branchActions}
+                            {onStartBranch ? (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className={messageActionClassName}
+                                disabled={blocked}
+                                aria-label={chatAssistants("newBranch")}
+                                onClick={() =>
+                                  void runAction(() =>
+                                    onStartBranch(message.id),
+                                  )
+                                }
+                              >
+                                <GitBranch className="size-3.5" />
+                              </Button>
+                            ) : null}
+                          </>
+                        }
+                      >
+                        {messageBody}
+                      </StreamingResponse>
+                    ) : (
+                      <MessageBubble
+                        variant="soft"
+                        className={conversationUserBubbleClassName}
+                      >
+                        <MessageBubbleContent>
+                          {messageBody}
+                        </MessageBubbleContent>
+                      </MessageBubble>
+                    )}
+                    {from === "user" && editingId !== message.id ? (
+                      <MessageFooter className={`gap-0.5 ${actionVisibility}`}>
+                        {branchActions}
+                        {text ? (
+                          <CopyButton
+                            text={displayMessagingUserText(text)}
+                            label={common("copy")}
+                            className={messageActionClassName}
+                            iconOnly
+                          />
+                        ) : null}
+                        {allowEdit ? (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className={messageActionClassName}
+                            disabled={blocked}
+                            aria-label={common("edit")}
+                            onClick={() => {
+                              messageRuntime.composer.beginEdit();
+                              setEditText(text);
+                              setEditingId(message.id);
+                            }}
+                          >
+                            <Pencil className="size-3.5" />
+                          </Button>
+                        ) : null}
+                      </MessageFooter>
+                    ) : null}
+                  </ConversationMessageShell>
                 );
               })}
             </MessageGroup>
           ) : (
-            <div className="flex min-h-64 items-center justify-center text-center">
-              <div className="max-w-md">
-                <Bot className="mx-auto mb-4 size-8 text-muted-foreground" />
-                <h3 className="text-lg font-medium">
-                  {t(
-                    workSessionId
-                      ? "startWorkConversation"
-                      : "startAConversation",
-                  )}
+            <div className="flex items-center justify-center pb-2 pt-8 text-center">
+              <div className="max-w-lg">
+                <span className="mx-auto mb-4 grid size-12 place-items-center rounded-2xl bg-muted ring-1 ring-border/50">
+                  <Bot className="size-6" />
+                </span>
+                <p className="mb-2 text-sm font-medium text-muted-foreground">
+                  {agentName}
+                </p>
+                <h3 className="text-2xl font-medium tracking-tight sm:text-3xl">
+                  {work("emptyTitle")}
                 </h3>
                 {workSessionId ? (
                   <p className="mt-2 text-sm text-muted-foreground">
                     {t("startWorkConversationDescription")}
                   </p>
+                ) : null}
+                {mcpToolsUpdated ? (
+                  <McpToolsUpdatedNote {...mcpToolsUpdated} />
                 ) : null}
               </div>
             </div>
@@ -1857,17 +1967,39 @@ export function AgentConversation({
             <MessageTyping label={work("preparingReply")} />
           ) : null}
         </MessageScroller>
-        <div className="mx-auto w-full max-w-3xl shrink-0 px-4 pb-2">
+        <div
+          className={`${conversationComposerDockClassName} ${!thread.messages.length ? "mb-auto" : ""}`}
+        >
+          {typeof composerNotice === "function"
+            ? composerNotice(
+                runtime.thread.composer.setText,
+                belowEditorElement,
+                renderedActivityIds,
+              )
+            : composerNotice}
           {submitError || chat.error?.message ? (
-            <p role="alert" className="mb-2 text-sm text-destructive">
-              {runtimeErrorCode
-                ? commandsT(
-                    commandsT.has(runtimeErrorCode)
-                      ? runtimeErrorCode
-                      : "sdkExecutionFailed",
-                  )
-                : submitError || chat.error?.message}
-            </p>
+            <div
+              role="alert"
+              className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground"
+            >
+              <span>
+                {configurationError
+                  ? work("configureAgent")
+                  : runtimeError
+                    ? runtimeError.text
+                    : submitError || chat.error?.message}
+              </span>
+              {(configurationError ||
+                runtimeError?.code === "PI_MCP_TOOLS_UNAVAILABLE") &&
+              settingsHref ? (
+                <Link
+                  href={settingsHref}
+                  className="rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted"
+                >
+                  {t("configureAgent")}
+                </Link>
+              ) : null}
+            </div>
           ) : null}
           {/* biome-ignore lint/a11y/noStaticElementInteractions: Non-focusable drop zone wraps the accessible composer; keyboard attachments use its upload control. */}
           <div
@@ -1895,35 +2027,36 @@ export function AgentConversation({
                 );
             }}
           >
-            {composer.attachments.length ? (
-              <div className="mb-2 flex flex-wrap gap-3">
-                {composer.attachments.map((attachment, index) => (
-                  <ConversationFilePreview
-                    key={attachment.id}
-                    file={attachment.file}
-                    name={attachment.name}
-                    mimeType={attachment.contentType}
-                    progress={
-                      attachment.status.type === "running"
-                        ? attachment.status.progress
-                        : undefined
-                    }
-                    removeLabel={t("removeAttachment", {
-                      name: attachment.name,
-                    })}
-                    onRemove={() =>
-                      void runAction(() =>
-                        runtime.thread.composer
-                          .getAttachmentByIndex(index)
-                          .remove(),
-                      )
-                    }
-                  />
-                ))}
-              </div>
-            ) : null}
             <PromptInput
-              className="bg-transparent"
+              attachments={
+                composer.attachments.length ? (
+                  <div className="mb-2 flex flex-wrap gap-3">
+                    {composer.attachments.map((attachment, index) => (
+                      <ConversationFilePreview
+                        key={attachment.id}
+                        file={attachment.file}
+                        name={attachment.name}
+                        mimeType={attachment.contentType}
+                        progress={
+                          attachment.status.type === "running"
+                            ? attachment.status.progress
+                            : undefined
+                        }
+                        removeLabel={t("removeAttachment", {
+                          name: attachment.name,
+                        })}
+                        onRemove={() =>
+                          void runAction(() =>
+                            runtime.thread.composer
+                              .getAttachmentByIndex(index)
+                              .remove(),
+                          )
+                        }
+                      />
+                    ))}
+                  </div>
+                ) : null
+              }
               value={composer.text}
               onValueChange={runtime.thread.composer.setText}
               onSubmit={() => runtime.thread.composer.send()}
@@ -1932,8 +2065,8 @@ export function AgentConversation({
               onStop={chatBusy ? () => void stop() : undefined}
               aria-label={t("messageThisAgent")}
               placeholder={t("messageThisAgent")}
-              minRows={2}
-              maxRows={8}
+              minRows={1}
+              maxRows={12}
               leadingAction={
                 <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
                   <ConversationTools
@@ -1948,7 +2081,7 @@ export function AgentConversation({
                     webSearchEnabled={webSearchEnabled}
                     onWebSearchChange={setWebSearchEnabled}
                   />
-                  {modelPicker}
+                  <span className="flex-1" />
                   <ConversationContextUsage busy={busy} usage={contextUsage} />
                   {reasoningAvailable ? (
                     <ReasoningEffortControl
@@ -1967,6 +2100,7 @@ export function AgentConversation({
                       {t("send")}
                     </Button>
                   ) : null}
+                  {modelPicker}
                 </div>
               }
             />
@@ -1976,6 +2110,7 @@ export function AgentConversation({
               {composerStatus}
             </p>
           ) : null}
+          <div ref={setBelowEditorElement} className="space-y-3 empty:hidden" />
         </div>
       </div>
     </AssistantRuntimeProvider>

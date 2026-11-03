@@ -1,7 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState, type ComponentProps } from "react";
 import type * as AssistantConversationModule from "@/components/dashboard/chat/AssistantConversation";
+
+const modelProps = {
+  providers: [{ id: "provider-1", name: "OpenAI", models: ["gpt-4o"] }],
+  defaultModelSelection: { providerId: "provider-1", model: "gpt-4o" },
+  modelSelection: null,
+  onModelChange: vi.fn(),
+};
 
 const mocks = vi.hoisted(() => ({
   push: vi.fn(),
@@ -11,6 +19,33 @@ const mocks = vi.hoisted(() => ({
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: mocks.push, refresh: mocks.refresh }),
 }));
+
+function DraftConversation({
+  component: Component,
+  remountOnFinish = false,
+  ...props
+}: Omit<
+  ComponentProps<typeof AssistantConversationModule.AssistantConversation>,
+  "draftText" | "onDraftTextChange"
+> & {
+  component: typeof AssistantConversationModule.AssistantConversation;
+  remountOnFinish?: boolean;
+}) {
+  const [draftText, setDraftText] = useState("");
+  const [version, setVersion] = useState(0);
+  return (
+    <Component
+      {...props}
+      key={version}
+      draftText={draftText}
+      onDraftTextChange={setDraftText}
+      onConversationChanged={() => {
+        props.onConversationChanged();
+        if (remountOnFinish) setVersion((previous) => previous + 1);
+      }}
+    />
+  );
+}
 
 describe("WorkspaceAssistantChat", () => {
   beforeEach(() => {
@@ -29,6 +64,7 @@ describe("WorkspaceAssistantChat", () => {
       {};
     const stopped: string[] = [];
     let admitted = false;
+    let completed = false;
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -67,8 +103,8 @@ describe("WorkspaceAssistantChat", () => {
           return Response.json({
             runId: admitted ? "new-run" : "old-run",
             cursor: 3,
-            status: admitted ? "pending" : "completed",
-            phase: admitted ? "generating" : "completed",
+            status: admitted && !completed ? "pending" : "completed",
+            phase: admitted && !completed ? "generating" : "completed",
             stopRequested: false,
             confirmations: [],
             messages: [
@@ -90,14 +126,16 @@ describe("WorkspaceAssistantChat", () => {
       }),
     );
     const view = render(
-      <AssistantConversation
+      <DraftConversation
+        component={AssistantConversation}
+        remountOnFinish
+        {...modelProps}
+        assistantName="Test Assistant"
         threadId="thread-1"
         revision={1}
-        revisionId="revision-1"
         readOnly={false}
         initialMessages={[]}
         onConversationChanged={vi.fn()}
-        onBranchChange={vi.fn()}
         onStartBranch={vi.fn()}
       />,
     );
@@ -111,6 +149,9 @@ describe("WorkspaceAssistantChat", () => {
         screen.getByRole("button", { name: "Send message" }),
       );
       await screen.findByText("New Run is active");
+      const composer = screen.getByRole("textbox", { name: "Send message" });
+      expect(composer).toHaveValue("");
+      await userEvent.type(composer, "Keep the next unsent draft");
       await userEvent.click(
         screen.getByRole("button", { name: "Request stop" }),
       );
@@ -121,6 +162,20 @@ describe("WorkspaceAssistantChat", () => {
       expect(
         screen.queryByText("Stop requested · awaiting confirmation"),
       ).not.toBeInTheDocument();
+      completed = true;
+      await act(async () => {
+        stream.controller?.enqueue(
+          new TextEncoder().encode(
+            'data: {"type":"text-end","id":"text"}\n\ndata: {"type":"finish"}\n\ndata: [DONE]\n\n',
+          ),
+        );
+        stream.controller?.close();
+        stream.controller = undefined;
+      });
+      await screen.findByRole("button", { name: "Send message" });
+      expect(screen.getByRole("textbox", { name: "Send message" })).toHaveValue(
+        "Keep the next unsent draft",
+      );
     } finally {
       stream.controller?.close();
       view.unmount();
@@ -220,14 +275,15 @@ describe("WorkspaceAssistantChat", () => {
     );
     vi.stubGlobal("fetch", requests);
     const view = render(
-      <AssistantConversation
+      <DraftConversation
+        component={AssistantConversation}
+        {...modelProps}
+        assistantName="Test Assistant"
         threadId="thread-1"
         revision={1}
-        revisionId="revision-1"
         readOnly={false}
         initialMessages={[]}
         onConversationChanged={vi.fn()}
-        onBranchChange={vi.fn()}
         onStartBranch={vi.fn()}
       />,
     );
@@ -370,14 +426,15 @@ describe("WorkspaceAssistantChat", () => {
     );
     vi.stubGlobal("fetch", requests);
     render(
-      <AssistantConversation
+      <DraftConversation
+        component={AssistantConversation}
+        {...modelProps}
+        assistantName="Test Assistant"
         threadId="thread-empty"
         revision={1}
-        revisionId="revision-1"
         readOnly={false}
         initialMessages={[]}
         onConversationChanged={vi.fn()}
-        onBranchChange={vi.fn()}
         onStartBranch={vi.fn()}
       />,
     );
@@ -426,14 +483,15 @@ describe("WorkspaceAssistantChat", () => {
     });
     vi.stubGlobal("fetch", requests);
     render(
-      <AssistantConversation
+      <DraftConversation
+        component={AssistantConversation}
+        {...modelProps}
+        assistantName="Test Assistant"
         threadId="thread-pending"
         revision={1}
-        revisionId="revision-1"
         readOnly={false}
         initialMessages={[]}
         onConversationChanged={vi.fn()}
-        onBranchChange={vi.fn()}
         onStartBranch={vi.fn()}
       />,
     );
@@ -502,14 +560,15 @@ describe("WorkspaceAssistantChat", () => {
     );
     vi.stubGlobal("fetch", requests);
     render(
-      <AssistantConversation
+      <DraftConversation
+        component={AssistantConversation}
+        {...modelProps}
+        assistantName="Test Assistant"
         threadId="thread-1"
         revision={2}
-        revisionId="revision-1"
         readOnly={false}
         initialMessages={[]}
         onConversationChanged={vi.fn()}
-        onBranchChange={vi.fn()}
         onStartBranch={vi.fn()}
       />,
     );
@@ -554,14 +613,15 @@ describe("WorkspaceAssistantChat", () => {
         }),
       );
       render(
-        <AssistantConversation
+        <DraftConversation
+          component={AssistantConversation}
+          {...modelProps}
+          assistantName="Test Assistant"
           threadId="thread-1"
           revision={1}
-          revisionId="revision-1"
           readOnly={false}
           initialMessages={[]}
           onConversationChanged={vi.fn()}
-          onBranchChange={vi.fn()}
           onStartBranch={vi.fn()}
         />,
       );

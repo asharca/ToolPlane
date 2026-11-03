@@ -314,7 +314,7 @@ export function FileTree({
       aria-label={ariaLabel}
       aria-multiselectable="false"
       inset={0}
-      pillClassName="rounded-xl bg-muted"
+      pillClassName="rounded-lg bg-muted"
       pillContainerClassName="inset-y-auto top-0 h-9"
       className={cn("min-w-0", className, classNames?.tree)}
     >

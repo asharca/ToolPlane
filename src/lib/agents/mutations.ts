@@ -1,7 +1,8 @@
 import "server-only";
 import { Prisma } from "@prisma/client";
-import { z } from "zod";
 import { db } from "@/lib/db";
+import { visiblePluginWhere } from "@/lib/plugins/catalog";
+import { parsePiPackageReleaseManifest } from "@/lib/pi-packages/manifest";
 import { deleteAgentConversationSandboxes } from "@/lib/agents/conversation-sandbox";
 import { withAgentMaintenanceLease } from "@/lib/agents/agent-execution-gate";
 import { writeAudit } from "@/lib/observability/audit";
@@ -15,7 +16,6 @@ import { matchingPiModelReferences } from "@/lib/agents/provider-catalog";
 import {
   agentRuntimeDisplayName,
   agentRuntimeSupportsProviderFormat,
-  isDedicatedSandboxRuntimeKind,
   normalizeDisabledBuiltinTools,
   type ImplementedAgentRuntimeKind,
 } from "@/lib/agents/runtime-kind";
@@ -23,40 +23,80 @@ import {
   DEFAULT_SANDBOX_IMAGE,
   sandboxVolumeName,
 } from "@/lib/sandboxes/runtime";
-import { parseAgentMarketResourceMap } from "@/lib/agents/market-setup";
+import {
+  type ExternalSandboxAccess,
+  isExternalSandboxAccess,
+  isExternalSandboxCandidate,
+  MAX_EXTERNAL_SANDBOXES,
+} from "@/lib/sandboxes/external";
 import { sandboxExecutionBusy } from "./sandbox-execution-gate";
 import { TERMINAL } from "@/lib/a2a/model";
-import { pinCurrentAgentRevision, AgentRevisionError } from "./revisions";
 import {
-  mcpDefinitionChecksum,
-  mcpRuntimeFilesChecksum,
-} from "@/lib/process/mcp-definition";
-import {
-  parseApprovedToolSignatures,
-  parsePendingToolChanges,
-} from "@/lib/process/mcp-tool-signature";
-import type { PreparedSessionMcpDefinition } from "@/lib/process/mcp-definition";
-import type { AgentRevisionConfig } from "./revision-types";
-import { readMcpToolCatalog } from "@/lib/process/mcp-tool-catalog";
-import { readMcpInspectorConnection } from "@/lib/workspace/inspector-connection";
+  pinCurrentAgentRevision,
+  captureAgentRevisionConfig,
+  publishAgentRevisionInTransaction,
+} from "./revisions";
+import { ensureWorkspaceMcpDeploymentPinned } from "@/lib/process/mcp-pinning";
+import { prepareSessionMcpDefinition } from "@/lib/process/mcp-definition";
+import { catalogToolNames } from "@/lib/process/mcp-grant-sync";
+import { isExecutableAgentRuntimeKind } from "./runtime-kind";
+import { emptyOmpConfig } from "./omp-config";
+import type { OmpConfigSnapshot } from "./omp-config";
 
 function assertNativeAgent(runtimeKind: string, retiredAt: Date | null): void {
-  if (runtimeKind !== "pi-sdk" || retiredAt !== null) {
+  if (!isExecutableAgentRuntimeKind(runtimeKind) || retiredAt !== null) {
     throw new AgentConfigurationError(
-      "Historical Agents are read-only; copy configuration to a native Pi Agent.",
+      "Historical Agents are read-only; copy configuration to a native Pi or OMP Agent.",
     );
   }
 }
 
-const UNAVAILABLE_SANDBOX_STATUSES = [
-  "copying",
-  "copy_failed",
-  "restoring",
-  "restore_failed",
-  "restore_cleanup_required",
-  "upgrading",
-  "deleting",
-];
+/** Validated outside the write so a rejected selection never touches existing rows. */
+async function validateExternalSandboxes(
+  client: Prisma.TransactionClient,
+  workspaceId: string,
+  requested: readonly ExternalSandboxSelection[],
+): Promise<ExternalSandboxSelection[]> {
+  if (requested.length > MAX_EXTERNAL_SANDBOXES)
+    throw new AgentConfigurationError(
+      `An Agent can attach at most ${MAX_EXTERNAL_SANDBOXES} external sandboxes.`,
+    );
+  const ids = new Set<string>();
+  for (const entry of requested) {
+    if (
+      typeof entry.sandboxId !== "string" ||
+      !entry.sandboxId ||
+      ids.has(entry.sandboxId) ||
+      !isExternalSandboxAccess(entry.access)
+    )
+      throw new AgentConfigurationError("Invalid external sandbox selection.");
+    ids.add(entry.sandboxId);
+  }
+  const rows = await client.sandbox.findMany({
+    where: { id: { in: [...ids] }, workspaceId },
+    select: {
+      id: true,
+      kind: true,
+      config: true,
+      _count: { select: { agentLinks: true } },
+    },
+  });
+  for (const id of ids) {
+    const row = rows.find((candidate) => candidate.id === id);
+    if (
+      !row ||
+      !isExternalSandboxCandidate({
+        kind: row.kind,
+        config: row.config,
+        isAgentTemplate: row._count.agentLinks > 0,
+      })
+    )
+      throw new AgentConfigurationError(
+        "Only SSH, connector or standalone Docker sandboxes in this workspace can be attached.",
+      );
+  }
+  return requested.map(({ sandboxId, access }) => ({ sandboxId, access }));
+}
 
 function slugify(input: string): string {
   const base = input
@@ -95,7 +135,7 @@ async function uniqueAgentSlug(
 
 export type CreateAgentOptions = {
   runtime?: ImplementedAgentRuntimeKind;
-  piPackages?: Array<{ marketInstallId: string; releaseId: string }>;
+  piPackages?: AgentConfig["piPackages"];
 };
 
 export type AgentCloneOptions = {
@@ -204,11 +244,24 @@ export async function createAgentRecords(
   options: CreateAgentOptions,
   sandboxSlug?: string,
 ) {
-  if (options.runtime && options.runtime !== "pi-sdk") {
-    throw new AgentConfigurationError("Only native Pi Agents can be created.");
+  const runtime = options.runtime ?? "pi-sdk";
+  if (!isExecutableAgentRuntimeKind(runtime)) {
+    throw new AgentConfigurationError(
+      "Only native Pi and OMP Agents can be created.",
+    );
   }
   const agent = await tx.agent.create({
-    data: { workspaceId, name, slug, runtimeKind: "pi-sdk" },
+    data: {
+      workspaceId,
+      name,
+      slug,
+      runtimeKind: runtime,
+      ...(runtime === "omp"
+        ? {
+            ompConfig: emptyOmpConfig() as Prisma.InputJsonValue,
+          }
+        : {}),
+    },
   });
   const templateSlug =
     sandboxSlug ??
@@ -247,7 +300,7 @@ export async function createAgent(
       tx,
       workspaceId,
       agent.id,
-      "pi-sdk",
+      agent.runtimeKind,
       options.piPackages,
     );
     return agent;
@@ -399,16 +452,20 @@ export type AgentConfig = {
   model: string | null;
   disabledBuiltinTools?: string[];
   maxSteps: number;
-  piPackages?: Array<{ marketInstallId: string; releaseId: string }>;
+  piPackages?: Array<{ marketInstallId: string; releaseId?: string }>;
+};
+
+export type ExternalSandboxSelection = {
+  sandboxId: string;
+  access: ExternalSandboxAccess;
 };
 
 export type AgentToolSelection = {
   deploymentIds: string[];
   installedSkillIds: string[];
   toolkitIds: string[];
-  sandboxIds?: string[];
-  defaultSandboxId?: string | null;
-  subAgentIds?: string[];
+  /** Full desired set; omit to keep current attachments. */
+  externalSandboxes?: ExternalSandboxSelection[];
 };
 
 export class AgentConfigurationError extends Error {
@@ -423,10 +480,10 @@ async function validateAndWritePiPackages(
   workspaceId: string,
   agentId: string,
   runtimeKind: string,
-  piPackages: Array<{ marketInstallId: string; releaseId: string }> | undefined,
+  piPackages: AgentConfig["piPackages"],
 ) {
   if (piPackages === undefined) return; // undefined = no change
-  if (runtimeKind !== "pi-sdk")
+  if (runtimeKind !== "pi-sdk" && runtimeKind !== "omp")
     throw new AgentConfigurationError("pi_packages_runtime_unsupported");
   if (
     !Array.isArray(piPackages) ||
@@ -439,8 +496,8 @@ async function validateAndWritePiPackages(
         ) ||
         typeof pkg.marketInstallId !== "string" ||
         !pkg.marketInstallId ||
-        typeof pkg.releaseId !== "string" ||
-        !pkg.releaseId,
+        (pkg.releaseId !== undefined &&
+          (typeof pkg.releaseId !== "string" || !pkg.releaseId)),
     )
   ) {
     throw new AgentConfigurationError("pi_packages_invalid");
@@ -456,15 +513,21 @@ async function validateAndWritePiPackages(
       );
     seenInstalls.add(pkg.marketInstallId);
   }
-  // Validate each install/release belongs to workspace and is approved
+  const existing = await tx.agentPiPackage.findMany({
+    where: { agentId, agent: { workspaceId } },
+  });
+  const pins: Array<{ marketInstallId: string; releaseId: string }> = [];
   for (const pkg of piPackages) {
     const install = await tx.marketInstall.findFirst({
-      where: { id: pkg.marketInstallId, targetWorkspaceId: workspaceId },
+      where: {
+        id: pkg.marketInstallId,
+        targetWorkspaceId: workspaceId,
+        listing: { ...visiblePluginWhere(workspaceId), status: "published" },
+      },
       select: {
         id: true,
         listingId: true,
         status: true,
-        listing: { select: { kind: true, status: true } },
         currentReleaseId: true,
       },
     });
@@ -472,35 +535,46 @@ async function validateAndWritePiPackages(
       throw new AgentConfigurationError(
         `Unknown or inaccessible market install: ${pkg.marketInstallId}`,
       );
-    if (install.listing.kind !== "pi-package")
-      throw new AgentConfigurationError(
-        `Market install is not a pi-package: ${pkg.marketInstallId}`,
-      );
-    if (install.listing.status !== "published")
-      throw new AgentConfigurationError(
-        `Listing is not published: ${pkg.marketInstallId}`,
-      );
     if (install.status !== "ready")
       throw new AgentConfigurationError(
         `Market install is not ready: ${pkg.marketInstallId}`,
       );
-    const release = await tx.marketRelease.findFirst({
-      where: { id: pkg.releaseId, listingId: install.listingId },
-      select: { id: true, listingId: true, reviewStatus: true },
-    });
-    if (release?.reviewStatus !== "approved")
+    const retained = existing.find(
+      (bound) => bound.marketInstallId === pkg.marketInstallId,
+    );
+    const releaseId =
+      retained &&
+      (pkg.releaseId === undefined || pkg.releaseId === retained.releaseId)
+        ? retained.releaseId
+        : install.currentReleaseId;
+    if (pkg.releaseId !== undefined && pkg.releaseId !== releaseId)
       throw new AgentConfigurationError(
         `Release not approved: ${pkg.releaseId}`,
       );
+    const release = await tx.marketRelease.findFirst({
+      where: {
+        id: releaseId,
+        listingId: install.listingId,
+        reviewStatus: "approved",
+      },
+      select: { id: true, manifest: true, checksum: true },
+    });
+    if (!release)
+      throw new AgentConfigurationError(`Release not approved: ${releaseId}`);
+    if (
+      parsePiPackageReleaseManifest(release.manifest, release.checksum).package
+        .runtime.kind !== runtimeKind
+    )
+      throw new AgentConfigurationError("PLUGIN_RUNTIME_MISMATCH");
+    pins.push({ marketInstallId: pkg.marketInstallId, releaseId });
   }
-  const existing = await tx.agentPiPackage.findMany({ where: { agentId } });
   if (
-    existing.length === piPackages.length &&
+    existing.length === pins.length &&
     existing.every((bound) =>
-      piPackages.some(
-        (pkg) =>
-          pkg.marketInstallId === bound.marketInstallId &&
-          pkg.releaseId === bound.releaseId,
+      pins.some(
+        (pin) =>
+          pin.marketInstallId === bound.marketInstallId &&
+          pin.releaseId === bound.releaseId,
       ),
     )
   )
@@ -524,20 +598,38 @@ async function validateAndWritePiPackages(
   const busyWork = await tx.workSession.findFirst({
     where: {
       agentId,
-      status: { in: ["queued", "running", "waiting_approval", "cancelling"] },
+      status: { in: ["queued", "running", "cancelling"] },
     },
     select: { id: true },
   });
   if (busyWork) throw new AgentConfigurationError("pi_package_agent_busy");
-  // Write: replace all bindings atomically
-  await tx.agentPiPackage.deleteMany({ where: { agentId } });
-  if (piPackages.length > 0) {
-    await tx.agentPiPackage.createMany({
-      data: piPackages.map((pkg) => ({
-        agentId,
-        marketInstallId: pkg.marketInstallId,
-        releaseId: pkg.releaseId,
-      })),
+  await tx.agentPiPackage.deleteMany({
+    where: {
+      agentId,
+      agent: { workspaceId },
+      marketInstallId: { notIn: pins.map((pin) => pin.marketInstallId) },
+    },
+  });
+  for (const pin of pins) {
+    const retained = existing.find(
+      (bound) => bound.marketInstallId === pin.marketInstallId,
+    );
+    if (retained?.releaseId === pin.releaseId) continue;
+    await tx.agentPiPackage.upsert({
+      where: {
+        agentId_marketInstallId: {
+          agentId,
+          marketInstallId: pin.marketInstallId,
+        },
+      },
+      create: { agentId, ...pin },
+      update: {
+        releaseId: pin.releaseId,
+        syncStatus: "synced",
+        targetReleaseId: null,
+        syncRequestedById: null,
+        syncError: null,
+      },
     });
   }
 }
@@ -554,7 +646,7 @@ export async function setAgentPiPackages(
         where: {
           id: agentId,
           workspaceId,
-          runtimeKind: "pi-sdk",
+          runtimeKind: { in: ["pi-sdk", "omp"] },
           publicRuntimeAllocation: null,
           workspace: { status: "active" },
         },
@@ -572,79 +664,76 @@ export async function setAgentPiPackages(
   );
 }
 
+async function requireAgentWorkspaceResource(
+  tx: Prisma.TransactionClient,
+  workspaceId: string,
+  agentId: string,
+  resource: { kind: "skill" | "mcp"; id: string },
+) {
+  await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${workspaceId} FOR UPDATE`;
+  const agent = await tx.agent.findFirst({
+    where: {
+      id: agentId,
+      workspaceId,
+      runtimeKind: { in: ["pi-sdk", "omp"] },
+      publicRuntimeAllocation: null,
+      workspace: { status: "active" },
+    },
+    select: { sandboxes: { select: { sandboxId: true } } },
+  });
+  if (!agent) throw new AgentConfigurationError("resource_binding_unavailable");
+  if (agent.sandboxes.some(({ sandboxId }) => sandboxExecutionBusy(sandboxId)))
+    throw new AgentConfigurationError("resource_binding_busy");
+  const task = await tx.a2ATask.findFirst({
+    where: {
+      context: { agentId, workspaceId },
+      state: { notIn: TERMINAL },
+    },
+    select: { id: true },
+  });
+  const work = await tx.workSession.findFirst({
+    where: {
+      agentId,
+      workspaceId,
+      status: { in: ["queued", "running", "cancelling"] },
+    },
+    select: { id: true },
+  });
+  if (task || work) throw new AgentConfigurationError("resource_binding_busy");
+  const selected =
+    resource.kind === "skill"
+      ? await tx.installedSkill.findFirst({
+          where: { id: resource.id, workspaceId },
+        })
+      : await tx.deployment.findFirst({
+          where: {
+            id: resource.id,
+            workspaceId,
+            OR: [{ source: null }, { source: { not: "sandbox" } }],
+          },
+        });
+  if (!selected)
+    throw new AgentConfigurationError("resource_binding_unavailable");
+}
+
 export async function bindAgentWorkspaceResource(
   workspaceId: string,
   agentId: string,
   resource: { kind: "skill" | "mcp"; id: string },
 ) {
-  return withAgentMaintenanceLease(agentId, () =>
-    db.$transaction(async (tx) => {
-      await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${workspaceId} FOR UPDATE`;
-      const agent = await tx.agent.findFirst({
-        where: {
-          id: agentId,
-          workspaceId,
-          runtimeKind: "pi-sdk",
-          publicRuntimeAllocation: null,
-          workspace: { status: "active" },
-        },
-        select: { sandboxes: { select: { sandboxId: true } } },
+  return withAgentMaintenanceLease(agentId, async () => {
+    if (resource.kind === "mcp") {
+      await db.$transaction((tx) =>
+        requireAgentWorkspaceResource(tx, workspaceId, agentId, resource),
+      );
+      await ensureWorkspaceMcpDeploymentPinned({
+        workspaceId,
+        deploymentId: resource.id,
       });
-      if (!agent)
-        throw new AgentConfigurationError("resource_binding_unavailable");
-      if (
-        agent.sandboxes.some(({ sandboxId }) => sandboxExecutionBusy(sandboxId))
-      )
-        throw new AgentConfigurationError("resource_binding_busy");
-      const task = await tx.a2ATask.findFirst({
-        where: {
-          context: { agentId, workspaceId },
-          state: { notIn: TERMINAL },
-        },
-        select: { id: true },
-      });
-      const work = await tx.workSession.findFirst({
-        where: {
-          agentId,
-          workspaceId,
-          status: {
-            in: ["queued", "running", "waiting_approval", "cancelling"],
-          },
-        },
-        select: { id: true },
-      });
-      if (task || work)
-        throw new AgentConfigurationError("resource_binding_busy");
-      const market = {
-        include: { listing: true, currentRelease: true },
-      } as const;
-      const selected =
-        resource.kind === "skill"
-          ? await tx.installedSkill.findFirst({
-              where: { id: resource.id, workspaceId },
-              include: { marketInstall: market },
-            })
-          : await tx.deployment.findFirst({
-              where: {
-                id: resource.id,
-                workspaceId,
-                OR: [{ source: null }, { source: { not: "sandbox" } }],
-              },
-              include: { marketInstall: market },
-            });
-      if (!selected)
-        throw new AgentConfigurationError("resource_binding_unavailable");
-      const install = selected.marketInstall;
-      if (
-        install &&
-        (!["ready", "modified", "setup_required"].includes(install.status) ||
-          install.currentRelease.reviewStatus !== "approved" ||
-          install.currentRelease.listingId !== install.listingId ||
-          install.listing.status !== "published" ||
-          (install.listing.visibility !== "public" &&
-            install.listing.publisherWorkspaceId !== workspaceId))
-      )
-        throw new AgentConfigurationError("resource_binding_unavailable");
+    }
+    return db.$transaction(async (tx) => {
+      // Recheck ownership and busy state after metadata resolution, before attaching.
+      await requireAgentWorkspaceResource(tx, workspaceId, agentId, resource);
       if (resource.kind === "skill") {
         await tx.agentSkill.upsert({
           where: {
@@ -657,16 +746,23 @@ export async function bindAgentWorkspaceResource(
           update: {},
         });
       } else {
+        const deployment = await tx.deployment.findUniqueOrThrow({
+          where: { id: resource.id },
+        });
         await tx.agentServer.upsert({
           where: {
             agentId_deploymentId: { agentId, deploymentId: resource.id },
           },
-          create: { agentId, deploymentId: resource.id },
-          update: {},
+          create: {
+            agentId,
+            deploymentId: resource.id,
+            allowedToolNames: catalogToolNames(deployment.installCfg),
+          },
+          update: { allowedToolNames: catalogToolNames(deployment.installCfg) },
         });
       }
-    }),
-  );
+    });
+  });
 }
 
 function assertRuntimeProviderFormat(runtime: string, format: string) {
@@ -675,95 +771,6 @@ function assertRuntimeProviderFormat(runtime: string, format: string) {
       `${agentRuntimeDisplayName(runtime)} does not support provider format "${format}".`,
     );
   }
-}
-
-function assertRuntimeSandboxes(
-  runtime: string,
-  requestedIds: readonly string[],
-  sandboxes: readonly {
-    id: string;
-    kind: string;
-    network: string;
-    config?: Prisma.JsonValue | null;
-  }[],
-  allowAutomatic = false,
-) {
-  if (
-    sandboxes.some(
-      ({ config }) =>
-        config &&
-        typeof config === "object" &&
-        !Array.isArray(config) &&
-        config.readOnly === true,
-    )
-  ) {
-    throw new AgentConfigurationError(
-      "Read-only sandboxes cannot be assigned as Agent templates.",
-    );
-  }
-  if (
-    sandboxes.some(
-      ({ config }) =>
-        config &&
-        typeof config === "object" &&
-        !Array.isArray(config) &&
-        config.managedBy === "agent-conversation",
-    )
-  ) {
-    throw new AgentConfigurationError(
-      "Conversation-owned sandboxes cannot be assigned as Agent templates.",
-    );
-  }
-  if (!isDedicatedSandboxRuntimeKind(runtime)) return;
-  if (allowAutomatic && requestedIds.length === 0) return;
-  if (
-    requestedIds.length !== 1 ||
-    sandboxes.length !== 1 ||
-    sandboxes[0]?.kind !== "docker"
-  ) {
-    throw new AgentConfigurationError(
-      `${agentRuntimeDisplayName(runtime)} requires exactly one Docker sandbox.`,
-    );
-  }
-  if (sandboxes[0]?.network === "none") {
-    throw new AgentConfigurationError(
-      `${agentRuntimeDisplayName(runtime)} requires a networked Docker sandbox.`,
-    );
-  }
-}
-
-type SandboxAssignmentConflict = {
-  agent: { name: string };
-  sandbox: { name: string };
-};
-
-function assertSandboxesUnassigned(conflict: SandboxAssignmentConflict | null) {
-  if (!conflict) return;
-  throw new AgentConfigurationError(
-    `Sandbox "${conflict.sandbox.name}" is already assigned to agent "${conflict.agent.name}". Choose an unassigned sandbox.`,
-  );
-}
-
-function isSandboxAssignmentConstraintError(error: unknown): boolean {
-  if (
-    !error ||
-    typeof error !== "object" ||
-    !("code" in error) ||
-    error.code !== "P2002"
-  ) {
-    return false;
-  }
-  const meta = "meta" in error ? error.meta : undefined;
-  return JSON.stringify(meta ?? "").includes("sandboxId");
-}
-
-function rethrowSandboxAssignmentConstraint(error: unknown): never {
-  if (isSandboxAssignmentConstraintError(error)) {
-    throw new AgentConfigurationError(
-      "The selected sandbox was assigned to another agent. Choose an unassigned sandbox.",
-    );
-  }
-  throw error;
 }
 
 type LockedModelProvider = {
@@ -791,7 +798,7 @@ async function lockProvider(
 function uniqueIds(ids: readonly string[]): string[] {
   return [...new Set(ids.filter(Boolean))];
 }
-async function validateNativeModelSelection(
+export async function validateNativeModelSelection(
   tx: Prisma.TransactionClient,
   workspaceId: string,
   runtimeKind: string,
@@ -833,173 +840,172 @@ export async function createConfiguredAgent(
   workspaceId: string,
   cfg: AgentConfig,
   tools: AgentToolSelection,
-  options: CreateAgentOptions,
+  options: CreateAgentOptions & {
+    enable?: boolean;
+    ompConfig?: OmpConfigSnapshot;
+    nativeSubagents?: boolean;
+    authorize?: (tx: Prisma.TransactionClient) => Promise<void>;
+  },
 ) {
-  if (options.runtime && options.runtime !== "pi-sdk") {
-    throw new AgentConfigurationError("Only native Pi Agents can be created.");
-  }
-  const runtime = "pi-sdk";
-  if (tools.sandboxIds?.length) {
+  const runtime = options.runtime ?? "pi-sdk";
+  if (!isExecutableAgentRuntimeKind(runtime)) {
     throw new AgentConfigurationError(
-      "New Agents receive an automatic dedicated sandbox template.",
+      "Only native Pi and OMP Agents can be created.",
     );
   }
   const cleanName = cfg.name.trim() || "New agent";
   const deploymentIds = uniqueIds(tools.deploymentIds);
   const installedSkillIds = uniqueIds(tools.installedSkillIds);
   const toolkitIds = uniqueIds(tools.toolkitIds);
-  const sandboxIds = uniqueIds(tools.sandboxIds ?? []);
-  const subAgentIds = uniqueIds(tools.subAgentIds ?? []);
 
-  try {
-    return await db.$transaction(
-      async (tx) => {
-        if (options.piPackages !== undefined || cfg.piPackages !== undefined) {
-          await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${workspaceId} FOR UPDATE`;
-        }
-        await lockAgentSlugNamespace(tx, workspaceId);
-        const slug = await uniqueAgentSlug(tx, workspaceId, slugify(cleanName));
-        const sandboxSlug = await uniqueSandboxSlug(
-          tx,
-          workspaceId,
-          slug,
-          "workspace",
-        );
-        if (cfg.model && !cfg.providerId) {
+  const selectedDeployments = await db.deployment.findMany({
+    where: {
+      id: { in: deploymentIds },
+      workspaceId,
+      OR: [{ source: null }, { source: { not: "sandbox" } }],
+    },
+    select: { id: true },
+  });
+  assertExactResources("MCP deployment", deploymentIds, selectedDeployments);
+  for (const { id } of selectedDeployments) {
+    const deployment = await ensureWorkspaceMcpDeploymentPinned({
+      workspaceId,
+      deploymentId: id,
+    });
+    if (options.enable) await prepareSessionMcpDefinition(deployment);
+  }
+  return await db.$transaction(
+    async (tx) => {
+      await options.authorize?.(tx);
+      if (options.piPackages !== undefined || cfg.piPackages !== undefined) {
+        await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${workspaceId} FOR UPDATE`;
+      }
+      await lockAgentSlugNamespace(tx, workspaceId);
+      const slug = await uniqueAgentSlug(tx, workspaceId, slugify(cleanName));
+      const sandboxSlug = await uniqueSandboxSlug(
+        tx,
+        workspaceId,
+        slug,
+        "workspace",
+      );
+      if (cfg.model && !cfg.providerId) {
+        throw new AgentConfigurationError("A model requires a model provider.");
+      }
+      if (cfg.providerId) {
+        const provider = await lockProvider(tx, workspaceId, cfg.providerId);
+        if (!provider)
           throw new AgentConfigurationError(
-            "A model requires a model provider.",
+            `Unknown model provider: ${cfg.providerId}`,
+          );
+        assertRuntimeProviderFormat(runtime, provider.format);
+        if (cfg.model && !provider.models.includes(cfg.model)) {
+          throw new AgentConfigurationError(
+            `Unknown or unavailable model: ${cfg.model}`,
           );
         }
-        if (cfg.providerId) {
-          const provider = await lockProvider(tx, workspaceId, cfg.providerId);
-          if (!provider)
-            throw new AgentConfigurationError(
-              `Unknown model provider: ${cfg.providerId}`,
-            );
-          assertRuntimeProviderFormat(runtime, provider.format);
-          if (cfg.model && !provider.models.includes(cfg.model)) {
-            throw new AgentConfigurationError(
-              `Unknown or unavailable model: ${cfg.model}`,
-            );
-          }
-        }
+      }
 
-        // Interactive transactions use one pg connection; keep these awaits
-        // sequential so the adapter never issues overlapping client.query calls.
-        const deployments = await tx.deployment.findMany({
-          where: {
-            id: { in: deploymentIds },
-            workspaceId,
-            OR: [{ source: null }, { source: { not: "sandbox" } }],
-          },
-          select: { id: true },
-        });
-        const skills = await tx.installedSkill.findMany({
-          where: { id: { in: installedSkillIds }, workspaceId },
-          select: { id: true },
-        });
-        const toolkits = await tx.toolkit.findMany({
-          where: { id: { in: toolkitIds }, workspaceId },
-          select: { id: true },
-        });
-        const sandboxes = await tx.sandbox.findMany({
-          where: {
-            id: { in: sandboxIds },
-            workspaceId,
-            deployment: { status: { notIn: UNAVAILABLE_SANDBOX_STATUSES } },
-          },
-          select: { id: true, kind: true, network: true, config: true },
-        });
-        const subAgents = await tx.agent.findMany({
-          where: { id: { in: subAgentIds }, workspaceId },
-          select: { id: true },
-        });
-        const sandboxConflict = await tx.agentSandbox.findFirst({
-          where: { sandboxId: { in: sandboxIds } },
-          select: {
-            agent: { select: { name: true } },
-            sandbox: { select: { name: true } },
-          },
-        });
-        assertExactResources("MCP deployment", deploymentIds, deployments);
-        assertExactResources("installed skill", installedSkillIds, skills);
-        assertExactResources("toolkit", toolkitIds, toolkits);
-        assertExactResources("sandbox", sandboxIds, sandboxes);
-        assertExactResources("sub-agent", subAgentIds, subAgents);
-        assertRuntimeSandboxes(runtime, sandboxIds, sandboxes, true);
-        assertSandboxesUnassigned(sandboxConflict);
+      // Interactive transactions use one pg connection; keep these awaits
+      // sequential so the adapter never issues overlapping client.query calls.
+      const deployments = await tx.deployment.findMany({
+        where: {
+          id: { in: deploymentIds },
+          workspaceId,
+          OR: [{ source: null }, { source: { not: "sandbox" } }],
+        },
+        select: { id: true, installCfg: true },
+      });
+      const skills = await tx.installedSkill.findMany({
+        where: { id: { in: installedSkillIds }, workspaceId },
+        select: { id: true },
+      });
+      const toolkits = await tx.toolkit.findMany({
+        where: { id: { in: toolkitIds }, workspaceId },
+        select: { id: true },
+      });
+      const externalSandboxes = await validateExternalSandboxes(
+        tx,
+        workspaceId,
+        tools.externalSandboxes ?? [],
+      );
+      assertExactResources("MCP deployment", deploymentIds, deployments);
+      assertExactResources("installed skill", installedSkillIds, skills);
+      assertExactResources("toolkit", toolkitIds, toolkits);
 
-        const agent = await createAgentRecords(
-          tx,
-          workspaceId,
-          cleanName,
-          slug,
-          options,
-          sandboxSlug,
-        );
-        await tx.agent.update({
-          where: { id: agent.id },
-          data: {
-            name: cleanName,
-            description: cfg.description?.trim() || null,
-            systemPrompt: cfg.systemPrompt,
-            providerId: cfg.providerId,
-            model: cfg.providerId ? cfg.model : null,
-            disabledBuiltinTools: normalizeDisabledBuiltinTools(
-              runtime,
-              cfg.disabledBuiltinTools,
-            ),
-            maxSteps: cfg.maxSteps,
-          },
+      const agent = await createAgentRecords(
+        tx,
+        workspaceId,
+        cleanName,
+        slug,
+        options,
+        sandboxSlug,
+      );
+      await tx.agent.update({
+        where: { id: agent.id },
+        data: {
+          name: cleanName,
+          description: cfg.description?.trim() || null,
+          systemPrompt: cfg.systemPrompt,
+          providerId: cfg.providerId,
+          model: cfg.providerId ? cfg.model : null,
+          disabledBuiltinTools: normalizeDisabledBuiltinTools(
+            runtime,
+            cfg.disabledBuiltinTools,
+          ),
+          maxSteps: cfg.maxSteps,
+          ...(runtime === "omp" && options.nativeSubagents
+            ? { subagentMode: "native" }
+            : {}),
+          ...(runtime === "omp" && options.ompConfig
+            ? { ompConfig: options.ompConfig as Prisma.InputJsonValue }
+            : {}),
+        },
+      });
+      await tx.agentServer.createMany({
+        data: deployments.map(({ id, installCfg }) => ({
+          agentId: agent.id,
+          deploymentId: id,
+          allowedToolNames: catalogToolNames(installCfg),
+        })),
+      });
+      await tx.agentSkill.createMany({
+        data: skills.map(({ id }) => ({
+          agentId: agent.id,
+          installedSkillId: id,
+        })),
+      });
+      await tx.agentToolkit.createMany({
+        data: toolkits.map(({ id }) => ({
+          agentId: agent.id,
+          toolkitId: id,
+        })),
+      });
+      await tx.agentExternalSandbox.createMany({
+        data: externalSandboxes.map(({ sandboxId, access }) => ({
+          agentId: agent.id,
+          sandboxId,
+          access,
+        })),
+      });
+      await validateAndWritePiPackages(
+        tx,
+        workspaceId,
+        agent.id,
+        runtime,
+        options.piPackages ?? cfg.piPackages,
+      );
+      if (options.enable) {
+        const config = await captureAgentRevisionConfig(tx, agent.id);
+        await publishAgentRevisionInTransaction(tx, workspaceId, agent.id, {
+          expectedRevisionId: null,
+          config,
         });
-        await tx.agentServer.createMany({
-          data: deployments.map(({ id }) => ({
-            agentId: agent.id,
-            deploymentId: id,
-          })),
-        });
-        await tx.agentSkill.createMany({
-          data: skills.map(({ id }) => ({
-            agentId: agent.id,
-            installedSkillId: id,
-          })),
-        });
-        await tx.agentToolkit.createMany({
-          data: toolkits.map(({ id }) => ({
-            agentId: agent.id,
-            toolkitId: id,
-          })),
-        });
-        await tx.agentSandbox.createMany({
-          data: sandboxes.map(({ id }) => ({
-            agentId: agent.id,
-            sandboxId: id,
-            isDefault:
-              isDedicatedSandboxRuntimeKind(runtime) ||
-              id === tools.defaultSandboxId ||
-              (!tools.defaultSandboxId && id === sandboxes[0]?.id),
-          })),
-        });
-        await tx.agentSubAgent.createMany({
-          data: subAgents.map(({ id }) => ({
-            parentId: agent.id,
-            childId: id,
-          })),
-        });
-        await validateAndWritePiPackages(
-          tx,
-          workspaceId,
-          agent.id,
-          runtime,
-          options.piPackages ?? cfg.piPackages,
-        );
-        return agent;
-      },
-      { maxWait: 10_000, timeout: 30_000 },
-    );
-  } catch (error) {
-    rethrowSandboxAssignmentConstraint(error);
-  }
+      }
+      await options.authorize?.(tx);
+      return agent;
+    },
+    { maxWait: 10_000, timeout: options.enable ? 120_000 : 30_000 },
+  );
 }
 
 export async function updateAgent(
@@ -1098,153 +1104,6 @@ export async function updateAgentModelSelection(
   });
 }
 
-async function requireMcpConnectionAdmin(
-  tx: Pick<Prisma.TransactionClient, "user" | "workspace">,
-  workspaceId: string,
-  userId: string,
-) {
-  const user = await tx.user.findFirst({
-    where: { id: userId, status: "active" },
-    select: { role: true },
-  });
-  const workspace =
-    user &&
-    (await tx.workspace.findFirst({
-      where: {
-        id: workspaceId,
-        status: "active",
-        OR: [
-          { ownerId: userId },
-          { members: { some: { userId, role: { in: ["owner", "admin"] } } } },
-          ...(user.role === "admin" ? [{}] : []),
-        ],
-      },
-      select: { id: true },
-    }));
-  if (!workspace)
-    throw new AgentConfigurationError("MCP_CONNECTION_NOT_AUTHORIZED");
-}
-
-export type ReviewedAgentMcpConnection = {
-  deploymentId: string;
-  allowedToolNames: string[];
-  prepared: PreparedSessionMcpDefinition;
-};
-
-/** Authorize reviewed connection scopes in the caller's atomic publication transaction. */
-export async function applyReviewedAgentMcpGrantsInTransaction(
-  tx: Prisma.TransactionClient,
-  input: {
-    workspaceId: string;
-    userId: string;
-    agentId: string;
-    expectedRevisionId: string;
-    connections: readonly ReviewedAgentMcpConnection[];
-  },
-) {
-  await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${input.workspaceId} FOR UPDATE`;
-  await requireMcpConnectionAdmin(tx, input.workspaceId, input.userId);
-  await tx.$queryRaw`SELECT id FROM "Agent" WHERE id=${input.agentId} AND "workspaceId"=${input.workspaceId} FOR UPDATE`;
-  const agent = await tx.agent.findFirst({
-    where: {
-      id: input.agentId,
-      workspaceId: input.workspaceId,
-      runtimeKind: "pi-sdk",
-      retiredAt: null,
-      publicRuntimeAllocation: { is: null },
-    },
-    select: { id: true },
-  });
-  if (!agent) throw new AgentConfigurationError("AGENT_EXECUTION_RETIRED");
-  const current = await pinCurrentAgentRevision(tx, input.agentId);
-  if (current.id !== input.expectedRevisionId)
-    throw new AgentRevisionError("AGENT_REVISION_CONFLICT");
-  if (
-    new Set(input.connections.map((entry) => entry.deploymentId)).size !==
-    input.connections.length
-  )
-    throw new AgentConfigurationError("MCP_TOOL_SELECTION_CHANGED");
-  const grants: AgentRevisionConfig["mcpGrants"] = [];
-  for (const connection of [...input.connections].sort((left, right) =>
-    left.deploymentId.localeCompare(right.deploymentId),
-  )) {
-    const allowedToolNames = z
-      .array(z.string().min(1).max(240))
-      .max(1_000)
-      .refine((names) => new Set(names).size === names.length)
-      .parse(connection.allowedToolNames);
-    await tx.$queryRaw`SELECT id FROM "Deployment" WHERE id=${connection.deploymentId} AND "workspaceId"=${input.workspaceId} FOR UPDATE`;
-    const live = await tx.deployment.findFirst({
-      where: {
-        id: connection.deploymentId,
-        workspaceId: input.workspaceId,
-        OR: [{ source: null }, { source: { not: "sandbox" } }],
-      },
-    });
-    if (
-      !live ||
-      mcpDefinitionChecksum(live) !== connection.prepared.definitionChecksum
-    )
-      throw new AgentConfigurationError("MCP_DEFINITION_CHANGED");
-    const sandboxId = current.config.sandboxTemplateId;
-    const sandbox =
-      sandboxId &&
-      (await tx.agentSandbox.findFirst({
-        where: {
-          agentId: input.agentId,
-          sandboxId,
-          isDefault: true,
-          sandbox: { workspaceId: input.workspaceId, kind: "docker" },
-        },
-        select: { sandboxId: true },
-      }));
-    const runtimeFilesChecksum = await mcpRuntimeFilesChecksum(
-      tx,
-      connection.deploymentId,
-    );
-    const discovery = readMcpInspectorConnection(live.installCfg);
-    if (
-      !sandbox ||
-      !discovery ||
-      discovery.sandboxId !== sandboxId ||
-      discovery.definitionChecksum !== connection.prepared.definitionChecksum ||
-      discovery.runtimeFilesChecksum !== runtimeFilesChecksum
-    )
-      throw new AgentConfigurationError("MCP_DISCOVERY_REQUIRED");
-    const discoveredNames = new Set(
-      readMcpToolCatalog(live.installCfg).map((tool) => tool.name),
-    );
-    if (allowedToolNames.some((name) => !discoveredNames.has(name)))
-      throw new AgentConfigurationError("MCP_TOOL_SELECTION_CHANGED");
-    if (
-      live.mcpToolExposure === "allowlist" &&
-      allowedToolNames.some((name) => !live.mcpAllowedTools.includes(name))
-    )
-      throw new AgentConfigurationError("MCP_TOOLS_NOT_EXPOSED");
-    await tx.agentServer.upsert({
-      where: {
-        agentId_deploymentId: {
-          agentId: input.agentId,
-          deploymentId: connection.deploymentId,
-        },
-      },
-      create: {
-        agentId: input.agentId,
-        deploymentId: connection.deploymentId,
-        allowedToolNames,
-      },
-      update: { allowedToolNames },
-    });
-    grants.push({
-      deploymentId: connection.deploymentId,
-      ...connection.prepared,
-      runtimeFilesChecksum,
-      allowedToolNames,
-    });
-  }
-  return { current, grants };
-}
-
 export async function setAgentTools(
   workspaceId: string,
   agentId: string,
@@ -1253,49 +1112,26 @@ export async function setAgentTools(
   return withAgentMaintenanceLease(agentId, async () => {
     const agent = await db.agent.findFirst({
       where: { id: agentId, workspaceId },
-      select: {
-        id: true,
-        runtimeKind: true,
-        retiredAt: true,
-        sandboxes: { select: { sandboxId: true } },
-      },
+      select: { id: true, runtimeKind: true, retiredAt: true },
     });
     if (!agent) return;
     assertNativeAgent(agent.runtimeKind, agent.retiredAt);
-    const previousIds = agent.sandboxes.map(({ sandboxId }) => sandboxId);
-    const requestedSandboxIds = uniqueIds(
-      tools.sandboxIds?.length ? tools.sandboxIds : previousIds,
-    );
-    if (
-      previousIds.length !== requestedSandboxIds.length ||
-      previousIds.some((id) => !requestedSandboxIds.includes(id))
-    ) {
-      const allocated = await db.sandbox.findFirst({
-        where: {
-          workspaceId,
-          AND: [
-            { config: { path: ["managedBy"], equals: "agent-conversation" } },
-            { config: { path: ["agentId"], equals: agentId } },
-          ],
-        },
-        select: { id: true },
-      });
-      if (allocated)
-        throw new AgentConfigurationError(
-          "Delete this Agent's isolated conversations/native contexts and finish their sandbox cleanup before changing its assigned template.",
-        );
-    }
-    const [
-      deployments,
-      skills,
-      toolkits,
-      sandboxes,
-      subAgents,
-      sandboxConflict,
-    ] = await Promise.all([
+    // The Agent's own sandbox is fixed at creation; only attachments change here.
+    const externalSandboxes =
+      tools.externalSandboxes &&
+      (await validateExternalSandboxes(
+        db,
+        workspaceId,
+        tools.externalSandboxes,
+      ));
+    const [deployments, skills, toolkits] = await Promise.all([
       db.deployment.findMany({
-        where: { id: { in: tools.deploymentIds }, workspaceId },
-        select: { id: true },
+        where: {
+          id: { in: tools.deploymentIds },
+          workspaceId,
+          OR: [{ source: null }, { source: { not: "sandbox" } }],
+        },
+        select: { id: true, installCfg: true },
       }),
       db.installedSkill.findMany({
         where: { id: { in: tools.installedSkillIds }, workspaceId },
@@ -1305,78 +1141,52 @@ export async function setAgentTools(
         where: { id: { in: tools.toolkitIds }, workspaceId },
         select: { id: true },
       }),
-      db.sandbox.findMany({
+    ]);
+    for (const { id } of deployments)
+      await ensureWorkspaceMcpDeploymentPinned({
+        workspaceId,
+        deploymentId: id,
+      });
+    await db.$transaction([
+      db.agentServer.deleteMany({
         where: {
-          id: { in: requestedSandboxIds },
-          workspaceId,
-          deployment: {
-            status: { notIn: UNAVAILABLE_SANDBOX_STATUSES },
+          agentId,
+          deploymentId: { notIn: deployments.map(({ id }) => id) },
+        },
+      }),
+      db.agentSkill.deleteMany({ where: { agentId } }),
+      db.agentToolkit.deleteMany({ where: { agentId } }),
+      ...(externalSandboxes
+        ? [
+            db.agentExternalSandbox.deleteMany({ where: { agentId } }),
+            db.agentExternalSandbox.createMany({
+              data: externalSandboxes.map(({ sandboxId, access }) => ({
+                agentId,
+                sandboxId,
+                access,
+              })),
+            }),
+          ]
+        : []),
+      ...deployments.map((deployment) => {
+        const data = {
+          allowedToolNames: catalogToolNames(deployment.installCfg),
+        };
+        return db.agentServer.upsert({
+          where: {
+            agentId_deploymentId: { agentId, deploymentId: deployment.id },
           },
-        },
-        select: { id: true, kind: true, network: true, config: true },
+          create: { agentId, deploymentId: deployment.id, ...data },
+          update: data,
+        });
       }),
-      // Same-workspace agents only, never the agent itself (no self-delegation).
-      db.agent.findMany({
-        where: {
-          id: { in: tools.subAgentIds ?? [], not: agentId },
-          workspaceId,
-        },
-        select: { id: true },
+      db.agentSkill.createMany({
+        data: skills.map((s) => ({ agentId, installedSkillId: s.id })),
       }),
-      db.agentSandbox.findFirst({
-        where: {
-          sandboxId: { in: requestedSandboxIds },
-          agentId: { not: agentId },
-        },
-        select: {
-          agent: { select: { name: true } },
-          sandbox: { select: { name: true } },
-        },
+      db.agentToolkit.createMany({
+        data: toolkits.map((t) => ({ agentId, toolkitId: t.id })),
       }),
     ]);
-    assertRuntimeSandboxes(agent.runtimeKind, requestedSandboxIds, sandboxes);
-    assertSandboxesUnassigned(sandboxConflict);
-    try {
-      await db.$transaction([
-        db.agentServer.deleteMany({
-          where: {
-            agentId,
-            deploymentId: {
-              notIn: deployments.map((deployment) => deployment.id),
-            },
-          },
-        }),
-        db.agentSkill.deleteMany({ where: { agentId } }),
-        db.agentToolkit.deleteMany({ where: { agentId } }),
-        db.agentSandbox.deleteMany({ where: { agentId } }),
-        db.agentSubAgent.deleteMany({ where: { parentId: agentId } }),
-        db.agentServer.createMany({
-          data: deployments.map((d) => ({ agentId, deploymentId: d.id })),
-          skipDuplicates: true,
-        }),
-        db.agentSkill.createMany({
-          data: skills.map((s) => ({ agentId, installedSkillId: s.id })),
-        }),
-        db.agentToolkit.createMany({
-          data: toolkits.map((t) => ({ agentId, toolkitId: t.id })),
-        }),
-        db.agentSandbox.createMany({
-          data: sandboxes.map((s) => ({
-            agentId,
-            sandboxId: s.id,
-            isDefault:
-              isDedicatedSandboxRuntimeKind(agent.runtimeKind) ||
-              s.id === tools.defaultSandboxId ||
-              (!tools.defaultSandboxId && s.id === sandboxes[0]?.id),
-          })),
-        }),
-        db.agentSubAgent.createMany({
-          data: subAgents.map((s) => ({ parentId: agentId, childId: s.id })),
-        }),
-      ]);
-    } catch (error) {
-      rethrowSandboxAssignmentConstraint(error);
-    }
   });
 }
 
@@ -1384,39 +1194,10 @@ export async function getAgentDeleteTargets(
   workspaceId: string,
   agentId: string,
 ) {
-  const agent = await db.agent.findFirst({
+  const deletableAgents = await db.agent.findMany({
     where: { id: agentId, workspaceId },
     select: {
       id: true,
-      marketInstall: { select: { resourceMap: true } },
-    },
-  });
-  if (!agent) return { agentIds: [], sandboxes: [] };
-  const map = agent.marketInstall
-    ? parseAgentMarketResourceMap(agent.marketInstall.resourceMap)
-    : null;
-  if (
-    agent.marketInstall &&
-    (!map || !Object.values(map.agents).includes(agentId))
-  ) {
-    throw new Error("The marketplace install resource map is invalid.");
-  }
-  const requestedAgentIds = map
-    ? [...new Set([agentId, ...Object.values(map.agents)])]
-    : [agentId];
-  const agents = await db.agent.findMany({
-    where: { workspaceId, id: { in: requestedAgentIds } },
-    select: {
-      id: true,
-      parentLinks: {
-        where: { parentId: { notIn: requestedAgentIds } },
-        take: 1,
-        select: { parentId: true },
-      },
-      marketInstall: { select: { id: true } },
-      unifiedMarketInstall: { select: { id: true } },
-      sourceMarketListing: { select: { id: true } },
-      publicEndpoints: { take: 1, select: { id: true } },
       sandboxes: {
         select: {
           sandbox: {
@@ -1432,16 +1213,6 @@ export async function getAgentDeleteTargets(
       },
     },
   });
-  const deletableAgents = agents.filter(
-    (candidate) =>
-      candidate.id === agentId ||
-      (candidate.parentLinks.length === 0 &&
-        !candidate.marketInstall &&
-        !candidate.unifiedMarketInstall &&
-        !candidate.sourceMarketListing &&
-        candidate.publicEndpoints.length === 0),
-  );
-  const allowedSandboxIds = new Set(Object.values(map?.sandboxes ?? {}));
   const sandboxes = new Map<
     string,
     {
@@ -1455,12 +1226,6 @@ export async function getAgentDeleteTargets(
   for (const candidate of deletableAgents.flatMap((row) =>
     row.sandboxes.map(({ sandbox }) => sandbox),
   )) {
-    if (
-      map &&
-      allowedSandboxIds.size > 0 &&
-      !allowedSandboxIds.has(candidate.id)
-    )
-      continue;
     const config = candidate.deployment.installCfg;
     const volumeName =
       config &&
@@ -1510,201 +1275,6 @@ export async function deleteAgent(
 }
 
 async function deleteAgentRecords(workspaceId: string, agentId: string) {
-  const install = await db.agentInstall.findFirst({
-    where: { agentId, targetWorkspaceId: workspaceId },
-    select: {
-      id: true,
-      resourceMap: true,
-      release: { select: { listingId: true } },
-    },
-  });
-  if (install) {
-    const resourceMap = parseAgentMarketResourceMap(install.resourceMap);
-    if (!resourceMap || !Object.values(resourceMap.agents).includes(agentId)) {
-      throw new Error("The marketplace install resource map is invalid.");
-    }
-    const candidateAgentIds = [...new Set(Object.values(resourceMap.agents))];
-    return db.$transaction(
-      async (tx) => {
-        const candidates = await tx.agent.findMany({
-          where: { workspaceId, id: { in: candidateAgentIds } },
-          select: {
-            id: true,
-            parentLinks: {
-              where: { parentId: { notIn: candidateAgentIds } },
-              take: 1,
-              select: { parentId: true },
-            },
-            marketInstall: { select: { id: true } },
-            unifiedMarketInstall: { select: { id: true } },
-            sourceMarketListing: { select: { id: true } },
-            publicEndpoints: { take: 1, select: { id: true } },
-          },
-        });
-        const deletableAgentIds = candidates
-          .filter(
-            (candidate) =>
-              candidate.id === agentId ||
-              (candidate.parentLinks.length === 0 &&
-                !candidate.marketInstall &&
-                !candidate.unifiedMarketInstall &&
-                !candidate.sourceMarketListing &&
-                candidate.publicEndpoints.length === 0),
-          )
-          .map(({ id }) => id);
-
-        const candidateToolkitIds = [
-          ...new Set(Object.values(resourceMap.toolkits)),
-        ];
-        const toolkits = await tx.toolkit.findMany({
-          where: { workspaceId, id: { in: candidateToolkitIds } },
-          select: {
-            id: true,
-            visibility: true,
-            agentLinks: {
-              where: { agentId: { notIn: deletableAgentIds } },
-              take: 1,
-              select: { agentId: true },
-            },
-            sourceMarketListing: { select: { id: true } },
-            marketInstall: { select: { id: true } },
-            installLinks: { take: 1, select: { id: true } },
-            apiTokens: { take: 1, select: { id: true } },
-          },
-        });
-        const deletableToolkitIds = toolkits
-          .filter(
-            (toolkit) =>
-              toolkit.visibility === "private" &&
-              toolkit.agentLinks.length === 0 &&
-              !toolkit.sourceMarketListing &&
-              !toolkit.marketInstall &&
-              toolkit.installLinks.length === 0 &&
-              toolkit.apiTokens.length === 0,
-          )
-          .map(({ id }) => id);
-
-        const candidateDeploymentIds = [
-          ...new Set(Object.values(resourceMap.deployments)),
-        ];
-        const deployments = await tx.deployment.findMany({
-          where: { workspaceId, id: { in: candidateDeploymentIds } },
-          select: {
-            id: true,
-            serverId: true,
-            publicInvocable: true,
-            agentLinks: {
-              where: { agentId: { notIn: deletableAgentIds } },
-              take: 1,
-              select: { agentId: true },
-            },
-            toolkitLinks: {
-              where: { toolkitId: { notIn: deletableToolkitIds } },
-              take: 1,
-              select: { toolkitId: true },
-            },
-            chatAssistantGrants: { take: 1, select: { assistantId: true } },
-            sourceMarketListing: { select: { id: true } },
-            marketInstall: { select: { id: true } },
-          },
-        });
-        const deletableDeploymentIds = deployments
-          .filter(
-            (deployment) =>
-              !deployment.serverId &&
-              !deployment.publicInvocable &&
-              deployment.agentLinks.length === 0 &&
-              deployment.toolkitLinks.length === 0 &&
-              deployment.chatAssistantGrants.length === 0 &&
-              !deployment.sourceMarketListing &&
-              !deployment.marketInstall,
-          )
-          .map(({ id }) => id);
-
-        const candidateSkillIds = [
-          ...new Set(Object.values(resourceMap.skills)),
-        ];
-        const skills = await tx.installedSkill.findMany({
-          where: { workspaceId, id: { in: candidateSkillIds } },
-          select: {
-            id: true,
-            skillId: true,
-            agentLinks: {
-              where: { agentId: { notIn: deletableAgentIds } },
-              take: 1,
-              select: { agentId: true },
-            },
-            toolkitLinks: {
-              where: { toolkitId: { notIn: deletableToolkitIds } },
-              take: 1,
-              select: { toolkitId: true },
-            },
-            sourceMarketListing: { select: { id: true } },
-            marketInstall: { select: { id: true } },
-          },
-        });
-        const deletableSkillIds = skills
-          .filter(
-            (skill) =>
-              !skill.skillId &&
-              skill.agentLinks.length === 0 &&
-              skill.toolkitLinks.length === 0 &&
-              !skill.sourceMarketListing &&
-              !skill.marketInstall,
-          )
-          .map(({ id }) => id);
-
-        const mappedSandboxIds = [
-          ...new Set(Object.values(resourceMap.sandboxes)),
-        ];
-        const legacySandboxes = await tx.sandbox.findMany({
-          where: {
-            workspaceId,
-            agentLinks: {
-              some: { agentId: { in: deletableAgentIds } },
-            },
-            ...(mappedSandboxIds.length > 0
-              ? { id: { in: mappedSandboxIds } }
-              : {}),
-          },
-          select: { id: true, deploymentId: true },
-        });
-        const sandboxDeploymentIds = legacySandboxes.map(
-          ({ deploymentId }) => deploymentId,
-        );
-
-        await tx.agentInstall.delete({ where: { id: install.id } });
-        await tx.agent.deleteMany({
-          where: { workspaceId, id: { in: deletableAgentIds } },
-        });
-        await tx.toolkit.deleteMany({
-          where: { workspaceId, id: { in: deletableToolkitIds } },
-        });
-        await tx.installedSkill.deleteMany({
-          where: { workspaceId, id: { in: deletableSkillIds } },
-        });
-        await tx.deployment.deleteMany({
-          where: {
-            workspaceId,
-            id: {
-              in: [
-                ...new Set([
-                  ...deletableDeploymentIds,
-                  ...sandboxDeploymentIds,
-                ]),
-              ],
-            },
-          },
-        });
-        await tx.agentListing.updateMany({
-          where: { id: install.release.listingId, installCount: { gt: 0 } },
-          data: { installCount: { decrement: 1 } },
-        });
-      },
-      { isolationLevel: "Serializable" },
-    );
-  }
-
   const sandboxes = await db.sandbox.findMany({
     where: { workspaceId, agentLinks: { some: { agentId } } },
     select: { deploymentId: true },
@@ -2337,45 +1907,5 @@ export async function appendConversationTurn(
       },
     });
     return { user, assistant };
-  });
-}
-
-// Re-approving a drifted tool is an operational acknowledgment, not a
-// revision/config change: it clears the pause recorded by
-// syncMcpToolApprovalState once an admin has reviewed the before/after diff.
-export async function approveAgentMcpToolChanges(
-  workspaceId: string,
-  agentId: string,
-  deploymentId: string,
-  toolNames?: readonly string[],
-) {
-  return db.$transaction(async (tx) => {
-    const row = await tx.agentServer.findFirst({
-      where: { agentId, deploymentId, agent: { workspaceId } },
-      select: {
-        agentId: true,
-        deploymentId: true,
-        approvedToolSignatures: true,
-        pendingToolChanges: true,
-      },
-    });
-    if (!row) throw new AgentConfigurationError("MCP_GRANT_NOT_FOUND");
-    const approved = parseApprovedToolSignatures(row.approvedToolSignatures);
-    const pending = parsePendingToolChanges(row.pendingToolChanges);
-    const targets = toolNames ?? Object.keys(pending);
-    for (const name of targets) {
-      const change = pending[name];
-      if (!change) continue;
-      approved[name] = change.currentSignature;
-      delete pending[name];
-    }
-    await tx.agentServer.update({
-      where: { agentId_deploymentId: { agentId, deploymentId } },
-      data: {
-        approvedToolSignatures: approved as Prisma.InputJsonValue,
-        pendingToolChanges: pending as Prisma.InputJsonValue,
-      },
-    });
-    return { approvedToolSignatures: approved, pendingToolChanges: pending };
   });
 }

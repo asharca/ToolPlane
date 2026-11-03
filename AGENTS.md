@@ -1,7 +1,12 @@
 # ToolPlane Agent Instructions
 
 Repository-wide guidance for coding agents. `CLAUDE.md` points here; feature
-details live in `docs/`. Read only the references relevant to the task.
+details live in the [standalone development docs](https://asharca.github.io/toolplane-docs/docs/zh).
+Read only the references relevant to the task. These Chinese-first docs describe
+ongoing development, not a stable production release. Public documentation has
+one authoring source: [`asharca/toolplane-docs`](https://github.com/asharca/toolplane-docs),
+under `content/`; update it there rather than restoring application-local copies.
+The application keeps its root `README.md` and CI-generated `CHANGELOG.md`.
 
 ## Working agreements
 
@@ -48,13 +53,16 @@ in the relevant subsystem document rather than duplicating it.
   MCP requires an account-level Bearer token, never a cookie or toolkit token.
   See `src/lib/auth/request-user.ts` before choosing an auth helper.
 - Public Agent endpoints must not expose container APIs/dashboards, runtime
-  tokens, provider keys, or MCP runtime tokens. Session containers must not receive
+  tokens, provider keys, or MCP runtime tokens. Agent containers must not receive
   Postgres access, user-level ToolPlane tokens, unrelated credentials, or another
-  session's writable volume. Keep secrets out of public responses,
+  Agent's writable volume. Conversations of one Agent share its container and use
+  separate working directories; this is not a security boundary against native shell.
+  An MCP explicitly configured with `installCfg.runInAgentSandbox` exposes its own
+  environment to that Agent sandbox. Keep secrets out of public responses,
   Deployment/Sandbox JSON and Docker inspect environment. See
   `src/lib/agents/runtime-grant.ts`, `src/lib/process/session-mcp.ts` and
-  `docs/RUNTIME_OPERATIONS.zh-CN.md`. Non-Pi runtime history is read-only; do not restore
-  legacy execution or reuse its credentials when creating a new Pi draft.
+  [runtime operations](https://asharca.github.io/toolplane-docs/docs/zh/developers/docs/RUNTIME_OPERATIONS). Retired runtime history is read-only; do not restore
+  legacy execution or reuse its credentials when creating a new Pi or OMP draft.
   Public API infrastructure remains, but no runtime supports public Endpoint execution.
   Hermes Agent records and their history are removed by the runtime-removal migration.
 - Return plaintext API tokens only at creation; persist only their hashes.
@@ -90,7 +98,7 @@ Confirm the database is local before migrating or seeding.
 
 ## Verification
 
-- Keep permanent tests focused on core behavior: auth/workspace isolation, Pi and
+- Keep permanent tests focused on core behavior: auth/workspace isolation, Pi, OMP and
   Assistant execution, immutable revisions/credentials, conversation/Work/A2A
   lifecycle, MCP access, and file/recovery boundaries. Add a regression only for a
   plausible consumer-visible failure or an uncovered core invariant; prefer an
@@ -102,6 +110,10 @@ Confirm the database is local before migrating or seeding.
 - For auth, persistence, runtime, or cross-module changes, include relevant
   integration and negative authorization cases. Run broader lint/test/build
   checks when the impact or requested CI validation warrants them.
+- Runtime changes require a real create/admit → isolated sandbox → native tool result
+  smoke, not only configuration or parser tests. After a dev-server restart, verify
+  `/api/v1/readiness`; preserve the actual runtime environment and ownership domain,
+  excluding inherited Node IPC descriptors when launching an independent process.
 - For documentation or instruction-only edits, check paths, commands, links,
   frontmatter, and the diff. Do not start services or run the application suite
   solely for prose changes.
@@ -128,34 +140,37 @@ sandboxes, and agents. Route groups do not appear in URLs:
 - `src/app/app/[workspace]/`: authenticated console with `DashboardChrome`;
   `/app` redirects to the default workspace.
 - `src/app/api/v1/`: JSON APIs and MCP gateways. Check each route's auth boundary.
+- `/docs`: compatibility redirects to the standalone Pages site, preserving
+  `/docs/{zh|en}/{category}/{topic}` beneath `/toolplane-docs`. The live instance's
+  `/docs-api` and `/api/v1/openapi.json` remain its API reference and schema.
 
 | Task | Start here |
 | --- | --- |
-| Core platform | `docs/README.zh-CN.md` (index); `prisma/schema.prisma` |
-| Shared UI | `docs/UI_LIBRARY.zh-CN.md`; use published `@asharca/ui`. Change shared components/styles in `asharca/ui`, then update the pinned dependency through a PR. Do not recreate `packages/ui` or alias imports to local UI source. |
+| Core platform | [Development docs index](https://asharca.github.io/toolplane-docs/docs/zh); `prisma/schema.prisma` |
+| Shared UI | Baseline: beUI registry [`llms.txt`](https://asharca.github.io/ui/llms.txt) (index, per-component detail/raw source, Markdown docs). Before building UI, look for a matching registry component and vendor its original source into `src/components/motion|agents|blocks/` and `src/lib/`; never restyle vendored source or start a second component library. See [UI library](https://asharca.github.io/toolplane-docs/docs/zh/developers/docs/UI_LIBRARY). Operation results use `notify()` from `src/components/dashboard/Toaster.tsx` (Animated Toast Stack). |
 | MCP runtime/gateway | `src/lib/process/supervisor.ts`, `mcp-client.ts`, `src/app/api/v1/mcp/[deploymentId]/rpc/route.ts` |
 | Auth | `src/lib/auth/request-user.ts`, `session.ts`, `tokens.ts` |
-| Toolkit retirement and client registration | `src/lib/toolkits/cutover.ts`; `docs/TOOLKIT_SYNC.zh-CN.md`; `src/lib/pi-packages/installations.ts`. Legacy execution/tokens are retired; conversion does not grant new authority. |
-| GitHub Resource Center | `src/lib/market/github-registry*.ts`; `docs/RUNTIME_OPERATIONS.zh-CN.md#github-资源中心`. Catalog contents only come from indexed fixed GitHub commits; preserve immutable pins and workspace-private authoring/uploads. No manual catalog publish/ZIP/npm intake paths. |
-| Agent revisions and turns | `src/lib/agents/revisions.ts`, `sandbox-turn.ts`, `conversation-sandbox.ts`; Pi is the only executable kernel (`pi-sdk` internally). New sessions pin an applied revision and receive independent persistent work volumes. |
+| Toolkit retirement and client registration | `src/lib/toolkits/cutover.ts`; [runtime operations](https://asharca.github.io/toolplane-docs/docs/zh/developers/docs/RUNTIME_OPERATIONS); `src/lib/pi-packages/installations.ts`. Legacy execution/tokens are retired; conversion does not grant new authority. |
+| GitHub Plugin Center | `src/lib/market/github-registry*.ts`; [GitHub plugin center](https://asharca.github.io/toolplane-docs/docs/zh/developers/docs/RUNTIME_OPERATIONS#user-content-github-插件中心). Catalog contents only come from indexed fixed GitHub commits; preserve immutable pins and workspace-private authoring/uploads. No manual catalog publish/ZIP/npm intake paths. |
+| Agent revisions and turns | `src/lib/agents/revisions.ts`, `sandbox-turn.ts`, `conversation-sandbox.ts`; Pi (`pi-sdk`) and OMP (`omp`) are independent executable kernels. Sessions pin applied revisions and own separate directories in one persistent sandbox per Agent; package pins remain conversation/context-scoped. OMP config import: `omp-config.ts`, `scripts/export-omp-config.mjs`, `scripts/omp-session.mjs`. |
 | Assistant chat and tools | `src/lib/chat/service.ts`, `run-control.ts`, `tools.ts`; independent Assistant revisions and durable Runs, remote MCP only, no Agent/Skill/package/stdio/A2A execution. |
 | Agent chat and tools | `src/app/api/v1/agents/[agentId]/chat/route.ts`; `src/lib/agents/resolve.ts`, `tools.ts`, `mutations.ts` |
-| Sandboxes and PTY | `docs/SANDBOXES.zh-CN.md`; conversation-scoped routes under `src/app/api/v1/agents/[agentId]/conversations/[conversationId]/` |
-| Messaging channels | `docs/AGENT_MESSAGING_PLATFORMS.zh-CN.md`; `src/lib/agents/channel-*.ts` |
-| Public agent API | `docs/AGENT_PUBLIC_API.zh-CN.md`; `src/lib/agents/public-api/` |
-| Workspace control MCP | `docs/AGENT_CONTROL_MCP.zh-CN.md`; `src/lib/agents/control-mcp.ts`, `control-service.ts`; creation accepts `pi-sdk` and produces an unauthorized draft requiring explicit revision review/application. |
+| Sandboxes and PTY | [Sandboxes](https://asharca.github.io/toolplane-docs/docs/zh/guides/docs/SANDBOXES); conversation-scoped routes under `src/app/api/v1/agents/[agentId]/conversations/[conversationId]/` |
+| Messaging channels | [Messaging platforms](https://asharca.github.io/toolplane-docs/docs/zh/guides/docs/AGENT_MESSAGING_PLATFORMS); `src/lib/agents/channel-*.ts` |
+| Public agent API | [Agent public API](https://asharca.github.io/toolplane-docs/docs/zh/api/docs/AGENT_PUBLIC_API); `src/lib/agents/public-api/` |
+| Workspace control MCP | [Agent Control MCP](https://asharca.github.io/toolplane-docs/docs/zh/api/docs/AGENT_CONTROL_MCP); `src/lib/agents/control-mcp.ts`, `control-service.ts`; creation accepts `pi-sdk` and produces an unauthorized draft requiring explicit revision review/application. |
 | Agent market | `src/lib/agents/market*.ts`; immutable releases use allowlisted manifests without secrets |
 
 MCP deployments run real processes/containers. Reconcile persisted deployment
 status with supervisor live state; observability comes from `LogEvent` (see
-docs/OBSERVABILITY.zh-CN.md).
+[observability](https://asharca.github.io/toolplane-docs/docs/zh/developers/docs/OBSERVABILITY)).
 Agent chat uses the AI SDK UI message stream through `ui-stream.ts`; execution
-uses the pinned Pi revision and its isolated session environment. Preserve
+uses the pinned Pi or OMP revision and its session directory in an Agent-owned sandbox. Preserve
 conversation ownership, immutable artifacts, live authorization narrowing,
 tool-source deduplication, and A2A depth/cycle guards. Assistant Run persistence,
 confirmation recovery and subscription lifecycles remain separate.
 Trust current code over stale architecture descriptions.
-Runtime mutations require the single-owner guard; read `docs/RUNTIME_OPERATIONS.zh-CN.md`
+Runtime mutations require the single-owner guard; read [runtime operations](https://asharca.github.io/toolplane-docs/docs/zh/developers/docs/RUNTIME_OPERATIONS)
 for upgrade/recovery and `src/lib/runtime/` before adding external operations.
 
 ## Repository skill

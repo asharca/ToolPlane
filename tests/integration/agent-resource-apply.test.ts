@@ -12,7 +12,7 @@ import {
   publishAgentRevision,
   resolvePinnedAgent,
 } from "@/lib/agents/revisions";
-import { marketReleaseChecksum } from "@/lib/market/artifact";
+import { marketReleaseChecksum } from "@/lib/pi-packages/artifact";
 import { publishFixtureAgentRevision } from "./agent-revision-fixture";
 
 // These tests intentionally run the real publisher and Docker native preflight.

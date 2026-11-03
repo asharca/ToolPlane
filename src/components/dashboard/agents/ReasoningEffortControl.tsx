@@ -62,7 +62,7 @@ export function ReasoningEffortControl({
             disabled={disabled}
             onClick={() => onChange("default")}
             aria-pressed={value === "default"}
-            className="rounded px-1.5 py-1 text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="rounded-lg px-1.5 py-1 text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             {t("reasoningEffortDefault")}
           </button>

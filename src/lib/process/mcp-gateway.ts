@@ -1,4 +1,6 @@
 import "server-only";
+import { randomUUID } from "node:crypto";
+import { withLogContext } from "@/lib/observability/context";
 import { NextResponse } from "next/server";
 import { livePort } from "@/lib/process/supervisor";
 import { withDeploymentSandboxAccess } from "./deployment-gateway";
@@ -165,7 +167,15 @@ export function proxyMcpRpcRequest(
   req: Request,
   deployment: McpGatewayDeployment,
 ): Promise<Response> {
-  return withDeploymentSandboxAccess(deployment.sandbox?.id, () =>
-    proxyRpcRequest(req, deployment),
+  return withLogContext(
+    {
+      callId: randomUUID(),
+      workspaceId: deployment.workspaceId,
+      deploymentId: deployment.id,
+    },
+    () =>
+      withDeploymentSandboxAccess(deployment.sandbox?.id, () =>
+        proxyRpcRequest(req, deployment),
+      ),
   );
 }

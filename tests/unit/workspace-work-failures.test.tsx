@@ -8,6 +8,16 @@ import {
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { WorkspaceWork } from "@/components/dashboard/work/WorkspaceWork";
+import type * as ConversationMessageModule from "@/components/dashboard/ConversationMessage";
+import {
+  finishWorkOutput,
+  startWorkOutput,
+  subscribeWorkOutput,
+} from "@/lib/work/run-control";
+
+const providers = [
+  { id: "provider-1", name: "OpenAI", models: ["pinned-model"] },
+];
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
@@ -16,9 +26,13 @@ vi.mock("@/lib/agents/actions", () => ({
   deleteAgentAction: vi.fn(),
   pinAgentAction: vi.fn(),
 }));
-vi.mock("@/components/dashboard/ConversationMessage", () => ({
-  AssistantMarkdown: ({ text }: { text: string }) => <div>{text}</div>,
-}));
+vi.mock(
+  "@/components/dashboard/ConversationMessage",
+  async (importOriginal) => ({
+    ...(await importOriginal<typeof ConversationMessageModule>()),
+    AssistantMarkdown: ({ text }: { text: string }) => <div>{text}</div>,
+  }),
+);
 vi.mock("@/components/dashboard/sandboxes/SandboxConsole", () => ({
   SandboxConsole: ({
     deploymentId,
@@ -69,6 +83,7 @@ function show() {
     <WorkspaceWork
       slug="team"
       workspaceId="workspace"
+      providers={providers}
       agents={[agent]}
       sessions={[]}
       selectedWorkSessionId={null}
@@ -95,7 +110,6 @@ const session: WorkSession = {
   conversationId: "conversation",
   sandbox: agent.sandboxes[0] ?? null,
   messages: [],
-  approvals: [],
 };
 function showSession(overrides: Partial<WorkSession> = {}) {
   const selected = { ...session, ...overrides };
@@ -103,6 +117,7 @@ function showSession(overrides: Partial<WorkSession> = {}) {
     <WorkspaceWork
       slug="team"
       workspaceId="workspace"
+      providers={providers}
       agents={[{ ...agent, runtimeKind: selected.runtimeKind }]}
       sessions={[selected]}
       selectedWorkSessionId="work"
@@ -121,6 +136,7 @@ describe("conversation workspace selection", () => {
     const props = {
       slug: "team",
       workspaceId: "workspace",
+      providers,
       agents: [agent],
       sessions: [],
       selectedWorkSessionId: null,
@@ -342,15 +358,9 @@ describe("Work attachment transaction failures", () => {
     );
   });
 
-  it.each([
-    [
-      `/compact ${"x".repeat(2000)}`,
-      "Enter a valid command of at most 2,000 characters.",
-    ],
-    ["/new", "/new is only available in messaging channels."],
-  ])(
+  it.each([`/compact ${"x".repeat(2000)}`, "/new"])(
     "rejects invalid Work command %s without losing the text",
-    async (line, error) => {
+    async (line) => {
       const fetchMock = vi.fn();
       vi.stubGlobal("fetch", fetchMock);
       showSession();
@@ -359,9 +369,10 @@ describe("Work attachment transaction failures", () => {
       });
       fireEvent.change(input, { target: { value: line } });
       fireEvent.click(screen.getByRole("button", { name: "Send prompt" }));
-      await screen.findByText(error);
-      expect(input).toHaveValue(line);
-      expect(fetchMock).not.toHaveBeenCalled();
+      await waitFor(() => expect(input).toHaveValue(line));
+      expect(
+        fetchMock.mock.calls.some(([, init]) => init?.method === "POST"),
+      ).toBe(false);
     },
   );
 
@@ -407,48 +418,6 @@ describe("Work attachment transaction failures", () => {
       fireEvent.click(screen.getByRole("button", { name: "Send prompt" }));
       await screen.findByText(message);
       expect(input).toHaveValue("/compact preserve paths");
-    },
-  );
-
-  it.each(["allow", "deny"])(
-    "submits explicit %s decisions and preserves pending approval on rejection",
-    async (decision) => {
-      const fetchMock = vi
-        .fn()
-        .mockResolvedValue(
-          Response.json(
-            { error: "Approval permission denied" },
-            { status: 403 },
-          ),
-        );
-      vi.stubGlobal("fetch", fetchMock);
-      showSession({
-        status: "waiting_approval",
-        approvals: [
-          {
-            id: "approval",
-            toolCallId: "call",
-            toolName: "delete_file",
-            input: { path: "report.md" },
-            status: "pending",
-          },
-        ],
-      });
-      fireEvent.click(
-        screen.getByRole("button", {
-          name: decision === "allow" ? "Allow once" : "Deny",
-        }),
-      );
-      await screen.findByText("Approval permission denied");
-      expect(fetchMock).toHaveBeenCalledWith(
-        "/api/v1/work-sessions/work/approvals/approval",
-        expect.objectContaining({ body: JSON.stringify({ decision }) }),
-      );
-      expect(
-        screen.queryByRole("combobox", {
-          name: "What should the Agent accomplish?",
-        }),
-      ).not.toBeInTheDocument();
     },
   );
 
@@ -522,5 +491,116 @@ describe("Work attachment transaction failures", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/v1/work-sessions/work", {
       cache: "no-store",
     });
+  });
+});
+
+describe("Work completion notification consumer", () => {
+  it("keeps the live subscription until SSE done even when REST already reports a terminal turn", async () => {
+    const workId = "notification-work";
+    const startedAt = 1_000;
+    const notifications = vi.fn();
+    class BrowserNotification {
+      static permission = "granted";
+      constructor(title: string, options: NotificationOptions) {
+        notifications(title, options);
+      }
+    }
+    // Only the network/browser boundary is replaced. Frames below come from
+    // the production Work output lifecycle, not from the notification helper.
+    class WorkEvents extends EventTarget {
+      static latest: WorkEvents;
+      closed = false;
+      private unsubscribe: () => void;
+      constructor() {
+        super();
+        WorkEvents.latest = this;
+        const subscription = subscribeWorkOutput(workId, (event) => {
+          this.dispatchEvent(
+            new MessageEvent(event.type, {
+              data: JSON.stringify(event.snapshot),
+            }),
+          );
+        });
+        this.unsubscribe = subscription.unsubscribe;
+        queueMicrotask(() => {
+          if (!this.closed) {
+            this.dispatchEvent(
+              new MessageEvent("snapshot", {
+                data: JSON.stringify(subscription.snapshot),
+              }),
+            );
+          }
+        });
+      }
+      close() {
+        this.closed = true;
+        this.unsubscribe();
+      }
+    }
+    vi.stubGlobal("EventSource", WorkEvents);
+    vi.stubGlobal("Notification", BrowserNotification);
+    vi.stubGlobal("isSecureContext", true);
+    const focus = vi.spyOn(document, "hasFocus").mockReturnValue(false);
+    vi.stubGlobal(
+      "navigator",
+      Object.create(navigator, {
+        locks: {
+          value: {
+            request: async (
+              _key: string,
+              _options: unknown,
+              callback: (lock: object) => void,
+            ) => {
+              callback({});
+            },
+          },
+        },
+      }),
+    );
+    window.localStorage.setItem(
+      "toolplane:work-completion-enabled:workspace",
+      "true",
+    );
+    const terminal = { ...session, id: workId, status: "idle" };
+    const fetchMock = vi.fn(async () => Response.json(terminal));
+    vi.stubGlobal("fetch", fetchMock);
+    startWorkOutput(workId, { startedAt });
+    const view = render(
+      <WorkspaceWork
+        slug="team"
+        workspaceId="workspace"
+        providers={providers}
+        agents={[agent]}
+        sessions={[{ ...terminal, status: "running" }]}
+        selectedWorkSessionId={workId}
+      />,
+    );
+    try {
+      await act(async () => {});
+      const events = WorkEvents.latest;
+      // start's real consumer refresh observes the terminal DB status before
+      // the coordinator's finally block emits its terminal SSE frame.
+      act(() => startWorkOutput(workId, { startedAt }));
+      await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+      await act(async () => {});
+      expect(events.closed).toBe(false);
+      expect(notifications).not.toHaveBeenCalled();
+
+      await act(async () => finishWorkOutput(workId));
+      await waitFor(() => expect(notifications).toHaveBeenCalledTimes(1));
+      expect(
+        window.localStorage.getItem(
+          `toolplane:work-completion:workspace:${workId}`,
+        ),
+      ).toBe(String(startedAt));
+      expect(notifications.mock.calls[0]?.[1]).not.toHaveProperty("body");
+      expect(events.closed).toBe(true);
+      act(() => finishWorkOutput(workId));
+      expect(notifications).toHaveBeenCalledTimes(1);
+    } finally {
+      view.unmount();
+      finishWorkOutput(workId);
+      focus.mockRestore();
+    }
   });
 });

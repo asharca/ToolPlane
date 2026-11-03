@@ -8,17 +8,14 @@ import { getAgentForRun } from "@/lib/agents/queries";
 import { resolveAgentPiPackages } from "@/lib/agents/resolve";
 import { runDedicatedSandboxTurn } from "@/lib/agents/sandbox-turn";
 import { createConversation, updateAgent } from "@/lib/agents/mutations";
-import {
-  publishAgentRevision,
-  resolvePinnedAgent,
-} from "@/lib/agents/revisions";
+import { publishAgentRevision } from "@/lib/agents/revisions";
 import { publishFixtureAgentRevision } from "./agent-revision-fixture";
 import {
   assertWorkPiPackageSnapshot,
   createWorkSession,
 } from "@/lib/work/sessions";
-import { marketReleaseChecksum } from "@/lib/market/artifact";
-import type { PiPackageManifestV1 } from "@/lib/market/pi-package-manifest";
+import { marketReleaseChecksum } from "@/lib/pi-packages/artifact";
+import type { PiPackageManifestV1 } from "@/lib/pi-packages/manifest";
 
 const stamp = randomUUID();
 let workspaceId = "",
@@ -145,7 +142,6 @@ async function fixture() {
         listingId: listing.id,
         targetWorkspaceId: workspaceId,
         currentReleaseId: releases[0].id,
-        requestedReleaseId: releases[0].id,
         status: "ready",
         idempotencyKey: name,
         resourceMap: { kind: "pi-package" },
@@ -249,7 +245,6 @@ describe.sequential("Pi SDK resource consumers", () => {
       where: { id: upgraded.install.id },
       data: {
         currentReleaseId: upgraded.v2.id,
-        requestedReleaseId: upgraded.v2.id,
       },
     });
     assertWorkPiPackageSnapshot(
@@ -344,7 +339,7 @@ describe.sequential("Pi SDK resource consumers", () => {
     ).toEqual(work.runtimeSnapshot);
   });
 
-  it.each(["release-revoked", "listing-disabled", "bytes-tampered"] as const)(
+  it.each(["release-revoked", "listing-withdrawn", "bytes-tampered"] as const)(
     "revalidates fresh Work and pinned native session resources after %s",
     async (change) => {
       const { agent, packages } = await fixture();
@@ -362,12 +357,12 @@ describe.sequential("Pi SDK resource consumers", () => {
       if (change === "release-revoked")
         await db.marketRelease.update({
           where: { id: selected.v1.id },
-          data: { reviewStatus: "rejected" },
+          data: { reviewStatus: "revoked" },
         });
-      if (change === "listing-disabled")
+      if (change === "listing-withdrawn")
         await db.marketListing.update({
           where: { id: selected.listing.id },
-          data: { status: "disabled" },
+          data: { status: "withdrawn" },
         });
       if (change === "bytes-tampered")
         await db.marketRelease.update({
@@ -386,37 +381,26 @@ describe.sequential("Pi SDK resource consumers", () => {
           task: "Must not execute",
         }),
       ).rejects.toThrow(
-        change === "release-revoked"
+        change !== "bytes-tampered"
           ? "A pinned capability release is unavailable or security-revoked."
           : "PI_PACKAGE_UNAVAILABLE",
       );
-      if (change === "listing-disabled") {
-        // Withdrawal blocks new attachment, not execution of already-authorized
-        // immutable sessions. Security revocation is tested separately above.
-        const pinned = await resolvePinnedAgent(loaded, revisionId);
-        expect(
-          resolveAgentPiPackages(pinned).find(
-            (item) => item.marketInstallId === selected.install.id,
-          )?.releaseId,
-        ).toBe(selected.v1.id);
-      } else {
-        await expect(
-          runDedicatedSandboxTurn({
-            agent: loaded,
-            conversationId: conversation.id,
-            messages: [
-              {
-                role: "user",
-                parts: [{ type: "text", text: "Must not execute" }],
-              },
-            ],
-          }),
-        ).rejects.toThrow(
-          change === "release-revoked"
-            ? "A pinned capability release is unavailable or security-revoked."
-            : "PI_PACKAGE_UNAVAILABLE",
-        );
-      }
+      await expect(
+        runDedicatedSandboxTurn({
+          agent: loaded,
+          conversationId: conversation.id,
+          messages: [
+            {
+              role: "user",
+              parts: [{ type: "text", text: "Must not execute" }],
+            },
+          ],
+        }),
+      ).rejects.toThrow(
+        change !== "bytes-tampered"
+          ? "A pinned capability release is unavailable or security-revoked."
+          : "PI_PACKAGE_UNAVAILABLE",
+      );
       expect(
         await db.conversation.findUniqueOrThrow({
           where: { id: conversation.id },
@@ -482,5 +466,72 @@ describe.sequential("Pi SDK resource consumers", () => {
     });
     expect(next?.runtimeSnapshot).toMatchObject({ piPackages: [] });
     assertWorkPiPackageSnapshot("pi-sdk", next?.runtimeSnapshot, current);
+  });
+
+  it("starts Pi without MCP servers whose grant exposes no tools", async () => {
+    const { agent } = await fixture();
+    const [granted, empty] = await Promise.all(
+      ["granted", "empty"].map(() =>
+        db.deployment.create({ data: { workspaceId, source: "config" } }),
+      ),
+    );
+    await db.agentServer.createMany({
+      data: [
+        {
+          agentId: agent.id,
+          deploymentId: granted.id,
+          allowedToolNames: ["search"],
+        },
+        { agentId: agent.id, deploymentId: empty.id, allowedToolNames: [] },
+      ],
+    });
+    const base = await db.agentRevision.findUniqueOrThrow({
+      where: {
+        agentId_version: {
+          agentId: agent.id,
+          version: (
+            await db.agent.findUniqueOrThrow({ where: { id: agent.id } })
+          ).currentRevisionVersion,
+        },
+      },
+    });
+    const grant = (deploymentId: string, allowedToolNames: string[]) => ({
+      deploymentId,
+      definitionChecksum: "a".repeat(64),
+      runtimeImageDigest: null,
+      runtimeFilesChecksum: "b".repeat(64),
+      allowedToolNames,
+    });
+    const revision = await db.agentRevision.create({
+      data: {
+        agentId: agent.id,
+        version: base.version + 1,
+        config: {
+          ...(base.config as Prisma.JsonObject),
+          mcpGrants: [grant(empty.id, []), grant(granted.id, ["search"])],
+        },
+      },
+    });
+    await db.agent.update({
+      where: { id: agent.id },
+      data: { currentRevisionVersion: revision.version },
+    });
+    const work = await createWorkSession({
+      workspaceId,
+      agentId: agent.id,
+      task: "List MCP tools",
+    });
+    if (!work) throw new Error("Work was not created");
+    // Session MCP rejects discovery for a tool-less grant, which would abort the
+    // whole Pi session before the first model call.
+    expect(
+      (
+        await resolvePiSessionPackages({
+          workspaceId,
+          agentId: agent.id,
+          conversationId: work.conversationId,
+        })
+      ).deploymentIds,
+    ).toEqual([granted.id]);
   });
 });

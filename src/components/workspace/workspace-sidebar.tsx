@@ -21,9 +21,7 @@ import {
   useAnimatedSidebar,
 } from "@/components/motion/animated-sidebar";
 import { Tooltip } from "@/components/motion/tooltip";
-import { EASE_OUT, SPRING_LAYOUT } from "@/lib/ease";
-import { useHoverCapable } from "@/lib/hooks/use-hover-capable";
-import { useOnOpen } from "@/lib/hooks/use-on-open";
+import { SPRING_LAYOUT } from "@/lib/ease";
 import { cn } from "@/lib/utils";
 
 export interface WorkspaceSidebarItem {
@@ -33,8 +31,8 @@ export interface WorkspaceSidebarItem {
   badge?: ReactNode;
   href?: string;
   disabled?: boolean;
-  /** Exactly one nested level. Parents toggle their children instead of navigating. */
-  children?: Omit<WorkspaceSidebarItem, "children">[];
+  /** Exactly one nested level, label-only. Parents toggle their children instead of navigating. */
+  children?: Omit<WorkspaceSidebarItem, "children" | "icon">[];
 }
 export interface WorkspaceSidebarGroup {
   id: string;
@@ -46,8 +44,6 @@ export interface WorkspaceSidebarProps {
   activeId?: string;
   onSelect?: (id: string) => void;
   title?: string;
-  /** Brand mark rendered in the header instead of the plain title text. */
-  logo?: ReactNode;
   footer?: ReactNode;
   className?: string;
 }
@@ -85,10 +81,7 @@ function WorkspaceNavigationItem({
         icon={item.icon}
         badge={item.badge}
         disabled={item.disabled}
-        className={cn(
-          "min-h-9 gap-2 overflow-visible rounded-lg px-2 text-xs [&>span:first-child:not([aria-hidden])]:rounded-lg [&>span[aria-hidden=true]]:size-5 [&_svg]:size-[18px] [&>span.absolute]:bg-[var(--workspace-surface,var(--background))]",
-          activeChild && !compact && "bg-foreground/5 text-foreground",
-        )}
+        className="min-h-9 gap-2 overflow-visible rounded-lg px-2 text-sm font-normal text-foreground hover:bg-foreground/5 [&>span:first-child:not([aria-hidden])]:rounded-lg [&_svg:not(.lucide-chevron-right)]:size-[18px] [&>span.absolute]:bg-foreground/[0.08]"
       >
         {item.label}
       </AnimatedSidebarMenuButton>
@@ -97,22 +90,22 @@ function WorkspaceNavigationItem({
           inert={compact || !expanded || item.disabled}
           aria-hidden={compact || !expanded || item.disabled}
         >
+          {/* Tree line sits under the parent icon; child labels align with the parent label. */}
           <AnimatedSidebarMenuSub
             open={expanded}
-            className="ml-4 gap-1 border-foreground/10 pl-3"
+            className="mt-0.5 ml-[17px] gap-0.5 border-foreground/10 pl-2.5"
           >
             {children.map((child) => (
               <AnimatedSidebarMenuSubItem key={child.id}>
                 <AnimatedSidebarMenuSubButton
                   href={child.href}
-                  icon={child.icon}
                   disabled={item.disabled || child.disabled}
                   isActive={activeId === child.id}
                   onSelect={() => onSelect?.(child.id)}
                   className={cn(
-                    "min-h-9 [&_svg]:size-3.5",
+                    "min-h-8 text-[13px]",
                     activeId === child.id &&
-                      "bg-[var(--workspace-surface,var(--background))] font-medium hover:bg-[var(--workspace-surface,var(--background))]",
+                      "bg-foreground/[0.08] font-medium text-foreground hover:bg-foreground/[0.08]",
                   )}
                 >
                   <span className="flex min-w-0 items-center gap-2">
@@ -141,18 +134,12 @@ export function WorkspaceSidebar({
   activeId,
   onSelect,
   title = "工作区",
-  logo,
   footer,
   className,
 }: WorkspaceSidebarProps) {
   const { open, isMobile } = useAnimatedSidebar();
   const reduced = useReducedMotion() ?? false;
   const compact = !open && !isMobile;
-  const canHover = useHoverCapable();
-  const [hovered, setHovered] = useState(false);
-  const [focused, setFocused] = useState(false);
-  useOnOpen(compact, () => setHovered(false));
-  const showToggle = !compact || !logo || (canHover && hovered) || focused;
   const toggleRef = useRef<HTMLButtonElement>(null);
   useLayoutEffect(() => {
     if (compact && document.activeElement instanceof HTMLElement) {
@@ -172,13 +159,7 @@ export function WorkspaceSidebar({
       }
     }
   }, [compact]);
-  // Opacity must not inherit spring velocity when hover reverses mid-flight.
-  const transition = reduced
-    ? { duration: 0 }
-    : {
-        ...SPRING_LAYOUT,
-        opacity: { type: "tween" as const, duration: 0.14, ease: EASE_OUT },
-      };
+  const transition = reduced ? { duration: 0 } : SPRING_LAYOUT;
   return (
     <AnimatedSidebar
       ariaLabel={`${title}导航`}
@@ -189,25 +170,14 @@ export function WorkspaceSidebar({
       <AnimatedSidebarHeader className="px-3.5 pt-2 pb-0">
         <motion.div
           initial={false}
-          animate={{ height: compact ? 36 : 64 }}
+          animate={{ height: compact ? 36 : 52 }}
           transition={transition}
-          onMouseEnter={() => setHovered(true)}
-          onMouseLeave={() => setHovered(false)}
-          onFocusCapture={(event) =>
-            setFocused(event.target.matches(":focus-visible"))
-          }
-          onBlurCapture={() => setFocused(false)}
           className="relative flex w-full flex-row items-center"
         >
           {isMobile ? (
             <>
-              <span className="flex min-w-0 flex-1 items-center gap-2 text-xs font-semibold">
-                {logo && (
-                  <span className="grid size-7 shrink-0 place-items-center">
-                    {logo}
-                  </span>
-                )}
-                <span className="truncate">{title}</span>
+              <span className="min-w-0 flex-1 truncate px-2 text-base font-semibold">
+                {title}
               </span>
               <Tooltip content="关闭工作区导航">
                 <AnimatedSidebarClose
@@ -220,20 +190,6 @@ export function WorkspaceSidebar({
             </>
           ) : (
             <>
-              {logo && (
-                <motion.span
-                  initial={false}
-                  animate={{
-                    y: compact && showToggle && !reduced ? 20 : 0,
-                    opacity: compact && showToggle ? 0 : 1,
-                  }}
-                  transition={transition}
-                  aria-hidden="true"
-                  className="pointer-events-none absolute left-0 grid size-9 place-items-center"
-                >
-                  <span className="grid size-7 place-items-center">{logo}</span>
-                </motion.span>
-              )}
               {/* The reveal edge and trigger share the sidebar's actual width.
                 No measured-width spring chasing the sidebar's own spring. */}
               <div
@@ -242,12 +198,12 @@ export function WorkspaceSidebar({
               >
                 <motion.span
                   initial={false}
-                  animate={{ x: compact && !reduced ? -8 : 0 }}
+                  animate={{
+                    x: compact && !reduced ? -8 : 0,
+                    opacity: compact ? 0 : 1,
+                  }}
                   transition={transition}
-                  className={cn(
-                    "flex h-full items-center whitespace-nowrap text-xs font-semibold",
-                    logo ? "pl-11" : "pl-2",
-                  )}
+                  className="flex h-full items-center whitespace-nowrap px-2 text-base font-semibold"
                 >
                   {title}
                 </motion.span>
@@ -260,26 +216,16 @@ export function WorkspaceSidebar({
                 <AnimatedSidebarTrigger
                   ref={toggleRef}
                   aria-label={compact ? "展开工作区侧栏" : "折叠工作区侧栏"}
-                  className="size-9 overflow-hidden rounded-lg focus-visible:ring-inset"
+                  className="grid size-9 place-items-center rounded-lg text-muted-foreground hover:text-foreground focus-visible:ring-inset"
                 >
-                  <motion.span
-                    initial={false}
-                    animate={{
-                      x: showToggle || reduced ? 0 : 36,
-                      opacity: showToggle ? 1 : 0,
-                    }}
-                    transition={transition}
-                    className="grid size-9 shrink-0 place-items-center"
-                  >
-                    <PanelLeft className="size-[18px]" />
-                  </motion.span>
+                  <PanelLeft className="size-[18px]" />
                 </AnimatedSidebarTrigger>
               </Tooltip>
             </>
           )}
         </motion.div>
       </AnimatedSidebarHeader>
-      <AnimatedSidebarContent className="gap-6 px-3.5 py-3 [scrollbar-width:none]">
+      <AnimatedSidebarContent className="gap-0.5 px-3.5 py-2 [scrollbar-width:none]">
         {groups.map((group) => (
           <AnimatedSidebarGroup
             key={group.id}
@@ -287,7 +233,7 @@ export function WorkspaceSidebar({
             aria-label={group.title}
             className="px-0 py-0"
           >
-            <AnimatedSidebarMenu className="gap-1">
+            <AnimatedSidebarMenu className="gap-0.5">
               {group.items.map((item) => (
                 <WorkspaceNavigationItem
                   key={item.id}

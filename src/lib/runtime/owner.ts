@@ -156,7 +156,7 @@ export function shutdownRuntimeOwner(): Promise<boolean> {
     const stop = async () => {
       const work = await import("@/lib/work/coordinator");
       work.stopWorkCoordinator();
-      (await import("@/lib/a2a/worker")).stopA2AWorker();
+      (await import("@/lib/agents/execution/worker")).stopAgentWorker();
       const channels = await import("@/lib/agents/channel-runtime");
       const connectors = await import("@/lib/sandboxes/connector-broker");
       const results = await Promise.allSettled([

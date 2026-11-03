@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { AgentRevisionConfigSchema } from "@/lib/agents/revision-types";
-import { assertMarketReleasesExecutable } from "@/lib/market/revocation";
+import { assertMarketReleasesExecutable } from "@/lib/pi-packages/revocation";
 import { assertRuntimeOwner } from "@/lib/runtime/ownership-state";
 import { runMcpDeploymentOperation } from "@/lib/workspace/mcp-operation";
 import { withMcpInspectorConnection } from "@/lib/workspace/inspector-connection";
@@ -13,10 +13,12 @@ import {
   mcpRuntimeFilesChecksum,
   prepareSessionMcpDefinition,
 } from "./mcp-definition";
+import { ensureWorkspaceMcpDeploymentPinned } from "./mcp-pinning";
 import { resolveMcpConnectionSpawnSpec } from "./mcp-credentials";
 import { sessionMcpPackageLaunch } from "./mcp-runtime-image";
 import { listMcpTools } from "./mcp-client";
 import type { McpToolDefinition } from "./mcp-tool-catalog";
+import { syncDeploymentMcpGrants } from "./mcp-grant-sync";
 import {
   startProcess,
   stopProcess,
@@ -79,11 +81,11 @@ async function inspectionAuthority(
     where: {
       id: input.agentId,
       workspaceId: input.workspaceId,
-      runtimeKind: "pi-sdk",
+      runtimeKind: { in: ["pi-sdk", "omp"] },
       retiredAt: null,
       publicRuntimeAllocation: { is: null },
     },
-    select: { currentRevisionVersion: true },
+    select: { currentRevisionVersion: true, runtimeKind: true },
   });
   if (!agent) throw new Error("AGENT_EXECUTION_RETIRED");
   const revision = await tx.agentRevision.findFirst({
@@ -96,6 +98,8 @@ async function inspectionAuthority(
   });
   if (!revision) throw new Error("AGENT_REVISION_CONFLICT");
   const config = AgentRevisionConfigSchema.parse(revision.config);
+  if (config.runtimeKind !== agent.runtimeKind)
+    throw new Error("MCP_REVISION_FORBIDDEN");
   if (!config.sandboxTemplateId)
     throw new Error("MCP_INSPECTION_SANDBOX_REQUIRED");
   const sandbox = await tx.agentSandbox.findFirst({
@@ -130,15 +134,19 @@ async function inspectionAuthority(
       workspaceId: input.workspaceId,
       OR: [{ source: null }, { source: { not: "sandbox" } }],
     },
-    include: { marketInstall: { select: { currentReleaseId: true } } },
   });
   if (!deployment) throw new Error("MCP_CONNECTION_NOT_FOUND");
   await assertMarketReleasesExecutable(tx, [
     ...config.packages.map((entry) => entry.releaseId),
-    ...(deployment.marketInstall?.currentReleaseId
-      ? [deployment.marketInstall.currentReleaseId]
-      : []),
   ]);
+  return { deployment, sandboxId: sandbox.sandboxId };
+}
+
+async function inspectionPin(
+  tx: Prisma.TransactionClient,
+  input: AgentMcpInspectionInput,
+) {
+  const { deployment, sandboxId } = await inspectionAuthority(tx, input);
   const cfg =
     deployment.installCfg &&
     typeof deployment.installCfg === "object" &&
@@ -147,7 +155,7 @@ async function inspectionAuthority(
       : {};
   return {
     deployment,
-    sandboxId: sandbox.sandboxId,
+    sandboxId,
     definitionChecksum: mcpDefinitionChecksum(deployment),
     runtimeFilesChecksum: await mcpRuntimeFilesChecksum(tx, input.deploymentId),
     // Compare opaque encrypted identities privately; neither these nor plaintext
@@ -178,10 +186,16 @@ export async function inspectAgentMcpConnection(
     input.workspaceId,
     input.deploymentId,
     async () => {
-      // No build, secret resolution, or process start may precede these checks.
-      const initial = await inspectionAuthority(db, input);
+      // Authorize before metadata lookup; pin outside transactions and then
+      // reauthorize before taking the definition used by discovery and review.
+      await inspectionAuthority(db, input);
+      await ensureWorkspaceMcpDeploymentPinned({
+        workspaceId: input.workspaceId,
+        deploymentId: input.deploymentId,
+      });
+      const initial = await inspectionPin(db, input);
       const prepared = await prepareSessionMcpDefinition(initial.deployment);
-      const current = await inspectionAuthority(db, input);
+      const current = await inspectionPin(db, input);
       assertInspectionUnchanged(initial, current);
       if (prepared.definitionChecksum !== current.definitionChecksum)
         throw new Error("MCP_DEFINITION_CHANGED");
@@ -235,10 +249,7 @@ export async function inspectAgentMcpConnection(
           persistCatalog: false,
           requireValidCatalog: true,
         });
-        assertInspectionUnchanged(
-          current,
-          await inspectionAuthority(db, input),
-        );
+        assertInspectionUnchanged(current, await inspectionPin(db, input));
       } catch (error) {
         failed = true;
         failure = error;
@@ -262,7 +273,7 @@ export async function inspectAgentMcpConnection(
         await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${input.workspaceId} FOR UPDATE`;
         await tx.$queryRaw`SELECT id FROM "Agent" WHERE id=${input.agentId} AND "workspaceId"=${input.workspaceId} FOR UPDATE`;
         await tx.$queryRaw`SELECT id FROM "Deployment" WHERE id=${input.deploymentId} AND "workspaceId"=${input.workspaceId} FOR UPDATE`;
-        const live = await inspectionAuthority(tx, input);
+        const live = await inspectionPin(tx, input);
         assertInspectionUnchanged(current, live);
         const result: AgentMcpInspectionResult = {
           tools: discovered,
@@ -291,5 +302,6 @@ export async function inspectAgentMcpConnection(
     },
   );
   if (!operation.accepted) throw new Error("MCP_CONNECTION_NOT_AUTHORIZED");
+  void syncDeploymentMcpGrants(input.deploymentId);
   return operation.value;
 }

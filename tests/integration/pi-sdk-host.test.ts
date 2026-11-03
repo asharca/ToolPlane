@@ -8,16 +8,22 @@ import { EventEmitter, once } from "node:events";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { Readable } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   buildPiMcpConfig,
   nativePiMcpToolName,
+  parsePiStreamLine,
   piMcpExtensionSource,
 } from "@/lib/agents/sandbox-runtime";
-import { nativeApprovalAdapter } from "@/lib/agents/native-tool-approval";
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
+import {
+  CallToolRequestSchema,
+  ListToolsRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
 
 type SdkState = {
   sessionId: string;
@@ -38,8 +44,10 @@ type SdkResponse = {
 };
 type RequestContext = {
   runtimeToken: string;
-  approvalUrl?: string;
+  uiUrl?: string;
   mcpConfig: { servers: unknown[] };
+  model: Record<string, unknown>;
+  reasoningEffort?: string;
 };
 const children = new Set<ChildProcess>();
 const cleanups: Array<() => Promise<void>> = [];
@@ -47,6 +55,7 @@ function completion(
   response: ServerResponse,
   delta: Record<string, unknown>,
   finish: string,
+  promptTokens = 20,
 ) {
   response.writeHead(200, { "content-type": "text/event-stream" });
   for (const chunk of [
@@ -61,7 +70,11 @@ function completion(
     },
     {
       choices: [{ index: 0, delta: {}, finish_reason: finish }],
-      usage: { prompt_tokens: 20, completion_tokens: 5, total_tokens: 25 },
+      usage: {
+        prompt_tokens: promptTokens,
+        completion_tokens: 5,
+        total_tokens: promptTokens + 5,
+      },
     },
   ])
     response.write(
@@ -81,7 +94,9 @@ async function setup() {
   );
   const requests: Array<{
     authorization?: string;
+    path?: string;
     body: {
+      model: string;
       messages: Array<{ role: string }>;
       tools?: Array<{ function: { name: string } }>;
     };
@@ -89,8 +104,18 @@ async function setup() {
   const behavior = {
     tool: "increment",
     pause: false,
+    pauseUi: false,
+    cancelUi: false,
+    failUiPoll: false,
+    failTodoProjection: false,
+    todoQuota: false,
+    toolArgs: "{}",
     completionText: "SDK_COMPLETE",
+    promptTokens: 20,
     mcpTool: "current_mcp",
+    streamCompletion: undefined as
+      | ((response: ServerResponse) => Promise<void>)
+      | undefined,
     mcpSchema: { type: "object", properties: {} } as Record<string, unknown>,
   };
   const mcpRequests: Array<{
@@ -99,24 +124,74 @@ async function setup() {
     method: string;
     params?: unknown;
   }> = [];
-  const approvals: Array<{ authorization?: string; action: string }> = [];
-  let allowReady = true;
+  const uiCalls: Array<{
+    authorization?: string;
+    path?: string;
+    action: string;
+    id?: string;
+    request?: { id: string; method: string; [key: string]: unknown };
+    todos?: Array<{ id: number; text: string; done: boolean }>;
+  }> = [];
+  const dialogs = new Map<string, string>();
   const server = createServer((request, response) => {
     void (async () => {
       let raw = "";
       for await (const chunk of request) raw += String(chunk);
       const body = JSON.parse(raw);
       if (
-        /^\/api\/v1\/agent-runtime\/a2a\/[^/]+\/approvals$/.test(
-          request.url ?? "",
-        )
+        /^\/api\/v1\/agent-runtime\/tasks\/[^/]+\/ui$/.test(request.url ?? "")
       ) {
-        approvals.push({
+        uiCalls.push({
+          ...body,
+          path: request.url,
           authorization: request.headers.authorization,
-          action: body.action,
         });
+        if (
+          body.action === "todos" &&
+          body.todos.length &&
+          behavior.todoQuota
+        ) {
+          response.writeHead(413, { "content-type": "application/json" });
+          response.end("{}");
+          return;
+        }
+        if (
+          body.action === "todos" &&
+          body.todos.length &&
+          behavior.failTodoProjection
+        ) {
+          response.writeHead(503, { "content-type": "application/json" });
+          response.end("{}");
+          return;
+        }
+        if (body.action === "request") {
+          dialogs.set(body.request.id, body.request.method);
+          requestEvents.emit("ui-request");
+        }
+        if (body.action === "poll" && behavior.failUiPoll) {
+          response.writeHead(503, { "content-type": "application/json" });
+          response.end("{}");
+          return;
+        }
+        const id = body.request?.id ?? body.id;
+        const method = dialogs.get(id);
+        const nativeResponse =
+          body.action === "request" || body.action === "poll"
+            ? !behavior.pauseUi &&
+              ["select", "confirm", "input", "editor"].includes(method ?? "")
+              ? {
+                  type: "extension_ui_response",
+                  id,
+                  ...(behavior.cancelUi
+                    ? { cancelled: true }
+                    : method === "confirm"
+                      ? { confirmed: true }
+                      : { value: `${method}-answer` }),
+                }
+              : undefined
+            : undefined;
         response.writeHead(200, { "content-type": "application/json" });
-        response.end(JSON.stringify({ status: allowReady ? "ready" : "deny" }));
+        response.end(JSON.stringify({ response: nativeResponse }));
         return;
       }
       if (request.url === "/mcp" || request.url === "/mcp-next") {
@@ -126,32 +201,65 @@ async function setup() {
           method: body.method,
           params: body.params,
         });
-        response.writeHead(200, { "content-type": "application/json" });
-        const result =
-          body.method === "tools/list"
-            ? {
-                tools: [
-                  {
-                    name: behavior.mcpTool,
-                    description: "Real fixture MCP tool",
-                    inputSchema: behavior.mcpSchema,
-                  },
-                ],
-              }
-            : {
-                content: [{ type: "text", text: "CURRENT_MCP_OK" }],
-                structuredContent: {
-                  calls: mcpRequests.filter(
-                    (entry) => entry.method === "tools/call",
-                  ).length,
-                },
-              };
-        response.end(JSON.stringify({ jsonrpc: "2.0", id: body.id, result }));
+        const mcp = new Server(
+          { name: "sdk-regression", version: "1.0.0" },
+          { capabilities: { tools: {} } },
+        );
+        mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
+          tools: [
+            {
+              name: behavior.mcpTool,
+              description: "Real fixture MCP tool",
+              inputSchema: behavior.mcpSchema as { type: "object" },
+            },
+          ],
+        }));
+        mcp.setRequestHandler(CallToolRequestSchema, async () => ({
+          content: [{ type: "text", text: "CURRENT_MCP_OK" }],
+          structuredContent: {
+            calls: mcpRequests.filter((entry) => entry.method === "tools/call")
+              .length,
+          },
+        }));
+        const transport = new WebStandardStreamableHTTPServerTransport({
+          sessionIdGenerator: undefined,
+          enableJsonResponse: true,
+        });
+        try {
+          await mcp.connect(transport);
+          const headers = new Headers();
+          for (const [name, value] of Object.entries(request.headers))
+            if (value !== undefined)
+              headers.set(
+                name,
+                Array.isArray(value) ? value.join(", ") : value,
+              );
+          const result = await transport.handleRequest(
+            new Request(`http://localhost${request.url}`, {
+              method: "POST",
+              headers,
+              body: raw,
+            }),
+            { parsedBody: body },
+          );
+          response.writeHead(result.status, Object.fromEntries(result.headers));
+          response.end(await result.text());
+        } finally {
+          await mcp.close();
+        }
         return;
       }
-      requests.push({ authorization: request.headers.authorization, body });
+      requests.push({
+        authorization: request.headers.authorization,
+        path: request.url,
+        body,
+      });
       requestEvents.emit("request");
       if (behavior.pause) return;
+      if (behavior.streamCompletion) {
+        await behavior.streamCompletion(response);
+        return;
+      }
       if (behavior.tool && body.messages.at(-1)?.role !== "tool") {
         completion(
           response,
@@ -161,13 +269,19 @@ async function setup() {
                 index: 0,
                 id: "count-call",
                 type: "function",
-                function: { name: behavior.tool, arguments: "{}" },
+                function: { name: behavior.tool, arguments: behavior.toolArgs },
               },
             ],
           },
           "tool_calls",
         );
-      } else completion(response, { content: behavior.completionText }, "stop");
+      } else
+        completion(
+          response,
+          { content: behavior.completionText },
+          "stop",
+          behavior.promptTokens,
+        );
     })().catch(() => {
       response.writeHead(500);
       response.end();
@@ -198,7 +312,7 @@ async function setup() {
 import { join } from 'node:path';
 export default function(pi) {
   let count: number = 0;
-  pi.on('session_start', (_,ctx) => { if(ctx.hasUI)throw new Error('UNEXPECTED_TERMINAL_UI');for (const entry of ctx.sessionManager.getBranch()) if(entry.type==='custom' && entry.customType==='count') count=entry.data; });
+  pi.on('session_start', (_,ctx) => { if(!ctx.hasUI || ctx.mode!=='rpc')throw new Error('NATIVE_RPC_UI_REQUIRED');for (const entry of ctx.sessionManager.getBranch()) if(entry.type==='custom' && entry.customType==='count') count=entry.data; });
   pi.on('resources_discover', () => ({ skillPaths: [${JSON.stringify(join(workspace, "SKILL.md"))}], promptPaths: [${JSON.stringify(join(workspace, "DynamicPrompt.md"))}] }));
   pi.on('input', e => e.text==='handled' ? { action:'handled' } : undefined);
   pi.registerTool({name:'increment',label:'Counter',description:'Increment counter',parameters:{type:'object',properties:{}},async execute(_,args,signal,update,ctx){count++;pi.appendEntry('count',count);writeFileSync(join(ctx.cwd,'count.txt'),String(count));return {content:[{type:'text',text:String(count)}],details:{count}};}});
@@ -209,6 +323,17 @@ export default function(pi) {
   pi.registerCommand('Fork',{handler:async(args,ctx)=>{const entry=ctx.sessionManager.getBranch().find(e=>e.type==='message'&&e.message.role==='user');await ctx.fork(entry.id);}});
   pi.registerCommand('Switch',{handler:async(args,ctx)=>{await ctx.switchSession(args);}});
   pi.registerCommand('Reload',{handler:async(args,ctx)=>{await ctx.reload();}});
+  pi.registerCommand('Tree',{handler:async(args,ctx)=>{await ctx.navigateTree(args);}});
+  pi.registerCommand('Dialogs',{handler:async(args,ctx)=>{
+    const results=[await ctx.ui.select('Select one',['first','second']),await ctx.ui.confirm('Confirm action','Native extension decision'),await ctx.ui.input('Input text','placeholder'),await ctx.ui.editor('Edit text','prefill')];
+    pi.sendMessage({customType:'dialogs',content:JSON.stringify(results),display:true});
+    ctx.ui.notify('Native notification','warning');ctx.ui.setStatus('native','ready');ctx.ui.setWidget('native',['line'],{placement:'belowEditor'});ctx.ui.setTitle('Native title');ctx.ui.setEditorText('draft');ctx.ui.setStatus('native',undefined);ctx.ui.setWidget('native',undefined);
+  }});
+  // This real child-process integration exercises native SDK timeout delivery;
+  // fake timers in the test runner cannot advance the separately spawned host.
+  pi.registerCommand('Timeout',{handler:async(args,ctx)=>{const result=await ctx.ui.confirm('Timeout','expires',{timeout:30});pi.sendMessage({customType:'timeout',content:String(result),display:true});}});
+  pi.registerCommand('Signal',{handler:async(args,ctx)=>{const c=new AbortController();queueMicrotask(()=>c.abort());const result=await ctx.ui.input('Signal','cancel',{signal:c.signal});pi.sendMessage({customType:'signal',content:String(result),display:true});}});
+  pi.registerCommand('AlreadyAborted',{handler:async(args,ctx)=>{const c=new AbortController();c.abort();const result=await ctx.ui.select('Never shown',[],{signal:c.signal});pi.sendMessage({customType:'signal',content:String(result),display:true});}});
 }`,
   );
   await writeFile(
@@ -224,6 +349,7 @@ export default function(pi) {
     sessionsDir,
     statePath: join(agentDir, "state.json"),
     packageSetChecksum: "empty-reviewed-set",
+    agentRevisionId: "revision-one",
     model: {
       id: "controlled",
       name: "Controlled",
@@ -250,10 +376,12 @@ export default function(pi) {
     hostOnlyCommands: ["login", "logout"],
     historyRequired: false,
   };
-  const context: RequestContext = {
+  const context = {
     runtimeToken: "test-runtime-first",
+    uiUrl: `http://127.0.0.1:${address.port}/api/v1/agent-runtime/tasks/fixture-task/ui`,
     mcpConfig: { servers: [] },
-  };
+    model: config.model,
+  } satisfies RequestContext;
   async function launch(overrides = {}) {
     const configPath = join(agentDir, `config-${randomUUID()}.json`);
     await writeFile(configPath, JSON.stringify({ ...config, ...overrides }));
@@ -295,7 +423,11 @@ export default function(pi) {
         entry.reject(new Error(`Host exited: ${stderr}`));
       pending.clear();
     });
-    function request(type: string, message?: string, current = context) {
+    function request(
+      type: string,
+      message?: string,
+      current: RequestContext = context,
+    ) {
       const id = randomUUID();
       const result = new Promise<SdkResponse>((done, reject) =>
         pending.set(id, { resolve: done, reject }),
@@ -320,10 +452,7 @@ export default function(pi) {
     requests,
     requestEvents,
     mcpRequests,
-    approvals,
-    denyReady: () => {
-      allowReady = false;
-    },
+    uiCalls,
     behavior,
     launch,
     extension,
@@ -340,6 +469,182 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 describe("official Pi SDK headless session host", () => {
+  it("continues copied native history after workspace rebasing without changing transcript bodies or revision pins", async () => {
+    const f = await setup();
+    const first = await f.launch();
+    const initial = await first.request(
+      "prompt",
+      "Persist native counter history",
+    );
+    expect(initial.success).toBe(true);
+    const initialState = assertDefined(initial.result).state;
+    await first.stop();
+    const transcript = await readFile(initialState.sessionFile, "utf8");
+    const end = transcript.indexOf("\n");
+    const header = JSON.parse(transcript.slice(0, end));
+    const body = transcript.slice(end + 1);
+    await writeFile(
+      initialState.sessionFile,
+      `${JSON.stringify({ ...header, cwd: "/workspace/workspace" })}\n${body}`,
+    );
+    const saved = JSON.parse(await readFile(f.config.statePath, "utf8"));
+    await writeFile(
+      f.config.statePath,
+      JSON.stringify({
+        ...saved,
+        sessionFile: `/workspace/${relative(f.root, initialState.sessionFile)}`,
+      }),
+    );
+    await writeFile(
+      join(f.root, ".toolplane-shared-migration.json"),
+      JSON.stringify({
+        sourceSandboxId: "legacy-sandbox",
+        legacyWorkspaceRoot: "/workspace",
+      }),
+    );
+    const resumed = await f.launch({
+      workspaceRoot: f.root,
+      historyRequired: true,
+    });
+    const result = await resumed.request(
+      "prompt",
+      "Continue the same native counter",
+    );
+    expect(result.success, JSON.stringify(result)).toBe(true);
+    expect(assertDefined(result.result).state.sessionId).toBe(
+      initialState.sessionId,
+    );
+    expect(await readFile(join(f.workspace, "count.txt"), "utf8")).toBe("2");
+    const continued = await readFile(initialState.sessionFile, "utf8");
+    expect(continued.slice(continued.indexOf("\n") + 1)).toContain(body);
+    expect(JSON.parse(continued.split("\n")[0]).cwd).toBe(f.workspace);
+    expect(
+      JSON.parse(await readFile(f.config.statePath, "utf8")),
+    ).toMatchObject({
+      sessionFile: initialState.sessionFile,
+      agentRevisionId: f.config.agentRevisionId,
+      packageSetChecksum: f.config.packageSetChecksum,
+    });
+  }, 60000);
+  it("streams reasoning and successive text through the runtime parser before completion", async () => {
+    const f = await setup();
+    f.behavior.tool = "";
+    const allowText = Promise.withResolvers<void>();
+    const allowCompletion = Promise.withResolvers<void>();
+    f.behavior.streamCompletion = async (response) => {
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      const chunk = (
+        delta: Record<string, unknown>,
+        finish: string | null = null,
+      ) =>
+        response.write(
+          `data: ${JSON.stringify({
+            id: "controlled",
+            object: "chat.completion.chunk",
+            created: 1,
+            model: "controlled",
+            choices: [{ index: 0, delta, finish_reason: finish }],
+          })}\n\n`,
+        );
+      chunk({ role: "assistant", reasoning_content: "Checking the request" });
+      await allowText.promise;
+      chunk({ content: "FIRST_PART" });
+      await allowCompletion.promise;
+      chunk({ content: "_SECOND_PART" });
+      chunk({}, "stop");
+      response.end("data: [DONE]\n\n");
+    };
+    const host = await f.launch();
+    const pending = host.request("prompt", "Stream the answer");
+    const parsed = () =>
+      host.events.map((event) => parsePiStreamLine(JSON.stringify(event)));
+    const text = () =>
+      parsed()
+        .map((event) => event?.delta ?? "")
+        .join("");
+    try {
+      await expect
+        .poll(() => parsed().flatMap((event) => event?.activities ?? []), {
+          timeout: 15_000,
+        })
+        .toContainEqual({
+          type: "reasoning",
+          status: "running",
+          delta: "Checking the request",
+        });
+      expect(text()).toBe("");
+      expect(
+        host.events.some((event) => event.type === "toolplane_sdk_response"),
+      ).toBe(false);
+      allowText.resolve();
+      await expect.poll(text, { timeout: 15_000 }).toBe("FIRST_PART");
+      expect(
+        host.events.some((event) => event.type === "toolplane_sdk_response"),
+      ).toBe(false);
+      allowCompletion.resolve();
+      const result = await pending;
+      expect(result.success).toBe(true);
+      expect(assertDefined(result.result).text).toBe("FIRST_PART_SECOND_PART");
+      expect(text()).toBe("FIRST_PART_SECOND_PART");
+      expect(
+        parsed().flatMap((event) => event?.activities ?? []),
+      ).toContainEqual({
+        type: "reasoning",
+        status: "completed",
+      });
+    } finally {
+      allowText.resolve();
+      allowCompletion.resolve();
+      await pending;
+    }
+  }, 60000);
+  it("switches the admitted model and provider URL per prompt, then restores the default without losing history", async () => {
+    const f = await setup();
+    f.behavior.tool = "";
+    const host = await f.launch();
+    const first = await host.request("prompt", "Retain the first model turn");
+    expect(first.success).toBe(true);
+    const original = assertDefined(first.result).state;
+    const alternate = await host.request("prompt", "Use the override", {
+      ...f.context,
+      runtimeToken: "test-runtime-override",
+      model: {
+        ...f.config.model,
+        id: "alternate",
+        baseUrl: f.config.model.baseUrl.replace("/v1", "/alternate/v1"),
+      },
+    });
+    expect(alternate.success).toBe(true);
+    expect(assertDefined(alternate.result).state.sessionId).toBe(
+      original.sessionId,
+    );
+    const restored = await host.request(
+      "prompt",
+      "Use the pinned default again",
+    );
+    expect(restored.success).toBe(true);
+    expect(assertDefined(restored.result).state.sessionId).toBe(
+      original.sessionId,
+    );
+    expect(f.requests.map((request) => request.body.model)).toEqual([
+      "controlled",
+      "alternate",
+      "controlled",
+    ]);
+    expect(f.requests.map((request) => request.path)).toEqual([
+      "/v1/chat/completions",
+      "/alternate/v1/chat/completions",
+      "/v1/chat/completions",
+    ]);
+    expect(f.requests.map((request) => request.authorization)).toEqual([
+      "Bearer test-runtime-first",
+      "Bearer test-runtime-override",
+      "Bearer test-runtime-first",
+    ]);
+    expect(
+      f.requests[2].body.messages.filter((message) => message.role === "user"),
+    ).toHaveLength(3);
+  }, 60000);
   it("returns the native /compact summary and preserves the same session file across restart", async () => {
     const f = await setup();
     f.behavior.tool = "";
@@ -356,7 +661,6 @@ describe("official Pi SDK headless session host", () => {
       (await host.request("prompt", `Second retained turn: ${history}`))
         .success,
     ).toBe(true);
-    const requestsBefore = f.requests.length;
     f.behavior.completionText = "NATIVE_SUMMARY_FROM_PROVIDER";
     const compacted = await host.request(
       "prompt",
@@ -365,7 +669,6 @@ describe("official Pi SDK headless session host", () => {
     expect(compacted.success).toBe(true);
     const result = assertDefined(compacted.result);
     expect(result.text).toContain("NATIVE_SUMMARY_FROM_PROVIDER");
-    expect(result.text).not.toContain("Pi command /compact completed.");
     expect(result.commandResult).toEqual({
       command: "compact",
       text: result.text,
@@ -375,10 +678,6 @@ describe("official Pi SDK headless session host", () => {
       sessionId: original.sessionId,
       sessionFile: original.sessionFile,
     });
-    expect(f.requests.length).toBeGreaterThan(requestsBefore);
-    expect(JSON.stringify(f.requests.slice(requestsBefore))).toContain(
-      "retain the native compaction marker",
-    );
     const entries = (await readFile(original.sessionFile, "utf8"))
       .split("\n")
       .filter(Boolean)
@@ -402,6 +701,51 @@ describe("official Pi SDK headless session host", () => {
       "NATIVE_SUMMARY_FROM_PROVIDER",
     );
   }, 60000);
+  it("automatically compacts native session history at the SDK threshold and resumes its persisted projection", async () => {
+    const f = await setup();
+    f.behavior.tool = "";
+    const host = await f.launch();
+    const history = "NATIVE_AUTO_COMPACTION_SOURCE ".repeat(4000);
+    const first = await host.request(
+      "prompt",
+      `First retained turn: ${history}`,
+    );
+    expect(first.success).toBe(true);
+    expect(
+      (await host.request("prompt", `Second retained turn: ${history}`))
+        .success,
+    ).toBe(true);
+    f.behavior.promptTokens = 120000;
+    f.behavior.completionText = "NATIVE_AUTO_SUMMARY";
+    const completed = await host.request(
+      "prompt",
+      "Complete the current turn near the context limit",
+    );
+    expect(completed.success).toBe(true);
+    const state = assertDefined(completed.result).state;
+    expect(state.sessionId).toBe(assertDefined(first.result).state.sessionId);
+    const entries = (await readFile(state.sessionFile, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(entries).toContainEqual(
+      expect.objectContaining({
+        type: "compaction",
+        summary: expect.stringContaining("NATIVE_AUTO_SUMMARY"),
+      }),
+    );
+    await host.stop();
+    f.behavior.promptTokens = 20;
+    f.behavior.completionText = "AFTER_NATIVE_AUTO_COMPACTION";
+    const resumed = await f.launch({ historyRequired: true });
+    expect(
+      (await resumed.request("prompt", "Continue after automatic compaction"))
+        .success,
+    ).toBe(true);
+    expect(JSON.stringify(f.requests.at(-1)?.body)).toContain(
+      "NATIVE_AUTO_SUMMARY",
+    );
+  }, 60000);
   it("applies configured reasoning through the native session and retains its JSONL record", async () => {
     const f = await setup();
     f.behavior.tool = "";
@@ -412,6 +756,11 @@ describe("official Pi SDK headless session host", () => {
     const result = await host.request(
       "prompt",
       "Use the configured reasoning level",
+      {
+        ...f.context,
+        model: { ...f.config.model, reasoning: true },
+        reasoningEffort: "high",
+      },
     );
     expect(result.success).toBe(true);
     const state = assertDefined(result.result).state;
@@ -434,6 +783,11 @@ describe("official Pi SDK headless session host", () => {
     const continued = await reopened.request(
       "prompt",
       "Continue with the configured reasoning level",
+      {
+        ...f.context,
+        model: { ...f.config.model, reasoning: true },
+        reasoningEffort: "high",
+      },
     );
     expect(continued.success).toBe(true);
     expect(assertDefined(continued.result).state.sessionId).toBe(
@@ -462,6 +816,22 @@ describe("official Pi SDK headless session host", () => {
       result: { text: "SDK_COMPLETE", state: { sessionPersisted: true } },
     });
     expect(await readFile(join(f.workspace, "count.txt"), "utf8")).toBe("1");
+    expect(
+      host.events
+        .filter((event) =>
+          [
+            "model_request",
+            "tool_execution_start",
+            "tool_execution_end",
+          ].includes(String(event.type)),
+        )
+        .map((event) => event.type),
+    ).toEqual([
+      "model_request",
+      "tool_execution_start",
+      "tool_execution_end",
+      "model_request",
+    ]);
     const jsonl = await readFile(
       assertDefined(result.result).state.sessionFile,
       "utf8",
@@ -522,6 +892,9 @@ describe("official Pi SDK headless session host", () => {
       error: { code: "PI_SDK_COMMAND_UNKNOWN" },
     });
     expect(f.requests).toEqual([]);
+    expect(host.events.some((event) => event.type === "model_request")).toBe(
+      false,
+    );
     expect(
       host.events.filter((e) => e.type === "toolplane_sdk_response"),
     ).toHaveLength(5);
@@ -533,6 +906,106 @@ describe("official Pi SDK headless session host", () => {
       error: { code: "PI_SDK_SESSION_MISSING" },
     });
   }, 60000);
+  it("discovers and calls pinned native tools through the SDK StreamableHTTP transport", async () => {
+    const f = await setup();
+    f.behavior.mcpTool = "a2a_publish_artifact";
+    f.behavior.tool = nativePiMcpToolName(0, 0, "a2a_publish_artifact");
+    const host = await f.launch();
+    const result = await host.request(
+      "prompt",
+      "Publish with the runtime tool",
+      {
+        ...f.context,
+        mcpConfig: JSON.parse(
+          buildPiMcpConfig([
+            {
+              deploymentId: "toolplane-runtime",
+              url: f.config.model.baseUrl.replace("/v1", "/mcp"),
+            },
+          ]),
+        ),
+      },
+    );
+    expect(result).toMatchObject({
+      success: true,
+      result: { text: "SDK_COMPLETE" },
+    });
+    expect(f.mcpRequests.map((entry) => entry.method)).toEqual([
+      "tools/list",
+      "tools/call",
+    ]);
+    expect(f.requests.at(-1)?.body.messages.at(-1)).toMatchObject({
+      role: "tool",
+      content: "CURRENT_MCP_OK",
+    });
+    expect(
+      host.events.some((event) => event.type === "toolplane_mcp_unavailable"),
+    ).toBe(false);
+  }, 60000);
+
+  it("resumes the same persisted session and files with a revised MCP toolset", async () => {
+    const f = await setup();
+    const server = {
+      name: "Fixture MCP",
+      deploymentId: "fixture",
+      url: f.config.model.baseUrl.replace("/v1", "/mcp"),
+    };
+    const context = {
+      ...f.context,
+      mcpConfig: JSON.parse(buildPiMcpConfig([server])),
+    };
+    f.behavior.tool = nativePiMcpToolName(0, 0, "current_mcp");
+    const host = await f.launch();
+    const first = await host.request(
+      "prompt",
+      "Remember the original revision",
+      context,
+    );
+    expect(first.success).toBe(true);
+    const original = assertDefined(first.result).state;
+    await writeFile(join(f.workspace, "retained.txt"), "retained user file");
+    // The broker stops the idle old host on signature mismatch before forwarding
+    // the new turn. Its response was emitted only after persist() completed.
+    await host.stop();
+    f.behavior.mcpTool = "new_revision_tool";
+    f.behavior.mcpSchema = {
+      type: "object",
+      properties: { optional: { type: "string" } },
+    };
+    f.behavior.tool = nativePiMcpToolName(0, 0, "new_revision_tool");
+    const next = await f.launch({
+      agentRevisionId: "revision-two",
+      historyRequired: true,
+    });
+    const continued = await next.request(
+      "prompt",
+      "Continue in the same conversation",
+      context,
+    );
+    expect(continued.success).toBe(true);
+    expect(assertDefined(continued.result).state).toMatchObject({
+      sessionId: original.sessionId,
+      sessionFile: original.sessionFile,
+    });
+    expect(await readFile(join(f.workspace, "retained.txt"), "utf8")).toBe(
+      "retained user file",
+    );
+    expect(f.requests.at(-1)?.body.messages).toContainEqual(
+      expect.objectContaining({
+        role: "user",
+        content: [{ type: "text", text: "Remember the original revision" }],
+      }),
+    );
+    expect(
+      f.mcpRequests
+        .filter((entry) => entry.method === "tools/call")
+        .map((entry) => entry.params),
+    ).toEqual([
+      { name: "current_mcp", arguments: {} },
+      { name: "new_revision_tool", arguments: {} },
+    ]);
+  }, 60000);
+
   it("uses current model credentials and MCP definitions on successive contexts, rejecting tool schema changes", async () => {
     const f = await setup();
     f.behavior.tool = nativePiMcpToolName(0, 0, "current_mcp");
@@ -543,8 +1016,10 @@ describe("official Pi SDK headless session host", () => {
       url: f.config.model.baseUrl.replace("/v1", "/mcp"),
     };
     const first = {
+      ...f.context,
       runtimeToken: "test-runtime-first",
       mcpConfig: JSON.parse(buildPiMcpConfig([server])),
+      model: f.config.model,
     };
     expect((await host.request("prompt", "Call MCP", first)).success).toBe(
       true,
@@ -718,15 +1193,22 @@ describe("official Pi SDK headless session host", () => {
     );
     expect(f.requests).toHaveLength(2);
   }, 60000);
-  it("retains tool failure and reload failure, and rejects outside dynamic resource paths", async () => {
+  it("keeps the turn alive after a failed tool call, retains reload failure, and rejects outside dynamic resource paths", async () => {
     const f = await setup();
     f.behavior.tool = "fail_tool";
     const host = await f.launch();
+    // The model receives the failed result and answers; the turn and session survive.
     expect(await host.request("prompt", "Call fail_tool")).toMatchObject({
-      success: false,
-      error: { code: "PI_SDK_TOOL_FAILED" },
+      success: true,
+      result: { state: { sessionPersisted: true } },
     });
-    expect(JSON.stringify(host.events)).not.toContain("private-tool-secret");
+    expect(host.events).toContainEqual(
+      expect.objectContaining({
+        type: "tool_execution_end",
+        toolName: "fail_tool",
+        isError: true,
+      }),
+    );
     await writeFile(
       f.extension,
       'export default () => { throw new Error("reload-secret"); };',
@@ -749,48 +1231,364 @@ describe("official Pi SDK headless session host", () => {
       error: { code: "PI_EXTENSION_RESOURCE_DENIED" },
     });
   }, 60000);
-  it("refreshes approval readiness for every execution context, including command-only turns", async () => {
-    const f = await setup(),
-      approvalExtensionPath = join(f.root, "private", "approval.mjs");
-    await writeFile(
-      approvalExtensionPath,
-      nativeApprovalAdapter(resolve("scripts/a2a-native-approval.mjs")),
+  it("delivers native extension dialogs and notifications with the current task bearer, without tool approval injection", async () => {
+    const f = await setup();
+    const host = await f.launch();
+    const result = await host.request("prompt", "/Dialogs");
+    expect(result.success).toBe(true);
+    expect(result.result?.text).toContain(
+      '["select-answer",true,"input-answer","editor-answer"]',
     );
-    const host = await f.launch({
-      approvalExtensionPath,
-      approvalHelperPath: resolve("scripts/a2a-native-approval.mjs"),
-    });
-    const first = {
-      ...f.context,
-      approvalUrl: f.config.model.baseUrl.replace(
-        "/v1",
-        "/api/v1/agent-runtime/a2a/fixture-task/approvals",
-      ),
-    };
-    expect((await host.request("prompt", "/CaseCmd", first)).success).toBe(
-      true,
-    );
-    const second = {
-      ...first,
-      runtimeToken: "test-runtime-replacement",
-      approvalUrl: first.approvalUrl.replace(
-        "fixture-task",
-        "fixture-task-next",
-      ),
-    };
-    expect((await host.request("prompt", "/Silent", second)).success).toBe(
-      true,
-    );
-    expect(f.approvals).toEqual([
-      { action: "ready", authorization: "Bearer test-runtime-first" },
-      { action: "ready", authorization: "Bearer test-runtime-first" },
-      { action: "ready", authorization: "Bearer test-runtime-replacement" },
+    expect(
+      f.uiCalls
+        .filter((call) => call.action === "request")
+        .map((call) => call.request?.method),
+    ).toEqual([
+      "select",
+      "confirm",
+      "input",
+      "editor",
+      "notify",
+      "setStatus",
+      "setWidget",
+      "setTitle",
+      "set_editor_text",
+      "setStatus",
+      "setWidget",
     ]);
-    f.denyReady();
-    expect((await host.request("prompt", "/CaseCmd", second)).success).toBe(
-      false,
+    expect(
+      f.uiCalls
+        .filter((call) => call.action === "request")
+        .map((call) => call.request),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          method: "select",
+          title: "Select one",
+          options: ["first", "second"],
+        }),
+        expect.objectContaining({
+          method: "notify",
+          message: "Native notification",
+          notifyType: "warning",
+        }),
+        expect.objectContaining({
+          method: "setWidget",
+          widgetKey: "native",
+          widgetLines: ["line"],
+          widgetPlacement: "belowEditor",
+        }),
+        expect.objectContaining({ method: "set_editor_text", text: "draft" }),
+      ]),
     );
+    expect(
+      f.uiCalls.every(
+        (call) => call.authorization === "Bearer test-runtime-first",
+      ),
+    ).toBe(true);
+    const firstCalls = f.uiCalls.length;
+    const replacement = {
+      ...f.context,
+      runtimeToken: "test-runtime-replacement",
+      uiUrl: f.context.uiUrl.replace("fixture-task", "next-task"),
+    };
+    expect(
+      (await host.request("prompt", "/Dialogs", replacement)).success,
+    ).toBe(true);
+    expect(
+      f.uiCalls
+        .slice(firstCalls)
+        .every(
+          (call) =>
+            call.authorization === "Bearer test-runtime-replacement" &&
+            call.path?.includes("next-task"),
+        ),
+    ).toBe(true);
     expect(f.requests).toEqual([]);
+    // Ordinary tools remain native; no platform approval readiness/check call is made.
+    expect(
+      (await host.request("prompt", "Use increment", replacement)).success,
+    ).toBe(true);
+    expect(await readFile(join(f.workspace, "count.txt"), "utf8")).toBe("1");
+    expect(
+      f.uiCalls.every((call) =>
+        ["request", "poll", "resolve", "todos"].includes(call.action),
+      ),
+    ).toBe(true);
+  }, 60000);
+  it("retires native dialogs on timeout, extension signal, and host abort without leaving a blocked command", async () => {
+    const f = await setup();
+    f.behavior.pauseUi = true;
+    const host = await f.launch();
+    expect((await host.request("prompt", "/Timeout")).result?.text).toContain(
+      "false",
+    );
+    expect((await host.request("prompt", "/Signal")).result?.text).toContain(
+      "undefined",
+    );
+    const dialogCount = f.uiCalls.filter(
+      (call) => call.action === "request",
+    ).length;
+    expect((await host.request("prompt", "/AlreadyAborted")).success).toBe(
+      true,
+    );
+    expect(f.uiCalls.filter((call) => call.action === "request")).toHaveLength(
+      dialogCount,
+    );
+    const requested = once(f.requestEvents, "ui-request");
+    const turn = host.request("prompt", "/Dialogs");
+    await requested;
+    expect((await host.request("abort")).success).toBe(true);
+    expect(await turn).toMatchObject({
+      success: false,
+      error: { code: "PI_SDK_ABORTED" },
+    });
+    const pendingIds = f.uiCalls
+      .filter(
+        (call) =>
+          call.action === "request" &&
+          ["confirm", "input", "select"].includes(call.request?.method ?? ""),
+      )
+      .map((call) => call.request?.id);
+    expect(
+      f.uiCalls
+        .filter((call) => call.action === "resolve")
+        .map((call) => call.id),
+    ).toEqual(pendingIds);
+    f.behavior.pauseUi = false;
+    expect((await host.request("prompt", "/Dialogs")).success).toBe(true);
+  }, 60000);
+  it("polls native dialog responses, preserves cancelled defaults, and retires failed transport requests", async () => {
+    const f = await setup();
+    const host = await f.launch();
+    f.behavior.pauseUi = true;
+    const requested = once(f.requestEvents, "ui-request");
+    const turn = host.request("prompt", "/Dialogs");
+    await requested;
+    f.behavior.pauseUi = false;
+    expect((await turn).success).toBe(true);
+    expect(f.uiCalls.some((call) => call.action === "poll")).toBe(true);
+    f.behavior.cancelUi = true;
+    expect((await host.request("prompt", "/Dialogs")).result?.text).toContain(
+      "[null,false,null,null]",
+    );
+    f.behavior.pauseUi = true;
+    f.behavior.failUiPoll = true;
+    expect((await host.request("prompt", "/Dialogs")).success).toBe(false);
+    const failed = f.uiCalls
+      .filter(
+        (call) =>
+          call.action === "request" && call.request?.method === "select",
+      )
+      .at(-1);
+    expect(f.uiCalls).toContainEqual(
+      expect.objectContaining({ action: "resolve", id: failed?.request?.id }),
+    );
+    // The first model/tool turn can write native history before UI delivery fails.
+    // Its persisted session pointer must survive that failed result and restart.
+    f.behavior.pauseUi = false;
+    f.behavior.failUiPoll = false;
+    f.behavior.cancelUi = false;
+    f.behavior.failTodoProjection = true;
+    f.behavior.tool = "todo";
+    f.behavior.toolArgs = JSON.stringify({
+      action: "add",
+      text: "Keep native state after delivery failure",
+    });
+    expect(
+      await host.request(
+        "prompt",
+        "Create native todo before UI delivery fails",
+      ),
+    ).toMatchObject({ success: false, error: { code: "PI_SDK_UI_FAILED" } });
+    const retained = JSON.parse(
+      await readFile(f.config.statePath, "utf8"),
+    ) as SdkState;
+    expect(retained.sessionPersisted).toBe(true);
+    expect(await readFile(retained.sessionFile, "utf8")).toContain(
+      "Keep native state after delivery failure",
+    );
+    await host.stop();
+    f.behavior.failTodoProjection = false;
+    f.behavior.tool = "";
+    const reopened = await f.launch({ historyRequired: true });
+    const continued = await reopened.request(
+      "prompt",
+      "Continue the saved native session",
+    );
+    expect(continued.success).toBe(true);
+    expect(continued.result?.state).toMatchObject({
+      sessionId: retained.sessionId,
+      sessionFile: retained.sessionFile,
+    });
+    expect(
+      f.uiCalls.filter((call) => call.action === "todos").at(-1)?.todos,
+    ).toEqual([
+      { id: 1, text: "Keep native state after delivery failure", done: false },
+    ]);
+  }, 60000);
+  it("uses the installed native todo extension and projects current branch state across restart, tree navigation, and clears", async () => {
+    const f = await setup();
+    f.behavior.tool = "todo";
+    f.behavior.toolArgs = JSON.stringify({
+      action: "add",
+      text: "native first",
+    });
+    const host = await f.launch();
+    const first = await host.request("prompt", "Add first todo");
+    expect(first.success).toBe(true);
+    expect(
+      f.requests[0].body.tools?.filter((tool) => tool.function.name === "todo"),
+    ).toHaveLength(1);
+    const session = assertDefined(first.result).state;
+    const entries = (await readFile(session.sessionFile, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    const firstTodoResult = entries.find(
+      (entry) =>
+        entry.type === "message" &&
+        entry.message.role === "toolResult" &&
+        entry.message.toolName === "todo",
+    );
+    expect(firstTodoResult.message.details).toMatchObject({
+      action: "add",
+      todos: [{ id: 1, text: "native first", done: false }],
+      nextId: 2,
+    });
+    expect(
+      f.uiCalls.filter((call) => call.action === "todos").at(-1)?.todos,
+    ).toEqual([{ id: 1, text: "native first", done: false }]);
+    f.behavior.toolArgs = JSON.stringify({
+      action: "add",
+      text: "native second",
+    });
+    expect((await host.request("prompt", "Add second todo")).success).toBe(
+      true,
+    );
+    await host.stop();
+    const resumed = await f.launch({ historyRequired: true });
+    expect((await resumed.request("prompt", "/todos")).result?.text).toContain(
+      "/todos",
+    );
+    expect(
+      f.uiCalls.filter((call) => call.action === "todos").at(-1)?.todos,
+    ).toHaveLength(2);
+    expect(
+      f.uiCalls.filter((call) => call.request?.method === "notify").at(-1)
+        ?.request?.message,
+    ).toContain("native second");
+    expect(
+      (await resumed.request("prompt", `/Tree ${firstTodoResult.id}`)).success,
+    ).toBe(true);
+    expect(
+      f.uiCalls.filter((call) => call.action === "todos").at(-1)?.todos,
+    ).toEqual([{ id: 1, text: "native first", done: false }]);
+    f.behavior.toolArgs = JSON.stringify({ action: "clear" });
+    expect((await resumed.request("prompt", "Clear todos")).success).toBe(true);
+    expect(
+      f.uiCalls.filter((call) => call.action === "todos").at(-1)?.todos,
+    ).toEqual([]);
+    expect((await resumed.request("prompt", "/Replace")).success).toBe(true);
+    expect(
+      f.uiCalls.filter((call) => call.action === "todos").at(-1)?.todos,
+    ).toEqual([]);
+  }, 60000);
+  it("prefers an admitted package's todo tool and rejects a conflicting package-only todos command", async () => {
+    const f = await setup();
+    await writeFile(
+      f.extension,
+      `export default pi=>{let n=0;pi.registerTool({name:'todo',label:'Package todo',description:'Native package todo',parameters:{type:'object',properties:{}},async execute(){n++;return {content:[{type:'text',text:'PACKAGE_TODO'}],details:{todos:n===1?[{id:7,text:'package state',done:true}]:n===2?[{title:'custom todo schema',completed:false}]:[{id:8,text:'x'.repeat(300000),done:false}]}};}});};`,
+    );
+    f.behavior.tool = "todo";
+    const host = await f.launch();
+    expect((await host.request("prompt", "Use package todo")).success).toBe(
+      true,
+    );
+    expect(
+      f.requests[0].body.tools?.filter((tool) => tool.function.name === "todo"),
+    ).toHaveLength(1);
+    expect(
+      f.uiCalls.filter((call) => call.action === "todos").at(-1)?.todos,
+    ).toEqual([{ id: 7, text: "package state", done: true }]);
+    f.behavior.todoQuota = true;
+    expect(
+      (await host.request("prompt", "Use package's custom todo schema"))
+        .success,
+    ).toBe(true);
+    expect(
+      f.uiCalls.filter((call) => call.action === "todos").at(-1)?.todos,
+    ).toEqual([]);
+    expect(
+      f.uiCalls.some(
+        (call) =>
+          call.request?.method === "notify" &&
+          String(call.request.message).includes(
+            "previously displayed list is stale",
+          ),
+      ),
+    ).toBe(true);
+    f.behavior.todoQuota = false;
+    const oversized = await host.request(
+      "prompt",
+      "Keep the oversized native state intact",
+    );
+    expect(oversized.success).toBe(true);
+    expect(
+      f.uiCalls.filter((call) => call.request?.method === "notify").at(-1)
+        ?.request,
+    ).toMatchObject({
+      notifyType: "warning",
+      message: expect.stringContaining("previously displayed list is stale"),
+    });
+    const nativeEntries = (
+      await readFile(assertDefined(oversized.result).state.sessionFile, "utf8")
+    )
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(
+      nativeEntries
+        .filter(
+          (entry) =>
+            entry.type === "message" &&
+            entry.message.role === "toolResult" &&
+            entry.message.toolName === "todo",
+        )
+        .at(-1).message.details.todos[0].text,
+    ).toHaveLength(300000);
+    await host.stop();
+    await writeFile(
+      f.extension,
+      `export default pi=>{pi.registerCommand('todos',{handler:async()=>{}});};`,
+    );
+    const collision = await f.launch({ historyRequired: true });
+    expect(await collision.request("prompt", "/todos")).toMatchObject({
+      success: false,
+      error: { code: "PI_CAPABILITY_CONFLICT" },
+    });
+  }, 60000);
+  it("keeps json mode noninteractive when an execution has no UI transport", async () => {
+    const f = await setup();
+    await writeFile(
+      f.extension,
+      `export default pi=>{pi.on('session_start',(_,ctx)=>{if(ctx.hasUI||ctx.mode!=='json')throw new Error('UNEXPECTED_UI');});};`,
+    );
+    f.behavior.tool = "todo";
+    f.behavior.toolArgs = JSON.stringify({
+      action: "add",
+      text: "native without web",
+    });
+    const host = await f.launch();
+    expect(
+      (
+        await host.request("prompt", "Use native todo without UI", {
+          ...f.context,
+          uiUrl: undefined,
+        })
+      ).success,
+    ).toBe(true);
+    expect(f.uiCalls).toEqual([]);
   }, 60000);
   it("keeps abort parsing live while the model is pending and does not report interrupted success", async () => {
     const f = await setup();
@@ -798,11 +1596,31 @@ describe("official Pi SDK headless session host", () => {
     const host = await f.launch(),
       turn = host.request("prompt", "Pause model");
     if (!f.requests.length) await once(f.requestEvents, "request");
+    await expect
+      .poll(
+        () =>
+          host.events.filter((event) => event.type === "model_request").length,
+      )
+      .toBe(1);
+    expect(host.events.some((event) => event.type === "message_update")).toBe(
+      false,
+    );
     expect((await host.request("abort")).success).toBe(true);
     expect(await turn).toMatchObject({
       success: false,
       error: { code: "PI_SDK_ABORTED" },
     });
     expect(f.requests).toHaveLength(1);
+    // The interrupted turn keeps its history; the next message continues instead
+    // of failing with PI_SDK_SESSION_MISSING.
+    await host.stop();
+    f.behavior.pause = false;
+    f.behavior.tool = "";
+    expect(
+      await (await f.launch({ historyRequired: true })).request(
+        "prompt",
+        "Continue after stop",
+      ),
+    ).toMatchObject({ success: true });
   }, 60000);
 });

@@ -85,6 +85,36 @@ export function mcpDefinitionChecksum(deployment: DeploymentForSpawn): string {
     .digest("hex");
 }
 
+/** Opt-in placement: session runtimes run inside the Agent's own sandbox. */
+export function mcpRunsInAgentSandbox(deployment: {
+  installCfg: unknown;
+}): boolean {
+  const cfg = deployment.installCfg;
+  return (
+    !!cfg &&
+    typeof cfg === "object" &&
+    !Array.isArray(cfg) &&
+    (cfg as Record<string, unknown>).runInAgentSandbox === true
+  );
+}
+
+/** Only Docker-launched (stdio) recipes can join an Agent sandbox. */
+export function supportsAgentSandboxPlacement(
+  deployment: DeploymentForSpawn,
+): boolean {
+  if (deployment.source === "sandbox") return false;
+  try {
+    const spec = resolveSpawnSpec(deployment);
+    return (
+      spec.kind === "bridge" &&
+      spec.command === "docker" &&
+      spec.args[0] === "run"
+    );
+  } catch {
+    return false;
+  }
+}
+
 /** Launchers may select exact versions/commits, never floating registry tags. */
 export function assertSessionMcpRecipePinned(
   deployment: DeploymentForSpawn,

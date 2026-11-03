@@ -109,7 +109,7 @@ async function main() {
   console.log(
     "Seeded the smoke account, workspace and three ungranted Pi drafts with stopped templates. " +
       "No catalog content, immutable release, credential, capability grant or runtime was created; " +
-      "sync Resource Center content from a configured GitHub registry.",
+      "sync Plugin Center content from a configured GitHub registry.",
   );
 }
 

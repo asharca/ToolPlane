@@ -1,7 +1,11 @@
 // @vitest-environment node
 import { describe, it, expect } from "vitest";
 import { Task, TaskState, SendMessageRequest } from "@a2a-js/sdk";
-import { toJsonRpcError } from "@a2a-js/sdk/errors";
+import {
+  toJsonRpcError,
+  ExtensionSupportRequiredError,
+  ContentTypeNotSupportedError,
+} from "@a2a-js/sdk/errors";
 import {
   assertTransition,
   historyView,
@@ -93,13 +97,84 @@ describe("native A2A 1.0 protocol contract", () => {
     { raw: "YQ==" },
     { data: { a: 1 } },
     { data: null },
-  ])("rejects unadvertised input modes, never fetching files", (part) => {
-    try {
-      validateParams("SendMessage", { message: { ...message, parts: [part] } });
-      throw new Error("accepted");
-    } catch (error) {
-      expect(toJsonRpcError(error).code).toBe(-32005);
-    }
+    { raw: "YR==", mediaType: "application/octet-stream" },
+  ])(
+    "rejects malformed or unadvertised input modes without fetching",
+    (part) => {
+      expect(() =>
+        validateParams("SendMessage", {
+          message: { ...message, parts: [part] },
+        }),
+      ).toThrow();
+    },
+  );
+  it.each([
+    {
+      raw: "YQ==",
+      filename: "letter.bin",
+      mediaType: "application/octet-stream",
+    },
+    {
+      url: "https://files.example/object?signature=transport-only",
+      filename: "report.csv",
+      mediaType: "text/csv",
+    },
+    { data: { toolplaneFileId: "owned-file" }, mediaType: "application/pdf" },
+  ])(
+    "accepts standard raw/url or owned handle shape, leaving ownership/network checks to intake",
+    (part) => {
+      expect(() =>
+        validateParams("SendMessage", {
+          message: { ...message, parts: [part] },
+        }),
+      ).not.toThrow();
+    },
+  );
+  it.each([
+    { raw: "YR==", mediaType: "application/octet-stream" },
+    {
+      raw: Buffer.alloc(32_769).toString("base64"),
+      mediaType: "application/octet-stream",
+    },
+    {
+      raw: "YQ==",
+      url: "https://files.example/object",
+      mediaType: "application/octet-stream",
+    },
+    {
+      url: "https://user:pass@files.example/object",
+      mediaType: "application/octet-stream",
+    },
+    {
+      url: "https://files.example/object#fragment",
+      mediaType: "application/octet-stream",
+    },
+    {
+      raw: "YQ==",
+      filename: "../secret",
+      mediaType: "application/octet-stream",
+    },
+  ])("rejects noncanonical or unsafe file Parts", (part) => {
+    expect(() =>
+      validateParams("SendMessage", { message: { ...message, parts: [part] } }),
+    ).toThrow();
+  });
+  it("rejects unknown extensions and published-service image output with standard errors", () => {
+    expect(() =>
+      validateParams("SendMessage", {
+        message: {
+          ...message,
+          extensions: ["https://unknown.example/extension"],
+        },
+      }),
+    ).toThrow(ExtensionSupportRequiredError);
+    const imageOutput = SendMessageRequest.fromJSON({
+      message,
+      configuration: { acceptedOutputModes: ["image/png"] },
+    });
+    expect(() => validateSend(imageOutput, ["text/plain"])).toThrow(
+      ContentTypeNotSupportedError,
+    );
   });
   it("reports standard errors for unsupported push and output modes", () => {
     for (const [configuration, code] of [
@@ -107,7 +182,7 @@ describe("native A2A 1.0 protocol contract", () => {
         { taskPushNotificationConfig: { url: "https://callback.test" } },
         -32003,
       ],
-      [{ acceptedOutputModes: ["image/png"] }, -32005],
+      [{ acceptedOutputModes: ["invalid-mime"] }, -32005],
     ] as const) {
       try {
         validateSend(SendMessageRequest.fromJSON({ message, configuration }));

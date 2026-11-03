@@ -2,6 +2,15 @@ import type { Sandbox } from "@prisma/client";
 import type { SkillBundleFile } from "@/lib/skills/bundle";
 import { z } from "zod";
 import { AGENT_STEP_BOUNDS } from "./constants";
+import { OMP_VERSION, OmpConfigSnapshotSchema } from "./omp-config";
+import {
+  SubagentPinSchema,
+  NativeRoleModelSchema,
+} from "./capability-contracts";
+import {
+  EXTERNAL_SANDBOX_ACCESS,
+  MAX_EXTERNAL_SANDBOXES,
+} from "@/lib/sandboxes/external";
 
 const reference = z.string().trim().min(1).max(240);
 const references = z.array(reference).max(1_000);
@@ -21,7 +30,7 @@ const sandboxDefinitionSchema = z
   })
   .strict() satisfies z.ZodType<Pick<Sandbox, "kind" | "image" | "network">>;
 
-export const AgentEnvironmentSnapshotSchema = sandboxDefinitionSchema
+const PiEnvironmentSnapshotSchema = sandboxDefinitionSchema
   .extend({
     piVersion: z.string().regex(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/),
     initialSnapshot: z
@@ -51,6 +60,17 @@ export const AgentEnvironmentSnapshotSchema = sandboxDefinitionSchema
       .max(1_000),
   })
   .strict();
+
+const OmpEnvironmentSnapshotSchema = PiEnvironmentSnapshotSchema.omit({
+  piVersion: true,
+})
+  .extend({ ompVersion: z.literal(OMP_VERSION) })
+  .strict();
+
+export const AgentEnvironmentSnapshotSchema = z.union([
+  PiEnvironmentSnapshotSchema,
+  OmpEnvironmentSnapshotSchema,
+]);
 
 const skillFileSchema = z
   .object({
@@ -122,9 +142,17 @@ export const AgentA2APolicySchema = z
 
 export type AgentA2APolicy = z.infer<typeof AgentA2APolicySchema>;
 
+export const SubagentModeSchema = z.enum(["platform", "native"]);
+export const NativeSubagentPolicySchema = z
+  .object({
+    maxConcurrency: z.number().int().min(1).max(8),
+    maxDepth: z.number().int().min(1).max(4),
+  })
+  .strict();
+
 // Resource identifiers and credential references only. Runtime materialization
 // resolves live grants and secrets separately; it must never persist their values.
-export const AgentRevisionConfigSchema = z
+const PiRevisionConfigSchema = z
   .object({
     schemaVersion: z.literal(1),
     runtimeKind: z.literal("pi-sdk"),
@@ -139,8 +167,35 @@ export const AgentRevisionConfigSchema = z
       .max(AGENT_STEP_BOUNDS.max),
     disabledBuiltinTools: references,
     sandboxTemplateId: reference.nullable(),
-    environment: AgentEnvironmentSnapshotSchema,
+    environment: PiEnvironmentSnapshotSchema,
+    // Attachment and maximum access only; live attachments narrow it at use.
+    externalSandboxes: z
+      .array(
+        z
+          .object({
+            sandboxId: reference,
+            access: z.enum(EXTERNAL_SANDBOX_ACCESS),
+          })
+          .strict(),
+      )
+      .max(MAX_EXTERNAL_SANDBOXES)
+      .default([]),
     skills: z.array(AgentSkillSnapshotSchema).max(1_000),
+    subagents: z.array(SubagentPinSchema).max(128).optional(),
+    // Optional without defaults: parsing historical revisions must not rewrite their checksum.
+    subagentMode: z.literal("platform").optional(),
+    nativeSubagentPolicy: NativeSubagentPolicySchema.optional(),
+    nativeRoleModels: z
+      .array(
+        NativeRoleModelSchema.extend({
+          marketInstallId: reference,
+          releaseId: reference,
+          path: z.string().min(1).max(1000),
+          name: reference,
+        }).strict(),
+      )
+      .max(1000)
+      .optional(),
     knowledgeBaseIds: references,
     packages: z
       .array(
@@ -178,5 +233,29 @@ export const AgentRevisionConfigSchema = z
       .strict(),
   })
   .strict();
+
+export const AgentRevisionConfigSchema = z
+  .discriminatedUnion("runtimeKind", [
+    PiRevisionConfigSchema,
+    PiRevisionConfigSchema.extend({
+      runtimeKind: z.literal("omp"),
+      subagentMode: SubagentModeSchema.optional(),
+      environment: OmpEnvironmentSnapshotSchema,
+      ompConfig: OmpConfigSnapshotSchema,
+      ompConfigChecksum: checksum,
+    }).strict(),
+  ])
+  .superRefine((config, ctx) => {
+    // "native" enables OMP's in-sandbox task tool alongside any platform delegation.
+    if (config.subagentMode !== "native") return;
+    if (!config.nativeSubagentPolicy || config.subagents?.length) {
+      ctx.addIssue({
+        code: "custom",
+        message:
+          "Native subagents require a policy and exclude pinned capability children.",
+        path: ["subagentMode"],
+      });
+    }
+  });
 
 export type AgentRevisionConfig = z.infer<typeof AgentRevisionConfigSchema>;

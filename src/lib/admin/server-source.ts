@@ -225,3 +225,73 @@ export async function fetchServerSourceMetadata(
   if (source === "npm") return npmMetadata(ref, fetchImpl);
   return pypiMetadata(ref, fetchImpl);
 }
+
+/** Resolve only fixed public registry hosts, with the same bounded metadata transport. */
+export async function resolveServerSourceVersion(
+  source: ServerMetadataSource,
+  ref: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<string> {
+  if (source === "npm") {
+    const match = /^((?:@[a-z0-9._~-]+\/)?[a-z0-9._~-]+)(?:@([^\s/]+))?$/.exec(
+      ref,
+    );
+    if (!match) throw new Error("Invalid npm package reference.");
+    const [, name, selector] = match;
+    if (
+      selector &&
+      /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(selector)
+    )
+      return ref;
+    const metadata = await requestJson(
+      fetchImpl,
+      `https://registry.npmjs.org/${encodeURIComponent(name)}`,
+    );
+    const version = text(record(metadata?.["dist-tags"])?.latest, 200);
+    if (
+      !version ||
+      !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(version)
+    )
+      throw new Error("npm package version is missing.");
+    return `${name}@${version}`;
+  }
+  if (source === "pypi") {
+    const match =
+      /^([A-Za-z0-9][A-Za-z0-9._-]*)(\[[A-Za-z0-9_,.-]+\])?(?:([<>=!~].+))?$/.exec(
+        ref,
+      );
+    if (!match) throw new Error("Invalid PyPI package reference.");
+    const [, name, extras = "", selector] = match;
+    if (selector && /^==\d[A-Za-z0-9.+!-]*$/.test(selector)) return ref;
+    const metadata = await requestJson(
+      fetchImpl,
+      `https://pypi.org/pypi/${encodeURIComponent(name)}/json`,
+    );
+    const version = text(record(metadata?.info)?.version, 200);
+    if (!version || !/^\d[A-Za-z0-9.+!-]*$/.test(version))
+      throw new Error("PyPI package version is missing.");
+    return `${name}${extras}==${version}`;
+  }
+  const match =
+    /^https:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/?(?:#([^\s]+))?$/.exec(
+      ref,
+    );
+  if (!match) throw new Error("Invalid GitHub repository reference.");
+  const [, owner, repository, revision] = match;
+  if (revision && /^[a-fA-F0-9]{40}$/.test(revision)) return ref;
+  const repo = repository.replace(/\.git$/, "");
+  const token = process.env.GITHUB_TOKEN || process.env.TOOLPLANE_GITHUB_TOKEN;
+  const metadata = await requestJson(
+    fetchImpl,
+    `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits/${encodeURIComponent(revision || "HEAD")}`,
+    {
+      accept: "application/vnd.github+json",
+      "user-agent": "toolplane-mcp-metadata",
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+    },
+  );
+  const sha = metadata?.sha;
+  if (typeof sha !== "string" || !/^[a-fA-F0-9]{40}$/.test(sha))
+    throw new Error("GitHub commit is missing.");
+  return `https://github.com/${owner}/${repo}#${sha}`;
+}

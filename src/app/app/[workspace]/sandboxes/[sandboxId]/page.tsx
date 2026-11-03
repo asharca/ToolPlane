@@ -8,11 +8,15 @@ import { notFound, redirect } from "next/navigation";
 import { Cpu, FolderOpen, Globe2, Laptop, Terminal } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { getWorkspaceForUser } from "@/lib/workspace/queries";
-import { sshTargetIdFromConfig } from "@/lib/sandboxes/ssh-targets";
 import { sandboxMcpResource } from "@/lib/sandboxes/oauth-policy";
 import { sandboxMcpExportable } from "@/lib/sandboxes/mcp-policy";
 import { SandboxMcpExport } from "@/components/dashboard/sandboxes/SandboxMcpExport";
 import { getSandbox } from "@/lib/sandboxes/queries";
+import { db } from "@/lib/db";
+import {
+  isExternalSandboxAccess,
+  isSessionSandbox,
+} from "@/lib/sandboxes/external";
 import {
   parseSandboxDirectoryText,
   type SandboxFileEntry,
@@ -46,7 +50,12 @@ import {
 } from "@/components/dashboard/DashboardUI";
 import { SandboxWorkspace } from "@/components/dashboard/sandboxes/SandboxWorkspace";
 import { SandboxConnectorStatus } from "@/components/dashboard/sandboxes/SandboxConnectorStatus";
-import { SandboxSettingsDialog } from "@/components/dashboard/sandboxes/SandboxSettingsDialog";
+import {
+  SandboxNameField,
+  SandboxSettingsDialog,
+  SandboxSettingsForm,
+} from "@/components/dashboard/sandboxes/SandboxSettingsDialog";
+import { DialogField } from "@/components/dashboard/dialog";
 import { SandboxDataManagement } from "@/components/dashboard/sandboxes/SandboxDataManagement";
 import { SubmitButton } from "@/components/dashboard/SubmitButton";
 import { ConfirmSubmitButton } from "@/components/dashboard/ConfirmSubmitButton";
@@ -73,7 +82,7 @@ function CommandBlock({
         </div>
         <CopyButton text={command} label={copyLabel} />
       </div>
-      <pre className="whitespace-pre-wrap break-all rounded-md border border-border bg-background px-3 py-2 text-xs leading-5 text-foreground">
+      <pre className="whitespace-pre-wrap break-all rounded-xl border border-border bg-background px-3 py-2 text-xs leading-5 text-foreground">
         <code>{command}</code>
       </pre>
     </div>
@@ -114,6 +123,22 @@ export default async function SandboxDetailPage({
   const sandbox = await getSandbox(ws.id, sandboxId);
   if (!sandbox) notFound();
   const agent = sandbox.agentLinks[0]?.agent;
+  const sessionCopy = isSessionSandbox(sandbox.config);
+  const managedAgentId =
+    sandbox.config &&
+    typeof sandbox.config === "object" &&
+    !Array.isArray(sandbox.config) &&
+    typeof sandbox.config.agentId === "string"
+      ? sandbox.config.agentId
+      : null;
+  const ownerAgent =
+    agent ??
+    (sessionCopy && managedAgentId
+      ? await db.agent.findFirst({
+          where: { id: managedAgentId, workspaceId: ws.id },
+          select: { id: true, name: true },
+        })
+      : null);
   const readOnly = Boolean(
     sandbox.config &&
       typeof sandbox.config === "object" &&
@@ -138,7 +163,11 @@ export default async function SandboxDetailPage({
       "deleting",
     ].includes(status);
   const connector = connectorFromConfig(sandbox.config);
-  const sshTargetId = sshTargetIdFromConfig(sandbox.config);
+  const sshServer = sandbox.sshServer;
+  const sshHost =
+    sshServer?.host.includes(":") && !sshServer.host.startsWith("[")
+      ? `[${sshServer.host}]`
+      : sshServer?.host;
   let mcpEndpoint: string | null = null;
   try {
     mcpEndpoint = sandboxMcpResource(sandbox.id);
@@ -149,7 +178,7 @@ export default async function SandboxDetailPage({
     sandbox.kind === "connector"
       ? t("userConnector")
       : sandbox.kind === "ssh"
-        ? sshTargetId
+        ? sshServer
           ? t("sshMode")
           : t("legacySshDisabled")
         : sandbox.kind === "host"
@@ -163,8 +192,8 @@ export default async function SandboxDetailPage({
       : sandbox.kind === "host"
         ? t("legacyHostDisabled")
         : sandbox.kind === "ssh"
-          ? sshTargetId
-            ? t("sshMode")
+          ? sshServer
+            ? `${sshServer.username}@${sshHost}${sshServer.port === 22 ? "" : `:${sshServer.port}`} · ${sshServer.root}`
             : t("legacySshDisabled")
           : (sandbox.image ?? "");
   const network =
@@ -196,7 +225,7 @@ export default async function SandboxDetailPage({
   const disabledLegacy =
     readOnly ||
     sandbox.kind === "host" ||
-    (sandbox.kind === "ssh" && !sshTargetId) ||
+    (sandbox.kind === "ssh" && !sshServer) ||
     (sandbox.kind === "connector" && !connector);
   const canUseConsole =
     status === "running" &&
@@ -210,6 +239,7 @@ export default async function SandboxDetailPage({
           "tools/call",
           { name: "list_dir", arguments: { path: "." } },
           5000,
+          { internal: true },
         ),
       )
     : { path: ".", entries: [] };
@@ -278,7 +308,7 @@ export default async function SandboxDetailPage({
             </p>
           </div>
         ) : (
-          <div className="rounded-md border border-border bg-background px-3 py-3 lg:col-span-2">
+          <div className="rounded-xl border border-border bg-background px-3 py-3 lg:col-span-2">
             <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               {t("runOnTheUserMachine")}
             </div>
@@ -299,7 +329,7 @@ export default async function SandboxDetailPage({
             </p>
           </div>
         ) : null}
-        <div className="min-w-0 rounded-md border border-border bg-muted/35 px-3 py-3 text-xs text-muted-foreground">
+        <div className="min-w-0 rounded-xl border border-border bg-muted/35 px-3 py-3 text-xs text-muted-foreground">
           <div className="font-medium text-foreground">
             {t("connectionModel")}
           </div>
@@ -346,7 +376,7 @@ export default async function SandboxDetailPage({
         <section className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex min-w-0 items-center gap-3">
-              <span className="flex size-10 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
+              <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
                 {sandbox.kind === "connector" ? (
                   <Laptop className="size-5" />
                 ) : (
@@ -371,9 +401,15 @@ export default async function SandboxDetailPage({
                     {backingStore}
                   </span>
                   <span className="font-mono">{network}</span>
-                  <span>
-                    {sandbox.agentLinks.length} {t("agents")}
-                  </span>
+                  <AnimatedBadge status="neutral" size="sm">
+                    {t(
+                      sessionCopy
+                        ? "sessionCopyRole"
+                        : agent
+                          ? "ownSandboxRole"
+                          : "externalSandboxRole",
+                    )}
+                  </AnimatedBadge>
                 </div>
               </div>
             </div>
@@ -410,7 +446,10 @@ export default async function SandboxDetailPage({
                     <h3 className="text-sm font-semibold text-foreground">
                       {t("generalSettings")}
                     </h3>
-                    <form action={renameSandboxAction} className="mt-3">
+                    <SandboxSettingsForm
+                      action={renameSandboxAction}
+                      className="mt-3"
+                    >
                       <input type="hidden" name="workspace" value={slug} />
                       <input
                         type="hidden"
@@ -421,24 +460,20 @@ export default async function SandboxDetailPage({
                         disabled={lifecycleBlocked}
                         className="flex items-end gap-2 disabled:opacity-60"
                       >
-                        <div className="min-w-0 flex-1 space-y-1.5 text-xs font-medium text-muted-foreground">
-                          <Input
-                            label={t("sandboxName")}
-                            name="name"
-                            defaultValue={sandbox.name}
-                            maxLength={80}
-                            className="min-w-0"
-                          />
-                        </div>
+                        <SandboxNameField
+                          label={t("sandboxName")}
+                          defaultValue={sandbox.name}
+                        />
                         <SubmitButton
                           pendingLabel={t("renaming")}
                           variant="secondary"
-                          size="sm"
+                          size="md"
+                          className="mb-0.5"
                         >
                           {t("rename")}
                         </SubmitButton>
                       </fieldset>
-                    </form>
+                    </SandboxSettingsForm>
                   </section>
 
                   {connector && !showConnectorSetup ? (
@@ -456,13 +491,7 @@ export default async function SandboxDetailPage({
                   ) : null}
 
                   <section className="py-5">
-                    <h3 className="text-sm font-semibold text-foreground">
-                      {t("environmentVariables")}
-                    </h3>
-                    <p className="mt-0.5 text-xs text-muted-foreground">
-                      {t("changesRestartTheSandboxContainerButKeepFiles")}
-                    </p>
-                    <form action={updateSandboxEnvAction} className="mt-3">
+                    <SandboxSettingsForm action={updateSandboxEnvAction}>
                       <input type="hidden" name="workspace" value={slug} />
                       <input
                         type="hidden"
@@ -473,15 +502,23 @@ export default async function SandboxDetailPage({
                         disabled={lifecycleBlocked}
                         className="space-y-3 disabled:opacity-60"
                       >
-                        <textarea
-                          name="env"
-                          defaultValue={envText}
-                          rows={5}
-                          spellCheck={false}
-                          placeholder={t("envPlaceholder")}
-                          className="rounded-xl border border-border bg-background px-3 py-2 text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring min-h-28 w-full resize-y font-mono text-xs leading-5"
-                          aria-label={t("environmentVariables")}
-                        />
+                        <DialogField
+                          label={t("environmentVariables")}
+                          htmlFor={`sandbox-env-${sandbox.id}`}
+                          description={t(
+                            "changesRestartTheSandboxContainerButKeepFiles",
+                          )}
+                        >
+                          <textarea
+                            id={`sandbox-env-${sandbox.id}`}
+                            name="env"
+                            defaultValue={envText}
+                            rows={5}
+                            spellCheck={false}
+                            placeholder={t("envPlaceholder")}
+                            className="block rounded-lg border border-border bg-background px-3 py-2 text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring min-h-28 w-full resize-y font-mono text-xs leading-5"
+                          />
+                        </DialogField>
                         <div className="flex flex-wrap items-center justify-between gap-3">
                           <p className="text-xs text-muted-foreground">
                             {t("environmentVariablesHint")}
@@ -489,13 +526,13 @@ export default async function SandboxDetailPage({
                           <SubmitButton
                             pendingLabel={t("saving")}
                             variant="secondary"
-                            size="sm"
+                            size="md"
                           >
                             {t("saveEnvironment")}
                           </SubmitButton>
                         </div>
                       </fieldset>
-                    </form>
+                    </SandboxSettingsForm>
                   </section>
 
                   {sandbox.kind === "docker" &&
@@ -654,21 +691,48 @@ export default async function SandboxDetailPage({
             </div>
           </div>
 
-          {sandbox.agentLinks.length > 0 ? (
-            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-              <span>{t("attachedAgents")}</span>
-              {sandbox.agentLinks.map((link) => (
-                <ButtonLink
-                  key={link.agent.id}
-                  href={`/app/${slug}/agents/${link.agent.id}`}
-                  variant="ghost"
-                  size="sm"
-                >
-                  {link.agent.name}
-                </ButtonLink>
-              ))}
-            </div>
-          ) : null}
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            {sessionCopy || agent ? (
+              <>
+                <span>{t("ownerAgent")}</span>
+                {ownerAgent ? (
+                  <ButtonLink
+                    href={`/app/${slug}/agents/${ownerAgent.id}?settings=sandboxes`}
+                    variant="ghost"
+                    size="sm"
+                  >
+                    {ownerAgent.name}
+                  </ButtonLink>
+                ) : (
+                  <span>{t("ownerAgentUnavailable")}</span>
+                )}
+                {!sessionCopy ? <span>{t("ownSandboxFixed")}</span> : null}
+              </>
+            ) : (
+              <>
+                <span>{t("attachedAgents")}</span>
+                {sandbox.externalAgentLinks.length ? (
+                  sandbox.externalAgentLinks.map((link) => (
+                    <ButtonLink
+                      key={link.agent.id}
+                      href={`/app/${slug}/agents/${link.agent.id}?settings=sandboxes`}
+                      variant="ghost"
+                      size="sm"
+                    >
+                      {link.agent.name}
+                      <span className="text-muted-foreground">
+                        {isExternalSandboxAccess(link.access)
+                          ? t(`access.${link.access}`)
+                          : link.access}
+                      </span>
+                    </ButtonLink>
+                  ))
+                ) : (
+                  <span>{t("noAttachedAgents")}</span>
+                )}
+              </>
+            )}
+          </div>
 
           {showConnectorSetup && connector ? (
             <DashboardPanel

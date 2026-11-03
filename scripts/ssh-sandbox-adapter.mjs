@@ -2,10 +2,13 @@ import { spawn } from "node:child_process";
 import { readFileSync, statSync } from "node:fs";
 import path from "node:path";
 
-const WORKER = readFileSync(
-  new URL("./ssh-sandbox-worker.py", import.meta.url),
-  "utf8",
-);
+// Read lazily so server code can import the argument builder without the worker.
+let worker;
+const workerSource = () =>
+  (worker ??= readFileSync(
+    new URL("./ssh-sandbox-worker.py", import.meta.url),
+    "utf8",
+  ));
 const MAX_RESPONSE = 7_500_000;
 const TOOLS = new Set([
   "sandbox_info",
@@ -19,10 +22,27 @@ const TOOLS = new Set([
 ]);
 const quote = (value) => `'${String(value).replace(/'/g, `'\\''`)}'`;
 
+const ABSOLUTE_PATH = (value) =>
+  typeof value === "string" &&
+  value.startsWith("/") &&
+  value.length <= 2048 &&
+  !/[^\x20-\uFFFF]|[\x7f\\]/.test(value) &&
+  !value.split("/").includes("..");
+
 export function validateSshTarget(raw) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw))
     throw new Error("SSH target is not configured.");
-  const { host, username, root, identityFile, knownHostsFile, port = 22 } = raw;
+  const {
+    host,
+    username,
+    root,
+    identityFile,
+    knownHostsFile,
+    askpassFile,
+    hostKeyAlias,
+    authType = "key",
+    port = 22,
+  } = raw;
   if (
     typeof host !== "string" ||
     !/^[a-zA-Z0-9][a-zA-Z0-9.:-]{0,252}$/.test(host)
@@ -35,27 +55,61 @@ export function validateSshTarget(raw) {
     throw new Error("Invalid SSH username.");
   if (!Number.isInteger(port) || port < 1 || port > 65535)
     throw new Error("Invalid SSH port.");
-  for (const value of [root, identityFile, knownHostsFile]) {
-    if (
-      typeof value !== "string" ||
-      !value.startsWith("/") ||
-      value.length > 2048 ||
-      /[^\x20-\uFFFF]|[\x7f\\]/.test(value) ||
-      value.split("/").includes("..")
-    )
+  if (authType !== "key" && authType !== "password")
+    throw new Error("Invalid SSH authentication type.");
+  // Password logins never carry an identity; key logins always do.
+  if ((authType === "key") !== (identityFile !== undefined))
+    throw new Error("Invalid SSH credential configuration.");
+  if (authType === "password" && askpassFile === undefined)
+    throw new Error("Invalid SSH credential configuration.");
+  const credentialPaths = [knownHostsFile, identityFile, askpassFile].filter(
+    (value) => value !== undefined,
+  );
+  for (const value of [root, ...credentialPaths]) {
+    if (!ABSOLUTE_PATH(value))
       throw new Error(
         "SSH paths must be absolute POSIX paths without parent traversal.",
       );
   }
   // OpenSSH config option values containing whitespace have parser-specific
   // quoting. Keep credential paths unambiguous; remote workspace allows spaces.
-  if (/\s/.test(identityFile) || /\s/.test(knownHostsFile))
+  if (credentialPaths.some((value) => /\s/.test(value)))
     throw new Error("SSH credential paths cannot contain whitespace.");
-  return { host, username, root, identityFile, knownHostsFile, port };
+  if (
+    hostKeyAlias !== undefined &&
+    (typeof hostKeyAlias !== "string" ||
+      !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(hostKeyAlias))
+  )
+    throw new Error("Invalid SSH host key alias.");
+  return {
+    host,
+    username,
+    root,
+    knownHostsFile,
+    port,
+    authType,
+    ...(identityFile === undefined ? {} : { identityFile }),
+    ...(askpassFile === undefined ? {} : { askpassFile }),
+    ...(hostKeyAlias === undefined ? {} : { hostKeyAlias }),
+  };
+}
+
+/** Fixed local environment; secrets reach OpenSSH only through the askpass file. */
+export function sshEnvironment(raw) {
+  const target = validateSshTarget(raw);
+  return {
+    PATH: "/usr/bin:/bin",
+    LANG: "C.UTF-8",
+    HOME: "/nonexistent",
+    ...(target.askpassFile
+      ? { SSH_ASKPASS: target.askpassFile, SSH_ASKPASS_REQUIRE: "force" }
+      : {}),
+  };
 }
 
 export function sshArguments(raw, remoteCommand, terminal = false) {
   const target = validateSshTarget(raw);
+  const key = target.authType === "key";
   return [
     "-F",
     "/dev/null",
@@ -66,17 +120,30 @@ export function sshArguments(raw, remoteCommand, terminal = false) {
     String(target.port),
     "-l",
     target.username,
-    "-i",
-    target.identityFile,
+    ...(key ? ["-i", target.identityFile] : []),
     ...[
-      "BatchMode=yes",
+      // Prompts (key passphrase or password) are answered only by askpass.
+      `BatchMode=${target.askpassFile ? "no" : "yes"}`,
       "IdentitiesOnly=yes",
       "IdentityAgent=none",
-      "PasswordAuthentication=no",
-      "KbdInteractiveAuthentication=no",
+      ...(key
+        ? [
+            "PubkeyAuthentication=yes",
+            "PasswordAuthentication=no",
+            "KbdInteractiveAuthentication=no",
+            "PreferredAuthentications=publickey",
+          ]
+        : [
+            "PubkeyAuthentication=no",
+            "PasswordAuthentication=yes",
+            "KbdInteractiveAuthentication=yes",
+            "PreferredAuthentications=keyboard-interactive,password",
+          ]),
+      "NumberOfPasswordPrompts=1",
       "StrictHostKeyChecking=yes",
       `UserKnownHostsFile=${target.knownHostsFile}`,
       "GlobalKnownHostsFile=/dev/null",
+      ...(target.hostKeyAlias ? [`HostKeyAlias=${target.hostKeyAlias}`] : []),
       "UpdateHostKeys=no",
       "ForwardAgent=no",
       "ClearAllForwardings=yes",
@@ -122,16 +189,14 @@ export function createSshSandbox(raw, identity = {}) {
   for (const [filename, secret] of [
     [target.identityFile, true],
     [target.knownHostsFile, false],
+    [target.askpassFile, true],
   ]) {
+    if (filename === undefined) continue;
     const info = statSync(filename);
     if (!info.isFile() || info.mode & (secret ? 0o077 : 0o022))
       throw new Error("SSH credential files have unsafe permissions.");
   }
-  const localEnv = {
-    PATH: "/usr/bin:/bin",
-    LANG: "C.UTF-8",
-    HOME: "/nonexistent",
-  };
+  const localEnv = sshEnvironment(target);
 
   async function request(tool, args = {}, env = {}) {
     if (!TOOLS.has(tool)) throw new Error("Unknown SSH sandbox tool.");
@@ -153,7 +218,7 @@ export function createSshSandbox(raw, identity = {}) {
     return new Promise((resolve, reject) => {
       const child = spawn(
         "/usr/bin/ssh",
-        sshArguments(target, `/usr/bin/python3 -u -c ${quote(WORKER)}`),
+        sshArguments(target, `/usr/bin/python3 -u -c ${quote(workerSource())}`),
         {
           shell: false,
           env: localEnv,

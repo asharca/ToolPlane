@@ -30,7 +30,11 @@ import { getAgentForRun } from "./queries";
 import { resolvePinnedAgent } from "./revisions";
 import { resolveAgentTools, resolveAgentPiPackages } from "./resolve";
 import type { ReasoningEffort } from "./constants";
+import type { AgentModelOverride } from "./chat-body";
+import { resolveAgentModelOverride } from "./turn-model";
+import { resolveSessionExternalSandboxes } from "./external-sandboxes";
 
+import { withWorkUiLease } from "./execution/work-ui";
 type SandboxTurnAgent = {
   id: string;
   workspaceId: string;
@@ -55,6 +59,7 @@ export type RunDedicatedSandboxTurnInput = {
   runtimeSessionId?: string;
   command?: string;
   reasoningEffort?: ReasoningEffort;
+  modelOverride?: AgentModelOverride;
   historyRequired?: boolean;
   onPromptInvocation?: (
     invocation: AgentPromptInvocation,
@@ -117,10 +122,17 @@ export async function runDedicatedSandboxTurn(
     liveAgent,
     (conversation ?? context)?.agentRevisionId,
   );
+  const effective = input.modelOverride
+    ? await resolveAgentModelOverride(
+        agent.workspaceId,
+        input.modelOverride,
+        agent.runtimeKind,
+      )
+    : { provider: agent.provider, model: agent.model };
   const resolved = resolveAgentTools(agent);
   input = {
     ...input,
-    agent,
+    agent: { ...agent, ...effective },
     systemPrompt: agent.systemPrompt,
     skills: resolved.skills,
     piPackages: resolveAgentPiPackages(agent),
@@ -153,7 +165,7 @@ export async function runDedicatedSandboxTurn(
         },
         async () => {
           const runtimeKind = input.agent.runtimeKind;
-          if (runtimeKind !== "pi-sdk") {
+          if (runtimeKind !== "pi-sdk" && runtimeKind !== "omp") {
             throw new Error("Historical Agent sessions are read-only.");
           }
           if (runtimeKind === "pi-sdk" && !input.piPackages)
@@ -163,6 +175,19 @@ export async function runDedicatedSandboxTurn(
           if (!provider?.id || !modelId)
             throw new Error("This Agent has no configured model.");
           const modelContext = resolveModelContext(provider, modelId);
+          const runtimeModel =
+            runtimeKind === "omp"
+              ? await db.providerModel.findUnique({
+                  where: {
+                    providerId_modelId: { providerId: provider.id, modelId },
+                  },
+                  select: {
+                    inputModalities: true,
+                    maxOutputTokens: true,
+                    contextWindow: true,
+                  },
+                })
+              : null;
 
           const link = await ensureAgentConversationSandbox({
             workspaceId: input.agent.workspaceId,
@@ -195,6 +220,11 @@ export async function runDedicatedSandboxTurn(
           const deploymentIds = [
             ...new Set(piSession?.deploymentIds ?? input.deploymentIds ?? []),
           ];
+          const externalSandboxes = await resolveSessionExternalSandboxes({
+            workspaceId: input.agent.workspaceId,
+            agentId: input.agent.id,
+            pinned: agent.revisionConfig.externalSandboxes,
+          });
           const now = Math.floor(Date.now() / 1000);
           const runtimeAccessToken = await createAgentRuntimeToken({
             workspaceId: input.agent.workspaceId,
@@ -204,13 +234,39 @@ export async function runDedicatedSandboxTurn(
             conversationId,
             a2aContextId: input.a2aContextId,
             providerId: provider.id,
+            modelOverride: input.modelOverride,
             deploymentIds,
+            externalSandboxIds: externalSandboxes.map(
+              (entry) => entry.sandboxId,
+            ),
             exp: now + 55 * 60,
           });
 
+          const runningTools = new Map<
+            string,
+            SandboxRuntimeActivity & { startedAt: number }
+          >();
+          const nativePolicy = agent.revisionConfig.nativeSubagentPolicy;
+          if (agent.revisionConfig.subagentMode === "native" && !nativePolicy)
+            throw new Error("OMP_NATIVE_POLICY_REQUIRED");
           const options: RunSandboxAgentTurnOptions = {
-            runtimeKind: "pi-sdk",
-            piVersion: agent.revisionConfig.environment.piVersion,
+            runtimeKind,
+            ...(agent.revisionConfig.runtimeKind === "omp"
+              ? {
+                  ompVersion: agent.revisionConfig.environment.ompVersion,
+                  ompConfig: agent.revisionConfig.ompConfig,
+                }
+              : { piVersion: agent.revisionConfig.environment.piVersion }),
+            ...(runtimeKind === "omp"
+              ? {
+                  modelInput: runtimeModel?.inputModalities.includes("image")
+                    ? (["text", "image"] as const)
+                    : (["text"] as const),
+                  ...(runtimeModel?.maxOutputTokens
+                    ? { maxOutputTokens: runtimeModel.maxOutputTokens }
+                    : {}),
+                }
+              : {}),
             workspaceId: input.agent.workspaceId,
             agentId: input.agent.id,
             sandboxId: link.sandboxId,
@@ -219,11 +275,14 @@ export async function runDedicatedSandboxTurn(
             provider,
             modelId,
             maxSteps: input.agent.maxSteps,
-            contextWindow: modelContext.maxTokens,
-            contextWindowEstimated: modelContext.estimated,
+            contextWindow:
+              runtimeModel?.contextWindow ?? modelContext.maxTokens,
+            contextWindowEstimated: runtimeModel?.contextWindow
+              ? false
+              : modelContext.estimated,
             modelProxyBase: runtimeModelProxyBase(provider.id),
             runtimeAccessToken,
-            nativeApprovalUrl: `${sandboxRuntimeOrigin()}/api/v1/agent-runtime/sessions/approvals`,
+            nativeUiUrl: `${sandboxRuntimeOrigin()}/api/v1/agent-runtime/sessions/ui`,
             systemPrompt: input.systemPrompt,
             disabledBuiltinTools: input.agent.disabledBuiltinTools,
             messages: input.messages,
@@ -231,12 +290,29 @@ export async function runDedicatedSandboxTurn(
             ...(runtimeKind === "pi-sdk"
               ? { piPackages: piSession?.packages }
               : {}),
-            mcpServers: deploymentIds.map((deploymentId) => ({
-              deploymentId,
-              url: runtimeMcpProxyUrl(deploymentId),
-            })),
+            ...(runtimeKind === "omp" &&
+            (agent.revisionConfig.subagents !== undefined ||
+              agent.revisionConfig.subagentMode !== undefined)
+              ? {
+                  ompCapabilities: {
+                    mode: agent.revisionConfig.subagentMode,
+                    plugins: resolveAgentPiPackages(agent),
+                    subagents: agent.capabilitySubagents,
+                    nativeRoleModels: agent.nativeRoleModels,
+                    policy: nativePolicy ?? { maxDepth: 4, maxConcurrency: 4 },
+                  },
+                }
+              : {}),
+            mcpServers: [
+              ...deploymentIds.map((deploymentId) => ({
+                deploymentId,
+                url: runtimeMcpProxyUrl(deploymentId),
+              })),
+              ...externalSandboxes,
+            ],
             workingDirectory: input.workingDirectory,
             runtimeSessionId,
+            agentRevisionId: agent.agentRevisionId,
             command: input.command,
             reasoningEffort: input.reasoningEffort,
             historyRequired: input.historyRequired,
@@ -244,17 +320,38 @@ export async function runDedicatedSandboxTurn(
             signal: input.signal,
             onTextDelta: input.onTextDelta,
             onActivity: async (activity) => {
-              if (activity.type === "tool")
-                await recordEvent({
-                  domain: "agent",
-                  eventName: "sandbox.tool",
-                  toolName: activity.toolName,
-                  outcome: activity.status === "failed" ? "error" : "success",
-                  attributes: {
-                    status: activity.status,
-                    toolCallId: activity.toolCallId,
-                  },
-                });
+              if (activity.type === "tool" && activity.toolCallId) {
+                const started = runningTools.get(activity.toolCallId);
+                const merged = {
+                  ...started,
+                  ...activity,
+                  input: activity.input ?? started?.input,
+                };
+                if (activity.status === "running") {
+                  runningTools.set(activity.toolCallId, {
+                    ...merged,
+                    startedAt: started?.startedAt ?? Date.now(),
+                  });
+                } else {
+                  runningTools.delete(activity.toolCallId);
+                  // One record per finished call; workspace members read it in the Agent tool log.
+                  await recordEvent({
+                    domain: "agent",
+                    eventName: "sandbox.tool",
+                    toolName: merged.originalToolName ?? merged.toolName,
+                    deploymentId: merged.deploymentId,
+                    outcome: activity.status === "failed" ? "error" : "success",
+                    durationMs:
+                      activity.durationMs ??
+                      (started ? Date.now() - started.startedAt : undefined),
+                    attributes: { toolCallId: activity.toolCallId },
+                    detail: {
+                      request: merged.input ?? null,
+                      response: activity.output ?? null,
+                    },
+                  });
+                }
+              }
               await input.onActivity?.(activity);
             },
             onContextUsage: input.onContextUsage,
@@ -262,7 +359,20 @@ export async function runDedicatedSandboxTurn(
             onUsage: input.onUsage,
             onCommandResult: input.onCommandResult,
           };
-          return runSandboxAgentTurn(options);
+          return withWorkUiLease(
+            {
+              conversationId,
+              workspaceId: agent.workspaceId,
+              agentId: agent.id,
+              agentRevisionId: agent.agentRevisionId,
+            },
+            runtimeAccessToken,
+            (enabled) =>
+              runSandboxAgentTurn({
+                ...options,
+                nativeUiUrl: enabled ? options.nativeUiUrl : undefined,
+              }),
+          );
         },
       ),
   );

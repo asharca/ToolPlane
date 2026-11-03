@@ -60,6 +60,10 @@ describe("bounded standard A2A Artifact validation", () => {
     { raw: "invalid!", mediaType: "text/plain" },
     { raw: "Zh==", mediaType: "text/plain" },
     { raw: "Zg==" },
+    { data: { toolplaneFileId: "foreign" }, mediaType: "application/json" },
+    { text: "spoofed", metadata: { toolplaneFileId: "foreign" } },
+    { path: "/workspace/report.txt" },
+    { fileId: "unresolved" },
   ])("rejects unsafe or noncanonical content %j", (part) => {
     expect(() => parseLocalArtifact(input(part))).toThrow();
   });

@@ -22,6 +22,11 @@ import {
   LogAccessError,
 } from "@/lib/observability/queries";
 import * as auditModule from "@/lib/observability/audit";
+import {
+  listA2ATasks,
+  getA2ATask,
+  pollA2ATasks,
+} from "@/lib/observability/views/a2a-tasks";
 
 const stamp = randomUUID();
 let userId: string,
@@ -309,7 +314,7 @@ describe("real authorized retained A2A protocol logging", () => {
       expect(payload).not.toContain(token);
       expect(
         assertDefined(first.event.detail).expiresAt.getTime(),
-      ).toBeLessThanOrEqual(Date.now() + 86_400_000);
+      ).toBeGreaterThan(Date.now() + 29 * 86_400_000);
       expect(
         JSON.stringify({ ...first.event, detail: undefined }),
       ).not.toContain(retainedCallerInput);
@@ -563,5 +568,142 @@ describe("A2A query scope and audited disclosure", () => {
       expect(restricted).toMatchObject({ detailState: "restricted" });
       expect(restricted).not.toHaveProperty("detail");
     }
+  });
+  it("projects root task trees from retained logs after the ledger is gone and rejects foreign readers", async () => {
+    const rootTaskId = randomUUID();
+    const childTaskId = randomUUID();
+    const contextId = randomUUID();
+    const after = {
+      createdAt: new Date(Date.now() - 1000).toISOString(),
+      id: "",
+    };
+    for (const [index, taskId] of [rootTaskId, childTaskId].entries()) {
+      await db.logEvent.create({
+        data: {
+          workspaceId,
+          agentId,
+          traceId: rootTaskId,
+          spanId: taskId,
+          domain: "a2a",
+          eventName: "a2a.task.settled",
+          message: "a2a.task.settled",
+          outcome: "success",
+          durationMs: 100,
+          attributes: {
+            data: {
+              a2a: {
+                direction: "inbound",
+                transport: "jsonrpc",
+                endpointId,
+                clientId,
+                taskId,
+                rootTaskId,
+                contextId,
+                ...(index ? { parentTaskId: rootTaskId } : {}),
+                taskState: "TASK_STATE_COMPLETED",
+              },
+            },
+          },
+          detail: {
+            create: {
+              expiresAt: new Date(Date.now() + 86_400_000),
+              data: {
+                payload: {
+                  response: {
+                    id: taskId,
+                    contextId,
+                    status: { state: "TASK_STATE_COMPLETED" },
+                    history: [
+                      {
+                        messageId: taskId,
+                        role: "user",
+                        parts: [{ text: "Pruned task safe input" }],
+                      },
+                    ],
+                    artifacts: [
+                      {
+                        artifactId: taskId,
+                        name: "Result",
+                        parts: [{ text: "Pruned task safe output" }],
+                      },
+                    ],
+                  },
+                },
+              },
+            },
+          },
+        },
+      });
+    }
+    const scope = { kind: "workspace", workspaceId, userId } as const;
+    const page = await listA2ATasks(scope, { q: rootTaskId });
+    expect(page.items).toHaveLength(1);
+    expect(page.items[0]).toMatchObject({
+      taskId: rootTaskId,
+      rootTaskId,
+      childCount: 1,
+    });
+    const detail = assertDefined(await getA2ATask(scope, rootTaskId));
+    expect(detail.tree.map((task) => task.taskId).sort()).toEqual(
+      [rootTaskId, childTaskId].sort(),
+    );
+    expect(JSON.stringify(detail.messages)).toContain("Pruned task safe input");
+    expect(JSON.stringify(detail.artifacts)).toContain(
+      "Pruned task safe output",
+    );
+    expect(detail.summary.to.name).not.toBe(agentId);
+    expect(
+      (await listA2ATasks(scope, { q: rootTaskId, state: "TASK_STATE_FAILED" }))
+        .items,
+    ).toEqual([]);
+    expect(
+      (await listA2ATasks(scope, { q: rootTaskId, direction: "outbound" }))
+        .items,
+    ).toEqual([]);
+    expect(
+      await getA2ATask(
+        {
+          kind: "workspace",
+          workspaceId: foreignWorkspaceId,
+          userId: foreignId,
+        },
+        rootTaskId,
+      ),
+    ).toBeNull();
+    expect(
+      (
+        await listA2ATasks(
+          {
+            kind: "workspace",
+            workspaceId: foreignWorkspaceId,
+            userId: foreignId,
+          },
+          { q: rootTaskId },
+        )
+      ).items,
+    ).toEqual([]);
+    const live = await pollA2ATasks(scope, { q: rootTaskId }, after);
+    expect(live.items.length).toBeGreaterThan(0);
+    expect(
+      live.items.every(
+        (entry) =>
+          entry.item.taskId === rootTaskId &&
+          entry.item.workspace?.id === workspaceId,
+      ),
+    ).toBe(true);
+    expect(JSON.stringify(live)).not.toContain("Pruned task safe input");
+    expect(
+      (
+        await pollA2ATasks(
+          {
+            kind: "workspace",
+            workspaceId: foreignWorkspaceId,
+            userId: foreignId,
+          },
+          { q: rootTaskId },
+          after,
+        )
+      ).items,
+    ).toEqual([]);
   });
 });

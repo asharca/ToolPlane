@@ -5,7 +5,9 @@ import { db } from "@/lib/db";
 import {
   AgentConfigurationError,
   createConfiguredAgent,
+  type ExternalSandboxSelection,
 } from "@/lib/agents/mutations";
+import { isExternalSandboxCandidate } from "@/lib/sandboxes/external";
 import {
   runWorkspaceAgentMessage,
   type AgentMessageResult,
@@ -19,6 +21,7 @@ import {
 import { deploymentLabel } from "@/lib/workspace/deployment-label";
 import { skillLabel } from "@/lib/workspace/skill-label";
 import type { ImplementedAgentRuntimeKind } from "@/lib/agents/runtime-kind";
+import { McpPinningError } from "@/lib/process/mcp-pinning";
 
 export class AgentControlError extends Error {
   constructor(
@@ -44,8 +47,7 @@ export type CreateAgentFromControlInput = {
   deploymentIds: string[];
   installedSkillIds: string[];
   toolkitIds: string[];
-  sandboxIds: string[];
-  subAgentIds: string[];
+  externalSandboxes: ExternalSandboxSelection[];
 };
 
 const AGENT_CONTROL_SELECT = {
@@ -112,6 +114,22 @@ const AGENT_CONTROL_SELECT = {
       },
     },
   },
+  externalSandboxes: {
+    orderBy: { createdAt: "asc" },
+    select: {
+      access: true,
+      sandbox: {
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+          kind: true,
+          deploymentId: true,
+          deployment: { select: { status: true } },
+        },
+      },
+    },
+  },
   subAgents: {
     select: {
       child: { select: { id: true, name: true, slug: true } },
@@ -126,7 +144,9 @@ type AgentControlRow = Prisma.AgentGetPayload<{
 
 function toSafeAgent(agent: AgentControlRow, workspaceSlug: string) {
   const configured = Boolean(agent.provider && agent.model);
-  const readOnly = agent.runtimeKind !== "pi-sdk" || Boolean(agent.retiredAt);
+  const readOnly =
+    (agent.runtimeKind !== "pi-sdk" && agent.runtimeKind !== "omp") ||
+    Boolean(agent.retiredAt);
   return {
     id: agent.id,
     name: agent.name,
@@ -172,6 +192,17 @@ function toSafeAgent(agent: AgentControlRow, workspaceSlug: string) {
         name: sandbox.name,
         slug: sandbox.slug,
         kind: sandbox.kind,
+        status: effectiveStatus(
+          sandbox.deploymentId,
+          sandbox.deployment.status,
+        ),
+      })),
+      externalSandboxes: agent.externalSandboxes.map(({ access, sandbox }) => ({
+        id: sandbox.id,
+        name: sandbox.name,
+        slug: sandbox.slug,
+        kind: sandbox.kind,
+        access,
         status: effectiveStatus(
           sandbox.deploymentId,
           sandbox.deployment.status,
@@ -253,8 +284,10 @@ export async function listAgentControlResources(workspaceId: string) {
           name: true,
           slug: true,
           kind: true,
+          config: true,
           deploymentId: true,
           deployment: { select: { status: true } },
+          _count: { select: { agentLinks: true } },
         },
       }),
     ]);
@@ -293,13 +326,25 @@ export async function listAgentControlResources(workspaceId: string) {
       serverCount: toolkit._count.servers,
       skillCount: toolkit._count.skills,
     })),
-    sandboxes: sandboxes.map((sandbox) => ({
-      id: sandbox.id,
-      name: sandbox.name,
-      slug: sandbox.slug,
-      kind: sandbox.kind,
-      status: effectiveStatus(sandbox.deploymentId, sandbox.deployment.status),
-    })),
+    // Only attachable sandboxes; each Agent's own sandbox is created with it.
+    externalSandboxes: sandboxes
+      .filter((sandbox) =>
+        isExternalSandboxCandidate({
+          kind: sandbox.kind,
+          config: sandbox.config,
+          isAgentTemplate: sandbox._count.agentLinks > 0,
+        }),
+      )
+      .map((sandbox) => ({
+        id: sandbox.id,
+        name: sandbox.name,
+        slug: sandbox.slug,
+        kind: sandbox.kind,
+        status: effectiveStatus(
+          sandbox.deploymentId,
+          sandbox.deployment.status,
+        ),
+      })),
   };
 }
 
@@ -331,7 +376,9 @@ export async function listAgentControlAgents(workspaceId: string) {
   });
   return agents.map((agent) => {
     const configured = Boolean(agent.provider && agent.model);
-    const readOnly = agent.runtimeKind !== "pi-sdk" || Boolean(agent.retiredAt);
+    const readOnly =
+      (agent.runtimeKind !== "pi-sdk" && agent.runtimeKind !== "omp") ||
+      Boolean(agent.retiredAt);
     return {
       id: agent.id,
       name: agent.name,
@@ -454,12 +501,14 @@ export async function createAgentFromControl(
         deploymentIds: input.deploymentIds,
         installedSkillIds: input.installedSkillIds,
         toolkitIds: input.toolkitIds,
-        sandboxIds: input.sandboxIds,
-        subAgentIds: input.subAgentIds,
+        externalSandboxes: input.externalSandboxes,
       },
       { runtime: input.runtime },
     );
   } catch (error) {
+    if (error instanceof McpPinningError) {
+      throw new AgentControlError("unavailable", error.code);
+    }
     if (error instanceof AgentConfigurationError) {
       throw new AgentControlError("invalid_arguments", error.message);
     }

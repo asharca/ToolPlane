@@ -1,8 +1,9 @@
 import "server-only";
-import { nativeApprovalAdapter } from "./native-tool-approval";
+import { MCP_RESULT_TO_FILE_TOOL } from "./native-tools";
 import { withSandboxExecutionLease } from "./sandbox-execution-gate";
 import { findAgentConversationSandbox } from "./conversation-sandbox";
 import { PiRuntimeInterruptedError } from "./pi-harness";
+import { hasNativeConversationHistory } from "./conversation-context";
 import {
   assertRuntimeOwner,
   trackRuntimeOperation,
@@ -36,12 +37,29 @@ import {
   type RuntimeCommand,
   type RuntimeUsage,
 } from "./runtime-commands";
-import { parsePiPackageReleaseManifest } from "@/lib/market/pi-package-manifest";
-import type { PiPackageManifestV1 } from "@/lib/market/pi-package-manifest";
+import { parsePiPackageReleaseManifest } from "@/lib/pi-packages/manifest";
+import type { PiPackageManifestV1 } from "@/lib/pi-packages/manifest";
 import { HOST_ONLY_COMMAND_NAMES } from "./runtime-commands";
 import type { RuntimeCommandResult } from "./runtime-commands";
 import { z } from "zod";
 import type { ReasoningEffort } from "./constants";
+import {
+  OMP_VERSION,
+  OmpConfigSnapshotSchema,
+  emptyOmpConfig,
+  type OmpConfigSnapshot,
+} from "./omp-config";
+import type { SubagentDefinition } from "./capability-contracts";
+import type { ResolvedNativeRoleModel } from "./native-role-models";
+import {
+  agentSessionWorkingDirectory,
+  agentSessionWorkspaceRoot,
+  type AgentSessionIdentity,
+} from "./session-paths";
+import {
+  observeAgentExecutionStage,
+  type AgentExecutionStage,
+} from "./execution-stages";
 
 export const PI_SDK_RUNTIME = {
   specs: [
@@ -62,7 +80,12 @@ const RUNTIME_TEMP_ROOT = "/workspace/.toolplane/runtime-tmp";
 const NPM_CACHE = "/workspace/.toolplane/npm-cache";
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
-export type SandboxAgentRuntimeKind = "pi" | "pi-sdk" | "claude-code" | "dsh";
+export type SandboxAgentRuntimeKind =
+  | "pi"
+  | "pi-sdk"
+  | "omp"
+  | "claude-code"
+  | "dsh";
 
 export type SandboxRuntimeProvider = {
   id: string;
@@ -73,6 +96,10 @@ export type SandboxRuntimeProvider = {
 export type SandboxRuntimeMcpServer = {
   deploymentId: string;
   url: string;
+  /** Display name shown to the model; defaults to the generated alias. */
+  label?: string;
+  /** Per-request budget; sandbox commands need longer than ordinary MCP calls. */
+  timeoutMs?: number;
 };
 
 export type SandboxRuntimeMessage = {
@@ -109,6 +136,7 @@ export type RunSandboxAgentTurnOptions = {
   runtimeKind: SandboxAgentRuntimeKind;
   workspaceId: string;
   agentId: string;
+  agentRevisionId?: string;
   sandboxId: string;
   conversationId?: string;
   a2aContextId?: string;
@@ -117,11 +145,29 @@ export type RunSandboxAgentTurnOptions = {
   maxSteps?: number;
   contextWindow: number;
   contextWindowEstimated?: boolean;
+  modelInput?: readonly ("text" | "image")[];
+  maxOutputTokens?: number;
   modelProxyBase: string;
   runtimeAccessToken: string;
-  nativeApprovalUrl?: string;
+  nativeUiUrl?: string;
   systemPrompt?: string | null;
   piVersion?: string;
+  ompVersion?: string;
+  ompConfig?: OmpConfigSnapshot;
+  ompCapabilities?: {
+    mode?: "platform" | "native";
+    plugins: NonNullable<RunSandboxAgentTurnOptions["piPackages"]>;
+    nativeRoleModels?: readonly ResolvedNativeRoleModel[];
+    subagents: readonly {
+      subagentId: string;
+      versionId: string;
+      checksum: string;
+      name: string;
+      definition: SubagentDefinition;
+      provider: SandboxRuntimeProvider | null;
+    }[];
+    policy: { maxDepth: number; maxConcurrency: number };
+  };
   disabledBuiltinTools?: readonly string[];
   messages: readonly SandboxRuntimeMessage[];
   skills?: readonly SkillForPrompt[];
@@ -142,6 +188,7 @@ export type RunSandboxAgentTurnOptions = {
   timeoutMs?: number;
   onTextDelta?: (text: string) => void | Promise<void>;
   onActivity?: (activity: SandboxRuntimeActivity) => void | Promise<void>;
+  onExecutionStage?: (stage: AgentExecutionStage) => void | Promise<void>;
   onContextUsage?: (usage: ContextUsageSnapshot) => void | Promise<void>;
   onCommands?: (commands: RuntimeCommand[]) => void | Promise<void>;
   onUsage?: (usage: RuntimeUsage) => void | Promise<void>;
@@ -163,6 +210,13 @@ export type SandboxRuntimeActivity = {
   input?: unknown;
   output?: unknown;
   isError?: boolean;
+  source?: {
+    subagentId: string;
+    subagentVersionId?: string;
+    subagentName?: string;
+    parentToolCallId?: string;
+    depth?: number;
+  };
 };
 
 export type ClaudeStreamLine = {
@@ -230,6 +284,7 @@ function safeSegment(value: string, fallback: string): string {
 
 function runtimeFilePath(
   part: SandboxRuntimeMessage["parts"][number],
+  identity?: AgentSessionIdentity,
 ): string | null {
   if (!part.providerMetadata || typeof part.providerMetadata !== "object")
     return null;
@@ -239,7 +294,9 @@ function runtimeFilePath(
   const value = (toolplane as Record<string, unknown>).runtimePath;
   if (typeof value !== "string") return null;
   try {
-    return normalizeSandboxWorkingDirectory(value);
+    return identity
+      ? agentSessionWorkingDirectory(identity, value)
+      : normalizeSandboxWorkingDirectory(value);
   } catch {
     return null;
   }
@@ -247,6 +304,7 @@ function runtimeFilePath(
 
 function messagePartText(
   part: SandboxRuntimeMessage["parts"][number],
+  identity?: AgentSessionIdentity,
 ): string | null {
   if (part.type === "text" && typeof part.text === "string") return part.text;
   if (part.type === "work-tool" && part.toolName) {
@@ -260,7 +318,7 @@ function messagePartText(
   const filename =
     (typeof part.filename === "string" ? part.filename.trim() : "") ||
     "attachment";
-  const path = runtimeFilePath(part);
+  const path = runtimeFilePath(part, identity);
   if (path)
     return `[Attached file: ${filename.replace(/\s+/g, " ").slice(0, 240)} at ${path}]`;
   return `[Attached ${part.type === "image" ? "image" : "file"}: ${filename.replace(/\s+/g, " ").slice(0, 240)}; bytes are not mounted in this sandbox turn]`;
@@ -292,13 +350,14 @@ export function normalizeSandboxWorkingDirectory(value: unknown): string {
 
 export function buildSandboxTranscript(
   messages: readonly SandboxRuntimeMessage[],
+  identity?: AgentSessionIdentity,
 ): string {
   return messages
     .flatMap((message) => {
       if (message.role !== "user" && message.role !== "assistant") return [];
       const text = message.parts
         .flatMap((part) => {
-          const value = messagePartText(part);
+          const value = messagePartText(part, identity);
           return value?.trim() ? [value] : [];
         })
         .join("\n")
@@ -447,15 +506,21 @@ export function sandboxRuntimeCanReachProxy(network: string): boolean {
 export function sandboxRuntimeStateRoot(
   runtimeKind: SandboxAgentRuntimeKind,
   agentId: string,
+  workspaceRoot = "/workspace",
 ): string {
-  return `/workspace/.toolplane/runtimes/${runtimeKind}/agents/${safeSegment(agentId, "agent")}`;
+  return `${workspaceRoot}/.toolplane/runtimes/${runtimeKind}/agents/${safeSegment(agentId, "agent")}`;
 }
 
 export function sandboxRuntimeSkillRoot(
   runtimeKind: SandboxAgentRuntimeKind,
   agentId: string,
+  workspaceRoot = "/workspace",
+  revisionId?: string,
 ): string {
-  return `${sandboxRuntimeStateRoot(runtimeKind, agentId)}/skills`;
+  const root = sandboxRuntimeStateRoot(runtimeKind, agentId, workspaceRoot);
+  return revisionId
+    ? `${root}/revisions/${safeSegment(revisionId, "revision")}/skills`
+    : `${root}/skills`;
 }
 
 export function sandboxRuntimeExecWrapper(controlPrefix: string): string {
@@ -502,6 +567,8 @@ export function buildPiMcpConfig(
       name: mcpName(server, index),
       deploymentId: server.deploymentId,
       url: httpUrl(server.url, "MCP proxy URL"),
+      ...(server.label ? { label: server.label.slice(0, 80) } : {}),
+      ...(server.timeoutMs ? { timeoutMs: server.timeoutMs } : {}),
     })),
   });
 }
@@ -518,7 +585,7 @@ export function nativePiMcpToolName(
 
 /** Loaded explicitly with --extension; it discovers and invokes ToolPlane MCP tools over JSON-RPC. */
 export function piMcpExtensionSource(
-  options: { eventFd?: 1 | 3 } = {},
+  options: { eventFd?: 1 | 3; workspaceRoot?: string } = {},
 ): string {
   return String.raw`import { readFile } from 'node:fs/promises';
 import { writeSync } from 'node:fs';
@@ -533,9 +600,9 @@ function short(value, max = 4000) {
   return String(text ?? '').slice(0, max);
 }
 
-async function readLimited(response) {
+async function readLimited(response, maxBytes = MAX_RESPONSE_BYTES) {
   const announced = Number(response.headers.get('content-length') || 0);
-  if (Number.isFinite(announced) && announced > MAX_RESPONSE_BYTES) {
+  if (Number.isFinite(announced) && announced > maxBytes) {
     throw new Error('MCP response exceeded its byte limit');
   }
   if (!response.body) return '';
@@ -548,7 +615,7 @@ async function readLimited(response) {
       const chunk = await reader.read();
       if (chunk.done) break;
       received += chunk.value.byteLength;
-      if (received > MAX_RESPONSE_BYTES) {
+      if (received > maxBytes) {
         await reader.cancel('MCP response byte limit exceeded').catch(() => undefined);
         throw new Error('MCP response exceeded its byte limit');
       }
@@ -560,33 +627,45 @@ async function readLimited(response) {
   }
 }
 
-async function rpc(server, method, params, signal) {
+async function rpc(server, method, params, signal, maxBytes) {
   const token = process.env.TOOLPLANE_RUNTIME_TOKEN;
   if (!token) throw new Error('Missing ToolPlane runtime token');
   const body = JSON.stringify({ jsonrpc: '2.0', id: Date.now(), method, params });
   if (new TextEncoder().encode(body).byteLength > MAX_REQUEST_BYTES) {
     throw new Error('MCP request exceeded its byte limit');
   }
-  const timeout = AbortSignal.timeout(30000);
+  const timeout = AbortSignal.timeout(
+    Number.isSafeInteger(server.timeoutMs) && server.timeoutMs > 0 && server.timeoutMs <= 300000
+      ? server.timeoutMs
+      : 30000,
+  );
   const response = await fetch(server.url, {
     method: 'POST',
     redirect: 'error',
     headers: {
       'content-type': 'application/json',
+      accept: 'application/json, text/event-stream',
       authorization: 'Bearer ' + token,
     },
     body,
     signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
   });
-  const text = await readLimited(response);
-  if (!response.ok) throw new Error('MCP HTTP ' + response.status + ': ' + short(text));
+  const text = await readLimited(response, maxBytes);
   let payload;
   try {
     payload = JSON.parse(text);
   } catch {
-    throw new Error('MCP returned invalid JSON');
+    payload = undefined;
   }
-  if (payload && payload.error) throw new Error(short(payload.error.message || payload.error));
+  const reason = payload && payload.error && payload.error.data && payload.error.data.reason;
+  const failure = (message) => Object.assign(new Error(message), {
+    toolplaneReason: typeof reason === 'string' && /^[A-Z][A-Z0-9_]{0,63}$/.test(reason)
+      ? reason
+      : response.status === 401 || response.status === 403 ? 'MCP_GRANT_REVOKED' : 'MCP_UNREACHABLE',
+  });
+  if (!response.ok) throw failure('MCP HTTP ' + response.status + ': ' + short(text));
+  if (payload === undefined) throw failure('MCP returned invalid JSON');
+  if (payload && payload.error) throw failure(short(payload.error.message || payload.error));
   return payload && payload.result ? payload.result : {};
 }
 
@@ -622,28 +701,115 @@ function errorText(content) {
   return content.map((part) => part && part.type === 'text' ? String(part.text || '') : '').filter(Boolean).join('\n');
 }
 
+const MAX_RESULT_FILE_BYTES = 10 * 1024 * 1024;
+
+// Calls one authorized MCP tool once and streams its complete JSON result into
+// the sandbox workspace; the model receives only a bounded file summary.
+function resultToFileTool(fileTools) {
+  return {
+    name: ${JSON.stringify(MCP_RESULT_TO_FILE_TOOL)},
+    label: 'Save MCP result to file',
+    description: 'Call an authorized MCP tool with its exact original arguments and save the complete JSON result in a sandbox file (10 MiB maximum, no truncation). Returns only a bounded file summary, never result bytes. Use the path for file-aware tools, pi_a2a_submit files or a2a_publish_artifact. The selected MCP tool remains subject to its resource authorization; a failure after execution must never be automatically retried. Ordinary MCP tools remain unchanged.',
+    parameters: {
+      type: 'object',
+      properties: {
+        tool: { type: 'string', enum: [...fileTools.keys()], description: 'Exact name of an available MCP tool.' },
+        arguments: { type: 'object', description: 'Arguments exactly as that tool accepts them.' },
+        filename: { type: 'string', minLength: 1, maxLength: 100, pattern: '^[A-Za-z0-9][A-Za-z0-9._-]*$' },
+      },
+      required: ['tool', 'arguments'],
+      additionalProperties: false,
+    },
+    async execute(toolCallId, params, signal) {
+      const tool = fileTools.get(params && params.tool);
+      if (!tool) throw new Error('Authorized MCP tool unavailable.');
+      if (!params.arguments || typeof params.arguments !== 'object' || Array.isArray(params.arguments)) {
+        throw new Error('Select an authorized MCP tool with its original arguments.');
+      }
+      const filename = params.filename ?? 'result.json';
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(filename)) throw new Error('Invalid result filename.');
+      writeSync(${options.eventFd ?? 1}, JSON.stringify({
+        type: 'toolplane_mcp_origin',
+        toolCallId,
+        deploymentId: tool.server.deploymentId,
+        originalToolName: tool.wireName,
+      }) + '\n');
+      let result;
+      try {
+        result = await rpc(tool.server, 'tools/call', { name: tool.wireName, arguments: params.arguments }, signal, MAX_RESULT_FILE_BYTES + 64 * 1024);
+      } catch (error) {
+        throw new Error('MCP invocation failed; its external outcome is unknown. Do not replay the tool blindly.', { cause: error });
+      }
+      let file;
+      try {
+        const serialized = JSON.stringify(result);
+        if (Buffer.byteLength(serialized) > MAX_RESULT_FILE_BYTES) {
+          throw new Error('The full MCP result exceeds the 10 MiB file limit; no truncated file was saved.');
+        }
+        const { writeWorkspaceFile } = await import(new URL('./a2a-sandbox-files.mjs', import.meta.url).href);
+        const { Readable } = await import('node:stream');
+        const { join } = await import('node:path');
+        const callId = String(toolCallId).replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 120) || 'call';
+        file = await writeWorkspaceFile(
+          ${JSON.stringify(options.workspaceRoot ?? "/workspace")},
+          join(process.cwd(), '.a2a-files', 'tool-results', callId + '-' + filename),
+          Readable.from([serialized]),
+          undefined,
+          signal,
+        );
+      } catch (error) {
+        const limit = error && String(error.message).includes('10 MiB') ? ': result exceeds the 10 MiB file limit' : '';
+        throw new Error('MCP tool already executed, but saving its complete result failed' + limit + '. Do not replay the tool blindly.', { cause: error });
+      }
+      const summary = { ...file, mediaType: 'application/json' };
+      if (result.isError) {
+        throw new Error('MCP tool returned an error; its complete result was saved without model echo: ' + JSON.stringify(summary) + '. Do not replay the tool blindly.');
+      }
+      return {
+        content: [textContent(JSON.stringify({ ...summary, summary: 'Full MCP result saved to file; content omitted from model context.' }))],
+        details: summary,
+      };
+    },
+  };
+}
+
 export async function createPiMcpTools(config) {
   if (!config || !Array.isArray(config.servers)) throw new Error('Invalid ToolPlane Pi MCP config');
 
   let registeredTools = 0;
   const definitions = [];
+  const fileTools = new Map();
   for (let serverIndex = 0; serverIndex < config.servers.length; serverIndex += 1) {
     const server = config.servers[serverIndex];
     if (!server || typeof server.name !== 'string' || typeof server.deploymentId !== 'string' || typeof server.url !== 'string') {
       throw new Error('Invalid ToolPlane MCP server entry');
     }
-    const catalog = await rpc(server, 'tools/list');
+    let catalog;
+    try {
+      catalog = await rpc(server, 'tools/list');
+    } catch (error) {
+      // Tell the host which server failed and why before Pi aborts the session.
+      writeSync(${options.eventFd ?? 1}, JSON.stringify({
+        type: 'toolplane_mcp_unavailable',
+        deploymentId: server.deploymentId,
+        reason: (error && error.toolplaneReason) || 'MCP_UNREACHABLE',
+      }) + '\n');
+      throw error;
+    }
     const tools = Array.isArray(catalog.tools) ? catalog.tools : [];
     for (let toolIndex = 0; toolIndex < tools.length; toolIndex += 1) {
       const tool = tools[toolIndex];
       if (!tool || typeof tool.name !== 'string' || !tool.name) continue;
       if (registeredTools >= MAX_REGISTERED_TOOLS) throw new Error('MCP tool catalog exceeded its limit');
       const wireName = tool.name;
+      const name = nativePiMcpToolName(serverIndex, toolIndex, wireName);
+      const parameters = toolParameters(tool.inputSchema);
+      if (server.deploymentId !== 'toolplane-runtime') fileTools.set(name, { server, wireName });
       definitions.push({
-        name: nativePiMcpToolName(serverIndex, toolIndex, wireName),
+        name,
         label: wireName,
-        description: short((tool.description || '') + '\nMCP server: ' + server.name),
-        parameters: toolParameters(tool.inputSchema),
+        description: short((tool.description || '') + '\nMCP server: ' + (typeof server.label === 'string' && server.label ? server.label : server.name)),
+        parameters,
         async execute(toolCallId, params, signal) {
           writeSync(${options.eventFd ?? 1}, JSON.stringify({
             type: 'toolplane_mcp_origin',
@@ -663,6 +829,7 @@ export async function createPiMcpTools(config) {
       registeredTools += 1;
     }
   }
+  if (fileTools.size) definitions.push(resultToFileTool(fileTools));
   return definitions;
 }
 
@@ -1461,6 +1628,7 @@ export async function preflightPiSdkCapabilities(input: {
         "pi-sdk-preflight.mjs",
         "pi-sdk-capabilities.mjs",
         "pi-sdk-package-files.mjs",
+        "pi-sdk-native-resources.mjs",
       ]) {
         await writeFile(
           `${directory}/${source}`,
@@ -1555,6 +1723,37 @@ async function writeSandboxFile(
   });
 }
 
+/**
+ * Trusted host sources travel as stdin data, never interpolated shell code.
+ * Rewrite every file on every turn; this is not a source or integrity cache.
+ * Keep dynamic turn config and package verification in their existing order.
+ */
+export const SANDBOX_HOST_FILES_WRITER = `
+const fs = require("node:fs");
+const path = require("node:path");
+process.umask(0o077);
+for (const file of JSON.parse(fs.readFileSync(0, "utf8"))) {
+  fs.mkdirSync(path.dirname(file.path), { recursive: true, mode: 0o700 });
+  fs.writeFileSync(file.path, file.content, { mode: 0o600 });
+}
+`;
+
+async function writeSandboxHostFiles(
+  container: string,
+  files: readonly { path: string; content: string }[],
+  signal?: AbortSignal,
+): Promise<void> {
+  await runTrackedDockerExec({
+    container,
+    workdir: "/workspace",
+    executable: "node",
+    args: ["-e", SANDBOX_HOST_FILES_WRITER],
+    stdin: JSON.stringify(files),
+    signal,
+    timeoutMs: 30_000,
+  });
+}
+
 async function materializeSandboxSkills(
   container: string,
   skillRoot: string,
@@ -1586,7 +1785,10 @@ async function materializeSandboxSkills(
   const reset = `
 set -eu
 root=$1
-case "$root" in /workspace/.toolplane/runtimes/*/agents/*/skills) ;; *) exit 2 ;; esac
+case "$root" in
+  /workspace/.toolplane/runtimes/*/agents/*/skills | /workspace/.toolplane/runtimes/*/agents/*/revisions/*/skills | /workspace/conversations/*/.toolplane/runtimes/*/agents/*/revisions/*/skills | /workspace/conversations/*/.toolplane/runtimes/omp/agents/*/turns/*/home/.omp/agent/skills/toolplane) ;;
+  *) exit 2 ;;
+esac
 rm -rf -- "$root"
 mkdir -p "$root"
 `;
@@ -1642,7 +1844,11 @@ async function assertAssignedDockerSandbox(
     "workspaceId" | "agentId" | "sandboxId" | "conversationId" | "a2aContextId"
   >,
   cleanup = false,
-): Promise<string> {
+): Promise<{
+  deploymentId: string;
+  workspaceRoot?: string;
+  identity?: AgentSessionIdentity;
+}> {
   if (options.conversationId || options.a2aContextId) {
     const mapped = await findAgentConversationSandbox({
       workspaceId: options.workspaceId,
@@ -1672,7 +1878,14 @@ async function assertAssignedDockerSandbox(
         "running"
     )
       throw new Error("The conversation sandbox is not ready.");
-    return sandbox.deploymentId;
+    return {
+      deploymentId: sandbox.deploymentId,
+      workspaceRoot: mapped.workspaceRoot,
+      identity: {
+        conversationId: mapped.conversationId ?? options.conversationId,
+        a2aContextId: mapped.contextId ?? options.a2aContextId,
+      },
+    };
   }
   const link = await db.agentSandbox.findUnique({
     where: {
@@ -1719,11 +1932,73 @@ async function assertAssignedDockerSandbox(
   ) {
     throw new Error("The assigned Docker sandbox is not running.");
   }
-  return link.sandbox.deploymentId;
+  return { deploymentId: link.sandbox.deploymentId };
+}
+
+/** Caller holds the sandbox execution lease; no other conversation/container is stopped. */
+export async function stopAgentSessionRuntime(input: {
+  workspaceId: string;
+  agentId: string;
+  sandboxId: string;
+  conversationId?: string;
+  a2aContextId?: string;
+}): Promise<void> {
+  assertRuntimeOwner();
+  const mapped = await findAgentConversationSandbox({
+    workspaceId: input.workspaceId,
+    agentId: input.agentId,
+    conversationId: input.conversationId,
+    contextId: input.a2aContextId,
+    cleanup: true,
+  });
+  if (!mapped || mapped.sandboxId !== input.sandboxId)
+    throw new Error("The sandbox does not match this conversation/context.");
+  const sandbox = await db.sandbox.findFirst({
+    where: {
+      id: mapped.sandboxId,
+      workspaceId: input.workspaceId,
+      kind: "docker",
+    },
+    select: { deploymentId: true, deployment: { select: { status: true } } },
+  });
+  if (!sandbox) throw new Error("Conversation sandbox binding is invalid.");
+  if (
+    effectiveStatus(sandbox.deploymentId, sandbox.deployment.status) !==
+    "running"
+  )
+    return;
+  const workspaceRoot = mapped.workspaceRoot;
+  const stateRoot = sandboxRuntimeStateRoot(
+    "pi-sdk",
+    input.agentId,
+    workspaceRoot,
+  );
+  const container = sandboxContainerName(input.sandboxId);
+  const driverPath = `${workspaceRoot}/.toolplane/runtime-tmp/${randomUUID()}-stop.mjs`;
+  try {
+    await writeSandboxFile(
+      container,
+      driverPath,
+      await readFile(
+        `${process.cwd()}/scripts/native-runtime-stop.mjs`,
+        "utf8",
+      ),
+    );
+    await runTrackedDockerExec({
+      container,
+      workdir: "/workspace",
+      executable: "node",
+      args: [driverPath, stateRoot],
+      timeoutMs: 15_000,
+    });
+  } finally {
+    await removeSandboxFiles(container, [driverPath]);
+  }
 }
 
 async function ensureRuntimeInstalled(
   container: string,
+  workspaceRoot: string,
   signal?: AbortSignal,
 ): Promise<string> {
   if (signal?.aborted) throw new Error("Sandbox runtime aborted.");
@@ -1733,65 +2008,35 @@ async function ensureRuntimeInstalled(
   const existing = installs.get(cacheKey);
   if (existing) return waitForSandboxRuntimeInstall(existing, signal);
   const install = (async () => {
-    const found = await runTrackedDockerExec({
-      container,
-      workdir: "/workspace",
-      executable: "test",
-      args: ["-x", binary],
-      timeoutMs: 10_000,
-    }).then(
-      () => true,
-      () => false,
-    );
-    if (!found) {
-      const installCommand = {
-        executable: "sh",
-        args: [
-          "-c",
-          'set -eu; prefix=$1; shift; mkdir -p "$prefix"; rm -rf -- "$prefix/node_modules"; cd "$prefix"; exec "$@"',
-          "toolplane-pnpm-install",
-          runtime.directory,
-          "pnpm",
-          "add",
-          "--save-prod",
-          "--ignore-workspace",
-          "--save-exact",
-          ...(runtime.ignoreScripts ? ["--ignore-scripts"] : []),
-          ...runtime.allowBuilds.map((name) => `--allow-build=${name}`),
-          "--store-dir",
-          `${NPM_CACHE}/pnpm-store`,
-          ...runtime.specs,
-        ],
-      };
+    const installerPath = `${workspaceRoot}/.toolplane/runtime-tmp/${randomUUID()}-pi-sdk-install.mjs`;
+    try {
+      await writeSandboxFile(
+        container,
+        installerPath,
+        await readFile(`${process.cwd()}/scripts/pi-sdk-install.mjs`, "utf8"),
+      );
       await runTrackedDockerExec({
         container,
         workdir: "/workspace",
-        ...installCommand,
+        executable: "node",
+        args: [
+          installerPath,
+          JSON.stringify({
+            directory: runtime.directory,
+            workspaceRoot,
+            storeDir: `${NPM_CACHE}/pnpm-store`,
+          }),
+        ],
         timeoutMs: PACKAGE_INSTALL_TIMEOUT_MS,
       }).catch((error) => {
         throw new Error(
           `Could not install ${runtime.specs.join(" and ")} in the assigned sandbox: ${error instanceof Error ? error.message : String(error)}`,
         );
       });
+      return binary;
+    } finally {
+      await removeSandboxFiles(container, [installerPath]);
     }
-    await runTrackedDockerExec({
-      container,
-      workdir: "/workspace",
-      executable: "test",
-      args: ["-x", binary],
-      timeoutMs: 10_000,
-    });
-    await runTrackedDockerExec({
-      container,
-      workdir: runtime.directory,
-      executable: "node",
-      args: [
-        "-e",
-        "const fs=require('node:fs'); if(Number(process.versions.node.split('.')[0])!==26 || process.platform!=='linux') throw Error('package_platform_mismatch'); for(const name of ['@earendil-works/pi-coding-agent','@earendil-works/pi-ai']) if(JSON.parse(fs.readFileSync('node_modules/'+name+'/package.json')).version!=='0.87.1') throw Error('PI_SDK_VERSION_MISMATCH');",
-      ],
-      timeoutMs: 30_000,
-    });
-    return binary;
   })();
   installs.set(cacheKey, install);
   const cleanup = () => {
@@ -1951,12 +2196,20 @@ export function parseClaudeRuntimeMetadata(line: string): {
 async function runNativeSessionExec(
   options: RunSandboxAgentTurnOptions,
   exec: DockerExecOptions,
-  sdk: { configPath: string; packageSetChecksum: string; mcpConfig: unknown },
+  workspaceRoot: string,
+  sdk: {
+    configPath: string;
+    packageSetChecksum: string;
+    mcpConfig: unknown;
+    hostSourceChecksum: string;
+    model: unknown;
+  },
 ) {
   if (!options.runtimeSessionId) throw new Error("PI_SDK_SESSION_MISSING");
   const id = randomUUID();
-  const driverPath = `${RUNTIME_TEMP_ROOT}/${id}-session.mjs`;
-  const inputPath = `${RUNTIME_TEMP_ROOT}/${id}-session.json`;
+  const temporaryRoot = `${workspaceRoot}/.toolplane/runtime-tmp`;
+  const driverPath = `${temporaryRoot}/${id}-session.mjs`;
+  const inputPath = `${temporaryRoot}/${id}-session.json`;
   try {
     await writeSandboxFile(
       exec.container,
@@ -1974,30 +2227,40 @@ async function runNativeSessionExec(
         kind: "pi-sdk",
         binary: exec.executable,
         args: exec.args,
-        statePath: `${sandboxRuntimeStateRoot("pi-sdk", options.agentId)}/sessions/${options.runtimeSessionId}.json`,
+        cwd: exec.workdir,
+        statePath: `${sandboxRuntimeStateRoot("pi-sdk", options.agentId, workspaceRoot)}/sessions/${options.runtimeSessionId}.json`,
         signature: createHash("sha256")
           .update(
             JSON.stringify({
               binary: exec.executable,
               args: exec.args,
               sdkVersion: "0.87.1",
+              // Reload resident hosts when the trusted adapter or path contract changes.
+              hostProtocol: "session-workspaces-v1",
+              hostSourceChecksum: sdk.hostSourceChecksum,
               packageSetChecksum: sdk.packageSetChecksum,
-              nativeApproval: Boolean(options.nativeApprovalUrl),
+              agentRevisionId: options.agentRevisionId,
+              nativeUi: Boolean(options.nativeUiUrl),
               workdir: exec.workdir,
-              model: options.modelId,
-              provider: options.provider,
               system: options.systemPrompt,
               skills: options.skills,
-              reasoningEffort: options.reasoningEffort,
             }),
           )
           .digest("hex"),
         command: options.command,
-        message: buildSandboxTranscript(options.messages.slice(-1)),
+        message: buildSandboxTranscript(
+          options.messages.slice(-1),
+          workspaceRoot !== "/workspace" &&
+            (options.conversationId || options.a2aContextId)
+            ? options
+            : undefined,
+        ),
         context: {
           runtimeToken: options.runtimeAccessToken,
-          approvalUrl: options.nativeApprovalUrl,
+          uiUrl: options.nativeUiUrl,
           mcpConfig: sdk.mcpConfig,
+          model: sdk.model,
+          reasoningEffort: options.reasoningEffort,
         },
       }),
       options.signal,
@@ -2055,8 +2318,14 @@ export async function readLegacyPiSdkPackageReferences(input: {
   sandboxId: string;
   agentId: string;
   runtimeSessionId: string;
+  conversationId?: string;
+  a2aContextId?: string;
 }) {
-  const root = sandboxRuntimeStateRoot("pi-sdk", input.agentId);
+  const workspaceRoot =
+    input.conversationId || input.a2aContextId
+      ? agentSessionWorkspaceRoot(input)
+      : "/workspace";
+  const root = sandboxRuntimeStateRoot("pi-sdk", input.agentId, workspaceRoot);
   const output = await runTrackedDockerExec({
     container: sandboxContainerName(input.sandboxId),
     workdir: "/workspace",
@@ -2093,18 +2362,21 @@ async function runPiSdk(
   container: string,
   workdir: string,
   skillRoot: string,
+  workspaceRoot: string,
   mcpServers: readonly SandboxRuntimeMcpServer[],
 ): Promise<string> {
   const runtimeSessionId = options.runtimeSessionId ?? randomUUID();
   options = { ...options, runtimeSessionId };
-  const stateRoot = sandboxRuntimeStateRoot("pi-sdk", options.agentId);
+  const stateRoot = sandboxRuntimeStateRoot(
+    "pi-sdk",
+    options.agentId,
+    workspaceRoot,
+  );
   const privateRoot = `${stateRoot}/host`;
   const hostPath = `${privateRoot}/pi-sdk-session.mjs`;
   const verifierPath = `${privateRoot}/pi-sdk-package-files.mjs`;
   const factoryPath = `${privateRoot}/pi-mcp.mjs`;
   const configPath = `${privateRoot}/${runtimeSessionId}.json`;
-  const approvalHelperPath = `${privateRoot}/a2a-native-approval.mjs`;
-  const approvalExtensionPath = `${privateRoot}/approval-pi.mjs`;
   const packages = [...(options.piPackages ?? [])]
     .sort((a, b) => a.marketInstallId.localeCompare(b.marketInstallId))
     .map((item) => {
@@ -2144,34 +2416,33 @@ async function runPiSdk(
       ),
     )
     .digest("hex");
+  const hostSources = createHash("sha256");
+  const hostFiles: { path: string; content: string }[] = [];
   for (const [path, source] of [
     [hostPath, "pi-sdk-session.mjs"],
     [verifierPath, "pi-sdk-package-files.mjs"],
     [`${privateRoot}/pi-sdk-capabilities.mjs`, "pi-sdk-capabilities.mjs"],
-    [approvalHelperPath, "a2a-native-approval.mjs"],
+    [`${privateRoot}/pi-sdk-ui.mjs`, "pi-sdk-ui.mjs"],
+    [`${privateRoot}/native-session-paths.mjs`, "native-session-paths.mjs"],
+    [
+      `${privateRoot}/pi-sdk-native-resources.mjs`,
+      "pi-sdk-native-resources.mjs",
+    ],
+    // Imported relative to pi-mcp.mjs by mcp_result_to_file.
+    [`${privateRoot}/a2a-sandbox-files.mjs`, "a2a-sandbox-files.mjs"],
   ]) {
-    await writeSandboxFile(
-      container,
-      path,
-      await readFile(`${process.cwd()}/scripts/${source}`, "utf8"),
-      options.signal,
+    const content = await readFile(
+      `${process.cwd()}/scripts/${source}`,
+      "utf8",
     );
+    hostSources.update(source).update(content);
+    hostFiles.push({ path, content });
   }
-  await writeSandboxFile(
-    container,
-    factoryPath,
-    piMcpExtensionSource({ eventFd: 3 }),
-    options.signal,
-  );
-  if (options.nativeApprovalUrl) {
-    httpUrl(options.nativeApprovalUrl, "native approval URL");
-    await writeSandboxFile(
-      container,
-      approvalExtensionPath,
-      nativeApprovalAdapter(approvalHelperPath),
-      options.signal,
-    );
-  }
+  const factorySource = piMcpExtensionSource({ eventFd: 3, workspaceRoot });
+  hostSources.update(factorySource);
+  hostFiles.push({ path: factoryPath, content: factorySource });
+  await writeSandboxHostFiles(container, hostFiles, options.signal);
+  if (options.nativeUiUrl) httpUrl(options.nativeUiUrl, "native UI URL");
   await runTrackedDockerExec({
     container,
     workdir,
@@ -2195,6 +2466,16 @@ async function runPiSdk(
         ),
       );
   const models = JSON.parse(buildPiModelsConfig(options)).providers.toolplane;
+  const sessionModel = {
+    ...models.models[0],
+    ...(options.reasoningEffort && options.reasoningEffort !== "default"
+      ? { reasoning: true }
+      : {}),
+    provider: "toolplane",
+    api: models.api,
+    baseUrl: models.baseUrl,
+    contextWindow: options.contextWindow,
+  };
   const excludeTools = normalizeDisabledBuiltinTools(
     "pi-sdk",
     options.disabledBuiltinTools,
@@ -2206,25 +2487,18 @@ async function runPiSdk(
       sdkVersion: "0.87.1",
       packageRoot: PI_SDK_RUNTIME.directory,
       cwd: workdir,
+      workspaceRoot,
       agentDir: stateRoot,
       sessionsDir: `${stateRoot}/sessions/${runtimeSessionId}`,
       statePath: `${stateRoot}/sessions/${runtimeSessionId}.json`,
       packageSetChecksum,
+      agentRevisionId: options.agentRevisionId,
       historyRequired: Boolean(
         options.historyRequired ||
-          options.messages.some((message) => message.role === "assistant"),
+          hasNativeConversationHistory(options.messages),
       ),
       reasoningEffort: options.reasoningEffort,
-      model: {
-        ...models.models[0],
-        ...(options.reasoningEffort && options.reasoningEffort !== "default"
-          ? { reasoning: true }
-          : {}),
-        provider: "toolplane",
-        api: models.api,
-        baseUrl: models.baseUrl,
-        contextWindow: options.contextWindow,
-      },
+      model: sessionModel,
       systemPrompt: options.systemPrompt?.trim() ?? "",
       excludeTools,
       defaultTools: agentRuntimeBuiltinToolGroups("pi-sdk")
@@ -2234,9 +2508,6 @@ async function runPiSdk(
       packages: packages.map(({ manifest: _manifest, ...item }) => item),
       packageVerifierPath: verifierPath,
       mcpFactoryPath: factoryPath,
-      ...(options.nativeApprovalUrl
-        ? { approvalHelperPath, approvalExtensionPath }
-        : {}),
       hostOnlyCommands: HOST_ONLY_COMMAND_NAMES,
     }),
     options.signal,
@@ -2245,9 +2516,27 @@ async function runPiSdk(
     text = "",
     streamed = "",
     error = "",
-    terminal = false;
+    terminal = false,
+    mcpUnavailable: { deploymentId: string; reason: string } | undefined;
+  const observeStage = options.onExecutionStage
+    ? observeAgentExecutionStage(options.onExecutionStage)
+    : undefined;
   const consume = async (line: string) => {
     const event = JSON.parse(line);
+    await observeStage?.(event);
+    if (event.type === "toolplane_mcp_unavailable") {
+      const server = mcpServers.find(
+        (item) => item.deploymentId === event.deploymentId,
+      );
+      if (server)
+        mcpUnavailable = {
+          deploymentId: server.deploymentId,
+          reason: /^[A-Z][A-Z0-9_]{0,63}$/.test(String(event.reason))
+            ? String(event.reason)
+            : "MCP_UNREACHABLE",
+        };
+      return;
+    }
     if (event.type === "prompt_invocation") {
       await options.onPromptInvocation?.(
         event.invocation as AgentPromptInvocation,
@@ -2305,7 +2594,17 @@ async function runPiSdk(
       signal: options.signal,
       timeoutMs: options.timeoutMs ?? TURN_TIMEOUT_MS,
       secrets: [options.runtimeAccessToken],
-      env: { PI_OFFLINE: "1", PI_TELEMETRY: "0", NO_COLOR: "1" },
+      env: {
+        PI_OFFLINE: "1",
+        PI_TELEMETRY: "0",
+        NO_COLOR: "1",
+        HOME: `${stateRoot}/home`,
+        PI_CODING_AGENT_DIR: stateRoot,
+        XDG_CONFIG_HOME: `${stateRoot}/xdg-config`,
+        XDG_DATA_HOME: `${stateRoot}/xdg-data`,
+        XDG_CACHE_HOME: `${stateRoot}/xdg-cache`,
+        XDG_STATE_HOME: `${stateRoot}/xdg-state`,
+      },
       onStdout: async (chunk) => {
         buffer += chunk;
         for (;;) {
@@ -2317,29 +2616,457 @@ async function runPiSdk(
         }
       },
     },
+    workspaceRoot,
     {
       configPath,
+      hostSourceChecksum: hostSources.digest("hex"),
       packageSetChecksum,
       mcpConfig: JSON.parse(buildPiMcpConfig(mcpServers)),
+      model: sessionModel,
     },
   );
   if (buffer.trim()) await consume(buffer.trim());
   if (!terminal) throw new Error("PI_SDK_PROTOCOL_ERROR");
+  if (error && mcpUnavailable) {
+    const deployment = await db.deployment.findFirst({
+      where: {
+        id: mcpUnavailable.deploymentId,
+        workspaceId: options.workspaceId,
+      },
+      select: { name: true },
+    });
+    // `CODE: REASON name` lets the console explain which server failed and why.
+    throw new Error(
+      `PI_MCP_TOOLS_UNAVAILABLE: ${mcpUnavailable.reason} ${(deployment?.name || mcpUnavailable.deploymentId).slice(0, 120)}`,
+    );
+  }
   if (error) throw new Error(error);
   if (text.startsWith(streamed) && text.length > streamed.length)
     await options.onTextDelta?.(text.slice(streamed.length));
   return text;
 }
 
+async function runOmp(
+  options: RunSandboxAgentTurnOptions,
+  container: string,
+  workdir: string,
+  workspaceRoot: string,
+  mcpServers: readonly SandboxRuntimeMcpServer[],
+): Promise<string> {
+  if (!options.runtimeSessionId || !options.agentRevisionId)
+    throw new Error("OMP_SESSION_MISSING");
+  const snapshot = OmpConfigSnapshotSchema.parse(
+    options.ompConfig ?? emptyOmpConfig(),
+  );
+  const root = sandboxRuntimeStateRoot("omp", options.agentId, workspaceRoot);
+  const hostRoot = `${root}/host`;
+  const runRoot = `${root}/turns/${randomUUID()}`;
+  const configPath = `${runRoot}/turn.json`;
+  const mcpFactoryPath = `${hostRoot}/omp-mcp.mjs`;
+  const binary = `/workspace/.toolplane/runtime-packages/omp-${OMP_VERSION}/omp`;
+  const hostFiles: { path: string; content: string }[] = [];
+  for (const source of [
+    "omp-install.mjs",
+    "omp-rpc.mjs",
+    "omp-ui.mjs",
+    "omp-policy.mjs",
+    "omp-hooks.mjs",
+    "omp-capabilities.mjs",
+    "pi-sdk-package-files.mjs",
+    "native-session-paths.mjs",
+    "omp-session.mjs",
+    "a2a-sandbox-files.mjs",
+  ]) {
+    hostFiles.push({
+      path: `${hostRoot}/${source}`,
+      content: await readFile(`${process.cwd()}/scripts/${source}`, "utf8"),
+    });
+  }
+  // The existing adapter invokes the real scoped POST tools/list + tools/call
+  // gateway. OMP's native Streamable HTTP assumptions are not imposed on it.
+  hostFiles.push({
+    path: mcpFactoryPath,
+    content: piMcpExtensionSource({ workspaceRoot }),
+  });
+  await writeSandboxHostFiles(container, hostFiles, options.signal);
+  if (options.nativeUiUrl) httpUrl(options.nativeUiUrl, "native UI URL");
+  const disabledTools = normalizeDisabledBuiltinTools(
+    "omp",
+    options.disabledBuiltinTools,
+  );
+  const tools = agentRuntimeBuiltinToolGroups("omp")
+    .flatMap((group) => group.tools)
+    .filter(
+      (name) =>
+        !disabledTools.includes(name) &&
+        !(
+          options.ompCapabilities?.mode === "platform" &&
+          ["task", "wait"].includes(name)
+        ),
+    );
+  const base = JSON.parse(buildPiModelsConfig(options)).providers.toolplane;
+  const model = {
+    ...base.models[0],
+    api: base.api,
+    baseUrl: base.baseUrl,
+    contextWindow: options.contextWindow,
+    maxTokens: Math.min(
+      options.maxOutputTokens ?? 16_384,
+      options.contextWindow,
+    ),
+    input: options.modelInput ?? ["text"],
+    reasoning: Boolean(
+      options.reasoningEffort && options.reasoningEffort !== "default",
+    ),
+  };
+  const plugins = (options.ompCapabilities?.plugins ?? []).map((item) => ({
+    ...item,
+    manifest: parsePiPackageReleaseManifest(item.manifest, item.checksum),
+    root: `${root}/packages/${item.checksum}/snapshot`,
+    manifestPath: `${root}/packages/${item.checksum}/manifest.json`,
+  }));
+  const nativeRoleModels = (
+    options.ompCapabilities?.nativeRoleModels ?? []
+  ).map((role, index) => {
+    const proxy = new URL(options.modelProxyBase);
+    proxy.pathname = `/api/v1/agent-runtime/model/${encodeURIComponent(role.providerId)}`;
+    const catalog = JSON.parse(
+      buildPiModelsConfig({
+        provider: role.provider,
+        modelId: role.model,
+        modelProxyBase: proxy.toString(),
+      }),
+    ).providers.toolplane;
+    const contextWindow =
+      role.metadata?.contextWindow ?? catalog.models[0].contextWindow;
+    return {
+      marketInstallId: role.marketInstallId,
+      releaseId: role.releaseId,
+      path: role.path,
+      name: role.name,
+      modelSelector: `toolplane_role_${index}/${role.model}`,
+      modelProvider: `toolplane_role_${index}`,
+      model: {
+        ...catalog.models[0],
+        api: catalog.api,
+        baseUrl: catalog.baseUrl,
+        contextWindow,
+        maxTokens: Math.min(
+          role.metadata?.maxOutputTokens ?? catalog.models[0].maxTokens,
+          contextWindow,
+        ),
+        input: role.metadata?.inputModalities.length
+          ? role.metadata.inputModalities.filter(
+              (value) => value === "text" || value === "image",
+            )
+          : ["text"],
+        reasoning: role.metadata?.capabilities.includes("reasoning") ?? false,
+      },
+    };
+  });
+  const subagents = (
+    options.ompCapabilities?.mode === undefined
+      ? options.ompCapabilities?.subagents
+      : []
+  )?.map((child, index) => {
+    const provider = child.provider ?? options.provider;
+    const childModelId = child.definition.model?.model ?? options.modelId;
+    const proxy = new URL(options.modelProxyBase);
+    proxy.pathname = `/api/v1/agent-runtime/model/${encodeURIComponent(provider.id)}`;
+    return {
+      subagentId: child.subagentId,
+      versionId: child.versionId,
+      checksum: child.checksum,
+      name: child.name,
+      nativeName: `tp-${child.subagentId.toLowerCase().replace(/[^a-z0-9_-]/g, "-")}`,
+      definition: child.definition,
+      tools: child.definition.permissions.builtinTools.filter((name) =>
+        tools.includes(name),
+      ),
+      modelSelector: `toolplane_child_${index}/${childModelId}`,
+      modelProvider: `toolplane_child_${index}`,
+      model: {
+        ...model,
+        id: childModelId,
+        name: childModelId,
+        api: piProviderProtocol(provider.format),
+        baseUrl: proxy.toString().replace(/\/$/, ""),
+      },
+    };
+  });
+  const authorizeBase = new URL(
+    "/api/v1/agent-runtime/subagents",
+    options.modelProxyBase,
+  ).toString();
+  let buffer = "",
+    text = "",
+    terminal = false,
+    error = "";
+  const observeStage = options.onExecutionStage
+    ? observeAgentExecutionStage(options.onExecutionStage)
+    : undefined;
+  const consume = async (line: string) => {
+    const event = JSON.parse(line);
+    if (event.type === "toolplane_omp_response") {
+      terminal = true;
+      if (!event.success)
+        error = /^OMP_[A-Z_]+$/.test(event.error?.code)
+          ? event.error.code
+          : "OMP_RUNTIME_FAILED";
+      text = redact(String(event.result?.text ?? ""), [
+        options.runtimeAccessToken,
+      ]);
+      const commands = RuntimeCommandsSchema.safeParse(event.result?.commands);
+      if (commands.success) await options.onCommands?.(commands.data);
+      const usage = parseRuntimeUsage(event.result?.usage);
+      if (usage) await options.onUsage?.(usage);
+      if (event.result?.commandResult)
+        await options.onCommandResult?.({
+          command: options.command ?? "",
+          text: redact(String(event.result.commandResult.text ?? ""), [
+            options.runtimeAccessToken,
+          ]),
+          status:
+            event.result.commandResult.status === "completed"
+              ? "completed"
+              : "failed",
+        });
+      return;
+    }
+    if (event.type === "omp_commands") {
+      const commands = RuntimeCommandsSchema.safeParse(event.commands);
+      if (commands.success) await options.onCommands?.(commands.data);
+      return;
+    }
+    if (event.type === "omp_context") {
+      await reportContextUsage(options, event.tokens, false);
+      return;
+    }
+    if (event.type === "omp_subagent") {
+      await reportActivities(options, [
+        {
+          type: "tool",
+          toolName: "task",
+          toolCallId: `omp-child:${event.subagentId}`,
+          source: event.source,
+          status: ["completed", "failed", "aborted", "cancelled"].includes(
+            event.status,
+          )
+            ? event.status === "completed"
+              ? "completed"
+              : "failed"
+            : "running",
+        },
+      ]);
+      return;
+    }
+    if (event.type === "omp_child_event" && event.source?.subagentId) {
+      const nested = event.event;
+      if (nested?.type === "thinking_delta") {
+        await reportActivities(options, [
+          {
+            type: "reasoning",
+            status: "running",
+            delta: nested.delta,
+            source: event.source,
+          },
+        ]);
+      } else if (nested?.type === "message_end") {
+        await reportActivities(options, [
+          {
+            type: "tool",
+            status: nested.isError ? "failed" : "completed",
+            toolName: "task",
+            toolCallId: `omp-child:${event.source.subagentId}:result`,
+            output: nested.text,
+            source: event.source,
+          },
+        ]);
+      } else if (
+        nested &&
+        [
+          "tool_execution_start",
+          "tool_execution_update",
+          "tool_execution_end",
+        ].includes(nested.type)
+      ) {
+        await reportActivities(
+          options,
+          [
+            {
+              type: "tool",
+              status:
+                nested.type === "tool_execution_end"
+                  ? nested.isError
+                    ? "failed"
+                    : "completed"
+                  : "running",
+              toolCallId: `${event.source.subagentId}:${nested.toolCallId}`,
+              toolName: nested.toolName,
+              input: nested.args,
+              output: nested.result,
+              isError: nested.isError,
+              source: event.source,
+            },
+          ],
+          mcpServers,
+        );
+      }
+      return;
+    }
+    await observeStage?.(event);
+    const parsed = parsePiStreamLine(line);
+    if (parsed?.delta)
+      await options.onTextDelta?.(
+        redact(parsed.delta, [options.runtimeAccessToken]),
+      );
+    if (parsed?.activities)
+      await reportActivities(options, parsed.activities, mcpServers);
+  };
+  try {
+    if (plugins.length)
+      await runTrackedDockerExec({
+        container,
+        workdir,
+        executable: "node",
+        args: [`${hostRoot}/pi-sdk-package-files.mjs`, "materialize"],
+        stdin: JSON.stringify(plugins),
+        signal: options.signal,
+        timeoutMs: 120_000,
+      });
+    await materializeSandboxSkills(
+      container,
+      sandboxRuntimeSkillRoot(
+        "omp",
+        options.agentId,
+        workspaceRoot,
+        options.agentRevisionId,
+      ),
+      options.skills ?? [],
+      options.signal,
+    );
+    await writeSandboxFile(
+      container,
+      configPath,
+      JSON.stringify({
+        ompVersion: OMP_VERSION,
+        binary,
+        agentRevisionId: options.agentRevisionId,
+        cwd: workdir,
+        workspaceRoot,
+        skillsRoot: sandboxRuntimeSkillRoot(
+          "omp",
+          options.agentId,
+          workspaceRoot,
+          options.agentRevisionId,
+        ),
+        runRoot,
+        sessionDir: `${root}/sessions/${safeSegment(options.runtimeSessionId, "runtime session")}`,
+        nativesDir: `${root}/native-cache`,
+        snapshot,
+        model,
+        tools,
+        disabledTools,
+        subagentMode: options.ompCapabilities?.mode,
+        ...(options.ompCapabilities
+          ? {
+              capabilities: {
+                plugins,
+                subagents,
+                nativeRoleModels,
+                policy: options.ompCapabilities.policy,
+              },
+              authorizeBase,
+            }
+          : {}),
+        skillIdentities: buildSandboxSkillBundles(options.skills ?? []).map(
+          (bundle, index) => ({
+            name: skillLabel({
+              skillId: options.skills?.[index]?.skillId ?? null,
+              skill: options.skills?.[index]?.skill ?? null,
+              name: options.skills?.[index]?.name ?? null,
+              slug: options.skills?.[index]?.slug ?? null,
+              source: options.skills?.[index]?.source ?? null,
+            }).slug,
+            directory: bundle.directory,
+            installedSkillId: options.skills?.[index]?.installedSkillId,
+            path: `${sandboxRuntimeSkillRoot("omp", options.agentId, workspaceRoot, options.agentRevisionId)}/${bundle.directory}`,
+          }),
+        ),
+        token: options.runtimeAccessToken,
+        uiUrl: options.nativeUiUrl,
+        policyExtension: `${hostRoot}/omp-policy.mjs`,
+        mcpFactoryPath,
+        mcpConfig: JSON.parse(buildPiMcpConfig(mcpServers)),
+        systemPrompt: options.systemPrompt,
+        reasoningEffort: options.reasoningEffort,
+        hostOnlyCommands: HOST_ONLY_COMMAND_NAMES,
+        historyRequired: Boolean(
+          options.historyRequired ||
+            hasNativeConversationHistory(options.messages),
+        ),
+        command: options.command,
+        message:
+          options.messages
+            .at(-1)
+            ?.parts.map((part) =>
+              messagePartText(
+                part,
+                workspaceRoot !== "/workspace" &&
+                  (options.conversationId || options.a2aContextId)
+                  ? options
+                  : undefined,
+              ),
+            )
+            .filter(Boolean)
+            .join("\n") ?? "",
+      }),
+      options.signal,
+    );
+    await runTrackedDockerExec({
+      container,
+      workdir,
+      executable: "node",
+      args: [`${hostRoot}/omp-session.mjs`, configPath],
+      signal: options.signal,
+      timeoutMs: options.timeoutMs ?? TURN_TIMEOUT_MS,
+      secrets: [options.runtimeAccessToken],
+      onStdout: async (chunk) => {
+        buffer += chunk;
+        for (;;) {
+          const index = buffer.indexOf("\n");
+          if (index < 0) break;
+          const line = buffer.slice(0, index).trim();
+          buffer = buffer.slice(index + 1);
+          if (line) await consume(line);
+        }
+      },
+    });
+    if (buffer.trim()) await consume(buffer.trim());
+    if (!terminal) throw new Error("OMP_RPC_PROTOCOL_FAILED");
+    if (error) throw new Error(error);
+    return text;
+  } finally {
+    await runTrackedDockerExec({
+      container,
+      workdir: "/workspace",
+      executable: "rm",
+      args: ["-rf", "--", runRoot],
+      timeoutMs: 10_000,
+    }).catch(() => undefined);
+  }
+}
+
 export async function runSandboxAgentTurn(
   options: RunSandboxAgentTurnOptions,
 ): Promise<string> {
-  if (options.runtimeKind !== "pi-sdk")
+  if (options.runtimeKind !== "pi-sdk" && options.runtimeKind !== "omp")
     throw new Error("AGENT_RUNTIME_RETIRED");
   try {
-    return await withSandboxExecutionLease(options.sandboxId, () =>
-      runExclusiveSandboxAgentTurn(options),
-    );
+    return await withSandboxExecutionLease(options.sandboxId, async () => {
+      await options.onExecutionStage?.("preparing");
+      return runExclusiveSandboxAgentTurn(options);
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const safeMessage = redact(message, [options.runtimeAccessToken]);
@@ -2384,9 +3111,31 @@ async function runExclusiveSandboxAgentTurn(
     !/^[a-zA-Z0-9_-]{1,200}$/.test(options.runtimeSessionId)
   )
     throw new Error("Invalid runtime session.");
-  const sandboxDeploymentId = await assertAssignedDockerSandbox(options);
+  const assigned = await assertAssignedDockerSandbox(options);
+  if (assigned.identity) options = { ...options, ...assigned.identity };
+  const sandboxDeploymentId = assigned.deploymentId;
   const container = sandboxContainerName(options.sandboxId);
-  const workdir = normalizeSandboxWorkingDirectory(options.workingDirectory);
+  const workspaceRoot = assigned.workspaceRoot ?? "/workspace";
+  const workdir =
+    assigned.identity && workspaceRoot !== "/workspace"
+      ? agentSessionWorkingDirectory(
+          assigned.identity,
+          options.workingDirectory,
+        )
+      : normalizeSandboxWorkingDirectory(options.workingDirectory);
+  await runTrackedDockerExec({
+    container,
+    workdir: "/workspace",
+    executable: "node",
+    args: [
+      "-e",
+      "const fs=require('node:fs'); for(const path of process.argv.slice(1)){ fs.mkdirSync(path,{recursive:true,mode:0o700}); if(fs.realpathSync(path)!==path) throw Error('SESSION_WORKSPACE_SCOPE'); }",
+      workspaceRoot,
+      workdir,
+    ],
+    signal: options.signal,
+    timeoutMs: 10_000,
+  });
   const prompt = buildSandboxTranscript(options.messages);
   if (!prompt && !options.command)
     throw new Error("The sandbox runtime turn has no user-visible message.");
@@ -2396,17 +3145,31 @@ async function runExclusiveSandboxAgentTurn(
   const skillRoot = sandboxRuntimeSkillRoot(
     options.runtimeKind,
     options.agentId,
+    workspaceRoot,
+    options.agentRevisionId,
   );
+  if (options.runtimeKind === "omp") {
+    if (options.ompVersion !== OMP_VERSION)
+      throw new Error("OMP_VERSION_MISMATCH");
+    return runOmp(options, container, workdir, workspaceRoot, mcpServers);
+  }
   if (options.piVersion !== undefined && options.piVersion !== "0.87.1")
     throw new Error("PI_SDK_VERSION_MISMATCH");
-  await ensureRuntimeInstalled(container, options.signal);
+  await ensureRuntimeInstalled(container, workspaceRoot, options.signal);
   await materializeSandboxSkills(
     container,
     skillRoot,
     options.skills ?? [],
     options.signal,
   );
-  return runPiSdk(options, container, workdir, skillRoot, mcpServers);
+  return runPiSdk(
+    options,
+    container,
+    workdir,
+    skillRoot,
+    workspaceRoot,
+    mcpServers,
+  );
 }
 
 export type PiHarnessOperationResult = {

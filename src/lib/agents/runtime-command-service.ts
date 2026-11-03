@@ -1,11 +1,11 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
 import {
-  runNativeEntry,
-  nativeEntryResult,
-  nativeEntryRuntimeParts,
-} from "@/lib/a2a/ingress";
-import type { EntryIdentity } from "@/lib/a2a/entry-policy";
+  runAgentEntry,
+  agentEntryResult,
+  agentEntryRuntimeParts,
+} from "@/lib/agents/execution/entries";
+import type { EntryIdentity } from "@/lib/agents/execution/entry-policy";
 import type { TaskGrant } from "@/lib/a2a/principal";
 import {
   TaskNotFoundError,
@@ -14,7 +14,7 @@ import {
 import { db } from "@/lib/db";
 import { ACTIVE } from "@/lib/a2a/model";
 import { localOwnerKey, assertLocalActor } from "@/lib/a2a/local-policy";
-import { assertEntryPolicy } from "@/lib/a2a/entry-policy";
+import { assertEntryPolicy } from "@/lib/agents/execution/entry-policy";
 import { isLocalGrant } from "@/lib/a2a/principal";
 import { appendWorkSessionInput } from "@/lib/work/sessions";
 import { startWorkOutput } from "@/lib/work/run-control";
@@ -27,6 +27,8 @@ import {
   conversationOperationKey,
 } from "./conversation-operations";
 import { parseRuntimeCommand } from "./runtime-commands";
+import type { AgentModelOverride } from "./chat-body";
+import { resolveAgentModelOverride } from "./turn-model";
 
 export class RuntimeCommandError extends Error {
   constructor(
@@ -47,6 +49,7 @@ export async function executeRuntimeCommand(input: {
   signal?: AbortSignal;
   entry?: Pick<EntryIdentity, "kind" | "channelId">;
   messageId?: string;
+  modelOverride?: AgentModelOverride;
 }) {
   const [liveAgent, scope] = await Promise.all([
     getAgentForRun(input.agentId, input.workspaceId),
@@ -66,7 +69,7 @@ export async function executeRuntimeCommand(input: {
   if (!liveAgent || !scope || scope.publicApiConversation)
     throw new RuntimeCommandError("notFound", 404);
   if (
-    liveAgent.runtimeKind !== "pi-sdk" ||
+    (liveAgent.runtimeKind !== "pi-sdk" && liveAgent.runtimeKind !== "omp") ||
     liveAgent.retiredAt ||
     scope.legacyRevisionUnresolved ||
     !scope.agentRevisionId
@@ -76,8 +79,14 @@ export async function executeRuntimeCommand(input: {
       409,
     );
   const agent = await resolvePinnedAgent(liveAgent, scope.agentRevisionId);
+  if (input.modelOverride)
+    await resolveAgentModelOverride(
+      input.workspaceId,
+      input.modelOverride,
+      agent.runtimeKind,
+    );
   const kind = agent.runtimeKind;
-  if (kind !== "pi-sdk")
+  if (kind !== "pi-sdk" && kind !== "omp")
     throw new RuntimeCommandError(
       "Historical Agent sessions are read-only.",
       409,
@@ -101,13 +110,7 @@ export async function executeRuntimeCommand(input: {
     const work = conversation.workSession;
     if (
       work &&
-      [
-        "queued",
-        "running",
-        "waiting_approval",
-        "cancelling",
-        "archived",
-      ].includes(work.status)
+      ["queued", "running", "cancelling", "archived"].includes(work.status)
     )
       throw new RuntimeCommandError("busy", 409);
     if (work) {
@@ -115,6 +118,7 @@ export async function executeRuntimeCommand(input: {
         input.workspaceId,
         work.id,
         input.line,
+        { modelOverride: input.modelOverride, a2aActorId: input.actorId },
       );
       if (!result.ok) throw new RuntimeCommandError("busy", 409);
       startWorkOutput(work.id);
@@ -214,7 +218,7 @@ export async function executeRuntimeCommand(input: {
           parts: [{ type: "text", text: input.line }],
         },
       });
-      const result = await runNativeEntry({
+      const result = await runAgentEntry({
         ...sdkEntry,
         workspaceId: input.workspaceId,
         agentId: input.agentId,
@@ -222,6 +226,7 @@ export async function executeRuntimeCommand(input: {
         messageId: input.messageId ?? randomUUID(),
         text: input.line,
         signal: input.signal,
+        modelOverride: input.modelOverride,
         onPromptInvocation: (invocation) =>
           persistAgentPromptInvocation({
             conversationId: conversation.id,
@@ -229,7 +234,7 @@ export async function executeRuntimeCommand(input: {
             invocation,
           }),
       });
-      const text = nativeEntryResult(result.task, result.path);
+      const text = agentEntryResult(result.task, result.path);
       input.signal?.throwIfAborted();
       await db.message.create({
         data: {
@@ -237,7 +242,7 @@ export async function executeRuntimeCommand(input: {
           role: "assistant",
           parts: [
             { type: "text", text },
-            ...nativeEntryRuntimeParts(result.task),
+            ...agentEntryRuntimeParts(result.task),
           ],
         },
       });

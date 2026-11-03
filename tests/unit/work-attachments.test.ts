@@ -6,11 +6,13 @@ const mocks = vi.hoisted(() => ({
   attachmentFindMany: vi.fn(),
   copy: vi.fn(),
   attachmentUpdateMany: vi.fn(),
+  conversationFindFirst: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => ({
   db: {
     sandbox: { findFirst: mocks.sandboxFindFirst },
+    conversation: { findFirst: mocks.conversationFindFirst },
     workspaceAttachment: { findMany: mocks.attachmentFindMany },
   },
 }));
@@ -119,6 +121,24 @@ describe("Work attachments", () => {
         },
       ),
     ).rejects.toBeInstanceOf(WorkAttachmentError);
+  });
+
+  it("rejects an attachment write after the conversation moved to another sandbox", async () => {
+    mocks.conversationFindFirst.mockResolvedValue({
+      agentId: "agent-1",
+      sandboxId: "sandbox-2",
+    });
+    await expect(
+      prepareWorkAttachments({
+        workspaceId: "workspace-1",
+        userId: "user-1",
+        sandboxId: "sandbox-1",
+        conversationId: "conversation-1",
+        workingDirectory: ".",
+        attachmentIds: ["attachment-1"],
+      }),
+    ).rejects.toMatchObject({ status: 409 });
+    expect(mocks.copy).not.toHaveBeenCalled();
   });
 
   it("rejects connector sandboxes instead of exposing a host path", async () => {

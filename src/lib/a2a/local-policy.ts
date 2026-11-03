@@ -9,6 +9,7 @@ import {
 import { db } from "@/lib/db";
 import { requireAgentRevision } from "@/lib/agents/revisions";
 import { ORDINARY_AGENT_FILTER } from "@/lib/agents/queries";
+import { A2A_LIMITS } from "./model";
 import {
   A2A_SCOPES,
   isLocalGrant,
@@ -73,7 +74,27 @@ export async function assertLocalActor(
   )
     throw missing();
 }
-/** Hash configured capabilities; delegation callers must separately authorize the parent-child edge. */
+export type LocalTargetReason =
+  | "SUBAGENT_RUNTIME_UNAVAILABLE"
+  | "SUBAGENT_SANDBOX_REQUIRED"
+  | "SUBAGENT_MODEL_REQUIRED"
+  | "SUBAGENT_REVISION_OUTDATED"
+  | "A2A_INBOUND_DISABLED";
+const reasons = new WeakMap<TaskNotFoundError, LocalTargetReason>();
+/** Same opaque A2A error on the wire; the reason is only for authorized configuration views. */
+function unavailable(reason: LocalTargetReason) {
+  const error = new TaskNotFoundError();
+  reasons.set(error, reason);
+  return error;
+}
+export function localTargetReason(error: unknown) {
+  return error instanceof TaskNotFoundError ? reasons.get(error) : undefined;
+}
+/**
+ * Hash configured capabilities. Direct ingress needs the target's inbound opt-in;
+ * delegation is authorized by the caller's reviewed parent-child edge instead,
+ * which callers must check separately (childGrant / assertLocalGrant).
+ */
 export async function localTarget(
   tx: Database,
   workspaceId: string,
@@ -88,9 +109,6 @@ export async function localTarget(
       ...ORDINARY_AGENT_FILTER,
       id: agentId,
       workspaceId,
-      ...(!entry || entry === "delegation" || entry.kind === "channel"
-        ? { a2aInboundEnabled: true }
-        : {}),
     },
     select: {
       id: true,
@@ -118,29 +136,29 @@ export async function localTarget(
       subAgents: { orderBy: { childId: "asc" }, select: { childId: true } },
     },
   });
+  if (agent?.runtimeKind !== "pi-sdk" && agent?.runtimeKind !== "omp")
+    throw unavailable("SUBAGENT_RUNTIME_UNAVAILABLE");
+  if (!entry && !agent.a2aInboundEnabled)
+    throw unavailable("A2A_INBOUND_DISABLED");
   if (
-    agent?.runtimeKind !== "pi-sdk" ||
     agent.sandboxes.length !== 1 ||
     agent.sandboxes[0].sandbox.workspaceId !== workspaceId ||
     agent.sandboxes[0].sandbox.kind !== "docker" ||
     agent.sandboxes[0].sandbox.network === "none"
   )
-    throw missing();
+    throw unavailable("SUBAGENT_SANDBOX_REQUIRED");
   const revision = await requireAgentRevision(tx, agentId, revisionId);
   const config = revision.config;
-  if (
-    (!entry || entry === "delegation" || entry.kind === "channel") &&
-    !config.a2a.inboundEnabled
-  )
-    throw missing();
+  if (!entry && !config.a2a.inboundEnabled)
+    throw unavailable("A2A_INBOUND_DISABLED");
   const sandbox = agent.sandboxes[0];
+  if (!config.providerId || !config.model)
+    throw unavailable("SUBAGENT_MODEL_REQUIRED");
   if (
     sandbox.sandboxId !== config.sandboxTemplateId ||
-    !config.providerId ||
-    !config.model ||
     agent.providerId !== config.providerId
   )
-    throw missing();
+    throw unavailable("SUBAGENT_REVISION_OUTDATED");
   const skills = config.skills
     .filter((skill) =>
       agent.skills.some(
@@ -199,7 +217,9 @@ export async function assertLocalGrant(
   await assertLocalActor(tx, grant.workspaceId, grant.actorId);
   if (!grant.agentRevisionId) throw missing();
   if (grant.entryPolicy)
-    await (await import("./entry-policy")).assertEntryPolicy(tx, grant);
+    await (
+      await import("@/lib/agents/execution/entry-policy")
+    ).assertEntryPolicy(tx, grant);
   const entry =
     grant.ancestorTaskIds.length === 0 ? grant.entryPolicy : "delegation";
   if (
@@ -278,10 +298,10 @@ export async function createLocalRootGrant(
     agentRevisionId: target.agentRevisionId,
     targetBinding: target.binding,
     ownerKey: localOwnerKey(workspaceId, agentId, actorId),
-    expiresAt: Date.now() + 840_000,
+    expiresAt: Date.now() + A2A_LIMITS.deadlineSeconds * 1000,
     scopes: [...A2A_SCOPES],
     maxConcurrent: 4,
-    timeoutSeconds: 840,
+    timeoutSeconds: A2A_LIMITS.deadlineSeconds,
     retentionDays: 7,
     ancestorTaskIds: [],
     ancestorAgentIds: [],
@@ -324,10 +344,10 @@ export async function createLocalEntryGrant(
     entryPolicy: entry,
     targetBinding: target.binding,
     ownerKey: localEntryOwnerKey(workspaceId, agentId, actorId, entry),
-    expiresAt: Date.now() + 840_000,
+    expiresAt: Date.now() + A2A_LIMITS.deadlineSeconds * 1000,
     scopes: [...A2A_SCOPES],
     maxConcurrent: 4,
-    timeoutSeconds: 840,
+    timeoutSeconds: A2A_LIMITS.deadlineSeconds,
     retentionDays: 7,
     ancestorTaskIds: [],
     ancestorAgentIds: [],
@@ -388,6 +408,7 @@ export async function childGrant(
     );
   return {
     ...authority,
+    modelOverride: undefined,
     agentId: targetId,
     agentRevisionId: target.agentRevisionId,
     timeoutSeconds: Math.min(authority.timeoutSeconds, policy.timeoutSeconds),

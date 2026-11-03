@@ -11,7 +11,7 @@ import {
 } from "@/lib/process/session-mcp";
 import { z } from "zod";
 import { parseJson } from "@/lib/agents/public-api/body";
-import { MarketError } from "@/lib/market/skills";
+import { PluginError } from "@/lib/plugins/catalog";
 
 const preEffectDenials: Record<string, true> = {
   MCP_SESSION_FORBIDDEN: true,
@@ -156,11 +156,13 @@ export const POST = withRequestLogging(
         { status: 403 },
       );
     } catch (error) {
-      const denied =
-        (error instanceof Error &&
-          Object.hasOwn(preEffectDenials, error.message)) ||
-        (error instanceof MarketError && error.code === "listing_unavailable");
-      const unknown = body.method === "tools/call" && !denied;
+      const reason =
+        error instanceof Error && Object.hasOwn(preEffectDenials, error.message)
+          ? error.message
+          : error instanceof PluginError && error.code === "listing_unavailable"
+            ? "MCP_LISTING_UNAVAILABLE"
+            : null;
+      const unknown = body.method === "tools/call" && !reason;
       return NextResponse.json(
         {
           jsonrpc: "2.0",
@@ -170,7 +172,12 @@ export const POST = withRequestLogging(
             message: unknown
               ? "Tool execution outcome is unknown; do not retry automatically"
               : "Session tool unavailable or grant revoked",
-            ...(unknown ? { data: { status: "execution_unknown" } } : {}),
+            // Denial codes are fixed policy identifiers, never secrets or tool output.
+            data: unknown
+              ? { status: "execution_unknown" }
+              : reason
+                ? { reason }
+                : undefined,
           },
         },
         { status: unknown ? 502 : 403 },

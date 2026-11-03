@@ -1,7 +1,14 @@
 "use client";
 
 // Domain adapter for https://asharca.github.io/ui/components/blocks/model-selector.
-import { Check, Loader2, Search, Settings2, X } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  Loader2,
+  Search,
+  Settings2,
+  X,
+} from "lucide-react";
 import {
   useEffect,
   useId,
@@ -9,8 +16,10 @@ import {
   useMemo,
   useRef,
   useState,
+  type ComponentProps,
   type KeyboardEvent,
   type ReactElement,
+  type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
 import { useTranslations } from "next-intl";
@@ -82,9 +91,111 @@ const SIZE_CLASS = {
   },
 };
 const SCROLLBAR_CLASS =
-  "[scrollbar-width:thin] [scrollbar-gutter:stable] [scrollbar-color:color-mix(in_oklab,var(--foreground)_18%,transparent)_transparent] hover:[scrollbar-color:color-mix(in_oklab,var(--foreground)_30%,transparent)_transparent] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-foreground/20 [&::-webkit-scrollbar-thumb:hover]:bg-foreground/30";
+  "[scrollbar-width:thin] [scrollbar-gutter:stable] [scrollbar-color:color-mix(in_oklab,var(--foreground)_18%,transparent)_transparent] hover:[scrollbar-color:color-mix(in_oklab,var(--foreground)_30%,transparent)_transparent] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-lg [&::-webkit-scrollbar-thumb]:bg-foreground/20 [&::-webkit-scrollbar-thumb:hover]:bg-foreground/30";
 const selectionId = (selection: ModelSelection) =>
   JSON.stringify([selection.providerId, selection.model]);
+
+export type ModelPickerTriggerProps = Omit<
+  ComponentProps<"button">,
+  "children"
+> & {
+  /** `field` fills form rows at select height; `compact` is the composer pill. */
+  layout?: "field" | "compact";
+  /** Visible text: the chosen model, or a localized prompt when empty. */
+  label: string;
+  /** Renders `label` as an unselected prompt. */
+  placeholder?: boolean;
+  /** Provider display name; the field layout shows its initial when no `icon`. */
+  provider?: string;
+  icon?: ReactNode;
+  /** Secondary text before the arrow (provider name, default marker). */
+  note?: ReactNode;
+  pending?: boolean;
+};
+
+/**
+ * Trigger for {@link ModelPicker}. The picker's popover injects id, ref,
+ * onClick and aria-expanded through the spread props; aria-expanded drives the
+ * open-state arrow.
+ */
+export function ModelPickerTrigger({
+  layout = "field",
+  label,
+  placeholder = false,
+  provider,
+  icon,
+  note,
+  pending = false,
+  className,
+  type = "button",
+  ...props
+}: ModelPickerTriggerProps) {
+  const field = layout === "field";
+  const leading =
+    icon ??
+    (field ? (
+      <span className="flex size-6 items-center justify-center rounded-full bg-muted text-[10px] font-semibold text-muted-foreground">
+        {provider?.charAt(0).toUpperCase() || "M"}
+      </span>
+    ) : null);
+  return (
+    <button
+      type={type}
+      aria-busy={pending || undefined}
+      {...props}
+      className={cn(
+        "group flex min-w-0 items-center text-left font-normal outline-none transition-colors focus-visible:ring-2 focus-visible:ring-foreground/20 disabled:cursor-not-allowed disabled:opacity-50",
+        field
+          ? "h-10 w-full gap-3 rounded-xl border border-border bg-background px-3 text-sm text-foreground hover:border-(--color-border-strong) aria-expanded:border-(--color-border-strong)"
+          : "h-8 max-w-[min(16rem,45vw)] gap-1.5 rounded-full bg-muted/50 px-3 text-xs text-muted-foreground hover:bg-muted hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground",
+        className,
+      )}
+    >
+      {leading ? (
+        <span
+          aria-hidden
+          className={cn(
+            "flex shrink-0 items-center justify-center text-muted-foreground",
+            field ? "size-6" : "size-1.5",
+          )}
+        >
+          {leading}
+        </span>
+      ) : null}
+      <span
+        className={cn(
+          "min-w-0 flex-1 truncate",
+          placeholder && "text-muted-foreground",
+        )}
+      >
+        {label}
+      </span>
+      {note ? (
+        <span
+          className={cn(
+            "shrink-0 truncate text-muted-foreground",
+            field ? "hidden max-w-[35%] text-xs sm:block" : "text-[10px]",
+          )}
+        >
+          {note}
+        </span>
+      ) : null}
+      <span
+        aria-hidden
+        className={cn(
+          "flex shrink-0 items-center justify-center text-muted-foreground",
+          field ? "size-4" : "size-3.5",
+        )}
+      >
+        {pending ? (
+          <Loader2 className="size-full animate-spin motion-reduce:animate-none" />
+        ) : (
+          <ChevronDown className="size-full transition-transform duration-150 group-aria-expanded:rotate-180 motion-reduce:transition-none" />
+        )}
+      </span>
+    </button>
+  );
+}
 
 export function ModelPicker({
   providers,
@@ -99,6 +210,7 @@ export function ModelPicker({
   closeOnSelect = true,
   onConfigure,
   size = "md",
+  className,
 }: {
   providers: ModelProviderOption[];
   value: ModelSelection | null;
@@ -112,6 +224,8 @@ export function ModelPicker({
   closeOnSelect?: boolean;
   onConfigure?: () => void;
   size?: "sm" | "md" | "lg";
+  /** Outer layout only, e.g. `flex w-full` so a field trigger fills its row. */
+  className?: string;
 }) {
   const t = useTranslations("console.agents");
   const uid = useId();
@@ -119,7 +233,7 @@ export function ModelPicker({
   const [internalOpen, setInternalOpen] = useState(false);
   const open = controlledOpen ?? internalOpen;
   const [query, setQuery] = useState("");
-  const rootRef = useRef<HTMLSpanElement>(null);
+  const rootRef = useRef<HTMLFieldSetElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const detailRef = useRef<HTMLElement>(null);
@@ -336,10 +450,20 @@ export function ModelPicker({
     if (closeOnSelect) close();
   };
   const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
-    if (event.nativeEvent.isComposing) return;
+    if (!open || event.nativeEvent.isComposing) return;
+    if (
+      event.key !== "Escape" &&
+      event.target !== inputRef.current &&
+      !(
+        event.target instanceof HTMLElement &&
+        event.target.getAttribute("role") === "option"
+      )
+    )
+      return;
     if (event.key !== "Tab") hideDetail();
     if (event.key === "Escape") {
       event.preventDefault();
+      event.stopPropagation();
       close();
     } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
@@ -355,11 +479,19 @@ export function ModelPicker({
   };
 
   return (
-    <span ref={rootRef} className="inline-flex max-w-full min-w-0">
+    <fieldset
+      ref={rootRef}
+      aria-label={t("model")}
+      onKeyDown={onKeyDown}
+      className={cn(
+        "m-0 inline-flex max-w-full min-w-0 border-0 p-0",
+        className,
+      )}
+    >
       <MorphPopover
         open={open}
         onOpenChange={changeOpen}
-        className="max-w-full min-w-0"
+        className="max-w-full min-w-0 grow"
       >
         <MorphPopoverTrigger>{trigger}</MorphPopoverTrigger>
         <MorphPopoverContent
@@ -382,7 +514,6 @@ export function ModelPicker({
               <Search aria-hidden className="size-3.5 text-muted-foreground" />
               <input
                 ref={inputRef}
-                onKeyDown={onKeyDown}
                 value={query}
                 onChange={(event) => {
                   hideDetail();
@@ -408,12 +539,12 @@ export function ModelPicker({
                     setQuery("");
                     inputRef.current?.focus();
                   }}
-                  className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                  className="rounded-lg p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
                 >
                   <X aria-hidden className="size-4" />
                 </button>
               ) : null}
-              <kbd className="rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground">
+              <kbd className="rounded-lg border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground">
                 ESC
               </kbd>
             </div>
@@ -452,7 +583,6 @@ export function ModelPicker({
                           aria-selected={isSelected}
                           data-index={index}
                           disabled={pending}
-                          onKeyDown={onKeyDown}
                           tabIndex={-1}
                           aria-describedby={`${uid}-${index}-description`}
                           onPointerEnter={(event) => {
@@ -477,13 +607,13 @@ export function ModelPicker({
                           {isSelected ? (
                             <span
                               aria-hidden
-                              className="absolute inset-y-[20%] left-0 w-0.5 rounded-full bg-primary"
+                              className="absolute inset-y-[20%] left-0 w-0.5 rounded-lg bg-primary"
                             />
                           ) : null}
                           <span
                             aria-hidden
                             className={cn(
-                              "flex shrink-0 items-center justify-center rounded-md border border-border bg-background text-muted-foreground",
+                              "flex shrink-0 items-center justify-center rounded-lg border border-border bg-background text-muted-foreground",
                               sizes.icon,
                             )}
                           >
@@ -620,7 +750,7 @@ export function ModelPicker({
                   {detail.tags.map((tag) => (
                     <span
                       key={tag}
-                      className="rounded-md border border-border bg-muted/40 px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                      className="rounded-lg border border-border bg-muted/40 px-1.5 py-0.5 text-[10px] text-muted-foreground"
                     >
                       {tag}
                     </span>
@@ -631,6 +761,6 @@ export function ModelPicker({
             )
           : null}
       </MorphPopover>
-    </span>
+    </fieldset>
   );
 }

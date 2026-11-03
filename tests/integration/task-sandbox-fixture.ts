@@ -2,10 +2,11 @@ import { randomUUID } from "node:crypto";
 import type { A2ATask } from "@prisma/client";
 import { db } from "@/lib/db";
 import type { LocalA2AGrant } from "@/lib/a2a/principal";
+import { agentSessionWorkspaceRoot } from "@/lib/agents/session-paths";
 
 const mappings = new Map<
   string,
-  { sandboxId: string; conversationId?: string }
+  { sandboxId: string; conversationId?: string; workspaceRoot: string }
 >();
 
 /** Persist the already-provisioned runtime at the injected executor boundary. */
@@ -38,6 +39,19 @@ export async function mapTaskSandbox(row: A2ATask) {
     : null;
   let sandboxId = context.sandboxId ?? conversation?.sandboxId;
   if (!sandboxId) {
+    const shared = await db.sandbox.findFirst({
+      where: {
+        workspaceId: grant.workspaceId,
+        AND: [
+          { config: { path: ["scope"], equals: "agent" } },
+          { config: { path: ["agentId"], equals: grant.agentId } },
+        ],
+      },
+      select: { id: true },
+    });
+    sandboxId = shared?.id;
+  }
+  if (!sandboxId) {
     const source = await db.agentSandbox.findFirstOrThrow({
       where: { agentId: grant.agentId },
       include: { sandbox: true },
@@ -67,6 +81,7 @@ export async function mapTaskSandbox(row: A2ATask) {
         network: source.sandbox.network,
         config: {
           managedBy: "agent-conversation",
+          scope: "agent",
           agentId: grant.agentId,
           sourceSandboxId: source.sandboxId,
           agentRevisionId: context.agentRevisionId,
@@ -84,7 +99,14 @@ export async function mapTaskSandbox(row: A2ATask) {
       where: { id: conversationId },
       data: { sandboxId },
     });
-  const mapping = { sandboxId, conversationId: conversationId ?? undefined };
+  const mapping = {
+    sandboxId,
+    conversationId: conversationId ?? undefined,
+    workspaceRoot: agentSessionWorkspaceRoot({
+      conversationId: conversationId ?? undefined,
+      a2aContextId: row.contextId,
+    }),
+  };
   mappings.set(row.contextId, mapping);
   return mapping;
 }

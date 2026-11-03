@@ -1,12 +1,29 @@
 import "server-only";
+import type {
+  RunSandboxAgentTurnOptions,
+  SandboxRuntimeActivity,
+} from "@/lib/agents/sandbox-runtime";
+import type { AgentExecutionStage } from "@/lib/agents/execution-stages";
 
 type Registry = Map<string, AbortController>;
+
+export type WorkRuntimeObserver = Pick<
+  RunSandboxAgentTurnOptions,
+  | "onTextDelta"
+  | "onActivity"
+  | "onExecutionStage"
+  | "onContextUsage"
+  | "onCommands"
+  | "onUsage"
+  | "onCommandResult"
+>;
 
 export type WorkOutputSnapshot = {
   text: string;
   activities: WorkOutputActivity[];
   active: boolean;
   done: boolean;
+  executionStage?: AgentExecutionStage;
   startedAt?: number;
   runtimeKind?: string;
   modelName?: string;
@@ -16,6 +33,7 @@ export type WorkOutputActivity = {
   id: string;
   type: "runtime" | "reasoning" | "tool";
   status: "running" | "completed" | "failed" | "cancelled";
+  source?: SandboxRuntimeActivity["source"];
   runtimeKind?: string;
   text?: string;
   toolCallId?: string;
@@ -30,6 +48,7 @@ export type WorkOutputActivity = {
 
 export type WorkOutputEvent =
   | { type: "start"; snapshot: WorkOutputSnapshot }
+  | { type: "stage"; snapshot: WorkOutputSnapshot }
   | { type: "delta"; delta: string; snapshot: WorkOutputSnapshot }
   | {
       type: "activity";
@@ -48,6 +67,7 @@ type OutputRegistry = Map<string, WorkOutputChannel>;
 const globalRegistry = globalThis as unknown as {
   __workRunControllers?: Registry;
   __workOutputChannels?: OutputRegistry;
+  __workRuntimeObservers?: Map<string, WorkRuntimeObserver>;
 };
 const controllers =
   globalRegistry.__workRunControllers ?? new Map<string, AbortController>();
@@ -56,6 +76,26 @@ const outputChannels =
   globalRegistry.__workOutputChannels ?? new Map<string, WorkOutputChannel>();
 globalRegistry.__workRunControllers = controllers;
 globalRegistry.__workOutputChannels = outputChannels;
+const runtimeObservers =
+  globalRegistry.__workRuntimeObservers ??
+  new Map<string, WorkRuntimeObserver>();
+globalRegistry.__workRuntimeObservers = runtimeObservers;
+
+/** Presentation callbacks never grant execution authority; the worker owns the lease. */
+export function observeWorkRuntime(
+  workSessionId: string,
+  observer: WorkRuntimeObserver,
+) {
+  runtimeObservers.set(workSessionId, observer);
+  return () => {
+    if (runtimeObservers.get(workSessionId) === observer)
+      runtimeObservers.delete(workSessionId);
+  };
+}
+
+export function workRuntimeObserver(workSessionId: string) {
+  return runtimeObservers.get(workSessionId);
+}
 
 function outputChannel(workSessionId: string): WorkOutputChannel {
   let channel = outputChannels.get(workSessionId);
@@ -78,6 +118,9 @@ function outputSnapshot(channel: WorkOutputChannel): WorkOutputSnapshot {
     activities: channel.activities.map((activity) => ({ ...activity })),
     active: channel.active,
     done: channel.done,
+    ...(channel.executionStage
+      ? { executionStage: channel.executionStage }
+      : {}),
     ...(channel.startedAt === undefined
       ? {}
       : { startedAt: channel.startedAt }),
@@ -114,10 +157,22 @@ export function startWorkOutput(
   channel.activities = [];
   channel.active = true;
   channel.done = false;
+  channel.executionStage = "queued";
   channel.startedAt = metadata.startedAt ?? Date.now();
   channel.runtimeKind = metadata.runtimeKind;
   channel.modelName = metadata.modelName;
   notifyOutput(channel, { type: "start", snapshot: outputSnapshot(channel) });
+}
+
+export function publishWorkExecutionStage(
+  workSessionId: string,
+  stage: AgentExecutionStage,
+) {
+  const channel = outputChannel(workSessionId);
+  if (!channel.active || channel.done || channel.executionStage === stage)
+    return;
+  channel.executionStage = stage;
+  notifyOutput(channel, { type: "stage", snapshot: outputSnapshot(channel) });
 }
 
 export function publishWorkActivity(
@@ -161,6 +216,7 @@ export function finishWorkOutput(workSessionId: string) {
   if (channel.done && !channel.active) return;
   channel.active = false;
   channel.done = true;
+  channel.executionStage = undefined;
   notifyOutput(channel, { type: "done", snapshot: outputSnapshot(channel) });
   // Keep a short replay window for clients that reconnect as the DB update settles.
   if (channel.cleanup) clearTimeout(channel.cleanup);

@@ -148,7 +148,7 @@ export function AnimatedBadge({
       layout
       transition={{ type: "spring", stiffness: 420, damping: 30, mass: 0.7 }}
       className={cn(
-        "relative inline-flex shrink-0 items-center overflow-hidden whitespace-nowrap rounded-full border font-medium tabular-nums",
+        "relative inline-flex shrink-0 items-center overflow-hidden whitespace-nowrap rounded-lg border font-medium tabular-nums",
         "transition-colors duration-300",
         STATUS_CLASS[status],
         SIZE_CLASS[size],
@@ -159,7 +159,7 @@ export function AnimatedBadge({
       {pulse && !reduce ? (
         <motion.span
           aria-hidden
-          className="absolute inset-0 rounded-full bg-current opacity-10"
+          className="absolute inset-0 rounded-lg bg-current opacity-10"
           animate={{ scale: [0.94, 1.08, 0.94], opacity: [0.08, 0.16, 0.08] }}
           transition={{ duration: 1.6, repeat: Infinity, ease: "easeInOut" }}
         />

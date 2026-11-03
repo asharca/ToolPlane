@@ -3,6 +3,10 @@ import { z } from "zod";
 import { AGENT_CONTROL_RUNTIME_KINDS } from "./runtime-kind";
 import { AGENT_STEP_BOUNDS } from "@/lib/agents/constants";
 import {
+  EXTERNAL_SANDBOX_ACCESS,
+  MAX_EXTERNAL_SANDBOXES,
+} from "@/lib/sandboxes/external";
+import {
   AgentControlError,
   createAgentFromControl,
   getAgentControlAgent,
@@ -49,8 +53,23 @@ const CreateAgentArguments = z
     deploymentIds: IdList.default([]),
     installedSkillIds: IdList.default([]),
     toolkitIds: IdList.default([]),
-    sandboxIds: IdList.default([]),
-    subAgentIds: IdList.default([]),
+    externalSandboxes: z
+      .array(
+        z
+          .object({
+            sandboxId: Id,
+            access: z.enum(EXTERNAL_SANDBOX_ACCESS).default("read"),
+          })
+          .strict(),
+      )
+      .max(MAX_EXTERNAL_SANDBOXES)
+      .default([])
+      .refine(
+        (entries) =>
+          new Set(entries.map((entry) => entry.sandboxId)).size ===
+          entries.length,
+        "Duplicate sandboxId.",
+      ),
   })
   .strict()
   .superRefine((input, ctx) => {
@@ -67,7 +86,7 @@ export const AGENT_CONTROL_MCP_TOOLS = [
   {
     name: "list_agent_resources",
     description:
-      "List safe, workspace-owned model providers, MCP deployments, skills, toolkits, and sandboxes. Call this before create_agent to discover valid IDs. Secrets are never returned.",
+      "List safe, workspace-owned model providers, MCP deployments, skills, toolkits, and attachable external sandboxes. Call this before create_agent to discover valid IDs. Secrets are never returned.",
     inputSchema: {
       type: "object",
       properties: {},
@@ -103,7 +122,7 @@ export const AGENT_CONTROL_MCP_TOOLS = [
   {
     name: "list_agents",
     description:
-      "List agents in this workspace, including configuration readiness and resource counts. Agent IDs can be used as subAgentIds when creating another agent.",
+      "List agents in this workspace, including configuration readiness and resource counts.",
     inputSchema: {
       type: "object",
       properties: {},
@@ -136,7 +155,7 @@ export const AGENT_CONTROL_MCP_TOOLS = [
   {
     name: "create_agent",
     description:
-      "Create a native Pi SDK Agent draft atomically from existing workspace resources. Use providerId/model/systemPrompt to configure its model. Execution requires explicit revision publication after configuration. This call is non-idempotent; after an uncertain timeout, call list_agents before retrying.",
+      "Create a native Pi SDK Agent draft atomically from existing workspace resources. Each Agent receives its own fixed sandbox; externalSandboxes optionally attaches SSH, connector or standalone Docker sandboxes (access read, write, or full including shell). Use providerId/model/systemPrompt to configure its model. Execution requires explicit revision publication after configuration. This call is non-idempotent; after an uncertain timeout, call list_agents before retrying.",
     inputSchema: {
       type: "object",
       properties: {
@@ -165,11 +184,22 @@ export const AGENT_CONTROL_MCP_TOOLS = [
           maxItems: 100,
         },
         toolkitIds: { type: "array", items: { type: "string" }, maxItems: 100 },
-        sandboxIds: { type: "array", items: { type: "string" }, maxItems: 100 },
-        subAgentIds: {
+        externalSandboxes: {
           type: "array",
-          items: { type: "string" },
-          maxItems: 100,
+          maxItems: MAX_EXTERNAL_SANDBOXES,
+          items: {
+            type: "object",
+            properties: {
+              sandboxId: { type: "string" },
+              access: {
+                type: "string",
+                enum: [...EXTERNAL_SANDBOX_ACCESS],
+                default: "read",
+              },
+            },
+            required: ["sandboxId"],
+            additionalProperties: false,
+          },
         },
       },
       required: ["name", "runtime"],

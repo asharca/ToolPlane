@@ -58,3 +58,51 @@ export function sandboxFlags(network: McpNetwork): string[] {
 export function envFlags(env: Record<string, string>): string[] {
   return Object.keys(env).flatMap((key) => ["-e", key]);
 }
+
+export type AgentSandboxCompanion = {
+  container: string;
+  volume: string;
+  user: string;
+};
+
+/**
+ * Run an MCP inside an Agent session sandbox: it joins the sandbox's network
+ * and process namespaces and shares its /workspace volume as the same user.
+ * The sandbox can therefore read the MCP's environment, including credentials.
+ */
+export function agentSandboxCompanionArgs(
+  args: string[],
+  imageIndex: number,
+  companion: AgentSandboxCompanion,
+  keepWorkdir: boolean,
+): string[] {
+  if (args[0] !== "run" || imageIndex < 1)
+    throw new Error("MCP_SESSION_RECIPE_UNSUPPORTED");
+  const flags: string[] = [];
+  for (let index = 1; index < imageIndex; index += 1) {
+    const arg = args[index];
+    if (arg === "--read-only") continue;
+    if (arg === "--network") {
+      index += 1;
+      continue;
+    }
+    flags.push(arg);
+  }
+  return [
+    "run",
+    "--network",
+    `container:${companion.container}`,
+    "--pid",
+    `container:${companion.container}`,
+    "--mount",
+    `type=volume,src=${companion.volume},dst=/workspace`,
+    "--user",
+    companion.user,
+    ...(keepWorkdir ? [] : ["--workdir", "/workspace"]),
+    ...flags,
+    // Same filesystem reach as the sandbox itself (a subset of its caps), so
+    // the MCP can write its package dir and files the sandbox user created.
+    ...["CHOWN", "DAC_OVERRIDE", "FOWNER"].flatMap((cap) => ["--cap-add", cap]),
+    ...args.slice(imageIndex),
+  ];
+}

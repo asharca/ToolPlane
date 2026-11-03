@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import { useTranslations } from "next-intl";
 import { CopyPlus } from "lucide-react";
 import { Button } from "@/components/motion/button/base";
@@ -9,11 +9,17 @@ import { FormCheckbox } from "@/components/ui/FormCheckbox";
 import {
   CenterMorphModal,
   CenterMorphModalTrigger,
-  CenterMorphModalClose,
   CenterMorphModalContent,
 } from "@/components/motion/center-morph-modal";
 import { SubmitButton } from "@/components/dashboard/SubmitButton";
 import { cloneAgentAction } from "@/lib/agents/actions";
+import {
+  DialogBody,
+  DialogCancel,
+  DialogField,
+  DialogFooter,
+  DialogHeader,
+} from "@/components/dashboard/dialog";
 
 export function CloneAgentButton({
   slug,
@@ -43,50 +49,80 @@ export function CloneAgentButton({
       <CenterMorphModalContent
         ariaLabel={t("cloneAgentDialogTitle")}
         closeButtonLabel={t("close")}
-        className="max-w-2xl"
+        className="flex max-h-[calc(100dvh-4rem)] max-w-2xl flex-col"
       >
-        <header className="border-b border-border pl-5 pr-16 py-4">
-          <h2 className="text-base font-semibold">
-            {t("cloneAgentDialogTitle")}
-          </h2>
-          <p className="mt-2 text-sm text-muted-foreground">
-            {t("cloneDraftDescription")}
-          </p>
-        </header>
-        <form action={cloneAgentAction} className="space-y-5 p-5">
-          <input type="hidden" name="workspace" value={slug} />
-          <input type="hidden" name="agentId" value={agentId} />
-          <input type="hidden" name="cloneOptions" value="1" />
+        <CloneAgentForm
+          key={String(open)}
+          slug={slug}
+          agentId={agentId}
+          agentName={agentName}
+        />
+      </CenterMorphModalContent>
+    </CenterMorphModal>
+  );
+}
+
+function CloneAgentForm({
+  slug,
+  agentId,
+  agentName,
+}: {
+  slug: string;
+  agentId: string;
+  agentName: string;
+}) {
+  const t = useTranslations("console.agents");
+  const initialName = String(t("agentCopyName", { name: agentName }));
+  const [name, setName] = useState(initialName);
+  const [copyConversations, setCopyConversations] = useState(false);
+  const nameId = useId();
+  const copyId = useId();
+  return (
+    <form action={cloneAgentAction} className="flex min-h-0 flex-col">
+      <DialogHeader
+        title={t("cloneAgentDialogTitle")}
+        description={t("cloneDraftDescription")}
+      />
+      <DialogBody>
+        <input type="hidden" name="workspace" value={slug} />
+        <input type="hidden" name="agentId" value={agentId} />
+        <input type="hidden" name="cloneOptions" value="1" />
+        <DialogField
+          label={t("cloneName")}
+          htmlFor={nameId}
+          dirty={name !== initialName}
+        >
           <Input
-            label={t("cloneName")}
+            id={nameId}
             name="cloneName"
             maxLength={60}
             autoFocus
-            defaultValue={String(t("agentCopyName", { name: agentName }))}
+            value={name}
+            onChange={setName}
             className="w-full"
           />
-          <div className="space-y-2">
-            <FormCheckbox
-              name="copyConversations"
-              label={t("copyReadOnlyHistory")}
-            />
-            <p className="text-xs text-muted-foreground">
-              {t("copyReadOnlyHistoryDescription")}
-            </p>
-          </div>
-          <footer className="flex justify-end gap-2 border-t border-border pt-4">
-            <CenterMorphModalClose>
-              <Button type="button" variant="secondary">
-                {t("cancel")}
-              </Button>
-            </CenterMorphModalClose>
-            <SubmitButton pendingLabel={t("cloning")} flash={false}>
-              <CopyPlus className="size-4" />
-              {t("cloneAgent")}
-            </SubmitButton>
-          </footer>
-        </form>
-      </CenterMorphModalContent>
-    </CenterMorphModal>
+        </DialogField>
+        <DialogField
+          label={t("copyReadOnlyHistory")}
+          htmlFor={copyId}
+          dirty={copyConversations}
+          description={t("copyReadOnlyHistoryDescription")}
+        >
+          <FormCheckbox
+            name="copyConversations"
+            id={copyId}
+            label=""
+            checked={copyConversations}
+            onCheckedChange={setCopyConversations}
+          />
+        </DialogField>
+      </DialogBody>
+      <DialogFooter cancel={<DialogCancel />}>
+        <SubmitButton size="md" pendingLabel={t("cloning")} flash={false}>
+          <CopyPlus className="size-4" />
+          {t("cloneAgent")}
+        </SubmitButton>
+      </DialogFooter>
+    </form>
   );
 }

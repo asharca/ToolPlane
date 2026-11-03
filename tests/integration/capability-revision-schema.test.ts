@@ -301,8 +301,8 @@ describe("capability revision persistence", () => {
     ).toBe(1);
   });
 
-  it("retains approval identity and forbids replay of unknown effects", async () => {
-    const approvalThread = await db.chatThread.create({
+  it("requires direct execution claims without fabricated approval and forbids unknown-effect replay", async () => {
+    const effectThread = await db.chatThread.create({
       data: {
         workspaceId,
         assistantId,
@@ -311,7 +311,7 @@ describe("capability revision persistence", () => {
       },
     });
     const turn = await db.chatTurn.create({
-      data: { threadId: approvalThread.id },
+      data: { threadId: effectThread.id },
     });
     const confirmation = await db.chatToolConfirmation.create({
       data: {
@@ -319,27 +319,41 @@ describe("capability revision persistence", () => {
         toolCallId: "write-1",
         toolName: "write",
         input: {},
+        status: "executing",
+        executionStartedAt: new Date(),
       },
     });
-    expect(confirmation.status).toBe("awaiting_user");
+    expect(confirmation.status).toBe("executing");
+    expect(confirmation.approverUserId).toBeNull();
+    expect(confirmation.resolvedAt).toBeNull();
+    for (const invalid of [
+      { status: "awaiting_user" },
+      { status: "approved", approverUserId: userId, resolvedAt: new Date() },
+      { status: "executing" },
+      {
+        status: "executing",
+        executionStartedAt: new Date(),
+        approverUserId: userId,
+      },
+    ]) {
+      await expect(
+        db.chatToolConfirmation.create({
+          data: {
+            turnId: turn.id,
+            toolCallId: "invalid-claim",
+            toolName: "write",
+            input: {},
+            ...invalid,
+          },
+        }),
+      ).rejects.toThrow();
+    }
     await expect(
       db.chatToolConfirmation.update({
         where: { id: confirmation.id },
-        data: { status: "approved" },
+        data: { approverUserId: userId, resolvedAt: new Date() },
       }),
     ).rejects.toThrow();
-    await db.chatToolConfirmation.update({
-      where: { id: confirmation.id },
-      data: {
-        status: "approved",
-        approverUserId: userId,
-        resolvedAt: new Date(),
-      },
-    });
-    await db.chatToolConfirmation.update({
-      where: { id: confirmation.id },
-      data: { status: "executing", executionStartedAt: new Date() },
-    });
     await db.chatToolConfirmation.update({
       where: { id: confirmation.id },
       data: { status: "execution_unknown" },
@@ -347,7 +361,19 @@ describe("capability revision persistence", () => {
     await expect(
       db.chatToolConfirmation.update({
         where: { id: confirmation.id },
-        data: { status: "approved" },
+        data: { status: "executing" },
+      }),
+    ).rejects.toThrow();
+    await expect(
+      db.chatToolConfirmation.create({
+        data: {
+          turnId: turn.id,
+          toolCallId: "write-1",
+          toolName: "write",
+          input: {},
+          status: "executing",
+          executionStartedAt: new Date(),
+        },
       }),
     ).rejects.toThrow();
     await db.chatToolConfirmation.update({

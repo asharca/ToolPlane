@@ -1,9 +1,14 @@
+import { posix } from "node:path";
 import { beginAgentConversationSandboxAccess } from "@/lib/agents/conversation-sandbox";
 
 export async function proxyConversationWorkspace(
   req: Request,
   path: string[],
-  resolve: () => Promise<{ port: number; sandboxId: string } | null>,
+  resolve: () => Promise<{
+    port: number;
+    sandboxId: string;
+    workspaceRoot: string;
+  } | null>,
 ) {
   const targetPath =
     path[0] === "rpc" && path.length === 1
@@ -19,11 +24,63 @@ export async function proxyConversationWorkspace(
       { error: "Conversation workspace is unavailable" },
       { status: 404 },
     );
-  const body = ["GET", "DELETE"].includes(req.method)
+  let body = ["GET", "DELETE"].includes(req.method)
     ? undefined
     : await req.text();
   if (body && Buffer.byteLength(body) > 1_000_000)
     return Response.json({ error: "Request too large" }, { status: 413 });
+  if (body) {
+    try {
+      const payload = JSON.parse(body);
+      const scopedPath = (value: unknown) => {
+        if (value !== undefined && typeof value !== "string")
+          throw new Error("Invalid path");
+        const relative = String(value ?? ".").replace(
+          /^\/workspace(?:\/|$)/,
+          "",
+        );
+        const normalized = posix.normalize(relative || ".");
+        if (
+          posix.isAbsolute(normalized) ||
+          normalized === ".." ||
+          normalized.startsWith("../")
+        )
+          throw new Error("Invalid path");
+        return posix.relative(
+          "/workspace",
+          posix.join(target.workspaceRoot, normalized),
+        );
+      };
+      if (
+        path[0] === "terminal" &&
+        path.length === 1 &&
+        req.method === "POST"
+      ) {
+        payload.cwd = scopedPath(payload.cwd);
+      } else if (path[0] === "rpc" && payload.method === "tools/call") {
+        const params = payload.params;
+        const args = params.arguments ?? {};
+        if (
+          [
+            "list_dir",
+            "read_file",
+            "download_file",
+            "write_file",
+            "delete_file",
+          ].includes(params.name)
+        )
+          params.arguments = { ...args, path: scopedPath(args.path) };
+        else if (["shell_exec", "process_exec"].includes(params.name))
+          params.arguments = { ...args, cwd: scopedPath(args.cwd) };
+      }
+      body = JSON.stringify(payload);
+    } catch {
+      return Response.json(
+        { error: "Invalid workspace request" },
+        { status: 400 },
+      );
+    }
+  }
   const release = beginAgentConversationSandboxAccess(target.sandboxId);
   let timer: NodeJS.Timeout | undefined;
   let released = false;
@@ -65,7 +122,8 @@ export async function proxyConversationWorkspace(
           const current = await resolve();
           if (
             current?.sandboxId === target.sandboxId &&
-            current.port === target.port
+            current.port === target.port &&
+            current.workspaceRoot === target.workspaceRoot
           )
             return;
         } catch {

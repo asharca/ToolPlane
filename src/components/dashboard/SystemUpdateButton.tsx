@@ -1,5 +1,6 @@
 "use client";
 import { Button } from "@/components/motion/button";
+import { SafeStreamdown } from "./SafeStreamdown";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, Download, ExternalLink, RefreshCw } from "lucide-react";
@@ -25,6 +26,8 @@ type UpdateStatus = {
   updateAvailable: boolean | null;
   releaseName: string | null;
   releaseUrl: string | null;
+  repository: string;
+  releaseNotes: string | null;
   artifactName: string;
   reason: string | null;
 };
@@ -172,10 +175,16 @@ export async function waitForSystemUpdateReady(
   return { status: "timeout" };
 }
 
-export function SystemUpdateButton({ canInstall }: { canInstall: boolean }) {
+export function SystemUpdateButton({
+  canInstall,
+  compact = false,
+}: {
+  canInstall: boolean;
+  /** Icon-only trigger for the collapsed sidebar rail. */
+  compact?: boolean;
+}) {
   const t = useTranslations("console.systemUpdate");
   const settingsT = useTranslations("console.settings");
-  const sidebarT = useTranslations("console.sidebar");
   const [status, setStatus] = useState<UpdateStatus | null>(null);
   const [uiState, setUiState] = useState<UiState>("idle");
   const [message, setMessage] = useState<string | null>(null);
@@ -188,7 +197,6 @@ export function SystemUpdateButton({ canInstall }: { canInstall: boolean }) {
         ? state
         : "checking",
     );
-    setStatus(null);
     setMessage(null);
     try {
       const response = await fetch("/api/v1/admin/system/update", {
@@ -260,6 +268,7 @@ export function SystemUpdateButton({ canInstall }: { canInstall: boolean }) {
 
   const runUpdate = async () => {
     if (
+      !canInstall ||
       !status?.canUpdate ||
       status.updateAvailable !== true ||
       uiState === "updating" ||
@@ -371,8 +380,8 @@ export function SystemUpdateButton({ canInstall }: { canInstall: boolean }) {
 
   return (
     <Popover
-      side="bottom"
-      align="end"
+      side="top"
+      align="start"
       onOpenChange={(open) => {
         if (open && !busy) void refresh();
       }}
@@ -383,88 +392,142 @@ export function SystemUpdateButton({ canInstall }: { canInstall: boolean }) {
           aria-label={triggerLabel}
           title={triggerLabel}
           variant="ghost"
-          size="icon"
+          className={`relative h-9 shrink-0 gap-[9px] rounded-lg px-[9px] text-sm font-normal text-foreground hover:bg-foreground/5 ${compact ? "w-9 justify-center" : "w-full justify-start"}`}
         >
-          <span className="relative flex size-4">
-            {busy ? (
-              <RefreshCw className="size-4 animate-spin" />
-            ) : (
-              <MarkGithubIcon size={16} className="size-4" />
-            )}
-            {hasUpdate ? (
-              <span
-                aria-hidden="true"
-                className="absolute -right-1 -top-1 size-2 rounded-full bg-(--color-warning)"
-              />
-            ) : null}
-          </span>
+          {busy ? (
+            <RefreshCw
+              aria-hidden="true"
+              className="size-[18px] shrink-0 animate-spin"
+            />
+          ) : (
+            <MarkGithubIcon
+              aria-hidden="true"
+              size={18}
+              className="size-[18px] shrink-0"
+            />
+          )}
+          {compact ? null : (
+            <span className="truncate">{settingsT("systemUpdate")}</span>
+          )}
+          {hasUpdate ? (
+            <span
+              aria-hidden="true"
+              className={`absolute size-2 rounded-full bg-(--color-warning) ${compact ? "right-1.5 top-1.5" : "right-2 top-1/2 -translate-y-1/2"}`}
+            />
+          ) : null}
         </Button>
       </PopoverTrigger>
 
-      <PopoverContent className="w-80 max-w-[calc(100vw-1rem)] space-y-4 p-4">
+      <PopoverContent className="flex max-h-[min(42rem,calc(100dvh-2rem))] w-[30rem] max-w-[calc(100vw-1rem)] flex-col gap-4 overflow-y-auto p-5">
         <div className="flex items-start gap-3">
           <div aria-live="polite" className="min-w-0 flex-1">
             <p className="text-sm font-semibold text-foreground">
               {settingsT("systemUpdate")}
             </p>
-            <p
-              role={uiState === "error" ? "alert" : "status"}
-              className="mt-1 text-sm font-medium text-foreground"
-            >
-              {label}
-            </p>
-            {detail ? (
-              <p
-                className="mt-0.5 break-words text-xs leading-5 text-muted-foreground"
-                title={detail}
-              >
-                {detail}
-              </p>
+            {canInstall ? (
+              <>
+                <p
+                  role={uiState === "error" ? "alert" : "status"}
+                  className="mt-1 text-sm font-medium text-foreground"
+                >
+                  {label}
+                </p>
+                {detail ? (
+                  <p
+                    className="mt-0.5 break-words text-xs leading-5 text-muted-foreground"
+                    title={detail}
+                  >
+                    {detail}
+                  </p>
+                ) : null}
+              </>
             ) : null}
           </div>
-          <Button
-            type="button"
-            onClick={refresh}
-            disabled={busy}
-            aria-label={t("checkAndUpdate")}
-            title={t("checkAndUpdate")}
-            variant="ghost"
-            size="icon"
-            className="shrink-0"
-          >
-            <RefreshCw className={`size-4 ${busy ? "animate-spin" : ""}`} />
-          </Button>
+          {canInstall ? (
+            <Button
+              type="button"
+              onClick={refresh}
+              disabled={busy}
+              aria-label={t("checkAndUpdate")}
+              title={t("checkAndUpdate")}
+              variant="ghost"
+              size="icon"
+              className="shrink-0"
+            >
+              <RefreshCw className={`size-4 ${busy ? "animate-spin" : ""}`} />
+            </Button>
+          ) : null}
         </div>
 
-        {versionDetail ? (
-          <div className="flex items-center justify-between gap-3 border-y border-border py-2 text-xs">
-            <span className="text-muted-foreground">{sidebarT("version")}</span>
-            <span
-              className="truncate font-medium text-foreground"
-              title={versionDetail}
-            >
-              {versionDetail}
-            </span>
+        <dl
+          aria-label={versionDetail ?? t("currentVersion")}
+          className="grid grid-cols-2 gap-4 rounded-xl bg-muted/50 p-3"
+        >
+          <div className="min-w-0">
+            <dt className="text-xs text-muted-foreground">
+              {t("currentVersion")}
+            </dt>
+            <dd className="mt-1 break-all font-mono text-lg font-semibold">
+              {status?.currentVersion ?? "—"}
+            </dd>
           </div>
+          <div className="min-w-0">
+            <dt className="text-xs text-muted-foreground">
+              {t("latestVersion")}
+            </dt>
+            <dd className="mt-1 break-all font-mono text-lg font-semibold">
+              {status?.latestVersion ?? "—"}
+            </dd>
+          </div>
+        </dl>
+
+        {status?.repository ? (
+          <a
+            href={`https://github.com/${status.repository}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex min-w-0 items-center gap-2 text-sm text-muted-foreground transition-colors hover:text-foreground"
+          >
+            <MarkGithubIcon aria-hidden="true" size={16} className="shrink-0" />
+            <span className="min-w-0 flex-1 break-all">
+              {status.repository}
+            </span>
+            <ExternalLink aria-hidden="true" className="size-3.5 shrink-0" />
+          </a>
         ) : null}
 
-        {status?.releaseName ? (
-          status.releaseUrl ? (
-            <a
-              href={status.releaseUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
-            >
-              <span className="truncate">{status.releaseName}</span>
-              <ExternalLink className="size-3.5 shrink-0" />
-            </a>
+        <section
+          className="min-h-0 border-t border-border pt-4"
+          aria-label={t("changelog")}
+        >
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <h3 className="text-sm font-semibold">{t("changelog")}</h3>
+            {status?.releaseUrl ? (
+              <a
+                href={status.releaseUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+              >
+                <span className="truncate">
+                  {status.releaseName || status.latestVersion}
+                </span>
+                <ExternalLink aria-hidden="true" className="size-3 shrink-0" />
+              </a>
+            ) : null}
+          </div>
+          {status?.releaseNotes?.trim() ? (
+            <div className="max-h-64 overflow-y-auto overscroll-contain break-words pr-2 text-sm leading-6 [overflow-wrap:anywhere]">
+              <SafeStreamdown mode="static" parseIncompleteMarkdown={false}>
+                {status.releaseNotes}
+              </SafeStreamdown>
+            </div>
           ) : (
-            <p className="truncate text-xs text-muted-foreground">
-              {status.releaseName}
+            <p className="py-3 text-sm text-muted-foreground">
+              {uiState === "checking" ? t("checking") : t("noReleaseNotes")}
             </p>
-          )
-        ) : null}
+          )}
+        </section>
 
         {activeStage >= 0 ? (
           <ol aria-label={t("updateProgress")} className="flex flex-col gap-2">

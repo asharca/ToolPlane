@@ -2,14 +2,15 @@ import "server-only";
 import { db } from "@/lib/db";
 import { z } from "zod";
 import { getConsoleTaskTree } from "./console-tasks";
+import { retryTaskFileReception } from "./store";
+import type { TaskGrant } from "./principal";
 import { resolveRequestPrincipal } from "@/lib/auth/request-user";
 import { getWorkspaceForUser } from "@/lib/workspace/queries";
-import { runtimeEnv } from "@/lib/runtime-env";
+import { originFromRequest } from "@/lib/http/origin";
 import { withLogContext } from "@/lib/observability/context";
 import { parseJson } from "@/lib/agents/public-api/body";
 import { TaskNotFoundError } from "@a2a-js/sdk/errors";
 import { A2AHttpError } from "./principal";
-import { a2aDeploymentOrigin } from "./connection-info";
 import {
   getA2AConsoleView,
   mutateA2AConsole,
@@ -59,14 +60,7 @@ export async function sessionActor(
     throw new A2AHttpError(403, "Same-origin request required.");
   const suppliedOrigin = req.headers.get("origin");
   if (req.method !== "GET" || suppliedOrigin !== null) {
-    let expected: string;
-    try {
-      expected = a2aDeploymentOrigin(
-        runtimeEnv("NEXT_PUBLIC_APP_URL") || "http://localhost:3000",
-      );
-    } catch {
-      throw new A2AHttpError(503, "Configure a valid deployment origin first.");
-    }
+    const expected = originFromRequest(req);
     // Exact origin check: null, missing, comma-separated or path-bearing Origin is rejected.
     if (suppliedOrigin !== expected)
       throw new A2AHttpError(403, "Same-origin request required.");
@@ -151,9 +145,48 @@ export async function handleA2AConsoleTasks(
 ) {
   return withLogContext({ suppressPayload: true }, async () => {
     try {
-      if (req.method !== "GET")
+      if (!["GET", "POST"].includes(req.method))
         return reply({ error: "Method not allowed." }, 405);
       const ctx = await sessionActor(req, slug, agentId);
+      if (req.method === "POST") {
+        if (
+          req.headers
+            .get("content-type")
+            ?.split(";")[0]
+            .trim()
+            .toLowerCase() !== "application/json"
+        )
+          throw new A2AHttpError(415, "Expected JSON.");
+        const input = await parseJson(
+          req,
+          z
+            .object({
+              rootTaskId: z.string().min(1).max(200),
+              taskId: z.string().min(1).max(200),
+              action: z.literal("retryFiles"),
+            })
+            .strict(),
+          2048,
+        );
+        if (!input.ok)
+          throw new A2AHttpError(
+            input.reason === "too_large" ? 413 : 400,
+            "Invalid file retry request.",
+          );
+        await getConsoleTaskTree(
+          ctx,
+          input.value.rootTaskId,
+          input.value.taskId,
+        );
+        const row = await db.a2ATask.findUnique({
+          where: { id: input.value.taskId },
+        });
+        if (!row) throw new TaskNotFoundError();
+        await retryTaskFileReception(row.grant as unknown as TaskGrant, {
+          taskId: row.id,
+        });
+        return reply({ ok: true });
+      }
       const query = new URL(req.url).searchParams;
       if ([...query.keys()].some((key) => query.getAll(key).length !== 1))
         throw new A2AHttpError(400, "Invalid task query.");

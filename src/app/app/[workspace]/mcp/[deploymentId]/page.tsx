@@ -1,9 +1,4 @@
 import { McpHttpApprovalForm } from "@/components/dashboard/McpHttpConsent";
-import {
-  McpConnectionFlow,
-  type McpConnectionTarget,
-} from "@/components/dashboard/McpConnectionFlow";
-import { isRemoteMcpDeployment } from "@/lib/remote-mcp/classification";
 import { AnimatedBadge } from "@/components/motion/animated-badge";
 
 import { ButtonLink } from "@/components/motion/button";
@@ -33,7 +28,6 @@ import {
   getDeploymentRuntimeSnapshot,
 } from "@/lib/process/supervisor";
 import { listMcpTools } from "@/lib/process/mcp-client";
-import { parsePendingToolChanges } from "@/lib/process/mcp-tool-signature";
 import {
   hasMcpToolCatalog,
   readMcpToolCatalog,
@@ -52,18 +46,28 @@ import {
   renameDeploymentAction,
   cloneDeploymentAction,
 } from "@/lib/workspace/actions";
-import { deploymentLabel } from "@/lib/workspace/deployment-label";
+import {
+  deploymentLabel,
+  deploymentPinnedPackage,
+  packageSelectorVersion,
+} from "@/lib/workspace/deployment-label";
 import { VariablesEditor } from "@/components/dashboard/VariablesEditor";
 import { SubmitButton } from "@/components/dashboard/SubmitButton";
 import { ConfirmSubmitButton } from "@/components/dashboard/ConfirmSubmitButton";
-import { getDeploymentLogs } from "@/lib/observability/log";
-import { DeploymentLogs } from "@/components/dashboard/DeploymentLogs";
 import { ContainerLogs } from "@/components/dashboard/ContainerLogs";
 import { ProvisioningRefresher } from "@/components/dashboard/ProvisioningRefresher";
 import { formatInTimeZone, resolveUserTimeZone } from "@/lib/timezone";
 import { McpJsonConfigEditor } from "@/components/dashboard/McpJsonConfigEditor";
 import { McpToolExposureEditor } from "@/components/dashboard/McpToolExposureEditor";
-import { McpToolCatalog } from "@/components/dashboard/McpToolCatalog";
+import { McpSandboxPlacementEditor } from "@/components/dashboard/McpSandboxPlacementEditor";
+import {
+  mcpRunsInAgentSandbox,
+  supportsAgentSandboxPlacement,
+} from "@/lib/process/mcp-definition";
+import {
+  McpConnectedChips,
+  type McpConnectedObject,
+} from "@/components/dashboard/McpConnectedChips";
 import { RuntimeFilesEditor } from "@/components/dashboard/RuntimeFilesEditor";
 import { SafeStreamdown } from "@/components/dashboard/SafeStreamdown";
 import {
@@ -96,21 +100,6 @@ function fmtDate(d: Date, timeZone: string, locale: string): string {
   );
 }
 
-function fmtTime(d: Date, timeZone: string, locale: string): string {
-  return formatInTimeZone(
-    d,
-    timeZone,
-    {
-      month: "short",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-    },
-    locale,
-  );
-}
-
 const transitioningStatuses = new Set([
   "provisioning",
   "copying",
@@ -124,7 +113,7 @@ export default async function DeploymentInspectorPage({
   searchParams,
 }: {
   params: Promise<{ workspace: string; deploymentId: string }>;
-  searchParams: Promise<{ tab?: string }>;
+  searchParams: Promise<{ tab?: string; error?: string }>;
 }) {
   const [t, common, locale] = await Promise.all([
     getTranslations("console.mcp"),
@@ -132,7 +121,7 @@ export default async function DeploymentInspectorPage({
     getLocale(),
   ]);
   const { workspace: slug, deploymentId } = await params;
-  const { tab } = await searchParams;
+  const { tab, error: queryError } = await searchParams;
 
   const user = await getCurrentUser();
   if (!user) redirect("/app/login");
@@ -161,77 +150,41 @@ export default async function DeploymentInspectorPage({
     },
   });
   if (!dep) notFound();
-  const [connectionAgents, connectionAssistants] = await Promise.all([
+  const [usingAgents, usingAssistants] = await Promise.all([
     db.agent.findMany({
       where: {
         workspaceId: ws.id,
-        runtimeKind: "pi-sdk",
         retiredAt: null,
-        publicRuntimeAllocation: null,
+        servers: { some: { deploymentId } },
       },
-      select: {
-        id: true,
-        name: true,
-        currentRevisionVersion: true,
-        servers: {
-          where: { deploymentId },
-          select: { pendingToolChanges: true },
-        },
-      },
+      select: { id: true, name: true },
       orderBy: { name: "asc" },
     }),
-    isRemoteMcpDeployment(dep)
-      ? db.chatAssistant.findMany({
-          where: { workspaceId: ws.id },
-          select: {
-            id: true,
-            name: true,
-            currentRevisionVersion: true,
-            mcpGrants: {
-              select: {
-                deploymentId: true,
-                allowedToolNames: true,
-                pendingToolChanges: true,
-              },
-            },
-          },
-          orderBy: { name: "asc" },
-        })
-      : [],
+    db.chatAssistant.findMany({
+      where: { workspaceId: ws.id, mcpGrants: { some: { deploymentId } } },
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+    }),
   ]);
-  const connectionTargets: McpConnectionTarget[] = [
-    ...connectionAgents.map(
-      (agent): McpConnectionTarget => ({
-        kind: "agent",
-        id: agent.id,
-        name: agent.name,
-        published: agent.currentRevisionVersion > 0,
-        pendingToolChanges: parsePendingToolChanges(
-          agent.servers[0]?.pendingToolChanges,
-        ),
-      }),
-    ),
-    ...connectionAssistants.map(
-      (assistant): McpConnectionTarget => ({
-        kind: "assistant",
-        id: assistant.id,
-        name: assistant.name,
-        revision: assistant.currentRevisionVersion,
-        grants: assistant.mcpGrants,
-        pendingToolChanges: parsePendingToolChanges(
-          assistant.mcpGrants.find(
-            (grant) => grant.deploymentId === deploymentId,
-          )?.pendingToolChanges,
-        ),
-      }),
-    ),
+  const connected: McpConnectedObject[] = [
+    ...usingAgents.map((agent) => ({
+      id: agent.id,
+      name: agent.name,
+      kind: "agent" as const,
+      href: `/app/${slug}/agents/${agent.id}`,
+    })),
+    ...usingAssistants.map((assistant) => ({
+      id: assistant.id,
+      name: assistant.name,
+      kind: "assistant" as const,
+      href: `/app/${slug}/chat?assistant=${encodeURIComponent(assistant.id)}&settings=1`,
+    })),
   ];
 
   const editableConfiguration = isEditableMcpSource(dep.source);
   const baseTabs = [
     { key: "overview", label: t("overview") },
     { key: "tools", label: t("tools") },
-    { key: "logs", label: t("mcpCallLogs") },
     { key: "runtime", label: t("runtimeLogs") },
     ...(editableConfiguration
       ? [{ key: "configuration", label: t("configuration") }]
@@ -243,6 +196,10 @@ export default async function DeploymentInspectorPage({
   const current = tabs.find((item) => item.key === tab)?.key ?? "overview";
 
   const label = deploymentLabel(dep);
+  const pinnedPackage = deploymentPinnedPackage(dep);
+  const pinnedVersion = pinnedPackage
+    ? packageSelectorVersion(pinnedPackage)
+    : null;
   const defaultCloneName = t("copyNameDefault", {
     name: label.name.slice(0, 75).trimEnd(),
   });
@@ -306,10 +263,6 @@ export default async function DeploymentInspectorPage({
           ? readMcpToolCatalog(refreshedConfig?.installCfg)
           : savedTools
       : savedTools;
-  const logs =
-    current === "logs"
-      ? await getDeploymentLogs(ws.id, deploymentId, 100, user.id)
-      : [];
   const runtimeSnapshot =
     current === "runtime" ? getDeploymentRuntimeSnapshot(deploymentId) : null;
   const initialRuntimeLogs =
@@ -337,21 +290,8 @@ export default async function DeploymentInspectorPage({
       : deploymentToolCatalogKnown || serverToolCatalogKnown
         ? savedTools.length
         : dep.server?.verifiedTools;
-  const toolCatalogLabels = {
-    title: t("toolCatalog"),
-    description: t("toolCatalogDescription"),
-    count: t("toolsCount", { count: tools.length }),
-    instructions: t("instructions"),
-    inputSchema: t("inputSchema"),
-    schemaJson: t("schemaJson"),
-    parameter: t("parameter"),
-    type: t("type"),
-    descriptionColumn: t("descriptionColumn"),
-    required: t("required"),
-    defaultValue: t("defaultValue"),
-    noDescription: t("noDescription"),
-    noArguments: t("noArguments"),
-  };
+  const aboutMarkdown = dep.server?.readme?.trim() || null;
+  const aboutDescription = dep.server?.description?.trim() || null;
 
   return (
     <>
@@ -360,7 +300,7 @@ export default async function DeploymentInspectorPage({
         deploymentId={deploymentId}
         initialStatus={status}
       />
-      <DashboardPage className="min-w-0 space-y-6 [overflow-wrap:anywhere]">
+      <DashboardPage className="min-w-0 space-y-5 [overflow-wrap:anywhere]">
         {dep.source === "remote" &&
         dep.sourceRef?.startsWith("http:") &&
         (dep.installCfg as { allowUnsafeHttp?: boolean } | null)
@@ -371,130 +311,124 @@ export default async function DeploymentInspectorPage({
             url={dep.sourceRef}
           />
         ) : null}
-        <section className="rounded-xl border border-border bg-card overflow-hidden">
-          <div className="flex flex-wrap items-start justify-between gap-3 px-5 py-3">
-            <div className="flex min-w-0 items-start gap-3">
-              <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted text-primary">
-                <Plug className="size-5" />
-              </span>
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <h1 className="break-words text-xl font-semibold tracking-tight text-foreground">
-                    {label.name}
-                  </h1>
-                  <AnimatedBadge status="neutral" size="sm" showIcon={false}>
-                    {sourceLabel}
-                  </AnimatedBadge>
-                </div>
-                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
-                  <StatusBadge status={status} />
-                  {label.ref ? (
-                    <code className="max-w-full truncate font-mono text-xs">
-                      {label.ref}
-                    </code>
-                  ) : null}
-                </div>
+        <header className="flex flex-wrap items-center justify-between gap-4">
+          <div className="flex min-w-0 items-center gap-3.5">
+            <span className="flex size-11 shrink-0 items-center justify-center rounded-xl border border-border bg-card text-primary shadow-sm">
+              <Plug className="size-5" />
+            </span>
+            <div className="min-w-0">
+              <h1
+                title={label.name}
+                className="truncate text-xl font-semibold tracking-tight text-foreground sm:text-2xl"
+              >
+                {label.name}
+              </h1>
+              <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-2">
+                <StatusBadge status={status} />
+                <AnimatedBadge status="neutral" size="sm" showIcon={false}>
+                  {sourceLabel}
+                </AnimatedBadge>
+                {pinnedPackage || label.ref ? (
+                  <code
+                    title={pinnedPackage ?? label.ref ?? undefined}
+                    className="max-w-full truncate rounded-md bg-muted px-2 py-0.5 font-mono text-xs text-muted-foreground"
+                  >
+                    {pinnedPackage ?? label.ref}
+                  </code>
+                ) : null}
               </div>
             </div>
+          </div>
 
-            <div className="flex flex-wrap items-center gap-2">
-              {running ? (
-                <ConnectDialog
-                  endpoint={endpoint}
-                  name={label.name}
-                  label={t("connect")}
-                  variant="outline"
-                />
-              ) : null}
-              {transitioning ? (
-                <>
-                  <ButtonLink
-                    href={`${base}?tab=runtime`}
-                    variant="secondary"
-                    size="sm"
-                  >
-                    {t("viewRuntimeLogs")}
-                  </ButtonLink>
-                  {status !== "deleting" ? (
-                    <form action={stopDeploymentAction}>
-                      <input type="hidden" name="workspace" value={slug} />
-                      <input
-                        type="hidden"
-                        name="deploymentId"
-                        value={deploymentId}
-                      />
-                      <SubmitButton
-                        flash={false}
-                        pendingLabel={t("stopping")}
-                        variant="secondary"
-                        size="sm"
-                      >
-                        {t("stop")}
-                      </SubmitButton>
-                    </form>
-                  ) : null}
-                </>
-              ) : setupRequired ? (
-                <ButtonLink
-                  href={`${base}?tab=variables`}
-                  variant="primary"
-                  size="sm"
-                >
-                  <KeyRound className="size-4" />
-                  {t("configureVariables")}
-                </ButtonLink>
-              ) : running ? (
-                <form action={stopDeploymentAction}>
-                  <input type="hidden" name="workspace" value={slug} />
-                  <input
-                    type="hidden"
-                    name="deploymentId"
-                    value={deploymentId}
-                  />
-                  <SubmitButton
-                    flash={false}
-                    pendingLabel={t("stopping")}
-                    variant="secondary"
-                    size="sm"
-                  >
-                    {t("stop")}
-                  </SubmitButton>
-                </form>
-              ) : (
-                <form action={startDeploymentAction}>
-                  <input type="hidden" name="workspace" value={slug} />
-                  <input
-                    type="hidden"
-                    name="deploymentId"
-                    value={deploymentId}
-                  />
-                  <SubmitButton
-                    flash={false}
-                    pendingLabel={t("starting")}
-                    variant="secondary"
-                    size="sm"
-                  >
-                    <Play className="size-3.5" />
-                    {t("start")}
-                  </SubmitButton>
-                </form>
-              )}
-              {status === "error" ? (
+          <div className="flex flex-wrap items-center gap-2">
+            {running ? (
+              <ConnectDialog
+                endpoint={endpoint}
+                name={label.name}
+                label={t("connect")}
+                variant="outline"
+              />
+            ) : null}
+            {transitioning ? (
+              <>
                 <ButtonLink
                   href={`${base}?tab=runtime`}
-                  variant="primary"
+                  variant="secondary"
                   size="sm"
                 >
                   {t("viewRuntimeLogs")}
                 </ButtonLink>
-              ) : null}
-            </div>
+                {status !== "deleting" ? (
+                  <form action={stopDeploymentAction}>
+                    <input type="hidden" name="workspace" value={slug} />
+                    <input
+                      type="hidden"
+                      name="deploymentId"
+                      value={deploymentId}
+                    />
+                    <SubmitButton
+                      flash={false}
+                      pendingLabel={t("stopping")}
+                      variant="secondary"
+                      size="sm"
+                    >
+                      {t("stop")}
+                    </SubmitButton>
+                  </form>
+                ) : null}
+              </>
+            ) : setupRequired ? (
+              <ButtonLink
+                href={`${base}?tab=variables`}
+                variant="primary"
+                size="sm"
+              >
+                <KeyRound className="size-4" />
+                {t("configureVariables")}
+              </ButtonLink>
+            ) : running ? (
+              <form action={stopDeploymentAction}>
+                <input type="hidden" name="workspace" value={slug} />
+                <input type="hidden" name="deploymentId" value={deploymentId} />
+                <SubmitButton
+                  flash={false}
+                  pendingLabel={t("stopping")}
+                  variant="secondary"
+                  size="sm"
+                >
+                  {t("stop")}
+                </SubmitButton>
+              </form>
+            ) : (
+              <form action={startDeploymentAction}>
+                <input type="hidden" name="workspace" value={slug} />
+                <input type="hidden" name="deploymentId" value={deploymentId} />
+                <SubmitButton
+                  flash={false}
+                  pendingLabel={t("starting")}
+                  variant="secondary"
+                  size="sm"
+                >
+                  <Play className="size-3.5" />
+                  {t("start")}
+                </SubmitButton>
+              </form>
+            )}
+            {status === "error" ? (
+              <ButtonLink
+                href={`${base}?tab=runtime`}
+                variant="primary"
+                size="sm"
+              >
+                {t("viewRuntimeLogs")}
+              </ButtonLink>
+            ) : null}
           </div>
-        </section>
+        </header>
         {!running ? (
           <p
             role="status"
-            className={`rounded-lg border border-border px-4 py-3 text-sm ${status === "error" ? "bg-destructive/10 text-destructive" : "bg-muted text-muted-foreground"}`}
+            className={`rounded-xl border px-4 py-3 text-sm ${status === "error" ? "border-destructive/30 bg-destructive/10 text-destructive" : "border-border bg-muted/40 text-muted-foreground"}`}
           >
             {setupRequired
               ? t("variablesNeedAttention", {
@@ -511,112 +445,152 @@ export default async function DeploymentInspectorPage({
           </p>
         ) : null}
 
-        <McpConnectionFlow
-          workspace={slug}
-          deploymentId={deploymentId}
-          targets={connectionTargets}
-        />
         <div className="-mx-4 overflow-hidden px-4 sm:mx-0 sm:px-0">
           <TabBar tabs={tabs} current={current} basePath={base} />
         </div>
 
         {current === "overview" ? (
-          <div className="space-y-5">
-            <DashboardPanel title={t("connectionDetails")}>
-              <dl className="divide-y divide-border text-sm">
-                <div className="flex flex-wrap items-start justify-between gap-3 py-3 first:pt-0 last:pb-0">
-                  <dt className="text-muted-foreground">{t("endpoint")}</dt>
-                  <dd className="flex min-w-0 items-center gap-2">
+          <div
+            className={
+              aboutMarkdown || aboutDescription
+                ? "grid min-w-0 gap-5 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start"
+                : "max-w-3xl"
+            }
+          >
+            <DashboardPanel
+              title={t("connectionDetails")}
+              className="lg:order-2"
+            >
+              <dl className="space-y-5 text-sm">
+                <div>
+                  <dt className="text-xs text-muted-foreground">
+                    {t("endpoint")}
+                  </dt>
+                  <dd className="mt-1.5 flex min-w-0 items-center gap-2 rounded-lg border border-border bg-muted/40 py-1 pr-1 pl-3">
                     <code
                       title={endpoint}
-                      className="min-w-0 max-w-[20rem] truncate font-mono text-xs text-foreground"
+                      className="min-w-0 flex-1 truncate font-mono text-xs text-foreground"
                     >
                       {endpoint}
                     </code>
                     <CopyButton text={endpoint} />
                   </dd>
                 </div>
-                <div className="flex items-center justify-between gap-3 py-3 last:pb-0">
-                  <dt className="text-muted-foreground">{t("created")}</dt>
-                  <dd className="text-foreground">
-                    {fmtDate(dep.createdAt, timeZone, locale)}
-                  </dd>
-                </div>
-                <div className="flex items-center justify-between gap-3 py-3 last:pb-0">
-                  <dt className="text-muted-foreground">{t("apiToken")}</dt>
-                  <dd>
-                    <Link
-                      href={`/app/${slug}/settings/tokens`}
-                      className="inline-flex items-center gap-1 text-sm font-medium text-foreground hover:underline"
-                    >
-                      <KeyRound className="size-3.5" />
-                      {t("manageTokens")}
-                    </Link>
-                  </dd>
-                </div>
-              </dl>
-              <div className="py-3 text-muted-foreground">
-                {t("configurationUpdatedAt", {
-                  value: fmtDate(dep.updatedAt, timeZone, locale),
-                })}
-              </div>
-            </DashboardPanel>
-            <DashboardPanel
-              title={t("aboutThisMcp")}
-              description={dep.server?.description ?? undefined}
-            >
-              {dep.server?.readme ? (
-                <SafeStreamdown
-                  mode="static"
-                  linkSafety={{ enabled: true }}
-                  className="prose prose-sm max-h-[42rem] max-w-none overflow-auto leading-7 dark:prose-invert"
-                >
-                  {dep.server.readme}
-                </SafeStreamdown>
-              ) : dep.server?.description ? null : (
-                <p className="text-sm text-muted-foreground">
-                  {t("noDescription")}
-                </p>
-              )}
-              <dl className="mt-5 grid gap-4 text-sm sm:grid-cols-2 lg:grid-cols-4">
-                {dep.server?.author ? (
+                {connected.length ? (
                   <div>
                     <dt className="text-xs text-muted-foreground">
-                      {t("author")}
+                      {t("connectedTo")}
                     </dt>
-                    <dd className="mt-1 font-medium text-foreground">
-                      {dep.server.author}
+                    <dd className="mt-1.5">
+                      <McpConnectedChips objects={connected} />
                     </dd>
                   </div>
                 ) : null}
-                <div>
-                  <dt className="text-xs text-muted-foreground">
-                    {t("sourceLabel")}
-                  </dt>
-                  <dd className="mt-1 font-medium text-foreground">
-                    {sourceLabel}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-xs text-muted-foreground">
-                    {t("network")}
-                  </dt>
-                  <dd className="mt-1 font-medium text-foreground">
-                    {networkLabel}
-                  </dd>
-                </div>
-                {typeof knownToolCount === "number" ? (
-                  <div>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-4">
+                  <div className="min-w-0">
                     <dt className="text-xs text-muted-foreground">
-                      {t("tools")}
+                      {t("sourceLabel")}
                     </dt>
-                    <dd className="mt-1 font-medium text-foreground">
-                      {knownToolCount.toLocaleString(locale)}
+                    <dd className="mt-1 truncate font-medium text-foreground">
+                      {sourceLabel}
                     </dd>
                   </div>
-                ) : null}
+                  {pinnedVersion ? (
+                    <div className="min-w-0">
+                      <dt className="text-xs text-muted-foreground">
+                        {t("pinnedVersion")}
+                      </dt>
+                      <dd
+                        title={pinnedPackage ?? undefined}
+                        className="mt-1 truncate font-mono text-foreground"
+                      >
+                        {pinnedVersion}
+                      </dd>
+                    </div>
+                  ) : null}
+                  <div className="min-w-0">
+                    <dt className="text-xs text-muted-foreground">
+                      {t("network")}
+                    </dt>
+                    <dd className="mt-1 truncate font-medium text-foreground">
+                      {networkLabel}
+                    </dd>
+                  </div>
+                  {typeof knownToolCount === "number" ? (
+                    <div className="min-w-0">
+                      <dt className="text-xs text-muted-foreground">
+                        {t("tools")}
+                      </dt>
+                      <dd className="mt-1">
+                        <Link
+                          href={`${base}?tab=tools`}
+                          className="font-medium text-foreground tabular-nums hover:underline"
+                        >
+                          {knownToolCount.toLocaleString(locale)}
+                        </Link>
+                      </dd>
+                    </div>
+                  ) : null}
+                  {dep.server?.author ? (
+                    <div className="col-span-2 min-w-0">
+                      <dt className="text-xs text-muted-foreground">
+                        {t("author")}
+                      </dt>
+                      <dd
+                        title={dep.server.author}
+                        className="mt-1 truncate font-medium text-foreground"
+                      >
+                        {dep.server.author}
+                      </dd>
+                    </div>
+                  ) : null}
+                  <div className="min-w-0">
+                    <dt className="text-xs text-muted-foreground">
+                      {t("created")}
+                    </dt>
+                    <dd className="mt-1 text-foreground">
+                      {fmtDate(dep.createdAt, timeZone, locale)}
+                    </dd>
+                  </div>
+                  <div className="min-w-0">
+                    <dt className="text-xs text-muted-foreground">
+                      {t("updated")}
+                    </dt>
+                    <dd className="mt-1 text-foreground">
+                      {fmtDate(dep.updatedAt, timeZone, locale)}
+                    </dd>
+                  </div>
+                </div>
               </dl>
+              <Link
+                href={`/app/${slug}/settings/tokens`}
+                className="mt-5 flex items-center gap-1.5 border-t border-border pt-4 text-sm font-medium text-foreground hover:underline"
+              >
+                <KeyRound className="size-3.5 text-muted-foreground" />
+                {t("manageTokens")}
+              </Link>
             </DashboardPanel>
+            {aboutMarkdown || aboutDescription ? (
+              <DashboardPanel
+                title={t("aboutThisMcp")}
+                className="lg:order-1"
+                bodyClassName="px-5 py-5 sm:px-6"
+              >
+                {aboutMarkdown ? (
+                  <SafeStreamdown
+                    mode="static"
+                    linkSafety={{ enabled: true }}
+                    className="max-w-3xl text-sm leading-7 text-foreground [&_[data-streamdown=heading-1]]:mt-0 [&_[data-streamdown=heading-1]]:text-xl [&_[data-streamdown=heading-2]]:text-lg [&_[data-streamdown=heading-3]]:text-base"
+                  >
+                    {aboutMarkdown}
+                  </SafeStreamdown>
+                ) : (
+                  <p className="max-w-3xl text-sm leading-7 text-muted-foreground">
+                    {aboutDescription}
+                  </p>
+                )}
+              </DashboardPanel>
+            ) : null}
           </div>
         ) : null}
 
@@ -660,75 +634,37 @@ export default async function DeploymentInspectorPage({
         ) : null}
 
         {current === "tools" ? (
-          <div className="space-y-6">
+          <div className="space-y-5">
             {discoveryFailed ? (
-              <p role="alert" className="text-sm text-destructive">
+              <p
+                role="alert"
+                className="rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive"
+              >
                 {t("toolDiscoveryFailed")}
               </p>
             ) : null}
-            {tools.length ? (
-              <McpToolCatalog
-                tools={tools}
-                labels={toolCatalogLabels}
-                compact
-                hrefForTool={(toolName) =>
-                  `/app/${encodeURIComponent(slug)}/mcp/${encodeURIComponent(deploymentId)}/tools/${encodeURIComponent(toolName)}`
-                }
-              />
-            ) : null}
+            <McpToolExposureEditor
+              workspace={slug}
+              deploymentId={deploymentId}
+              tools={tools}
+              initialMode={dep.mcpToolExposure}
+              initialAllowedTools={dep.mcpAllowedTools}
+              initialPublicInvocable={dep.publicInvocable}
+              editable={running}
+              connected={connected}
+              toolBasePath={`${base}/tools`}
+            />
 
-            <section className="rounded-xl border border-border bg-card overflow-hidden">
-              <header className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-5 py-4">
-                <div className="flex min-w-0 items-start gap-2.5">
-                  <Wrench className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-                  <div>
-                    <h2 className="text-sm font-semibold text-foreground">
-                      {t("toolAccess")}
-                    </h2>
-                    <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                      {t("toolAccessDescription")}
-                    </p>
-                  </div>
-                </div>
-                {running ? (
-                  <AnimatedBadge status="neutral" size="sm" showIcon={false}>
-                    {t("toolsCount", { count: tools.length })}
-                  </AnimatedBadge>
-                ) : null}
-              </header>
-              <div className="px-5 py-5">
-                <McpToolExposureEditor
+            {playgroundAvailable ? (
+              <DashboardPanel title={t("manualToolTesting")}>
+                <ToolPlayground
+                  key={`runtime:${tools.map((tool) => tool.name).join("|")}`}
                   workspace={slug}
                   deploymentId={deploymentId}
                   tools={tools}
-                  initialMode={dep.mcpToolExposure}
-                  initialAllowedTools={dep.mcpAllowedTools}
-                  initialPublicInvocable={dep.publicInvocable}
-                  running={running}
+                  defaultRuntime
                 />
-              </div>
-            </section>
-
-            {playgroundAvailable ? (
-              <section className="rounded-xl border border-border bg-card overflow-hidden">
-                <header className="border-b border-border px-5 py-4">
-                  <h2 className="text-sm font-semibold text-foreground">
-                    {t("manualToolTesting")}
-                  </h2>
-                  <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                    {t("manualToolTestingDescription")}
-                  </p>
-                </header>
-                <div className="px-5 py-5">
-                  <ToolPlayground
-                    key={`runtime:${tools.map((tool) => tool.name).join("|")}`}
-                    workspace={slug}
-                    deploymentId={deploymentId}
-                    tools={tools}
-                    defaultRuntime
-                  />
-                </div>
-              </section>
+              </DashboardPanel>
             ) : (
               <DashboardEmptyState
                 icon={Wrench}
@@ -744,14 +680,14 @@ export default async function DeploymentInspectorPage({
                 }
                 actions={
                   <ButtonLink
-                    href={`${base}?tab=logs`}
+                    href={`${base}?tab=runtime`}
                     variant="secondary"
                     size="md"
                   >
                     {t("viewRuntimeLogs")}
                   </ButtonLink>
                 }
-                className="min-h-44"
+                className="min-h-44 rounded-xl border border-dashed border-border"
               />
             )}
           </div>
@@ -797,10 +733,28 @@ export default async function DeploymentInspectorPage({
               </form>
             </DashboardPanel>
 
+            {supportsAgentSandboxPlacement(dep) ? (
+              <DashboardPanel
+                title={t("agentSandboxPlacement")}
+                description={t("agentSandboxPlacementDescription")}
+              >
+                <McpSandboxPlacementEditor
+                  workspace={slug}
+                  deploymentId={deploymentId}
+                  initialEnabled={mcpRunsInAgentSandbox(dep)}
+                />
+              </DashboardPanel>
+            ) : null}
+
             <DashboardPanel
               title={t("cloneMcp")}
               description={t("cloneMcpDescription")}
             >
+              {queryError === "mcpVersionResolutionFailed" ? (
+                <p role="alert" className="mb-4 text-sm text-destructive">
+                  {t("mcpVersionResolutionFailed")}
+                </p>
+              ) : null}
               <form
                 action={cloneDeploymentAction}
                 className="max-w-xl space-y-4"
@@ -828,7 +782,7 @@ export default async function DeploymentInspectorPage({
                     title={t("nameCannotBeBlank")}
                   />
                 </label>
-                <p className="rounded-md border border-border bg-muted/[0.06] px-3 py-2 text-xs leading-5 text-foreground text-foreground">
+                <p className="rounded-xl border border-border bg-muted/[0.06] px-3 py-2 text-xs leading-5 text-foreground text-foreground">
                   {t("cloneSensitiveDataHint")}
                 </p>
                 <div className="flex items-start gap-2.5 rounded-lg border border-border p-3">
@@ -977,27 +931,6 @@ export default async function DeploymentInspectorPage({
               syncErrorLabel={t("runtimeLogSyncFailed")}
               truncatedLabel={t("runtimeLogTruncated")}
             />
-          </section>
-        ) : null}
-
-        {current === "logs" ? (
-          <section id="request-logs" className="min-w-0 space-y-4">
-            <header>
-              <h2 className="text-base font-semibold text-foreground">
-                {t("mcpCallLogs")}
-              </h2>
-              <p className="mt-1 text-sm text-muted-foreground">
-                {t("requestLogsDescription")}
-              </p>
-            </header>
-            <div className="min-w-0">
-              <DeploymentLogs
-                logs={logs.map((log) => ({
-                  ...log,
-                  time: fmtTime(log.createdAt, timeZone, locale),
-                }))}
-              />
-            </div>
           </section>
         ) : null}
       </DashboardPage>

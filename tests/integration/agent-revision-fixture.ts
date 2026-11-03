@@ -1,5 +1,6 @@
 import { db } from "@/lib/db";
 import { publishAgentRevision } from "@/lib/agents/revisions";
+import { OMP_VERSION } from "@/lib/agents/omp-config";
 
 /** Publish real immutable fixtures without resolving images or starting native runtimes. */
 export async function publishFixtureAgentRevision(
@@ -8,7 +9,7 @@ export async function publishFixtureAgentRevision(
 ) {
   const owner = await db.agent.findUniqueOrThrow({
     where: { id: agentId },
-    select: { currentRevisionVersion: true },
+    select: { currentRevisionVersion: true, runtimeKind: true },
   });
   const current = owner.currentRevisionVersion
     ? await db.agentRevision.findUniqueOrThrow({
@@ -24,7 +25,9 @@ export async function publishFixtureAgentRevision(
       kind: "docker",
       image: `fixture@sha256:${"a".repeat(64)}`,
       network: "isolated",
-      piVersion: "0.87.1",
+      ...(owner.runtimeKind === "omp"
+        ? { ompVersion: OMP_VERSION }
+        : { piVersion: "0.87.1" }),
       initialSnapshot: null,
       resourceLimits: { memoryBytes: 536870912, cpus: 1, pidsLimit: 128 },
       credentialReferences: [],

@@ -7,7 +7,7 @@ import {
   GithubRegistryError,
   deriveGithubResourceRegistryWebhookSecret,
   queueGithubResourceWebhook,
-} from "@/lib/market/github-registry";
+} from "@/lib/plugins/sources";
 
 export const runtime = "nodejs";
 const MAX_PAYLOAD = 1024 * 1024;

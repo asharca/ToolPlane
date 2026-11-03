@@ -177,7 +177,7 @@ export default async function DeploymentToolPage({
                 <Link
                   key={candidate.name}
                   href={`${base}/tools/${encodeURIComponent(candidate.name)}`}
-                  className="flex min-w-0 items-center gap-2 rounded-md px-3 py-2 text-xs text-muted-foreground hover:bg-muted/35 hover:text-foreground"
+                  className="flex min-w-0 items-center gap-2 rounded-lg px-3 py-2 text-xs text-muted-foreground hover:bg-muted/35 hover:text-foreground"
                 >
                   <code className="min-w-0 flex-1 truncate font-mono">
                     {candidate.name}

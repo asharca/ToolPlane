@@ -10,8 +10,6 @@ const mocks = vi.hoisted(() => ({
   create: vi.fn(),
   update: vi.fn(),
   remove: vi.fn(),
-  market: vi.fn(),
-  modify: vi.fn(),
   transaction: vi.fn(),
   revalidate: vi.fn(),
   redirect: vi.fn(),
@@ -37,7 +35,6 @@ vi.mock("@/lib/db", () => ({
       update: mocks.update,
       deleteMany: mocks.remove,
     },
-    marketInstall: { findFirst: mocks.market, updateMany: mocks.modify },
     $transaction: mocks.transaction,
   },
 }));
@@ -74,7 +71,6 @@ beforeEach(() => {
     typeof operation === "function"
       ? operation({
           installedSkill: { update: mocks.update },
-          marketInstall: { updateMany: mocks.modify },
         })
       : Promise.all(operation),
   );
@@ -120,27 +116,21 @@ describe("custom skill authorization and editing", () => {
     expect(mocks.transaction).not.toHaveBeenCalled();
     expect(mocks.remove).not.toHaveBeenCalled();
   });
-  it("publishes edited content and marks market installs modified atomically", async () => {
+  it("publishes workspace-owned content and reports persistence failures", async () => {
     expect(
       await updateSkillContentAction({}, form({ content: "# Updated" })),
     ).toEqual({ saved: true });
     expect(mocks.update).toHaveBeenCalledWith({
-      where: { id: "skill" },
+      where: { id: "skill", workspaceId: "workspace" },
       data: { content: "# Updated", status: "published" },
     });
-    expect(mocks.modify).toHaveBeenCalledWith(
-      expect.objectContaining({ data: { status: "modified" } }),
-    );
     expect(mocks.revalidate).toHaveBeenCalledWith("/app/team/skills/skill");
-    mocks.transaction.mockRejectedValueOnce(new Error("transaction failed"));
+    mocks.update.mockRejectedValueOnce(new Error("update failed"));
     expect(await updateSkillContentAction({}, form())).toEqual({
       error: "formSaveFailed",
     });
   });
-  it("preserves market-managed skills but deletes an unlinked custom skill", async () => {
-    mocks.market.mockResolvedValueOnce({ id: "install" });
-    await deleteCustomSkillAction(form());
-    expect(mocks.remove).not.toHaveBeenCalled();
+  it("deletes a workspace-owned custom skill", async () => {
     await expect(deleteCustomSkillAction(form())).rejects.toThrow(
       "REDIRECT:/app/team/skills",
     );

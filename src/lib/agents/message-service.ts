@@ -1,13 +1,13 @@
 import "server-only";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { UIMessage } from "ai";
 import { db } from "@/lib/db";
 import {
-  runNativeEntry,
+  runAgentEntry,
   latestEntryText,
-  nativeEntryResult,
-  nativeEntryRuntimeParts,
-} from "@/lib/a2a/ingress";
+  agentEntryResult,
+  agentEntryRuntimeParts,
+} from "./execution/entries";
 import type { NormalizedMessagingSource } from "./messaging";
 import type { AgentForRun } from "./queries";
 import { getAgent, getAgentForRequest } from "./queries";
@@ -36,6 +36,9 @@ import {
 } from "./runtime-commands";
 import { AgentRevisionError, resolvePinnedAgent } from "./revisions";
 import { persistAgentPromptInvocation } from "./prompt-invocation";
+
+export const CHANNEL_EXECUTION_FAILURE_MESSAGE =
+  "本次执行未能完成，未自动重试。请在工作区查看会话执行状态，检查模型或工具连接后再发送新消息。";
 
 export type AgentMessageResult =
   | { status: number; body: { error: string } }
@@ -97,7 +100,7 @@ export async function runAgentChannelMessage(params: {
   defaults?: Partial<AgentMessageBody>;
   attachmentParts?: UIMessage["parts"];
   signal?: AbortSignal;
-  onAccepted?: (message: string) => Promise<void>;
+  onUiRequired?: (message: string) => Promise<void>;
 }): Promise<AgentMessageResult> {
   const channel = await db.agentChannelConnection.findFirst({
     where: {
@@ -140,7 +143,7 @@ export async function runAgentChannelMessage(params: {
     return { status: 403, body: { error: "Sender or chat is not allowed" } };
   const agent = await getAgent(params.workspaceId, params.agentId);
   if (!agent) return { status: 404, body: { error: "Agent not found" } };
-  if (agent.runtimeKind !== "pi-sdk")
+  if (agent.runtimeKind !== "pi-sdk" && agent.runtimeKind !== "omp")
     return {
       status: 410,
       body: {
@@ -152,7 +155,7 @@ export async function runAgentChannelMessage(params: {
       status: 409,
       body: {
         error:
-          "Authorize a native channel operator in Agent A2A settings first.",
+          "Channel execution identity is unavailable. Re-enable the channel to bind your account.",
       },
     };
   const sessionKey = `channel:${channel.id}:${event.sessionKey}`;
@@ -171,7 +174,7 @@ export async function runAgentChannelMessage(params: {
     if (name === "help") {
       message = [
         "/new - Start a new conversation",
-        ...sessionRuntimeCommands("pi-sdk", prior?.messages ?? []).map(
+        ...sessionRuntimeCommands(agent.runtimeKind, prior?.messages ?? []).map(
           (item) =>
             `/${item.name}${item.description ? ` - ${item.description}` : ""}`,
         ),
@@ -265,7 +268,7 @@ export async function runAgentChannelMessage(params: {
     defaults: params.defaults,
     connectionId: channel.id,
     actorId: channel.a2aActorId,
-    onAccepted: params.onAccepted,
+    onUiRequired: params.onUiRequired,
     attachmentParts: params.attachmentParts,
     signal: params.signal,
   });
@@ -276,7 +279,7 @@ export async function runAgentChannelMessage(params: {
 async function runLoadedAgentMessage(params: {
   agent: AgentForRun;
   actorId?: string;
-  onAccepted?: (message: string) => Promise<void>;
+  onUiRequired?: (message: string) => Promise<void>;
   rawBody: unknown;
   defaults?: Partial<AgentMessageBody>;
   connectionId?: string;
@@ -284,7 +287,7 @@ async function runLoadedAgentMessage(params: {
   signal?: AbortSignal;
 }): Promise<AgentMessageResult> {
   const agent = params.agent;
-  if (agent.runtimeKind !== "pi-sdk")
+  if (agent.runtimeKind !== "pi-sdk" && agent.runtimeKind !== "omp")
     return {
       status: 410,
       body: {
@@ -317,7 +320,7 @@ async function runLoadedAgentMessage(params: {
           "A stable channel message ID is required for native task deduplication.",
       },
     };
-  const command = parseRuntimeCommand(body.message, "pi-sdk");
+  const command = parseRuntimeCommand(body.message, agent.runtimeKind);
   if (command && body.message.length > 2000)
     return {
       status: 400,
@@ -327,6 +330,29 @@ async function runLoadedAgentMessage(params: {
     ? event.sessionKey
     : (body.conversationId ?? `agent-message:${agent.id}:${event.sessionKey}`);
   let releaseConversation: (() => void) | null = null;
+  let persistedConversationId: string | null = null;
+  let assistantMessageId: string = randomUUID();
+  const response = (
+    conversationId: string,
+    text: string,
+  ): AgentMessageResult => {
+    const silent = isSilentAgentReply(text);
+    return {
+      status: 200,
+      body: {
+        agentId: agent.id,
+        conversationId,
+        delivery: silent ? "silent" : "message",
+        message: silent ? "" : text,
+        rawMessage: text,
+        sessionKey: event.sessionKey,
+        source: event.source,
+        platform: event.source.platform,
+        externalUserId: event.source.userId ?? null,
+        channelId: event.source.chatId ?? null,
+      },
+    };
+  };
   try {
     if (
       body.conversationId &&
@@ -395,26 +421,75 @@ async function runLoadedAgentMessage(params: {
         releaseRouting?.();
       };
     }
+    const projectionKey =
+      params.connectionId && event.source.messageId
+        ? createHash("sha256")
+            .update(
+              JSON.stringify([
+                params.connectionId,
+                conversation.id,
+                event.source.messageId,
+              ]),
+            )
+            .digest("hex")
+        : null;
+    if (projectionKey) assistantMessageId = `channel-reply-${projectionKey}`;
+    const userMessageId = projectionKey
+      ? `channel-message-${projectionKey}`
+      : randomUUID();
+    const previousUser = projectionKey
+      ? await db.message.findUnique({ where: { id: userMessageId } })
+      : null;
+    const text = command ? body.message : event.promptText;
+    if (previousUser && latestEntryText(previousUser) !== text.trim())
+      return {
+        status: 400,
+        body: {
+          error: "Channel message ID was reused with different content.",
+        },
+      };
+    // A failed transport send may retry the same saved reply, but never the execution/history.
+    const previousReply = projectionKey
+      ? await db.message.findUnique({ where: { id: assistantMessageId } })
+      : null;
+    if (previousReply?.conversationId === conversation.id) {
+      const parts = previousReply.parts as Array<{
+        type?: string;
+        text?: string;
+      }>;
+      return response(
+        conversation.id,
+        parts
+          .filter(
+            (part) => part.type === "text" && typeof part.text === "string",
+          )
+          .map((part) => part.text)
+          .join("\n"),
+      );
+    }
     const userParts = [
       {
         type: "text" as const,
-        text: command ? body.message : event.promptText,
+        text,
       },
     ];
     const userMessage: UIMessage = {
-      id: randomUUID(),
+      id: userMessageId,
       role: "user",
       parts: userParts,
     };
-    const savedUser = await db.message.create({
-      data: {
+    const savedUser = await db.message.upsert({
+      where: { id: userMessage.id },
+      update: {},
+      create: {
         id: userMessage.id,
         conversationId: conversation.id,
         role: "user",
         parts: userParts,
       },
     });
-    const result = await runNativeEntry({
+    persistedConversationId = conversation.id;
+    const result = await runAgentEntry({
       kind: params.connectionId
         ? "channel"
         : event.source.platform === "mcp"
@@ -434,38 +509,50 @@ async function runLoadedAgentMessage(params: {
           messageId: savedUser.id,
           invocation,
         }),
-      onAccepted: (_task, path) =>
-        params.onAccepted?.(
-          `Native task accepted. Approvals and progress (authorized console operator only): ${path}`,
-        ),
+      onUiRequired: (path) =>
+        params.onUiRequired?.(`Pi 扩展需要你的输入，请打开会话：${path}`),
     });
-    const text = nativeEntryResult(result.task, result.path);
-    const runtimeParts = nativeEntryRuntimeParts(result.task);
+    const replyText = agentEntryResult(result.task, result.path);
+    const runtimeParts = agentEntryRuntimeParts(result.task);
     params.signal?.throwIfAborted();
     await db.message.create({
       data: {
+        id: assistantMessageId,
         conversationId: conversation.id,
         role: "assistant",
-        parts: [{ type: "text", text }, ...runtimeParts],
+        parts: [{ type: "text", text: replyText }, ...runtimeParts],
       },
     });
-    const silent = isSilentAgentReply(text);
-    return {
-      status: 200,
-      body: {
-        agentId: agent.id,
-        conversationId: conversation.id,
-        delivery: silent ? "silent" : "message",
-        message: silent ? "" : text,
-        rawMessage: text,
-        sessionKey: event.sessionKey,
-        source: event.source,
-        platform: event.source.platform,
-        externalUserId: event.source.userId ?? null,
-        channelId: event.source.chatId ?? null,
-      },
-    };
+    return response(conversation.id, replyText);
   } catch (error) {
+    // Aborting a channel observer (including shutdown) is not a failed execution.
+    if (params.signal?.aborted) throw error;
+    if (persistedConversationId) {
+      await db.message.create({
+        data: {
+          id: assistantMessageId,
+          conversationId: persistedConversationId,
+          role: "assistant",
+          parts: [
+            { type: "text", text: CHANNEL_EXECUTION_FAILURE_MESSAGE },
+            {
+              type: "data-agent-execution",
+              data: {
+                status: "failed",
+                error: {
+                  code: "AGENT_EXECUTION_FAILED",
+                  message: CHANNEL_EXECUTION_FAILURE_MESSAGE,
+                },
+              },
+            },
+          ],
+        },
+      });
+      return response(
+        persistedConversationId,
+        CHANNEL_EXECUTION_FAILURE_MESSAGE,
+      );
+    }
     if (error instanceof AgentRevisionError)
       return { status: 409, body: { error: error.code } };
     throw error;

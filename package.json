@@ -6,7 +6,6 @@
     "node": ">=26.12.1"
   },
   "scripts": {
-    "postinstall": "fumadocs-mdx",
     "prepare": "node -e \"if(require('node:fs').existsSync('.git')) import('./scripts/install-git-hooks.mjs')\"",
     "hooks:install": "node scripts/install-git-hooks.mjs",
     "check:staged": "node scripts/check-staged.mjs",
@@ -59,9 +58,6 @@
     "clsx": "^2.1.1",
     "dotenv": "^17.4.2",
     "file-type": "22.0.1",
-    "fumadocs-core": "^16.15.18",
-    "fumadocs-mdx": "^15.4.6",
-    "fumadocs-ui": "^16.15.18",
     "geist": "^1.7.2",
     "grammy": "1.41.1",
     "jose": "^6.2.3",

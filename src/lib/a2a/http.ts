@@ -28,7 +28,10 @@ import {
   logHealth,
   type LogOutcome,
 } from "@/lib/observability/events";
-import { sanitizeLog } from "@/lib/observability/redaction";
+import {
+  PROTOCOL_BODY_DEPTH,
+  sanitizeLog,
+} from "@/lib/observability/redaction";
 import { MAX_DIAGNOSTIC_BYTES } from "@/lib/observability/payload";
 import { AgentApiError } from "@/lib/agents/public-api/errors";
 import { A2A_LIMITS, A2A_PROTOCOL_VERSION } from "./model";
@@ -42,6 +45,7 @@ import { buildAgentCard, NativeA2AHandler } from "./handler";
 import { Rpc, validateParams } from "./validation";
 import { ObservationLimiter } from "./transport-limits";
 import { getTaskRow } from "./store";
+import { fileSafeLogPayload } from "./remote-wire";
 const observations = new ObservationLimiter();
 
 type RpcId = string | number | null;
@@ -302,15 +306,15 @@ export async function handleA2ARpc(
             {
               workspaceMcpPayload: false,
               payload: {
-                request: requestPayload,
-                response: body,
+                request: fileSafeLogPayload(requestPayload),
+                response: fileSafeLogPayload(body),
                 responseKind: kind,
                 responseComplete: complete && !truncated,
               },
             },
             secrets,
             MAX_DIAGNOSTIC_BYTES,
-            16,
+            PROTOCOL_BODY_DEPTH,
           );
           truncated ||= safe.truncated;
           const payload = object(object(safe.data)?.payload);
@@ -337,8 +341,8 @@ export async function handleA2ARpc(
               durationMs,
               ...(binding && outcome !== "denied"
                 ? {
-                    request: requestPayload,
-                    response: body,
+                    request: fileSafeLogPayload(requestPayload),
+                    response: fileSafeLogPayload(body),
                     responseKind: kind,
                     responseComplete: complete && !truncated,
                     truncated,
@@ -422,6 +426,15 @@ export async function handleA2ARpc(
         ? rpc.method
         : "unknown";
       const card = await buildAgentCard(grant);
+      const retryFiles = req.headers.get("a2a-retry-files");
+      if (
+        retryFiles !== null &&
+        (retryFiles !== "true" || rpc.method !== "GetTask")
+      )
+        throw new A2AHttpError(
+          400,
+          "A2A-Retry-Files: true is only valid with GetTask.",
+        );
       const requested = req.headers.get("a2a-version") ?? "";
       // Spec patch numbers do not participate in protocol negotiation.
       const version = /^\d+\.\d+(?:\.\d+)?$/.test(requested)
@@ -464,26 +477,35 @@ export async function handleA2ARpc(
       const subscription = new AbortController();
       const signal = AbortSignal.any([req.signal, subscription.signal]);
       // Observe original errors before the SDK maps them to RPC errors; never change its wire response.
-      const handler = new Proxy(new NativeA2AHandler(grant, card, signal), {
-        get(target, key) {
-          const value = Reflect.get(target, key);
-          if (typeof value !== "function") return value;
-          return (...args: unknown[]) => {
-            try {
-              const result = Reflect.apply(value, target, args);
-              return result instanceof Promise
-                ? result.catch((error: unknown) => {
-                    handlerError = error;
-                    throw error;
-                  })
-                : result;
-            } catch (error) {
-              handlerError = error;
-              throw error;
-            }
-          };
+      const handler = new Proxy(
+        new NativeA2AHandler(
+          grant,
+          card,
+          signal,
+          undefined,
+          retryFiles === "true",
+        ),
+        {
+          get(target, key) {
+            const value = Reflect.get(target, key);
+            if (typeof value !== "function") return value;
+            return (...args: unknown[]) => {
+              try {
+                const result = Reflect.apply(value, target, args);
+                return result instanceof Promise
+                  ? result.catch((error: unknown) => {
+                      handlerError = error;
+                      throw error;
+                    })
+                  : result;
+              } catch (error) {
+                handlerError = error;
+                throw error;
+              }
+            };
+          },
         },
-      });
+      );
       const result = await new JsonRpcTransportHandler(handler).handle(
         rpc,
         new ServerCallContext({ requestedVersion: version }),
@@ -512,7 +534,7 @@ export async function handleA2ARpc(
           requestPayload,
           secrets,
           MAX_DIAGNOSTIC_BYTES - 512,
-          16,
+          PROTOCOL_BODY_DEPTH,
         );
         requestPayload = safe.data;
         truncated ||= safe.truncated;
@@ -544,7 +566,12 @@ export async function handleA2ARpc(
             collectionStopped = true;
             return;
           }
-          const safe = sanitizeLog(envelope, secrets, remaining, 16);
+          const safe = sanitizeLog(
+            envelope,
+            secrets,
+            remaining,
+            PROTOCOL_BODY_DEPTH,
+          );
           streamBytes +=
             Buffer.byteLength(JSON.stringify(safe.data)) +
             (events.length ? 1 : 0);

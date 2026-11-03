@@ -1,9 +1,10 @@
 import { startRuntimeOwner } from "@/lib/runtime/owner";
 import { runtimeCanOperate } from "@/lib/runtime/ownership-state";
 import { systemLog } from "@/lib/observability/system";
-import { maintainPiPackageSources } from "@/lib/market/pi-package-catalog";
 import { stopIdleAgentConversationSandboxes } from "@/lib/agents/conversation-sandbox";
-import { runPendingGithubResourceSyncJobs } from "@/lib/market/github-registry";
+import { runPendingGithubResourceSyncJobs } from "@/lib/plugins/indexer";
+import { provisionOfficialPluginSource } from "@/lib/plugins/sources";
+import { runPendingAgentPluginSyncs } from "@/lib/plugins/agent-sync";
 // Next.js startup hook. Runs once when the Node server boots to recover MCP
 // processes, channel runners, and sandbox data operations interrupted by a restart.
 export async function registerNode() {
@@ -19,16 +20,15 @@ async function registerNodeOwned() {
     __mcpReconciled?: boolean;
     __agentConversationMaintenanceTimer?: NodeJS.Timeout;
     __logMaintenanceTimer?: ReturnType<typeof setInterval>;
-    __piPackageSourceMaintenanceTimer?: NodeJS.Timeout;
     __githubResourceSyncTimer?: NodeJS.Timeout;
   };
   if (g.__mcpReconciled) return;
+  await provisionOfficialPluginSource();
   g.__mcpReconciled = true;
   g.__toolplaneStopTimers = () => {
     for (const timer of [
       g.__logMaintenanceTimer,
       g.__agentConversationMaintenanceTimer,
-      g.__piPackageSourceMaintenanceTimer,
       g.__githubResourceSyncTimer,
     ]) {
       if (timer) clearInterval(timer);
@@ -56,29 +56,12 @@ async function registerNodeOwned() {
     }, 5 * 60_000);
     g.__logMaintenanceTimer.unref?.();
   }
-  if (!g.__piPackageSourceMaintenanceTimer) {
-    let running = false;
-    const maintain = async () => {
-      if (running || !runtimeCanOperate()) return;
-      running = true;
-      try {
-        await maintainPiPackageSources();
-      } catch {
-        systemLog("error", "Pi package metadata maintenance failed");
-      } finally {
-        running = false;
-      }
-    };
-    g.__piPackageSourceMaintenanceTimer = setInterval(() => {
-      void maintain();
-    }, 5 * 60_000);
-    g.__piPackageSourceMaintenanceTimer.unref?.();
-  }
   if (!g.__githubResourceSyncTimer) {
     const synchronize = async () => {
       if (!runtimeCanOperate()) return;
       try {
         await runPendingGithubResourceSyncJobs();
+        await runPendingAgentPluginSyncs();
       } catch {
         systemLog("error", "GitHub resource registry maintenance failed");
       }
@@ -201,8 +184,8 @@ async function registerNodeOwned() {
   }
 
   try {
-    const { startA2AWorker } = await import("@/lib/a2a/worker");
-    await startA2AWorker();
+    const { startAgentWorker } = await import("@/lib/agents/execution/worker");
+    await startAgentWorker();
   } catch {
     failed = true;
     systemLog("error", "[a2a] startup recovery failed");

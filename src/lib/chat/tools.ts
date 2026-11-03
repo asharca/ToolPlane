@@ -3,7 +3,6 @@ import { db } from "@/lib/db";
 import { buildToolSet } from "@/lib/agents/tools";
 import type { AgentToolSet } from "@/lib/agents/agent-tool";
 import { mcpDefinitionChecksum } from "@/lib/process/mcp-definition";
-import { parsePendingToolChanges } from "@/lib/process/mcp-tool-signature";
 import {
   callPinnedRemoteMcpTool,
   listPinnedRemoteMcpTools,
@@ -15,7 +14,7 @@ import { logRequest } from "@/lib/observability/log";
 import type { ChatAssistantRevisionConfig } from "./revision-types";
 import { ChatServiceError, requireChatRemoteDeployment } from "./service";
 // Revision authority is an upper bound. Live grants can only narrow it, and are
-// checked again immediately before every remote invocation (including approval).
+// checked again immediately before every remote invocation.
 export async function buildChatToolSet(scope: {
   assistantId: string;
   workspaceId: string;
@@ -163,8 +162,7 @@ export async function buildChatToolSet(scope: {
             if (
               !current?.allowedToolNames.includes(toolName) ||
               current.deployment.workspaceId !== scope.workspaceId ||
-              current.deployment.sandbox ||
-              toolName in parsePendingToolChanges(current.pendingToolChanges)
+              current.deployment.sandbox
             )
               throw new ChatServiceError(
                 403,
@@ -201,9 +199,7 @@ export async function buildChatToolSet(scope: {
     );
     if (
       !pinned?.allowedToolNames.includes(origin.originalToolName) ||
-      !live?.allowedToolNames.includes(origin.originalToolName) ||
-      origin.originalToolName in
-        parsePendingToolChanges(live.pendingToolChanges)
+      !live?.allowedToolNames.includes(origin.originalToolName)
     )
       continue;
     if (mcpDefinitionChecksum(live.deployment) !== pinned.definitionChecksum)

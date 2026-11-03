@@ -11,6 +11,8 @@ import {
 } from "vitest";
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
+import * as sandboxRuntime from "@/lib/sandboxes/runtime";
+import * as agentRuntime from "@/lib/agents/sandbox-runtime";
 import {
   cloneAgent,
   createAgent,
@@ -41,21 +43,20 @@ import {
 } from "@/lib/agents/channel-pairing";
 import {
   captureAgentRevisionConfig,
+  prepareAgentRevisionMcpDeployments,
   resolvePinnedAgent,
 } from "@/lib/agents/revisions";
-import {
-  getAgentMarketListing,
-  listAgentMarketListings,
-  materializeAgentRelease,
-} from "@/lib/agents/market";
-import {
-  buildGithubRegistryAgentRelease,
-  publishGithubRegistryAgentRelease,
-} from "@/lib/market/github-registry-agent";
+import { resolveAgentRuntimeGrant } from "@/lib/agents/runtime-grant";
+import { AgentRevisionConfigSchema } from "@/lib/agents/revision-types";
 
 // Database revision fixtures exercise persistence/pinning without pretending to
 // exercise the sandbox-native publication preflight in this mutation suite.
 async function seedPublishedRevision(agentId: string) {
+  const owner = await db.agent.findUniqueOrThrow({
+    where: { id: agentId },
+    select: { workspaceId: true },
+  });
+  await prepareAgentRevisionMcpDeployments(owner.workspaceId, agentId);
   return db.$transaction(async (tx) => {
     const agent = await tx.agent.findUniqueOrThrow({ where: { id: agentId } });
     const config = await captureAgentRevisionConfig(tx, agentId, {
@@ -135,6 +136,7 @@ afterAll(async () => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 async function createDockerSandbox(label: string) {
@@ -155,252 +157,111 @@ async function createDockerSandbox(label: string) {
 }
 
 describe("agents mutations", () => {
-  it("keeps private GitHub Agent releases workspace-scoped and installs only reauthorization drafts", async () => {
-    const suffix = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  it("creates an enabled Agent whose first conversation pins the selected configuration", async () => {
+    // External Docker boundaries only; persistence, authorization, and pinning are real.
+    vi.spyOn(sandboxRuntime, "resolveDockerImageDigest").mockResolvedValue(
+      `fixture@sha256:${"a".repeat(64)}`,
+    );
+    vi.spyOn(agentRuntime, "preflightPiSdkCapabilities").mockResolvedValue({
+      commands: [],
+      tools: [],
+      skills: [],
+      prompts: [],
+    });
+    const agent = await createConfiguredAgent(
+      workspaceId,
+      {
+        name: "Ready on creation",
+        providerId,
+        model: "model-1",
+        systemPrompt: "Selected instructions",
+        maxSteps: 8,
+      },
+      { deploymentIds: [], installedSkillIds: [], toolkitIds: [] },
+      { runtime: "pi-sdk", enable: true },
+    );
+    const current = await db.agent.findUniqueOrThrow({
+      where: { id: agent.id },
+    });
+    expect(current.currentRevisionVersion).toBe(1);
+    const conversation = await createConversation(workspaceId, agent.id);
+    if (!conversation)
+      throw new Error("Created Agent must accept a conversation");
+    const pinned = await resolvePinnedAgent(
+      current,
+      conversation.agentRevisionId,
+    );
+    expect(pinned).toMatchObject({
+      providerId,
+      model: "model-1",
+      systemPrompt: "Selected instructions",
+      maxSteps: 8,
+    });
+  });
+
+  it("rolls back the Agent and sandbox when initial capability preflight fails", async () => {
+    vi.spyOn(sandboxRuntime, "resolveDockerImageDigest").mockResolvedValue(
+      `fixture@sha256:${"a".repeat(64)}`,
+    );
+    vi.spyOn(agentRuntime, "preflightPiSdkCapabilities").mockRejectedValue(
+      new Error("PI_CAPABILITY_CONFLICT"),
+    );
+    const before = {
+      agents: await db.agent.count({ where: { workspaceId } }),
+      sandboxes: await db.sandbox.count({ where: { workspaceId } }),
+      deployments: await db.deployment.count({ where: { workspaceId } }),
+    };
+    await expect(
+      createConfiguredAgent(
+        workspaceId,
+        {
+          name: "Rejected creation",
+          providerId,
+          model: "model-1",
+          systemPrompt: null,
+          maxSteps: 8,
+        },
+        { deploymentIds: [], installedSkillIds: [], toolkitIds: [] },
+        { runtime: "pi-sdk", enable: true },
+      ),
+    ).rejects.toThrow("PI_CAPABILITY_CONFLICT");
+    expect({
+      agents: await db.agent.count({ where: { workspaceId } }),
+      sandboxes: await db.sandbox.count({ where: { workspaceId } }),
+      deployments: await db.deployment.count({ where: { workspaceId } }),
+    }).toEqual(before);
+  });
+
+  it("rejects enabling a new Agent with another workspace's model provider", async () => {
     const foreign = await db.workspace.create({
       data: {
-        slug: `registry-foreign-${suffix}`,
-        name: "Foreign registry consumer",
+        name: "Foreign creation",
+        slug: `foreign-create-${Date.now()}`,
         ownerId: userId,
       },
     });
-    const descriptor = {
-      schemaVersion: 1,
-      kind: "agent",
-      listing: {
-        slug: "portable-agent",
-        name: `Portable registry Agent ${suffix}`,
-        summary: "A portable native draft",
-        author: "Registry author",
-        iconUrl: null,
-        tags: [],
-      },
-      rootAgentKey: "root",
-      agents: [
-        {
-          key: "root",
-          name: "Registry draft",
-          slug: "registry-draft",
-          systemPrompt: "Portable instructions",
-          maxSteps: 10,
-          modelRequirement: { format: "openai", model: "model-1" },
-          deploymentKeys: ["mcp"],
-          skillKeys: [],
-          toolkitKeys: [],
-          subAgentKeys: [],
-        },
-      ],
-      deployments: [
-        {
-          key: "mcp",
-          name: "Portable MCP",
-          catalogSlug: "registry-test-mcp",
-          source: "remote",
-          sourceRef: "https://mcp.example.test/mcp",
-          requiredEnv: ["MCP_BEARER_TOKEN"],
-          publicEnv: {},
-          transport: "streamable-http",
-          authType: "bearer",
-          bearerEnv: "MCP_BEARER_TOKEN",
-          mcpToolExposure: "all",
-          mcpAllowedTools: ["unapproved_tool"],
-        },
-      ],
-      skills: [],
-      toolkits: [],
-    };
-    let listingId: string | undefined;
     try {
-      const artifact = buildGithubRegistryAgentRelease(descriptor);
-      const published = await db.$transaction((tx) =>
-        publishGithubRegistryAgentRelease(tx, {
-          workspaceId,
-          userId,
-          namespace: `registry-${suffix}`,
-          resourceId: "portable-agent",
-          visibility: "private",
-          artifact,
-        }),
-      );
-      listingId = published.agentListingId;
-      expect(await getAgentMarketListing(listingId)).toBeNull();
-      expect(await getAgentMarketListing(listingId, foreign.id)).toBeNull();
-      expect(
-        (await getAgentMarketListing(listingId, workspaceId))?.release.id,
-      ).toBe(published.agentReleaseId);
-      expect(
-        (await listAgentMarketListings({ q: descriptor.listing.name })).items,
-      ).toHaveLength(0);
-      expect(
-        (
-          await listAgentMarketListings({
-            workspaceId: foreign.id,
-            q: descriptor.listing.name,
-          })
-        ).items,
-      ).toHaveLength(0);
-      expect(
-        (
-          await listAgentMarketListings({
-            workspaceId,
-            q: descriptor.listing.name,
-          })
-        ).items.map((item) => item.id),
-      ).toContain(listingId);
       await expect(
-        materializeAgentRelease({
-          releaseId: published.agentReleaseId,
-          targetWorkspaceId: foreign.id,
-          installedById: userId,
-          idempotencyKey: `foreign-${suffix}`,
-        }),
-      ).rejects.toMatchObject({ code: "listing_unavailable" });
-      const installed = await materializeAgentRelease({
-        releaseId: published.agentReleaseId,
-        targetWorkspaceId: workspaceId,
-        installedById: userId,
-        idempotencyKey: `local-${suffix}`,
-      });
-      const draft = await db.agent.findUniqueOrThrow({
-        where: { id: installed.agent.id },
-        include: {
-          sandboxes: { include: { sandbox: true } },
-          servers: true,
-          skills: true,
-        },
-      });
-      expect(draft).toMatchObject({
-        runtimeKind: "pi-sdk",
-        currentRevisionVersion: 0,
-        providerId: null,
-      });
-      expect(draft.sandboxes).toHaveLength(1);
-      expect(draft.servers).toHaveLength(0);
-      expect(draft.skills).toHaveLength(0);
-      expect(installed.install.status).toBe("needs_setup");
-      expect(installed.requirements.providers).toEqual([
-        {
-          agentKey: "root",
-          format: "openai",
-          model: "model-1",
-          satisfied: false,
-        },
-      ]);
-      expect(installed.requirements.environment).toContainEqual({
-        deploymentKey: "mcp",
-        variable: "MCP_BEARER_TOKEN",
-        required: true,
-      });
-      const mcp = await db.deployment.findUniqueOrThrow({
-        where: { id: installed.resourceMap.deployments.mcp },
-      });
-      expect(mcp.mcpAllowedTools).toEqual([]);
-      expect(mcp.mcpToolExposure).toBe("allowlist");
-      expect(mcp.status).toBe("stopped");
-      await db.agentListing.update({
-        where: { id: listingId },
-        data: { status: "disabled" },
-      });
-      const reused = await db.$transaction((tx) =>
-        publishGithubRegistryAgentRelease(tx, {
-          workspaceId,
-          userId,
-          namespace: `registry-${suffix}`,
-          resourceId: "portable-agent",
-          visibility: "private",
-          agentListingId: published.agentListingId,
-          agentReleaseId: published.agentReleaseId,
-        }),
-      );
-      expect(reused.agentReleaseId).toBe(published.agentReleaseId);
-      expect(await db.agentRelease.count({ where: { listingId } })).toBe(1);
-      expect(
-        (await db.agentListing.findUniqueOrThrow({ where: { id: listingId } }))
-          .status,
-      ).toBe("disabled");
-      const newer = await db.$transaction((tx) =>
-        publishGithubRegistryAgentRelease(tx, {
-          workspaceId,
-          userId,
-          namespace: `registry-${suffix}`,
-          resourceId: "portable-agent",
-          visibility: "private",
-          agentListingId: listingId,
-          artifact: buildGithubRegistryAgentRelease({
-            ...descriptor,
-            listing: {
-              ...descriptor.listing,
-              summary: "A newer portable draft",
-            },
-          }),
-        }),
-      );
-      expect(newer.agentReleaseId).not.toBe(reused.agentReleaseId);
-      expect(
-        (await db.agentListing.findUniqueOrThrow({ where: { id: listingId } }))
-          .status,
-      ).toBe("disabled");
-      expect(await getAgentMarketListing(listingId, workspaceId)).toBeNull();
-      // Only index withdrawal uses draft, so an ordinary remove/re-add can return.
-      await db.agentListing.update({
-        where: { id: listingId },
-        data: { status: "draft" },
-      });
-      await db.$transaction((tx) =>
-        publishGithubRegistryAgentRelease(tx, {
-          workspaceId,
-          userId,
-          namespace: `registry-${suffix}`,
-          resourceId: "portable-agent",
-          visibility: "private",
-          agentListingId: listingId,
-          agentReleaseId: newer.agentReleaseId,
-        }),
+        createConfiguredAgent(
+          foreign.id,
+          {
+            name: "Unauthorized creation",
+            providerId,
+            model: "model-1",
+            systemPrompt: null,
+            maxSteps: 8,
+          },
+          { deploymentIds: [], installedSkillIds: [], toolkitIds: [] },
+          { runtime: "pi-sdk", enable: true },
+        ),
+      ).rejects.toThrow("Unknown model provider");
+      expect(await db.agent.count({ where: { workspaceId: foreign.id } })).toBe(
+        0,
       );
       expect(
-        (await getAgentMarketListing(listingId, workspaceId))?.release.id,
-      ).toBe(newer.agentReleaseId);
-      expect(() =>
-        buildGithubRegistryAgentRelease({
-          ...descriptor,
-          agents: [
-            { ...descriptor.agents[0], runtime: { kind: "claude-code" } },
-          ],
-        }),
-      ).toThrow();
-      expect(() =>
-        buildGithubRegistryAgentRelease({
-          ...descriptor,
-          agents: [{ ...descriptor.agents[0], providerId }],
-        }),
-      ).toThrow();
-      expect(() =>
-        buildGithubRegistryAgentRelease({
-          ...descriptor,
-          agents: [
-            {
-              ...descriptor.agents[0],
-              systemPrompt: `Use ghp_${"x".repeat(24)}`,
-            },
-          ],
-        }),
-      ).toThrow();
-      expect(() =>
-        buildGithubRegistryAgentRelease({
-          ...descriptor,
-          deployments: [
-            {
-              ...descriptor.deployments[0],
-              publicEnv: { API_TOKEN: "opaque-workspace-secret" },
-            },
-          ],
-        }),
-      ).toThrow();
+        await db.sandbox.count({ where: { workspaceId: foreign.id } }),
+      ).toBe(0);
     } finally {
-      if (listingId) {
-        await db.agentInstall.deleteMany({ where: { release: { listingId } } });
-        await db.agentListing.delete({ where: { id: listingId } });
-      }
       await db.workspace.delete({ where: { id: foreign.id } });
     }
   });
@@ -583,7 +444,6 @@ describe("agents mutations", () => {
           deploymentIds: [],
           installedSkillIds: [],
           toolkitIds: [],
-          sandboxIds: [],
         },
         { runtime: "pi-sdk" },
       );
@@ -662,7 +522,6 @@ describe("agents mutations", () => {
           deploymentIds: [],
           installedSkillIds: [],
           toolkitIds: [],
-          sandboxIds: [],
         },
         { runtime: "pi-sdk" },
       ),
@@ -729,90 +588,137 @@ describe("agents mutations", () => {
     ).resolves.toBeNull();
   });
 
-  it("does not attach a sandbox with an incomplete data lifecycle operation", async () => {
-    const agent = await createAgent(workspaceId, "Blocked sandbox consumer", {
+  it("shares external sandboxes across Agents and narrows pinned access to the live attachment", async () => {
+    const owner = await createAgent(workspaceId, "External owner", {
       runtime: "pi-sdk",
     });
-    const activeSandbox = await createDockerSandbox(
-      "Active sandbox consumer workspace",
-    );
-    await setAgentTools(workspaceId, agent.id, {
-      deploymentIds: [],
-      installedSkillIds: [],
-      toolkitIds: [],
-      sandboxIds: [activeSandbox.id],
+    const peer = await createAgent(workspaceId, "External peer", {
+      runtime: "pi-sdk",
     });
-    const deployment = await db.deployment.create({
-      data: {
-        workspaceId,
-        name: "Interrupted clone",
-        source: "sandbox",
-        status: "copy_failed",
-      },
+    const ownSandbox = await db.agentSandbox.findMany({
+      where: { agentId: owner.id },
     });
-    const sandbox = await db.sandbox.create({
-      data: {
-        workspaceId,
-        deploymentId: deployment.id,
-        name: "Interrupted clone",
-        slug: `interrupted-clone-${Date.now()}`,
-        kind: "docker",
-        image: "alpine:3.20",
-      },
+    const peerOwn = await db.agentSandbox.findFirstOrThrow({
+      where: { agentId: peer.id },
     });
-
-    await expect(
-      setAgentTools(workspaceId, agent.id, {
-        deploymentIds: [],
-        installedSkillIds: [],
-        toolkitIds: [],
-        sandboxIds: [sandbox.id],
-      }),
-    ).rejects.toThrow("requires exactly one Docker sandbox");
-
-    await expect(
-      db.agentSandbox.findMany({ where: { agentId: agent.id } }),
-    ).resolves.toEqual([
-      expect.objectContaining({ sandboxId: activeSandbox.id, isDefault: true }),
-    ]);
-    await deleteAgent(workspaceId, agent.id);
-    await db.deployment.delete({ where: { id: deployment.id } });
-  });
-
-  it("rejects read-only archived Docker sandboxes as Agent templates without changing assignments", async () => {
-    const agent = await createAgent(workspaceId, "Archived sandbox consumer");
-    const original = await db.agentSandbox.findMany({
-      where: { agentId: agent.id },
-    });
-    const archived = await createDockerSandbox("Archived runtime workspace");
+    const shared = await createDockerSandbox("Shared external");
+    const archived = await createDockerSandbox("Archived external");
+    const sessionCopy = await createDockerSandbox("Session copy");
     await db.sandbox.update({
       where: { id: archived.id },
       data: { config: { readOnly: true } },
     });
-
+    const none = { deploymentIds: [], installedSkillIds: [], toolkitIds: [] };
     try {
+      await setAgentTools(workspaceId, owner.id, {
+        ...none,
+        externalSandboxes: [{ sandboxId: shared.id, access: "full" }],
+      });
+      await setAgentTools(workspaceId, peer.id, {
+        ...none,
+        externalSandboxes: [{ sandboxId: shared.id, access: "read" }],
+      });
+      // Another Agent's own sandbox and read-only rows are never attachable.
+      for (const sandboxId of [peerOwn.sandboxId, archived.id])
+        await expect(
+          setAgentTools(workspaceId, owner.id, {
+            ...none,
+            externalSandboxes: [{ sandboxId, access: "read" }],
+          }),
+        ).rejects.toThrow("Only SSH, connector or standalone Docker");
+      // Omitting the selection keeps attachments; the own sandbox never moves.
+      await setAgentTools(workspaceId, owner.id, none);
       await expect(
-        setAgentTools(workspaceId, agent.id, {
-          deploymentIds: [],
-          installedSkillIds: [],
-          toolkitIds: [],
-          sandboxIds: [archived.id],
+        db.agentExternalSandbox.findMany({
+          where: { sandboxId: shared.id },
+          orderBy: { access: "asc" },
+          select: { agentId: true, access: true },
         }),
-      ).rejects.toThrow(
-        "Read-only sandboxes cannot be assigned as Agent templates.",
-      );
+      ).resolves.toEqual([
+        { agentId: owner.id, access: "full" },
+        { agentId: peer.id, access: "read" },
+      ]);
       await expect(
-        db.agentSandbox.findMany({ where: { agentId: agent.id } }),
-      ).resolves.toEqual(original);
+        db.agentSandbox.findMany({ where: { agentId: owner.id } }),
+      ).resolves.toEqual(ownSandbox);
+
+      await updateAgent(workspaceId, owner.id, {
+        name: "External owner",
+        systemPrompt: null,
+        providerId,
+        model: "gpt-x",
+        maxSteps: 5,
+      });
+      const revision = await seedPublishedRevision(owner.id);
+      expect(
+        AgentRevisionConfigSchema.parse(revision.config).externalSandboxes,
+      ).toEqual([{ sandboxId: shared.id, access: "full" }]);
+      const conversation = await db.conversation.create({
+        data: {
+          agentId: owner.id,
+          agentRevisionId: revision.id,
+          legacyRevisionUnresolved: false,
+          sandboxId: sessionCopy.id,
+        },
+      });
+      const token = {
+        workspaceId,
+        agentId: owner.id,
+        agentRevisionId: revision.id,
+        sandboxId: sessionCopy.id,
+        conversationId: conversation.id,
+        providerId,
+        deploymentIds: [],
+        externalSandboxIds: [shared.id],
+        exp: Math.floor(Date.now() / 1000) + 600,
+      };
+      const grantFor = async () =>
+        (await resolveAgentRuntimeGrant(token))?.externalSandboxTools;
+      await expect(grantFor()).resolves.toEqual({
+        [shared.id]: expect.arrayContaining(["shell_exec", "write_file"]),
+      });
+      await setAgentTools(workspaceId, owner.id, {
+        ...none,
+        externalSandboxes: [{ sandboxId: shared.id, access: "read" }],
+      });
+      await expect(grantFor()).resolves.toEqual({
+        [shared.id]: ["sandbox_info", "list_dir", "read_file", "download_file"],
+      });
+      // Detaching revokes only that sandbox, not the session grant.
+      await setAgentTools(workspaceId, owner.id, {
+        ...none,
+        externalSandboxes: [],
+      });
+      await expect(grantFor()).resolves.toEqual({});
     } finally {
-      await deleteAgent(workspaceId, agent.id);
-      await db.deployment.delete({ where: { id: archived.deploymentId } });
+      await deleteAgent(workspaceId, owner.id);
+      await deleteAgent(workspaceId, peer.id);
+      await db.deployment.deleteMany({
+        where: {
+          id: {
+            in: [
+              shared.deploymentId,
+              archived.deploymentId,
+              sessionCopy.deploymentId,
+            ],
+          },
+        },
+      });
     }
   });
 
   it("updates config and replaces the attached tools", async () => {
     const a = await createAgent(workspaceId, "Cfg", { runtime: "pi-sdk" });
-    const sandbox = await createDockerSandbox("Config workspace");
+    await db.deployment.update({
+      where: { id: deploymentId },
+      data: {
+        installCfg: {
+          transport: "streamable-http",
+          authType: "none",
+          toolCatalog: [{ name: "read" }, { name: "write" }],
+        },
+      },
+    });
     await updateAgent(workspaceId, a.id, {
       name: "Cfg2",
       systemPrompt: "sp",
@@ -824,7 +730,6 @@ describe("agents mutations", () => {
       deploymentIds: [deploymentId],
       installedSkillIds: [],
       toolkitIds: [],
-      sandboxIds: [sandbox.id],
     });
     const reread = await db.agent.findUnique({
       where: { id: a.id },
@@ -833,28 +738,21 @@ describe("agents mutations", () => {
     expect(reread?.name).toBe("Cfg2");
     expect(reread?.model).toBe("gpt-x");
     expect(reread?.servers).toHaveLength(1);
-    expect(reread?.servers[0]?.allowedToolNames).toEqual([]);
-    // Seed explicit live consent; an unrelated draft save must not reset it.
-    await db.agentServer.update({
-      where: { agentId_deploymentId: { agentId: a.id, deploymentId } },
-      data: { allowedToolNames: ["read"] },
-    });
+    expect(reread?.servers[0]?.allowedToolNames).toEqual(["read", "write"]);
     await setAgentTools(workspaceId, a.id, {
       deploymentIds: [deploymentId],
       installedSkillIds: [],
       toolkitIds: [],
-      sandboxIds: [sandbox.id],
     });
     const retainedGrant = await db.agentServer.findUniqueOrThrow({
       where: { agentId_deploymentId: { agentId: a.id, deploymentId } },
     });
-    expect(retainedGrant.allowedToolNames).toEqual(["read"]);
+    expect(retainedGrant.allowedToolNames).toEqual(["read", "write"]);
 
     await setAgentTools(workspaceId, a.id, {
       deploymentIds: [],
       installedSkillIds: [],
       toolkitIds: [],
-      sandboxIds: [sandbox.id],
     });
     const after = await db.agent.findUnique({
       where: { id: a.id },
@@ -1205,12 +1103,10 @@ describe("agents mutations", () => {
       data: { workspaceId: other.id, serverId: fserver.id },
     });
     const a = await createAgent(workspaceId, "Scope", { runtime: "pi-sdk" });
-    const sandbox = await createDockerSandbox("Scoped tools workspace");
     await setAgentTools(workspaceId, a.id, {
       deploymentIds: [deploymentId, fdep.id],
       installedSkillIds: [],
       toolkitIds: [],
-      sandboxIds: [sandbox.id],
     });
     const reread = await db.agent.findUnique({
       where: { id: a.id },

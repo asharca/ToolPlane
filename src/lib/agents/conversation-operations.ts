@@ -120,7 +120,7 @@ export async function rotateChannelConversation(params: {
   const liveAgent = await getAgentForRun(params.agentId, params.workspaceId);
   if (!liveAgent) throw new ConversationOperationError("notFound", 404);
   if (
-    liveAgent.runtimeKind !== "pi-sdk" ||
+    (liveAgent.runtimeKind !== "pi-sdk" && liveAgent.runtimeKind !== "omp") ||
     liveAgent.retiredAt ||
     conversation.legacyRevisionUnresolved ||
     !conversation.agentRevisionId
@@ -137,12 +137,7 @@ export async function rotateChannelConversation(params: {
       const work = await db.workSession.findUnique({
         where: { id: conversation.workSession.id },
       });
-      if (
-        work &&
-        ["queued", "running", "waiting_approval", "cancelling"].includes(
-          work.status,
-        )
-      )
+      if (work && ["queued", "running", "cancelling"].includes(work.status))
         throw new ConversationOperationError("busy");
     }
     const channel = await db.agentChannelConnection.findFirst({

@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   liveStatus: vi.fn(),
   revalidatePath: vi.fn(),
   redirect: vi.fn(),
+  fetch: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/current-user", () => ({
@@ -119,9 +120,17 @@ describe("catalog MCP deployment setup", () => {
     mocks.getCurrentUser.mockResolvedValue({ id: userId, email });
     mocks.liveStatus.mockReturnValue(null);
     mocks.startProcess.mockResolvedValue(undefined);
+    // Registry lookups are the only network a first install may perform.
+    mocks.fetch.mockImplementation(async (url: string) =>
+      url.startsWith("https://registry.npmjs.org/")
+        ? new Response(JSON.stringify({ "dist-tags": { latest: "1.2.3" } }))
+        : new Response("", { status: 404 }),
+    );
+    vi.stubGlobal("fetch", mocks.fetch);
   });
 
   afterAll(async () => {
+    vi.unstubAllGlobals();
     await db.workspace.deleteMany({ where: { id: workspaceId } });
     await db.server.deleteMany({
       where: { id: { in: [requiredServerId, automaticServerId] } },
@@ -139,6 +148,7 @@ describe("catalog MCP deployment setup", () => {
       },
     });
     expect(deployment.status).toBe("setup_required");
+    expect(deployment.sourceRef).toBe("required-mcp@1.2.3");
     expect(deployment.installCfg).toMatchObject({ env: { API_TOKEN: "" } });
     expect(deployment.installCfg).toHaveProperty("credentialEnvelope");
     expect(resolveMcpEnvironment(deployment.installCfg, workspaceId)).toEqual({
@@ -159,6 +169,9 @@ describe("catalog MCP deployment setup", () => {
       },
     });
     expect(deployment.status).toBe("provisioning");
+    expect(deployment.sourceRef).toBe(
+      "@modelcontextprotocol/server-memory@1.2.3",
+    );
     expect(mocks.startProcess).toHaveBeenCalledWith(
       deployment.id,
       expect.any(Object),
@@ -189,6 +202,7 @@ describe("catalog MCP deployment setup", () => {
       where: { workspaceId, serverId: null, name: "Detached required MCP" },
     });
     expect(clone.status).toBe("setup_required");
+    expect(clone.sourceRef).toBe("required-mcp@1.2.3");
     expect(clone.installCfg).toMatchObject({
       env: { API_TOKEN: "" },
       requiredEnv: ["API_TOKEN"],
@@ -201,6 +215,35 @@ describe("catalog MCP deployment setup", () => {
     expect(mocks.redirect).toHaveBeenCalledWith(
       `/app/${workspaceSlug}/mcp/${clone.id}?tab=variables`,
     );
+  });
+  it("does not create a catalog deployment when its version cannot be pinned", async () => {
+    const server = await db.server.create({
+      data: {
+        slug: `unpinnable-mcp-${stamp}`,
+        name: "Unpinnable MCP",
+        verifiedAt: new Date(),
+        installCfg: { source: "npm", ref: "unpinnable-mcp", env: [] },
+      },
+    });
+    try {
+      mocks.fetch.mockResolvedValue(new Response("", { status: 503 }));
+      mocks.redirect.mockImplementationOnce((url: string) => {
+        throw new Error(`redirect:${url}`);
+      });
+      await expect(
+        deployServerAction(deploymentForm(server.id)),
+      ).rejects.toThrow(
+        `redirect:/app/${workspaceSlug}/mcp?error=mcpVersionResolutionFailed`,
+      );
+      expect(
+        await db.deployment.count({
+          where: { workspaceId, serverId: server.id },
+        }),
+      ).toBe(0);
+      expect(mocks.startProcess).not.toHaveBeenCalled();
+    } finally {
+      await db.server.deleteMany({ where: { id: server.id } });
+    }
   });
   it("stops a running encrypted connection before persisting a rotation and revocation", async () => {
     const deployment = await db.deployment.create({

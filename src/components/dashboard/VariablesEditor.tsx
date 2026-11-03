@@ -275,7 +275,7 @@ function VariablesEditorForm({
                       ) : null}
                     </span>
                     {row.removed ? (
-                      <p className="flex h-9 items-center rounded-md border border-dashed border-border bg-background px-3 text-xs text-muted-foreground">
+                      <p className="flex h-9 items-center rounded-lg border border-dashed border-border bg-background px-3 text-xs text-muted-foreground">
                         {t("variableWillBeRemoved")}
                       </p>
                     ) : (

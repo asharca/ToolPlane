@@ -52,21 +52,29 @@ export async function removeDeploymentContainer(
   deploymentId: string,
 ): Promise<void> {
   const containerName = deploymentContainerName(deploymentId);
-  await trackRuntimeOperation(
-    () =>
-      new Promise<void>((resolve, reject) => {
+  await trackRuntimeOperation(async () => {
+    const deadline = Date.now() + DOCKER_COMMAND_TIMEOUT_MS;
+    for (;;) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) {
+        markRuntimeUncertain();
+        throw new Error(
+          `Docker runtime container cleanup timed out after ${DOCKER_COMMAND_TIMEOUT_MS}ms.`,
+        );
+      }
+      const removing = await new Promise<boolean>((resolve, reject) => {
         const child = spawn("docker", ["rm", "-f", containerName], {
           env: dockerEnv(),
           stdio: ["ignore", "pipe", "pipe"],
         });
         let stderr = "";
         let settled = false;
-        const finish = (error?: Error) => {
+        const finish = (error?: Error, stillRemoving = false) => {
           if (settled) return;
           settled = true;
           clearTimeout(timer);
           if (error) reject(error);
-          else resolve();
+          else resolve(stillRemoving);
         };
         const timer = setTimeout(() => {
           markRuntimeUncertain();
@@ -80,7 +88,7 @@ export async function removeDeploymentContainer(
               `Docker runtime container cleanup timed out after ${DOCKER_COMMAND_TIMEOUT_MS}ms.`,
             ),
           );
-        }, DOCKER_COMMAND_TIMEOUT_MS);
+        }, remaining);
 
         child.stderr?.on("data", (chunk: Buffer) => {
           if (stderr.length < MAX_DOCKER_ERROR_BYTES) {
@@ -101,11 +109,23 @@ export async function removeDeploymentContainer(
           );
           if (isMissingDockerContainer(error)) {
             finish();
+          } else if (
+            /removal of container .+ is already in progress/i.test(
+              error.message,
+            )
+          ) {
+            finish(undefined, true);
           } else {
             finish(error);
           }
         });
-      }),
-    true,
-  );
+      });
+      if (!removing) return;
+      // Docker --rm can still be deleting the container after its process exits.
+      // Do not delete its configuration volume until removal is confirmed.
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.min(100, Math.max(0, deadline - Date.now()))),
+      );
+    }
+  }, true);
 }

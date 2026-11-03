@@ -1,44 +1,28 @@
 import "server-only";
 import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
-import type { AgentTool, AgentToolSet } from "@/lib/agents/agent-tool";
+import type { AgentToolSet } from "@/lib/agents/agent-tool";
 import { McpToolNotDispatchedError } from "@/lib/remote-mcp/pinned-connection";
 import {
-  appendChatRunEvent,
   chatAccessWhere,
   lockChatRun,
   type ChatRunFence,
   type ChatRunScope,
 } from "./run-control";
+import { chatExecutionProgressChunk } from "./execution-stage";
 
 function json(value: unknown): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(value ?? null)) as Prisma.InputJsonValue;
-}
-function pause(signal: AbortSignal) {
-  return new Promise<void>((resolve, reject) => {
-    signal.throwIfAborted();
-    const finish = () => {
-      signal.removeEventListener("abort", abort);
-      resolve();
-    };
-    const timer = setTimeout(finish, 200);
-    const abort = () => {
-      clearTimeout(timer);
-      reject(signal.reason);
-    };
-    signal.addEventListener("abort", abort, { once: true });
-  });
 }
 
 type Scope = ChatRunScope & {
   fence: ChatRunFence;
   signal: AbortSignal;
-  requiresConfirmation?: (name: string, tool: AgentTool) => boolean;
   onUnknownOutcome?: (error: unknown) => void;
 };
 
-// Only explicitly classified read-only tools may opt out. Remote effects require
-// an online, user-bound decision; transport reconnects never grant permission.
+// Every tool invocation has a durable, single-use execution record. Authorization
+// is checked live; neither a reconnect nor a duplicate call may replay an effect.
 export function wrapChatTools(tools: AgentToolSet, scope: Scope): AgentToolSet {
   return Object.fromEntries(
     Object.entries(tools).map(([name, tool]) => [
@@ -51,72 +35,14 @@ export function wrapChatTools(tools: AgentToolSet, scope: Scope): AgentToolSet {
           const toolCallId = options?.toolCallId;
           if (!toolCallId)
             throw new Error("Durable tools require a stable toolCallId.");
-          const confirmed = scope.requiresConfirmation?.(name, tool) ?? true;
-          let confirmationId: string | undefined;
-          if (confirmed) {
-            const confirmation = await db.$transaction(async (tx) => {
-              await lockChatRun(tx, scope.turnId, scope.fence);
-              const existing = await tx.chatToolConfirmation.findUnique({
-                where: {
-                  turnId_toolCallId: { turnId: scope.turnId, toolCallId },
-                },
-              });
-              if (existing)
-                throw new Error(
-                  "Tool call already recorded; execution must not be replayed.",
-                );
-              return tx.chatToolConfirmation.create({
-                data: {
-                  turnId: scope.turnId,
-                  toolCallId,
-                  toolName: name,
-                  input: json(args),
-                  expiresAt: new Date(Date.now() + 840_000),
-                },
-              });
-            });
-            confirmationId = confirmation.id;
-            await appendChatRunEvent(scope, scope.fence, {
-              type: "data-chat-tool",
-              data: {
-                toolCallId,
-                toolName: name,
-                phase: "awaiting_user",
-                confirmationId,
-                input: args,
-              },
-            });
-            while (true) {
-              scope.signal.throwIfAborted();
-              const decision = await db.chatToolConfirmation.findUniqueOrThrow({
-                where: { id: confirmationId },
-              });
-              if (decision.status === "approved") break;
-              if (
-                decision.status === "awaiting_user" &&
-                decision.expiresAt &&
-                decision.expiresAt <= new Date()
-              ) {
-                await db.chatToolConfirmation.updateMany({
-                  where: { id: confirmationId, status: "awaiting_user" },
-                  data: { status: "rejected", resolvedAt: new Date() },
-                });
-                throw new Error(
-                  "Tool execution was not approved before it expired.",
-                );
-              }
-              if (decision.status !== "awaiting_user")
-                throw new Error("Tool execution was not approved.");
-              await pause(scope.signal);
-            }
-          }
-          scope.signal.throwIfAborted();
           // Fence, authorization and durable execution claim commit before invocation.
-          await db.$transaction(async (tx) => {
+          const confirmation = await db.$transaction(async (tx) => {
             await lockChatRun(tx, scope.turnId, scope.fence);
+            scope.signal.throwIfAborted();
             const authorized = await tx.chatTurn.findFirst({
               where: {
                 id: scope.turnId,
+                threadId: scope.threadId,
                 actorUserId: scope.userId,
                 stopRequestedAt: null,
                 thread: chatAccessWhere(scope.userId, scope.workspaceId),
@@ -124,32 +50,25 @@ export function wrapChatTools(tools: AgentToolSet, scope: Scope): AgentToolSet {
             });
             if (!authorized)
               throw new Error("Tool execution authority was revoked.");
-            if (confirmationId) {
-              const claim = await tx.chatToolConfirmation.updateMany({
-                where: {
-                  id: confirmationId,
-                  status: "approved",
-                  approverUserId: scope.userId,
-                },
-                data: { status: "executing", executionStartedAt: new Date() },
-              });
-              if (claim.count !== 1)
-                throw new Error(
-                  "Tool execution was already claimed or not approved by this user.",
-                );
-            } else if (
-              await tx.chatRunEvent.findFirst({
-                where: {
-                  turnId: scope.turnId,
-                  payload: { path: ["data", "toolCallId"], equals: toolCallId },
-                },
-                select: { id: true },
-              })
-            ) {
+            const existing = await tx.chatToolConfirmation.findUnique({
+              where: {
+                turnId_toolCallId: { turnId: scope.turnId, toolCallId },
+              },
+            });
+            if (existing)
               throw new Error(
                 "Tool call already recorded; execution must not be replayed.",
               );
-            }
+            const claim = await tx.chatToolConfirmation.create({
+              data: {
+                turnId: scope.turnId,
+                toolCallId,
+                toolName: name,
+                input: json(args),
+                status: "executing",
+                executionStartedAt: new Date(),
+              },
+            });
             await tx.chatRunEvent.create({
               data: {
                 turnId: scope.turnId,
@@ -162,27 +81,42 @@ export function wrapChatTools(tools: AgentToolSet, scope: Scope): AgentToolSet {
                     toolName: name,
                     input: json(args),
                     phase: "tool_calling",
-                    ...(confirmationId ? { confirmationId } : {}),
+                    confirmationId: claim.id,
                   },
                 },
               },
             });
+            const sequence = authorized.lastEventSequence + 2;
+            await tx.chatRunEvent.create({
+              data: {
+                turnId: scope.turnId,
+                generation: scope.fence.generation,
+                sequence,
+                payload: chatExecutionProgressChunk(
+                  scope.turnId,
+                  "tool-running",
+                  sequence,
+                ),
+              },
+            });
+            return claim;
           });
           try {
+            if (scope.signal.aborted)
+              throw new McpToolNotDispatchedError(scope.signal.reason);
             // Await settlement even after abort: an HTTP cancellation is not evidence
             // that a remote mutation was rolled back.
             const result = await tool.execute(args, ...rest);
             await db.$transaction(async (tx) => {
               const turn = await lockChatRun(tx, scope.turnId, scope.fence);
-              if (confirmationId)
-                await tx.chatToolConfirmation.update({
-                  where: { id: confirmationId },
-                  data: {
-                    status: "succeeded",
-                    result: result == null ? Prisma.JsonNull : json(result),
-                    executionCompletedAt: new Date(),
-                  },
-                });
+              await tx.chatToolConfirmation.update({
+                where: { id: confirmation.id },
+                data: {
+                  status: "succeeded",
+                  result: result == null ? Prisma.JsonNull : json(result),
+                  executionCompletedAt: new Date(),
+                },
+              });
               await tx.chatRunEvent.create({
                 data: {
                   turnId: scope.turnId,
@@ -208,20 +142,19 @@ export function wrapChatTools(tools: AgentToolSet, scope: Scope): AgentToolSet {
             const phase = notDispatched ? "failed" : "execution_unknown";
             await db.$transaction(async (tx) => {
               const turn = await lockChatRun(tx, scope.turnId, scope.fence);
-              if (confirmationId)
-                await tx.chatToolConfirmation.updateMany({
-                  where: { id: confirmationId, status: "executing" },
-                  data: {
-                    status: phase,
-                    ...(notDispatched
-                      ? { executionCompletedAt: new Date() }
-                      : {}),
-                    error:
-                      error instanceof Error
-                        ? error.message
-                        : "Remote outcome unknown",
-                  },
-                });
+              await tx.chatToolConfirmation.updateMany({
+                where: { id: confirmation.id, status: "executing" },
+                data: {
+                  status: phase,
+                  ...(notDispatched
+                    ? { executionCompletedAt: new Date() }
+                    : {}),
+                  error:
+                    error instanceof Error
+                      ? error.message
+                      : "Remote outcome unknown",
+                },
+              });
               await tx.chatRunEvent.create({
                 data: {
                   turnId: scope.turnId,

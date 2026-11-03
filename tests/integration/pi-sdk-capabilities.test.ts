@@ -76,7 +76,11 @@ describe("native Pi capability namespaces", () => {
       failure = error;
     }
     expect(failure).toBeInstanceOf(PiCapabilityConflictError);
-    expect(failure).toMatchObject({ code: "PI_CAPABILITY_CONFLICT" });
+    // The name lets the settings dialog tell the user which duplicate to remove.
+    expect(failure).toMatchObject({
+      code: "PI_CAPABILITY_CONFLICT",
+      conflict: "skill:repeated-native-skill",
+    });
   });
   it("accepts computed native command names without rewriting extensions", async () => {
     const { loaded, enforceNativeNamespaces } = await load([

@@ -5,6 +5,7 @@ import {
   CenterMorphModalContent,
 } from "@/components/motion/center-morph-modal";
 import { Button } from "@/components/motion/button";
+import { DialogBody, DialogHeader } from "@/components/dashboard/dialog";
 
 import { useTranslations } from "next-intl";
 import { useState } from "react";
@@ -204,39 +205,32 @@ export function ConnectDialog({
       <CenterMorphModalContent
         ariaLabel={selectedLabel ?? t("installServer")}
         closeButtonLabel={t("close")}
-        className="w-full max-w-xl p-6"
+        className="flex max-h-[calc(100dvh-2rem)] w-full max-w-xl flex-col"
       >
-        <div>
-          <div className="mb-4 flex items-center pr-10">
-            <div className="flex items-center gap-2">
-              {selected ? (
-                <Button
-                  type="button"
-                  onClick={() => setSelected(null)}
-                  variant="ghost"
-                  size="md"
-                  className="inline-flex items-center"
-                >
-                  <ArrowLeft className="size-3.5" />
-                  {t("changeClient")}
-                </Button>
-              ) : null}
-              <h2 className="text-base font-semibold text-foreground">
-                {selectedLabel ?? t("installServer")}
-              </h2>
-            </div>
-          </div>
-
+        <DialogHeader title={selectedLabel ?? t("installServer")} />
+        <DialogBody className="pt-0">
+          {selected ? (
+            <Button
+              type="button"
+              onClick={() => setSelected(null)}
+              variant="ghost"
+              size="md"
+              className="-ml-3 inline-flex items-center"
+            >
+              <ArrowLeft className="size-3.5" />
+              {t("changeClient")}
+            </Button>
+          ) : null}
           {selected ? (
             <div className="space-y-3">
-              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+              <p className="text-sm font-medium text-foreground">
                 {t("howToInstall")}
               </p>
               <p className="text-sm text-muted-foreground">
                 {t(selected.howToKey)}
               </p>
               <div className="relative">
-                <pre className="overflow-x-auto rounded-md border border-border bg-muted/50 p-3 pr-12 font-mono text-xs text-foreground">
+                <pre className="overflow-x-auto rounded-xl border border-border bg-muted/50 p-3 pr-12 font-mono text-xs text-foreground">
                   {selected.snippet(key, endpoint)}
                 </pre>
                 <Button
@@ -274,7 +268,7 @@ export function ConnectDialog({
               ))}
             </div>
           )}
-        </div>
+        </DialogBody>
       </CenterMorphModalContent>
     </CenterMorphModal>
   );

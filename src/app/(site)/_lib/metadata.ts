@@ -1,9 +1,4 @@
 import type { Metadata } from "next";
-import { getLocale } from "next-intl/server";
-import {
-  getMarketingContent,
-  type MarketingCapability,
-} from "@/lib/marketing/content";
 import { SITE } from "@/lib/site";
 import { runtimeEnv } from "@/lib/runtime-env";
 
@@ -60,17 +55,4 @@ export function siteMetadata({
       ? { index: true, follow: true }
       : { index: false, follow: true, noarchive: true },
   };
-}
-
-export async function capabilityMetadata(
-  capability: MarketingCapability,
-  path: string,
-): Promise<Metadata> {
-  const locale = await getLocale();
-  const page = getMarketingContent(locale).capabilities[capability];
-  return siteMetadata({
-    title: `${page.eyebrow} | ${SITE.name}`,
-    description: page.description,
-    path,
-  });
 }

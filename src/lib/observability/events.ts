@@ -2,7 +2,7 @@ import "server-only";
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { getLogContext, withLogContext, type LogContext } from "./context";
-import { redactText, sanitizeLog } from "./redaction";
+import { PROTOCOL_BODY_DEPTH, redactText, sanitizeLog } from "./redaction";
 import { getLogSettings } from "./settings";
 import type { PayloadPolicy } from "./payload";
 import { version } from "../../../package.json";
@@ -153,6 +153,7 @@ async function persistEvent(entry: LogEntry): Promise<void> {
   const {
     secrets: contextSecrets,
     suppressPayload: contextSuppressPayload,
+    tokenId: contextTokenId,
     ...context
   } = currentContext;
   const {
@@ -164,19 +165,28 @@ async function persistEvent(entry: LogEntry): Promise<void> {
     payloadPolicy = "metadata-only",
     secrets: extraSecrets,
     suppressPayload,
+    tokenId: entryTokenId,
     ...fields
   } = entry;
   const secrets = [...(contextSecrets ?? []), ...(extraSecrets ?? [])];
-  const sensitive = Boolean(
-    contextSuppressPayload ||
-      suppressPayload ||
-      payloadPolicy === "request-response" ||
-      payloadPolicy === "agent-content" ||
-      payloadPolicy === "forbidden" ||
-      entry.domain === "agent" ||
-      context.agentId ||
-      entry.agentId,
-  );
+  // MCP protocol records follow the workspace-visible body policy, so their errors stay readable too.
+  const mcpProtocol =
+    entry.domain === "mcp" &&
+    ["gateway.request", "mcp.rpc", "mcp.internal"].includes(entry.eventName) &&
+    !(contextSuppressPayload || suppressPayload) &&
+    payloadPolicy !== "forbidden";
+  const sensitive =
+    !mcpProtocol &&
+    Boolean(
+      contextSuppressPayload ||
+        suppressPayload ||
+        payloadPolicy === "request-response" ||
+        payloadPolicy === "agent-content" ||
+        payloadPolicy === "forbidden" ||
+        entry.domain === "agent" ||
+        context.agentId ||
+        entry.agentId,
+    );
   const occurredAt = entry.occurredAt ?? new Date();
   const outcome = fields.outcome ?? (error ? errorOutcome(error) : "success");
   const errorType = sensitive
@@ -224,6 +234,7 @@ async function persistEvent(entry: LogEntry): Promise<void> {
         ),
       )
     : undefined;
+  const tokenId = entryTokenId ?? contextTokenId;
   const attributeData = validatedA2a
     ? { ...agentTelemetry(attributes), a2a: validatedA2a }
     : sensitive
@@ -234,6 +245,17 @@ async function persistEvent(entry: LogEntry): Promise<void> {
     secrets,
     4096,
   ).data;
+  // Verified database identity, not a credential. Keep generic token-key redaction strict.
+  if (
+    tokenId &&
+    safeAttributes &&
+    typeof safeAttributes === "object" &&
+    "data" in safeAttributes
+  ) {
+    const data = safeAttributes.data;
+    if (data && typeof data === "object" && !Array.isArray(data))
+      Object.assign(data, { tokenId: tokenId.slice(0, 200) });
+  }
   const fallback = {
     ...safe,
     occurredAt: occurredAt.toISOString(),
@@ -272,13 +294,18 @@ async function persistEvent(entry: LogEntry): Promise<void> {
                   : null;
           if (resource) safe.workspaceId = resource.workspaceId;
         }
+        // MCP protocol bodies and Agent tool calls (input/output) are workspace-visible, including
+        // calls inside Agent sessions; only explicit suppression (A2A, sandbox OAuth, approvals) or a
+        // forbidden policy omits them. The persisted marker keeps its historical `workspaceMcpPayload` key.
+        const agentToolCall =
+          entry.domain === "agent" &&
+          entry.eventName === "sandbox.tool" &&
+          !(contextSuppressPayload || suppressPayload) &&
+          payloadPolicy !== "forbidden";
         const workspaceMcpPayload =
-          !sensitive &&
-          entry.domain === "mcp" &&
-          (entry.eventName === "gateway.request" ||
-            entry.eventName === "mcp.rpc") &&
           typeof safe.workspaceId === "string" &&
-          typeof safe.deploymentId === "string";
+          ((mcpProtocol && typeof safe.deploymentId === "string") ||
+            agentToolCall);
         const capture =
           workspaceMcpPayload ||
           (!(contextSuppressPayload || suppressPayload) &&
@@ -308,7 +335,9 @@ async function persistEvent(entry: LogEntry): Promise<void> {
           },
           secrets,
           32_768,
-          payloadPolicy === "request-response" ? 16 : 8,
+          payloadPolicy === "request-response" || workspaceMcpPayload
+            ? PROTOCOL_BODY_DEPTH
+            : 8,
         );
         const hasDetail = Boolean(error) || (capture && detail !== undefined);
         await tx.logEvent.create({
@@ -332,9 +361,8 @@ async function persistEvent(entry: LogEntry): Promise<void> {
                           Math.min(
                             settings.detailDays,
                             settings.eventDays ?? settings.detailDays,
-                            workspaceMcpPayload ||
-                              payloadPolicy === "request-response" ||
-                              payloadPolicy === "agent-content"
+                            payloadPolicy === "agent-content" &&
+                              !workspaceMcpPayload
                               ? 1
                               : settings.detailDays,
                           ) *

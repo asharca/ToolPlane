@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 import { getTranslations } from "next-intl/server";
@@ -13,7 +12,6 @@ import {
 import { AgentsBrowser } from "@/components/dashboard/agents/AgentsBrowser";
 import { SettingsModal } from "@/components/dashboard/SettingsModal";
 import { originFromHeaders } from "@/lib/http/origin";
-import { listAgentMarketListings } from "@/lib/agents/market";
 
 export const dynamic = "force-dynamic";
 
@@ -37,18 +35,12 @@ export default async function AgentsPage({
   if (!ws) redirect("/app");
   const agentControlEndpoint = `${originFromHeaders(await headers())}/api/v1/workspaces/${encodeURIComponent(slug)}/agents/mcp`;
 
-  const [agents, providers, deployments, skills, marketAgents] =
-    await Promise.all([
-      listAgents(ws.id),
-      listProviders(ws.id),
-      listAgentDeploymentOptions(ws.id),
-      listAgentSkillOptions(ws.id),
-      listAgentMarketListings({
-        pageSize: 12,
-        sort: "popular",
-        workspaceId: ws.id,
-      }),
-    ]);
+  const [agents, providers, deployments, skills] = await Promise.all([
+    listAgents(ws.id),
+    listProviders(ws.id),
+    listAgentDeploymentOptions(ws.id),
+    listAgentSkillOptions(ws.id),
+  ]);
   const defaultModelProviderId = ws.defaultModelProviderId;
   const defaultModelId = ws.defaultModel;
   const defaultModel =
@@ -68,7 +60,7 @@ export default async function AgentsPage({
       fallbackHref={`/app/${slug}/work`}
       compact={create === "1"}
     >
-      <div className="h-full overflow-y-auto">
+      <div className="h-full min-h-0">
         <AgentsBrowser
           slug={slug}
           workspaceId={ws.id}
@@ -90,24 +82,6 @@ export default async function AgentsPage({
               a.sandboxes[0]?.sandbox.kind === "docker" &&
               a.sandboxes[0]?.sandbox.network !== "none",
             runtimeStatus: null,
-          }))}
-          marketAgents={marketAgents.items.map((agent) => ({
-            id: agent.id,
-            releaseId: agent.latestReleaseId,
-            idempotencyKey: randomUUID(),
-            name: agent.name,
-            summary: agent.summary,
-            iconUrl: agent.iconUrl,
-            publisher:
-              agent.author ?? agent.workspaceName ?? agent.workspaceSlug,
-            tags: [
-              ...agent.categories.map((category) => category.name),
-              ...agent.tags,
-            ].slice(0, 3),
-            runtimes: agent.releaseSummary.runtimes,
-            resourceCount: agent.releaseSummary.resourceCount,
-            sandboxCount: agent.releaseSummary.agentCount,
-            installCount: agent.installCount,
           }))}
           createOptions={{
             providers: providers.map((provider) => ({

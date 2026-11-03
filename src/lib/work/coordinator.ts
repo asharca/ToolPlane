@@ -1,4 +1,3 @@
-import { resolvePiSessionPackages } from "@/lib/agents/pi-session-packages";
 import { systemLog } from "@/lib/observability/system";
 import "server-only";
 import {
@@ -9,17 +8,11 @@ import { withLogContext, enrichLogContext } from "@/lib/observability/context";
 import { recordEvent } from "@/lib/observability/events";
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
-import { normalizeReasoningEffort } from "@/lib/agents/constants";
 import { generateWorkSessionTitle } from "@/lib/agents/conversation-naming";
 import { activeConversationMessages } from "@/lib/agents/conversation-context";
-import { getAgentForRun } from "@/lib/agents/queries";
-import { resolvePinnedAgent } from "@/lib/agents/revisions";
 import { persistAgentPromptInvocation } from "@/lib/agents/prompt-invocation";
-import {
-  resolveAgentTools,
-  resolveAgentPiPackages,
-} from "@/lib/agents/resolve";
 import type { SandboxRuntimeActivity } from "@/lib/agents/sandbox-runtime";
+import { nativeUiProjection } from "@/lib/agents/execution/native-ui";
 import {
   COMMAND_RESULT_PART,
   RUNTIME_COMMANDS_PART,
@@ -32,16 +25,22 @@ import type {
   RuntimeCommandResult,
   RuntimeUsage,
 } from "@/lib/agents/runtime-commands";
-import { runDedicatedSandboxTurn } from "@/lib/agents/sandbox-turn";
+import {
+  runAgentEntry,
+  agentEntryResult,
+  agentEntryRuntimeParts,
+} from "@/lib/agents/execution/entries";
 import type { ContextUsageSnapshot } from "@/lib/context-usage";
+import {
+  agentMessageModelOverride,
+  AGENT_TURN_MODEL_PART,
+} from "@/lib/agents/turn-model";
 import { deploymentLabel } from "@/lib/workspace/deployment-label";
 import {
-  assertWorkPiPackageSnapshot,
-  normalizeWorkDirectory,
-} from "./sessions";
-import {
   finishWorkOutput,
+  observeWorkRuntime,
   publishWorkActivity,
+  publishWorkExecutionStage,
   publishWorkOutput,
   registerWorkRun,
   startWorkOutput,
@@ -54,12 +53,7 @@ const MAX_REASONING_CHARACTERS = 40_000;
 type RuntimeSnapshot = {
   providerId?: string | null;
   model?: string | null;
-  systemPrompt?: string | null;
-  agentMaxSteps?: number;
   deploymentIds?: string[];
-  installedSkillIds?: string[];
-  knowledgeBaseIds?: string[];
-  workingDirectory?: string;
 };
 
 type RuntimeMessage = {
@@ -88,6 +82,7 @@ type WorkToolPart = {
   output?: unknown;
   isError: boolean;
   status: "running" | "completed" | "failed" | "cancelled";
+  source?: SandboxRuntimeActivity["source"];
 };
 
 type WorkTracePart =
@@ -96,6 +91,7 @@ type WorkTracePart =
       type: "reasoning";
       text: string;
       state: "done";
+      source?: SandboxRuntimeActivity["source"];
     }
   | {
       type: "work-runtime";
@@ -149,18 +145,6 @@ function abortError(signal: AbortSignal) {
   return signal.reason instanceof Error
     ? signal.reason
     : new Error("Work cancelled");
-}
-
-function workSystemPrompt(workingDirectory: string): string {
-  const displayPath =
-    workingDirectory === "." ? "/workspace" : `/workspace/${workingDirectory}`;
-  return [
-    "You are working in a durable multi-turn session inside an authorized sandbox.",
-    `Your current working directory is ${displayPath}. Sandbox command and file tool paths are resolved relative to it.`,
-    "Use the available tools to perform and verify the work. Do not merely describe commands the user should run.",
-    "When the current request is satisfied and verified, return a concise result. Ask one concrete question only when user input is required.",
-    "Returning a final response completes only the current turn. The Work session remains available for later messages.",
-  ].join("\n\n");
 }
 
 async function appendAssistantResult(
@@ -247,7 +231,12 @@ async function executeWork(workSessionId: string) {
   registerWorkRun(work.id, controller);
   const runStartedAt = Date.now();
   const initialSnapshot = snapshot(work.runtimeSnapshot);
-  const initialModelName = initialSnapshot.model ?? undefined;
+  const turnOverride = agentMessageModelOverride(
+    work.conversation.messages.findLast((message) => message.role === "user")
+      ?.parts,
+  );
+  const initialModelName =
+    turnOverride?.model ?? initialSnapshot.model ?? undefined;
   startWorkOutput(work.id, {
     startedAt: runStartedAt,
     runtimeKind: work.runtimeKind,
@@ -265,6 +254,7 @@ async function executeWork(workSessionId: string) {
   let reasoningText = "";
   let activeReasoningText = "";
   let activeReasoningId: string | null = null;
+  let activeReasoningSource: SandboxRuntimeActivity["source"];
   let reasoningSequence = 0;
   let reasoningActive = false;
   let runtimeStatus: "completed" | "failed" | "cancelled" = "completed";
@@ -274,7 +264,41 @@ async function executeWork(workSessionId: string) {
   let usage: RuntimeUsage | undefined;
   let executedCommand: ParsedRuntimeCommand | null = null;
   let commandResult: RuntimeCommandResult | undefined;
+  const previousHookIds =
+    work.runtimeKind === "omp"
+      ? new Set(
+          nativeUiProjection(work.uiProjection).hooks.map((hook) => hook.id),
+        )
+      : null;
+  const hookMetadata = async (): Promise<Prisma.InputJsonValue[]> => {
+    if (!previousHookIds) return [];
+    const current = await db.workSession.findFirst({
+      where: {
+        id: work.id,
+        workspaceId: work.workspaceId,
+        agentId: work.agentId,
+        conversationId: work.conversationId,
+      },
+      select: { uiProjection: true },
+    });
+    return nativeUiProjection(current?.uiProjection)
+      .hooks.filter((hook) => !previousHookIds.has(hook.id))
+      .map((hook) => ({ type: "hook-activity", data: hook }));
+  };
   const runtimeMetadata = (): Prisma.InputJsonValue[] => [
+    ...(initialModelName &&
+    (turnOverride?.providerId ?? initialSnapshot.providerId)
+      ? [
+          {
+            type: AGENT_TURN_MODEL_PART,
+            data: {
+              providerId:
+                turnOverride?.providerId ?? initialSnapshot.providerId,
+              model: initialModelName,
+            },
+          } as Prisma.InputJsonValue,
+        ]
+      : []),
     ...(commands
       ? [
           {
@@ -314,7 +338,13 @@ async function executeWork(workSessionId: string) {
     reasoningActive = false;
     const text = activeReasoningText;
     const id = activeReasoningId ?? `reasoning:${++reasoningSequence}`;
-    if (text) trace.push({ type: "reasoning", text, state: "done" });
+    if (text)
+      trace.push({
+        type: "reasoning",
+        text,
+        state: "done",
+        ...(activeReasoningSource ? { source: activeReasoningSource } : {}),
+      });
     activeReasoningText = "";
     activeReasoningId = null;
     publishWorkActivity(work.id, {
@@ -322,10 +352,15 @@ async function executeWork(workSessionId: string) {
       type: "reasoning",
       status: "completed",
       ...(text ? { text } : {}),
+      ...(activeReasoningSource ? { source: activeReasoningSource } : {}),
     });
+    activeReasoningSource = undefined;
   };
   const onActivity = (activity: SandboxRuntimeActivity) => {
     if (activity.type === "reasoning") {
+      if (activeReasoningSource?.subagentId !== activity.source?.subagentId)
+        finishReasoning();
+      activeReasoningSource = activity.source;
       if (!reasoningActive && activity.status === "running") {
         reasoningActive = true;
         activeReasoningId = `reasoning:${++reasoningSequence}`;
@@ -344,18 +379,26 @@ async function executeWork(workSessionId: string) {
           type: "reasoning",
           status: "running",
           ...(activeReasoningText ? { text: activeReasoningText } : {}),
+          ...(activity.source ? { source: activity.source } : {}),
         });
       } else if (reasoningActive || activeReasoningText) {
         reasoningActive = true;
         finishReasoning();
       } else {
         const text = activity.delta?.slice(0, MAX_REASONING_CHARACTERS) ?? "";
-        if (text) trace.push({ type: "reasoning", text, state: "done" });
+        if (text)
+          trace.push({
+            type: "reasoning",
+            text,
+            state: "done",
+            ...(activity.source ? { source: activity.source } : {}),
+          });
         publishWorkActivity(work.id, {
           id: `reasoning:${++reasoningSequence}`,
           type: "reasoning",
           status: "completed",
           ...(text ? { text } : {}),
+          ...(activity.source ? { source: activity.source } : {}),
         });
       }
       return;
@@ -407,6 +450,9 @@ async function executeWork(workSessionId: string) {
       ...(activity.output === undefined ? {} : { output: activity.output }),
       isError: activity.status === "failed" || activity.isError === true,
       status: activity.status,
+      ...((activity.source ?? previous?.source)
+        ? { source: activity.source ?? previous?.source }
+        : {}),
     };
     const next = previous ? Object.assign(previous, part) : part;
     if (!previous) {
@@ -419,6 +465,7 @@ async function executeWork(workSessionId: string) {
       status: activity.status,
       toolCallId: activity.toolCallId,
       toolName: next.toolName,
+      ...(next.source ? { source: next.source } : {}),
       ...(next.deploymentName ? { deploymentName: next.deploymentName } : {}),
       ...(next.originalToolName
         ? { originalToolName: next.originalToolName }
@@ -449,6 +496,7 @@ async function executeWork(workSessionId: string) {
         status,
         toolCallId,
         toolName: settled.toolName,
+        ...(settled.source ? { source: settled.source } : {}),
         ...(settled.deploymentName
           ? { deploymentName: settled.deploymentName }
           : {}),
@@ -482,7 +530,7 @@ async function executeWork(workSessionId: string) {
     });
     if (!stillRunning) return;
     if (
-      !["pi-sdk"].includes(work.runtimeKind) ||
+      !["pi-sdk", "omp"].includes(work.runtimeKind) ||
       work.legacyRevisionUnresolved ||
       !work.agentRevisionId ||
       work.conversation.legacyRevisionUnresolved ||
@@ -495,70 +543,11 @@ async function executeWork(workSessionId: string) {
     if (!work.sandbox) {
       throw new Error("Work sandbox is unavailable.");
     }
-    const liveAgent = await getAgentForRun(work.agentId, work.workspaceId);
-    if (!liveAgent) throw new Error("Work Agent no longer exists.");
-    const agent = await resolvePinnedAgent(liveAgent, work.agentRevisionId, {
-      workspaceId: work.workspaceId,
-    });
-    if (agent.runtimeKind !== work.runtimeKind) {
-      throw new Error(
-        "The Agent runtime changed after this Work session was created. Start a new Work session.",
-      );
-    }
-    const saved = snapshot(work.runtimeSnapshot);
-    const piSession =
-      work.runtimeKind === "pi-sdk"
-        ? await resolvePiSessionPackages({
-            workspaceId: work.workspaceId,
-            agentId: work.agentId,
-            conversationId: work.conversationId,
-          })
-        : undefined;
-    const piPackages = piSession?.packages ?? resolveAgentPiPackages(agent);
-    assertWorkPiPackageSnapshot(
-      work.runtimeKind,
-      work.runtimeSnapshot,
-      piPackages,
-    );
-    const provider = agent.provider;
-    const model = agent.model;
-    if (!provider || !model)
-      throw new Error("Work Agent has no configured model.");
-    const workingDirectory =
-      normalizeWorkDirectory(saved.workingDirectory ?? ".") ?? ".";
-
-    const resolved = resolveAgentTools(
-      piSession ? { ...agent, piPackages: [] } : agent,
-      work.sandboxId,
-    );
-    if (piSession) resolved.deploymentIds = piSession.deploymentIds;
-    const deploymentIds = saved.deploymentIds
-      ? new Set(saved.deploymentIds)
-      : null;
-    const skillIds = saved.installedSkillIds
-      ? new Set(saved.installedSkillIds)
-      : null;
-    const knowledgeBaseIds = saved.knowledgeBaseIds
-      ? new Set(saved.knowledgeBaseIds)
-      : null;
-    resolved.deploymentIds = resolved.deploymentIds.filter(
-      (id) =>
-        resolved.sandboxDeploymentIds.includes(id) ||
-        Boolean(piSession?.packageDeploymentIds.includes(id)) ||
-        !deploymentIds ||
-        deploymentIds.has(id),
-    );
-    resolved.skills = resolved.skills.filter(
-      (skill) => !skillIds || skillIds.has((skill as { id?: string }).id ?? ""),
-    );
-    // Delegation is exposed only through the pinned SDK collaboration protocol.
-    resolved.subAgents = [];
-    if (resolved.knowledgeBases && knowledgeBaseIds) {
-      resolved.knowledgeBases = resolved.knowledgeBases.filter((link) =>
-        knowledgeBaseIds.has(link.knowledgeBase.id),
-      );
-    }
-    resolvedDeploymentIds = resolved.deploymentIds;
+    if (!work.a2aActorId)
+      throw new Error("Work execution identity is unavailable.");
+    // Labels are display metadata, not authority. The admitted worker resolves and
+    // intersects the pinned Work resources with current permissions before execution.
+    resolvedDeploymentIds = snapshot(work.runtimeSnapshot).deploymentIds ?? [];
     if (resolvedDeploymentIds.length) {
       const deployments = await db.deployment.findMany({
         where: {
@@ -599,47 +588,18 @@ async function executeWork(workSessionId: string) {
               .map((part) => part.text ?? "")
               .join("\n")
           : "";
-      const command = parseRuntimeCommand(commandText, work.runtimeKind);
-      executedCommand = command;
-      const system = [agent.systemPrompt, workSystemPrompt(workingDirectory)]
-        .filter(Boolean)
-        .join("\n\n---\n\n");
-      response = await runDedicatedSandboxTurn({
-        agent,
-        conversationId: work.conversationId,
-        systemPrompt: system,
-        messages: command ? runtimeMessages.slice(0, -1) : runtimeMessages,
-        ...(command ? { command: commandText } : {}),
-        runtimeSessionId: work.conversationId,
-        skills: resolved.skills,
-        piPackages,
-        deploymentIds: resolved.deploymentIds.filter(
-          (id) => !resolved.sandboxDeploymentIds.includes(id),
-        ),
-        workingDirectory,
-        reasoningEffort:
-          normalizeReasoningEffort(work.conversation.reasoningEffort) ??
-          undefined,
-        signal: controller.signal,
-        onPromptInvocation: async (invocation) => {
-          const message = runtimeMessages.findLast(
-            (entry) => entry.role === "user",
-          );
-          if (!message?.id)
-            throw new Error("Prompt invocation user message is unavailable.");
-          await persistAgentPromptInvocation({
-            conversationId: work.conversationId,
-            messageId: message.id,
-            invocation,
-          });
-        },
+      executedCommand = parseRuntimeCommand(commandText, work.runtimeKind);
+      if (!last?.id || last.role !== "user")
+        throw new Error("Work user message is unavailable.");
+      const stopObserving = observeWorkRuntime(work.id, {
         onTextDelta: (delta) => {
           finishReasoning();
           publishWorkOutput(work.id, delta);
         },
         onActivity,
-        onContextUsage: (usage) => {
-          contextUsage = usage;
+        onExecutionStage: (stage) => publishWorkExecutionStage(work.id, stage),
+        onContextUsage: (next) => {
+          contextUsage = next;
         },
         onCommands: (next) => {
           commands = next;
@@ -651,6 +611,40 @@ async function executeWork(workSessionId: string) {
           commandResult = next;
         },
       });
+      try {
+        const result = await runAgentEntry({
+          kind: "work",
+          sourceId: work.id,
+          workspaceId: work.workspaceId,
+          agentId: work.agentId,
+          actorId: work.a2aActorId,
+          messageId: last.id,
+          text: commandText,
+          modelOverride: turnOverride,
+          signal: controller.signal,
+          onActivity: (activity) => {
+            // Native activities already stream from the leased executor above.
+            if (activity.toolCallId?.startsWith("platform-child:"))
+              onActivity(activity);
+          },
+          onPromptInvocation: (invocation) =>
+            persistAgentPromptInvocation({
+              conversationId: work.conversationId,
+              messageId: last.id,
+              invocation,
+            }),
+        });
+        response = agentEntryResult(result.task, result.path);
+        // Durable metadata also covers a task that completed before this observer attached.
+        for (const part of agentEntryRuntimeParts(result.task)) {
+          if (part.type === RUNTIME_COMMANDS_PART)
+            commands = part.data.commands;
+          else if (part.type === RUNTIME_USAGE_PART) usage = part.data;
+          else if (part.type === COMMAND_RESULT_PART) commandResult = part.data;
+        }
+      } finally {
+        stopObserving();
+      }
     }
     if (controller.signal.aborted) throw abortError(controller.signal);
     const fallbackText = response.trim();
@@ -669,7 +663,7 @@ async function executeWork(workSessionId: string) {
       traceParts(),
       contextUsage,
       turnTiming(),
-      runtimeMetadata(),
+      [...runtimeMetadata(), ...(await hookMetadata())],
     );
     tracePersisted = true;
     if (!executedCommand && !pendingTitles.has(work.id)) {
@@ -720,7 +714,7 @@ async function executeWork(workSessionId: string) {
           traceParts(),
           contextUsage,
           turnTiming(),
-          runtimeMetadata(),
+          [...runtimeMetadata(), ...(await hookMetadata())],
         );
         tracePersisted = true;
       } catch (traceError) {
@@ -735,7 +729,7 @@ async function executeWork(workSessionId: string) {
       await db.workSession.updateMany({
         where: {
           id: workSessionId,
-          status: { in: ["running", "waiting_approval"] },
+          status: { in: ["running"] },
         },
         data: {
           status: "failed",
@@ -787,7 +781,7 @@ async function claimNextWork(): Promise<string | null> {
     const work = await db.workSession.findFirst({
       where: {
         status: "queued",
-        runtimeKind: "pi-sdk",
+        runtimeKind: { in: ["pi-sdk", "omp"] },
         agentRevisionId: { not: null },
         legacyRevisionUnresolved: false,
         conversation: {
@@ -847,20 +841,14 @@ export async function startWorkCoordinator() {
   if (!state.reconciled) {
     const now = new Date();
     await db.$transaction(async (tx) => {
-      await tx.workApproval.updateMany({
-        where: {
-          status: "pending",
-          workSession: { status: "waiting_approval" },
-        },
-        data: { status: "expired", resolvedAt: now },
-      });
       await tx.workSession.updateMany({
-        where: { status: { in: ["running", "waiting_approval"] } },
+        where: { status: { in: ["running"] } },
         data: {
           status: "failed",
           error:
             "Work was interrupted by a server restart. Review the transcript, then resume it.",
           completedAt: now,
+          uiLease: null,
         },
       });
       await tx.workSession.updateMany({

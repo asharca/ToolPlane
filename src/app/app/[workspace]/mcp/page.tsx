@@ -14,6 +14,7 @@ import {
 } from "@/components/dashboard/DashboardUI";
 import { McpDeploymentsBrowser } from "@/components/dashboard/McpDeploymentsBrowser";
 import { formatInTimeZone, resolveUserTimeZone } from "@/lib/timezone";
+import { DeployCustomMcpDialog } from "@/components/dashboard/DeployCustomMcpDialog";
 
 export const dynamic = "force-dynamic";
 
@@ -57,7 +58,8 @@ export default async function McpServersPage({
       id: deployment.id,
       name: label.name,
       source: label.source,
-      reference: deployment.server?.slug ?? label.ref,
+      reference:
+        deployment.pinnedPackage ?? deployment.server?.slug ?? label.ref,
       status: effectiveStatus(deployment.id, deployment.status),
       createdAt: formatDate(deployment.createdAt, timeZone, locale),
       iconUrl: deployment.server?.iconUrl ?? null,
@@ -75,10 +77,16 @@ export default async function McpServersPage({
         <DashboardToolbar
           className="shrink-0"
           actions={
-            <ButtonLink href={marketHref} variant="secondary" size="md">
-              <Store className="size-4" />
-              {t("browseToolplane")}
-            </ButtonLink>
+            <>
+              <DeployCustomMcpDialog
+                slug={slug}
+                defaultOpen={query.create === "1"}
+              />
+              <ButtonLink href={marketHref} variant="secondary" size="md">
+                <Store className="size-4" />
+                {t("browseToolplane")}
+              </ButtonLink>
+            </>
           }
         >
           <h1 className="text-xl font-semibold">{t("title")}</h1>
@@ -89,6 +97,10 @@ export default async function McpServersPage({
         {query.error === "unsafeHttpConfirmationRequired" ? (
           <p role="alert" className="text-sm text-destructive">
             {t("unsafeHttpConsentDescription")}
+          </p>
+        ) : query.error === "mcpVersionResolutionFailed" ? (
+          <p role="alert" className="text-sm text-destructive">
+            {t("mcpVersionResolutionFailed")}
           </p>
         ) : null}
 

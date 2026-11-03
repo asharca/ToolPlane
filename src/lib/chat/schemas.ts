@@ -92,13 +92,6 @@ const assistantFields = {
       z
         .object({
           deploymentId: z.string().trim().min(1),
-          allowedToolNames: z
-            .array(z.string().trim().min(1).max(240))
-            .max(1000),
-          expectedDefinitionChecksum: z
-            .string()
-            .regex(/^[a-f0-9]{64}$/)
-            .optional(),
         })
         .strict(),
     )
@@ -115,7 +108,6 @@ const assistantFields = {
 export const CreateChatAssistantSchema = z
   .object({
     workspaceId: z.string().trim().min(1),
-    marketTemplateReleaseId: z.string().trim().min(1).max(240).optional(),
     ...assistantFields,
   })
   .strict();
@@ -188,6 +180,13 @@ export const CreateChatTurnSchema = z
     idempotencyKey: z.string().trim().min(1).max(240),
     webSearchEnabled: z.boolean().default(false),
     reasoningEffort: z.enum(REASONING_EFFORTS).optional(),
+    modelOverride: z
+      .object({
+        providerId: z.string().trim().min(1),
+        model: z.string().trim().min(1).max(240),
+      })
+      .strict()
+      .optional(),
   })
   .refine((value) => value.messages.at(-1)?.role === "user", {
     message: "The last message must be from the user",
@@ -211,6 +210,7 @@ export type CreateChatTurnInput = {
   messageId?: string;
   webSearchEnabled: boolean;
   reasoningEffort?: ReasoningEffort;
+  modelOverride?: { providerId: string; model: string };
 };
 
 export function parseChatTurn(raw: unknown): CreateChatTurnInput | null {

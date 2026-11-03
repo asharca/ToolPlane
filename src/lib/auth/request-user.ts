@@ -22,7 +22,7 @@ export async function resolveRequestPrincipal(
   if (authorization !== null) {
     const context = await verifyApiTokenContext(authorization);
     if (!context) return null;
-    enrichLogContext({ actorId: context.user.id });
+    enrichLogContext({ actorId: context.user.id, tokenId: context.token.id });
     return {
       ...context,
       credential: context.token.toolkitId ? "toolkit-token" : "personal-token",

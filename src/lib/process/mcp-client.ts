@@ -1,4 +1,5 @@
 import "server-only";
+import { randomUUID } from "node:crypto";
 import {
   assertRuntimeOwner,
   runtimeAbortSignal,
@@ -11,7 +12,7 @@ import {
 } from "./mcp-tool-catalog";
 import { persistDeploymentMcpToolCatalog } from "./mcp-tool-catalog-store";
 import { recordEvent } from "@/lib/observability/events";
-import { withLogContext } from "@/lib/observability/context";
+import { getLogContext, withLogContext } from "@/lib/observability/context";
 
 export type McpTool = McpToolDefinition;
 
@@ -54,6 +55,11 @@ export type McpRpcOptions = {
   maxRequestBytes?: number;
   maxResponseBytes?: number;
   onResponseBytes?: (bytes: number) => void;
+  /**
+   * Platform plumbing (file listing, document storage, sandbox inspection) that merely
+   * uses MCP as transport. Logged as `mcp.internal` and listed under its own log tab.
+   */
+  internal?: boolean;
 };
 
 export type McpToolCatalogOptions = McpRpcOptions & {
@@ -201,6 +207,8 @@ async function mcpRpcAtPort(
   options: McpRpcOptions = {},
 ): Promise<Record<string, unknown> | null> {
   assertRuntimeOwner();
+  const actorId = await sessionActorId();
+  const caller = actorId ? { actorId } : {};
   const start = performance.now();
   let httpStatus: number | undefined;
   const request = {
@@ -249,8 +257,9 @@ async function mcpRpcAtPort(
       throw error;
     }
     await recordEvent({
+      ...caller,
       domain: "mcp",
-      eventName: "mcp.rpc",
+      eventName: options.internal ? "mcp.internal" : "mcp.rpc",
       rpcMethod: method,
       toolName: typeof params?.name === "string" ? params.name : undefined,
       httpStatus,
@@ -261,8 +270,9 @@ async function mcpRpcAtPort(
     return json?.result ?? null;
   } catch (error) {
     await recordEvent({
+      ...caller,
       domain: "mcp",
-      eventName: "mcp.rpc",
+      eventName: options.internal ? "mcp.internal" : "mcp.rpc",
       rpcMethod: method,
       toolName: typeof params?.name === "string" ? params.name : undefined,
       httpStatus,
@@ -272,6 +282,22 @@ async function mcpRpcAtPort(
     });
     if (error instanceof McpPayloadTooLargeError) throw error;
     return null;
+  }
+}
+
+/**
+ * Pages and server actions run outside request logging. Attribute their calls to
+ * the verified session user; background work has no request scope and stays unattributed.
+ */
+async function sessionActorId(): Promise<string | undefined> {
+  const context = getLogContext();
+  if (context?.actorId || context?.agentId || context?.tokenId)
+    return undefined;
+  try {
+    const { getSessionUserId } = await import("@/lib/auth/session");
+    return (await getSessionUserId()) ?? undefined;
+  } catch {
+    return undefined;
   }
 }
 
@@ -286,17 +312,29 @@ export async function mcpRpc(
   return withLogContext(
     {
       deploymentId,
+      callId: getLogContext()?.callId ?? randomUUID(),
       secrets: liveMcpRuntimeSnapshot(deploymentId)?.redactionValues,
     },
     async () => {
       if (port) return mcpRpcAtPort(port, method, params, timeoutMs, options);
+      const actorId = await sessionActorId();
       await recordEvent({
+        ...(actorId ? { actorId } : {}),
         domain: "mcp",
-        eventName: "mcp.rpc",
+        eventName: options.internal ? "mcp.internal" : "mcp.rpc",
         rpcMethod: method,
+        toolName: typeof params?.name === "string" ? params.name : undefined,
         error: new Error("MCP deployment is not running"),
         errorCode: "deployment_unavailable",
         httpStatus: 503,
+        detail: {
+          request: {
+            jsonrpc: "2.0",
+            method,
+            ...(params === undefined ? {} : { params }),
+          },
+          response: null,
+        },
       });
       return null;
     },

@@ -42,13 +42,13 @@ export function AccountMenu({
           <button
             type="button"
             aria-label="账户菜单"
-            className="flex h-9 w-full items-center gap-2 overflow-hidden rounded-lg px-1 py-1 text-left outline-none transition-colors hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring"
+            className="flex h-9 w-full items-center gap-1.5 overflow-hidden rounded-lg px-1.5 text-left outline-none transition-colors hover:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-ring"
           >
-            <span className="grid size-7 shrink-0 place-items-center rounded-full bg-[#d5ff66] text-[11px] font-semibold text-[#172000]">
+            <span className="grid size-6 shrink-0 place-items-center rounded-full bg-[#d5ff66] text-[10px] font-semibold text-[#172000]">
               {workspaceInitials(userLabel)}
             </span>
             {!compact && (
-              <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">
+              <span className="min-w-0 flex-1 truncate text-sm text-foreground">
                 {userLabel}
               </span>
             )}

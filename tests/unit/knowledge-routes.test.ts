@@ -323,7 +323,7 @@ describe("knowledge document lifecycle", () => {
         },
       },
       30_000,
-      { maxRequestBytes: 10 * 1024 * 1024 },
+      { maxRequestBytes: 10 * 1024 * 1024, internal: true },
     );
     expect(m.index).toHaveBeenCalledWith("doc", "# Notes");
     expect((await upload(fileRequest(), context)).status).toBe(201);

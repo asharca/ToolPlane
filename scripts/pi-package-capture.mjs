@@ -19,6 +19,7 @@ import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { dirname, basename, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { resolveOmpPluginResources } from "./omp-plugin-resources.mjs";
 
 const sdkEntry = await realpath(
   "/opt/pi-sdk/node_modules/@earendil-works/pi-coding-agent/dist/index.js",
@@ -842,7 +843,36 @@ async function installDependencies() {
   }
   return manifest;
 }
-async function resources() {
+async function resources(manifest, inventory) {
+  if (manifest.omp) {
+    const files = inventory
+      .filter((entry) => entry.type === "file")
+      .map((entry) => ({
+        path: entry.path.slice("package/".length),
+        content: entry.path.endsWith("/package.json")
+          ? Buffer.from(entry.content, "base64").toString("utf8")
+          : "",
+      }));
+    const native = resolveOmpPluginResources(
+      { path: PACKAGE, manifest },
+      files,
+    );
+    const result = { skills: [], prompts: [], themes: [] };
+    for (const [kind, paths] of Object.entries(native))
+      result[kind] = paths.map((path) => `package/${path}`);
+    for (const kind of ["skills", "prompts", "themes"]) {
+      for (const entry of manifest.omp[kind] ?? []) {
+        if (typeof entry !== "string") throw Error("invalid_omp_resource");
+        const path = resolve(PACKAGE, entry);
+        if (!inside(PACKAGE, path) || !inside(PACKAGE, await realpath(path)))
+          throw Error("resource_escape");
+        result[kind].push(relative(ROOT, path));
+      }
+    }
+    if (!Object.values(result).some((paths) => paths.length))
+      throw Error("omp_resources_missing");
+    return result;
+  }
   const manager = new DefaultPackageManager({
     cwd: PACKAGE,
     agentDir: "/tmp/pi-agent",
@@ -942,7 +972,7 @@ async function main() {
     ).toString("utf8"),
   );
   captureStage = "resources";
-  const resourcePaths = await resources();
+  const resourcePaths = await resources(manifest, entries);
   captureStage = "snapshot";
   const snapshot = {
     source: provenance,
@@ -957,13 +987,21 @@ async function main() {
       provenance.kind === "npm"
         ? provenance.version
         : (manifest.version ?? null),
-    runtime: {
-      kind: "pi-sdk",
-      piVersion: "0.87.1",
-      nodeMajor: 26,
-      platform: "linux",
-      arch: process.arch,
-    },
+    runtime: manifest.omp
+      ? {
+          kind: "omp",
+          ompVersion: "18.14.0",
+          nodeMajor: 26,
+          platform: "linux",
+          arch: process.arch,
+        }
+      : {
+          kind: "pi-sdk",
+          piVersion: "0.87.1",
+          nodeMajor: 26,
+          platform: "linux",
+          arch: process.arch,
+        },
     root: "package",
     resources: resourcePaths,
     entries,

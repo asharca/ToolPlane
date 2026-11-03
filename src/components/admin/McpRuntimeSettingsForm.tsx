@@ -48,7 +48,7 @@ export function McpRuntimeSettingsForm({
       }
     >
       <form action={action} className="space-y-5">
-        <div className="flex items-start gap-3 rounded-md border border-border bg-muted/25 p-4">
+        <div className="flex items-start gap-3 rounded-xl border border-border bg-muted/25 p-4">
           <Clock3
             className="mt-0.5 size-5 shrink-0 text-muted-foreground"
             aria-hidden="true"

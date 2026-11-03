@@ -1,12 +1,16 @@
 "use client";
 import { BouncyAccordion } from "@/components/motion/bouncy-accordion";
+import {
+  DialogHeader,
+  DialogBody,
+  DialogFooter,
+  DialogCancel,
+  DialogField,
+} from "@/components/dashboard/dialog";
 
 import { CenterMorphModal } from "@/components/motion/center-morph-modal";
 import { CenterMorphModalTrigger } from "@/components/motion/center-morph-modal";
-import {
-  CenterMorphModalContent,
-  CenterMorphModalClose,
-} from "@/components/motion/center-morph-modal";
+import { CenterMorphModalContent } from "@/components/motion/center-morph-modal";
 
 import { Button } from "@/components/motion/button";
 
@@ -138,14 +142,14 @@ export function DeployCustomMcpDialog({
   const [network, setNetwork] = useState<"isolated" | "none">("isolated");
   const [networkTouched, setNetworkTouched] = useState(false);
   const [allowUnsafeHttp, setAllowUnsafeHttp] = useState(false);
-  const [creationFailed, createAction] = useActionState<boolean, FormData>(
-    async (_previous, form) => {
-      await deployCustomServerAction(form);
-      // Creation redirects on success; a returned action did not create a usable connection.
-      return true;
-    },
-    false,
-  );
+  const [creationError, createAction] = useActionState<
+    "connectionCreateFailed" | "mcpVersionResolutionFailed" | null,
+    FormData
+  >(async (_previous, form) => {
+    const result = await deployCustomServerAction(form);
+    // Creation redirects on success; a returned action did not create a usable connection.
+    return result?.error ?? "connectionCreateFailed";
+  }, null);
 
   const configRef = useRef<HTMLTextAreaElement>(null);
 
@@ -228,27 +232,15 @@ export function DeployCustomMcpDialog({
 
   const content = (
     <>
-      <div className="flex shrink-0 items-start gap-3 border-b border-border pl-5 pr-16 py-3 sm:pl-6">
-        <div className="flex min-w-0 items-start gap-3">
-          <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-sm">
-            <Plug className="size-4" />
+      <DialogHeader
+        title={t("deployCustomMcp")}
+        icon={<Plug className="size-4" />}
+        description={
+          <span id="deploy-custom-mcp-description">
+            {t("jsonSingleServerHint")}
           </span>
-          <div className="min-w-0">
-            <h2
-              id="deploy-custom-mcp-title"
-              className="text-lg font-semibold tracking-tight text-foreground"
-            >
-              {t("deployCustomMcp")}
-            </h2>
-            <p
-              id="deploy-custom-mcp-description"
-              className="mt-1 text-sm text-muted-foreground"
-            >
-              {t("jsonSingleServerHint")}
-            </p>
-          </div>
-        </div>
-      </div>
+        }
+      />
 
       <form
         action={createAction}
@@ -263,10 +255,7 @@ export function DeployCustomMcpDialog({
           value={JSON.stringify(configIsRemote ? [] : runtimeFiles)}
         />
 
-        <div
-          data-testid="deploy-custom-mcp-scroll-area"
-          className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-5 sm:px-6"
-        >
+        <DialogBody>
           <div className="flex gap-2.5 rounded-lg bg-muted px-3 py-2.5 text-xs leading-5 text-foreground">
             <AlertTriangle className="mt-0.5 size-4 shrink-0" />
             <span>
@@ -276,20 +265,12 @@ export function DeployCustomMcpDialog({
             </span>
           </div>
 
-          <section className="min-w-0 space-y-3">
-            <header>
-              <div className="min-w-0">
-                <label
-                  htmlFor="config"
-                  className="block text-sm font-semibold text-foreground"
-                >
-                  {t("jsonConfig")}
-                </label>
-                <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
-                  {t("jsonCommandHint")}
-                </p>
-              </div>
-            </header>
+          <DialogField
+            label={t("jsonConfig")}
+            htmlFor="config"
+            description={t("jsonCommandHint")}
+            dirty={config !== ""}
+          >
             <div className="space-y-3">
               <textarea
                 // biome-ignore lint/a11y/noAutofocus: Modal opening focuses its primary config field; removing this changes keyboard focus behavior.
@@ -304,89 +285,96 @@ export function DeployCustomMcpDialog({
                 spellCheck={false}
                 aria-invalid={Boolean(configError)}
                 aria-describedby={configError ? "config-error" : undefined}
-                className="min-h-52 w-full resize-y rounded-xl border border-border bg-muted/35 p-3 font-mono text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              />
-              {configName ? (
-                <p className="text-xs text-muted-foreground">
-                  {t("serverColumn")}:{" "}
-                  <span className="font-medium text-foreground">
-                    {configName}
-                  </span>
-                </p>
-              ) : null}
-              {configIsRemote ? (
-                <RemoteMcpTransportNotice url={parsedConfig?.ref} showHelp />
-              ) : null}
-              <McpHttpConsent onChange={setAllowUnsafeHttp} />
-              {configError ? (
-                <p
-                  id="config-error"
-                  role="alert"
-                  className="text-xs text-destructive dark:text-destructive"
-                >
-                  {configError}
-                </p>
-              ) : null}
-              {creationFailed ? (
-                <p role="alert" className="text-sm text-destructive">
-                  {t("connectionCreateFailed")}
-                </p>
-              ) : null}
-              <BouncyAccordion
-                items={[
-                  {
-                    id: "details",
-                    title: <>{t("jsonExamples")}</>,
-                    description: (
-                      <>
-                        <div className="space-y-3 border-t border-border px-3 py-3">
-                          <p className="text-xs leading-5 text-muted-foreground">
-                            {t("jsonExamplesHint")}
-                          </p>
-                          {(
-                            [
-                              ["npxConfig", "jsonExampleNpxConfig"],
-                              ["npxGit", "jsonExampleNpxGit"],
-                              ["uvxGit", "jsonExampleUvxGit"],
-                              ["uv", "jsonExampleUv"],
-                              ["docker", "jsonExampleDocker"],
-                              ["remoteHttp", "jsonExampleRemoteHttp"],
-                            ] as const
-                          ).map(([key, label]) => (
-                            <div
-                              key={key}
-                              className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-card px-3 py-2"
-                            >
-                              <span className="text-xs font-medium text-foreground">
-                                {t(label)}
-                              </span>
-                              <Button
-                                type="button"
-                                onClick={() =>
-                                  setJsonConfig(JSON_CONFIG_EXAMPLES[key])
-                                }
-                                variant="secondary"
-                                size="sm"
-                              >
-                                {t("useJsonExample")}
-                              </Button>
-                            </div>
-                          ))}
-                          <p className="text-xs leading-5 text-muted-foreground">
-                            {jsonGitHint}
-                          </p>
-                        </div>
-                      </>
-                    ),
-                  },
-                ]}
+                className="min-h-52 w-full resize-y rounded-lg border border-border bg-muted/35 p-3 font-mono text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
             </div>
-          </section>
+          </DialogField>
+          <div className="space-y-3">
+            {configName ? (
+              <p className="text-xs text-muted-foreground">
+                {t("serverColumn")}:{" "}
+                <span className="font-medium text-foreground">
+                  {configName}
+                </span>
+              </p>
+            ) : null}
+            {configIsRemote ? (
+              <RemoteMcpTransportNotice url={parsedConfig?.ref} showHelp />
+            ) : null}
+            <DialogField label={null} dirty={allowUnsafeHttp}>
+              <McpHttpConsent onChange={setAllowUnsafeHttp} />
+            </DialogField>
+            {configError ? (
+              <p
+                id="config-error"
+                role="alert"
+                className="text-xs text-destructive dark:text-destructive"
+              >
+                {configError}
+              </p>
+            ) : null}
+            {creationError ? (
+              <p role="alert" className="text-sm text-destructive">
+                {t(creationError)}
+              </p>
+            ) : null}
+            <BouncyAccordion
+              items={[
+                {
+                  id: "details",
+                  title: <>{t("jsonExamples")}</>,
+                  description: (
+                    <>
+                      <div className="space-y-3 border-t border-border px-3 py-3">
+                        <p className="text-xs leading-5 text-muted-foreground">
+                          {t("jsonExamplesHint")}
+                        </p>
+                        {(
+                          [
+                            ["npxConfig", "jsonExampleNpxConfig"],
+                            ["npxGit", "jsonExampleNpxGit"],
+                            ["uvxGit", "jsonExampleUvxGit"],
+                            ["uv", "jsonExampleUv"],
+                            ["docker", "jsonExampleDocker"],
+                            ["remoteHttp", "jsonExampleRemoteHttp"],
+                          ] as const
+                        ).map(([key, label]) => (
+                          <div
+                            key={key}
+                            className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border bg-card px-3 py-2"
+                          >
+                            <span className="text-xs font-medium text-foreground">
+                              {t(label)}
+                            </span>
+                            <Button
+                              type="button"
+                              onClick={() =>
+                                setJsonConfig(JSON_CONFIG_EXAMPLES[key])
+                              }
+                              variant="secondary"
+                              size="sm"
+                            >
+                              {t("useJsonExample")}
+                            </Button>
+                          </div>
+                        ))}
+                        <p className="text-xs leading-5 text-muted-foreground">
+                          {jsonGitHint}
+                        </p>
+                      </div>
+                    </>
+                  ),
+                },
+              ]}
+            />
+          </div>
 
           {!configIsRemote ? (
             <>
-              <div className="space-y-2">
+              <DialogField
+                label={t("runtimeFilesOptional")}
+                dirty={runtimeFiles.length > 0}
+              >
                 <BouncyAccordion
                   items={[
                     {
@@ -422,51 +410,46 @@ export function DeployCustomMcpDialog({
                     {runtimeFilesError}
                   </p>
                 ) : null}
-              </div>
+              </DialogField>
 
-              <BouncyAccordion
-                items={[
-                  {
-                    id: "network",
-                    title: `${t("networkMode")}: ${network === "none" ? t("networkNone") : t("networkIsolated")}`,
-                    description: (
-                      <McpNetworkModeControl
-                        value={network}
-                        onChange={(value) => {
-                          setNetwork(value);
-                          setNetworkTouched(true);
-                        }}
-                        warnAboutPackageInstall={configCommand !== "docker"}
-                      />
-                    ),
-                  },
-                ]}
-              />
+              <DialogField
+                label={t("networkMode")}
+                dirty={network !== "isolated"}
+              >
+                <BouncyAccordion
+                  items={[
+                    {
+                      id: "network",
+                      title: `${t("networkMode")}: ${network === "none" ? t("networkNone") : t("networkIsolated")}`,
+                      description: (
+                        <McpNetworkModeControl
+                          value={network}
+                          onChange={(value) => {
+                            setNetwork(value);
+                            setNetworkTouched(true);
+                          }}
+                          warnAboutPackageInstall={configCommand !== "docker"}
+                        />
+                      ),
+                    },
+                  ]}
+                />
+              </DialogField>
             </>
           ) : null}
-        </div>
+        </DialogBody>
 
-        <div
-          data-testid="deploy-custom-mcp-footer"
-          className="flex shrink-0 justify-end gap-2 border-t border-border bg-card px-5 py-4 sm:px-6"
-        >
-          {!inline ? (
-            <CenterMorphModalClose>
-              <Button type="button" variant="secondary" size="sm">
-                {t("cancel")}
-              </Button>
-            </CenterMorphModalClose>
-          ) : null}
+        <DialogFooter cancel={!inline ? <DialogCancel /> : undefined}>
           <SubmitButton
             flash={false}
-            error={creationFailed}
+            error={Boolean(creationError)}
             pendingLabel={t("deploying")}
             variant="primary"
-            size="sm"
+            size="md"
           >
             {t("deploy")}
           </SubmitButton>
-        </div>
+        </DialogFooter>
       </form>
     </>
   );

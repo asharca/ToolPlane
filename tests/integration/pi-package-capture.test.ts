@@ -7,18 +7,16 @@ import { createInterface } from "node:readline";
 import { once } from "node:events";
 import { db } from "@/lib/db";
 import type { Prisma } from "@prisma/client";
-import { marketReleaseChecksum } from "@/lib/market/artifact";
+import { marketReleaseChecksum } from "@/lib/pi-packages/artifact";
 import {
   parsePiPackageReleaseManifest,
   scanPiPackageReleaseManifest,
   type PiPackageSnapshotV1,
-} from "@/lib/market/pi-package-manifest";
-import {
-  approveResourceMarketRelease,
-  installMarketRelease,
-  updateMarketInstall,
-} from "@/lib/market/resources";
-import { createAgent, updateAgent } from "@/lib/agents/mutations";
+} from "@/lib/pi-packages/manifest";
+import { addPlugin, updatePlugin } from "@/lib/plugins/installs";
+import { computePluginCapabilities } from "@/lib/plugins/capabilities";
+import { approveAgentPluginSync } from "@/lib/plugins/agent-sync";
+import { createAgent } from "@/lib/agents/mutations";
 import { resolveAgentPiPackages } from "@/lib/agents/resolve";
 import { AGENT_PI_PACKAGES_INCLUDE } from "@/lib/agents/pi-package-includes";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -30,14 +28,6 @@ import type * as ChildProcess from "node:child_process";
 import type * as DnsPromises from "node:dns/promises";
 import type * as Https from "node:https";
 import type { IncomingMessage } from "node:http";
-import { gunzipSync } from "node:zlib";
-import {
-  checkPiPackageUpdates,
-  createPiPackageSource,
-  listPiPackageSourceEntries,
-  publishPiPackageToRegistry,
-  resolvePiPackageCaptureSource,
-} from "@/lib/market/pi-package-catalog";
 import type * as Net from "node:net";
 
 const routing = vi.hoisted(() => ({
@@ -146,7 +136,7 @@ import { execFile, spawn } from "node:child_process";
 import {
   capturePiPackage,
   captureGithubRegistryPiPackage,
-} from "@/lib/market/pi-package-source";
+} from "@/lib/pi-packages/source";
 
 const exec = promisify(execFile);
 let directory = "";
@@ -199,7 +189,6 @@ async function frozenReleaseFixture(
   input: {
     workspaceId: string;
     publishedById: string;
-    categoryId: string;
     slug: string;
     name: string;
     listingId?: string;
@@ -223,7 +212,6 @@ async function frozenReleaseFixture(
             publisherWorkspaceId: workspace.id,
             publishedById: input.publishedById,
             metadata: {},
-            categories: { connect: { id: input.categoryId } },
           },
         });
     const manifest = parsePiPackageReleaseManifest({
@@ -246,17 +234,16 @@ async function frozenReleaseFixture(
         manifestVersion: 1,
         manifest: manifest as Prisma.InputJsonValue,
         checksum: marketReleaseChecksum(manifest),
-        releaseSummary: {},
-        categoryIds: [input.categoryId],
+        releaseSummary: { capabilities: computePluginCapabilities(manifest) },
         scanResult: scanPiPackageReleaseManifest(
           manifest,
         ) as Prisma.InputJsonValue,
-        reviewStatus: "pending",
+        reviewStatus: "approved",
       },
     });
     await tx.marketListing.update({
       where: { id: listing.id },
-      data: { pendingReleaseId: release.id, latestVersion: release.version },
+      data: { latestReleaseId: release.id, latestVersion: release.version },
     });
     return { listing, release };
   });
@@ -581,313 +568,6 @@ it("rejects an authenticated redirect before contacting its credential sink", as
   ).toBe(false);
 }, 310_000);
 
-it("discovers private catalogs, explicitly publishes an approved npm artifact, and only notifies about upstream changes", async () => {
-  const database = new URL(assertDefined(process.env.DATABASE_URL));
-  if (
-    !["localhost", "127.0.0.1"].includes(database.hostname) ||
-    !/acceptance|test|disposable/.test(database.pathname)
-  )
-    throw new Error("Disposable database required");
-  const stamp = randomUUID();
-  const user = await db.user.create({
-    data: {
-      email: `${stamp}@source.invalid`,
-      passwordHash: "fixture",
-      role: "admin",
-    },
-  });
-  const outsider = await db.user.create({
-    data: { email: `${stamp}@outsider.invalid`, passwordHash: "fixture" },
-  });
-  const workspace = await db.workspace.create({
-    data: {
-      ownerId: user.id,
-      slug: stamp,
-      name: "Private source fixture",
-      members: { create: { userId: user.id, role: "owner" } },
-    },
-  });
-  const category = await db.category.create({
-    data: { slug: stamp, name: "Source fixture" },
-  });
-  const access = { workspaceId: workspace.id, userId: user.id };
-  const name = "@toolplane-fixture/private-prompt";
-  const token = "fixture-private-token";
-  publications.length = 0;
-  try {
-    const original = await tar(
-      name,
-      { name, version: "1.0.0", pi: { prompts: ["prompts/review.md"] } },
-      { "prompts/review.md": "Frozen approved prompt V1.\n" },
-    );
-    metadata[`private/${name}`] = original;
-    files["/private/prompt.tgz"] = files["/private-prompt.tgz"];
-    original.versions["1.0.0"].dist.tarball =
-      "https://registry.npmjs.org/private/prompt.tgz";
-    metadata["private/catalog"] = {
-      schemaVersion: 1,
-      entries: [
-        {
-          name: "Private prompt",
-          source: `npm:${name}@latest`,
-          description: "Reviewed prompts",
-          version: "1.0.0",
-        },
-      ],
-      hasMore: false,
-    };
-    metadata["private/-/v1/search"] = {
-      objects: [
-        {
-          package: { name, version: "1.0.0", description: "Reviewed prompts" },
-        },
-      ],
-      total: 1,
-    };
-    const registry = await createPiPackageSource({
-      ...access,
-      name: "Private registry",
-      kind: "npm",
-      url: "https://registry.npmjs.org/private/",
-      credentials: { type: "bearer", token },
-    });
-    const catalog = await createPiPackageSource({
-      ...access,
-      name: "Private catalog",
-      kind: "catalog",
-      url: "https://registry.npmjs.org/private/catalog",
-      credentials: { type: "bearer", token },
-    });
-    const destination = await createPiPackageSource({
-      ...access,
-      name: "Publish destination",
-      kind: "npm",
-      url: "https://registry.npmjs.org/publishing/",
-      credentials: { type: "bearer", token },
-    });
-    expect(JSON.stringify([registry, catalog, destination])).not.toContain(
-      token,
-    );
-    const stored = await db.piPackageSource.findUniqueOrThrow({
-      where: { id: registry.id },
-    });
-    expect(stored.credentialsEnc).not.toContain(token);
-    expect(
-      await listPiPackageSourceEntries({ ...access, sourceId: catalog.id }),
-    ).toEqual({
-      page: 1,
-      hasMore: false,
-      entries: [
-        {
-          name: "Private prompt",
-          source: `npm:${name}@latest`,
-          description: "Reviewed prompts",
-          version: "1.0.0",
-        },
-      ],
-    });
-    expect(
-      (await listPiPackageSourceEntries({ ...access, sourceId: registry.id }))
-        .entries,
-    ).toEqual([
-      {
-        name,
-        source: `npm:${name}`,
-        description: "Reviewed prompts",
-        version: "1.0.0",
-      },
-    ]);
-    await expect(
-      listPiPackageSourceEntries({
-        ...access,
-        userId: outsider.id,
-        sourceId: catalog.id,
-      }),
-    ).rejects.toMatchObject({ code: "not_authorized" });
-    const wrongCredentials = await createPiPackageSource({
-      ...access,
-      name: "Rejected credentials",
-      kind: "catalog",
-      url: "https://registry.npmjs.org/private/catalog",
-      credentials: { type: "bearer", token: "incorrect-token" },
-    });
-    await expect(
-      listPiPackageSourceEntries({ ...access, sourceId: wrongCredentials.id }),
-    ).rejects.toMatchObject({ code: "source_auth_failed" });
-
-    const requested = `npm:${name}@latest`;
-    const snapshot = await capturePiPackage(
-      requested,
-      await resolvePiPackageCaptureSource({
-        ...access,
-        sourceId: registry.id,
-        source: requested,
-      }),
-    );
-    const published = await frozenReleaseFixture(snapshot, {
-      workspaceId: workspace.id,
-      publishedById: user.id,
-      categoryId: category.id,
-      slug: "private-prompt",
-      name: "Private prompt",
-    });
-    await db.piPackageTracking.create({
-      data: {
-        workspaceId: workspace.id,
-        listingId: published.listing.id,
-        sourceId: registry.id,
-        requested,
-      },
-    });
-    await expect(
-      publishPiPackageToRegistry({
-        ...access,
-        sourceId: destination.id,
-        releaseId: published.release.id,
-        confirm: true,
-      }),
-    ).rejects.toMatchObject({ code: "release_not_found" });
-    await approveResourceMarketRelease({
-      listingId: published.listing.id,
-      releaseId: published.release.id,
-      reviewedById: user.id,
-    });
-    const installed = await installMarketRelease({
-      releaseId: published.release.id,
-      targetWorkspaceId: workspace.id,
-      installedById: user.id,
-      idempotencyKey: stamp,
-    });
-    expect(publications).toEqual([]);
-    await expect(
-      publishPiPackageToRegistry({
-        ...access,
-        userId: outsider.id,
-        sourceId: destination.id,
-        releaseId: published.release.id,
-        confirm: true,
-      }),
-    ).rejects.toMatchObject({ code: "not_authorized" });
-    expect(publications).toEqual([]);
-    const result = await publishPiPackageToRegistry({
-      ...access,
-      sourceId: destination.id,
-      releaseId: published.release.id,
-      confirm: true,
-    });
-    expect(result).toMatchObject({
-      name,
-      version: "1.0.0",
-      registry: destination.url,
-    });
-    expect(publications).toHaveLength(1);
-    expect(publications[0].path).toBe(`/publishing/${name}`);
-    const document = publications[0].document;
-    const attachments = document._attachments as Record<
-      string,
-      { data: string }
-    >;
-    const archive = Buffer.from(
-      attachments["private-prompt-1.0.0.tgz"].data,
-      "base64",
-    );
-    expect(
-      gunzipSync(archive).includes(Buffer.from("Frozen approved prompt V1.\n")),
-    ).toBe(true);
-    expect(result.integrity).toBe(
-      `sha512-${createHash("sha512").update(archive).digest("base64")}`,
-    );
-    const unpacked = JSON.parse(
-      (
-        await exec("python3", [
-          "-c",
-          'import base64,io,json,sys,tarfile\nwith tarfile.open(fileobj=io.BytesIO(base64.b64decode(sys.argv[1])),mode="r:gz") as t:\n print(json.dumps({"manifest":json.load(t.extractfile("package/package.json")),"prompt":t.extractfile("package/prompts/review.md").read().decode()}))',
-          archive.toString("base64"),
-        ])
-      ).stdout,
-    );
-    expect(unpacked).toEqual({
-      manifest: {
-        name,
-        version: "1.0.0",
-        pi: { prompts: ["prompts/review.md"] },
-      },
-      prompt: "Frozen approved prompt V1.\n",
-    });
-    expect(JSON.stringify(document)).not.toContain(token);
-    await expect(
-      publishPiPackageToRegistry({
-        ...access,
-        sourceId: destination.id,
-        releaseId: published.release.id,
-        confirm: true,
-      }),
-    ).rejects.toMatchObject({ code: "registry_version_conflict" });
-    expect(publications).toHaveLength(1);
-
-    const next = await tar(
-      `${name}-next`,
-      { name, version: "2.0.0", pi: { prompts: ["prompts/review.md"] } },
-      { "prompts/review.md": "Unapplied upstream V2.\n" },
-    );
-    metadata[`private/${name}`] = {
-      name,
-      "dist-tags": { latest: "2.0.0" },
-      versions: {
-        "1.0.0": original.versions["1.0.0"],
-        "2.0.0": next.versions["1.0.0"],
-      },
-    };
-    credentialRequests.length = 0;
-    const updates = await checkPiPackageUpdates({
-      ...access,
-      listingId: published.listing.id,
-    });
-    expect(updates).toMatchObject([
-      {
-        listingId: published.listing.id,
-        mode: "subscribed",
-        status: "update_available",
-        latestVersion: "2.0.0",
-      },
-    ]);
-    expect(credentialRequests.map((item) => item.path)).toEqual([
-      `/private/${name}`,
-    ]);
-    expect(
-      await db.marketInstall.findUniqueOrThrow({
-        where: { id: installed.install.id },
-      }),
-    ).toMatchObject({
-      currentReleaseId: published.release.id,
-      requestedReleaseId: published.release.id,
-    });
-    expect(
-      await db.marketRelease.count({
-        where: { listingId: published.listing.id },
-      }),
-    ).toBe(1);
-    expect(publications).toHaveLength(1);
-  } finally {
-    await db.marketInstall.deleteMany({
-      where: { targetWorkspaceId: workspace.id },
-    });
-    await db.marketListing.updateMany({
-      where: { publisherWorkspaceId: workspace.id },
-      data: { latestReleaseId: null, pendingReleaseId: null },
-    });
-    await db.marketRelease.deleteMany({
-      where: { listing: { publisherWorkspaceId: workspace.id } },
-    });
-    await db.marketListing.deleteMany({
-      where: { publisherWorkspaceId: workspace.id },
-    });
-    await db.workspace.delete({ where: { id: workspace.id } });
-    await db.category.delete({ where: { id: category.id } });
-    await db.user.deleteMany({ where: { id: { in: [user.id, outsider.id] } } });
-  }
-}, 310_000);
-
 it("captures uploaded ZIP native resources and dependencies through the same non-executing isolate", async () => {
   const filename = join(directory, "uploaded.zip");
   const records = {
@@ -1124,7 +804,7 @@ it.each([
   310_000,
 );
 
-it("runs approved immutable V1 in Linux SDK, reconnects, and requires explicit Agent application of V2", async () => {
+it("runs immutable V1 across reconnects and synchronizes code-changing V2 only after plugin review", async () => {
   const database = new URL(assertDefined(process.env.DATABASE_URL));
   if (
     !["localhost", "127.0.0.1"].includes(database.hostname) ||
@@ -1150,9 +830,6 @@ it("runs approved immutable V1 in Linux SDK, reconnects, and requires explicit A
       name: "Frozen SDK smoke",
       members: { create: { userId: user.id, role: "owner" } },
     },
-  });
-  const category = await db.category.create({
-    data: { slug: stamp, name: "SDK smoke" },
   });
   let host: ChildProcess.ChildProcess | undefined;
   const model = createHttpServer(async (request, response) => {
@@ -1215,21 +892,15 @@ it("runs approved immutable V1 in Linux SDK, reconnects, and requires explicit A
     const published = await frozenReleaseFixture(snapshot, {
       workspaceId: workspace.id,
       publishedById: user.id,
-      categoryId: category.id,
       slug: "runtime",
       name: "Frozen runtime",
     });
-    await approveResourceMarketRelease({
-      listingId: published.listing.id,
-      releaseId: published.release.id,
-      reviewedById: user.id,
-    });
-    const installed = await installMarketRelease({
-      releaseId: published.release.id,
-      targetWorkspaceId: workspace.id,
-      installedById: user.id,
-      idempotencyKey: stamp,
-    });
+    const install = await addPlugin(
+      workspace.id,
+      user.id,
+      published.listing.id,
+    );
+    const installed = { install };
     const agent = await createAgent(workspace.id, "Frozen SDK", {
       runtime: "pi-sdk",
       piPackages: [
@@ -1261,6 +932,8 @@ it("runs approved immutable V1 in Linux SDK, reconnects, and requires explicit A
     for (const file of [
       "pi-sdk-session.mjs",
       "pi-sdk-capabilities.mjs",
+      "pi-sdk-ui.mjs",
+      "pi-sdk-native-resources.mjs",
       "pi-sdk-package-files.mjs",
     ])
       await exec("docker", [
@@ -1459,6 +1132,18 @@ it("runs approved immutable V1 in Linux SDK, reconnects, and requires explicit A
             context: {
               runtimeToken: "fixture-only",
               mcpConfig: { servers: [] },
+              model: {
+                id: "controlled",
+                name: "Controlled",
+                provider: "toolplane",
+                api: "openai-completions",
+                baseUrl: `http://host.docker.internal:${address.port}/v1`,
+                reasoning: false,
+                input: ["text"],
+                contextWindow: 128000,
+                maxTokens: 4096,
+                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+              },
             },
           })}\n`,
         );
@@ -1528,37 +1213,46 @@ it("runs approved immutable V1 in Linux SDK, reconnects, and requires explicit A
       workspaceId: workspace.id,
       publishedById: user.id,
       listingId: published.listing.id,
-      categoryId: category.id,
       slug: "runtime",
       name: "Frozen runtime",
     });
-    await approveResourceMarketRelease({
-      listingId: v2.listing.id,
-      releaseId: v2.release.id,
-      reviewedById: user.id,
-    });
-    await updateMarketInstall({
-      installId: installed.install.id,
-      targetWorkspaceId: workspace.id,
-      actorId: user.id,
-      targetReleaseId: v2.release.id,
-      currentReleaseId: published.release.id,
-    });
+    await updatePlugin(
+      workspace.id,
+      user.id,
+      installed.install.id,
+      v2.release.id,
+    );
     expect((await packages())[0].releaseId).toBe(published.release.id);
+    expect(
+      await db.agentPiPackage.findUniqueOrThrow({
+        where: {
+          agentId_marketInstallId: {
+            agentId: agent.id,
+            marketInstallId: installed.install.id,
+          },
+        },
+      }),
+    ).toMatchObject({
+      syncStatus: "review_required",
+      targetReleaseId: v2.release.id,
+    });
     expect(await prompt("/Count")).toMatchObject({
       success: true,
       result: { text: "Pi 扩展 · fixture\ndependency=DEPENDENCY_V1 count=3" },
     });
     await stop();
-    await updateAgent(workspace.id, agent.id, {
-      name: agent.name,
-      systemPrompt: null,
-      providerId: null,
-      model: null,
-      maxSteps: 100,
-      piPackages: [
-        { marketInstallId: installed.install.id, releaseId: v2.release.id },
-      ],
+    expect(
+      await approveAgentPluginSync(
+        workspace.id,
+        user.id,
+        agent.id,
+        installed.install.id,
+        v2.release.id,
+      ),
+    ).toMatchObject({
+      releaseId: v2.release.id,
+      syncStatus: "synced",
+      targetReleaseId: null,
     });
     await configure("original");
     launch();
@@ -1576,7 +1270,7 @@ it("runs approved immutable V1 in Linux SDK, reconnects, and requires explicit A
     console.log(
       JSON.stringify({
         smoke:
-          "real-capture-review-install-bind-linux-sdk-reconnect-explicit-upgrade",
+          "real-capture-install-bind-linux-sdk-reconnect-reviewed-plugin-sync",
         v1: published.release.checksum,
         v2: v2.release.checksum,
         count: 4,
@@ -1596,7 +1290,7 @@ it("runs approved immutable V1 in Linux SDK, reconnects, and requires explicit A
     });
     await db.marketListing.updateMany({
       where: { publisherWorkspaceId: workspace.id },
-      data: { latestReleaseId: null, pendingReleaseId: null },
+      data: { latestReleaseId: null },
     });
     await db.marketRelease.deleteMany({
       where: { listing: { publisherWorkspaceId: workspace.id } },
@@ -1605,7 +1299,6 @@ it("runs approved immutable V1 in Linux SDK, reconnects, and requires explicit A
       where: { publisherWorkspaceId: workspace.id },
     });
     await db.workspace.delete({ where: { id: workspace.id } });
-    await db.category.delete({ where: { id: category.id } });
     await db.user.delete({ where: { id: user.id } });
   }
 }, 310_000);

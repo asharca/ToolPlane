@@ -1,6 +1,14 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import type { Prisma } from "@prisma/client";
+import { isDeepStrictEqual } from "node:util";
+import type {
+  A2AContext,
+  A2AEntryBinding,
+  Conversation,
+  Deployment,
+  Prisma,
+  Sandbox,
+} from "@prisma/client";
 import { db } from "@/lib/db";
 import {
   assertRuntimeOwner,
@@ -17,10 +25,11 @@ import { resolveSpawnSpec } from "@/lib/process/spawn-spec";
 import { enqueueSandboxOperation } from "@/lib/sandboxes/lifecycle";
 import {
   assertDockerVolumeExists,
-  copyDockerVolume,
+  initializeDockerSessionWorkspace,
   createDockerVolume,
   digestDockerVolume,
   removeDockerSandboxRuntimeStrict,
+  removeDockerSessionWorkspace,
   removeDockerVolumeStrict,
   sandboxVolumeName,
   stopDockerSandboxContainer,
@@ -33,6 +42,10 @@ import { sandboxExecutionBusy } from "./sandbox-execution-gate";
 import { requireAgentRevision } from "./revisions";
 import { resolveAgentEnvironmentCredentials } from "./environment-credentials";
 import { stopSessionMcp } from "@/lib/process/session-mcp";
+import { agentSessionWorkspaceRoot } from "./session-paths";
+import { materializeConversationAttachments } from "@/lib/attachments/work";
+import { stopAgentSessionRuntime } from "./sandbox-runtime";
+import { AgentRevisionConfigSchema } from "./revision-types";
 
 export type AgentConversationSandboxInput = {
   workspaceId: string;
@@ -43,11 +56,20 @@ export type AgentConversationSandboxInput = {
 export type AgentConversationSandbox = {
   sandboxId: string;
   deploymentId: string;
+  workspaceRoot: string;
+  workingDirectory: string;
+  conversationId?: string;
+  contextId?: string;
 };
 type ManagedConfig = {
   managedBy: string;
   agentId: string;
   sourceSandboxId: string;
+};
+type AgentSessionBinding = {
+  conversation: Conversation | null;
+  context: (A2AContext & { entryBindings: A2AEntryBinding[] }) | null;
+  sandbox: (Sandbox & { deployment: Deployment }) | null;
 };
 import {
   beginAgentConversationSandboxAccess,
@@ -72,22 +94,13 @@ function managed(config: Prisma.JsonValue | null): ManagedConfig | null {
 async function binding(
   tx: Prisma.TransactionClient,
   input: AgentConversationSandboxInput,
-) {
+): Promise<AgentSessionBinding> {
   if (!input.conversationId && !input.contextId)
     throw new Error("Conversation or native context is required.");
   const agent = await tx.agent.findFirst({
     where: { id: input.agentId, workspaceId: input.workspaceId },
   });
   if (!agent) throw new Error("Agent not found in workspace.");
-  const conversation = input.conversationId
-    ? await tx.conversation.findFirst({
-        where: {
-          id: input.conversationId,
-          agentId: input.agentId,
-          agent: { workspaceId: input.workspaceId },
-        },
-      })
-    : null;
   const context = input.contextId
     ? await tx.a2AContext.findFirst({
         where: {
@@ -99,33 +112,43 @@ async function binding(
         include: { entryBindings: true },
       })
     : null;
-  if ((input.conversationId && !conversation) || (input.contextId && !context))
+  if (input.contextId && !context)
     throw new Error("Conversation/context does not belong to this Agent.");
-  if (conversation && context) {
-    const entries = context.entryBindings;
-    let matches = entries.some(
-      (entry) =>
-        ["chat", "control", "channel"].includes(entry.kind) &&
-        entry.sourceId === conversation.id,
-    );
-    if (!matches) {
-      const workIds = entries
-        .filter((entry) => entry.kind === "work")
-        .map((entry) => entry.sourceId);
-      matches =
-        workIds.length > 0 &&
-        !!(await tx.workSession.findFirst({
-          where: {
-            id: { in: workIds },
-            conversationId: conversation.id,
-            workspaceId: input.workspaceId,
-            agentId: input.agentId,
-          },
-        }));
+  const conversationIds = new Set<string>();
+  for (const entry of context?.entryBindings ?? []) {
+    if (["chat", "control", "channel"].includes(entry.kind))
+      conversationIds.add(entry.sourceId);
+    if (entry.kind === "work") {
+      const work = await tx.workSession.findFirst({
+        where: {
+          id: entry.sourceId,
+          workspaceId: input.workspaceId,
+          agentId: input.agentId,
+        },
+        select: { conversationId: true },
+      });
+      if (work?.conversationId) conversationIds.add(work.conversationId);
     }
-    if (!matches)
-      throw new Error("Native context is not bound to this conversation.");
   }
+  if (
+    conversationIds.size > 1 ||
+    (input.conversationId &&
+      context &&
+      !conversationIds.has(input.conversationId))
+  )
+    throw new Error("Native context is not bound to this conversation.");
+  const conversationId = input.conversationId ?? [...conversationIds][0];
+  const conversation = conversationId
+    ? await tx.conversation.findFirst({
+        where: {
+          id: conversationId,
+          agentId: input.agentId,
+          agent: { workspaceId: input.workspaceId },
+        },
+      })
+    : null;
+  if (conversationId && !conversation)
+    throw new Error("Conversation/context does not belong to this Agent.");
   const ids = [conversation?.sandboxId, context?.sandboxId].filter(
     (id): id is string => !!id,
   );
@@ -137,12 +160,35 @@ async function binding(
         include: { deployment: true },
       })
     : null;
-  if (ids.length) {
-    const config = sandbox && managed(sandbox.config);
-    if (sandbox?.kind !== "docker" || config?.agentId !== input.agentId)
-      throw new Error("Conversation sandbox binding is invalid.");
-  }
+  if (
+    ids.length &&
+    (sandbox?.kind !== "docker" ||
+      managed(sandbox.config)?.agentId !== input.agentId)
+  )
+    throw new Error("Conversation sandbox binding is invalid.");
   return { conversation, context, sandbox };
+}
+
+function mapping(
+  input: AgentConversationSandboxInput,
+  found: AgentSessionBinding,
+  sandbox: { id: string; deploymentId: string },
+): AgentConversationSandbox {
+  const identity = {
+    conversationId: found.conversation?.id,
+    a2aContextId: found.context?.id ?? input.contextId,
+  };
+  const workspaceRoot = agentSessionWorkspaceRoot(identity);
+  return {
+    sandboxId: sandbox.id,
+    deploymentId: sandbox.deploymentId,
+    workspaceRoot,
+    workingDirectory: workspaceRoot,
+    ...(identity.conversationId
+      ? { conversationId: identity.conversationId }
+      : {}),
+    ...(identity.a2aContextId ? { contextId: identity.a2aContextId } : {}),
+  };
 }
 
 export async function findAgentConversationSandbox(
@@ -150,9 +196,18 @@ export async function findAgentConversationSandbox(
 ): Promise<AgentConversationSandbox | null> {
   if (input.cleanup) assertRuntimeOwner();
   const found = await binding(db, input);
-  return found.sandbox
-    ? { sandboxId: found.sandbox.id, deploymentId: found.sandbox.deploymentId }
-    : null;
+  if (!found.sandbox) return null;
+  const result = mapping(input, found, found.sandbox);
+  // Before migration, history/file readers must still see the original volume root.
+  if (
+    (found.sandbox.config as Record<string, unknown> | null)?.scope !== "agent"
+  )
+    return {
+      ...result,
+      workspaceRoot: "/workspace",
+      workingDirectory: "/workspace",
+    };
+  return result;
 }
 
 export async function ensureAgentConversationSandbox(
@@ -170,32 +225,77 @@ export async function ensureAgentConversationSandbox(
     session.agentRevisionId,
   );
   const environment = revision.config.environment;
+  const authorize = () =>
+    resolveAgentEnvironmentCredentials({
+      ...input,
+      conversationId: initial.conversation?.id,
+      agentRevisionId: revision.id,
+    });
+  await authorize();
   const allocated = await db.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "Agent" WHERE id = ${input.agentId} AND "workspaceId" = ${input.workspaceId} FOR UPDATE`;
     const current = await binding(tx, input);
+    for (const owner of [current.conversation, current.context]) {
+      if (
+        owner &&
+        (owner.agentRevisionId !== revision.id ||
+          owner.legacyRevisionUnresolved)
+      )
+        throw new Error("Session revision changed.");
+    }
+    const oldConfig = current.sandbox?.config as Record<string, unknown> | null;
+    if (oldConfig?.readOnly === true && oldConfig?.migrationArchive !== true)
+      throw new Error("Historical Agent sessions are read-only.");
     if (
-      (current.conversation ?? current.context)?.agentRevisionId !== revision.id
+      current.sandbox &&
+      oldConfig?.scope !== "agent" &&
+      oldConfig?.agentRevisionId !== revision.id
     )
-      throw new Error("Session revision changed.");
-    if (current.sandbox) {
-      const config = current.sandbox.config as Record<string, unknown> | null;
-      if (config?.readOnly === true)
+      throw new Error("Session sandbox revision does not match.");
+    const existing = await tx.sandbox.findFirst({
+      where: {
+        workspaceId: input.workspaceId,
+        AND: [
+          { config: { path: ["managedBy"], equals: "agent-conversation" } },
+          { config: { path: ["agentId"], equals: input.agentId } },
+          { config: { path: ["scope"], equals: "agent" } },
+        ],
+      },
+      include: { deployment: true },
+    });
+    if (existing) {
+      const config = existing.config as Record<string, unknown> | null;
+      if (
+        config?.readOnly === true ||
+        typeof config?.agentRevisionId !== "string"
+      )
         throw new Error("Historical Agent sessions are read-only.");
-      if (config?.agentRevisionId !== revision.id)
-        throw new Error("Session sandbox revision does not match.");
-      return { sandbox: current.sandbox, created: false };
+      if (
+        current.conversation &&
+        Array.isArray(config?.pendingWorkspaceDeletes) &&
+        config.pendingWorkspaceDeletes.includes(current.conversation.id)
+      )
+        throw new Error(
+          "Conversation sandbox deletion requires recovery; its saved mapping was retained.",
+        );
+      const pin = await tx.agentRevision.findFirst({
+        where: { id: config.agentRevisionId, agentId: input.agentId },
+        select: { config: true },
+      });
+      if (!pin) throw new Error("AGENT_SHARED_ENVIRONMENT_CONFLICT");
+      const pinned = AgentRevisionConfigSchema.parse(pin.config);
+      if (
+        pinned.runtimeKind !== revision.config.runtimeKind ||
+        !isDeepStrictEqual(pinned.environment, environment)
+      )
+        throw new Error("AGENT_SHARED_ENVIRONMENT_CONFLICT");
+      return existing;
     }
     const id = randomUUID();
-    const config = {
-      managedBy: "agent-conversation",
-      agentId: input.agentId,
-      sourceSandboxId: revision.config.sandboxTemplateId ?? "revision",
-      agentRevisionId: revision.id,
-    };
     const deployment = await tx.deployment.create({
       data: {
         workspaceId: input.workspaceId,
-        name: `Conversation sandbox: ${input.agentId}`,
+        name: `Agent sandbox: ${input.agentId}`,
         source: "sandbox",
         sourceRef: environment.image,
         status: "copying",
@@ -206,118 +306,93 @@ export async function ensureAgentConversationSandbox(
           network: environment.network,
           volumeName: sandboxVolumeName(id),
           resourceLimits: environment.resourceLimits,
-          piVersion: environment.piVersion,
+          ...("ompVersion" in environment
+            ? { ompVersion: environment.ompVersion }
+            : { piVersion: environment.piVersion }),
         },
       },
     });
-    const sandbox = await tx.sandbox.create({
+    return tx.sandbox.create({
       data: {
         id,
         workspaceId: input.workspaceId,
         deploymentId: deployment.id,
-        name: `Conversation ${input.conversationId ?? input.contextId}`,
-        slug: `conversation-${id}`,
+        name: `Agent ${input.agentId}`,
+        slug: `agent-${id}`,
         kind: "docker",
         image: environment.image,
         network: environment.network,
-        config,
+        config: {
+          managedBy: "agent-conversation",
+          scope: "agent",
+          agentId: input.agentId,
+          sourceSandboxId: revision.config.sandboxTemplateId ?? "revision",
+          agentRevisionId: revision.id,
+        },
       },
       include: { deployment: true },
     });
-    if (current.conversation)
-      await tx.conversation.update({
-        where: { id: current.conversation.id },
-        data: { sandboxId: id },
-      });
-    if (current.context)
-      await tx.a2AContext.update({
-        where: { id: current.context.id },
-        data: { sandboxId: id },
-      });
-    return { sandbox, created: true };
   });
-  const { sandbox, created } = allocated;
-  const authorizeAccess = async () => {
-    input.signal?.throwIfAborted();
-    await assertDockerVolumeExists(sandboxVolumeName(sandbox.id));
-    return resolveAgentEnvironmentCredentials({
-      ...input,
-      agentRevisionId: revision.id,
+  const bindExistingOwners = async () =>
+    db.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "Agent" WHERE id = ${input.agentId} AND "workspaceId" = ${input.workspaceId} FOR UPDATE`;
+      const latest = await binding(tx, input);
+      for (const owner of [latest.conversation, latest.context]) {
+        if (
+          owner &&
+          (owner.agentRevisionId !== revision.id ||
+            owner.legacyRevisionUnresolved)
+        )
+          throw new Error("Session revision changed.");
+      }
+      if (latest.sandbox?.id !== allocated.id)
+        throw new Error("Conversation/context sandbox mappings changed.");
+      if (latest.conversation && !latest.conversation.sandboxId)
+        await tx.conversation.update({
+          where: { id: latest.conversation.id },
+          data: { sandboxId: allocated.id },
+        });
+      if (latest.context && !latest.context.sandboxId)
+        await tx.a2AContext.update({
+          where: { id: latest.context.id },
+          data: { sandboxId: allocated.id },
+        });
     });
-  };
-  // Reuse is not a lifecycle mutation: an open PTY must not prevent it.
-  // Still reauthorize the pinned session and credentials before returning it.
+  // Reusing a live shared environment is not a disruptive lifecycle mutation.
   if (
-    !created &&
-    sandbox.deployment.status === "running" &&
-    liveStatus(sandbox.deploymentId) === "running"
+    initial.sandbox?.id === allocated.id &&
+    allocated.deployment.status === "running" &&
+    liveStatus(allocated.deploymentId) === "running"
   ) {
-    const release = beginAgentConversationSandboxAccess(sandbox.id);
+    const release = beginAgentConversationSandboxAccess(allocated.id);
     try {
-      await authorizeAccess();
+      await assertDockerVolumeExists(sandboxVolumeName(allocated.id));
+      await authorize();
+      await bindExistingOwners();
       input.signal?.throwIfAborted();
-      if (liveStatus(sandbox.deploymentId) === "running")
-        return { sandboxId: sandbox.id, deploymentId: sandbox.deploymentId };
+      if (liveStatus(allocated.deploymentId) === "running")
+        return mapping(input, initial, allocated);
     } finally {
       release();
     }
   }
   const result = await enqueueSandboxOperation(
     input.workspaceId,
-    sandbox.id,
+    allocated.id,
     async () => {
-      if (created) {
-        try {
-          const snapshot = environment.initialSnapshot;
-          if (snapshot) {
-            const frozen = await db.sandboxSnapshot.findFirst({
-              where: {
-                id: snapshot.snapshotId,
-                volumeName: snapshot.volumeName,
-                status: "ready",
-                sandboxId: revision.config.sandboxTemplateId ?? "",
-                sandbox: { workspaceId: input.workspaceId },
-              },
-              include: { sandbox: { select: { config: true } } },
-            });
-            if (
-              !frozen ||
-              (frozen.sandbox?.config &&
-                typeof frozen.sandbox.config === "object" &&
-                !Array.isArray(frozen.sandbox.config) &&
-                frozen.sandbox.config.readOnly === true) ||
-              (await digestDockerVolume(snapshot.volumeName)) !==
-                snapshot.checksum
-            )
-              throw new Error(
-                "Pinned environment snapshot is unavailable or its digest changed.",
-              );
-            await copyDockerVolume(
-              snapshot.volumeName,
-              sandboxVolumeName(sandbox.id),
-            );
-            if (
-              (await digestDockerVolume(sandboxVolumeName(sandbox.id))) !==
-              snapshot.checksum
-            )
-              throw new Error(
-                "Session snapshot copy failed integrity verification.",
-              );
-          } else await createDockerVolume(sandboxVolumeName(sandbox.id));
-          await db.deployment.update({
-            where: { id: sandbox.deploymentId },
-            data: { status: "provisioning" },
-          });
-        } catch (error) {
-          await db.deployment.update({
-            where: { id: sandbox.deploymentId },
-            data: { status: "copy_failed" },
-          });
-          throw error;
-        }
+      input.signal?.throwIfAborted();
+      const sandbox = await db.sandbox.findFirstOrThrow({
+        where: { id: allocated.id, workspaceId: input.workspaceId },
+        include: { deployment: true },
+      });
+      if (sandbox.deployment.status === "copying") {
+        await createDockerVolume(sandboxVolumeName(sandbox.id));
+        await db.deployment.update({
+          where: { id: sandbox.deploymentId },
+          data: { status: "provisioning" },
+        });
       } else if (
         [
-          "copying",
           "copy_failed",
           "deleting",
           "restoring",
@@ -329,7 +404,208 @@ export async function ensureAgentConversationSandbox(
           "Conversation sandbox requires recovery; its saved mapping was retained.",
         );
       }
-      const environmentVariables = await authorizeAccess();
+      await assertDockerVolumeExists(sandboxVolumeName(sandbox.id));
+      const current = await binding(db, input);
+      const config = sandbox.config as Record<string, unknown> | null;
+      if (
+        current.conversation &&
+        Array.isArray(config?.pendingWorkspaceDeletes) &&
+        config.pendingWorkspaceDeletes.includes(current.conversation.id)
+      )
+        throw new Error(
+          "Conversation sandbox deletion requires recovery; its saved mapping was retained.",
+        );
+      const destination = mapping(input, current, sandbox);
+      if (current.sandbox?.id !== sandbox.id) {
+        const initialize = async () => {
+          let source:
+            | { volumeName: string; checksum: string; sourceSandboxId?: string }
+            | undefined;
+          if (current.sandbox) {
+            const old = current.sandbox;
+            if (
+              [
+                "copying",
+                "copy_failed",
+                "deleting",
+                "restoring",
+                "restore_failed",
+                "restore_cleanup_required",
+              ].includes(old.deployment.status)
+            )
+              throw new Error(
+                "Conversation sandbox requires recovery; its saved mapping was retained.",
+              );
+            await stopAgentSandboxSessionMcp(old.id, input.workspaceId);
+            await killProcess(old.deploymentId, {
+              preventRestart: true,
+              finalStatus: "stopped",
+            });
+            await stopDockerSandboxContainer(old.id);
+            source = {
+              volumeName: sandboxVolumeName(old.id),
+              checksum: await digestDockerVolume(sandboxVolumeName(old.id)),
+              sourceSandboxId: old.id,
+            };
+          } else if (environment.initialSnapshot) {
+            const snapshot = environment.initialSnapshot;
+            const frozen = await db.sandboxSnapshot.findFirst({
+              where: {
+                id: snapshot.snapshotId,
+                volumeName: snapshot.volumeName,
+                status: "ready",
+                sandboxId: revision.config.sandboxTemplateId ?? "",
+                sandbox: { workspaceId: input.workspaceId },
+              },
+              include: { sandbox: { select: { config: true } } },
+            });
+            const config = frozen?.sandbox?.config as Record<
+              string,
+              unknown
+            > | null;
+            if (
+              !frozen ||
+              config?.readOnly === true ||
+              (await digestDockerVolume(snapshot.volumeName)) !==
+                snapshot.checksum
+            )
+              throw new Error(
+                "Pinned environment snapshot is unavailable or its digest changed.",
+              );
+            source = {
+              volumeName: snapshot.volumeName,
+              checksum: snapshot.checksum,
+            };
+          }
+          await initializeDockerSessionWorkspace(
+            sandboxVolumeName(sandbox.id),
+            destination.workspaceRoot.slice("/workspace/".length),
+            source,
+          );
+          if (current.conversation && !current.sandbox)
+            await materializeConversationAttachments({
+              workspaceId: input.workspaceId,
+              conversationId: current.conversation.id,
+              volumeName: sandboxVolumeName(sandbox.id),
+              workspaceRoot: destination.workspaceRoot,
+            });
+          await db.$transaction(async (tx) => {
+            await tx.$queryRaw`SELECT id FROM "Agent" WHERE id = ${input.agentId} AND "workspaceId" = ${input.workspaceId} FOR UPDATE`;
+            const latest = await binding(tx, input);
+            for (const owner of [latest.conversation, latest.context]) {
+              if (
+                owner &&
+                (owner.agentRevisionId !== revision.id ||
+                  owner.legacyRevisionUnresolved)
+              )
+                throw new Error("Session revision changed.");
+            }
+            if (latest.sandbox?.id !== current.sandbox?.id)
+              throw new Error(
+                "Conversation/context sandbox mappings changed during migration.",
+              );
+            if (latest.conversation) {
+              const work = await tx.workSession.findFirst({
+                where: {
+                  conversationId: latest.conversation.id,
+                  workspaceId: input.workspaceId,
+                  agentId: input.agentId,
+                },
+                select: { id: true },
+              });
+              await tx.conversation.update({
+                where: { id: latest.conversation.id },
+                data: { sandboxId: sandbox.id },
+              });
+              await tx.workSession.updateMany({
+                where: {
+                  conversationId: latest.conversation.id,
+                  workspaceId: input.workspaceId,
+                  agentId: input.agentId,
+                },
+                data: { sandboxId: sandbox.id },
+              });
+              await tx.a2AContext.updateMany({
+                where: {
+                  workspaceId: input.workspaceId,
+                  agentId: input.agentId,
+                  targetKind: "local",
+                  ...(current.sandbox
+                    ? { sandboxId: current.sandbox.id }
+                    : { sandboxId: null }),
+                  entryBindings: {
+                    some: {
+                      OR: [
+                        {
+                          kind: { in: ["chat", "control", "channel"] },
+                          sourceId: latest.conversation.id,
+                        },
+                        ...(work ? [{ kind: "work", sourceId: work.id }] : []),
+                      ],
+                    },
+                  },
+                },
+                data: { sandboxId: sandbox.id },
+              });
+            }
+            if (latest.context)
+              await tx.a2AContext.update({
+                where: { id: latest.context.id },
+                data: { sandboxId: sandbox.id },
+              });
+            await tx.piSessionPackageSet.updateMany({
+              where: {
+                OR: [
+                  {
+                    conversation: {
+                      agentId: input.agentId,
+                      agent: { workspaceId: input.workspaceId },
+                      sandboxId: sandbox.id,
+                    },
+                  },
+                  {
+                    context: {
+                      agentId: input.agentId,
+                      workspaceId: input.workspaceId,
+                      targetKind: "local",
+                      sandboxId: sandbox.id,
+                    },
+                  },
+                ],
+              },
+              data: { sandboxId: sandbox.id },
+            });
+            if (current.sandbox) {
+              const config = current.sandbox.config as Record<
+                string,
+                Prisma.JsonValue
+              >;
+              await tx.sandbox.update({
+                where: { id: current.sandbox.id },
+                data: {
+                  config: {
+                    ...config,
+                    readOnly: true,
+                    migrationArchive: true,
+                    retainedUntilAgentDeletion: true,
+                    migratedToSandboxId: sandbox.id,
+                  } as Prisma.InputJsonValue,
+                },
+              });
+            }
+          });
+        };
+        if (current.sandbox)
+          await enqueueSandboxOperation(
+            input.workspaceId,
+            current.sandbox.id,
+            initialize,
+          );
+        else await initialize();
+      } else {
+        await bindExistingOwners();
+      }
+      const environmentVariables = await authorize();
       if (liveStatus(sandbox.deploymentId) !== "running") {
         const deployment = await db.deployment.findUniqueOrThrow({
           where: { id: sandbox.deploymentId },
@@ -348,7 +624,7 @@ export async function ensureAgentConversationSandbox(
         active: accesses.get(sandbox.id)?.active ?? 0,
         usedAt: Date.now(),
       });
-      return { sandboxId: sandbox.id, deploymentId: sandbox.deploymentId };
+      return destination;
     },
   );
   if (!result) throw new Error("Workspace is being deleted.");
@@ -399,7 +675,7 @@ async function removeManagedSandbox(
           snapshots: true,
           workSessions: {
             where: {
-              status: { in: ["queued", "running", "waiting_approval"] },
+              status: { in: ["queued", "running"] },
             },
             take: 1,
           },
@@ -461,6 +737,164 @@ export async function deleteAgentConversationSandboxes(
 ): Promise<void> {
   await withAgentMaintenanceLease(input.agentId, () =>
     trackRuntimeOperation(async () => {
+      if (input.conversationId) {
+        const found = await binding(db, {
+          ...input,
+          conversationId: input.conversationId,
+        });
+        const conversation = found.conversation;
+        const cleanup =
+          afterCleanup ??
+          (async () => {
+            await db.conversation.deleteMany({
+              where: {
+                id: input.conversationId,
+                agentId: input.agentId,
+                agent: { workspaceId: input.workspaceId },
+              },
+            });
+          });
+        if (conversation?.agentRevisionId)
+          await stopSessionMcp({
+            workspaceId: input.workspaceId,
+            agentId: input.agentId,
+            conversationId: conversation.id,
+            agentRevisionId: conversation.agentRevisionId,
+          });
+        if (conversation) {
+          const work = await db.workSession.findFirst({
+            where: {
+              conversationId: conversation.id,
+              workspaceId: input.workspaceId,
+              agentId: input.agentId,
+            },
+            select: { id: true },
+          });
+          const contexts = await db.a2AContext.findMany({
+            where: {
+              workspaceId: input.workspaceId,
+              agentId: input.agentId,
+              targetKind: "local",
+              sandboxId: found.sandbox?.id,
+              entryBindings: {
+                some: {
+                  OR: [
+                    {
+                      kind: { in: ["chat", "control", "channel"] },
+                      sourceId: conversation.id,
+                    },
+                    ...(work ? [{ kind: "work", sourceId: work.id }] : []),
+                  ],
+                },
+              },
+            },
+          });
+          for (const context of contexts)
+            if (context.agentRevisionId)
+              await stopSessionMcp({
+                workspaceId: input.workspaceId,
+                agentId: input.agentId,
+                a2aContextId: context.id,
+                agentRevisionId: context.agentRevisionId,
+              });
+        }
+        if (found.sandbox && conversation) {
+          const sandbox = found.sandbox;
+          const result = await enqueueSandboxOperation(
+            input.workspaceId,
+            sandbox.id,
+            async () => {
+              const row = await db.sandbox.findFirstOrThrow({
+                where: { id: sandbox.id, workspaceId: input.workspaceId },
+              });
+              const config = row.config as Record<string, Prisma.JsonValue>;
+              if (config.scope !== "agent") {
+                // A legacy volume is an indivisible recovery source; deleting one
+                // owner cannot discard another Context's retained work/history.
+                await killProcess(sandbox.deploymentId, {
+                  preventRestart: true,
+                  finalStatus: "stopped",
+                });
+                await stopDockerSandboxContainer(sandbox.id);
+                await db.sandbox.update({
+                  where: { id: sandbox.id },
+                  data: {
+                    config: {
+                      ...config,
+                      readOnly: true,
+                      migrationArchive: true,
+                      retainedUntilAgentDeletion: true,
+                    } as Prisma.InputJsonValue,
+                  },
+                });
+                await cleanup();
+                return true;
+              }
+              if (liveStatus(sandbox.deploymentId) === "running") {
+                const port = livePort(sandbox.deploymentId);
+                if (!port)
+                  throw new Error(
+                    "Cannot prove conversation terminal idleness.",
+                  );
+                const response = await fetch(
+                  `http://127.0.0.1:${port}/terminal/activity`,
+                  { signal: AbortSignal.timeout(5000) },
+                );
+                if (
+                  !response.ok ||
+                  ((await response.json()) as { active?: unknown }).active !== 0
+                )
+                  throw new Error(
+                    "Conversation sandbox has active terminal sessions.",
+                  );
+              }
+              const pending = new Set(
+                Array.isArray(config.pendingWorkspaceDeletes)
+                  ? config.pendingWorkspaceDeletes.filter(
+                      (id): id is string => typeof id === "string",
+                    )
+                  : [],
+              );
+              pending.add(conversation.id);
+              await db.sandbox.update({
+                where: { id: sandbox.id },
+                data: {
+                  config: {
+                    ...config,
+                    pendingWorkspaceDeletes: [...pending],
+                  } as Prisma.InputJsonValue,
+                },
+              });
+              await stopAgentSessionRuntime({
+                workspaceId: input.workspaceId,
+                agentId: input.agentId,
+                sandboxId: sandbox.id,
+                conversationId: conversation.id,
+              });
+              await removeDockerSessionWorkspace(
+                sandboxVolumeName(sandbox.id),
+                agentSessionWorkspaceRoot({
+                  conversationId: conversation.id,
+                }).slice("/workspace/".length),
+              );
+              await cleanup();
+              pending.delete(conversation.id);
+              await db.sandbox.update({
+                where: { id: sandbox.id },
+                data: {
+                  config: {
+                    ...config,
+                    pendingWorkspaceDeletes: [...pending],
+                  } as Prisma.InputJsonValue,
+                },
+              });
+              return true;
+            },
+          );
+          if (!result) throw new Error("Workspace is being deleted.");
+        } else await cleanup();
+        return;
+      }
       const sandboxes = await db.sandbox.findMany({
         where: {
           workspaceId: input.workspaceId,
@@ -501,19 +935,15 @@ export async function deleteAgentContextSandbox(input: {
   if (!context?.sandbox) return;
   if (managed(context.sandbox.config)?.agentId !== input.agentId)
     throw new Error("Invalid context sandbox.");
-  if (
-    context.sandbox.conversations.length ||
-    context.sandbox.a2aContexts.length > 1
-  ) {
-    await db.a2AContext.update({
-      where: { id: context.id },
-      data: { sandboxId: null },
+  if (context.agentRevisionId)
+    await stopSessionMcp({
+      workspaceId: input.workspaceId,
+      agentId: input.agentId,
+      a2aContextId: context.id,
+      agentRevisionId: context.agentRevisionId,
     });
-    return;
-  }
-  await withAgentMaintenanceLease(input.agentId, () =>
-    removeManagedSandbox(context.sandboxId as string, input.workspaceId),
-  );
+  // Releasing a Context must never remove the Agent's shared volume or detach
+  // another identity. Its historical mapping remains available to readers.
 }
 
 export async function stopIdleAgentConversationSandboxes(): Promise<void> {
@@ -525,7 +955,7 @@ export async function stopIdleAgentConversationSandboxes(): Promise<void> {
       deployment: true,
       conversations: true,
       workSessions: {
-        where: { status: { in: ["queued", "running", "waiting_approval"] } },
+        where: { status: { in: ["queued", "running"] } },
         take: 1,
       },
       a2aContexts: {
@@ -550,6 +980,8 @@ export async function stopIdleAgentConversationSandboxes(): Promise<void> {
     const config = managed(sandbox.config);
     if (
       !config ||
+      (sandbox.config as Record<string, unknown> | null)?.migrationArchive ===
+        true ||
       agentExecutionBusy(config.agentId) ||
       sandboxExecutionBusy(sandbox.id) ||
       accesses.get(sandbox.id)?.active ||
@@ -558,10 +990,7 @@ export async function stopIdleAgentConversationSandboxes(): Promise<void> {
     )
       continue;
     await withAgentMaintenanceLease(config.agentId, async () => {
-      if (
-        sandbox.deployment.status === "deleting" ||
-        (!sandbox.conversations.length && !sandbox.a2aContexts.length)
-      ) {
+      if (sandbox.deployment.status === "deleting") {
         await removeManagedSandbox(sandbox.id, sandbox.workspaceId);
       } else if (
         sandbox.deployment.status === "stopping" ||

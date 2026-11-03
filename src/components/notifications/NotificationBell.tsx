@@ -72,7 +72,7 @@ export function NotificationBell({
         aria-label={label}
         aria-describedby={unavailable ? statusId : undefined}
         title={unavailable ? `${label} — ${t("countUnavailable")}` : label}
-        className={`relative min-h-9 shrink-0 gap-2 rounded-lg px-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${compact ? "w-9 justify-center" : "justify-start"}`}
+        className={`relative h-9 shrink-0 gap-[9px] rounded-lg px-[9px] text-sm font-normal text-foreground hover:bg-foreground/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${compact ? "w-9 justify-center" : "justify-start"}`}
       >
         <Bell aria-hidden="true" className="size-[18px] shrink-0" />
         {!compact && (

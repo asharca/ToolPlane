@@ -3,12 +3,14 @@ import { getCurrentUser } from "@/lib/auth/current-user";
 import { getWorkspaceForUser } from "@/lib/workspace/queries";
 import { listSandboxes } from "@/lib/sandboxes/queries";
 import {
+  isExternalSandboxAccess,
+  isExternalSandboxCandidate,
+} from "@/lib/sandboxes/external";
+import {
   getAgentPageData,
   listAgentDeploymentOptions,
-  listAgents,
   listAgentSkillOptions,
   listProviders,
-  resolveAgentMarketSetupGuide,
 } from "@/lib/agents/queries";
 import { effectiveStatus } from "@/lib/process/supervisor";
 import { AgentSettings } from "@/components/dashboard/agents/AgentSettings";
@@ -18,6 +20,9 @@ import { toAgentChannelConnectionClientView } from "@/lib/agents/channel-connect
 import { SettingsModal } from "@/components/dashboard/SettingsModal";
 import { db } from "@/lib/db";
 import { AgentRevisionConfigSchema } from "@/lib/agents/revision-types";
+import { listPlugins, pluginReleaseLabel } from "@/lib/plugins/catalog";
+import { readCapabilities } from "@/lib/plugins/capabilities";
+import { parsePiPackageReleaseManifest } from "@/lib/pi-packages/manifest";
 
 export const dynamic = "force-dynamic";
 
@@ -60,44 +65,35 @@ export default async function AgentDetailPage({
   const selectedSkills = new Set(
     agent.skills.map((skill) => skill.installedSkillId),
   );
-  const selectedSandboxes = new Set(
-    agent.sandboxes.map((sandbox) => sandbox.sandboxId),
-  );
-  const selectedSubAgents = new Set(
-    agent.subAgents.map((child) => child.childId),
-  );
   const [
     connections,
     providers,
     deployments,
     skills,
     sandboxes,
-    agents,
     installs,
     current,
+    externalLinks,
   ] = await Promise.all([
     listAgentChannelConnections(ws.id, agentId),
     listProviders(ws.id),
     listAgentDeploymentOptions(ws.id, selectedDeps),
     listAgentSkillOptions(ws.id, selectedSkills),
     listSandboxes(ws.id),
-    listAgents(ws.id),
-    db.marketInstall.findMany({
-      where: { targetWorkspaceId: ws.id, listing: { kind: "pi-package" } },
-      orderBy: { createdAt: "asc" },
-      select: {
-        id: true,
-        status: true,
-        currentReleaseId: true,
-        listing: { select: { name: true, status: true } },
-        currentRelease: { select: { version: true, reviewStatus: true } },
-      },
-    }),
+    listPlugins(ws.id, user.id, { installedOnly: true }),
     db.agent.findFirst({
       where: { id: agentId, workspaceId: ws.id },
       select: { currentRevisionVersion: true },
     }),
+    db.agentExternalSandbox.findMany({
+      where: { agentId, agent: { workspaceId: ws.id } },
+      select: { sandboxId: true, access: true },
+    }),
   ]);
+  const ownSandboxId = agent.sandboxes.find(
+    (link) => link.isDefault,
+  )?.sandboxId;
+  const ownSandbox = sandboxes.find((sandbox) => sandbox.id === ownSandboxId);
   const revision = current?.currentRevisionVersion
     ? await db.agentRevision.findUnique({
         where: {
@@ -109,10 +105,6 @@ export default async function AgentDetailPage({
   const publishedRevision = revision
     ? { ...revision, config: AgentRevisionConfigSchema.parse(revision.config) }
     : null;
-  const marketSetup = await resolveAgentMarketSetupGuide(
-    ws.id,
-    agent.marketInstall,
-  );
   const allowedSections: AgentSettingsSection[] = [
     "general",
     "instructions",
@@ -125,7 +117,7 @@ export default async function AgentDetailPage({
     "advanced",
   ];
   const initialSettingsTab =
-    settings === "a2a" || settings === "channels"
+    settings === "a2a" || settings === "channels" || settings === "changelog"
       ? settings
       : (allowedSections.find((section) => section === settings) ?? "general");
   return (
@@ -139,8 +131,10 @@ export default async function AgentDetailPage({
         initialA2ATaskId={task}
         initialSettingsTab={initialSettingsTab}
         agentName={agent.name}
-        marketSetup={marketSetup}
-        ready={agent.runtimeKind === "pi-sdk" && Boolean(publishedRevision)}
+        ready={
+          (agent.runtimeKind === "pi-sdk" || agent.runtimeKind === "omp") &&
+          Boolean(publishedRevision)
+        }
         channelSettings={{
           connections: connections.map(toAgentChannelConnectionClientView),
         }}
@@ -149,6 +143,7 @@ export default async function AgentDetailPage({
           name: agent.name,
           description: agent.description ?? "",
           runtimeKind: agent.runtimeKind,
+          ompConfig: agent.ompConfig,
           systemPrompt: agent.systemPrompt ?? "",
           disabledBuiltinTools: agent.disabledBuiltinTools,
           providerId: agent.providerId,
@@ -171,70 +166,149 @@ export default async function AgentDetailPage({
           skills,
           publishedRevision,
           canManageCredentials: ws.ownerId === user.id,
-          piPackages: installs.map((install) => {
+          canApprovePluginSync:
+            ws.ownerId === user.id ||
+            Boolean(
+              await db.membership.findFirst({
+                where: {
+                  workspaceId: ws.id,
+                  userId: user.id,
+                  role: { in: ["owner", "admin"] },
+                },
+                select: { userId: true },
+              }),
+            ),
+          piPackages: installs.items.flatMap((plugin) => {
+            const install = plugin.install;
+            if (!install) return [];
             const enabled = agent.piPackages.find(
               (pkg) => pkg.marketInstallId === install.id,
             );
+            const snapshot = install.currentRelease
+              ? parsePiPackageReleaseManifest(
+                  install.currentRelease.manifest,
+                  install.currentRelease.checksum,
+                ).package
+              : null;
+            const compatible = snapshot?.runtime.kind === agent.runtimeKind;
+            if (!compatible && !enabled) return [];
             const available =
               install.status === "ready" &&
-              install.listing.status === "published";
-            return {
-              marketInstallId: install.id,
-              name: install.listing.name,
-              currentReleaseId: install.currentReleaseId,
-              currentVersion: install.currentRelease?.version ?? null,
-              currentAvailable:
-                available &&
-                install.currentRelease?.reviewStatus === "approved",
-              enabledReleaseId: enabled?.releaseId ?? null,
-              enabledVersion: enabled?.release.version ?? null,
-              enabledAvailable:
-                available && enabled?.release.reviewStatus === "approved",
-            };
+              plugin.status === "published" &&
+              compatible;
+            const from = readCapabilities(enabled?.release.releaseSummary);
+            const to = readCapabilities(enabled?.targetRelease?.releaseSummary);
+            const previousMcp = new Map(
+              from?.mcp.map(({ key, tools }) => [key, new Set(tools)]),
+            );
+            return [
+              {
+                marketInstallId: install.id,
+                listingId: plugin.id,
+                name: plugin.name,
+                capabilities: snapshot
+                  ? {
+                      runtimeKind: snapshot.runtime.kind,
+                      hooks: snapshot.resources.hooks ?? [],
+                      extensions: snapshot.resources.extensions,
+                      tools: snapshot.resources.tools ?? [],
+                      commands: snapshot.resources.commands ?? [],
+                    }
+                  : null,
+                currentReleaseId: install.currentReleaseId,
+                currentVersion: install.currentRelease
+                  ? pluginReleaseLabel(install.currentRelease)
+                  : null,
+                currentAvailable:
+                  available &&
+                  install.currentRelease?.reviewStatus === "approved",
+                enabledReleaseId: enabled?.releaseId ?? null,
+                enabledVersion: enabled
+                  ? pluginReleaseLabel(enabled.release)
+                  : null,
+                syncStatus: enabled?.syncStatus ?? "synced",
+                syncError: enabled?.syncError ?? null,
+                targetVersion: enabled?.targetRelease
+                  ? pluginReleaseLabel(enabled.targetRelease)
+                  : null,
+                targetReleaseId: enabled?.targetReleaseId ?? null,
+                capabilityDiff:
+                  from && to
+                    ? {
+                        addedMcp: to.mcp.flatMap(({ key, tools }) => {
+                          const previous = previousMcp.get(key);
+                          const addedTools = tools.filter(
+                            (tool) => !previous?.has(tool),
+                          );
+                          return !previous || addedTools.length
+                            ? [
+                                {
+                                  key,
+                                  tools: addedTools,
+                                  requirementAdded: !previous,
+                                },
+                              ]
+                            : [];
+                        }),
+                        codeChanged: from.codeDigest !== to.codeDigest,
+                      }
+                    : null,
+              },
+            ];
           }),
-          defaultSandboxId:
-            agent.sandboxes.find((sandbox) => sandbox.isDefault)?.sandboxId ??
-            null,
-          sandboxes: sandboxes
+          ownSandbox: ownSandbox
+            ? {
+                id: ownSandbox.id,
+                name: ownSandbox.name,
+                kind: ownSandbox.kind,
+                image: ownSandbox.image,
+                network: ownSandbox.network,
+                status: effectiveStatus(
+                  ownSandbox.deploymentId,
+                  ownSandbox.deployment.status,
+                ),
+              }
+            : null,
+          // Attached rows stay listed in any state so saving never detaches them silently.
+          externalSandboxes: sandboxes
             .filter(
               (sandbox) =>
-                (sandbox._count.agentLinks === 0 ||
-                  selectedSandboxes.has(sandbox.id)) &&
-                ![
-                  "copying",
-                  "copy_failed",
-                  "restoring",
-                  "restore_failed",
-                  "restore_cleanup_required",
-                  "upgrading",
-                  "deleting",
-                ].includes(
-                  effectiveStatus(
-                    sandbox.deploymentId,
-                    sandbox.deployment.status,
-                  ),
+                isExternalSandboxCandidate({
+                  kind: sandbox.kind,
+                  config: sandbox.config,
+                  isAgentTemplate: sandbox._count.agentLinks > 0,
+                }) &&
+                (externalLinks.some((link) => link.sandboxId === sandbox.id) ||
+                  ![
+                    "copying",
+                    "copy_failed",
+                    "restoring",
+                    "restore_failed",
+                    "restore_cleanup_required",
+                    "upgrading",
+                    "deleting",
+                  ].includes(
+                    effectiveStatus(
+                      sandbox.deploymentId,
+                      sandbox.deployment.status,
+                    ),
+                  )),
+            )
+            .map((sandbox) => {
+              const access = externalLinks.find(
+                (link) => link.sandboxId === sandbox.id,
+              )?.access;
+              return {
+                id: sandbox.id,
+                name: sandbox.name,
+                kind: sandbox.kind,
+                access: isExternalSandboxAccess(access) ? access : null,
+                status: effectiveStatus(
+                  sandbox.deploymentId,
+                  sandbox.deployment.status,
                 ),
-            )
-            .map((sandbox) => ({
-              id: sandbox.id,
-              label: sandbox.name,
-              kind: sandbox.kind,
-              network: sandbox.network,
-              checked: selectedSandboxes.has(sandbox.id),
-              status: effectiveStatus(
-                sandbox.deploymentId,
-                sandbox.deployment.status,
-              ),
-            })),
-          subAgents: agents
-            .filter(
-              (child) => child.id !== agentId && child.runtimeKind === "pi-sdk",
-            )
-            .map((child) => ({
-              id: child.id,
-              label: child.name,
-              checked: selectedSubAgents.has(child.id),
-            })),
+              };
+            }),
         }}
       />
     </SettingsModal>

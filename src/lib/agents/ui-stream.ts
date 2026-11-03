@@ -2,6 +2,10 @@ import "server-only";
 
 import type { AssistantMessageEvent, ToolCall } from "@earendil-works/pi-ai";
 import type { SandboxRuntimeActivity } from "./sandbox-runtime";
+type ChildRuntimeActivity = SandboxRuntimeActivity & {
+  source: NonNullable<SandboxRuntimeActivity["source"]>;
+  text?: string;
+};
 
 type AgentUiChunk =
   | { type: "text-start"; id: string }
@@ -18,7 +22,8 @@ type AgentUiChunk =
       input: unknown;
     }
   | { type: "tool-output-available"; toolCallId: string; output: unknown }
-  | { type: "tool-output-error"; toolCallId: string; errorText: string };
+  | { type: "tool-output-error"; toolCallId: string; errorText: string }
+  | { type: "data-subagent-activity"; id: string; data: ChildRuntimeActivity };
 
 type AgentUiWriter = { write(chunk: AgentUiChunk): void };
 
@@ -119,6 +124,11 @@ export function createSandboxUiStreamBridge(
   let textId: string | null = null;
   let reasoningId: string | null = null;
   let sequence = 0;
+  const childReasoning = new Map<
+    string,
+    { id: string; text: string; active: boolean }
+  >();
+  const childTools = new Map<string, SandboxRuntimeActivity>();
 
   function endText() {
     if (!textId) return;
@@ -143,6 +153,55 @@ export function createSandboxUiStreamBridge(
     },
     onActivity(activity: SandboxRuntimeActivity) {
       endText();
+      if (activity.source) {
+        endReasoning();
+        const childKey = JSON.stringify([
+          activity.source.subagentId,
+          activity.source.parentToolCallId,
+        ]);
+        if (activity.type === "reasoning") {
+          let state = childReasoning.get(childKey);
+          if (!state || (!state.active && activity.status === "running")) {
+            state = {
+              id: `${prefix}-child-reasoning-${sequence++}`,
+              text: "",
+              active: true,
+            };
+            childReasoning.set(childKey, state);
+          }
+          state.text += activity.delta ?? "";
+          state.active = activity.status === "running";
+          writer.write({
+            type: "data-subagent-activity",
+            id: state.id,
+            data: { ...activity, source: activity.source, text: state.text },
+          });
+        } else {
+          const id = `${prefix}-child-tool-${childKey}:${activity.toolCallId ?? "execution"}`;
+          const previous = childTools.get(id);
+          if (
+            previous &&
+            previous.status !== "running" &&
+            activity.status === "running"
+          )
+            return;
+          const next = {
+            ...previous,
+            ...activity,
+            source: activity.source,
+            input:
+              activity.input === undefined ? previous?.input : activity.input,
+            output:
+              activity.output === undefined
+                ? previous?.output
+                : activity.output,
+            toolName: activity.toolName ?? previous?.toolName,
+          };
+          childTools.set(id, next);
+          writer.write({ type: "data-subagent-activity", id, data: next });
+        }
+        return;
+      }
       if (activity.type === "reasoning") {
         if (activity.status === "running") {
           if (!reasoningId) {

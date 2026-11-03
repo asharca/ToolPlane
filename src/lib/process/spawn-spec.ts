@@ -5,7 +5,6 @@ import {
   type McpNetwork,
 } from "./sandbox";
 import { commandArgsNeedGit } from "./git-source";
-import { sshTargetIdFromConfig } from "@/lib/sandboxes/ssh-targets";
 import {
   connectorFromConfig,
   type SandboxConnectorConfig,
@@ -50,7 +49,6 @@ export type SpawnSpec =
       name: string;
       sandboxId: string;
       sandboxKind: "docker" | "connector" | "ssh";
-      sshTargetId?: string;
       image?: string;
       volumeName?: string;
       resourceLimits?: SandboxResourceLimits;
@@ -321,7 +319,6 @@ function readCfg(installCfg: unknown): {
 function readSandboxCfg(installCfg: unknown): {
   sandboxId: string;
   kind: "docker" | "connector" | "ssh";
-  sshTargetId?: string;
   image?: string;
   volumeName?: string;
   resourceLimits?: SandboxResourceLimits;
@@ -343,13 +340,9 @@ function readSandboxCfg(installCfg: unknown): {
   };
   if (c.readOnly === true) throw new Error("AGENT_RUNTIME_RETIRED");
   const connector = connectorFromConfig(installCfg);
-  const sshTargetId = sshTargetIdFromConfig(installCfg);
-  if (c.kind === "ssh" && !sshTargetId)
-    throw new Error(
-      "Legacy SSH configuration is disabled; select an approved SSH target.",
-    );
+  // SSH credentials live in SandboxSshServer and are loaded at launch.
   const kind =
-    c.kind === "ssh" && sshTargetId
+    c.kind === "ssh"
       ? "ssh"
       : c.kind === "connector" && connector
         ? "connector"
@@ -357,7 +350,6 @@ function readSandboxCfg(installCfg: unknown): {
   return {
     sandboxId: c.sandboxId ?? "",
     kind,
-    ...(sshTargetId ? { sshTargetId } : {}),
     image: c.image,
     volumeName: c.volumeName,
     resourceLimits: c.resourceLimits,
@@ -379,7 +371,6 @@ export function resolveSpawnSpec(
       name: d.name ?? "Sandbox",
       sandboxId: cfg.sandboxId,
       sandboxKind: cfg.kind,
-      ...(cfg.sshTargetId ? { sshTargetId: cfg.sshTargetId } : {}),
       network: cfg.network,
       env: cfg.env,
       ...(cfg.image ? { image: cfg.image } : {}),

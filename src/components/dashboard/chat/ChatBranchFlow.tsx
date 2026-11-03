@@ -4,6 +4,7 @@ import { Button } from "@/components/motion/button";
 
 import "@xyflow/react/dist/style.css";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useReducedMotion } from "motion/react";
 import { useTranslations } from "next-intl";
 import { graphlib, layout } from "@dagrejs/dagre";
 import {
@@ -100,13 +101,11 @@ function BranchNode({ data }: NodeProps<BranchFlowNode>) {
       data-message-id={data.id}
       data-active-path={data.active ? "true" : "false"}
       className={cx(
-        "group/branch-node relative h-[106px] w-[220px] rounded-md border bg-card px-3 py-2 shadow-sm transition-[border-color,box-shadow,opacity]",
-        data.role === "user"
-          ? "border-primary/35 bg-muted/35"
-          : "border-border bg-muted/35",
-        data.awaitingInput && "border-primary/60 bg-muted/10",
+        "group/branch-node relative h-[106px] w-[220px] rounded-2xl border bg-background px-3 py-2.5 shadow-sm transition-[border-color,box-shadow,opacity]",
+        data.role === "user" ? "border-border/70 bg-muted" : "border-border/70",
+        data.awaitingInput && "border-primary/50 border-dashed",
         data.id === data.activeMessageId &&
-          "border-primary ring-2 ring-primary/20",
+          "border-primary/70 ring-2 ring-primary/10",
         !data.active && "opacity-55 hover:opacity-100",
       )}
     >
@@ -118,7 +117,7 @@ function BranchNode({ data }: NodeProps<BranchFlowNode>) {
       />
       <div className="flex min-w-0 items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-1.5">
-          <span className="rounded bg-background/80 px-1.5 py-0.5 text-[10px] font-medium">
+          <span className="shrink-0 whitespace-nowrap rounded-full bg-muted/70 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
             {data.role === "user" ? t("branchUser") : t("branchAssistant")}
           </span>
           {data.modelId ? (
@@ -127,7 +126,7 @@ function BranchNode({ data }: NodeProps<BranchFlowNode>) {
             </span>
           ) : null}
         </div>
-        <div className="flex shrink-0 items-center opacity-0 transition-opacity group-hover/branch-node:opacity-100 group-focus-within/branch-node:opacity-100">
+        <div className="flex shrink-0 items-center opacity-0 transition-opacity group-hover/branch-node:opacity-100 group-focus-within/branch-node:opacity-100 [@media(hover:none)]:opacity-100">
           {data.role === "assistant" ? (
             <Button
               type="button"
@@ -140,7 +139,7 @@ function BranchNode({ data }: NodeProps<BranchFlowNode>) {
               }}
               variant={"ghost"}
               size={"icon"}
-              className="flex items-center justify-center"
+              className="flex size-6 items-center justify-center rounded-md"
             >
               <Split className="size-3.5" />
             </Button>
@@ -157,19 +156,19 @@ function BranchNode({ data }: NodeProps<BranchFlowNode>) {
               }}
               variant={"ghost"}
               size={"icon"}
-              className="flex items-center justify-center"
+              className="flex size-6 items-center justify-center rounded-md"
             >
               <Trash2 className="size-3.5" />
             </Button>
           ) : null}
         </div>
       </div>
-      <p className="mt-2 line-clamp-2 min-h-8 text-[11px] leading-4 text-foreground">
+      <p className="mt-2 line-clamp-2 min-h-8 text-xs leading-4 text-foreground">
         {data.awaitingInput
           ? t("branchAwaitingInputDescription")
           : data.preview}
       </p>
-      <div className="mt-1.5 flex items-center justify-between gap-2 text-[9px] text-muted-foreground">
+      <div className="mt-1.5 flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
         <span className="flex min-w-0 items-center gap-1.5">
           <span
             className={cx(
@@ -200,6 +199,7 @@ function branchFlow(
   busy: boolean,
   onDelete: (messageId: string) => void,
   onStart: (messageId: string) => void,
+  reducedMotion: boolean,
 ) {
   const graph = new graphlib.Graph()
     .setGraph({
@@ -252,7 +252,7 @@ function branchFlow(
         source: node.parentId,
         target: node.id,
         type: "smoothstep",
-        animated: active,
+        animated: active && !reducedMotion,
         markerEnd: {
           type: MarkerType.ArrowClosed,
           color,
@@ -262,7 +262,7 @@ function branchFlow(
         style: {
           stroke: color,
           strokeWidth: active ? 2.25 : 1.5,
-          strokeDasharray: "4 4",
+          strokeDasharray: active ? undefined : "4 4",
         },
       },
     ];
@@ -307,6 +307,7 @@ function BranchCanvas({
       {viewport ? (
         <ReactFlow
           colorMode="system"
+          className="!bg-muted/15 [&_.react-flow__attribution]:!bg-background [&_.react-flow__attribution]:!text-muted-foreground"
           defaultViewport={viewport}
           nodes={flow.nodes}
           edges={flow.edges}
@@ -322,14 +323,14 @@ function BranchCanvas({
           }}
           onlyRenderVisibleElements
         >
-          <Background gap={18} size={1} color="var(--border)" />
+          <Background gap={24} size={1} color="var(--border)" />
           <Controls
-            className="[&>button]:!border-border [&>button]:!bg-card [&>button]:!fill-foreground [&>button]:!text-foreground"
+            className="!overflow-hidden !rounded-xl !border !border-border !shadow-sm [&>button]:!border-border [&>button]:!bg-background [&>button]:!fill-foreground [&>button]:!text-foreground"
             position="bottom-left"
             showInteractive={false}
           />
           <MiniMap
-            className="overflow-hidden rounded-md border border-border bg-card shadow-sm"
+            className="!overflow-hidden !rounded-xl !border !border-border !bg-background !shadow-sm"
             nodeColor={(node) =>
               node.data.role === "user"
                 ? "var(--primary)"
@@ -370,23 +371,24 @@ export function ChatBranchPanel({
 }) {
   const t = useTranslations("console.chatAssistants");
   const common = useTranslations("common");
+  const reducedMotion = useReducedMotion() ?? false;
   const flow = useMemo(
-    () => branchFlow(branch, busy, onDelete, onStart),
-    [branch, busy, onDelete, onStart],
+    () => branchFlow(branch, busy, onDelete, onStart, reducedMotion),
+    [branch, busy, onDelete, onStart, reducedMotion],
   );
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-background">
       <header
-        className={`flex shrink-0 items-center justify-between ${onClose ? "h-11 px-3" : "h-16 pl-3 pr-16"}`}
+        className={`flex shrink-0 items-center justify-between border-b border-border ${onClose ? "h-14 px-4" : "pt-5 pb-4 pl-6 pr-14"}`}
       >
         <div className="flex min-w-0 items-center gap-2">
           <GitBranch className="size-4 text-muted-foreground" />
           <div className="min-w-0">
-            <h2 className="truncate text-xs font-medium">
+            <h2 className="truncate text-base font-semibold">
               {t("conversationBranches")}
             </h2>
-            <p className="text-[10px] text-muted-foreground">
+            <p className="mt-0.5 text-xs text-muted-foreground">
               {t("branchSummary", {
                 branches: branch.branchCount,
                 messages: branch.nodes.length,
@@ -407,7 +409,7 @@ export function ChatBranchPanel({
               }
               variant={"ghost"}
               size={"icon"}
-              className="flex items-center justify-center"
+              className="flex size-8 items-center justify-center rounded-lg text-muted-foreground"
             >
               {maximized ? (
                 <Minimize2 className="size-4" />
@@ -423,7 +425,7 @@ export function ChatBranchPanel({
               aria-label={common("close")}
               variant={"ghost"}
               size={"icon"}
-              className="flex items-center justify-center"
+              className="flex size-8 items-center justify-center rounded-lg text-muted-foreground"
             >
               <X className="size-4" />
             </Button>

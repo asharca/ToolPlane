@@ -80,7 +80,7 @@ export function SandboxMcpExport({
             {t("mcpChatgptInstructions")}
           </p>
           {endpoint ? (
-            <div className="flex items-center gap-2 rounded-md border border-border p-3">
+            <div className="flex items-center gap-2 rounded-xl border border-border p-3">
               <code className="min-w-0 flex-1 break-all text-xs">
                 {endpoint}
               </code>
@@ -118,7 +118,7 @@ export function SandboxMcpExport({
             grants.map((grant) => (
               <div
                 key={grant.id}
-                className="flex items-start justify-between gap-3 rounded-md border border-border p-3"
+                className="flex items-start justify-between gap-3 rounded-xl border border-border p-3"
               >
                 <div className="min-w-0">
                   <p className="break-all text-sm">{grant.name}</p>

@@ -8,6 +8,7 @@ import {
 import type { Prisma, A2ATask } from "@prisma/client";
 import {
   Artifact,
+  AgentCard,
   Message,
   Role,
   SendMessageRequest,
@@ -21,6 +22,7 @@ import {
   RequestMalformedError,
   TaskNotFoundError,
   UnsupportedOperationError,
+  ContentTypeNotSupportedError,
 } from "@a2a-js/sdk/errors";
 import { db } from "@/lib/db";
 import { requireAgentRevision } from "@/lib/agents/revisions";
@@ -66,7 +68,8 @@ import {
   a2aTaskOutcome,
   taskStateName,
 } from "@/lib/observability/a2a-log";
-import { logHealth } from "@/lib/observability/events";
+import { logHealth, recordEvent } from "@/lib/observability/events";
+import { prepareTaskFileParts, retryTaskFileTransfers } from "./task-files";
 
 import { assertCollaborationAdmission } from "./collaboration-policy";
 type Tx = Prisma.TransactionClient;
@@ -76,7 +79,7 @@ const notFound = () => new TaskNotFoundError();
 function isPiHarnessTask(row: A2ATask): boolean {
   if (row.executionBackend === "legacy") return false;
   if (
-    !["pi-sdk", "pi-harness"].includes(row.executionBackend) ||
+    !["pi-sdk", "omp", "pi-harness"].includes(row.executionBackend) ||
     !isLocalGrant(row.grant as unknown as TaskGrant)
   ) {
     throw new UnsupportedOperationError("Invalid task execution backend.");
@@ -219,7 +222,7 @@ export async function recordLocalPromptInvocation(
   await db.$transaction(async (tx) => {
     const row = await lockTask(tx, id);
     if (
-      row.executionBackend !== "pi-sdk" ||
+      (row.executionBackend !== "pi-sdk" && row.executionBackend !== "omp") ||
       row.leaseToken !== leaseToken ||
       row.state !== TaskState.TASK_STATE_WORKING
     )
@@ -252,6 +255,71 @@ export async function submitTask(
     submitTaskInTransaction(tx, grant, request, admission),
   );
 }
+/** Explicitly retry file reception, never SendMessage or a completed business operation. */
+export async function retryTaskFileReception(
+  grant: TaskGrant,
+  input: { taskId: string },
+  signal?: AbortSignal,
+) {
+  const row = await retryTaskFileTransfers(grant, input.taskId, signal);
+  return Task.fromJSON(row.snapshot);
+}
+/** A sandbox copy failed before the model/runtime was invoked. Keep the execution identity, not a retryable business call. */
+export async function deferTaskFileStaging(taskId: string, leaseToken: string) {
+  await db.$transaction(async (tx) => {
+    const row = await lockTask(tx, taskId);
+    if (
+      row.leaseToken !== leaseToken ||
+      row.phase !== "executing" ||
+      terminal(row.state) ||
+      row.cancelRequestedAt
+    )
+      return;
+    const task = Task.fromJSON(row.snapshot);
+    task.metadata = {
+      ...task.metadata,
+      toolplaneFileDelivery: { state: "failed", stage: "sandbox" },
+    };
+    await persist(tx, row, task, taskEvent(task), {
+      phase: "file-staging-failed",
+      leaseToken: null,
+      remoteFilesStatus: "failed",
+    });
+  });
+}
+
+export async function completeTaskFileStaging(
+  taskId: string,
+  leaseToken: string,
+) {
+  await db.$transaction(async (tx) => {
+    const row = await lockTask(tx, taskId);
+    if (
+      row.leaseToken !== leaseToken ||
+      row.phase !== "executing" ||
+      row.cancelRequestedAt ||
+      terminal(row.state)
+    )
+      return;
+    const task = Task.fromJSON(row.snapshot);
+    const delivery = task.metadata?.toolplaneFileDelivery;
+    if (
+      !delivery ||
+      typeof delivery !== "object" ||
+      Array.isArray(delivery) ||
+      delivery.stage !== "sandbox"
+    )
+      return;
+    task.metadata = {
+      ...task.metadata,
+      toolplaneFileDelivery: { state: "ready", stage: "sandbox" },
+    };
+    await persist(tx, row, task, taskEvent(task), {
+      remoteFilesStatus: "ready",
+    });
+  });
+}
+
 /** Used by authenticated ingress adapters so binding, receipt and Task commit together. */
 export async function submitTaskInTransaction(
   tx: Tx,
@@ -264,10 +332,7 @@ export async function submitTaskInTransaction(
       410,
       "Published legacy execution is retired; retained tasks are read-only.",
     );
-  validateSend(
-    request,
-    isLocalGrant(grant) ? LOCAL_OUTPUT_MODES : ["text/plain"],
-  );
+  validateSend(request, LOCAL_OUTPUT_MODES);
   const message = request.message;
   if (!message) throw new RequestMalformedError("A user message is required.");
   const contentHash = digest({
@@ -343,6 +408,25 @@ export async function submitTaskInTransaction(
     )
       throw notFound();
     return replay.task;
+  }
+  if (isRemoteGrant(grant)) {
+    const peer = await tx.remoteA2AAgent.findFirstOrThrow({
+      where: { id: grant.remoteAgentId, workspaceId: grant.workspaceId },
+    });
+    const card = AgentCard.fromJSON(peer.card);
+    validateSend(request, card.defaultOutputModes);
+    if (
+      message.parts.some(
+        (part) =>
+          !acceptsOutput(
+            card.defaultInputModes,
+            part.mediaType || "text/plain",
+          ),
+      )
+    )
+      throw new ContentTypeNotSupportedError(
+        "The remote Agent does not accept the requested input file MIME type.",
+      );
   }
   // Reference IDs are informational, never authorization or an instruction override.
   for (const id of message.referenceTaskIds) {
@@ -468,6 +552,18 @@ export async function submitTaskInTransaction(
     contextId: context.id,
     taskId: id,
   });
+  const deferredFiles: Prisma.A2ATaskFileCreateManyInput[] = [];
+  accepted.parts = await prepareTaskFileParts(
+    tx,
+    id,
+    grant.workspaceId,
+    accepted.parts,
+    `input:${digest(message.messageId)}`,
+    context.expiresAt,
+    isWorkspaceGrant(grant) ? (grant.parentTaskId ?? id) : id,
+    deferredFiles,
+  );
+  const receivingFiles = deferredFiles.length;
   let row: A2ATask;
   if (previous) {
     row = await lockTask(tx, previous.id);
@@ -484,9 +580,15 @@ export async function submitTaskInTransaction(
     if (task.history.length >= A2A_LIMITS.messagesPerTask)
       throw new UnsupportedOperationError("Task message limit reached.");
     task.history.push(accepted);
+    task.metadata = {
+      ...task.metadata,
+      toolplaneFileDelivery: { state: receivingFiles ? "pending" : "ready" },
+    };
     transition(task, TaskState.TASK_STATE_SUBMITTED);
     row = await persist(tx, row, task, taskEvent(task), {
-      phase: "queued",
+      phase: receivingFiles ? "file-receiving" : "queued",
+      remoteFilesStatus: receivingFiles ? "pending" : "ready",
+      remoteObservedState: null,
       pendingQuestion: null,
       request: json(
         SendMessageRequest.toJSON({ ...request, message: accepted }),
@@ -503,7 +605,10 @@ export async function submitTaskInTransaction(
         state: TaskState.TASK_STATE_SUBMITTED,
         timestamp,
       },
-      metadata: request.metadata,
+      metadata: {
+        ...request.metadata,
+        toolplaneFileDelivery: { state: receivingFiles ? "pending" : "ready" },
+      },
     });
     const deadline = Math.min(
       Date.now() +
@@ -511,13 +616,34 @@ export async function submitTaskInTransaction(
       grant.expiresAt ?? Infinity,
       context.expiresAt.getTime(),
     );
-    const executionBackend = isLocalGrant(grant) ? "pi-sdk" : "legacy";
+    const executionBackend = isLocalGrant(grant)
+      ? (await requireAgentRevision(tx, grant.agentId, grant.agentRevisionId))
+          .config.runtimeKind
+      : "legacy";
+    const previousProjection = isLocalGrant(grant)
+      ? await tx.a2ATask.findFirst({
+          where: { contextId: context.id },
+          orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+          select: { uiProjection: true },
+        })
+      : null;
+    // Display continuity only: the host overwrites this from the actual Pi branch.
+    const projected = previousProjection?.uiProjection as
+      | { todos?: Prisma.InputJsonValue; uiEvents?: Prisma.InputJsonValue }
+      | undefined;
     row = await tx.a2ATask.create({
       data: {
         id,
         contextId: context.id,
         state: TaskState.TASK_STATE_SUBMITTED,
         executionBackend,
+        uiProjection: {
+          todos: projected?.todos ?? [],
+          uiEvents: projected?.uiEvents ?? [],
+          dialogs: [],
+        },
+        phase: receivingFiles ? "file-receiving" : "queued",
+        remoteFilesStatus: receivingFiles ? "pending" : "ready",
         statusAt: new Date(timestamp),
         snapshot: json(jsonTask(task)),
         request: json(
@@ -534,6 +660,8 @@ export async function submitTaskInTransaction(
       },
     });
   }
+  if (deferredFiles.length)
+    await tx.a2ATaskFile.createMany({ data: deferredFiles });
   await tx.a2ARequest.create({
     data: {
       ownerKey: grant.ownerKey,
@@ -548,10 +676,58 @@ export async function submitTaskInTransaction(
 export async function requestCancellation(grant: TaskGrant, id: string) {
   await assertLiveGrant(grant, "cancel");
   await getTaskRow(grant, id);
+  return commitTaskCancellation(id);
+}
+
+/** Owner-side cleanup only: an explicit Work cancel cannot authorize new execution. */
+export async function requestWorkEntryCancellation(
+  workSessionId: string,
+  id: string,
+) {
+  const work = await db.workSession.findUnique({
+    where: { id: workSessionId },
+  });
+  const row = await db.a2ATask.findUnique({ where: { id } });
+  const grant = row?.grant as unknown as TaskGrant;
+  if (
+    !work?.cancelRequestedAt ||
+    !row ||
+    !isLocalGrant(grant) ||
+    grant.workspaceId !== work.workspaceId ||
+    grant.agentId !== work.agentId ||
+    grant.actorId !== work.a2aActorId ||
+    grant.agentRevisionId !== work.agentRevisionId ||
+    grant.ancestorTaskIds.length ||
+    row.parentTaskId ||
+    row.rootTaskId !== id ||
+    grant.entryPolicy?.kind !== "work" ||
+    grant.entryPolicy.sourceId !== work.id ||
+    grant.entryPolicy.sourceAgentId !== work.agentId ||
+    !(await db.a2AEntryBinding.count({
+      where: {
+        kind: "work",
+        sourceId: work.id,
+        ownerKey: grant.ownerKey,
+        contextId: row.contextId,
+        lastTaskId: row.id,
+        context: { workspaceId: work.workspaceId, agentId: work.agentId },
+      },
+    }))
+  )
+    throw new TaskNotFoundError();
+  return commitTaskCancellation(id, true);
+}
+
+async function commitTaskCancellation(id: string, allowTerminal = false) {
   const committed = await db.$transaction(async (tx) => {
     const row = await lockTask(tx, id);
     const native = isPiHarnessTask(row);
     const task = Task.fromJSON(row.snapshot);
+    if (allowTerminal && terminal(row.state)) {
+      if (isLocalGrant(row.grant as unknown as TaskGrant))
+        await cancelLocalDescendants(tx, row);
+      return { task, settledRow: undefined };
+    }
     if (row.state === TaskState.TASK_STATE_CANCELED && row.cancelRequestedAt)
       return { task, settledRow: undefined };
     assertCancelable(task);
@@ -597,9 +773,15 @@ export async function claimTask(id: string) {
     const cleanup = native && Boolean(row.nativeOperationId);
     if ((row.cancelRequestedAt || row.deadlineAt <= new Date()) && !cleanup)
       return null;
+    const stagingResume =
+      row.state === TaskState.TASK_STATE_WORKING &&
+      row.phase === "file-stage-ready";
     const resume =
-      row.state === TaskState.TASK_STATE_WORKING && row.phase === "resumable";
+      row.state === TaskState.TASK_STATE_WORKING &&
+      (row.phase === "resumable" || stagingResume);
     if (row.state !== TaskState.TASK_STATE_SUBMITTED && !resume) return null;
+    if (row.state === TaskState.TASK_STATE_SUBMITTED && row.phase !== "queued")
+      return null;
     const grant = row.grant as unknown as TaskGrant;
     if (!isWorkspaceGrant(grant))
       throw new A2AHttpError(
@@ -635,7 +817,7 @@ export async function claimTask(id: string) {
     }
     const task = Task.fromJSON(row.snapshot);
     if (resume) {
-      if (!native) {
+      if (!native && !stagingResume) {
         // Defer the store/continuation cycle until a legacy continuation is claimed.
         const { resumeMessage } = await import("./local-continuation");
         task.history.push(await resumeMessage(tx, row));
@@ -648,11 +830,12 @@ export async function claimTask(id: string) {
       phase: "executing",
       waitForTaskIds: [],
       pendingQuestion: null,
-      approvalReadyLease: null,
       ...(cleanup
         ? { cancelRequestedAt: row.cancelRequestedAt ?? new Date() }
         : {}),
-      ...(resume && !native ? { resumeCount: { increment: 1 } } : {}),
+      ...(resume && !native && !stagingResume
+        ? { resumeCount: { increment: 1 } }
+        : {}),
     });
   });
 }
@@ -673,7 +856,7 @@ export async function releasePiHarnessClaim(
       return;
     await tx.a2ATask.update({
       where: { id: taskId },
-      data: { phase: "resumable", leaseToken: null, approvalReadyLease: null },
+      data: { phase: "resumable", leaseToken: null },
     });
   });
 }
@@ -768,21 +951,6 @@ export async function finishTask(
     const task = Task.fromJSON(row.snapshot);
     const grant = row.grant as unknown as TaskGrant;
     const local = isLocalGrant(grant);
-    if (
-      local &&
-      (!confirmedNative || state === TaskState.TASK_STATE_COMPLETED) &&
-      (await tx.a2AToolApproval.count({
-        where: {
-          taskId: id,
-          leaseToken,
-          status: { in: ["pending", "approved"] },
-        },
-      }))
-    ) {
-      state = TaskState.TASK_STATE_FAILED;
-      detail = "Executor ended with unresolved native tool approvals.";
-      artifact = undefined;
-    }
     if (
       !confirmedNative &&
       local &&
@@ -954,6 +1122,33 @@ export async function recordTaskSettled(row: A2ATask): Promise<void> {
   try {
     if (!settled(row.state)) return;
     const taskState = taskStateName(TaskState[row.state]);
+    const grant = row.grant as unknown as TaskGrant;
+    if (
+      isLocalGrant(grant) &&
+      grant.entryPolicy &&
+      !grant.ancestorTaskIds.length
+    ) {
+      await recordEvent({
+        domain: "agent",
+        eventName: "agent.execution.settled",
+        workspaceId: grant.workspaceId,
+        agentId: grant.agentId,
+        actorId: grant.actorId,
+        conversationId:
+          grant.entryPolicy.kind === "work"
+            ? undefined
+            : grant.entryPolicy.sourceId,
+        outcome: a2aTaskOutcome(taskState),
+        durationMs: row.statusAt.getTime() - row.createdAt.getTime(),
+        attributes: {
+          taskId: row.id,
+          contextId: row.contextId,
+          entryKind: grant.entryPolicy.kind,
+          state: taskState,
+        },
+      });
+      return;
+    }
     await recordA2AEvent({
       eventName: "a2a.task.settled",
       binding: {
@@ -1099,6 +1294,9 @@ export async function cancelLocalDescendants(tx: Tx, parent: A2ATask) {
     if (!row.parentTaskId || !ancestors.has(row.parentTaskId)) continue;
     ancestors.add(row.id);
     if (terminal(row.state)) continue;
+    // An observed terminal peer has no business execution to cancel. Its retained file reception remains retryable.
+    if (row.remoteObservedState != null && terminal(row.remoteObservedState))
+      continue;
     const native = isPiHarnessTask(row);
     if (
       isRemoteGrant(row.grant as unknown as TaskGrant) &&

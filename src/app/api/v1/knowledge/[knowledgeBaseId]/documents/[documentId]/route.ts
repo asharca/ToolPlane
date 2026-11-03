@@ -55,10 +55,13 @@ export const POST = withRequestLogging(
         { error: "Source sandbox is unavailable" },
         { status: 404 },
       );
-    const result = await mcpRpc(document.sandbox.deploymentId, "tools/call", {
-      name: "read_file",
-      arguments: { path: document.sourcePath },
-    });
+    const result = await mcpRpc(
+      document.sandbox.deploymentId,
+      "tools/call",
+      { name: "read_file", arguments: { path: document.sourcePath } },
+      undefined,
+      { internal: true },
+    );
     const raw = resultText(result);
     if (!raw)
       return Response.json(

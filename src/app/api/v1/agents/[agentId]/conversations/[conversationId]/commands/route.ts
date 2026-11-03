@@ -3,6 +3,8 @@ import { withRequestLogging } from "@/lib/observability/http";
 import { resolveRequestUser } from "@/lib/auth/request-user";
 import { getAgentForRequest } from "@/lib/agents/queries";
 import { ConversationOperationError } from "@/lib/agents/conversation-operations";
+import { AgentModelOverrideSchema } from "@/lib/agents/chat-body";
+import { AgentModelOverrideError } from "@/lib/agents/turn-model";
 import {
   executeRuntimeCommand,
   RuntimeCommandError,
@@ -28,9 +30,14 @@ export const POST = withRequestLogging(
       !body ||
       typeof body.line !== "string" ||
       body.line.length > 2000 ||
-      Object.keys(body).some((key) => key !== "line")
+      Object.keys(body).some((key) => key !== "line" && key !== "modelOverride")
     )
       return Response.json({ error: "invalidCommand" }, { status: 400 });
+    const modelOverride = AgentModelOverrideSchema.optional().safeParse(
+      body.modelOverride,
+    );
+    if (!modelOverride.success)
+      return Response.json({ error: "modelOverrideInvalid" }, { status: 400 });
     try {
       return Response.json(
         await executeRuntimeCommand({
@@ -40,9 +47,12 @@ export const POST = withRequestLogging(
           actorId: user.id,
           line: body.line,
           signal: req.signal,
+          modelOverride: modelOverride.data,
         }),
       );
     } catch (error) {
+      if (error instanceof AgentModelOverrideError)
+        return Response.json({ error: error.code }, { status: error.status });
       if (error instanceof RuntimeCommandError)
         return Response.json(
           { error: error.message },

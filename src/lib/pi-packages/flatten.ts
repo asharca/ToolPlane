@@ -1,9 +1,8 @@
 import { createHash } from "node:crypto";
 import { posix } from "node:path";
-import type { PiPackageSnapshotV1 } from "@/lib/market/pi-package-manifest";
+import type { PiPackageSnapshotV1 } from "@/lib/pi-packages/manifest";
 import { parsePromptTemplate } from "@/lib/pi-packages/prompts";
-import { MarketError } from "@/lib/market/skills";
-import { piPackageMcpAdapterSource } from "@/lib/pi-packages/adapter";
+import { PluginError } from "@/lib/plugins/catalog";
 
 /** Flatten resource declarations while retaining each complete, immutable dependency tree.
  * Source directories are not installed packages: only the outer pi declarations load resources.
@@ -11,6 +10,11 @@ import { piPackageMcpAdapterSource } from "@/lib/pi-packages/adapter";
 export function flattenPiPackages(
   snapshots: PiPackageSnapshotV1[],
 ): PiPackageSnapshotV1 {
+  if (snapshots.some((snapshot) => snapshot.runtime.kind !== "pi-sdk"))
+    throw new PluginError(
+      "pi_package_invalid_selection",
+      "Pi package composition cannot load OMP-native plugins.",
+    );
   const output = structuredClone(snapshots[0]);
   output.entries = [];
   output.resources = { extensions: [], skills: [], prompts: [], themes: [] };
@@ -65,7 +69,7 @@ export function flattenPiPackages(
         (output.runtime.platform !== snapshot.runtime.platform ||
           output.runtime.arch !== snapshot.runtime.arch)
       )
-        throw new MarketError(
+        throw new PluginError(
           "pi_package_invalid_selection",
           "Selected package runtime platforms are incompatible.",
         );
@@ -85,7 +89,7 @@ export function flattenPiPackages(
     for (const requirement of snapshot.toolplane?.mcp ?? []) {
       const previous = mcp.get(requirement.key);
       if (previous && JSON.stringify(previous) !== JSON.stringify(requirement))
-        throw new MarketError(
+        throw new PluginError(
           "pi_package_invalid_selection",
           `MCP requirement ${requirement.key} conflicts; choose one source.`,
         );
@@ -107,7 +111,7 @@ export function flattenPiPackages(
         )
           resource = files.get(`${path}/SKILL.md`);
         if (resource?.type !== "file")
-          throw new MarketError(
+          throw new PluginError(
             "pi_package_invalid_selection",
             `Resource ${snapshot.name}:${path} must resolve to a regular file before assembly.`,
           );
@@ -154,11 +158,7 @@ export function flattenPiPackages(
         const digest =
           kind === "extensions"
             ? createHash("sha256")
-                .update(
-                  text === piPackageMcpAdapterSource()
-                    ? text
-                    : dependencyDigest + path.slice(dependencyRoot.length),
-                )
+                .update(dependencyDigest + path.slice(dependencyRoot.length))
                 .digest("hex")
             : dependencyDigest;
         let name = posix.basename(path).replace(/\.(md|json)$/, "");
@@ -185,7 +185,7 @@ export function flattenPiPackages(
           inheritedOrigin?.identity ?? `${kind}:${snapshot.name}:${path}`;
         const previous = identities.get(identity);
         if (previous && previous !== digest)
-          throw new MarketError(
+          throw new PluginError(
             "pi_package_invalid_selection",
             `Incompatible versions of ${identity}; choose one source.`,
           );
@@ -210,7 +210,7 @@ export function flattenPiPackages(
               : [kind === "prompts" ? `command:${name}` : `${kind}:${name}`];
         for (const claim of claims) {
           if (names.has(claim))
-            throw new MarketError(
+            throw new PluginError(
               "pi_package_invalid_selection",
               `${claim} conflicts between ${names.get(claim)} and ${snapshot.name}:${path}; choose one source (commands are not renamed).`,
             );

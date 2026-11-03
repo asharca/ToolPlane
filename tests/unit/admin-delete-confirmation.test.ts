@@ -28,6 +28,10 @@ vi.mock("@/lib/admin/workspaces", () => ({
 }));
 import { deleteUserAction } from "@/lib/admin/user-actions";
 import { deleteWorkspaceAdminAction } from "@/lib/admin/workspace-actions";
+import {
+  withdrawPluginListing,
+  revokePluginRelease,
+} from "@/lib/admin/plugin-actions";
 
 describe("administrator deletion confirmation", () => {
   beforeEach(() => {
@@ -58,6 +62,12 @@ describe("administrator deletion confirmation", () => {
       deleteWorkspaceAdminAction({}, new FormData()),
     ).rejects.toThrow("Forbidden");
     expect(mocks.user).not.toHaveBeenCalled();
+    await expect(withdrawPluginListing(new FormData())).rejects.toThrow(
+      "Forbidden",
+    );
+    await expect(revokePluginRelease(new FormData())).rejects.toThrow(
+      "Forbidden",
+    );
     expect(mocks.workspace).not.toHaveBeenCalled();
   });
 });

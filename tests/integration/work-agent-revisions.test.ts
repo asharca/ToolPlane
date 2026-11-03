@@ -1,7 +1,13 @@
 // @vitest-environment node
 import { randomUUID } from "node:crypto";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { SendMessageRequest, Task, Message, Role } from "@a2a-js/sdk";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import {
+  SendMessageRequest,
+  Task,
+  Message,
+  Role,
+  TaskState,
+} from "@a2a-js/sdk";
 import {
   submitTask,
   requestCancellation,
@@ -27,7 +33,30 @@ import type {
   AgentA2APolicy,
   AgentRevisionConfig,
 } from "@/lib/agents/revision-types";
-import { nativeEntryPromptInvocations } from "@/lib/a2a/ingress";
+import {
+  agentEntryPromptInvocations,
+  submitAgentEntry,
+} from "@/lib/agents/execution/entries";
+import { agentMessageModelOverride } from "@/lib/agents/turn-model";
+import {
+  withWorkUiLease,
+  handleSessionUi,
+  handleWorkUi,
+} from "@/lib/agents/execution/work-ui";
+import { createAgentRuntimeToken } from "@/lib/agents/runtime-access";
+import { createConfiguredAgent } from "@/lib/agents/mutations";
+import { emptyOmpConfig, OMP_VERSION } from "@/lib/agents/omp-config";
+import { marketReleaseChecksum } from "@/lib/pi-packages/artifact";
+import { publishFixtureAgentRevision } from "./agent-revision-fixture";
+import { updateTaskUi } from "@/lib/agents/execution/task-ui";
+import { mapTaskSandbox } from "./task-sandbox-fixture";
+const browserActor = vi.hoisted(() => ({ id: "" }));
+vi.mock("@/lib/auth/request-user", () => ({
+  resolveRequestPrincipal: async () => ({
+    credential: "session",
+    user: { id: browserActor.id },
+  }),
+}));
 
 const stamp = randomUUID();
 let userId = "";
@@ -110,6 +139,7 @@ async function fixture() {
     maxSteps: 10,
     disabledBuiltinTools: [],
     sandboxTemplateId: sandbox.id,
+    externalSandboxes: [],
     environment: {
       kind: "docker",
       image: `fixture@sha256:${"a".repeat(64)}`,
@@ -136,6 +166,405 @@ async function fixture() {
   return { agent, config, revision };
 }
 describe.sequential("Work and local A2A owner revisions", () => {
+  it("creates OMP drafts and pins real OMP Work/A2A backends without Pi package state", async () => {
+    const ompConfig = {
+      ...emptyOmpConfig(),
+      files: [{ path: "APPEND_SYSTEM.md", content: "Frozen OMP instructions" }],
+    };
+    const agent = await createConfiguredAgent(
+      workspaceId,
+      {
+        name: `omp-${++sequence}`,
+        systemPrompt: "OMP prompt",
+        providerId,
+        model: "fixture",
+        maxSteps: 10,
+      },
+      { deploymentIds: [], installedSkillIds: [], toolkitIds: [] },
+      { runtime: "omp" },
+    );
+    expect(agent.ompConfig).toEqual(emptyOmpConfig());
+    await db.agent.update({
+      where: { id: agent.id },
+      data: { a2aInboundEnabled: true, ompConfig },
+    });
+    const revision = await publishFixtureAgentRevision(workspaceId, agent.id);
+    expect(revision.config).toMatchObject({
+      runtimeKind: "omp",
+      ompConfig,
+      ompConfigChecksum: marketReleaseChecksum(ompConfig),
+      environment: { ompVersion: OMP_VERSION },
+      packages: [],
+    });
+    expect(revision.config.environment).not.toHaveProperty("piVersion");
+    const work = await createWorkSession({
+      workspaceId,
+      agentId: agent.id,
+      a2aActorId: userId,
+      task: "OMP work",
+    });
+    expect(work).toMatchObject({
+      runtimeKind: "omp",
+      agentRevisionId: revision.id,
+    });
+    expect(
+      await db.piSessionPackageSet.count({
+        where: { conversationId: work?.conversationId },
+      }),
+    ).toBe(0);
+    const grant = await createLocalRootGrant(workspaceId, agent.id, userId);
+    const task = await submitTask(
+      grant,
+      SendMessageRequest.fromJSON({
+        message: {
+          messageId: randomUUID(),
+          role: "ROLE_USER",
+          parts: [{ text: "OMP local execution" }],
+        },
+      }),
+    );
+    expect(task.executionBackend).toBe("omp");
+    const claimed = await claimTask(task.id);
+    expect(claimed).toMatchObject({
+      executionBackend: "omp",
+      grant: { agentRevisionId: revision.id },
+    });
+    await db.agent.update({
+      where: { id: agent.id },
+      data: { ompConfig: emptyOmpConfig() },
+    });
+    const live = await getAgentForRun(agent.id, workspaceId);
+    if (!live) throw new Error("Missing OMP fixture");
+    expect(
+      (await resolvePinnedAgent(live, revision.id)).revisionConfig,
+    ).toMatchObject({ ompConfig });
+    const changed = emptyOmpConfig();
+    await expect(
+      publishAgentRevision(workspaceId, agent.id, {
+        expectedRevisionId: revision.id,
+        config: { ...revision.config, ompConfig: changed },
+      }),
+    ).rejects.toMatchObject({ code: "OMP_CONFIG_CHECKSUM_MISMATCH" });
+    await requestCancellation(grant, task.id);
+    await db.agent.update({
+      where: { id: agent.id },
+      data: { a2aInboundEnabled: false },
+    });
+    await expect(assertLocalGrant(grant)).rejects.toThrow();
+  });
+  it("persists native Work todos and scopes dialogs to the live turn and initiating browser actor", async () => {
+    const { agent, revision } = await fixture();
+    const work = await createWorkSession({
+      workspaceId,
+      agentId: agent.id,
+      a2aActorId: userId,
+      task: "Native Work UI",
+    });
+    if (!work?.sandboxId) throw new Error("Missing Work fixture");
+    browserActor.id = userId;
+    await db.workSession.update({
+      where: { id: work.id },
+      data: { status: "running" },
+    });
+    await db.conversation.update({
+      where: { id: work.conversationId },
+      data: { sandboxId: work.sandboxId },
+    });
+    const scope = {
+      conversationId: work.conversationId,
+      workspaceId,
+      agentId: agent.id,
+      agentRevisionId: revision.id,
+    };
+    const claims = {
+      ...scope,
+      sandboxId: work.sandboxId,
+      providerId,
+      deploymentIds: [],
+      exp: Math.floor(Date.now() / 1000) + 300,
+    };
+    const token = await createAgentRuntimeToken(claims);
+    const runtime = (body: unknown, credential = token) =>
+      handleSessionUi(
+        new Request("http://localhost:3000/api/v1/agent-runtime/sessions/ui", {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${credential}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify(body),
+        }),
+      );
+    const slug = `work-revision-${stamp}`;
+    const url = `http://localhost:3000/api/v1/workspaces/${slug}/work-sessions/${work.id}/ui`;
+    const view = (body?: unknown, extra: Record<string, string> = {}) =>
+      handleWorkUi(
+        new Request(url, {
+          method: body === undefined ? "GET" : "POST",
+          headers: {
+            host: "localhost:3000",
+            ...(body === undefined
+              ? {}
+              : {
+                  origin: "http://localhost:3000",
+                  "content-type": "application/json",
+                }),
+            ...extra,
+          },
+          ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        }),
+        slug,
+        work.id,
+      );
+    const request = {
+      type: "extension_ui_request",
+      id: randomUUID(),
+      method: "confirm",
+      title: "Native confirm",
+      message: "Continue?",
+    };
+    const response = {
+      type: "extension_ui_response",
+      id: request.id,
+      confirmed: true,
+    };
+    const todos = [{ id: 1, text: "Native Work todo", done: false }];
+    await withWorkUiLease(scope, token, async (enabled) => {
+      expect(enabled).toBe(true);
+      expect((await runtime({ action: "todos", todos })).status).toBe(200);
+      expect((await runtime({ action: "request", request })).status).toBe(200);
+      expect((await (await view()).json()).execution).toMatchObject({
+        status: "input-required",
+        uiRequests: [request],
+        todos,
+      });
+      expect(
+        (await view(response, { origin: "https://evil.example" })).status,
+      ).toBe(403);
+      expect(
+        (await view(response, { authorization: "Bearer unrelated" })).status,
+      ).toBe(401);
+      expect((await view({ ...response, taskId: "forged" })).status).toBe(400);
+      const foreign = await db.user.create({
+        data: {
+          email: `work-ui-${randomUUID()}@test.invalid`,
+          passwordHash: "fixture",
+        },
+      });
+      try {
+        await db.membership.create({
+          data: { workspaceId, userId: foreign.id, role: "member" },
+        });
+        browserActor.id = foreign.id;
+        expect((await view()).status).toBe(404);
+        expect((await view(response)).status).toBe(404);
+      } finally {
+        browserActor.id = userId;
+        await db.membership.deleteMany({ where: { userId: foreign.id } });
+        await db.user.delete({ where: { id: foreign.id } });
+      }
+      expect((await view(response)).status).toBe(200);
+      expect((await view(response)).status).toBe(409);
+      expect(
+        await (await runtime({ action: "poll", id: request.id })).json(),
+      ).toEqual({ response });
+      const stale = await createAgentRuntimeToken({
+        ...claims,
+        exp: claims.exp + 1,
+      });
+      expect(
+        (await runtime({ action: "todos", todos: [] }, stale)).status,
+      ).toBe(404);
+      expect(
+        (
+          await runtime({
+            action: "todos",
+            todos: [{ id: 2, text: "x".repeat(270_000), done: false }],
+          })
+        ).status,
+      ).toBe(413);
+      expect((await (await view()).json()).execution.todos).toEqual(todos);
+    });
+    expect((await runtime({ action: "todos", todos: [] })).status).toBe(404);
+    await db.workSession.update({
+      where: { id: work.id },
+      data: { status: "completed" },
+    });
+    expect((await (await view()).json()).execution).toMatchObject({
+      status: "completed",
+      uiRequests: [],
+      todos,
+    });
+  });
+  it("answers admitted Work dialogs through the current task lease and rejects stale replies", async () => {
+    const { agent, revision } = await fixture();
+    const work = await createWorkSession({
+      workspaceId,
+      agentId: agent.id,
+      a2aActorId: userId,
+      task: "Task-backed Work UI",
+    });
+    if (!work) throw new Error("Missing Work fixture");
+    browserActor.id = userId;
+    await db.workSession.update({
+      where: { id: work.id },
+      data: { status: "running" },
+    });
+    const accepted = await submitAgentEntry(
+      {
+        kind: "work",
+        sourceId: work.id,
+        workspaceId,
+        agentId: agent.id,
+        actorId: userId,
+        messageId: randomUUID(),
+        text: "Task-backed Work UI",
+      },
+      () => {},
+    );
+    const task = await claimTask(accepted.row.id);
+    if (!task?.leaseToken) throw new Error("Missing Work task claim");
+    const mapping = await mapTaskSandbox(task);
+    await db.workSession.update({
+      where: { id: work.id },
+      data: { sandboxId: mapping.sandboxId },
+    });
+    const token = {
+      workspaceId,
+      agentId: agent.id,
+      agentRevisionId: revision.id,
+      providerId,
+      sandboxId: mapping.sandboxId,
+      conversationId: work.conversationId,
+      a2aContextId: task.contextId,
+      a2aTaskId: task.id,
+      a2aLeaseToken: task.leaseToken,
+      deploymentIds: [],
+      exp: Math.floor(Date.now() / 1000) + 300,
+    };
+    const request = {
+      type: "extension_ui_request" as const,
+      id: randomUUID(),
+      method: "confirm" as const,
+      title: "Work task confirm",
+      message: "Continue?",
+    };
+    await updateTaskUi(token, { action: "request", request });
+    const slug = `work-revision-${stamp}`;
+    const url = `http://localhost:3000/api/v1/workspaces/${slug}/work-sessions/${work.id}/ui`;
+    const view = (body?: unknown) =>
+      handleWorkUi(
+        new Request(url, {
+          method: body === undefined ? "GET" : "POST",
+          headers: {
+            host: "localhost:3000",
+            ...(body === undefined
+              ? {}
+              : {
+                  origin: "http://localhost:3000",
+                  "content-type": "application/json",
+                }),
+          },
+          ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        }),
+        slug,
+        work.id,
+      );
+    expect((await (await view()).json()).execution).toMatchObject({
+      status: "input-required",
+      uiRequests: [request],
+    });
+    const response = {
+      type: "extension_ui_response",
+      id: request.id,
+      confirmed: true,
+    };
+    expect((await view(response)).status).toBe(200);
+    expect(
+      await updateTaskUi(token, { action: "poll", id: request.id }),
+    ).toEqual({ response });
+    expect((await view(response)).status).toBe(409);
+    await updateTaskUi(token, { action: "resolve", id: request.id });
+    await updateTaskUi(token, {
+      action: "request",
+      request: { ...request, id: "stale-dialog" },
+    });
+    await db.a2ATask.update({
+      where: { id: task.id },
+      data: {
+        leaseToken: randomUUID(),
+        state: TaskState.TASK_STATE_WORKING,
+      },
+    });
+    expect((await view({ ...response, id: "stale-dialog" })).status).toBe(404);
+    expect((await (await view()).json()).execution.uiRequests).toEqual([]);
+  });
+  it("stores a Work override only on its user turn and keeps the pinned runtime snapshot unchanged", async () => {
+    const { agent, revision } = await fixture();
+    const alternate = await db.modelProvider.create({
+      data: {
+        workspaceId,
+        name: "Alternate",
+        format: "openai",
+        baseUrl: "https://alternate.test.invalid",
+        apiKey: "private-alternate-key",
+        models: ["alternate"],
+      },
+    });
+    const override = { providerId: alternate.id, model: "alternate" };
+    const work = await createWorkSession({
+      workspaceId,
+      agentId: agent.id,
+      task: "Override first turn",
+      modelOverride: override,
+    });
+    if (!work) throw new Error("Missing Work fixture");
+    const first = await db.message.findFirstOrThrow({
+      where: { conversationId: work.conversationId, role: "user" },
+    });
+    expect(agentMessageModelOverride(first.parts)).toEqual(override);
+    expect(work.runtimeSnapshot).toMatchObject({
+      providerId,
+      model: "fixture",
+    });
+    await db.workSession.update({
+      where: { id: work.id },
+      data: { status: "idle" },
+    });
+    await expect(
+      appendWorkSessionInput(workspaceId, work.id, "Rejected turn", {
+        modelOverride: { providerId: alternate.id, model: "missing" },
+      }),
+    ).rejects.toMatchObject({ code: "modelOverrideUnavailable" });
+    expect(
+      await db.message.count({
+        where: { conversationId: work.conversationId },
+      }),
+    ).toBe(1);
+    expect(
+      await db.workSession.findUniqueOrThrow({ where: { id: work.id } }),
+    ).toMatchObject({ status: "idle" });
+    expect(
+      await appendWorkSessionInput(workspaceId, work.id, "Default second turn"),
+    ).toMatchObject({ ok: true });
+    const messages = await db.message.findMany({
+      where: { conversationId: work.conversationId },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    });
+    expect(agentMessageModelOverride(messages.at(-1)?.parts)).toBeUndefined();
+    expect(
+      await db.workSession.findUniqueOrThrow({ where: { id: work.id } }),
+    ).toMatchObject({
+      agentRevisionId: revision.id,
+      runtimeSnapshot: work.runtimeSnapshot,
+    });
+    expect(await db.agentRevision.count({ where: { agentId: agent.id } })).toBe(
+      1,
+    );
+    expect(
+      await db.agentRevision.findUniqueOrThrow({ where: { id: revision.id } }),
+    ).toMatchObject({ config: revision.config });
+  });
   it("rejects stale publication CAS without advancing the default or adding a revision", async () => {
     const { agent, config, revision } = await fixture();
     const next = await publishAgentRevision(workspaceId, agent.id, {
@@ -357,7 +786,7 @@ describe.sequential("Work and local A2A owner revisions", () => {
       task.history.find((message) => message.messageId === messageId)?.parts[0]
         .content,
     ).toEqual({ $case: "text", value: "/review src" });
-    expect(nativeEntryPromptInvocations(task, messageId)).toEqual([invocation]);
+    expect(agentEntryPromptInvocations(task, messageId)).toEqual([invocation]);
     task.history.push(
       Message.fromJSON({
         messageId: "next-user",
@@ -367,8 +796,8 @@ describe.sequential("Work and local A2A owner revisions", () => {
         parts: [],
       }),
     );
-    expect(nativeEntryPromptInvocations(task, "next-user")).toEqual([]);
-    expect(nativeEntryPromptInvocations(task, messageId)).toEqual([invocation]);
+    expect(agentEntryPromptInvocations(task, "next-user")).toEqual([]);
+    expect(agentEntryPromptInvocations(task, messageId)).toEqual([invocation]);
   });
   it("never assigns the current revision to unresolved historical Work", async () => {
     const { agent } = await fixture();

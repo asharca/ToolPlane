@@ -4,11 +4,6 @@ import { db } from "@/lib/db";
 import { effectiveStatuses } from "@/lib/process/supervisor";
 import { deploymentLabel } from "@/lib/workspace/deployment-label";
 import { skillLabel } from "@/lib/workspace/skill-label";
-import {
-  parseAgentMarketSetupGuide,
-  parseAgentMarketSetupResourceIds,
-  type AgentMarketSetupGuide,
-} from "@/lib/agents/market-setup";
 import { AGENT_ENDPOINT_RUNTIME_MANAGED_BY } from "@/lib/agents/public-api/tool-policy";
 import { AgentRevisionConfigSchema } from "./revision-types";
 import { AGENT_PI_PACKAGES_INCLUDE } from "./pi-package-includes";
@@ -253,6 +248,7 @@ export async function getAgentPageData(workspaceId: string, agentId: string) {
       name: true,
       slug: true,
       runtimeKind: true,
+      ompConfig: true,
       description: true,
       systemPrompt: true,
       disabledBuiltinTools: true,
@@ -260,16 +256,12 @@ export async function getAgentPageData(workspaceId: string, agentId: string) {
       model: true,
       maxSteps: true,
       provider: { select: { name: true } },
-      servers: { select: { deploymentId: true } },
+      servers: {
+        select: { deploymentId: true, allowedToolNames: true },
+      },
       skills: { select: { installedSkillId: true } },
       toolkits: { select: { toolkitId: true } },
-      piPackages: {
-        select: {
-          marketInstallId: true,
-          releaseId: true,
-          release: { select: { version: true, reviewStatus: true } },
-        },
-      },
+      piPackages: AGENT_PI_PACKAGES_INCLUDE,
       sandboxes: {
         select: {
           sandboxId: true,
@@ -280,49 +272,8 @@ export async function getAgentPageData(workspaceId: string, agentId: string) {
         },
       },
       subAgents: { select: { childId: true } },
-      marketInstall: {
-        select: {
-          status: true,
-          requirements: true,
-          resourceMap: true,
-        },
-      },
     },
   });
-}
-
-/**
- * Recomputes marketplace setup against current workspace-owned resources.
- * Provider credentials are never selected, and deployment environment values
- * remain server-side inputs to the client-safe guide parser.
- */
-export async function resolveAgentMarketSetupGuide(
-  workspaceId: string,
-  input: unknown,
-): Promise<AgentMarketSetupGuide | null> {
-  const resourceIds = parseAgentMarketSetupResourceIds(input);
-  if (!resourceIds) return null;
-
-  const [agents, deployments] = await Promise.all([
-    resourceIds.agentIds.length > 0
-      ? db.agent.findMany({
-          where: { workspaceId, id: { in: resourceIds.agentIds } },
-          select: {
-            id: true,
-            model: true,
-            provider: { select: { format: true } },
-          },
-        })
-      : Promise.resolve([]),
-    resourceIds.deploymentIds.length > 0
-      ? db.deployment.findMany({
-          where: { workspaceId, id: { in: resourceIds.deploymentIds } },
-          select: { id: true, installCfg: true },
-        })
-      : Promise.resolve([]),
-  ]);
-
-  return parseAgentMarketSetupGuide(input, { agents, deployments });
 }
 
 export async function listAgents(workspaceId: string) {
@@ -463,7 +414,8 @@ export async function listConversations(
   return conversations.map((conversation) => ({
     ...conversation,
     readOnly:
-      conversation.agent.runtimeKind !== "pi-sdk" ||
+      (conversation.agent.runtimeKind !== "pi-sdk" &&
+        conversation.agent.runtimeKind !== "omp") ||
       Boolean(conversation.agent.retiredAt) ||
       conversation.legacyRevisionUnresolved ||
       !conversation.agentRevisionId ||
@@ -483,11 +435,12 @@ export async function getConversation(
       workSession: {
         select: {
           id: true,
+          runtimeKind: true,
           agentRevisionId: true,
           legacyRevisionUnresolved: true,
         },
       },
-      agentRevision: { select: { agentId: true, config: true } },
+      agentRevision: { select: { agentId: true, version: true, config: true } },
       sandbox: {
         select: {
           id: true,
@@ -512,20 +465,24 @@ export async function getConversation(
   const config = parsed.success ? parsed.data : null;
   const work = conversation.workSession;
   const readOnly =
-    conversation.agent.runtimeKind !== "pi-sdk" ||
+    (conversation.agent.runtimeKind !== "pi-sdk" &&
+      conversation.agent.runtimeKind !== "omp") ||
     Boolean(conversation.agent.retiredAt) ||
     conversation.legacyRevisionUnresolved ||
     !conversation.agentRevisionId ||
     !config ||
+    config.runtimeKind !== conversation.agent.runtimeKind ||
     conversation.agentRevision?.agentId !== conversation.agentId ||
     Boolean(
       work &&
         (work.legacyRevisionUnresolved ||
+          work.runtimeKind !== config.runtimeKind ||
           work.agentRevisionId !== conversation.agentRevisionId),
     );
   return {
     ...conversation,
     readOnly,
+    agentRevisionVersion: conversation.agentRevision?.version ?? null,
     runtimeKind: config?.runtimeKind ?? null,
     modelName: config?.model ?? null,
     contextWindow: null,

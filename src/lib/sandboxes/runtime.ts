@@ -37,6 +37,23 @@ export function sandboxSyncContainerName(sandboxId: string): string {
   return `${sandboxContainerName(sandboxId)}-sync`;
 }
 
+/** The uid:gid the sandbox's processes run as, so companions can share its files. */
+export async function dockerSandboxRuntimeUser(
+  sandboxId: string,
+): Promise<string> {
+  const user = (
+    await runDocker([
+      "exec",
+      sandboxContainerName(sandboxId),
+      "sh",
+      "-c",
+      'printf "%s:%s" "$(id -u)" "$(id -g)"',
+    ])
+  ).trim();
+  if (!/^\d+:\d+$/.test(user)) throw new Error("MCP_SANDBOX_UNAVAILABLE");
+  return user;
+}
+
 export function sandboxSnapshotVolumeName(snapshotId: string): string {
   return `toolplane_snapshot_${snapshotId.replace(/[^a-zA-Z0-9_.-]/g, "_")}`;
 }
@@ -446,6 +463,192 @@ export async function copyDockerVolume(
     );
   }
   if (copyError) throw copyError;
+}
+
+/** Publish a complete session subtree once; retries never merge into live files. */
+export async function initializeDockerSessionWorkspace(
+  destinationVolume: string,
+  directory: string,
+  source?: { volumeName: string; checksum: string; sourceSandboxId?: string },
+): Promise<void> {
+  if (!/^conversations\/(?:conversation|context)-[a-f0-9]{64}$/.test(directory))
+    throw new Error("Invalid session workspace directory.");
+  await assertDockerVolumeExists(destinationVolume);
+  if (source) {
+    await assertDockerVolumeExists(source.volumeName);
+    if (
+      !/^[a-f0-9]{64}$/.test(source.checksum) ||
+      source.volumeName === destinationVolume
+    )
+      throw new Error("Invalid session workspace source.");
+  }
+  const marker = JSON.stringify({
+    schemaVersion: 1,
+    sourceVolume: source?.volumeName ?? null,
+    checksum: source?.checksum ?? null,
+    sourceSandboxId: source?.sourceSandboxId ?? null,
+    legacyWorkspaceRoot: source?.sourceSandboxId ? "/workspace" : null,
+  });
+  const helperName = `toolplane-volume-copy-${randomUUID()}`;
+  const script = `set -euo pipefail
+root="/to/$1"
+marker="$2"
+checksum="$3"
+test ! -L /to/conversations
+mkdir -p /to/conversations
+if test -e "$root" || test -L "$root"; then
+  test ! -L "$root"
+  test -f "$root/.toolplane-shared-migration.json"
+  test ! -L "$root/.toolplane-shared-migration.json"
+  test "$(cat "$root/.toolplane-shared-migration.json")" = "$marker"
+  exit 0
+fi
+stage="$(mktemp -d /to/conversations/.migration-XXXXXXXX)"
+trap 'rm -rf -- "$stage"' EXIT
+chmod 0777 "$stage"
+if test -n "$checksum"; then
+  digest() { tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner -C "$1" -cf - . | sha256sum | cut -d ' ' -f 1; }
+  test "$(digest /from)" = "$checksum"
+  tar -C /from -cf - . | tar -C "$stage" -xpf -
+  test "$(digest "$stage")" = "$checksum"
+fi
+find "$stage" -type l -print0 | while IFS= read -r -d '' link; do
+  IFS= read -r -d '' target < <(readlink -z -- "$link")
+  case "$target" in
+    /workspace) target="/workspace/$1" ;;
+    /workspace/*) target="/workspace/$1/\${target#/workspace/}" ;;
+    *) continue ;;
+  esac
+  ln -sfnT -- "$target" "$link"
+done
+test ! -e "$stage/.toolplane-shared-migration.json"
+test ! -L "$stage/.toolplane-shared-migration.json"
+printf '%s' "$marker" > "$stage/.toolplane-shared-migration.json"
+mv -T -- "$stage" "$root"
+`;
+  let copyError: unknown;
+  try {
+    await runDocker(
+      [
+        "run",
+        "--rm",
+        "--name",
+        helperName,
+        "--label",
+        "toolplane.volume-copy=true",
+        "--read-only",
+        "--network",
+        "none",
+        "--memory",
+        "512m",
+        "--cpus",
+        "1",
+        "--pids-limit",
+        "128",
+        "--cap-drop",
+        "ALL",
+        "--cap-add",
+        "CHOWN",
+        "--cap-add",
+        "DAC_OVERRIDE",
+        "--cap-add",
+        "FOWNER",
+        "--security-opt",
+        "no-new-privileges",
+        ...(source
+          ? [
+              "--mount",
+              `type=volume,src=${source.volumeName},dst=/from,readonly`,
+            ]
+          : []),
+        "--mount",
+        `type=volume,src=${destinationVolume},dst=/to`,
+        "debian:bookworm-slim",
+        "bash",
+        "-c",
+        script,
+        "toolplane-session-migration",
+        directory,
+        marker,
+        source?.checksum ?? "",
+      ],
+      VOLUME_COPY_TIMEOUT_MS,
+    );
+  } catch (error) {
+    copyError = error;
+  }
+  try {
+    await removeDockerVolumeCopyHelper(helperName);
+  } catch (cleanupError) {
+    throw new DockerVolumeCopyCleanupError(
+      copyError ? [copyError, cleanupError] : [cleanupError],
+      "Session workspace migration helper could not be removed.",
+      helperName,
+    );
+  }
+  if (copyError) throw copyError;
+}
+
+/** Remove one fixed session namespace without following workspace symlinks. */
+export async function removeDockerSessionWorkspace(
+  volumeName: string,
+  directory: string,
+): Promise<void> {
+  if (!/^conversations\/(?:conversation|context)-[a-f0-9]{64}$/.test(directory))
+    throw new Error("Invalid session workspace directory.");
+  await assertDockerVolumeExists(volumeName);
+  const helperName = `toolplane-volume-copy-${randomUUID()}`;
+  let operationError: unknown;
+  try {
+    await runDocker(
+      [
+        "run",
+        "--rm",
+        "--name",
+        helperName,
+        "--label",
+        "toolplane.volume-copy=true",
+        "--read-only",
+        "--network",
+        "none",
+        "--memory",
+        "128m",
+        "--cpus",
+        "0.25",
+        "--pids-limit",
+        "32",
+        "--cap-drop",
+        "ALL",
+        "--cap-add",
+        "DAC_OVERRIDE",
+        "--cap-add",
+        "FOWNER",
+        "--security-opt",
+        "no-new-privileges",
+        "--mount",
+        `type=volume,src=${volumeName},dst=/to`,
+        VOLUME_HELPER_IMAGE,
+        "sh",
+        "-c",
+        'set -eu; test ! -L /to/conversations; rm -rf -- "/to/$1"; test ! -e "/to/$1"; test ! -L "/to/$1"',
+        "toolplane-session-delete",
+        directory,
+      ],
+      VOLUME_COPY_TIMEOUT_MS,
+    );
+  } catch (error) {
+    operationError = error;
+  }
+  try {
+    await removeDockerVolumeCopyHelper(helperName);
+  } catch (cleanupError) {
+    throw new DockerVolumeCopyCleanupError(
+      operationError ? [operationError, cleanupError] : [cleanupError],
+      "Session workspace deletion helper could not be removed.",
+      helperName,
+    );
+  }
+  if (operationError) throw operationError;
 }
 
 export async function removeDockerVolumeCopyHelper(

@@ -2,13 +2,13 @@ import "server-only";
 import { createHash } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
-import { assemblePiPackage } from "@/lib/market/pi-package-assembly";
-import { marketReleaseChecksum } from "@/lib/market/artifact";
+import { assemblePiPackage } from "@/lib/pi-packages/assembly";
+import { marketReleaseChecksum } from "@/lib/pi-packages/artifact";
 import {
   parsePiPackageReleaseManifest,
   scanPiPackageReleaseManifest,
-} from "@/lib/market/pi-package-manifest";
-import { MarketError } from "@/lib/market/skills";
+} from "@/lib/pi-packages/manifest";
+import { PluginError } from "@/lib/plugins/catalog";
 import { readMcpToolCatalog } from "@/lib/process/mcp-tool-catalog";
 import { revokeToolkitInstallTokens } from "./install-link";
 import { writeAudit } from "@/lib/observability/audit";
@@ -53,14 +53,13 @@ export async function cutoverToolkitToPrivatePackage(
         select: { id: true, slug: true, name: true },
       });
       if (!user || !workspace)
-        throw new MarketError(
+        throw new PluginError(
           "not_authorized",
           "Workspace or platform administrator authorization is required.",
         );
       const toolkit = await tx.toolkit.findFirst({
         where: { id: input.toolkitId, workspaceId: workspace.id },
         include: {
-          sourceMarketListing: { include: { latestRelease: true } },
           skills: true,
           servers: {
             include: {
@@ -77,17 +76,25 @@ export async function cutoverToolkitToPrivatePackage(
         },
       });
       if (!toolkit)
-        throw new MarketError(
+        throw new PluginError(
           "source_not_found",
           "Toolkit not found in this workspace.",
         );
-      if (toolkit.sourceMarketListing?.kind === "pi-package") {
+      const existing = await tx.marketListing.findFirst({
+        where: {
+          publisherWorkspaceId: workspace.id,
+          kind: "pi-package",
+          metadata: { path: ["cutover", "toolkitId"], equals: toolkit.id },
+        },
+        include: { latestRelease: true },
+      });
+      if (existing) {
         return {
           mode: input.mode,
           status: "already-applied" as const,
-          listingId: toolkit.sourceMarketListing.id,
-          releaseId: toolkit.sourceMarketListing.latestReleaseId,
-          digest: toolkit.sourceMarketListing.latestRelease?.checksum ?? null,
+          listingId: existing.id,
+          releaseId: existing.latestReleaseId,
+          digest: existing.latestRelease?.checksum ?? null,
           requiresReauthorization: true as const,
           blockers: [] as string[],
         };
@@ -139,7 +146,7 @@ export async function cutoverToolkitToPrivatePackage(
         blockers.push("no_convertible_content");
       if (blockers.some((blocker) => blocker !== "active_legacy_tasks")) {
         if (input.mode === "apply")
-          throw new MarketError(
+          throw new PluginError(
             "invalid_manifest",
             `Toolkit cannot be converted: ${blockers.join(", ")}`,
           );
@@ -178,7 +185,7 @@ export async function cutoverToolkitToPrivatePackage(
       });
       const scanResult = scanPiPackageReleaseManifest(manifest);
       if (scanResult.status === "blocked")
-        throw new MarketError(
+        throw new PluginError(
           "invalid_manifest",
           "Convertible content contains possible credentials.",
         );
@@ -193,7 +200,7 @@ export async function cutoverToolkitToPrivatePackage(
           mcpRequirements: snapshot.toolplane?.mcp ?? [],
         };
       if (blockers.length)
-        throw new MarketError(
+        throw new PluginError(
           "in_use",
           "Drain all active legacy tasks before applying Toolkit cutover.",
         );
@@ -201,15 +208,10 @@ export async function cutoverToolkitToPrivatePackage(
         input.confirmReauthorization !== true ||
         input.expectedDigest !== digest
       )
-        throw new MarketError(
+        throw new PluginError(
           "source_changed",
           "Explicitly confirm the exact dry-run digest and fresh authorization requirement.",
         );
-      if (toolkit.sourceMarketListing)
-        await tx.marketListing.update({
-          where: { id: toolkit.sourceMarketListing.id },
-          data: { sourceToolkitId: null, status: "archived" },
-        });
       const listing = await tx.marketListing.create({
         data: {
           kind: "pi-package",
@@ -221,7 +223,6 @@ export async function cutoverToolkitToPrivatePackage(
           publisherKind: "workspace",
           publisherWorkspaceId: workspace.id,
           publishedById: input.userId,
-          sourceToolkitId: toolkit.id,
           tags: [],
           metadata: {
             cutover: {

@@ -20,3 +20,11 @@
 .sandbox-terminal .xterm-viewport {
   background: transparent;
 }
+
+/* Theme tokens are complete colors, so mix rather than wrapping them in hsl(). */
+input[data-dirty="true"]:not([type="hidden"]),
+select[data-dirty="true"],
+textarea[data-dirty="true"] {
+  border-color: color-mix(in srgb, var(--primary) 60%, transparent);
+  background-color: color-mix(in srgb, var(--primary) 5%, var(--background));
+}

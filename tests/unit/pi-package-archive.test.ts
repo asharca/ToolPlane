@@ -11,11 +11,11 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { serializePiPackageArchive } from "@/lib/market/pi-package-archive";
+import { serializePiPackageArchive } from "@/lib/pi-packages/archive";
 import type {
   PiPackageEntryV1,
   PiPackageManifestV1,
-} from "@/lib/market/pi-package-manifest";
+} from "@/lib/pi-packages/manifest";
 
 function file(
   path: string,

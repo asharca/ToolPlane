@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import Image from "next/image";
 import { useTranslations } from "next-intl";
 import { File as FileIcon, X } from "lucide-react";
@@ -10,6 +10,49 @@ import { AnimatedBadge } from "@/components/motion/animated-badge";
 import { FilePreviewDialog } from "@/components/dashboard/FilePreviewDialog";
 import { previewType } from "@/lib/file-preview";
 import type { ContextUsageSnapshot } from "@/lib/context-usage";
+import {
+  PromptInput,
+  type PromptInputProps,
+} from "@/components/agents/prompt-input";
+import { cn } from "@/lib/utils";
+
+/** Shared card surface for every prompt input; the theme border token is too faint on dark backgrounds. */
+export const conversationComposerSurfaceClassName =
+  "rounded-3xl border border-foreground/10 bg-background shadow-sm transition-[border-color,box-shadow] focus-within:border-foreground/20 focus-within:shadow-md dark:bg-muted/40";
+// The vendored PromptInput sets the textarea height to the text height only, so content-box keeps its top padding from clipping the text.
+export const conversationComposerClassName = `${conversationComposerSurfaceClassName} px-2 pt-2 pb-0 [&>textarea]:box-content [&>textarea]:text-[15px] [&>textarea]:leading-6 [&>textarea]:max-h-[40vh] [&>div:last-child]:mt-0 [&>div:last-child]:flex-wrap [&>div:last-child]:px-0.5 [&>div:last-child]:pb-2.5 [&>div:last-child]:pt-1 [&>div:last-child_button]:rounded-full [&>div:last-child>button:last-child]:ml-0 [&>div:last-child>button:last-child]:size-9 [&>div:last-child>button:last-child]:rounded-full`;
+export const conversationComposerDockClassName =
+  "relative z-10 mx-auto w-full max-w-3xl shrink-0 px-3 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 before:pointer-events-none before:absolute before:inset-x-0 before:-top-8 before:h-8 before:bg-gradient-to-t before:from-background before:to-transparent sm:px-4";
+
+/** Presentation-only wrapper around beUI's auto-growing prompt input. */
+export function ConversationComposer({
+  className,
+  attachments,
+  ...props
+}: PromptInputProps & { attachments?: ReactNode }) {
+  const input = (
+    <PromptInput
+      minRows={1}
+      maxRows={12}
+      className={cn(
+        conversationComposerClassName,
+        attachments
+          ? "border-0 bg-transparent shadow-none focus-within:shadow-none dark:bg-transparent"
+          : undefined,
+        className,
+      )}
+      {...props}
+    />
+  );
+  return attachments ? (
+    <div className={conversationComposerSurfaceClassName}>
+      <div className="px-4 pt-3">{attachments}</div>
+      {input}
+    </div>
+  ) : (
+    input
+  );
+}
 
 export function ConversationContextUsage({
   busy = false,
@@ -156,7 +199,7 @@ export function ConversationFilePreview({
         type="button"
         aria-label={t("open", { name })}
         onClick={() => setOpen(true)}
-        className="flex min-w-0 max-w-xs items-center gap-3 rounded-xl border border-border bg-background px-3 py-2 text-left hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="flex min-w-0 max-w-xs items-center gap-3 rounded-lg border border-border bg-background px-3 py-2 text-left hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         {image && source ? (
           <Image

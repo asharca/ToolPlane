@@ -2,6 +2,7 @@ import "server-only";
 import type { Prisma } from "@prisma/client";
 import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import { db } from "@/lib/db";
+import { agentSessionWorkspaceRoot } from "@/lib/agents/session-paths";
 import { type AgentForRun, ORDINARY_AGENT_FILTER } from "@/lib/agents/queries";
 import { resolveAgentTools } from "@/lib/agents/resolve";
 import {
@@ -89,14 +90,28 @@ async function sandboxForComposer(
   sandboxId = session.sandboxId;
   const sandbox = await db.sandbox.findFirst({
     where: { id: sandboxId, workspaceId: agent.workspaceId },
-    select: { id: true, deploymentId: true, kind: true },
+    select: { id: true, deploymentId: true, kind: true, config: true },
   });
   if (!sandbox) throw new ComposerRequestError(404, "Sandbox not found.");
-  return sandbox;
+  const config = sandbox.config;
+  const shared =
+    config &&
+    typeof config === "object" &&
+    !Array.isArray(config) &&
+    config.scope === "agent";
+  if (shared && config.agentId !== agent.id)
+    throw new ComposerRequestError(404, "Session sandbox not found.");
+  return {
+    ...sandbox,
+    workspaceRoot: shared
+      ? agentSessionWorkspaceRoot({ conversationId: context.conversationId })
+      : "/workspace",
+  };
 }
 
 async function sandboxFiles(
   deploymentId: string,
+  workspaceRoot: string,
   input: { query?: string; read?: string },
   signal?: AbortSignal,
 ) {
@@ -108,12 +123,12 @@ async function sandboxFiles(
       arguments: {
         runtime: "node",
         args: ["-e", FILES_SCRIPT, JSON.stringify(input)],
-        cwd: ".",
+        cwd: workspaceRoot.replace(/^\/workspace\/?/, "") || ".",
         timeoutMs: 10_000,
       },
     },
     15_000,
-    { signal, maxResponseBytes: 256 * 1024 },
+    { signal, maxResponseBytes: 256 * 1024, internal: true },
   );
   const parsed = CallToolResultSchema.safeParse(result);
   const first = parsed.success
@@ -225,9 +240,12 @@ export async function listComposerItems(
     context,
   );
   const [files, sessions] = await Promise.all([
-    sandboxFiles(sandbox.deploymentId, { query: input.query }, signal).catch(
-      () => null,
-    ),
+    sandboxFiles(
+      sandbox.deploymentId,
+      sandbox.workspaceRoot,
+      { query: input.query },
+      signal,
+    ).catch(() => null),
     db.conversation.findMany({
       where: {
         ...(await sessionScope(agent, sandbox.id)),
@@ -307,13 +325,14 @@ export async function resolveComposerReference(
         throw new ComposerRequestError(400, "Invalid file path.");
       const result = await sandboxFiles(
         sandbox.deploymentId,
+        sandbox.workspaceRoot,
         { read: path },
         signal,
       );
       if (typeof result.text !== "string")
         throw new ComposerRequestError(422, "No readable file content.");
       label = path;
-      text = `/workspace/${path}\n${result.text}`;
+      text = `${sandbox.workspaceRoot}/${path}\n${result.text}`;
     } else {
       const session = await db.conversation.findFirst({
         where: { ...(await sessionScope(agent, sandbox.id)), id: input.id },

@@ -86,7 +86,7 @@ describe("keyless web search", () => {
         .fn()
         .mockResolvedValueOnce(new Response(null, { status: 204 }))
         .mockResolvedValueOnce(
-          new Response("too\n much\t" + "x".repeat(1000), { status: 503 }),
+          new Response(`too\n much\t${"x".repeat(1000)}`, { status: 503 }),
         ),
     );
     await expect(
@@ -95,7 +95,7 @@ describe("keyless web search", () => {
     await expect(
       buildKeylessWebSearchToolSet().web_search.execute({ query: "query" }),
     ).rejects.toThrow(
-      `Exa MCP search failed (503): ${("too much " + "x".repeat(1000)).slice(0, 500)}`,
+      `Exa MCP search failed (503): ${(`too much ${"x".repeat(1000)}`).slice(0, 500)}`,
     );
   });
 
@@ -114,7 +114,7 @@ describe("keyless web search", () => {
       content: [
         {
           type: "text",
-          text: "x".repeat(24000) + "\n\n[Search results truncated]",
+          text: `${"x".repeat(24000)}\n\n[Search results truncated]`,
         },
       ],
     });

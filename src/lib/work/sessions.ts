@@ -22,6 +22,11 @@ import {
   allowedWorkSessionSources,
   type WorkSessionStatus,
 } from "@/lib/work/state-machine";
+import type { AgentModelOverride } from "@/lib/agents/chat-body";
+import {
+  AGENT_MODEL_OVERRIDE_PART,
+  resolveAgentModelOverride,
+} from "@/lib/agents/turn-model";
 
 type CreateWorkSessionInput = {
   workspaceId: string;
@@ -35,6 +40,7 @@ type CreateWorkSessionInput = {
   attachments?: PreparedWorkAttachment[];
   references?: ComposerReference[];
   reasoningEffort?: ReasoningEffort;
+  modelOverride?: AgentModelOverride;
 };
 
 export type WorkSessionTransitionResult =
@@ -47,7 +53,9 @@ const workSessionClientInclude = {
   agent: {
     select: { id: true, name: true, runtimeKind: true, retiredAt: true },
   },
-  agentRevision: { select: { id: true, agentId: true, config: true } },
+  agentRevision: {
+    select: { id: true, agentId: true, version: true, config: true },
+  },
   sandbox: {
     select: {
       id: true,
@@ -64,14 +72,15 @@ const workSessionClientInclude = {
       },
     },
   },
-  approvals: { orderBy: { requestedAt: "desc" as const } },
 } satisfies Prisma.WorkSessionInclude;
 
 const workSessionSummaryInclude = {
   agent: {
     select: { id: true, name: true, runtimeKind: true, retiredAt: true },
   },
-  agentRevision: { select: { id: true, agentId: true, config: true } },
+  agentRevision: {
+    select: { id: true, agentId: true, version: true, config: true },
+  },
   sandbox: {
     select: {
       id: true,
@@ -91,7 +100,9 @@ const workSessionExecutionSelect = {
   status: true,
   conversationId: true,
   agent: { select: { runtimeKind: true, retiredAt: true } },
-  agentRevision: { select: { id: true, agentId: true, config: true } },
+  agentRevision: {
+    select: { id: true, agentId: true, version: true, config: true },
+  },
   conversation: {
     select: { agentRevisionId: true, legacyRevisionUnresolved: true },
   },
@@ -128,7 +139,12 @@ export function workSessionRevisionMetadata(session: {
   runtimeKind: string;
   runtimeSnapshot: unknown;
   agent: { runtimeKind: string; retiredAt: Date | null };
-  agentRevision: { id: string; agentId: string; config: unknown } | null;
+  agentRevision: {
+    id: string;
+    agentId: string;
+    version?: number;
+    config: unknown;
+  } | null;
   conversation?: {
     agentRevisionId: string | null;
     legacyRevisionUnresolved: boolean;
@@ -152,12 +168,14 @@ export function workSessionRevisionMetadata(session: {
     saved.model === config.model;
   return {
     agentRevisionId: session.agentRevisionId,
+    agentRevisionVersion: revision?.version ?? null,
     legacyRevisionUnresolved: session.legacyRevisionUnresolved,
     readOnly:
-      session.runtimeKind !== "pi-sdk" ||
+      (session.runtimeKind !== "pi-sdk" && session.runtimeKind !== "omp") ||
       session.legacyRevisionUnresolved ||
       !config ||
-      session.agent.runtimeKind !== "pi-sdk" ||
+      session.agent.runtimeKind !== session.runtimeKind ||
+      config.runtimeKind !== session.runtimeKind ||
       Boolean(session.agent.retiredAt) ||
       Boolean(
         session.conversation &&
@@ -254,7 +272,18 @@ export async function createWorkSession(input: CreateWorkSessionInput) {
         },
       },
     });
-    if (agent?.runtimeKind !== "pi-sdk") return null;
+    if (
+      !agent ||
+      (agent.runtimeKind !== "pi-sdk" && agent.runtimeKind !== "omp")
+    )
+      return null;
+    if (input.modelOverride)
+      await resolveAgentModelOverride(
+        input.workspaceId,
+        input.modelOverride,
+        agent.runtimeKind,
+        tx,
+      );
     const revision = await pinCurrentAgentRevision(tx, agent.id);
     const config = revision.config;
     const pinnedProvider =
@@ -361,7 +390,12 @@ export async function createWorkSession(input: CreateWorkSessionInput) {
       data: {
         conversationId: conversation.id,
         role: "user",
-        parts: workMessageParts(task, attachments, input.references),
+        parts: [
+          ...workMessageParts(task, attachments, input.references),
+          ...(input.modelOverride
+            ? [{ type: AGENT_MODEL_OVERRIDE_PART, data: input.modelOverride }]
+            : []),
+        ],
         textCharacters:
           task.length +
           (input.references ?? []).reduce(
@@ -371,6 +405,7 @@ export async function createWorkSession(input: CreateWorkSessionInput) {
       },
     });
     return tx.workSession.create({
+      omit: { uiProjection: true, uiLease: true },
       data: {
         workspaceId: input.workspaceId,
         agentId: agent.id,
@@ -443,7 +478,7 @@ export async function transitionWorkSession(
       status: { in: sources },
       ...(["queued", "running"].includes(status)
         ? {
-            runtimeKind: "pi-sdk",
+            runtimeKind: { in: ["pi-sdk", "omp"] },
             agentRevisionId: { not: null },
             legacyRevisionUnresolved: false,
             conversation: {
@@ -484,13 +519,6 @@ export function waitForWorkSessionUser(
   });
 }
 
-export function waitForWorkSessionApproval(
-  workspaceId: string,
-  workSessionId: string,
-) {
-  return transitionWorkSession(workspaceId, workSessionId, "waiting_approval");
-}
-
 export function failWorkSession(
   workspaceId: string,
   workSessionId: string,
@@ -509,15 +537,11 @@ export function cancelWorkSession(workspaceId: string, workSessionId: string) {
       where: {
         id: workSessionId,
         workspaceId,
-        status: { in: ["running", "waiting_approval"] },
+        status: { in: ["running"] },
       },
       data: { status: "cancelling", cancelRequestedAt: now },
     });
     if (cancelling.count) {
-      await tx.workApproval.updateMany({
-        where: { workSessionId, status: "pending" },
-        data: { status: "expired", resolvedAt: now },
-      });
       return { ok: true, changed: true, status: "cancelling" };
     }
     const stopped = await tx.workSession.updateMany({
@@ -589,10 +613,10 @@ export async function resumeWorkSession(
         id: workSessionId,
         workspaceId,
         status: "failed",
-        runtimeKind: "pi-sdk",
+        runtimeKind: work.runtimeKind,
         agentRevisionId: work.agentRevisionId,
         legacyRevisionUnresolved: false,
-        agent: { runtimeKind: "pi-sdk", retiredAt: null },
+        agent: { runtimeKind: work.runtimeKind, retiredAt: null },
         conversation: {
           agentRevisionId: work.agentRevisionId,
           legacyRevisionUnresolved: false,
@@ -628,6 +652,7 @@ export async function appendWorkSessionInput(
     attachments?: PreparedWorkAttachment[];
     references?: ComposerReference[];
     reasoningEffort?: ReasoningEffort;
+    modelOverride?: AgentModelOverride;
   } = {},
 ): Promise<WorkSessionTransitionResult> {
   const text = input.trim();
@@ -655,6 +680,13 @@ export async function appendWorkSessionInput(
         status: work.status,
       } as const;
     }
+    if (options.modelOverride)
+      await resolveAgentModelOverride(
+        workspaceId,
+        options.modelOverride,
+        work.runtimeKind,
+        tx,
+      );
 
     const updated = await tx.workSession.updateMany({
       where: {
@@ -706,7 +738,12 @@ export async function appendWorkSessionInput(
       data: {
         conversationId: work.conversationId,
         role: "user",
-        parts: workMessageParts(text, attachments, options.references),
+        parts: [
+          ...workMessageParts(text, attachments, options.references),
+          ...(options.modelOverride
+            ? [{ type: AGENT_MODEL_OVERRIDE_PART, data: options.modelOverride }]
+            : []),
+        ],
         textCharacters:
           text.length +
           (options.references ?? []).reduce(
@@ -721,6 +758,7 @@ export async function appendWorkSessionInput(
 
 export async function listWorkSessions(workspaceId: string, agentId?: string) {
   const sessions = await db.workSession.findMany({
+    omit: { uiProjection: true, uiLease: true },
     where: {
       workspaceId,
       status: { not: "archived" },
@@ -743,6 +781,7 @@ export async function getWorkSession(
   conversationId?: string,
 ) {
   const session = await db.workSession.findFirst({
+    omit: { uiProjection: true, uiLease: true },
     where: {
       id: workSessionId,
       workspaceId,
@@ -761,6 +800,7 @@ export async function getWorkSessionForUser(
   workSessionId: string,
 ) {
   const session = await db.workSession.findFirst({
+    omit: { uiProjection: true, uiLease: true },
     where: {
       id: workSessionId,
       workspace: {

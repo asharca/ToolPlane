@@ -50,7 +50,7 @@ export async function refreshTaskStorage(
       + 512 * (SELECT COUNT(*) FROM "A2ARequest" r WHERE r."taskId"=t.id)
       + 1024 * (SELECT COUNT(*) FROM "A2AEntryReceipt" r WHERE r."taskId"=t.id)
       + 1024 * (SELECT COUNT(*) FROM "A2AEntryBinding" b WHERE b."lastTaskId"=t.id)
-      + COALESCE((SELECT SUM(octet_length(a.input::text) + 1024) FROM "A2AToolApproval" a WHERE a."taskId"=t.id), 0) AS bytes, t.sequence
+      + octet_length(t."uiProjection"::text) AS bytes, t.sequence
     FROM "A2ATask" t WHERE t.id=${id}`;
   const row = rows[0];
   if (!row) throw new Error("Task storage record disappeared.");

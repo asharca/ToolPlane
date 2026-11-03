@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { withRequestLogging } from "@/lib/observability/http";
 import { resolveRequestUser } from "@/lib/auth/request-user";
 import { getAgentForRequest } from "@/lib/agents/queries";
 import {
@@ -104,5 +105,6 @@ async function handle(req: Request, { params }: Params) {
     );
   }
 }
-export const GET = handle;
-export const POST = handle;
+const route = "/api/v1/agents/[agentId]/composer";
+export const GET = withRequestLogging(route, handle);
+export const POST = withRequestLogging(route, handle);

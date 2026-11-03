@@ -27,12 +27,42 @@ function parts(value: unknown) {
     );
     if (
       kinds.length !== 1 ||
-      kinds[0] !== "text" ||
-      typeof part.text !== "string" ||
-      part.text.length > 65_536 ||
-      (part.mediaType !== undefined && part.mediaType !== "text/plain")
+      kinds[0] === "data" ||
+      (part.filename !== undefined &&
+        (typeof part.filename !== "string" ||
+          part.filename.length > 200 ||
+          /[\p{Cc}/\\]/u.test(part.filename))) ||
+      (kinds[0] === "text"
+        ? typeof part.text !== "string" ||
+          part.text.length > 65_536 ||
+          (part.mediaType !== undefined && part.mediaType !== "text/plain")
+        : typeof part.mediaType !== "string" ||
+          !/^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/i.test(part.mediaType) ||
+          (kinds[0] === "raw"
+            ? typeof part.raw !== "string" ||
+              part.raw.length > 43_692 ||
+              !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
+                part.raw,
+              ) ||
+              Buffer.from(part.raw, "base64").length > 32_768 ||
+              Buffer.from(part.raw, "base64").toString("base64") !== part.raw
+            : typeof part.url !== "string" ||
+              !part.url ||
+              part.url.length > 8192))
     )
       throw new Error("Unsupported remote part.");
+    if (kinds[0] === "url") {
+      const url = new URL(part.url as string);
+      if (
+        url.protocol !== "https:" ||
+        url.username ||
+        url.password ||
+        url.hash ||
+        (part.url as string).trim() !== part.url ||
+        (part.url as string).includes("\\")
+      )
+        throw new Error("Unsupported remote file URL.");
+    }
   }
 }
 function message(
@@ -177,4 +207,28 @@ export function validateCardWire(raw: unknown) {
           throw new Error("Invalid remote security requirement.");
     }
   }
+}
+
+/** File capabilities and bytes are transport-only, including malformed and streaming envelopes. */
+export function fileSafeLogPayload(value: unknown): unknown {
+  if (typeof value === "string") return "[transport payload omitted]";
+  if (Array.isArray(value)) return value.map(fileSafeLogPayload);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [
+      key,
+      [
+        "raw",
+        "url",
+        "rawText",
+        "metadata",
+        "authorization",
+        "headers",
+      ].includes(key)
+        ? "[file source omitted]"
+        : item && typeof item === "object"
+          ? fileSafeLogPayload(item)
+          : item,
+    ]),
+  );
 }

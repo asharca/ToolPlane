@@ -306,7 +306,7 @@ export function CommandPalette({
                                 setOpen(false);
                               }}
                               className={cn(
-                                "relative isolate flex w-full items-center gap-3 rounded-md px-2 py-2 text-left text-sm transition-colors",
+                                "relative isolate flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left text-sm transition-colors",
                                 isActive
                                   ? "text-foreground"
                                   : "text-muted-foreground",
@@ -315,7 +315,7 @@ export function CommandPalette({
                               {isActive ? (
                                 <motion.span
                                   layoutId={`${uid}-active`}
-                                  className="absolute inset-0 z-0 rounded-md bg-muted/60"
+                                  className="absolute inset-0 z-0 rounded-lg bg-muted/60"
                                   transition={
                                     reduce
                                       ? { duration: 0 }

@@ -1,12 +1,12 @@
 import "server-only";
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
-import { marketReleaseChecksum } from "@/lib/market/artifact";
+import { marketReleaseChecksum } from "@/lib/pi-packages/artifact";
 import {
   buildInstalledSkillMarkdown,
   installedSkillExtraFiles,
 } from "@/lib/skills/artifact";
-import { assertMarketReleasesExecutable } from "@/lib/market/revocation";
+import { assertMarketReleasesExecutable } from "@/lib/pi-packages/revocation";
 import {
   resolveDockerImageDigest,
   digestDockerVolume,
@@ -28,14 +28,37 @@ import {
   preflightPiSdkCapabilities,
   nativePiMcpToolName,
 } from "./sandbox-runtime";
+import { MCP_RESULT_TO_FILE_TOOL } from "./native-tools";
 import {
   mcpDefinitionChecksum,
   prepareSessionMcpDefinition,
   prepareExistingSessionMcpDefinition,
   mcpRuntimeFilesChecksum,
 } from "@/lib/process/mcp-definition";
+import { ensureWorkspaceMcpDeploymentPinned } from "@/lib/process/mcp-pinning";
+import {
+  exposedMcpToolNames,
+  sameToolNames,
+} from "@/lib/workspace/mcp-tool-exposure";
 import { readMcpToolCatalog } from "@/lib/process/mcp-tool-catalog";
-import { piCommunicationCatalog } from "@/lib/a2a/pi-tool-catalog";
+import { piRuntimeCatalog } from "@/lib/agents/execution/runtime-tool-catalog";
+import {
+  externalSandboxTools,
+  isExternalSandboxAccess,
+  narrowExternalSandboxAccess,
+} from "@/lib/sandboxes/external";
+import { isExecutableAgentRuntimeKind } from "./runtime-kind";
+import {
+  OMP_VERSION,
+  emptyOmpConfig,
+  isOmpInstructionPath,
+} from "./omp-config";
+import { parseOmpConfigSnapshot } from "./omp-config-server";
+import { resolveCapabilitySubagents } from "./subagents";
+import {
+  captureNativeRoleModels,
+  resolveNativeRoleModels,
+} from "./native-role-models";
 
 export class AgentRevisionError extends Error {
   constructor(public readonly code: string) {
@@ -60,7 +83,8 @@ export async function requireAgentRevision(
     },
   });
   if (
-    agent?.runtimeKind !== "pi-sdk" ||
+    !agent ||
+    !isExecutableAgentRuntimeKind(agent.runtimeKind) ||
     agent.retiredAt ||
     agent.workspace.status !== "active"
   )
@@ -79,6 +103,13 @@ export async function requireAgentRevision(
         });
   if (!revision) throw new AgentRevisionError("AGENT_REVISION_UNRESOLVED");
   const config = AgentRevisionConfigSchema.parse(revision.config);
+  if (config.runtimeKind !== agent.runtimeKind)
+    throw new AgentRevisionError("AGENT_RUNTIME_MISMATCH");
+  if (
+    config.runtimeKind === "omp" &&
+    config.ompConfigChecksum !== marketReleaseChecksum(config.ompConfig)
+  )
+    throw new AgentRevisionError("OMP_CONFIG_CHECKSUM_MISMATCH");
   await assertMarketReleasesExecutable(
     tx,
     config.packages.map((pkg) => pkg.releaseId),
@@ -101,21 +132,9 @@ export async function captureInstalledSkillSnapshot(
     where: { id: installedSkillId, workspaceId, status: "published" },
     include: {
       skill: true,
-      marketInstall: { include: { listing: true, currentRelease: true } },
     },
   });
   if (!skill) throw new AgentRevisionError("resource_binding_unavailable");
-  const install = skill.marketInstall;
-  if (
-    install &&
-    (!["ready", "modified", "setup_required"].includes(install.status) ||
-      install.currentRelease.reviewStatus !== "approved" ||
-      install.currentRelease.listingId !== install.listingId ||
-      install.listing.status !== "published" ||
-      (install.listing.visibility !== "public" &&
-        install.listing.publisherWorkspaceId !== workspaceId))
-  )
-    throw new AgentRevisionError("resource_binding_unavailable");
   const artifact = {
     name: skill.name ?? skill.skill?.name ?? skill.id,
     slug: skill.slug ?? skill.skill?.slug ?? skill.id,
@@ -138,20 +157,61 @@ const captureInclude = {
   skills: { include: { installedSkill: { include: { skill: true } } } },
   knowledgeBases: true,
   sandboxes: { include: { sandbox: true } },
+  externalSandboxes: {
+    orderBy: { createdAt: "asc" },
+    select: { sandboxId: true, access: true },
+  },
   piPackages: AGENT_PI_PACKAGES_INCLUDE,
 } as const;
 
-/** Capture artifacts, not mutable Skill ids. No environment values/credentials are copied. */
+/** Resolve and capture attached MCP recipes before entering a revision transaction. */
+export async function prepareAgentRevisionMcpDeployments(
+  workspaceId: string,
+  agentId: string,
+) {
+  const agent = await db.agent.findFirst({
+    where: {
+      id: agentId,
+      workspaceId,
+      runtimeKind: { in: ["pi-sdk", "omp"] },
+      retiredAt: null,
+      workspace: { status: "active" },
+    },
+    select: { servers: { select: { deploymentId: true } } },
+  });
+  if (!agent) throw new AgentRevisionError("AGENT_NOT_FOUND");
+  for (const { deploymentId } of agent.servers) {
+    const deployment = await ensureWorkspaceMcpDeploymentPinned({
+      workspaceId,
+      deploymentId,
+    });
+    await prepareSessionMcpDefinition(deployment);
+  }
+}
+
+/** Capture artifacts, not mutable Skill ids or credentials. Transaction callers must prepare MCP deployments first. */
 export async function captureAgentRevisionConfig(
   tx: Prisma.TransactionClient,
   agentId: string,
   environment?: AgentEnvironmentSnapshot,
 ): Promise<AgentRevisionConfig> {
+  if (tx === db) {
+    const owner = await db.agent.findUnique({
+      where: { id: agentId },
+      select: { workspaceId: true },
+    });
+    if (!owner) throw new AgentRevisionError("AGENT_NOT_FOUND");
+    await prepareAgentRevisionMcpDeployments(owner.workspaceId, agentId);
+  }
   const agent = await tx.agent.findUnique({
     where: { id: agentId },
     include: captureInclude,
   });
-  if (agent?.runtimeKind !== "pi-sdk" || agent.retiredAt)
+  if (
+    !agent ||
+    !isExecutableAgentRuntimeKind(agent.runtimeKind) ||
+    agent.retiredAt
+  )
     throw new AgentRevisionError("AGENT_EXECUTION_RETIRED");
   const previous =
     agent.currentRevisionVersion > 0
@@ -180,7 +240,9 @@ export async function captureAgentRevisionConfig(
           kind: "docker" as const,
           image: await resolveDockerImageDigest(template.image),
           network: template.network,
-          piVersion: "0.87.1",
+          ...(agent.runtimeKind === "omp"
+            ? { ompVersion: OMP_VERSION }
+            : { piVersion: "0.87.1" }),
           initialSnapshot: null,
           resourceLimits: { memoryBytes: 536870912, cpus: 1, pidsLimit: 128 },
           credentialReferences: [],
@@ -188,18 +250,46 @@ export async function captureAgentRevisionConfig(
       : null);
   if (!frozenEnvironment)
     throw new AgentRevisionError("AGENT_ENVIRONMENT_REQUIRED");
+  const ompConfig =
+    agent.runtimeKind === "omp"
+      ? parseOmpConfigSnapshot(agent.ompConfig ?? emptyOmpConfig())
+      : null;
+  if (ompConfig) {
+    // Legacy executable files remain in frozen history, not in new authority.
+    ompConfig.files = ompConfig.files.filter((file) =>
+      isOmpInstructionPath(file.path),
+    );
+    delete ompConfig.plugins;
+  }
   const packages = resolveAgentPiPackages(agent);
   return AgentRevisionConfigSchema.parse({
     schemaVersion: 1,
-    runtimeKind: "pi-sdk",
+    runtimeKind: agent.runtimeKind,
+    ...(ompConfig
+      ? { ompConfig, ompConfigChecksum: marketReleaseChecksum(ompConfig) }
+      : {}),
     systemPrompt: agent.systemPrompt,
     providerId: agent.providerId,
     model: agent.model,
     modelProviderIds: [],
+    ...(agent.runtimeKind === "omp" && agent.subagentMode === "native"
+      ? { nativeRoleModels: captureNativeRoleModels(packages) }
+      : {}),
     maxSteps: agent.maxSteps,
     disabledBuiltinTools: agent.disabledBuiltinTools,
     sandboxTemplateId: template?.id ?? null,
     environment: frozenEnvironment,
+    externalSandboxes: agent.externalSandboxes.map(({ sandboxId, access }) => ({
+      sandboxId,
+      access,
+    })),
+    // Dynamic native roles and platform A2A use no hand-authored definition pins.
+    subagents: [],
+    subagentMode: agent.subagentMode,
+    nativeSubagentPolicy: {
+      maxConcurrency: agent.nativeSubagentMaxConcurrency,
+      maxDepth: agent.nativeSubagentMaxDepth,
+    },
     skills: agent.skills.map(({ installedSkill: skill }) => {
       const artifact = {
         name: skill.name ?? skill.skill?.name ?? skill.id,
@@ -225,23 +315,17 @@ export async function captureAgentRevisionConfig(
       releaseId: pkg.releaseId,
       integrity: pkg.checksum,
     })),
-    // A mutable deployment attachment is not consent to every present/future tool.
+    // The live binding is authoritative: `all` bindings are kept equal to the
+    // catalog, `selected` bindings hold the user's explicit subset.
     mcpGrants: await Promise.all(
       agent.servers.map(
         async ({ deploymentId, deployment, allowedToolNames }) => ({
           deploymentId,
-          ...(await prepareSessionMcpDefinition(deployment)),
+          ...(await prepareSessionMcpDefinition(deployment, {
+            prepare: false,
+          })),
           runtimeFilesChecksum: await mcpRuntimeFilesChecksum(tx, deploymentId),
-          allowedToolNames: (
-            prior?.mcpGrants.find(
-              (grant) => grant.deploymentId === deploymentId,
-            )?.allowedToolNames ?? allowedToolNames
-          ).filter(
-            (name) =>
-              allowedToolNames.includes(name) &&
-              (deployment.mcpToolExposure !== "allowlist" ||
-                deployment.mcpAllowedTools.includes(name)),
-          ),
+          allowedToolNames: exposedMcpToolNames(deployment, allowedToolNames),
         }),
       ),
     ),
@@ -265,13 +349,23 @@ async function validateRevisionAuthorization(
     where: {
       id: agentId,
       workspaceId,
-      runtimeKind: "pi-sdk",
+      runtimeKind: config.runtimeKind,
       retiredAt: null,
       workspace: { status: "active" },
     },
     include: captureInclude,
   });
   if (!agent) throw new AgentRevisionError("AGENT_EXECUTION_RETIRED");
+  if ((config.subagentMode ?? "platform") !== agent.subagentMode)
+    throw new AgentRevisionError("SUBAGENT_MODE_CONFLICT");
+  if (
+    config.subagentMode === "native" &&
+    (!config.nativeSubagentPolicy ||
+      config.nativeSubagentPolicy.maxConcurrency >
+        agent.nativeSubagentMaxConcurrency ||
+      config.nativeSubagentPolicy.maxDepth > agent.nativeSubagentMaxDepth)
+  )
+    throw new AgentRevisionError("SUBAGENT_POLICY_REVOKED");
   const providers = new Set([agent.providerId]);
   if (
     (config.providerId && !providers.has(config.providerId)) ||
@@ -289,6 +383,17 @@ async function validateRevisionAuthorization(
     config.mcpGrants.some((grant) => !deployments.has(grant.deploymentId))
   )
     throw new AgentRevisionError("AGENT_GRANT_REVOKED");
+  for (const pinned of config.externalSandboxes) {
+    const live = agent.externalSandboxes.find(
+      (entry) => entry.sandboxId === pinned.sandboxId,
+    );
+    if (
+      !live ||
+      !isExternalSandboxAccess(live.access) ||
+      narrowExternalSandboxAccess(pinned.access, live.access) !== pinned.access
+    )
+      throw new AgentRevisionError("AGENT_GRANT_REVOKED");
+  }
   for (const grant of config.mcpGrants) {
     const deployment = agent.servers.find(
       (entry) => entry.deploymentId === grant.deploymentId,
@@ -409,6 +514,22 @@ async function validateRevisionAuthorization(
     tx,
     config.packages.map((pkg) => pkg.releaseId),
   );
+  const children = await resolveCapabilitySubagents(
+    tx,
+    workspaceId,
+    agentId,
+    config,
+  );
+  if (children.length !== (config.subagents?.length ?? 0))
+    throw new AgentRevisionError("SUBAGENT_REVOKED");
+  const nativeModels = await resolveNativeRoleModels(
+    tx,
+    workspaceId,
+    agentId,
+    config,
+  );
+  if (nativeModels.length !== (config.nativeRoleModels?.length ?? 0))
+    throw new AgentRevisionError("AGENT_PROVIDER_REVOKED");
   await assertAgentEnvironmentCredentialReferences(
     tx,
     workspaceId,
@@ -452,8 +573,26 @@ export async function publishAgentRevisionInTransaction(
   if ((current?.id ?? null) !== input.expectedRevisionId)
     throw new AgentRevisionError("AGENT_REVISION_CONFLICT");
   const config = AgentRevisionConfigSchema.parse(input.config);
+  if (config.subagents?.length)
+    throw new AgentRevisionError("SUBAGENT_AUTHORING_RETIRED");
+  if (config.runtimeKind === "omp") {
+    parseOmpConfigSnapshot(config.ompConfig);
+    if (config.ompConfigChecksum !== marketReleaseChecksum(config.ompConfig))
+      throw new AgentRevisionError("OMP_CONFIG_CHECKSUM_MISMATCH");
+    if (
+      config.subagents !== undefined &&
+      (config.ompConfig.plugins?.length ||
+        config.ompConfig.files.some((file) =>
+          /^(?:agents|skills|hooks|extensions)\//.test(file.path),
+        ))
+    )
+      throw new AgentRevisionError("OMP_CONFIG_DUPLICATE_CAPABILITY");
+  }
   AgentEnvironmentSnapshotSchema.parse(config.environment);
-  if (config.environment.piVersion !== "0.87.1")
+  if (
+    config.runtimeKind === "pi-sdk" &&
+    config.environment.piVersion !== "0.87.1"
+  )
     throw new AgentRevisionError("PI_SDK_VERSION_MISMATCH");
   const authorized = await validateRevisionAuthorization(
     tx,
@@ -480,51 +619,64 @@ export async function publishAgentRevisionInTransaction(
     )
       throw new AgentRevisionError("AGENT_INITIAL_SNAPSHOT_INVALID");
   }
-  const nativeToolNames = config.mcpGrants.flatMap((grant, serverIndex) => {
-    const deployment = authorized.servers.find(
-      (entry) => entry.deploymentId === grant.deploymentId,
-    )?.deployment;
-    if (!deployment) throw new AgentRevisionError("AGENT_GRANT_REVOKED");
-    return readMcpToolCatalog(deployment.installCfg)
-      .filter(
-        (tool) =>
-          grant.allowedToolNames.includes(tool.name) &&
-          (deployment.mcpToolExposure !== "allowlist" ||
-            deployment.mcpAllowedTools.includes(tool.name)),
-      )
-      .map((tool, toolIndex) =>
-        nativePiMcpToolName(serverIndex, toolIndex, tool.name),
+  if (config.runtimeKind === "pi-sdk") {
+    const nativeToolNames = config.mcpGrants.flatMap((grant, serverIndex) => {
+      const deployment = authorized.servers.find(
+        (entry) => entry.deploymentId === grant.deploymentId,
+      )?.deployment;
+      if (!deployment) throw new AgentRevisionError("AGENT_GRANT_REVOKED");
+      return readMcpToolCatalog(deployment.installCfg)
+        .filter(
+          (tool) =>
+            grant.allowedToolNames.includes(tool.name) &&
+            (deployment.mcpToolExposure !== "allowlist" ||
+              deployment.mcpAllowedTools.includes(tool.name)),
+        )
+        .map((tool, toolIndex) =>
+          nativePiMcpToolName(serverIndex, toolIndex, tool.name),
+        );
+    });
+    if (nativeToolNames.length) nativeToolNames.push(MCP_RESULT_TO_FILE_TOOL);
+    // Session servers: MCP grants, then external sandboxes, then the task server.
+    for (const [index, entry] of config.externalSandboxes.entries())
+      nativeToolNames.push(
+        ...externalSandboxTools(entry.access).map((tool, toolIndex) =>
+          nativePiMcpToolName(config.mcpGrants.length + index, toolIndex, tool),
+        ),
       );
-  });
-  if (config.a2a.outboundEnabled)
     nativeToolNames.push(
-      ...piCommunicationCatalog.map((tool, toolIndex) =>
-        nativePiMcpToolName(config.mcpGrants.length, toolIndex, tool.name),
-      ),
-    );
-  await preflightPiSdkCapabilities({
-    piPackages: resolveAgentPiPackages({
-      ...authorized,
-      piPackages: authorized.piPackages.filter((binding) =>
-        config.packages.some(
-          (pin) =>
-            pin.marketInstallId === binding.marketInstallId &&
-            pin.releaseId === binding.releaseId,
+      ...piRuntimeCatalog(config.a2a.outboundEnabled).map((tool, toolIndex) =>
+        nativePiMcpToolName(
+          config.mcpGrants.length + config.externalSandboxes.length,
+          toolIndex,
+          tool.name,
         ),
       ),
-    }),
-    skills: config.skills.map((skill) => ({
-      skillId: null,
-      skill: null,
-      name: skill.name,
-      slug: skill.slug,
-      content: skill.markdown,
-      files: skill.files,
-      userInvocable: skill.userInvocable,
-      agentInvocable: skill.agentInvocable,
-    })),
-    toolNames: nativeToolNames,
-  });
+    );
+    await preflightPiSdkCapabilities({
+      piPackages: resolveAgentPiPackages({
+        ...authorized,
+        piPackages: authorized.piPackages.filter((binding) =>
+          config.packages.some(
+            (pin) =>
+              pin.marketInstallId === binding.marketInstallId &&
+              pin.releaseId === binding.releaseId,
+          ),
+        ),
+      }),
+      skills: config.skills.map((skill) => ({
+        skillId: null,
+        skill: null,
+        name: skill.name,
+        slug: skill.slug,
+        content: skill.markdown,
+        files: skill.files,
+        userInvocable: skill.userInvocable,
+        agentInvocable: skill.agentInvocable,
+      })),
+      toolNames: nativeToolNames,
+    });
+  }
   await validateRevisionAuthorization(tx, workspaceId, agentId, config);
   const revision = await tx.agentRevision.create({
     data: {
@@ -538,6 +690,125 @@ export async function publishAgentRevisionInTransaction(
     data: { currentRevisionVersion: revision.version },
   });
   return { id: revision.id, version: revision.version, config };
+}
+
+/**
+ * Follow MCP catalog, exposure and recipe changes for MCP grants the current
+ * revision already holds. Publishes the applied configuration with only those
+ * grants refreshed; unapplied Agent edits are never published here. Returns the
+ * new revision, or null when the applied grants are already current.
+ */
+export async function refreshAgentRevisionMcpGrants(
+  workspaceId: string,
+  agentId: string,
+) {
+  const agent = await db.agent.findFirst({
+    where: {
+      id: agentId,
+      workspaceId,
+      runtimeKind: { in: ["pi-sdk", "omp"] },
+      retiredAt: null,
+    },
+    select: {
+      currentRevisionVersion: true,
+      servers: { include: { deployment: true } },
+    },
+  });
+  if (!agent?.currentRevisionVersion) return null;
+  const current = await db.agentRevision.findUnique({
+    where: {
+      agentId_version: { agentId, version: agent.currentRevisionVersion },
+    },
+  });
+  if (!current) return null;
+  const applied = AgentRevisionConfigSchema.parse(current.config);
+  const recipeChanged = async (
+    grant: AgentRevisionConfig["mcpGrants"][number],
+    deployment: Parameters<typeof mcpDefinitionChecksum>[0],
+  ) =>
+    grant.definitionChecksum !== mcpDefinitionChecksum(deployment) ||
+    grant.runtimeFilesChecksum !==
+      (await mcpRuntimeFilesChecksum(db, grant.deploymentId));
+  let stale = false;
+  for (const grant of applied.mcpGrants) {
+    const binding = agent.servers.find(
+      (entry) => entry.deploymentId === grant.deploymentId,
+    );
+    if (!binding) continue;
+    if (await recipeChanged(grant, binding.deployment)) {
+      // Image capture must happen outside the publication transaction.
+      await ensureWorkspaceMcpDeploymentPinned({
+        workspaceId,
+        deploymentId: grant.deploymentId,
+      });
+      await prepareSessionMcpDefinition(binding.deployment);
+      stale = true;
+    } else if (
+      !sameToolNames(
+        grant.allowedToolNames,
+        exposedMcpToolNames(binding.deployment, binding.allowedToolNames),
+      )
+    )
+      stale = true;
+  }
+  if (!stale) return null;
+  return db.$transaction(
+    async (tx) => {
+      const live = await tx.agent.findFirst({
+        where: { id: agentId, workspaceId },
+        select: {
+          servers: { include: { deployment: true } },
+          externalSandboxes: { select: { sandboxId: true, access: true } },
+        },
+      });
+      if (!live) throw new AgentRevisionError("AGENT_NOT_FOUND");
+      const mcpGrants = await Promise.all(
+        applied.mcpGrants.map(async (grant) => {
+          const binding = live.servers.find(
+            (entry) => entry.deploymentId === grant.deploymentId,
+          );
+          // A removed binding is a revocation; runtime already narrows it.
+          if (!binding) return grant;
+          return {
+            deploymentId: grant.deploymentId,
+            ...(await prepareSessionMcpDefinition(binding.deployment, {
+              prepare: false,
+            })),
+            runtimeFilesChecksum: await mcpRuntimeFilesChecksum(
+              tx,
+              grant.deploymentId,
+            ),
+            allowedToolNames: exposedMcpToolNames(
+              binding.deployment,
+              binding.allowedToolNames,
+            ),
+          };
+        }),
+      );
+      // Never widen: keep only still-attached sandboxes at the lower access.
+      const externalSandboxes = applied.externalSandboxes.flatMap((entry) => {
+        const attached = live.externalSandboxes.find(
+          (item) => item.sandboxId === entry.sandboxId,
+        );
+        return attached && isExternalSandboxAccess(attached.access)
+          ? [
+              {
+                sandboxId: entry.sandboxId,
+                access: narrowExternalSandboxAccess(
+                  entry.access,
+                  attached.access,
+                ),
+              },
+            ]
+          : [];
+      });
+      return publishAgentRevisionInTransaction(tx, workspaceId, agentId, {
+        expectedRevisionId: current.id,
+        config: { ...applied, mcpGrants, externalSandboxes },
+      });
+    },
+    { timeout: 120_000 },
+  );
 }
 
 /** Removing a default package grants nothing; preserve all other applied scopes, even revoked ones. */
@@ -568,6 +839,13 @@ export async function removeAgentRevisionPackageInTransaction(
     packages: applied.packages.filter(
       (pkg) => pkg.marketInstallId !== marketInstallId,
     ),
+    ...(applied.nativeRoleModels !== undefined
+      ? {
+          nativeRoleModels: applied.nativeRoleModels.filter(
+            (role) => role.marketInstallId !== marketInstallId,
+          ),
+        }
+      : {}),
   };
   const revision = await tx.agentRevision.create({
     data: {
@@ -588,6 +866,11 @@ export async function publishAgentRevision(
   agentId: string,
   input: PublishAgentRevisionInput,
 ) {
+  const owner = await db.agent.findFirst({
+    where: { id: agentId, workspaceId },
+    select: { id: true },
+  });
+  if (!owner) throw new AgentRevisionError("AGENT_NOT_FOUND");
   const config =
     input.config === undefined
       ? await captureAgentRevisionConfig(db, agentId, input.environment)
@@ -645,6 +928,11 @@ export async function resolvePinnedAgent<
       },
     });
     if (!live) throw new AgentRevisionError("AGENT_NOT_FOUND");
+    if (
+      live.runtimeKind !== config.runtimeKind ||
+      agent.runtimeKind !== config.runtimeKind
+    )
+      throw new AgentRevisionError("AGENT_RUNTIME_MISMATCH");
     const providerIds = new Set([live.providerId]);
     if (config.providerId && !providerIds.has(config.providerId))
       throw new AgentRevisionError("AGENT_PROVIDER_REVOKED");
@@ -703,11 +991,27 @@ export async function resolvePinnedAgent<
           ),
         ),
       }));
+    const capabilitySubagents = await resolveCapabilitySubagents(
+      tx,
+      agent.workspaceId,
+      agent.id,
+      config,
+    );
+    const nativeRoleModels = await resolveNativeRoleModels(
+      tx,
+      agent.workspaceId,
+      agent.id,
+      config,
+    );
     return {
       ...agent,
-      runtimeKind: "pi-sdk",
+      runtimeKind: config.runtimeKind,
       agentRevisionId: id,
       revisionConfig: config,
+      // Never inherit a draft mode into a pinned historical session.
+      subagentMode: config.subagentMode,
+      nativeSubagentMaxConcurrency: config.nativeSubagentPolicy?.maxConcurrency,
+      nativeSubagentMaxDepth: config.nativeSubagentPolicy?.maxDepth,
       systemPrompt: config.systemPrompt,
       providerId: config.providerId,
       provider,
@@ -744,6 +1048,8 @@ export async function resolvePinnedAgent<
       piPackages: approvedPackages,
       toolkits: [],
       subAgents: [],
+      capabilitySubagents,
+      nativeRoleModels,
       knowledgeBases: live.knowledgeBases.filter((entry) =>
         config.knowledgeBaseIds.includes(entry.knowledgeBaseId),
       ),

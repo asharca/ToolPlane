@@ -51,7 +51,10 @@ import {
   refreshTaskStorage,
   reserveNativeExecutionOutput,
 } from "@/lib/a2a/quotas";
-import { startA2AWorker, stopA2AWorker } from "@/lib/a2a/worker";
+import {
+  startAgentWorker,
+  stopAgentWorker,
+} from "@/lib/agents/execution/worker";
 
 const OUTPUT_CHARGE = vi.hoisted(() => {
   // The retained client schema has a 200000-character minimum quota.
@@ -234,7 +237,7 @@ beforeEach(async () => {
   });
 });
 afterAll(async () => {
-  stopA2AWorker();
+  stopAgentWorker();
   if (workspaceId) {
     await db.logEvent.deleteMany({ where: { workspaceId } });
     await db.auditEvent.deleteMany({ where: { workspaceId } });
@@ -592,8 +595,8 @@ describe("retained published A2A history", () => {
   });
   it("quarantines interrupted historical executions without replaying side effects", async () => {
     const retained = await history(TaskState.TASK_STATE_WORKING);
-    await startA2AWorker();
-    stopA2AWorker();
+    await startAgentWorker();
+    stopAgentWorker();
     expect((await getTask(grant, retained.id)).status?.state).toBe(
       TaskState.TASK_STATE_FAILED,
     );

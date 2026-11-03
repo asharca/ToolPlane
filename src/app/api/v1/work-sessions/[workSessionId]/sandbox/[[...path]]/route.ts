@@ -31,8 +31,8 @@ async function proxy(req: Request, { params }: Params) {
   });
   if (!work) return Response.json({ error: "Not found" }, { status: 404 });
   const historical =
-    work.runtimeKind !== "pi-sdk" ||
-    work.agent.runtimeKind !== "pi-sdk" ||
+    (work.runtimeKind !== "pi-sdk" && work.runtimeKind !== "omp") ||
+    (work.agent.runtimeKind !== "pi-sdk" && work.agent.runtimeKind !== "omp") ||
     work.agent.retiredAt ||
     work.legacyRevisionUnresolved ||
     !work.agentRevisionId ||
@@ -63,7 +63,7 @@ async function proxy(req: Request, { params }: Params) {
           agentRevisionId: work.agentRevisionId,
           legacyRevisionUnresolved: false,
         },
-        agent: { retiredAt: null, runtimeKind: "pi-sdk" },
+        agent: { retiredAt: null, runtimeKind: work.runtimeKind },
         workspace: {
           status: "active",
           OR: [
@@ -85,7 +85,13 @@ async function proxy(req: Request, { params }: Params) {
     )
       return null;
     const port = livePort(mapping.deploymentId);
-    return port ? { port, sandboxId: mapping.sandboxId } : null;
+    return port
+      ? {
+          port,
+          sandboxId: mapping.sandboxId,
+          workspaceRoot: mapping.workspaceRoot,
+        }
+      : null;
   });
 }
 const route = "/api/v1/work-sessions/[workSessionId]/sandbox/[[...path]]";

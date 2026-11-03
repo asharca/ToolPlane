@@ -6,7 +6,7 @@ import {
   markRuntimeUncertain,
 } from "@/lib/runtime/ownership-state";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
@@ -210,7 +210,7 @@ async function streamIntoHelper(
   body: ReadableStream<Uint8Array>,
   maxBytes: number,
   signal?: AbortSignal,
-): Promise<number> {
+): Promise<{ size: number; sha256: string }> {
   const ownerSignal = runtimeAbortSignal();
   const combined = ownerSignal
     ? signal
@@ -226,7 +226,7 @@ async function streamIntoHelperOwned(
   body: ReadableStream<Uint8Array>,
   maxBytes: number,
   signal?: AbortSignal,
-): Promise<number> {
+): Promise<{ size: number; sha256: string }> {
   if (signal?.aborted)
     throw new AttachmentStorageError("Attachment upload was aborted.");
   const child = spawn("docker", args, {
@@ -236,9 +236,11 @@ async function streamIntoHelperOwned(
   child.stdout.resume();
   const resultPromise = waitForChild(child);
   let size = 0;
+  const hash = createHash("sha256");
   const limiter = new Transform({
     transform(chunk: Buffer, _encoding, callback) {
       size += chunk.byteLength;
+      hash.update(chunk);
       callback(
         size > maxBytes ? new AttachmentTooLargeError(maxBytes) : null,
         chunk,
@@ -270,7 +272,7 @@ async function streamIntoHelperOwned(
           `Docker attachment helper failed (${result.signal ?? result.code ?? "unknown"}).`,
       );
     }
-    return size;
+    return { size, sha256: hash.digest("hex") };
   } catch (error) {
     child.kill("SIGKILL");
     await resultPromise;
@@ -300,22 +302,30 @@ export async function writeWorkspaceAttachment(input: {
   body: ReadableStream<Uint8Array>;
   maxBytes: number;
   signal?: AbortSignal;
-}): Promise<{ storagePath: string; size: number }> {
+  objectId?: string;
+  allowEmpty?: boolean;
+}): Promise<{ storagePath: string; size: number; sha256: string }> {
   if (!Number.isSafeInteger(input.maxBytes) || input.maxBytes <= 0) {
     throw new AttachmentStorageError("Invalid attachment byte limit.");
   }
   const volumeName = workspaceAttachmentVolumeName(input.workspaceId);
-  const objectId = randomUUID();
+  const objectId = input.objectId ?? randomUUID();
+  if (
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      objectId,
+    )
+  )
+    throw new AttachmentStorageError("Invalid attachment object id.");
   const storagePath = `objects/${objectId}-${safeAttachmentFilename(input.filename)}`;
   const target = checkedStoragePath(storagePath);
   const temporary = `${ATTACHMENT_MOUNT_PATH}/.uploads/${objectId}`;
   await runDocker(["volume", "create", volumeName]);
 
   try {
-    const size = await streamIntoHelper(
+    const { size, sha256 } = await streamIntoHelper(
       helperArgs(
         volumeName,
-        'set -eu; mkdir -p "$(dirname "$1")"; cat > "$1"',
+        'set -euC; umask 077; test ! -L /attachments/.uploads; test ! -L /attachments/objects; mkdir -p /attachments/.uploads /attachments/objects; cat > "$1"',
         [temporary],
         { input: true },
       ),
@@ -323,15 +333,15 @@ export async function writeWorkspaceAttachment(input: {
       input.maxBytes,
       input.signal,
     );
-    if (size === 0) throw new EmptyAttachmentError();
+    if (size === 0 && !input.allowEmpty) throw new EmptyAttachmentError();
     await runDocker(
       helperArgs(
         volumeName,
-        'set -eu; test -f "$1"; test "$(wc -c < "$1")" -eq "$3"; mkdir -p "$(dirname "$2")"; chmod 600 "$1"; mv -f "$1" "$2"',
+        'set -eu; test ! -L /attachments/.uploads; test ! -L /attachments/objects; test ! -L "$1"; test -f "$1"; test "$(wc -c < "$1")" -eq "$3"; chmod 600 "$1"; ln "$1" "$2"; rm "$1"',
         [temporary, target, String(size)],
       ),
     );
-    return { storagePath, size };
+    return { storagePath, size, sha256 };
   } catch (error) {
     await runDocker(helperArgs(volumeName, 'rm -f "$1"', [temporary])).catch(
       () => undefined,
@@ -353,7 +363,12 @@ export function readWorkspaceAttachment(
   const release = beginRuntimeOperation();
   const child = spawn(
     "docker",
-    helperArgs(volumeName, 'cat "$1"', [target], { readOnly: true }),
+    helperArgs(
+      volumeName,
+      'set -eu; test ! -L /attachments/objects; test ! -L "$1"; test -f "$1"; cat "$1"',
+      [target],
+      { readOnly: true },
+    ),
     {
       env: dockerEnv(),
       ...(runtimeAbortSignal() ? { signal: runtimeAbortSignal() } : {}),
@@ -417,7 +432,14 @@ export async function deleteWorkspaceAttachmentFile(
     if (error instanceof Error && /no such volume/i.test(error.message)) return;
     throw error;
   }
-  await runDocker(helperArgs(volumeName, 'rm -f "$1"', [target]));
+  const temporary = `${ATTACHMENT_MOUNT_PATH}/.uploads/${storagePath.slice(8, 44)}`;
+  await runDocker(
+    helperArgs(
+      volumeName,
+      'set -eu; test ! -L /attachments/objects; test ! -L /attachments/.uploads; rm -f "$1" "$2"',
+      [target, temporary],
+    ),
+  );
 }
 
 export async function removeWorkspaceAttachmentVolume(
@@ -437,6 +459,7 @@ export async function copyWorkspaceAttachmentToDockerVolume(input: {
   storagePath: string;
   destinationVolume: string;
   destinationPath: string;
+  exclusive?: boolean;
 }): Promise<void> {
   const sourceVolume = workspaceAttachmentVolumeName(input.workspaceId);
   if (!/^[A-Za-z0-9][A-Za-z0-9_.-]+$/.test(input.destinationVolume)) {
@@ -486,7 +509,9 @@ export async function copyWorkspaceAttachmentToDockerVolume(input: {
       HELPER_IMAGE,
       "sh",
       "-c",
-      'set -eu; test -f "$1"; mkdir -p "$(dirname "$2")"; cp "$1" "$2"; chmod 600 "$2"',
+      input.exclusive
+        ? 'set -eu; test -f "$1"; parent="$(dirname "$2")"; mkdir -p "$parent"; resolved="$(realpath "$parent")"; case "$resolved" in /to|/to/*) ;; *) exit 73 ;; esac; test ! -L "$2"; if test -e "$2"; then cmp -s "$1" "$2"; exit; fi; temporary="$(mktemp "$parent/.attachment.XXXXXX")"; trap \'rm -f "$temporary"\' EXIT; cp "$1" "$temporary"; chmod 600 "$temporary"; ln "$temporary" "$2" || { test ! -L "$2" && cmp -s "$1" "$2"; }'
+        : 'set -eu; test -f "$1"; mkdir -p "$(dirname "$2")"; cp "$1" "$2"; chmod 600 "$2"',
       "toolplane-attachment-helper",
       `/from/${input.storagePath}`,
       `/to/${input.destinationPath}`,

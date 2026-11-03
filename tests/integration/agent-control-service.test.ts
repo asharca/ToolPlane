@@ -20,7 +20,6 @@ let sandboxDeploymentId = "";
 let installedSkillId = "";
 let toolkitId = "";
 let sandboxId = "";
-let childAgentId = "";
 let foreignOwnerId = "";
 let foreignWorkspaceId = "";
 let foreignProviderId = "";
@@ -28,7 +27,6 @@ let foreignDeploymentId = "";
 let foreignSkillId = "";
 let foreignToolkitId = "";
 let foreignSandboxId = "";
-let foreignAgentId = "";
 
 beforeAll(async () => {
   const owner = await db.user.create({
@@ -121,15 +119,6 @@ beforeAll(async () => {
     },
   });
   sandboxId = sandbox.id;
-  const child = await db.agent.create({
-    data: {
-      workspaceId,
-      name: "Child agent",
-      slug: `child-${stamp}`,
-      runtimeKind: "pi-sdk",
-    },
-  });
-  childAgentId = child.id;
 
   const foreignOwner = await db.user.create({
     data: {
@@ -198,15 +187,6 @@ beforeAll(async () => {
     },
   });
   foreignSandboxId = foreignSandbox.id;
-  const foreignAgent = await db.agent.create({
-    data: {
-      workspaceId: foreignWorkspaceId,
-      name: "Foreign agent",
-      slug: `foreign-agent-${stamp}`,
-      runtimeKind: "pi-sdk",
-    },
-  });
-  foreignAgentId = foreignAgent.id;
 });
 
 afterAll(async () => {
@@ -230,8 +210,7 @@ function createInput(
     deploymentIds: [deploymentId],
     installedSkillIds: [installedSkillId],
     toolkitIds: [toolkitId],
-    sandboxIds: [],
-    subAgentIds: [childAgentId],
+    externalSandboxes: [],
     ...overrides,
   };
 }
@@ -296,9 +275,6 @@ describe("Agent Control service", () => {
     expect(stored.toolkits.map(({ toolkitId: id }) => id)).toEqual([toolkitId]);
     expect(stored.sandboxes).toHaveLength(1);
     expect(stored.sandboxes[0]?.sandboxId).not.toBe(sandboxId);
-    expect(stored.subAgents.map(({ childId: id }) => id)).toEqual([
-      childAgentId,
-    ]);
 
     const revision = await publishFixtureAgentRevision(
       workspaceId,
@@ -369,8 +345,13 @@ describe("Agent Control service", () => {
     ["deployment", () => createInput({ deploymentIds: [foreignDeploymentId] })],
     ["skill", () => createInput({ installedSkillIds: [foreignSkillId] })],
     ["toolkit", () => createInput({ toolkitIds: [foreignToolkitId] })],
-    ["sandbox", () => createInput({ sandboxIds: [foreignSandboxId] })],
-    ["sub-agent", () => createInput({ subAgentIds: [foreignAgentId] })],
+    [
+      "sandbox",
+      () =>
+        createInput({
+          externalSandboxes: [{ sandboxId: foreignSandboxId, access: "read" }],
+        }),
+    ],
   ])(
     "rejects a foreign-workspace %s without leaving a partial agent",
     async (_label, buildInput) => {

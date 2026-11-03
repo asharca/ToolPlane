@@ -62,10 +62,10 @@ const CONTENT = {
       openConsole: "Open console",
       links: [
         { label: "Overview", href: "/" },
-        { label: "MCP runtime", href: "/server" },
-        { label: "Skills", href: "/tools/skills" },
-        { label: "Agents", href: "/agents" },
-        { label: "Integrations", href: "/client" },
+        { label: "MCP runtime", href: "/#mcp" },
+        { label: "Skills", href: "/#skills" },
+        { label: "Agents", href: "/#agents" },
+        { label: "Integrations", href: "/#clients" },
       ],
     },
     footer: {
@@ -239,10 +239,10 @@ const CONTENT = {
       openConsole: "进入控制台",
       links: [
         { label: "产品概览", href: "/" },
-        { label: "MCP 运行时", href: "/server" },
-        { label: "技能", href: "/tools/skills" },
-        { label: "智能体", href: "/agents" },
-        { label: "客户端集成", href: "/client" },
+        { label: "MCP 运行时", href: "/#mcp" },
+        { label: "技能", href: "/#skills" },
+        { label: "智能体", href: "/#agents" },
+        { label: "客户端集成", href: "/#clients" },
       ],
     },
     footer: {

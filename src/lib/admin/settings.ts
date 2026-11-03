@@ -12,6 +12,7 @@ import { parseRemoteMcpPrivateHosts } from "../../../scripts/remote-mcp-private-
 export const MCP_STARTUP_TIMEOUTS_SETTING_KEY = "mcp.startupTimeouts";
 export const REMOTE_MCP_PRIVATE_HOSTS_SETTING_KEY = "mcp.remotePrivateHosts";
 export const SKILL_IMPORT_MAX_SKILLS_SETTING_KEY = "skills.maxImportSkills";
+export const SSH_PRIVATE_HOSTS_SETTING_KEY = "sandboxes.sshPrivateHosts";
 export const AGENT_CONCURRENCY_SETTING_KEY = "agents.concurrency";
 export const MAX_AGENT_CONCURRENCY = 32;
 export const MAX_TOTAL_AGENT_CONCURRENCY = 256;
@@ -298,4 +299,48 @@ export async function resetRemoteMcpPrivateHostsSettings(
   actorId = "system",
 ): Promise<void> {
   await saveAuditedSetting(REMOTE_MCP_PRIVATE_HOSTS_SETTING_KEY, null, actorId);
+}
+
+export type SshPrivateHostsSettings = {
+  value: string;
+  source: "database" | "default";
+};
+
+// Read on every scan, create and launch so removing an entry stops the next
+// connection. Workspace members can never widen this administrator policy.
+export async function resolveSshPrivateHostsSettings(): Promise<SshPrivateHostsSettings> {
+  try {
+    const setting = await db.systemSetting.findUnique({
+      where: { key: SSH_PRIVATE_HOSTS_SETTING_KEY },
+      select: { value: true },
+    });
+    if (setting)
+      return {
+        value: parseRemoteMcpPrivateHosts(setting.value)?.value ?? "",
+        source: "database",
+      };
+  } catch {
+    // Fail closed: an unreadable policy allows no private address.
+  }
+  return { value: "", source: "default" };
+}
+
+export async function updateSshPrivateHostsSettings(
+  value: string,
+  actorId = "system",
+): Promise<SshPrivateHostsSettings> {
+  const parsed = parseRemoteMcpPrivateHosts(value);
+  if (!parsed) throw new Error("Invalid SSH private host allowlist.");
+  await saveAuditedSetting(
+    SSH_PRIVATE_HOSTS_SETTING_KEY,
+    parsed.value,
+    actorId,
+  );
+  return { value: parsed.value, source: "database" };
+}
+
+export async function resetSshPrivateHostsSettings(
+  actorId = "system",
+): Promise<void> {
+  await saveAuditedSetting(SSH_PRIVATE_HOSTS_SETTING_KEY, null, actorId);
 }

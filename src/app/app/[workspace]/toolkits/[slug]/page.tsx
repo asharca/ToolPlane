@@ -41,11 +41,7 @@ export default async function ToolkitHistoryPage({
           <ButtonLink href={`${base}/toolkits`} variant="ghost" size="sm">
             {t("historyTitle")}
           </ButtonLink>
-          <ButtonLink
-            href={`${base}/market/pi-packages`}
-            variant="secondary"
-            size="sm"
-          >
+          <ButtonLink href={`${base}/plugins`} variant="secondary" size="sm">
             {t("browsePiPackages")}
           </ButtonLink>
         </div>

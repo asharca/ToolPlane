@@ -152,7 +152,7 @@ function QuestionOptions({
           className={cn("p-0.5", question.options?.length && "mt-1.5")}
           classNames={{
             field:
-              "h-10 rounded-xl border-0 bg-background/70 focus-within:bg-background",
+              "h-10 rounded-lg border-0 bg-background/70 focus-within:bg-background",
             input: "px-3 text-sm",
           }}
         />
@@ -289,7 +289,7 @@ export function ApprovalCard({
       data-state={status}
       aria-busy={busy}
       className={cn(
-        "w-full overflow-hidden rounded-2xl bg-muted p-4 text-sm",
+        "w-full overflow-hidden rounded-xl bg-muted p-4 text-sm",
         className,
       )}
     >
@@ -332,7 +332,7 @@ export function ApprovalCard({
             ) : (
               <span
                 className={cn(
-                  "shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors",
+                  "shrink-0 rounded-lg border px-2 py-0.5 text-[11px] font-medium transition-colors",
                   getStatusBadgeClass(status),
                 )}
               >
@@ -344,7 +344,7 @@ export function ApprovalCard({
                 type="button"
                 aria-label="Dismiss"
                 onClick={onDismiss}
-                className="grid size-5 shrink-0 place-items-center rounded-full text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                className="grid size-5 shrink-0 place-items-center rounded-lg text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <X className="size-4" />
               </button>
@@ -396,7 +396,7 @@ export function ApprovalCard({
                       aria-label="Previous question"
                       disabled={busy || currentStep === 0}
                       onClick={() => setStep(currentStep - 1)}
-                      className="rounded-full"
+                      className="rounded-lg"
                     >
                       <ArrowLeft className="size-4" />
                     </Button>
@@ -415,7 +415,7 @@ export function ApprovalCard({
                   }
                   disabled={busy || !isAnswered(currentAnswer)}
                   onClick={continueQuestion}
-                  className="ml-auto rounded-full"
+                  className="ml-auto rounded-lg"
                 >
                   {busy ? (
                     <LoaderCircle
@@ -437,7 +437,7 @@ export function ApprovalCard({
                   size="sm"
                   disabled={busy}
                   onClick={onApprove}
-                  className="rounded-full"
+                  className="rounded-lg"
                 >
                   {approveLabel}
                 </Button>
@@ -447,7 +447,7 @@ export function ApprovalCard({
                     size="sm"
                     disabled={busy}
                     onClick={onRequestChanges}
-                    className="rounded-full"
+                    className="rounded-lg"
                   >
                     Request changes
                   </Button>
@@ -458,7 +458,7 @@ export function ApprovalCard({
                     size="sm"
                     disabled={busy}
                     onClick={onReject}
-                    className="rounded-full text-muted-foreground hover:text-rose-600 dark:hover:text-rose-400"
+                    className="rounded-lg text-muted-foreground hover:text-rose-600 dark:hover:text-rose-400"
                   >
                     Reject
                   </Button>

@@ -174,28 +174,13 @@ export async function updateSkillContentAction(
   if (!ctx || !(await ownCustomSkill(installId, ctx.ws.id)))
     return { error: t("formAccessDenied") };
   try {
-    await db.$transaction([
-      db.installedSkill.update({
-        where: { id: installId },
-        data: {
-          content: String(formData.get("content") ?? ""),
-          status: "published",
-        },
-      }),
-      db.marketInstall.updateMany({
-        where: {
-          OR: [
-            { installedSkillId: installId },
-            {
-              toolkit: {
-                is: { skills: { some: { installedSkillId: installId } } },
-              },
-            },
-          ],
-        },
-        data: { status: "modified" },
-      }),
-    ]);
+    await db.installedSkill.update({
+      where: { id: installId, workspaceId: ctx.ws.id },
+      data: {
+        content: String(formData.get("content") ?? ""),
+        status: "published",
+      },
+    });
   } catch {
     return { error: t("formSaveFailed") };
   }
@@ -224,21 +209,9 @@ export async function updateSkillAttributesAction(formData: FormData) {
   if (descriptionChanged) {
     data.description = String(formData.get("description") ?? "") || null;
   }
-  await db.$transaction(async (tx) => {
-    await tx.installedSkill.update({ where: { id: installId }, data });
-    await tx.marketInstall.updateMany({
-      where: {
-        OR: [
-          { installedSkillId: installId },
-          {
-            toolkit: {
-              is: { skills: { some: { installedSkillId: installId } } },
-            },
-          },
-        ],
-      },
-      data: { status: "modified" },
-    });
+  await db.installedSkill.update({
+    where: { id: installId, workspaceId: ctx.ws.id },
+    data,
   });
   revalidatePath(`/app/${slug}/skills/${installId}`);
 }
@@ -248,23 +221,6 @@ export async function deleteCustomSkillAction(formData: FormData) {
   const installId = String(formData.get("installId") ?? "");
   const ctx = await authedWs(slug);
   if (!ctx || !(await ownCustomSkill(installId, ctx.ws.id))) return;
-  if (
-    await db.marketInstall.findFirst({
-      where: {
-        targetWorkspaceId: ctx.ws.id,
-        OR: [
-          { installedSkillId: installId },
-          {
-            toolkit: {
-              is: { skills: { some: { installedSkillId: installId } } },
-            },
-          },
-        ],
-      },
-      select: { id: true },
-    })
-  )
-    return;
   await db.installedSkill.deleteMany({
     where: { id: installId, workspaceId: ctx.ws.id },
   });

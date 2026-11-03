@@ -1,3 +1,5 @@
+import { isNativeFieldDirty } from "@/lib/forms/dirty-fields";
+
 export const WORKSPACE_MANAGER_HREF = "/app?view=workspaces";
 export const ACCOUNT_SETTINGS_HREF = "/app?view=account";
 
@@ -14,13 +16,12 @@ const WORKSPACE_SECTIONS = new Set([
   "agents",
   "chat",
   "knowledge",
-  "market",
+  "plugins",
   "mcp",
   "members",
   "observability",
   "providers",
   "sandboxes",
-  "seller",
   "settings",
   "skills",
   "toolkits",
@@ -75,36 +76,13 @@ export function hasUnsavedWorkspaceChanges(
     )
       continue;
     if (field.dataset.unsavedChanges === "true") return true;
-    if (field instanceof HTMLInputElement) {
-      if (field.type === "hidden" || field.readOnly) continue;
-      if (
-        ["checkbox", "radio"].includes(field.type)
-          ? field.checked !== field.defaultChecked
-          : field.value !== field.defaultValue
-      )
-        return true;
-    } else if (
-      field instanceof HTMLTextAreaElement &&
-      !field.readOnly &&
-      field.value !== field.defaultValue
+    if (
+      (field instanceof HTMLInputElement ||
+        field instanceof HTMLTextAreaElement ||
+        field instanceof HTMLSelectElement) &&
+      isNativeFieldDirty(field)
     )
       return true;
-    else if (field instanceof HTMLSelectElement) {
-      const defaults = Array.from(field.options).filter(
-        (option) => option.defaultSelected,
-      );
-      const expected = defaults.length
-        ? defaults.map((option) => option.value)
-        : field.options.length
-          ? [field.options[0].value]
-          : [];
-      if (
-        Array.from(field.selectedOptions)
-          .map((option) => option.value)
-          .join("\0") !== expected.join("\0")
-      )
-        return true;
-    }
   }
   return false;
 }

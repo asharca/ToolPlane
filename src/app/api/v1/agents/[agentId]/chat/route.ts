@@ -1,11 +1,15 @@
 import type { UIMessage } from "ai";
 import { createUIMessageStream, createUIMessageStreamResponse } from "ai";
+import { TaskNotFoundError } from "@a2a-js/sdk/errors";
+import { getTaskRow } from "@/lib/a2a/store";
+import { isLocalGrant, type TaskGrant } from "@/lib/a2a/principal";
+import { nativeUiView } from "@/lib/agents/execution/native-ui";
 import {
-  runNativeEntry,
+  runAgentEntry,
   latestEntryText,
-  nativeEntryResult,
-  nativeEntryRuntimeParts,
-} from "@/lib/a2a/ingress";
+  agentEntryResult,
+  agentEntryRuntimeParts,
+} from "@/lib/agents/execution/entries";
 import { parseAgentChatBody } from "@/lib/agents/chat-body";
 import { normalizeReasoningEffort } from "@/lib/agents/constants";
 import { waitForConversationOperation } from "@/lib/agents/conversation-operations";
@@ -13,6 +17,10 @@ import { persistAgentPromptInvocation } from "@/lib/agents/prompt-invocation";
 import { getAgentForRequest } from "@/lib/agents/queries";
 import { resolvePinnedAgent } from "@/lib/agents/revisions";
 import { createSandboxUiStreamBridge } from "@/lib/agents/ui-stream";
+import {
+  AgentModelOverrideError,
+  resolveAgentModelOverride,
+} from "@/lib/agents/turn-model";
 import { resolveRequestUser } from "@/lib/auth/request-user";
 import { db } from "@/lib/db";
 import { enrichLogContext } from "@/lib/observability/context";
@@ -33,7 +41,10 @@ export const POST = withRequestLogging(
     const { agentId } = await params;
     const liveAgent = await getAgentForRequest(agentId, user.id);
     if (!liveAgent) return new Response("Not found", { status: 404 });
-    if (liveAgent.runtimeKind !== "pi-sdk" || liveAgent.retiredAt)
+    if (
+      (liveAgent.runtimeKind !== "pi-sdk" && liveAgent.runtimeKind !== "omp") ||
+      liveAgent.retiredAt
+    )
       return new Response("Historical Agent sessions are read-only.", {
         status: 409,
       });
@@ -49,7 +60,10 @@ export const POST = withRequestLogging(
         status: 400,
       });
     const body = parseAgentChatBody(raw);
-    if (!body) return new Response("Bad request", { status: 400 });
+    if (!body)
+      return raw && typeof raw === "object" && "modelOverride" in raw
+        ? Response.json({ error: "modelOverrideInvalid" }, { status: 400 })
+        : new Response("Bad request", { status: 400 });
     if (!body.conversationId)
       return new Response(
         "Create a conversation before submitting a native task.",
@@ -90,7 +104,15 @@ export const POST = withRequestLogging(
       });
     try {
       await resolvePinnedAgent(liveAgent, conversation.agentRevisionId);
+      if (body.modelOverride)
+        await resolveAgentModelOverride(
+          liveAgent.workspaceId,
+          body.modelOverride,
+          liveAgent.runtimeKind,
+        );
     } catch (error) {
+      if (error instanceof AgentModelOverrideError)
+        return Response.json({ error: error.code }, { status: error.status });
       return new Response(
         error instanceof Error
           ? error.message
@@ -156,7 +178,7 @@ export const POST = withRequestLogging(
             `sandbox-${agentId}`,
           );
           try {
-            const result = await runNativeEntry({
+            const result = await runAgentEntry({
               kind: "chat",
               sourceId: conversation.id,
               workspaceId: liveAgent.workspaceId,
@@ -165,29 +187,86 @@ export const POST = withRequestLogging(
               messageId: userMessageId,
               text,
               signal: req.signal,
+              modelOverride: body.modelOverride,
               onPromptInvocation: (invocation) =>
                 persistAgentPromptInvocation({
                   conversationId: conversation.id,
                   messageId: savedUser.id,
                   invocation,
                 }),
-              onAccepted: (_task, path) =>
-                uiStream.onTextDelta(
-                  `Native task accepted. Tool approvals and progress: ${path}\n\n`,
-                ),
             });
-            const responseText = nativeEntryResult(result.task, result.path);
-            const runtimeParts = nativeEntryRuntimeParts(result.task);
-            await db.message.create({
-              data: {
-                conversationId: conversation.id,
-                role: "assistant",
-                parts: [
-                  { type: "text", text: responseText, state: "done" },
-                  ...runtimeParts,
-                ],
+            const binding = await db.a2AEntryBinding.findFirst({
+              where: {
+                kind: "chat",
+                sourceId: conversation.id,
+                lastTaskId: result.task.id,
+                context: {
+                  workspaceId: liveAgent.workspaceId,
+                  agentId,
+                  targetKind: "local",
+                },
               },
+              select: { lastTask: { select: { grant: true } } },
             });
+            const grant = binding?.lastTask.grant as unknown as TaskGrant;
+            if (
+              !binding ||
+              !isLocalGrant(grant) ||
+              grant.workspaceId !== liveAgent.workspaceId ||
+              grant.agentId !== agentId ||
+              grant.actorId !== user.id ||
+              grant.entryPolicy?.kind !== "chat" ||
+              grant.entryPolicy.sourceId !== conversation.id ||
+              grant.entryPolicy.sourceAgentId !== agentId
+            )
+              throw new TaskNotFoundError();
+            const task = await getTaskRow(grant, result.task.id);
+            if (task.parentTaskId || task.rootTaskId !== task.id)
+              throw new TaskNotFoundError();
+            const projection = nativeUiView(task.uiProjection);
+            const hookParts = projection.hooks.map((hook) => ({
+              type: "data-hook-activity" as const,
+              id: `native-hook:${hook.id}`,
+              data: hook,
+            }));
+            const childParts = projection.activities.map((activity) => ({
+              type: "data-subagent-activity" as const,
+              id: `native-child:${task.id}:${JSON.stringify([activity.type, activity.source.subagentId, activity.toolCallId ?? null])}`,
+              data: activity,
+            }));
+            let responseText = "";
+            let responseFailed = false;
+            let responseError: unknown;
+            try {
+              responseText = agentEntryResult(result.task, result.path);
+            } catch (error) {
+              responseFailed = true;
+              responseError = error;
+            }
+            const runtimeParts = responseFailed
+              ? []
+              : agentEntryRuntimeParts(result.task);
+            const parts = [
+              ...hookParts,
+              ...childParts,
+              ...(responseFailed
+                ? []
+                : [
+                    { type: "text", text: responseText, state: "done" },
+                    ...runtimeParts,
+                  ]),
+            ];
+            if (parts.length)
+              await db.message.create({
+                data: {
+                  conversationId: conversation.id,
+                  role: "assistant",
+                  parts,
+                },
+              });
+            for (const part of hookParts) writer.write(part);
+            for (const part of childParts) writer.write(part);
+            if (responseFailed) throw responseError;
             uiStream.onTextDelta(responseText);
             for (const part of runtimeParts) writer.write(part);
           } finally {

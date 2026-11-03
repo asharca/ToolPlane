@@ -18,6 +18,10 @@ const apiMocks = vi.hoisted(() => ({
   fetch: vi.fn(),
 }));
 
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ refresh: vi.fn() }),
+}));
+
 vi.mock("@ai-sdk/react", () => ({
   useChat: (options: { id?: string }) => ({
     ...chatMocks.useChat(options),
@@ -340,8 +344,12 @@ describe("AgentConversation", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Attachment storage is unavailable.",
     );
-    expect(composer).toHaveValue("Keep the file and text");
-    expect(screen.getByText("one.txt")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText("Message this agent")).toHaveValue(
+        "Keep the file and text",
+      );
+      expect(screen.getByText("one.txt")).toBeInTheDocument();
+    });
     expect(chatMocks.sendMessage).not.toHaveBeenCalled();
   });
 
@@ -527,7 +535,12 @@ describe("AgentConversation", () => {
       screen.getByRole("button", { name: "Remove file-0.txt" }),
     );
     expect(screen.queryByText("file-0.txt")).not.toBeInTheDocument();
-    await userEvent.upload(input, new File(["replacement"], "replacement.txt"));
+    await userEvent.upload(
+      assertDefined(
+        document.querySelector<HTMLInputElement>('input[type="file"]'),
+      ),
+      new File(["replacement"], "replacement.txt"),
+    );
     expect(await screen.findByText("replacement.txt")).toBeInTheDocument();
     expect(apiMocks.fetch).not.toHaveBeenCalled();
   });
@@ -574,43 +587,6 @@ describe("AgentConversation", () => {
     );
     expect(chatMocks.sendMessage).not.toHaveBeenCalled();
   });
-
-  it.each([true, false])(
-    "requires an explicit tool approval decision approved=%s",
-    async (approved) => {
-      const addToolApprovalResponse = vi.fn();
-      const messages = [
-        {
-          id: "approval-message",
-          role: "assistant",
-          parts: [
-            {
-              type: "tool-delete_file",
-              toolCallId: "delete-call",
-              state: "approval-requested",
-              input: { path: "important.md" },
-              approval: { id: "approval-id" },
-            },
-          ],
-        },
-      ] as AgentUIMessage[];
-      chatMocks.useChat.mockReturnValue({
-        ...chatMocks.useChat(),
-        messages,
-        addToolApprovalResponse,
-      });
-      renderConversation({ initialMessages: messages });
-      await userEvent.click(
-        screen.getByRole("button", { name: approved ? "Allow once" : "Deny" }),
-      );
-      await waitFor(() =>
-        expect(addToolApprovalResponse).toHaveBeenCalledWith(
-          expect.objectContaining({ id: "approval-id", approved }),
-        ),
-      );
-      expect(chatMocks.sendMessage).not.toHaveBeenCalled();
-    },
-  );
 
   it("shows a regeneration creation error without losing persisted history", async () => {
     renderConversation({

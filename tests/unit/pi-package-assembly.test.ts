@@ -2,7 +2,7 @@
 import { createHash } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import { describe, expect, it, vi } from "vitest";
-import { assemblePiPackage } from "@/lib/market/pi-package-assembly";
+import { assemblePiPackage } from "@/lib/pi-packages/assembly";
 import { flattenPiPackages } from "@/lib/pi-packages/flatten";
 import {
   parsePromptTemplate,
@@ -12,12 +12,14 @@ import {
   parsePiPackageReleaseManifest,
   type PiPackageEntryV1,
   type PiPackageSnapshotV1,
-} from "@/lib/market/pi-package-manifest";
-import { marketReleaseChecksum } from "@/lib/market/artifact";
+} from "@/lib/pi-packages/manifest";
+import { marketReleaseChecksum } from "@/lib/pi-packages/artifact";
+import type * as PluginCatalog from "@/lib/plugins/catalog";
 
 vi.mock("server-only", () => ({}));
-vi.mock("@/lib/market/skills", () => ({
-  MarketError: class extends Error {
+vi.mock("@/lib/plugins/catalog", async (original) => ({
+  ...(await original<typeof PluginCatalog>()),
+  PluginError: class extends Error {
     constructor(
       public code: string,
       message: string,

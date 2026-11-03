@@ -381,7 +381,7 @@ export function SandboxScreen({
             ) : null}
             {rfbStatus === "credentials" ? (
               <form
-                className="absolute flex max-w-sm items-end gap-2 rounded-md border border-border bg-background p-3"
+                className="absolute flex max-w-sm items-end gap-2 rounded-xl border border-border bg-background p-3"
                 onSubmit={(event) => {
                   event.preventDefault();
                   rfbClient.current?.sendCredentials({ password });
@@ -404,7 +404,7 @@ export function SandboxScreen({
               </form>
             ) : null}
             {rfbStatus === "error" ? (
-              <div className="absolute flex items-center gap-3 rounded-md bg-background px-3 py-2 text-sm text-muted-foreground">
+              <div className="absolute flex items-center gap-3 rounded-xl bg-background px-3 py-2 text-sm text-muted-foreground">
                 <p role="alert">{t("screenUnavailable")}</p>
                 <Button
                   type="button"

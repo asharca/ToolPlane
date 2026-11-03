@@ -147,7 +147,9 @@ export async function assertRemoteGrant(
   )
     throw missing();
   if (authority.entryPolicy)
-    await (await import("./entry-policy")).assertEntryPolicy(tx, authority);
+    await (
+      await import("@/lib/agents/execution/entry-policy")
+    ).assertEntryPolicy(tx, authority);
   if (cancellation) {
     // A stopped parent may still cancel a known remote task, but never authorize new work.
     if (

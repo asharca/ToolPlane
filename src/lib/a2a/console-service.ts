@@ -23,13 +23,6 @@ export type ConsoleActor = {
 };
 const Id = z.string().min(1).max(200);
 export const A2AConsoleAction = z.discriminatedUnion("action", [
-  z
-    .object({
-      action: z.literal("set-channel-operator"),
-      connectionId: Id,
-      enabled: z.boolean(),
-    })
-    .strict(),
   z.object({ action: z.literal("set-inbound"), enabled: z.boolean() }).strict(),
   z
     .object({ action: z.literal("set-outbound"), enabled: z.boolean() })
@@ -137,18 +130,10 @@ export async function getA2AConsoleView(
   } catch {
     /* Return a safe configuration warning, not Host-derived URLs. */
   }
-  const supported = agent.runtimeKind === "pi-sdk";
+  const supported =
+    agent.runtimeKind === "pi-sdk" || agent.runtimeKind === "omp";
   const sandbox =
     agent.sandboxes.length === 1 ? agent.sandboxes[0].sandbox : null;
-  const channels =
-    manager && supported
-      ? await db.agentChannelConnection.findMany({
-          where: { workspaceId: ctx.workspaceId, agentId: ctx.agentId },
-          take: 100,
-          orderBy: { name: "asc" },
-          select: { id: true, name: true, platform: true, a2aActorId: true },
-        })
-      : [];
   return {
     canManage: manager,
     collaboration: {
@@ -156,13 +141,6 @@ export async function getA2AConsoleView(
       outboundEnabled: agent.a2aOutboundEnabled,
     },
     connections,
-    channels: channels.map((channel) => ({
-      id: channel.id,
-      name: channel.name,
-      platform: channel.platform,
-      enabled: Boolean(channel.a2aActorId),
-      mine: channel.a2aActorId === ctx.actorId,
-    })),
     local: {
       supported,
       ready:
@@ -218,11 +196,22 @@ export async function mutateA2AConsole(
         id: ctx.agentId,
         workspaceId: ctx.workspaceId,
       },
-      select: { id: true, runtimeKind: true, currentRevisionVersion: true },
+      select: {
+        id: true,
+        runtimeKind: true,
+        currentRevisionVersion: true,
+        subagentMode: true,
+        nativeSubagentMaxConcurrency: true,
+        nativeSubagentMaxDepth: true,
+      },
     });
     if (!agent) throw new A2AHttpError(404, "Agent unavailable.");
     if (input.action === "set-inbound" || input.action === "set-outbound") {
-      if (input.enabled && agent.runtimeKind !== "pi-sdk")
+      if (
+        input.enabled &&
+        agent.runtimeKind !== "pi-sdk" &&
+        agent.runtimeKind !== "omp"
+      )
         throw new A2AHttpError(409, "Retired Agent execution is read-only.");
       const inbound = input.action === "set-inbound";
       await tx.agent.update({
@@ -231,22 +220,40 @@ export async function mutateA2AConsole(
           ? { a2aInboundEnabled: input.enabled }
           : { a2aOutboundEnabled: input.enabled },
       });
-      if (agent.runtimeKind === "pi-sdk" && agent.currentRevisionVersion > 0) {
+      if (
+        (agent.runtimeKind === "pi-sdk" || agent.runtimeKind === "omp") &&
+        agent.currentRevisionVersion > 0
+      ) {
         const revision = await requireAgentRevision(tx, agent.id);
-        await publishAgentRevisionInTransaction(tx, ctx.workspaceId, agent.id, {
-          expectedRevisionId: revision.id,
-          config: {
-            ...revision.config,
-            a2a: {
-              ...revision.config.a2a,
-              ...(inbound
-                ? { inboundEnabled: input.enabled }
-                : { outboundEnabled: input.enabled }),
+        // Direction changes cannot apply a pending mode or widen native limits.
+        const nativePolicy = revision.config.nativeSubagentPolicy;
+        if (
+          (revision.config.subagentMode ?? "platform") === agent.subagentMode &&
+          (!nativePolicy ||
+            (nativePolicy.maxConcurrency <=
+              agent.nativeSubagentMaxConcurrency &&
+              nativePolicy.maxDepth <= agent.nativeSubagentMaxDepth))
+        ) {
+          await publishAgentRevisionInTransaction(
+            tx,
+            ctx.workspaceId,
+            agent.id,
+            {
+              expectedRevisionId: revision.id,
+              config: {
+                ...revision.config,
+                a2a: {
+                  ...revision.config.a2a,
+                  ...(inbound
+                    ? { inboundEnabled: input.enabled }
+                    : { outboundEnabled: input.enabled }),
+                },
+              },
             },
-          },
-        });
-        if (inbound && input.enabled)
-          await localTarget(tx, ctx.workspaceId, agent.id, "delegation");
+          );
+          if (inbound && input.enabled)
+            await localTarget(tx, ctx.workspaceId, agent.id);
+        }
       }
       await writeAudit(tx, {
         actorId: ctx.actorId,
@@ -257,34 +264,6 @@ export async function mutateA2AConsole(
         changes: inbound
           ? { inboundEnabled: input.enabled }
           : { outboundEnabled: input.enabled },
-      });
-      return {};
-    }
-    if (input.action === "set-channel-operator") {
-      const channel = await tx.agentChannelConnection.findFirst({
-        where: {
-          id: input.connectionId,
-          workspaceId: ctx.workspaceId,
-          agentId: ctx.agentId,
-        },
-        select: { id: true },
-      });
-      if (!channel) throw new A2AHttpError(404, "Channel unavailable.");
-      if (input.enabled) await localTarget(tx, ctx.workspaceId, ctx.agentId);
-      await tx.agentChannelConnection.update({
-        where: { id: channel.id },
-        data: { a2aActorId: input.enabled ? ctx.actorId : null },
-      });
-      await writeAudit(tx, {
-        actorId: ctx.actorId,
-        workspaceId: ctx.workspaceId,
-        action: "agent.a2a.channel_operator",
-        targetType: "AgentChannelConnection",
-        targetId: channel.id,
-        changes: {
-          enabled: input.enabled,
-          actorId: input.enabled ? ctx.actorId : null,
-        },
       });
       return {};
     }

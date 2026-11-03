@@ -23,6 +23,7 @@ import { a2aDeploymentOrigin } from "./connection-info";
 import { assertRuntimeOwner } from "@/lib/runtime/ownership-state";
 import {
   A2A_PROTOCOL_VERSION,
+  A2A_FILE_DELIVERY_EXTENSION,
   A2A_LIMITS,
   historyView,
   settled,
@@ -38,7 +39,8 @@ import {
   type A2AOperation,
 } from "./principal";
 import * as store from "./store";
-import { wakeA2AWorker } from "./worker";
+import { wakeAgentWorker } from "@/lib/agents/execution/worker";
+import { hydrateTaskParts } from "./files";
 
 export async function buildAgentCard(grant: TaskGrant): Promise<AgentCard> {
   if (isLocalGrant(grant)) {
@@ -84,6 +86,7 @@ export async function buildAgentCard(grant: TaskGrant): Promise<AgentCard> {
       streaming: true,
       pushNotifications: false,
       extendedAgentCard: false,
+      extensions: [A2A_FILE_DELIVERY_EXTENSION],
     },
     defaultInputModes: ["text/plain"],
     defaultOutputModes: ["text/plain"],
@@ -105,10 +108,46 @@ export class NativeA2AHandler implements A2ARequestHandler {
     private readonly grant: TaskGrant,
     private readonly card: AgentCard,
     private readonly signal?: AbortSignal,
-    private readonly wake: () => void = wakeA2AWorker,
+    private readonly wake: () => void = wakeAgentWorker,
+    private readonly retryFiles = false,
   ) {}
   async getAgentCard() {
     return this.card;
+  }
+  private async egress(task: Task): Promise<Task> {
+    // Projection only: capability URLs never enter persisted Tasks or events.
+    const result = Task.fromJSON(Task.toJSON(task));
+    const base = runtimeEnv("NEXT_PUBLIC_APP_URL") || "http://localhost:3000";
+    for (const artifact of result.artifacts)
+      artifact.parts = await hydrateTaskParts(result.id, artifact.parts, base);
+    for (const message of result.history)
+      message.parts = await hydrateTaskParts(result.id, message.parts, base);
+    if (result.status?.message)
+      result.status.message.parts = await hydrateTaskParts(
+        result.id,
+        result.status.message.parts,
+        base,
+      );
+    return result;
+  }
+  private async egressEvent(event: StreamResponse): Promise<StreamResponse> {
+    const copy = StreamResponse.fromJSON(StreamResponse.toJSON(event));
+    const payload = copy.payload;
+    if (payload?.$case === "task")
+      payload.value = await this.egress(payload.value);
+    else if (payload?.$case === "artifactUpdate" && payload.value.artifact)
+      payload.value.artifact.parts = await hydrateTaskParts(
+        payload.value.taskId,
+        payload.value.artifact.parts,
+        runtimeEnv("NEXT_PUBLIC_APP_URL") || "http://localhost:3000",
+      );
+    else if (payload?.$case === "statusUpdate" && payload.value.status?.message)
+      payload.value.status.message.parts = await hydrateTaskParts(
+        payload.value.taskId,
+        payload.value.status.message.parts,
+        runtimeEnv("NEXT_PUBLIC_APP_URL") || "http://localhost:3000",
+      );
+    return copy;
   }
   private async authorize(context: ServerCallContext, operation: A2AOperation) {
     if (context.tenant && context.tenant !== grantTargetId(this.grant))
@@ -121,9 +160,11 @@ export class NativeA2AHandler implements A2ARequestHandler {
     const row = await store.submitTask(this.grant, params);
     this.wake();
     if (params.configuration?.returnImmediately)
-      return historyView(
-        Task.fromJSON(row.snapshot),
-        params.configuration.historyLength,
+      return this.egress(
+        historyView(
+          Task.fromJSON(row.snapshot),
+          params.configuration.historyLength,
+        ),
       );
     return this.waitForTask(
       row.id,
@@ -143,11 +184,23 @@ export class NativeA2AHandler implements A2ARequestHandler {
   }
   async getTask(params: GetTaskRequest, context: ServerCallContext) {
     await this.authorize(context, "read");
-    return store.getTask(this.grant, params.id, params.historyLength);
+    if (this.retryFiles)
+      await store.retryTaskFileReception(
+        this.grant,
+        { taskId: params.id },
+        this.signal,
+      );
+    return this.egress(
+      await store.getTask(this.grant, params.id, params.historyLength),
+    );
   }
   async listTasks(params: ListTasksRequest, context: ServerCallContext) {
     await this.authorize(context, "read");
-    return store.listTasks(this.grant, params);
+    const result = await store.listTasks(this.grant, params);
+    result.tasks = await Promise.all(
+      result.tasks.map((task) => this.egress(task)),
+    );
+    return result;
   }
   async requestTaskCancellation(
     params: CancelTaskRequest,
@@ -185,7 +238,7 @@ export class NativeA2AHandler implements A2ARequestHandler {
           ? terminal(task.status.state)
           : settled(task.status.state))
       )
-        return task;
+        return this.egress(task);
       await delay(A2A_LIMITS.pollMs, undefined, { signal: this.signal });
     }
   }
@@ -203,7 +256,7 @@ export class NativeA2AHandler implements A2ARequestHandler {
         "A terminal task cannot be subscribed to. Use GetTask.",
       );
     // Every subscription begins with an authoritative snapshot, not an assumed event replay.
-    yield taskEvent(initial);
+    yield await this.egressEvent(taskEvent(initial));
     if (initial.status && settled(initial.status.state)) return;
     while (true) {
       this.signal?.throwIfAborted();
@@ -216,11 +269,14 @@ export class NativeA2AHandler implements A2ARequestHandler {
             payload.payload.value,
             historyLength,
           );
-        yield payload;
+        yield await this.egressEvent(payload);
         if (
-          payload.payload?.$case === "statusUpdate" &&
-          payload.payload.value.status &&
-          settled(payload.payload.value.status.state)
+          (payload.payload?.$case === "statusUpdate" &&
+            payload.payload.value.status &&
+            settled(payload.payload.value.status.state)) ||
+          (payload.payload?.$case === "task" &&
+            payload.payload.value.status &&
+            settled(payload.payload.value.status.state))
         )
           return;
       }

@@ -2,6 +2,14 @@ import type { UIMessage } from "ai";
 import { z } from "zod";
 import { REASONING_EFFORTS, type ReasoningEffort } from "./constants";
 
+export const AgentModelOverrideSchema = z
+  .object({
+    providerId: z.string().trim().min(1).max(256),
+    model: z.string().trim().min(1).max(240),
+  })
+  .strict();
+export type AgentModelOverride = z.infer<typeof AgentModelOverrideSchema>;
+
 const ChatMessage = z
   .object({
     id: z.string().min(1),
@@ -15,6 +23,7 @@ const ChatBody = z
     messages: z.array(ChatMessage).default([]),
     conversationId: z.string().min(1).optional(),
     reasoningEffort: z.enum(REASONING_EFFORTS).optional(),
+    modelOverride: AgentModelOverrideSchema.optional(),
   })
   .passthrough();
 
@@ -75,6 +84,7 @@ export type AgentChatBody = {
   messages: UIMessage[];
   conversationId?: string;
   reasoningEffort?: ReasoningEffort;
+  modelOverride?: AgentModelOverride;
 };
 
 export type AgentMessageBody = {
@@ -121,6 +131,7 @@ export function parseAgentChatBody(raw: unknown): AgentChatBody | null {
   return {
     conversationId: parsed.data.conversationId,
     reasoningEffort: parsed.data.reasoningEffort,
+    modelOverride: parsed.data.modelOverride,
     messages: parsed.data.messages as unknown as UIMessage[],
   };
 }

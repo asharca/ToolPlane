@@ -4,26 +4,24 @@ export const SECRET_ENV_BOOTSTRAP =
   'IFS= read -r toolplane_env || exit 125; eval "unset toolplane_env; $toolplane_env"; exec "$@"';
 
 export function secretEnvironmentLine(env) {
-  return (
-    Object.entries(env)
-      .map(([key, value]) => {
-        if (
-          !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) ||
-          typeof value !== "string" ||
-          value.includes("\0")
-        ) {
-          throw new Error("Invalid MCP runtime environment");
-        }
-        // POSIX printf octal escapes keep newlines, quotes and shell metacharacters
-        // inert. A sentinel preserves trailing newlines through command substitution.
-        const octal = Array.from(
-          Buffer.from(value),
-          (byte) => `\\0${byte.toString(8).padStart(3, "0")}`,
-        ).join("");
-        return `${key}=$(printf '%b_' '${octal}'); ${key}=\${${key}%_}; export ${key};`;
-      })
-      .join(" ") + "\n"
-  );
+  return `${Object.entries(env)
+    .map(([key, value]) => {
+      if (
+        !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) ||
+        typeof value !== "string" ||
+        value.includes("\0")
+      ) {
+        throw new Error("Invalid MCP runtime environment");
+      }
+      // POSIX printf octal escapes keep newlines, quotes and shell metacharacters
+      // inert. A sentinel preserves trailing newlines through command substitution.
+      const octal = Array.from(
+        Buffer.from(value),
+        (byte) => `\\0${byte.toString(8).padStart(3, "0")}`,
+      ).join("");
+      return `${key}=$(printf '%b_' '${octal}'); ${key}=\${${key}%_}; export ${key};`;
+    })
+    .join(" ")}\n`;
 }
 
 export function withSecretEnvironmentBootstrap(args, image, metadata) {

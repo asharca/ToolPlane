@@ -95,7 +95,7 @@ export async function mcpRpcViaSandbox(
       },
     },
     Math.min(remote.timeoutMs, 120_000) + 5_000,
-    { maxRequestBytes: 1_000_000, maxResponseBytes: 256_000 },
+    { maxRequestBytes: 1_000_000, maxResponseBytes: 256_000, internal: true },
   );
   if (!outer || outer.isError === true) return null;
   const executionText = firstText(outer);

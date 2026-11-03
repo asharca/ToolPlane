@@ -48,7 +48,7 @@ vi.mock("@/lib/process/mcp-client", () => ({
   listMcpTools: mocks.list,
   mcpRpc: mocks.rpc,
 }));
-vi.mock("@/lib/market/revocation", () => ({
+vi.mock("@/lib/pi-packages/revocation", () => ({
   assertMarketReleasesExecutable: vi.fn(),
 }));
 vi.mock("@/lib/agents/environment-credentials", () => ({
@@ -73,7 +73,7 @@ import {
   sessionMcpRequest,
   stopSessionMcp,
 } from "@/lib/process/session-mcp";
-import { assertMarketReleasesExecutable } from "@/lib/market/revocation";
+import { assertMarketReleasesExecutable } from "@/lib/pi-packages/revocation";
 import { assertAgentEnvironmentCredentialReferences } from "@/lib/agents/environment-credentials";
 import {
   mcpDefinitionChecksum,

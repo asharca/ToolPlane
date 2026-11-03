@@ -4,13 +4,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   GithubRegistryTransport,
   parseGithubRegistryIndex,
-} from "@/lib/market/github-registry-source";
+} from "@/lib/plugins/github";
 
 const commit = "a".repeat(40);
 const resource = {
   id: "review",
-  kind: "skill",
-  version: "1.0.0",
   path: "skills/review",
 };
 const data = Buffer.from("# Review");
@@ -28,53 +26,89 @@ const file = {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("GitHub registry source boundaries", () => {
+  it("accepts v3 plugin directories and rejects retired v2 explicitly", () => {
+    expect(
+      parseGithubRegistryIndex({ schemaVersion: 3, plugins: [resource] }),
+    ).toEqual({ schemaVersion: 3, plugins: [resource] });
+    expect(() =>
+      parseGithubRegistryIndex({ schemaVersion: 2, packages: [resource] }),
+    ).toThrow("registry_index_v2_unsupported");
+  });
   it.each([
-    { schemaVersion: 1, resources: [resource, resource] },
-    { schemaVersion: 1, resources: [{ ...resource, path: "../escape" }] },
-    { schemaVersion: 1, resources: [{ ...resource, path: "skills\\review" }] },
-    { schemaVersion: 1, resources: [{ ...resource, version: "01.0.0" }] },
+    { schemaVersion: 3, plugins: [resource, resource] },
     {
-      schemaVersion: 1,
-      resources: [
-        {
-          ...resource,
-          source: {
-            repository: "acme/source",
-            commit: "main",
-            path: "skills/review",
-          },
-        },
-      ],
+      schemaVersion: 3,
+      plugins: [resource, { id: "other", path: resource.path }],
     },
-    {
-      schemaVersion: 1,
-      resources: [
-        {
-          ...resource,
-          source: {
-            repository: "https://evil.test/repo",
-            commit,
-            path: "skills/review",
-          },
-        },
-      ],
-    },
-    { schemaVersion: 1, resources: [resource], unrecognized: true },
-  ])("rejects ambiguous, unsafe or mutable index entries", (raw) => {
+    ...["../escape", "./review", "skills\\review", "skills//review"].map(
+      (path) => ({ schemaVersion: 3, plugins: [{ ...resource, path }] }),
+    ),
+    ...["Bad-id", "with.dot", "with_underscore", "-start", "a".repeat(65)].map(
+      (id) => ({ schemaVersion: 3, plugins: [{ ...resource, id }] }),
+    ),
+    { schemaVersion: 3, plugins: [{ ...resource, version: "1.0.0" }] },
+    { schemaVersion: 3, plugins: [resource], unrecognized: true },
+    { schemaVersion: 1, resources: [] },
+  ])("rejects ambiguous or escaping plugin identities and paths", (raw) => {
     expect(() => parseGithubRegistryIndex(raw)).toThrow();
+  });
+  it("uses a slugified package name when the repository has no index", async () => {
+    const packageData = Buffer.from(
+      JSON.stringify({ name: "@acme/review-tools", version: "1.0.0" }),
+    );
+    const packageFile = {
+      ...file,
+      path: "package.json",
+      size: packageData.length,
+      sha: createHash("sha1")
+        .update(`blob ${packageData.length}\0`)
+        .update(packageData)
+        .digest("hex"),
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        url.includes("/git/trees/")
+          ? Response.json({ truncated: false, tree: [packageFile] })
+          : url.includes("api.github.com")
+            ? Response.json({ private: false })
+            : new Response(packageData),
+      ),
+    );
+    const transport = new GithubRegistryTransport(
+      "acme/source",
+      undefined,
+      "public",
+    );
+    await expect(transport.index("acme/source", commit)).resolves.toEqual({
+      schemaVersion: 3,
+      plugins: [{ id: "acme-review-tools", path: "" }],
+    });
+    await expect(
+      transport.directory("acme/source", commit, ""),
+    ).resolves.toEqual([
+      { path: "package.json", data: packageData, executable: false },
+    ]);
   });
   it("downloads bytes only from the resolved SHA and verifies their Git blob identity without exposing credentials", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: string, init?: RequestInit) => {
         const url = new URL(input);
-        expect(init?.redirect).toBe("error");
         if (url.hostname === "api.github.com") {
+          if (url.pathname.startsWith("/repos/acme/source")) {
+            return new Response(null, {
+              status: 301,
+              headers: {
+                location: `https://api.github.com/repositories/123${url.pathname.slice("/repos/acme/source".length)}${url.search}`,
+              },
+            });
+          }
           if (url.pathname.includes("/git/trees/")) {
             expect(url.pathname.endsWith(commit)).toBe(true);
             return Response.json({ truncated: false, tree: [file] });
           }
-          return url.pathname === "/repos/acme/source"
+          return url.pathname === "/repositories/123"
             ? Response.json({ private: false })
             : Response.json({ message: "Not Found" }, { status: 404 });
         }
@@ -92,6 +126,65 @@ describe("GitHub registry source boundaries", () => {
       "public",
     ).directory("acme/source", commit, "skills/review");
     expect(files).toEqual([{ path: "SKILL.md", data, executable: false }]);
+  });
+  it.each([
+    "https://evil.test/repositories/123",
+    "http://api.github.com/repositories/123",
+    "https://credential@api.github.com/repositories/123",
+    "https://api.github.com/repos/other/source",
+    "https://api.github.com/repositories/123/git/trees/main",
+    "https://api.github.com/repositories/123?access=other",
+  ])(
+    "does not send a scoped token to an unsafe rename target %s",
+    async (location) => {
+      const fetch = vi.fn(
+        async () => new Response(null, { status: 301, headers: { location } }),
+      );
+      vi.stubGlobal("fetch", fetch);
+      await expect(
+        new GithubRegistryTransport(
+          "acme/source",
+          "private-token",
+          "private",
+        ).resolveCommit("acme/source", "main"),
+      ).rejects.toMatchObject({ code: "github_request_failed" });
+      expect(fetch).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("keeps branch resolution pinned across a permanent repository rename", async () => {
+    const branch = "release/next";
+    const suffix = `/commits/${encodeURIComponent(branch)}`;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string, init?: RequestInit) => {
+        const url = new URL(input);
+        expect(new Headers(init?.headers).get("authorization")).toBe(
+          "Bearer private-token",
+        );
+        if (url.pathname === `/repos/acme/source${suffix}`) {
+          return new Response(null, {
+            status: 308,
+            headers: {
+              location: `https://api.github.com/repositories/123${suffix}`,
+            },
+          });
+        }
+        if (
+          url.origin !== "https://api.github.com" ||
+          url.pathname !== `/repositories/123${suffix}`
+        )
+          throw new Error("Unexpected destination");
+        return Response.json({ sha: commit });
+      }),
+    );
+    await expect(
+      new GithubRegistryTransport(
+        "acme/source",
+        "private-token",
+        "private",
+      ).resolveCommit("acme/source", branch),
+    ).resolves.toBe(commit);
   });
   it.each([
     { truncated: true, tree: [file] },

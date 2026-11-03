@@ -15,7 +15,6 @@ import { FilePathTree } from "@/components/dashboard/FilePathTree";
 import { useTranslations } from "next-intl";
 import { useRef, useState } from "react";
 import {
-  ChevronDown,
   Cpu,
   FileText,
   FileUp,
@@ -29,6 +28,7 @@ import {
 } from "lucide-react";
 import {
   ModelPicker,
+  ModelPickerTrigger,
   type ModelProviderOption,
 } from "@/components/dashboard/models/ModelPicker";
 import { FormSelect } from "@/components/ui/FormSelect";
@@ -491,6 +491,7 @@ export function WorkspaceKnowledge({
                 <div className="sm:col-span-2 text-xs font-medium text-muted-foreground">
                   <span>{t("embeddingModel")}</span>
                   <ModelPicker
+                    className="mt-1.5 flex w-full"
                     providers={providers}
                     value={providerId && model ? { providerId, model } : null}
                     onSelect={(selection) => {
@@ -503,22 +504,13 @@ export function WorkspaceKnowledge({
                       );
                     }}
                     trigger={
-                      <Button
-                        type="button"
+                      <ModelPickerTrigger
                         aria-label={`${t("embeddingModel")}: ${model || t("embeddingModel")}`}
-                        variant={"outline"}
-                        size={"sm"}
-                        className="mt-1.5 flex w-full items-center gap-2 text-left"
-                      >
-                        <Cpu className="size-4 shrink-0 text-muted-foreground" />
-                        <span className="min-w-0 flex-1 truncate">
-                          {model || t("embeddingModel")}
-                        </span>
-                        <span className="hidden max-w-44 truncate text-xs text-muted-foreground sm:block">
-                          {selectedProvider?.name}
-                        </span>
-                        <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
-                      </Button>
+                        label={model || t("embeddingModel")}
+                        placeholder={!model}
+                        icon={<Cpu className="size-4" />}
+                        note={selectedProvider?.name}
+                      />
                     }
                   />
                 </div>
@@ -890,6 +882,7 @@ export function WorkspaceKnowledge({
                   <div className="sm:col-span-2 text-xs font-medium text-muted-foreground">
                     <span>{t("embeddingModel")}</span>
                     <ModelPicker
+                      className="mt-1.5 flex w-full"
                       providers={providers}
                       value={providerId && model ? { providerId, model } : null}
                       onSelect={(selection) => {
@@ -903,22 +896,13 @@ export function WorkspaceKnowledge({
                         );
                       }}
                       trigger={
-                        <Button
-                          type="button"
+                        <ModelPickerTrigger
                           aria-label={`${t("embeddingModel")}: ${model || t("embeddingModel")}`}
-                          variant={"outline"}
-                          size={"sm"}
-                          className="mt-1.5 flex w-full items-center gap-2 text-left"
-                        >
-                          <Cpu className="size-4 shrink-0 text-muted-foreground" />
-                          <span className="min-w-0 flex-1 truncate">
-                            {model || t("embeddingModel")}
-                          </span>
-                          <span className="hidden max-w-44 truncate text-xs text-muted-foreground sm:block">
-                            {selectedProvider?.name}
-                          </span>
-                          <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
-                        </Button>
+                          label={model || t("embeddingModel")}
+                          placeholder={!model}
+                          icon={<Cpu className="size-4" />}
+                          note={selectedProvider?.name}
+                        />
                       }
                     />
                   </div>

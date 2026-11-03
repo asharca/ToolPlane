@@ -115,9 +115,12 @@ function load(item) {
     pkg.source?.kind === "toolplane" &&
     runtime?.platform === "any" &&
     runtime?.arch === "any";
+  const supported =
+    runtime?.kind === "pi-sdk"
+      ? runtime.piVersion === "0.87.1"
+      : runtime?.kind === "omp" && runtime.ompVersion === "18.14.0";
   if (
-    runtime?.kind !== "pi-sdk" ||
-    runtime.piVersion !== "0.87.1" ||
+    !supported ||
     runtime.nodeMajor !== 26 ||
     (!portable &&
       (runtime.platform !== process.platform ||

@@ -48,6 +48,7 @@ type GitHubRelease = {
   tag_name: string;
   name?: string;
   html_url?: string;
+  body?: string | null;
   prerelease?: boolean;
   draft?: boolean;
   assets?: GitHubReleaseAsset[];
@@ -68,6 +69,8 @@ export type SystemUpdateStatus = {
   updateAvailable: boolean | null;
   releaseName: string | null;
   releaseUrl: string | null;
+  repository: string;
+  releaseNotes: string | null;
   artifactName: string;
   reason: string | null;
 };
@@ -273,63 +276,43 @@ export async function getSystemUpdateStatus(): Promise<SystemUpdateStatus> {
   const currentVersion = await readCurrentVersion();
   const root = runtimeRoot();
 
-  if (!updateEnabled()) {
-    return disabledStatus(
-      currentVersion,
-      artifactName,
-      "Updates are disabled.",
-    );
-  }
-  if (!root) {
-    return disabledStatus(
-      currentVersion,
-      artifactName,
-      "Runtime directory is not configured.",
-    );
-  }
-  if (!(await canWriteRuntime(root))) {
-    return disabledStatus(
-      currentVersion,
-      artifactName,
-      "Runtime directory is not writable.",
-    );
-  }
+  const unavailableReason = !updateEnabled()
+    ? "Updates are disabled."
+    : !root
+      ? "Runtime directory is not configured."
+      : !(await canWriteRuntime(root))
+        ? "Runtime directory is not writable."
+        : null;
 
   try {
     const release = await fetchLatestRelease();
     const latestVersion = release.tag_name || null;
     const artifact = findReleaseAsset(release, artifactName);
-    if (!artifact) {
-      return {
-        enabled: true,
-        canUpdate: false,
-        runtimeId,
-        currentVersion,
-        latestVersion,
-        updateAvailable: null,
-        releaseName: release.name ?? latestVersion,
-        releaseUrl: release.html_url ?? null,
-        artifactName,
-        reason: `Release artifact not found: ${artifactName}`,
-      };
-    }
-
     return {
-      enabled: true,
-      canUpdate: true,
+      enabled: updateEnabled(),
+      canUpdate: !unavailableReason && !!artifact,
       runtimeId,
       currentVersion,
       latestVersion,
-      updateAvailable: latestVersion
-        ? !sameVersion(currentVersion, latestVersion)
-        : null,
+      updateAvailable:
+        artifact && latestVersion
+          ? !sameVersion(currentVersion, latestVersion)
+          : null,
       releaseName: release.name ?? latestVersion,
       releaseUrl: release.html_url ?? null,
+      repository: updateRepo(),
+      releaseNotes: typeof release.body === "string" ? release.body : null,
       artifactName,
-      reason: null,
+      reason:
+        unavailableReason ||
+        (!artifact ? `Release artifact not found: ${artifactName}` : null),
     };
   } catch (error) {
-    return disabledStatus(currentVersion, artifactName, displayError(error));
+    return disabledStatus(
+      currentVersion,
+      artifactName,
+      unavailableReason || displayError(error),
+    );
   }
 }
 
@@ -357,6 +340,8 @@ function disabledStatus(
     updateAvailable: null,
     releaseName: null,
     releaseUrl: null,
+    repository: updateRepo(),
+    releaseNotes: null,
     artifactName,
     reason,
   };

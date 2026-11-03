@@ -31,7 +31,7 @@ export function AuthForm({
 
   return (
     <div className="mx-auto w-full max-w-sm px-4 py-10">
-      <div className="rounded-2xl border border-border bg-card p-6 sm:p-7">
+      <div className="rounded-xl border border-border bg-card p-6 sm:p-7">
         <h1 className="mb-1 text-2xl font-semibold tracking-tight text-foreground">
           {isSignup ? t("signupTitle") : t("loginTitle")}
         </h1>

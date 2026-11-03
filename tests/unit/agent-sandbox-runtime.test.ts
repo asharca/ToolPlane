@@ -1,11 +1,20 @@
 import { assertDefined } from "../assert-defined";
 import { describe, expect, it } from "vitest";
-import { mkdtemp, writeFile, symlink, rm, realpath } from "node:fs/promises";
+import {
+  mkdtemp,
+  writeFile,
+  readFile,
+  stat,
+  symlink,
+  rm,
+  realpath,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import {
   PI_SDK_RUNTIME,
+  SANDBOX_HOST_FILES_WRITER,
   buildSandboxSkillBundles,
   buildSandboxTranscript,
   normalizeSandboxWorkingDirectory,
@@ -25,8 +34,150 @@ import {
   sessionRuntimeCommands,
   RUNTIME_COMMANDS_PART,
 } from "@/lib/agents/runtime-commands";
+import {
+  agentSessionWorkspaceRoot,
+  agentSessionWorkingDirectory,
+} from "@/lib/agents/session-paths";
 
 describe("sandbox Agent runtime helpers", () => {
+  it("isolates conversation cwd, writable state and revision resources while retaining one fixed installation", () => {
+    const first = { conversationId: "session/a" };
+    const second = { conversationId: "session_a" };
+    const firstRoot = agentSessionWorkspaceRoot(first);
+    const secondRoot = agentSessionWorkspaceRoot(second);
+    expect(firstRoot).not.toBe(secondRoot);
+    expect(firstRoot).toMatch(
+      /^\/workspace\/conversations\/conversation-[a-f0-9]{64}$/,
+    );
+    expect(
+      agentSessionWorkspaceRoot({ a2aContextId: first.conversationId }),
+    ).not.toBe(firstRoot);
+    expect(
+      agentSessionWorkspaceRoot({ ...first, a2aContextId: "context" }),
+    ).toBe(firstRoot);
+    expect(agentSessionWorkingDirectory(first)).toBe(firstRoot);
+    expect(
+      agentSessionWorkingDirectory(first, "/workspace/project/../src"),
+    ).toBe(`${firstRoot}/src`);
+    expect(agentSessionWorkingDirectory(first, `${firstRoot}/src`)).toBe(
+      `${firstRoot}/src`,
+    );
+    expect(() => agentSessionWorkingDirectory(first, "../../etc")).toThrow(
+      /session workspace/,
+    );
+    expect(() => agentSessionWorkingDirectory(first, secondRoot)).toThrow(
+      /session workspace/,
+    );
+    expect(() =>
+      agentSessionWorkingDirectory(first, `${firstRoot}/../other`),
+    ).toThrow(/session workspace/);
+    expect(sandboxRuntimeStateRoot("pi-sdk", "agent", firstRoot)).not.toBe(
+      sandboxRuntimeStateRoot("pi-sdk", "agent", secondRoot),
+    );
+    expect(
+      sandboxRuntimeSkillRoot("pi-sdk", "agent", firstRoot, "revision-one"),
+    ).not.toBe(
+      sandboxRuntimeSkillRoot("pi-sdk", "agent", firstRoot, "revision-two"),
+    );
+    expect(PI_SDK_RUNTIME.directory).toBe(
+      "/workspace/.toolplane/runtime-packages/pi-sdk-0.87.1",
+    );
+    const attachment = (runtimePath: string) => [
+      {
+        role: "user",
+        parts: [
+          {
+            type: "file",
+            filename: "input.txt",
+            providerMetadata: { toolplane: { runtimePath } },
+          },
+        ],
+      },
+    ];
+    expect(
+      buildSandboxTranscript(attachment("/workspace/uploads/input.txt"), first),
+    ).toContain(`${firstRoot}/uploads/input.txt`);
+    expect(
+      buildSandboxTranscript(
+        attachment(`${firstRoot}/uploads/input.txt`),
+        first,
+      ),
+    ).toContain(`${firstRoot}/uploads/input.txt`);
+    expect(
+      buildSandboxTranscript(attachment(`${secondRoot}/private.txt`), first),
+    ).not.toContain(secondRoot);
+  });
+  it("batches exact host bytes with private permissions and rewrites every declared source", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "sandbox-host-files-"));
+    const hostRoot = join(directory, "private", "host sources");
+    const files = [
+      {
+        path: join(hostRoot, "literal; touch injected.mjs"),
+        content:
+          "// Unicode 雪, quotes '\" and shell $(touch injected.mjs)\n\0\n",
+      },
+      { path: join(hostRoot, "factory.mjs"), content: "export default {};\n" },
+      { path: join(hostRoot, "empty.mjs"), content: "" },
+    ];
+    const command = ["-e", `process.umask(0o000);${SANDBOX_HOST_FILES_WRITER}`];
+    try {
+      const first = spawnSync(process.execPath, command, {
+        cwd: directory,
+        input: JSON.stringify(files),
+        encoding: "utf8",
+      });
+      expect(first.status, first.stderr).toBe(0);
+      for (const file of files) {
+        expect(await readFile(file.path, "utf8")).toBe(file.content);
+        expect((await stat(file.path)).mode & 0o777).toBe(0o600);
+      }
+      for (const path of [join(directory, "private"), hostRoot])
+        expect((await stat(path)).mode & 0o777).toBe(0o700);
+      await expect(stat(join(directory, "injected.mjs"))).rejects.toMatchObject(
+        { code: "ENOENT" },
+      );
+
+      await writeFile(assertDefined(files[0]).path, "substituted host source");
+      assertDefined(files[1]).content = "// new factory\n";
+      const second = spawnSync(process.execPath, command, {
+        cwd: directory,
+        input: JSON.stringify(files),
+        encoding: "utf8",
+      });
+      expect(second.status, second.stderr).toBe(0);
+      for (const file of files)
+        expect(await readFile(file.path, "utf8")).toBe(file.content);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("stops a host batch at the first write failure instead of starting later files", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "sandbox-host-failure-"));
+    const firstPath = join(directory, "first.mjs");
+    const laterPath = join(directory, "later.mjs");
+    try {
+      const result = spawnSync(
+        process.execPath,
+        ["-e", SANDBOX_HOST_FILES_WRITER],
+        {
+          input: JSON.stringify([
+            { path: firstPath, content: "first\n" },
+            { path: directory, content: "must fail: target is a directory" },
+            { path: laterPath, content: "must not be written" },
+          ]),
+          encoding: "utf8",
+        },
+      );
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("EISDIR");
+      expect(await readFile(firstPath, "utf8")).toBe("first\n");
+      await expect(stat(laterPath)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("rejects substituted snapshot metadata and metadata symlinks before loading executable bytes", async () => {
     const verifierPath = join(
       process.cwd(),

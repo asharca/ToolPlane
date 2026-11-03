@@ -8,6 +8,7 @@ import { useTranslations } from "next-intl";
 import {
   useCallback,
   useEffect,
+  useEffectEvent,
   useRef,
   useState,
   type ReactNode,
@@ -394,153 +395,178 @@ export function SandboxConsole({
       terminalRef.current.options.theme = terminalTheme();
   }, [resolvedTheme]);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: View changes remount the terminal host; generation changes explicitly reconnect the session.
-  useEffect(() => {
-    if (readOnly) return;
-    let disposed = false;
-    let eventSource: EventSource | null = null;
-    let resizeObserver: ResizeObserver | null = null;
-    let terminal: XtermTerminal | null = null;
+  const terminalVisible =
+    !readOnly &&
+    !filesOnly &&
+    (terminalOnly || !compact || compactView === "terminal");
 
-    async function mountTerminal() {
-      const element = terminalElementRef.current;
-      if (!element) return;
-      const [{ Terminal }, { FitAddon }] = await Promise.all([
-        import("@xterm/xterm"),
-        import("@xterm/addon-fit"),
-      ]);
-      if (disposed) return;
+  const startTerminal = useEffectEvent(
+    (
+      terminalBase: string,
+      initialPath: string,
+      running: boolean,
+      waitingForConnector: boolean,
+    ) => {
+      let disposed = false;
+      let eventSource: EventSource | null = null;
+      let resizeObserver: ResizeObserver | null = null;
+      let terminal: XtermTerminal | null = null;
+      let ownedSessionId: string | null = null;
+      const closeSession = (sessionId: string) =>
+        fetch(`${terminalBase}/${sessionId}`, {
+          method: "DELETE",
+          keepalive: true,
+        }).catch(() => {
+          // Owner shutdown also releases terminal processes if the view is gone.
+        });
 
-      const fit = new FitAddon();
-      terminal = new Terminal({
-        cursorBlink: true,
-        fontFamily: getComputedStyle(element).fontFamily,
-        fontSize: 13,
-        lineHeight: 1.45,
-        scrollback: 4000,
-        theme: terminalTheme(),
-      });
-      terminal.loadAddon(fit);
-      terminal.open(element);
-      terminalRef.current = terminal;
-      fitRef.current = fit;
-      fit.fit();
+      async function mountTerminal() {
+        const element = terminalElementRef.current;
+        if (!element) return;
+        const [{ Terminal }, { FitAddon }] = await Promise.all([
+          import("@xterm/xterm"),
+          import("@xterm/addon-fit"),
+        ]);
+        if (disposed) return;
 
-      if (!running) {
-        terminal.writeln(
-          `\x1b[33m${
+        const fit = new FitAddon();
+        terminal = new Terminal({
+          cursorBlink: true,
+          fontFamily: getComputedStyle(element).fontFamily,
+          fontSize: 13,
+          lineHeight: 1.45,
+          scrollback: 4000,
+          theme: terminalTheme(),
+        });
+        terminal.loadAddon(fit);
+        terminal.open(element);
+        terminalRef.current = terminal;
+        fitRef.current = fit;
+        fit.fit();
+
+        if (!running) {
+          terminal.writeln(
+            `\x1b[33m${
+              waitingForConnector
+                ? t("waitingForConnectorSession")
+                : t("sandboxStoppedTerminalHint")
+            }\x1b[0m`,
+          );
+          setTerminalStatus(
             waitingForConnector
-              ? t("waitingForConnectorSession")
-              : t("sandboxStoppedTerminalHint")
-          }\x1b[0m`,
-        );
-        setTerminalStatus(
-          waitingForConnector ? t("waitingForConnector") : t("terminalStopped"),
-        );
-        return;
+              ? t("waitingForConnector")
+              : t("terminalStopped"),
+          );
+          return;
+        }
+
+        const sessionRes = await fetch(terminalBase, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            cols: terminal.cols,
+            rows: terminal.rows,
+            cwd: normalizePath(initialPath),
+          }),
+        });
+        if (!sessionRes.ok) {
+          if (disposed) return;
+          terminal.writeln(
+            `\x1b[31m${t("failedToOpenTerminal", { status: sessionRes.status })}\x1b[0m`,
+          );
+          setTerminalStatus(t("terminalError"));
+          return;
+        }
+        const session = (await sessionRes.json()) as TerminalSession;
+        if (disposed) {
+          void closeSession(session.id);
+          return;
+        }
+        ownedSessionId = session.id;
+        sessionIdRef.current = session.id;
+        inputWritesRef.current = Promise.resolve();
+        setTerminalStatus(t("terminalConnected"));
+
+        eventSource = new EventSource(`${terminalBase}/${session.id}/stream`);
+        eventSource.addEventListener("data", (event) => {
+          if (disposed || !terminal) return;
+          const payload = JSON.parse((event as MessageEvent).data) as {
+            data?: string;
+          };
+          terminal.write(payload.data ?? "");
+        });
+        eventSource.addEventListener("exit", (event) => {
+          const payload = JSON.parse((event as MessageEvent).data) as {
+            exitCode?: number;
+          };
+          terminal?.writeln(
+            `\r\n\x1b[33m${
+              payload.exitCode == null
+                ? t("terminalExited")
+                : t("terminalExitedWithCode", { code: payload.exitCode })
+            }\x1b[0m`,
+          );
+          setTerminalStatus(t("terminalExitedStatus"));
+        });
+        eventSource.onerror = () => {
+          if (!disposed) setTerminalStatus(t("terminalDisconnected"));
+        };
+
+        terminal.onData((data) => queueInput(data));
+        terminal.onResize(({ cols, rows }) => {
+          const sessionId = sessionIdRef.current;
+          if (sessionId)
+            void postTerminal(terminalBase, sessionId, "resize", {
+              cols,
+              rows,
+            });
+        });
+
+        resizeObserver = new ResizeObserver(() => resizeTerminal());
+        resizeObserver.observe(element);
+        terminal.focus();
       }
 
-      const sessionRes = await fetch(terminalBase, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          cols: terminal.cols,
-          rows: terminal.rows,
-          cwd: normalizePath(initialPath),
-        }),
-      });
-      if (!sessionRes.ok) {
-        terminal.writeln(
-          `\x1b[31m${t("failedToOpenTerminal", { status: sessionRes.status })}\x1b[0m`,
-        );
-        setTerminalStatus(t("terminalError"));
-        return;
-      }
-      const session = (await sessionRes.json()) as TerminalSession;
-      sessionIdRef.current = session.id;
-      inputWritesRef.current = Promise.resolve();
-      setTerminalStatus(t("terminalConnected"));
+      void mountTerminal();
 
-      eventSource = new EventSource(`${terminalBase}/${session.id}/stream`);
-      eventSource.addEventListener("data", (event) => {
-        if (disposed || !terminal) return;
-        const payload = JSON.parse((event as MessageEvent).data) as {
-          data?: string;
-        };
-        terminal.write(payload.data ?? "");
-      });
-      eventSource.addEventListener("exit", (event) => {
-        const payload = JSON.parse((event as MessageEvent).data) as {
-          exitCode?: number;
-        };
-        terminal?.writeln(
-          `\r\n\x1b[33m${
-            payload.exitCode == null
-              ? t("terminalExited")
-              : t("terminalExitedWithCode", { code: payload.exitCode })
-          }\x1b[0m`,
-        );
-        setTerminalStatus(t("terminalExitedStatus"));
-      });
-      eventSource.onerror = () => {
-        if (!disposed) setTerminalStatus(t("terminalDisconnected"));
+      return () => {
+        disposed = true;
+        if (inputTimerRef.current) {
+          clearTimeout(inputTimerRef.current);
+          inputTimerRef.current = null;
+        }
+        flushInput();
+        eventSource?.close();
+        resizeObserver?.disconnect();
+        const sessionId = ownedSessionId;
+        if (sessionId) {
+          const close = () => closeSession(sessionId);
+          void inputWritesRef.current.then(close, close);
+        }
+        sessionIdRef.current = null;
+        fitRef.current = null;
+        terminalRef.current = null;
+        terminal?.dispose();
       };
+    },
+  );
 
-      terminal.onData((data) => queueInput(data));
-      terminal.onResize(({ cols, rows }) => {
-        const sessionId = sessionIdRef.current;
-        if (sessionId)
-          void postTerminal(terminalBase, sessionId, "resize", { cols, rows });
-      });
-
-      resizeObserver = new ResizeObserver(() => resizeTerminal());
-      resizeObserver.observe(element);
-      terminal.focus();
-    }
-
-    void mountTerminal();
-
-    return () => {
-      disposed = true;
-      if (inputTimerRef.current) {
-        clearTimeout(inputTimerRef.current);
-        inputTimerRef.current = null;
-      }
-      flushInput();
-      eventSource?.close();
-      resizeObserver?.disconnect();
-      const sessionId = sessionIdRef.current;
-      if (sessionId) {
-        const closeSession = () =>
-          fetch(`${terminalBase}/${sessionId}`, {
-            method: "DELETE",
-            keepalive: true,
-          });
-        void inputWritesRef.current
-          .then(closeSession, closeSession)
-          .catch(() => {
-            // The view is gone; owner shutdown also releases its terminal processes.
-          });
-      }
-      sessionIdRef.current = null;
-      fitRef.current = null;
-      terminalRef.current = null;
-      terminal?.dispose();
-    };
+  useEffect(() => {
+    if (!terminalVisible) return;
+    // Explicit reconnects change generation; ordinary data refreshes keep the PTY.
+    void terminalGeneration;
+    return startTerminal(
+      terminalBase,
+      initialPath,
+      running,
+      waitingForConnector,
+    );
   }, [
-    compactView,
-    compact,
-    filesOnly,
-    readOnly,
-    flushInput,
     initialPath,
-    queueInput,
-    resizeTerminal,
     running,
-    t,
     terminalBase,
     terminalGeneration,
-    terminalOnly,
+    terminalVisible,
     waitingForConnector,
   ]);
 

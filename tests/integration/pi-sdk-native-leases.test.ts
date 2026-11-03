@@ -2,7 +2,7 @@
 import { assertDefined } from "../assert-defined";
 import type { ChildProcess } from "node:child_process";
 import type { A2ATask } from "@prisma/client";
-import type * as Worker from "@/lib/a2a/worker";
+import type * as Worker from "@/lib/agents/execution/worker";
 import type {
   RuntimeCommand,
   RuntimeCommandResult,
@@ -18,22 +18,24 @@ import { Readable } from "node:stream";
 import { TaskState } from "@a2a-js/sdk";
 import { expect, it, vi } from "vitest";
 import { db } from "@/lib/db";
-import { submitNativeEntry } from "@/lib/a2a/ingress";
+import { submitAgentEntry } from "@/lib/agents/execution/entries";
 import { claimTask, finishTask } from "@/lib/a2a/store";
-import { handleRuntimeApprovals } from "@/lib/a2a/approval-http";
+import { handleRuntimeUi } from "@/lib/agents/execution/ui-http";
 import { createAgentRuntimeToken } from "@/lib/agents/runtime-access";
-import { nativeApprovalAdapter } from "@/lib/agents/native-tool-approval";
 import { httpFixture } from "../fixtures/pi-agent-communication";
 import { executeRuntimeCommand } from "@/lib/agents/runtime-command-service";
 import { RUNTIME_COMMANDS_PART } from "@/lib/agents/runtime-commands";
 import { textArtifact } from "@/lib/a2a/model";
 import { mapTaskSandbox, taskSandbox } from "./task-sandbox-fixture";
 import { AgentRevisionConfigSchema } from "@/lib/agents/revision-types";
+import type { LocalA2AGrant } from "@/lib/a2a/principal";
+import { AGENT_TURN_MODEL_PART } from "@/lib/agents/turn-model";
+import type { AgentModelOverride } from "@/lib/agents/chat-body";
 
 const scheduler = vi.hoisted(() => ({ wake: () => {} }));
-vi.mock("@/lib/a2a/worker", async (original) => ({
+vi.mock("@/lib/agents/execution/worker", async (original) => ({
   ...(await original<typeof Worker>()),
-  wakeA2AWorker: () => scheduler.wake(),
+  wakeAgentWorker: () => scheduler.wake(),
 }));
 type HostResponse = {
   success: boolean;
@@ -44,7 +46,7 @@ type HostResponse = {
   };
 };
 
-it("refreshes real native task readiness on the same SDK host and rejects the previous lease", async () => {
+it("refreshes real native task UI projection on the same SDK host and rejects the previous lease", async () => {
   const database = new URL(assertDefined(process.env.DATABASE_URL));
   if (
     !["localhost", "127.0.0.1"].includes(database.hostname) ||
@@ -60,19 +62,13 @@ it("refreshes real native task readiness on the same SDK host and rejects the pr
   const workspace = await db.workspace.create({
     data: { name: "SDK lease test", slug: `sdk-${stamp}`, ownerId: user.id },
   });
-  const readyTasks: string[] = [];
+  const projectedTasks: string[] = [];
   const platform = await httpFixture(async (request) => {
     const taskId = assertDefined(
       new URL(request.url).pathname.split("/").at(-2),
     );
-    const body = await request.clone().json();
-    const response = await handleRuntimeApprovals(request, taskId);
-    if (
-      body.action === "ready" &&
-      response.ok &&
-      (await response.clone().json()).status === "ready"
-    )
-      readyTasks.push(taskId);
+    const response = await handleRuntimeUi(request, taskId);
+    if (response.ok) projectedTasks.push(taskId);
     return response;
   });
   try {
@@ -83,6 +79,7 @@ it("refreshes real native task readiness on the same SDK host and rejects the pr
         format: "openai",
         baseUrl: platform.base,
         apiKey: "fixture-only",
+        models: ["controlled"],
       },
     });
     const deployment = await db.deployment.create({
@@ -161,16 +158,10 @@ it("refreshes real native task readiness on the same SDK host and rejects the pr
       privateDir = join(root, "private"),
       sessionsDir = join(root, "sessions");
     for (const path of [cwd, privateDir, sessionsDir]) await mkdir(path);
-    const extension = join(cwd, "fixture.mjs"),
-      approvalExtensionPath = join(privateDir, "approval.mjs");
-    const approvalHelperPath = resolve("scripts/a2a-native-approval.mjs");
+    const extension = join(cwd, "fixture.mjs");
     await writeFile(
       extension,
-      `import {writeFileSync,existsSync,readFileSync} from 'node:fs'; export default pi=>pi.registerCommand('Count',{handler:async(_,ctx)=>{const p=ctx.cwd+'/count';const n=existsSync(p)?Number(readFileSync(p,'utf8'))+1:1;writeFileSync(p,String(n));pi.sendMessage({customType:'fixture',content:'count='+n,display:true})}});`,
-    );
-    await writeFile(
-      approvalExtensionPath,
-      nativeApprovalAdapter(approvalHelperPath),
+      `import {writeFileSync,existsSync,readFileSync} from 'node:fs'; export default pi=>pi.registerCommand('Count',{handler:async(_,ctx)=>{const p=ctx.cwd+'/count';const n=existsSync(p)?Number(readFileSync(p,'utf8'))+1:1;writeFileSync(p,String(n));writeFileSync(ctx.cwd+'/model',ctx.model.id);pi.sendMessage({customType:'fixture',content:'count='+n,display:true})}});`,
     );
     const mcpFactoryPath = join(privateDir, "mcp.mjs");
     await writeFile(
@@ -211,8 +202,6 @@ it("refreshes real native task readiness on the same SDK host and rejects the pr
         packages: [],
         packageVerifierPath: resolve("scripts/pi-sdk-package-files.mjs"),
         mcpFactoryPath,
-        approvalExtensionPath,
-        approvalHelperPath,
         hostOnlyCommands: [],
       }),
     );
@@ -232,8 +221,8 @@ it("refreshes real native task readiness on the same SDK host and rejects the pr
       if (event.type === "toolplane_sdk_response")
         pending.get(event.id)?.(event);
     });
-    async function task() {
-      const accepted = await submitNativeEntry(
+    async function task(modelOverride?: AgentModelOverride) {
+      const accepted = await submitAgentEntry(
         {
           kind: "chat",
           sourceId: conversation.id,
@@ -242,6 +231,7 @@ it("refreshes real native task readiness on the same SDK host and rejects the pr
           actorId: user.id,
           messageId: randomUUID(),
           text: "/Count",
+          modelOverride,
         },
         () => {},
       );
@@ -252,17 +242,18 @@ it("refreshes real native task readiness on the same SDK host and rejects the pr
       return row;
     }
     async function request(row: A2ATask) {
+      const override = (row.grant as unknown as LocalA2AGrant).modelOverride;
       const runtimeToken = await createAgentRuntimeToken({
         workspaceId: workspace.id,
         agentId: agent.id,
         agentRevisionId: revision.id,
         ...taskSandbox(row),
-        providerId: provider.id,
+        providerId: override?.providerId ?? provider.id,
+        modelOverride: override,
         deploymentIds: [],
         a2aTaskId: row.id,
         a2aContextId: row.contextId,
         a2aLeaseToken: assertDefined(row.leaseToken),
-        a2aApprovalRequired: true,
         exp: Math.floor(Date.now() / 1000) + 300,
       });
       const id = randomUUID();
@@ -274,12 +265,44 @@ it("refreshes real native task readiness on the same SDK host and rejects the pr
           message: "/Count",
           context: {
             runtimeToken,
-            approvalUrl: `${platform.base}/api/v1/agent-runtime/a2a/${row.id}/approvals`,
+            uiUrl: `${platform.base}/api/v1/agent-runtime/tasks/${row.id}/ui`,
             mcpConfig: { servers: [] },
+            model: {
+              ...JSON.parse(await readFile(configPath, "utf8")).model,
+              id: override?.model ?? "controlled",
+            },
           },
         })}\n`,
       );
       return result;
+    }
+    await expect(
+      task({ providerId: provider.id, model: "not-configured" }),
+    ).rejects.toMatchObject({ code: "modelOverrideUnavailable" });
+    const foreignWorkspace = await db.workspace.create({
+      data: { ownerId: user.id, name: "Foreign", slug: `sdk-foreign-${stamp}` },
+    });
+    try {
+      const foreignProvider = await db.modelProvider.create({
+        data: {
+          workspaceId: foreignWorkspace.id,
+          name: "Foreign",
+          format: "openai",
+          baseUrl: platform.base,
+          apiKey: "foreign-private",
+          models: ["controlled"],
+        },
+      });
+      await expect(
+        task({ providerId: foreignProvider.id, model: "controlled" }),
+      ).rejects.toMatchObject({ code: "modelOverrideUnavailable" });
+      expect(
+        await db.a2ATask.count({
+          where: { context: { workspaceId: workspace.id } },
+        }),
+      ).toBe(0);
+    } finally {
+      await db.workspace.delete({ where: { id: foreignWorkspace.id } });
     }
     const first = await task();
     expect(await request(first)).toMatchObject({
@@ -292,6 +315,17 @@ it("refreshes real native task readiness on the same SDK host and rejects the pr
       TaskState.TASK_STATE_COMPLETED,
       "Done",
     );
+    expect(await readFile(join(cwd, "model"), "utf8")).toBe("controlled");
+    const alternate = await db.modelProvider.create({
+      data: {
+        workspaceId: workspace.id,
+        name: "Alternate",
+        format: "openai",
+        baseUrl: platform.base,
+        apiKey: "alternate-private",
+        models: ["alternate"],
+      },
+    });
     const awakened = new Promise<void>((done) => {
       scheduler.wake = done;
     });
@@ -301,6 +335,7 @@ it("refreshes real native task readiness on the same SDK host and rejects the pr
       conversationId: conversation.id,
       actorId: user.id,
       line: "/Count",
+      modelOverride: { providerId: alternate.id, model: "alternate" },
       signal: AbortSignal.timeout(15000),
     });
     await Promise.race([
@@ -324,12 +359,40 @@ it("refreshes real native task readiness on the same SDK host and rejects the pr
       success: true,
       result: { text: "Pi 扩展 · fixture\ncount=2" },
     });
-    expect(new Set(readyTasks)).toEqual(new Set([first.id, second.id]));
-    expect(await request(first)).toMatchObject({ success: false });
+    expect(await readFile(join(cwd, "model"), "utf8")).toBe("alternate");
+    expect(new Set(projectedTasks)).toEqual(new Set([first.id, second.id]));
+    const staleToken = await createAgentRuntimeToken({
+      workspaceId: workspace.id,
+      agentId: agent.id,
+      agentRevisionId: revision.id,
+      ...taskSandbox(first),
+      providerId: provider.id,
+      deploymentIds: [],
+      a2aTaskId: first.id,
+      a2aContextId: first.contextId,
+      a2aLeaseToken: assertDefined(first.leaseToken),
+      exp: Math.floor(Date.now() / 1000) + 300,
+    });
+    expect(
+      (
+        await fetch(
+          `${platform.base}/api/v1/agent-runtime/tasks/${first.id}/ui`,
+          {
+            method: "POST",
+            headers: {
+              authorization: `Bearer ${staleToken}`,
+              "content-type": "application/json",
+            },
+            body: JSON.stringify({ action: "todos", todos: [] }),
+          },
+        )
+      ).status,
+    ).toBe(404);
     expect(await readFile(join(cwd, "count"), "utf8")).toBe("2");
     const artifact = textArtifact(assertDefined(output.result).text);
     artifact.metadata = {
       toolplanePiSdk: {
+        model: { providerId: alternate.id, model: "alternate" },
         commands: assertDefined(output.result).commands,
         commandResult: assertDefined(output.result).commandResult,
       },
@@ -359,6 +422,38 @@ it("refreshes real native task readiness on the same SDK host and rejects the pr
         },
       ]),
     );
+    expect(saved.parts).toEqual(
+      expect.arrayContaining([
+        {
+          type: AGENT_TURN_MODEL_PART,
+          data: { providerId: alternate.id, model: "alternate" },
+        },
+      ]),
+    );
+    const third = await task();
+    expect(
+      (third.grant as unknown as LocalA2AGrant).modelOverride,
+    ).toBeUndefined();
+    expect(await request(third)).toMatchObject({
+      success: true,
+      result: { text: "Pi 扩展 · fixture\ncount=3" },
+    });
+    expect(await readFile(join(cwd, "model"), "utf8")).toBe("controlled");
+    await finishTask(
+      third.id,
+      assertDefined(third.leaseToken),
+      TaskState.TASK_STATE_COMPLETED,
+      "Done",
+    );
+    expect(await db.agentRevision.count({ where: { agentId: agent.id } })).toBe(
+      1,
+    );
+    expect(
+      await db.agentRevision.findUniqueOrThrow({ where: { id: revision.id } }),
+    ).toMatchObject({ config: revision.config });
+    expect(
+      await db.agent.findUniqueOrThrow({ where: { id: agent.id } }),
+    ).toMatchObject({ providerId: provider.id, model: "controlled" });
   } finally {
     if (child && child.exitCode === null) {
       const stopped = once(child, "close");

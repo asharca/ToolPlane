@@ -6,6 +6,8 @@ import * as AgentTools from "@/lib/agents/tools";
 import { logRequest } from "@/lib/observability/log";
 import { McpToolNotDispatchedError } from "@/lib/remote-mcp/pinned-connection";
 import type * as PinnedConnection from "@/lib/remote-mcp/pinned-connection";
+import { loadMcpToolPolicies } from "@/lib/workspace/mcp-tool-exposure";
+import type { McpTool } from "@/lib/process/mcp-client";
 
 vi.mock("@/lib/process/manager", () => ({ startProcess: vi.fn() }));
 
@@ -107,6 +109,37 @@ const grant = {
 };
 const readToolKey = AgentTools.toolKey(deployment.id, "read");
 
+function multipleDeploymentScope() {
+  const otherDeployment = {
+    ...deployment,
+    id: "other-remote",
+    sourceRef: "https://other.example.com/mcp",
+  };
+  state.grants.mockResolvedValue([
+    grant,
+    { ...grant, deploymentId: otherDeployment.id, deployment: otherDeployment },
+  ]);
+  vi.mocked(loadMcpToolPolicies).mockResolvedValueOnce(
+    new Map([
+      [deployment.id, { mode: "all", allowedTools: [] }],
+      [otherDeployment.id, { mode: "all", allowedTools: [] }],
+    ]),
+  );
+  return {
+    ...scope,
+    config: {
+      ...config,
+      mcpGrants: [
+        ...config.mcpGrants,
+        {
+          deploymentId: otherDeployment.id,
+          allowedToolNames: ["read"],
+          definitionChecksum: mcpDefinitionChecksum(otherDeployment),
+        },
+      ],
+    },
+  };
+}
 beforeEach(() => {
   vi.clearAllMocks();
   state.status.mockReturnValue("running");
@@ -183,6 +216,87 @@ describe("Assistant revision-bounded remote tools", () => {
     expect(state.tools).toHaveBeenCalledOnce();
     expect(state.execute).not.toHaveBeenCalled();
   });
+
+  it("keeps deployment order and fresh authority when discoveries finish out of order", async () => {
+    const multiScope = multipleDeploymentScope();
+    const first = Promise.withResolvers<McpTool[]>();
+    const second = Promise.withResolvers<McpTool[]>();
+    state.tools.mockImplementation(
+      ({ deploymentId }: { deploymentId: string }) =>
+        deploymentId === deployment.id ? first.promise : second.promise,
+    );
+    const preparation = buildChatToolSet(multiScope);
+    const outcome = Promise.allSettled([preparation]);
+    try {
+      await vi.waitFor(() => expect(state.tools).toHaveBeenCalledTimes(2));
+      second.resolve([{ name: "read" }, { name: "unapproved" }]);
+      first.resolve([{ name: "write" }, { name: "read" }]);
+      const tools = await preparation;
+      expect(Object.keys(tools)).toEqual([
+        readToolKey,
+        AgentTools.toolKey("other-remote", "read"),
+      ]);
+      state.current.mockResolvedValue({ ...grant, allowedToolNames: [] });
+      await expect(tools[readToolKey].execute({})).rejects.toMatchObject({
+        status: 403,
+      });
+      expect(state.execute).not.toHaveBeenCalled();
+    } finally {
+      first.resolve([]);
+      second.resolve([]);
+      await outcome;
+    }
+  });
+
+  it.each(["failure", "cancellation"] as const)(
+    "drains all deployment discovery after %s before rejecting preparation",
+    async (kind) => {
+      const multiScope = multipleDeploymentScope();
+      const controller = new AbortController();
+      const first = Promise.withResolvers<McpTool[]>();
+      const second = Promise.withResolvers<McpTool[]>();
+      const firstError =
+        kind === "cancellation"
+          ? new DOMException("Stopped", "AbortError")
+          : new Error("First deployment failed");
+      const secondError = new Error("Second deployment failed first");
+      state.tools.mockImplementation(
+        ({ deploymentId }: { deploymentId: string }) =>
+          deploymentId === deployment.id ? first.promise : second.promise,
+      );
+      let settled = false;
+      const outcome = buildChatToolSet({
+        ...multiScope,
+        signal: controller.signal,
+      }).then(
+        (value) => {
+          settled = true;
+          return { value, error: undefined };
+        },
+        (error: unknown) => {
+          settled = true;
+          return { value: undefined, error };
+        },
+      );
+      try {
+        await vi.waitFor(() => expect(state.tools).toHaveBeenCalledTimes(2));
+        if (kind === "cancellation") controller.abort(firstError);
+        second.reject(secondError);
+        // Give rejection handlers a turn; the other deployment still owns work.
+        const tick = Promise.withResolvers<void>();
+        setImmediate(tick.resolve);
+        await tick.promise;
+        expect(settled).toBe(false);
+        expect(state.execute).not.toHaveBeenCalled();
+        first.reject(firstError);
+        expect((await outcome).error).toBe(firstError);
+      } finally {
+        first.resolve([]);
+        second.resolve([]);
+        await outcome;
+      }
+    },
+  );
 
   it("classifies only an explicit fresh exposure rejection as not dispatched", async () => {
     const tools = await buildChatToolSet(scope);

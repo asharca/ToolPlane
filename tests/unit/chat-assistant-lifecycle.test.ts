@@ -34,12 +34,6 @@ const state = vi.hoisted(() => ({
     config: unknown;
   }>,
   blockingRun: null as { id: string } | null,
-  installs: 0,
-  published: true,
-  template: vi.fn(),
-}));
-vi.mock("@/lib/market/skills", () => ({
-  getAssistantMarketTemplate: state.template,
 }));
 vi.mock("@/lib/db", () => {
   const client = {
@@ -186,18 +180,6 @@ vi.mock("@/lib/db", () => {
     },
     chatTurn: { findFirst: vi.fn(async () => state.blockingRun) },
     $queryRaw: vi.fn(async () => []),
-    marketListing: {
-      updateMany: vi.fn(async ({ data }) => {
-        if (!state.published) return { count: 0 };
-        state.installs = Math.max(
-          0,
-          state.installs +
-            (data.installCount.increment ??
-              -(data.installCount.decrement ?? 0)),
-        );
-        return { count: 1 };
-      }),
-    },
     chatThread: {
       create: vi.fn(async ({ data }) => ({ id: "thread", ...data })),
     },
@@ -210,7 +192,6 @@ vi.mock("@/lib/db", () => {
           assistants: state.assistants.map((a) => ({ ...a })),
           grants: [...state.grants],
           revisions: [...state.revisions],
-          installs: state.installs,
         };
         try {
           return await run(client);
@@ -230,45 +211,25 @@ import {
   updateChatAssistant,
 } from "@/lib/chat/service";
 
-function template(requireModel = true, requireMcp = true) {
-  return {
-    releaseId: "release",
-    manifest: {
-      assistant: {
-        name: "Market assistant",
-        systemPrompt: "Reviewed policy",
-        maxSteps: 7,
-        modelRequirement: requireModel
-          ? { providerFormat: "openai", model: "model" }
-          : undefined,
-        mcpRequirements: requireMcp
-          ? [{ catalogSlug: "search", name: "Search" }]
-          : [],
-      },
-    },
-  };
-}
 function deploymentRecipe(sourceRef = "https://mcp.example.com/mcp") {
   return {
     name: "Search",
     source: "remote",
     sourceRef,
     serverId: null,
-    installCfg: { transport: "streamable-http", authType: "none", env: {} },
+    installCfg: {
+      transport: "streamable-http",
+      authType: "none",
+      env: {},
+      toolCatalog: [{ name: "search" }, { name: "read" }],
+    },
   };
 }
-function reviewedGrant(deploymentId = "mcp", allowedToolNames = ["search"]) {
-  const deployment = state.deployments.find(
-    (entry) => entry.id === deploymentId,
-  );
-  if (!deployment)
+function selectedGrant(deploymentId = "mcp") {
+  if (!state.deployments.some((entry) => entry.id === deploymentId))
     throw new Error(`Missing deployment fixture: ${deploymentId}`);
   return {
     deploymentId,
-    allowedToolNames,
-    expectedDefinitionChecksum: mcpDefinitionChecksum(
-      deploymentRecipe(deployment.sourceRef),
-    ),
   };
 }
 beforeEach(() => {
@@ -287,9 +248,6 @@ beforeEach(() => {
       server: { slug: "search", verifiedAt: new Date() },
     },
   ];
-  state.installs = 0;
-  state.published = true;
-  state.template.mockResolvedValue(template());
 });
 
 describe("Assistant revision publication, ownership and retained pins", () => {
@@ -304,9 +262,7 @@ describe("Assistant revision publication, ownership and retained pins", () => {
         resource === "provider"
           ? { modelProviderId: "foreign" }
           : {
-              mcpGrants: [
-                { deploymentId: "foreign", allowedToolNames: ["search"] },
-              ],
+              mcpGrants: [{ deploymentId: "foreign" }],
             };
       await expect(
         updateChatAssistant("owner", "assistant-1", {
@@ -324,7 +280,7 @@ describe("Assistant revision publication, ownership and retained pins", () => {
       workspaceId: "ws",
       name: "Assistant",
       systemPrompt: "Original",
-      mcpGrants: [reviewedGrant()],
+      mcpGrants: [selectedGrant()],
     });
     const oldThread = await createChatThread("owner", assistant.id, {});
     await updateChatAssistant("owner", assistant.id, {
@@ -348,7 +304,7 @@ describe("Assistant revision publication, ownership and retained pins", () => {
         mcpGrants: [
           {
             deploymentId: "mcp",
-            allowedToolNames: ["search"],
+            allowedToolNames: ["search", "read"],
             definitionChecksum: expect.stringMatching(/^[a-f0-9]{64}$/),
           },
         ],
@@ -392,7 +348,7 @@ describe("Assistant revision publication, ownership and retained pins", () => {
       updateChatAssistant("owner", assistant.id, {
         expectedRevision: 1,
         name: "Changed",
-        mcpGrants: [reviewedGrant()],
+        mcpGrants: [selectedGrant()],
       }),
     ).rejects.toThrow("publication failed");
     expect(state.assistants[0]).toMatchObject({
@@ -408,7 +364,7 @@ describe("Assistant revision publication, ownership and retained pins", () => {
       workspaceId: "ws",
       name: "Source",
       systemPrompt: "Policy",
-      mcpGrants: [reviewedGrant()],
+      mcpGrants: [selectedGrant()],
     });
     const copy = await copyChatAssistant("owner", source.id, {
       name: "Copy",
@@ -451,7 +407,7 @@ describe("Assistant revision publication, ownership and retained pins", () => {
       createChatAssistant("owner", {
         workspaceId: "ws",
         name: "Unpublished",
-        mcpGrants: [reviewedGrant()],
+        mcpGrants: [selectedGrant()],
       }),
     ).rejects.toThrow("publication failed");
     expect(state.assistants).toEqual([]);
@@ -459,177 +415,79 @@ describe("Assistant revision publication, ownership and retained pins", () => {
     expect(state.revisions).toEqual([]);
   });
 
-  it("preserves retained MCP pins on unrelated edits and requires fresh review to reauthorize or copy", async () => {
+  it("captures the current MCP definition on executable edits without a review receipt", async () => {
     const source = await createChatAssistant("owner", {
       workspaceId: "ws",
       name: "Source",
-      mcpGrants: [reviewedGrant()],
+      mcpGrants: [selectedGrant()],
     });
     const original = ChatAssistantRevisionConfigSchema.parse(
       state.revisions[0]?.config,
-    );
-    expect(original.mcpGrants[0]?.definitionChecksum).toBe(
-      reviewedGrant().expectedDefinitionChecksum,
     );
     const deployment = state.deployments[0];
     if (!deployment) throw new Error("Missing deployment fixture");
     deployment.sourceRef = "https://mcp.example.com/updated";
     await updateChatAssistant("owner", source.id, {
       expectedRevision: 1,
-      name: "Edited",
+      name: "Renamed",
+      pinned: true,
+    });
+    expect(state.revisions).toHaveLength(1);
+    await updateChatAssistant("owner", source.id, {
+      expectedRevision: 1,
+      systemPrompt: "Edited",
     });
     const edited = ChatAssistantRevisionConfigSchema.parse(
       state.revisions[1]?.config,
     );
-    expect(edited.mcpGrants).toEqual(original.mcpGrants);
-    await updateChatAssistant("owner", source.id, {
-      expectedRevision: 2,
-      mcpGrants: [{ deploymentId: "mcp", allowedToolNames: ["search"] }],
-    });
-    expect(
-      ChatAssistantRevisionConfigSchema.parse(state.revisions[2]?.config)
-        .mcpGrants,
-    ).toEqual(original.mcpGrants);
-    await updateChatAssistant("owner", source.id, {
-      expectedRevision: 3,
-      mcpGrants: [reviewedGrant()],
-    });
-    const reauthorized = ChatAssistantRevisionConfigSchema.parse(
-      state.revisions[3]?.config,
+    expect(edited.mcpGrants[0]?.definitionChecksum).toBe(
+      mcpDefinitionChecksum(deploymentRecipe(deployment.sourceRef)),
     );
-    expect(reauthorized.mcpGrants[0]?.definitionChecksum).toBe(
-      reviewedGrant().expectedDefinitionChecksum,
-    );
-    expect(reauthorized.mcpGrants[0]?.definitionChecksum).not.toBe(
+    expect(edited.mcpGrants[0]?.definitionChecksum).not.toBe(
       original.mcpGrants[0]?.definitionChecksum,
     );
     expect(
       ChatAssistantRevisionConfigSchema.parse(state.revisions[0]?.config),
     ).toEqual(original);
-    deployment.sourceRef = "https://mcp.example.com/copied";
     const copy = await copyChatAssistant("owner", source.id, {
       name: "Copy",
-      expectedRevision: 4,
-      mcpGrants: [reviewedGrant()],
+      expectedRevision: 2,
+      mcpGrants: [selectedGrant()],
     });
-    const copied = ChatAssistantRevisionConfigSchema.parse(
-      state.revisions[4]?.config,
-    );
-    expect(state.revisions[4]?.assistantId).toBe(copy.id);
-    expect(copied.mcpGrants[0]?.definitionChecksum).toBe(
-      reviewedGrant().expectedDefinitionChecksum,
-    );
-    expect(copied.mcpGrants[0]?.definitionChecksum).not.toBe(
-      reauthorized.mcpGrants[0]?.definitionChecksum,
-    );
-    expect(state.grants).toEqual([
-      {
-        assistantId: source.id,
-        deploymentId: "mcp",
-        allowedToolNames: ["search"],
-      },
-      {
-        assistantId: copy.id,
-        deploymentId: "mcp",
-        allowedToolNames: ["search"],
-      },
-    ]);
+    expect(state.revisions[2]?.assistantId).toBe(copy.id);
+    expect(
+      ChatAssistantRevisionConfigSchema.parse(state.revisions[2]?.config)
+        .mcpGrants,
+    ).toEqual(edited.mcpGrants);
   });
 
-  it.each([
-    ["create", "missing"],
-    ["create", "stale"],
-    ["update", "missing"],
-    ["update", "stale"],
-    ["copy", "missing"],
-    ["copy", "stale"],
-  ] as const)(
-    "rejects %s with %s MCP discovery approval without publishing or granting",
-    async (operation, approval) => {
-      const source = await createChatAssistant("owner", {
-        workspaceId: "ws",
-        name: "Source",
-        mcpGrants: [],
-      });
-      const reviewed = reviewedGrant();
-      const deployment = state.deployments[0];
-      if (!deployment) throw new Error("Missing deployment fixture");
-      deployment.sourceRef = "https://mcp.example.com/changed-after-review";
-      const grant =
-        approval === "missing"
-          ? { deploymentId: "mcp", allowedToolNames: ["search"] }
-          : reviewed;
-      await expect(
-        operation === "create"
-          ? createChatAssistant("owner", {
-              workspaceId: "ws",
-              name: "New",
-              mcpGrants: [grant],
-            })
-          : operation === "copy"
-            ? copyChatAssistant("owner", source.id, {
-                name: "Copy",
-                expectedRevision: 1,
-                mcpGrants: [grant],
-              })
-            : updateChatAssistant("owner", source.id, {
-                expectedRevision: 1,
-                mcpGrants: [grant],
-              }),
-      ).rejects.toMatchObject({ status: approval === "missing" ? 400 : 409 });
-      expect(state.assistants).toHaveLength(1);
-      expect(state.assistants[0]).toMatchObject({
-        name: "Source",
-        currentRevisionVersion: 1,
-      });
-      expect(state.revisions).toHaveLength(1);
-      expect(state.grants).toEqual([]);
-    },
-  );
-
-  it("requires fresh recipe approval when changing a retained tool allowlist", async () => {
+  it("materializes the complete catalog on addition and executable edits", async () => {
     const source = await createChatAssistant("owner", {
       workspaceId: "ws",
       name: "Source",
-      mcpGrants: [reviewedGrant()],
+      mcpGrants: [{ deploymentId: "mcp" }],
     });
-    await expect(
-      updateChatAssistant("owner", source.id, {
-        expectedRevision: 1,
-        mcpGrants: [{ deploymentId: "mcp", allowedToolNames: ["read"] }],
-      }),
-    ).rejects.toMatchObject({ status: 400 });
-    const stale = reviewedGrant("mcp", ["read"]);
-    const deployment = state.deployments[0];
-    if (!deployment) throw new Error("Missing deployment fixture");
-    deployment.sourceRef = "https://mcp.example.com/changed-after-review";
-    await expect(
-      updateChatAssistant("owner", source.id, {
-        expectedRevision: 1,
-        mcpGrants: [stale],
-      }),
-    ).rejects.toMatchObject({ status: 409 });
-    expect(state.revisions).toHaveLength(1);
-    await updateChatAssistant("owner", source.id, {
-      expectedRevision: 1,
-      mcpGrants: [reviewedGrant("mcp", ["read"])],
-    });
-    expect(
-      ChatAssistantRevisionConfigSchema.parse(state.revisions[1]?.config)
-        .mcpGrants,
-    ).toEqual([
-      {
-        deploymentId: "mcp",
-        allowedToolNames: ["read"],
-        definitionChecksum: reviewedGrant().expectedDefinitionChecksum,
-      },
-    ]);
     expect(state.grants).toEqual([
       {
         assistantId: source.id,
         deploymentId: "mcp",
-        allowedToolNames: ["read"],
+        allowedToolNames: ["search", "read"],
       },
     ]);
+    await updateChatAssistant("owner", source.id, {
+      expectedRevision: 1,
+      mcpGrants: [{ deploymentId: "mcp" }],
+    });
+    expect(state.grants).toEqual([
+      {
+        assistantId: source.id,
+        deploymentId: "mcp",
+        allowedToolNames: ["search", "read"],
+      },
+    ]);
+    expect(
+      ChatAssistantRevisionConfigSchema.parse(state.revisions[1]?.config)
+        .mcpGrants[0]?.allowedToolNames,
+    ).toEqual(["search", "read"]);
   });
 });

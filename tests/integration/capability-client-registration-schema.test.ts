@@ -8,22 +8,8 @@ import { db } from "@/lib/db";
 const stamp = `${process.pid}-${Date.now()}`;
 let userId = "";
 let workspaceId = "";
-let listingId = "";
-let releaseId = "";
-let nextReleaseId = "";
-let otherReleaseId = "";
-let marketInstallId = "";
 const checksum = "a".repeat(64);
 const nextChecksum = "b".repeat(64);
-const selection = () => [{ releaseId, checksum, kind: "skill" }];
-const registration = () => ({
-  workspaceId,
-  userId,
-  client: "claude-code",
-  label: "Schema fixture",
-  tokenHash: randomUUID(),
-  bindings: {},
-});
 
 beforeAll(async () => {
   userId = (
@@ -40,76 +26,10 @@ beforeAll(async () => {
       },
     })
   ).id;
-  const listing = await db.marketListing.create({
-    data: {
-      kind: "skill",
-      namespace: `client-schema-${stamp}`,
-      slug: "fixture",
-      name: "Fixture",
-      publisherWorkspaceId: workspaceId,
-      metadata: {},
-    },
-  });
-  listingId = listing.id;
-  releaseId = (
-    await db.marketRelease.create({
-      data: {
-        listingId,
-        version: 1,
-        manifest: {},
-        releaseSummary: {},
-        checksum,
-      },
-    })
-  ).id;
-  nextReleaseId = (
-    await db.marketRelease.create({
-      data: {
-        listingId,
-        version: 2,
-        manifest: {},
-        releaseSummary: {},
-        checksum: nextChecksum,
-      },
-    })
-  ).id;
-  const otherListing = await db.marketListing.create({
-    data: {
-      kind: "mcp",
-      namespace: `client-schema-${stamp}`,
-      slug: "other",
-      name: "Other",
-      publisherWorkspaceId: workspaceId,
-      metadata: {},
-    },
-  });
-  otherReleaseId = (
-    await db.marketRelease.create({
-      data: {
-        listingId: otherListing.id,
-        version: 1,
-        manifest: {},
-        releaseSummary: {},
-        checksum,
-      },
-    })
-  ).id;
-  marketInstallId = (
-    await db.marketInstall.create({
-      data: {
-        listingId,
-        currentReleaseId: releaseId,
-        requestedReleaseId: releaseId,
-        targetWorkspaceId: workspaceId,
-        idempotencyKey: randomUUID(),
-      },
-    })
-  ).id;
 });
 
 afterAll(async () => {
   if (workspaceId) {
-    await db.piPackageClientInstallation.deleteMany({ where: { workspaceId } });
     await db.marketInstall.deleteMany({
       where: { targetWorkspaceId: workspaceId },
     });
@@ -122,202 +42,6 @@ afterAll(async () => {
     await db.workspace.deleteMany({ where: { id: workspaceId } });
   }
   if (userId) await db.user.deleteMany({ where: { id: userId } });
-});
-
-describe("capability client registration persistence", () => {
-  it("preserves baseline package pins and accepts generic fixed selections", async () => {
-    const baseline = await db.piPackageClientInstallation.create({
-      data: { ...registration(), marketInstallId, releaseId },
-    });
-    expect(baseline.selections).toEqual([]);
-    const generic = await db.piPackageClientInstallation.create({
-      data: { ...registration(), selections: selection() },
-      include: { selectionReferences: true },
-    });
-    expect(generic.marketInstallId).toBeNull();
-    expect(generic.configVersion).toBe(0);
-    expect(generic.releaseId).toBeNull();
-    expect(generic.selectionReferences).toEqual([
-      { installationId: generic.id, releaseId, checksum, kind: "skill" },
-    ]);
-    await db.piPackageClientInstallation.update({
-      where: { id: generic.id },
-      data: { label: "Renamed", lastUsedAt: new Date() },
-    });
-    const authenticated = await db.piPackageClientInstallation.update({
-      where: { id: generic.id },
-      data: { lastUsedAt: new Date() },
-    });
-    expect(authenticated.configVersion).toBe(0);
-  });
-
-  it("rejects empty generic and partial or wrong-identity baseline pins", async () => {
-    for (const pins of [
-      {},
-      { marketInstallId },
-      { releaseId },
-      { marketInstallId, releaseId: otherReleaseId },
-    ]) {
-      await expect(
-        db.piPackageClientInstallation.create({
-          data: { ...registration(), ...pins },
-        }),
-      ).rejects.toThrow();
-    }
-  });
-
-  it("rejects orphan, mismatched, duplicated and credential-bearing selection metadata", async () => {
-    for (const selections of [
-      [{ releaseId: randomUUID(), checksum, kind: "skill" }],
-      [{ releaseId, checksum: nextChecksum, kind: "skill" }],
-      [{ releaseId, checksum, kind: "mcp" }],
-      [{ releaseId, checksum, kind: "prompt" }],
-      [...selection(), ...selection()],
-      [{ releaseId, checksum, kind: "skill", apiKey: "not-a-credential" }],
-      [{ releaseId, checksum, kind: "skill", credentialId: "extra-field" }],
-    ]) {
-      await expect(
-        db.piPackageClientInstallation.create({
-          data: { ...registration(), selections },
-        }),
-      ).rejects.toThrow();
-    }
-  });
-
-  it("requires reviewed transactions for selection version changes and keeps identity immutable", async () => {
-    const row = await db.piPackageClientInstallation.create({
-      data: { ...registration(), selections: selection() },
-    });
-    const replacement = [
-      { releaseId: nextReleaseId, checksum: nextChecksum, kind: "skill" },
-    ];
-    await expect(
-      db.piPackageClientInstallation.update({
-        where: { id: row.id },
-        data: { selections: replacement },
-      }),
-    ).rejects.toThrow();
-    await expect(
-      db.$transaction(async (tx) => {
-        await tx.$queryRaw`SELECT set_config('toolplane.client_registration_reviewed_update', 'on', true)`;
-        await tx.piPackageClientInstallation.update({
-          where: { id: row.id },
-          data: { selections: replacement },
-        });
-      }),
-    ).rejects.toThrow();
-    await db.$transaction(async (tx) => {
-      await tx.$queryRaw`SELECT set_config('toolplane.client_registration_reviewed_update', 'on', true)`;
-      await tx.piPackageClientInstallation.update({
-        where: { id: row.id },
-        data: { selections: replacement, configVersion: { increment: 1 } },
-      });
-    });
-    const current = await db.piPackageClientInstallation.findUniqueOrThrow({
-      where: { id: row.id },
-    });
-    expect(current.configVersion).toBe(1);
-    const staleWrite = await db.piPackageClientInstallation.updateMany({
-      where: { id: row.id, configVersion: 0 },
-      data: { label: "Stale configuration", configVersion: { increment: 1 } },
-    });
-    expect(staleWrite.count).toBe(0);
-    for (const configVersion of [-1, 0, 3]) {
-      await expect(
-        db.piPackageClientInstallation.update({
-          where: { id: row.id },
-          data: { configVersion },
-        }),
-      ).rejects.toThrow();
-    }
-    await expect(
-      db.piPackageClientInstallation.create({
-        data: { ...registration(), selections: selection(), configVersion: -1 },
-      }),
-    ).rejects.toThrow();
-    expect(
-      await db.piPackageClientSelection.findMany({
-        where: { installationId: row.id },
-      }),
-    ).toEqual([
-      {
-        installationId: row.id,
-        releaseId: nextReleaseId,
-        checksum: nextChecksum,
-        kind: "skill",
-      },
-    ]);
-    await expect(
-      db.piPackageClientInstallation.update({
-        where: { id: row.id },
-        data: { selections: selection() },
-      }),
-    ).rejects.toThrow();
-    await expect(
-      db.piPackageClientInstallation.update({
-        where: { id: row.id },
-        data: { client: "pi" },
-      }),
-    ).rejects.toThrow();
-  });
-
-  it("retains release references after revocation and prevents direct reference tampering", async () => {
-    const row = await db.piPackageClientInstallation.create({
-      data: { ...registration(), selections: selection() },
-    });
-    await db.piPackageClientInstallation.update({
-      where: { id: row.id },
-      data: { status: "revoked" },
-    });
-    await expect(
-      db.piPackageClientSelection.deleteMany({
-        where: { installationId: row.id },
-      }),
-    ).rejects.toThrow();
-    await expect(
-      db.marketRelease.delete({ where: { id: releaseId } }),
-    ).rejects.toThrow();
-    await expect(
-      db.marketListing.delete({ where: { id: listingId } }),
-    ).rejects.toThrow();
-    await expect(
-      db.marketRelease.update({
-        where: { id: releaseId },
-        data: { checksum: nextChecksum },
-      }),
-    ).rejects.toThrow();
-    await expect(
-      db.marketRelease.update({
-        where: { id: releaseId },
-        data: { version: 3 },
-      }),
-    ).rejects.toThrow();
-    await expect(
-      db.marketListing.update({
-        where: { id: listingId },
-        data: { kind: "mcp" },
-      }),
-    ).rejects.toThrow();
-  });
-
-  it("releases generic retention only when the registration itself is deleted", async () => {
-    const row = await db.piPackageClientInstallation.create({
-      data: {
-        ...registration(),
-        selections: [{ releaseId: otherReleaseId, checksum, kind: "mcp" }],
-      },
-    });
-    await expect(
-      db.marketRelease.delete({ where: { id: otherReleaseId } }),
-    ).rejects.toThrow();
-    await db.piPackageClientInstallation.delete({ where: { id: row.id } });
-    expect(
-      await db.piPackageClientSelection.count({
-        where: { installationId: row.id },
-      }),
-    ).toBe(0);
-    await db.marketRelease.delete({ where: { id: otherReleaseId } });
-  });
 });
 
 describe("revision source release retention", () => {
@@ -345,9 +69,9 @@ describe("revision source release retention", () => {
       data: {
         listingId: listing.id,
         currentReleaseId: source.id,
-        requestedReleaseId: source.id,
         targetWorkspaceId: workspaceId,
         idempotencyKey: randomUUID(),
+        status: "ready",
       },
     });
     const agent = await db.agent.create({
@@ -432,9 +156,21 @@ describe("revision source release retention", () => {
     });
     // Failed insert transactions do not consume the owner's next revision number.
     for (const packagePin of [
-      { marketInstallId, releaseId: randomUUID(), integrity: checksum },
-      { marketInstallId, releaseId, integrity: checksum },
-      { marketInstallId, releaseId: source.id, integrity: nextChecksum },
+      {
+        marketInstallId: packageInstall.id,
+        releaseId: randomUUID(),
+        integrity: checksum,
+      },
+      {
+        marketInstallId: randomUUID(),
+        releaseId: source.id,
+        integrity: checksum,
+      },
+      {
+        marketInstallId: packageInstall.id,
+        releaseId: source.id,
+        integrity: nextChecksum,
+      },
     ]) {
       await expect(
         db.agentRevision.create({
@@ -446,6 +182,32 @@ describe("revision source release retention", () => {
         }),
       ).rejects.toThrow();
     }
+    await db.marketRelease.update({
+      where: { id: source.id },
+      data: { reviewStatus: "revoked" },
+    });
+    await expect(
+      db.agentRevision.create({
+        data: { agentId: agent.id, version: 1, config: agentConfig },
+      }),
+    ).rejects.toThrow();
+    await db.marketRelease.update({
+      where: { id: source.id },
+      data: { reviewStatus: "approved" },
+    });
+    await db.marketListing.update({
+      where: { id: listing.id },
+      data: { status: "withdrawn" },
+    });
+    await expect(
+      db.agentRevision.create({
+        data: { agentId: agent.id, version: 1, config: agentConfig },
+      }),
+    ).rejects.toThrow();
+    await db.marketListing.update({
+      where: { id: listing.id },
+      data: { status: "published" },
+    });
     const agentRevision = await db.agentRevision.create({
       data: { agentId: agent.id, version: 1, config: agentConfig },
       include: { releaseReferences: true },

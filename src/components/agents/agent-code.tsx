@@ -2,6 +2,7 @@
 
 import { type CSSProperties, Fragment, useEffect, useState } from "react";
 import { createHighlighter, type Highlighter } from "shiki";
+import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
 import { cn } from "@/lib/utils";
 
 export type AgentCodeLanguage =
@@ -41,6 +42,7 @@ const tokenCache = new Map<string, AgentCodeTokenLines>();
 function getAgentCodeHighlighter() {
   if (!agentCodeHighlighter) {
     agentCodeHighlighter = createHighlighter({
+      engine: createJavaScriptRegexEngine(),
       themes: [LIGHT_THEME, DARK_THEME],
       langs: ["bash", "diff", "json", "tsx", "typescript"],
     });

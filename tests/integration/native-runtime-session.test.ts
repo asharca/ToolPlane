@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { execFile, spawn } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { once } from "node:events";
@@ -9,6 +9,153 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { expect, it } from "vitest";
+import { stopNativeSessionHosts } from "../../scripts/native-runtime-stop.mjs";
+
+it("stops only one conversation's resident SDK host while preserving its sibling and saved native state", async () => {
+  const root = await mkdtemp(join(tmpdir(), "toolplane-session-stop-"));
+  const driver = join(process.cwd(), "scripts/native-runtime-session.mjs");
+  const host = join(process.cwd(), "scripts/pi-sdk-session.mjs");
+  const daemons: ChildProcess[] = [];
+  const environment = {
+    ...process.env,
+    NODE_CHANNEL_FD: undefined,
+    NODE_CHANNEL_SERIALIZATION_MODE: undefined,
+  };
+  const prepare = async (name: string) => {
+    const cwd = join(root, name, "workspace");
+    const stateRoot = join(root, name, ".toolplane", "runtime");
+    const configPath = join(stateRoot, "host", "native.json");
+    const statePath = join(stateRoot, "sessions", "native.json");
+    const socketPath = `/tmp/toolplane-runtime-${createHash("sha256").update(statePath).digest("hex").slice(0, 32)}.sock`;
+    await Promise.all(
+      [cwd, join(stateRoot, "host"), join(stateRoot, "sessions", "native")].map(
+        (path) => mkdir(path, { recursive: true }),
+      ),
+    );
+    const extension = join(cwd, "counter.mjs");
+    const factory = join(stateRoot, "host", "mcp.mjs");
+    await writeFile(
+      extension,
+      "export default pi => { let count=0; pi.registerCommand('Ping',{handler:async()=>{ pi.sendMessage({customType:'counter',content:'count='+ ++count,display:true}); }}); };",
+    );
+    await writeFile(
+      factory,
+      "export async function createPiMcpTools(){ return []; }",
+    );
+    const model = {
+      id: "test",
+      name: "Test",
+      api: "openai-completions",
+      provider: "toolplane",
+      baseUrl: "http://127.0.0.1:1/v1",
+      reasoning: false,
+      input: ["text"],
+      contextWindow: 32768,
+      maxTokens: 1024,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    };
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        sdkVersion: "0.87.1",
+        packageRoot: process.cwd(),
+        cwd,
+        agentDir: stateRoot,
+        sessionsDir: join(stateRoot, "sessions", "native"),
+        statePath,
+        packageSetChecksum: "empty",
+        agentRevisionId: "pinned",
+        model,
+        systemPrompt: "Counter fixture",
+        defaultTools: [],
+        excludeTools: [],
+        packages: [],
+        resources: {
+          extensions: [extension],
+          skills: [],
+          prompts: [],
+          themes: [],
+        },
+        packageVerifierPath: join(
+          process.cwd(),
+          "scripts/pi-sdk-package-files.mjs",
+        ),
+        mcpFactoryPath: factory,
+        hostOnlyCommands: [],
+      }),
+    );
+    const inputPath = join(root, name, "request.json");
+    await writeFile(
+      inputPath,
+      JSON.stringify({
+        kind: "pi-sdk",
+        binary: process.execPath,
+        args: [host, configPath],
+        cwd,
+        statePath,
+        signature: name,
+        command: "/Ping",
+        context: {
+          runtimeToken: `token-${name}`,
+          model,
+          mcpConfig: { servers: [] },
+        },
+      }),
+    );
+    const daemon = spawn(process.execPath, [driver, inputPath, "serve"], {
+      stdio: "ignore",
+      env: environment,
+    });
+    daemons.push(daemon);
+    await expect
+      .poll(() => existsSync(socketPath), { timeout: 10000 })
+      .toBe(true);
+    const request = async () => {
+      const { stdout } = await promisify(execFile)(
+        process.execPath,
+        [driver, inputPath],
+        { timeout: 20000, env: environment },
+      );
+      const result = stdout.trim().split("\n").at(-1);
+      if (!result) throw new Error("Native runtime returned no response");
+      return JSON.parse(result);
+    };
+    return { stateRoot, statePath, socketPath, daemon, request };
+  };
+  try {
+    const first = await prepare("first");
+    const second = await prepare("second");
+    expect(await first.request()).toMatchObject({
+      success: true,
+      result: { text: expect.stringContaining("count=1") },
+    });
+    expect(await second.request()).toMatchObject({
+      success: true,
+      result: { text: expect.stringContaining("count=1") },
+    });
+    const stopped = once(first.daemon, "exit");
+    await stopNativeSessionHosts(first.stateRoot);
+    await stopped;
+    expect(existsSync(first.socketPath)).toBe(false);
+    expect(existsSync(first.statePath)).toBe(true);
+    expect(existsSync(second.socketPath)).toBe(true);
+    expect(await second.request()).toMatchObject({
+      success: true,
+      result: { text: expect.stringContaining("count=2") },
+    });
+    await stopNativeSessionHosts(first.stateRoot);
+  } finally {
+    await Promise.all(
+      daemons.map(async (daemon) => {
+        if (daemon.exitCode !== null || daemon.signalCode !== null) return;
+        const stopped = once(daemon, "exit");
+        daemon.kill("SIGTERM");
+        await stopped;
+      }),
+    );
+    await rm(root, { recursive: true, force: true });
+  }
+}, 60000);
 
 it("settles real SDK commands without agent_end, rotates context, and kills disconnected process groups", async () => {
   const dir = await mkdtemp(join(tmpdir(), "toolplane-sdk-daemon-"));
@@ -98,7 +245,11 @@ export default function(pi) {
     command: "/Case",
     message: "",
     history: [{ role: "user", text: "never seeded" }],
-    context: { runtimeToken: "first-test-token", mcpConfig: { servers: [] } },
+    context: {
+      runtimeToken: "first-test-token",
+      mcpConfig: { servers: [] },
+      model: JSON.parse(await readFile(configPath, "utf8")).model,
+    },
   };
   await writeFile(inputPath, JSON.stringify(job));
   let daemon = spawn(process.execPath, [driver, inputPath, "serve"], {
@@ -134,7 +285,7 @@ export default function(pi) {
       (event) => event.type === "toolplane_sdk_response",
     );
     expect(response).toHaveLength(1);
-    expect(response[0]).toMatchObject({
+    expect(response[0], JSON.stringify(response[0])).toMatchObject({
       success: true,
       result: {
         text: expect.stringContaining("count=1"),
@@ -234,6 +385,20 @@ export default function(pi) {
         message: "PI_SDK_SESSION_MISSING",
       },
     });
+    // A revision participates in the production signature. An idle old broker
+    // must stop before a changed toolset can reach its already-created SDK host.
+    const upgradeSocket = createConnection(socketPath);
+    await once(upgradeSocket, "connect");
+    const upgradeResponse = once(upgradeSocket, "data");
+    const upgradedHostStopped = once(daemon, "exit");
+    upgradeSocket.write(
+      `${JSON.stringify({ ...job, signature: "sdk-new-revision" })}\n`,
+    );
+    expect(JSON.parse(String((await upgradeResponse)[0]).trim())).toEqual({
+      type: "toolplane_session_restart",
+    });
+    await upgradedHostStopped;
+    expect(existsSync(socketPath)).toBe(false);
   } finally {
     // Ask the daemon to stop its detached host process group before removing files.
     if (daemon.exitCode === null && daemon.signalCode === null) {

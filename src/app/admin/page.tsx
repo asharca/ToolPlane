@@ -3,13 +3,7 @@
 import { ButtonLink } from "@/components/motion/button";
 import { getLocale, getTranslations } from "next-intl/server";
 import Link from "next/link";
-import {
-  Activity,
-  ArrowUpRight,
-  Building2,
-  ClipboardCheck,
-  CircleAlert,
-} from "lucide-react";
+import { Activity, ArrowUpRight, Building2, CircleAlert } from "lucide-react";
 import { requireAdmin } from "@/lib/auth/admin";
 import { getSystemOverview } from "@/lib/admin/overview";
 import { formatInTimeZone, resolveUserTimeZone } from "@/lib/timezone";
@@ -92,13 +86,6 @@ export default async function AdminOverviewPage() {
 
       <section className="grid grid-cols-2 gap-px border-y border-border bg-border xl:grid-cols-4">
         <AdminMetric
-          icon={ClipboardCheck}
-          label={ops("pendingReviews")}
-          value={o.attention.pendingReviews.toLocaleString()}
-          href="/admin/reviews"
-          note={ops("reviewQueue")}
-        />
-        <AdminMetric
           icon={Building2}
           label={t("workspaces")}
           value={o.counts.workspaces.toLocaleString()}
@@ -128,19 +115,6 @@ export default async function AdminOverviewPage() {
       <div id="needs-attention" className="grid min-w-0 gap-8 xl:grid-cols-2">
         <AdminPanel title={ops("needsAttention")} padded={false}>
           <ul className="divide-y divide-border">
-            <li>
-              <Link
-                href="/admin/reviews"
-                className="flex items-center justify-between gap-3 px-5 py-3 text-sm hover:bg-muted/50"
-              >
-                <span>{ops("pendingReviews")}</span>
-                <AdminBadge
-                  tone={o.attention.pendingReviews ? "warning" : "neutral"}
-                >
-                  {o.attention.pendingReviews}
-                </AdminBadge>
-              </Link>
-            </li>
             {o.attention.unavailableWorkspaces ? (
               <li>
                 <Link
@@ -182,9 +156,7 @@ export default async function AdminOverviewPage() {
               </li>
             ))}
           </ul>
-          {!o.attention.pendingReviews &&
-          !o.attention.abnormalCount &&
-          !o.attention.unavailableWorkspaces ? (
+          {!o.attention.abnormalCount && !o.attention.unavailableWorkspaces ? (
             <p className="px-5 py-6 text-sm text-muted-foreground">
               {ops("noPendingWork")}
             </p>
@@ -388,9 +360,7 @@ export default async function AdminOverviewPage() {
               items={[
                 { label: t("directoryServers"), value: o.counts.servers },
                 { label: t("directorySkills"), value: o.counts.skills },
-                { label: t("directoryAgents"), value: o.counts.agentListings },
                 { label: t("clients"), value: o.counts.clients },
-                { label: t("categories"), value: o.counts.categories },
               ]}
             />
           </div>
@@ -424,7 +394,7 @@ export default async function AdminOverviewPage() {
                     <span className="flex min-w-0 items-center gap-3">
                       <span
                         aria-hidden="true"
-                        className="grid size-8 shrink-0 place-items-center rounded-md bg-muted text-xs font-semibold text-muted-foreground"
+                        className="grid size-8 shrink-0 place-items-center rounded-lg bg-muted text-xs font-semibold text-muted-foreground"
                       >
                         {(u.name ?? u.email).slice(0, 2).toUpperCase()}
                       </span>
@@ -485,7 +455,7 @@ export default async function AdminOverviewPage() {
                       aria-label={deploymentLabels[status] ?? status}
                       value={count}
                       max={deployTotal}
-                      className={`block h-1.5 w-full overflow-hidden rounded [&::-webkit-progress-bar]:bg-muted ${status === "running" ? "accent-primary [&::-webkit-progress-value]:bg-primary" : status === "error" || status === "failed" ? "accent-destructive [&::-webkit-progress-value]:bg-destructive" : "accent-muted-foreground [&::-webkit-progress-value]:bg-muted-foreground"}`}
+                      className={`block h-1.5 w-full overflow-hidden rounded-full [&::-webkit-progress-bar]:bg-muted ${status === "running" ? "accent-primary [&::-webkit-progress-value]:bg-primary" : status === "error" || status === "failed" ? "accent-destructive [&::-webkit-progress-value]:bg-destructive" : "accent-muted-foreground [&::-webkit-progress-value]:bg-muted-foreground"}`}
                     />
                   </div>
                 ))}

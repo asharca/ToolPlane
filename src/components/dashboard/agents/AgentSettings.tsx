@@ -1,6 +1,5 @@
 "use client";
-import { ModalSidebar } from "../ModalSidebar";
-import { Button } from "@/components/motion/button/base";
+import { DialogNav } from "../dialog";
 
 import dynamic from "next/dynamic";
 import { useState } from "react";
@@ -9,13 +8,14 @@ import type { AgentResourceOption } from "@/components/dashboard/agents/AgentRes
 import type { ModelProviderOption } from "@/components/dashboard/models/ModelPicker";
 import { AgentSettingsForm } from "@/components/dashboard/agents/AgentSettingsForm";
 import type {
+  AgentOwnSandbox,
+  AgentExternalSandbox,
   AgentPiPackageOption,
   AgentSettingsSection,
 } from "@/components/dashboard/agents/AgentSettingsForm";
-import { AgentMarketSetupBanner } from "@/components/dashboard/agents/AgentMarketSetupBanner";
 import type { AgentChannelConnectionClientView } from "@/lib/agents/channel-connection-client";
-import type { AgentMarketSetupGuide } from "@/lib/agents/market-setup";
 import type { AgentRevisionConfig } from "@/lib/agents/revision-types";
+import { isExecutableAgentRuntimeKind } from "@/lib/agents/runtime-kind";
 
 const AgentMessagingPanel = dynamic(() =>
   import("@/components/dashboard/agents/AgentMessagingPanel").then(
@@ -29,6 +29,12 @@ const AgentA2APanel = dynamic(() =>
   ),
 );
 
+const RevisionChangelog = dynamic(() =>
+  import("@/components/dashboard/RevisionChangelog").then(
+    (module) => module.RevisionChangelog,
+  ),
+);
+
 type SettingsData = {
   workspaceId?: string;
   name: string;
@@ -36,6 +42,7 @@ type SettingsData = {
   runtimeKind: string;
   systemPrompt: string;
   disabledBuiltinTools?: string[];
+  ompConfig?: unknown;
   providerId: string | null;
   model: string | null;
   maxSteps: number;
@@ -43,22 +50,22 @@ type SettingsData = {
   deployments: AgentResourceOption[];
   skills: AgentResourceOption[];
   piPackages?: AgentPiPackageOption[];
-  defaultSandboxId?: string | null;
-  sandboxes: AgentResourceOption[];
-  subAgents: AgentResourceOption[];
+  ownSandbox: AgentOwnSandbox | null;
+  externalSandboxes: AgentExternalSandbox[];
   publishedRevision?: {
     id: string;
     version: number;
     config: AgentRevisionConfig;
   } | null;
   canManageCredentials?: boolean;
+  canApprovePluginSync?: boolean;
 };
 
 type ChannelSettingsData = {
   connections: AgentChannelConnectionClientView[];
 };
 
-type SettingsTab = AgentSettingsSection | "channels" | "a2a";
+type SettingsTab = AgentSettingsSection | "channels" | "a2a" | "changelog";
 type InitialSettingsTab = SettingsTab | "agent";
 
 const AGENT_SETTINGS_SECTIONS: readonly AgentSettingsSection[] = [
@@ -92,9 +99,9 @@ function resolveSettingsTab({
     initialSettingsTab === "agent"
       ? "general"
       : (initialSettingsTab ?? "general");
-  if (requested === "a2a") return requested;
-  if (isAgentSettingsSection(requested)) return requested;
+  if (requested === "a2a" || requested === "changelog") return requested;
   if (requested === "channels" && supportsChannelSettings) return requested;
+  if (isAgentSettingsSection(requested)) return requested;
   return "general";
 }
 
@@ -105,7 +112,6 @@ export function AgentSettings({
   channelSettings,
   ready,
   agentName,
-  marketSetup = null,
   initialSettingsTab,
   initialA2ATaskId,
 }: {
@@ -115,17 +121,25 @@ export function AgentSettings({
   channelSettings: ChannelSettingsData;
   ready: boolean;
   agentName: string;
-  marketSetup?: AgentMarketSetupGuide | null;
   initialSettingsTab?: InitialSettingsTab | null;
   initialA2ATaskId?: string;
 }) {
   const t = useTranslations("console.agents");
-  const supportsChannelSettings = settings.runtimeKind === "pi-sdk";
+  const supportsChannelSettings = isExecutableAgentRuntimeKind(
+    settings.runtimeKind,
+  );
   const requestedTab = resolveSettingsTab({
     initialSettingsTab,
     supportsChannelSettings,
   });
-  const [settingsTab, setSettingsTab] = useState<SettingsTab>(requestedTab);
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>(
+    requestedTab === "subAgents" && !supportsChannelSettings
+      ? "general"
+      : requestedTab,
+  );
+  const [dirtySections, setDirtySections] = useState<AgentSettingsSection[]>(
+    [],
+  );
 
   const navigationItems: Array<{ id: SettingsTab; label: string }> = [
     { id: "general", label: t("basic") },
@@ -136,8 +150,11 @@ export function AgentSettings({
     { id: "mcp", label: t("mcp") },
     { id: "skills", label: t("skills") },
     { id: "piPackages", label: t("piPackages") },
-    { id: "subAgents", label: t("subAgents") },
+    ...(isExecutableAgentRuntimeKind(settings.runtimeKind)
+      ? [{ id: "subAgents" as const, label: t("subAgents") }]
+      : []),
     { id: "a2a", label: t("a2a.title") },
+    { id: "changelog", label: t("changelogTab") },
     ...(supportsChannelSettings
       ? [{ id: "channels" as const, label: t("channelSettingsTab") }]
       : []),
@@ -149,57 +166,27 @@ export function AgentSettings({
         aria-label={agentName}
         className="flex h-full min-h-0 flex-col overflow-hidden bg-background"
       >
-        {marketSetup ? (
-          <AgentMarketSetupBanner slug={slug} setup={marketSetup} />
-        ) : null}
-
-        <div className="flex min-h-0 flex-1 flex-col sm:flex-row">
-          <ModalSidebar className="sm:flex sm:w-52 sm:min-h-0 sm:flex-col sm:border-b-0 sm:border-r">
-            <div className="p-3 sm:hidden">
-              <select
-                aria-label={t("configurationNavigation")}
-                value={settingsTab}
-                onChange={(event) =>
-                  setSettingsTab(event.target.value as SettingsTab)
-                }
-                className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                {navigationItems.map(({ id, label }) => (
-                  <option key={id} value={id}>
-                    {label}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <nav
-              aria-label={t("configurationNavigation")}
-              className="hidden min-h-0 flex-1 space-y-1 overflow-y-auto p-4 sm:block"
+        <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+          <DialogNav
+            label={t("configurationNavigation")}
+            items={navigationItems.map((item) => ({
+              ...item,
+              dirty: dirtySections.includes(item.id as AgentSettingsSection),
+            }))}
+            active={settingsTab}
+            onSelect={(id) => setSettingsTab(id as SettingsTab)}
+          />
+          <div className={cx("min-h-0 min-w-0 flex-1 overflow-hidden")}>
+            <div
+              hidden={!isAgentSettingsSection(settingsTab)}
+              className={
+                isAgentSettingsSection(settingsTab)
+                  ? "h-full min-h-0"
+                  : "hidden"
+              }
             >
-              {navigationItems.map(({ id, label }) => {
-                const active = settingsTab === id;
-                return (
-                  <Button
-                    key={id}
-                    type="button"
-                    aria-current={active ? "page" : undefined}
-                    onClick={() => setSettingsTab(id)}
-                    variant={active ? "secondary" : "ghost"}
-                    size="sm"
-                    className="w-full justify-start text-left"
-                  >
-                    <span className="truncate">{label}</span>
-                  </Button>
-                );
-              })}
-            </nav>
-          </ModalSidebar>
-          <div
-            className={cx(
-              "min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
-            )}
-          >
-            {isAgentSettingsSection(settingsTab) ? (
               <AgentSettingsForm
+                key={`${settings.publishedRevision?.id ?? "draft"}:${settings.piPackages?.map((pkg) => `${pkg.marketInstallId}:${pkg.enabledReleaseId}`).join(",") ?? ""}`}
                 slug={slug}
                 workspaceId={settings.workspaceId}
                 agentId={agentId}
@@ -207,6 +194,7 @@ export function AgentSettings({
                 description={settings.description}
                 systemPrompt={settings.systemPrompt}
                 disabledBuiltinTools={settings.disabledBuiltinTools}
+                ompConfig={settings.ompConfig}
                 providerId={settings.providerId}
                 model={settings.model}
                 maxSteps={settings.maxSteps}
@@ -214,35 +202,50 @@ export function AgentSettings({
                 deployments={settings.deployments}
                 skills={settings.skills}
                 piPackages={settings.piPackages}
-                defaultSandboxId={settings.defaultSandboxId}
-                sandboxes={settings.sandboxes}
-                subAgents={settings.subAgents}
+                ownSandbox={settings.ownSandbox}
+                externalSandboxes={settings.externalSandboxes}
                 runtimeKind={settings.runtimeKind}
                 publishedRevision={settings.publishedRevision}
                 canManageCredentials={settings.canManageCredentials}
-                activeSection={settingsTab}
+                canApprovePluginSync={settings.canApprovePluginSync}
+                activeSection={
+                  isAgentSettingsSection(settingsTab) ? settingsTab : "general"
+                }
                 onSectionChange={setSettingsTab}
+                onDirtySectionsChange={setDirtySections}
                 showNavigation={false}
-                className="mx-auto w-full max-w-2xl space-y-4 px-5 py-6 sm:px-6"
+                className="flex h-full min-h-0 flex-col"
               />
-            ) : settingsTab === "channels" && supportsChannelSettings ? (
-              <div className="mx-auto h-full w-full max-w-6xl">
+            </div>
+            {settingsTab === "channels" && supportsChannelSettings ? (
+              <div className="h-full w-full overflow-y-auto">
                 <AgentMessagingPanel
                   slug={slug}
                   agentId={agentId}
-                  sandboxId={settings.defaultSandboxId ?? undefined}
+                  sandboxId={settings.ownSandbox?.id}
                   connections={channelSettings.connections}
                   ready={ready}
                 />
               </div>
             ) : settingsTab === "a2a" ? (
-              <AgentA2APanel
-                key={`${slug}:${agentId}:${initialA2ATaskId ?? ""}`}
-                slug={slug}
-                agentId={agentId}
-                runtimeKind={settings.runtimeKind}
-                initialTaskId={initialA2ATaskId}
-              />
+              <div className="h-full overflow-y-auto">
+                <AgentA2APanel
+                  key={`${slug}:${agentId}:${initialA2ATaskId ?? ""}`}
+                  slug={slug}
+                  agentId={agentId}
+                  runtimeKind={settings.runtimeKind}
+                  initialTaskId={initialA2ATaskId}
+                />
+              </div>
+            ) : settingsTab === "changelog" ? (
+              <div className="h-full overflow-y-auto">
+                <RevisionChangelog
+                  key={agentId}
+                  url={`/api/v1/agents/${encodeURIComponent(agentId)}/revisions`}
+                  title={t("changelogTab")}
+                  className="space-y-6 px-6 py-5"
+                />
+              </div>
             ) : null}
           </div>
         </div>

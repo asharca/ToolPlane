@@ -2,6 +2,7 @@ import "server-only";
 import { SignJWT, jwtVerify } from "jose";
 import { runtimeEnv } from "@/lib/runtime-env";
 import { getLogContext, enrichLogContext } from "@/lib/observability/context";
+import { AgentModelOverrideSchema, type AgentModelOverride } from "./chat-body";
 
 export const AGENT_RUNTIME_TOKEN_MAX_TTL_SECONDS = 60 * 60;
 export const AGENT_RUNTIME_TOKEN_HEADER = "x-toolplane-runtime-token";
@@ -14,11 +15,13 @@ export type AgentRuntimeTokenPayload = {
   conversationId?: string;
   a2aContextId?: string;
   providerId: string;
+  modelOverride?: AgentModelOverride;
   deploymentIds: string[];
+  /** Attached sandboxes pinned by the revision; live access is rechecked per call. */
+  externalSandboxIds?: string[];
   exp: number;
   a2aTaskId?: string;
   a2aLeaseToken?: string;
-  a2aApprovalRequired?: boolean;
   traceId?: string;
   parentSpanId?: string;
 };
@@ -57,14 +60,17 @@ export async function createAgentRuntimeToken(
     (payload.a2aContextId !== undefined && !validId(payload.a2aContextId)) ||
     ((payload.a2aTaskId !== undefined || payload.a2aLeaseToken !== undefined) &&
       (!validId(payload.a2aTaskId) || !validId(payload.a2aLeaseToken))) ||
-    (payload.a2aApprovalRequired !== undefined &&
-      (payload.a2aApprovalRequired !== true || !payload.a2aTaskId)) ||
     !validId(payload.workspaceId) ||
     !validId(payload.agentId) ||
     !validId(payload.agentRevisionId) ||
     !validId(payload.sandboxId) ||
     !validId(payload.providerId) ||
+    (payload.modelOverride !== undefined &&
+      (!AgentModelOverrideSchema.safeParse(payload.modelOverride).success ||
+        payload.modelOverride.providerId !== payload.providerId)) ||
     !validDeploymentIds(payload.deploymentIds) ||
+    (payload.externalSandboxIds !== undefined &&
+      !validDeploymentIds(payload.externalSandboxIds)) ||
     !Number.isSafeInteger(payload.exp) ||
     payload.exp <= issuedAt ||
     payload.exp > issuedAt + AGENT_RUNTIME_TOKEN_MAX_TTL_SECONDS
@@ -76,9 +82,6 @@ export async function createAgentRuntimeToken(
     ...(payload.a2aTaskId
       ? { a2aTaskId: payload.a2aTaskId, a2aLeaseToken: payload.a2aLeaseToken }
       : {}),
-    ...(payload.a2aApprovalRequired === true
-      ? { a2aApprovalRequired: true }
-      : {}),
     workspaceId: payload.workspaceId,
     agentId: payload.agentId,
     agentRevisionId: payload.agentRevisionId,
@@ -86,7 +89,11 @@ export async function createAgentRuntimeToken(
     conversationId: payload.conversationId,
     a2aContextId: payload.a2aContextId,
     providerId: payload.providerId,
+    ...(payload.modelOverride ? { modelOverride: payload.modelOverride } : {}),
     deploymentIds: [...new Set(payload.deploymentIds)],
+    ...(payload.externalSandboxIds?.length
+      ? { externalSandboxIds: [...new Set(payload.externalSandboxIds)] }
+      : {}),
     traceId: getLogContext()?.traceId,
     parentSpanId: getLogContext()?.spanId,
   })
@@ -120,14 +127,18 @@ export async function verifyAgentRuntimeToken(
       ((payload.a2aTaskId !== undefined ||
         payload.a2aLeaseToken !== undefined) &&
         (!validId(payload.a2aTaskId) || !validId(payload.a2aLeaseToken))) ||
-      (payload.a2aApprovalRequired !== undefined &&
-        (payload.a2aApprovalRequired !== true || !payload.a2aTaskId)) ||
       !validId(payload.workspaceId) ||
       !validId(payload.agentId) ||
       !validId(payload.agentRevisionId) ||
       !validId(payload.sandboxId) ||
       !validId(payload.providerId) ||
+      (payload.modelOverride !== undefined &&
+        (!AgentModelOverrideSchema.safeParse(payload.modelOverride).success ||
+          (payload.modelOverride as AgentModelOverride).providerId !==
+            payload.providerId)) ||
       !validDeploymentIds(payload.deploymentIds) ||
+      (payload.externalSandboxIds !== undefined &&
+        !validDeploymentIds(payload.externalSandboxIds)) ||
       typeof issuedAt !== "number" ||
       typeof expiresAt !== "number" ||
       issuedAt > Math.floor(now / 1000) + 60 ||
@@ -148,9 +159,6 @@ export async function verifyAgentRuntimeToken(
             a2aLeaseToken: String(payload.a2aLeaseToken),
           }
         : {}),
-      ...(payload.a2aApprovalRequired === true
-        ? { a2aApprovalRequired: true }
-        : {}),
       workspaceId: payload.workspaceId,
       agentId: payload.agentId,
       agentRevisionId: payload.agentRevisionId,
@@ -162,7 +170,21 @@ export async function verifyAgentRuntimeToken(
         ? { a2aContextId: payload.a2aContextId }
         : {}),
       providerId: payload.providerId,
+      ...(payload.modelOverride
+        ? {
+            modelOverride: AgentModelOverrideSchema.parse(
+              payload.modelOverride,
+            ),
+          }
+        : {}),
       deploymentIds: [...new Set(payload.deploymentIds)],
+      ...(Array.isArray(payload.externalSandboxIds)
+        ? {
+            externalSandboxIds: [
+              ...new Set(payload.externalSandboxIds as string[]),
+            ],
+          }
+        : {}),
       exp: expiresAt,
       ...(typeof payload.traceId === "string"
         ? { traceId: payload.traceId }
@@ -231,6 +253,10 @@ export function runtimeModelProxyBase(providerId: string): string {
 
 export function runtimeMcpProxyUrl(deploymentId: string): string {
   return `${sandboxRuntimeOrigin()}/api/v1/agent-runtime/mcp/${encodeURIComponent(deploymentId)}/rpc`;
+}
+
+export function runtimeExternalSandboxProxyUrl(sandboxId: string): string {
+  return `${sandboxRuntimeOrigin()}/api/v1/agent-runtime/sandboxes/${encodeURIComponent(sandboxId)}/rpc`;
 }
 
 export function runtimeProviderUrl(

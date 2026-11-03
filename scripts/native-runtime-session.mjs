@@ -109,7 +109,12 @@ async function serve() {
         active = socket;
         sdkRequestId = randomUUID();
         clearTimeout(idle);
-        if (job.kind !== "pi-sdk" || job.signature !== input.signature) {
+        if (
+          job.kind !== "pi-sdk" ||
+          job.signature !== input.signature ||
+          job.statePath !== input.statePath ||
+          job.cwd !== input.cwd
+        ) {
           send({ type: "toolplane_session_restart" });
           await stop();
           return;
@@ -130,6 +135,7 @@ async function serve() {
   });
   function start() {
     child = spawn(input.binary, [...input.args], {
+      cwd: input.cwd ?? process.cwd(),
       stdio: ["pipe", "pipe", "pipe", "pipe"],
       detached: true,
     });
@@ -179,6 +185,13 @@ async function serve() {
         const code = /^PI_[A-Z0-9_]{1,80}$/.test(event.error?.code)
           ? event.error.code
           : "PI_SDK_RUNTIME_FAILED";
+        // Tool discovery runs before the model request. Reload the persisted
+        // session with fresh definitions instead of failing this user's turn.
+        if (!event.success && code === "PI_SDK_TOOLSET_CHANGED") {
+          send({ type: "toolplane_session_restart" });
+          void stop();
+          return;
+        }
         send({
           type: event.type,
           id: event.id,

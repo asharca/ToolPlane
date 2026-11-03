@@ -30,21 +30,15 @@ describe("chat bounded-context input", () => {
       mcpGrants: [
         {
           deploymentId: "mcp-1",
-          allowedToolNames: ["search"],
-          expectedDefinitionChecksum: "a".repeat(64),
         },
       ],
-      marketTemplateReleaseId: "release-1",
     });
 
     expect(result.mcpGrants).toEqual([
       {
         deploymentId: "mcp-1",
-        allowedToolNames: ["search"],
-        expectedDefinitionChecksum: "a".repeat(64),
       },
     ]);
-    expect(result.marketTemplateReleaseId).toBe("release-1");
     expect(result.description).toBe("Finds primary sources.");
     expect(result.modelParameters).toEqual({
       temperature: 0.4,
@@ -223,52 +217,48 @@ describe("chat bounded-context input", () => {
   });
 
   it.each([CreateChatAssistantSchema, UpdateChatAssistantSchema])(
-    "validates optional reviewed-definition checksums without accepting server-owned pins",
+    "accepts deployment grants and rejects client-owned tool lists and pins",
     (schema) => {
-      const base = { workspaceId: "ws-1", name: "Helper", expectedRevision: 1 };
       const input =
         schema === CreateChatAssistantSchema
-          ? { workspaceId: base.workspaceId, name: base.name }
-          : { expectedRevision: base.expectedRevision };
-      const grant = { deploymentId: "mcp-1", allowedToolNames: ["search"] };
+          ? { workspaceId: "ws-1", name: "Helper" }
+          : { expectedRevision: 1 };
       expect(
-        schema.safeParse({
-          ...input,
-          mcpGrants: [{ ...grant, expectedDefinitionChecksum: "a".repeat(64) }],
-        }).success,
+        schema.safeParse({ ...input, mcpGrants: [{ deploymentId: "mcp-1" }] })
+          .success,
       ).toBe(true);
-      for (const checksum of ["", "a".repeat(63), "g".repeat(64)]) {
-        expect(
-          schema.safeParse({
-            ...input,
-            mcpGrants: [{ ...grant, expectedDefinitionChecksum: checksum }],
-          }).success,
-        ).toBe(false);
-      }
       expect(
         schema.safeParse({
           ...input,
-          mcpGrants: [{ ...grant, definitionChecksum: "a".repeat(64) }],
+          mcpGrants: [{ deploymentId: "mcp-1", allowedToolNames: ["search"] }],
+        }).success,
+      ).toBe(false);
+      expect(
+        schema.safeParse({
+          ...input,
+          mcpGrants: [
+            { deploymentId: "mcp-1", definitionChecksum: "a".repeat(64) },
+          ],
         }).success,
       ).toBe(false);
     },
   );
 
-  it("requires an explicit tool allowlist and a durable request key", () => {
+  it("accepts deployment-only grants and requires a durable request key", () => {
     expect(
       CreateChatAssistantSchema.safeParse({
         workspaceId: "ws-1",
         name: "Helper",
         mcpGrants: [{ deploymentId: "mcp-1" }],
       }).success,
-    ).toBe(false);
+    ).toBe(true);
     expect(
       CreateChatAssistantSchema.safeParse({
         workspaceId: "ws-1",
         name: "Helper",
         mcpGrants: [{ deploymentId: "mcp-1", allowedToolNames: [] }],
       }).success,
-    ).toBe(true);
+    ).toBe(false);
     expect(
       CreateChatAssistantSchema.safeParse({
         workspaceId: "ws-1",

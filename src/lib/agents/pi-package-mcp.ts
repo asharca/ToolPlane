@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { piPackageMcpRequirementsSchema } from "@/lib/market/pi-package-manifest";
+import { piPackageMcpRequirementsSchema } from "@/lib/pi-packages/manifest";
 
 export type PiPackageMcpToolPolicy = Record<string, string[]>;
 

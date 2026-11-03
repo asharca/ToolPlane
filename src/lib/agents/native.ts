@@ -168,6 +168,7 @@ export type NativeRunOptions = {
   modelParameters?: ModelParameters;
   reasoningEffort?: ReasoningEffort;
   signal?: AbortSignal;
+  onModelRequest?: () => void | Promise<void>;
   onEvent?: (event: AssistantMessageEvent) => void | Promise<void>;
   onToolResult?: (
     toolCall: ToolCall,
@@ -225,6 +226,8 @@ async function runNativeSteps(options: NativeRunOptions): Promise<string> {
       const modelStart = performance.now();
       let firstOutputMs: number | undefined;
       try {
+        options.signal?.throwIfAborted();
+        await options.onModelRequest?.();
         const stream = models.streamSimple(runtimeModel, context, {
           signal: options.signal,
           maxRetries: 0,

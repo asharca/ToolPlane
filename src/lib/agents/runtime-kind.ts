@@ -1,6 +1,7 @@
 export const AGENT_RUNTIME_KINDS = [
   "pi",
   "pi-sdk",
+  "omp",
   "claude-code",
   "dsh",
 ] as const;
@@ -13,9 +14,16 @@ export type SandboxHarnessRuntimeKind = Extract<
 >;
 export type DedicatedSandboxRuntimeKind = Extract<
   AgentRuntimeKind,
-  "pi" | "pi-sdk" | "claude-code" | "dsh"
+  "pi" | "pi-sdk" | "omp" | "claude-code" | "dsh"
 >;
 export type WorkRuntimeKind = DedicatedSandboxRuntimeKind;
+export type ExecutableAgentRuntimeKind = "pi-sdk" | "omp";
+
+export function isExecutableAgentRuntimeKind(
+  value: unknown,
+): value is ExecutableAgentRuntimeKind {
+  return value === "pi-sdk" || value === "omp";
+}
 
 // Explicit public capability inventory. Entry-point subsets are intentional:
 // console support does not automatically grant creation through Control MCP.
@@ -38,6 +46,13 @@ export const AGENT_RUNTIME_CAPABILITIES = {
     publicEndpoint: false,
   },
   dsh: {
+    sandbox: true,
+    providerBinding: "single",
+    attachments: false,
+    terminal: true,
+    publicEndpoint: false,
+  },
+  omp: {
     sandbox: true,
     providerBinding: "single",
     attachments: false,
@@ -89,6 +104,13 @@ const AGENT_RUNTIME_BUILTIN_TOOL_GROUPS: Record<
     { category: "file", tools: ["read", "edit", "write"] },
     { category: "search", tools: ["grep", "find", "ls"] },
     { category: "shell", tools: ["bash"] },
+    { category: "orchestration", tools: ["todo"] },
+  ],
+  omp: [
+    { category: "file", tools: ["read", "edit", "write"] },
+    { category: "search", tools: ["grep", "glob", "web_search"] },
+    { category: "shell", tools: ["bash", "eval"] },
+    { category: "orchestration", tools: ["todo", "task", "wait", "ask"] },
   ],
   "claude-code": [
     { category: "file", tools: ["Read", "Edit", "Write"] },
@@ -138,6 +160,7 @@ export function agentRuntimeDisplayName(value: string): string {
   if (value === "dsh") return "DeepSeek Harness";
   if (value === "pi") return "Pi";
   if (value === "pi-sdk") return "Pi SDK";
+  if (value === "omp") return "OMP";
   return value;
 }
 

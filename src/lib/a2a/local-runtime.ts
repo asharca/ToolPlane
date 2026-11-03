@@ -8,10 +8,7 @@ import { localTarget } from "./local-policy";
 import { findAgentConversationSandbox } from "@/lib/agents/conversation-sandbox";
 
 /** Signed task and execution lease are required; a normal model/MCP runtime token cannot delegate. */
-export async function assertLocalRuntimeToken(
-  token: AgentRuntimeTokenPayload,
-  approvalChannel = false,
-) {
+export async function assertLocalRuntimeToken(token: AgentRuntimeTokenPayload) {
   if (!token.a2aTaskId || !token.a2aLeaseToken) throw new TaskNotFoundError();
   const row = await db.a2ATask.findUnique({ where: { id: token.a2aTaskId } });
   if (
@@ -21,12 +18,6 @@ export async function assertLocalRuntimeToken(
     row.phase !== "executing" ||
     row.cancelRequestedAt ||
     row.deadlineAt <= new Date()
-  )
-    throw new TaskNotFoundError();
-  if (
-    !approvalChannel &&
-    token.a2aApprovalRequired &&
-    row.approvalReadyLease !== row.leaseToken
   )
     throw new TaskNotFoundError();
   const grant = row.grant as unknown as TaskGrant;
@@ -54,7 +45,10 @@ export async function assertLocalRuntimeToken(
   );
   if (
     mapped?.sandboxId !== token.sandboxId ||
-    target.providerId !== token.providerId
+    (grant.modelOverride?.providerId ?? target.providerId) !==
+      token.providerId ||
+    grant.modelOverride?.model !== token.modelOverride?.model ||
+    grant.modelOverride?.providerId !== token.modelOverride?.providerId
   )
     throw new TaskNotFoundError();
   return { row, grant, target };

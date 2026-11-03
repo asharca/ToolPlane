@@ -2,12 +2,12 @@
 
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import { usePathname, useSearchParams } from "next/navigation";
 import { Menu } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { DashboardSidebar } from "./DashboardSidebar";
 import { DashboardLogo } from "./DashboardLogo";
 import { DashboardRuntimeConfigProvider } from "./DashboardRuntimeConfig";
+import { Toaster } from "./Toaster";
 import { usePersistentBoolean } from "@/lib/use-persistent-boolean";
 import { dashboardSidebarCookieName } from "@/lib/sidebar-preferences";
 import {
@@ -17,12 +17,6 @@ import {
 import { AnimatedSidebarTrigger } from "@/components/motion/animated-sidebar";
 import { Tooltip } from "@/components/motion/tooltip";
 import { WorkspaceShell } from "@/components/workspace/workspace-shell";
-import {
-  DASHBOARD_DETACHED_QUERY_PARAM,
-  DashboardTabBar,
-  DashboardTabContent,
-  DashboardTabsProvider,
-} from "./DashboardTabs";
 
 type Workspace = { id: string; slug: string; name: string };
 
@@ -49,11 +43,6 @@ export function DashboardChrome({
   initialSidebarCollapsed?: boolean;
   children: ReactNode;
 }) {
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
-  const [detached] = useState(
-    () => searchParams.get(DASHBOARD_DETACHED_QUERY_PARAM) === "1",
-  );
   const [open, setOpen] = useState(false);
   const [collapsed, setCollapsed] = usePersistentBoolean(
     `toolplane:dashboard-sidebar:${slug}`,
@@ -62,16 +51,6 @@ export function DashboardChrome({
   );
   const t = useTranslations("console.sidebar");
   const workspaceT = useTranslations("console.workspaces");
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: Path navigation must reapply the detached marker even when search parameters are unchanged.
-  useEffect(() => {
-    if (!detached || searchParams.get(DASHBOARD_DETACHED_QUERY_PARAM) === "1")
-      return;
-    // Feature links need not know about the window shell; keep reloads detached too.
-    const url = new URL(window.location.href);
-    url.searchParams.set(DASHBOARD_DETACHED_QUERY_PARAM, "1");
-    window.history.replaceState(null, "", url);
-  }, [detached, pathname, searchParams]);
 
   useEffect(() => {
     const confirm = () => window.confirm(workspaceT("unsavedChanges"));
@@ -133,50 +112,40 @@ export function DashboardChrome({
     document.cookie = `${lastWorkspaceCookieName(userId)}=${encodeURIComponent(slug)}; Path=/; Max-Age=31536000; SameSite=Lax${location.protocol === "https:" ? "; Secure" : ""}`;
   }, [slug, userId]);
 
-  if (detached) {
-    return (
-      <DashboardRuntimeConfigProvider supportEmail={supportEmail}>
-        <main className="flex h-dvh min-h-0 min-w-0 flex-col overflow-auto overscroll-contain bg-background text-foreground [--dashboard-page-header-height:2.75rem] [--dashboard-tabbar-height:0rem]">
-          {children}
-        </main>
-      </DashboardRuntimeConfigProvider>
-    );
-  }
-
   return (
     <DashboardRuntimeConfigProvider supportEmail={supportEmail}>
-      <DashboardTabsProvider key={slug} slug={slug}>
-        <WorkspaceShell
-          className="h-dvh [--dashboard-page-header-height:2.75rem] [--dashboard-tabbar-height:2.75rem]"
-          open={!collapsed}
-          onOpenChange={(expanded) => setCollapsed(!expanded)}
-          openMobile={open}
-          onOpenMobileChange={setOpen}
-          scroll="none"
-          sidebar={
-            <DashboardSidebar
-              slug={slug}
-              workspaceName={workspaceName}
-              userLabel={userLabel}
-              workspaces={workspaces}
-              isAdmin={isAdmin}
-            />
-          }
-          mobileHeader={
-            <>
-              <Tooltip content={t("openMenu")}>
-                <AnimatedSidebarTrigger aria-label={t("openMenu")}>
-                  <Menu aria-hidden="true" className="size-5" />
-                </AnimatedSidebarTrigger>
-              </Tooltip>
-              <DashboardLogo />
-            </>
-          }
-          tabBar={<DashboardTabBar canInstall={isAdmin} />}
-        >
-          <DashboardTabContent>{children}</DashboardTabContent>
-        </WorkspaceShell>
-      </DashboardTabsProvider>
+      <WorkspaceShell
+        className="h-dvh [--dashboard-page-header-height:2.75rem]"
+        open={!collapsed}
+        onOpenChange={(expanded) => setCollapsed(!expanded)}
+        openMobile={open}
+        onOpenMobileChange={setOpen}
+        scroll="none"
+        sidebar={
+          <DashboardSidebar
+            slug={slug}
+            workspaceName={workspaceName}
+            userLabel={userLabel}
+            workspaces={workspaces}
+            isAdmin={isAdmin}
+          />
+        }
+        mobileHeader={
+          <>
+            <Tooltip content={t("openMenu")}>
+              <AnimatedSidebarTrigger aria-label={t("openMenu")}>
+                <Menu aria-hidden="true" className="size-5" />
+              </AnimatedSidebarTrigger>
+            </Tooltip>
+            <DashboardLogo />
+          </>
+        }
+      >
+        <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-auto overscroll-contain [scrollbar-width:thin] [scrollbar-color:color-mix(in_srgb,var(--foreground)_18%,transparent)_transparent] [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-foreground/20">
+          {children}
+        </main>
+      </WorkspaceShell>
+      <Toaster />
     </DashboardRuntimeConfigProvider>
   );
 }

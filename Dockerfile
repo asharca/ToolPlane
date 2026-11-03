@@ -41,7 +41,7 @@ RUN set -eux; \
 RUN node -e "require('node:fs').writeFileSync('package.json', JSON.stringify({name:'pi-sdk',private:true,pnpm:{overrides:{semver:'7.8.5',undici:'8.10.2'}}}))" \
     && pnpm add --prod --ignore-scripts --save-exact --config.auto-install-peers=false @earendil-works/pi-coding-agent@0.87.1 \
     && node --input-type=module -e "import {createRequire} from 'node:module'; import {realpathSync} from 'node:fs'; const r=createRequire(realpathSync('/opt/pi-sdk/node_modules/@earendil-works/pi-coding-agent/dist/index.js')); if(r('semver/package.json').version!=='7.8.5'||r('undici/package.json').version!=='8.10.2')process.exit(1)"
-COPY scripts/pi-package-capture.mjs scripts/pi-package-archive.py /app/scripts/
+COPY scripts/pi-package-capture.mjs scripts/pi-package-archive.py scripts/omp-plugin-resources.mjs /app/scripts/
 WORKDIR /app
 USER node
 ENTRYPOINT ["node", "/app/scripts/pi-package-capture.mjs"]

@@ -8,6 +8,9 @@ import { resolveAgentRequestSession } from "@/lib/agents/request-session";
 import { isAgentRuntimeGrantCurrent } from "@/lib/agents/runtime-grant";
 import { serveHistoricalSandboxFiles } from "@/lib/agents/historical-sandbox";
 import { publishFixtureAgentRevision } from "./agent-revision-fixture";
+import { resolveAgentModelOverride } from "@/lib/agents/turn-model";
+import { resolvePinnedAgent } from "@/lib/agents/revisions";
+import { parseAgentChatBody } from "@/lib/agents/chat-body";
 
 const stamp = randomUUID();
 let userId = "";
@@ -84,6 +87,179 @@ async function fixture() {
 }
 
 describe.sequential("Agent execution entrance revision boundaries", () => {
+  it("uses a workspace override grant without changing the immutable revision or subsequent default", async () => {
+    const { agent, sandbox, revision, conversation } = await fixture();
+    const alternate = await db.modelProvider.create({
+      data: {
+        workspaceId,
+        name: "Alternate",
+        format: "openai-responses",
+        baseUrl: "https://alternate.test.invalid",
+        apiKey: "alternate-private-key",
+        models: ["alternate"],
+      },
+    });
+    await db.conversation.update({
+      where: { id: conversation.id },
+      data: { sandboxId: sandbox.id },
+    });
+    const override = { providerId: alternate.id, model: "alternate" };
+    const resolved = await resolveAgentModelOverride(
+      workspaceId,
+      override,
+      "pi-sdk",
+    );
+    expect(resolved).toMatchObject({
+      provider: { id: alternate.id },
+      model: "alternate",
+    });
+    const token = {
+      workspaceId,
+      agentId: agent.id,
+      agentRevisionId: revision.id,
+      sandboxId: sandbox.id,
+      conversationId: conversation.id,
+      providerId: alternate.id,
+      modelOverride: override,
+      deploymentIds: [],
+      exp: Math.floor(Date.now() / 1000) + 300,
+    };
+    await expect(isAgentRuntimeGrantCurrent(token)).resolves.toBe(true);
+    await expect(
+      isAgentRuntimeGrantCurrent({ ...token, providerId }),
+    ).resolves.toBe(false);
+    await expect(
+      isAgentRuntimeGrantCurrent({ ...token, modelOverride: undefined }),
+    ).resolves.toBe(false);
+    const live = await getAgentForRun(agent.id, workspaceId);
+    if (!live) throw new Error("Missing Agent fixture");
+    expect(await resolvePinnedAgent(live, revision.id)).toMatchObject({
+      providerId,
+      model: "original",
+    });
+    await expect(
+      isAgentRuntimeGrantCurrent({
+        ...token,
+        providerId,
+        modelOverride: undefined,
+      }),
+    ).resolves.toBe(true);
+    expect(
+      await db.agentRevision.findUniqueOrThrow({ where: { id: revision.id } }),
+    ).toMatchObject({ config: revision.config });
+    expect(await db.agentRevision.count({ where: { agentId: agent.id } })).toBe(
+      1,
+    );
+    expect(
+      await db.agent.findUniqueOrThrow({ where: { id: agent.id } }),
+    ).toMatchObject({ providerId, model: "original" });
+    await db.modelProvider.update({
+      where: { id: alternate.id },
+      data: { models: [] },
+    });
+    await expect(isAgentRuntimeGrantCurrent(token)).resolves.toBe(false);
+    await db.modelProvider.update({
+      where: { id: alternate.id },
+      data: { models: ["alternate"], apiKey: "" },
+    });
+    await expect(isAgentRuntimeGrantCurrent(token)).resolves.toBe(false);
+  });
+
+  it("rejects foreign providers, unknown models, missing credentials and unsupported runtime formats", async () => {
+    const foreign = await db.workspace.create({
+      data: { ownerId: userId, slug: `foreign-${stamp}`, name: "Foreign" },
+    });
+    try {
+      const provider = await db.modelProvider.create({
+        data: {
+          workspaceId: foreign.id,
+          name: "Foreign",
+          format: "openai",
+          baseUrl: "https://foreign.test.invalid",
+          apiKey: "private",
+          models: ["foreign"],
+        },
+      });
+      await expect(
+        resolveAgentModelOverride(
+          workspaceId,
+          {
+            providerId: provider.id,
+            model: "foreign",
+          },
+          "pi-sdk",
+        ),
+      ).rejects.toMatchObject({ code: "modelOverrideUnavailable" });
+      await expect(
+        resolveAgentModelOverride(
+          workspaceId,
+          {
+            providerId,
+            model: "not-in-catalog",
+          },
+          "pi-sdk",
+        ),
+      ).rejects.toMatchObject({ code: "modelOverrideUnavailable" });
+      const unavailable = await db.modelProvider.create({
+        data: {
+          workspaceId,
+          name: "No credentials",
+          format: "openai",
+          baseUrl: "https://unavailable.test.invalid",
+          apiKey: " ",
+          models: ["unavailable"],
+        },
+      });
+      await expect(
+        resolveAgentModelOverride(
+          workspaceId,
+          {
+            providerId: unavailable.id,
+            model: "unavailable",
+          },
+          "pi-sdk",
+        ),
+      ).rejects.toMatchObject({ code: "modelOverrideUnavailable" });
+      await db.modelProvider.update({
+        where: { id: unavailable.id },
+        data: { apiKey: "private", format: "unsupported" },
+      });
+      await expect(
+        resolveAgentModelOverride(
+          workspaceId,
+          {
+            providerId: unavailable.id,
+            model: "unavailable",
+          },
+          "pi-sdk",
+        ),
+      ).rejects.toMatchObject({ code: "modelOverrideUnavailable" });
+    } finally {
+      await db.workspace.delete({ where: { id: foreign.id } });
+    }
+  });
+
+  it("parses only an explicit well-formed per-turn model override", () => {
+    expect(
+      parseAgentChatBody({
+        messages: [],
+        modelOverride: { providerId, model: "future" },
+      })?.modelOverride,
+    ).toEqual({ providerId, model: "future" });
+    expect(parseAgentChatBody({ messages: [] })?.modelOverride).toBeUndefined();
+    expect(
+      parseAgentChatBody({
+        messages: [],
+        modelOverride: { providerId, model: "" },
+      }),
+    ).toBeNull();
+    expect(
+      parseAgentChatBody({
+        messages: [],
+        modelOverride: { providerId, model: "future", apiKey: "untrusted" },
+      }),
+    ).toBeNull();
+  });
   it("keeps resource requests and metadata on the session revision after a new publication", async () => {
     const { agent, revision, conversation } = await fixture();
     expect(conversation).toMatchObject({
@@ -205,6 +381,85 @@ describe.sequential("Agent execution entrance revision boundaries", () => {
     expect(
       await db.conversation.findUnique({ where: { id: conversation.id } }),
     ).toMatchObject({ agentRevisionId: revision.id, sandboxId: sandbox.id });
+  });
+  it("keeps distinct immutable session grants valid on one compatible environment and revokes archived or incompatible mappings", async () => {
+    const { agent, sandbox, revision, conversation } = await fixture();
+    const sharedConfig = {
+      managedBy: "agent-conversation",
+      scope: "agent",
+      agentId: agent.id,
+      sourceSandboxId: "revision",
+      agentRevisionId: revision.id,
+    };
+    await db.sandbox.update({
+      where: { id: sandbox.id },
+      data: { config: sharedConfig },
+    });
+    await db.conversation.update({
+      where: { id: conversation.id },
+      data: { sandboxId: sandbox.id },
+    });
+    await db.agent.update({
+      where: { id: agent.id },
+      data: { systemPrompt: "A separate revision" },
+    });
+    const future = await publishFixtureAgentRevision(workspaceId, agent.id);
+    const second = await createConversation(workspaceId, agent.id);
+    if (!second) throw new Error("Missing shared conversation fixture");
+    await db.conversation.update({
+      where: { id: second.id },
+      data: { sandboxId: sandbox.id },
+    });
+    const token = {
+      workspaceId,
+      agentId: agent.id,
+      agentRevisionId: revision.id,
+      sandboxId: sandbox.id,
+      conversationId: conversation.id,
+      providerId,
+      deploymentIds: [],
+      exp: Math.floor(Date.now() / 1000) + 300,
+    };
+    const secondToken = {
+      ...token,
+      conversationId: second.id,
+      agentRevisionId: future.id,
+    };
+    expect(await isAgentRuntimeGrantCurrent(token)).toBe(true);
+    expect(await isAgentRuntimeGrantCurrent(secondToken)).toBe(true);
+    expect(
+      await isAgentRuntimeGrantCurrent({ ...token, conversationId: second.id }),
+    ).toBe(false);
+    await db.sandbox.update({
+      where: { id: sandbox.id },
+      data: {
+        config: { ...sharedConfig, pendingWorkspaceDeletes: [conversation.id] },
+      },
+    });
+    expect(await isAgentRuntimeGrantCurrent(token)).toBe(false);
+    expect(await isAgentRuntimeGrantCurrent(secondToken)).toBe(true);
+    await db.sandbox.update({
+      where: { id: sandbox.id },
+      data: { config: { ...sharedConfig, readOnly: true } },
+    });
+    expect(await isAgentRuntimeGrantCurrent(token)).toBe(false);
+    expect(await isAgentRuntimeGrantCurrent(secondToken)).toBe(false);
+    const environment = await db.agentRevision.create({
+      data: {
+        agentId: agent.id,
+        version: future.version + 1,
+        config: {
+          ...future.config,
+          environment: { ...future.config.environment, network: "none" },
+        },
+      },
+    });
+    await db.sandbox.update({
+      where: { id: sandbox.id },
+      data: { config: { ...sharedConfig, agentRevisionId: environment.id } },
+    });
+    expect(await isAgentRuntimeGrantCurrent(token)).toBe(false);
+    expect(await isAgentRuntimeGrantCurrent(secondToken)).toBe(false);
   });
   it.each(["shell_exec", "write_file", "delete_file"])(
     "denies historical %s without starting any runtime",

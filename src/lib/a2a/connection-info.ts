@@ -51,13 +51,6 @@ export function a2aConnectionInfo(
 }
 
 export type A2AConsoleView = {
-  channels?: Array<{
-    id: string;
-    name: string;
-    platform: string;
-    enabled: boolean;
-    mine: boolean;
-  }>;
   canManage: boolean;
   collaboration: { inboundEnabled: boolean; outboundEnabled: boolean };
   local: { supported: boolean; ready: boolean };

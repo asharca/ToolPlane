@@ -101,7 +101,6 @@ function workspacePayload(log: LogWithDetail) {
   const detail = jsonRecord(log.detail?.data);
   return log.domain === "mcp" &&
     log.deploymentId &&
-    !log.agentId &&
     (log.eventName === "gateway.request" || log.eventName === "mcp.rpc") &&
     detail?.workspaceMcpPayload === true
     ? jsonRecord(detail.payload)

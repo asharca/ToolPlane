@@ -9,6 +9,10 @@ import {
   PiCapabilityConflictError,
   assertNativeSkillDiagnostics,
 } from "./pi-sdk-capabilities.mjs";
+import {
+  officialTodoPath,
+  configureNativeTodo,
+} from "./pi-sdk-native-resources.mjs";
 if (process.argv[2] !== "worker") {
   const child = spawn(
     process.execPath,
@@ -104,7 +108,11 @@ if (process.argv[2] !== "worker") {
       platformMcp: true,
     };
     stage = "extension-loading";
-    const extensions = await loadExtensions(resources.extensions, cwd);
+    const todoPath = officialTodoPath(join(sdkRoot, "index.js"));
+    const extensions = configureNativeTodo(
+      await loadExtensions([...resources.extensions, todoPath], cwd),
+      todoPath,
+    );
     const skills = loadSkills({
       cwd,
       agentDir: cwd,
@@ -139,10 +147,12 @@ if (process.argv[2] !== "worker") {
             ? "PI_CAPABILITY_CONFLICT"
             : "PI_EXTENSION_LOAD_FAILED",
         detail:
-          `${stage}: ${error instanceof Error ? error.message : String(error)}`.slice(
-            0,
-            2048,
-          ),
+          error instanceof PiCapabilityConflictError && error.conflict
+            ? error.conflict.slice(0, 2048)
+            : `${stage}: ${error instanceof Error ? error.message : String(error)}`.slice(
+                0,
+                2048,
+              ),
       }),
     );
     process.exit(0);

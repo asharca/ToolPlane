@@ -3,6 +3,8 @@ import type { Prisma } from "@prisma/client";
 import type { ComposerReference } from "@/lib/work/composer-types";
 import { db } from "@/lib/db";
 import { sandboxVolumeName } from "@/lib/sandboxes/runtime";
+import { posix } from "node:path";
+import { agentSessionWorkingDirectory } from "@/lib/agents/session-paths";
 import {
   copyWorkspaceAttachmentToDockerVolume,
   safeAttachmentFilename,
@@ -123,6 +125,33 @@ export async function prepareWorkAttachments(input: {
       ? config.volumeName
       : sandboxVolumeName(sandbox.id);
   const byId = new Map(records.map((record) => [record.id, record]));
+  let workingDirectory = input.workingDirectory;
+  if (input.conversationId) {
+    const conversation = await db.conversation.findFirst({
+      where: {
+        id: input.conversationId,
+        agent: { workspaceId: input.workspaceId },
+      },
+      select: { agentId: true, sandboxId: true },
+    });
+    if (!conversation)
+      throw new WorkAttachmentError(404, "Conversation not found.");
+    if (conversation.sandboxId !== sandbox.id)
+      throw new WorkAttachmentError(409, "Conversation workspace changed.");
+    if (
+      sandboxConfig &&
+      typeof sandboxConfig === "object" &&
+      !Array.isArray(sandboxConfig) &&
+      sandboxConfig.scope === "agent"
+    )
+      workingDirectory = posix.relative(
+        "/workspace",
+        agentSessionWorkingDirectory(
+          { conversationId: input.conversationId },
+          input.workingDirectory,
+        ),
+      );
+  }
   const prepared: PreparedWorkAttachment[] = [];
   for (const id of ids) {
     const record = byId.get(id);
@@ -132,11 +161,7 @@ export async function prepareWorkAttachments(input: {
         "One or more attachments are unavailable or already in use.",
       );
     }
-    const path = destinationPath(
-      input.workingDirectory,
-      record.id,
-      record.name,
-    );
+    const path = destinationPath(workingDirectory, record.id, record.name);
     await copyWorkspaceAttachmentToDockerVolume({
       workspaceId: input.workspaceId,
       storagePath: record.storagePath,
@@ -151,6 +176,85 @@ export async function prepareWorkAttachments(input: {
     });
   }
   return prepared;
+}
+
+/** Called only while a new session workspace is being initialized. */
+export async function materializeConversationAttachments(input: {
+  workspaceId: string;
+  conversationId: string;
+  volumeName: string;
+  workspaceRoot: string;
+}): Promise<void> {
+  const conversation = await db.conversation.findFirst({
+    where: {
+      id: input.conversationId,
+      agent: { workspaceId: input.workspaceId },
+    },
+    select: { id: true },
+  });
+  if (!conversation)
+    throw new WorkAttachmentError(404, "Conversation not found.");
+  const records = await db.workspaceAttachment.findMany({
+    where: {
+      conversationId: input.conversationId,
+      workspaceId: input.workspaceId,
+      chatThreadId: null,
+    },
+    select: { id: true, name: true, storagePath: true },
+  });
+  if (!records.length) return;
+  const messages = await db.message.findMany({
+    where: { conversationId: input.conversationId, role: "user" },
+    select: { parts: true },
+  });
+  const destinations = new Map<string, string>();
+  for (const message of messages) {
+    if (!Array.isArray(message.parts)) continue;
+    for (const part of message.parts) {
+      if (
+        !part ||
+        typeof part !== "object" ||
+        Array.isArray(part) ||
+        part.type !== "file"
+      )
+        continue;
+      const metadata = part.providerMetadata;
+      if (!metadata || typeof metadata !== "object" || Array.isArray(metadata))
+        continue;
+      const toolplane = metadata.toolplane;
+      if (
+        !toolplane ||
+        typeof toolplane !== "object" ||
+        Array.isArray(toolplane)
+      )
+        continue;
+      if (
+        typeof part.url === "string" &&
+        typeof toolplane.runtimePath === "string"
+      )
+        destinations.set(part.url, toolplane.runtimePath);
+    }
+  }
+  for (const record of records) {
+    const original = destinations.get(`/api/v1/attachments/${record.id}`);
+    if (!original) continue;
+    const suffix = `/.toolplane/attachments/${record.id}/${safeAttachmentFilename(record.name)}`;
+    if (!original.endsWith(suffix))
+      throw new WorkAttachmentError(409, "Invalid attachment destination.");
+    const destination = agentSessionWorkingDirectory(
+      { conversationId: input.conversationId },
+      original,
+    );
+    if (!destination.startsWith(`${input.workspaceRoot}/`))
+      throw new WorkAttachmentError(409, "Attachment workspace mismatch.");
+    await copyWorkspaceAttachmentToDockerVolume({
+      workspaceId: input.workspaceId,
+      storagePath: record.storagePath,
+      destinationVolume: input.volumeName,
+      destinationPath: posix.relative("/workspace", destination),
+      exclusive: true,
+    });
+  }
 }
 
 export async function claimWorkAttachments(

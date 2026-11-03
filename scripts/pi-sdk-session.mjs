@@ -17,7 +17,24 @@ import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
 
 import { enforceNativeNamespaces } from "./pi-sdk-capabilities.mjs";
+import { createNativeUi } from "./pi-sdk-ui.mjs";
+import {
+  configureNativeTodo,
+  officialTodoPath,
+} from "./pi-sdk-native-resources.mjs";
 const config = JSON.parse(readFileSync(process.argv[2], "utf8"));
+// Extension and native writable state belongs to this conversation, never /root.
+for (const [name, directory] of Object.entries({
+  HOME: join(config.agentDir, "home"),
+  PI_CODING_AGENT_DIR: config.agentDir,
+  XDG_CONFIG_HOME: join(config.agentDir, "xdg-config"),
+  XDG_DATA_HOME: join(config.agentDir, "xdg-data"),
+  XDG_CACHE_HOME: join(config.agentDir, "xdg-cache"),
+  XDG_STATE_HOME: join(config.agentDir, "xdg-state"),
+})) {
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  process.env[name] = directory;
+}
 const sdkEntry = realpathSync(
   join(
     config.packageRoot,
@@ -47,6 +64,11 @@ const sdkVersion = JSON.parse(
 const { parseCommandArgs } = await import(
   pathToFileURL(join(dirname(sdkEntry), "core/prompt-templates.js")).href
 );
+const { theme } = await import(
+  pathToFileURL(join(dirname(sdkEntry), "modes/interactive/theme/theme.js"))
+    .href
+);
+const todoPath = officialTodoPath(sdkEntry);
 let promptInvocation;
 const fail = (code) => {
   throw Object.assign(new Error(code), { code });
@@ -121,8 +143,16 @@ let runtime,
 let texts = [],
   usage,
   turnError,
+  modelFailed = false,
   aborted = false;
 let lastState;
+const nativeUi = createNativeUi({
+  getContext: () => context,
+  theme,
+  onError: () => {
+    turnError = "PI_SDK_UI_FAILED";
+  },
+});
 const settingsManager = sdk.SettingsManager.inMemory({
   defaultTools: config.defaultTools,
   packages: [],
@@ -130,7 +160,6 @@ const settingsManager = sdk.SettingsManager.inMemory({
   skills: [],
   prompts: [],
   themes: [],
-  compaction: { enabled: false },
   retry: { enabled: false },
 });
 const modelRuntime = await sdk.ModelRuntime.create({
@@ -156,6 +185,12 @@ const packageReferences = config.packages.map(
 );
 let saved;
 try {
+  if (config.workspaceRoot) {
+    const { migrateNativeSessionPaths } = await import(
+      "./native-session-paths.mjs"
+    );
+    await migrateNativeSessionPaths(config);
+  }
   if (config.sdkVersion !== "0.87.1" || sdkVersion !== "0.87.1")
     fail("PI_SDK_VERSION_MISMATCH");
   if (!existsSync(config.statePath) && config.historyRequired)
@@ -164,9 +199,18 @@ try {
     saved = JSON.parse(readFileSync(config.statePath, "utf8"));
     if (saved.runtimeKind !== "pi-sdk" || saved.sdkVersion !== "0.87.1")
       fail("PI_SDK_SESSION_MISSING");
-    if (saved.packageSetChecksum !== config.packageSetChecksum)
+    // Only an explicitly changed, server-authorized revision can change packages.
+    // SessionManager.open below keeps the same persisted transcript and files.
+    const revisionChanged =
+      typeof config.agentRevisionId === "string" &&
+      saved.agentRevisionId !== config.agentRevisionId;
+    if (
+      !revisionChanged &&
+      saved.packageSetChecksum !== config.packageSetChecksum
+    )
       fail("PI_SDK_PACKAGE_SET_CHANGED");
     if (
+      !revisionChanged &&
       saved.packageReferences &&
       canonicalJson(saved.packageReferences) !==
         canonicalJson(packageReferences)
@@ -202,6 +246,7 @@ function persist() {
     ...state(),
     packageSetChecksum: config.packageSetChecksum,
     packageReferences,
+    agentRevisionId: config.agentRevisionId,
   };
   const temporary = `${config.statePath}.${process.pid}.tmp`;
   writeFileSync(temporary, JSON.stringify(value), { mode: 0o600 });
@@ -250,29 +295,64 @@ const contentText = (content) =>
         .filter((p) => p.type === "text")
         .map((p) => p.text)
         .join("\n");
+// Tool input/output for the transcript and the workspace Agent tool log; bounded so one large
+// result (for example `cat` of a big file) cannot bloat the event stream.
+const TOOL_PAYLOAD_CHARS = 20_000;
+function toolPayload(value) {
+  if (value === undefined) return undefined;
+  const text =
+    typeof value === "string" ? value : (JSON.stringify(value) ?? "");
+  return text.length > TOOL_PAYLOAD_CHARS
+    ? `${text.slice(0, TOOL_PAYLOAD_CHARS)}…[truncated]`
+    : value;
+}
 function event(event) {
   if (!active) return;
-  if (
-    event.type === "message_update" &&
-    event.assistantMessageEvent?.type === "text_delta"
-  )
-    emit({ type: "text_delta", delta: event.assistantMessageEvent.delta });
+  if (event.type === "message_update") {
+    const update = event.assistantMessageEvent;
+    if (
+      [
+        "text_start",
+        "text_delta",
+        "thinking_start",
+        "thinking_delta",
+        "thinking_end",
+        "toolcall_start",
+        "toolcall_delta",
+      ].includes(update?.type)
+    )
+      emit({
+        type: "message_update",
+        assistantMessageEvent: { type: update.type, delta: update.delta },
+      });
+  }
   if (event.type === "tool_execution_start")
     emit({
       type: event.type,
       toolCallId: event.toolCallId,
       toolName: event.toolName,
+      args: toolPayload(event.args),
     });
-  if (event.type === "tool_execution_end") {
+  // A failed tool call (for example a shell command exiting non-zero) is an
+  // ordinary result the model reads and reacts to; it does not fail the turn.
+  if (event.type === "tool_execution_end")
     emit({
       type: event.type,
       toolCallId: event.toolCallId,
       toolName: event.toolName,
       isError: event.isError,
+      result: toolPayload(event.result),
     });
-    if (event.isError) turnError = "PI_SDK_TOOL_FAILED";
-  }
   if (event.type === "message_end") {
+    if (
+      event.message.role === "toolResult" &&
+      event.message.toolName === "todo"
+    )
+      queueMicrotask(() => {
+        void nativeUi.projectTodos(runtime.session.sessionManager).catch(() => {
+          turnError = "PI_SDK_UI_FAILED";
+        });
+      });
     const message = event.message;
     if (message.role === "user" && promptInvocation) {
       const invocation = {
@@ -291,8 +371,8 @@ function event(event) {
         `Pi 扩展 · ${message.customType}\n${contentText(message.content)}`,
       );
     if (message.role === "assistant") {
-      if (message.stopReason === "error" || message.stopReason === "aborted")
-        turnError = "PI_SDK_MODEL_FAILED";
+      modelFailed =
+        message.stopReason === "error" || message.stopReason === "aborted";
       const text = contentText(message.content);
       if (text) texts.push(text);
       if (message.usage) {
@@ -324,7 +404,8 @@ async function bindSession(session) {
   unsubscribe?.();
   unsubscribe = session.subscribe(event);
   await session.bindExtensions({
-    mode: "json",
+    mode: context?.uiUrl ? "rpc" : "json",
+    uiContext: context?.uiUrl ? nativeUi.uiContext : undefined,
     onError: () => {
       turnError = "PI_EXTENSION_LOAD_FAILED";
     },
@@ -358,12 +439,7 @@ async function factory({ cwd: nextCwd, sessionManager, sessionStartEvent }) {
   )
     fail("PI_SDK_SESSION_SCOPE");
   await verifyPiPackageSnapshots(config.packages);
-  const extensions = [
-    ...(config.approvalExtensionPath && context?.approvalUrl
-      ? [config.approvalExtensionPath]
-      : []),
-    ...config.resources.extensions,
-  ];
+  const extensions = [...config.resources.extensions, todoPath];
   const services = await sdk.createAgentSessionServices({
     cwd,
     agentDir: config.agentDir,
@@ -376,19 +452,26 @@ async function factory({ cwd: nextCwd, sessionManager, sessionStartEvent }) {
       noThemes: true,
       noContextFiles: true,
       additionalExtensionPaths: extensions,
+      extensionFactories: [
+        {
+          name: "toolplane-web-projection",
+          hidden: true,
+          factory: (pi) => {
+            const project = (_event, ctx) =>
+              nativeUi.projectTodos(ctx.sessionManager);
+            pi.on("session_start", project);
+            pi.on("session_tree", project);
+            pi.on("before_provider_request", () => {
+              if (active) emit({ type: "model_request" });
+            });
+          },
+        },
+      ],
       additionalSkillPaths: config.resources.skills,
       additionalPromptTemplatePaths: config.resources.prompts,
       additionalThemePaths: config.resources.themes,
       systemPrompt: config.systemPrompt,
-      extensionsOverride: (base) => {
-        if (config.approvalExtensionPath && context?.approvalUrl)
-          base.extensions.sort(
-            (a, b) =>
-              Number(b.resolvedPath === config.approvalExtensionPath) -
-              Number(a.resolvedPath === config.approvalExtensionPath),
-          );
-        return base;
-      },
+      extensionsOverride: (base) => configureNativeTodo(base, todoPath),
     },
   });
   diagnostics(services);
@@ -430,18 +513,24 @@ async function refreshContext(next) {
     !Array.isArray(next.mcpConfig.servers)
   )
     fail("PI_SDK_CONTEXT_REQUIRED");
+  if (
+    next.model?.provider !== "toolplane" ||
+    typeof next.model.id !== "string" ||
+    typeof next.model.baseUrl !== "string"
+  )
+    fail("PI_SDK_MODEL_REQUIRED");
+  // Turn-scoped model/auth; neither the immutable revision nor packages change.
+  config.model = next.model;
+  config.reasoningEffort = next.reasoningEffort;
+  modelRuntime.registerProvider("toolplane", {
+    baseUrl: config.model.baseUrl,
+    api: config.model.api,
+    apiKey: "$TOOLPLANE_RUNTIME_TOKEN",
+    authHeader: true,
+    models: [config.model],
+  });
   context = next;
   process.env.TOOLPLANE_RUNTIME_TOKEN = next.runtimeToken;
-  if (next.approvalUrl) process.env.TOOLPLANE_APPROVAL_URL = next.approvalUrl;
-  else delete process.env.TOOLPLANE_APPROVAL_URL;
-  if (next.approvalUrl) {
-    if (!config.approvalHelperPath || !config.approvalExtensionPath)
-      fail("PI_SDK_APPROVAL_REQUIRED");
-    const { approvalReady } = await import(
-      pathToFileURL(config.approvalHelperPath).href
-    );
-    await approvalReady();
-  }
   await modelRuntime.setRuntimeApiKey("toolplane", next.runtimeToken);
   const definitions = await createPiMcpTools(next.mcpConfig);
   const signature = canonicalJson(
@@ -450,11 +539,6 @@ async function refreshContext(next) {
       .sort((a, b) => a.name.localeCompare(b.name)),
   );
   if (toolSignature !== undefined && signature !== toolSignature)
-    fail("PI_SDK_TOOLSET_CHANGED");
-  if (
-    runtime &&
-    Boolean(next.approvalUrl) !== Boolean(runtime.approvalRequired)
-  )
     fail("PI_SDK_TOOLSET_CHANGED");
   toolMap = new Map(definitions.map((t) => [t.name, t]));
   if (toolSignature === undefined)
@@ -482,6 +566,7 @@ async function handle(request) {
   if (request.type === "abort") {
     try {
       aborted = true;
+      nativeUi.cancel();
       await runtime?.session.abort();
       respond(true, {
         text: "Request aborted",
@@ -509,10 +594,12 @@ async function handle(request) {
     return;
   }
   active = request.id;
+  nativeUi.start();
   texts = [];
   usage = undefined;
   turnError = undefined;
   aborted = false;
+  modelFailed = false;
   let terminal;
   try {
     if (initialError) fail(initialError);
@@ -532,11 +619,14 @@ async function handle(request) {
         agentDir: config.agentDir,
         sessionManager: manager,
       });
-      runtime.approvalRequired = Boolean(context.approvalUrl);
       runtime.setRebindSession(bindSession);
       await bindSession(runtime.session);
     }
+    // Always select the admitted model, including the pinned default on a turn
+    // without an override. Session history survives and global defaults do not change.
+    await runtime.session.setModel(config.model, { persist: false });
     applyConfiguredThinkingLevel(runtime.session);
+    await nativeUi.projectTodos(runtime.session.sessionManager);
     let command;
     let compaction;
     if (request.type === "compact") {
@@ -583,7 +673,11 @@ async function handle(request) {
     } while (current !== runtime.session);
     if (aborted) fail("PI_SDK_ABORTED");
     if (turnError) fail(turnError);
+    if (modelFailed) fail("PI_SDK_MODEL_FAILED");
     diagnostics(runtime.services);
+    await nativeUi.projectTodos(runtime.session.sessionManager);
+    await nativeUi.drain();
+    if (turnError) fail(turnError);
     persist();
     const text =
       texts.join("\n\n") ||
@@ -603,22 +697,35 @@ async function handle(request) {
     };
   } catch (error) {
     try {
+      nativeUi.cancel();
       if (runtime) await runtime.session.abort();
     } catch {
       /* preserve original failure */
     }
-    terminal = {
-      success: false,
-      code: /^PI_[A-Z_]+$/.test(error.code ?? "")
-        ? error.code
-        : "PI_SDK_REQUEST_FAILED",
-    };
+    const code = /^PI_[A-Z_]+$/.test(error.code ?? "")
+      ? error.code
+      : "PI_SDK_REQUEST_FAILED";
+    // Model/UI delivery failure or stop ends this turn only. Keep the history Pi
+    // already wrote so the next message continues; nothing is replayed.
+    if (
+      runtime &&
+      (code === "PI_SDK_MODEL_FAILED" ||
+        code === "PI_SDK_ABORTED" ||
+        code === "PI_SDK_UI_FAILED")
+    )
+      try {
+        persist();
+      } catch {
+        /* the original failure stays authoritative */
+      }
+    terminal = { success: false, code };
   } finally {
+    nativeUi.cancel();
+    await nativeUi.drain();
     context = undefined;
     toolMap = new Map();
     promptInvocation = undefined;
     delete process.env.TOOLPLANE_RUNTIME_TOKEN;
-    delete process.env.TOOLPLANE_APPROVAL_URL;
     await modelRuntime.removeRuntimeApiKey("toolplane").catch(() => {});
     active = undefined;
     respond(terminal.success, terminal.result, terminal.code);
@@ -642,6 +749,8 @@ input.on("line", (line) => {
 });
 input.on("close", () => {
   void (async () => {
+    nativeUi.cancel();
+    await nativeUi.drain();
     await runtime?.session.abort();
     await runtime?.dispose();
   })().finally(() => process.exit());

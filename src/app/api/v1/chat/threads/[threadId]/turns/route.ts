@@ -9,7 +9,7 @@ import {
 import { resolveRequestUser } from "@/lib/auth/request-user";
 import { buildChatToolSet } from "@/lib/chat/tools";
 import { wrapChatTools } from "@/lib/chat/durable-tools";
-import { marketReleaseChecksum } from "@/lib/market/artifact";
+import { marketReleaseChecksum } from "@/lib/pi-packages/artifact";
 import { runNativeAgent, uiMessagesToPi } from "@/lib/agents/native";
 import { createNativeUiStreamBridge } from "@/lib/agents/ui-stream";
 import {
@@ -32,16 +32,19 @@ import {
   getChatThreadForUser,
   getChatTurnReplay,
   type ChatTurnAdmission,
+  resolveChatTurnModel,
 } from "@/lib/chat/service";
 import { buildKeylessWebSearchToolSet } from "@/lib/chat/keyless-web-search";
 import {
   startChatRun,
+  appendChatExecutionStage,
   cancelChatRun,
   recoverStaleChatRuns,
   subscribeChatRun,
   chatRunHeaders,
   type ChatRunOutput,
 } from "@/lib/chat/run-control";
+import type { ChatExecutionStage } from "@/lib/chat/execution-stage";
 import {
   assertRuntimeOwner,
   RuntimeUnavailableError,
@@ -78,6 +81,7 @@ export const POST = withRequestLogging(
       messageId: input.messageId ?? null,
       webSearchEnabled: input.webSearchEnabled,
       reasoningEffort: input.reasoningEffort ?? null,
+      modelOverride: input.modelOverride ?? null,
     });
     let thread: Awaited<ReturnType<typeof getChatThreadForExecution>>;
     try {
@@ -117,26 +121,70 @@ export const POST = withRequestLogging(
       conversationId: threadId,
     });
     const { assistant } = thread;
-    const provider = assistant.modelProvider;
-    if (!provider || !assistant.model) {
+    let provider = assistant.modelProvider;
+    let modelId = assistant.model;
+    if (input.modelOverride) {
+      try {
+        const historyParts = [
+          ...thread.messages.flatMap((message) =>
+            Array.isArray(message.parts) ? message.parts : [],
+          ),
+          ...last.parts,
+        ];
+        const modalities = new Set<string>();
+        for (const part of historyParts) {
+          if (
+            !part ||
+            typeof part !== "object" ||
+            !("mediaType" in part) ||
+            typeof part.mediaType !== "string"
+          )
+            continue;
+          const modality = part.mediaType.split("/")[0];
+          if (
+            modality === "image" ||
+            modality === "audio" ||
+            modality === "video"
+          )
+            modalities.add(modality);
+        }
+        ({ provider, modelId } = await resolveChatTurnModel(
+          thread.workspaceId,
+          input.modelOverride,
+          {
+            tools:
+              input.webSearchEnabled ||
+              assistant.mcpGrants.some(
+                (grant) => grant.allowedToolNames.length > 0,
+              ),
+            reasoning: Boolean(
+              input.reasoningEffort && input.reasoningEffort !== "default",
+            ),
+            modalities: [...modalities],
+          },
+        ));
+      } catch (error) {
+        return error instanceof ChatServiceError
+          ? Response.json({ error: error.message }, { status: error.status })
+          : Response.json(
+              { error: "Chat configuration is unavailable" },
+              { status: 500 },
+            );
+      }
+    }
+    if (!provider || !modelId) {
       return Response.json(
         { error: "This chat assistant has no model configured" },
         { status: 400 },
       );
     }
+    const effectiveProvider = provider;
+    const effectiveModel = modelId;
 
     const targetMessageId =
       input.trigger === "regenerate-message"
         ? (input.messageId ?? thread.branch.activeMessageId ?? undefined)
         : input.messageId;
-    const targetModelId = targetMessageId
-      ? thread.branch.nodes.find((message) => message.id === targetMessageId)
-          ?.modelId
-      : null;
-    const modelId =
-      input.trigger === "regenerate-message" && targetModelId
-        ? targetModelId
-        : assistant.model;
     let turn: ChatTurnAdmission;
     try {
       assertRuntimeOwner();
@@ -149,7 +197,9 @@ export const POST = withRequestLogging(
           messageId: targetMessageId,
           clientLastMessageId: last.id,
           modelId,
+          modelProviderId: provider.id,
           expectedAssistantId: assistant.id,
+          expectedAssistantRevisionId: thread.assistantRevisionId ?? undefined,
           idempotencyKey: input.idempotencyKey,
           requestHash,
         },
@@ -180,24 +230,38 @@ export const POST = withRequestLogging(
     let finalParts: Array<Record<string, unknown>> = [];
     let finalCancelled = false;
     let output: ChatRunOutput;
+    const runScope = {
+      threadId,
+      turnId: turn.id,
+      assistantMessageId: turn.assistantMessageId,
+      workspaceId: thread.workspaceId,
+      userId: user.id,
+    };
     try {
       output = await startChatRun(
-        {
-          threadId,
-          turnId: turn.id,
-          assistantMessageId: turn.assistantMessageId,
-          workspaceId: thread.workspaceId,
-          userId: user.id,
-        },
+        runScope,
         (runSignal, fence) => {
           const unknownEffect = new AbortController();
           const signal = AbortSignal.any([runSignal, unknownEffect.signal]);
+          let stage: ChatExecutionStage | undefined;
+          const publishStage = async (next: ChatExecutionStage) => {
+            if (stage === next) return;
+            await appendChatExecutionStage(runScope, fence, next);
+            stage = next;
+          };
           return createUIMessageStream<AgentUIMessage>({
             generateId: () => turn.assistantMessageId,
             execute: async ({ writer }) => {
               writer.write({
                 type: "start",
                 messageId: turn.assistantMessageId,
+              });
+              writer.write({
+                type: "data-model",
+                data: {
+                  providerId: effectiveProvider.id,
+                  model: effectiveModel,
+                },
               });
               const uiStream = createNativeUiStreamBridge(
                 writer,
@@ -207,16 +271,50 @@ export const POST = withRequestLogging(
                 current: null,
               };
               try {
-                const remoteTools = await buildChatToolSet({
-                  assistantId: assistant.id,
-                  workspaceId: thread.workspaceId,
-                  userId: user.id,
-                  config: thread.revisionConfig,
-                  signal,
-                });
+                await publishStage("preparing");
+                // Drain both branches before finishing the turn, including on
+                // failure: remote discovery may still own deployment lifecycle work.
+                const [remoteToolsResult, historyResult] =
+                  await Promise.allSettled([
+                    buildChatToolSet({
+                      assistantId: assistant.id,
+                      workspaceId: thread.workspaceId,
+                      userId: user.id,
+                      config: thread.revisionConfig,
+                      signal,
+                    }),
+                    (async () => {
+                      const persistedHistory = await getChatHistoryForExecution(
+                        user.id,
+                        threadId,
+                        turn.historyLeafId,
+                      );
+                      const history = persistedHistory.map((message) => ({
+                        id: message.id,
+                        role: message.role,
+                        parts: message.parts,
+                      }));
+                      return (await hydrateWorkspaceAttachmentMessages(
+                        history as unknown as Array<{
+                          role: string;
+                          parts: Array<Record<string, unknown>>;
+                        }>,
+                        {
+                          workspaceId: thread.workspaceId,
+                          scope: { chatThreadId: threadId },
+                        },
+                      )) as UIMessage[];
+                    })(),
+                  ]);
+                // Keep the original preparation error precedence, not completion order.
+                if (remoteToolsResult.status === "rejected")
+                  throw remoteToolsResult.reason;
+                if (historyResult.status === "rejected")
+                  throw historyResult.reason;
+                const hydratedHistory = historyResult.value;
                 const tools = wrapChatTools(
                   {
-                    ...remoteTools,
+                    ...remoteToolsResult.value,
                     ...(input.webSearchEnabled
                       ? buildKeylessWebSearchToolSet(signal)
                       : {}),
@@ -232,31 +330,10 @@ export const POST = withRequestLogging(
                     onUnknownOutcome: (error) => unknownEffect.abort(error),
                   },
                 );
-                const persistedHistory = await getChatHistoryForExecution(
-                  user.id,
-                  threadId,
-                  turn.historyLeafId,
-                );
-                const history = persistedHistory.map((message) => ({
-                  id: message.id,
-                  role: message.role,
-                  parts: message.parts,
-                }));
-                const hydratedHistory =
-                  (await hydrateWorkspaceAttachmentMessages(
-                    history as unknown as Array<{
-                      role: string;
-                      parts: Array<Record<string, unknown>>;
-                    }>,
-                    {
-                      workspaceId: thread.workspaceId,
-                      scope: { chatThreadId: threadId },
-                    },
-                  )) as UIMessage[];
                 signal.throwIfAborted();
                 await runNativeAgent({
-                  provider,
-                  modelId,
+                  provider: effectiveProvider,
+                  modelId: effectiveModel,
                   systemPrompt: assistant.systemPrompt ?? "",
                   messages: uiMessagesToPi(hydratedHistory),
                   tools,
@@ -266,7 +343,19 @@ export const POST = withRequestLogging(
                   ),
                   reasoningEffort: input.reasoningEffort,
                   signal,
-                  onEvent: uiStream.onEvent,
+                  onModelRequest: () => publishStage("waiting-model"),
+                  onEvent: async (event) => {
+                    if (
+                      ((event.type === "text_delta" ||
+                        event.type === "thinking_delta" ||
+                        event.type === "toolcall_delta") &&
+                        event.delta.length > 0) ||
+                      event.type === "toolcall_start" ||
+                      event.type === "toolcall_end"
+                    )
+                      await publishStage("generating");
+                    uiStream.onEvent(event);
+                  },
                   onToolResult: uiStream.onToolResult,
                   onContextUsage: (usage) => {
                     contextUsage.current = usage;

@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { db } from "@/lib/db";
 import { cutoverToolkitToPrivatePackage } from "@/lib/toolkits/cutover";
 import { createApiToken, verifyApiTokenContext } from "@/lib/auth/tokens";
-import { parsePiPackageReleaseManifest } from "@/lib/market/pi-package-manifest";
+import { parsePiPackageReleaseManifest } from "@/lib/pi-packages/manifest";
 import { toolkitAccessWhere } from "@/lib/auth/toolkit-scope";
 
 const stamp = `${process.pid}-${Date.now()}`;
@@ -74,7 +74,7 @@ describe.sequential("controlled Toolkit private-package cutover", () => {
   afterAll(async () => {
     await db.marketListing.updateMany({
       where: { publisherWorkspaceId: workspaceId },
-      data: { latestReleaseId: null, pendingReleaseId: null },
+      data: { latestReleaseId: null },
     });
     await db.marketRelease.deleteMany({
       where: { listing: { publisherWorkspaceId: workspaceId } },
@@ -141,7 +141,9 @@ describe.sequential("controlled Toolkit private-package cutover", () => {
       requiresReauthorization: true,
     });
     expect(
-      await db.marketListing.count({ where: { sourceToolkitId: toolkitId } }),
+      await db.marketListing.count({
+        where: { publisherWorkspaceId: workspaceId },
+      }),
     ).toBe(0);
     expect(
       await db.toolkit.findUniqueOrThrow({ where: { id: toolkitId } }),
@@ -221,7 +223,7 @@ describe.sequential("controlled Toolkit private-package cutover", () => {
     expect(release.listing).toMatchObject({
       kind: "pi-package",
       visibility: "private",
-      sourceToolkitId: toolkitId,
+      publisherWorkspaceId: workspaceId,
     });
     const manifest = parsePiPackageReleaseManifest(
       release.manifest,

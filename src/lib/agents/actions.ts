@@ -6,7 +6,14 @@ import type {
   ModelCostTier,
 } from "@earendil-works/pi-ai";
 import { z } from "zod";
-import type { AgentConfig } from "@/lib/agents/mutations";
+import type {
+  AgentConfig,
+  ExternalSandboxSelection,
+} from "@/lib/agents/mutations";
+import {
+  EXTERNAL_SANDBOX_ACCESS,
+  MAX_EXTERNAL_SANDBOXES,
+} from "@/lib/sandboxes/external";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { getCurrentUser } from "@/lib/auth/current-user";
@@ -67,18 +74,15 @@ import {
   hasBuiltInPairingProvider,
 } from "@/lib/agents/platforms";
 import { stopSandboxAction } from "@/lib/sandboxes/actions";
-import {
-  AgentMarketError,
-  materializeAgentRelease,
-  unpublishAgentListing,
-  withdrawPendingAgentRelease,
-} from "@/lib/agents/market";
+import { approveAgentPluginSync } from "@/lib/plugins/agent-sync";
 import { safeRelativePath } from "@/lib/auth/safe-redirect";
 import { db } from "@/lib/db";
+import { McpPinningError } from "@/lib/process/mcp-pinning";
 import { deleteManagedAgent } from "@/lib/agents/deletion";
 import { AgentEnvironmentSnapshotSchema } from "./revision-types";
 import {
   captureAgentRevisionConfig,
+  prepareAgentRevisionMcpDeployments,
   publishAgentRevision,
   AgentRevisionError,
 } from "./revisions";
@@ -126,11 +130,12 @@ function resourceReviewError(error: unknown) {
     typeof error === "object" &&
     "code" in error &&
     typeof error.code === "string" &&
-    (/^(?:AGENT_|PI_|MCP_)[A-Z0-9_]+$/.test(error.code) ||
+    (/^(?:AGENT_|PI_|OMP_|MCP_)[A-Z0-9_]+$/.test(error.code) ||
       error.code === "resourceChanged" ||
       error.code === "reviewRequired" ||
       error.code === "reviewExpired" ||
-      error.code === "revisionPreparationRequired")
+      error.code === "revisionPreparationRequired" ||
+      error.code === "mcpVersionResolutionFailed")
   )
     return error.code;
   if (
@@ -211,6 +216,30 @@ function piPackagesFromForm(formData: FormData): AgentConfig["piPackages"] {
     return piPackagesFormSchema.parse(JSON.parse(raw));
   } catch {
     throw new AgentConfigurationError("pi_packages_invalid");
+  }
+}
+
+const externalSandboxesFormSchema = z
+  .array(
+    z
+      .object({
+        sandboxId: z.string().min(1).max(240),
+        access: z.enum(EXTERNAL_SANDBOX_ACCESS),
+      })
+      .strict(),
+  )
+  .max(MAX_EXTERNAL_SANDBOXES);
+
+function externalSandboxesFromForm(
+  formData: FormData,
+): ExternalSandboxSelection[] | undefined {
+  const raw = formData.get("externalSandboxes");
+  if (raw === null) return undefined;
+  try {
+    if (typeof raw !== "string" || raw.length > 16_000) throw new Error();
+    return externalSandboxesFormSchema.parse(JSON.parse(raw));
+  } catch {
+    throw new AgentConfigurationError("Invalid external sandbox selection.");
   }
 }
 
@@ -636,52 +665,68 @@ export async function updateWorkspaceModelPreferenceAction(
   return { savedAt: Date.now() };
 }
 
-export async function createAgentAction(formData: FormData) {
+export async function createAgentAction(
+  _previous: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
   const slug = String(formData.get("workspace") ?? "");
   const name = String(formData.get("name") ?? "").trim() || "New agent";
   const ctx = await authorizedWorkspace(slug);
-  if (!ctx) return;
-  const rawRuntime = formData.get("runtime");
-  if (rawRuntime && rawRuntime !== "pi-sdk")
-    throw new Error("Only native Pi Agents are available for creation.");
-  const runtime = "pi-sdk";
-  const providerId = String(formData.get("providerId") ?? "").trim() || null;
-  const model = String(formData.get("model") ?? "") || null;
-  const provider = providerId ? await getProvider(ctx.ws.id, providerId) : null;
-  if (!provider || !model || !provider.models.includes(model)) {
-    throw new Error("Choose an available model.");
+  if (!ctx) return { error: "resource_binding_unavailable" };
+  let agentId: string;
+  try {
+    const rawRuntime = formData.get("runtime");
+    if (rawRuntime && rawRuntime !== "pi-sdk" && rawRuntime !== "omp")
+      throw new Error(
+        "Only native Pi and OMP Agents are available for creation.",
+      );
+    const runtime = rawRuntime === "omp" ? "omp" : "pi-sdk";
+    const providerId = String(formData.get("providerId") ?? "").trim() || null;
+    const model = String(formData.get("model") ?? "") || null;
+    const provider = providerId
+      ? await getProvider(ctx.ws.id, providerId)
+      : null;
+    if (!provider || !model || !provider.models.includes(model)) {
+      throw new Error("Choose an available model.");
+    }
+    const agent = await createConfiguredAgent(
+      ctx.ws.id,
+      {
+        name,
+        description:
+          String(formData.get("description") ?? "")
+            .trim()
+            .slice(0, 500) || null,
+        systemPrompt:
+          String(formData.get("systemPrompt") ?? "")
+            .trim()
+            .slice(0, 100_000) || null,
+        providerId,
+        model,
+        disabledBuiltinTools: formData
+          .getAll("disabledBuiltinTool")
+          .map(String),
+        maxSteps: agentMaxSteps(formData),
+        piPackages: piPackagesFromForm(formData),
+      },
+      {
+        deploymentIds: formData.getAll("deploymentId").map(String),
+        installedSkillIds: formData.getAll("installedSkillId").map(String),
+        toolkitIds: formData.getAll("toolkitId").map(String),
+      },
+      {
+        runtime,
+        enable: true,
+      },
+    );
+    agentId = agent.id;
+  } catch (error) {
+    return { error: resourceReviewError(error) };
   }
-  const agent = await createConfiguredAgent(
-    ctx.ws.id,
-    {
-      name,
-      description:
-        String(formData.get("description") ?? "")
-          .trim()
-          .slice(0, 500) || null,
-      systemPrompt:
-        String(formData.get("systemPrompt") ?? "")
-          .trim()
-          .slice(0, 100_000) || null,
-      providerId,
-      model,
-      disabledBuiltinTools: formData.getAll("disabledBuiltinTool").map(String),
-      maxSteps: agentMaxSteps(formData),
-      piPackages: piPackagesFromForm(formData),
-    },
-    {
-      deploymentIds: formData.getAll("deploymentId").map(String),
-      installedSkillIds: formData.getAll("installedSkillId").map(String),
-      toolkitIds: formData.getAll("toolkitId").map(String),
-    },
-    {
-      runtime,
-    },
-  );
   revalidatePath(`/app/${slug}/agents`);
   revalidatePath(`/app/${slug}/work`);
   redirect(
-    `/app/${encodeURIComponent(slug)}/work?agent=${encodeURIComponent(agent.id)}`,
+    `/app/${encodeURIComponent(slug)}/work?agent=${encodeURIComponent(agentId)}`,
   );
 }
 
@@ -722,10 +767,6 @@ export async function pinAgentAction(formData: FormData) {
   revalidatePath(`/app/${slug}/work`);
 }
 
-export async function uninstallAgentMarketCopyAction(formData: FormData) {
-  return deleteAgentAction(formData);
-}
-
 export async function cloneAgentAction(formData: FormData) {
   const slug = String(formData.get("workspace") ?? "");
   const sourceAgentId = String(formData.get("agentId") ?? "");
@@ -754,89 +795,31 @@ export async function cloneAgentAction(formData: FormData) {
   );
 }
 
-function marketErrorCode(error: unknown) {
-  return error instanceof AgentMarketError ? error.code : "install_failed";
-}
-
-export async function unpublishAgentListingAction(formData: FormData) {
+export async function approveAgentPluginSyncAction(formData: FormData) {
   const slug = String(formData.get("workspace") ?? "");
   const agentId = String(formData.get("agentId") ?? "");
+  const installId = String(formData.get("installId") ?? "");
+  const targetReleaseId = String(formData.get("targetReleaseId") ?? "");
   const ctx = await authorizedWorkspace(slug);
-  if (!ctx || !agentId || ctx.ws.ownerId !== ctx.user.id) return;
-  if (!(await isManageableAgent(ctx.ws.id, agentId))) return;
-
-  await unpublishAgentListing({
-    workspaceId: ctx.ws.id,
+  if (
+    !ctx ||
+    !agentId ||
+    !installId ||
+    !targetReleaseId ||
+    !(await isManageableAgent(ctx.ws.id, agentId))
+  )
+    throw new Error("Not authorized.");
+  const binding = await approveAgentPluginSync(
+    ctx.ws.id,
+    ctx.user.id,
     agentId,
-    actorId: ctx.user.id,
-  });
-  const publishPath = `/app/${slug}/agents/${agentId}/publish`;
-  revalidatePath(`/app/${slug}/market/agents`);
-  revalidatePath(publishPath);
-  redirect(`${publishPath}?unpublished=1`);
-}
-
-export async function withdrawPendingAgentReleaseAction(formData: FormData) {
-  const slug = String(formData.get("workspace") ?? "");
-  const agentId = String(formData.get("agentId") ?? "");
-  const ctx = await authorizedWorkspace(slug);
-  if (!ctx || !agentId || ctx.ws.ownerId !== ctx.user.id) return;
-  if (!(await isManageableAgent(ctx.ws.id, agentId))) return;
-
-  await withdrawPendingAgentRelease({
-    workspaceId: ctx.ws.id,
-    agentId,
-    actorId: ctx.user.id,
-  });
-  const publishPath = `/app/${slug}/agents/${agentId}/publish`;
-  revalidatePath(`/app/${slug}/market/agents`);
-  revalidatePath(publishPath);
-  redirect(`${publishPath}?withdrawn=1`);
-}
-
-export async function installAgentFromMarketAction(formData: FormData) {
-  const workspaceSlug = String(formData.get("workspace") ?? "");
-  const releaseId = String(formData.get("releaseId") ?? "");
-  const idempotencyKey = String(formData.get("idempotencyKey") ?? "").slice(
-    0,
-    128,
+    installId,
+    targetReleaseId,
   );
-  const returnTo =
-    safeRelativePath(formData.get("returnTo")) ??
-    (workspaceSlug ? `/app/${workspaceSlug}/market/agents` : "/app");
-  const ctx = await authorizedWorkspace(workspaceSlug);
-  if (!ctx || !releaseId || !idempotencyKey) return;
-
-  let clonedAgentId: string | null = null;
-  let errorCode: string | null = null;
-  try {
-    const result = await materializeAgentRelease({
-      releaseId,
-      targetWorkspaceId: ctx.ws.id,
-      installedById: ctx.user.id,
-      idempotencyKey,
-      name:
-        String(formData.get("name") ?? "")
-          .trim()
-          .slice(0, 80) || undefined,
-    });
-    clonedAgentId = result.agent.id;
-  } catch (error) {
-    errorCode = marketErrorCode(error);
-  }
-  if (errorCode) {
-    const separator = returnTo.includes("?") ? "&" : "?";
-    redirect(
-      `${returnTo}${separator}cloneError=${encodeURIComponent(errorCode)}`,
-    );
-  }
-  if (!clonedAgentId) return;
-
-  revalidatePath(`/app/${workspaceSlug}/agents`);
-  revalidatePath(`/app/${workspaceSlug}/market/agents`);
-  redirect(
-    `/app/${encodeURIComponent(workspaceSlug)}/work?agent=${encodeURIComponent(clonedAgentId)}`,
-  );
+  revalidatePath(`/app/${slug}/agents/${agentId}`);
+  revalidatePath(`/app/${slug}/plugins`);
+  revalidatePath(`/app/${slug}/work`);
+  return { syncStatus: binding.syncStatus, syncError: binding.syncError };
 }
 
 export type ResourceEnableState = Partial<AgentResourceReview> & {
@@ -859,7 +842,7 @@ export async function previewAgentResourceAction(
     !ctx ||
     !agentId ||
     !resourceId ||
-    (resourceKind !== "skill" && resourceKind !== "mcp") ||
+    resourceKind !== "skill" ||
     !(await isManageableAgent(ctx.ws.id, agentId))
   )
     return { error: "resource_binding_unavailable" };
@@ -889,7 +872,7 @@ export async function enableAgentResourceAction(
     !ctx ||
     !agentId ||
     !resourceId ||
-    (resourceKind !== "skill" && resourceKind !== "mcp") ||
+    resourceKind !== "skill" ||
     !(await isManageableAgent(ctx.ws.id, agentId))
   )
     return { error: "resource_binding_unavailable" };
@@ -899,18 +882,6 @@ export async function enableAgentResourceAction(
   const reviewReceipt = String(formData.get("reviewReceipt") ?? "");
   if (!expectedRevisionId || !reviewReceipt) return { error: "reviewRequired" };
   try {
-    let allowedToolNames: string[] | undefined;
-    if (resourceKind === "mcp") {
-      const selection = formData.get("allowedToolNames");
-      if (typeof selection !== "string") return { error: "reviewRequired" };
-      const parsed = z
-        .array(z.string().min(1).max(240))
-        .max(1_000)
-        .safeParse(JSON.parse(selection));
-      if (!parsed.success || new Set(parsed.data).size !== parsed.data.length)
-        return { error: "reviewRequired" };
-      allowedToolNames = parsed.data;
-    }
     const revision = await applyAgentResourceReview({
       workspaceId: ctx.ws.id,
       userId: ctx.user.id,
@@ -919,12 +890,9 @@ export async function enableAgentResourceAction(
       resourceKind,
       expectedRevisionId,
       reviewReceipt,
-      ...(allowedToolNames === undefined ? {} : { allowedToolNames }),
     });
     revalidatePath(`/app/${slug}/agents/${agentId}`);
-    revalidatePath(
-      `/app/${slug}/${resourceKind === "skill" ? "skills" : "mcp"}/${resourceId}`,
-    );
+    revalidatePath(`/app/${slug}/skills/${resourceId}`);
     revalidatePath(`/app/${slug}/work`);
     return { bound: true, enabled: true, agentId, revisionId: revision.id };
   } catch (error) {
@@ -976,13 +944,13 @@ export async function updateAgentAction(
         deploymentIds: formData.getAll("deploymentId").map(String),
         installedSkillIds: formData.getAll("installedSkillId").map(String),
         toolkitIds: formData.getAll("toolkitId").map(String),
-        sandboxIds: formData.getAll("sandboxId").map(String),
-        defaultSandboxId:
-          String(formData.get("defaultSandboxId") ?? "") || null,
-        subAgentIds: formData.getAll("subAgentId").map(String),
+        externalSandboxes: externalSandboxesFromForm(formData),
       });
     });
   } catch (error) {
+    if (error instanceof SyntaxError || error instanceof z.ZodError)
+      return { error: "MCP_TOOL_SELECTION_CHANGED" };
+    if (error instanceof McpPinningError) return { error: error.code };
     if (error instanceof AgentExecutionBusyError)
       return { error: error.message };
     if (error instanceof AgentConfigurationError) {
@@ -1046,11 +1014,14 @@ export async function prepareAgentRevisionAction(formData: FormData) {
     typeof rawEnvironment === "string" && rawEnvironment
       ? AgentEnvironmentSnapshotSchema.parse(JSON.parse(rawEnvironment))
       : undefined;
+  await prepareAgentRevisionMcpDeployments(ctx.ws.id, agentId);
   return db.$transaction(
     async (tx) => {
       const agent = await tx.agent.findFirstOrThrow({
         where: { id: agentId, workspaceId: ctx.ws.id },
-        select: { currentRevisionVersion: true },
+        select: {
+          currentRevisionVersion: true,
+        },
       });
       const current = await tx.agentRevision.findUnique({
         where: {
@@ -1074,11 +1045,29 @@ export async function publishAgentRevisionAction(formData: FormData) {
     throw new Error("Agent not found.");
   if (!formData.has("expectedRevisionId"))
     throw new Error("Prepare the Agent configuration before applying it.");
-  const revision = await publishAgentRevision(ctx.ws.id, agentId, {
-    expectedRevisionId:
-      String(formData.get("expectedRevisionId") ?? "") || null,
-    config: JSON.parse(String(formData.get("config") ?? "")),
-  });
+  let revision: { id: string };
+  try {
+    revision = await publishAgentRevision(ctx.ws.id, agentId, {
+      expectedRevisionId:
+        String(formData.get("expectedRevisionId") ?? "") || null,
+      config: JSON.parse(String(formData.get("config") ?? "")),
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message === "PI_CAPABILITY_CONFLICT") {
+      const detail = error.cause instanceof Error ? error.cause.message : "";
+      const conflict = /^(skill|tool|command):(.{1,200})$/.exec(detail);
+      return {
+        error: "PI_CAPABILITY_CONFLICT" as const,
+        conflict: conflict
+          ? {
+              kind: conflict[1] as "skill" | "tool" | "command",
+              name: conflict[2],
+            }
+          : null,
+      };
+    }
+    throw error;
+  }
   revalidatePath(`/app/${slug}/agents/${agentId}`);
   revalidatePath(`/app/${slug}/agents`);
   revalidatePath(`/app/${slug}/work`);

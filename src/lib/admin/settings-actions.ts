@@ -21,9 +21,11 @@ import {
   MIN_MCP_STARTUP_TIMEOUT_MS,
   resetMcpStartupTimeoutSettings,
   resetRemoteMcpPrivateHostsSettings,
+  resetSshPrivateHostsSettings,
   updateMcpStartupTimeoutSettings,
   updateRemoteMcpPrivateHostsSettings,
   updateSkillImportSettings,
+  updateSshPrivateHostsSettings,
 } from "@/lib/admin/settings";
 import { parseRemoteMcpPrivateHosts } from "../../../scripts/remote-mcp-private-hosts.mjs";
 import {
@@ -198,6 +200,31 @@ export async function updateRemoteMcpPrivateHostsSettingsAction(
         return { error: t("errorRemoteMcpPrivateHosts") };
       }
       await updateRemoteMcpPrivateHostsSettings(value, admin.id);
+    }
+  } catch {
+    return { error: t("errorActionFailed") };
+  }
+
+  revalidatePath("/admin/settings");
+  return { ok: true };
+}
+
+export async function updateSshPrivateHostsSettingsAction(
+  _prev: AdminSettingsActionState,
+  formData: FormData,
+): Promise<AdminSettingsActionState> {
+  const admin = await requireAdmin();
+  const t = await getTranslations("admin");
+
+  try {
+    if (String(formData.get("intent") ?? "") === "reset") {
+      await resetSshPrivateHostsSettings(admin.id);
+    } else {
+      const value = formData.get("sshPrivateHosts");
+      if (typeof value !== "string" || !parseRemoteMcpPrivateHosts(value)) {
+        return { error: t("errorSshPrivateHosts") };
+      }
+      await updateSshPrivateHostsSettings(value, admin.id);
     }
   } catch {
     return { error: t("errorActionFailed") };

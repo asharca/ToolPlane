@@ -8,6 +8,7 @@ import {
 } from "@/lib/agents/public-api/auth";
 import { takeAgentApiPrincipalRateLimit } from "@/lib/agents/public-api/rate-limit";
 import { TaskNotFoundError } from "@a2a-js/sdk/errors";
+import type { AgentModelOverride } from "@/lib/agents/chat-body";
 
 export const A2A_SCOPES = ["a2a:send", "a2a:read", "a2a:cancel"] as const;
 export type A2AOperation = "send" | "read" | "cancel";
@@ -27,6 +28,8 @@ export type A2AGrant = {
   retentionDays: number;
 };
 export type LocalA2AGrant = {
+  // Trusted console admission only; never populated from A2A message metadata.
+  modelOverride?: AgentModelOverride;
   entryPolicy?: {
     kind: "chat" | "work" | "channel" | "control";
     sourceId: string;
@@ -54,7 +57,7 @@ export type LocalA2AGrant = {
 };
 export type RemoteA2AGrant = Omit<
   LocalA2AGrant,
-  "kind" | "agentId" | "agentRevisionId"
+  "kind" | "agentId" | "agentRevisionId" | "modelOverride"
 > & {
   kind: "remote";
   remoteAgentId: string;

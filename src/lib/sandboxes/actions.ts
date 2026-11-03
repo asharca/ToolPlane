@@ -34,7 +34,6 @@ import {
   sandboxConfigWithEnv,
 } from "./env";
 import { resolveSandboxImage } from "./images";
-import { sshTargetIdFromConfig } from "./ssh-targets";
 import {
   connectorFromConfig,
   connectorServerUrlFromHeaders,
@@ -90,6 +89,7 @@ async function sandboxInWorkspace(sandboxId: string, workspaceId: string) {
       deployment: true,
       snapshots: true,
       agentLinks: { select: { agentId: true } },
+      sshServer: { select: { sandboxId: true } },
       conversations: { select: { id: true } },
       a2aContexts: { select: { id: true } },
     },
@@ -116,7 +116,10 @@ async function genericSandboxMutationAllowed(
     where: {
       workspaceId: sandbox.workspaceId,
       sandboxes: { some: { sandboxId: sandbox.id } },
-      OR: [{ runtimeKind: { not: "pi-sdk" } }, { retiredAt: { not: null } }],
+      OR: [
+        { runtimeKind: { notIn: ["pi-sdk", "omp"] } },
+        { retiredAt: { not: null } },
+      ],
     },
     select: { id: true },
   });
@@ -247,9 +250,6 @@ function installCfgForSandbox(sandbox: {
     network: sandbox.network,
     volumeName: sandboxVolumeName(sandbox.id),
     connector: connector ?? undefined,
-    ...(sandbox.kind === "ssh"
-      ? { sshTargetId: sshTargetIdFromConfig(sandbox.config) ?? "" }
-      : {}),
     env,
   };
 }
@@ -970,7 +970,7 @@ function runSandboxLifecycle(
       await stopAgentSandboxSessionMcp(sandbox.id, workspaceId);
     if (operation !== "stop") {
       if (sandbox.kind === "host") return result("skipped", "host_unmanaged");
-      if (sandbox.kind === "ssh" && !sshTargetIdFromConfig(sandbox.config)) {
+      if (sandbox.kind === "ssh" && !sandbox.sshServer) {
         return result("skipped", "ssh_unconfigured");
       }
       if (

@@ -4,13 +4,13 @@
 
 ToolPlane 是一个自托管的 AI 工具与 Agent 平台，以工作区组织工具、技能、模型和运行环境。实例凭据、工作区数据与托管运行时由部署者管理。
 
-[中文文档](docs/README.zh-CN.md) · [运行与维护](docs/RUNTIME_OPERATIONS.zh-CN.md)
+[中文开发文档](https://asharca.github.io/toolplane-docs/docs/zh) · [运行与维护](https://asharca.github.io/toolplane-docs/docs/zh/developers/docs/RUNTIME_OPERATIONS) · [文档源码](https://github.com/asharca/toolplane-docs)
 
 ## 核心能力
 
 - **MCP 管理**：从目录或自定义配置部署服务，支持 npm、PyPI、GitHub 和 Docker 来源。
-- **资源中心与客户端**：从受管理的 GitHub 仓库同步不可变资源，保留固定提交与审计；不接受本地上传或站内内容发布。客户端按独立 scope 注册，旧 Toolkit 执行与令牌已退役。
-- **Agent 执行**：仅使用 Pi 内核（内部标识 `pi-sdk`），审查并应用不可变修订后，在独立会话沙箱中执行；其他旧运行时仅保留只读历史。
+- **插件中心与客户端**：从 GitHub 同步统一版本的组合插件包，一个包可包含 MCP、Skill、Pi 能力包、Agent 和 Assistant；按需选择成员、审阅更新，保留固定提交与审计。不接受本地上传或站内内容发布。客户端按独立 scope 注册，旧 Toolkit 执行与令牌已退役。
+- **Agent 执行**：支持 Pi SDK（`pi-sdk`）和 OMP（`omp`），审查并应用不可变修订后，每个智能体复用一个持久沙箱，会话分别保留工作目录、原生历史和插件版本。模型、技能、MCP 与插件直接绑定平台资源。平台 Agent 委派可与 OMP 原生动态子任务共存，授权随修订固定；其他旧运行时仅保留只读历史。
 - **沙箱与设备**：管理 Docker 沙箱，通过 Connector 连接自己的电脑，或通过 ADB 桥接 Android。
 - **观测与集成**：查看调用、延迟和错误，通过 MCP、API 或消息渠道接入。
 
@@ -22,11 +22,13 @@ flowchart TB
   Skills["Skill · Prompt · 文件"] --> Package
   Package -->|审查并应用| Revision["Agent 修订"]
   Package -->|独立授权注册| Clients["外部 AI 客户端"]
-  Revision --> Session["Pi 会话 · 固定修订"]
-  Session --> Sandbox["独立持久工作卷"]
+  Revision --> Session["Pi / OMP 会话 · 固定修订"]
+  Session --> Sandbox["Agent 共享持久沙箱 · 会话独立目录"]
 ```
 
-Agent 会话固定已应用的修订，后续包更新不会自动改变现有会话。能力审查、运行时限制与历史数据边界见[运行时文档](docs/AGENT_RUNTIMES.zh-CN.md)。
+Agent 会话固定已应用的修订，后续包更新不会自动改变现有会话。能力审查、运行时限制与历史数据边界见[运行时文档](https://asharca.github.io/toolplane-docs/docs/zh/developers/docs/AGENT_RUNTIMES)。
+
+智能体与助手的会话列表滚动条位于各自侧栏最右缘，仅在滚动时显示，停止约 800 毫秒后隐藏；隐藏时保留滚动条占位，避免列表宽度跳变。
 
 ## 快速开始
 
@@ -49,7 +51,7 @@ docker compose pull app
 docker compose up -d
 ```
 
-应用默认端口为 `10030`。公网部署前，请配置 HTTPS、端口访问控制及备份，详见[运行与维护](docs/RUNTIME_OPERATIONS.zh-CN.md)。
+应用默认端口为 `10030`。公网部署前，请配置 HTTPS、端口访问控制及备份，详见[运行与维护](https://asharca.github.io/toolplane-docs/docs/zh/developers/docs/RUNTIME_OPERATIONS)。
 
 ### 本地开发
 
@@ -68,7 +70,7 @@ pnpm db:migrate
 pnpm dev
 ```
 
-访问 `http://localhost:3000`。可选执行 `pnpm db:seed` 创建本地演示账户 `smoke@example.com` / `password123`；不要在生产数据库运行演示种子。种子只创建未授权的 Pi 草稿与停止状态模板，不创建资源中心内容、发布版本、凭据、API token 或运行进程；已有账户与草稿不重置。资源从 GitHub 仓库同步后，仍须配置并显式 Prepare／审阅／Apply。
+访问 `http://localhost:3000`。可选执行 `pnpm db:seed` 创建本地演示账户 `smoke@example.com` / `password123`；不要在生产数据库运行演示种子。种子只创建未授权的 Pi 草稿与停止状态模板，不创建插件中心内容、发布版本、凭据、API token 或运行进程；已有账户与草稿不重置。资源从 GitHub 仓库同步后，仍须配置并显式 Prepare／审阅／Apply。
 
 `pnpm install` 自动安装仓库的 Git hooks；已有 checkout 可运行 `pnpm hooks:install`。安装器不覆盖其他 `core.hooksPath` 配置，无 `.git` 的镜像依赖层和发布归档跳过安装。
 
@@ -81,9 +83,9 @@ pnpm dev
 
 ## 使用入口
 
-在资源中心配置 GitHub 仓库，初始官方仓库为 [`asharca/toolplane-resources`](https://github.com/asharca/toolplane-resources)。工作区 owner/admin 添加仓库并同步 `registry.json`；资源内容与版本通过 GitHub PR 管理。安装冻结版本后，审查差异并显式应用到 Agent 修订；同步不会自动升级已有会话。客户端另行注册并授权，旧 Toolkit 转换不继承执行权限。外部 AI 客户端可从 **Agents → Connect AI** 获取 Agent Control MCP 配置。仓库协议、私有来源和签名 Webhook 见[资源同步操作](docs/RUNTIME_OPERATIONS.zh-CN.md#github-资源中心)。
+侧栏“插件中心”展开为浏览插件包、工作区资源、更新和 GitHub 来源；独立 Skill/MCP 入口负责工作区管理。工作区 owner/admin 登记 GitHub 仓库并同步 schemaVersion 2 的 `registry.json`，内容与整包版本通过 GitHub PR 管理；初始官方仓库为 [`asharca/toolplane-plugins`](https://github.com/asharca/toolplane-plugins)。安装时选择包内成员，新增成员不会在更新时默认勾选；同步、安装和更新均不执行资源、不自动授权，也不改变已有会话版本。客户端另行注册并授权，旧 Toolkit 转换不继承执行权限。外部 AI 客户端可从 **Agents → Connect AI** 获取 Agent Control MCP 配置。仓库协议、升级顺序、私有来源和签名 Webhook 见[资源同步操作](https://asharca.github.io/toolplane-docs/docs/zh/developers/docs/RUNTIME_OPERATIONS#user-content-github-插件中心)。
 
-设备连接请使用沙箱页面生成的 Connector 命令；支持范围、系统要求及屏幕访问方式见[沙箱与连接器](docs/SANDBOXES.zh-CN.md)。连接器以本地用户权限运行，不等同于隔离容器。
+设备连接请使用沙箱页面生成的 Connector 命令；支持范围、系统要求及屏幕访问方式见[沙箱与连接器](https://asharca.github.io/toolplane-docs/docs/zh/guides/docs/SANDBOXES)。连接器以本地用户权限运行，不等同于隔离容器。
 
 ## 开发命令
 
@@ -105,11 +107,15 @@ CI 执行 `pnpm test`，不追求全仓覆盖率数字。需要诊断覆盖情�
 
 ## 文档
 
+文档站是独立的 [GitHub Pages 站点](https://asharca.github.io/toolplane-docs/docs/zh)，中文优先，描述当前开发中的功能，不是稳定生产版本的承诺；部署者应结合实际运行版本阅读。公开文档唯一维护源为 [`asharca/toolplane-docs`](https://github.com/asharca/toolplane-docs) 的 `content/`，通过该仓库的 PR 更新，不在应用仓库维护第二份正文。根目录 `README.md` 仍介绍本项目，`CHANGELOG.md` 仍由本仓库 CI/CD 生成。
+
+应用原 `/docs` 入口跳转至独立站，已有 `/docs/{zh|en}/{guides|developers|api}/{topic}` 路径在 `/toolplane-docs` 基路径下保留。运行中实例的 `/docs-api` 与 `/api/v1/openapi.json` 继续提供该实例的交互式 API 参考与 OpenAPI 定义，与独立站的开发文档区分。
+
 | 主题 | 入口 |
 |---|---|
-| 架构与运行时 | [Pi 内核与历史边界](docs/AGENT_RUNTIMES.zh-CN.md) |
-| 工具与客户端 | [文档索引](docs/README.zh-CN.md) · [沙箱与连接器](docs/SANDBOXES.zh-CN.md) |
-| 对外集成 | [Agent Control MCP](docs/AGENT_CONTROL_MCP.zh-CN.md) · [公共 API](docs/AGENT_PUBLIC_API.zh-CN.md) · [消息渠道](docs/AGENT_MESSAGING_PLATFORMS.zh-CN.md) |
-| 部署与维护 | [升级与恢复](docs/RUNTIME_OPERATIONS.zh-CN.md) · [日志与审计](docs/OBSERVABILITY.zh-CN.md) |
+| 架构与运行时 | [Pi 内核与历史边界](https://asharca.github.io/toolplane-docs/docs/zh/developers/docs/AGENT_RUNTIMES) |
+| 工具与客户端 | [文档索引](https://asharca.github.io/toolplane-docs/docs/zh) · [沙箱与连接器](https://asharca.github.io/toolplane-docs/docs/zh/guides/docs/SANDBOXES) |
+| 对外集成 | [Agent Control MCP](https://asharca.github.io/toolplane-docs/docs/zh/api/docs/AGENT_CONTROL_MCP) · [公共 API](https://asharca.github.io/toolplane-docs/docs/zh/api/docs/AGENT_PUBLIC_API) · [消息渠道](https://asharca.github.io/toolplane-docs/docs/zh/guides/docs/AGENT_MESSAGING_PLATFORMS) |
+| 部署与维护 | [升级与恢复](https://asharca.github.io/toolplane-docs/docs/zh/developers/docs/RUNTIME_OPERATIONS) · [日志与审计](https://asharca.github.io/toolplane-docs/docs/zh/developers/docs/OBSERVABILITY) |
 
-完整目录见[文档索引](docs/README.zh-CN.md)。ToolPlane 需要单个持续运行的应用进程，不适合 Serverless，也不要让多个实例同时操作同一运行域。
+完整目录见[文档索引](https://asharca.github.io/toolplane-docs/docs/zh)。ToolPlane 需要单个持续运行的应用进程，不适合 Serverless，也不要让多个实例同时操作同一运行域。

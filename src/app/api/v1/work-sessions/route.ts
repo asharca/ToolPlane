@@ -2,6 +2,8 @@ import { withRequestLogging } from "@/lib/observability/http";
 import { resolveRequestUser } from "@/lib/auth/request-user";
 import { getAgentForRequest } from "@/lib/agents/queries";
 import { normalizeReasoningEffort } from "@/lib/agents/constants";
+import { AgentModelOverrideSchema } from "@/lib/agents/chat-body";
+import { AgentModelOverrideError } from "@/lib/agents/turn-model";
 import {
   createWorkSession,
   listWorkSessions,
@@ -64,6 +66,7 @@ export const POST = withRequestLogging(
       attachmentIds?: unknown;
       references?: unknown;
       reasoningEffort?: unknown;
+      modelOverride?: unknown;
     };
     try {
       body = await req.json();
@@ -83,6 +86,11 @@ export const POST = withRequestLogging(
     ) {
       return Response.json({ error: "Invalid task" }, { status: 400 });
     }
+    const modelOverride = AgentModelOverrideSchema.optional().safeParse(
+      body.modelOverride,
+    );
+    if (!modelOverride.success)
+      return Response.json({ error: "modelOverrideInvalid" }, { status: 400 });
     const references = ComposerReferencesSchema.safeParse(body.references);
     if (!references.success)
       return Response.json({ error: "Invalid references" }, { status: 400 });
@@ -122,6 +130,7 @@ export const POST = withRequestLogging(
     if (
       agent &&
       agent.runtimeKind !== "pi-sdk" &&
+      agent.runtimeKind !== "omp" &&
       command &&
       !runtimeCommands(agent.runtimeKind).some(
         (item) => item.name === command.name,
@@ -140,7 +149,10 @@ export const POST = withRequestLogging(
       );
     if (!agent)
       return Response.json({ error: "Agent not found" }, { status: 404 });
-    if (agent.runtimeKind !== "pi-sdk" || agent.retiredAt)
+    if (
+      (agent.runtimeKind !== "pi-sdk" && agent.runtimeKind !== "omp") ||
+      agent.retiredAt
+    )
       return Response.json(
         { error: "Retired Agent history is read-only." },
         { status: 410 },
@@ -185,10 +197,13 @@ export const POST = withRequestLogging(
           ? { acceptanceCriteria: body.acceptanceCriteria }
           : {}),
         ...(reasoningEffort ? { reasoningEffort } : {}),
+        modelOverride: modelOverride.data,
         workingDirectory,
         ...(attachments.length ? { uploadedById: user.id, attachments } : {}),
       });
     } catch (error) {
+      if (error instanceof AgentModelOverrideError)
+        return Response.json({ error: error.code }, { status: error.status });
       return error instanceof WorkAttachmentError
         ? Response.json({ error: error.message }, { status: error.status })
         : Response.json(

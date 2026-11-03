@@ -6,7 +6,6 @@
     "includes": [
       "**",
       "!!.next",
-      "!!.source",
       "!!**/dist",
       "!!next-env.d.ts",
       "!!.next-dev-wrapper.js",

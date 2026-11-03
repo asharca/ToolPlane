@@ -11,10 +11,20 @@ import {
 } from "vitest";
 import { randomUUID } from "node:crypto";
 import { Task, TaskState } from "@a2a-js/sdk";
-import { runNativeEntry } from "@/lib/a2a/ingress";
+import {
+  runAgentEntry,
+  submitAgentEntry,
+} from "@/lib/agents/execution/entries";
+import type * as EntryModule from "@/lib/agents/execution/entries";
 import { claimTask, finishTask, getTask } from "@/lib/a2a/store";
 import { textArtifact } from "@/lib/a2a/model";
 import { db } from "@/lib/db";
+import {
+  applyNativeUiAction,
+  nativeUiProjection,
+} from "@/lib/agents/execution/native-ui";
+import type { Prisma } from "@prisma/client";
+import { encryptSecretText } from "@/lib/security/secrets";
 import { publishFixtureAgentRevision } from "./agent-revision-fixture";
 import { GET, POST } from "@/app/api/v1/workspaces/[slug]/agent-channels/route";
 import {
@@ -24,6 +34,7 @@ import {
 import {
   runAgentChannelMessage,
   runWorkspaceAgentMessage,
+  CHANNEL_EXECUTION_FAILURE_MESSAGE,
 } from "@/lib/agents/message-service";
 import {
   liveAgentChannelStatus,
@@ -33,11 +44,51 @@ import {
 import { acquireConversationOperation } from "@/lib/agents/conversation-operations";
 import { POST as runtimeCommand } from "@/app/api/v1/agents/[agentId]/conversations/[conversationId]/commands/route";
 import { executeRuntimeCommand } from "@/lib/agents/runtime-command-service";
+import {
+  GET as getExecution,
+  POST as decideExecution,
+} from "@/app/api/v1/agents/[agentId]/conversations/[conversationId]/execution/route";
 
-const identity = vi.hoisted(() => ({ user: null as { id: string } | null }));
+function executionRequest(
+  agent: string,
+  conversationId: string,
+  body?: Record<string, unknown>,
+  headers: Record<string, string> = {},
+) {
+  const method = body ? "POST" : "GET";
+  const req = new Request(
+    `http://localhost:3000/api/v1/agents/${agent}/conversations/${conversationId}/execution`,
+    {
+      method,
+      headers: {
+        ...(body
+          ? {
+              "content-type": "application/json",
+              origin: "http://localhost:3000",
+            }
+          : {}),
+        ...headers,
+      },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    },
+  );
+  const context = {
+    params: Promise.resolve({ agentId: agent, conversationId }),
+  };
+  return body ? decideExecution(req, context) : getExecution(req, context);
+}
+
+const identity = vi.hoisted(() => ({
+  user: null as { id: string } | null,
+  credential: "session" as "session" | "personal-token" | "toolkit-token",
+}));
 vi.mock("@/lib/auth/request-user", () => ({
   resolveAccountRequestUser: async () => identity.user,
   resolveRequestUser: async () => identity.user,
+  resolveRequestPrincipal: async () =>
+    identity.user
+      ? { user: identity.user, credential: identity.credential, token: null }
+      : null,
 }));
 vi.mock("@/lib/agents/channel-runtime", () => ({
   liveAgentChannelStatus: vi.fn(() => "stopped"),
@@ -48,15 +99,14 @@ vi.mock("@/lib/agents/channel-runtime", () => ({
 }));
 // Keep real published-revision admission, policy, persistence and receipts;
 // inject only terminal SDK output, without legacy Harness operation metadata.
-vi.mock("@/lib/a2a/ingress", async (original) => {
-  const actual = await original<typeof import("@/lib/a2a/ingress")>();
+vi.mock("@/lib/agents/execution/entries", async (original) => {
+  const actual = await original<typeof EntryModule>();
   return {
     ...actual,
-    runNativeEntry: vi.fn(
-      async (input: Parameters<typeof actual.runNativeEntry>[0]) => {
-        const accepted = await actual.submitNativeEntry(input, () => {});
-        const path = `/app/channels/agents/${input.agentId}?settings=a2a&task=${accepted.row.id}`;
-        await input.onAccepted?.(Task.fromJSON(accepted.row.snapshot), path);
+    runAgentEntry: vi.fn(
+      async (input: Parameters<typeof actual.runAgentEntry>[0]) => {
+        const accepted = await actual.submitAgentEntry(input, () => {});
+        const path = `/app/channels/work?agent=${input.agentId}&c=${input.sourceId}`;
         if (!accepted.replay) {
           const running = await claimTask(accepted.row.id);
           if (!running?.leaseToken)
@@ -161,6 +211,100 @@ afterAll(async () => {
   await db.user.delete({ where: { id: assertDefined(identity.user).id } });
   await db.$disconnect();
 });
+
+it("reads channel history with isolated, gap-free live and older cursors", async () => {
+  const channel = await db.agentChannelConnection.create({
+    data: {
+      workspaceId: workspace.id,
+      agentId,
+      platform: "telegram",
+      name: "History",
+      credentials: {},
+      inboundTokenHash: randomUUID(),
+      inboundTokenSecret: encryptSecretText("history-fixture-token"),
+      inboundTokenPrefix: "history-fixture",
+    },
+  });
+  const conversation = await db.conversation.create({
+    data: {
+      agentId,
+      title: "Channel room",
+      runtimeSessionKey: `channel:${channel.id}:room`,
+    },
+  });
+  const unrelated = await db.conversation.create({
+    data: {
+      agentId,
+      title: "Private console chat",
+      runtimeSessionKey: `channel:${channel.id}-other:room`,
+    },
+  });
+  const time = new Date("2026-10-01T00:00:00Z");
+  const prefix = randomUUID();
+  await db.message.createMany({
+    data: Array.from({ length: 102 }, (_, i) => ({
+      id: `${prefix}-${String(i).padStart(3, "0")}`,
+      conversationId: conversation.id,
+      role: i % 2 ? "assistant" : "user",
+      parts: [{ type: "text", text: `Message ${i}` }],
+      createdAt: time,
+    })),
+  });
+  const privateMessage = await db.message.create({
+    data: {
+      conversationId: unrelated.id,
+      role: "user",
+      parts: [{ type: "text", text: "Private" }],
+    },
+  });
+  const history = (query = "", slug = workspace.slug) =>
+    GET(
+      new Request(
+        `http://localhost/api/v1/workspaces/${slug}/agent-channels?history=${channel.id}${query}`,
+      ),
+      { params: Promise.resolve({ slug }) },
+    );
+  const initial = await history();
+  expect(initial.status).toBe(200);
+  const page = await initial.json();
+  expect(page.messages.map((m: { text: string }) => m.text)).toEqual(
+    Array.from({ length: 100 }, (_, i) => `Message ${i + 2}`),
+  );
+  expect(page.hasMore).toBe(true);
+  const older = await (await history(`&before=${page.messages[0].id}`)).json();
+  expect(older.messages.map((m: { text: string }) => m.text)).toEqual([
+    "Message 0",
+    "Message 1",
+  ]);
+  expect(older.hasMore).toBe(false);
+  await db.message.create({
+    data: {
+      id: `${prefix}-102`,
+      conversationId: conversation.id,
+      role: "assistant",
+      parts: [
+        { type: "text", text: "New reply" },
+        { type: "data-internal", data: "Not conversation text" },
+      ],
+      createdAt: time,
+    },
+  });
+  const live = await (
+    await history(`&after=${page.messages.at(-1).id}`)
+  ).json();
+  expect(live.messages.map((m: { text: string }) => m.text)).toEqual([
+    "New reply",
+  ]);
+  expect((await history(`&after=${privateMessage.id}`)).status).toBe(404);
+  expect((await history("", other.slug)).status).toBe(404);
+  const owner = identity.user;
+  identity.user = null;
+  try {
+    expect((await history()).status).toBe(401);
+  } finally {
+    identity.user = owner;
+  }
+});
 async function command(body: Record<string, unknown>, slug = workspace.slug) {
   return POST(
     new Request(`http://localhost/api/v1/workspaces/${slug}/agent-channels`, {
@@ -254,6 +398,111 @@ async function piCommandChannel() {
 }
 
 describe("workspace channels", () => {
+  it("activates paired WeChat with the adding account without enabling A2A delegation", async () => {
+    const { agent } = await piCommandChannel();
+    await db.agent.update({
+      where: { id: agent.id },
+      data: { a2aInboundEnabled: false, a2aOutboundEnabled: false },
+    });
+    await publishFixtureAgentRevision(workspace.id, agent.id);
+    const created = await command({
+      action: "create",
+      platform: "weixin",
+      agentId: agent.id,
+    });
+    expect(created.status).toBe(200);
+    const { connectionId } = await created.json();
+    const owner = assertDefined(identity.user);
+    const member = await db.user.create({
+      data: {
+        email: `channel-member-${randomUUID()}@test.dev`,
+        passwordHash: "unused",
+      },
+    });
+    await db.membership.create({
+      data: { workspaceId: workspace.id, userId: member.id, role: "member" },
+    });
+    try {
+      identity.user = member;
+      expect((await command({ action: "start", connectionId })).status).toBe(
+        403,
+      );
+      expect(
+        (
+          await command({
+            action: "create",
+            platform: "weixin",
+            agentId: agent.id,
+          })
+        ).status,
+      ).toBe(403);
+      identity.user = owner;
+      expect(
+        await db.agentChannelConnection.findUniqueOrThrow({
+          where: { id: connectionId },
+        }),
+      ).toMatchObject({ a2aActorId: owner.id });
+      vi.stubGlobal(
+        "fetch",
+        vi
+          .fn()
+          .mockResolvedValueOnce(Response.json({ qrcode: "pairing-fixture" }))
+          .mockResolvedValueOnce(
+            Response.json({
+              status: "confirmed",
+              ilink_bot_id: "paired-bot",
+              bot_token: "private-pairing-token",
+            }),
+          ),
+      );
+      vi.mocked(startAgentChannelRunner).mockImplementationOnce(
+        async (workspaceId, id) => {
+          await db.agentChannelConnection.update({
+            where: { id, workspaceId },
+            data: { status: "running" },
+          });
+          return {};
+        },
+      );
+      expect((await command({ action: "pair", connectionId })).status).toBe(
+        200,
+      );
+      const checked = await command({ action: "check", connectionId });
+      expect(checked.status).toBe(200);
+      expect(JSON.stringify(await checked.json())).not.toContain(
+        "private-pairing-token",
+      );
+      const result = await runAgentChannelMessage({
+        workspaceId: workspace.id,
+        agentId: agent.id,
+        connectionId,
+        rawBody: {
+          message: "Hello from WeChat",
+          source: {
+            chatId: "paired-chat",
+            userId: "wechat-user",
+            messageId: randomUUID(),
+          },
+        },
+      });
+      expect(result.status).toBe(200);
+      expect(result.body).toMatchObject({ message: "Channel reply" });
+      const binding = await nativeBinding(
+        (result.body as { conversationId: string }).conversationId,
+      );
+      expect(binding.lastTask.grant).toMatchObject({
+        actorId: owner.id,
+        agentId: agent.id,
+      });
+      expect(
+        await db.agent.findUniqueOrThrow({ where: { id: agent.id } }),
+      ).toMatchObject({ a2aInboundEnabled: false, a2aOutboundEnabled: false });
+    } finally {
+      identity.user = owner;
+      await db.user.delete({ where: { id: member.id } });
+    }
+  });
+
   it("keeps SDK control-message slash input executable instead of wrapping it in messaging context", async () => {
     const agent = await db.agent.create({
       data: {
@@ -400,7 +649,7 @@ describe("workspace channels", () => {
         }),
         { params: Promise.resolve({ agentId: agent.id, conversationId: id }) },
       );
-    const calls = vi.mocked(runNativeEntry).mock.calls.length;
+    const calls = vi.mocked(runAgentEntry).mock.calls.length;
     try {
       identity.user = stranger;
       expect((await request()).status).toBe(404);
@@ -451,7 +700,7 @@ describe("workspace channels", () => {
           message: expect.stringContaining("busy"),
         });
       }
-      expect(vi.mocked(runNativeEntry).mock.calls).toHaveLength(calls);
+      expect(vi.mocked(runAgentEntry).mock.calls).toHaveLength(calls);
       expect(await db.message.count({ where: { conversationId: id } })).toBe(2);
       await db.a2ATask.update({
         where: { id: binding.lastTaskId },
@@ -467,16 +716,16 @@ describe("workspace channels", () => {
           entry: { kind: "channel", channelId: channel.id },
         }),
       ).rejects.toMatchObject({ status: 400, message: "invalidCommand" });
-      expect(vi.mocked(runNativeEntry).mock.calls).toHaveLength(calls);
+      expect(vi.mocked(runAgentEntry).mock.calls).toHaveLength(calls);
       const response = await request();
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({
         kind: "output",
         text: "Channel reply",
       });
-      expect(vi.mocked(runNativeEntry).mock.calls).toHaveLength(calls + 1);
+      expect(vi.mocked(runAgentEntry).mock.calls).toHaveLength(calls + 1);
       const commandInput = assertDefined(
-        vi.mocked(runNativeEntry).mock.calls.at(-1),
+        vi.mocked(runAgentEntry).mock.calls.at(-1),
       )[0];
       expect(commandInput).toMatchObject({
         kind: "channel",
@@ -589,6 +838,13 @@ describe("workspace channels", () => {
     expect(first.status).toBe(200);
     const replay = await run();
     expect(replay.body).toMatchObject({ message: "Channel reply" });
+    const firstConversationId =
+      "conversationId" in first.body ? first.body.conversationId : "";
+    expect(
+      await db.message.count({
+        where: { conversationId: firstConversationId },
+      }),
+    ).toBe(2);
     expect(
       await db.a2ATask.count({ where: { context: { agentId: agent.id } } }),
     ).toBe(1);
@@ -598,9 +854,7 @@ describe("workspace channels", () => {
     expect(binding.lastTask.grant).toMatchObject({
       actorId: assertDefined(identity.user).id,
     });
-    await expect(run("Changed content")).rejects.toThrow(
-      "reused with different content",
-    );
+    expect((await run("Changed content")).status).toBe(400);
     await db.agentChannelConnection.update({
       where: { id: channel.id },
       data: { a2aActorId: null },
@@ -634,6 +888,7 @@ describe("workspace channels", () => {
     );
     const [source, target] = sandboxes;
     const foreign = await createSandbox(other.id, "Foreign sandbox");
+    vi.mocked(startAgentChannelRunner).mockResolvedValue({});
     const rawCreate = await command({
       action: "create",
       platform: "weixin",
@@ -769,7 +1024,7 @@ describe("workspace channels", () => {
     expect((await nativeBinding(historyId)).context.agentId).toBe(
       source.agent.id,
     );
-    expect(runNativeEntry).toHaveBeenLastCalledWith(
+    expect(runAgentEntry).toHaveBeenLastCalledWith(
       expect.objectContaining({
         kind: "channel",
         channelId: connectionId,
@@ -1112,5 +1367,383 @@ describe("workspace channels", () => {
         })
       ).status,
     ).toBe(409);
+  });
+});
+
+describe("channel execution delivery and conversation approvals", () => {
+  it.each(["failed-task", "observer-error"])(
+    "persists a safe failed assistant reply without successful artifacts or replay (%s)",
+    async (mode) => {
+      const { agent, channel } = await piCommandChannel();
+      vi.mocked(runAgentEntry).mockImplementationOnce(async (input) => {
+        const accepted = await submitAgentEntry(input, () => {});
+        const running = assertDefined(await claimTask(accepted.row.id));
+        await finishTask(
+          running.id,
+          assertDefined(running.leaseToken),
+          TaskState.TASK_STATE_FAILED,
+          "PI_SDK_REQUEST_FAILED: Bearer super-secret /internal/runtime/session.json at executor.stack:1 HTTP 406",
+        );
+        if (mode === "observer-error")
+          throw new Error(
+            "Bearer super-secret /internal/runtime/session.json stack trace",
+          );
+        return {
+          task: await getTask(accepted.grant, accepted.row.id),
+          path: `/app/${workspace.slug}/work?agent=${input.agentId}&c=${input.sourceId}`,
+        };
+      });
+      const onUiRequired = vi.fn(async () => {});
+      const rawBody = {
+        message: "hi",
+        source: {
+          chatId: "failure-chat",
+          userId: "sender",
+          messageId: randomUUID(),
+        },
+      };
+      const run = () =>
+        runAgentChannelMessage({
+          workspaceId: workspace.id,
+          connectionId: channel.id,
+          agentId: agent.id,
+          rawBody,
+          onUiRequired,
+        });
+      const result = await run();
+      expect(result.body).toMatchObject({
+        delivery: "message",
+        message: CHANNEL_EXECUTION_FAILURE_MESSAGE,
+      });
+      expect(onUiRequired).not.toHaveBeenCalled();
+      if (!("conversationId" in result.body))
+        throw new Error("Expected conversation reply");
+      const conversationId = result.body.conversationId;
+      const messages = await db.message.findMany({
+        where: { conversationId },
+        orderBy: { createdAt: "asc" },
+      });
+      expect(messages).toHaveLength(2);
+      expect(
+        messages.find((message) => message.role === "assistant")?.parts,
+      ).toEqual([
+        { type: "text", text: CHANNEL_EXECUTION_FAILURE_MESSAGE },
+        {
+          type: "data-agent-execution",
+          data: {
+            status: "failed",
+            error: {
+              code: "AGENT_EXECUTION_FAILED",
+              message: CHANNEL_EXECUTION_FAILURE_MESSAGE,
+            },
+          },
+        },
+      ]);
+      const execution = await executionRequest(agent.id, conversationId);
+      expect(execution.status).toBe(200);
+      const executionBody = await execution.json();
+      expect(executionBody.execution).toMatchObject({
+        status: "failed",
+        error: { code: "PI_SDK_REQUEST_FAILED" },
+        uiRequests: [],
+        todos: [],
+        uiEvents: [],
+      });
+      expect(JSON.stringify(executionBody)).not.toMatch(
+        /super-secret|internal\/runtime|executor.stack|Bearer/,
+      );
+      const calls = vi.mocked(runAgentEntry).mock.calls.length;
+      expect((await run()).body).toMatchObject({
+        message: CHANNEL_EXECUTION_FAILURE_MESSAGE,
+      });
+      expect(vi.mocked(runAgentEntry).mock.calls).toHaveLength(calls);
+      expect(await db.message.count({ where: { conversationId } })).toBe(2);
+      expect(
+        await db.a2ATask.count({ where: { context: { agentId: agent.id } } }),
+      ).toBe(1);
+    },
+  );
+
+  it("notifies native dialogs and accepts only the initiating session's native response", async () => {
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", "http://localhost:3000");
+    const { agent, channel } = await piCommandChannel();
+    const notices: string[] = [];
+    const owner = assertDefined(identity.user);
+    const otherActor = await db.user.create({
+      data: {
+        email: `approval-actor-${randomUUID()}@test.dev`,
+        passwordHash: "unused",
+      },
+    });
+    await db.membership.create({
+      data: {
+        workspaceId: workspace.id,
+        userId: otherActor.id,
+        role: "member",
+      },
+    });
+    try {
+      vi.mocked(runAgentEntry).mockImplementationOnce(async (input) => {
+        expect(notices).toEqual([]);
+        const accepted = await submitAgentEntry(input, () => {});
+        const running = assertDefined(await claimTask(accepted.row.id));
+        const request = {
+          type: "extension_ui_request" as const,
+          id: randomUUID(),
+          method: "input" as const,
+          title: "Native input",
+          placeholder: "Name",
+        };
+        const { projection } = applyNativeUiAction(
+          {},
+          assertDefined(running.leaseToken),
+          running.deadlineAt.getTime(),
+          { action: "request", request },
+        );
+        await db.a2ATask.update({
+          where: { id: running.id },
+          data: {
+            uiProjection: projection as unknown as Prisma.InputJsonValue,
+          },
+        });
+        const path = `/app/${workspace.slug}/work?agent=${input.agentId}&c=${input.sourceId}`;
+        await input.onUiRequired?.(path);
+        expect(notices).toHaveLength(1);
+        expect(notices[0]).toContain(path);
+        expect(notices[0]).not.toMatch(/A2A|Native|accepted|settings=/);
+        const view = await executionRequest(agent.id, input.sourceId);
+        expect(view.status).toBe(200);
+        expect((await view.json()).execution).toMatchObject({
+          id: running.id,
+          status: "input-required",
+          uiRequests: [request],
+        });
+        const decision = {
+          type: "extension_ui_response",
+          id: request.id,
+          value: "Native answer",
+        };
+        expect(
+          (
+            await executionRequest(agent.id, input.sourceId, {
+              ...decision,
+              taskId: running.id,
+            })
+          ).status,
+        ).toBe(400);
+        expect(
+          (
+            await executionRequest(agent.id, input.sourceId, {
+              ...decision,
+              id: randomUUID(),
+            })
+          ).status,
+        ).toBe(409);
+        for (const authorization of [
+          "Bearer personal",
+          "Bearer toolkit",
+          "Bearer runtime",
+          "Bearer invalid",
+        ]) {
+          expect(
+            (
+              await executionRequest(agent.id, input.sourceId, decision, {
+                authorization,
+              })
+            ).status,
+          ).toBe(401);
+          expect(
+            (
+              await executionRequest(agent.id, input.sourceId, undefined, {
+                authorization,
+              })
+            ).status,
+          ).toBe(401);
+        }
+        for (const headers of Array.of<Record<string, string>>(
+          { origin: "https://evil.example" },
+          { origin: "null" },
+          { origin: "" },
+          { origin: "http://localhost:3000/" },
+          { "sec-fetch-site": "cross-site" },
+        ))
+          expect(
+            (
+              await executionRequest(
+                agent.id,
+                input.sourceId,
+                decision,
+                headers,
+              )
+            ).status,
+          ).toBe(403);
+        expect(
+          (
+            await executionRequest(agent.id, input.sourceId, undefined, {
+              "sec-fetch-site": "cross-site",
+            })
+          ).status,
+        ).toBe(403);
+        const missingOrigin = await decideExecution(
+          new Request(
+            `http://localhost:3000/api/v1/agents/${agent.id}/conversations/${input.sourceId}/execution`,
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify(decision),
+            },
+          ),
+          {
+            params: Promise.resolve({
+              agentId: agent.id,
+              conversationId: input.sourceId,
+            }),
+          },
+        );
+        expect(missingOrigin.status).toBe(403);
+        const arbitraryTask = await getExecution(
+          new Request(
+            `http://localhost:3000/api/v1/agents/${agent.id}/conversations/${input.sourceId}/execution?taskId=${running.id}`,
+          ),
+          {
+            params: Promise.resolve({
+              agentId: agent.id,
+              conversationId: input.sourceId,
+            }),
+          },
+        );
+        expect(arbitraryTask.status).toBe(400);
+        identity.user = null;
+        expect((await executionRequest(agent.id, input.sourceId)).status).toBe(
+          401,
+        );
+        identity.user = otherActor;
+        expect((await executionRequest(agent.id, input.sourceId)).status).toBe(
+          403,
+        );
+        expect(
+          (await executionRequest(agent.id, input.sourceId, decision)).status,
+        ).toBe(403);
+        identity.user = owner;
+        for (const credential of ["personal-token", "toolkit-token"] as const) {
+          identity.credential = credential;
+          expect(
+            (await executionRequest(agent.id, input.sourceId, decision)).status,
+          ).toBe(401);
+        }
+        identity.credential = "session";
+        expect(
+          (await executionRequest(foreignAgentId, input.sourceId)).status,
+        ).toBe(404);
+        const unrelated = await db.conversation.create({
+          data: { agentId: agent.id, title: "No execution" },
+        });
+        expect(
+          await (await executionRequest(agent.id, unrelated.id)).json(),
+        ).toEqual({ execution: null });
+        expect(
+          (await executionRequest(agent.id, unrelated.id, decision)).status,
+        ).toBe(404);
+        expect(
+          nativeUiProjection(
+            (await db.a2ATask.findUniqueOrThrow({ where: { id: running.id } }))
+              .uiProjection,
+          ).dialogs[0].response,
+        ).toBeUndefined();
+        // Local dev ports use the shared origin policy, without accepting cross-site origins.
+        vi.stubEnv("NEXT_PUBLIC_APP_URL", "http://localhost:3007");
+        const decided = await executionRequest(
+          agent.id,
+          input.sourceId,
+          decision,
+        );
+        vi.stubEnv("NEXT_PUBLIC_APP_URL", "http://localhost:3000");
+        expect(decided.status).toBe(200);
+        expect(await decided.json()).toEqual({ ok: true });
+        expect(
+          nativeUiProjection(
+            (await db.a2ATask.findUniqueOrThrow({ where: { id: running.id } }))
+              .uiProjection,
+          ).dialogs[0].response,
+        ).toEqual(decision);
+        expect(
+          (await executionRequest(agent.id, input.sourceId, decision)).status,
+        ).toBe(409);
+        await finishTask(
+          running.id,
+          assertDefined(running.leaseToken),
+          TaskState.TASK_STATE_COMPLETED,
+          undefined,
+          textArtifact("Approved reply"),
+        );
+        return { task: await getTask(accepted.grant, running.id), path };
+      });
+      const result = await runAgentChannelMessage({
+        workspaceId: workspace.id,
+        agentId: agent.id,
+        connectionId: channel.id,
+        rawBody: {
+          message: "Read notes",
+          source: {
+            chatId: "approval-chat",
+            userId: "sender",
+            messageId: randomUUID(),
+          },
+        },
+        onUiRequired: async (message) => {
+          notices.push(message);
+        },
+      });
+      expect(result.body).toMatchObject({
+        delivery: "message",
+        message: "Approved reply",
+      });
+    } finally {
+      identity.user = owner;
+      identity.credential = "session";
+      vi.unstubAllEnvs();
+      await db.membership.deleteMany({ where: { userId: otherActor.id } });
+      await db.user.delete({ where: { id: otherActor.id } });
+    }
+  });
+
+  it("detaches aborted observers without inventing a failed assistant message", async () => {
+    const { agent, channel } = await piCommandChannel();
+    const controller = new AbortController();
+    let conversationId = "";
+    let taskId = "";
+    vi.mocked(runAgentEntry).mockImplementationOnce(async (input) => {
+      const accepted = await submitAgentEntry(input, () => {});
+      conversationId = input.sourceId;
+      taskId = accepted.row.id;
+      controller.abort();
+      input.signal?.throwIfAborted();
+      throw new Error("Expected aborted signal");
+    });
+    await expect(
+      runAgentChannelMessage({
+        workspaceId: workspace.id,
+        agentId: agent.id,
+        connectionId: channel.id,
+        signal: controller.signal,
+        rawBody: {
+          message: "hi",
+          source: {
+            chatId: "abort-chat",
+            userId: "sender",
+            messageId: randomUUID(),
+          },
+        },
+      }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(
+      await db.message.count({ where: { conversationId, role: "assistant" } }),
+    ).toBe(0);
+    expect(
+      await db.a2ATask.findUniqueOrThrow({ where: { id: taskId } }),
+    ).toMatchObject({
+      state: TaskState.TASK_STATE_SUBMITTED,
+      cancelRequestedAt: null,
+    });
   });
 });
