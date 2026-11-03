@@ -1,5 +1,5 @@
 -- Bindings follow the complete catalog; deployment exposure is the only tool filter.
-CREATE FUNCTION pg_temp.mcp_catalog_names(cfg jsonb) RETURNS text[] LANGUAGE sql IMMUTABLE AS $$
+CREATE OR REPLACE FUNCTION pg_temp.mcp_catalog_names(cfg jsonb) RETURNS text[] LANGUAGE sql IMMUTABLE AS $$
   SELECT COALESCE(array_agg(DISTINCT tool->>'name' ORDER BY tool->>'name'), ARRAY[]::text[])
   FROM jsonb_array_elements(
     CASE WHEN jsonb_typeof(cfg->'toolCatalog') = 'array' THEN cfg->'toolCatalog' ELSE '[]'::jsonb END

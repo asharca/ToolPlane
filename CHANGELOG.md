@@ -1,36 +1,39 @@
 # Changelog
 
-## Unreleased
+## [0.33.0](https://github.com/asharca/ToolPlane/compare/v0.32.0...v0.33.0) (2026-11-04)
 
-### Features
-* add administrator-configurable per-Agent and platform execution limits, isolated persistent conversation sandboxes, cancellable admission, conversation-scoped files and nonblocking terminals with live access revalidation, and idle container cleanup with preserved volumes
-* add selected-sandbox batch start, stop and restart with disruptive-action confirmation, workspace-scoped lifecycle guards and per-sandbox results
-* add request-level A2A debugging across HTTP, MCP and native entries, with redacted 24-hour administrator-only bodies, committed task timelines, and workspace-scoped metadata views
-* rename the Resource Center to Plugin Center and the official repository to `asharca/toolplane-plugins`; preserve fixed releases and safely follow GitHub's same-API permanent repository-ID redirects without forwarding credentials to arbitrary destinations
-* make GitHub registries the Resource Center's only content-publishing path for Skills, MCP configurations, Pi packages, Agents and Assistants; resolve fixed commits into immutable releases with atomic synchronization, workspace-scoped credentials and webhook signatures, preserved session pins, and explicit installation/application; remove local uploads, inline authoring and direct npm/Git/ZIP publication while preserving private Skill editing and chat/Work attachments
-* distribute GitHub resources as unified versioned composite packages, with stable member identities, explicit selection and permission review, atomic installation, provenance-aware unchanged-member reuse, safe update/removal behavior and preserved historical pins; group discovery, installed packages, updates and sources under the Resource Center sidebar submenu while retaining independent Skill/MCP management
+### 新增
 
-### Documentation
-* add an evidence-based repository lessons notebook, require coding agents to read and maintain it, and promote recurring lessons into durable guidance
+- 智能体支持 Pi SDK 与 OMP 两套独立原生执行内核，提供原生工具、插件、技能、交互对话和持久会话；支持将 OMP 配置转换为平台资源，并在预览、权限审阅后应用。
+- 智能体与助手使用不可变能力修订，固定模型、提示词、插件和 MCP 授权；变更通过显式审阅应用，既有会话保持原修订，可通过升级入口前移。
+- OMP 原生子任务与平台智能体委派可以同时启用。平台委派使用已审阅的父子授权边，不要求子智能体开放全局入站；支持等待结果、异步提交及子任务活动展示。
+- 插件中心统一管理 GitHub 固定提交中的版本化资源，支持来源同步、成员选择、权限审阅及更新差异。插件 README、变更记录和不可变来源可在控制台查看。
+- 同一智能体共享持久 Docker 执行环境，每个会话拥有独立工作目录、HOME 和原生历史；不同智能体保留独立容器与可写卷。支持会话目录迁移、空闲回收及保留卷恢复。
+- 增加管理员配置的智能体与平台执行并发限制、可取消排队、沙箱批量启停，以及受工作区授权约束的外挂沙箱与 SSH 服务器配置。
+- 增加按请求关联的 MCP／A2A 日志、任务时间线及文件产物传递；调试请求体仅管理员可见，经过脱敏并限时保留。
 
-### Bug Fixes
-* restore missing Resource Center error and version-comparison pagination translations in both languages, and allow loopback development hot reload without admitting untrusted origins
-* create fully configured Agents with their first authorized immutable revision in one operation, enter the ready work composer on success, and preserve form input while rolling back incomplete Agent/sandbox records on preparation failure
-* apply ordinary Agent setting changes on Save, request consent only for additional execution authority, and retain revision CAS and existing conversation pins; stop showing normal idle sandboxes as yellow warnings while preserving pending approvals and real errors
-* remove the duplicate workspace settings link from the main sidebar while retaining settings in the workspace menu
-* restore independent Skill and MCP management links and active states in the workspace sidebar, separate from Resource Center discovery and installation
-* restore Add MCP on the workspace MCP page and route `/mcp/new` to the existing configuration dialog, preserving private deployment validation separately from Resource Center publishing
-* preserve indexed package and configuration context in staged checks so React/Next rules remain enabled without rejecting valid suppressions or reading unstaged dependency changes
-* serialize terminal input requests and drain pending writes before closing a session, preventing keystroke reordering through asynchronous sandbox proxies
-* focus permanent tests and CI on core behavior and security boundaries; remove implementation-detail, wording and duplicate suites, retire the global 80% coverage gate and Codecov upload, and retain optional coverage diagnostics
-* return sub-agent resource validation failures without aborting the parent tool call; build the Pi capture sandbox before CI tests and align behavioral coverage with current UI controls
-* reject staged JS/TS syntax, JSON and lint errors before commit; install repository hooks automatically and run shared lint/type checks before push and in CI, excluding generated MDX files from lint
-* prevent long-running MCP and channel outages from Node 24.21 retaining nested timeout signals; initialize native weak signal following in the managed launcher before Next starts
-* authorize configured tools for authenticated inbound A2A roots without human approval, preserving per-call receipts, live permission checks and interactive chat/Work approval policies
-* switch workspace and account settings sections locally, keeping the modal and workbench mounted; reuse the sidebar across workspace, account, and agent settings
-* drain runtime ownership before replacing release files and restart through the managed SIGTERM handler; reject unclean online upgrades without replacing files, and use runtime readiness for Compose health checks
-* require runtime readiness as well as the target version and a new process identity before reporting update completion; return retryable local status during blocked recovery so older clients also cannot report false success
-* restore thin, theme-matched scrollbars after the console theme migration while preserving intentionally hidden scrollbars
+### 改进与修复
+
+- Work 展示排队、准备、等待模型、生成和工具执行阶段，支持持久订阅、刷新恢复、原生交互与完成通知；客户端断开不再等同取消执行。
+- 批量写入每轮可信宿主脚本，减少 Pi／OMP 准备阶段的 Docker 命令往返，同时保留覆盖、完整性校验和授权边界。
+- 修复后台数据刷新重建终端 PTY、丢失 shell 状态和未提交命令的问题；终端输入串行发送，关闭前排空待写入内容，晚返回的创建请求按自身会话回收。
+- 修复首次启动失败后，将界面失败记录误判为原生会话历史而无法继续的问题。真正产生正文、推理或工具活动的会话仍必须恢复历史，不静默重建或自动重放旧请求。
+- 修复 OMP 原生 MCP 刷新移除平台宿主工具、模型流代理压缩协商及共享沙箱原生历史路径迁移问题。
+- 统一助手与智能体的消息、工具结果、复制、模型选择和执行进度展示；保留运行期间输入的下一条草稿，避免流结束或组件重挂载清空内容。
+- 优化工作区侧栏、设置弹层、修订升级说明、插件详情和响应式终端交互；修复重复导航、活动区域裁剪及后台刷新引起的列表跳变。
+- 更新受管启动与升级流程，先排空运行时所有权，再替换文件并重启；以 readiness、目标版本和新进程身份共同确认升级完成。
+- 提交与推送钩子检查暂存快照和共享 lint／类型规则；CI 聚焦核心行为、授权和恢复边界，不再使用全仓覆盖率百分比作为门槛。
+
+### 不兼容变化与升级
+
+- 运行环境要求 Node.js **26.12.1 或更高版本**。Hermes 执行内核及其记录移除；其他已退役运行时的保留历史只读，不能恢复旧执行或复用旧凭据。
+- 原资源中心改为插件中心，官方仓库为 `asharca/toolplane-plugins`。公共目录内容只来自固定 GitHub 提交，不再提供旧的手工目录发布、直接 npm／Git／ZIP 发布和旧市场安装入口；工作区私有创作与会话附件保持独立。
+- 智能体沙箱由独立会话容器迁移为智能体共享容器与会话目录。同一智能体内不再承诺进程／容器级隔离；目录分离不能替代操作系统安全边界。
+- 升级前备份数据库及沙箱卷，应用本版本全部 Prisma 迁移并重新生成客户端，按单运行时所有者流程受控重启。旧会话卷按首次使用迁移，失败时保留原数据，不用空工作区替代。
+- 公共 Agent API 基础设施保留，但当前运行时不支持公共 Endpoint 执行。助手继续采用独立修订与持久 Runs，仅支持远程 MCP，不执行智能体、技能、stdio 或 A2A。
+- 公共开发文档已迁至独立站点；应用内旧 `/docs` 路径提供兼容跳转，实时 OpenAPI 仍由实例提供。
+
+升级与恢复细节见 [运行时运维](https://asharca.github.io/toolplane-docs/docs/zh/developers/docs/RUNTIME_OPERATIONS) 和 [沙箱指南](https://asharca.github.io/toolplane-docs/docs/zh/guides/docs/SANDBOXES)。
 
 ## [0.32.0](https://github.com/asharca/ToolPlane/compare/v0.31.2...v0.32.0) (2026-09-28)
 

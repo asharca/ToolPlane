@@ -22,7 +22,7 @@
 
 **已提升规范**：[AGENTS.md 验证要求](AGENTS.md#verification)；升级和接管仍遵循[运行时运维](https://asharca.github.io/toolplane-docs/docs/zh/developers/docs/RUNTIME_OPERATIONS)。
 
-- **历史证据**：[Unreleased 修复记录](CHANGELOG.md#unreleased)中的升级判定与排空修复；2026-10-30 修改 Next 配置后旧 owner dirty 标记使 readiness 返回 503，按原域核验并恢复后返回 200。
+- **历史证据**：[变更日志](CHANGELOG.md)中的升级判定与排空修复；2026-10-30 修改 Next 配置后旧 owner dirty 标记使 readiness 返回 503，按原域核验并恢复后返回 200。
 - **2026-11-01 证据**：源码导出和测试通过，Turbopack instrumentation 模块图仍缺失 A2A 新导出；受控重启后恢复。另一次独立 Node 进程继承失效 `NODE_CHANNEL_FD` / `NODE_CHANNEL_SERIALIZATION_MODE`，完成后 SIGABRT；排除这两个进程私有键后退出 0。
 - **2026-11-02 证据**：OMP 真实 Work 首轮以 `Sandbox command failed (2)` 失败，原因是每轮技能目录不匹配 materializer 的安全白名单；随后真实 CLI 启动又发现 `find` 不属于当前可用内置工具。配置/类型测试无法覆盖这两步。Webpack 冷启动还将 early-return 后的 Node 动态导入纳入 Edge bundle；改为正分支保护后 readiness 200。依据：[沙箱执行器](src/lib/agents/sandbox-runtime.ts)、[运行时工具清单](src/lib/agents/runtime-kind.ts)、[instrumentation](src/instrumentation.ts)。
 - **同日 UI 验收补充**：开发实例遗漏磁盘上已存在的 Work UI 路由，独立 typegen 和生产构建均能识别；完整构建返回 200 后，真实 ask → 浏览器回复 → todo 完成闭环通过。切换本地生产模式还暴露 `.env` 的公开地址端口与验收监听端口不同；仅为验收进程明确设置 `TOOLPLANE_RUNTIME_ORIGIN` 后回调恢复。下次除 readiness 外，还须核对沙箱实际回调地址及带认证的 UI 路由，并完成一次真实交互，不能用构建通过代替验收。
@@ -32,6 +32,7 @@
 - **2026-11-04 本地替换补充**：前一轮直接调用 Next CLI 的实例退出后，受管启动器检测到 dirty 标记并拒绝接管。确认旧 PID 已退出、没有活动 Work／助手 Run 或相关 Docker exec/cp 后，按运维流程使用日志给出的准确 ACK 单次恢复，readiness 返回 200。后续本地生产验收也必须通过 `pnpm start`／`scripts/start-server.cjs`，不能用 Next 的 Ready 日志代替受管停机和运行时就绪。
 - **同日导航轨道补充**：用户指出轨道出现后正文被挤压、与输入栏错位。原因是已绝对定位的 PreviewRail 又触发消息视口单侧 `pr-10`，输入栏没有同等占位。移除此应用层动态占位后，真实浏览器中轨道显隐均不改变消息列和输入栏的左右边界；1280px 与 390px 视口、长消息导航跳转均已检查。下次验证轨道出现前后的共同列宽与中心线，而不只看一张有轨道的截图。依据：[消息滚动容器](src/components/agents/message-scroller.tsx)、[输入栏](src/components/dashboard/ConversationComposer.tsx)。
 - **同日终端刷新补充（用户反馈）**：Work 后台刷新改变翻译函数及输入回调身份，`SandboxConsole` 的 effect 清理直接 DELETE 当前 PTY，再创建新 shell。终端初始化改用 `useEffectEvent`，仅由资源身份、面板和运行状态或显式重连控制生命周期；创建晚返回时按自身 session ID 回收，不覆盖新终端。真实浏览器连续四轮后台刷新后，shell PID、环境变量、当前目录与未提交命令保留；真实延迟创建与手动重连验证旧 PTY 被回收且新 shell 可交互。下次除观察连接状态，还须检查后台刷新期间的 PTY 创建／删除及真实 shell 状态。规范：[沙箱终端生命周期](https://asharca.github.io/toolplane-docs/docs/zh/guides/docs/SANDBOXES#智能体共享沙箱与会话目录)；实现：[SandboxConsole](src/components/dashboard/sandboxes/SandboxConsole.tsx)。
+- **同日发布前迁移验收**：全新数据库连续部署时，相邻 MCP 迁移在同一连接重复 `CREATE FUNCTION pg_temp.mcp_catalog_names`；后一个迁移改为 `CREATE OR REPLACE FUNCTION`。隔离空库的完整 `prisma migrate deploy` 退出 0 后删除验收库。已有开发库上分次迁移成功不能替代发布前同连接的完整迁移链验证。依据：[目录跟随迁移](prisma/migrations/20261101010000_mcp_bindings_follow_catalog/migration.sql)。
 - **确认日期**：历史日期未知；初始整理于 2026-10-18；2026-10-30、2026-11-01、2026-11-02、2026-11-03、2026-11-04 实测确认。
 
 ### TP-L002：构建成功，不代表最终镜像里的原生依赖能启动
