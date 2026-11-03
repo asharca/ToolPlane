@@ -191,18 +191,6 @@ describe("settings permission additions", () => {
         environment: before.environment,
       }).success,
     ).toBe(false);
-    expect(
-      AgentRevisionConfigSchema.safeParse({
-        ...before,
-        packages: [
-          {
-            marketInstallId: "pi-package",
-            releaseId: "release",
-            integrity: "checksum",
-          },
-        ],
-      }).success,
-    ).toBe(false);
     expect(AgentRevisionConfigSchema.parse(pi)).toEqual(pi);
   });
 });

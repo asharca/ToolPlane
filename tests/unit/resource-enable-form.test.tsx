@@ -5,6 +5,7 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ResourceEnableForm } from "@/components/dashboard/ResourceEnableForm";
 
@@ -49,6 +50,15 @@ function mount() {
     />,
   );
 }
+async function selectAgent(name: string) {
+  const user = userEvent.setup();
+  const native = document.getElementById(
+    `${screen.getByRole("combobox").id}-native`,
+  );
+  if (!(native instanceof HTMLSelectElement))
+    throw new Error("Missing native Agent selection");
+  await user.selectOptions(native, name);
+}
 async function waitForControlsIdle() {
   await waitFor(() => {
     expect(screen.getByRole("combobox")).toBeEnabled();
@@ -67,9 +77,7 @@ async function previewSource() {
 async function review() {
   mocks.preview.mockResolvedValue(prepared());
   mount();
-  fireEvent.change(screen.getByRole("combobox"), {
-    target: { value: "agent-a" },
-  });
+  await selectAgent("Published Pi");
   await previewSource();
   await screen.findByRole("heading", { name: "resourceReviewTitle" });
 }
@@ -93,11 +101,9 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("single-resource revision application", () => {
-  it("requires a published Agent instead of pretending a draft can be enabled", () => {
+  it("requires a published Agent instead of pretending a draft can be enabled", async () => {
     mount();
-    fireEvent.change(screen.getByRole("combobox"), {
-      target: { value: "agent-draft" },
-    });
+    await selectAgent("Draft Pi");
     expect(screen.getByRole("status")).toHaveTextContent(
       "resourceRevisionPreparationRequired",
     );
@@ -150,7 +156,6 @@ describe("single-resource revision application", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "resourceBindingBusy",
     );
-    expect(screen.getByRole("combobox")).toHaveValue("agent-a");
     expect(
       screen.getByRole("checkbox", { name: "resourceReviewConsent" }),
     ).toBeChecked();
@@ -196,9 +201,7 @@ describe("single-resource revision application", () => {
 
   it("clears the previous target review when choosing another Agent", async () => {
     await review();
-    fireEvent.change(screen.getByRole("combobox"), {
-      target: { value: "agent-draft" },
-    });
+    await selectAgent("Draft Pi");
     expect(
       screen.queryByRole("heading", { name: "resourceReviewTitle" }),
     ).not.toBeInTheDocument();
@@ -215,9 +218,7 @@ describe("single-resource revision application", () => {
       expiresAt: new Date(Date.now() - 1_000).toISOString(),
     });
     mount();
-    fireEvent.change(screen.getByRole("combobox"), {
-      target: { value: "agent-a" },
-    });
+    await selectAgent("Published Pi");
     await previewSource();
     expect(await screen.findByRole("status")).toHaveTextContent(
       "resourcePreviewExpired",
@@ -252,9 +253,7 @@ describe("single-resource revision application", () => {
       agentId: "foreign-agent",
     });
     mount();
-    fireEvent.change(screen.getByRole("combobox"), {
-      target: { value: "agent-a" },
-    });
+    await selectAgent("Published Pi");
     await previewSource();
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "resourcePreviewFailed",

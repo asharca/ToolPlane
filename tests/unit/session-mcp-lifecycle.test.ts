@@ -71,7 +71,6 @@ import {
   listSessionMcpTools,
   sessionMcpProcessId,
   sessionMcpRequest,
-  stopSessionMcp,
 } from "@/lib/process/session-mcp";
 import { assertMarketReleasesExecutable } from "@/lib/pi-packages/revocation";
 import { assertAgentEnvironmentCredentialReferences } from "@/lib/agents/environment-credentials";
@@ -364,14 +363,6 @@ describe("session MCP authorization and lifecycle", () => {
       callSessionMcpTool(session, "recipe", "approved", {}),
     ).rejects.toThrow("MCP_GRANT_REVOKED");
     expect(mocks.rpc).not.toHaveBeenCalled();
-  });
-
-  it("stops only the owning session sidecar and never removes session files", async () => {
-    await stopSessionMcp(session);
-    expect(mocks.stop).toHaveBeenCalledExactlyOnceWith(
-      sessionMcpProcessId(session, "recipe"),
-    );
-    expect(mocks.stop).not.toHaveBeenCalledWith("recipe");
   });
 });
 

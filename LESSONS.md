@@ -33,6 +33,7 @@
 - **同日导航轨道补充**：用户指出轨道出现后正文被挤压、与输入栏错位。原因是已绝对定位的 PreviewRail 又触发消息视口单侧 `pr-10`，输入栏没有同等占位。移除此应用层动态占位后，真实浏览器中轨道显隐均不改变消息列和输入栏的左右边界；1280px 与 390px 视口、长消息导航跳转均已检查。下次验证轨道出现前后的共同列宽与中心线，而不只看一张有轨道的截图。依据：[消息滚动容器](src/components/agents/message-scroller.tsx)、[输入栏](src/components/dashboard/ConversationComposer.tsx)。
 - **同日终端刷新补充（用户反馈）**：Work 后台刷新改变翻译函数及输入回调身份，`SandboxConsole` 的 effect 清理直接 DELETE 当前 PTY，再创建新 shell。终端初始化改用 `useEffectEvent`，仅由资源身份、面板和运行状态或显式重连控制生命周期；创建晚返回时按自身 session ID 回收，不覆盖新终端。真实浏览器连续四轮后台刷新后，shell PID、环境变量、当前目录与未提交命令保留；真实延迟创建与手动重连验证旧 PTY 被回收且新 shell 可交互。下次除观察连接状态，还须检查后台刷新期间的 PTY 创建／删除及真实 shell 状态。规范：[沙箱终端生命周期](https://asharca.github.io/toolplane-docs/docs/zh/guides/docs/SANDBOXES#智能体共享沙箱与会话目录)；实现：[SandboxConsole](src/components/dashboard/sandboxes/SandboxConsole.tsx)。
 - **同日发布前迁移验收**：全新数据库连续部署时，相邻 MCP 迁移在同一连接重复 `CREATE FUNCTION pg_temp.mcp_catalog_names`；后一个迁移改为 `CREATE OR REPLACE FUNCTION`。隔离空库的完整 `prisma migrate deploy` 退出 0 后删除验收库。已有开发库上分次迁移成功不能替代发布前同连接的完整迁移链验证。依据：[目录跟随迁移](prisma/migrations/20261101010000_mcp_bindings_follow_catalog/migration.sql)。
+- **同日完整 CI 补充**：迁移解锁后，核心套件发现 14 个失败：资源授权测试向按钮而非选择框原生表单值发送 change，旧 SSH 文件注册表夹具调用已退役入口，OMP 包禁止断言和 MCP 清理调用次数断言仍绑定旧实现。修正真实表单值交互，移除失效契约／调用形状断言，不放宽运行时授权。修正后的四个文件共 106 项测试分别通过（95＋11）；发布仍须等待完整 CI，不能用局部测试或预推送类型检查替代。
 - **确认日期**：历史日期未知；初始整理于 2026-10-18；2026-10-30、2026-11-01、2026-11-02、2026-11-03、2026-11-04 实测确认。
 
 ### TP-L002：构建成功，不代表最终镜像里的原生依赖能启动
