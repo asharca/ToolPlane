@@ -1217,6 +1217,7 @@ describe("assistant background execution with real persistence", () => {
       executionCompletedAt: expect.any(Date),
     });
     const events = await db.chatRunEvent.findMany({
+      orderBy: { sequence: "asc" },
       where: {
         turnId: scope.turnId,
         payload: { path: ["type"], equals: "data-chat-tool" },
