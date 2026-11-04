@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.33.2](https://github.com/asharca/ToolPlane/compare/v0.33.1...v0.33.2) (2026-11-04)
+
+
+### Bug Fixes
+
+* **observability:** preserve complete logs and native task details ([#172](https://github.com/asharca/ToolPlane/issues/172)) ([06a1024](https://github.com/asharca/ToolPlane/commit/06a10249f6950eab25c064b06c38f5e394f9faf1))
+
 ## [0.33.1](https://github.com/asharca/ToolPlane/compare/v0.33.0...v0.33.1) (2026-11-04)
 
 
