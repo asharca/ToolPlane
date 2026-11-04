@@ -23,6 +23,7 @@ export type DashboardTableProps = {
   className?: string;
   height?: number;
   ariaLabel?: string;
+  selectable?: boolean;
   selectedRowIds?: string[];
   onSelectionChange?: (ids: string[]) => void;
   selectionActions?: TableProps<DashboardTableRow>["selectionActions"];
@@ -36,6 +37,7 @@ export function DashboardTable({
   className,
   height,
   ariaLabel,
+  selectable = true,
   selectedRowIds,
   onSelectionChange,
   selectionActions,
@@ -68,7 +70,7 @@ export function DashboardTable({
           data={rows}
           columns={columns}
           getRowId={(row) => row.id}
-          selectable
+          selectable={selectable}
           resizable
           reorderable
           selectedRowIds={selectedRowIds}

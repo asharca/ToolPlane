@@ -70,7 +70,7 @@ export function isExternalSandboxCandidate(sandbox: {
   );
 }
 
-/** Conversation and endpoint runtime copies are owned by the platform, not listed as user sandboxes. */
+/** Platform-managed runtime and history rows; never eligible as external attachments. */
 export function isSessionSandbox(config: unknown): boolean {
   return managedBy(config) !== undefined;
 }

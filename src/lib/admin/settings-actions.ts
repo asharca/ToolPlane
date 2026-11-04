@@ -15,7 +15,9 @@ import {
   MAX_AGENT_CONCURRENCY,
   MAX_TOTAL_AGENT_CONCURRENCY,
   resetAgentConcurrencySettings,
+  resetAgentSandboxAutoStopSettings,
   updateAgentConcurrencySettings,
+  updateAgentSandboxAutoStopSettings,
   isValidMcpStartupTimeouts,
   MAX_MCP_STARTUP_TIMEOUT_MS,
   MIN_MCP_STARTUP_TIMEOUT_MS,
@@ -73,6 +75,28 @@ export async function updateAgentConcurrencySettingsAction(
     return { error: t("errorActionFailed") };
   }
   refreshAgentExecutionLimits();
+  revalidatePath("/admin/settings");
+  return { ok: true };
+}
+
+export async function updateAgentSandboxAutoStopSettingsAction(
+  _prev: AdminSettingsActionState,
+  formData: FormData,
+): Promise<AdminSettingsActionState> {
+  const admin = await requireAdmin();
+  const t = await getTranslations("admin");
+  try {
+    if (formData.get("intent") === "reset") {
+      await resetAgentSandboxAutoStopSettings(admin.id);
+    } else {
+      const enabled = formData.get("agentSandboxAutoStopEnabled");
+      if (enabled !== "true" && enabled !== "false")
+        return { error: t("errorActionFailed") };
+      await updateAgentSandboxAutoStopSettings(enabled === "true", admin.id);
+    }
+  } catch {
+    return { error: t("errorActionFailed") };
+  }
   revalidatePath("/admin/settings");
   return { ok: true };
 }

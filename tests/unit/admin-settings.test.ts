@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   findUnique: vi.fn(),
   upsert: vi.fn(),
+  deleteMany: vi.fn(),
+  currentUser: vi.fn(),
   auditCreate: vi.fn(),
 }));
 
@@ -11,6 +13,7 @@ vi.mock("@/lib/db", () => {
     systemSetting: {
       findUnique: mocks.findUnique,
       upsert: mocks.upsert,
+      deleteMany: mocks.deleteMany,
     },
     auditEvent: { create: mocks.auditCreate },
   };
@@ -22,21 +25,157 @@ vi.mock("@/lib/db", () => {
   };
 });
 
+vi.mock("@/lib/auth/current-user", () => ({
+  getCurrentUser: mocks.currentUser,
+}));
+vi.mock("next/navigation", () => ({
+  redirect: (path: string): never => {
+    throw new Error(`redirect:${path}`);
+  },
+}));
+vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+vi.mock("next-intl/server", () => ({
+  getTranslations: async () => (key: string) => key,
+}));
+vi.mock("@/lib/agents/agent-execution-gate", () => ({
+  refreshAgentExecutionLimits: vi.fn(),
+}));
+
 import {
+  AGENT_SANDBOX_AUTO_STOP_SETTING_KEY,
+  getAgentSandboxAutoStopSettings,
+  updateAgentSandboxAutoStopSettings,
   getAgentConcurrencySettings,
   updateAgentConcurrencySettings,
   resolveRemoteMcpPrivateHostsSettings,
 } from "@/lib/admin/settings";
+import { updateAgentSandboxAutoStopSettingsAction } from "@/lib/admin/settings-actions";
 
 describe("system settings storage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.findUnique.mockResolvedValue(null);
+    mocks.currentUser.mockResolvedValue({ id: "admin", role: "admin" });
   });
 
   afterEach(() => {
     vi.unstubAllEnvs();
   });
+
+  it("defaults to auto-stop and persists audited disable, re-enable and reset actions", async () => {
+    let stored: { value: string } | null = null;
+    mocks.findUnique.mockImplementation(async () => stored);
+    mocks.upsert.mockImplementation(async ({ update }) => {
+      stored = { value: update.value };
+      return stored;
+    });
+    mocks.deleteMany.mockImplementation(async () => {
+      stored = null;
+      return { count: 1 };
+    });
+    await expect(getAgentSandboxAutoStopSettings()).resolves.toEqual({
+      enabled: true,
+      source: "default",
+    });
+    for (const enabled of [false, true]) {
+      const form = new FormData();
+      form.set("agentSandboxAutoStopEnabled", String(enabled));
+      await expect(
+        updateAgentSandboxAutoStopSettingsAction({}, form),
+      ).resolves.toEqual({ ok: true });
+      await expect(getAgentSandboxAutoStopSettings()).resolves.toEqual({
+        enabled,
+        source: "database",
+      });
+    }
+    const form = new FormData();
+    form.set("intent", "reset");
+    await expect(
+      updateAgentSandboxAutoStopSettingsAction({}, form),
+    ).resolves.toEqual({ ok: true });
+    await expect(getAgentSandboxAutoStopSettings()).resolves.toEqual({
+      enabled: true,
+      source: "default",
+    });
+    expect(
+      mocks.auditCreate.mock.calls.map(([{ data }]) => ({
+        actorId: data.actorId,
+        action: data.action,
+        targetId: data.targetId,
+        changes: data.changes,
+      })),
+    ).toEqual([
+      {
+        actorId: "admin",
+        action: "setting.changed",
+        targetId: AGENT_SANDBOX_AUTO_STOP_SETTING_KEY,
+        changes: { before: null, after: '{"enabled":false}' },
+      },
+      {
+        actorId: "admin",
+        action: "setting.changed",
+        targetId: AGENT_SANDBOX_AUTO_STOP_SETTING_KEY,
+        changes: { before: '{"enabled":false}', after: '{"enabled":true}' },
+      },
+      {
+        actorId: "admin",
+        action: "setting.reset",
+        targetId: AGENT_SANDBOX_AUTO_STOP_SETTING_KEY,
+        changes: { before: '{"enabled":true}', after: null },
+      },
+    ]);
+  });
+
+  it.each([null, "", "TRUE", "1", " false ", "on"])(
+    "rejects malformed auto-stop form value %s without writes or audit",
+    async (value) => {
+      const form = new FormData();
+      if (value !== null) form.set("agentSandboxAutoStopEnabled", value);
+      await expect(
+        updateAgentSandboxAutoStopSettingsAction({}, form),
+      ).resolves.toEqual({ error: "errorActionFailed" });
+      expect(mocks.upsert).not.toHaveBeenCalled();
+      expect(mocks.deleteMany).not.toHaveBeenCalled();
+      expect(mocks.auditCreate).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([null, { id: "member", role: "user" }])(
+    "denies unauthenticated and non-admin auto-stop changes and resets (%s)",
+    async (user) => {
+      mocks.currentUser.mockResolvedValue(user);
+      for (const intent of ["save", "reset"]) {
+        const form = new FormData();
+        form.set("intent", intent);
+        form.set("agentSandboxAutoStopEnabled", "false");
+        await expect(
+          updateAgentSandboxAutoStopSettingsAction({}, form),
+        ).rejects.toThrow(
+          user ? "redirect:/" : "redirect:/app/login?next=/admin",
+        );
+      }
+      expect(mocks.upsert).not.toHaveBeenCalled();
+      expect(mocks.deleteMany).not.toHaveBeenCalled();
+      expect(mocks.auditCreate).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["false", 0, null, undefined])(
+    "rejects non-boolean policy values %s rather than coercing them",
+    async (enabled) => {
+      await expect(
+        updateAgentSandboxAutoStopSettings(enabled as boolean, "admin"),
+      ).rejects.toThrow("Invalid Agent sandbox auto-stop settings");
+      mocks.findUnique.mockResolvedValue({
+        value: JSON.stringify({ enabled }),
+      });
+      await expect(getAgentSandboxAutoStopSettings()).rejects.toThrow(
+        "Invalid Agent sandbox auto-stop settings",
+      );
+      expect(mocks.upsert).not.toHaveBeenCalled();
+      expect(mocks.auditCreate).not.toHaveBeenCalled();
+    },
+  );
 
   it("reads saved concurrency limits and refuses invalid policy instead of widening it", async () => {
     mocks.findUnique.mockResolvedValue({

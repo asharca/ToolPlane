@@ -227,6 +227,7 @@ export function SandboxConsole({
   terminalSubtitle,
   workspaceRoot,
   waitingForConnector = false,
+  offlineHint,
   readOnly = false,
 }: {
   deploymentId: string;
@@ -242,6 +243,7 @@ export function SandboxConsole({
   terminalSubtitle?: string;
   workspaceRoot?: string;
   waitingForConnector?: boolean;
+  offlineHint?: string;
   readOnly?: boolean;
 }) {
   const running = sandboxRunning || readOnly;
@@ -449,7 +451,7 @@ export function SandboxConsole({
             `\x1b[33m${
               waitingForConnector
                 ? t("waitingForConnectorSession")
-                : t("sandboxStoppedTerminalHint")
+                : (offlineHint ?? t("sandboxStoppedTerminalHint"))
             }\x1b[0m`,
           );
           setTerminalStatus(
@@ -961,7 +963,7 @@ export function SandboxConsole({
             {!running
               ? waitingForConnector
                 ? t("waitingForConnectorSession")
-                : t("startTheSandboxToBrowseFiles")
+                : (offlineHint ?? t("startTheSandboxToBrowseFiles"))
               : t("noFilesInThisDirectory")}
           </p>
         ) : null}

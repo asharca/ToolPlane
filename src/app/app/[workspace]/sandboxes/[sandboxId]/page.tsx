@@ -12,11 +12,8 @@ import { sandboxMcpResource } from "@/lib/sandboxes/oauth-policy";
 import { sandboxMcpExportable } from "@/lib/sandboxes/mcp-policy";
 import { SandboxMcpExport } from "@/components/dashboard/sandboxes/SandboxMcpExport";
 import { getSandbox } from "@/lib/sandboxes/queries";
-import { db } from "@/lib/db";
-import {
-  isExternalSandboxAccess,
-  isSessionSandbox,
-} from "@/lib/sandboxes/external";
+import { getAgentSandboxAutoStopSettings } from "@/lib/admin/settings";
+import { isExternalSandboxAccess } from "@/lib/sandboxes/external";
 import {
   parseSandboxDirectoryText,
   type SandboxFileEntry,
@@ -59,7 +56,7 @@ import { DialogField } from "@/components/dashboard/dialog";
 import { SandboxDataManagement } from "@/components/dashboard/sandboxes/SandboxDataManagement";
 import { SubmitButton } from "@/components/dashboard/SubmitButton";
 import { ConfirmSubmitButton } from "@/components/dashboard/ConfirmSubmitButton";
-import { ProvisioningRefresher } from "@/components/dashboard/ProvisioningRefresher";
+import { SandboxStatusRefresher } from "@/components/dashboard/sandboxes/SandboxStatusRefresher";
 import { CopyButton } from "@/components/dashboard/CopyButton";
 import { formatInTimeZone, resolveUserTimeZone } from "@/lib/timezone";
 
@@ -120,25 +117,21 @@ export default async function SandboxDetailPage({
   const ws = await getWorkspaceForUser(slug, user.id);
   if (!ws) redirect("/app");
 
-  const sandbox = await getSandbox(ws.id, sandboxId);
+  const [sandbox, autoStop] = await Promise.all([
+    getSandbox(ws.id, sandboxId),
+    getAgentSandboxAutoStopSettings(),
+  ]);
   if (!sandbox) notFound();
-  const agent = sandbox.agentLinks[0]?.agent;
-  const sessionCopy = isSessionSandbox(sandbox.config);
-  const managedAgentId =
-    sandbox.config &&
-    typeof sandbox.config === "object" &&
-    !Array.isArray(sandbox.config) &&
-    typeof sandbox.config.agentId === "string"
-      ? sandbox.config.agentId
-      : null;
-  const ownerAgent =
-    agent ??
-    (sessionCopy && managedAgentId
-      ? await db.agent.findFirst({
-          where: { id: managedAgentId, workspaceId: ws.id },
-          select: { id: true, name: true },
-        })
-      : null);
+  const ownerAgent = sandbox.ownerAgent;
+  const managed = sandbox.role === "runtime" || sandbox.role === "history";
+  const template = sandbox.role === "template";
+  const roleLabels = {
+    runtime: "runtimeRole",
+    template: "templateRole",
+    history: "historyRole",
+    external: "externalSandboxRole",
+  } as const;
+  const returnScope = sandbox.role === "external" ? "?scope=external" : "";
   const readOnly = Boolean(
     sandbox.config &&
       typeof sandbox.config === "object" &&
@@ -153,6 +146,7 @@ export default async function SandboxDetailPage({
   const running = status === "running" || status === "provisioning";
   const lifecycleBlocked =
     readOnly ||
+    managed ||
     [
       "copying",
       "copy_failed",
@@ -362,8 +356,8 @@ export default async function SandboxDetailPage({
 
   return (
     <>
-      <ProvisioningRefresher
-        active={
+      <SandboxStatusRefresher
+        transitioning={
           status === "provisioning" ||
           status === "copying" ||
           status === "restoring" ||
@@ -374,6 +368,14 @@ export default async function SandboxDetailPage({
       />
       <DashboardPage>
         <section className="space-y-4">
+          <ButtonLink
+            href={`/app/${slug}/sandboxes${returnScope}`}
+            variant="ghost"
+            size="sm"
+            className="w-fit"
+          >
+            {t("backToSandboxes")}
+          </ButtonLink>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex min-w-0 items-center gap-3">
               <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
@@ -402,19 +404,20 @@ export default async function SandboxDetailPage({
                   </span>
                   <span className="font-mono">{network}</span>
                   <AnimatedBadge status="neutral" size="sm">
-                    {t(
-                      sessionCopy
-                        ? "sessionCopyRole"
-                        : agent
-                          ? "ownSandboxRole"
-                          : "externalSandboxRole",
-                    )}
+                    {t(roleLabels[sandbox.role])}
                   </AnimatedBadge>
                 </div>
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-3">
-              <StatusBadge status={status} />
+              {template ? null : sandbox.role === "runtime" &&
+                status === "stopped" ? (
+                <AnimatedBadge status="neutral" size="sm">
+                  {t("runtimeStandby")}
+                </AnimatedBadge>
+              ) : (
+                <StatusBadge status={status} />
+              )}
               {sandbox.kind === "connector" && connector ? (
                 <SandboxConnectorStatus
                   workspace={slug}
@@ -430,223 +433,229 @@ export default async function SandboxDetailPage({
                   }}
                 />
               ) : null}
-              <SandboxSettingsDialog
-                title={t("sandboxSettings")}
-                subtitle={sandbox.name}
-                triggerLabel={t("settings")}
-                closeLabel={t("close")}
-              >
-                <div className="divide-y divide-border">
-                  <SandboxMcpExport
-                    sandboxId={sandbox.id}
-                    endpoint={mcpEndpoint}
-                    exportable={sandboxMcpExportable(sandbox)}
-                  />
-                  <section className="pb-5">
-                    <h3 className="text-sm font-semibold text-foreground">
-                      {t("generalSettings")}
-                    </h3>
-                    <SandboxSettingsForm
-                      action={renameSandboxAction}
-                      className="mt-3"
-                    >
-                      <input type="hidden" name="workspace" value={slug} />
-                      <input
-                        type="hidden"
-                        name="sandboxId"
-                        value={sandbox.id}
-                      />
-                      <fieldset
-                        disabled={lifecycleBlocked}
-                        className="flex items-end gap-2 disabled:opacity-60"
-                      >
-                        <SandboxNameField
-                          label={t("sandboxName")}
-                          defaultValue={sandbox.name}
-                        />
-                        <SubmitButton
-                          pendingLabel={t("renaming")}
-                          variant="secondary"
-                          size="md"
-                          className="mb-0.5"
-                        >
-                          {t("rename")}
-                        </SubmitButton>
-                      </fieldset>
-                    </SandboxSettingsForm>
-                  </section>
-
-                  {connector && !showConnectorSetup ? (
-                    <section className="py-5">
+              {!managed ? (
+                <SandboxSettingsDialog
+                  title={t("sandboxSettings")}
+                  subtitle={sandbox.name}
+                  triggerLabel={t("settings")}
+                  closeLabel={t("close")}
+                >
+                  <div className="divide-y divide-border">
+                    <SandboxMcpExport
+                      sandboxId={sandbox.id}
+                      endpoint={mcpEndpoint}
+                      exportable={sandboxMcpExportable(sandbox)}
+                    />
+                    <section className="pb-5">
                       <h3 className="text-sm font-semibold text-foreground">
-                        {t("connectorSetup")}
+                        {t("generalSettings")}
                       </h3>
-                      <p className="mt-0.5 text-xs text-muted-foreground">
-                        {t(
-                          "runThisCommandOnTheUserMachineTheClientConnectsBackToThePlatformOverWebsocketAndExecutesSandboxOperationsLocally",
-                        )}
-                      </p>
-                      <div className="mt-4">{connectorSettings}</div>
-                    </section>
-                  ) : null}
-
-                  <section className="py-5">
-                    <SandboxSettingsForm action={updateSandboxEnvAction}>
-                      <input type="hidden" name="workspace" value={slug} />
-                      <input
-                        type="hidden"
-                        name="sandboxId"
-                        value={sandbox.id}
-                      />
-                      <fieldset
-                        disabled={lifecycleBlocked}
-                        className="space-y-3 disabled:opacity-60"
+                      <SandboxSettingsForm
+                        action={renameSandboxAction}
+                        className="mt-3"
                       >
-                        <DialogField
-                          label={t("environmentVariables")}
-                          htmlFor={`sandbox-env-${sandbox.id}`}
-                          description={t(
-                            "changesRestartTheSandboxContainerButKeepFiles",
-                          )}
+                        <input type="hidden" name="workspace" value={slug} />
+                        <input
+                          type="hidden"
+                          name="sandboxId"
+                          value={sandbox.id}
+                        />
+                        <fieldset
+                          disabled={lifecycleBlocked}
+                          className="flex items-end gap-2 disabled:opacity-60"
                         >
-                          <textarea
-                            id={`sandbox-env-${sandbox.id}`}
-                            name="env"
-                            defaultValue={envText}
-                            rows={5}
-                            spellCheck={false}
-                            placeholder={t("envPlaceholder")}
-                            className="block rounded-lg border border-border bg-background px-3 py-2 text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring min-h-28 w-full resize-y font-mono text-xs leading-5"
+                          <SandboxNameField
+                            label={t("sandboxName")}
+                            defaultValue={sandbox.name}
                           />
-                        </DialogField>
-                        <div className="flex flex-wrap items-center justify-between gap-3">
-                          <p className="text-xs text-muted-foreground">
-                            {t("environmentVariablesHint")}
-                          </p>
                           <SubmitButton
-                            pendingLabel={t("saving")}
+                            pendingLabel={t("renaming")}
                             variant="secondary"
                             size="md"
+                            className="mb-0.5"
                           >
-                            {t("saveEnvironment")}
+                            {t("rename")}
                           </SubmitButton>
-                        </div>
-                      </fieldset>
-                    </SandboxSettingsForm>
-                  </section>
-
-                  {sandbox.kind === "docker" &&
-                  status !== "copy_failed" &&
-                  status !== "deleting" ? (
-                    <SandboxDataManagement
-                      workspace={slug}
-                      sandboxId={sandbox.id}
-                      sandboxName={sandbox.name}
-                      disabled={
-                        readOnly ||
-                        status === "provisioning" ||
-                        status === "copying" ||
-                        status === "restoring" ||
-                        status === "restore_cleanup_required" ||
-                        status === "upgrading"
-                      }
-                      disabledLabel={
-                        status === "restore_cleanup_required"
-                          ? t("statusCleanupPending")
-                          : undefined
-                      }
-                      creationDisabled={status === "restore_failed"}
-                      snapshots={sandbox.snapshots.map((snapshot) => ({
-                        id: snapshot.id,
-                        name: snapshot.name,
-                        status: snapshot.status,
-                        error: snapshot.error ? "error" : null,
-                        createdAt: formatInTimeZone(
-                          snapshot.createdAt,
-                          timeZone,
-                          {
-                            month: "short",
-                            day: "numeric",
-                            year: "numeric",
-                            hour: "numeric",
-                            minute: "2-digit",
-                          },
-                          locale,
-                        ),
-                      }))}
-                    />
-                  ) : null}
-
-                  {agent ? (
-                    <section className="pt-5">
-                      <h3 className="text-sm font-semibold text-foreground">
-                        {t("managedByAgent")}
-                      </h3>
-                      <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-                        <p className="max-w-xl text-xs leading-5 text-muted-foreground">
-                          {t("deleteAgentSandboxFromAgent")}
-                        </p>
-                        <ButtonLink
-                          href={`/app/${slug}/agents/${agent.id}`}
-                          variant="secondary"
-                          size="sm"
-                        >
-                          {t("openAgent")}
-                        </ButtonLink>
-                      </div>
+                        </fieldset>
+                      </SandboxSettingsForm>
                     </section>
-                  ) : (
-                    <section className="pt-5">
-                      <h3 className="text-sm font-semibold text-destructive dark:text-destructive">
-                        {t("dangerZone")}
-                      </h3>
-                      <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-                        <p className="max-w-xl text-xs leading-5 text-muted-foreground">
+
+                    {connector && !showConnectorSetup ? (
+                      <section className="py-5">
+                        <h3 className="text-sm font-semibold text-foreground">
+                          {t("connectorSetup")}
+                        </h3>
+                        <p className="mt-0.5 text-xs text-muted-foreground">
                           {t(
-                            sandbox.kind === "docker"
-                              ? "deleteSandboxDescription"
-                              : "deleteExternalSandboxDescription",
+                            "runThisCommandOnTheUserMachineTheClientConnectsBackToThePlatformOverWebsocketAndExecutesSandboxOperationsLocally",
                           )}
                         </p>
-                        <form action={deleteSandboxAction}>
-                          <input type="hidden" name="workspace" value={slug} />
-                          <input
-                            type="hidden"
-                            name="sandboxId"
-                            value={sandbox.id}
-                          />
-                          <ConfirmSubmitButton
-                            triggerLabel={t("delete")}
-                            confirmLabel={common("confirm")}
-                            cancelLabel={common("cancel")}
-                            prompt={t(
-                              sandbox.kind === "docker"
-                                ? "deleteSandboxPrompt"
-                                : "deleteExternalSandboxPrompt",
-                              { name: sandbox.name },
+                        <div className="mt-4">{connectorSettings}</div>
+                      </section>
+                    ) : null}
+
+                    <section className="py-5">
+                      <SandboxSettingsForm action={updateSandboxEnvAction}>
+                        <input type="hidden" name="workspace" value={slug} />
+                        <input
+                          type="hidden"
+                          name="sandboxId"
+                          value={sandbox.id}
+                        />
+                        <fieldset
+                          disabled={lifecycleBlocked}
+                          className="space-y-3 disabled:opacity-60"
+                        >
+                          <DialogField
+                            label={t("environmentVariables")}
+                            htmlFor={`sandbox-env-${sandbox.id}`}
+                            description={t(
+                              "changesRestartTheSandboxContainerButKeepFiles",
                             )}
-                            pendingLabel={t("deletingSandbox")}
-                            promptClassName="max-w-sm text-xs text-muted-foreground"
-                          />
-                        </form>
-                      </div>
+                          >
+                            <textarea
+                              id={`sandbox-env-${sandbox.id}`}
+                              name="env"
+                              defaultValue={envText}
+                              rows={5}
+                              spellCheck={false}
+                              placeholder={t("envPlaceholder")}
+                              className="block rounded-lg border border-border bg-background px-3 py-2 text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring min-h-28 w-full resize-y font-mono text-xs leading-5"
+                            />
+                          </DialogField>
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <p className="text-xs text-muted-foreground">
+                              {t("environmentVariablesHint")}
+                            </p>
+                            <SubmitButton
+                              pendingLabel={t("saving")}
+                              variant="secondary"
+                              size="md"
+                            >
+                              {t("saveEnvironment")}
+                            </SubmitButton>
+                          </div>
+                        </fieldset>
+                      </SandboxSettingsForm>
                     </section>
-                  )}
-                </div>
-              </SandboxSettingsDialog>
-              {lifecycleBlocked ? null : (
+
+                    {sandbox.kind === "docker" &&
+                    status !== "copy_failed" &&
+                    status !== "deleting" ? (
+                      <SandboxDataManagement
+                        workspace={slug}
+                        sandboxId={sandbox.id}
+                        sandboxName={sandbox.name}
+                        disabled={
+                          readOnly ||
+                          status === "provisioning" ||
+                          status === "copying" ||
+                          status === "restoring" ||
+                          status === "restore_cleanup_required" ||
+                          status === "upgrading"
+                        }
+                        disabledLabel={
+                          status === "restore_cleanup_required"
+                            ? t("statusCleanupPending")
+                            : undefined
+                        }
+                        creationDisabled={status === "restore_failed"}
+                        snapshots={sandbox.snapshots.map((snapshot) => ({
+                          id: snapshot.id,
+                          name: snapshot.name,
+                          status: snapshot.status,
+                          error: snapshot.error ? "error" : null,
+                          createdAt: formatInTimeZone(
+                            snapshot.createdAt,
+                            timeZone,
+                            {
+                              month: "short",
+                              day: "numeric",
+                              year: "numeric",
+                              hour: "numeric",
+                              minute: "2-digit",
+                            },
+                            locale,
+                          ),
+                        }))}
+                      />
+                    ) : null}
+
+                    {ownerAgent ? (
+                      <section className="pt-5">
+                        <h3 className="text-sm font-semibold text-foreground">
+                          {t("managedByAgent")}
+                        </h3>
+                        <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                          <p className="max-w-xl text-xs leading-5 text-muted-foreground">
+                            {t("deleteAgentSandboxFromAgent")}
+                          </p>
+                          <ButtonLink
+                            href={`/app/${slug}/agents/${ownerAgent.id}`}
+                            variant="secondary"
+                            size="sm"
+                          >
+                            {t("openAgent")}
+                          </ButtonLink>
+                        </div>
+                      </section>
+                    ) : (
+                      <section className="pt-5">
+                        <h3 className="text-sm font-semibold text-destructive dark:text-destructive">
+                          {t("dangerZone")}
+                        </h3>
+                        <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                          <p className="max-w-xl text-xs leading-5 text-muted-foreground">
+                            {t(
+                              sandbox.kind === "docker"
+                                ? "deleteSandboxDescription"
+                                : "deleteExternalSandboxDescription",
+                            )}
+                          </p>
+                          <form action={deleteSandboxAction}>
+                            <input
+                              type="hidden"
+                              name="workspace"
+                              value={slug}
+                            />
+                            <input
+                              type="hidden"
+                              name="sandboxId"
+                              value={sandbox.id}
+                            />
+                            <ConfirmSubmitButton
+                              triggerLabel={t("delete")}
+                              confirmLabel={common("confirm")}
+                              cancelLabel={common("cancel")}
+                              prompt={t(
+                                sandbox.kind === "docker"
+                                  ? "deleteSandboxPrompt"
+                                  : "deleteExternalSandboxPrompt",
+                                { name: sandbox.name },
+                              )}
+                              pendingLabel={t("deletingSandbox")}
+                              promptClassName="max-w-sm text-xs text-muted-foreground"
+                            />
+                          </form>
+                        </div>
+                      </section>
+                    )}
+                  </div>
+                </SandboxSettingsDialog>
+              ) : null}
+              {ownerAgent || !lifecycleBlocked ? (
                 <ButtonLink
                   href={
-                    agent
-                      ? `/app/${slug}/agents/${agent.id}`
+                    ownerAgent
+                      ? `/app/${slug}/agents/${ownerAgent.id}`
                       : `/app/${slug}/agents`
                   }
                   variant="ghost"
                   size="sm"
                 >
-                  {agent ? t("openAgent") : t("attachToAgent")}
+                  {ownerAgent ? t("openAgent") : t("attachToAgent")}
                 </ButtonLink>
-              )}
+              ) : null}
               {disabledLegacy || lifecycleBlocked ? null : running ? (
                 <>
                   <form action={stopSandboxAction}>
@@ -692,7 +701,7 @@ export default async function SandboxDetailPage({
           </div>
 
           <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            {sessionCopy || agent ? (
+            {sandbox.role !== "external" ? (
               <>
                 <span>{t("ownerAgent")}</span>
                 {ownerAgent ? (
@@ -706,7 +715,7 @@ export default async function SandboxDetailPage({
                 ) : (
                   <span>{t("ownerAgentUnavailable")}</span>
                 )}
-                {!sessionCopy ? <span>{t("ownSandboxFixed")}</span> : null}
+                {template ? <span>{t("templateFixed")}</span> : null}
               </>
             ) : (
               <>
@@ -733,6 +742,19 @@ export default async function SandboxDetailPage({
               </>
             )}
           </div>
+          {sandbox.role !== "external" ? (
+            <p className="text-sm leading-6 text-muted-foreground">
+              {sandbox.role === "runtime"
+                ? t("runtimeLifecycleDescription", {
+                    policy: t(
+                      autoStop.enabled
+                        ? "runtimeAutoStopEnabled"
+                        : "runtimeAutoStopDisabled",
+                    ),
+                  })
+                : t(template ? "templateDescription" : "historyDescription")}
+            </p>
+          ) : null}
 
           {showConnectorSetup && connector ? (
             <DashboardPanel
@@ -751,6 +773,15 @@ export default async function SandboxDetailPage({
               displays={connectorLive?.displays ?? []}
               deploymentId={sandbox.deploymentId}
               running={canUseConsole}
+              offlineHint={
+                sandbox.role === "runtime"
+                  ? t("runtimeOfflineHint")
+                  : template
+                    ? t("templateOfflineHint")
+                    : sandbox.role === "history"
+                      ? t("historyOfflineHint")
+                      : undefined
+              }
               initialPath={initialDirectory.path}
               initialEntries={initialDirectory.entries}
               terminalSubtitle={sandbox.name}

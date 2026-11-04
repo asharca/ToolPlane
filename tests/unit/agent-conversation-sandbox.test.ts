@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { agentSessionWorkspaceRoot } from "@/lib/agents/session-paths";
 import * as sandboxRuntime from "@/lib/agents/sandbox-runtime";
+import { withSandboxExecutionLease } from "@/lib/agents/sandbox-execution-gate";
 const mocks = vi.hoisted(() => ({
   agent: vi.fn(),
   conversation: vi.fn(),
@@ -41,10 +42,16 @@ const mocks = vi.hoisted(() => ({
   hydrate: vi.fn(),
   stopHost: vi.fn(),
   removeWorkspace: vi.fn(),
+  setting: vi.fn(),
+  agentBusy: vi.fn(),
+  deleteConversations: vi.fn(),
+  deleteContexts: vi.fn(),
+  deleteDeployment: vi.fn(),
 }));
 vi.mock("@/lib/db", () => {
   const db = {
     agent: { findFirst: mocks.agent, findUnique: mocks.agentOwner },
+    systemSetting: { findUnique: mocks.setting },
     agentRevision: { findFirst: mocks.revision },
     sandboxSnapshot: { findFirst: mocks.snapshot },
     agentEnvironmentCredential: { findMany: mocks.credentials },
@@ -52,12 +59,14 @@ vi.mock("@/lib/db", () => {
       findFirst: mocks.conversation,
       findMany: mocks.conversationFindMany,
       update: mocks.updateConversation,
+      deleteMany: mocks.deleteConversations,
     },
     a2AContext: {
       findFirst: mocks.context,
       findMany: mocks.contextFindMany,
       update: mocks.updateContext,
       updateMany: mocks.updateContexts,
+      deleteMany: mocks.deleteContexts,
     },
     workSession: { findFirst: mocks.work, updateMany: mocks.updateWork },
     piSessionPackageSet: { updateMany: vi.fn() },
@@ -72,6 +81,7 @@ vi.mock("@/lib/db", () => {
       findUniqueOrThrow: mocks.deployment,
       create: mocks.createDeployment,
       update: mocks.updateDeployment,
+      delete: mocks.deleteDeployment,
     },
     $queryRaw: mocks.query,
     $transaction: mocks.transaction,
@@ -110,7 +120,7 @@ vi.mock("@/lib/sandboxes/runtime", () => ({
   sandboxVolumeName: (id: string) => `volume-${id}`,
 }));
 vi.mock("@/lib/agents/agent-execution-gate", () => ({
-  agentExecutionBusy: () => false,
+  agentExecutionBusy: mocks.agentBusy,
   withAgentMaintenanceLease: (_id: string, fn: () => Promise<unknown>) => fn(),
 }));
 import {
@@ -180,6 +190,18 @@ const sandbox = {
   },
   deployment: { id: "deployment", status: "stopped" },
 };
+const idleSandbox = () => ({
+  ...sandbox,
+  conversations: [{ id: "conversation" }],
+  workSessions: [] as { id: string; status: string }[],
+  a2aContexts: [] as { tasks: { id: string }[] }[],
+  snapshots: [],
+  deployment: {
+    ...sandbox.deployment,
+    status: "running",
+    updatedAt: new Date(0),
+  },
+});
 const workspaceRoot = agentSessionWorkspaceRoot({
   conversationId: input.conversationId,
 });
@@ -193,6 +215,9 @@ const expectedMapping = {
 describe("durable conversation sandbox bindings", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.setting.mockResolvedValue(null);
+    mocks.agentBusy.mockReturnValue(false);
+    mocks.updateDeployment.mockResolvedValue(undefined);
     sandboxAccesses.clear();
     frozenSandboxes.clear();
     mocks.liveStatus.mockReturnValue(null);
@@ -359,6 +384,105 @@ describe("durable conversation sandbox bindings", () => {
       agentRevisionId: revision.id,
       a2aContextId: "context",
     });
+  });
+  it("reads persisted auto-stop policy again on the next cycle without restarting", async () => {
+    const candidate = idleSandbox();
+    mocks.sandboxFindMany.mockResolvedValue([candidate]);
+    mocks.updateDeployment.mockImplementation(async ({ data }) => {
+      candidate.deployment.status = data.status;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation(async () => Response.json({ active: 0 })),
+    );
+    mocks.setting.mockResolvedValue({ value: '{"enabled":false}' });
+    await stopIdleAgentConversationSandboxes();
+    expect(candidate.deployment.status).toBe("running");
+    expect(mocks.kill).not.toHaveBeenCalled();
+    expect(mocks.stopContainer).not.toHaveBeenCalled();
+
+    mocks.setting.mockResolvedValue({ value: '{"enabled":true}' });
+    await stopIdleAgentConversationSandboxes();
+    expect(candidate.deployment.status).toBe("stopped");
+    expect(mocks.stopContainer).toHaveBeenCalledWith(candidate.id);
+    expect(mocks.start).not.toHaveBeenCalled();
+  });
+
+  it("finishes a persisted stopping operation even when auto-stop is disabled", async () => {
+    const candidate = idleSandbox();
+    candidate.deployment.status = "stopping";
+    mocks.sandboxFindMany.mockResolvedValue([candidate]);
+    mocks.setting.mockResolvedValue({ value: '{"enabled":false}' });
+    mocks.updateDeployment.mockImplementation(async ({ data }) => {
+      candidate.deployment.status = data.status;
+    });
+    await stopIdleAgentConversationSandboxes();
+    expect(candidate.deployment.status).toBe("stopped");
+    expect(mocks.stopContainer).toHaveBeenCalledWith(candidate.id);
+  });
+
+  it("finishes deleting runtime and owners even when auto-stop is disabled", async () => {
+    const candidate = idleSandbox();
+    candidate.deployment.status = "deleting";
+    mocks.sandboxFindMany.mockResolvedValue([candidate]);
+    mocks.sandbox.mockResolvedValue(candidate);
+    mocks.setting.mockResolvedValue({ value: '{"enabled":false}' });
+    await stopIdleAgentConversationSandboxes();
+    expect(mocks.removeRuntime).toHaveBeenCalledWith(
+      candidate.id,
+      "volume-isolated",
+    );
+    expect(mocks.deleteConversations).toHaveBeenCalled();
+    expect(mocks.deleteContexts).toHaveBeenCalled();
+    expect(mocks.deleteDeployment).toHaveBeenCalled();
+    expect(mocks.start).not.toHaveBeenCalled();
+  });
+
+  it.each([true, false])(
+    "preserves native turns, queued/active Work and tasks, and file/terminal access (enabled=%s)",
+    async (enabled) => {
+      mocks.setting.mockResolvedValue({ value: JSON.stringify({ enabled }) });
+      // Even persisted stop recovery must respect active execution/access guards.
+      const candidate = idleSandbox();
+      candidate.deployment.status = "stopping";
+      mocks.sandboxFindMany.mockResolvedValue([candidate]);
+      await withSandboxExecutionLease(candidate.id, () =>
+        stopIdleAgentConversationSandboxes(),
+      );
+      mocks.agentBusy.mockReturnValue(true);
+      await stopIdleAgentConversationSandboxes();
+      mocks.agentBusy.mockReturnValue(false);
+      for (const status of ["queued", "running"]) {
+        candidate.workSessions = [{ id: "work", status }];
+        await stopIdleAgentConversationSandboxes();
+      }
+      candidate.workSessions = [];
+      candidate.a2aContexts = [{ tasks: [{ id: "task" }] }];
+      await stopIdleAgentConversationSandboxes();
+      candidate.a2aContexts = [];
+      const release = beginAgentConversationSandboxAccess(candidate.id);
+      try {
+        await stopIdleAgentConversationSandboxes();
+      } finally {
+        release();
+      }
+      expect(mocks.updateDeployment).not.toHaveBeenCalled();
+      expect(mocks.stopContainer).not.toHaveBeenCalled();
+      expect(mocks.kill).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not stop a recently accessed sandbox or start an unused sandbox", async () => {
+    const candidate = idleSandbox();
+    mocks.sandboxFindMany.mockResolvedValue([candidate]);
+    const release = beginAgentConversationSandboxAccess(candidate.id);
+    release();
+    await stopIdleAgentConversationSandboxes();
+    candidate.deployment.status = "stopped";
+    sandboxAccesses.clear();
+    await stopIdleAgentConversationSandboxes();
+    expect(mocks.stopContainer).not.toHaveBeenCalled();
+    expect(mocks.start).not.toHaveBeenCalled();
   });
   it("rejects archived read-only session sandboxes before starting execution", async () => {
     mocks.sandbox.mockResolvedValue({
@@ -901,20 +1025,25 @@ describe("durable conversation sandbox bindings", () => {
     expect(mocks.copy).not.toHaveBeenCalled();
     expect(mocks.start).not.toHaveBeenCalled();
   });
-  it("retains read-only migration archives during idle maintenance", async () => {
-    mocks.sandboxFindMany.mockResolvedValue([
-      {
-        ...sandbox,
-        config: { ...sandbox.config, migrationArchive: true, readOnly: true },
-        conversations: [],
-        a2aContexts: [],
-        workSessions: [],
-      },
-    ]);
-    await stopIdleAgentConversationSandboxes();
-    expect(mocks.removeRuntime).not.toHaveBeenCalled();
-    expect(mocks.kill).not.toHaveBeenCalled();
-  });
+  it.each([true, false])(
+    "retains read-only migration archives during idle maintenance (enabled=%s)",
+    async (enabled) => {
+      mocks.setting.mockResolvedValue({ value: JSON.stringify({ enabled }) });
+      mocks.sandboxFindMany.mockResolvedValue([
+        {
+          ...sandbox,
+          config: { ...sandbox.config, migrationArchive: true, readOnly: true },
+          deployment: { ...sandbox.deployment, status: "deleting" },
+          conversations: [],
+          a2aContexts: [],
+          workSessions: [],
+        },
+      ]);
+      await stopIdleAgentConversationSandboxes();
+      expect(mocks.removeRuntime).not.toHaveBeenCalled();
+      expect(mocks.kill).not.toHaveBeenCalled();
+    },
+  );
   it("prevents new file/terminal access while lifecycle holds the sandbox", () => {
     frozenSandboxes.add("isolated");
     expect(() => beginAgentConversationSandboxAccess("isolated")).toThrow(

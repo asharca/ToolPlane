@@ -10,10 +10,10 @@ import { Bot, Boxes, Cpu, Laptop, Terminal } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { getWorkspaceForUser } from "@/lib/workspace/queries";
 import { listSandboxes } from "@/lib/sandboxes/queries";
+import { getAgentSandboxAutoStopSettings } from "@/lib/admin/settings";
 import {
   isExternalSandboxAccess,
   isExternalSandboxCandidate,
-  isSessionSandbox,
 } from "@/lib/sandboxes/external";
 import {
   connectorFromConfig,
@@ -32,7 +32,7 @@ import {
 import { effectiveStatus } from "@/lib/process/supervisor";
 import { DashboardHeader } from "@/components/dashboard/DashboardHeader";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
-import { ProvisioningRefresher } from "@/components/dashboard/ProvisioningRefresher";
+import { SandboxStatusRefresher } from "@/components/dashboard/sandboxes/SandboxStatusRefresher";
 import { SandboxCreateForm } from "@/components/dashboard/sandboxes/SandboxCreateForm";
 import { SandboxConnectorStatus } from "@/components/dashboard/sandboxes/SandboxConnectorStatus";
 import { SandboxBatchTable } from "@/components/dashboard/sandboxes/SandboxBatchTable";
@@ -163,16 +163,35 @@ export default async function SandboxesPage({
     params,
     searchParams,
   ]);
-  const scope = requestedScope === "external" ? "external" : "agents";
+  const scope = requestedScope === "external" ? "external" : "runtime";
   const user = await getCurrentUser();
   if (!user) redirect("/app/login");
   const timeZone = resolveUserTimeZone(user);
   const ws = await getWorkspaceForUser(slug, user.id);
   if (!ws) redirect("/app");
 
-  const sandboxes = await listSandboxes(ws.id);
-  const anyProvisioning = sandboxes.some((s) => {
-    const status = effectiveStatus(s.deploymentId, s.deployment.status);
+  const [sandboxes, autoStop] = await Promise.all([
+    listSandboxes(ws.id),
+    getAgentSandboxAutoStopSettings(),
+  ]);
+  const runtimeSandboxes = sandboxes.filter((s) => s.role === "runtime");
+  const externalSandboxes = sandboxes.filter(
+    (sandbox) =>
+      sandbox.role === "external" &&
+      isExternalSandboxCandidate({
+        kind: sandbox.kind,
+        config: sandbox.config,
+        isAgentTemplate: sandbox._count.agentLinks > 0,
+      }),
+  );
+  const sandboxRows = (
+    scope === "runtime" ? runtimeSandboxes : externalSandboxes
+  ).map((sandbox) => ({ sandbox }));
+  const anyProvisioning = sandboxRows.some(({ sandbox }) => {
+    const status = effectiveStatus(
+      sandbox.deploymentId,
+      sandbox.deployment.status,
+    );
     return (
       status === "provisioning" ||
       status === "copying" ||
@@ -181,46 +200,20 @@ export default async function SandboxesPage({
       status === "upgrading"
     );
   });
-  const ownSandboxes = sandboxes.filter(
-    (sandbox) =>
-      sandbox.agentLinks.length > 0 && !isSessionSandbox(sandbox.config),
-  );
-  const externalSandboxes = sandboxes.filter((sandbox) =>
-    isExternalSandboxCandidate({
-      kind: sandbox.kind,
-      config: sandbox.config,
-      isAgentTemplate: sandbox._count.agentLinks > 0,
-    }),
-  );
-  const sessionSandboxes = sandboxes.filter((sandbox) =>
-    isSessionSandbox(sandbox.config),
-  );
-  const externalLinkCount = externalSandboxes.reduce(
-    (sum, sandbox) => sum + sandbox._count.externalAgentLinks,
-    0,
-  );
-  const sandboxRows = (
-    scope === "agents" ? ownSandboxes : externalSandboxes
-  ).map((sandbox) => ({ sandbox }));
-  const sectionTitle = t(
-    scope === "agents" ? "agentOwnSandboxes" : "externalSandboxes",
-  );
-  const filters = [
-    {
-      value: "agents",
-      label: t("agentOwnSandboxes"),
-      href: `/app/${slug}/sandboxes`,
-    },
-    {
-      value: "external",
-      label: t("externalSandboxes"),
-      href: `/app/${slug}/sandboxes?scope=external`,
-    },
-  ];
+  const scopeLabels = {
+    runtime: "runtimeSandboxes",
+    external: "externalSandboxes",
+  } as const;
+  const sectionTitle = t(scopeLabels[scope]);
+  const filters = (["runtime", "external"] as const).map((value) => ({
+    value,
+    label: t(scopeLabels[value]),
+    href: `/app/${slug}/sandboxes${value === "runtime" ? "" : `?scope=${value}`}`,
+  }));
 
   return (
     <>
-      <ProvisioningRefresher active={anyProvisioning} />
+      <SandboxStatusRefresher transitioning={anyProvisioning} />
       <DashboardHeader title={t("sandboxes")} />
       <DashboardPage>
         <DashboardToolbar
@@ -231,10 +224,10 @@ export default async function SandboxesPage({
           </p>
         </DashboardToolbar>
 
-        <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3">
           <SandboxStat
-            label={t("agentOwnSandboxes")}
-            value={ownSandboxes.length}
+            label={t("runtimeSandboxes")}
+            value={runtimeSandboxes.length}
             icon={Bot}
           />
           <SandboxStat
@@ -242,23 +235,16 @@ export default async function SandboxesPage({
             value={externalSandboxes.length}
             icon={Laptop}
           />
-          <SandboxStat
-            label={t("sessionCopies")}
-            value={sessionSandboxes.length}
-            icon={Cpu}
-          />
-          <SandboxStat
-            label={t("externalAgentLinks")}
-            value={externalLinkCount}
-            icon={Boxes}
-          />
         </div>
 
         <DashboardSection
           title={sectionTitle}
           count={sandboxRows.length}
           actions={
-            <div className="flex items-center gap-1 rounded-lg border border-border p-1">
+            <nav
+              aria-label={t("sandboxViews")}
+              className="flex flex-wrap items-center gap-1 rounded-lg border border-border p-1"
+            >
               {filters.map((filter) => (
                 <Link
                   key={filter.value}
@@ -273,16 +259,27 @@ export default async function SandboxesPage({
                   {filter.label}
                 </Link>
               ))}
-            </div>
+            </nav>
           }
         >
+          {scope === "runtime" ? (
+            <p className="mb-4 text-sm leading-6 text-muted-foreground">
+              {t("runtimeLifecycleDescription", {
+                policy: t(
+                  autoStop.enabled
+                    ? "runtimeAutoStopEnabled"
+                    : "runtimeAutoStopDisabled",
+                ),
+              })}
+            </p>
+          ) : null}
           {sandboxRows.length === 0 ? (
             <DashboardEmptyState
               icon={Boxes}
               title={t("noSandboxesYet")}
               description={t(
-                scope === "agents"
-                  ? "ownSandboxesEmpty"
+                scope === "runtime"
+                  ? "runtimeSandboxesEmpty"
                   : "externalSandboxesEmpty",
               )}
             />
@@ -290,15 +287,16 @@ export default async function SandboxesPage({
             <SandboxBatchTable
               key={scope}
               workspace={slug}
+              batchEnabled={scope === "external"}
               minWidth="68rem"
               headers={[
-                { label: t(scope === "agents" ? "ownerAgent" : "sandbox") },
+                { label: t(scope === "external" ? "sandbox" : "ownerAgent") },
                 { label: t("mode") },
                 { label: t("status") },
                 { label: t("backingStore") },
                 {
                   label: t(
-                    scope === "agents" ? "sessionCopies" : "agentsColumn",
+                    scope === "external" ? "agentsColumn" : "usageColumn",
                   ),
                 },
                 { label: t("snapshots") },
@@ -314,6 +312,7 @@ export default async function SandboxesPage({
                 const running =
                   status === "running" || status === "provisioning";
                 const lifecycleBlocked = LIFECYCLE_BLOCKED_STATUSES.has(status);
+                const managed = s.role === "runtime";
                 const connector = connectorFromConfig(s.config);
                 const disabledLegacy =
                   (s.config &&
@@ -323,24 +322,12 @@ export default async function SandboxesPage({
                   s.kind === "host" ||
                   (s.kind === "ssh" && !s.sshServer) ||
                   (s.kind === "connector" && !connector);
-                const agent = s.agentLinks[0]?.agent;
-                const copies =
-                  scope === "agents"
-                    ? sessionSandboxes.filter((copy) => {
-                        const config = copy.config;
-                        return (
-                          config &&
-                          typeof config === "object" &&
-                          !Array.isArray(config) &&
-                          (config.sourceSandboxId === s.id ||
-                            (agent && config.agentId === agent.id))
-                        );
-                      })
-                    : [];
+                const agent = s.ownerAgent;
                 return {
                   id: s.id,
                   name: s.name,
                   batchEligible:
+                    !managed &&
                     !disabledLegacy &&
                     !lifecycleBlocked &&
                     status !== "provisioning",
@@ -360,12 +347,12 @@ export default async function SandboxesPage({
                           </span>
                           <div>
                             <div className="font-medium text-foreground">
-                              {scope === "agents"
-                                ? (agent?.name ?? s.name)
-                                : s.name}
+                              {scope === "external"
+                                ? s.name
+                                : (agent?.name ?? t("ownerAgentUnavailable"))}
                             </div>
                             <div className="text-xs text-muted-foreground">
-                              {scope === "agents" ? s.name : s.slug}
+                              {scope === "external" ? s.slug : s.name}
                             </div>
                           </div>
                         </div>
@@ -387,7 +374,13 @@ export default async function SandboxesPage({
                       </AnimatedBadge>
                     </div>,
                     <div key="status" className="min-w-0">
-                      <StatusBadge status={status} />
+                      {managed && status === "stopped" ? (
+                        <AnimatedBadge status="neutral" size="sm">
+                          {t("runtimeStandby")}
+                        </AnimatedBadge>
+                      ) : (
+                        <StatusBadge status={status} />
+                      )}
                     </div>,
                     <div key="storage" className="min-w-0 max-w-72">
                       <div
@@ -416,28 +409,17 @@ export default async function SandboxesPage({
                       ) : null}
                     </div>,
                     <div key="agent" className="min-w-0">
-                      {scope === "agents" ? (
-                        copies.length > 0 ? (
-                          <details className="max-w-64 text-xs">
-                            <summary className="cursor-pointer rounded py-2 text-muted-foreground focus-visible:outline focus-visible:outline-ring">
-                              {t("sessionCopyCount", { count: copies.length })}
-                            </summary>
-                            <ul className="max-h-64 space-y-2 overflow-y-auto py-2">
-                              {copies.map((copy) => (
-                                <li key={copy.id}>
-                                  <Link
-                                    href={`/app/${slug}/sandboxes/${copy.id}`}
-                                    className="block truncate text-foreground hover:underline"
-                                  >
-                                    {copy.name}
-                                  </Link>
-                                </li>
-                              ))}
-                            </ul>
-                          </details>
-                        ) : (
-                          <span className="text-muted-foreground">0</span>
-                        )
+                      {scope !== "external" ? (
+                        <div className="space-y-1 text-xs text-muted-foreground">
+                          <div>
+                            {t("conversationCount", {
+                              count: s._count.conversations,
+                            })}
+                          </div>
+                          <div>
+                            {t("contextCount", { count: s._count.a2aContexts })}
+                          </div>
+                        </div>
                       ) : s.externalAgentLinks.length > 0 ? (
                         <ul className="space-y-1">
                           {s.externalAgentLinks.map((link) => (
@@ -470,7 +452,9 @@ export default async function SandboxesPage({
                     </div>,
                     <div key="actions" className="min-w-0">
                       <div className="flex items-center justify-end gap-3">
-                        {disabledLegacy || lifecycleBlocked ? null : running ? (
+                        {managed ||
+                        disabledLegacy ||
+                        lifecycleBlocked ? null : running ? (
                           <>
                             <form action={stopSandboxAction}>
                               <input
@@ -542,6 +526,14 @@ export default async function SandboxesPage({
                             size="sm"
                           >
                             {t("openAgent")}
+                          </ButtonLink>
+                        ) : managed ? (
+                          <ButtonLink
+                            href={`/app/${slug}/sandboxes/${s.id}`}
+                            variant="ghost"
+                            size="sm"
+                          >
+                            {t("inspect")}
                           </ButtonLink>
                         ) : (
                           <form action={deleteSandboxAction}>
