@@ -87,6 +87,8 @@ pnpm dev
 
 设备连接请使用沙箱页面生成的 Connector 命令；支持范围、系统要求及屏幕访问方式见[沙箱与连接器](https://asharca.github.io/toolplane-docs/docs/zh/guides/docs/SANDBOXES)。连接器以本地用户权限运行，不等同于隔离容器。
 
+工作页的普通聊天可在菜单中确认删除；渠道会话不提供删除入口。侧栏位置调整使用拖动，不再提供 Move up / Move down 等菜单移动操作。
+
 ## 开发命令
 
 | 命令 | 用途 |

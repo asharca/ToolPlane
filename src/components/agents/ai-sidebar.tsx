@@ -2,17 +2,13 @@
 // asharca.github.io/ui/components/agents/ai-sidebar
 
 import {
-  ArrowDown,
-  ArrowUp,
   Bookmark,
   FileText,
   Folder,
-  FolderInput,
   FolderOpen,
   type LucideIcon,
   MoreHorizontal,
   Pencil,
-  Undo2,
 } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import {
@@ -53,10 +49,9 @@ export interface SidebarResourceMove {
 }
 
 /**
- * The moves this row can make right now, the same four the keyboard offers on
- * `Alt+Shift+Arrow`. A pointer drag is the fast path for them; a finger has no
- * drag to give, so the row menu carries them too. Absent keys are moves this
- * row cannot make from where it sits.
+ * The moves this row can make right now, also used by the keyboard's
+ * `Alt+Shift+Arrow` shortcuts. Absent keys are moves this row cannot make
+ * from where it sits. Position changes are not exposed as menu actions.
  */
 export interface SidebarResourceMoveCommands {
   up?: () => void;
@@ -412,45 +407,19 @@ function ResourceRow({
     action();
   };
 
-  const menu = renderMenu?.(row.item, {
-    close: () => onMenuOpenChange(false),
-    rename: () => {
-      onMenuOpenChange(false);
-      onRenameStart();
-    },
-    moves,
-  }) ?? (
-    <>
-      <ResourceMenuAction icon={Pencil} onSelect={runFromMenu(onRenameStart)}>
-        Rename
-      </ResourceMenuAction>
-      {moves.up || moves.down || moves.into || moves.out ? (
-        <div aria-hidden="true" className="my-1 h-px bg-border" />
-      ) : null}
-      {moves.up ? (
-        <ResourceMenuAction icon={ArrowUp} onSelect={runFromMenu(moves.up)}>
-          Move up
-        </ResourceMenuAction>
-      ) : null}
-      {moves.down ? (
-        <ResourceMenuAction icon={ArrowDown} onSelect={runFromMenu(moves.down)}>
-          Move down
-        </ResourceMenuAction>
-      ) : null}
-      {moves.into ? (
-        <ResourceMenuAction
-          icon={FolderInput}
-          onSelect={runFromMenu(moves.into.run)}
-        >
-          Move into {moves.into.label}
-        </ResourceMenuAction>
-      ) : null}
-      {moves.out ? (
-        <ResourceMenuAction icon={Undo2} onSelect={runFromMenu(moves.out)}>
-          Move out
-        </ResourceMenuAction>
-      ) : null}
-    </>
+  const menu = renderMenu ? (
+    renderMenu(row.item, {
+      close: () => onMenuOpenChange(false),
+      rename: () => {
+        onMenuOpenChange(false);
+        onRenameStart();
+      },
+      moves,
+    })
+  ) : (
+    <ResourceMenuAction icon={Pencil} onSelect={runFromMenu(onRenameStart)}>
+      Rename
+    </ResourceMenuAction>
   );
 
   return (
@@ -563,32 +532,34 @@ function ResourceRow({
           onDoubleClick={(event) => event.stopPropagation()}
         >
           {renderActions?.(row.item)}
-          <MorphPopover open={menuOpen} onOpenChange={onMenuOpenChange}>
-            <MorphPopoverTrigger>
-              <button
-                type="button"
-                draggable={false}
-                tabIndex={-1}
-                aria-label={`Actions for ${row.item.label}`}
-                className={cn(
-                  "grid size-7 shrink-0 place-items-center rounded-lg outline-none transition-opacity hover:bg-foreground/5 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring group-hover/resource:opacity-100 group-data-[menu-open=true]/resource:opacity-100",
-                  // Keep the only rename/move path visible on touch devices.
-                  canTouch ? "opacity-100" : "opacity-0",
-                )}
+          {menu ? (
+            <MorphPopover open={menuOpen} onOpenChange={onMenuOpenChange}>
+              <MorphPopoverTrigger>
+                <button
+                  type="button"
+                  draggable={false}
+                  tabIndex={-1}
+                  aria-label={`Actions for ${row.item.label}`}
+                  className={cn(
+                    "grid size-7 shrink-0 place-items-center rounded-lg outline-none transition-opacity hover:bg-foreground/5 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring group-hover/resource:opacity-100 group-data-[menu-open=true]/resource:opacity-100",
+                    // Keep row actions visible on touch devices.
+                    canTouch ? "opacity-100" : "opacity-0",
+                  )}
+                >
+                  <MoreHorizontal aria-hidden="true" className="size-4" />
+                </button>
+              </MorphPopoverTrigger>
+              <MorphPopoverContent
+                side="bottom"
+                align="end"
+                sideOffset={8}
+                radius={12}
+                className="w-40 p-1.5"
               >
-                <MoreHorizontal aria-hidden="true" className="size-4" />
-              </button>
-            </MorphPopoverTrigger>
-            <MorphPopoverContent
-              side="bottom"
-              align="end"
-              sideOffset={8}
-              radius={12}
-              className="w-40 p-1.5"
-            >
-              <div data-sidebar-resource-menu={row.item.id}>{menu}</div>
-            </MorphPopoverContent>
-          </MorphPopover>
+                <div data-sidebar-resource-menu={row.item.id}>{menu}</div>
+              </MorphPopoverContent>
+            </MorphPopover>
+          ) : null}
         </div>
       ) : null}
     </motion.div>

@@ -4,7 +4,7 @@ import { useSidebarScroll } from "@/components/dashboard/useSidebarScroll";
 
 import { Button } from "@/components/motion/button";
 
-import { useRouter } from "next/navigation";
+import { unstable_rethrow, useRouter } from "next/navigation";
 import {
   useCallback,
   useEffect,
@@ -94,7 +94,11 @@ import { MessageScroller } from "@/components/agents/message-scroller";
 import { ToolResult } from "@/components/agents/tool-result";
 import { SandboxConsole } from "@/components/dashboard/sandboxes/SandboxConsole";
 import { resolveContextUsage } from "@/lib/context-usage";
-import { deleteAgentAction, pinAgentAction } from "@/lib/agents/actions";
+import {
+  deleteAgentAction,
+  deleteConversationAction,
+  pinAgentAction,
+} from "@/lib/agents/actions";
 import type { ReasoningEffort } from "@/lib/agents/constants";
 import {
   SubagentActivity,
@@ -1225,6 +1229,9 @@ export function WorkspaceWork({
   const [deleteAgentTarget, setDeleteAgentTarget] = useState<WorkAgent | null>(
     null,
   );
+  const [deleteConversationTarget, setDeleteConversationTarget] =
+    useState<ConversationSummary | null>(null);
+  const [deleteConversationError, setDeleteConversationError] = useState("");
   const [groupEditor, setGroupEditor] = useState<{
     id: string | null;
     name: string;
@@ -2634,16 +2641,6 @@ export function WorkspaceWork({
                           {label}
                         </button>
                       );
-                      const moveActions = (
-                        <>
-                          {controls.moves.up
-                            ? action("Move up", controls.moves.up)
-                            : null}
-                          {controls.moves.down
-                            ? action("Move down", controls.moves.down)
-                            : null}
-                        </>
-                      );
                       if (kind === "group" && id !== "ungrouped")
                         return (
                           <>
@@ -2680,22 +2677,30 @@ export function WorkspaceWork({
                             {action(tAgents("deleteAgent"), () =>
                               setDeleteAgentTarget(itemAgent),
                             )}
-                            {moveActions}
                           </>
                         );
                       }
                       if (kind === "session") {
                         const item = items.find((session) => session.id === id);
-                        return item && ARCHIVABLE_STATUSES.has(item.status) ? (
-                          <>
-                            {moveActions}
-                            {action(t("archive"), () => void archiveWork(id))}
-                          </>
-                        ) : (
-                          moveActions
-                        );
+                        return item && ARCHIVABLE_STATUSES.has(item.status)
+                          ? action(t("archive"), () => void archiveWork(id))
+                          : null;
                       }
-                      if (kind === "conversation") return moveActions;
+                      if (kind === "conversation") {
+                        const target = conversations.find(
+                          (item) => item.id === id,
+                        );
+                        if (
+                          !target ||
+                          target.source ||
+                          target.title?.startsWith("msg:")
+                        )
+                          return null;
+                        return action(tAgents("deleteConversation"), () => {
+                          setDeleteConversationError("");
+                          setDeleteConversationTarget(target);
+                        });
+                      }
                       return null;
                     }}
                   />
@@ -3232,6 +3237,71 @@ export function WorkspaceWork({
         onClose={() => setGroupEditor(null)}
         onSubmit={saveAgentGroup}
       />
+
+      <CenterMorphModal
+        open={Boolean(deleteConversationTarget)}
+        onOpenChange={(open) => {
+          if (!open) setDeleteConversationTarget(null);
+        }}
+      >
+        <CenterMorphModalContent
+          ariaLabel={tAgents("deleteConversation")}
+          closeButtonLabel={tAgents("close")}
+          className="max-w-md"
+        >
+          <DialogHeader title={tAgents("deleteConversation")} />
+          <DialogBody>
+            <p className="text-sm text-muted-foreground">
+              {tAgents("deleteConversationDescription")}
+            </p>
+            {deleteConversationError ? (
+              <p role="alert" className="mt-3 text-sm text-destructive">
+                {deleteConversationError}
+              </p>
+            ) : null}
+          </DialogBody>
+          <form
+            action={async (formData) => {
+              setDeleteConversationError("");
+              try {
+                const result = await deleteConversationAction(formData);
+                if (result.error) setDeleteConversationError(result.error);
+              } catch (cause) {
+                unstable_rethrow(cause);
+                setDeleteConversationError(
+                  cause instanceof Error
+                    ? cause.message
+                    : operationsT("failed"),
+                );
+              }
+            }}
+          >
+            <input type="hidden" name="workspace" value={slug} />
+            <input
+              type="hidden"
+              name="agentId"
+              value={deleteConversationTarget?.agentId ?? ""}
+            />
+            <input
+              type="hidden"
+              name="conversationId"
+              value={deleteConversationTarget?.id ?? ""}
+            />
+            <DialogFooter cancel={<DialogCancel />}>
+              <SubmitButton
+                size="md"
+                variant="primary"
+                className="bg-destructive text-white hover:bg-destructive/90"
+                pendingLabel={tAgents("deleting")}
+                error={deleteConversationError}
+                flash={false}
+              >
+                {tAgents("confirmDelete")}
+              </SubmitButton>
+            </DialogFooter>
+          </form>
+        </CenterMorphModalContent>
+      </CenterMorphModal>
 
       <CenterMorphModal
         open={Boolean(deleteAgentTarget)}
