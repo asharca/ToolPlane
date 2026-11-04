@@ -142,15 +142,23 @@ jobs:
         run: pnpm check
 
       - name: Build Pi package capture sandbox
+        if: inputs.full
         run: docker build --target pi-package-capture -t toolplane-pi-package-capture:0.87.1 .
 
+      - name: Test core boundaries
+        if: ${{ !inputs.full }}
+        run: pnpm vitest run tests/unit/auth.test.ts tests/unit/agent-control-auth.test.ts tests/integration/auth-status.test.ts tests/integration/workspace-management.test.ts tests/integration/logging.test.ts tests/integration/a2a-logging.test.ts --testTimeout=30000 --hookTimeout=60000
+
       - name: Test core functionality
+        if: inputs.full
         run: pnpm test
 
       - name: Build
+        if: inputs.full
         run: pnpm build
 
       - name: Assemble and verify runtime artifact
+        if: inputs.full
         run: |
           set -euxo pipefail
           pnpm runtime:assemble
