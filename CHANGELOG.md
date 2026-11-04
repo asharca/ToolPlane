@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.33.1](https://github.com/asharca/ToolPlane/compare/v0.33.0...v0.33.1) (2026-11-04)
+
+
+### Bug Fixes
+
+* preserve shared legacy sandbox mappings during upgrade ([#170](https://github.com/asharca/ToolPlane/issues/170)) ([6826062](https://github.com/asharca/ToolPlane/commit/6826062e4b8e4e21b377e07921ca22d14e0b8ca2))
+
 ## [0.33.0](https://github.com/asharca/ToolPlane/compare/v0.32.0...v0.33.0) (2026-11-04)
 
 ### 新增
