@@ -22,6 +22,10 @@ WHERE deployment."id" = sandbox."deploymentId"
   AND (sandbox."kind" = 'hermes'
     OR sandbox."id" IN (SELECT "sandboxId" FROM "AgentRuntime"));
 
+-- Retired runtimes may have many conversations sharing their historical volume.
+-- Remove exclusivity before preserving those mappings, not in a later migration.
+DROP INDEX IF EXISTS "Conversation_sandboxId_key";
+
 UPDATE "Conversation" AS conversation
 SET "sandboxId" = sandbox."id"
 FROM "AgentRuntime" AS runtime
