@@ -2371,7 +2371,11 @@
         "noMessages": "No messages are available; bodies may not have been retained or may have expired.",
         "messages": "Messages",
         "artifacts": "Artifacts",
-        "rawProtocol": "Raw protocol JSON",
+        "rawProtocol": "Raw record JSON",
+        "ledgerSource": "Task ledger",
+        "logSource": "Protocol log",
+        "ledgerRequest": "Task input",
+        "ledgerResponse": "Task record",
         "settledAt": "Settled",
         "roles": { "user": "User", "agent": "Agent", "assistant": "Assistant" },
         "directions": {
@@ -2403,7 +2407,7 @@
           "unknown": "Unknown"
         },
         "bodyStates": {
-          "truncated": "The body exceeded the retention size limit and was truncated.",
+          "truncated": "This historical log was truncated. Discarded content cannot be recovered.",
           "expired": "The body expired. Metadata remains available.",
           "restricted": "Access to this content is restricted by policy.",
           "unavailable": "The body was not recorded or is no longer available."
@@ -3737,7 +3741,7 @@
     "logsInvalidFilter": "Invalid filters. Select a time window of up to 31 days.",
     "logsReset": "Reset",
     "logsRefresh": "Refresh",
-    "logsExport": "Export (up to 1,000)",
+    "logsExport": "Export all filtered results",
     "logsViews": "Log views",
     "logsTab_http": "Requests",
     "logsTab_agent": "Executions",

@@ -15,6 +15,12 @@ import { LogAccessError } from "@/lib/observability/queries";
 import { listMcpCalls, getMcpCall } from "@/lib/observability/views/mcp-calls";
 import { GET as streamLogs } from "@/app/api/v1/workspaces/[slug]/logs/stream/route";
 import { createApiToken } from "@/lib/auth/tokens";
+import {
+  appendAgentChannelLog,
+  clearAgentChannelLogs,
+  getAgentChannelLogs,
+  getPersistedAgentChannelLogs,
+} from "@/lib/agents/channel-runtime-logs";
 
 const runtime = vi.hoisted(() => ({ port: 0 }));
 vi.mock("@/lib/process/supervisor", () => ({
@@ -104,6 +110,92 @@ afterAll(async () => {
 });
 
 describe("getObservability", () => {
+  it("returns complete long channel messages and history beyond 200 entries without crossing workspace boundaries", async () => {
+    const channelId = `channel-log-${stamp}`;
+    const traceId = `complete-channel-${stamp}`;
+    const baseTime = Date.now() - 10_000;
+    const history = Array.from({ length: 201 }, (_, index) => ({
+      workspaceId,
+      channelId,
+      traceId,
+      spanId: `channel-${index}`,
+      domain: "channel",
+      eventName: "channel.log",
+      message: `channel history ${index}`,
+      createdAt: new Date(baseTime + index),
+      occurredAt: new Date(baseTime + index),
+    }));
+    await db.logEvent.createMany({
+      data: [
+        ...history,
+        {
+          workspaceId: foreignWorkspaceId,
+          channelId,
+          traceId,
+          spanId: "foreign-channel",
+          domain: "channel",
+          eventName: "channel.log",
+          message: "foreign channel private content",
+        },
+        {
+          workspaceId,
+          channelId: `${channelId}-other`,
+          traceId,
+          spanId: "other-channel",
+          domain: "channel",
+          eventName: "channel.log",
+          message: "other channel private content",
+        },
+      ],
+    });
+    const secret = "channel-tail-configured-secret";
+    const body = `channel head\n${"中🙂".repeat(80_000)}\nchannel tail `;
+    const expected = `${body}[REDACTED]\n`;
+    try {
+      const immediate = withLogContext({ workspaceId, traceId }, () =>
+        appendAgentChannelLog(channelId, "info", `${body}${secret}\n`, [
+          secret,
+        ]),
+      );
+      expect(immediate).toBe(expected);
+      expect(getAgentChannelLogs(channelId)).toEqual([
+        { timestamp: expect.any(Number), level: "info", message: expected },
+      ]);
+      // appendAgentChannelLog deliberately does not block the runtime on the
+      // database writer. Observe its real persisted result before consuming it.
+      await vi.waitFor(
+        async () => {
+          expect(
+            await db.logEvent.count({ where: { workspaceId, channelId } }),
+          ).toBe(202);
+        },
+        { timeout: 10_000 },
+      );
+      const logs = await getPersistedAgentChannelLogs(workspaceId, channelId);
+      expect(logs).toHaveLength(202);
+      expect(logs.slice(0, 201).map((log) => log.message)).toEqual(
+        history.map((row) => row.message),
+      );
+      expect(logs[201]).toMatchObject({ level: "info", message: expected });
+      expect(
+        Buffer.byteLength(assertDefined(logs[201]).message),
+      ).toBeGreaterThan(512 * 1024);
+      expect(JSON.stringify(logs)).not.toContain(secret);
+      expect(JSON.stringify(logs)).not.toContain("private content");
+      expect(
+        await getPersistedAgentChannelLogs(foreignWorkspaceId, channelId),
+      ).toEqual([
+        {
+          timestamp: expect.any(Number),
+          level: "info",
+          message: "foreign channel private content",
+        },
+      ]);
+    } finally {
+      clearAgentChannelLogs(channelId);
+    }
+  }, 20_000);
+
   it("keeps deployment request logs within the requested workspace", async () => {
     const traceId = `deployment-activity-${stamp}`;
     await db.logEvent.create({

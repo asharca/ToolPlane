@@ -10,11 +10,13 @@ import { removeStaleSessionMcpCaptures } from "./mcp-runtime-image";
 import { remoteMcpConnectionIdentity } from "@/lib/remote-mcp/classification";
 import { spawn, type ChildProcess } from "node:child_process";
 import {
+  appendFileSync,
   existsSync,
   closeSync,
   mkdirSync,
   openSync,
   readFileSync,
+  readSync,
   readdirSync,
   renameSync,
   rmSync,
@@ -64,7 +66,6 @@ type Entry = {
   // chunks.
   stderrBuffer: string;
   stderrDecoder: StringDecoder;
-  discardingOverlongStderrLine: boolean;
 };
 
 type Store = Map<string, Entry>;
@@ -109,7 +110,7 @@ export type DeploymentRuntimeLogChunk = {
   cursor: number;
   nextCursor: number;
   // True when a caller's cursor belongs to another launch generation, or the
-  // requested data has fallen out of the bounded local log buffer.
+  // requested data predates a legacy log file's retained start cursor.
   reset: boolean;
   text: string;
   truncated?: boolean;
@@ -324,10 +325,8 @@ const REGISTRY_DIR =
 const READY_TIMEOUT_MS = 5 * 60_000;
 const STOP_GRACE_MS = 5000;
 const KILL_GRACE_MS = 1000;
-const RUNTIME_LOG_MAX_BYTES = 512 * 1024;
 const RUNTIME_LOG_CHUNK_MAX_BYTES = 64 * 1024;
 const RUNTIME_LOG_CHUNK_DEFAULT_BYTES = 16 * 1024;
-const STDERR_LINE_BUFFER_MAX_CHARS = 256 * 1024;
 const DOCKER_LOG_TIMEOUT_MS = 5000;
 const LAUNCH_LOCK_MAX_AGE_MS = 10 * 60_000;
 
@@ -835,23 +834,15 @@ function appendRuntimeLog(entry: Entry, value: string): string {
   const appended = Buffer.from(content);
   try {
     ensureRegistryDir();
-    const previous = existsSync(runtimeLogPath(entry.runtime.deploymentId))
-      ? readFileSync(runtimeLogPath(entry.runtime.deploymentId))
-      : Buffer.alloc(0);
-    const next = Buffer.concat([previous, appended]);
-    const kept =
-      next.byteLength > RUNTIME_LOG_MAX_BYTES
-        ? next.subarray(next.byteLength - RUNTIME_LOG_MAX_BYTES)
-        : next;
-    writeFileSync(runtimeLogPath(entry.runtime.deploymentId), kept, {
-      mode: 0o600,
-    });
+    const file = runtimeLogPath(entry.runtime.deploymentId);
+    appendFileSync(file, appended, { mode: 0o600 });
     entry.runtime.logEndCursor += appended.byteLength;
-    entry.runtime.logStartCursor = entry.runtime.logEndCursor - kept.byteLength;
+    entry.runtime.logStartCursor = Math.max(
+      0,
+      entry.runtime.logEndCursor - statSync(file).size,
+    );
   } catch {
-    // Keep an in-memory cursor even if the best-effort log write failed.
-    entry.runtime.logEndCursor += appended.byteLength;
-    entry.runtime.logStartCursor = entry.runtime.logEndCursor;
+    // Failed best-effort writes must not advance the cursor past persisted data.
   }
   updateRuntime(entry, {}, true);
   return redacted;
@@ -899,9 +890,7 @@ function completeStderrLines(
 
 function formatBridgeRuntimeEvent(event: BridgeRuntimeEvent): string {
   const field = (value: unknown) =>
-    typeof value === "string"
-      ? value.replace(/[\r\n]/g, " ").slice(0, 512)
-      : "";
+    typeof value === "string" ? value.replace(/[\r\n]/g, " ") : "";
   const details = [
     `phase=${field(event.phase) || "unknown"}`,
     ...(field(event.imageState) ? [`image=${field(event.imageState)}`] : []),
@@ -945,14 +934,6 @@ function recordCompleteStderr(
     ordinary = "";
   };
   for (const line of lines) {
-    if (line.length > STDERR_LINE_BUFFER_MAX_CHARS) {
-      flushOrdinary();
-      recordRuntimeStderr(
-        entry,
-        "[toolplane-runtime] omitted overlong stderr line\n",
-      );
-      continue;
-    }
     if (consumeBridgeRuntimeEvent(entry, line)) {
       flushOrdinary();
     } else {
@@ -963,31 +944,12 @@ function recordCompleteStderr(
   entry.stderrBuffer = tail;
 }
 
-function discardUntilLineBreak(entry: Entry, value: string): string {
-  if (!entry.discardingOverlongStderrLine) return value;
-  const index = value.search(/[\r\n]/);
-  if (index < 0) return "";
-  let next = index + 1;
-  if (value[index] === "\r" && value[next] === "\n") next += 1;
-  entry.discardingOverlongStderrLine = false;
-  return value.slice(next);
-}
-
 function captureRuntimeStderr(entry: Entry, value: string): void {
-  value = discardUntilLineBreak(entry, value);
   if (!value) return;
   entry.stderrBuffer += value;
-  recordCompleteStderr(entry, entry.stderrBuffer);
-  if (entry.stderrBuffer.length <= STDERR_LINE_BUFFER_MAX_CHARS) return;
-  // Never emit a raw prefix from a line that has grown beyond the bounded
-  // buffer. An unknown Authorization/token value might itself be split across
-  // chunks, so a safe omission is preferable to a partially redacted leak.
-  entry.stderrBuffer = "";
-  entry.discardingOverlongStderrLine = true;
-  recordRuntimeStderr(
-    entry,
-    "[toolplane-runtime] omitted overlong stderr line\n",
-  );
+  // Scan/redact only once a complete line arrives, retaining even very long
+  // incomplete lines so secrets split across stream chunks remain private.
+  if (/[\r\n]/.test(value)) recordCompleteStderr(entry, entry.stderrBuffer);
 }
 
 function flushRuntimeStderr(entry: Entry): void {
@@ -1093,15 +1055,12 @@ export function getDeploymentRuntimeLogChunk(
   const generation = registryWins
     ? registryGeneration(registry)
     : (runtime?.generation ?? (registry ? registryGeneration(registry) : null));
-  const log = (() => {
-    try {
-      return existsSync(runtimeLogPath(deploymentId))
-        ? readFileSync(runtimeLogPath(deploymentId))
-        : Buffer.alloc(0);
-    } catch {
-      return Buffer.alloc(0);
-    }
-  })();
+  let logSize = 0;
+  try {
+    logSize = statSync(runtimeLogPath(deploymentId)).size;
+  } catch {
+    // Missing or unreadable log storage is a best-effort empty chunk.
+  }
   const registryLogEnd =
     registryWins && typeof registry.logEndCursor === "number"
       ? registry.logEndCursor
@@ -1110,14 +1069,13 @@ export function getDeploymentRuntimeLogChunk(
     registryWins && typeof registry.logStartCursor === "number"
       ? registry.logStartCursor
       : undefined;
-  const logEndCursor =
-    registryLogEnd ?? runtime?.logEndCursor ?? log.byteLength;
+  const logEndCursor = registryLogEnd ?? runtime?.logEndCursor ?? logSize;
   const logStartCursor =
     registryLogStart !== undefined
       ? Math.max(0, Math.min(registryLogStart, logEndCursor))
       : runtime
         ? Math.max(0, Math.min(runtime.logStartCursor, logEndCursor))
-        : Math.max(0, logEndCursor - log.byteLength);
+        : Math.max(0, logEndCursor - logSize);
   const requestedCursor =
     typeof options.cursor === "number" && Number.isFinite(options.cursor)
       ? Math.max(0, Math.floor(options.cursor))
@@ -1129,21 +1087,66 @@ export function getDeploymentRuntimeLogChunk(
     reset = true;
     cursor = logStartCursor;
   }
-  const start = Math.max(0, Math.min(log.byteLength, cursor - logStartCursor));
+  const truncated = cursor === logStartCursor && logStartCursor > 0;
+  const offset = Math.max(0, Math.min(logSize, cursor - logStartCursor));
+  const available = Math.min(logSize, logEndCursor - logStartCursor);
   const limit = boundedLogLimit(options.limit);
-  const slice = log.subarray(start, Math.min(log.byteLength, start + limit));
-  const nextCursor = cursor + slice.byteLength;
+  let text = "";
+  let nextCursor = cursor;
+  if (offset < available) {
+    let fd: number | undefined;
+    try {
+      fd = openSync(runtimeLogPath(deploymentId), "r");
+      // Three bytes of lookbehind/lookahead suffice for a UTF-8 code point.
+      // Never read the whole file just to return a bounded transport page.
+      const windowStart = Math.max(0, offset - 3);
+      const bytes = Buffer.allocUnsafe(
+        Math.min(available - windowStart, limit + 6),
+      );
+      let read = 0;
+      while (read < bytes.byteLength) {
+        const count = readSync(
+          fd,
+          bytes,
+          read,
+          bytes.byteLength - read,
+          windowStart + read,
+        );
+        if (!count) break;
+        read += count;
+      }
+      let start = Math.min(offset - windowStart, read);
+      // Normalize a caller-supplied mid-code-point cursor backwards. Legacy
+      // tail files can start mid-code-point; only that unrecoverable prefix
+      // must be skipped, retaining the legacy truncation indicator below.
+      while (start > 0 && start < read && (bytes[start] & 0xc0) === 0x80)
+        start -= 1;
+      while (start < read && (bytes[start] & 0xc0) === 0x80) start += 1;
+      let end = Math.min(read, start + limit);
+      while (end > start && end < read && (bytes[end] & 0xc0) === 0x80)
+        end -= 1;
+      // A limit smaller than one code point must still make progress. Only
+      // this case can exceed the requested limit (by at most three bytes).
+      if (end === start && end < read) {
+        end += 1;
+        while (end < read && (bytes[end] & 0xc0) === 0x80) end += 1;
+      }
+      cursor = logStartCursor + windowStart + start;
+      nextCursor = logStartCursor + windowStart + end;
+      text = bytes.toString("utf8", start, end);
+    } catch {
+      // Keep the cursor retryable when the best-effort file read fails.
+    } finally {
+      if (fd !== undefined) closeSync(fd);
+    }
+  }
   return {
     generation,
     cursor,
     nextCursor,
     reset,
-    text: slice.toString("utf8"),
-    ...(cursor > logStartCursor
-      ? {}
-      : logStartCursor > 0
-        ? { truncated: true }
-        : {}),
+    text,
+    ...(truncated ? { truncated: true } : {}),
   };
 }
 
@@ -1977,7 +1980,6 @@ async function launchProcess(
     credentialIdentity: mcpRuntimeCredentialIdentity(managedSpec),
     stderrBuffer: "",
     stderrDecoder: new StringDecoder("utf8"),
-    discardingOverlongStderrLine: false,
   };
   s.set(deploymentId, entry);
   try {

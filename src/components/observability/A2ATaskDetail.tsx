@@ -211,15 +211,27 @@ export function A2ATaskDetail({ detail }: { detail: A2ATaskDetailView }) {
           {detail.protocol.map((event) => (
             <section key={event.eventId} className="space-y-3">
               <p className="break-all font-mono text-xs text-muted-foreground">
+                {event.source === "ledger" ? t("ledgerSource") : t("logSource")}
+                {" · "}
                 {event.eventId}
               </p>
               <BodyNotice state={event.bodyState} />
               <div className="grid min-w-0 gap-3 xl:grid-cols-2">
                 {event.request !== undefined && (
-                  <JsonPanel title={t("request")} value={event.request} />
+                  <JsonPanel
+                    title={t(
+                      event.source === "ledger" ? "ledgerRequest" : "request",
+                    )}
+                    value={event.request}
+                  />
                 )}
                 {event.response !== undefined && (
-                  <JsonPanel title={t("response")} value={event.response} />
+                  <JsonPanel
+                    title={t(
+                      event.source === "ledger" ? "ledgerResponse" : "response",
+                    )}
+                    value={event.response}
+                  />
                 )}
               </div>
             </section>

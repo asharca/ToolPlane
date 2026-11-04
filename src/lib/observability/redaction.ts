@@ -30,93 +30,78 @@ export function redactText(
     );
 }
 
-/**
- * Protocol bodies keep their full nesting. Each level spends 32 bytes of the byte
- * budget, so recursion stays bounded by `maxBytes` rather than a depth cap.
- */
-export const PROTOCOL_BODY_DEPTH = Number.POSITIVE_INFINITY;
-
-export function sanitizeLog(
-  value: unknown,
-  secrets: readonly string[] = [],
-  maxBytes = 32_768,
-  maxDepth = 8,
-) {
-  let remaining = maxBytes;
-  let truncated = false;
-  const seen = new WeakSet<object>();
-  const visit = (input: unknown, depth: number): unknown => {
-    if (remaining < 64 || depth > maxDepth) {
-      truncated = true;
-      return "[TRUNCATED]";
-    }
-    remaining -= 32;
+/** Preserves complete log values while replacing credentials and cyclic paths. */
+export function sanitizeLog(value: unknown, secrets: readonly string[] = []) {
+  type Frame = {
+    input: object;
+    source: Record<string, unknown> | unknown[];
+    output: Record<string, unknown> | unknown[];
+    keys: string[] | null;
+    index: number;
+  };
+  const active = new WeakSet<object>();
+  const frames: Frame[] = [];
+  const convert = (input: unknown): unknown => {
     if (input === null || input === undefined) return null;
-    if (typeof input === "string") {
-      // Bound work as well as output; never keep a partially redacted huge value.
-      if (input.length > maxBytes * 4) {
-        truncated = true;
-        return "[OVERSIZE]";
-      }
-      const text = redactText(input, secrets);
-      const bytes = Buffer.byteLength(text);
-      if (bytes > remaining) {
-        truncated = true;
-        return "[TRUNCATED]";
-      }
-      remaining -= bytes;
-      return text;
-    }
+    if (typeof input === "string") return redactText(input, secrets);
     if (typeof input === "number") return Number.isFinite(input) ? input : null;
     if (typeof input === "boolean") return input;
     if (typeof input === "bigint") return String(input);
     if (typeof input !== "object") return null;
-    if (seen.has(input)) return "[CIRCULAR]";
-    seen.add(input);
-    if (input instanceof Error) {
-      return visit(
-        {
-          name: input.name,
-          message: input.message,
-          stack: input.stack,
-          cause: input.cause,
-          code: "code" in input ? input.code : undefined,
-        },
-        depth + 1,
-      );
-    }
+    if (active.has(input)) return "[CIRCULAR]";
     if (input instanceof Date) return input.toISOString();
-    if (Array.isArray(input)) {
-      if (input.length > 100) truncated = true;
-      return input.slice(0, 100).map((item) => visit(item, depth + 1));
-    }
-    const result: Record<string, unknown> = {};
-    const entries = Object.entries(input);
-    if (entries.length > 100) truncated = true;
-    for (const [key, item] of entries.slice(0, 100)) {
-      if (remaining < 64) {
-        truncated = true;
-        break;
-      }
-      const safeKey = redactText(key.slice(0, 160), secrets);
-      remaining -= Buffer.byteLength(safeKey);
-      const count =
-        /^(?:input|output|total|cacheRead|cacheWrite|used|max)Tokens$/.test(
-          key,
-        ) && typeof item === "number";
-      Object.defineProperty(result, safeKey, {
-        enumerable: true,
-        writable: true,
-        configurable: true,
-        value:
-          SECRET_KEY.test(key) && !count ? OMITTED : visit(item, depth + 1),
-      });
-    }
-    return result;
+    const source =
+      input instanceof Error
+        ? {
+            name: input.name,
+            message: input.message,
+            stack: input.stack,
+            cause: input.cause,
+            code: "code" in input ? input.code : undefined,
+          }
+        : input;
+    const array = Array.isArray(source);
+    const output: Record<string, unknown> | unknown[] = array ? [] : {};
+    active.add(input);
+    frames.push({
+      input,
+      source: source as Record<string, unknown> | unknown[],
+      output,
+      keys: array ? null : Object.keys(source),
+      index: 0,
+    });
+    return output;
   };
-  const data = visit(value, 0);
-  // Escaping can increase serialized bytes. Omit rather than produce invalid JSON.
-  if (Buffer.byteLength(JSON.stringify(data)) > maxBytes)
-    return { data: "[TRUNCATED]", truncated: true };
-  return { data, truncated };
+  const data = convert(value);
+  // Only ancestors are active: shared references are copied, not called cycles.
+  // Keeping traversal state on the heap also permits deeply nested protocol data.
+  while (frames.length) {
+    const frame = frames[frames.length - 1];
+    if (
+      frame.index >= (frame.keys?.length ?? (frame.source as unknown[]).length)
+    ) {
+      active.delete(frame.input);
+      frames.pop();
+      continue;
+    }
+    if (!frame.keys) {
+      (frame.output as unknown[]).push(
+        convert((frame.source as unknown[])[frame.index++]),
+      );
+      continue;
+    }
+    const key = frame.keys[frame.index++];
+    const item = (frame.source as Record<string, unknown>)[key];
+    const count =
+      /^(?:input|output|total|cacheRead|cacheWrite|used|max)Tokens$/.test(
+        key,
+      ) && typeof item === "number";
+    Object.defineProperty(frame.output, redactText(key, secrets), {
+      enumerable: true,
+      writable: true,
+      configurable: true,
+      value: SECRET_KEY.test(key) && !count ? OMITTED : convert(item),
+    });
+  }
+  return { data, truncated: false };
 }

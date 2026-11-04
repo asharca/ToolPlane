@@ -24,7 +24,7 @@ export async function writeAudit(
       ...entry,
       traceId: context?.traceId ?? newRequestId(),
       requestId: context?.requestId,
-      changes: sanitizeLog(entry.changes ?? {}, context?.secrets, 8192)
+      changes: sanitizeLog(entry.changes ?? {}, context?.secrets)
         .data as Prisma.InputJsonValue,
     },
   });

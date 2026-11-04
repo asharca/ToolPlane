@@ -13,10 +13,8 @@ vi.mock("@/lib/observability/settings", () => ({
 }));
 import { recordEvent } from "@/lib/observability/events";
 import { withLogContext, enrichLogContext } from "@/lib/observability/context";
-import {
-  boundedResponseText,
-  MAX_DIAGNOSTIC_BYTES,
-} from "@/lib/observability/payload";
+import { readResponseText } from "@/lib/observability/payload";
+import { logRequest } from "@/lib/observability/log";
 import { recordA2AEvent } from "@/lib/observability/a2a-log";
 import { getLogContext } from "@/lib/observability/context";
 import type { LocalA2AGrant } from "@/lib/a2a/principal";
@@ -182,7 +180,7 @@ describe("typed lazy payload policy", () => {
       "private prompt",
     );
   });
-  it("automatically captures bounded redacted deployment MCP detail without a diagnostic window", async () => {
+  it("automatically captures full redacted deployment MCP detail without a diagnostic window", async () => {
     mocks.settings.mockResolvedValue({ detailDays: 7, captures: [] });
     await withLogContext(
       { workspaceId: "ws", secrets: ["runtime-secret-value"] },
@@ -204,7 +202,12 @@ describe("typed lazy payload policy", () => {
               },
             },
             response: {
-              result: { content: [{ type: "text", text: "x".repeat(40_000) }] },
+              result: {
+                content: Array.from({ length: 150 }, (_, index) => ({
+                  type: "text",
+                  text: `${"x".repeat(1000)} ${index === 149 ? "runtime-secret-value" : "safe"} tail`,
+                })),
+              },
             },
           },
         }),
@@ -222,9 +225,10 @@ describe("typed lazy payload policy", () => {
         },
       },
     });
-    expect(detail.truncated).toBe(true);
-    expect(Buffer.byteLength(JSON.stringify(detail.data))).toBeLessThanOrEqual(
-      32_768,
+    expect(detail.truncated).toBe(false);
+    expect(detail.data.payload.response.result.content).toHaveLength(150);
+    expect(detail.data.payload.response.result.content[149].text).toBe(
+      `${"x".repeat(1000)} [REDACTED] tail`,
     );
     expect(JSON.stringify(mocks.create.mock.calls)).not.toContain(
       "runtime-secret-value",
@@ -232,6 +236,98 @@ describe("typed lazy payload policy", () => {
     expect(JSON.stringify(mocks.create.mock.calls)).not.toContain(
       "private-key",
     );
+  });
+  it("keeps complete allowed messages, attributes and errors with tail secrets redacted", async () => {
+    const message = `${"message ".repeat(1500)}runtime-secret-value tail`;
+    const error = new Error(
+      `${"failure ".repeat(1500)}runtime-secret-value tail`,
+      {
+        cause: new Error("password=private"),
+      },
+    );
+    const fields = Object.fromEntries(
+      Array.from({ length: 180 }, (_, index) => [`field${index}`, index]),
+    );
+    await recordEvent({
+      domain: "system",
+      workspaceId: "ws",
+      eventName: "test.full-metadata",
+      message,
+      error,
+      attributes: { fields, text: message },
+      secrets: ["runtime-secret-value"],
+    });
+    const data = mocks.create.mock.calls[0][0].data;
+    expect(data.message).toBe(
+      message.replace("runtime-secret-value", "[REDACTED]"),
+    );
+    expect(data.attributes.data.fields).toEqual(fields);
+    expect(data.attributes.data.text).toBe(data.message);
+    expect(data.detail.create.data.error.message).toBe(
+      error.message.replace("runtime-secret-value", "[REDACTED]"),
+    );
+    expect(data.detail.create.truncated).toBe(false);
+    expect(JSON.stringify(mocks.create.mock.calls)).not.toContain(
+      "runtime-secret-value",
+    );
+    expect(JSON.stringify(mocks.create.mock.calls)).not.toContain(
+      "password=private",
+    );
+  });
+
+  it("does not hold up a business response and retains context and MCP semantic errors", async () => {
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    const response = new Response(
+      new ReadableStream<Uint8Array>({
+        start(value) {
+          controller = value;
+        },
+      }),
+      { headers: { "content-type": "application/json" } },
+    );
+    const { promise: completed, resolve: persisted } =
+      Promise.withResolvers<void>();
+    mocks.create.mockImplementationOnce(async () => {
+      persisted();
+    });
+    await withLogContext(
+      {
+        workspaceId: "ws",
+        actorId: "original",
+        secrets: ["runtime-secret-value"],
+      },
+      async () => {
+        await logRequest({
+          workspaceId: "ws",
+          deploymentId: "deployment-1",
+          method: "POST",
+          path: "/mcp/deployment-1/rpc#tools/call:slow",
+          statusCode: 200,
+          durationMs: 1,
+          response,
+        });
+        enrichLogContext({ actorId: "changed" });
+      },
+    );
+    expect(mocks.create).not.toHaveBeenCalled();
+    const text = `${"failure ".repeat(6000)}runtime-secret-value tail`;
+    const body = JSON.stringify({
+      result: { isError: true, content: [{ type: "text", text }] },
+    });
+    controller.enqueue(new TextEncoder().encode(body));
+    controller.close();
+    expect(await response.text()).toBe(body);
+    await completed;
+    const data = mocks.create.mock.calls[0][0].data;
+    expect(data.actorId).toBe("original");
+    expect(data.outcome).toBe("error");
+    expect(data.message).toBe(
+      text.replace("runtime-secret-value", "[REDACTED]"),
+    );
+    expect(
+      data.detail.create.data.payload.response.result.content[0].text,
+    ).toBe(data.message);
+    expect(data.detail.create.truncated).toBe(false);
   });
   it("does not auto-capture deployment MCP payloads in an explicitly suppressed context", async () => {
     mocks.settings.mockResolvedValue({ detailDays: 7, captures: [] });
@@ -404,26 +500,43 @@ describe("typed lazy payload policy", () => {
     expect(mocks.create).not.toHaveBeenCalled();
   });
 });
-describe("bounded diagnostic response reader", () => {
+describe("complete finite response reader", () => {
   it("does not consume the original response", async () => {
     const response = Response.json({ hello: "world" });
-    expect(await boundedResponseText(response)).toContain("world");
+    expect(await readResponseText(response)).toContain("world");
     expect(await response.json()).toEqual({ hello: "world" });
   });
-  it("rejects oversized payloads before concatenating them", async () => {
-    expect(
-      await boundedResponseText(
-        new Response(new Uint8Array(MAX_DIAGNOSTIC_BYTES + 1)),
-      ),
-    ).toBeNull();
+  it("retains finite responses larger than the former byte budget", async () => {
+    const body = `${"字".repeat(50_000)} tail`;
+    expect(await readResponseText(new Response(body))).toBe(body);
+  });
+  it("retains finite responses that take longer than the former deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      const response = new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("start "));
+            setTimeout(() => {
+              controller.enqueue(new TextEncoder().encode("tail"));
+              controller.close();
+            }, 300);
+          },
+        }),
+      );
+      const reading = readResponseText(response);
+      await vi.advanceTimersByTimeAsync(300);
+      expect(await reading).toBe("start tail");
+    } finally {
+      vi.useRealTimers();
+    }
   });
   it("never reads a live SSE stream", async () => {
-    const pull = vi.fn();
-    const response = new Response(new ReadableStream({ pull }), {
-      headers: { "content-type": "text/event-stream" },
+    const response = new Response(new ReadableStream(), {
+      headers: { "content-type": "Text/Event-Stream; charset=utf-8" },
     });
     const clone = vi.spyOn(response, "clone");
-    expect(await boundedResponseText(response)).toBeNull();
+    expect(await readResponseText(response)).toBeNull();
     expect(clone).not.toHaveBeenCalled();
   });
 });

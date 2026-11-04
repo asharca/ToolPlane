@@ -28,11 +28,7 @@ import {
   logHealth,
   type LogOutcome,
 } from "@/lib/observability/events";
-import {
-  PROTOCOL_BODY_DEPTH,
-  sanitizeLog,
-} from "@/lib/observability/redaction";
-import { MAX_DIAGNOSTIC_BYTES } from "@/lib/observability/payload";
+import { sanitizeLog } from "@/lib/observability/redaction";
 import { AgentApiError } from "@/lib/agents/public-api/errors";
 import { A2A_LIMITS, A2A_PROTOCOL_VERSION } from "./model";
 import {
@@ -251,8 +247,7 @@ export async function handleA2ARpc(
     let taskState: A2ALogMetadata["taskState"],
       rpcErrorCode: number | undefined;
     let rpcFailed = false,
-      logged = false,
-      truncated = false;
+      logged = false;
     let streamEventCount: number | undefined;
     let handlerError: unknown;
     let releaseObservation: (() => void) | undefined;
@@ -309,14 +304,11 @@ export async function handleA2ARpc(
                 request: fileSafeLogPayload(requestPayload),
                 response: fileSafeLogPayload(body),
                 responseKind: kind,
-                responseComplete: complete && !truncated,
+                responseComplete: complete,
               },
             },
             secrets,
-            MAX_DIAGNOSTIC_BYTES,
-            PROTOCOL_BODY_DEPTH,
           );
-          truncated ||= safe.truncated;
           const payload = object(object(safe.data)?.payload);
           requestPayload = payload?.request;
           body = payload?.response;
@@ -344,8 +336,7 @@ export async function handleA2ARpc(
                     request: fileSafeLogPayload(requestPayload),
                     response: fileSafeLogPayload(body),
                     responseKind: kind,
-                    responseComplete: complete && !truncated,
-                    truncated,
+                    responseComplete: complete,
                   }
                 : {}),
               secrets,
@@ -526,63 +517,13 @@ export async function handleA2ARpc(
       releaseObservation = undefined;
       const iterator = result[Symbol.asyncIterator]();
       const events: unknown[] = [];
-      let streamBytes = MAX_DIAGNOSTIC_BYTES,
-        collectionStopped = false;
       streamEventCount = 0;
-      try {
-        const safe = sanitizeLog(
-          requestPayload,
-          secrets,
-          MAX_DIAGNOSTIC_BYTES - 512,
-          PROTOCOL_BODY_DEPTH,
-        );
-        requestPayload = safe.data;
-        truncated ||= safe.truncated;
-        streamBytes = Buffer.byteLength(
-          JSON.stringify({
-            workspaceMcpPayload: false,
-            payload: {
-              request: requestPayload,
-              response: { events },
-              responseKind: "sse",
-              responseComplete: false,
-            },
-          }),
-        );
-      } catch {
-        truncated = true;
-        collectionStopped = true;
-        logHealth.failures += 1;
-      }
       const collect = (envelope: unknown) => {
         streamEventCount = (streamEventCount ?? 0) + 1;
         observeEnvelope(envelope);
-        if (collectionStopped) return;
         try {
-          const remaining =
-            MAX_DIAGNOSTIC_BYTES - streamBytes - (events.length ? 1 : 0);
-          if (remaining < 64 || events.length >= 100) {
-            truncated = true;
-            collectionStopped = true;
-            return;
-          }
-          const safe = sanitizeLog(
-            envelope,
-            secrets,
-            remaining,
-            PROTOCOL_BODY_DEPTH,
-          );
-          streamBytes +=
-            Buffer.byteLength(JSON.stringify(safe.data)) +
-            (events.length ? 1 : 0);
-          events.push(safe.data);
-          if (safe.truncated) {
-            truncated = true;
-            collectionStopped = true;
-          }
+          events.push(sanitizeLog(envelope, secrets).data);
         } catch {
-          truncated = true;
-          collectionStopped = true;
           logHealth.failures += 1;
         }
       };

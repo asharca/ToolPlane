@@ -32,12 +32,9 @@ export function appendAgentChannelLog(
     secrets,
   });
   const logs = globalThis.__toolplaneAgentChannelLogs.get(connectionId) ?? [];
-  for (const line of redacted.trim().split(/\r?\n/).filter(Boolean)) {
-    logs.push({ timestamp: Date.now(), level, message: line.slice(0, 2000) });
-  }
-  // Immediate local tail while the bounded persistent writer completes.
-  globalThis.__toolplaneAgentChannelLogs.set(connectionId, logs.slice(-200));
-  return redacted.trim().slice(0, 2000);
+  logs.push({ timestamp: Date.now(), level, message: redacted });
+  globalThis.__toolplaneAgentChannelLogs.set(connectionId, logs);
+  return redacted;
 }
 
 export function getAgentChannelLogs(connectionId: string) {
@@ -51,7 +48,6 @@ export async function getPersistedAgentChannelLogs(
   const rows = await db.logEvent.findMany({
     where: { workspaceId, channelId: connectionId, domain: "channel" },
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-    take: 200,
   });
   return rows.reverse().map((row) => ({
     timestamp: row.occurredAt.getTime(),

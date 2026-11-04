@@ -4,9 +4,9 @@ import { db } from "@/lib/db";
 import { formatInTimeZone } from "@/lib/timezone";
 import { deploymentLabel } from "@/lib/workspace/deployment-label";
 import { inspectMcpLog } from "./mcp-log-entry";
-import { recordEvent, type LogOutcome } from "./events";
-import { boundedResponseText, type PayloadPolicy } from "./payload";
-import { enrichLogContext } from "./context";
+import { logHealth, recordEvent, type LogOutcome } from "./events";
+import { readResponseText, type PayloadPolicy } from "./payload";
+import { enrichLogContext, getLogContext, withLogContext } from "./context";
 import {
   aggregateLogs,
   authorizeLogs,
@@ -36,51 +36,80 @@ export async function logRequest(entry: {
   const policy =
     entry.payloadPolicy ??
     (entry.path.includes("/agents/mcp") ? "agent-content" : "diagnostic");
-  const metadataBody =
-    entry.responseBody ??
-    (!entry.outcome && entry.response
-      ? await boundedResponseText(entry.response)
-      : null);
-  const inspection = inspectMcpLog({ ...entry, responseBody: metadataBody });
-  const parse = (text?: string | null) => {
-    try {
-      return text ? JSON.parse(text) : null;
-    } catch {
-      return "[INVALID OR TRUNCATED JSON]";
-    }
+  const context = getLogContext();
+  const persist = async () => {
+    let responseText: Promise<string | null> | undefined;
+    const readResponse = () => {
+      if (entry.responseBody != null)
+        return Promise.resolve(entry.responseBody);
+      responseText ??= entry.response
+        ? readResponseText(entry.response)
+        : Promise.resolve(null);
+      return responseText;
+    };
+    // Resolve ordinary MCP bodies before opening the persistence transaction.
+    // The lazy factory below still enforces capture policy for other payloads.
+    const metadataBody =
+      entry.responseBody ??
+      (!entry.outcome && entry.response ? await readResponse() : null);
+    if (
+      entry.response &&
+      !entry.payload &&
+      entry.deploymentId &&
+      !context?.suppressPayload &&
+      policy !== "forbidden"
+    )
+      await readResponse();
+    const inspection = inspectMcpLog({ ...entry, responseBody: metadataBody });
+    const parse = (text?: string | null) => {
+      try {
+        return text ? JSON.parse(text) : null;
+      } catch {
+        return "[INVALID JSON]";
+      }
+    };
+    await recordEvent({
+      domain: "mcp",
+      eventName: "gateway.request",
+      workspaceId: entry.workspaceId,
+      deploymentId: entry.deploymentId ?? undefined,
+      method: entry.method,
+      path: entry.path.split("#")[0],
+      rpcMethod: inspection.rpcMethod ?? undefined,
+      toolName: inspection.toolName ?? undefined,
+      httpStatus: entry.statusCode,
+      durationMs: entry.durationMs,
+      outcome: entry.outcome ?? inspection.outcome,
+      message:
+        policy === "agent-content"
+          ? "Agent Control request"
+          : (inspection.errorSummary ??
+            inspection.toolName ??
+            inspection.rpcMethod ??
+            entry.path),
+      error: entry.error,
+      payloadPolicy: policy,
+      detail:
+        entry.payload ??
+        (async () => ({
+          request: parse(entry.requestBody),
+          response: parse(await readResponse()),
+        })),
+    });
   };
-  await recordEvent({
-    domain: "mcp",
-    eventName: "gateway.request",
-    workspaceId: entry.workspaceId,
-    deploymentId: entry.deploymentId ?? undefined,
-    method: entry.method,
-    path: entry.path.split("#")[0],
-    rpcMethod: inspection.rpcMethod ?? undefined,
-    toolName: inspection.toolName ?? undefined,
-    httpStatus: entry.statusCode,
-    durationMs: entry.durationMs,
-    outcome: entry.outcome ?? inspection.outcome,
-    message:
-      policy === "agent-content"
-        ? "Agent Control request"
-        : (inspection.errorSummary ??
-          inspection.toolName ??
-          inspection.rpcMethod ??
-          entry.path),
-    error: entry.error,
-    payloadPolicy: policy,
-    detail:
-      entry.payload ??
-      (async () => ({
-        request: parse(entry.requestBody),
-        response: parse(
-          entry.response
-            ? await boundedResponseText(entry.response)
-            : entry.responseBody,
-        ),
-      })),
-  });
+  if (entry.response) {
+    // Snapshot the request's identities, suppression and secrets before returning
+    // its response. Slow finite bodies must not hold up the business response.
+    void withLogContext(
+      { ...context, secrets: [...(context?.secrets ?? [])] },
+      persist,
+      true,
+    ).catch(() => {
+      logHealth.failures += 1;
+    });
+    return;
+  }
+  await persist();
 }
 
 type LogWithDetail = LogEvent & { detail?: { data: Prisma.JsonValue } | null };

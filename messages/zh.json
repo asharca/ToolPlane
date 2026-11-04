@@ -2371,7 +2371,11 @@
         "noMessages": "没有可展示的消息；正文可能未保留或已过期。",
         "messages": "消息",
         "artifacts": "产物",
-        "rawProtocol": "原始协议 JSON",
+        "rawProtocol": "原始记录 JSON",
+        "ledgerSource": "任务账本",
+        "logSource": "协议日志",
+        "ledgerRequest": "任务输入",
+        "ledgerResponse": "任务记录",
         "settledAt": "结束于",
         "roles": { "user": "用户", "agent": "Agent", "assistant": "助手" },
         "directions": {
@@ -2403,7 +2407,7 @@
           "unknown": "未知"
         },
         "bodyStates": {
-          "truncated": "正文超过保留大小，已截断。",
+          "truncated": "这条历史日志曾被截断，已丢弃的内容无法恢复。",
           "expired": "正文已过期，元数据仍可查看。",
           "restricted": "内容受访问策略限制。",
           "unavailable": "未记录正文或正文已不可用。"
@@ -3737,7 +3741,7 @@
     "logsInvalidFilter": "筛选条件无效，时间范围不能超过 31 天。",
     "logsReset": "重置",
     "logsRefresh": "刷新",
-    "logsExport": "导出（最多 1,000 条）",
+    "logsExport": "导出全部筛选结果",
     "logsViews": "日志视图",
     "logsTab_http": "请求",
     "logsTab_agent": "执行链",
