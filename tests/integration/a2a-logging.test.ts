@@ -9,6 +9,9 @@ import { refreshTaskStorage } from "@/lib/a2a/quotas";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { db } from "@/lib/db";
 import { createAgentApiKey } from "@/lib/agents/public-api/auth";
+import { createApiToken } from "@/lib/auth/tokens";
+import { handleLogRequest } from "@/lib/observability/views/api";
+import type { A2ATaskDetail, ViewScope } from "@/lib/observability/views/types";
 import { POST } from "@/app/api/v1/agent-endpoints/[endpointId]/a2a/route";
 import {
   LOG_SETTINGS_KEY,
@@ -282,6 +285,67 @@ async function retainedHistory(
   });
 }
 
+/** Native entry history exists independently of optional transport LogDetail rows. */
+async function nativeLedger(
+  input: {
+    workspaceId?: string;
+    rootTaskId?: string;
+    parentTaskId?: string;
+    request?: Prisma.InputJsonValue;
+    snapshot?: Prisma.InputJsonValue;
+    events?: Prisma.InputJsonValue[];
+  } = {},
+) {
+  const id = randomUUID();
+  const targetAgentId = input.workspaceId
+    ? (
+        await db.agent.create({
+          data: {
+            workspaceId: input.workspaceId,
+            slug: `native-logging-${id}`,
+            name: "Foreign native ledger",
+            runtimeKind: "pi-sdk",
+          },
+        })
+      ).id
+    : agentId;
+  const context = await db.a2AContext.create({
+    data: {
+      workspaceId: input.workspaceId ?? workspaceId,
+      targetKind: "local",
+      agentId: targetAgentId,
+      targetBinding: `local:${targetAgentId}`,
+      ownerKey: `native-logging:${id}`,
+      expiresAt: new Date(Date.now() + 86_400_000),
+    },
+  });
+  return db.a2ATask.create({
+    data: {
+      id,
+      contextId: context.id,
+      rootTaskId: input.rootTaskId ?? id,
+      parentTaskId: input.parentTaskId,
+      executionBackend: "native",
+      state: TaskState.TASK_STATE_COMPLETED,
+      phase: "done",
+      completedAt: new Date(),
+      deadlineAt: new Date(Date.now() + 60_000),
+      grant: { actorId: userId, privateAuthority: "never-disclose-grant" },
+      request: input.request ?? {},
+      snapshot: input.snapshot ?? {
+        id,
+        status: { state: "TASK_STATE_COMPLETED" },
+      },
+      events: {
+        create: (input.events ?? []).map((payload, index) => ({
+          sequence: index + 1,
+          payload,
+        })),
+      },
+    },
+  });
+}
+
 describe("real authorized retained A2A protocol logging", () => {
   it("captures one redacted history read per access without capture settings or any new execution", async () => {
     const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
@@ -354,6 +418,122 @@ describe("real authorized retained A2A protocol logging", () => {
       });
     }
   });
+  it("captures every real SSE event beyond 100 events and 32 KiB without truncation", async () => {
+    const retained = await retainedHistory(TaskState.TASK_STATE_WORKING);
+    const response = await POST(
+      new Request(`http://localhost/api/v1/agent-endpoints/${publicId}/a2a`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "a2a-version": "1.0",
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 8,
+          method: "SubscribeToTask",
+          params: { id: retained.id },
+        }),
+      }),
+      { params: Promise.resolve({ endpointId: publicId }) },
+    );
+    const requestId = assertDefined(response.headers.get("x-request-id"));
+    requestIds.push(requestId);
+    expect(response.headers.get("content-type")).toContain("text/event-stream");
+    const reader = assertDefined(response.body).getReader();
+    const first = await reader.read();
+    expect(first.done).toBe(false);
+    const texts = Array.from(
+      { length: 125 },
+      (_, index) => `stream-${index}-${"完整".repeat(300)}-end`,
+    );
+    await db.$transaction(async (tx) => {
+      await tx.a2AEvent.createMany({
+        data: [
+          ...texts.map((text, index) => ({
+            taskId: retained.id,
+            sequence: index + 2,
+            payload: {
+              artifactUpdate: {
+                taskId: retained.id,
+                contextId: retained.contextId,
+                artifact: { artifactId: `part-${index}`, parts: [{ text }] },
+                append: false,
+                lastChunk: true,
+              },
+            },
+          })),
+          {
+            taskId: retained.id,
+            sequence: 127,
+            payload: {
+              statusUpdate: {
+                taskId: retained.id,
+                contextId: retained.contextId,
+                status: { state: "TASK_STATE_COMPLETED" },
+                final: true,
+              },
+            },
+          },
+        ],
+      });
+      const snapshot = Task.fromJSON(retained.snapshot);
+      snapshot.status = {
+        state: TaskState.TASK_STATE_COMPLETED,
+        message: undefined,
+        timestamp: new Date().toISOString(),
+      };
+      await tx.a2ATask.update({
+        where: { id: retained.id },
+        data: {
+          state: TaskState.TASK_STATE_COMPLETED,
+          phase: "done",
+          completedAt: new Date(),
+          sequence: 127,
+          snapshot: Task.toJSON(snapshot) as Prisma.InputJsonValue,
+        },
+      });
+    });
+    let wire = new TextDecoder().decode(first.value);
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      wire += new TextDecoder().decode(chunk.value);
+    }
+    expect(wire).toContain(texts[124]);
+    await vi.waitFor(async () => {
+      const rows = await db.logEvent.findMany({
+        where: { requestId, eventName: "a2a.request" },
+        include: { detail: true },
+      });
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        outcome: "success",
+        detail: {
+          truncated: false,
+          data: {
+            payload: {
+              responseKind: "sse",
+              responseComplete: true,
+              response: { events: expect.any(Array) },
+            },
+          },
+        },
+      });
+      const detail = assertDefined(rows[0].detail);
+      const payload = detail.data as {
+        payload: { response: { events: unknown[] } };
+      };
+      expect(payload.payload.response.events).toHaveLength(127);
+      const serialized = JSON.stringify(payload);
+      expect(Buffer.byteLength(serialized)).toBeGreaterThan(32_768);
+      for (const text of texts) expect(serialized).toContain(text);
+      expect(serialized).not.toContain("[TRUNCATED]");
+      expect(serialized).not.toContain(token);
+      expect(serialized).not.toContain("fixture-private");
+    });
+  });
+
   it("records history stream disconnection once without canceling retained work", async () => {
     const retained = await retainedHistory(TaskState.TASK_STATE_WORKING);
     const input = {
@@ -394,6 +574,7 @@ describe("real authorized retained A2A protocol logging", () => {
         outcome: "cancelled",
         attributes: { data: { a2a: { taskId } } },
         detail: {
+          truncated: false,
           data: { payload: { responseKind: "sse", responseComplete: false } },
         },
       });
@@ -411,6 +592,364 @@ describe("real authorized retained A2A protocol logging", () => {
 });
 
 describe("A2A query scope and audited disclosure", () => {
+  it.each(["workspace", "admin"] as const)(
+    "reads complete redacted native ledger content without transport logs for %s",
+    async (kind) => {
+      const text = `native-input-${"全文".repeat(20_000)}-end`;
+      const output = `native-output-${"result".repeat(8_000)}-end`;
+      const message = {
+        messageId: randomUUID(),
+        role: "ROLE_USER",
+        parts: [{ text }],
+      };
+      const history = [
+        message,
+        ...Array.from({ length: 125 }, (_, index) => ({
+          messageId: `history-${index}`,
+          role: "ROLE_AGENT",
+          parts: [{ text: `reply-${index}` }],
+        })),
+      ];
+      const parts = Array.from({ length: 125 }, (_, index) => ({
+        text: index === 124 ? output : `part-${index}`,
+      }));
+      let deep: Prisma.InputJsonValue = {
+        message: {
+          messageId: "deep-message",
+          role: "ROLE_AGENT",
+          parts: [{ text: "deep-visible password=deep-private" }],
+        },
+        authorization: "Bearer ledger-private",
+        grant: { actorId: "nested-grant-private" },
+      };
+      for (let index = 0; index < 50; index++) deep = { data: deep };
+      const row = await nativeLedger({
+        request: { message },
+        snapshot: {
+          history,
+          artifacts: [{ artifactId: "result", parts }],
+          data: Object.fromEntries(
+            Array.from({ length: 125 }, (_, index) => [
+              `field-${index}`,
+              `value-${index}`,
+            ]),
+          ),
+          metadata: { private: "file-metadata-private" },
+        },
+        events: [deep],
+      });
+      const child = await nativeLedger({
+        rootTaskId: row.id,
+        parentTaskId: row.id,
+        request: {
+          message: {
+            messageId: "child",
+            role: "ROLE_USER",
+            parts: [{ text: "same-workspace-child" }],
+          },
+        },
+      });
+      const foreign = await nativeLedger({
+        workspaceId: foreignWorkspaceId,
+        rootTaskId: row.id,
+        parentTaskId: row.id,
+        request: {
+          message: {
+            messageId: "foreign",
+            role: "ROLE_USER",
+            parts: [{ text: "foreign-child-private" }],
+          },
+        },
+        events: [
+          {
+            message: {
+              messageId: "foreign-event",
+              role: "ROLE_AGENT",
+              parts: [{ text: "foreign-event-private" }],
+            },
+          },
+        ],
+      });
+      const scope: ViewScope =
+        kind === "admin"
+          ? { kind: "admin", userId: adminId }
+          : { kind: "workspace", workspaceId, userId };
+      expect(
+        await db.logEvent.count({
+          where: {
+            attributes: { path: ["data", "a2a", "taskId"], equals: row.id },
+          },
+        }),
+      ).toBe(0);
+      const credential = await createApiToken(
+        scope.userId,
+        "Native detail regression",
+      );
+      const response = await handleLogRequest(
+        new Request(`http://localhost/api/observability/a2a/${row.id}`, {
+          headers: { authorization: `Bearer ${credential.token}` },
+        }),
+        kind === "admin" ? { admin: true } : { slug: `a2a-logs-${stamp}` },
+        "a2a",
+        row.id,
+      );
+      expect(response.status).toBe(200);
+      const detail = (await response.json()) as A2ATaskDetail;
+      expect(
+        detail.messages.filter((entry) => entry.id === message.messageId),
+      ).toHaveLength(1);
+      expect(
+        detail.messages.find((entry) => entry.id === message.messageId)?.parts,
+      ).toEqual([{ text }]);
+      expect(
+        detail.messages.find((entry) => entry.id === message.messageId)?.role,
+      ).toBe("user");
+      expect(
+        detail.messages.find((entry) => entry.id === "deep-message")?.role,
+      ).toBe("agent");
+      expect(detail.messages).toHaveLength(128);
+      expect(
+        detail.messages.find((entry) => entry.id === "deep-message")?.parts,
+      ).toEqual([{ text: 'deep-visible password="[REDACTED]"' }]);
+      expect(
+        detail.artifacts.find((entry) => entry.id === "result")?.parts,
+      ).toEqual(parts);
+      expect(detail.tree.map((entry) => entry.taskId).sort()).toEqual(
+        [row.id, child.id].sort(),
+      );
+      expect(detail.tree.some((entry) => entry.taskId === foreign.id)).toBe(
+        false,
+      );
+      expect(
+        detail.protocol.every(
+          (entry) =>
+            entry.source === "ledger" && entry.bodyState === "available",
+        ),
+      ).toBe(true);
+      expect(
+        detail.protocol.find(
+          (entry) => entry.eventId === `ledger:${row.id}:request`,
+        )?.request,
+      ).toEqual({ message });
+      expect(JSON.stringify(detail.protocol)).toContain(
+        '"field-124":"value-124"',
+      );
+      const serialized = JSON.stringify(detail);
+      for (const privateValue of [
+        "never-disclose-grant",
+        "nested-grant-private",
+        "deep-private",
+        "ledger-private",
+        "file-metadata-private",
+        "foreign-child-private",
+        "foreign-event-private",
+      ])
+        expect(serialized).not.toContain(privateValue);
+      expect(serialized).not.toContain("[TRUNCATED]");
+      expect(
+        await db.auditEvent.count({
+          where: {
+            action: "logging.detail.viewed",
+            targetType: "a2aTask",
+            targetId: row.id,
+            actorId: scope.userId,
+            workspaceId,
+          },
+        }),
+      ).toBe(1);
+      const page = await listA2ATasks(scope, { q: row.id });
+      expect(
+        page.items.find((entry) => entry.workspace?.id === workspaceId),
+      ).toMatchObject({ taskId: row.id, childCount: 1 });
+      expect(JSON.stringify(page)).not.toContain("native-input-");
+      const live = await pollA2ATasks(
+        scope,
+        { q: row.id },
+        { createdAt: new Date(Date.now() - 60_000).toISOString(), id: "" },
+      );
+      expect(JSON.stringify(live)).not.toContain("native-input-");
+      for (const foreignScope of [
+        {
+          kind: "workspace",
+          workspaceId: foreignWorkspaceId,
+          userId: foreignId,
+        },
+        { kind: "admin", userId: adminId, workspaceId: foreignWorkspaceId },
+      ] as const) {
+        // An orphan subtree may resolve by root ID, but only its own workspace is readable.
+        const foreignDetail = assertDefined(
+          await getA2ATask(foreignScope, row.id),
+        );
+        expect(foreignDetail.tree.map((entry) => entry.taskId)).toEqual([
+          foreign.id,
+        ]);
+        expect(JSON.stringify(foreignDetail)).not.toContain("native-input-");
+        expect(JSON.stringify(foreignDetail)).not.toContain("native-output-");
+      }
+      expect(
+        await getA2ATask(
+          { kind: "workspace", workspaceId, userId },
+          foreign.id,
+        ),
+      ).toBeNull();
+      await expect(
+        getA2ATask(
+          { kind: "workspace", workspaceId, userId: foreignId },
+          row.id,
+        ),
+      ).rejects.toBeInstanceOf(LogAccessError);
+      await expect(
+        getA2ATask({ kind: "admin", userId }, row.id),
+      ).rejects.toBeInstanceOf(LogAccessError);
+    },
+  );
+
+  it("replays artifact increments once and lets the final snapshot replace streamed copies", async () => {
+    const artifact = (text: string) => ({
+      artifactId: "stream",
+      parts: [{ text }],
+    });
+    const row = await nativeLedger({
+      events: [
+        { artifactUpdate: { artifact: artifact("a"), append: false } },
+        { artifactUpdate: { artifact: artifact("b"), append: true } },
+        {
+          task: {
+            artifacts: [
+              { artifactId: "stream", parts: [{ text: "a" }, { text: "b" }] },
+            ],
+          },
+        },
+        { artifactUpdate: { artifact: artifact("c"), append: true } },
+        {
+          artifactUpdate: {
+            artifact: { artifactId: "event-only", parts: [{ text: "one" }] },
+            append: true,
+          },
+        },
+        {
+          artifactUpdate: {
+            artifact: { artifactId: "event-only", parts: [{ text: "two" }] },
+            append: true,
+          },
+        },
+      ],
+      snapshot: {
+        artifacts: [
+          {
+            artifactId: "stream",
+            parts: [{ text: "a" }, { text: "b" }, { text: "c" }],
+          },
+        ],
+      },
+    });
+    const captured = await db.logEvent.create({
+      data: {
+        workspaceId,
+        agentId,
+        traceId: row.id,
+        spanId: randomUUID(),
+        domain: "a2a",
+        eventName: "a2a.request",
+        message: "a2a.request",
+        outcome: "success",
+        attributes: {
+          data: {
+            a2a: {
+              direction: "internal",
+              transport: "jsonrpc",
+              taskId: row.id,
+              rootTaskId: row.id,
+            },
+          },
+        },
+        detail: {
+          create: {
+            expiresAt: new Date(Date.now() + 86_400_000),
+            data: {
+              payload: {
+                response: {
+                  events: [
+                    {
+                      artifactUpdate: {
+                        artifact: {
+                          artifactId: "event-only",
+                          parts: [{ text: "one" }],
+                        },
+                        append: true,
+                      },
+                    },
+                    {
+                      artifactUpdate: {
+                        artifact: {
+                          artifactId: "event-only",
+                          parts: [{ text: "two" }],
+                        },
+                        append: true,
+                      },
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    const detail = assertDefined(
+      await getA2ATask({ kind: "workspace", workspaceId, userId }, row.id),
+    );
+    expect(detail.artifacts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "stream",
+          parts: [{ text: "a" }, { text: "b" }, { text: "c" }],
+        }),
+        expect.objectContaining({
+          id: "event-only",
+          parts: [{ text: "one" }, { text: "two" }],
+        }),
+      ]),
+    );
+    expect(detail.artifacts).toHaveLength(2);
+    expect(
+      detail.protocol.filter(
+        (entry) => entry.eventId === `ledger:${row.id}:snapshot`,
+      ),
+    ).toHaveLength(1);
+    expect(
+      detail.protocol.find((entry) => entry.eventId === captured.id),
+    ).toMatchObject({ source: "log", bodyState: "available" });
+  });
+
+  it("fails closed when native ledger access cannot be audited", async () => {
+    const row = await nativeLedger({
+      request: {
+        message: { role: "ROLE_USER", parts: [{ text: "audited-only" }] },
+      },
+    });
+    for (const scope of [
+      { kind: "workspace", workspaceId, userId },
+      { kind: "admin", userId: adminId },
+    ] as const) {
+      const audit = vi
+        .spyOn(db.auditEvent, "create")
+        .mockRejectedValueOnce(new Error("audit unavailable"));
+      try {
+        await expect(getA2ATask(scope, row.id)).rejects.toThrow(
+          "audit unavailable",
+        );
+      } finally {
+        audit.mockRestore();
+      }
+    }
+    expect(
+      await db.auditEvent.count({
+        where: { targetType: "a2aTask", targetId: row.id },
+      }),
+    ).toBe(0);
+  });
+
   it("audits administrator and workspace body views and denies disclosure on audit failure or expiry", async () => {
     const request = await call(readTaskRequest());
     const id = request.event.id;

@@ -279,6 +279,32 @@ describe("sandbox Agent runtime helpers", () => {
     expect(transcript).not.toContain("secret-base64");
   });
 
+  it("retains complete string and structured tool values in conversation history", () => {
+    const input = `${"输入🙂".repeat(12_000)}input-tail`;
+    const output = { text: `${"结果🙂".repeat(12_000)}output-tail` };
+    const transcript = buildSandboxTranscript([
+      {
+        role: "assistant",
+        parts: [
+          {
+            type: "work-tool",
+            toolName: "native-tool",
+            input,
+            output,
+          },
+        ],
+      },
+    ]);
+    expect(transcript).toBe(
+      [
+        "### ASSISTANT",
+        "[Recorded successful tool call: native-tool]",
+        `Input: ${input}`,
+        `Output: ${JSON.stringify(output)}`,
+      ].join("\n"),
+    );
+  });
+
   it("parses Claude stream-json text and final results", () => {
     expect(
       parseClaudeStreamLine(

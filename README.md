@@ -76,7 +76,7 @@ pnpm dev
 
 - **pre-commit**：在临时目录中检查 Git index 的文件快照，并从 index 读取 `package.json`、`biome.json` 和 `.gitignore`，确保 React/Next 规则及忽略设置与待提交内容一致；使用 Biome 校验语法、lint 和格式，不自动修改工作区或暂存内容，支持部分暂存。
 - **pre-push**：要求推送当前 `HEAD` 且已跟踪文件无未提交变更，运行 `pnpm check`（`biome ci . --error-on-warnings`、Next 路由类型生成和 TypeScript 检查）。先执行 `pnpm db:generate` 准备 Prisma 类型；不连接数据库或运行迁移。
-- CI 复用 `pnpm check`，再运行完整测试和构建；只检查、不自动修复。hooks 不替代受保护分支的 CI。
+- 普通 PR 的 CI 只运行 `pnpm check` 和鉴权、工作区隔离、日志授权的核心回归，15 分钟超时；不再重复运行三平台 connector、Docker/SSH 实机、完整测试及构建。分支保护只要求 `validate`。完整验证通过手动运行 `ci` 并勾选 `full` 触发，SSH 实机通过手动运行 `sandbox-ssh` 触发；正式发布仍构建镜像与运行制品。
 - lint 和 formatter 统一使用锁定版本的 Biome，不再运行 ESLint/Prettier。`biome.json` 使用推荐规则，不保留迁移期的 warning 降级；提交、推送和 CI 均阻断 error、warning、语法和格式问题。明确的框架约束或安全处理仅允许带原因的局部例外，不批量添加忽略注释。
 - 编辑器安装官方 `biomejs.biome` 扩展并将其设为 JS/TS/JSON/CSS 的默认 formatter，可启用保存时格式化。import 自动整理暂不启用，避免工具迁移改变导入顺序。
 - 格式化覆盖 Biome 支持的仓库文件；生成目录和原始测试 fixtures 不参与。Markdown/MDX、YAML、Python、SQL、Prisma 等不由本配置格式化，不额外引入第二套 formatter。
@@ -103,7 +103,7 @@ pnpm dev
 
 测试集中保护身份与工作区隔离、Pi/Assistant 执行、不可变修订与凭据授权、会话/Work/A2A 生命周期、MCP 接入以及文件与恢复边界。普通页面、样式、文案、内部函数转发和数据库查询形状不作为永久测试目标；保留的前端测试验证失败恢复、输入保留与错误修订不可应用等核心状态转换。
 
-CI 执行 `pnpm test`，不追求全仓覆盖率数字。需要诊断覆盖情况时可运行 `pnpm test:coverage`，报告写入 `coverage/coverage-summary.json` 和 `coverage/lcov.info`；统计范围为 `src` 与 `packages/connector/bin`，不能代表外部容器或子进程内部的覆盖率。集成测试需要独立的 pgvector PostgreSQL 测试库；先生成 Prisma Client、应用数据库迁移，并构建 Pi 包捕获镜像（`docker build --target pi-package-capture -t toolplane-pi-package-capture:0.87.1 .`），不要使用业务数据库运行测试。
+默认 CI 不运行完整 `pnpm test`，不追求全仓覆盖率数字。完整验证可手动运行 `ci` 并设置 `full=true`，或在本地运行 `pnpm test`；需要诊断覆盖情况时可运行 `pnpm test:coverage`，报告写入 `coverage/coverage-summary.json` 和 `coverage/lcov.info`，不能代表外部容器或子进程内部的覆盖率。集成测试需要独立的 pgvector PostgreSQL 测试库；先生成 Prisma Client并应用数据库迁移；完整运行时测试还需构建 Pi 包捕获镜像（`docker build --target pi-package-capture -t toolplane-pi-package-capture:0.87.1 .`），不要使用业务数据库运行测试。
 
 ## 文档
 

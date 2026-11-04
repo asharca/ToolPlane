@@ -9,7 +9,7 @@ vi.mock("@/lib/observability/events", () => ({ recordEvent: records }));
 import { withRequestLogging } from "@/lib/observability/http";
 
 describe("structured logging safety", () => {
-  it("redacts nested credentials, errors and known secrets while retaining usage and valid bounded JSON", () => {
+  it("redacts credentials and Error causes without losing large payloads or usage", () => {
     const error = new Error("Authorization: Bearer fixture-private-value", {
       cause: new Error('password="do-not-record"'),
     });
@@ -20,6 +20,7 @@ describe("structured logging safety", () => {
       outputTokens: 7,
       headers: { cookie: "private" },
       nested: ["known-value"],
+      text: `${"字".repeat(150_000)} known-value tail`,
     };
     circular.self = circular;
     const result = sanitizeLog(circular, ["known-value"]);
@@ -27,21 +28,104 @@ describe("structured logging safety", () => {
     expect(text).not.toContain("fixture-private-value");
     expect(text).not.toContain("do-not-record");
     expect(text).not.toContain("known-value");
+    expect(result.truncated).toBe(false);
     expect(result.data).toMatchObject({
       apiKey: "[REDACTED]",
       inputTokens: 42,
       outputTokens: 7,
+      self: "[CIRCULAR]",
+      text: `${"字".repeat(150_000)} [REDACTED] tail`,
+      error: { cause: { message: 'password="[REDACTED]"' } },
     });
-    const huge = sanitizeLog(
-      { text: "字".repeat(50_000), next: ["x".repeat(1000)] },
-      [],
-      512,
+  });
+
+  it("retains every array item, object key and long key while redacting the tail", () => {
+    const longKey = `${"key".repeat(100)}known-value`;
+    const input = {
+      items: Array.from({ length: 350 }, (_, index) => ({
+        index,
+        value: index === 349 ? "known-value" : "safe",
+      })),
+      fields: Object.fromEntries(
+        Array.from({ length: 350 }, (_, index) => [
+          `field${index}`,
+          index === 349 ? "known-value" : index,
+        ]),
+      ),
+      [longKey]: "safe",
+      date: new Date("2026-01-01T00:00:00Z"),
+      bigint: BigInt("9007199254740993"),
+      totalTokens: 49,
+      cacheReadTokens: 5,
+      cacheWriteTokens: 6,
+      usedTokens: 7,
+      maxTokens: 100,
+    };
+    const result = sanitizeLog(input, ["known-value"]);
+    expect(result.truncated).toBe(false);
+    expect(result.data).toMatchObject({
+      items: input.items.map((item) => ({
+        ...item,
+        value: item.index === 349 ? "[REDACTED]" : "safe",
+      })),
+      fields: { field349: "[REDACTED]" },
+      [`${"key".repeat(100)}[REDACTED]`]: "safe",
+      date: "2026-01-01T00:00:00.000Z",
+      bigint: "9007199254740993",
+      totalTokens: 49,
+      cacheReadTokens: 5,
+      cacheWriteTokens: 6,
+      usedTokens: 7,
+      maxTokens: 100,
+    });
+    expect(Object.keys((result.data as typeof input).fields)).toHaveLength(350);
+    expect(JSON.stringify(result.data)).not.toContain("known-value");
+  });
+
+  it("handles deep payloads iteratively and distinguishes shared references from cycles", () => {
+    const leaf: Record<string, unknown> = {
+      text: "known-value",
+      password: "private",
+    };
+    const root: Record<string, unknown> = {};
+    let cursor = root;
+    for (let depth = 0; depth < 20_000; depth += 1) {
+      const next: Record<string, unknown> = {};
+      cursor.next = next;
+      cursor = next;
+    }
+    cursor.leaf = leaf;
+    cursor.root = root;
+    const result = sanitizeLog(root, ["known-value"]);
+    let output = result.data as Record<string, unknown>;
+    for (let depth = 0; depth < 20_000; depth += 1)
+      output = output.next as Record<string, unknown>;
+    expect(output).toEqual({
+      leaf: { text: "[REDACTED]", password: "[REDACTED]" },
+      root: "[CIRCULAR]",
+    });
+    const error = new Error("shared");
+    error.cause = error;
+    expect(
+      sanitizeLog({ first: leaf, second: leaf, errors: [error, error] }, [
+        "known-value",
+      ]).data,
+    ).toMatchObject({
+      first: { text: "[REDACTED]" },
+      second: { text: "[REDACTED]" },
+      errors: [{ cause: "[CIRCULAR]" }, { cause: "[CIRCULAR]" }],
+    });
+    expect(result.truncated).toBe(false);
+  });
+
+  it("preserves hostile own keys without mutating object prototypes", () => {
+    const input = JSON.parse(
+      '{"__proto__":{"safe":true},"constructor":"known-value"}',
     );
-    expect(huge.truncated).toBe(true);
-    expect(Buffer.byteLength(JSON.stringify(huge.data))).toBeLessThanOrEqual(
-      512,
-    );
-    expect(() => JSON.parse(JSON.stringify(huge.data))).not.toThrow();
+    const result = sanitizeLog(input, ["known-value"]);
+    expect(Object.hasOwn(result.data as object, "__proto__")).toBe(true);
+    expect(Object.getPrototypeOf(result.data)).toBe(Object.prototype);
+    expect(JSON.stringify(result.data)).toContain('"constructor":"[REDACTED]"');
   });
 
   it("isolates concurrent roots and links child spans without leaking non-context fields", async () => {

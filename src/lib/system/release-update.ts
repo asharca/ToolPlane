@@ -700,7 +700,6 @@ function runCommand(
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk: string) => {
       stderr += chunk;
-      if (stderr.length > 10_000) stderr = stderr.slice(-10_000);
     });
     child.on("error", (error) => {
       clearTimeout(timer);

@@ -43,8 +43,7 @@ function parseJson(value: string | null | undefined): unknown {
 }
 
 function compactText(value: string): string {
-  const normalized = value.replaceAll(/\s+/g, " ").trim();
-  return normalized.length > 240 ? `${normalized.slice(0, 237)}…` : normalized;
+  return value.replaceAll(/\s+/g, " ").trim();
 }
 
 function messageFromValue(value: unknown): string | null {

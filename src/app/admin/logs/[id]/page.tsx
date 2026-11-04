@@ -304,17 +304,12 @@ export default async function LogDetailPage({
             }
             actions={
               <AdminBadge>
-                {t("logsTraceCount", { count: Math.min(trace.length, 500) })}
+                {t("logsTraceCount", { count: trace.length })}
               </AdminBadge>
             }
           >
-            {trace.length > 500 ? (
-              <p role="status" className="mb-4 text-sm text-muted-foreground">
-                {t("logsTruncated")}
-              </p>
-            ) : null}
             <ol className="ml-2 border-l border-border">
-              {trace.slice(0, 500).map((row) => (
+              {trace.map((row) => (
                 <li key={row.id} className="relative pl-5">
                   <span
                     aria-hidden="true"

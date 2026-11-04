@@ -43,9 +43,6 @@ type RuntimeResponse = {
 };
 
 const TERMINAL_STATUSES = new Set(["stopped", "error"]);
-// Keep the browser-side tail no larger than the supervisor's retained stderr
-// file. This prevents a long-running Logs tab from growing without bound.
-const MAX_CLIENT_LOG_BYTES = 512 * 1024;
 
 type RuntimeLogView = {
   text: string;
@@ -59,27 +56,6 @@ function isTerminalStatus(status: string | null | undefined): boolean {
 function readablePhase(phase: string | undefined): string {
   if (!phase) return "—";
   return phase.replaceAll(/[_-]+/g, " ");
-}
-
-function keepRecentLogText(value: string): { text: string; trimmed: boolean } {
-  const bytes = new TextEncoder().encode(value);
-  if (bytes.byteLength <= MAX_CLIENT_LOG_BYTES) {
-    return { text: value, trimmed: false };
-  }
-
-  // Start at a UTF-8 code-point boundary so trimming cannot introduce a
-  // replacement character at the beginning of the rendered log tail.
-  let start = bytes.byteLength - MAX_CLIENT_LOG_BYTES;
-  while (
-    start < bytes.byteLength &&
-    (bytes[start] & 0b1100_0000) === 0b1000_0000
-  ) {
-    start += 1;
-  }
-  return {
-    text: new TextDecoder().decode(bytes.subarray(start)),
-    trimmed: true,
-  };
 }
 
 export function ContainerLogs({
@@ -175,57 +151,54 @@ export function ContainerLogs({
       inFlightRef.current = true;
       if (manual) setRefreshing(true);
       try {
-        const query = new URLSearchParams({
-          cursor: String(cursorRef.current),
-          limit: "16384",
-        });
-        if (generationRef.current)
-          query.set("generation", generationRef.current);
+        let hasMore = true;
+        while (hasMore) {
+          const query = new URLSearchParams({
+            cursor: String(cursorRef.current),
+            limit: "65536",
+          });
+          if (generationRef.current)
+            query.set("generation", generationRef.current);
 
-        const response = await fetch(
-          `/api/v1/mcp/${deploymentId}/runtime?${query}`,
-          {
-            cache: "no-store",
-          },
-        );
-        if (!response.ok)
-          throw new Error(`runtime sync failed (${response.status})`);
-        const data = (await response.json()) as RuntimeResponse;
-        const chunk = data.logs;
-        const previousGeneration = generationRef.current;
-        const generationChanged = Boolean(
-          previousGeneration &&
-            chunk.generation &&
-            previousGeneration !== chunk.generation,
-        );
-        const shouldReset = chunk.reset || generationChanged;
+          const response = await fetch(
+            `/api/v1/mcp/${deploymentId}/runtime?${query}`,
+            {
+              cache: "no-store",
+            },
+          );
+          if (!response.ok)
+            throw new Error(`runtime sync failed (${response.status})`);
+          const data = (await response.json()) as RuntimeResponse;
+          const chunk = data.logs;
+          const previousGeneration = generationRef.current;
+          const generationChanged = Boolean(
+            previousGeneration &&
+              chunk.generation &&
+              previousGeneration !== chunk.generation,
+          );
+          const shouldReset = chunk.reset || generationChanged;
 
-        setLogView((previous) => {
-          const combined = shouldReset
-            ? chunk.text
-            : `${previous.text}${chunk.text}`;
-          const bounded = keepRecentLogText(combined);
-          return {
-            text: bounded.text,
+          setLogView((previous) => ({
+            text: shouldReset ? chunk.text : `${previous.text}${chunk.text}`,
             truncated:
               (shouldReset ? false : previous.truncated) ||
-              Boolean(chunk.truncated) ||
-              bounded.trimmed,
-          };
-        });
-        generationRef.current = chunk.generation;
-        cursorRef.current = chunk.nextCursor;
-        setSnapshot(data.snapshot);
-        setSyncError(false);
+              Boolean(chunk.truncated),
+          }));
+          generationRef.current = chunk.generation;
+          cursorRef.current = chunk.nextCursor;
+          hasMore = chunk.nextCursor > chunk.cursor;
+          setSnapshot(data.snapshot);
+          setSyncError(false);
 
-        const nextStatus = data.snapshot?.status ?? "stopped";
-        const previousStatus = statusRef.current;
-        statusRef.current = nextStatus;
-        setRuntimeStatus(nextStatus);
-        if (previousStatus !== nextStatus) {
-          // Refresh server-rendered controls and the header as soon as the
-          // supervisor reports a lifecycle status transition.
-          router.refresh();
+          const nextStatus = data.snapshot?.status ?? "stopped";
+          const previousStatus = statusRef.current;
+          statusRef.current = nextStatus;
+          setRuntimeStatus(nextStatus);
+          if (previousStatus !== nextStatus) {
+            // Refresh server-rendered controls and the header as soon as the
+            // supervisor reports a lifecycle status transition.
+            router.refresh();
+          }
         }
       } catch {
         setSyncError(true);

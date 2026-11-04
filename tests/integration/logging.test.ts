@@ -169,6 +169,13 @@ describe("durable scoped logging", () => {
       data: { value: JSON.stringify({ captures: [] }) },
     });
     invalidateLogSettings();
+    const response = {
+      ok: true,
+      content: Array.from({ length: 150 }, (_, index) => ({
+        index,
+        text: `${"字".repeat(1000)} ${index === 149 ? "fixture-private-key" : "safe"} tail`,
+      })),
+    };
     await withLogContext(
       { workspaceId, secrets: ["fixture-private-key"] },
       () =>
@@ -183,7 +190,7 @@ describe("durable scoped logging", () => {
             value: "fixture-private-key",
             safe: "yes",
           }),
-          responseBody: JSON.stringify({ ok: true }),
+          responseBody: JSON.stringify(response),
         }),
     );
     const captured = await db.logEvent.findFirstOrThrow({
@@ -193,7 +200,28 @@ describe("durable scoped logging", () => {
     expect(captured.detail?.data).toMatchObject({
       payload: {
         request: { value: "[REDACTED]", safe: "yes" },
-        response: { ok: true },
+        response: {
+          ...response,
+          content: response.content.map((item) => ({
+            ...item,
+            text: item.text.replace("fixture-private-key", "[REDACTED]"),
+          })),
+        },
+      },
+    });
+    expect(captured.detail?.truncated).toBe(false);
+    const readable = await getLogEvent({ userId, workspaceId }, captured.id);
+    expect(readable?.detailState).toBe("available");
+    expect(readable?.detail?.data).toEqual({
+      payload: {
+        request: { value: "[REDACTED]", safe: "yes" },
+        response: {
+          ...response,
+          content: response.content.map((item) => ({
+            ...item,
+            text: item.text.replace("fixture-private-key", "[REDACTED]"),
+          })),
+        },
       },
     });
     expect(assertDefined(captured.detail).expiresAt.getTime()).toBeGreaterThan(
@@ -364,6 +392,82 @@ describe("durable scoped logging", () => {
     });
     expect((await getLogEvent({ adminId }, previous.id))?.detail).toBeNull();
   });
+  it("returns complete traces beyond 500 events without crossing workspace boundaries", async () => {
+    const traceId = randomUUID();
+    const createdAt = new Date();
+    const rows = Array.from({ length: 550 }, (_, index) => ({
+      id: `trace-${stamp}-${String(index).padStart(4, "0")}`,
+      domain: "system",
+      eventName: "test.large-trace",
+      message: "trace fixture",
+      workspaceId,
+      traceId,
+      spanId: `span-${index}`,
+      createdAt,
+    }));
+    await db.logEvent.createMany({ data: rows });
+    const foreign = await db.workspace.create({
+      data: {
+        slug: `foreign-trace-${stamp}`,
+        name: "Foreign trace",
+        ownerId: foreignId,
+      },
+    });
+    try {
+      await db.logEvent.create({
+        data: {
+          domain: "system",
+          eventName: "test.foreign-trace",
+          message: "foreign",
+          workspaceId: foreign.id,
+          traceId,
+          spanId: "foreign",
+          createdAt,
+        },
+      });
+      const trace = await getLogTrace({ userId, workspaceId }, traceId);
+      expect(trace.map((row) => row.id)).toEqual(rows.map((row) => row.id));
+      expect(trace.every((row) => row.workspaceId === workspaceId)).toBe(true);
+      await expect(
+        getLogTrace({ userId: foreignId, workspaceId }, traceId),
+      ).rejects.toBeInstanceOf(LogAccessError);
+    } finally {
+      await db.logEvent.deleteMany({ where: { workspaceId: foreign.id } });
+      await db.workspace.delete({ where: { id: foreign.id } });
+    }
+  });
+
+  it("persists complete audit changes with credentials redacted at the payload tail", async () => {
+    const tail = `${"字".repeat(50_000)} fixture-private-key tail`;
+    const changes = {
+      values: Array.from({ length: 150 }, (_, index) => index),
+      fields: Object.fromEntries(
+        Array.from({ length: 150 }, (_, index) => [`field${index}`, index]),
+      ),
+      tail,
+      password: "never-store",
+    };
+    const audit = await withLogContext(
+      { secrets: ["fixture-private-key"] },
+      () =>
+        writeAudit(db, {
+          actorId: adminId,
+          workspaceId,
+          action: "test.full-audit",
+          targetType: "workspace",
+          targetId: workspaceId,
+          changes,
+        }),
+    );
+    const persisted = await db.auditEvent.findUniqueOrThrow({
+      where: { id: audit.id },
+    });
+    expect(persisted.changes).toEqual({
+      ...changes,
+      tail: tail.replace("fixture-private-key", "[REDACTED]"),
+      password: "[REDACTED]",
+    });
+  });
 
   it("authorizes exports with persisted roles and excludes payloads", async () => {
     const exportable = await db.logEvent.create({
@@ -382,43 +486,82 @@ describe("durable scoped logging", () => {
         },
       },
     });
-    const regular = await createApiToken(userId, "test");
-    const admin = await createApiToken(adminId, "test");
-    const toolkit = await db.toolkit.create({
-      data: { workspaceId, name: "test", slug: `logs-${stamp}` },
+    const createdAt = new Date(Date.now() - 1000);
+    const fixtures = Array.from({ length: 1050 }, (_, index) => ({
+      id: `export-${stamp}-${String(index).padStart(4, "0")}`,
+      domain: "system",
+      eventName: "test.export",
+      message: "paged export fixture",
+      workspaceId,
+      traceId: stamp,
+      spanId: `export-${index}`,
+      createdAt,
+    }));
+    await db.logEvent.createMany({ data: fixtures });
+    const foreign = await db.workspace.create({
+      data: {
+        slug: `foreign-export-${stamp}`,
+        name: "Foreign export",
+        ownerId: foreignId,
+      },
     });
-    const scoped = await createApiToken(adminId, "test", {
-      toolkitId: toolkit.id,
-    });
-    const request = (token: string) =>
-      new Request(
-        `http://localhost/api/v1/admin/logs/export?domain=system&workspaceId=${workspaceId}`,
-        { headers: { authorization: `Bearer ${token}` } },
+    try {
+      await db.logEvent.create({
+        data: {
+          domain: "system",
+          eventName: "test.export",
+          message: "foreign export fixture",
+          workspaceId: foreign.id,
+          traceId: stamp,
+          spanId: "foreign-export",
+          createdAt,
+        },
+      });
+      const regular = await createApiToken(userId, "test");
+      const admin = await createApiToken(adminId, "test");
+      const toolkit = await db.toolkit.create({
+        data: { workspaceId, name: "test", slug: `logs-${stamp}` },
+      });
+      const scoped = await createApiToken(adminId, "test", {
+        toolkitId: toolkit.id,
+      });
+      const request = (token: string) =>
+        new Request(
+          `http://localhost/api/v1/admin/logs/export?domain=system&eventName=test.export&workspaceId=${workspaceId}`,
+          { headers: { authorization: `Bearer ${token}` } },
+        );
+      expect((await exportLogs(request(regular.token))).status).toBe(403);
+      expect((await exportLogs(request(scoped.token))).status).toBe(401);
+      const response = await exportLogs(request(admin.token));
+      expect(response.status).toBe(200);
+      const rows = (await response.text())
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      expect(rows).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: exportable.id, workspaceId }),
+        ]),
       );
-    expect((await exportLogs(request(regular.token))).status).toBe(403);
-    expect((await exportLogs(request(scoped.token))).status).toBe(401);
-    const response = await exportLogs(request(admin.token));
-    expect(response.status).toBe(200);
-    const rows = (await response.text())
-      .trim()
-      .split("\n")
-      .map((line) => JSON.parse(line));
-    expect(rows).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ id: exportable.id, workspaceId }),
-      ]),
-    );
-    expect(
-      rows.every(
-        (row) => row.workspaceId === workspaceId && !("detail" in row),
-      ),
-    ).toBe(true);
-    expect(JSON.stringify(rows)).not.toContain("private-export-payload");
-    expect(
-      await db.auditEvent.count({
-        where: { actorId: adminId, action: "logging.exported" },
-      }),
-    ).toBe(1);
+      expect(rows).toHaveLength(fixtures.length + 1);
+      expect(
+        rows.filter((row) => row.id !== exportable.id).map((row) => row.id),
+      ).toEqual(fixtures.map((row) => row.id).reverse());
+      expect(
+        rows.every(
+          (row) => row.workspaceId === workspaceId && !("detail" in row),
+        ),
+      ).toBe(true);
+      expect(JSON.stringify(rows)).not.toContain("private-export-payload");
+      expect(
+        await db.auditEvent.count({
+          where: { actorId: adminId, action: "logging.exported" },
+        }),
+      ).toBe(1);
+    } finally {
+      await db.logEvent.deleteMany({ where: { workspaceId: foreign.id } });
+      await db.workspace.delete({ where: { id: foreign.id } });
+    }
   });
 
   it("cleans expired records in bounded batches without cascading business deletion into audit history", async () => {

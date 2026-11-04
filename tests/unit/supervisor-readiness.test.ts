@@ -17,6 +17,7 @@ import {
   vi,
 } from "vitest";
 import type * as SupervisorModule from "@/lib/process/supervisor";
+import type { DeploymentRuntimeLogChunk } from "@/lib/process/supervisor";
 
 const mocks = vi.hoisted(() => ({
   spawn: vi.fn(),
@@ -123,6 +124,26 @@ function createChild(
     return true;
   });
   return child;
+}
+
+function readAllRuntimeLogs(deploymentId: string, limit = 64 * 1024) {
+  let cursor = 0;
+  let text = "";
+  const chunks: DeploymentRuntimeLogChunk[] = [];
+  while (true) {
+    const chunk = supervisor.getDeploymentRuntimeLogChunk(deploymentId, {
+      cursor,
+      limit,
+    });
+    chunks.push(chunk);
+    expect(chunk.text).not.toContain("\uFFFD");
+    if (!chunk.text) break;
+    expect(chunk.nextCursor).toBeGreaterThan(cursor);
+    expect(chunk.nextCursor - chunk.cursor).toBe(Buffer.byteLength(chunk.text));
+    text += chunk.text;
+    cursor = chunk.nextCursor;
+  }
+  return { text, chunks, cursor };
 }
 
 function resetSupervisorGlobals() {
@@ -1211,42 +1232,53 @@ describe("supervisor readiness races", () => {
     expect(afterEnd.text).not.toContain("terminal-known-");
   });
 
-  it("omits an overlong unterminated stderr line instead of leaking a partial generic credential", async () => {
-    const child = createChild();
-    mocks.spawn.mockReturnValue(child);
-
-    await supervisor.startProcess(
-      "runtime-overlong-line",
-      { kind: "builtin", name: "Overlong line" },
-      { awaitReady: false },
-    );
-    child.stderr.emit(
-      "data",
-      Buffer.from(
-        `Authorization: Bearer generic-split-token-${"x".repeat(300 * 1024)}`,
-      ),
-    );
-    const omitted = supervisor.getDeploymentRuntimeLogChunk(
-      "runtime-overlong-line",
-      { limit: 64 * 1024 },
-    );
-    expect(omitted.text).toContain("omitted overlong stderr line");
-    expect(omitted.text).not.toContain("generic-split-token");
-
-    // Discard only until the next line break; later useful diagnostics remain.
-    child.stderr.emit(
-      "data",
-      Buffer.from("\nnormal diagnostic after omission\n"),
-    );
-    const resumed = supervisor.getDeploymentRuntimeLogChunk(
-      "runtime-overlong-line",
-      {
-        cursor: omitted.nextCursor,
-        limit: 64 * 1024,
-      },
-    );
-    expect(resumed.text).toContain("normal diagnostic after omission");
-  });
+  it.each(["single chunk", "split chunks", "terminal tail"])(
+    "retains an overlong stderr line and redacts complete credentials from %s",
+    async (delivery) => {
+      const child = createChild();
+      mocks.spawn.mockReturnValue(child);
+      await supervisor.startProcess(
+        "runtime-long-line",
+        {
+          kind: "bridge",
+          name: "Long line",
+          command: "command",
+          args: [],
+          env: { MCP_TOKEN: "configured-split-secret" },
+        },
+        { awaitReady: false },
+      );
+      const prefix = `visible-prefix-${"x".repeat(300 * 1024)}`;
+      const suffix = `${"y".repeat(300 * 1024)}-visible-suffix`;
+      const pieces = [
+        `${prefix} configured-split-`,
+        "secret Authorization: Bearer generic-split-",
+        `token-${"z".repeat(300 * 1024)} ${suffix}`,
+      ];
+      if (delivery === "single chunk") {
+        child.stderr.emit("data", Buffer.from(`${pieces.join("")}\n`));
+      } else {
+        for (const piece of pieces) {
+          child.stderr.emit("data", Buffer.from(piece));
+          expect(
+            supervisor.getDeploymentRuntimeLogChunk("runtime-long-line").text,
+          ).toBe("");
+        }
+        if (delivery === "terminal tail") child.stderr.emit("end");
+        else child.stderr.emit("data", Buffer.from("\n"));
+      }
+      const { text, chunks } = readAllRuntimeLogs("runtime-long-line");
+      expect(text).toBe(
+        `[${new Date().toISOString()}] [stderr] ${prefix} [REDACTED] Authorization: Bearer [REDACTED] ${suffix}${delivery === "terminal tail" ? "" : "\n"}`,
+      );
+      expect(text).not.toContain("omitted");
+      expect(text).not.toContain("configured-split-");
+      expect(text).not.toContain("generic-split-");
+      expect(chunks.every((chunk) => !chunk.truncated && !chunk.reset)).toBe(
+        true,
+      );
+    },
+  );
 
   it("resets runtime log cursors for a new launch generation and retains terminal error logs", async () => {
     const first = createChild();
@@ -1765,25 +1797,139 @@ describe("supervisor readiness races", () => {
     );
   });
 
-  it("bounds retained output while keeping absolute byte cursors for late clients", async () => {
+  it("pages all stderr beyond 512 KiB without exposing stdout", async () => {
     const child = createChild();
     mocks.spawn.mockReturnValue(child);
     await supervisor.startProcess(
-      "bounded-log",
-      { kind: "builtin", name: "Bounded" },
+      "complete-log",
+      { kind: "builtin", name: "Complete" },
       { awaitReady: false },
     );
-    for (let index = 0; index < 100; index++)
-      child.stderr.emit("data", Buffer.from(`${index}:${"x".repeat(12000)}\n`));
-    const chunk = supervisor.getDeploymentRuntimeLogChunk("bounded-log", {
+    const lines = Array.from(
+      { length: 100 },
+      (_, index) => `${index}:${"x".repeat(12000)}\n`,
+    );
+    for (const line of lines) child.stderr.emit("data", Buffer.from(line));
+    child.stdout.emit(
+      "data",
+      Buffer.from('{"jsonrpc":"2.0","private":"protocol-only"}\n'),
+    );
+    const { text, chunks, cursor } = readAllRuntimeLogs("complete-log");
+    const expected = lines
+      .map((line) => `[${new Date().toISOString()}] [stderr] ${line}`)
+      .join("");
+    expect(text).toBe(expected);
+    expect(cursor).toBe(Buffer.byteLength(expected));
+    expect(cursor).toBeGreaterThan(512 * 1024);
+    expect(chunks[0]).toMatchObject({ cursor: 0, reset: false });
+    expect(chunks.every((chunk) => !chunk.truncated)).toBe(true);
+    expect(text).not.toContain("protocol-only");
+  });
+
+  it.each([1, 2, 3, 4, 7, 64 * 1024])(
+    "pages UTF-8 without replacement characters or stalled cursors at limit %s",
+    (limit) => {
+      mkdirSync(registryDir, { recursive: true });
+      const expected = "a中🙂éz\n".repeat(limit > 10 ? 12000 : 4);
+      writeFileSync(path.join(registryDir, "utf8-log.log"), expected);
+      const { text, chunks, cursor } = readAllRuntimeLogs("utf8-log", limit);
+      expect(text).toBe(expected);
+      expect(cursor).toBe(Buffer.byteLength(expected));
+      expect(
+        chunks.every(
+          (chunk) => Buffer.byteLength(chunk.text) <= Math.max(4, limit),
+        ),
+      ).toBe(true);
+    },
+  );
+
+  it("normalizes a cursor inside a UTF-8 code point to its complete character", () => {
+    mkdirSync(registryDir, { recursive: true });
+    writeFileSync(path.join(registryDir, "mid-code-point.log"), "🙂中end");
+    expect(
+      supervisor.getDeploymentRuntimeLogChunk("mid-code-point", {
+        cursor: 2,
+        limit: 1,
+      }),
+    ).toMatchObject({ cursor: 0, nextCursor: 4, text: "🙂", reset: false });
+  });
+
+  it("keeps legacy absolute cursors and truncation hints when an old tail starts inside UTF-8", () => {
+    mkdirSync(registryDir, { recursive: true });
+    const legacyTail = Buffer.from("🙂你好\n").subarray(1);
+    writeFileSync(path.join(registryDir, "legacy-utf8.log"), legacyTail);
+    writeFileSync(
+      path.join(registryDir, "legacy-utf8.runtime.json"),
+      JSON.stringify({
+        deploymentId: "legacy-utf8",
+        status: "error",
+        phase: "error",
+        generation: "legacy-generation",
+        logStartCursor: 100,
+        logEndCursor: 100 + legacyTail.byteLength,
+      }),
+    );
+    const first = supervisor.getDeploymentRuntimeLogChunk("legacy-utf8", {
       cursor: 0,
-      limit: 128,
+      limit: 4,
     });
-    expect(chunk.cursor).toBeGreaterThan(0);
-    expect(chunk.truncated).toBe(true);
-    expect(chunk.reset).toBe(true);
-    expect(Buffer.byteLength(chunk.text)).toBeLessThanOrEqual(128);
-    expect(chunk.nextCursor).toBe(chunk.cursor + Buffer.byteLength(chunk.text));
+    expect(first).toMatchObject({
+      generation: "legacy-generation",
+      cursor: 103,
+      nextCursor: 106,
+      text: "你",
+      reset: true,
+      truncated: true,
+    });
+    expect(
+      supervisor.getDeploymentRuntimeLogChunk("legacy-utf8", {
+        cursor: first.nextCursor,
+        generation: first.generation ?? undefined,
+      }),
+    ).toMatchObject({
+      cursor: 106,
+      nextCursor: 100 + legacyTail.byteLength,
+      text: "好\n",
+      reset: false,
+    });
+  });
+
+  it("logs complete lifecycle fields beyond 512 characters with secrets redacted", async () => {
+    const child = createChild();
+    mocks.spawn.mockReturnValue(child);
+    await supervisor.startProcess(
+      "long-lifecycle",
+      {
+        kind: "bridge",
+        name: "Long lifecycle",
+        command: "command",
+        args: [],
+        env: { SECRET: "lifecycle-tail-secret" },
+      },
+      { awaitReady: false },
+    );
+    const token = mocks.spawn.mock.calls[0][2].env.MCP_RUNTIME_EVENT_TOKEN;
+    const phase = "phase".repeat(300);
+    const imageState = `${"image".repeat(300)} lifecycle-tail-secret`;
+    const containerState = "container".repeat(300);
+    child.stderr.emit(
+      "data",
+      Buffer.from(
+        `[toolplane-runtime] ${JSON.stringify({
+          type: "phase",
+          token,
+          phase,
+          imageState,
+          containerState,
+        })}\n`,
+      ),
+    );
+    const { text } = readAllRuntimeLogs("long-lifecycle");
+    expect(text).toContain(
+      `phase=${phase} image=${"image".repeat(300)} [REDACTED] container=${containerState}\n`,
+    );
+    expect(text).not.toContain(token);
+    expect(text).not.toContain("lifecycle-tail-secret");
   });
 
   it("normalizes malformed, blank and partial runtime events without exposing their launch token", async () => {

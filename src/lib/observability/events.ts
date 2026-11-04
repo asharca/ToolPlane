@@ -2,7 +2,7 @@ import "server-only";
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { getLogContext, withLogContext, type LogContext } from "./context";
-import { PROTOCOL_BODY_DEPTH, redactText, sanitizeLog } from "./redaction";
+import { sanitizeLog } from "./redaction";
 import { getLogSettings } from "./settings";
 import type { PayloadPolicy } from "./payload";
 import { version } from "../../../package.json";
@@ -219,14 +219,8 @@ async function persistEvent(entry: LogEntry): Promise<void> {
             : undefined)),
     },
     secrets,
-    8192,
   ).data as Record<string, unknown>;
-  if (!safe || typeof safe !== "object")
-    throw new Error("Log metadata exceeds limit");
-  safe.message = redactText(
-    String(safe.message ?? entry.eventName),
-    secrets,
-  ).slice(0, 1024);
+  safe.message = String(safe.message ?? entry.eventName);
   const validatedA2a = a2a
     ? Object.fromEntries(
         Object.entries(a2aLogMetadataSchema.parse(a2a)).filter(
@@ -243,7 +237,6 @@ async function persistEvent(entry: LogEntry): Promise<void> {
   const safeAttributes = sanitizeLog(
     { data: attributeData, instance: process.pid, version },
     secrets,
-    4096,
   ).data;
   // Verified database identity, not a credential. Keep generic token-key redaction strict.
   if (
@@ -334,10 +327,6 @@ async function persistEvent(entry: LogEntry): Promise<void> {
               : {}),
           },
           secrets,
-          32_768,
-          payloadPolicy === "request-response" || workspaceMcpPayload
-            ? PROTOCOL_BODY_DEPTH
-            : 8,
         );
         const hasDetail = Boolean(error) || (capture && detail !== undefined);
         await tx.logEvent.create({

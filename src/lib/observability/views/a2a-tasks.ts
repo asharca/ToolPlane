@@ -3,6 +3,10 @@ import { TaskState } from "@a2a-js/sdk";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { db } from "@/lib/db";
+import { fileSafeLogPayload } from "@/lib/a2a/remote-wire";
+import { writeAudit } from "../audit";
+import { getLogContext } from "../context";
+import { sanitizeLog } from "../redaction";
 import {
   authorizeLogs,
   getA2aMetadata,
@@ -94,7 +98,7 @@ function filters(scope: ViewScope, filter: A2ATaskFilter) {
   });
 }
 
-/** Only ledger identity/state columns are selected. Ledger conversation JSON is never read. */
+/** Lists and statistics select ledger identity/state only, never conversation JSON. */
 function taskTables(scope: ViewScope, selectedWorkspace?: string) {
   const ws = scope.workspaceId ?? selectedWorkspace;
   const logWorkspace = ws
@@ -308,68 +312,16 @@ function object(
     : null;
 }
 
-/** Chat content is derived exclusively from authorized, audited, redacted protocol bodies. */
+/** Walk authorized, redacted envelopes without imposing a conversation depth limit. */
 function collectContent(
   value: JsonValue | undefined,
   taskId: string,
   time: string,
   messages: Map<string, A2AMessageView>,
   artifacts: Map<string, A2AArtifactView>,
-  depth = 0,
+  taskIds: Set<string>,
 ) {
-  if (depth > 24 || value === null || value === undefined) return;
-  if (Array.isArray(value)) {
-    for (const entry of value)
-      collectContent(entry, taskId, time, messages, artifacts, depth + 1);
-    return;
-  }
-  const data = object(value);
-  if (!data) return;
-  const id =
-    typeof data.taskId === "string"
-      ? data.taskId
-      : typeof data.id === "string" &&
-          (object(data.status) || Array.isArray(data.history))
-        ? data.id
-        : taskId;
-  if (typeof data.role === "string" && Array.isArray(data.parts)) {
-    const messageId =
-      typeof data.messageId === "string"
-        ? data.messageId
-        : JSON.stringify([data.role, data.parts]);
-    const key = `${id}:${messageId}`;
-    messages.set(key, {
-      id: messageId,
-      taskId: id,
-      role: data.role,
-      parts: data.parts,
-      time: messages.get(key)?.time ?? time,
-    });
-  }
-  if (typeof data.artifactId === "string" && Array.isArray(data.parts)) {
-    const key = `${id}:${data.artifactId}`;
-    artifacts.set(key, {
-      id: data.artifactId,
-      taskId: id,
-      name: typeof data.name === "string" ? data.name : null,
-      description:
-        typeof data.description === "string" ? data.description : null,
-      parts: [...data.parts],
-    });
-  }
-  const artifact = object(data.artifact);
-  if (data.append === true && artifact) {
-    const artifactId =
-      typeof artifact.artifactId === "string" ? artifact.artifactId : null;
-    const existing = artifactId
-      ? artifacts.get(`${id}:${artifactId}`)
-      : undefined;
-    if (existing && Array.isArray(artifact.parts)) {
-      existing.parts.push(...artifact.parts);
-      return;
-    }
-  }
-  for (const key of [
+  const keys = [
     "params",
     "request",
     "response",
@@ -384,29 +336,105 @@ function collectContent(
     "artifact",
     "events",
     "data",
-  ]) {
-    if (data[key] !== undefined)
-      collectContent(data[key], id, time, messages, artifacts, depth + 1);
-  }
-  // MCP transports wrap the A2A wire envelope in text content blocks.
-  if (Array.isArray(data.content))
-    for (const block of data.content) {
-      const text = object(block)?.text;
-      if (typeof text === "string") {
+  ];
+  const pending = [{ value, taskId }];
+  while (pending.length) {
+    const current = pending[pending.length - 1];
+    pending.pop();
+    if (Array.isArray(current.value)) {
+      for (let index = current.value.length - 1; index >= 0; index--)
+        pending.push({ value: current.value[index], taskId: current.taskId });
+      continue;
+    }
+    const data = object(current.value);
+    if (!data) continue;
+    const candidate =
+      typeof data.taskId === "string"
+        ? data.taskId
+        : typeof data.id === "string" &&
+            (object(data.status) || Array.isArray(data.history))
+          ? data.id
+          : current.taskId;
+    const id = taskIds.has(candidate) ? candidate : current.taskId;
+    if (typeof data.role === "string" && Array.isArray(data.parts)) {
+      const messageId =
+        typeof data.messageId === "string"
+          ? data.messageId
+          : JSON.stringify([data.role, data.parts]);
+      const key = `${id}:${messageId}`;
+      messages.set(key, {
+        id: messageId,
+        taskId: id,
+        role:
+          data.role === "ROLE_USER"
+            ? "user"
+            : data.role === "ROLE_AGENT"
+              ? "agent"
+              : data.role,
+        parts: data.parts,
+        time: messages.get(key)?.time ?? time,
+      });
+    }
+    if (typeof data.artifactId === "string" && Array.isArray(data.parts)) {
+      artifacts.set(`${id}:${data.artifactId}`, {
+        id: data.artifactId,
+        taskId: id,
+        name: typeof data.name === "string" ? data.name : null,
+        description:
+          typeof data.description === "string" ? data.description : null,
+        parts: [...data.parts],
+      });
+    }
+    const artifact = object(data.artifact);
+    let appended = false;
+    if (
+      data.append === true &&
+      artifact &&
+      typeof artifact.artifactId === "string" &&
+      Array.isArray(artifact.parts)
+    ) {
+      const existing = artifacts.get(`${id}:${artifact.artifactId}`);
+      if (existing) {
+        for (const part of artifact.parts) existing.parts.push(part);
+        appended = true;
+      }
+    }
+    // MCP transports wrap A2A envelopes in text content blocks.
+    if (Array.isArray(data.content))
+      for (let index = data.content.length - 1; index >= 0; index--) {
+        const text = object(data.content[index])?.text;
+        if (typeof text !== "string") continue;
         try {
-          collectContent(
-            JSON.parse(text) as JsonValue,
-            id,
-            time,
-            messages,
-            artifacts,
-            depth + 1,
-          );
+          pending.push({ value: JSON.parse(text) as JsonValue, taskId: id });
         } catch {
           /* Not a JSON protocol block. */
         }
       }
+    for (let index = keys.length - 1; index >= 0; index--) {
+      const key = keys[index];
+      if (key === "artifact" && appended) continue;
+      if (data[key] !== undefined)
+        pending.push({ value: data[key], taskId: id });
     }
+  }
+}
+
+function ledgerContent(value: JsonValue): JsonValue {
+  const data = sanitizeLog(fileSafeLogPayload(value), getLogContext()?.secrets)
+    .data as JsonValue;
+  // Grants are execution authority, not conversation content, even when nested.
+  const pending = [data];
+  while (pending.length) {
+    const entry = pending.pop();
+    if (Array.isArray(entry)) {
+      for (const item of entry) pending.push(item);
+    } else if (entry && typeof entry === "object")
+      for (const key of Object.keys(entry)) {
+        if (/grant/i.test(key)) entry[key] = "[REDACTED]";
+        else pending.push(entry[key]);
+      }
+  }
+  return data;
 }
 
 export async function getA2ATask(
@@ -421,40 +449,62 @@ export async function getA2ATask(
     WHERE t."taskId" = ${taskId} OR t."rootTaskId" = ${taskId} ORDER BY (t."taskId" = ${taskId}) DESC LIMIT 1`);
   const task = found[0];
   if (!task) return null;
-  const [roots, treeRows, events, ledgerTimeline] = await Promise.all([
-    db.$queryRaw<TaskRow[]>(
-      Prisma.sql`WITH ${tables} SELECT r.* FROM roots r WHERE r."rootTaskId" = ${task.rootTaskId} AND r."workspaceId" = ${task.workspaceId}`,
-    ),
-    db.$queryRaw<TaskRow[]>(
-      Prisma.sql`WITH ${tables} SELECT t.* FROM tasks t WHERE t."rootTaskId" = ${task.rootTaskId} AND t."workspaceId" = ${task.workspaceId} ORDER BY t."startedAt", t."taskId"`,
-    ),
-    db.$queryRaw<
-      {
-        id: string;
-        createdAt: Date;
-        level: string;
-        message: string;
-        attributes: JsonValue | null;
-        eventName: string;
-      }[]
-    >(Prisma.sql`
+  // Establish ownership before auditing, and fail closed before reading any ledger body.
+  await writeAudit(db, {
+    actorId: scope.userId,
+    workspaceId: task.workspaceId,
+    action: "logging.detail.viewed",
+    targetType: "a2aTask",
+    targetId: task.rootTaskId,
+  });
+  const [roots, treeRows, events, ledgerEvents, ledgerTasks] =
+    await Promise.all([
+      db.$queryRaw<TaskRow[]>(
+        Prisma.sql`WITH ${tables} SELECT r.* FROM roots r WHERE r."rootTaskId" = ${task.rootTaskId} AND r."workspaceId" = ${task.workspaceId}`,
+      ),
+      db.$queryRaw<TaskRow[]>(
+        Prisma.sql`WITH ${tables} SELECT t.* FROM tasks t WHERE t."rootTaskId" = ${task.rootTaskId} AND t."workspaceId" = ${task.workspaceId} ORDER BY t."startedAt", t."taskId"`,
+      ),
+      db.$queryRaw<
+        {
+          id: string;
+          createdAt: Date;
+          level: string;
+          message: string;
+          attributes: JsonValue | null;
+          eventName: string;
+        }[]
+      >(Prisma.sql`
       WITH ${tables} SELECT e.id, e."createdAt", e.level, e.message, e.attributes, e."eventName"
       FROM scoped_events e JOIN tasks t ON t."taskId" = e.meta->>'taskId' AND t."workspaceId" = e."workspaceId"
       WHERE t."rootTaskId" = ${task.rootTaskId} AND t."workspaceId" = ${task.workspaceId} ORDER BY e."createdAt", e.id`),
-    db.$queryRaw<
-      {
-        taskId: string;
-        sequence: number;
-        createdAt: Date;
-        state: string | null;
-      }[]
-    >(Prisma.sql`
-      WITH ${tables} SELECT e."taskId", e.sequence, e."createdAt",
-        COALESCE(e.payload->'statusUpdate'->'status'->>'state', e.payload->'task'->'status'->>'state') AS state
+      db.$queryRaw<
+        {
+          taskId: string;
+          sequence: number;
+          createdAt: Date;
+          payload: JsonValue;
+        }[]
+      >(Prisma.sql`
+      WITH ${tables} SELECT e."taskId", e.sequence, e."createdAt", e.payload
       FROM "A2AEvent" e JOIN tasks t ON t."taskId" = e."taskId"
       JOIN "A2ATask" ledger ON ledger.id = e."taskId" JOIN "A2AContext" c ON c.id = ledger."contextId" AND c."workspaceId" = t."workspaceId"
       WHERE t."workspaceId" = ${task.workspaceId} AND t."rootTaskId" = ${task.rootTaskId} ORDER BY e."createdAt", e.sequence`),
-  ]);
+      db.$queryRaw<
+        {
+          taskId: string;
+          createdAt: Date;
+          updatedAt: Date;
+          request: JsonValue;
+          snapshot: JsonValue;
+        }[]
+      >(Prisma.sql`
+      WITH ${tables} SELECT ledger.id AS "taskId", ledger."createdAt", ledger."updatedAt", ledger.request, ledger.snapshot
+      FROM "A2ATask" ledger JOIN "A2AContext" c ON c.id = ledger."contextId"
+      JOIN tasks t ON t."taskId" = ledger.id AND t."workspaceId" = c."workspaceId"
+      WHERE c."workspaceId" = ${task.workspaceId} AND t."rootTaskId" = ${task.rootTaskId}
+      ORDER BY ledger."createdAt", ledger.id`),
+    ]);
   const root = roots[0];
   if (!root) return null;
   const names = await resolveNames(references([root, ...treeRows]));
@@ -471,23 +521,8 @@ export async function getA2ATask(
   const messages = new Map<string, A2AMessageView>();
   const artifacts = new Map<string, A2AArtifactView>();
   const protocol: A2ATaskDetail["protocol"] = [];
-  const timeline: TimelineEntry[] = ledgerTimeline.flatMap(
-    (entry): TimelineEntry[] => {
-      const state = entry.state;
-      if (!state) return [];
-      return [
-        {
-          id: `ledger:${entry.taskId}:${entry.sequence}`,
-          taskId: entry.taskId,
-          time: entry.createdAt.toISOString(),
-          level: errorStates.includes(state) ? "error" : "info",
-          message: state,
-          state,
-          eventName: "a2a.task.state",
-        },
-      ];
-    },
-  );
+  const taskIds = new Set(treeRows.map((row) => row.taskId));
+  const timeline: TimelineEntry[] = [];
   for (const event of events) {
     const metadata = getA2aMetadata(event.attributes);
     timeline.push({
@@ -508,6 +543,8 @@ export async function getA2ATask(
     const response = payload?.response ?? null;
     protocol.push({
       eventId: event.id,
+      source: "log",
+      taskId: metadata?.taskId,
       request,
       response,
       bodyState: detail.detailState,
@@ -523,6 +560,7 @@ export async function getA2ATask(
         event.createdAt.toISOString(),
         messages,
         artifacts,
+        taskIds,
       );
       collectContent(
         response,
@@ -530,9 +568,85 @@ export async function getA2ATask(
         event.createdAt.toISOString(),
         messages,
         artifacts,
+        taskIds,
       );
     }
   }
+  // Replay ledger events once, then apply each authoritative final snapshot once.
+  // Separate maps prevent a captured copy of a streaming delta from being appended twice.
+  const ledgerMessages = new Map<string, A2AMessageView>();
+  const ledgerArtifacts = new Map<string, A2AArtifactView>();
+  for (const entry of ledgerTasks) {
+    const request = ledgerContent(entry.request);
+    protocol.push({
+      eventId: `ledger:${entry.taskId}:request`,
+      source: "ledger",
+      taskId: entry.taskId,
+      request,
+      bodyState: "available",
+    });
+    collectContent(
+      request,
+      entry.taskId,
+      entry.createdAt.toISOString(),
+      ledgerMessages,
+      ledgerArtifacts,
+      taskIds,
+    );
+  }
+  for (const entry of ledgerEvents) {
+    const payload = ledgerContent(entry.payload);
+    const envelope = object(payload);
+    const status =
+      object(object(envelope?.statusUpdate)?.status) ??
+      object(object(envelope?.task)?.status);
+    const state = typeof status?.state === "string" ? status.state : null;
+    if (state)
+      timeline.push({
+        id: `ledger:${entry.taskId}:${entry.sequence}`,
+        taskId: entry.taskId,
+        time: entry.createdAt.toISOString(),
+        level: errorStates.includes(state) ? "error" : "info",
+        message: state,
+        state,
+        eventName: "a2a.task.state",
+      });
+    protocol.push({
+      eventId: `ledger:${entry.taskId}:event:${entry.sequence}`,
+      source: "ledger",
+      taskId: entry.taskId,
+      response: payload,
+      bodyState: "available",
+    });
+    collectContent(
+      payload,
+      entry.taskId,
+      entry.createdAt.toISOString(),
+      ledgerMessages,
+      ledgerArtifacts,
+      taskIds,
+    );
+  }
+  for (const entry of ledgerTasks) {
+    const snapshot = ledgerContent(entry.snapshot);
+    protocol.push({
+      eventId: `ledger:${entry.taskId}:snapshot`,
+      source: "ledger",
+      taskId: entry.taskId,
+      response: snapshot,
+      bodyState: "available",
+    });
+    collectContent(
+      snapshot,
+      entry.taskId,
+      entry.updatedAt.toISOString(),
+      ledgerMessages,
+      ledgerArtifacts,
+      taskIds,
+    );
+  }
+  for (const [key, message] of ledgerMessages) messages.set(key, message);
+  for (const [key, artifact] of ledgerArtifacts) artifacts.set(key, artifact);
   timeline.sort(
     (a, b) => a.time.localeCompare(b.time) || a.id.localeCompare(b.id),
   );

@@ -75,7 +75,6 @@ export const PI_SDK_RUNTIME = {
 const PACKAGE_INSTALL_TIMEOUT_MS = 15 * 60_000;
 const TURN_TIMEOUT_MS = 30 * 60_000;
 const MAX_STDOUT_BYTES = 8 * 1024 * 1024;
-const MAX_STDERR_BYTES = 64 * 1024;
 const RUNTIME_TEMP_ROOT = "/workspace/.toolplane/runtime-tmp";
 const NPM_CACHE = "/workspace/.toolplane/npm-cache";
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -261,19 +260,12 @@ type DockerExecOptions = {
 const installs = new Map<string, Promise<string>>();
 const uncertainPiSandboxes = new Set<string>();
 
-function byteSlice(value: string, maxBytes: number): string {
-  const bytes = Buffer.from(value, "utf8");
-  return bytes.byteLength <= maxBytes
-    ? value
-    : `${bytes.subarray(0, maxBytes).toString("utf8")}\n[truncated]`;
-}
-
-function displayValue(value: unknown, maxBytes = 20_000): string {
-  if (typeof value === "string") return byteSlice(value, maxBytes);
+function displayValue(value: unknown): string {
+  if (typeof value === "string") return value;
   try {
-    return byteSlice(JSON.stringify(value), maxBytes);
+    return JSON.stringify(value);
   } catch {
-    return byteSlice(String(value), maxBytes);
+    return String(value);
   }
 }
 
@@ -663,9 +655,12 @@ async function rpc(server, method, params, signal, maxBytes) {
       ? reason
       : response.status === 401 || response.status === 403 ? 'MCP_GRANT_REVOKED' : 'MCP_UNREACHABLE',
   });
-  if (!response.ok) throw failure('MCP HTTP ' + response.status + ': ' + short(text));
+  if (!response.ok) throw failure('MCP HTTP ' + response.status + ': ' + text);
   if (payload === undefined) throw failure('MCP returned invalid JSON');
-  if (payload && payload.error) throw failure(short(payload.error.message || payload.error));
+  if (payload && payload.error) {
+    const message = payload.error.message || payload.error;
+    throw failure(typeof message === 'string' ? message : JSON.stringify(message));
+  }
   return payload && payload.result ? payload.result : {};
 }
 
@@ -1268,6 +1263,7 @@ function runDockerOnce(args: string[], timeoutMs = 10_000): Promise<void> {
       stdio: ["ignore", "ignore", "pipe"],
     });
     let stderr = "";
+    const stderrDecoder = new StringDecoder("utf8");
     let settled = false;
     const finish = (error?: Error) => {
       if (settled) return;
@@ -1282,11 +1278,13 @@ function runDockerOnce(args: string[], timeoutMs = 10_000): Promise<void> {
       finish(new Error("Docker cleanup timed out."));
     }, timeoutMs);
     child.stderr?.on("data", (chunk: Buffer) => {
-      if (Buffer.byteLength(stderr) < MAX_STDERR_BYTES)
-        stderr += chunk.toString();
+      stderr += stderrDecoder.write(chunk);
+    });
+    child.stderr?.once("end", () => {
+      stderr += stderrDecoder.end();
     });
     child.once("error", (error) => finish(error));
-    child.once("exit", (code) =>
+    child.once("close", (code) =>
       code === 0
         ? finish()
         : finish(
@@ -1553,14 +1551,10 @@ function runTrackedDockerExecOwned(
       consumeStdout(stdoutDecoder.write(chunk)),
     );
     child.stderr?.on("data", (chunk: Buffer) => {
-      if (Buffer.byteLength(stderr) < MAX_STDERR_BYTES)
-        stderr += stderrDecoder.write(chunk);
+      stderr += stderrDecoder.write(chunk);
     });
     child.once("error", (error) => void finish(null, null, error));
-    child.once(
-      options.piHarness ? "close" : "exit",
-      (code, signal) => void finish(code, signal),
-    );
+    child.once("close", (code, signal) => void finish(code, signal));
     if (options.piHarness) {
       const onTransportError = (error: NodeJS.ErrnoException) =>
         stop(
@@ -2637,7 +2631,7 @@ async function runPiSdk(
     });
     // `CODE: REASON name` lets the console explain which server failed and why.
     throw new Error(
-      `PI_MCP_TOOLS_UNAVAILABLE: ${mcpUnavailable.reason} ${(deployment?.name || mcpUnavailable.deploymentId).slice(0, 120)}`,
+      `PI_MCP_TOOLS_UNAVAILABLE: ${mcpUnavailable.reason} ${deployment?.name || mcpUnavailable.deploymentId}`,
     );
   }
   if (error) throw new Error(error);

@@ -421,7 +421,6 @@ export async function getLogTrace(scope: LogScope, traceId: string) {
       ...("workspaceId" in scope ? { workspaceId: scope.workspaceId } : {}),
     },
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-    take: 501,
   });
 }
 

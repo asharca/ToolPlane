@@ -148,6 +148,8 @@ export type A2ATaskDetail = {
   timeline: TimelineEntry[];
   protocol: {
     eventId: string;
+    source?: "log" | "ledger";
+    taskId?: string;
     request?: JsonValue | null;
     response?: JsonValue | null;
     bodyState: BodyState;
