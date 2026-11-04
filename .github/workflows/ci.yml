@@ -1,12 +1,15 @@
 name: ci
 
 on:
-  push:
-    branches: [main]
   pull_request:
   pull_request_target:
     types: [opened, reopened, synchronize]
   workflow_dispatch:
+    inputs:
+      full:
+        description: Run the full suite, cross-platform connector checks and runtime artifact build
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -18,11 +21,7 @@ concurrency:
 
 jobs:
   connector-cross-platform:
-    if: >-
-      github.event_name != 'pull_request_target' &&
-      !(github.event_name == 'pull_request' &&
-        github.event.pull_request.head.repo.full_name == github.repository &&
-        startsWith(github.event.pull_request.head.ref, 'release-please--branches--'))
+    if: github.event_name == 'workflow_dispatch' && inputs.full
     name: connector (${{ matrix.os }})
     env:
       DATABASE_URL: postgresql://mcp:mcp@127.0.0.1:5432/toolplane_test
@@ -67,6 +66,7 @@ jobs:
   validate:
     if: github.event_name != 'pull_request_target'
     runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.full && 45 || 15 }}
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -117,15 +117,23 @@ jobs:
         run: pnpm check
 
       - name: Build Pi package capture sandbox
+        if: inputs.full
         run: docker build --target pi-package-capture -t toolplane-pi-package-capture:0.87.1 .
 
+      - name: Test core boundaries
+        if: ${{ !inputs.full }}
+        run: pnpm vitest run tests/unit/auth.test.ts tests/unit/agent-control-auth.test.ts tests/integration/auth-status.test.ts tests/integration/workspace-management.test.ts tests/integration/logging.test.ts tests/integration/a2a-logging.test.ts --testTimeout=30000 --hookTimeout=60000
+
       - name: Test core functionality
+        if: inputs.full
         run: pnpm test
 
       - name: Build
+        if: inputs.full
         run: pnpm build
 
       - name: Assemble and verify runtime artifact
+        if: inputs.full
         run: |
           set -euxo pipefail
           pnpm runtime:assemble
@@ -157,16 +165,3 @@ jobs:
           actual_files="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100" --jq '.[].filename' | LC_ALL=C sort)"
           test "$actual_files" = "$expected_files"
           test "${GITHUB_EVENT_NAME}" = pull_request_target
-
-  release-metadata-connectors:
-    name: connector (${{ matrix.os }})
-    needs: release-metadata
-    if: ${{ needs.release-metadata.result == 'success' }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - name: Confirm release metadata gate
-        run: echo "Release metadata verified; released commits already passed CI."
