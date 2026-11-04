@@ -1,4 +1,5 @@
 import "server-only";
+import { getTransportSettings } from "@/lib/admin/transport-settings";
 import {
   createHash,
   randomUUID,
@@ -332,7 +333,7 @@ export async function submitTaskInTransaction(
       410,
       "Published legacy execution is retired; retained tasks are read-only.",
     );
-  validateSend(request, LOCAL_OUTPUT_MODES);
+  validateSend(request, LOCAL_OUTPUT_MODES, await getTransportSettings());
   const message = request.message;
   if (!message) throw new RequestMalformedError("A user message is required.");
   const contentHash = digest({
@@ -414,7 +415,11 @@ export async function submitTaskInTransaction(
       where: { id: grant.remoteAgentId, workspaceId: grant.workspaceId },
     });
     const card = AgentCard.fromJSON(peer.card);
-    validateSend(request, card.defaultOutputModes);
+    validateSend(
+      request,
+      card.defaultOutputModes,
+      await getTransportSettings(),
+    );
     if (
       message.parts.some(
         (part) =>

@@ -1,4 +1,5 @@
 import "server-only";
+import { getTransportSettings } from "@/lib/admin/transport-settings";
 import { createHash, randomBytes } from "node:crypto";
 import { db } from "@/lib/db";
 import { sandboxMcpExportable } from "./mcp-policy";
@@ -66,7 +67,8 @@ export async function resolveSandboxMcpGrant(sandboxId: string, token: string) {
   if (
     !grant ||
     (grant.oauthResource &&
-      grant.oauthResource !== sandboxMcpResource(sandboxId))
+      grant.oauthResource !==
+        sandboxMcpResource(sandboxId, await getTransportSettings()))
   )
     return null;
   const sandbox = await ownedSandbox(sandboxId, grant.userId);

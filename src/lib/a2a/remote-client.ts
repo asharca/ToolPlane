@@ -1,4 +1,5 @@
 import "server-only";
+import { getTransportSettings } from "@/lib/admin/transport-settings";
 import {
   AgentCard,
   type Message,
@@ -98,17 +99,19 @@ export async function discoverRemoteConnection(
   signal?: AbortSignal,
   explicitRpcUrl?: string,
 ): Promise<{ card: AgentCard; cardUrl: string; rpcUrl: string }> {
-  const approvedCardUrl = remoteUrl(cardUrl).href;
+  const policy = await getTransportSettings();
+  const approvedCardUrl = remoteUrl(cardUrl, policy).href;
   const explicitPair =
     explicitRpcUrl === undefined
       ? undefined
-      : remotePair(approvedCardUrl, explicitRpcUrl);
+      : remotePair(approvedCardUrl, explicitRpcUrl, policy);
   const response = await fetchRemoteJson(
     approvedCardUrl,
     "GET",
     undefined,
     token,
     signal,
+    policy,
   );
   let raw: unknown;
   try {
@@ -126,7 +129,7 @@ export async function discoverRemoteConnection(
         )
           return false;
         try {
-          remotePair(approvedCardUrl, item.url);
+          remotePair(approvedCardUrl, item.url, policy);
           return true;
         } catch (error) {
           if (error instanceof RemoteA2AError) return false;
@@ -140,7 +143,7 @@ export async function discoverRemoteConnection(
           ? "Multiple compatible RPC addresses. Specify an advanced RPC URL."
           : "Card has no compatible same-origin A2A 1.0 JSONRPC address.",
       );
-    pair = remotePair(approvedCardUrl, candidates[0].url);
+    pair = remotePair(approvedCardUrl, candidates[0].url, policy);
   }
   return {
     ...pair,

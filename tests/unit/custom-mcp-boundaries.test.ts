@@ -8,6 +8,33 @@ import {
 } from "@/lib/workspace/custom-mcp";
 
 describe("MCP configuration trust boundaries", () => {
+  it("accepts global HTTP consent without persisting it as per-deployment authorization", () => {
+    const config = JSON.stringify({
+      example: { type: "http", url: "http://example.com/mcp" },
+    });
+    expect(() =>
+      parseMcpJsonConfig(config, undefined, { allowUnsafeHttp: false }),
+    ).toThrow();
+    const parsed = parseMcpJsonConfig(config, undefined, {
+      allowUnsafeHttp: false,
+      allowHttp: true,
+    });
+    expect(parsed.source).toBe("remote");
+    expect(parsed.installCfg).toMatchObject({ allowUnsafeHttp: false });
+    for (const url of [
+      "ftp://example.com/mcp",
+      "http://user:pass@example.com/mcp",
+      "http://127.0.0.1/mcp",
+      "http://example.com/mcp#secret",
+    ])
+      expect(() =>
+        parseMcpJsonConfig(
+          JSON.stringify({ example: { type: "http", url } }),
+          undefined,
+          { allowHttp: true },
+        ),
+      ).toThrow();
+  });
   it("never exposes plaintext or encrypted credentials", () => {
     const { credentialEnvelope } = sealMcpEnvironment({}, "workspace-1", {
       TOKEN: "private-plaintext",

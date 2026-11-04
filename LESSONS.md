@@ -68,6 +68,7 @@
 - **证据**：清理前的 [sandbox actions 大型 mock 测试](https://github.com/asharca/ToolPlane/blob/8dab4aa09edbf187832c1d2ae7c48ec9d2a36432/tests/unit/sandbox-actions.test.ts)、[种子数据断言](https://github.com/asharca/ToolPlane/blob/8dab4aa09edbf187832c1d2ae7c48ec9d2a36432/tests/unit/smoke-mcp-catalog.test.ts)；现行边界见 [AGENTS.md 的 Verification](AGENTS.md#verification) 与 [README 开发命令](README.md#开发命令)。
 - **验证隔离补充（2026-11-01）**：A2A 集成测试与运行中的开发服务共用数据库时，开发 worker 可领取测试任务并创建 Deployment，干扰远端状态与容量断言；Postgres 日志确认 A2AContext 插入与 Deployment 插入形成 Agent／Workspace 锁死锁。串行测试文件不能隔离另一个服务进程；运行任务型集成测试应使用不被开发 worker 连接的独立本地数据库。检查数据库连接目标，并用独立库重跑受影响的 A2A 集成场景。
 - **环境传递补充（2026-11-03）**：仅在 Eval 中构造隔离库环境对象、却未传给实际启动测试的 shell，仍会连接开发库；本次中止误启动并按精确 fixture ID 清理残留，随后在独立库通过 102 项集成检查。启动测试的同一进程必须设置并检查实际 `DATABASE_URL` 的主机和库名，不以另一个进程里的变量作为隔离证据。
+- **独立 UI 实例补充（2026-11-05）**：临时 Next 启动器曾被继承的 `DATABASE_URL` 覆盖 `.env`，隔离库仍使用了错误数据库的口令；修正后又与已有 Connector broker 共用端口，导致 readiness 返回 503。验证实例须显式确定实际子进程的连接目标及配置优先级，并隔离 HTTP、Connector 与运行时所有权域；`Ready in` 不替代 `/api/v1/readiness`。本次换用干净独立库及独立 broker 端口后 readiness 为 200，再验证真实管理员保存、刷新、审计与恢复默认；未修改线上配置或清除既有实例的 dirty 标记。
 - **预检 fixture 补充（2026-11-02）**：`a2a-local.test.ts` 每次 `beforeEach` 为五个 Agent 完整发布修订，反复执行相同 Docker 原生能力预检，导致 24 项在 hook 的 10 秒上限超时。授权数据库用例沿用 `agents-mutations.test.ts` 的真实配置捕获与事务内不可变修订 fixture，不绕过数据库约束；原生发布预检保留在显式发布与运行时验收路径。未提高 timeout，修正后本地委派与历史资源两文件 71 项在 34.47 秒通过。历史 fixture 同时须原子写入子定义与当前版本，固定修订会话须显式标为已解析，不能靠放宽数据库约束让测试通过。
 - **确认日期**：2026-10-26。
 

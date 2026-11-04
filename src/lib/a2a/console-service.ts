@@ -1,4 +1,5 @@
 import "server-only";
+import { getTransportSettings } from "@/lib/admin/transport-settings";
 import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { db } from "@/lib/db";
@@ -126,6 +127,7 @@ export async function getA2AConsoleView(
       ctx.slug,
       ctx.agentId,
       endpoint?.publicId,
+      await getTransportSettings(),
     );
   } catch {
     /* Return a safe configuration warning, not Host-derived URLs. */

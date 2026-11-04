@@ -1,4 +1,5 @@
 import "server-only";
+import { getTransportSettings } from "@/lib/admin/transport-settings";
 import { createHmac, randomUUID } from "node:crypto";
 import { SignJWT, jwtVerify, type JWTPayload } from "jose";
 import type { Prisma } from "@prisma/client";
@@ -307,11 +308,14 @@ async function prepareMcp(
     ]),
   );
   if (config.env !== undefined) config.env = env;
-  const parsed = parseCustomMcpInput({
-    source: "config",
-    config: JSON.stringify({ mcpServers: { [server.name]: config } }),
-    allowUnsafeHttp: override?.allowUnsafeHttp === true,
-  });
+  const parsed = parseCustomMcpInput(
+    {
+      source: "config",
+      config: JSON.stringify({ mcpServers: { [server.name]: config } }),
+      allowUnsafeHttp: override?.allowUnsafeHttp === true,
+    },
+    await getTransportSettings(),
+  );
   const cfg = record(parsed.installCfg);
   const required = [
     ...new Set([

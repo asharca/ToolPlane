@@ -16,6 +16,13 @@ import {
 } from "../fixtures/a2a-remote";
 import type * as RemoteNetwork from "@/lib/a2a/remote-network";
 const network = vi.hoisted(() => ({ fetch: vi.fn() }));
+vi.mock("@/lib/admin/transport-settings", () => ({
+  getTransportSettings: async () => ({
+    allowHttp: false,
+    a2aInlineBytes: 32768,
+    source: "default",
+  }),
+}));
 vi.mock("@/lib/a2a/remote-network", async (original) => ({
   ...(await original<typeof RemoteNetwork>()),
   fetchRemoteJson: network.fetch,
@@ -145,6 +152,34 @@ describe("strict A2A 1.0 remote profile", () => {
       expect(result.artifacts[0].parts[0].content?.$case).not.toBe("text");
     },
   );
+  it("validates peer inline files using an explicit policy snapshot, not a process-global override", () => {
+    const policy = { allowHttp: true, a2aInlineBytes: 512 * 1024 };
+    const part = {
+      raw: Buffer.alloc(policy.a2aInlineBytes, 97).toString("base64"),
+      mediaType: "application/octet-stream",
+    };
+    const wire = response({
+      message: { messageId: "large-file", role: "ROLE_AGENT", parts: [part] },
+    });
+    expect(() => validateRemoteResponse(request, wire, policy)).not.toThrow();
+    expect(() => validateRemoteResponse(request, wire)).toThrow();
+    part.raw = Buffer.alloc(policy.a2aInlineBytes + 1).toString("base64");
+    expect(() => validateRemoteResponse(request, wire, policy)).toThrow();
+    const url = response({
+      message: {
+        messageId: "http-file",
+        role: "ROLE_AGENT",
+        parts: [
+          {
+            url: "http://agent.example/report",
+            mediaType: "application/octet-stream",
+          },
+        ],
+      },
+    });
+    expect(() => validateRemoteResponse(request, url, policy)).not.toThrow();
+    expect(() => validateRemoteResponse(request, url)).toThrow();
+  });
   it("omits file capabilities and peer metadata in nested transport diagnostics", () => {
     const payload = {
       result: {
@@ -278,6 +313,7 @@ describe("remote connection discovery", () => {
       undefined,
       "peer-key",
       signal,
+      expect.objectContaining({ allowHttp: false, a2aInlineBytes: 32768 }),
     );
   });
   it("supports unauthenticated cards without requiring a token", async () => {

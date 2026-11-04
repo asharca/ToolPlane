@@ -1,4 +1,6 @@
 import "server-only";
+import { getTransportSettings } from "@/lib/admin/transport-settings";
+import { permitsTransportProtocol } from "@/lib/transport-policy";
 import {
   createHash,
   createHmac,
@@ -43,7 +45,6 @@ export const TASK_FILE_LIMITS = {
   taskBytes: 100 * 1024 * 1024,
   workspaceBytes: 1024 * 1024 * 1024,
   filesPerTask: 20,
-  inlineBytes: 32 * 1024,
   retentionMs: 7 * 24 * 60 * 60 * 1000,
   ticketMs: 15 * 60 * 1000,
   uploadMs: 15 * 60 * 1000,
@@ -609,7 +610,11 @@ export async function createTaskFileUrl(
       })(),
   );
   const origin = new URL(baseUrl);
-  if (origin.protocol !== "https:" || origin.username || origin.password)
+  if (
+    !permitsTransportProtocol(origin.protocol, await getTransportSettings()) ||
+    origin.username ||
+    origin.password
+  )
     throw new Error("HTTPS file egress origin is required.");
   const expiry = String(
     Math.min(

@@ -15,6 +15,7 @@ import {
 import { McpDeploymentsBrowser } from "@/components/dashboard/McpDeploymentsBrowser";
 import { formatInTimeZone, resolveUserTimeZone } from "@/lib/timezone";
 import { DeployCustomMcpDialog } from "@/components/dashboard/DeployCustomMcpDialog";
+import { getTransportSettings } from "@/lib/admin/transport-settings";
 
 export const dynamic = "force-dynamic";
 
@@ -51,7 +52,10 @@ export default async function McpServersPage({
   const timeZone = resolveUserTimeZone(user);
   const ws = await getWorkspaceForUser(slug, user.id);
   if (!ws) redirect("/app");
-  const deployments = await getDeployments(ws.id);
+  const [deployments, { allowHttp }] = await Promise.all([
+    getDeployments(ws.id),
+    getTransportSettings(),
+  ]);
   const deploymentItems = deployments.map((deployment) => {
     const label = deploymentLabel(deployment);
     return {
@@ -80,6 +84,7 @@ export default async function McpServersPage({
             <>
               <DeployCustomMcpDialog
                 slug={slug}
+                allowHttp={allowHttp}
                 defaultOpen={query.create === "1"}
               />
               <ButtonLink href={marketHref} variant="secondary" size="md">
@@ -94,7 +99,7 @@ export default async function McpServersPage({
             {t("deploymentCountSummary", { count: deploymentItems.length })}
           </p>
         </DashboardToolbar>
-        {query.error === "unsafeHttpConfirmationRequired" ? (
+        {query.error === "unsafeHttpConfirmationRequired" && !allowHttp ? (
           <p role="alert" className="text-sm text-destructive">
             {t("unsafeHttpConsentDescription")}
           </p>

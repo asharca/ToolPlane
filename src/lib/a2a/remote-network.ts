@@ -1,6 +1,14 @@
 import "server-only";
 import { lookup } from "node:dns/promises";
 import { request } from "node:https";
+import { request as httpRequest } from "node:http";
+import { getTransportSettings } from "@/lib/admin/transport-settings";
+import {
+  DEFAULT_TRANSPORT_POLICY,
+  permitsTransportProtocol,
+  a2aTransportBodyBytes,
+  type TransportPolicy,
+} from "@/lib/transport-policy";
 import { BlockList, isIP } from "node:net";
 import { validateRemoteResponse, fileSafeLogPayload } from "./remote-wire";
 import { runtimeEnv } from "@/lib/runtime-env";
@@ -60,7 +68,10 @@ export function publicRemoteAddress(address: string): boolean {
         !blocked.check(address, "ipv6");
 }
 /** Deployment administrator approves exact origins; workspace administrators cannot override this policy. */
-export function remoteUrl(value: string): URL {
+export function remoteUrl(
+  value: string,
+  policy: TransportPolicy = DEFAULT_TRANSPORT_POLICY,
+): URL {
   let url: URL;
   try {
     url = new URL(value);
@@ -70,7 +81,7 @@ export function remoteUrl(value: string): URL {
   if (
     value !== value.trim() ||
     /[^\x21-\uFFFF]|[\x7f\\]/.test(value) ||
-    url.protocol !== "https:" ||
+    !permitsTransportProtocol(url.protocol, policy) ||
     url.username ||
     url.password ||
     url.search ||
@@ -103,9 +114,13 @@ export function remoteUrl(value: string): URL {
     );
   return url;
 }
-export function remotePair(cardUrl: string, rpcUrl: string) {
-  const card = remoteUrl(cardUrl),
-    rpc = remoteUrl(rpcUrl);
+export function remotePair(
+  cardUrl: string,
+  rpcUrl: string,
+  policy: TransportPolicy = DEFAULT_TRANSPORT_POLICY,
+) {
+  const card = remoteUrl(cardUrl, policy),
+    rpc = remoteUrl(rpcUrl, policy);
   if (card.origin !== rpc.origin || card.href === rpc.href)
     throw new RemoteA2AError(
       "Card and RPC addresses must be distinct paths on the same approved origin.",
@@ -146,9 +161,19 @@ async function fetchPinnedRemoteJson(
   body: string | undefined,
   token: string | undefined,
   signal?: AbortSignal,
+  snapshot?: TransportPolicy,
 ): Promise<Response> {
-  const url = remoteUrl(urlValue);
-  if (body && Buffer.byteLength(body) > REMOTE_REQUEST_BYTES)
+  const policy = snapshot ?? (await getTransportSettings());
+  const url = remoteUrl(urlValue, policy);
+  const responseBytes = Math.max(
+    REMOTE_RESPONSE_BYTES,
+    a2aTransportBodyBytes(policy),
+  );
+  if (
+    body &&
+    Buffer.byteLength(body) >
+      Math.max(REMOTE_REQUEST_BYTES, a2aTransportBodyBytes(policy))
+  )
     throw new RemoteA2AError("Remote request size limit exceeded.");
   if (token && (!/^[\x21-\x7e]+$/.test(token) || token.length > 8192))
     throw new RemoteA2AError("Invalid remote credential.");
@@ -166,7 +191,7 @@ async function fetchPinnedRemoteJson(
       if (abortSignal.aborted) error.cause = abortSignal.reason;
       reject(error);
     };
-    const req = request(
+    const req = (url.protocol === "http:" ? httpRequest : request)(
       url,
       {
         method,
@@ -207,7 +232,7 @@ async function fetchPinnedRemoteJson(
             res.headers["content-encoding"] !== "identity") ||
           (res.headers["a2a-version"] &&
             res.headers["a2a-version"] !== "1.0") ||
-          Number(res.headers["content-length"]) > REMOTE_RESPONSE_BYTES
+          Number(res.headers["content-length"]) > responseBytes
         ) {
           res.destroy();
           req.destroy();
@@ -218,7 +243,7 @@ async function fetchPinnedRemoteJson(
         let bytes = 0;
         res.on("data", (chunk: Buffer) => {
           bytes += chunk.length;
-          if (bytes > REMOTE_RESPONSE_BYTES) {
+          if (bytes > responseBytes) {
             res.destroy();
             req.destroy();
             fail();
@@ -255,7 +280,8 @@ export function remoteRpcFetch(
 ): typeof fetch {
   return async (input, init) => {
     const req = new Request(input, init);
-    const approvedUrl = remoteUrl(rpcUrl).href;
+    const policy = await getTransportSettings();
+    const approvedUrl = remoteUrl(rpcUrl, policy).href;
     if (req.url !== approvedUrl || req.method !== "POST")
       throw new RemoteA2AError("Remote transport target changed.");
     const started = performance.now();
@@ -287,6 +313,7 @@ export function remoteRpcFetch(
         body,
         token,
         req.signal,
+        policy,
       );
       httpStatus = response.status;
       try {
@@ -294,7 +321,7 @@ export function remoteRpcFetch(
         responsePayload = { rawText: text };
         responseComplete = true;
         responsePayload = JSON.parse(text);
-        validateRemoteResponse(rpc, responsePayload);
+        validateRemoteResponse(rpc, responsePayload, policy);
       } catch {
         throw new RemoteA2AError(
           "Remote output is not a valid supported A2A response.",
@@ -376,7 +403,10 @@ export async function fetchRemoteJson(
 
 export const REMOTE_FILE_BYTES = 10 * 1024 * 1024;
 /** Signed query strings are accepted only by the file transport, never Card/RPC. */
-export function remoteFileUrl(value: string): URL {
+export function remoteFileUrl(
+  value: string,
+  policy: TransportPolicy = DEFAULT_TRANSPORT_POLICY,
+): URL {
   let url: URL;
   try {
     url = new URL(value);
@@ -387,7 +417,7 @@ export function remoteFileUrl(value: string): URL {
     value !== value.trim() ||
     value.length > 8192 ||
     /[^\x21-\uFFFF]|[\x7f\\]/.test(value) ||
-    url.protocol !== "https:" ||
+    !permitsTransportProtocol(url.protocol, policy) ||
     url.username ||
     url.password ||
     url.hash
@@ -399,7 +429,7 @@ export function remoteFileUrl(value: string): URL {
   if (!privateAddresses) {
     const clean = new URL(url);
     clean.search = "";
-    remoteUrl(clean.href);
+    remoteUrl(clean.href, policy);
   }
   return url;
 }
@@ -450,7 +480,7 @@ export async function fetchRemoteFile(
   value: string,
   signal?: AbortSignal,
 ): Promise<ReadableStream<Uint8Array>> {
-  const url = remoteFileUrl(value);
+  const url = remoteFileUrl(value, await getTransportSettings());
   if (inflight >= 16)
     throw new RemoteA2AError("Remote connection capacity reached.");
   inflight++;
@@ -478,7 +508,7 @@ export async function fetchRemoteFile(
     abortSignal.throwIfAborted();
     const { promise, resolve, reject } =
       Promise.withResolvers<ReadableStream<Uint8Array>>();
-    const req = request(
+    const req = (url.protocol === "http:" ? httpRequest : request)(
       url,
       {
         method: "GET",

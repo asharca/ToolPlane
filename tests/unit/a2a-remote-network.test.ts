@@ -16,14 +16,27 @@ import {
 import { REMOTE_CARD, REMOTE_RPC, remoteTask } from "../fixtures/a2a-remote";
 import type { A2ALogBinding } from "@/lib/observability/a2a-log";
 import { withLogContext } from "@/lib/observability/context";
+import {
+  DEFAULT_TRANSPORT_POLICY,
+  a2aTransportBodyBytes,
+} from "@/lib/transport-policy";
+const responseLimit = Math.max(
+  REMOTE_RESPONSE_BYTES,
+  a2aTransportBodyBytes(DEFAULT_TRANSPORT_POLICY),
+);
 const mocks = vi.hoisted(() => ({
   lookup: vi.fn(),
   request: vi.fn(),
   create: vi.fn(),
   settings: vi.fn(),
+  transportPolicy: vi.fn(),
 }));
 vi.mock("node:dns/promises", () => ({ lookup: mocks.lookup }));
 vi.mock("node:https", () => ({ request: mocks.request }));
+vi.mock("node:http", () => ({ request: mocks.request }));
+vi.mock("@/lib/admin/transport-settings", () => ({
+  getTransportSettings: mocks.transportPolicy,
+}));
 vi.mock("@/lib/db", () => ({
   db: {
     $transaction: async (fn: (tx: unknown) => unknown) =>
@@ -81,6 +94,10 @@ beforeEach(() => {
     JSON.stringify(["https://agent.example"]),
   );
   vi.clearAllMocks();
+  mocks.transportPolicy.mockResolvedValue({
+    ...DEFAULT_TRANSPORT_POLICY,
+    source: "default",
+  });
   status = 200;
   headers = { "content-type": "application/json" };
   body = "{}";
@@ -120,6 +137,35 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 describe("remote HTTPS egress boundary", () => {
+  it("permits configured plaintext without changing exact-origin approval, DNS pinning, or default denial", async () => {
+    const policy = { allowHttp: true, a2aInlineBytes: 512 * 1024 };
+    mocks.transportPolicy.mockResolvedValue(policy);
+    vi.stubEnv("TOOLPLANE_A2A_REMOTE_ORIGINS", '["http://agent.example"]');
+    expect(() => remoteUrl("http://agent.example/rpc")).toThrow();
+    expect(remoteUrl("http://agent.example/rpc", policy).protocol).toBe(
+      "http:",
+    );
+    expect(() => remoteUrl("http://other.example/rpc", policy)).toThrow();
+    expect(() =>
+      remoteUrl("http://user:secret@agent.example/rpc", policy),
+    ).toThrow();
+    expect(() => remoteUrl("ftp://agent.example/rpc", policy)).toThrow();
+    body = "debug-file";
+    expect(
+      await new Response(
+        await fetchRemoteFile("http://agent.example/file"),
+      ).text(),
+    ).toBe("debug-file");
+    expect(options.headers).not.toHaveProperty("authorization");
+    mocks.lookup.mockResolvedValue([{ address: "169.254.169.254", family: 4 }]);
+    await expect(
+      fetchRemoteFile("http://agent.example/file"),
+    ).rejects.toThrow();
+    mocks.transportPolicy.mockResolvedValue(DEFAULT_TRANSPORT_POLICY);
+    await expect(
+      fetchRemoteFile("http://agent.example/file"),
+    ).rejects.toThrow();
+  });
   it("streams file bytes over pinned HTTPS without forwarding peer bearer credentials", async () => {
     body = "file bytes";
     headers = { "content-type": "application/octet-stream" };
@@ -290,7 +336,7 @@ describe("remote HTTPS egress boundary", () => {
       fetchRemoteJson(REMOTE_CARD, "GET", undefined, undefined),
     ).rejects.toThrow();
     headers = { "content-type": "application/json" };
-    body = "x".repeat(REMOTE_RESPONSE_BYTES + 1);
+    body = "x".repeat(responseLimit + 1);
     await expect(
       fetchRemoteJson(REMOTE_CARD, "GET", undefined, undefined),
     ).rejects.toThrow();
@@ -489,7 +535,7 @@ describe("remote HTTPS egress boundary", () => {
   it.each([
     { "content-encoding": "gzip" },
     { "content-type": "text/html" },
-    { "content-length": String(REMOTE_RESPONSE_BYTES + 1) },
+    { "content-length": String(responseLimit + 1) },
   ])("does not read rejected response formats %j", async (rejectedHeaders) => {
     Object.assign(headers, rejectedHeaders);
     body = "unsafe rejected body";

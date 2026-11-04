@@ -2,13 +2,39 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { FlushController } from "@/lib/agents/channels/FlushController";
 import { toSlackMarkdown } from "@/lib/agents/channels/adapters/slack/slackMarkdown";
-import { channelFetch } from "@/lib/agents/channels/http";
+import { channelFetch, sanitizeRemoteUrl } from "@/lib/agents/channels/http";
 import {
   downloadFileAsBase64,
   downloadImageAsBase64,
 } from "@/lib/agents/channels/media";
 import { clampSurrogateBoundary } from "@/lib/agents/channels/text";
 import { splitMessage } from "@/lib/agents/channels/utils";
+vi.mock("@/lib/admin/transport-settings", () => ({
+  getTransportSettings: async () => ({
+    allowHttp: false,
+    a2aInlineBytes: 32768,
+  }),
+}));
+
+describe("channel HTTP debug boundaries", () => {
+  it("relaxes only HTTP/WS with an explicit snapshot while retaining provider hosts, ports and credentials restrictions", () => {
+    const policy = { allowHttp: true };
+    expect(sanitizeRemoteUrl("http://slack.com/file", false, policy)).toBe(
+      "http://slack.com/file",
+    );
+    expect(sanitizeRemoteUrl("ws://slack.com/socket", true, policy)).toBe(
+      "ws://slack.com/socket",
+    );
+    expect(() => sanitizeRemoteUrl("http://slack.com/file")).toThrow();
+    for (const url of [
+      "http://evil.test/file",
+      "http://u:p@slack.com/file",
+      "http://slack.com:8080/file",
+      "ftp://slack.com/file",
+    ])
+      expect(() => sanitizeRemoteUrl(url, false, policy)).toThrow();
+  });
+});
 
 afterEach(() => {
   vi.useRealTimers();

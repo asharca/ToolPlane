@@ -17,6 +17,36 @@ import {
 } from "@/lib/sandboxes/oauth-policy";
 afterEach(() => vi.unstubAllEnvs());
 describe("ChatGPT sandbox OAuth protocol policy", () => {
+  it("uses an explicit HTTP debug snapshot consistently without weakening canonical origin, audience or redirect checks", () => {
+    const policy = { allowHttp: true, a2aInlineBytes: 32768 };
+    vi.stubEnv("TOOLPLANE_PUBLIC_URL", "http://toolplane.test:3000");
+    expect(() => sandboxPublicOrigin()).toThrow();
+    const resource = sandboxMcpResource("debug", policy);
+    expect(sandboxAuthorizationMetadata(policy).issuer).toBe(
+      "http://toolplane.test:3000",
+    );
+    expect(sandboxProtectedResourceMetadata("debug", policy).resource).toBe(
+      resource,
+    );
+    expect(sandboxIdFromResource(resource, policy)).toBe("debug");
+    expect(
+      sandboxIdFromResource(
+        resource.replace("toolplane.test", "evil.test"),
+        policy,
+      ),
+    ).toBeNull();
+    expect(isValidOAuthRedirect("http://client.example/callback", policy)).toBe(
+      true,
+    );
+    expect(
+      isValidOAuthRedirect("http://user:pass@client.example/callback", policy),
+    ).toBe(false);
+    expect(
+      isValidOAuthRedirect("http://client.example/callback#secret", policy),
+    ).toBe(false);
+    vi.stubEnv("TOOLPLANE_PUBLIC_URL", "http://toolplane.test/path");
+    expect(() => sandboxPublicOrigin(policy)).toThrow();
+  });
   it("publishes consistent issuer, audience, PKCE, DCR and refresh discovery", () => {
     vi.stubEnv("TOOLPLANE_PUBLIC_URL", "https://toolplane.test");
     const resource = sandboxMcpResource("sb-1");

@@ -9,6 +9,28 @@ const input = (part: unknown, name = "report.txt") => ({
   parts: [part],
 });
 describe("bounded standard A2A Artifact validation", () => {
+  it("uses the configured inline limit independently of the bounded text/JSON artifact payload", () => {
+    const policy = { allowHttp: false, a2aInlineBytes: 512 * 1024 };
+    const raw = Buffer.alloc(policy.a2aInlineBytes, 97).toString("base64");
+    expect(
+      parseLocalArtifact(
+        input({ raw, mediaType: "application/octet-stream" }),
+        policy,
+      ).parts[0].content?.$case,
+    ).toBe("raw");
+    expect(() =>
+      parseLocalArtifact(input({ raw, mediaType: "application/octet-stream" })),
+    ).toThrow();
+    expect(() =>
+      parseLocalArtifact(
+        input({
+          raw: Buffer.alloc(policy.a2aInlineBytes + 1).toString("base64"),
+          mediaType: "application/octet-stream",
+        }),
+        policy,
+      ),
+    ).toThrow();
+  });
   it("stamps stable canonical content integrity without changing replay identity", () => {
     const artifact = parseLocalArtifact(input({ data: { z: 1, a: "中" } }));
     const identity = artifactDigest(artifact);

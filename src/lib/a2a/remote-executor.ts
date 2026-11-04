@@ -1,4 +1,5 @@
 import "server-only";
+import { getTransportSettings } from "@/lib/admin/transport-settings";
 import { createHash } from "node:crypto";
 import {
   Artifact,
@@ -287,7 +288,7 @@ export const executeRemoteTask: TaskExecutor = async (row, signal) => {
     where: { id: grant.remoteAgentId, workspaceId: grant.workspaceId },
   });
   const card = AgentCard.fromJSON(remote.card);
-  validateSend(input, card.defaultOutputModes);
+  validateSend(input, card.defaultOutputModes, await getTransportSettings());
   if (
     message.parts.some(
       (part) =>

@@ -1,3 +1,9 @@
+import {
+  DEFAULT_TRANSPORT_POLICY,
+  MAX_A2A_INLINE_BYTES,
+  permitsTransportProtocol,
+  type TransportPolicy,
+} from "@/lib/transport-policy";
 import { z } from "zod";
 import {
   A2A_LIMITS,
@@ -18,7 +24,10 @@ const Metadata = z.record(z.string(), z.unknown());
 const Part = z
   .object({
     text: z.string().max(A2A_LIMITS.inputCharacters).optional(),
-    raw: z.string().max(43_692).optional(),
+    raw: z
+      .string()
+      .max(Math.ceil(MAX_A2A_INLINE_BYTES / 3) * 4)
+      .optional(),
     url: z.string().min(1).max(8192).optional(),
     data: z.object({ toolplaneFileId: Id }).strict().optional(),
     metadata: Metadata.optional(),
@@ -27,18 +36,19 @@ const Part = z
   })
   .strict()
   .superRefine((part, ctx) => {
-    if (
-      part.raw !== undefined &&
-      (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
-        part.raw,
-      ) ||
-        Buffer.from(part.raw, "base64").length > 32_768 ||
-        Buffer.from(part.raw, "base64").toString("base64") !== part.raw)
-    )
-      ctx.addIssue({
-        code: "custom",
-        message: "Inline files require canonical base64 and at most 32 KiB.",
-      });
+    if (part.raw !== undefined) {
+      const decoded = Buffer.from(part.raw, "base64");
+      if (
+        !/^[A-Za-z0-9+/]*={0,2}$/.test(part.raw) ||
+        decoded.length > MAX_A2A_INLINE_BYTES ||
+        decoded.toString("base64") !== part.raw
+      )
+        ctx.addIssue({
+          code: "custom",
+          message:
+            "Inline files require canonical base64 within the maximum file size.",
+        });
+    }
     const keys = ["text", "raw", "url", "data"].filter((key) =>
       Object.hasOwn(part, key),
     );
@@ -134,6 +144,7 @@ export function validateParams(
   method: string,
   raw: unknown,
   outputModes: readonly string[] = ["text/plain"],
+  policy: TransportPolicy = DEFAULT_TRANSPORT_POLICY,
 ) {
   const schema =
     method === "SendMessage" || method === "SendStreamingMessage"
@@ -151,11 +162,12 @@ export function validateParams(
   if (!schema.safeParse(raw).success)
     throw new RequestMalformedError("Invalid A2A method parameters.");
   if (method === "SendMessage" || method === "SendStreamingMessage")
-    validateSend(SendMessageRequest.fromJSON(raw), outputModes);
+    validateSend(SendMessageRequest.fromJSON(raw), outputModes, policy);
 }
 export function validateSend(
   request: SendMessageRequest,
   outputModes: readonly string[] = ["text/plain"],
+  policy: TransportPolicy = DEFAULT_TRANSPORT_POLICY,
 ) {
   const message = request.message;
   if (
@@ -218,15 +230,18 @@ export function validateSend(
         );
       if (part.filename && /[\p{Cc}/\\]/u.test(part.filename))
         throw new RequestMalformedError("Invalid file name.");
-      if (content.$case === "raw" && content.value.byteLength > 32_768)
+      if (
+        content.$case === "raw" &&
+        content.value.byteLength > policy.a2aInlineBytes
+      )
         throw new RequestMalformedError(
-          "Inline files exceed the 32 KiB limit; use a URL.",
+          `Inline files exceed the ${policy.a2aInlineBytes / 1024} KiB limit; use a URL.`,
         );
       if (content.$case === "url") {
         try {
           const url = new URL(content.value);
           if (
-            url.protocol !== "https:" ||
+            !permitsTransportProtocol(url.protocol, policy) ||
             url.username ||
             url.password ||
             url.hash

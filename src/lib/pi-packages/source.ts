@@ -1,4 +1,10 @@
 import "server-only";
+import { getTransportSettings } from "@/lib/admin/transport-settings";
+import {
+  DEFAULT_TRANSPORT_POLICY,
+  permitsTransportProtocol,
+  type TransportPolicy,
+} from "@/lib/transport-policy";
 import { spawn } from "node:child_process";
 import { createConnection, isIP, type Socket } from "node:net";
 import { createHash, randomUUID } from "node:crypto";
@@ -40,7 +46,10 @@ const failed = () =>
     "The package could not be captured safely.",
   );
 
-export function validatePiPackageSource(value: string): string {
+export function validatePiPackageSource(
+  value: string,
+  policy: TransportPolicy = DEFAULT_TRANSPORT_POLICY,
+): string {
   if (
     typeof value !== "string" ||
     value.length > 2048 ||
@@ -79,11 +88,12 @@ export function validatePiPackageSource(value: string): string {
     throw failed();
   }
   if (
-    url.protocol !== "https:" ||
+    !permitsTransportProtocol(url.protocol, policy) ||
     url.username ||
     url.password ||
     url.search ||
-    (url.port && url.port !== "443") ||
+    (url.protocol === "https:" && url.port && url.port !== "443") ||
+    url.port === "0" ||
     /\s/.test(source)
   )
     throw failed();
@@ -185,6 +195,7 @@ export async function capturePiPackage(
   capturing = true;
   const started = Date.now();
   try {
+    const policy = await getTransportSettings();
     if (
       options.archive &&
       (!options.archive.length || options.archive.length > 32 * 1024 * 1024)
@@ -207,12 +218,13 @@ export async function capturePiPackage(
     }
     const validated = options.archive
       ? `zip:sha256:${createHash("sha256").update(options.archive).digest("hex")}`
-      : validatePiPackageSource(source);
-    if (options.registry) piSourceUrl(options.registry);
+      : validatePiPackageSource(source, policy);
+    if (options.registry) piSourceUrl(options.registry, policy);
     if (options.authentication)
       sourceAuthorization(
-        piSourceUrl(options.authentication.url),
+        piSourceUrl(options.authentication.url, policy),
         options.authentication,
+        policy,
       );
     if (!(await dockerCommand(["image", "inspect", IMAGE], 15_000)))
       throw new PluginError(
@@ -223,6 +235,7 @@ export async function capturePiPackage(
       validated,
       TIMEOUT - (Date.now() - started),
       options,
+      policy,
     );
   } finally {
     capturing = false;
@@ -295,6 +308,7 @@ async function runCapture(
   source: string,
   remaining: number,
   options: PiPackageCaptureOptions,
+  policy: TransportPolicy,
 ): Promise<PiPackageSnapshotV1> {
   const name = `toolplane-pi-capture-${randomUUID()}`;
   const flags = sandboxFlags("none");
@@ -395,14 +409,19 @@ async function runCapture(
       throw failed();
     }
   }
-  async function open(id: string, host: string, conn: Connection) {
+  async function open(
+    id: string,
+    host: string,
+    port: number,
+    conn: Connection,
+  ) {
     try {
       const address = await pinnedAddress(host);
       if (stopped || connections.get(id) !== conn) return;
       const socket = createConnection({
         host: address.address,
         family: address.family,
-        port: 443,
+        port,
       });
       conn.socket = socket;
       socket.on("error", () => undefined);
@@ -558,7 +577,13 @@ async function runCapture(
         connections.size >= 16 ||
         connections.size + closed.size >= 20_000 ||
         typeof item.host !== "string" ||
-        item.port !== 443
+        (item.port !== 443 &&
+          !(
+            policy.allowHttp &&
+            Number.isInteger(item.port) &&
+            Number(item.port) >= 1 &&
+            Number(item.port) <= 65535
+          ))
       )
         throw failed();
       const conn: Connection = {
@@ -567,7 +592,7 @@ async function runCapture(
         timer: setTimeout(abort, 15_000),
       };
       connections.set(id, conn);
-      void open(id, item.host, conn).catch(abort);
+      void open(id, item.host, Number(item.port), conn).catch(abort);
       return;
     }
     const conn = connections.get(id);
@@ -611,6 +636,7 @@ async function runCapture(
       type: "configuration",
       registry: options.registry ?? "https://registry.npmjs.org/",
       authentication: options.authentication ?? null,
+      allowHttp: policy.allowHttp,
     });
     if (options.archive) {
       for (let offset = 0; offset < options.archive.length; offset += BLOCK)

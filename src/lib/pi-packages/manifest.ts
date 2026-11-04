@@ -437,6 +437,8 @@ function validateEntries(
   return resolve;
 }
 
+// Immutable provenance is structural, not an outbound request. Live capture and
+// registry transports enforce the current administrator policy before networking.
 function publicGitUrl(raw: string): string {
   let url: URL;
   try {
@@ -445,12 +447,13 @@ function publicGitUrl(raw: string): string {
     return invalid("invalid_source");
   }
   if (
-    url.protocol !== "https:" ||
+    !["https:", "http:"].includes(url.protocol) ||
     url.username ||
     url.password ||
     url.search ||
     url.hash ||
-    (url.port && url.port !== "443") ||
+    (url.protocol === "https:" && url.port && url.port !== "443") ||
+    url.port === "0" ||
     !url.hostname ||
     url.pathname === "/"
   )
@@ -479,12 +482,15 @@ function validateSource(snapshot: PiPackageSnapshotV1): void {
         invalid("invalid_source");
       }
       if (
-        registry.protocol !== "https:" ||
+        !["https:", "http:"].includes(registry.protocol) ||
         registry.username ||
         registry.password ||
         registry.search ||
         registry.hash ||
-        (registry.port && registry.port !== "443")
+        (registry.protocol === "https:" &&
+          registry.port &&
+          registry.port !== "443") ||
+        registry.port === "0"
       )
         invalid("invalid_source");
     }

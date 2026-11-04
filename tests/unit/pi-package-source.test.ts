@@ -13,6 +13,7 @@ const transport = vi.hoisted(() => ({
   lookup: vi.fn(),
   connect: vi.fn(),
   owner: vi.fn(),
+  policy: vi.fn(),
 }));
 vi.mock("node:child_process", async (original) => {
   const actual = await original<typeof ChildProcess>();
@@ -41,6 +42,9 @@ vi.mock("node:net", async (original) => {
 vi.mock("@/lib/runtime/ownership-state", () => ({
   assertRuntimeOwner: transport.owner,
 }));
+vi.mock("@/lib/admin/transport-settings", () => ({
+  getTransportSettings: transport.policy,
+}));
 vi.mock("@/lib/plugins/catalog", () => ({
   PluginError: class extends Error {
     constructor(
@@ -54,6 +58,7 @@ vi.mock("@/lib/plugins/catalog", () => ({
 import {
   capturePiPackage,
   captureGithubRegistryPiPackage,
+  validatePiPackageSource,
 } from "@/lib/pi-packages/source";
 
 class Tunnel extends Duplex {
@@ -159,6 +164,10 @@ let start: (child: Container, source: string) => void;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  transport.policy.mockResolvedValue({
+    allowHttp: false,
+    a2aInlineBytes: 32768,
+  });
   container = undefined;
   tunnel = undefined;
   start = () => undefined;
@@ -189,6 +198,51 @@ afterEach(() => {
 });
 
 describe("Pi package capture trust boundary", () => {
+  it("threads administrator HTTP policy through capture intake and the pinned broker without losing integrity provenance", async () => {
+    const policy = { allowHttp: true, a2aInlineBytes: 32768 };
+    expect(() =>
+      validatePiPackageSource("http://code.example/team/repo.git"),
+    ).toThrow();
+    expect(
+      validatePiPackageSource("http://code.example/team/repo.git", policy),
+    ).toBe("http://code.example/team/repo.git");
+    expect(() =>
+      validatePiPackageSource("http://169.254.169.254/team/repo.git", policy),
+    ).toThrow();
+    transport.policy.mockResolvedValue(policy);
+    const expected = fixture();
+    Object.assign(expected.source, { registry: "http://registry.example/" });
+    start = (child) => {
+      child.onFrame = (frame) => {
+        if (frame.type !== "connected") return;
+        // The capture protocol requires every broker connection to close before
+        // immutable snapshot bytes can be accepted.
+        child.emitFrame({ type: "close", id: "debug" });
+        sendSnapshot(child, expected);
+      };
+      child.emitFrame({
+        type: "connect",
+        id: "debug",
+        host: "registry.example",
+        port: 80,
+      });
+    };
+    expect(
+      await capturePiPackage("npm:fixture@1.0.0", {
+        registry: "http://registry.example/",
+      }),
+    ).toEqual(expected);
+    expect(transport.connect.mock.calls[0][0]).toMatchObject({
+      host: "93.184.216.34",
+      port: 80,
+    });
+    transport.policy.mockResolvedValue({ ...policy, allowHttp: false });
+    await expect(
+      capturePiPackage("npm:fixture@1.0.0", {
+        registry: "http://registry.example/",
+      }),
+    ).rejects.toThrow();
+  });
   it.each([
     { repository: "https://github.com/team/registry" },
     { commit: "main" },

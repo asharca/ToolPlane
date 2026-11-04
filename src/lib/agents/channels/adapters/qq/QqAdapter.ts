@@ -1,4 +1,5 @@
 // Adapted from Cherry Studio. See NOTICE for source and license.
+import { getTransportSettings } from "@/lib/admin/transport-settings";
 import {
   type FileAttachment,
   type ImageAttachment,
@@ -238,7 +239,9 @@ export class QqAdapter extends ChannelAdapter {
       if (this.shouldStop) return;
       this.log.info("Connecting to QQ gateway", { url: gatewayUrl });
 
-      const ws = new WebSocket(sanitizeRemoteUrl(gatewayUrl, true));
+      const ws = new WebSocket(
+        sanitizeRemoteUrl(gatewayUrl, true, await getTransportSettings()),
+      );
       this.ws = ws;
 
       ws.on("open", () => {
@@ -605,7 +608,11 @@ export class QqAdapter extends ChannelAdapter {
               : `https://${att.url}`;
             // SSRF guard: reject local/private/credentialed/non-http(s) targets from the
             // inbound payload before we fetch with the bot token (and before the retry).
-            const safeUrl = sanitizeRemoteUrl(url);
+            const safeUrl = sanitizeRemoteUrl(
+              url,
+              false,
+              await getTransportSettings(),
+            );
             const response = await fetch(safeUrl, {
               headers: {
                 Authorization: `QQBot ${token}`,

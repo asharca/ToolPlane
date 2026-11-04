@@ -1,4 +1,6 @@
 import "server-only";
+import { getTransportSettings } from "@/lib/admin/transport-settings";
+import { a2aTransportBodyBytes } from "@/lib/transport-policy";
 import { z } from "zod";
 import { toJsonRpcError } from "@a2a-js/sdk/errors";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -73,7 +75,14 @@ export async function handleRuntimeTools(req: Request, taskId: string) {
         { error: "Expected JSON" },
         { status: 415, headers },
       );
-    const parsed = await parseJson(req, Rpc, LOCAL_LIMITS.requestBytes);
+    const parsed = await parseJson(
+      req,
+      Rpc,
+      Math.max(
+        LOCAL_LIMITS.requestBytes,
+        a2aTransportBodyBytes(await getTransportSettings()),
+      ),
+    );
     if (!parsed.ok)
       return Response.json(
         { error: "Invalid MCP request" },

@@ -43,13 +43,18 @@ vi.mock("@/lib/agents/agent-execution-gate", () => ({
 
 import {
   AGENT_SANDBOX_AUTO_STOP_SETTING_KEY,
+  PRIVATE_HOSTS_SETTING_KEY,
   getAgentSandboxAutoStopSettings,
   updateAgentSandboxAutoStopSettings,
   getAgentConcurrencySettings,
   updateAgentConcurrencySettings,
-  resolveRemoteMcpPrivateHostsSettings,
+  resolvePrivateHostsSettings,
 } from "@/lib/admin/settings";
-import { updateAgentSandboxAutoStopSettingsAction } from "@/lib/admin/settings-actions";
+import {
+  updateAgentSandboxAutoStopSettingsAction,
+  updatePrivateHostsSettingsAction,
+} from "@/lib/admin/settings-actions";
+import { resolveSshAddress } from "@/lib/sandboxes/ssh-servers";
 
 describe("system settings storage", () => {
   beforeEach(() => {
@@ -217,11 +222,11 @@ describe("system settings storage", () => {
     },
   );
 
-  it("uses a normalized administrator Remote MCP allowlist ahead of the environment fallback", async () => {
-    vi.stubEnv("TOOLPLANE_REMOTE_MCP_PRIVATE_HOSTS", "*.rhzy.ai,10.0.10.42");
+  it("uses a normalized shared administrator allowlist ahead of the environment fallback", async () => {
+    vi.stubEnv("TOOLPLANE_PRIVATE_HOSTS", "*.rhzy.ai,10.0.10.42");
     mocks.findUnique.mockResolvedValue(null);
 
-    await expect(resolveRemoteMcpPrivateHostsSettings()).resolves.toEqual({
+    await expect(resolvePrivateHostsSettings()).resolves.toEqual({
       value: "*.rhzy.ai,10.0.10.42",
       source: "environment",
     });
@@ -229,29 +234,162 @@ describe("system settings storage", () => {
     mocks.findUnique.mockResolvedValue({
       value: "MCP.RHZY.AI.\n*.RHZY.AI,10.0.10.42",
     });
-    await expect(resolveRemoteMcpPrivateHostsSettings()).resolves.toEqual({
+    await expect(resolvePrivateHostsSettings()).resolves.toEqual({
       value: "mcp.rhzy.ai,*.rhzy.ai,10.0.10.42",
       source: "database",
     });
   });
 
-  it("fails closed for an invalid stored Remote MCP allowlist", async () => {
-    vi.stubEnv("TOOLPLANE_REMOTE_MCP_PRIVATE_HOSTS", "*.rhzy.ai");
+  it("fails closed for an invalid stored shared allowlist", async () => {
+    vi.stubEnv("TOOLPLANE_PRIVATE_HOSTS", "*.rhzy.ai");
     mocks.findUnique.mockResolvedValue({ value: "127.0.0.1" });
 
-    await expect(resolveRemoteMcpPrivateHostsSettings()).resolves.toEqual({
+    await expect(resolvePrivateHostsSettings()).resolves.toEqual({
       value: "",
       source: "database",
     });
+    await expect(resolveSshAddress("10.0.10.42")).rejects.toMatchObject({
+      code: "SSH_HOST_PRIVATE_NOT_ALLOWED",
+    });
   });
 
-  it("fails closed when the stored Remote MCP allowlist cannot be read", async () => {
-    vi.stubEnv("TOOLPLANE_REMOTE_MCP_PRIVATE_HOSTS", "*.rhzy.ai");
+  it("fails closed when the shared allowlist cannot be read", async () => {
+    vi.stubEnv("TOOLPLANE_PRIVATE_HOSTS", "*.rhzy.ai");
     mocks.findUnique.mockRejectedValue(new Error("database unavailable"));
 
-    await expect(resolveRemoteMcpPrivateHostsSettings()).resolves.toEqual({
+    await expect(resolvePrivateHostsSettings()).resolves.toEqual({
       value: "",
       source: "default",
     });
+    await expect(resolveSshAddress("10.0.10.42")).rejects.toMatchObject({
+      code: "SSH_HOST_PRIVATE_NOT_ALLOWED",
+    });
   });
+
+  it("saves one audited shared override, preserves an explicit empty denial, and resets to the environment", async () => {
+    vi.stubEnv("TOOLPLANE_PRIVATE_HOSTS", "10.20.0.5");
+    let stored: { value: string } | null = null;
+    mocks.findUnique.mockImplementation(async () => stored);
+    mocks.upsert.mockImplementation(async ({ update }) => {
+      stored = { value: update.value };
+      return stored;
+    });
+    mocks.deleteMany.mockImplementation(async () => {
+      stored = null;
+      return { count: 1 };
+    });
+    for (const [input, value] of [
+      ["MCP.RHZY.AI.\n10.20.0.6,10.20.0.6", "mcp.rhzy.ai,10.20.0.6"],
+      ["", ""],
+    ]) {
+      const form = new FormData();
+      form.set("privateHosts", input);
+      await expect(updatePrivateHostsSettingsAction({}, form)).resolves.toEqual(
+        {
+          ok: true,
+        },
+      );
+      await expect(resolvePrivateHostsSettings()).resolves.toEqual({
+        value,
+        source: "database",
+      });
+      if (value) {
+        await expect(resolveSshAddress("10.20.0.6")).resolves.toBe("10.20.0.6");
+      } else {
+        await expect(resolveSshAddress("10.20.0.6")).rejects.toMatchObject({
+          code: "SSH_HOST_PRIVATE_NOT_ALLOWED",
+        });
+        await expect(resolveSshAddress("10.20.0.5")).rejects.toMatchObject({
+          code: "SSH_HOST_PRIVATE_NOT_ALLOWED",
+        });
+      }
+    }
+    const reset = new FormData();
+    reset.set("intent", "reset");
+    await expect(updatePrivateHostsSettingsAction({}, reset)).resolves.toEqual({
+      ok: true,
+    });
+    await expect(resolvePrivateHostsSettings()).resolves.toEqual({
+      value: "10.20.0.5",
+      source: "environment",
+    });
+    await expect(resolveSshAddress("10.20.0.5")).resolves.toBe("10.20.0.5");
+    await expect(resolveSshAddress("10.20.0.6")).rejects.toMatchObject({
+      code: "SSH_HOST_PRIVATE_NOT_ALLOWED",
+    });
+    expect(
+      mocks.auditCreate.mock.calls.map(([{ data }]) => ({
+        actorId: data.actorId,
+        action: data.action,
+        targetId: data.targetId,
+        changes: data.changes,
+      })),
+    ).toEqual([
+      {
+        actorId: "admin",
+        action: "setting.changed",
+        targetId: PRIVATE_HOSTS_SETTING_KEY,
+        changes: { before: null, after: "mcp.rhzy.ai,10.20.0.6" },
+      },
+      {
+        actorId: "admin",
+        action: "setting.changed",
+        targetId: PRIVATE_HOSTS_SETTING_KEY,
+        changes: { before: "mcp.rhzy.ai,10.20.0.6", after: "" },
+      },
+      {
+        actorId: "admin",
+        action: "setting.reset",
+        targetId: PRIVATE_HOSTS_SETTING_KEY,
+        changes: { before: "", after: null },
+      },
+    ]);
+  });
+
+  it.each([null, "127.0.0.1", "10.0.0.0/8", "https://mcp.rhzy.ai/mcp"])(
+    "rejects malformed shared policy %s without writes or audit",
+    async (value) => {
+      const form = new FormData();
+      if (value !== null) form.set("privateHosts", value);
+      await expect(updatePrivateHostsSettingsAction({}, form)).resolves.toEqual(
+        {
+          error: "errorPrivateHosts",
+        },
+      );
+      expect(mocks.upsert).not.toHaveBeenCalled();
+      expect(mocks.deleteMany).not.toHaveBeenCalled();
+      expect(mocks.auditCreate).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([null, { id: "member", role: "user" }])(
+    "denies unauthenticated and non-admin shared policy changes and resets (%s)",
+    async (user) => {
+      mocks.currentUser.mockResolvedValue(user);
+      for (const intent of ["save", "reset"]) {
+        const form = new FormData();
+        form.set("intent", intent);
+        form.set("privateHosts", "10.20.0.5");
+        await expect(
+          updatePrivateHostsSettingsAction({}, form),
+        ).rejects.toThrow(
+          user ? "redirect:/" : "redirect:/app/login?next=/admin",
+        );
+      }
+      expect(mocks.upsert).not.toHaveBeenCalled();
+      expect(mocks.deleteMany).not.toHaveBeenCalled();
+      expect(mocks.auditCreate).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["127.0.0.1", ""])(
+    "defaults to no private grants for an absent setting and environment %s",
+    async (value) => {
+      vi.stubEnv("TOOLPLANE_PRIVATE_HOSTS", value);
+      await expect(resolvePrivateHostsSettings()).resolves.toEqual({
+        value: "",
+        source: "default",
+      });
+    },
+  );
 });

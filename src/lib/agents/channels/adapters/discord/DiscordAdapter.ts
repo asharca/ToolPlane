@@ -1,4 +1,5 @@
 // Adapted from Cherry Studio. See NOTICE for source and license.
+import { getTransportSettings } from "@/lib/admin/transport-settings";
 import {
   downloadFileAsBase64,
   downloadImageAsBase64,
@@ -316,7 +317,9 @@ export class DiscordAdapter extends ChannelAdapter {
       const wsUrl = `${gatewayUrl}?v=10&encoding=json`;
       this.log.info("Connecting to Discord gateway", { url: wsUrl });
 
-      const ws = new WebSocket(sanitizeRemoteUrl(wsUrl, true));
+      const ws = new WebSocket(
+        sanitizeRemoteUrl(wsUrl, true, await getTransportSettings()),
+      );
       this.ws = ws;
 
       ws.on("open", () => {

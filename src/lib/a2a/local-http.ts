@@ -1,4 +1,5 @@
 import "server-only";
+import { getTransportSettings } from "@/lib/admin/transport-settings";
 import { LOCAL_OUTPUT_MODES, A2A_FILE_DELIVERY_EXTENSION } from "./model";
 import { AgentCard } from "@a2a-js/sdk";
 import { z } from "zod";
@@ -103,6 +104,7 @@ export async function localAgentCard(grant: LocalA2AGrant) {
   });
   const origin = a2aDeploymentOrigin(
     runtimeEnv("NEXT_PUBLIC_APP_URL") || "http://localhost:3000",
+    await getTransportSettings(),
   );
   const url = new URL(
     `/api/v1/workspaces/${encodeURIComponent(workspace.slug)}/agents/${encodeURIComponent(grant.agentId)}/a2a/local`,

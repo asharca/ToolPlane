@@ -5,7 +5,7 @@ import { useActionState } from "react";
 import { Network, RotateCcw, Save } from "lucide-react";
 import { useTranslations } from "next-intl";
 import {
-  updateRemoteMcpPrivateHostsSettingsAction,
+  updatePrivateHostsSettingsAction,
   type AdminSettingsActionState,
 } from "@/lib/admin/settings-actions";
 import { SubmitButton } from "@/components/dashboard/SubmitButton";
@@ -13,7 +13,7 @@ import { AdminBadge, AdminPanel } from "@/components/admin/AdminUI";
 
 const MAX_PRIVATE_HOSTS_LENGTH = 8_192;
 
-export function RemoteMcpPrivateHostsSettingsForm({
+export function PrivateHostsSettingsForm({
   value,
   source,
 }: {
@@ -24,7 +24,7 @@ export function RemoteMcpPrivateHostsSettingsForm({
   const [state, action, isPending] = useActionState<
     AdminSettingsActionState,
     FormData
-  >(updateRemoteMcpPrivateHostsSettingsAction, {});
+  >(updatePrivateHostsSettingsAction, {});
   const sourceLabel =
     source === "database"
       ? t("settingsSourceAdmin")
@@ -34,8 +34,8 @@ export function RemoteMcpPrivateHostsSettingsForm({
 
   return (
     <AdminPanel
-      title={t("remoteMcpPrivateHosts")}
-      description={t("remoteMcpPrivateHostsDescription")}
+      title={t("privateHosts")}
+      description={t("privateHostsDescription")}
       actions={
         <AdminBadge tone={source === "database" ? "info" : "neutral"}>
           {sourceLabel}
@@ -49,34 +49,31 @@ export function RemoteMcpPrivateHostsSettingsForm({
             aria-hidden="true"
           />
           <p className="text-sm leading-6 text-muted-foreground">
-            {t("remoteMcpPrivateHostsBehavior")}
+            {t("privateHostsBehavior")}
           </p>
         </div>
 
         <div className="space-y-1.5">
           <label
-            htmlFor="remote-mcp-private-hosts"
+            htmlFor="private-hosts"
             className="block text-sm font-medium text-foreground"
           >
-            {t("remoteMcpPrivateHostsLabel")}
+            {t("privateHostsLabel")}
           </label>
           <textarea
-            id="remote-mcp-private-hosts"
-            name="remoteMcpPrivateHosts"
+            id="private-hosts"
+            name="privateHosts"
             defaultValue={value}
             rows={4}
             maxLength={MAX_PRIVATE_HOSTS_LENGTH}
             spellCheck={false}
             autoCapitalize="none"
             autoCorrect="off"
-            aria-describedby="remote-mcp-private-hosts-hint"
+            aria-describedby="private-hosts-hint"
             className="min-h-36 w-full resize-y rounded-lg bg-muted/35 p-3 text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
-          <p
-            id="remote-mcp-private-hosts-hint"
-            className="text-xs text-muted-foreground"
-          >
-            {t("remoteMcpPrivateHostsHint")}
+          <p id="private-hosts-hint" className="text-xs text-muted-foreground">
+            {t("privateHostsHint")}
           </p>
         </div>
 
@@ -114,7 +111,7 @@ export function RemoteMcpPrivateHostsSettingsForm({
         ) : null}
         {state.ok ? (
           <p className="text-sm text-accent-foreground" aria-live="polite">
-            {t("remoteMcpPrivateHostsSaved")}
+            {t("privateHostsSaved")}
           </p>
         ) : null}
       </form>

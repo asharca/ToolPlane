@@ -1,4 +1,6 @@
 import "server-only";
+import { getTransportSettings } from "@/lib/admin/transport-settings";
+import type { TransportPolicy } from "@/lib/transport-policy";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { SignJWT, jwtVerify } from "jose";
 import { z } from "zod";
@@ -98,23 +100,24 @@ function callback(
   redirectUri: string,
   state: string | null,
   result: Record<string, string>,
+  policy: TransportPolicy,
 ) {
   const url = new URL(redirectUri);
   for (const [key, value] of Object.entries(result))
     url.searchParams.set(key, value);
   if (state !== null) url.searchParams.set("state", state);
   // Metadata advertises RFC 9207, so include iss on BOTH success and errors.
-  url.searchParams.set("iss", sandboxPublicOrigin());
+  url.searchParams.set("iss", sandboxPublicOrigin(policy));
   return new Response(null, {
     status: 303,
     headers: { location: url.href, "cache-control": "no-store" },
   });
 }
-function consentCookie(value: string, maxAge: number) {
-  return `${CONSENT_COOKIE}=${value}; Path=${AUTHORIZE_PATH}; Max-Age=${maxAge}; HttpOnly; SameSite=Lax${sandboxPublicOrigin().startsWith("https:") ? "; Secure" : ""}`;
+function consentCookie(value: string, maxAge: number, policy: TransportPolicy) {
+  return `${CONSENT_COOKIE}=${value}; Path=${AUTHORIZE_PATH}; Max-Age=${maxAge}; HttpOnly; SameSite=Lax${sandboxPublicOrigin(policy).startsWith("https:") ? "; Secure" : ""}`;
 }
-function finishConsent(response: Response) {
-  response.headers.set("set-cookie", consentCookie("", 0));
+function finishConsent(response: Response, policy: TransportPolicy) {
+  response.headers.set("set-cookie", consentCookie("", 0, policy));
   return response;
 }
 function escapeHtml(value: string) {
@@ -138,13 +141,15 @@ const Consent = z.object({
 });
 type ConsentData = z.infer<typeof Consent>;
 
-async function register(req: Request) {
+async function register(req: Request, policy: TransportPolicy) {
   admit("register", 30);
   const registration = z
     .object({
       client_name: z.string().trim().min(1).max(100).default("MCP client"),
       redirect_uris: z
-        .array(z.string().refine(isValidOAuthRedirect))
+        .array(
+          z.string().refine((value) => isValidOAuthRedirect(value, policy)),
+        )
         .min(1)
         .max(10),
       token_endpoint_auth_method: z
@@ -186,7 +191,7 @@ async function register(req: Request) {
     201,
   );
 }
-async function authorizeGet(req: Request) {
+async function authorizeGet(req: Request, policy: TransportPolicy) {
   const params = new URL(req.url).searchParams;
   let clientId: string | null;
   let redirectUri: string | null;
@@ -205,11 +210,15 @@ async function authorizeGet(req: Request) {
     where: { id: clientId },
   });
   // Never redirect to an unregistered callback, including on errors.
-  if (!client?.redirectUris.includes(redirectUri)) fail("invalid_request");
+  if (
+    !client?.redirectUris.includes(redirectUri) ||
+    !isValidOAuthRedirect(redirectUri, policy)
+  )
+    fail("invalid_request");
   let consent: ConsentData;
   try {
     const resource = params.get("resource") ?? "";
-    const sandboxId = sandboxIdFromResource(resource);
+    const sandboxId = sandboxIdFromResource(resource, policy);
     if (!sandboxId) fail("invalid_target");
     if (params.get("response_type") !== "code")
       fail("unsupported_response_type");
@@ -237,12 +246,12 @@ async function authorizeGet(req: Request) {
     };
   } catch (error) {
     if (error instanceof OAuthError)
-      return callback(redirectUri, state, { error: error.code });
+      return callback(redirectUri, state, { error: error.code }, policy);
     throw error;
   }
   const principal = await resolveRequestPrincipal(req);
   if (!principal) {
-    const login = new URL("/app/login", sandboxPublicOrigin());
+    const login = new URL("/app/login", sandboxPublicOrigin(policy));
     login.searchParams.set("next", `${AUTHORIZE_PATH}?${params}`);
     return new Response(null, {
       status: 303,
@@ -250,15 +259,15 @@ async function authorizeGet(req: Request) {
     });
   }
   if (principal.credential !== "session")
-    return callback(redirectUri, state, { error: "access_denied" });
+    return callback(redirectUri, state, { error: "access_denied" }, policy);
   const sandbox = await ownedSandbox(consent.sandboxId, principal.user.id);
   if (!sandbox || !sandboxMcpExportable(sandbox))
-    return callback(redirectUri, state, { error: "access_denied" });
+    return callback(redirectUri, state, { error: "access_denied" }, policy);
   admit(`authorize:${principal.user.id}`, 120);
   const signed = await new SignJWT(consent)
     .setProtectedHeader({ alg: "HS256", typ: "toolplane-mcp-consent+jwt" })
     .setSubject(principal.user.id)
-    .setIssuer(sandboxPublicOrigin())
+    .setIssuer(sandboxPublicOrigin(policy))
     .setAudience("sandbox-mcp-consent")
     .setIssuedAt()
     .setExpirationTime("10m")
@@ -287,12 +296,12 @@ async function authorizeGet(req: Request) {
       "x-frame-options": "DENY",
       "referrer-policy": "no-referrer",
       "x-content-type-options": "nosniff",
-      "set-cookie": consentCookie(consent.nonce, 600),
+      "set-cookie": consentCookie(consent.nonce, 600, policy),
     },
   });
 }
-async function authorizePost(req: Request) {
-  if (req.headers.get("origin") !== sandboxPublicOrigin())
+async function authorizePost(req: Request, policy: TransportPolicy) {
+  if (req.headers.get("origin") !== sandboxPublicOrigin(policy))
     fail("access_denied", 403);
   const principal = await resolveRequestPrincipal(req);
   if (principal?.credential !== "session") fail("access_denied", 403);
@@ -303,7 +312,7 @@ async function authorizePost(req: Request) {
       form.get("consent") ?? "",
       secretKey(),
       {
-        issuer: sandboxPublicOrigin(),
+        issuer: sandboxPublicOrigin(policy),
         audience: "sandbox-mcp-consent",
         algorithms: ["HS256"],
         typ: "toolplane-mcp-consent+jwt",
@@ -324,28 +333,55 @@ async function authorizePost(req: Request) {
   const client = await db.sandboxMcpOAuthClient.findUnique({
     where: { id: consent.clientId },
   });
-  if (!client?.redirectUris.includes(consent.redirectUri))
+  if (
+    !client?.redirectUris.includes(consent.redirectUri) ||
+    !isValidOAuthRedirect(consent.redirectUri, policy)
+  )
     fail("invalid_request");
   if (form.get("decision") !== "allow")
     return finishConsent(
-      callback(consent.redirectUri, consent.state, { error: "access_denied" }),
+      callback(
+        consent.redirectUri,
+        consent.state,
+        { error: "access_denied" },
+        policy,
+      ),
+      policy,
     );
   const scopes = consent.scopes.filter((scope) => form.get(scope) === "yes");
   if (!toolsForSandboxScopes(scopes).length)
     return finishConsent(
-      callback(consent.redirectUri, consent.state, { error: "invalid_scope" }),
+      callback(
+        consent.redirectUri,
+        consent.state,
+        { error: "invalid_scope" },
+        policy,
+      ),
+      policy,
     );
   const sandbox = await ownedSandbox(consent.sandboxId, principal.user.id);
   if (!sandbox || !sandboxMcpExportable(sandbox))
     return finishConsent(
-      callback(consent.redirectUri, consent.state, { error: "access_denied" }),
+      callback(
+        consent.redirectUri,
+        consent.state,
+        { error: "access_denied" },
+        policy,
+      ),
+      policy,
     );
   const release = beginWorkspaceOperation(sandbox.workspaceId);
   if (!release)
     return finishConsent(
-      callback(consent.redirectUri, consent.state, {
-        error: "temporarily_unavailable",
-      }),
+      callback(
+        consent.redirectUri,
+        consent.state,
+        {
+          error: "temporarily_unavailable",
+        },
+        policy,
+      ),
+      policy,
     );
   try {
     admit(`authorize:${principal.user.id}`, 120);
@@ -369,7 +405,8 @@ async function authorizePost(req: Request) {
       },
     });
     return finishConsent(
-      callback(consent.redirectUri, consent.state, { code }),
+      callback(consent.redirectUri, consent.state, { code }, policy),
+      policy,
     );
   } finally {
     release();
@@ -420,12 +457,14 @@ async function authenticateClient(req: Request, form: URLSearchParams) {
   }
   return client;
 }
-async function exchange(req: Request) {
+async function exchange(req: Request, policy: TransportPolicy) {
   const form = await readForm(req);
   const client = await authenticateClient(req, form);
   const resource = form.get("resource") ?? "";
-  if (!sandboxIdFromResource(resource)) fail("invalid_target");
+  if (!sandboxIdFromResource(resource, policy)) fail("invalid_target");
   if (form.get("grant_type") === "authorization_code") {
+    if (!isValidOAuthRedirect(form.get("redirect_uri") ?? "", policy))
+      fail("invalid_grant");
     const code = await db.sandboxMcpOAuthCode.findUnique({
       where: { codeHash: hash(form.get("code") ?? "") },
     });
@@ -611,24 +650,25 @@ export function handleSandboxOAuth(
   action: "register" | "authorize" | "token" | "revoke",
 ): Promise<Response> {
   return withLogContext({ suppressPayload: true }, async () => {
+    const policy = await getTransportSettings();
     try {
-      sandboxPublicOrigin();
+      sandboxPublicOrigin(policy);
       if (action === "authorize")
         return req.method === "GET"
-          ? await authorizeGet(req)
+          ? await authorizeGet(req, policy)
           : req.method === "POST"
-            ? await authorizePost(req)
+            ? await authorizePost(req, policy)
             : fail("invalid_request", 405);
       if (req.method !== "POST") fail("invalid_request", 405);
       if (
         req.headers.has("origin") &&
-        req.headers.get("origin") !== sandboxPublicOrigin()
+        req.headers.get("origin") !== sandboxPublicOrigin(policy)
       )
         fail("access_denied", 403);
       return action === "register"
-        ? await register(req)
+        ? await register(req, policy)
         : action === "token"
-          ? await exchange(req)
+          ? await exchange(req, policy)
           : await revoke(req);
     } catch (error) {
       const response = privateJson(

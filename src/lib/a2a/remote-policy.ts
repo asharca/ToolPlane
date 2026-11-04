@@ -1,4 +1,5 @@
 import "server-only";
+import { getTransportSettings } from "@/lib/admin/transport-settings";
 import { createHash } from "node:crypto";
 import { TaskState } from "@a2a-js/sdk";
 import {
@@ -60,7 +61,7 @@ export async function remoteTarget(
     },
   });
   if (!row) throw missing();
-  remotePair(row.cardUrl, row.rpcUrl);
+  remotePair(row.cardUrl, row.rpcUrl, await getTransportSettings());
   if (
     AgentCard.fromJSON(row.card).skills.some(
       (skill) => !policy.capabilityIds.includes(skill.id),

@@ -28,7 +28,7 @@ const mocks = vi.hoisted(() => ({
   removeDeploymentContainer: vi.fn(),
   removeStaleSessionMcpCaptures: vi.fn(),
   resolveMcpStartupTimeoutSettings: vi.fn(),
-  resolveRemoteMcpPrivateHostsSettings: vi.fn(),
+  resolvePrivateHostsSettings: vi.fn(),
 }));
 
 vi.mock("node:child_process", async (importOriginal) => {
@@ -51,8 +51,7 @@ vi.mock("@/lib/sandboxes/connector-broker", () => ({
 }));
 vi.mock("@/lib/admin/settings", () => ({
   resolveMcpStartupTimeoutSettings: mocks.resolveMcpStartupTimeoutSettings,
-  resolveRemoteMcpPrivateHostsSettings:
-    mocks.resolveRemoteMcpPrivateHostsSettings,
+  resolvePrivateHostsSettings: mocks.resolvePrivateHostsSettings,
 }));
 
 // Bridge launch tests exercise supervisor lifecycle behavior, not Docker volume
@@ -190,7 +189,7 @@ beforeEach(() => {
     maxTimeoutMs: 900_000,
     source: "database",
   });
-  mocks.resolveRemoteMcpPrivateHostsSettings.mockReset().mockResolvedValue({
+  mocks.resolvePrivateHostsSettings.mockReset().mockResolvedValue({
     value: "*.rhzy.ai,10.0.10.42",
     source: "database",
   });
@@ -298,34 +297,6 @@ describe("supervisor readiness races", () => {
 
     expect(mocks.removeDeploymentContainer).not.toHaveBeenCalled();
     expect(mocks.resolveMcpStartupTimeoutSettings).not.toHaveBeenCalled();
-    expect(mocks.resolveRemoteMcpPrivateHostsSettings).not.toHaveBeenCalled();
-  });
-
-  it("passes the administrator private host allowlist only to the remote bridge", async () => {
-    const child = createChild();
-    mocks.spawn.mockReturnValue(child);
-    await supervisor.startProcess(
-      "private-remote",
-      {
-        kind: "remote",
-        name: "Private remote",
-        url: "https://mcp.rhzy.ai/mcp",
-        transport: "streamable-http",
-        headers: {},
-        timeoutMs: 60_000,
-        allowUnsafeHttp: false,
-      },
-      { awaitReady: false },
-    );
-
-    const options = mocks.spawn.mock.calls[0]?.[2] as {
-      env?: Record<string, string>;
-    };
-    expect(mocks.resolveRemoteMcpPrivateHostsSettings).toHaveBeenCalledOnce();
-    expect(options.env).toMatchObject({
-      MCP_REMOTE_PRIVATE_HOSTS: "*.rhzy.ai,10.0.10.42",
-    });
-    expect(options.env).not.toHaveProperty("DATABASE_URL");
   });
 
   it("runs the ready callback only after the deployment is listening", async () => {

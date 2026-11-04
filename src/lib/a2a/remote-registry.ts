@@ -1,4 +1,5 @@
 import "server-only";
+import { getTransportSettings } from "@/lib/admin/transport-settings";
 import { randomUUID } from "node:crypto";
 import { AgentCard } from "@a2a-js/sdk";
 import { Prisma } from "@prisma/client";
@@ -240,7 +241,8 @@ export async function mutateRemoteRegistry(
           },
         });
       } else {
-        if (input.enabled) remotePair(row.cardUrl, row.rpcUrl);
+        if (input.enabled)
+          remotePair(row.cardUrl, row.rpcUrl, await getTransportSettings());
         const ids = new Set(row.allowedAgentIds);
         if (input.allowCurrentAgent === true) ids.add(ctx.agentId);
         if (input.allowCurrentAgent === false) ids.delete(ctx.agentId);

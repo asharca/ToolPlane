@@ -1,4 +1,6 @@
 import "server-only";
+import { getTransportSettings } from "@/lib/admin/transport-settings";
+import { a2aTransportBodyBytes } from "@/lib/transport-policy";
 import { A2A_QUOTA_ERROR } from "./quotas";
 import { AgentCard } from "@a2a-js/sdk";
 import {
@@ -144,7 +146,11 @@ function rpcError(id: RpcId, error: unknown) {
   return sanitizeEnvelope({ jsonrpc: "2.0", id, error: toJsonRpcError(error) });
 }
 async function readBody(req: Request) {
-  if (Number(req.headers.get("content-length")) > A2A_LIMITS.bodyBytes)
+  const bodyBytes = Math.max(
+    A2A_LIMITS.bodyBytes,
+    a2aTransportBodyBytes(await getTransportSettings()),
+  );
+  if (Number(req.headers.get("content-length")) > bodyBytes)
     throw new A2AHttpError(413, "Request body too large.");
   if (!req.body) return "";
   const reader = req.body.getReader();
@@ -163,7 +169,7 @@ async function readBody(req: Request) {
       signal.throwIfAborted();
       if (chunk.done) break;
       size += chunk.value.byteLength;
-      if (size > A2A_LIMITS.bodyBytes) {
+      if (size > bodyBytes) {
         await reader.cancel();
         throw new A2AHttpError(413, "Request body too large.");
       }
@@ -442,7 +448,12 @@ export async function handleA2ARpc(
             : "read";
       if (!permits(grant, operation))
         throw new A2AHttpError(403, "Required A2A permission is missing.");
-      validateParams(rpc.method, rpc.params, card.defaultOutputModes);
+      validateParams(
+        rpc.method,
+        rpc.params,
+        card.defaultOutputModes,
+        await getTransportSettings(),
+      );
       if (
         credential &&
         credential.length > 20 &&

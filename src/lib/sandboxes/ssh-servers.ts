@@ -9,7 +9,7 @@ import path from "node:path";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { publicRemoteAddress } from "@/lib/a2a/remote-network";
-import { resolveSshPrivateHostsSettings } from "@/lib/admin/settings";
+import { resolvePrivateHostsSettings } from "@/lib/admin/settings";
 import { decryptSecretText, encryptSecretText } from "@/lib/security/secrets";
 import {
   isPrivateRemoteMcpIp,
@@ -175,7 +175,7 @@ export async function resolveSshAddress(host: string): Promise<string> {
     if (!isPrivateRemoteMcpIp(raw))
       throw new SshServerError("SSH_HOST_FORBIDDEN");
     allow ??= parseRemoteMcpPrivateHosts(
-      (await resolveSshPrivateHostsSettings()).value,
+      (await resolvePrivateHostsSettings()).value,
     );
     const listed =
       allow &&

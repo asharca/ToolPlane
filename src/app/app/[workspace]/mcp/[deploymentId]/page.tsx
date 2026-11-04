@@ -1,4 +1,6 @@
 import { McpHttpApprovalForm } from "@/components/dashboard/McpHttpConsent";
+import { RemoteMcpTransportNotice } from "@/components/dashboard/RemoteMcpTransportNotice";
+import { getTransportSettings } from "@/lib/admin/transport-settings";
 import { AnimatedBadge } from "@/components/motion/animated-badge";
 
 import { ButtonLink } from "@/components/motion/button";
@@ -150,7 +152,7 @@ export default async function DeploymentInspectorPage({
     },
   });
   if (!dep) notFound();
-  const [usingAgents, usingAssistants] = await Promise.all([
+  const [usingAgents, usingAssistants, { allowHttp }] = await Promise.all([
     db.agent.findMany({
       where: {
         workspaceId: ws.id,
@@ -165,6 +167,7 @@ export default async function DeploymentInspectorPage({
       select: { id: true, name: true },
       orderBy: { name: "asc" },
     }),
+    getTransportSettings(),
   ]);
   const connected: McpConnectedObject[] = [
     ...usingAgents.map((agent) => ({
@@ -274,7 +277,14 @@ export default async function DeploymentInspectorPage({
   const endpoint = `${originFromHeaders(await headers())}/api/v1/mcp/${deploymentId}/rpc`;
   const base = `/app/${slug}/mcp/${deploymentId}`;
   const provisioning = status === "provisioning";
-  const setupRequired = status === "setup_required";
+  const setupRequired =
+    status === "setup_required" &&
+    !(
+      allowHttp &&
+      dep.source === "remote" &&
+      dep.sourceRef?.startsWith("http:") &&
+      missingRequiredVariables.length === 0
+    );
   const runtimePolling = provisioning || running;
   const sourceLabel =
     label.source === "catalog"
@@ -303,6 +313,7 @@ export default async function DeploymentInspectorPage({
       <DashboardPage className="min-w-0 space-y-5 [overflow-wrap:anywhere]">
         {dep.source === "remote" &&
         dep.sourceRef?.startsWith("http:") &&
+        !allowHttp &&
         (dep.installCfg as { allowUnsafeHttp?: boolean } | null)
           ?.allowUnsafeHttp !== true ? (
           <McpHttpApprovalForm
@@ -310,6 +321,8 @@ export default async function DeploymentInspectorPage({
             deploymentId={deploymentId}
             url={dep.sourceRef}
           />
+        ) : dep.source === "remote" ? (
+          <RemoteMcpTransportNotice url={dep.sourceRef} />
         ) : null}
         <header className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex min-w-0 items-center gap-3.5">
@@ -608,6 +621,7 @@ export default async function DeploymentInspectorPage({
               slug={slug}
               deploymentId={deploymentId}
               remote={dep.source === "remote"}
+              allowHttp={allowHttp}
               maskedConfig={serializedConfig}
               requiresReveal={false}
               initialNetwork={envCfg.network === "none" ? "none" : "isolated"}

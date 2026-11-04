@@ -1,4 +1,9 @@
 import "server-only";
+import { getTransportSettings } from "@/lib/admin/transport-settings";
+import {
+  DEFAULT_TRANSPORT_POLICY,
+  type TransportPolicy,
+} from "@/lib/transport-policy";
 import {
   Artifact,
   Part as StandardPart,
@@ -33,7 +38,10 @@ import { LocalArtifactInput } from "@/lib/agents/execution/tool-inputs";
 
 export const LOCAL_ARTIFACT_BYTES = A2A_LIMITS.publishArtifactBytes;
 
-export function parseLocalArtifact(raw: unknown): Artifact {
+export function parseLocalArtifact(
+  raw: unknown,
+  policy: TransportPolicy = DEFAULT_TRANSPORT_POLICY,
+): Artifact {
   const value = LocalArtifactInput.parse(raw);
   if (value.parts.some((part) => "path" in part || "fileId" in part))
     throw new RequestMalformedError(
@@ -51,19 +59,17 @@ export function parseLocalArtifact(raw: unknown): Artifact {
         "Use an owned fileId source instead of constructing an internal file reference.",
       );
     if (part.raw !== undefined) {
-      if (
-        !part.mediaType ||
-        !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
-          part.raw,
-        )
-      )
+      if (!part.mediaType || !/^[A-Za-z0-9+/]*={0,2}$/.test(part.raw))
         throw new RequestMalformedError(
           "File bytes must be canonical base64 with a mediaType.",
         );
       const content = Buffer.from(part.raw, "base64");
       if (content.toString("base64") !== part.raw)
         throw new RequestMalformedError("Non-canonical file bytes.");
-      bytes += content.length;
+      if (content.length > policy.a2aInlineBytes)
+        throw new UnsupportedOperationError(
+          `Inline file exceeds ${policy.a2aInlineBytes / 1024} KiB.`,
+        );
     } else if (part.data !== undefined) {
       if (part.mediaType && part.mediaType !== "application/json")
         throw new RequestMalformedError(
@@ -94,7 +100,10 @@ export async function publishLocalArtifact(
     (part) => !("fileId" in part || "path" in part),
   );
   const validatedParts = inline.length
-    ? parseLocalArtifact({ ...input, parts: inline }).parts
+    ? parseLocalArtifact(
+        { ...input, parts: inline },
+        await getTransportSettings(),
+      ).parts
     : [];
   let inlineIndex = 0;
   const resolved = [];

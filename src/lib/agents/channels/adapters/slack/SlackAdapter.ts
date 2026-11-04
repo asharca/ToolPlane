@@ -1,4 +1,5 @@
 // Adapted from Cherry Studio. See NOTICE for source and license.
+import { getTransportSettings } from "@/lib/admin/transport-settings";
 import {
   type FileAttachment,
   type ImageAttachment,
@@ -327,7 +328,9 @@ export class SlackAdapter extends ChannelAdapter {
       if (this.shouldStop) return;
       this.log.info("Connecting to Slack Socket Mode");
 
-      const ws = new WebSocket(sanitizeRemoteUrl(wsUrl, true));
+      const ws = new WebSocket(
+        sanitizeRemoteUrl(wsUrl, true, await getTransportSettings()),
+      );
       this.ws = ws;
 
       ws.on("open", () => {

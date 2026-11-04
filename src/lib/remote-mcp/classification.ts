@@ -24,6 +24,10 @@ export function assertAssistantRemoteDeployment(
     cfg?.credentialEnvelope
       ? { ...deployment, installCfg: { ...cfg, env: mcpEnvironmentState(cfg) } }
       : deployment,
+    false,
+    // Classification checks recipe shape, never authorizes a live connection.
+    // Runtime connection resolution applies the current administrator policy.
+    { allowHttp: true },
   );
   if (spec.kind !== "remote") throw new Error("ASSISTANT_REMOTE_MCP_REQUIRED");
   const path = decodeURIComponent(new URL(spec.url).pathname);

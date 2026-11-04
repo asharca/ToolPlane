@@ -1,5 +1,12 @@
 import "server-only";
 import { request } from "node:https";
+import { request as httpRequest } from "node:http";
+import { getTransportSettings } from "@/lib/admin/transport-settings";
+import {
+  DEFAULT_TRANSPORT_POLICY,
+  permitsTransportProtocol,
+  type TransportPolicy,
+} from "@/lib/transport-policy";
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import { publicRemoteAddress } from "@/lib/a2a/remote-network";
@@ -13,7 +20,10 @@ export function sourceError(code: string = "source_unavailable"): PluginError {
     "The package source request could not be completed safely.",
   );
 }
-export function piSourceUrl(raw: string): URL {
+export function piSourceUrl(
+  raw: string,
+  policy: TransportPolicy = DEFAULT_TRANSPORT_POLICY,
+): URL {
   try {
     if (
       typeof raw !== "string" ||
@@ -23,12 +33,13 @@ export function piSourceUrl(raw: string): URL {
       throw sourceError();
     const url = new URL(raw);
     if (
-      url.protocol !== "https:" ||
+      !permitsTransportProtocol(url.protocol, policy) ||
       url.username ||
       url.password ||
       url.hash ||
       url.search ||
-      (url.port && url.port !== "443")
+      (url.protocol === "https:" && url.port && url.port !== "443") ||
+      url.port === "0"
     )
       throw sourceError();
     const path = decodeURIComponent(url.pathname);
@@ -47,9 +58,10 @@ export function piSourceUrl(raw: string): URL {
 export function sourceAuthorization(
   url: URL,
   authentication?: PiSourceAuthentication,
+  policy: TransportPolicy = DEFAULT_TRANSPORT_POLICY,
 ): string | undefined {
   if (!authentication) return undefined;
-  const scope = piSourceUrl(authentication.url);
+  const scope = piSourceUrl(authentication.url, policy);
   const path = decodeURIComponent(url.pathname);
   const prefix = decodeURIComponent(scope.pathname).replace(/\/$/, "");
   if (
@@ -74,7 +86,8 @@ export async function piSourceRequest(
     accept?: string;
   } = {},
 ): Promise<Buffer> {
-  const checked = piSourceUrl(url.origin + url.pathname);
+  const policy = await getTransportSettings();
+  const checked = piSourceUrl(url.origin + url.pathname, policy);
   checked.search = url.search;
   try {
     const host = checked.hostname.replace(/^\[|\]$/g, "");
@@ -93,9 +106,13 @@ export async function piSourceRequest(
       addresses.some((item) => !publicRemoteAddress(item.address))
     )
       throw sourceError("source_network_blocked");
-    const authorization = sourceAuthorization(checked, options.authentication);
+    const authorization = sourceAuthorization(
+      checked,
+      options.authentication,
+      policy,
+    );
     return await new Promise<Buffer>((resolve, reject) => {
-      const req = request(
+      const req = (checked.protocol === "http:" ? httpRequest : request)(
         checked,
         {
           method: options.method ?? "GET",

@@ -1,4 +1,6 @@
 import "server-only";
+import { getTransportSettings } from "@/lib/admin/transport-settings";
+import { permitsTransportProtocol } from "@/lib/transport-policy";
 import { createHash, randomUUID } from "node:crypto";
 import { Part, Task, type TaskState } from "@a2a-js/sdk";
 import type { A2ATask, Prisma } from "@prisma/client";
@@ -55,6 +57,7 @@ export async function prepareTaskFileParts(
   deferredFiles?: Prisma.A2ATaskFileCreateManyInput[],
   refreshUrls = false,
 ): Promise<Part[]> {
+  const policy = await getTransportSettings();
   const result: Part[] = [];
   let count = parts.some((part) => part.content?.$case !== "text")
     ? (await tx.a2ATaskFile.count({ where: { taskId } })) +
@@ -72,7 +75,7 @@ export async function prepareTaskFileParts(
     if (content?.$case === "url") {
       const url = new URL(content.value);
       if (
-        url.protocol !== "https:" ||
+        !permitsTransportProtocol(url.protocol, policy) ||
         url.username ||
         url.password ||
         url.hash ||
@@ -83,12 +86,16 @@ export async function prepareTaskFileParts(
           "File URLs require HTTPS without credentials or fragments.",
         );
       source = { kind: "url", value: content.value };
-    } else if (content?.$case === "raw")
+    } else if (content?.$case === "raw") {
+      if (content.value.byteLength > policy.a2aInlineBytes)
+        throw new RequestMalformedError(
+          `Inline files exceed the ${policy.a2aInlineBytes / 1024} KiB limit; use a URL.`,
+        );
       source = {
         kind: "raw",
         value: Buffer.from(content.value).toString("base64"),
       };
-    else {
+    } else {
       const id =
         content?.$case === "data" ? content.value.toolplaneFileId : undefined;
       if (typeof id !== "string")

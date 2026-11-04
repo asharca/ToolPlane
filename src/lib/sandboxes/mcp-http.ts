@@ -1,4 +1,5 @@
 import "server-only";
+import { getTransportSettings } from "@/lib/admin/transport-settings";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import {
@@ -53,7 +54,7 @@ export function handleSandboxMcp(
       try {
         response.headers.set(
           "www-authenticate",
-          sandboxAuthChallenge(sandboxId),
+          sandboxAuthChallenge(sandboxId, await getTransportSettings()),
         );
       } catch {
         return privateJson(

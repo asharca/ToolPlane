@@ -516,6 +516,7 @@ function parseRemoteHttpMcpConfig(
   name: string,
   operatorApproval?: boolean,
   allowEnvironment = true,
+  allowHttp = false,
 ): ParsedCustomMcp {
   const unknownKey = Object.keys(config).find(
     (key) => !REMOTE_HTTP_FIELDS.has(key),
@@ -536,7 +537,11 @@ function parseRemoteHttpMcpConfig(
     );
   }
   const allowUnsafeHttp = operatorApproval ?? config.allowUnsafeHttp === true;
-  if (new URL(config.url).protocol === "http:" && !allowUnsafeHttp) {
+  if (
+    new URL(config.url).protocol === "http:" &&
+    !allowUnsafeHttp &&
+    !allowHttp
+  ) {
     return configError(
       "HTTP is unencrypted; explicitly set allowUnsafeHttp: true to approve the risk.",
     );
@@ -647,7 +652,11 @@ function parseRemoteHttpMcpConfig(
 export function parseMcpJsonConfig(
   raw: string,
   fallbackName?: string,
-  options: { allowEnvironment?: boolean; allowUnsafeHttp?: boolean } = {},
+  options: {
+    allowEnvironment?: boolean;
+    allowUnsafeHttp?: boolean;
+    allowHttp?: boolean;
+  } = {},
 ): ParsedCustomMcp {
   let document: unknown;
   try {
@@ -709,6 +718,7 @@ export function parseMcpJsonConfig(
       name ?? "",
       options.allowUnsafeHttp,
       options.allowEnvironment,
+      options.allowHttp,
     );
 
   const allowedKeys = new Set([
@@ -751,7 +761,11 @@ export function parseMcpDeploymentConfig(
   expectedSource: EditableMcpSource,
   fallbackName?: string,
   networkOverride?: unknown,
-  options: { allowEnvironment?: boolean; allowUnsafeHttp?: boolean } = {},
+  options: {
+    allowEnvironment?: boolean;
+    allowUnsafeHttp?: boolean;
+    allowHttp?: boolean;
+  } = {},
 ): ParsedMcpDeploymentConfig {
   if (expectedSource === "remote") {
     const parsed = parseMcpJsonConfig(raw, fallbackName, options);
@@ -841,7 +855,10 @@ export function parseMcpDeploymentConfig(
   };
 }
 
-export function parseCustomMcpInput(raw: unknown): ParsedCustomMcp {
+export function parseCustomMcpInput(
+  raw: unknown,
+  policy: { allowHttp: boolean } = { allowHttp: false },
+): ParsedCustomMcp {
   if (
     raw &&
     typeof raw === "object" &&
@@ -852,6 +869,7 @@ export function parseCustomMcpInput(raw: unknown): ParsedCustomMcp {
     if (typeof config !== "string") return configError("config is required.");
     const parsed = parseMcpJsonConfig(config, undefined, {
       allowUnsafeHttp: input.allowUnsafeHttp === true,
+      allowHttp: policy.allowHttp,
     });
     // Transport-risk consent is the explicit caller choice, never inherited
     // from a downloaded/imported document. Network selection stays separate.

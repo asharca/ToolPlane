@@ -1,3 +1,8 @@
+import {
+  DEFAULT_TRANSPORT_POLICY,
+  permitsTransportProtocol,
+  type TransportPolicy,
+} from "@/lib/transport-policy";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { SANDBOX_MCP_TOOLS, type SandboxMcpTool } from "./mcp-policy";
 
@@ -13,7 +18,9 @@ export const CONSENT_COOKIE = "toolplane_mcp_consent";
 const ID = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/;
 
 // Never infer the issuer or audience from attacker-controlled Host/Forwarded headers.
-export function sandboxPublicOrigin(): string {
+export function sandboxPublicOrigin(
+  policy: TransportPolicy = DEFAULT_TRANSPORT_POLICY,
+): string {
   const configured =
     process.env.TOOLPLANE_PUBLIC_URL || process.env.NEXT_PUBLIC_APP_URL;
   if (!configured)
@@ -23,7 +30,8 @@ export function sandboxPublicOrigin(): string {
   const url = new URL(configured);
   const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
   if (
-    (url.protocol !== "https:" && !(loopback && url.protocol === "http:")) ||
+    (!permitsTransportProtocol(url.protocol, policy) &&
+      !(loopback && url.protocol === "http:")) ||
     url.username ||
     url.password ||
     url.search ||
@@ -36,31 +44,45 @@ export function sandboxPublicOrigin(): string {
   }
   return url.origin;
 }
-export function sandboxMcpResource(sandboxId: string): string {
+export function sandboxMcpResource(
+  sandboxId: string,
+  policy: TransportPolicy = DEFAULT_TRANSPORT_POLICY,
+): string {
   if (!ID.test(sandboxId)) throw new Error("Invalid sandbox ID.");
-  return `${sandboxPublicOrigin()}/api/v1/sandboxes/${sandboxId}/mcp`;
+  return `${sandboxPublicOrigin(policy)}/api/v1/sandboxes/${sandboxId}/mcp`;
 }
-export function sandboxIdFromResource(resource: string): string | null {
-  const prefix = `${sandboxPublicOrigin()}/api/v1/sandboxes/`;
+export function sandboxIdFromResource(
+  resource: string,
+  policy: TransportPolicy = DEFAULT_TRANSPORT_POLICY,
+): string | null {
+  const prefix = `${sandboxPublicOrigin(policy)}/api/v1/sandboxes/`;
   if (!resource.startsWith(prefix) || !resource.endsWith("/mcp")) return null;
   const id = resource.slice(prefix.length, -4);
-  return ID.test(id) && sandboxMcpResource(id) === resource ? id : null;
+  return ID.test(id) && sandboxMcpResource(id, policy) === resource ? id : null;
 }
-export function sandboxProtectedResourceMetadata(sandboxId: string) {
+export function sandboxProtectedResourceMetadata(
+  sandboxId: string,
+  policy: TransportPolicy = DEFAULT_TRANSPORT_POLICY,
+) {
   return {
-    resource: sandboxMcpResource(sandboxId),
-    authorization_servers: [sandboxPublicOrigin()],
+    resource: sandboxMcpResource(sandboxId, policy),
+    authorization_servers: [sandboxPublicOrigin(policy)],
     scopes_supported: [...SANDBOX_OAUTH_SCOPES],
     bearer_methods_supported: ["header"],
     resource_name: "ToolPlane sandbox",
   };
 }
-export function sandboxAuthChallenge(sandboxId: string): string {
-  sandboxMcpResource(sandboxId);
-  return `Bearer resource_metadata="${sandboxPublicOrigin()}/.well-known/oauth-protected-resource/api/v1/sandboxes/${sandboxId}/mcp"`;
+export function sandboxAuthChallenge(
+  sandboxId: string,
+  policy: TransportPolicy = DEFAULT_TRANSPORT_POLICY,
+): string {
+  sandboxMcpResource(sandboxId, policy);
+  return `Bearer resource_metadata="${sandboxPublicOrigin(policy)}/.well-known/oauth-protected-resource/api/v1/sandboxes/${sandboxId}/mcp"`;
 }
-export function sandboxAuthorizationMetadata() {
-  const origin = sandboxPublicOrigin();
+export function sandboxAuthorizationMetadata(
+  policy: TransportPolicy = DEFAULT_TRANSPORT_POLICY,
+) {
+  const origin = sandboxPublicOrigin(policy);
   return {
     issuer: origin,
     authorization_response_iss_parameter_supported: true,
@@ -117,14 +139,17 @@ export function sandboxToolAnnotations(name: string) {
     openWorldHint: !readOnlyHint,
   };
 }
-export function isValidOAuthRedirect(value: string): boolean {
+export function isValidOAuthRedirect(
+  value: string,
+  policy: TransportPolicy = DEFAULT_TRANSPORT_POLICY,
+): boolean {
   try {
     const url = new URL(value);
     if (url.username || url.password || url.hash || value.length > 2048)
       return false;
     // Exact URI matching at authorization and token exchange; no wildcard redirects.
     return (
-      url.protocol === "https:" ||
+      permitsTransportProtocol(url.protocol, policy) ||
       (url.protocol === "http:" &&
         ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname))
     );

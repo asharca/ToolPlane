@@ -98,8 +98,8 @@ services:
       TOOLPLANE_MCP_STARTUP_IDLE_TIMEOUT_MS: ${TOOLPLANE_MCP_STARTUP_IDLE_TIMEOUT_MS:-300000}
       TOOLPLANE_MCP_STARTUP_MAX_TIMEOUT_MS: ${TOOLPLANE_MCP_STARTUP_MAX_TIMEOUT_MS:-900000}
       # Admin-controlled exact hosts, wildcard suffixes, or private IPs allowed
-      # for Remote MCPs. This does not allow loopback or link-local targets.
-      TOOLPLANE_REMOTE_MCP_PRIVATE_HOSTS: ${TOOLPLANE_REMOTE_MCP_PRIVATE_HOSTS:-}
+      # for Remote MCP and SSH. This does not allow loopback or link-local targets.
+      TOOLPLANE_PRIVATE_HOSTS: ${TOOLPLANE_PRIVATE_HOSTS:-}
       TOOLPLANE_RUNTIME_ROOT: /app
 
 volumes:
