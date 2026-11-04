@@ -1,20 +1,9 @@
 import "server-only";
 import { execFile } from "node:child_process";
-import {
-  mkdtemp,
-  mkdir,
-  chmod,
-  readFile,
-  writeFile,
-  rm,
-} from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { mkdtemp, chmod, readFile, writeFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-import {
-  ensureOmpInstalled,
-  OMP_VERSION,
-} from "../../../scripts/omp-install.mjs";
+import { prepareOmpRuntime } from "./omp-runtime";
 import {
   assertRuntimeOwner,
   runtimeAbortSignal,
@@ -25,7 +14,6 @@ import {
   buildInstalledSkillMarkdown,
   installedSkillExtraFiles,
 } from "@/lib/skills/artifact";
-let binary: Promise<string> | undefined;
 function dockerEnvironment(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { NODE_ENV: process.env.NODE_ENV };
   for (const key of [
@@ -40,29 +28,6 @@ function dockerEnvironment(): NodeJS.ProcessEnv {
     if (process.env[key]) env[key] = process.env[key];
   return env;
 }
-function preparedBinary() {
-  binary ??= (async () => {
-    const root = join(
-      homedir(),
-      ".cache",
-      "toolplane",
-      "omp",
-      OMP_VERSION,
-      `${process.platform}-${process.arch}`,
-    );
-    await mkdir(root, { recursive: true, mode: 0o700 });
-    // Reuse only artifacts accepted by the installer's pinned SHA-256 check.
-    try {
-      const path = await ensureOmpInstalled(join(root, "omp"));
-      await chmod(path, 0o755);
-      return path;
-    } catch (error) {
-      binary = undefined;
-      throw error;
-    }
-  })();
-  return binary;
-}
 /** Real pinned OMP startup and plugin factories, offline with no credentials or host filesystem access. */
 export async function preflightOmpCapabilities(input: {
   piPackages: ResolvedAgentPiPackage[];
@@ -71,7 +36,7 @@ export async function preflightOmpCapabilities(input: {
 }) {
   return trackRuntimeOperation(async () => {
     assertRuntimeOwner(true);
-    const path = await preparedBinary();
+    const path = await prepareOmpRuntime();
     const root = await mkdtemp(`${tmpdir()}/toolplane-omp-preflight-`);
     const name = `toolplane-omp-preflight-${randomUUID()}`;
     const command = (args: string[], stdin?: string, teardown = false) => {
@@ -173,5 +138,5 @@ export async function preflightOmpCapabilities(input: {
         await rm(root, { recursive: true, force: true });
       }
     }
-  });
+  }, true);
 }

@@ -2,7 +2,7 @@ import "server-only";
 import { db } from "@/lib/db";
 import { scanMarketArtifact } from "@/lib/pi-packages/secret-scan";
 import { requirePluginWorkspace } from "@/lib/plugins/catalog";
-import { withAgentMaintenanceLease } from "./agent-execution-gate";
+import { withAgentDraftLease } from "./agent-execution-gate";
 import {
   OmpConfigSnapshotSchema,
   OmpInstructionFilesSchema,
@@ -63,7 +63,7 @@ export async function saveOmpInstructionsDraft(input: {
 }) {
   const parsed = OmpInstructionFilesSchema.safeParse(input.files);
   if (!parsed.success) throw new OmpConfigError("OMP_INSTRUCTIONS_INVALID");
-  return withAgentMaintenanceLease(input.agentId, () =>
+  return withAgentDraftLease(input.agentId, () =>
     db.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM "Agent" WHERE id=${input.agentId} AND "workspaceId"=${input.workspaceId} FOR UPDATE`;
       await requirePluginWorkspace(input.workspaceId, input.userId, false, tx);

@@ -48,7 +48,6 @@ export async function resolveAgentRuntimeGrant(
           runtimeKind: revision.config.runtimeKind,
           retiredAt: null,
           workspace: { status: "active" },
-          providerId: revision.config.providerId,
         },
         select: {
           servers: { select: { deploymentId: true, allowedToolNames: true } },
@@ -59,6 +58,16 @@ export async function resolveAgentRuntimeGrant(
         },
       });
       if (!agent) return null;
+      const provider = revision.config.providerId
+        ? await tx.modelProvider.findFirst({
+            where: {
+              id: revision.config.providerId,
+              workspaceId: token.workspaceId,
+            },
+            select: { apiKey: true },
+          })
+        : null;
+      if (!provider?.apiKey.trim()) return null;
       if (token.modelOverride) {
         if (token.modelOverride.providerId !== token.providerId) return null;
         await resolveAgentModelOverride(

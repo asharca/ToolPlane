@@ -11,6 +11,7 @@ import {
   AgentExecutionBusyError,
   agentExecutionBusy,
   refreshAgentExecutionLimits,
+  withAgentDraftLease,
   withAgentExecutionLease,
   withAgentMaintenanceLease,
 } from "@/lib/agents/agent-execution-gate";
@@ -163,6 +164,71 @@ describe("Agent execution admission", () => {
     await expect(third).resolves.toBe("third");
     two.resolve();
     await second;
+  });
+
+  it("saves drafts during execution without bypassing capacity or exclusive maintenance", async () => {
+    limits.maxPerAgent = 1;
+    const activeHold = deferred();
+    const activeEntered = deferred();
+    const draftHold = deferred();
+    const draftEntered = deferred();
+    const active = withAgentExecutionLease(
+      { agentId: "draft", sessionId: "active" },
+      async () => {
+        activeEntered.resolve();
+        await activeHold.promise;
+      },
+    );
+    let draft: Promise<void> | undefined;
+    try {
+      await activeEntered.promise;
+      draft = withAgentDraftLease("draft", async () => {
+        expect(
+          await withAgentDraftLease("draft", async () => "nested save"),
+        ).toBe("nested save");
+        await expect(
+          withAgentMaintenanceLease("draft", async () => "unsafe upgrade"),
+        ).rejects.toBeInstanceOf(AgentExecutionBusyError);
+        draftEntered.resolve();
+        await draftHold.promise;
+      });
+      await draftEntered.promise;
+      await expect(
+        withAgentExecutionLease(
+          { agentId: "draft", sessionId: "second", wait: false },
+          async () => "over capacity",
+        ),
+      ).rejects.toBeInstanceOf(AgentExecutionBusyError);
+      await expect(
+        withAgentDraftLease("draft", async () => "competing save"),
+      ).rejects.toBeInstanceOf(AgentExecutionBusyError);
+      await expect(
+        withAgentMaintenanceLease("draft", async () => "delete"),
+      ).rejects.toBeInstanceOf(AgentExecutionBusyError);
+      activeHold.resolve();
+      await active;
+      expect(
+        await withAgentExecutionLease(
+          { agentId: "draft", sessionId: "second", wait: false },
+          async () => "admitted during save",
+        ),
+      ).toBe("admitted during save");
+    } finally {
+      activeHold.resolve();
+      draftHold.resolve();
+      await Promise.all([active, draft]);
+    }
+    await withAgentMaintenanceLease("draft", async () => {
+      expect(
+        await withAgentDraftLease("draft", async () => "nested draft"),
+      ).toBe("nested draft");
+      await expect(
+        withAgentExecutionLease(
+          { agentId: "draft", sessionId: "exclusive", wait: false },
+          async () => "unsafe admission",
+        ),
+      ).rejects.toBeInstanceOf(AgentExecutionBusyError);
+    });
   });
 
   it("keeps maintenance exclusive and refuses admission when settings cannot be read", async () => {

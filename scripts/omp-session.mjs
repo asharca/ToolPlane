@@ -15,7 +15,7 @@ import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
 import { OmpFrameDecoder } from "./omp-rpc.mjs";
 import { createOmpUi } from "./omp-ui.mjs";
-import { ensureOmpInstalled, OMP_VERSION } from "./omp-install.mjs";
+import { verifyOmpRuntime, OMP_VERSION } from "./omp-install.mjs";
 import { assembleOmpCapabilities } from "./omp-capabilities.mjs";
 import { verifyPiPackageSnapshots } from "./pi-sdk-package-files.mjs";
 
@@ -63,9 +63,7 @@ if (
     config.capabilities.policy.maxDepth > 4)
 )
   fail("OMP_CONFIG_INVALID");
-await ensureOmpInstalled(config.binary, {
-  workspaceRoot: config.workspaceRoot,
-});
+if (!(await verifyOmpRuntime(config.binary))) fail("OMP_RUNTIME_NOT_PREPARED");
 await privateDirectory(config.sessionDir);
 await privateDirectory(config.runRoot);
 const agentDir = join(config.runRoot, "home", ".omp", "agent");

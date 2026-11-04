@@ -450,7 +450,11 @@ export function AgentSettingsForm(props: Props) {
       setDirty(false);
       const preparation = identity();
       if (environment.trim()) preparation.set("environment", environment);
-      const prepared = await prepareAgentRevisionAction(preparation);
+      const preview = await prepareAgentRevisionAction(preparation);
+      const prepared = {
+        expectedRevisionId: preview.expectedRevisionId,
+        config: JSON.parse(preview.configJson) as AgentRevisionConfig,
+      };
       // Never classify against a different tab's newly applied configuration.
       if ((prepared.expectedRevisionId ?? "") !== revision)
         throw new Error(r("stale"));

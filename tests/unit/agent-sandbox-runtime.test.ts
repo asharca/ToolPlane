@@ -14,7 +14,7 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import {
   PI_SDK_RUNTIME,
-  SANDBOX_HOST_FILES_WRITER,
+  SANDBOX_TURN_PREPARER,
   buildSandboxSkillBundles,
   buildSandboxTranscript,
   normalizeSandboxWorkingDirectory,
@@ -119,11 +119,11 @@ describe("sandbox Agent runtime helpers", () => {
       { path: join(hostRoot, "factory.mjs"), content: "export default {};\n" },
       { path: join(hostRoot, "empty.mjs"), content: "" },
     ];
-    const command = ["-e", `process.umask(0o000);${SANDBOX_HOST_FILES_WRITER}`];
+    const command = ["-e", `process.umask(0o000);${SANDBOX_TURN_PREPARER}`];
     try {
       const first = spawnSync(process.execPath, command, {
         cwd: directory,
-        input: JSON.stringify(files),
+        input: JSON.stringify({ files }),
         encoding: "utf8",
       });
       expect(first.status, first.stderr).toBe(0);
@@ -138,15 +138,20 @@ describe("sandbox Agent runtime helpers", () => {
       );
 
       await writeFile(assertDefined(files[0]).path, "substituted host source");
+      const outside = join(directory, "outside.mjs");
+      await writeFile(outside, "must remain untouched");
+      await rm(assertDefined(files[1]).path);
+      await symlink(outside, assertDefined(files[1]).path);
       assertDefined(files[1]).content = "// new factory\n";
       const second = spawnSync(process.execPath, command, {
         cwd: directory,
-        input: JSON.stringify(files),
+        input: JSON.stringify({ files }),
         encoding: "utf8",
       });
       expect(second.status, second.stderr).toBe(0);
       for (const file of files)
         expect(await readFile(file.path, "utf8")).toBe(file.content);
+      expect(await readFile(outside, "utf8")).toBe("must remain untouched");
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -159,13 +164,15 @@ describe("sandbox Agent runtime helpers", () => {
     try {
       const result = spawnSync(
         process.execPath,
-        ["-e", SANDBOX_HOST_FILES_WRITER],
+        ["-e", SANDBOX_TURN_PREPARER],
         {
-          input: JSON.stringify([
-            { path: firstPath, content: "first\n" },
-            { path: directory, content: "must fail: target is a directory" },
-            { path: laterPath, content: "must not be written" },
-          ]),
+          input: JSON.stringify({
+            files: [
+              { path: firstPath, content: "first\n" },
+              { path: directory, content: "must fail: target is a directory" },
+              { path: laterPath, content: "must not be written" },
+            ],
+          }),
           encoding: "utf8",
         },
       );
@@ -175,6 +182,58 @@ describe("sandbox Agent runtime helpers", () => {
       await expect(stat(laterPath)).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
       await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("replaces revised skills including binary files and removes resources revoked by the next revision", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sandbox-prepared-skills-"));
+    const skillRoot = join(root, "skills");
+    const binary = Buffer.from([0, 255, 1, 128]);
+    const run = (
+      digest: string,
+      files: { path: string; content: string; encoding?: "base64" }[],
+    ) =>
+      spawnSync(process.execPath, ["-e", SANDBOX_TURN_PREPARER], {
+        input: JSON.stringify({
+          directories: [root],
+          files: [],
+          skills: { root: skillRoot, digest, files },
+        }),
+        encoding: "utf8",
+      });
+    try {
+      const first = run("revision-one", [
+        { path: join(skillRoot, "old", "SKILL.md"), content: "first skill" },
+        {
+          path: join(skillRoot, "old", "asset.bin"),
+          content: binary.toString("base64"),
+          encoding: "base64",
+        },
+      ]);
+      expect(first.status, first.stderr).toBe(0);
+      expect(await readFile(join(skillRoot, "old", "asset.bin"))).toEqual(
+        binary,
+      );
+      const revised = run("revision-two", [
+        {
+          path: join(skillRoot, "new", "SKILL.md"),
+          content: "replacement skill",
+        },
+      ]);
+      expect(revised.status, revised.stderr).toBe(0);
+      expect(await readFile(join(skillRoot, "new", "SKILL.md"), "utf8")).toBe(
+        "replacement skill",
+      );
+      await expect(stat(join(skillRoot, "old"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      const removed = run("no-skills", []);
+      expect(removed.status, removed.stderr).toBe(0);
+      await expect(stat(join(skillRoot, "new"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
     }
   });
 

@@ -116,7 +116,6 @@ export async function localTarget(
       runtimeKind: true,
       a2aInboundEnabled: true,
       a2aOutboundEnabled: true,
-      providerId: true,
       sandboxes: {
         select: {
           sandboxId: true,
@@ -154,10 +153,13 @@ export async function localTarget(
   const sandbox = agent.sandboxes[0];
   if (!config.providerId || !config.model)
     throw unavailable("SUBAGENT_MODEL_REQUIRED");
-  if (
-    sandbox.sandboxId !== config.sandboxTemplateId ||
-    agent.providerId !== config.providerId
-  )
+  // A pending draft selection is not a revocation of the published provider.
+  const provider = await tx.modelProvider.findFirst({
+    where: { id: config.providerId, workspaceId },
+    select: { apiKey: true },
+  });
+  if (!provider?.apiKey.trim()) throw unavailable("SUBAGENT_MODEL_REQUIRED");
+  if (sandbox.sandboxId !== config.sandboxTemplateId)
     throw unavailable("SUBAGENT_REVISION_OUTDATED");
   const skills = config.skills
     .filter((skill) =>

@@ -4,7 +4,10 @@ import { db } from "@/lib/db";
 import { visiblePluginWhere } from "@/lib/plugins/catalog";
 import { parsePiPackageReleaseManifest } from "@/lib/pi-packages/manifest";
 import { deleteAgentConversationSandboxes } from "@/lib/agents/conversation-sandbox";
-import { withAgentMaintenanceLease } from "@/lib/agents/agent-execution-gate";
+import {
+  withAgentDraftLease,
+  withAgentMaintenanceLease,
+} from "@/lib/agents/agent-execution-gate";
 import { writeAudit } from "@/lib/observability/audit";
 import { conversationTitleFromParts } from "@/lib/agents/conversation-title";
 import {
@@ -42,6 +45,8 @@ import { catalogToolNames } from "@/lib/process/mcp-grant-sync";
 import { isExecutableAgentRuntimeKind } from "./runtime-kind";
 import { emptyOmpConfig } from "./omp-config";
 import type { OmpConfigSnapshot } from "./omp-config";
+import { prepareOmpRuntime } from "./omp-runtime";
+import { preparePiRuntime } from "./pi-runtime";
 
 function assertNativeAgent(runtimeKind: string, retiredAt: Date | null): void {
   if (!isExecutableAgentRuntimeKind(runtimeKind) || retiredAt !== null) {
@@ -639,7 +644,7 @@ export async function setAgentPiPackages(
   agentId: string,
   piPackages: NonNullable<AgentConfig["piPackages"]>,
 ) {
-  return withAgentMaintenanceLease(agentId, () =>
+  return withAgentDraftLease(agentId, () =>
     db.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${workspaceId} FOR UPDATE`;
       const agent = await tx.agent.findFirst({
@@ -874,6 +879,9 @@ export async function createConfiguredAgent(
     });
     if (options.enable) await prepareSessionMcpDefinition(deployment);
   }
+  // Finish network preparation before taking transactional locks or exposing a usable Agent.
+  if (options.enable && runtime === "omp") await prepareOmpRuntime();
+  if (options.enable && runtime === "pi-sdk") await preparePiRuntime();
   return await db.$transaction(
     async (tx) => {
       await options.authorize?.(tx);
@@ -1013,7 +1021,7 @@ export async function updateAgent(
   agentId: string,
   cfg: AgentConfig,
 ) {
-  return withAgentMaintenanceLease(agentId, async () => {
+  return withAgentDraftLease(agentId, async () => {
     await db.$transaction(async (tx) => {
       if (cfg.piPackages !== undefined) {
         await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${workspaceId} FOR UPDATE`;
@@ -1109,7 +1117,7 @@ export async function setAgentTools(
   agentId: string,
   tools: AgentToolSelection,
 ) {
-  return withAgentMaintenanceLease(agentId, async () => {
+  return withAgentDraftLease(agentId, async () => {
     const agent = await db.agent.findFirst({
       where: { id: agentId, workspaceId },
       select: { id: true, runtimeKind: true, retiredAt: true },

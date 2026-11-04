@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { AsyncResource } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
@@ -50,6 +51,7 @@ import { marketReleaseChecksum } from "@/lib/pi-packages/artifact";
 import { publishFixtureAgentRevision } from "./agent-revision-fixture";
 import { updateTaskUi } from "@/lib/agents/execution/task-ui";
 import { mapTaskSandbox } from "./task-sandbox-fixture";
+import { withAgentMaintenanceLease } from "@/lib/agents/agent-execution-gate";
 const browserActor = vi.hoisted(() => ({ id: "" }));
 vi.mock("@/lib/auth/request-user", () => ({
   resolveRequestPrincipal: async () => ({
@@ -166,6 +168,50 @@ async function fixture() {
   return { agent, config, revision };
 }
 describe.sequential("Work and local A2A owner revisions", () => {
+  it("rejects retry and new input while conversation deletion holds maintenance", async () => {
+    const { agent } = await fixture();
+    const work = await createWorkSession({
+      workspaceId,
+      agentId: agent.id,
+      task: "Deletion admission race",
+    });
+    if (!work) throw new Error("Missing Work fixture");
+    await db.workSession.update({
+      where: { id: work.id },
+      data: { status: "failed" },
+    });
+    const requester = new AsyncResource("concurrent-work-input");
+    try {
+      await withAgentMaintenanceLease(agent.id, () =>
+        requester.runInAsyncScope(async () => {
+          await expect(
+            resumeWorkSession(workspaceId, work.id),
+          ).resolves.toMatchObject({
+            ok: false,
+            reason: "invalid_transition",
+            status: "failed",
+          });
+          await expect(
+            appendWorkSessionInput(workspaceId, work.id, "Concurrent input"),
+          ).resolves.toMatchObject({
+            ok: false,
+            reason: "invalid_transition",
+            status: "failed",
+          });
+        }),
+      );
+    } finally {
+      requester.emitDestroy();
+    }
+    expect(
+      await db.workSession.findUnique({ where: { id: work.id } }),
+    ).toMatchObject({ status: "failed" });
+    expect(
+      await db.message.count({
+        where: { conversationId: work.conversationId },
+      }),
+    ).toBe(1);
+  });
   it("creates OMP drafts and pins real OMP Work/A2A backends without Pi package state", async () => {
     const ompConfig = {
       ...emptyOmpConfig(),

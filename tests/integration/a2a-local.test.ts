@@ -53,6 +53,7 @@ import {
   assertLocalGrant,
   LOCAL_LIMITS,
   localOwnerKey,
+  localTarget,
 } from "@/lib/a2a/local-policy";
 import { createEntryPolicy } from "@/lib/agents/execution/entry-policy";
 import type { LocalA2AGrant } from "@/lib/a2a/principal";
@@ -432,19 +433,48 @@ afterAll(async () => {
 });
 
 describe("local Agent authorization and native continuations", () => {
-  it("rejects a pinned local grant after its live provider is removed", async () => {
+  it("keeps a pinned local grant after clearing only its unapplied draft provider", async () => {
     await db.agent.update({
       where: { id: agents[0] },
       data: { providerId: null },
     });
     try {
-      await expect(assertLocalGrant(grant)).rejects.toBeInstanceOf(
-        TaskNotFoundError,
-      );
+      await assertLocalGrant(grant);
+      expect(await localTarget(db, ws, agents[0])).toMatchObject({
+        agentRevisionId: grant.agentRevisionId,
+        providerId: provider,
+      });
+      expect(await createLocalRootGrant(ws, agents[0], user)).toMatchObject({
+        agentRevisionId: grant.agentRevisionId,
+      });
     } finally {
       await db.agent.update({
         where: { id: agents[0] },
         data: { providerId: provider },
+      });
+    }
+  });
+
+  it("rejects a pinned local grant when its provider credentials are disabled", async () => {
+    const pinnedProvider = await db.modelProvider.findUniqueOrThrow({
+      where: { id: provider },
+      select: { apiKey: true },
+    });
+    await db.modelProvider.update({
+      where: { id: provider },
+      data: { apiKey: " " },
+    });
+    try {
+      await expect(assertLocalGrant(grant)).rejects.toBeInstanceOf(
+        TaskNotFoundError,
+      );
+      await expect(
+        createLocalRootGrant(ws, agents[0], user),
+      ).rejects.toBeInstanceOf(TaskNotFoundError);
+    } finally {
+      await db.modelProvider.update({
+        where: { id: provider },
+        data: { apiKey: pinnedProvider.apiKey },
       });
     }
   });
@@ -2111,6 +2141,132 @@ describe("unified native ingress mappings", () => {
       text: "New task only",
     };
   }
+  it.each(["chat", "work"] as const)(
+    "keeps existing and new %s entries on the published provider after an unapplied draft provider change",
+    async (kind) => {
+      const draftProvider = await db.modelProvider.create({
+        data: {
+          workspaceId: ws,
+          name: "Unapplied draft provider",
+          format: "openai",
+          baseUrl: "https://draft-model.test.invalid",
+          apiKey: "draft-secret-never-used",
+        },
+      });
+      async function pinnedEntry() {
+        const input = await entry(kind);
+        if (kind === "work")
+          await db.workSession.update({
+            where: { id: input.sourceId },
+            data: {
+              runtimeSnapshot: {
+                piPackages: [],
+                workingDirectory: ".",
+                deploymentIds: [],
+                installedSkillIds: [],
+              },
+            },
+          });
+        return input;
+      }
+      try {
+        const input = await pinnedEntry();
+        const first = await submitAgentEntry(input, vi.fn());
+        const original = assertDefined(await claimTask(first.row.id));
+        const originalOptions = await localTaskOptions(
+          original,
+          new AbortController().signal,
+          "",
+        );
+        const originalToken = assertDefined(
+          await verifyAgentRuntimeToken(originalOptions.runtimeAccessToken),
+        );
+        await db.agent.update({
+          where: { id: agents[0] },
+          data: {
+            providerId: draftProvider.id,
+            model: "unapplied-draft-model",
+          },
+        });
+
+        await assertLocalGrant(first.grant);
+        expect(await resolveAgentRuntimeGrant(originalToken)).toMatchObject({
+          runtimeKind: "pi-sdk",
+          model: "fixture",
+        });
+        expect(await localTarget(db, ws, agents[0])).toMatchObject({
+          agentRevisionId: grant.agentRevisionId,
+          providerId: provider,
+        });
+        expect(await createLocalRootGrant(ws, agents[0], user)).toMatchObject({
+          agentRevisionId: grant.agentRevisionId,
+          targetBinding: grant.targetBinding,
+        });
+        await finishTask(
+          original.id,
+          assertDefined(original.leaseToken),
+          TaskState.TASK_STATE_COMPLETED,
+          undefined,
+          textArtifact("completed before follow-up"),
+        );
+
+        for (const nextInput of [
+          {
+            ...input,
+            messageId: randomUUID(),
+            text: "Continue pinned session",
+          },
+          await pinnedEntry(),
+        ]) {
+          const accepted = await submitAgentEntry(nextInput, vi.fn());
+          expect(accepted.grant.agentRevisionId).toBe(grant.agentRevisionId);
+          if (nextInput.sourceId === input.sourceId)
+            expect(accepted.row.contextId).toBe(first.row.contextId);
+          else expect(accepted.row.contextId).not.toBe(first.row.contextId);
+          const running = assertDefined(await claimTask(accepted.row.id));
+          const options = await localTaskOptions(
+            running,
+            new AbortController().signal,
+            "",
+          );
+          expect(options).toMatchObject({
+            agentRevisionId: grant.agentRevisionId,
+            provider: { id: provider },
+            modelId: "fixture",
+          });
+          const token = assertDefined(
+            await verifyAgentRuntimeToken(options.runtimeAccessToken),
+          );
+          expect(token.providerId).toBe(provider);
+          expect(
+            await resolveAgentRuntimeGrant(token, {
+              providerId: provider,
+              model: "fixture",
+            }),
+          ).toMatchObject({ runtimeKind: "pi-sdk", model: "fixture" });
+          expect(
+            await resolveAgentRuntimeGrant({
+              ...token,
+              providerId: draftProvider.id,
+            }),
+          ).toBeNull();
+          await finishTask(
+            running.id,
+            assertDefined(running.leaseToken),
+            TaskState.TASK_STATE_COMPLETED,
+            undefined,
+            textArtifact("completed on pinned provider"),
+          );
+        }
+      } finally {
+        await db.agent.update({
+          where: { id: agents[0] },
+          data: { providerId: provider, model: "fixture" },
+        });
+        await db.modelProvider.delete({ where: { id: draftProvider.id } });
+      }
+    },
+  );
   it.each(["pi-sdk", "omp"] as const)(
     "runs authorized %s Work delegation with its pinned inputs, stream and child projection",
     async (runtimeKind) => {

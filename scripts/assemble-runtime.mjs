@@ -308,6 +308,7 @@ for (const entry of [
 // from Next's dependency trace. Assembly owns their complete runtime closure.
 for (const script of [
   "omp-install.mjs",
+  "omp-install-cli.mjs",
   "omp-rpc.mjs",
   "omp-ui.mjs",
   "omp-policy.mjs",

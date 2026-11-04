@@ -12,6 +12,8 @@ import {
 } from "@/lib/runtime/ownership-state";
 import { execFile, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
+import { createReadStream } from "node:fs";
+import { pipeline } from "node:stream/promises";
 import { posix } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -49,6 +51,8 @@ import {
   emptyOmpConfig,
   type OmpConfigSnapshot,
 } from "./omp-config";
+import { prepareOmpRuntime } from "./omp-runtime";
+import { preparePiRuntime } from "./pi-runtime";
 import type { SubagentDefinition } from "./capability-contracts";
 import type { ResolvedNativeRoleModel } from "./native-role-models";
 import {
@@ -76,7 +80,6 @@ const PACKAGE_INSTALL_TIMEOUT_MS = 15 * 60_000;
 const TURN_TIMEOUT_MS = 30 * 60_000;
 const MAX_STDOUT_BYTES = 8 * 1024 * 1024;
 const RUNTIME_TEMP_ROOT = "/workspace/.toolplane/runtime-tmp";
-const NPM_CACHE = "/workspace/.toolplane/npm-cache";
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 export type SandboxAgentRuntimeKind =
@@ -248,6 +251,7 @@ type DockerExecOptions = {
   user?: string;
   args?: string[];
   stdin?: string | Buffer;
+  stdinFile?: string;
   env?: Record<string, string>;
   signal?: AbortSignal;
   timeoutMs?: number;
@@ -257,7 +261,6 @@ type DockerExecOptions = {
   piHarness?: boolean;
 };
 
-const installs = new Map<string, Promise<string>>();
 const uncertainPiSandboxes = new Set<string>();
 
 function displayValue(value: unknown): string {
@@ -1418,6 +1421,7 @@ function runTrackedDockerExecOwned(
     let settled = false;
     let callbackChain = Promise.resolve();
     let forceKillTimer: ReturnType<typeof setTimeout> | null = null;
+    let inputTransfer: Promise<void> | undefined;
 
     const terminate = () => {
       if (stopping) return;
@@ -1425,7 +1429,7 @@ function runTrackedDockerExecOwned(
         options.container,
         innerPid,
         pidFile,
-        options.piHarness,
+        Boolean(options.piHarness || options.stdinFile),
       )
         .catch((error: unknown) => {
           terminationError = error;
@@ -1484,7 +1488,9 @@ function runTrackedDockerExecOwned(
       cleanup();
       consumeStdout(stdoutDecoder.end());
       stderr += stderrDecoder.end();
-      if (options.piHarness && code !== 0 && !spawnError) terminate();
+      if ((options.piHarness || options.stdinFile) && code !== 0 && !spawnError)
+        terminate();
+      if (inputTransfer) await inputTransfer;
       if (stopping) await stopping;
       if (terminationError) return reject(terminationError);
       try {
@@ -1569,7 +1575,14 @@ function runTrackedDockerExecOwned(
       child.stdout?.on("error", onTransportError);
       child.stderr?.on("error", onTransportError);
     }
-    child.stdin?.end(options.stdin ?? "");
+    if (options.stdinFile && child.stdin) {
+      inputTransfer = pipeline(
+        createReadStream(options.stdinFile),
+        child.stdin,
+      ).catch((error: unknown) =>
+        stop(error instanceof Error ? error : new Error(String(error))),
+      );
+    } else child.stdin?.end(options.stdin ?? "");
   });
 }
 export type PiSdkCapabilityInventory = {
@@ -1717,105 +1730,118 @@ async function writeSandboxFile(
   });
 }
 
-/**
- * Trusted host sources travel as stdin data, never interpolated shell code.
- * Rewrite every file on every turn; this is not a source or integrity cache.
- * Keep dynamic turn config and package verification in their existing order.
- */
-export const SANDBOX_HOST_FILES_WRITER = `
+/** Trusted sources and turn data cross stdin once; no sandbox marker authenticates host code. */
+export const SANDBOX_TURN_PREPARER = `
 const fs = require("node:fs");
 const path = require("node:path");
+const { randomUUID } = require("node:crypto");
+const { pathToFileURL } = require("node:url");
 process.umask(0o077);
-for (const file of JSON.parse(fs.readFileSync(0, "utf8"))) {
-  fs.mkdirSync(path.dirname(file.path), { recursive: true, mode: 0o700 });
-  fs.writeFileSync(file.path, file.content, { mode: 0o600 });
+const input = JSON.parse(fs.readFileSync(0, "utf8"));
+function directory(value) {
+  fs.mkdirSync(value, { recursive: true, mode: 0o700 });
+  if (fs.realpathSync(value) !== value) throw Error("SESSION_WORKSPACE_SCOPE");
 }
+function write(file) {
+  directory(path.dirname(file.path));
+  const temporary = file.path + ".toolplane-" + randomUUID();
+  try {
+    fs.writeFileSync(temporary, file.encoding === "base64" ? Buffer.from(file.content, "base64") : file.content, { mode: 0o600, flag: "wx" });
+    fs.renameSync(temporary, file.path);
+  } finally { fs.rmSync(temporary, { force: true }); }
+}
+(async () => {
+  for (const value of input.directories ?? []) directory(value);
+  for (const file of input.files) write(file);
+  if (input.skills) {
+    const { root, digest, files } = input.skills;
+    let previous;
+    try { previous = fs.readFileSync(path.join(root, ".toolplane-skills.sha256"), "utf8"); }
+    catch (error) { if (error.code !== "ENOENT") throw error; }
+    if (previous !== digest) {
+      fs.rmSync(root, { recursive: true, force: true });
+      directory(root);
+      for (const file of files) write(file);
+      write({ path: path.join(root, ".toolplane-skills.sha256"), content: digest });
+    }
+  }
+  if (input.packages?.length) {
+    // These absolute paths select restored adapters inside this session's sandbox, not server modules.
+    const verifier = await import(pathToFileURL(input.verifierPath).href);
+    verifier.materializePiPackageSnapshots(input.packages);
+  }
+  let runtimeReady = true;
+  if (input.runtime?.kind === "pi-sdk") {
+    // The installer lives at a runtime-selected conversation workspace path.
+    const installer = await import(pathToFileURL(input.runtime.installerPath).href);
+    runtimeReady = await installer.verifyPiSdkRuntime(input.runtime.directory);
+  } else if (input.runtime?.kind === "omp") {
+    try {
+      if (!fs.lstatSync(input.runtime.binary).isFile()) throw Error("OMP_STATE_SCOPE");
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+      runtimeReady = false;
+    }
+  }
+  process.stdout.write(JSON.stringify({ runtimeReady }));
+})().catch(error => { console.error(error); process.exitCode = 1; });
 `;
 
-async function writeSandboxHostFiles(
+type SandboxTurnPreparation = {
+  files: { path: string; content: string; encoding?: "base64" }[];
+  skillRoot: string;
+  skills: readonly SkillForPrompt[];
+  packages: unknown[];
+  verifierPath: string;
+  runtime:
+    | { kind: "pi-sdk"; directory: string; installerPath: string }
+    | { kind: "omp"; binary: string };
+};
+
+async function prepareSandboxTurn(
   container: string,
-  files: readonly { path: string; content: string }[],
+  workspaceRoot: string,
+  workdir: string,
+  preparation: SandboxTurnPreparation,
   signal?: AbortSignal,
-): Promise<void> {
-  await runTrackedDockerExec({
+): Promise<boolean> {
+  const bundles = buildSandboxSkillBundles(preparation.skills);
+  const files: { path: string; content: string; encoding?: "base64" }[] = [];
+  for (const bundle of bundles) {
+    const root = `${preparation.skillRoot}/${bundle.directory}`;
+    files.push({ path: `${root}/SKILL.md`, content: bundle.markdown });
+    for (const file of bundle.files) {
+      const path = safeSkillFilePath(file.path);
+      if (path)
+        files.push({
+          path: `${root}/${path}`,
+          content: file.content,
+          encoding: file.encoding === "base64" ? "base64" : undefined,
+        });
+    }
+  }
+  const output = await runTrackedDockerExec({
     container,
     workdir: "/workspace",
     executable: "node",
-    args: ["-e", SANDBOX_HOST_FILES_WRITER],
-    stdin: JSON.stringify(files),
+    args: ["-e", SANDBOX_TURN_PREPARER],
+    stdin: JSON.stringify({
+      directories: [workspaceRoot, workdir],
+      files: preparation.files,
+      skills: {
+        root: preparation.skillRoot,
+        digest: sandboxSkillBundleDigest(bundles),
+        files,
+      },
+      packages: preparation.packages,
+      verifierPath: preparation.verifierPath,
+      runtime: preparation.runtime,
+    }),
     signal,
-    timeoutMs: 30_000,
+    timeoutMs: 120_000,
   });
-}
-
-async function materializeSandboxSkills(
-  container: string,
-  skillRoot: string,
-  skills: readonly SkillForPrompt[],
-  signal?: AbortSignal,
-): Promise<void> {
-  const bundles = buildSandboxSkillBundles(skills);
-  const digest = sandboxSkillBundleDigest(bundles);
-  const marker = `${skillRoot}/.toolplane-skills.sha256`;
-  const unchanged = await runTrackedDockerExec({
-    container,
-    workdir: "/workspace",
-    executable: "sh",
-    args: [
-      "-c",
-      'test -r "$1" && [ "$(cat "$1")" = "$2" ]',
-      "toolplane-check-skills",
-      marker,
-      digest,
-    ],
-    signal,
-    timeoutMs: 10_000,
-  }).then(
-    () => true,
-    () => false,
-  );
-  if (unchanged) return;
-  if (signal?.aborted) throw new Error("Sandbox runtime aborted.");
-  const reset = `
-set -eu
-root=$1
-case "$root" in
-  /workspace/.toolplane/runtimes/*/agents/*/skills | /workspace/.toolplane/runtimes/*/agents/*/revisions/*/skills | /workspace/conversations/*/.toolplane/runtimes/*/agents/*/revisions/*/skills | /workspace/conversations/*/.toolplane/runtimes/omp/agents/*/turns/*/home/.omp/agent/skills/toolplane) ;;
-  *) exit 2 ;;
-esac
-rm -rf -- "$root"
-mkdir -p "$root"
-`;
-  await runTrackedDockerExec({
-    container,
-    workdir: "/workspace",
-    executable: "sh",
-    args: ["-c", reset, "toolplane-reset-skills", skillRoot],
-    signal,
-    timeoutMs: 30_000,
-  });
-  for (const bundle of bundles) {
-    const directory = `${skillRoot}/${bundle.directory}`;
-    await writeSandboxFile(
-      container,
-      `${directory}/SKILL.md`,
-      bundle.markdown,
-      signal,
-    );
-    for (const file of bundle.files) {
-      const path = safeSkillFilePath(file.path);
-      if (!path) continue;
-      await writeSandboxFile(
-        container,
-        `${directory}/${path}`,
-        file.encoding === "base64"
-          ? Buffer.from(file.content, "base64")
-          : file.content,
-        signal,
-      );
-    }
-  }
-  await writeSandboxFile(container, marker, digest, signal);
+  return z.object({ runtimeReady: z.boolean() }).parse(JSON.parse(output))
+    .runtimeReady;
 }
 
 async function removeSandboxFiles(
@@ -1990,56 +2016,6 @@ export async function stopAgentSessionRuntime(input: {
   }
 }
 
-async function ensureRuntimeInstalled(
-  container: string,
-  workspaceRoot: string,
-  signal?: AbortSignal,
-): Promise<string> {
-  if (signal?.aborted) throw new Error("Sandbox runtime aborted.");
-  const runtime = PI_SDK_RUNTIME;
-  const binary = `${runtime.directory}/node_modules/.bin/${runtime.binary}`;
-  const cacheKey = `${container}:${runtime.directory}`;
-  const existing = installs.get(cacheKey);
-  if (existing) return waitForSandboxRuntimeInstall(existing, signal);
-  const install = (async () => {
-    const installerPath = `${workspaceRoot}/.toolplane/runtime-tmp/${randomUUID()}-pi-sdk-install.mjs`;
-    try {
-      await writeSandboxFile(
-        container,
-        installerPath,
-        await readFile(`${process.cwd()}/scripts/pi-sdk-install.mjs`, "utf8"),
-      );
-      await runTrackedDockerExec({
-        container,
-        workdir: "/workspace",
-        executable: "node",
-        args: [
-          installerPath,
-          JSON.stringify({
-            directory: runtime.directory,
-            workspaceRoot,
-            storeDir: `${NPM_CACHE}/pnpm-store`,
-          }),
-        ],
-        timeoutMs: PACKAGE_INSTALL_TIMEOUT_MS,
-      }).catch((error) => {
-        throw new Error(
-          `Could not install ${runtime.specs.join(" and ")} in the assigned sandbox: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      });
-      return binary;
-    } finally {
-      await removeSandboxFiles(container, [installerPath]);
-    }
-  })();
-  installs.set(cacheKey, install);
-  const cleanup = () => {
-    if (installs.get(cacheKey) === install) installs.delete(cacheKey);
-  };
-  void install.then(cleanup, cleanup);
-  return waitForSandboxRuntimeInstall(install, signal);
-}
-
 async function reportContextUsage(
   options: RunSandboxAgentTurnOptions,
   usedTokens: number,
@@ -2198,6 +2174,7 @@ async function runNativeSessionExec(
     hostSourceChecksum: string;
     model: unknown;
   },
+  preparation: SandboxTurnPreparation,
 ) {
   if (!options.runtimeSessionId) throw new Error("PI_SDK_SESSION_MISSING");
   const id = randomUUID();
@@ -2205,60 +2182,88 @@ async function runNativeSessionExec(
   const driverPath = `${temporaryRoot}/${id}-session.mjs`;
   const inputPath = `${temporaryRoot}/${id}-session.json`;
   try {
-    await writeSandboxFile(
-      exec.container,
-      driverPath,
-      await readFile(
-        `${process.cwd()}/scripts/native-runtime-session.mjs`,
-        "utf8",
-      ),
-      options.signal,
-    );
-    await writeSandboxFile(
-      exec.container,
-      inputPath,
-      JSON.stringify({
-        kind: "pi-sdk",
-        binary: exec.executable,
-        args: exec.args,
-        cwd: exec.workdir,
-        statePath: `${sandboxRuntimeStateRoot("pi-sdk", options.agentId, workspaceRoot)}/sessions/${options.runtimeSessionId}.json`,
-        signature: createHash("sha256")
-          .update(
-            JSON.stringify({
-              binary: exec.executable,
-              args: exec.args,
-              sdkVersion: "0.87.1",
-              // Reload resident hosts when the trusted adapter or path contract changes.
-              hostProtocol: "session-workspaces-v1",
-              hostSourceChecksum: sdk.hostSourceChecksum,
-              packageSetChecksum: sdk.packageSetChecksum,
-              agentRevisionId: options.agentRevisionId,
-              nativeUi: Boolean(options.nativeUiUrl),
-              workdir: exec.workdir,
-              system: options.systemPrompt,
-              skills: options.skills,
-            }),
-          )
-          .digest("hex"),
-        command: options.command,
-        message: buildSandboxTranscript(
-          options.messages.slice(-1),
-          workspaceRoot !== "/workspace" &&
-            (options.conversationId || options.a2aContextId)
-            ? options
-            : undefined,
+    preparation.files.push(
+      {
+        path: driverPath,
+        content: await readFile(
+          `${process.cwd()}/scripts/native-runtime-session.mjs`,
+          "utf8",
         ),
-        context: {
-          runtimeToken: options.runtimeAccessToken,
-          uiUrl: options.nativeUiUrl,
-          mcpConfig: sdk.mcpConfig,
-          model: sdk.model,
-          reasoningEffort: options.reasoningEffort,
-        },
-      }),
+      },
+      {
+        path: inputPath,
+        content: JSON.stringify({
+          kind: "pi-sdk",
+          binary: exec.executable,
+          args: exec.args,
+          cwd: exec.workdir,
+          statePath: `${sandboxRuntimeStateRoot("pi-sdk", options.agentId, workspaceRoot)}/sessions/${options.runtimeSessionId}.json`,
+          signature: createHash("sha256")
+            .update(
+              JSON.stringify({
+                binary: exec.executable,
+                args: exec.args,
+                sdkVersion: "0.87.1",
+                // Reload resident hosts when the trusted adapter or path contract changes.
+                hostProtocol: "session-workspaces-v1",
+                hostSourceChecksum: sdk.hostSourceChecksum,
+                packageSetChecksum: sdk.packageSetChecksum,
+                agentRevisionId: options.agentRevisionId,
+                nativeUi: Boolean(options.nativeUiUrl),
+                workdir: exec.workdir,
+                system: options.systemPrompt,
+                skills: options.skills,
+              }),
+            )
+            .digest("hex"),
+          command: options.command,
+          message: buildSandboxTranscript(
+            options.messages.slice(-1),
+            workspaceRoot !== "/workspace" &&
+              (options.conversationId || options.a2aContextId)
+              ? options
+              : undefined,
+          ),
+          context: {
+            runtimeToken: options.runtimeAccessToken,
+            uiUrl: options.nativeUiUrl,
+            mcpConfig: sdk.mcpConfig,
+            model: sdk.model,
+            reasoningEffort: options.reasoningEffort,
+          },
+        }),
+      },
+    );
+    const ready = await prepareSandboxTurn(
+      exec.container,
+      workspaceRoot,
+      exec.workdir,
+      preparation,
       options.signal,
     );
+    if (!ready) {
+      const artifact = await waitForSandboxRuntimeInstall(
+        preparePiRuntime(),
+        options.signal,
+      );
+      if (preparation.runtime.kind !== "pi-sdk")
+        throw new Error("PI_SDK_VERSION_MISMATCH");
+      await runTrackedDockerExec({
+        container: exec.container,
+        workdir: "/workspace",
+        executable: "node",
+        args: [
+          preparation.runtime.installerPath,
+          JSON.stringify({
+            directory: PI_SDK_RUNTIME.directory,
+            sha256: artifact.sha256,
+          }),
+        ],
+        stdinFile: artifact.path,
+        signal: options.signal,
+        timeoutMs: PACKAGE_INSTALL_TIMEOUT_MS,
+      });
+    }
     return await runTrackedDockerExec({
       ...exec,
       executable: "node",
@@ -2415,6 +2420,7 @@ async function runPiSdk(
   for (const [path, source] of [
     [hostPath, "pi-sdk-session.mjs"],
     [verifierPath, "pi-sdk-package-files.mjs"],
+    [`${privateRoot}/pi-sdk-install.mjs`, "pi-sdk-install.mjs"],
     [`${privateRoot}/pi-sdk-capabilities.mjs`, "pi-sdk-capabilities.mjs"],
     [`${privateRoot}/pi-sdk-ui.mjs`, "pi-sdk-ui.mjs"],
     [`${privateRoot}/native-session-paths.mjs`, "native-session-paths.mjs"],
@@ -2435,17 +2441,7 @@ async function runPiSdk(
   const factorySource = piMcpExtensionSource({ eventFd: 3, workspaceRoot });
   hostSources.update(factorySource);
   hostFiles.push({ path: factoryPath, content: factorySource });
-  await writeSandboxHostFiles(container, hostFiles, options.signal);
   if (options.nativeUiUrl) httpUrl(options.nativeUiUrl, "native UI URL");
-  await runTrackedDockerExec({
-    container,
-    workdir,
-    executable: "node",
-    args: [verifierPath, "materialize"],
-    stdin: JSON.stringify(packages),
-    signal: options.signal,
-    timeoutMs: 120_000,
-  });
   const resources = {
     extensions: [] as string[],
     skills: [skillRoot],
@@ -2474,10 +2470,9 @@ async function runPiSdk(
     "pi-sdk",
     options.disabledBuiltinTools,
   );
-  await writeSandboxFile(
-    container,
-    configPath,
-    JSON.stringify({
+  hostFiles.push({
+    path: configPath,
+    content: JSON.stringify({
       sdkVersion: "0.87.1",
       packageRoot: PI_SDK_RUNTIME.directory,
       cwd: workdir,
@@ -2504,8 +2499,7 @@ async function runPiSdk(
       mcpFactoryPath: factoryPath,
       hostOnlyCommands: HOST_ONLY_COMMAND_NAMES,
     }),
-    options.signal,
-  );
+  });
   let buffer = "",
     text = "",
     streamed = "",
@@ -2618,6 +2612,18 @@ async function runPiSdk(
       mcpConfig: JSON.parse(buildPiMcpConfig(mcpServers)),
       model: sessionModel,
     },
+    {
+      files: hostFiles,
+      skillRoot,
+      skills: options.skills ?? [],
+      packages,
+      verifierPath,
+      runtime: {
+        kind: "pi-sdk",
+        directory: PI_SDK_RUNTIME.directory,
+        installerPath: `${privateRoot}/pi-sdk-install.mjs`,
+      },
+    },
   );
   if (buffer.trim()) await consume(buffer.trim());
   if (!terminal) throw new Error("PI_SDK_PROTOCOL_ERROR");
@@ -2661,6 +2667,7 @@ async function runOmp(
   const hostFiles: { path: string; content: string }[] = [];
   for (const source of [
     "omp-install.mjs",
+    "omp-install-cli.mjs",
     "omp-rpc.mjs",
     "omp-ui.mjs",
     "omp-policy.mjs",
@@ -2682,7 +2689,6 @@ async function runOmp(
     path: mcpFactoryPath,
     content: piMcpExtensionSource({ workspaceRoot }),
   });
-  await writeSandboxHostFiles(container, hostFiles, options.signal);
   if (options.nativeUiUrl) httpUrl(options.nativeUiUrl, "native UI URL");
   const disabledTools = normalizeDisabledBuiltinTools(
     "omp",
@@ -2918,31 +2924,9 @@ async function runOmp(
       await reportActivities(options, parsed.activities, mcpServers);
   };
   try {
-    if (plugins.length)
-      await runTrackedDockerExec({
-        container,
-        workdir,
-        executable: "node",
-        args: [`${hostRoot}/pi-sdk-package-files.mjs`, "materialize"],
-        stdin: JSON.stringify(plugins),
-        signal: options.signal,
-        timeoutMs: 120_000,
-      });
-    await materializeSandboxSkills(
-      container,
-      sandboxRuntimeSkillRoot(
-        "omp",
-        options.agentId,
-        workspaceRoot,
-        options.agentRevisionId,
-      ),
-      options.skills ?? [],
-      options.signal,
-    );
-    await writeSandboxFile(
-      container,
-      configPath,
-      JSON.stringify({
+    hostFiles.push({
+      path: configPath,
+      content: JSON.stringify({
         ompVersion: OMP_VERSION,
         binary,
         agentRevisionId: options.agentRevisionId,
@@ -3015,8 +2999,42 @@ async function runOmp(
             .filter(Boolean)
             .join("\n") ?? "",
       }),
+    });
+    const ready = await prepareSandboxTurn(
+      container,
+      workspaceRoot,
+      workdir,
+      {
+        files: hostFiles,
+        skillRoot: sandboxRuntimeSkillRoot(
+          "omp",
+          options.agentId,
+          workspaceRoot,
+          options.agentRevisionId,
+        ),
+        skills: options.skills ?? [],
+        packages: plugins,
+        verifierPath: `${hostRoot}/pi-sdk-package-files.mjs`,
+        runtime: { kind: "omp", binary },
+      },
       options.signal,
     );
+    if (!ready) {
+      // Only old or rebuilt sandboxes need a local transfer; the session host verifies the digest once.
+      const source = await waitForSandboxRuntimeInstall(
+        prepareOmpRuntime(),
+        options.signal,
+      );
+      await runTrackedDockerExec({
+        container,
+        workdir: "/workspace",
+        executable: "node",
+        args: [`${hostRoot}/omp-install-cli.mjs`, "install-runtime", binary],
+        stdinFile: source,
+        signal: options.signal,
+        timeoutMs: PACKAGE_INSTALL_TIMEOUT_MS,
+      });
+    }
     await runTrackedDockerExec({
       container,
       workdir,
@@ -3117,19 +3135,6 @@ async function runExclusiveSandboxAgentTurn(
           options.workingDirectory,
         )
       : normalizeSandboxWorkingDirectory(options.workingDirectory);
-  await runTrackedDockerExec({
-    container,
-    workdir: "/workspace",
-    executable: "node",
-    args: [
-      "-e",
-      "const fs=require('node:fs'); for(const path of process.argv.slice(1)){ fs.mkdirSync(path,{recursive:true,mode:0o700}); if(fs.realpathSync(path)!==path) throw Error('SESSION_WORKSPACE_SCOPE'); }",
-      workspaceRoot,
-      workdir,
-    ],
-    signal: options.signal,
-    timeoutMs: 10_000,
-  });
   const prompt = buildSandboxTranscript(options.messages);
   if (!prompt && !options.command)
     throw new Error("The sandbox runtime turn has no user-visible message.");
@@ -3149,13 +3154,6 @@ async function runExclusiveSandboxAgentTurn(
   }
   if (options.piVersion !== undefined && options.piVersion !== "0.87.1")
     throw new Error("PI_SDK_VERSION_MISMATCH");
-  await ensureRuntimeInstalled(container, workspaceRoot, options.signal);
-  await materializeSandboxSkills(
-    container,
-    skillRoot,
-    options.skills ?? [],
-    options.signal,
-  );
   return runPiSdk(
     options,
     container,

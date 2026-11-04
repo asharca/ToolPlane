@@ -37,6 +37,8 @@
 - **同日合并后重跑补充**：PR 全套通过后，main 的后台聊天测试读出 `succeeded` 在 `tool_calling` 之前；测试查询没有 `orderBy`，而真实订阅按 `sequence` 升序。测试改用同一持久序号排序，不修改运行时事件和状态机。数据库无显式排序不保证插入顺序；不能依赖本机或某次 CI 的行返回顺序。依据：[后台执行测试](tests/integration/chat-background.test.ts)、[事件订阅](src/lib/chat/run-control.ts)。
 - **同日生产升级演练补充**：旧库多个会话共用一个 AgentRuntime 沙箱，Hermes 退休迁移先回填 Conversation.sandboxId，但其唯一索引直到后续共享沙箱迁移才删除，恢复库实测触发 `Conversation_sandboxId_key` 冲突。把索引解除提前到回填之前，后续删除改为幂等；同一备份重建后，正式镜像加只读修正迁移的完整 27 项升级成功。空库迁移通过不能覆盖真实旧库的数据分布，切换前须从生产备份恢复并验证完整待执行链。
 - **同日生产 Pi 迁移补充**：容器内原生预检把私有 `/tmp` 暂存目录交给宿主 Docker daemon bind mount，真实发布报 `PI_CAPABILITY_PREFLIGHT_FAILED` / `bind source path does not exist`；readiness 当时仍为 200。部署增加同绝对路径的专用 `TMPDIR` 挂载并受控重建后，17 个新 Pi 修订均完成真实预检与发布。下次容器化验收须覆盖准备／应用修订，不能只验应用启动。规范：[运行时运维](https://asharca.github.io/toolplane-docs/docs/zh/developers/docs/RUNTIME_OPERATIONS)；实现：[原生预检](src/lib/agents/sandbox-runtime.ts)。
+- **SDK 导出补充（2026-11-05，线上保存失败）**：共享 `TMPDIR` 不能让应用私有 `/app/scripts/pi-sdk-install.mjs` 在 daemon 宿主出现。固定 SDK 镜像改由 stdin 接收应用读取的可信源码，保留禁网、只读根和降权。真实生产容器设置保存越过导出并成功发布修订；下次必须用脚本仅存在于应用容器内、无现成 SDK 缓存的部署路径验证，不能以宿主进程成功导出代替。
+- **发布等待补充（2026-11-04，用户催查）**：`v0.33.3` 发布作业时间戳显示 15:52:16 UTC 已完成、耗时 9 分 39 秒，但 `gh run watch` 的返回累计约 33 分钟，期间仍沿用等待状态，延误线上切换。不能把监视命令尚未返回等同于远端仍在构建；用户报告等待异常时，用 `gh run view --json status,conclusion,jobs` 与 Release／镜像可用性独立核对，再报告实际阻塞点。最终按固定镜像摘要受控重建，核对容器版本 `0.33.3`、新启动时间及公网 readiness，不以 Release 存在代替部署成功。
 - **确认日期**：历史日期未知；初始整理于 2026-10-18；2026-10-30、2026-11-01、2026-11-02、2026-11-03、2026-11-04 实测确认。
 
 ### TP-L002：构建成功，不代表最终镜像里的原生依赖能启动
@@ -234,6 +236,7 @@
 - **错误与原因**：双模式子智能体在实际 `:3000` 页面保存原生并发 2、深度 1 后，PUT 已正确持久化，界面却回退到深度 3、重新标脏且审核区消失。React 自动 reset 触发 Radix Select 的初始值回调；该回调不检查 `defaultPrevented`，仅拦截 `onReset` 不能解决。
 - **下次怎么验证**：实际改动非默认下拉值，跨页签返回后保存，等待权限审核出现并确认选择值未回退、未重新标脏；点击应用后重开页面核对已应用修订，再验证取消不落库。不能把 HTTP 200 或数据库草稿正确当成整个设置流程成功。
 - **证据**：[Agent 设置表单](src/components/dashboard/agents/AgentSettingsForm.tsx)、[共享 FormSelect](src/components/ui/FormSelect.tsx)；复用既有 AssistantEditor 的显式提交流程，不修改 vendored Radix 源码。
+- **快照传输补充（2026-11-05，真实保存验收）**：Office 技能的 XML 附件以 U+FEFF 开头，Prepare 的正确摘要跨 Flight 后对应内容少一个字符，发布抛出 `AGENT_SKILL_CHECKSUM_MISMATCH`；纯 JSON／数据库回归均未触发。审核 action 返回完整 `configJson`，客户端解析后继续现有审核与 CAS 提交，不放宽校验或改写原始内容。真实生产页面保留五个技能完成保存，发布 v7；下次验收须包含带 BOM 的长附件并完成浏览器 Prepare → Apply 往返，不能只验证捕获函数或普通短文本。
 - **确认日期**：2026-11-02（真实浏览器验收）。
 
 ### TP-L022：A2A 错误不能用子类携带内部原因
@@ -311,6 +314,8 @@
 - **真实刷新补充（同日验收）**：真实模型流结束后，分支的 `activeMessageId` 改变了 `AssistantConversation` 的 React key，父组件刷新导致重挂载，仍清空执行期间写下的草稿。未发送文本须按会话保存在父层；回归须在完成回调触发重挂载后重新查找输入框，不能只断言已脱离 DOM 的旧元素。依据：`WorkspaceAssistantChat.tsx` 的会话 key 与 `tests/unit/workspace-assistant-chat.test.tsx` 的完成后草稿回归。
 - **执行阶段补充（2026-11-04）**：会话已接纳、连接已建立或收到流 start 都不能证明模型已生成内容。分别追踪排队、准备、真实 provider 请求、首个内容与工具执行；工具后再次请求模型时回到等待阶段。使用真实 Pi／OMP `bash` 回合及助手会话观察阶段切换，并在 OMP 工具运行中刷新验证快照恢复；助手持久化回归暂停首个模型输出，检查等待阶段、游标重放及历史不受污染。依据：`src/lib/agents/execution-stages.ts`、`src/lib/chat/execution-stage.ts`、`tests/integration/chat-background.test.ts`。
 - **准备耗时补充（2026-11-04，用户反馈）**：真实热会话暴露逐文件 tracked Docker exec 的固定开销；宿主脚本批量写入后，Pi／OMP 的准备等待下降，但不能省略每轮可信源码覆盖和完整性校验。性能比较须分开冷启动、热轮次与远程发现耗时；本次助手远程 `tools/list` 从约 0.4 秒波动到 1.4 秒，不能把总准备时间变化全部归因于本地并发修改。验收同时执行真实原生工具，不能只观察阶段标签。
+- **创建就绪补充（2026-11-04，用户纠正）**：用户向已创建的 OMP Agent 只发“你好”，首轮沙箱仍在下载 276,244,656 字节二进制，文件写入持续约 539 秒。创建／发布必须在数据库事务外先完成固定运行时制品准备；聊天仅从已校验的服务端缓存本地分发，并在沙箱离线校验，不能把首次网络安装藏在“准备中”。失败回归检查 Agent、沙箱及 Deployment 未残留；验收须使用刚创建 Agent 自己的全新沙箱执行真实原生工具，再检查第二轮二进制未被重写，不能把已有 Agent 热会话或提示词中的哨兵文字当成功结果。依据：`src/lib/agents/omp-runtime.ts`、`scripts/omp-install.mjs`、`tests/integration/agents-mutations.test.ts`。
+- **Pi 冷安装补充（同日实测）**：不能用已有 SDK 的热沙箱证明离线安装正常。全新沙箱暴露合法主目录别名被缓存路径检查拒绝，以及 `FileHandle.createWriteStream({ autoClose: false })` 的流结束后 `FileHandle.close()` 未收尾；流改用显式 fd，主目录先取 canonical path。验收从固定镜像真实导出制品，在禁网、只读根容器完成离线安装并执行版本检查，再由新建 Pi Agent 实际完成首次和第二轮 `bash`，从原生 JSONL 核对成功的 toolResult。测量分开记录：本次 Pi 首轮准备 25.51 秒、热轮 1.35 秒，OMP 热轮 3.80 秒；不能把共享缓存就绪称为首轮无等待，或把供应商 503 算成本地安装耗时。依据：`src/lib/agents/pi-runtime.ts`、`scripts/pi-sdk-install.mjs`、真实 Work 与原生会话记录。
 
 ### TP-L030：CI 提速要减少默认工作，不只缩短超时
 
@@ -319,6 +324,24 @@
 - **证据（2026-11-04，用户再次纠正）**：默认检查虽已缩为 6 个测试文件，仍启动 PostgreSQL、应用迁移，总耗时约 1 分 46 秒；其中静态检查约 49 秒、测试约 14 秒、容器准备约 12 秒。默认 `validate` 进一步只保留静态检查并缓存 TypeScript 增量结果，数据库与完整测试留在手动作业；不再让默认作业声明数据库服务。
 - **下次怎么验证**：以不可连接的数据库地址运行默认命令，确认不访问数据库；实际观察 GitHub 新作业及其耗时，再报告提速结果，不能拿本地热缓存时间代替远端结果。
 - **意图澄清（同日）**：用户明确不要求额外限制 CI 时间，只要求实际运行更快。默认作业不设置人为超时，不能用降低超时上限冒充性能优化；保留纯静态检查与缓存方案。
+
+### TP-L031：配置草稿不能复用阻断执行的维护租约
+
+**规则**：区分只更新草稿的配置写入与会破坏活跃沙箱的维护；草稿写入和维护互斥，但不排斥运行中、排队中或新准入的正常执行。执行容量、同会话串行及实时撤销仍独立生效，草稿租约不能升级为独占维护。
+
+- **证据（2026-11-04，用户反馈）**：设置保存的 action、`updateAgent` 和 `setAgentTools` 使用 `withAgentMaintenanceLease`，该租约看到活跃执行就抛出 `Agent execution capacity is busy. The task has not started.`，把配置写入误判成执行准入。独立数据库回归在活跃执行租约内保存，修复前准确失败于 `updateAgent`，修复后保存成功且原会话仍固定旧修订，删除仍被拒绝。
+- **真实页面验收**：修复部署到 `:3000` 后，Pi Work 的原生 `bash sleep 120` 运行中从设置页保存描述成功，默认修订从 1 升到 2，Work 与 Conversation 仍固定原修订；原生工具继续返回 `SAVE_DURING_RUN_OK`。容量和保存回归共 40 项通过。
+- **下次怎么验证**：在真实任务运行期间修改并保存设置，核对新默认修订与原会话固定引用；容量回归同时验证草稿可与执行共存、不绕过并发上限、嵌套维护不能放宽互斥。不能只在 Agent 空闲时验收保存。
+- **依据**：`src/lib/agents/agent-execution-gate.ts`、`tests/unit/agent-execution-gate.test.ts`、`tests/integration/agents-mutations.test.ts`。
+- **固定模型补充（2026-11-05，用户报告 Task not found）**：本地准入、固定配置解析和 runtime grant 把草稿 provider 与 revision 等值比较，未应用 MiniMax 草稿便阻断固定 Qwen 的旧 Work／新入口。执行改查所选修订的 provider，并保留真实资源归属与凭据撤销。独立库先复现四个失败，修复后相关 126 项通过；生产原 v6 会话真实 `bash` 返回 `PINNED_REVISION_OK`，新 v7 MiniMax 会话返回 `NEW_REVISION_OK`。下次同时验证草稿切换／置空不改旧权限，以及固定 provider 删除／空凭据仍拒绝。
+
+### TP-L032：沙箱分类按用户用途，不暴露内部生命周期记录
+
+**规则**：界面只区分智能体沙箱与外挂沙箱；环境模板和历史迁移副本是内部记录，不作为并列资源分类或计入当前沙箱数量。运行状态必须来自实际执行沙箱，不能用模板的停止状态代表智能体不可用。
+
+- **证据（2026-11-04，用户纠正）**：修复“列表全是停止”时，初版改为执行、模板、外挂、历史四类，用户明确要求只保留智能体和外挂两类。真实工作区只有 6 个当前执行沙箱，但另有 10 个模板和 47 条历史记录，暴露内部分类会放大资源数量并增加理解成本。
+- **下次怎么验证**：用同时存在模板、当前执行环境与迁移副本的工作区核对两个分类及计数；在另一 Work 标签执行真实原生工具，返回列表确认对应智能体行自动更新，而非新增一个副本。自动关闭开关另以独立数据库和真实 Docker 验证：模拟该临时记录空闲 16 分钟，关闭时仍运行，重新开启后同一容器停止，不改生产时钟或用户资源。
+- **依据**：`src/app/app/[workspace]/sandboxes/page.tsx`、`src/lib/sandboxes/queries.ts`、`src/lib/agents/conversation-sandbox.ts`、`tests/integration/sandbox-queries.test.ts`。
 
 ### TP-L033：会话列表改版必须验收资源菜单与失败反馈
 

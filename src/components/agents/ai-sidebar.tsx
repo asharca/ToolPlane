@@ -78,6 +78,8 @@ export interface AISidebarProps {
   defaultActiveId?: string | null;
   onActiveChange?: (id: string) => void;
   defaultExpandedIds?: string[];
+  expandedIds?: string[];
+  onExpandedIdsChange?: (ids: string[]) => void;
   renderIcon?: (item: SidebarResource) => ReactNode;
   renderActions?: (item: SidebarResource) => ReactNode;
   renderMenu?: (
@@ -446,7 +448,11 @@ function ResourceRow({
           event.defaultPrevented ||
           draggedRef.current ||
           renaming ||
-          row.item.disabled
+          row.item.disabled ||
+          !event.currentTarget.contains(event.target as Node) ||
+          (event.target as Element).closest(
+            "button, a, input, select, textarea",
+          )
         )
           return;
         if (acceptsChildren) onToggle();
@@ -524,12 +530,18 @@ function ResourceRow({
       )}
 
       {!renaming && !row.item.disabled ? (
-        // biome-ignore lint/a11y/noStaticElementInteractions lint/a11y/useKeyWithClickEvents: This wrapper only stops portal event bubbling; child controls own keyboard interactions.
+        // biome-ignore lint/a11y/noStaticElementInteractions: This wrapper only stops portal event bubbling; child controls own keyboard interactions.
         <div
           className="flex shrink-0 items-center gap-0.5"
           // Portal events follow the React tree, so menu actions must not reach the row.
           onClick={(event) => event.stopPropagation()}
           onDoubleClick={(event) => event.stopPropagation()}
+          onKeyDown={(event) => {
+            if (event.key !== "Escape" || !menuOpen) return;
+            event.preventDefault();
+            event.stopPropagation();
+            onMenuOpenChange(false);
+          }}
         >
           {renderActions?.(row.item)}
           {menu ? (
@@ -577,6 +589,8 @@ export function AISidebar({
   defaultActiveId = null,
   onActiveChange,
   defaultExpandedIds = [],
+  expandedIds: controlledExpandedIds,
+  onExpandedIdsChange,
   renderIcon,
   renderMenu,
   renderActions,
@@ -585,8 +599,22 @@ export function AISidebar({
 }: AISidebarProps) {
   const [internalItems, setInternalItems] = useState(items ?? defaultItems);
   const [internalActiveId, setInternalActiveId] = useState(defaultActiveId);
-  const [expandedIds, setExpandedIds] = useState(
+  const [internalExpandedIds, setInternalExpandedIds] = useState(
     () => new Set(defaultExpandedIds),
+  );
+  const expandedIds = useMemo(
+    () =>
+      controlledExpandedIds === undefined
+        ? internalExpandedIds
+        : new Set(controlledExpandedIds),
+    [controlledExpandedIds, internalExpandedIds],
+  );
+  const updateExpandedIds = useCallback(
+    (next: Set<string>) => {
+      if (controlledExpandedIds === undefined) setInternalExpandedIds(next);
+      onExpandedIdsChange?.([...next]);
+    },
+    [controlledExpandedIds, onExpandedIdsChange],
   );
   const [focusedId, setFocusedId] = useState<string | null>(
     activeId ?? defaultActiveId,
@@ -691,21 +719,21 @@ export function AISidebar({
     [activeId, onActiveChange],
   );
 
-  const toggle = useCallback((id: string) => {
-    setExpandedIds((current) => {
-      const next = new Set(current);
+  const toggle = useCallback(
+    (id: string) => {
+      const next = new Set(expandedIds);
       if (next.has(id)) next.delete(id);
       else next.add(id);
-      return next;
-    });
-  }, []);
+      updateExpandedIds(next);
+    },
+    [expandedIds, updateExpandedIds],
+  );
 
   // The same four moves `Alt+Shift+Arrow` performs, handed to the row menu so
   // they survive on a device with no drag and no modifier keys.
   const moveCommands = useCallback(
-    (row: FlatResource): SidebarResourceMoveCommands => {
+    (row: FlatResource, index: number): SidebarResourceMoveCommands => {
       if (row.item.disabled) return {};
-      const index = flat.findIndex(({ item }) => item.id === row.item.id);
       const previous = flat[index - 1];
       const next = flat[index + 1];
       const parentId = row.parentId;
@@ -737,7 +765,7 @@ export function AISidebar({
         commands.into = {
           label: previous.item.label,
           run: () => {
-            setExpandedIds((current) => new Set(current).add(previous.item.id));
+            updateExpandedIds(new Set(expandedIds).add(previous.item.id));
             void performMove({
               itemId: row.item.id,
               targetId: previous.item.id,
@@ -757,7 +785,7 @@ export function AISidebar({
 
       return commands;
     },
-    [flat, performMove],
+    [expandedIds, flat, performMove, updateExpandedIds],
   );
 
   const handleKeyDown = useCallback(
@@ -829,7 +857,7 @@ export function AISidebar({
         canContain(previous.item)
       ) {
         event.preventDefault();
-        setExpandedIds((current) => new Set(current).add(previous.item.id));
+        updateExpandedIds(new Set(expandedIds).add(previous.item.id));
         void performMove({
           itemId: row.item.id,
           targetId: previous.item.id,
@@ -870,7 +898,15 @@ export function AISidebar({
         setMenuOpenId(row.item.id);
       }
     },
-    [expandedIds, flat, focusRow, performMove, select, toggle],
+    [
+      expandedIds,
+      flat,
+      focusRow,
+      performMove,
+      select,
+      toggle,
+      updateExpandedIds,
+    ],
   );
 
   return (
@@ -901,7 +937,7 @@ export function AISidebar({
         )}
       >
         <AnimatePresence initial={false}>
-          {flat.map((row) => (
+          {flat.map((row, index) => (
             <ResourceRow
               key={row.item.id}
               row={row}
@@ -911,7 +947,7 @@ export function AISidebar({
               draggingId={draggingId}
               dropTarget={dropTarget}
               menuOpen={menuOpenId === row.item.id}
-              moves={moveCommands(row)}
+              moves={moveCommands(row, index)}
               renaming={renamingId === row.item.id}
               onFocus={() => setFocusedId(row.item.id)}
               onSelect={() => select(row.item.id)}
@@ -937,7 +973,17 @@ export function AISidebar({
               }}
               onMenuOpenChange={(open) => {
                 setMenuOpenId(open ? row.item.id : null);
-                if (!open) focusRow(row.item.id);
+                if (
+                  !open &&
+                  document.activeElement instanceof Element &&
+                  document.activeElement
+                    .closest("[data-sidebar-resource-menu]")
+                    ?.getAttribute("data-sidebar-resource-menu") === row.item.id
+                ) {
+                  rowRefs.current
+                    .get(row.item.id)
+                    ?.focus({ preventScroll: true });
+                }
               }}
               onDragStart={(event, id) => {
                 setDraggingId(id);

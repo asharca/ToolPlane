@@ -54,6 +54,8 @@ import {
   isOmpInstructionPath,
 } from "./omp-config";
 import { parseOmpConfigSnapshot } from "./omp-config-server";
+import { prepareOmpRuntime } from "./omp-runtime";
+import { preparePiRuntime } from "./pi-runtime";
 import { resolveCapabilitySubagents } from "./subagents";
 import {
   captureNativeRoleModels,
@@ -875,11 +877,14 @@ export async function publishAgentRevision(
     input.config === undefined
       ? await captureAgentRevisionConfig(db, agentId, input.environment)
       : input.config;
+  const preparedConfig = AgentRevisionConfigSchema.parse(config);
+  if (preparedConfig.runtimeKind === "omp") await prepareOmpRuntime();
+  if (preparedConfig.runtimeKind === "pi-sdk") await preparePiRuntime();
   return db.$transaction(
     (tx) =>
       publishAgentRevisionInTransaction(tx, workspaceId, agentId, {
         expectedRevisionId: input.expectedRevisionId,
-        config,
+        config: preparedConfig,
       }),
     { timeout: 120_000 },
   );
@@ -892,6 +897,12 @@ export async function rollbackAgentRevision(
   revisionId: string,
   expectedRevisionId: string,
 ) {
+  const owner = await db.agent.findFirst({
+    where: { id: agentId, workspaceId },
+    select: { runtimeKind: true },
+  });
+  if (!owner) throw new AgentRevisionError("AGENT_NOT_FOUND");
+  if (owner.runtimeKind === "pi-sdk") await preparePiRuntime();
   return db.$transaction(
     async (tx) => {
       const revision = await requireAgentRevision(tx, agentId, revisionId);
@@ -921,7 +932,6 @@ export async function resolvePinnedAgent<
       where: { id: agent.id, workspaceId: agent.workspaceId },
       include: {
         ...captureInclude,
-        provider: true,
         knowledgeBases: {
           include: { knowledgeBase: { include: { provider: true } } },
         },
@@ -933,15 +943,13 @@ export async function resolvePinnedAgent<
       agent.runtimeKind !== config.runtimeKind
     )
       throw new AgentRevisionError("AGENT_RUNTIME_MISMATCH");
-    const providerIds = new Set([live.providerId]);
-    if (config.providerId && !providerIds.has(config.providerId))
-      throw new AgentRevisionError("AGENT_PROVIDER_REVOKED");
+    // Draft defaults do not change an immutable session's provider authority.
     const provider = config.providerId
       ? await tx.modelProvider.findFirst({
           where: { id: config.providerId, workspaceId: agent.workspaceId },
         })
       : null;
-    if (config.providerId && !provider)
+    if (config.providerId && !provider?.apiKey.trim())
       throw new AgentRevisionError("AGENT_PROVIDER_REVOKED");
     const skillIds = new Set(
       live.skills

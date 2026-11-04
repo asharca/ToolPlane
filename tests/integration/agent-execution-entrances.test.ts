@@ -377,7 +377,26 @@ describe.sequential("Agent execution entrance revision boundaries", () => {
       where: { id: agent.id },
       data: { providerId: null },
     });
-    await expect(isAgentRuntimeGrantCurrent(token)).resolves.toBe(false);
+    await expect(isAgentRuntimeGrantCurrent(token)).resolves.toBe(true);
+    const provider = await db.modelProvider.findUniqueOrThrow({
+      where: { id: providerId },
+      select: { apiKey: true },
+    });
+    await db.modelProvider.update({
+      where: { id: providerId },
+      data: { apiKey: " " },
+    });
+    try {
+      await expect(isAgentRuntimeGrantCurrent(token)).resolves.toBe(false);
+      await expect(resolvePinnedAgent(agent, revision.id)).rejects.toThrow(
+        "AGENT_PROVIDER_REVOKED",
+      );
+    } finally {
+      await db.modelProvider.update({
+        where: { id: providerId },
+        data: { apiKey: provider.apiKey },
+      });
+    }
     expect(
       await db.conversation.findUnique({ where: { id: conversation.id } }),
     ).toMatchObject({ agentRevisionId: revision.id, sandboxId: sandbox.id });

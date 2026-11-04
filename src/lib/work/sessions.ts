@@ -3,6 +3,13 @@ import { posix } from "node:path";
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { defaultConversationRuntimeSession } from "@/lib/agents/mutations";
+import { deleteAgentConversationSandboxes } from "@/lib/agents/conversation-sandbox";
+import {
+  AgentExecutionBusyError,
+  withAgentDraftLease,
+  withAgentMaintenanceLease,
+} from "@/lib/agents/agent-execution-gate";
+import { deleteWorkspaceAttachmentFile } from "@/lib/attachments/storage";
 import { AgentRevisionConfigSchema } from "@/lib/agents/revision-types";
 import { resolveModelContext } from "@/lib/agents/model";
 import type { ReasoningEffort } from "@/lib/agents/constants";
@@ -51,7 +58,13 @@ export type WorkSessionTransitionResult =
 
 const workSessionClientInclude = {
   agent: {
-    select: { id: true, name: true, runtimeKind: true, retiredAt: true },
+    select: {
+      id: true,
+      workspaceId: true,
+      name: true,
+      runtimeKind: true,
+      retiredAt: true,
+    },
   },
   agentRevision: {
     select: { id: true, agentId: true, version: true, config: true },
@@ -591,12 +604,36 @@ export async function finalizeWorkSessionCancellation(
   return result.count === 1;
 }
 
+// Admission must commit before deletion can take the Agent maintenance lease;
+// otherwise a concurrent input could requeue a workspace being removed.
+async function withWorkSessionInputLease(
+  workspaceId: string,
+  workSessionId: string,
+  update: (
+    tx: Prisma.TransactionClient,
+  ) => Promise<WorkSessionTransitionResult>,
+): Promise<WorkSessionTransitionResult> {
+  const work = await db.workSession.findFirst({
+    where: { id: workSessionId, workspaceId },
+    select: { agentId: true, status: true },
+  });
+  if (!work) return { ok: false, reason: "not_found" };
+  try {
+    return await withAgentDraftLease(work.agentId, () =>
+      db.$transaction(update),
+    );
+  } catch (error) {
+    if (!(error instanceof AgentExecutionBusyError)) throw error;
+    return { ok: false, reason: "invalid_transition", status: work.status };
+  }
+}
+
 export async function resumeWorkSession(
   workspaceId: string,
   workSessionId: string,
   actorId?: string,
 ): Promise<WorkSessionTransitionResult> {
-  return db.$transaction(async (tx) => {
+  return withWorkSessionInputLease(workspaceId, workSessionId, async (tx) => {
     const work = await tx.workSession.findFirst({
       where: { id: workSessionId, workspaceId },
       select: workSessionExecutionSelect,
@@ -659,7 +696,7 @@ export async function appendWorkSessionInput(
   if (!text || text.length > 20_000)
     return { ok: false, reason: "invalid_input" };
 
-  return db.$transaction(async (tx) => {
+  return withWorkSessionInputLease(workspaceId, workSessionId, async (tx) => {
     const work = await tx.workSession.findFirst({
       where: { id: workSessionId, workspaceId },
       select: workSessionExecutionSelect,
@@ -765,7 +802,6 @@ export async function listWorkSessions(workspaceId: string, agentId?: string) {
       ...(agentId ? { agentId } : {}),
     },
     orderBy: { updatedAt: "desc" },
-    take: 100,
     include: workSessionSummaryInclude,
   });
   return sessions.map((session) => ({
@@ -810,22 +846,68 @@ export async function getWorkSessionForUser(
     },
     include: workSessionClientInclude,
   });
-  return session
+  return session &&
+    session.agent.workspaceId === session.workspaceId &&
+    session.agentId === session.conversation.agentId
     ? { ...session, ...workSessionRevisionMetadata(session) }
     : null;
 }
 
-export async function archiveWorkSession(
+export async function deleteWorkSession(
   workspaceId: string,
   workSessionId: string,
-) {
-  const result = await db.workSession.updateMany({
+): Promise<boolean> {
+  const target = await db.workSession.findFirst({
     where: {
       id: workSessionId,
       workspaceId,
-      status: { in: ["idle", "completed", "failed", "cancelled"] },
+      agent: { workspaceId },
+      conversation: { agent: { workspaceId } },
     },
-    data: { status: "archived" },
+    select: { agentId: true, conversation: { select: { agentId: true } } },
   });
-  return result.count === 1;
+  if (!target || target.agentId !== target.conversation.agentId) return false;
+  return withAgentMaintenanceLease(target.agentId, async () => {
+    const work = await db.workSession.findFirst({
+      where: {
+        id: workSessionId,
+        workspaceId,
+        agentId: target.agentId,
+        agent: { workspaceId },
+        conversation: { agentId: target.agentId, agent: { workspaceId } },
+      },
+      select: { conversationId: true, status: true },
+    });
+    if (!work) return false;
+    if (
+      !["idle", "completed", "failed", "cancelled", "archived"].includes(
+        work.status,
+      )
+    )
+      throw new Error(
+        "Work is queued or running. Stop it before deleting the conversation.",
+      );
+    await deleteAgentConversationSandboxes(
+      {
+        workspaceId,
+        agentId: target.agentId,
+        conversationId: work.conversationId,
+      },
+      async () => {
+        const attachments = await db.workspaceAttachment.findMany({
+          where: { workspaceId, conversationId: work.conversationId },
+          select: { storagePath: true },
+        });
+        for (const attachment of attachments)
+          await deleteWorkspaceAttachmentFile(
+            workspaceId,
+            attachment.storagePath,
+          );
+        // Commit FK cleanup before the lifecycle clears its pending-delete
+        // marker. Shared Agent sandbox/deployment rows are never deleted.
+        await db.conversation.delete({ where: { id: work.conversationId } });
+      },
+    );
+    return true;
+  });
 }

@@ -24,7 +24,7 @@ import { buildModel } from "@/lib/agents/model";
 import { providerPreset } from "@/lib/agents/provider-catalog";
 import {
   AgentExecutionBusyError,
-  withAgentMaintenanceLease,
+  withAgentDraftLease,
 } from "@/lib/agents/agent-execution-gate";
 import {
   refreshProviderModels,
@@ -97,6 +97,11 @@ const resourceReviewPublicErrors: Record<string, true> = {
   PI_EXTENSION_LOAD_FAILED: true,
   PI_CAPABILITY_PREFLIGHT_FAILED: true,
   PI_CAPABILITY_PREFLIGHT_TIMEOUT: true,
+  OMP_PLATFORM_UNSUPPORTED: true,
+  OMP_INSTALL_TIMEOUT: true,
+  OMP_ARTIFACT_DOWNLOAD_FAILED: true,
+  OMP_ARTIFACT_DIGEST_MISMATCH: true,
+  OMP_ARTIFACT_TOO_LARGE: true,
   MCP_CONNECTION_NOT_AUTHORIZED: true,
   AGENT_EXECUTION_RETIRED: true,
   AGENT_REVISION_CONFLICT: true,
@@ -921,7 +926,7 @@ export async function updateAgentAction(
   const maxSteps = agentMaxSteps(formData);
 
   try {
-    await withAgentMaintenanceLease(agentId, async () => {
+    await withAgentDraftLease(agentId, async () => {
       await updateAgent(ctx.ws.id, agentId, {
         name: String(formData.get("name") ?? "").trim() || "New agent",
         description:
@@ -1030,7 +1035,11 @@ export async function prepareAgentRevisionAction(formData: FormData) {
         select: { id: true },
       });
       const config = await captureAgentRevisionConfig(tx, agentId, environment);
-      return { expectedRevisionId: current?.id ?? null, config };
+      // Flight text chunks decode a leading BOM; JSON keeps it inside the payload.
+      return {
+        expectedRevisionId: current?.id ?? null,
+        configJson: JSON.stringify(config),
+      };
     },
     { timeout: 120_000 },
   );
