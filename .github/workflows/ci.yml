@@ -66,6 +66,7 @@ jobs:
   validate:
     if: github.event_name != 'pull_request_target' && !inputs.full
     runs-on: ubuntu-latest
+
     env:
       DATABASE_URL: postgresql://mcp:mcp@127.0.0.1:5432/toolplane_test
       NEXT_TELEMETRY_DISABLED: 1
