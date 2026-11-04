@@ -164,7 +164,10 @@ describe("system settings storage", () => {
     "rejects non-boolean policy values %s rather than coercing them",
     async (enabled) => {
       await expect(
-        updateAgentSandboxAutoStopSettings(enabled as boolean, "admin"),
+        updateAgentSandboxAutoStopSettings(
+          enabled as unknown as boolean,
+          "admin",
+        ),
       ).rejects.toThrow("Invalid Agent sandbox auto-stop settings");
       mocks.findUnique.mockResolvedValue({
         value: JSON.stringify({ enabled }),
