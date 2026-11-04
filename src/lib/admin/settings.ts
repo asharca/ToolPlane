@@ -14,6 +14,7 @@ export const REMOTE_MCP_PRIVATE_HOSTS_SETTING_KEY = "mcp.remotePrivateHosts";
 export const SKILL_IMPORT_MAX_SKILLS_SETTING_KEY = "skills.maxImportSkills";
 export const SSH_PRIVATE_HOSTS_SETTING_KEY = "sandboxes.sshPrivateHosts";
 export const AGENT_CONCURRENCY_SETTING_KEY = "agents.concurrency";
+export const AGENT_SANDBOX_AUTO_STOP_SETTING_KEY = "sandboxes.agentAutoStop";
 export const MAX_AGENT_CONCURRENCY = 32;
 export const MAX_TOTAL_AGENT_CONCURRENCY = 256;
 
@@ -75,6 +76,44 @@ export async function resetAgentConcurrencySettings(
   actorId: string,
 ): Promise<void> {
   await saveAuditedSetting(AGENT_CONCURRENCY_SETTING_KEY, null, actorId);
+}
+
+export type AgentSandboxAutoStopSettings = {
+  enabled: boolean;
+  source: "database" | "default";
+};
+
+export async function getAgentSandboxAutoStopSettings(
+  client: Pick<Prisma.TransactionClient, "systemSetting"> = db,
+): Promise<AgentSandboxAutoStopSettings> {
+  const setting = await client.systemSetting.findUnique({
+    where: { key: AGENT_SANDBOX_AUTO_STOP_SETTING_KEY },
+    select: { value: true },
+  });
+  if (!setting) return { enabled: true, source: "default" };
+  const parsed = JSON.parse(setting.value);
+  if (typeof parsed?.enabled !== "boolean")
+    throw new Error("Invalid Agent sandbox auto-stop settings.");
+  return { enabled: parsed.enabled, source: "database" };
+}
+
+export async function updateAgentSandboxAutoStopSettings(
+  enabled: boolean,
+  actorId: string,
+): Promise<void> {
+  if (typeof enabled !== "boolean")
+    throw new Error("Invalid Agent sandbox auto-stop settings.");
+  await saveAuditedSetting(
+    AGENT_SANDBOX_AUTO_STOP_SETTING_KEY,
+    JSON.stringify({ enabled }),
+    actorId,
+  );
+}
+
+export async function resetAgentSandboxAutoStopSettings(
+  actorId: string,
+): Promise<void> {
+  await saveAuditedSetting(AGENT_SANDBOX_AUTO_STOP_SETTING_KEY, null, actorId);
 }
 
 export const DEFAULT_MCP_STARTUP_IDLE_TIMEOUT_MS = 90_000;

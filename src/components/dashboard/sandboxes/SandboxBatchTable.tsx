@@ -22,12 +22,14 @@ type SandboxRow = DashboardTableRow & { name: string; batchEligible: boolean };
 export function SandboxBatchTable({
   workspace,
   rows,
+  batchEnabled = true,
   ...tableProps
 }: Omit<
   DashboardTableProps,
   "rows" | "selectedRowIds" | "onSelectionChange" | "selectionActions"
 > & {
   workspace: string;
+  batchEnabled?: boolean;
   rows: SandboxRow[];
 }) {
   const t = useTranslations("console.sandboxes");
@@ -81,6 +83,9 @@ export function SandboxBatchTable({
       submitting.current = false;
       startRefresh(() => router.refresh());
     }
+  }
+  if (!batchEnabled) {
+    return <DashboardTable {...tableProps} rows={rows} selectable={false} />;
   }
 
   return (

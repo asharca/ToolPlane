@@ -1177,15 +1177,27 @@ export async function generateConversationTitleAction(
   }
 }
 
-export async function deleteConversationAction(formData: FormData) {
+export async function deleteConversationAction(
+  formData: FormData,
+): Promise<ActionState> {
   const slug = String(formData.get("workspace") ?? "");
   const agentId = String(formData.get("agentId") ?? "");
   const conversationId = String(formData.get("conversationId") ?? "");
-  if (!conversationId) return;
-  const ctx = await authorizedWorkspace(slug);
-  if (!ctx || !(await isManageableAgent(ctx.ws.id, agentId))) return;
-  if (!(await deleteConsoleConversation(ctx.ws.id, agentId, conversationId)))
-    return;
+  if (!conversationId) return { error: "Conversation not found." };
+  try {
+    const ctx = await authorizedWorkspace(slug);
+    if (!ctx || !(await isManageableAgent(ctx.ws.id, agentId)))
+      return { error: "Conversation not found." };
+    if (!(await deleteConsoleConversation(ctx.ws.id, agentId, conversationId)))
+      return { error: "Conversation not found." };
+  } catch (error) {
+    return {
+      error:
+        error instanceof Error
+          ? error.message
+          : "Could not delete conversation.",
+    };
+  }
   revalidatePath(`/app/${slug}/work`);
   redirect(`/app/${slug}/work?agent=${agentId}`);
 }

@@ -15,6 +15,7 @@ import {
 import { AdminPage, AdminPageHeader } from "@/components/admin/AdminUI";
 import { McpRuntimeSettingsForm } from "@/components/admin/McpRuntimeSettingsForm";
 import { AgentConcurrencySettingsForm } from "@/components/admin/AgentConcurrencySettingsForm";
+import { AgentSandboxAutoStopSettingsForm } from "@/components/admin/AgentSandboxAutoStopSettingsForm";
 import { RemoteMcpPrivateHostsSettingsForm } from "@/components/admin/RemoteMcpPrivateHostsSettingsForm";
 import { SshPrivateHostsSettingsForm } from "@/components/admin/SshPrivateHostsSettingsForm";
 import { RuntimeSettingsForm } from "@/components/admin/RuntimeSettingsForm";
@@ -22,6 +23,8 @@ import { SkillImportSettingsForm } from "@/components/admin/SkillImportSettingsF
 import {
   AGENT_CONCURRENCY_SETTING_KEY,
   getAgentConcurrencySettings,
+  AGENT_SANDBOX_AUTO_STOP_SETTING_KEY,
+  getAgentSandboxAutoStopSettings,
   MAX_AGENT_CONCURRENCY,
   MAX_TOTAL_AGENT_CONCURRENCY,
   MCP_STARTUP_TIMEOUTS_SETTING_KEY,
@@ -48,6 +51,7 @@ export default async function AdminSettingsPage() {
     remoteMcpPrivateHosts,
     sshPrivateHosts,
     agentConcurrency,
+    agentSandboxAutoStop,
   ] = await Promise.all([
     getTranslations("admin"),
     resolveAgentAttachmentLimit(),
@@ -56,12 +60,14 @@ export default async function AdminSettingsPage() {
     resolveRemoteMcpPrivateHostsSettings(),
     resolveSshPrivateHostsSettings(),
     getAgentConcurrencySettings(),
+    getAgentSandboxAutoStopSettings(),
   ]);
   const [ops, locale, changes] = await Promise.all([
     getTranslations("adminOps"),
     getLocale(),
     getSettingChanges([
       AGENT_CONCURRENCY_SETTING_KEY,
+      AGENT_SANDBOX_AUTO_STOP_SETTING_KEY,
       AGENT_ATTACHMENT_LIMIT_SETTING_KEY,
       MCP_STARTUP_TIMEOUTS_SETTING_KEY,
       REMOTE_MCP_PRIVATE_HOSTS_SETTING_KEY,
@@ -117,6 +123,10 @@ export default async function AdminSettingsPage() {
             perAgentLimit={MAX_AGENT_CONCURRENCY}
             totalLimit={MAX_TOTAL_AGENT_CONCURRENCY}
           />,
+        )}
+        {section(
+          AGENT_SANDBOX_AUTO_STOP_SETTING_KEY,
+          <AgentSandboxAutoStopSettingsForm {...agentSandboxAutoStop} />,
         )}
         {section(
           AGENT_ATTACHMENT_LIMIT_SETTING_KEY,

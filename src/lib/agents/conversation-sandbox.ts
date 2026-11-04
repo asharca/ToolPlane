@@ -10,6 +10,7 @@ import type {
   Sandbox,
 } from "@prisma/client";
 import { db } from "@/lib/db";
+import { getAgentSandboxAutoStopSettings } from "@/lib/admin/settings";
 import {
   assertRuntimeOwner,
   trackRuntimeOperation,
@@ -948,6 +949,7 @@ export async function deleteAgentContextSandbox(input: {
 
 export async function stopIdleAgentConversationSandboxes(): Promise<void> {
   assertRuntimeOwner();
+  const { enabled: autoStopEnabled } = await getAgentSandboxAutoStopSettings();
   const idleBefore = Date.now() - 15 * 60_000;
   const sandboxes = await db.sandbox.findMany({
     where: { config: { path: ["managedBy"], equals: "agent-conversation" } },
@@ -995,6 +997,7 @@ export async function stopIdleAgentConversationSandboxes(): Promise<void> {
       } else if (
         sandbox.deployment.status === "stopping" ||
         (sandbox.deployment.status === "running" &&
+          autoStopEnabled &&
           (accesses.get(sandbox.id)?.usedAt ??
             sandbox.deployment.updatedAt.getTime()) < idleBefore)
       ) {
