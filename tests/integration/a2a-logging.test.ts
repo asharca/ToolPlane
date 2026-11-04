@@ -297,11 +297,24 @@ async function nativeLedger(
   } = {},
 ) {
   const id = randomUUID();
+  const targetAgentId = input.workspaceId
+    ? (
+        await db.agent.create({
+          data: {
+            workspaceId: input.workspaceId,
+            slug: `native-logging-${id}`,
+            name: "Foreign native ledger",
+            runtimeKind: "pi-sdk",
+          },
+        })
+      ).id
+    : agentId;
   const context = await db.a2AContext.create({
     data: {
       workspaceId: input.workspaceId ?? workspaceId,
       targetKind: "local",
-      ...(input.workspaceId ? {} : { agentId }),
+      agentId: targetAgentId,
+      targetBinding: `local:${targetAgentId}`,
       ownerKey: `native-logging:${id}`,
       expiresAt: new Date(Date.now() + 86_400_000),
     },
