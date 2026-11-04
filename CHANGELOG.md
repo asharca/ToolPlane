@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.33.3](https://github.com/asharca/ToolPlane/compare/v0.33.2...v0.33.3) (2026-11-04)
+
+
+### Bug Fixes
+
+* 简化沙箱管理并支持配置空闲自动关闭 ([#176](https://github.com/asharca/ToolPlane/issues/176)) ([d68d04b](https://github.com/asharca/ToolPlane/commit/d68d04bf61f7666e577716c8edd79ceb2bbebf4e))
+
 ## [0.33.2](https://github.com/asharca/ToolPlane/compare/v0.33.1...v0.33.2) (2026-11-04)
 
 
