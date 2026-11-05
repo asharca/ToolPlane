@@ -1,5 +1,6 @@
 import { isIP } from "node:net";
 
+/** @typedef {{ value: string, hosts: Set<string>, suffixes: Set<string>, ips: Set<string> }} PrivateHostsPolicy */
 export const MAX_REMOTE_MCP_PRIVATE_HOSTS_LENGTH = 8_192;
 export const MAX_REMOTE_MCP_PRIVATE_HOSTS = 100;
 
@@ -48,6 +49,7 @@ export function isPrivateRemoteMcpIp(address) {
       : false;
 }
 
+/** @returns {PrivateHostsPolicy | null} */
 export function parseRemoteMcpPrivateHosts(value) {
   if (
     typeof value !== "string" ||

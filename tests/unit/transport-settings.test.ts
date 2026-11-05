@@ -33,6 +33,7 @@ function form(allowHttp = "true", limit = "512", intent = "save") {
   data.set("allowHttp", allowHttp);
   data.set("a2aInlineKiB", limit);
   data.set("intent", intent);
+  data.set("a2aFileMiB", "10");
   return data;
 }
 
@@ -74,6 +75,45 @@ describe("administrator transport security boundaries", () => {
       expect(state.save).not.toHaveBeenCalled();
     },
   );
+  it.each(["0", "101", "1.5", "1e2", "", "Infinity"])(
+    "rejects an invalid file limit without changing settings (%s)",
+    async (value) => {
+      const data = form();
+      data.set("a2aFileMiB", value);
+      expect(await updateTransportSettingsAction({}, data)).toHaveProperty(
+        "error",
+      );
+      expect(state.save).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps existing HTTP and inline settings when upgrading a policy without a file limit", async () => {
+    state.findUnique.mockResolvedValue({
+      value: JSON.stringify({ allowHttp: true, a2aInlineBytes: 524288 }),
+    });
+    expect(await getTransportSettings()).toEqual({
+      allowHttp: true,
+      a2aInlineBytes: 524288,
+      a2aFileBytes: 10 * 1024 * 1024,
+      source: "database",
+    });
+  });
+
+  it.each([1, 25, 100])(
+    "reads an administrator file limit of %s MiB",
+    async (mib) => {
+      state.findUnique.mockResolvedValue({
+        value: JSON.stringify({
+          allowHttp: false,
+          a2aInlineBytes: 32768,
+          a2aFileBytes: mib * 1024 * 1024,
+        }),
+      });
+      expect((await getTransportSettings()).a2aFileBytes).toBe(
+        mib * 1024 * 1024,
+      );
+    },
+  );
 
   it.each([
     "{",
@@ -81,6 +121,8 @@ describe("administrator transport security boundaries", () => {
     '{"allowHttp":"true","a2aInlineBytes":524288}',
     '{"allowHttp":true,"a2aInlineBytes":0}',
     '{"allowHttp":true,"a2aInlineBytes":10485761}',
+    '{"allowHttp":true,"a2aInlineBytes":32768,"a2aFileBytes":104857601}',
+    '{"allowHttp":true,"a2aInlineBytes":32768,"a2aFileBytes":"26214400"}',
   ])(
     "never enables plaintext from invalid persisted policy (%s)",
     async (value) => {

@@ -9,6 +9,8 @@ import { TRANSPORT_SETTINGS_KEY } from "@/lib/admin/transport-settings";
 import {
   MIN_A2A_INLINE_BYTES,
   MAX_A2A_INLINE_BYTES,
+  MIN_A2A_FILE_BYTES,
+  MAX_A2A_FILE_BYTES,
 } from "@/lib/transport-policy";
 
 export async function updateTransportSettingsAction(
@@ -36,11 +38,25 @@ export async function updateTransportSettingsAction(
             max: MAX_A2A_INLINE_BYTES / 1024,
           }),
         };
+      const rawFileMiB = String(formData.get("a2aFileMiB") ?? "").trim();
+      const fileMiB = /^\d+$/.test(rawFileMiB) ? Number(rawFileMiB) : NaN;
+      if (
+        !Number.isSafeInteger(fileMiB) ||
+        fileMiB < MIN_A2A_FILE_BYTES / 1024 ** 2 ||
+        fileMiB > MAX_A2A_FILE_BYTES / 1024 ** 2
+      )
+        return {
+          error: t("errorA2aFileSize", {
+            min: MIN_A2A_FILE_BYTES / 1024 ** 2,
+            max: MAX_A2A_FILE_BYTES / 1024 ** 2,
+          }),
+        };
       await saveAuditedSetting(
         TRANSPORT_SETTINGS_KEY,
         JSON.stringify({
           allowHttp: allowHttp === "true",
           a2aInlineBytes: kib * 1024,
+          a2aFileBytes: fileMiB * 1024 ** 2,
         }),
         admin.id,
       );

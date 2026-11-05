@@ -5,7 +5,7 @@ import { LocalArtifactInput } from "./tool-inputs";
 export const piArtifactTool = {
   name: "a2a_publish_artifact",
   description:
-    "Publish an immutable Artifact to this task with named text, JSON, small inline bytes or file parts {path,filename?,mediaType?}/{fileId}. Workspace files stream to task storage (10 MiB/file, 100 MiB and 20 files/task); never paste large bytes or include credentials. Reuse artifactId only for identical retries. Publishing does not complete the task.",
+    "Publish an immutable Artifact to this task with named text, JSON, small inline bytes or file parts {path,filename?,mediaType?}/{fileId}. Workspace files stream to task storage (administrator-configured limit: default 10 MiB/file, configurable 1–100 MiB; 100 MiB and 20 files/task); never paste large bytes or include credentials. Reuse artifactId only for identical retries. Publishing does not complete the task.",
   schema: LocalArtifactInput,
 } as const;
 

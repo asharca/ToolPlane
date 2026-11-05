@@ -3,6 +3,13 @@ import { lookup } from "node:dns/promises";
 import { request } from "node:https";
 import { request as httpRequest } from "node:http";
 import { getTransportSettings } from "@/lib/admin/transport-settings";
+import { resolvePrivateHostsSettings } from "@/lib/admin/settings";
+import {
+  isPrivateRemoteMcpIp,
+  normalizeRemoteMcpHostname,
+  parseRemoteMcpPrivateHosts,
+  type PrivateHostsPolicy,
+} from "../../../scripts/remote-mcp-private-hosts.mjs";
 import {
   DEFAULT_TRANSPORT_POLICY,
   permitsTransportProtocol,
@@ -127,7 +134,11 @@ export function remotePair(
     );
   return { cardUrl: card.href, rpcUrl: rpc.href };
 }
-async function addresses(host: string, signal: AbortSignal) {
+async function addresses(
+  host: string,
+  signal: AbortSignal,
+  privateHosts: PrivateHostsPolicy | null = null,
+) {
   const pending = isIP(host)
     ? Promise.resolve([{ address: host, family: isIP(host) }])
     : lookup(host, { all: true, verbatim: true });
@@ -142,11 +153,27 @@ async function addresses(host: string, signal: AbortSignal) {
     else signal.addEventListener("abort", abort, { once: true });
   });
   try {
+    const name = normalizeRemoteMcpHostname(host);
+    const listedHost =
+      privateHosts &&
+      (privateHosts.hosts.has(name) ||
+        [...privateHosts.suffixes].some((suffix) =>
+          name.endsWith(`.${suffix}`),
+        ));
     const result = await Promise.race([pending, aborted]);
     if (
       !result.length ||
       result.length > 32 ||
-      result.some((item) => !publicRemoteAddress(item.address))
+      result.some(
+        (item) =>
+          !publicRemoteAddress(item.address) &&
+          !(
+            privateHosts &&
+            isPrivateRemoteMcpIp(item.address) &&
+            (listedHost ||
+              privateHosts.ips.has(normalizeRemoteMcpHostname(item.address)))
+          ),
+      )
     )
       throw new RemoteA2AError("Remote DNS resolved to a prohibited address.");
     return result[0];
@@ -401,7 +428,6 @@ export async function fetchRemoteJson(
   }
 }
 
-export const REMOTE_FILE_BYTES = 10 * 1024 * 1024;
 /** Signed query strings are accepted only by the file transport, never Card/RPC. */
 export function remoteFileUrl(
   value: string,
@@ -425,62 +451,15 @@ export function remoteFileUrl(
     throw new RemoteA2AError(
       "File addresses require HTTPS without credentials or fragment.",
     );
-  const privateAddresses = privateFileAddresses(url.origin);
-  if (!privateAddresses) {
-    const clean = new URL(url);
-    clean.search = "";
-    remoteUrl(clean.href, policy);
-  }
   return url;
-}
-function privateFileAddresses(origin: string): string[] | undefined {
-  let configured: unknown;
-  try {
-    configured = JSON.parse(
-      runtimeEnv("TOOLPLANE_A2A_FILE_PRIVATE_ORIGINS") || "{}",
-    );
-  } catch {
-    throw new RemoteA2AError("Invalid private file origin configuration.");
-  }
-  if (
-    !configured ||
-    typeof configured !== "object" ||
-    Array.isArray(configured) ||
-    Object.keys(configured).length > 100
-  )
-    throw new RemoteA2AError("Invalid private file origin configuration.");
-  const values = (configured as Record<string, unknown>)[origin];
-  if (values === undefined) return undefined;
-  // This opt-in permits exact RFC1918/ULA addresses, never metadata/link-local/loopback.
-  const privateV4 = new BlockList();
-  privateV4.addSubnet("10.0.0.0", 8, "ipv4");
-  privateV4.addSubnet("172.16.0.0", 12, "ipv4");
-  privateV4.addSubnet("192.168.0.0", 16, "ipv4");
-  const privateV6 = new BlockList();
-  privateV6.addSubnet("fc00::", 7, "ipv6");
-  if (
-    !Array.isArray(values) ||
-    !values.length ||
-    values.length > 32 ||
-    values.some(
-      (address) =>
-        typeof address !== "string" ||
-        !(isIP(address) === 4
-          ? privateV4.check(address, "ipv4")
-          : isIP(address) === 6 && privateV6.check(address, "ipv6")),
-    )
-  )
-    throw new RemoteA2AError(
-      "Private file origins require exact private addresses.",
-    );
-  return values as string[];
 }
 /** Stream bytes directly to storage. No redirects, auth forwarding, proxy, or payload logging. */
 export async function fetchRemoteFile(
   value: string,
   signal?: AbortSignal,
 ): Promise<ReadableStream<Uint8Array>> {
-  const url = remoteFileUrl(value, await getTransportSettings());
+  const policy = await getTransportSettings();
+  const url = remoteFileUrl(value, policy);
   if (inflight >= 16)
     throw new RemoteA2AError("Remote connection capacity reached.");
   inflight++;
@@ -497,14 +476,22 @@ export async function fetchRemoteFile(
       ...(signal ? [signal] : []),
     ]);
     const host = url.hostname.replace(/^\[|\]$/g, "");
-    const approved = privateFileAddresses(url.origin);
-    let pinned: { address: string; family: number };
-    if (approved) {
-      // Pin an administrator-specified address, not a fresh potentially rebinding DNS answer.
-      if (isIP(host) && !approved.includes(host))
-        throw new RemoteA2AError("Private file address is not approved.");
-      pinned = { address: approved[0], family: isIP(approved[0]) };
-    } else pinned = await addresses(host, abortSignal);
+    const privateHosts = parseRemoteMcpPrivateHosts(
+      (await resolvePrivateHostsSettings()).value,
+    );
+    const pinned = await addresses(host, abortSignal, privateHosts);
+    const name = normalizeRemoteMcpHostname(host);
+    const listedHost =
+      privateHosts &&
+      (privateHosts.hosts.has(name) ||
+        [...privateHosts.suffixes].some((suffix) =>
+          name.endsWith(`.${suffix}`),
+        ));
+    if (!listedHost && publicRemoteAddress(pinned.address)) {
+      const clean = new URL(url);
+      clean.search = "";
+      remoteUrl(clean.href, policy);
+    }
     abortSignal.throwIfAborted();
     const { promise, resolve, reject } =
       Promise.withResolvers<ReadableStream<Uint8Array>>();
@@ -527,7 +514,7 @@ export async function fetchRemoteFile(
           (res.statusCode ?? 0) !== 200 ||
           (res.headers["content-encoding"] &&
             res.headers["content-encoding"] !== "identity") ||
-          Number(res.headers["content-length"]) > REMOTE_FILE_BYTES
+          Number(res.headers["content-length"]) > policy.a2aFileBytes
         ) {
           res.destroy();
           req.destroy();
@@ -549,7 +536,7 @@ export async function fetchRemoteFile(
             res.on("data", (chunk: Buffer) => {
               if (ended) return;
               bytes += chunk.byteLength;
-              if (bytes > REMOTE_FILE_BYTES) {
+              if (bytes > policy.a2aFileBytes) {
                 fail();
                 res.destroy();
                 req.destroy();

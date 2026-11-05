@@ -299,7 +299,7 @@ function environmentPrivateHostsSettings(): PrivateHostsSettings {
     : { value: "", source: "default" };
 }
 
-// Read on every SSH connection and Remote MCP launch so a saved policy applies
+// Read on every SSH connection, Remote MCP launch and A2A file download so policy applies
 // to the next connection on every instance. Workspace members cannot widen it.
 export async function resolvePrivateHostsSettings(): Promise<PrivateHostsSettings> {
   try {

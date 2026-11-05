@@ -20,6 +20,7 @@ vi.mock("@/lib/admin/transport-settings", () => ({
   getTransportSettings: async () => ({
     allowHttp: false,
     a2aInlineBytes: 32768,
+    a2aFileBytes: 10 * 1024 * 1024,
     source: "default",
   }),
 }));

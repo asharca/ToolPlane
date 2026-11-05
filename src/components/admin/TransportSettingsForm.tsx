@@ -13,15 +13,20 @@ import {
   DEFAULT_A2A_INLINE_BYTES,
   MAX_A2A_INLINE_BYTES,
   MIN_A2A_INLINE_BYTES,
+  DEFAULT_A2A_FILE_BYTES,
+  MIN_A2A_FILE_BYTES,
+  MAX_A2A_FILE_BYTES,
 } from "@/lib/transport-policy";
 
 export function TransportSettingsForm({
   allowHttp: initialAllowHttp,
   a2aInlineBytes,
+  a2aFileBytes,
   source,
 }: {
   allowHttp: boolean;
   a2aInlineBytes: number;
+  a2aFileBytes: number;
   source: "database" | "default";
 }) {
   const t = useTranslations("admin");
@@ -95,6 +100,30 @@ export function TransportSettingsForm({
             })}
           </p>
         </div>
+        <div className="space-y-1.5">
+          <label htmlFor="a2a-file-mib" className="block text-sm font-medium">
+            {t("a2aFileMiB")}
+          </label>
+          <Input
+            id="a2a-file-mib"
+            name="a2aFileMiB"
+            type="number"
+            min={MIN_A2A_FILE_BYTES / 1024 ** 2}
+            max={MAX_A2A_FILE_BYTES / 1024 ** 2}
+            step={1}
+            required
+            defaultValue={String(a2aFileBytes / 1024 ** 2)}
+            disabled={pending}
+            aria-describedby="a2a-file-mib-hint"
+          />
+          <p id="a2a-file-mib-hint" className="text-sm text-muted-foreground">
+            {t("a2aFileMiBHint", {
+              min: MIN_A2A_FILE_BYTES / 1024 ** 2,
+              max: MAX_A2A_FILE_BYTES / 1024 ** 2,
+              default: DEFAULT_A2A_FILE_BYTES / 1024 ** 2,
+            })}
+          </p>
+        </div>
         <p className="text-sm text-muted-foreground">
           {t("transportSettingsSafety")}
         </p>
@@ -118,9 +147,7 @@ export function TransportSettingsForm({
               variant="secondary"
               size="md"
             >
-              {t("restoreTransportDefaults", {
-                default: DEFAULT_A2A_INLINE_BYTES / 1024,
-              })}
+              {t("restoreTransportDefaults")}
             </Button>
           ) : null}
         </div>

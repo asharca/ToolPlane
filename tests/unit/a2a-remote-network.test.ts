@@ -11,7 +11,6 @@ import {
   REMOTE_RESPONSE_BYTES,
   fetchRemoteFile,
   remoteFileUrl,
-  REMOTE_FILE_BYTES,
 } from "@/lib/a2a/remote-network";
 import { REMOTE_CARD, REMOTE_RPC, remoteTask } from "../fixtures/a2a-remote";
 import type { A2ALogBinding } from "@/lib/observability/a2a-log";
@@ -19,6 +18,7 @@ import { withLogContext } from "@/lib/observability/context";
 import {
   DEFAULT_TRANSPORT_POLICY,
   a2aTransportBodyBytes,
+  DEFAULT_A2A_FILE_BYTES,
 } from "@/lib/transport-policy";
 const responseLimit = Math.max(
   REMOTE_RESPONSE_BYTES,
@@ -30,12 +30,16 @@ const mocks = vi.hoisted(() => ({
   create: vi.fn(),
   settings: vi.fn(),
   transportPolicy: vi.fn(),
+  privateHosts: vi.fn(),
 }));
 vi.mock("node:dns/promises", () => ({ lookup: mocks.lookup }));
 vi.mock("node:https", () => ({ request: mocks.request }));
 vi.mock("node:http", () => ({ request: mocks.request }));
 vi.mock("@/lib/admin/transport-settings", () => ({
   getTransportSettings: mocks.transportPolicy,
+}));
+vi.mock("@/lib/admin/settings", () => ({
+  resolvePrivateHostsSettings: mocks.privateHosts,
 }));
 vi.mock("@/lib/db", () => ({
   db: {
@@ -94,8 +98,10 @@ beforeEach(() => {
     JSON.stringify(["https://agent.example"]),
   );
   vi.clearAllMocks();
+  mocks.privateHosts.mockResolvedValue({ value: "", source: "database" });
   mocks.transportPolicy.mockResolvedValue({
     ...DEFAULT_TRANSPORT_POLICY,
+    a2aFileBytes: DEFAULT_A2A_FILE_BYTES,
     source: "default",
   });
   status = 200;
@@ -138,7 +144,11 @@ afterEach(() => {
 });
 describe("remote HTTPS egress boundary", () => {
   it("permits configured plaintext without changing exact-origin approval, DNS pinning, or default denial", async () => {
-    const policy = { allowHttp: true, a2aInlineBytes: 512 * 1024 };
+    const policy = {
+      allowHttp: true,
+      a2aInlineBytes: 512 * 1024,
+      a2aFileBytes: DEFAULT_A2A_FILE_BYTES,
+    };
     mocks.transportPolicy.mockResolvedValue(policy);
     vi.stubEnv("TOOLPLANE_A2A_REMOTE_ORIGINS", '["http://agent.example"]');
     expect(() => remoteUrl("http://agent.example/rpc")).toThrow();
@@ -195,44 +205,97 @@ describe("remote HTTPS egress boundary", () => {
     },
   );
   it("bounds file bytes, rejecting a large content length before consumption", async () => {
-    headers["content-length"] = String(REMOTE_FILE_BYTES + 1);
+    headers["content-length"] = String(DEFAULT_A2A_FILE_BYTES + 1);
     await expect(
       fetchRemoteFile("https://agent.example/file"),
     ).rejects.toThrow();
     expect(mocks.request).toHaveBeenCalledTimes(1);
   });
-  it("pins only exact admin private-file IPs without weakening RPC policy", async () => {
-    vi.stubEnv(
-      "TOOLPLANE_A2A_FILE_PRIVATE_ORIGINS",
-      JSON.stringify({ "https://files.internal": ["10.0.0.8"] }),
-    );
-    expect(() => remoteUrl("https://files.internal/rpc")).toThrow();
-    const stream = await fetchRemoteFile(
-      "https://files.internal/file?signature=private-ticket",
-    );
-    await new Response(stream).text();
-    expect(mocks.lookup).not.toHaveBeenCalled();
-    const callback = vi.fn();
-    (
-      options.lookup as (
-        host: string,
-        opts: { all: boolean },
-        cb: typeof callback,
-      ) => void
-    )("files.internal", { all: false }, callback);
-    expect(callback).toHaveBeenCalledWith(null, "10.0.0.8", 4);
-    expect(options.headers).not.toHaveProperty("authorization");
+  it("uses the administrator limit for advertised and chunked file sizes", async () => {
+    const fileBytes = 12 * 1024 * 1024;
+    mocks.transportPolicy.mockResolvedValue({
+      ...DEFAULT_TRANSPORT_POLICY,
+      a2aFileBytes: fileBytes,
+    });
+    body = "x".repeat(fileBytes);
+    headers = { "content-length": String(fileBytes) };
+    const accepted = await fetchRemoteFile("https://agent.example/file");
+    expect(await new Response(accepted).text()).toBe(body);
+    headers = {};
+    body += "x";
+    const rejected = await fetchRemoteFile("https://agent.example/file");
+    await expect(new Response(rejected).arrayBuffer()).rejects.toThrow();
   });
-  it.each(["127.0.0.1", "169.254.169.254", "::1", "fe80::1", "100.64.1.1"])(
-    "never permits unsafe private-file destination %s",
-    (address) => {
-      vi.stubEnv(
-        "TOOLPLANE_A2A_FILE_PRIVATE_ORIGINS",
-        JSON.stringify({ "https://files.internal": [address] }),
+  it.each(["files.internal.example", "*.internal.example", "10.0.0.8"])(
+    "uses shared private host policy %s without widening RPC",
+    async (value) => {
+      mocks.privateHosts.mockResolvedValue({ value, source: "database" });
+      mocks.lookup.mockResolvedValue([{ address: "10.0.0.8", family: 4 }]);
+      expect(() => remoteUrl("https://files.internal.example/rpc")).toThrow();
+      const stream = await fetchRemoteFile(
+        "https://files.internal.example/file?signature=private-ticket",
       );
-      expect(() => remoteFileUrl("https://files.internal/file")).toThrow();
+      await new Response(stream).text();
+      expect(mocks.lookup).toHaveBeenCalledTimes(1);
+      const callback = vi.fn();
+      (
+        options.lookup as (
+          host: string,
+          opts: { all: boolean },
+          cb: typeof callback,
+        ) => void
+      )("files.internal.example", { all: false }, callback);
+      expect(callback).toHaveBeenCalledWith(null, "10.0.0.8", 4);
+      expect(options.headers).not.toHaveProperty("authorization");
     },
   );
+  it.each(["127.0.0.1", "169.254.169.254", "::1", "fe80::1", "100.64.1.1"])(
+    "never permits unsafe private-file destination %s",
+    async (address) => {
+      mocks.privateHosts.mockResolvedValue({
+        value: "files.internal",
+        source: "database",
+      });
+      mocks.lookup.mockResolvedValue([
+        { address, family: address.includes(":") ? 6 : 4 },
+      ]);
+      await expect(
+        fetchRemoteFile("https://files.internal/file"),
+      ).rejects.toThrow();
+    },
+  );
+  it("denies unlisted private hosts and applies whitelist removal to the next download", async () => {
+    mocks.lookup.mockResolvedValue([{ address: "10.0.0.8", family: 4 }]);
+    await expect(
+      fetchRemoteFile("https://files.internal/file"),
+    ).rejects.toThrow();
+    mocks.privateHosts.mockResolvedValue({
+      value: "files.internal",
+      source: "database",
+    });
+    expect(
+      await new Response(
+        await fetchRemoteFile("https://files.internal/file"),
+      ).text(),
+    ).toBe(body);
+    mocks.privateHosts.mockResolvedValue({ value: "", source: "database" });
+    await expect(
+      fetchRemoteFile("https://files.internal/file"),
+    ).rejects.toThrow();
+  });
+  it("rejects mixed private and metadata DNS answers even for a listed hostname", async () => {
+    mocks.privateHosts.mockResolvedValue({
+      value: "files.internal",
+      source: "database",
+    });
+    mocks.lookup.mockResolvedValue([
+      { address: "10.0.0.8", family: 4 },
+      { address: "169.254.169.254", family: 4 },
+    ]);
+    await expect(
+      fetchRemoteFile("https://files.internal/file"),
+    ).rejects.toThrow();
+  });
   it.each([
     "127.0.0.1",
     "10.0.0.2",
