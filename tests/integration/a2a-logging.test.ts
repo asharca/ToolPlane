@@ -347,6 +347,42 @@ async function nativeLedger(
 }
 
 describe("real authorized retained A2A protocol logging", () => {
+  it("projects a bounded deadline code without exposing status detail in summaries", async () => {
+    const row = await retainedHistory(TaskState.TASK_STATE_FAILED);
+    try {
+      const task = Task.fromJSON(row.snapshot);
+      assertDefined(task.status).message = Message.fromJSON({
+        messageId: randomUUID(),
+        role: "ROLE_AGENT",
+        parts: [
+          {
+            text: "PI_TASK_TOOL_TIMEOUT: private-tool-result password=private-value",
+          },
+        ],
+      });
+      await db.a2ATask.update({
+        where: { id: row.id },
+        data: { snapshot: Task.toJSON(task) as Prisma.InputJsonValue },
+      });
+      for (const scope of [
+        { kind: "workspace", workspaceId, userId },
+        { kind: "admin", userId: adminId },
+      ] as const) {
+        const page = await listA2ATasks(scope, { q: row.id });
+        const summary = assertDefined(
+          page.items.find((item) => item.taskId === row.id),
+        );
+        expect(summary.error).toBe("PI_TASK_TOOL_TIMEOUT");
+        expect(JSON.stringify(summary)).not.toContain("private-tool-result");
+        expect((await getA2ATask(scope, row.id))?.summary.error).toBe(
+          "PI_TASK_TOOL_TIMEOUT",
+        );
+      }
+    } finally {
+      await db.a2AContext.delete({ where: { id: row.contextId } });
+    }
+  });
+
   it("captures one redacted history read per access without capture settings or any new execution", async () => {
     const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
     try {

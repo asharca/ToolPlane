@@ -40,6 +40,9 @@
 - **SDK 导出补充（2026-11-05，线上保存失败）**：共享 `TMPDIR` 不能让应用私有 `/app/scripts/pi-sdk-install.mjs` 在 daemon 宿主出现。固定 SDK 镜像改由 stdin 接收应用读取的可信源码，保留禁网、只读根和降权。真实生产容器设置保存越过导出并成功发布修订；下次必须用脚本仅存在于应用容器内、无现成 SDK 缓存的部署路径验证，不能以宿主进程成功导出代替。
 - **发布等待补充（2026-11-04，用户催查）**：`v0.33.3` 发布作业时间戳显示 15:52:16 UTC 已完成、耗时 9 分 39 秒，但 `gh run watch` 的返回累计约 33 分钟，期间仍沿用等待状态，延误线上切换。不能把监视命令尚未返回等同于远端仍在构建；用户报告等待异常时，用 `gh run view --json status,conclusion,jobs` 与 Release／镜像可用性独立核对，再报告实际阻塞点。最终按固定镜像摘要受控重建，核对容器版本 `0.33.3`、新启动时间及公网 readiness，不以 Release 存在代替部署成功。
 - **本地 :3000 复发（2026-11-05，用户报告 `did not complete (4)`）**：受管启动的 `:3000` 实例未设 `TOOLPLANE_RUNTIME_ORIGIN`，回落到 `.env` 的 `NEXT_PUBLIC_APP_URL`（`:3007`），沙箱模型请求被拒；`nativeFailure` 只给出 `PI_EXECUTION_FAILED`，需从宿主配置的 `baseUrl` 与沙箱内实测连通性定位。重启时继承的 shell 环境还指向另一套 smoke 库和已被占用的 Connector 端口，首次重启 readiness 503；移除这些覆盖、仅追加运行时 Origin 后为 200。修复 Origin 后又暴露上游网关对该 provider 密钥全部模型返回 503，属外部故障。下次本地启动后，从沙箱内实测运行时 Origin，并用一次真实 Work 的原生 `bash` 结果验收，不以 readiness 代替。
+- **捕获镜像补充（2026-11-05，线上私有插件同步失败）**：应用更新后发送含 `allowHttp` 的捕获配置，daemon 上仍是只接受 `authentication,registry,type` 的旧 `toolplane-pi-package-capture:0.87.1`；来源已解析固定 GitHub 提交，捕获阶段却报 `package_capture_failed`，页面仅显示 `registry_sync_failed`。SDK 版本标签相同不代表可信脚本和宿主协议相同。按 Dockerfile 的 `pi-package-capture` target 重建独立镜像后，禁网、只读根、非 root 的真实提示词包捕获返回完整快照且校验和一致。下次更新捕获协议或可信脚本时同步构建辅助镜像，并在应用实际连接的 Docker daemon 上完成真实包捕获和来源同步，不能仅验应用 readiness；重试前检查来源租约，避免覆盖用户已启动的同步。
+- **捕获修复验收**：重建镜像摘要为 `sha256:9e0f2dab851e85dffa2ae5bb9224d7f706786eec27c86f659224247e28b94242`；既有来源同步任务 `cmw3dqkde00f401o3b6kxvhtk` 随后对固定提交 `34dcae67c6ef3ffda05e925d3406503695a6a52b` 返回 `succeeded`，来源状态 `synced`，索引资源 1 个，无错误。受保护的人工入队未匹配正在同步的来源，未新增重复任务。
+- **提交详情大小补充（2026-11-05，同一私有来源再次失败）**：`resolveCommit()` 请求完整提交详情，却以 256 KiB 限制响应；真实 GitHub 返回 209 个变更文件、307116 字节，导致尚未解析 SHA 就报 `github_response_too_large`。按用户要求仅取消此请求的响应大小限制，保留其他资源限额和鉴权；17 MiB 提交详情回归及来源边界共 34 项通过。受控替换生产镜像后，任务 `commit-repair-935faee9-e7ed-4d46-bf61-aa6e4d9ac1e3` 对提交 `54403f29c85478a9ab44a311a4be066f8eeca3d2` 同步成功，来源 `synced`，活动资源 3 个。下次同步验收须覆盖包含大量文件变更的提交，而不只验证小响应或首次同步。
 - **确认日期**：历史日期未知；初始整理于 2026-10-18；2026-10-30、2026-11-01、2026-11-02、2026-11-03、2026-11-04、2026-11-05 实测确认。
 
 ### TP-L002：构建成功，不代表最终镜像里的原生依赖能启动
@@ -123,6 +126,7 @@
 - **下次怎么验证**：`tests/integration/pi-sdk-resource-routing.test.ts` 覆盖零工具授权不进入会话；`tests/unit/agent-runtime-proxy.test.ts` 覆盖拒绝响应带 `data.reason`；改动 Pi 扩展源码后，用本地 403 服务直接运行 `piMcpExtensionSource()` 生成的扩展，确认先发出 `toolplane_mcp_unavailable` 事件。
 - **证据**：[会话 MCP 过滤](src/lib/agents/pi-session-packages.ts)、[扩展与宿主事件](src/lib/agents/sandbox-runtime.ts)、[运行时路由](src/app/api/v1/agent-runtime/mcp/[deploymentId]/rpc/route.ts)、[错误文案](src/components/dashboard/useRuntimeErrorText.ts)。
 - **2026-11-05 复发（用户要求提示更清晰）**：宿主已产生已翻译的 `PI_SDK_MODEL_FAILED`，但 worker 的错误码白名单把它压成 `PI_EXECUTION_FAILED`，`agentEntryResult` 再改写成 `Agent execution did not complete (4)`；`PI_MCP_TOOLS_UNAVAILABLE` 同样被吞。首次修复后真实 Work 仍缺原因：常驻 broker `native-runtime-session.mjs` 会重新序列化宿主响应并丢掉新字段，而直连宿主的测试绕过了它。现由 [`runtime-failure.ts`](src/lib/agents/runtime-failure.ts) 统一“错误码＋白名单原因”（`HTTP_nnn`／`UNREACHABLE`／`TIMEOUT`），broker 源码纳入常驻会话签名。下次改宿主协议字段，须经真实 broker 回归（[`native-runtime-session.test.ts`](tests/integration/native-runtime-session.test.ts)，修复前失败）并在真实 Work 页面核对文案，不能只测宿主进程。
+- **任务时限补充（2026-11-05，用户反馈线上频繁超时）**：指定任务从提交到过期一直为 `SUBMITTED`，没有执行或沙箱绑定证据，却只显示 `Task deadline exceeded.`；其他执行中到期又可能被通用 `PI_EXECUTION_FAILED` 覆盖。任务总时限包含排队、准备和执行，必须按最后已记录阶段说明，不能把它直接解释为供应商单次请求或工具自身超时。阶段投影与 UI、终态共用任务锁，保留租约校验和显式取消优先级；列表只投影固定错误码，不带正文。修复前两项真实数据库回归分别缺码、返回泛化错误；修复后相关 131 项通过。独立数据库 HTTP 烟测覆盖排队、准备、等待模型、生成、工具五阶段的持久化和日志列表／详情，并验证未授权返回 401；实际组件在中英文、390px 和桌面浏览器核对文案。下次同时验证阶段不会被 UI 更新、过期或旧租约回调覆盖；旧记录无证据时只说明阶段未知，不推断根因。
 - **确认日期**：2026-10-31（用户报告）；2026-11-05（用户报告）。
 
 ### TP-L010：工具失败是工具结果，不是整轮失败
@@ -243,6 +247,7 @@
 - **下次怎么验证**：实际改动非默认下拉值，跨页签返回后保存，等待权限审核出现并确认选择值未回退、未重新标脏；点击应用后重开页面核对已应用修订，再验证取消不落库。不能把 HTTP 200 或数据库草稿正确当成整个设置流程成功。
 - **证据**：[Agent 设置表单](src/components/dashboard/agents/AgentSettingsForm.tsx)、[共享 FormSelect](src/components/ui/FormSelect.tsx)；复用既有 AssistantEditor 的显式提交流程，不修改 vendored Radix 源码。
 - **快照传输补充（2026-11-05，真实保存验收）**：Office 技能的 XML 附件以 U+FEFF 开头，Prepare 的正确摘要跨 Flight 后对应内容少一个字符，发布抛出 `AGENT_SKILL_CHECKSUM_MISMATCH`；纯 JSON／数据库回归均未触发。审核 action 返回完整 `configJson`，客户端解析后继续现有审核与 CAS 提交，不放宽校验或改写原始内容。真实生产页面保留五个技能完成保存，发布 v7；下次验收须包含带 BOM 的长附件并完成浏览器 Prepare → Apply 往返，不能只验证捕获函数或普通短文本。
+- **插件来源补充（2026-11-05，用户报告）**：新增私有来源失败时，React Action 正常返回错误状态仍触发 reset，文本和 PAT 被清空；只在冒泡阶段 `preventDefault()` 后，Radix 原生监听仍把“私有”改回“公开”。`PluginActionForm` 在失败的 reset 捕获阶段同时阻止默认行为和传播，成功仍允许重置。隔离数据库上的真实页面已验证仓库格式拒绝、GitHub 拒绝 PAT 后全部输入保留，以及真实公开来源注册成功后表单清空并可读回记录；原生产失败输入已丢失，不能把格式错误推测为已确认的 PAT 权限问题。下次必须检查实际提交的可见性、失败后 PAT 是否保留，以及成功重置，不只检查错误文案。依据：[插件表单](src/components/dashboard/plugins/PluginForms.tsx)、[来源校验](src/lib/plugins/sources.ts)。
 - **确认日期**：2026-11-02（真实浏览器验收）。
 
 ### TP-L022：A2A 错误不能用子类携带内部原因

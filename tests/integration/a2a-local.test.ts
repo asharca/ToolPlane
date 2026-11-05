@@ -63,6 +63,8 @@ import {
   requestCancellation,
   eventsAfter,
   requestWorkEntryCancellation,
+  interruptTask,
+  recordTaskExecutionStage,
 } from "@/lib/a2a/store";
 import type { A2ATask, Prisma } from "@prisma/client";
 import {
@@ -111,6 +113,7 @@ import { observeWorkRuntime } from "@/lib/work/run-control";
 import { executeLocalTask } from "@/lib/agents/execution/pi-executor";
 import { runSandboxAgentTurn } from "@/lib/agents/sandbox-runtime";
 import type * as AgentSandboxRuntime from "@/lib/agents/sandbox-runtime";
+import { taskRuntimeFailure } from "@/lib/agents/runtime-failure";
 
 // Native process I/O is injected; Work admission, claims, tokens and child grants remain real.
 vi.mock("@/lib/agents/sandbox-runtime", async (original) => ({
@@ -473,6 +476,107 @@ describe("local Agent authorization and native continuations", () => {
         data: { apiKey: pinnedProvider.apiKey },
       });
     }
+  });
+
+  it("distinguishes an unstarted task deadline from an execution failure", async () => {
+    const queued = await submitTask(grant, request());
+    await db.a2ATask.update({
+      where: { id: queued.id },
+      data: { deadlineAt: new Date(0) },
+    });
+    await interruptTask(queued.id, "Task deadline exceeded.");
+    const result = await getTask(grant, queued.id);
+    expect(result.status?.state).toBe(TaskState.TASK_STATE_FAILED);
+    expect(taskRuntimeFailure(result)?.code).toBe("PI_TASK_QUEUE_TIMEOUT");
+    expect(() => agentEntryResult(result, "/task")).toThrow(
+      "PI_TASK_QUEUE_TIMEOUT",
+    );
+  });
+
+  it("does not report an expired execution as an unrelated runtime failure", async () => {
+    const running = await root();
+    await db.a2ATask.update({
+      where: { id: running.id },
+      data: { deadlineAt: new Date(0) },
+    });
+    await finishTask(
+      running.id,
+      assertDefined(running.leaseToken),
+      TaskState.TASK_STATE_FAILED,
+      "PI_EXECUTION_FAILED: private error",
+    );
+    expect(taskRuntimeFailure(await getTask(grant, running.id))?.code).toBe(
+      "PI_TASK_TIMEOUT",
+    );
+  });
+
+  it("records preparation before a task is claimed", async () => {
+    const queued = await submitTask(grant, request());
+    await recordTaskExecutionStage(queued.id, null, "preparing");
+    await db.a2ATask.update({
+      where: { id: queued.id },
+      data: { deadlineAt: new Date(0) },
+    });
+    await interruptTask(queued.id, "Task deadline exceeded.");
+    expect(taskRuntimeFailure(await getTask(grant, queued.id))?.code).toBe(
+      "PI_TASK_PREPARATION_TIMEOUT",
+    );
+  });
+
+  it.each([
+    ["preparing", "PI_TASK_PREPARATION_TIMEOUT"],
+    ["waiting-model", "PI_TASK_MODEL_TIMEOUT"],
+    ["generating", "PI_TASK_GENERATION_TIMEOUT"],
+    ["tool-running", "PI_TASK_TOOL_TIMEOUT"],
+  ] as const)(
+    "retains the last observed %s stage through UI updates and stale callbacks",
+    async (stage, code) => {
+      const running = await root();
+      const lease = assertDefined(running.leaseToken);
+      await recordTaskExecutionStage(running.id, lease, stage);
+      await updateTaskUi(await runtimeToken(running), {
+        action: "todos",
+        todos: [],
+      });
+      await recordTaskExecutionStage(running.id, "stale-lease", "generating");
+      await db.a2ATask.update({
+        where: { id: running.id },
+        data: { deadlineAt: new Date(0) },
+      });
+      await recordTaskExecutionStage(running.id, lease, "preparing");
+      await finishTask(
+        running.id,
+        lease,
+        TaskState.TASK_STATE_FAILED,
+        "PI_EXECUTION_FAILED: private runtime exception",
+      );
+      const result = await getTask(grant, running.id);
+      expect(taskRuntimeFailure(result)?.code).toBe(code);
+      expect(JSON.stringify(Task.toJSON(result))).not.toContain(
+        "private runtime exception",
+      );
+      await recordTaskExecutionStage(running.id, null, "queued");
+      expect(taskRuntimeFailure(await getTask(grant, running.id))?.code).toBe(
+        code,
+      );
+    },
+  );
+
+  it("keeps explicit cancellation ahead of a simultaneous deadline", async () => {
+    const running = await root();
+    await requestCancellation(grant, running.id);
+    await db.a2ATask.update({
+      where: { id: running.id },
+      data: { deadlineAt: new Date(0) },
+    });
+    await finishTask(
+      running.id,
+      assertDefined(running.leaseToken),
+      TaskState.TASK_STATE_FAILED,
+    );
+    const result = await getTask(grant, running.id);
+    expect(result.status?.state).toBe(TaskState.TASK_STATE_CANCELED);
+    expect(taskRuntimeFailure(result)).toBeUndefined();
   });
 
   it("projects bound native progress without spending journal sequence or event storage", async () => {

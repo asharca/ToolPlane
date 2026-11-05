@@ -98,7 +98,7 @@ function filters(scope: ViewScope, filter: A2ATaskFilter) {
   });
 }
 
-/** Lists and statistics select ledger identity/state only, never conversation JSON. */
+/** Lists select ledger identity/state and bounded timeout codes, never conversation JSON. */
 function taskTables(scope: ViewScope, selectedWorkspace?: string) {
   const ws = scope.workspaceId ?? selectedWorkspace;
   const logWorkspace = ws
@@ -148,7 +148,13 @@ function taskTables(scope: ViewScope, selectedWorkspace?: string) {
         CASE WHEN c."targetKind" = 'remote' THEN 'outbound' WHEN c."endpointId" IS NOT NULL THEN 'inbound' ELSE 'internal' END AS direction,
         c."agentId", c."endpointId", c."clientId", c."remoteAgentId",
         COALESCE(t.grant->>'sourceAgentId', t.grant->'ancestorAgentIds'->>-1) AS "sourceAgentId",
-        t.grant->>'actorId' AS "actorId"
+        t.grant->>'actorId' AS "actorId",
+        CASE WHEN t.state IN (4, 7) THEN
+          CASE WHEN t.snapshot #>> '{status,message,parts,0,text}' = 'Task deadline exceeded.'
+            THEN 'PI_TASK_TIMEOUT'
+            ELSE substring(t.snapshot #>> '{status,message,parts,0,text}' FROM '^(PI_TASK_[A-Z_]{0,40}TIMEOUT)(?=[: .]|$)')
+          END
+        END AS error
       FROM "A2ATask" t JOIN "A2AContext" c ON c.id = t."contextId" ${ledgerWorkspace}
     ), merged_tasks AS (
       SELECT COALESCE(t."taskId", l."taskId") AS "taskId", COALESCE(t."workspaceId", l."workspaceId") AS "workspaceId",
@@ -160,7 +166,7 @@ function taskTables(scope: ViewScope, selectedWorkspace?: string) {
         COALESCE(t.direction, l.direction, 'internal') AS direction,
         COALESCE(t."agentId", l."agentId") AS "agentId", COALESCE(t."endpointId", l."endpointId") AS "endpointId",
         COALESCE(t."clientId", l."clientId") AS "clientId", COALESCE(t."remoteAgentId", l."remoteAgentId") AS "remoteAgentId",
-        COALESCE(t."actorId", l."actorId") AS "actorId", t."sourceAgentId", l.error, l.search
+        COALESCE(t."actorId", l."actorId") AS "actorId", t."sourceAgentId", COALESCE(t.error, l.error) AS error, l.search
       FROM ledger_tasks t FULL JOIN log_tasks l ON l."taskId" = t."taskId" AND l."workspaceId" = t."workspaceId"
     ), tasks AS (
       SELECT m.*,

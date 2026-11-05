@@ -1197,6 +1197,9 @@ export function WorkspaceWork({
   const [conversationBusy, setConversationBusy] = useState(false);
   const [listOptionsOpen, setListOptionsOpen] = useState(false);
   const [sidebarSearch, setSidebarSearch] = useState("");
+  const [fullConversationLists, setFullConversationLists] = useState<
+    Record<string, boolean>
+  >({});
   const [searchExpandedResources, setSearchExpandedResources] = useState<{
     query: string;
     ids: string[];
@@ -1539,7 +1542,14 @@ export function WorkspaceWork({
               label: item.label,
               kind: "bookmark" as const,
             })),
-          ],
+          ].filter(
+            (item, index) =>
+              sidebarSearch.trim() ||
+              fullConversationLists[itemAgent.id] ||
+              index < 5 ||
+              item.id === `session:${selectedWorkSessionId}` ||
+              item.id === `conversation:${conversation?.id}`,
+          ),
         }),
       );
     if (!groupPreferences.groups.length) return agentResources(visibleAgents);
@@ -1557,7 +1567,16 @@ export function WorkspaceWork({
         children: agentResources(groupedAgents.ungrouped),
       },
     ];
-  }, [groupPreferences.groups.length, groupedAgents, t, visibleAgents]);
+  }, [
+    groupPreferences.groups.length,
+    groupedAgents,
+    t,
+    visibleAgents,
+    sidebarSearch,
+    fullConversationLists,
+    selectedWorkSessionId,
+    conversation?.id,
+  ]);
   const filteredSidebarResources = useMemo(() => {
     const query = sidebarSearch.trim().toLocaleLowerCase();
     if (!query) return sidebarResources;
@@ -2503,6 +2522,44 @@ export function WorkspaceWork({
                   <AISidebar
                     items={filteredSidebarResources}
                     activeId={activeResourceId}
+                    renderAfterRow={(resource) => {
+                      if (sidebarSearch.trim()) return null;
+                      const roots = sidebarResources.flatMap((item) =>
+                        item.id.startsWith("group:")
+                          ? (item.children ?? [])
+                          : [item],
+                      );
+                      const parent = roots.find(
+                        (item) => item.children?.at(-1)?.id === resource.id,
+                      );
+                      if (!parent) return null;
+                      const id = parent.id.slice("agent:".length);
+                      const entry = visibleAgents.find(
+                        ({ agent }) => agent.id === id,
+                      );
+                      if (
+                        !entry ||
+                        entry.sessions.length + entry.channels.length <= 5
+                      )
+                        return null;
+                      return (
+                        <button
+                          type="button"
+                          aria-label={`${fullConversationLists[id] ? t("collapseAll") : t("expandAll")} ${entry.agent.name}`}
+                          onClick={() =>
+                            setFullConversationLists((current) => ({
+                              ...current,
+                              [id]: !current[id],
+                            }))
+                          }
+                          className="ml-10 self-start rounded-md px-2 py-1.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+                        >
+                          {fullConversationLists[id]
+                            ? t("collapseAll")
+                            : t("expandAll")}
+                        </button>
+                      );
+                    }}
                     ariaLabel={tAgents("agents")}
                     className={`px-0 [&_[role=treeitem]]:rounded-lg [&_[role=treeitem]]:min-h-10 [&_[aria-selected=true]]:bg-muted [&_[role=treeitem]>span[aria-hidden=true]:empty]:ml-1 [&_[role=treeitem]>span[aria-hidden=true]:empty]:w-0 [&_[role=treeitem]>span[aria-hidden=true]:has(>[data-sidebar-dot])]:ml-1 [&_[role=treeitem]>span[aria-hidden=true]:has(>[data-sidebar-dot])]:w-0 ${sidebarHoverActionsClassName}`}
                     expandedIds={expandedResourceIds}

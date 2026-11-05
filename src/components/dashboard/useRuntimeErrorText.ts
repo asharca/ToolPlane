@@ -26,6 +26,8 @@ export function useRuntimeErrorText() {
   const t = useTranslations("console.runtimeCommands");
   return useCallback(
     (message: string | null | undefined) => {
+      if (message?.trim() === "Task deadline exceeded.")
+        return { code: "PI_TASK_TIMEOUT", text: t("PI_TASK_TIMEOUT") };
       const match = message ? CODE.exec(message) : null;
       if (!match) return null;
       const [, code, detail = ""] = match;

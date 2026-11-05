@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import {
+  Fragment,
   type DragEvent,
   type KeyboardEvent,
   type ReactNode,
@@ -82,6 +83,7 @@ export interface AISidebarProps {
   onExpandedIdsChange?: (ids: string[]) => void;
   renderIcon?: (item: SidebarResource) => ReactNode;
   renderActions?: (item: SidebarResource) => ReactNode;
+  renderAfterRow?: (item: SidebarResource) => ReactNode;
   renderMenu?: (
     item: SidebarResource,
     controls: SidebarResourceMenuControls,
@@ -594,6 +596,7 @@ export function AISidebar({
   renderIcon,
   renderMenu,
   renderActions,
+  renderAfterRow,
   ariaLabel = "Resources",
   className,
 }: AISidebarProps) {
@@ -938,100 +941,103 @@ export function AISidebar({
       >
         <AnimatePresence initial={false}>
           {flat.map((row, index) => (
-            <ResourceRow
-              key={row.item.id}
-              row={row}
-              active={selectedId === row.item.id}
-              expanded={expandedIds.has(row.item.id)}
-              focused={focusedRow === row.item.id}
-              draggingId={draggingId}
-              dropTarget={dropTarget}
-              menuOpen={menuOpenId === row.item.id}
-              moves={moveCommands(row, index)}
-              renaming={renamingId === row.item.id}
-              onFocus={() => setFocusedId(row.item.id)}
-              onSelect={() => select(row.item.id)}
-              renderActions={renderActions}
-              onToggle={() => toggle(row.item.id)}
-              onKeyDown={(event) => handleKeyDown(event, row)}
-              onRenameStart={() => setRenamingId(row.item.id)}
-              onRenameCancel={() => setRenamingId(null)}
-              onRenameCommit={(label) => {
-                const trimmed = label.trim();
-                setRenamingId(null);
-                if (!trimmed || trimmed === row.item.label) return;
-                const before = renderedItems;
-                updateItems(renameResource(before, row.item.id, trimmed));
-                void Promise.resolve(onRename?.(row.item, trimmed)).catch(
-                  () => {
-                    updateItems(before);
-                    setAnnouncement(
-                      `Rename failed. ${row.item.label} was restored.`,
-                    );
-                  },
-                );
-              }}
-              onMenuOpenChange={(open) => {
-                setMenuOpenId(open ? row.item.id : null);
-                if (
-                  !open &&
-                  document.activeElement instanceof Element &&
-                  document.activeElement
-                    .closest("[data-sidebar-resource-menu]")
-                    ?.getAttribute("data-sidebar-resource-menu") === row.item.id
-                ) {
-                  rowRefs.current
-                    .get(row.item.id)
-                    ?.focus({ preventScroll: true });
-                }
-              }}
-              onDragStart={(event, id) => {
-                setDraggingId(id);
-                event.dataTransfer.effectAllowed = "move";
-                event.dataTransfer.setData("text/plain", id);
-              }}
-              onDragEnd={() => {
-                setDraggingId(null);
-                setDropTarget(null);
-              }}
-              onDragOver={(event, targetRow) => {
-                if (!draggingId || draggingId === targetRow.item.id) return;
-                const source = findResource(renderedItems, draggingId);
-                if (source && containsResource(source, targetRow.item.id))
-                  return;
-                event.preventDefault();
-                event.stopPropagation();
-                const rect = event.currentTarget.getBoundingClientRect();
-                const ratio = (event.clientY - rect.top) / rect.height;
-                const position =
-                  !targetRow.item.disabled &&
-                  canContain(targetRow.item) &&
-                  ratio >= 0.25 &&
-                  ratio <= 0.75
-                    ? "inside"
-                    : ratio < 0.5
-                      ? "before"
-                      : "after";
-                setDropTarget({ id: targetRow.item.id, position });
-              }}
-              onDrop={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                if (draggingId && dropTarget) {
-                  void performMove({
-                    itemId: draggingId,
-                    targetId: dropTarget.id,
-                    position: dropTarget.position,
-                  });
-                }
-              }}
-              renderIcon={renderIcon}
-              renderMenu={renderMenu}
-              setRef={(node) => {
-                if (node) rowRefs.current.set(row.item.id, node);
-                else rowRefs.current.delete(row.item.id);
-              }}
-            />
+            <Fragment key={row.item.id}>
+              <ResourceRow
+                row={row}
+                active={selectedId === row.item.id}
+                expanded={expandedIds.has(row.item.id)}
+                focused={focusedRow === row.item.id}
+                draggingId={draggingId}
+                dropTarget={dropTarget}
+                menuOpen={menuOpenId === row.item.id}
+                moves={moveCommands(row, index)}
+                renaming={renamingId === row.item.id}
+                onFocus={() => setFocusedId(row.item.id)}
+                onSelect={() => select(row.item.id)}
+                renderActions={renderActions}
+                onToggle={() => toggle(row.item.id)}
+                onKeyDown={(event) => handleKeyDown(event, row)}
+                onRenameStart={() => setRenamingId(row.item.id)}
+                onRenameCancel={() => setRenamingId(null)}
+                onRenameCommit={(label) => {
+                  const trimmed = label.trim();
+                  setRenamingId(null);
+                  if (!trimmed || trimmed === row.item.label) return;
+                  const before = renderedItems;
+                  updateItems(renameResource(before, row.item.id, trimmed));
+                  void Promise.resolve(onRename?.(row.item, trimmed)).catch(
+                    () => {
+                      updateItems(before);
+                      setAnnouncement(
+                        `Rename failed. ${row.item.label} was restored.`,
+                      );
+                    },
+                  );
+                }}
+                onMenuOpenChange={(open) => {
+                  setMenuOpenId(open ? row.item.id : null);
+                  if (
+                    !open &&
+                    document.activeElement instanceof Element &&
+                    document.activeElement
+                      .closest("[data-sidebar-resource-menu]")
+                      ?.getAttribute("data-sidebar-resource-menu") ===
+                      row.item.id
+                  ) {
+                    rowRefs.current
+                      .get(row.item.id)
+                      ?.focus({ preventScroll: true });
+                  }
+                }}
+                onDragStart={(event, id) => {
+                  setDraggingId(id);
+                  event.dataTransfer.effectAllowed = "move";
+                  event.dataTransfer.setData("text/plain", id);
+                }}
+                onDragEnd={() => {
+                  setDraggingId(null);
+                  setDropTarget(null);
+                }}
+                onDragOver={(event, targetRow) => {
+                  if (!draggingId || draggingId === targetRow.item.id) return;
+                  const source = findResource(renderedItems, draggingId);
+                  if (source && containsResource(source, targetRow.item.id))
+                    return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  const rect = event.currentTarget.getBoundingClientRect();
+                  const ratio = (event.clientY - rect.top) / rect.height;
+                  const position =
+                    !targetRow.item.disabled &&
+                    canContain(targetRow.item) &&
+                    ratio >= 0.25 &&
+                    ratio <= 0.75
+                      ? "inside"
+                      : ratio < 0.5
+                        ? "before"
+                        : "after";
+                  setDropTarget({ id: targetRow.item.id, position });
+                }}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  if (draggingId && dropTarget) {
+                    void performMove({
+                      itemId: draggingId,
+                      targetId: dropTarget.id,
+                      position: dropTarget.position,
+                    });
+                  }
+                }}
+                renderIcon={renderIcon}
+                renderMenu={renderMenu}
+                setRef={(node) => {
+                  if (node) rowRefs.current.set(row.item.id, node);
+                  else rowRefs.current.delete(row.item.id);
+                }}
+              />
+              {renderAfterRow?.(row.item)}
+            </Fragment>
           ))}
         </AnimatePresence>
 

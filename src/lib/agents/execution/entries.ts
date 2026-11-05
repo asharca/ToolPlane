@@ -31,6 +31,7 @@ import {
   runtimeFailureText,
   taskRuntimeFailure,
 } from "@/lib/agents/runtime-failure";
+import { taskDeadlineFailure } from "@/lib/agents/execution/deadline-failure";
 import { db } from "@/lib/db";
 import { requireAgentRevision } from "@/lib/agents/revisions";
 import { assertRuntimeOwner } from "@/lib/runtime/ownership-state";
@@ -365,9 +366,7 @@ export async function runAgentEntry(
         }
       }
       if (row.deadlineAt <= new Date())
-        throw new UnsupportedOperationError(
-          `Task deadline reached. Inspect the durable task at ${path}`,
-        );
+        throw new UnsupportedOperationError(taskDeadlineFailure(row));
       await delay(500, undefined, { signal: input.signal });
     }
   } catch (error) {

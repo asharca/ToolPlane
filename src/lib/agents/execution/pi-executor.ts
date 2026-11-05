@@ -15,6 +15,8 @@ import type {
 } from "@/lib/agents/runtime-commands";
 import { isLocalGrant } from "@/lib/a2a/principal";
 import { workRuntimeObserver } from "@/lib/work/run-control";
+import { recordTaskExecutionStage } from "@/lib/a2a/store";
+import type { AgentExecutionStage } from "@/lib/agents/execution-stages";
 
 /** Local runtime port: Task context identity, not a private Conversation or old sub-agent runner. */
 export const executeLocalTask: TaskExecutor = async (row, signal) => {
@@ -29,7 +31,11 @@ export const executeLocalTask: TaskExecutor = async (row, signal) => {
     grant.entryPolicy?.kind === "work"
       ? workRuntimeObserver(grant.entryPolicy.sourceId)
       : undefined;
-  await observer?.onExecutionStage?.("preparing");
+  const onExecutionStage = async (stage: AgentExecutionStage) => {
+    await recordTaskExecutionStage(row.id, row.leaseToken, stage);
+    await observer?.onExecutionStage?.(stage);
+  };
+  await onExecutionStage("preparing");
   const options = await localTaskOptions(
     row,
     signal,
@@ -42,7 +48,7 @@ export const executeLocalTask: TaskExecutor = async (row, signal) => {
     ...options,
     onTextDelta: observer?.onTextDelta,
     onActivity: observer?.onActivity,
-    onExecutionStage: observer?.onExecutionStage,
+    onExecutionStage,
     onContextUsage: observer?.onContextUsage,
     onCommands: async (value) => {
       commands = value;

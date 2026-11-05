@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useTranslations } from "next-intl";
+import { useRuntimeErrorText } from "@/components/dashboard/useRuntimeErrorText";
 import { DashboardTable } from "@/components/dashboard/DashboardUI";
 import type { A2ATaskSummary } from "@/lib/observability/views/types";
 import {
@@ -23,6 +24,7 @@ export function A2ATaskTable({
   returnTo?: string;
 }) {
   const t = useTranslations("console.observability.viewer");
+  const describeRuntimeError = useRuntimeErrorText();
   if (!items.length) return <EmptyState />;
   return (
     <DashboardTable
@@ -56,9 +58,9 @@ export function A2ATaskTable({
             {item.error && (
               <span
                 className="block max-w-72 truncate text-xs text-destructive"
-                title={item.error}
+                title={describeRuntimeError(item.error)?.text ?? item.error}
               >
-                {item.error}
+                {describeRuntimeError(item.error)?.text ?? item.error}
               </span>
             )}
           </Link>,

@@ -21,6 +21,7 @@ import {
   interruptTask,
   releasePiHarnessClaim,
   deferTaskFileStaging,
+  recordTaskExecutionStage,
 } from "@/lib/a2a/store";
 import {
   assertLiveGrant,
@@ -420,6 +421,8 @@ export function executeAgentTask(
           wait: false,
         },
         async () => {
+          if (!active.native)
+            await recordTaskExecutionStage(id, queued.leaseToken, "preparing");
           await observer?.onExecutionStage?.("preparing");
           const cleanup = Boolean(active.native && queued.nativeOperationId);
           const { sandboxId } = await localTaskSandbox(
@@ -446,6 +449,8 @@ export function executeAgentTask(
         error instanceof SandboxExecutionBusyError ||
         error instanceof AgentExecutionBusyError
       ) {
+        if (!active.native)
+          await recordTaskExecutionStage(id, queued.leaseToken, "queued");
         await observer?.onExecutionStage?.("queued");
         return;
       }

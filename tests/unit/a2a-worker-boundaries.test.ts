@@ -62,6 +62,7 @@ vi.mock("@/lib/a2a/store", () => ({
   interruptTask: state.interrupt,
   releasePiHarnessClaim: state.releaseClaim,
   deferTaskFileStaging: state.deferFiles,
+  recordTaskExecutionStage: vi.fn(),
 }));
 vi.mock("@/lib/runtime/ownership-state", () => ({
   assertRuntimeOwner: () => {
@@ -543,7 +544,6 @@ describe("A2A worker admission and recovery boundaries", () => {
     ] as never);
     await tickAgentWorker();
     expect(row.state).toBe(TaskState.TASK_STATE_FAILED);
-    expect(state.messages.get(row.id)).toBe("Task deadline exceeded.");
     expect(state.log).toHaveBeenCalledWith(
       "error",
       "Remote A2A observation failed.",

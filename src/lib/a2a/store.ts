@@ -28,6 +28,8 @@ import {
 import { db } from "@/lib/db";
 import { requireAgentRevision } from "@/lib/agents/revisions";
 import type { AgentPromptInvocation } from "@/lib/agents/sandbox-runtime";
+import type { AgentExecutionStage } from "@/lib/agents/execution-stages";
+import { taskDeadlineFailure } from "@/lib/agents/execution/deadline-failure";
 import { getAgentConcurrencySettings } from "@/lib/admin/settings";
 import { runtimeEnv } from "@/lib/runtime-env";
 import {
@@ -903,6 +905,32 @@ export async function projectPiHarnessProgress(
     await refreshTaskStorage(tx, row.id, true);
   });
 }
+/** Stage updates share the task lock with UI projection and terminal settlement. */
+export async function recordTaskExecutionStage(
+  id: string,
+  leaseToken: string | null,
+  stage: AgentExecutionStage,
+): Promise<void> {
+  await db.$transaction(async (tx) => {
+    const row = await lockTask(tx, id);
+    if (
+      row.leaseToken !== leaseToken ||
+      ![TaskState.TASK_STATE_SUBMITTED, TaskState.TASK_STATE_WORKING].includes(
+        row.state,
+      ) ||
+      row.deadlineAt <= new Date()
+    )
+      return;
+    const projection = row.uiProjection as Record<string, Prisma.JsonValue>;
+    if (projection?.executionStage === stage) return;
+    await tx.a2ATask.update({
+      where: { id },
+      data: { uiProjection: json({ ...projection, executionStage: stage }) },
+    });
+    await refreshTaskStorage(tx, id);
+  });
+}
+
 export async function finishTask(
   id: string,
   leaseToken: string,
@@ -1016,11 +1044,12 @@ export async function finishTask(
       }
     }
     // A confirmed native terminal result wins late cancellation/deadline races.
+    const deadlineExceeded = row.deadlineAt <= new Date();
     const actual = confirmedNative
       ? state
       : row.cancelRequestedAt
         ? TaskState.TASK_STATE_CANCELED
-        : row.deadlineAt <= new Date()
+        : deadlineExceeded
           ? TaskState.TASK_STATE_FAILED
           : state;
     let current = row;
@@ -1062,6 +1091,8 @@ export async function finishTask(
       });
       current = await persist(tx, row, task, event);
     }
+    if (!confirmedNative && local && !row.cancelRequestedAt && deadlineExceeded)
+      detail = taskDeadlineFailure(row);
     transition(task, actual, detail);
     const updated = await persist(tx, current, task, statusEvent(task), {
       leaseToken: null,
@@ -1093,6 +1124,12 @@ export async function interruptTask(
         "A bound Pi operation must be resumed or canceled natively.",
       );
     }
+    if (
+      isLocalGrant(row.grant as unknown as TaskGrant) &&
+      !row.cancelRequestedAt &&
+      row.deadlineAt <= new Date()
+    )
+      detail = taskDeadlineFailure(row);
     const task = Task.fromJSON(row.snapshot);
     if (row.remoteDispatchedAt) {
       task.metadata = {
