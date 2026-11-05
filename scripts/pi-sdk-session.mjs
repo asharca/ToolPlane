@@ -23,6 +23,8 @@ import {
   officialTodoPath,
 } from "./pi-sdk-native-resources.mjs";
 const config = JSON.parse(readFileSync(process.argv[2], "utf8"));
+// Native tools inherit this: importing a skill must not add files to its pinned snapshot.
+process.env.PYTHONDONTWRITEBYTECODE = "1";
 // Extension and native writable state belongs to this conversation, never /root.
 for (const [name, directory] of Object.entries({
   HOME: join(config.agentDir, "home"),

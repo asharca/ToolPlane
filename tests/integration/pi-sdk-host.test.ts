@@ -5,7 +5,14 @@ import type { ServerResponse } from "node:http";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { EventEmitter, once } from "node:events";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
@@ -478,6 +485,33 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 describe("official Pi SDK headless session host", () => {
+  it("keeps Python imports from changing skill files across continued native turns", async () => {
+    const f = await setup();
+    const skill = join(f.workspace, "python-skill");
+    await mkdir(skill);
+    await writeFile(join(skill, "gb_layout.py"), "VALUE = 42\n");
+    f.behavior.tool = "bash";
+    const code = `import sys; sys.path.insert(0, ${JSON.stringify(skill)}); import gb_layout; from pathlib import Path; Path("python-result.txt").write_text(str(gb_layout.VALUE))`;
+    f.behavior.toolArgs = JSON.stringify({ command: `python3 -c '${code}'` });
+    const first = await f.launch({ defaultTools: ["bash"] });
+    expect(
+      (await first.request("prompt", "Run the Python skill")).success,
+    ).toBe(true);
+    expect(await readFile(join(f.workspace, "python-result.txt"), "utf8")).toBe(
+      "42",
+    );
+    expect(await readdir(skill)).toEqual(["gb_layout.py"]);
+    await first.stop();
+    const resumed = await f.launch({
+      defaultTools: ["bash"],
+      historyRequired: true,
+    });
+    expect(
+      (await resumed.request("prompt", "Run the Python skill again")).success,
+    ).toBe(true);
+    expect(await readdir(skill)).toEqual(["gb_layout.py"]);
+  }, 60000);
+
   it("continues copied native history after workspace rebasing without changing transcript bodies or revision pins", async () => {
     const f = await setup();
     const first = await f.launch();

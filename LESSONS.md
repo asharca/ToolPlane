@@ -95,6 +95,7 @@
 
 - **错误与原因**：2026-10-30 插件中心切换回归中，固定会话绕过目录状态，旧测试仍写入 `disabled`/`rejected`，能力测试把文件放在根目录而不是 `package/`，遮住仅改版本号也触发审核的问题；版本引用触发器还未校验安装记录所属工作区与发布来源。
 - **下次怎么验证**：逐文件运行资源路由、版本引用、包绑定与能力指纹测试；覆盖 `withdrawn`/`revoked` 对固定会话拒绝执行、无效安装引用拒绝写入，以及真实 `package/package.json` 仅版本变化无需审核。测试环境需满足 Node 引擎和 disposable 数据库要求，不能把前置条件失败报告为行为通过。
+- **Python 缓存污染（2026-11-05）**：线上日报技能导入 `gb_layout` 后，固定快照新增 `__pycache__/gb_layout.cpython-311.pyc`，后续“继续”在准备阶段被完整性校验拒绝。临时副本仅移除该缓存即通过原校验，另两个插件及 SDK 均正常。原生 Pi 宿主须在启动扩展和工具前设置 `PYTHONDONTWRITEBYTECODE=1`，不能忽略快照中的额外文件。验证使用真实 SDK 的 bash 执行 Python import，并重启宿主继续一轮，确认技能目录未新增文件；回归见 `tests/integration/pi-sdk-host.test.ts`。
 - **证据**：[执行撤销校验](src/lib/pi-packages/revocation.ts)、[版本引用触发器](prisma/migrations/20261030000000_plugin_center/migration.sql)、[资源路由集成测试](tests/integration/pi-sdk-resource-routing.test.ts)、[版本引用集成测试](tests/integration/capability-client-registration-schema.test.ts)、[能力指纹测试](tests/unit/plugin-capabilities.test.ts)。
 - **确认日期**：2026-10-30。
 
