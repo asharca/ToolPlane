@@ -2153,6 +2153,11 @@ async function runNativeSessionExec(
       `${process.cwd()}/scripts/native-runtime-session.mjs`,
       "utf8",
     );
+    // Live workspace setting, read for every turn; not part of the revision.
+    const retrySetting = await db.workspace.findUnique({
+      where: { id: options.workspaceId },
+      select: { modelRetryAttempts: true },
+    });
     preparation.files.push(
       { path: driverPath, content: brokerSource },
       {
@@ -2198,6 +2203,7 @@ async function runNativeSessionExec(
             mcpConfig: sdk.mcpConfig,
             model: sdk.model,
             reasoningEffort: options.reasoningEffort,
+            modelRetries: retrySetting?.modelRetryAttempts ?? 0,
           },
         }),
       },

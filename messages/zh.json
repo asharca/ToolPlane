@@ -1576,12 +1576,17 @@
       "PI_TASK_TIMEOUT": "任务总时限已到，时限包含排队、准备和执行时间。未记录确切的超时阶段，无法认定是模型或工具故障。请检查已有结果后再重试；未自动重试。",
       "modelFailure": {
         "unreachable": "沙箱无法连接 ToolPlane 的模型代理，模型请求未发出。请确认运行时地址 TOOLPLANE_RUNTIME_ORIGIN（未设置时使用 NEXT_PUBLIC_APP_URL）指向当前服务的实际地址。",
-        "timeout": "模型请求超时，未自动重试。请稍后重新发送，或切换模型。",
+        "timeout": "模型请求超时。请稍后重新发送，或切换模型。",
         "auth": "模型服务拒绝了请求（HTTP {status}）：API 密钥无效或无权使用此模型。请检查模型供应商的凭据。",
         "notFound": "模型服务找不到此模型或接口（HTTP {status}）。请检查模型供应商的 Base URL 和模型名称。",
         "rateLimited": "模型服务限流或额度不足（HTTP {status}）。请稍后重试，或检查供应商额度。",
         "unavailable": "模型服务暂时不可用（HTTP {status}），故障在模型供应商一侧。请稍后重试，或切换到其他模型。",
-        "rejected": "模型服务拒绝了请求（HTTP {status}）。请检查模型参数，或切换到其他模型。"
+        "rejected": "模型服务拒绝了请求（HTTP {status}）。请检查模型参数，或切换到其他模型。",
+        "emptyStream": "模型网关返回了空响应：上游模型没有生成任何内容（常见于网关账号或上游通道异常）。请稍后重新发送，或切换模型/供应商。",
+        "streamIncomplete": "模型响应在完成前中断。请稍后重新发送，或切换模型。",
+        "contentFilter": "模型供应商的内容审核拦截了本次输出。请调整任务内容或切换模型。",
+        "providerError": "模型服务返回了错误。请检查模型供应商状态，或切换到其他模型。",
+        "retried": "已自动重试 {count} 次仍失败。"
       },
       "descriptions": {
         "clear": "清空模型上下文，保留对话历史",
@@ -2641,6 +2646,11 @@
       "useDefaultModel": "使用默认模型",
       "clearDefaultModel": "清除默认模型",
       "modelPreferenceSaveError": "无法保存模型选择。",
+      "modelRetry": "模型请求重试",
+      "modelRetryAttempts": "失败后自动重试",
+      "modelRetryAttemptsDesc": "智能体任务中单次模型请求失败（限流、5xx、超时、连接中断或上游空响应）时，按指数退避重试。工具不会被重复执行。",
+      "modelRetryOff": "不重试",
+      "modelRetryCount": "{count} 次",
       "preferences": "偏好设置",
       "preferencesDesc": "设置控制台在当前浏览器和登录账号中的显示方式。",
       "language": "界面语言",

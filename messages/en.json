@@ -1576,12 +1576,17 @@
       "PI_TASK_TIMEOUT": "The total task deadline was reached, including queueing, preparation and execution. The exact stage was not recorded, so a model or tool failure cannot be established. Check existing results before retrying; no automatic retry was attempted.",
       "modelFailure": {
         "unreachable": "The sandbox could not reach ToolPlane's model proxy, so no model request was sent. Make sure TOOLPLANE_RUNTIME_ORIGIN (or NEXT_PUBLIC_APP_URL when unset) points to this server's actual address.",
-        "timeout": "The model request timed out and was not retried. Send it again later or switch models.",
+        "timeout": "The model request timed out. Send it again later or switch models.",
         "auth": "The model service rejected the request (HTTP {status}): the API key is invalid or cannot use this model. Check the provider's credentials.",
         "notFound": "The model service could not find this model or endpoint (HTTP {status}). Check the provider's base URL and model name.",
         "rateLimited": "The model service is rate limiting or out of quota (HTTP {status}). Try again later or check the provider's quota.",
         "unavailable": "The model service is temporarily unavailable (HTTP {status}); the failure is on the provider's side. Try again later or switch to another model.",
-        "rejected": "The model service rejected the request (HTTP {status}). Check the model parameters or switch to another model."
+        "rejected": "The model service rejected the request (HTTP {status}). Check the model parameters or switch to another model.",
+        "emptyStream": "The model gateway returned an empty response: the upstream model produced no content (often a gateway account or upstream channel problem). Send it again later or switch models or providers.",
+        "streamIncomplete": "The model response was cut off before it finished. Send it again later or switch models.",
+        "contentFilter": "The provider's content filter blocked this output. Adjust the task or switch models.",
+        "providerError": "The model service returned an error. Check the provider's status or switch to another model.",
+        "retried": "Still failed after {count, plural, one {# automatic retry} other {# automatic retries}}."
       },
       "descriptions": {
         "clear": "Clear model context without deleting conversation history",
@@ -2641,6 +2646,11 @@
       "useDefaultModel": "Use default model",
       "clearDefaultModel": "Clear default model",
       "modelPreferenceSaveError": "Could not save this model selection.",
+      "modelRetry": "Model request retries",
+      "modelRetryAttempts": "Retry after failure",
+      "modelRetryAttemptsDesc": "When one model request in an Agent task fails (rate limit, 5xx, timeout, dropped connection, or empty upstream response), retry it with exponential backoff. Tools are never run twice.",
+      "modelRetryOff": "Don't retry",
+      "modelRetryCount": "{count, plural, one {# time} other {# times}}",
       "preferences": "Preferences",
       "preferencesDesc": "Choose how the console should feel across this browser and your signed-in account.",
       "language": "Language",

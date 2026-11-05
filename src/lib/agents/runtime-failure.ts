@@ -5,8 +5,11 @@ import type { Task } from "@a2a-js/sdk";
  * fixed tokens only: `CODE` plus an optional allowlisted reason. Native error
  * text can contain credentials or task content and never escapes.
  */
-const FAILURE =
-  /^((?:PI|OMP|MCP)_[A-Z0-9_]{1,60})(?=[:\s.]|$)(?::\s*(HTTP_[1-5]\d\d|UNREACHABLE|TIMEOUT|MCP_[A-Z0-9_]{1,40})(?=[\s.]|$))?/;
+const MODEL_REASON =
+  "HTTP_[1-5]\\d\\d|UNREACHABLE|TIMEOUT|EMPTY_STREAM|STREAM_INCOMPLETE|CONTENT_FILTER|PROVIDER_ERROR";
+const FAILURE = new RegExp(
+  `^((?:PI|OMP|MCP)_[A-Z0-9_]{1,60})(?=[:\\s.]|$)(?::\\s*((?:${MODEL_REASON})(?: RETRIED_\\d{1,2})?|MCP_[A-Z0-9_]{1,40})(?=[\\s.]|$))?`,
+);
 
 export type RuntimeFailure = { code: string; reason?: string };
 

@@ -48,6 +48,7 @@ type RequestContext = {
   mcpConfig: { servers: unknown[] };
   model: Record<string, unknown>;
   reasoningEffort?: string;
+  modelRetries?: number;
 };
 const children = new Set<ChildProcess>();
 const cleanups: Array<() => Promise<void>> = [];
@@ -81,6 +82,14 @@ function completion(
       `data: ${JSON.stringify({ id: "controlled", object: "chat.completion.chunk", created: 1, model: "controlled", ...chunk })}\n\n`,
     );
   response.end("data: [DONE]\n\n");
+}
+// A gateway that already answered 200 reports an upstream that produced nothing
+// as an in-stream error (observed from sub2api as `empty_stream`).
+function emptyStream(response: ServerResponse) {
+  response.writeHead(200, { "content-type": "text/event-stream" });
+  response.end(
+    `data: ${JSON.stringify({ error: { message: "empty_stream", type: "upstream_error" } })}\n\n`,
+  );
 }
 async function setup() {
   const root = await mkdtemp(join(tmpdir(), "pi-sdk-host-"));
@@ -1652,5 +1661,47 @@ describe("official Pi SDK headless session host", () => {
       success: false,
       error: { code: "PI_SDK_MODEL_FAILED", reason: "UNREACHABLE" },
     });
+  }, 60000);
+  it("retries an empty gateway stream within the turn budget, then reports the reason and retry count", async () => {
+    const f = await setup();
+    f.behavior.tool = "";
+    let empty = 1;
+    f.behavior.streamCompletion = async (response) => {
+      if (empty-- > 0) return emptyStream(response);
+      completion(response, { content: "RECOVERED" }, "stop");
+    };
+    const host = await f.launch();
+    expect(
+      await host.request("prompt", "Retry once", {
+        ...f.context,
+        modelRetries: 2,
+      }),
+    ).toMatchObject({ success: true, result: { text: "RECOVERED" } });
+    expect(f.requests).toHaveLength(2);
+    // The failed attempt is not replayed to the model as an assistant turn.
+    expect(f.requests[1].body.messages.at(-1)?.role).toBe("user");
+
+    f.behavior.streamCompletion = async (response) => emptyStream(response);
+    const exhausted = await host.request("prompt", "Keep failing", {
+      ...f.context,
+      modelRetries: 1,
+    });
+    expect(exhausted).toMatchObject({
+      success: false,
+      error: { code: "PI_SDK_MODEL_FAILED", reason: "EMPTY_STREAM RETRIED_1" },
+    });
+    expect(f.requests).toHaveLength(4);
+
+    // Retries off: one request, no retry count.
+    expect(
+      await host.request("prompt", "No retry", {
+        ...f.context,
+        modelRetries: 0,
+      }),
+    ).toMatchObject({
+      success: false,
+      error: { code: "PI_SDK_MODEL_FAILED", reason: "EMPTY_STREAM" },
+    });
+    expect(f.requests).toHaveLength(5);
   }, 60000);
 });

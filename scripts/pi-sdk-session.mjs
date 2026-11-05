@@ -89,8 +89,19 @@ function modelFailureReason(errorMessage) {
     )
   )
     return "UNREACHABLE";
-  return undefined;
+  if (EMPTY_STREAM.test(message)) return "EMPTY_STREAM";
+  if (/stream ended|finish_reason: network_error|terminated/i.test(message))
+    return "STREAM_INCOMPLETE";
+  if (/content_filter/i.test(message)) return "CONTENT_FILTER";
+  return "PROVIDER_ERROR";
 }
+// Gateways that already sent HTTP 200 report an upstream that produced nothing,
+// or a stream cut before finish_reason, as an in-stream error. Pi 0.87.1 does
+// not classify either as transient.
+const EMPTY_STREAM = /empty_stream|empty .{0,40}stream/i;
+const TRANSIENT_STREAM =
+  /empty_stream|empty .{0,40}stream|without finish_reason/i;
+const MAX_MODEL_RETRIES = 10;
 const emit = (event) => writeFileSync(3, `${JSON.stringify(event)}\n`);
 const within = (root, path) => {
   const rel = relative(root, path);
@@ -163,6 +174,7 @@ let texts = [],
   turnError,
   modelFailed = false,
   modelReason,
+  modelRetried = 0,
   aborted = false;
 let lastState;
 const nativeUi = createNativeUi({
@@ -327,6 +339,7 @@ function toolPayload(value) {
 }
 function event(event) {
   if (!active) return;
+  if (event.type === "auto_retry_start") modelRetried = event.attempt;
   if (event.type === "message_update") {
     const update = event.assistantMessageEvent;
     if (
@@ -415,6 +428,13 @@ function event(event) {
     }
   }
 }
+// Session setup and reload recompute settings from storage, so apply after them.
+function applyRetryBudget() {
+  const retries = config.modelRetries ?? 0;
+  settingsManager.applyOverrides({
+    retry: { enabled: retries > 0, maxRetries: retries },
+  });
+}
 function applyConfiguredThinkingLevel(session) {
   const level = config.reasoningEffort;
   if (level === undefined || level === "default") return;
@@ -423,9 +443,23 @@ function applyConfiguredThinkingLevel(session) {
   // Pi 0.87.1 clamps to the current model and persists the change in this session only.
   session.setThinkingLevel(level, { persist: false });
 }
+// Pinned 0.87.1 exposes no retry matcher setting; extend its instance check so
+// empty/incomplete gateway streams retry under the same budget and backoff.
+function allowTransientStreamRetry(session) {
+  const piRetryable = session._isRetryableError;
+  if (typeof piRetryable !== "function") fail("PI_SDK_VERSION_MISMATCH");
+  if (piRetryable.toolplane) return;
+  const retryable = (message) =>
+    piRetryable.call(session, message) ||
+    (message?.stopReason === "error" &&
+      TRANSIENT_STREAM.test(String(message.errorMessage ?? "")));
+  retryable.toolplane = true;
+  session._isRetryableError = retryable;
+}
 async function bindSession(session) {
   unsubscribe?.();
   unsubscribe = session.subscribe(event);
+  allowTransientStreamRetry(session);
   await session.bindExtensions({
     mode: context?.uiUrl ? "rpc" : "json",
     uiContext: context?.uiUrl ? nativeUi.uiContext : undefined,
@@ -445,6 +479,7 @@ async function bindSession(session) {
       reload: async () => {
         await verifyPiPackageSnapshots(config.packages);
         await runtime.session.reload();
+        applyRetryBudget();
         diagnostics(runtime.services);
         persist();
       },
@@ -545,6 +580,13 @@ async function refreshContext(next) {
   // Turn-scoped model/auth; neither the immutable revision nor packages change.
   config.model = next.model;
   config.reasoningEffort = next.reasoningEffort;
+  // Workspace setting, live per turn: retries one failed model request in place.
+  config.modelRetries =
+    Number.isInteger(next.modelRetries) &&
+    next.modelRetries >= 0 &&
+    next.modelRetries <= MAX_MODEL_RETRIES
+      ? next.modelRetries
+      : 0;
   modelRuntime.registerProvider("toolplane", {
     baseUrl: config.model.baseUrl,
     api: config.model.api,
@@ -626,6 +668,7 @@ async function handle(request) {
   aborted = false;
   modelFailed = false;
   modelReason = undefined;
+  modelRetried = 0;
   let terminal;
   try {
     if (initialError) fail(initialError);
@@ -652,6 +695,7 @@ async function handle(request) {
     // without an override. Session history survives and global defaults do not change.
     await runtime.session.setModel(config.model, { persist: false });
     applyConfiguredThinkingLevel(runtime.session);
+    applyRetryBudget();
     await nativeUi.projectTodos(runtime.session.sessionManager);
     let command;
     let compaction;
@@ -699,7 +743,13 @@ async function handle(request) {
     } while (current !== runtime.session);
     if (aborted) fail("PI_SDK_ABORTED");
     if (turnError) fail(turnError);
-    if (modelFailed) fail("PI_SDK_MODEL_FAILED", modelReason);
+    if (modelFailed)
+      fail(
+        "PI_SDK_MODEL_FAILED",
+        modelReason && modelRetried > 0
+          ? `${modelReason} RETRIED_${modelRetried}`
+          : modelReason,
+      );
     diagnostics(runtime.services);
     await nativeUi.projectTodos(runtime.session.sessionManager);
     await nativeUi.drain();

@@ -185,11 +185,12 @@ async function serve() {
         const code = /^PI_[A-Z0-9_]{1,80}$/.test(event.error?.code)
           ? event.error.code
           : "PI_SDK_RUNTIME_FAILED";
-        const reason = /^(HTTP_[1-5]\d\d|UNREACHABLE|TIMEOUT)$/.test(
-          event.error?.reason,
-        )
-          ? event.error.reason
-          : undefined;
+        const reason =
+          /^(HTTP_[1-5]\d\d|UNREACHABLE|TIMEOUT|EMPTY_STREAM|STREAM_INCOMPLETE|CONTENT_FILTER|PROVIDER_ERROR)( RETRIED_\d{1,2})?$/.test(
+            event.error?.reason,
+          )
+            ? event.error.reason
+            : undefined;
         // Tool discovery runs before the model request. Reload the persisted
         // session with fresh definitions instead of failing this user's turn.
         if (!event.success && code === "PI_SDK_TOOLSET_CHANGED") {

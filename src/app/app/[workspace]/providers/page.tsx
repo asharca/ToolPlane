@@ -1,6 +1,6 @@
 import type { ModelCost } from "@earendil-works/pi-ai";
 import { redirect } from "next/navigation";
-import { getLocale, getTranslations } from "next-intl/server";
+import { getLocale } from "next-intl/server";
 import { ProvidersPanel } from "@/components/dashboard/agents/ProvidersPanel";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { listProviders } from "@/lib/agents/queries";
@@ -23,14 +23,6 @@ export default async function ProvidersPage({
 
   const ws = await getWorkspaceForUser(slug, user.id);
   if (!ws) redirect("/app");
-  if (ws.ownerId !== user.id) {
-    const management = await getTranslations("console.workspaces");
-    return (
-      <p className="p-6 text-sm text-muted-foreground">
-        {management("ownerOnly")}
-      </p>
-    );
-  }
 
   const timeZone = resolveUserTimeZone(user);
   await backfillProviderModels(ws.id);

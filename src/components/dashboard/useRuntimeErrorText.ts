@@ -9,6 +9,10 @@ const CODE =
 function modelFailureKind(reason: string) {
   if (reason === "UNREACHABLE") return "unreachable";
   if (reason === "TIMEOUT") return "timeout";
+  if (reason === "EMPTY_STREAM") return "emptyStream";
+  if (reason === "STREAM_INCOMPLETE") return "streamIncomplete";
+  if (reason === "CONTENT_FILTER") return "contentFilter";
+  if (reason === "PROVIDER_ERROR") return "providerError";
   const status = Number(/^HTTP_(\d{3})$/.exec(reason)?.[1]);
   if (status === 401 || status === 403) return "auth";
   if (status === 404) return "notFound";
@@ -47,15 +51,20 @@ export function useRuntimeErrorText() {
         };
       }
       if (code === "PI_SDK_MODEL_FAILED" || code === "OMP_MODEL_FAILED") {
-        const reason = /^[A-Z][A-Z0-9_]*/.exec(detail.trim())?.[0] ?? "";
+        const [, reason = "", retried] =
+          /^([A-Z][A-Z0-9_]*)(?: RETRIED_(\d{1,2}))?/.exec(detail.trim()) ?? [];
         const kind = modelFailureKind(reason);
-        if (kind)
+        if (kind) {
+          const text = t(`modelFailure.${kind}`, {
+            status: reason.replace(/^HTTP_/, ""),
+          });
           return {
             code,
-            text: t(`modelFailure.${kind}`, {
-              status: reason.replace(/^HTTP_/, ""),
-            }),
+            text: retried
+              ? `${text} ${t("modelFailure.retried", { count: Number(retried) })}`
+              : text,
           };
+        }
       }
       return {
         code,

@@ -277,7 +277,7 @@ export async function createProviderAction(
       error: "Name, base URL and API key are required for custom providers.",
     };
   }
-  const ctx = await authorizedWorkspace(slug, true);
+  const ctx = await authorizedWorkspace(slug);
   if (!ctx) return { error: "Not authorized." };
   let provider: { id: string };
   try {
@@ -315,7 +315,7 @@ export async function updateProviderAction(
       error: "Provider, name and base URL are required for custom providers.",
     };
   }
-  const ctx = await authorizedWorkspace(slug, true);
+  const ctx = await authorizedWorkspace(slug);
   if (!ctx) return { error: "Not authorized." };
   const existing = await getProvider(ctx.ws.id, providerId);
   if (!existing) return { error: "Provider not found." };
@@ -358,7 +358,7 @@ export async function updateProviderAction(
 export async function deleteProviderAction(formData: FormData) {
   const slug = String(formData.get("workspace") ?? "");
   const providerId = String(formData.get("providerId") ?? "");
-  const ctx = await authorizedWorkspace(slug, true);
+  const ctx = await authorizedWorkspace(slug);
   if (!ctx) return;
   await deleteProvider(ctx.ws.id, providerId, ctx.user.id);
   revalidateProviderViews(slug);
@@ -517,7 +517,7 @@ export async function addProviderModelAction(
     return {
       error: "Check the model classification, token limits, and prices.",
     };
-  const ctx = await authorizedWorkspace(slug, true);
+  const ctx = await authorizedWorkspace(slug);
   if (!ctx) return { error: "Not authorized." };
   const models =
     modelIds.length === 1
@@ -549,7 +549,7 @@ export async function updateProviderModelAction(
   if (!providerId || !modelId || modelId.length > 200 || !model) {
     return { error: "Check the model fields, token limits, and prices." };
   }
-  const ctx = await authorizedWorkspace(slug, true);
+  const ctx = await authorizedWorkspace(slug);
   if (!ctx) return { error: "Not authorized." };
   try {
     await updateProviderModel(ctx.ws.id, providerId, model);
@@ -567,7 +567,7 @@ export async function deleteProviderModelAction(
   const slug = String(formData.get("workspace") ?? "");
   const providerId = String(formData.get("providerId") ?? "");
   const modelId = String(formData.get("modelId") ?? "").trim();
-  const ctx = await authorizedWorkspace(slug, true);
+  const ctx = await authorizedWorkspace(slug);
   if (!ctx) return { error: "Not authorized." };
   try {
     await deleteProviderModel(ctx.ws.id, providerId, modelId);
@@ -592,7 +592,7 @@ export async function testProviderModelAction(
   const providerId = String(formData.get("providerId") ?? "");
   const modelId = String(formData.get("model") ?? "").trim();
   if (!modelId) return { error: "Model is required." };
-  const ctx = await authorizedWorkspace(slug, true);
+  const ctx = await authorizedWorkspace(slug);
   if (!ctx) return { error: "Not authorized." };
   const provider = await getProvider(ctx.ws.id, providerId);
   if (!provider) return { error: "Provider not found." };
@@ -662,6 +662,25 @@ export async function updateWorkspaceModelPreferenceAction(
   });
   revalidatePath(`/app/${slug}/settings`);
   revalidatePath(`/app/${slug}/agents`);
+  return { savedAt: Date.now() };
+}
+
+export async function updateWorkspaceModelRetryAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const slug = String(formData.get("workspace") ?? "");
+  const attempts = Number(formData.get("attempts"));
+  if (!Number.isInteger(attempts) || attempts < 0 || attempts > 10)
+    return { error: "Choose between 0 and 10 retries." };
+  // Members manage providers, so they also tune how provider failures retry.
+  const ctx = await authorizedWorkspace(slug);
+  if (!ctx) return { error: "Not authorized." };
+  await db.workspace.update({
+    where: { id: ctx.ws.id },
+    data: { modelRetryAttempts: attempts },
+  });
+  revalidatePath(`/app/${slug}/settings`);
   return { savedAt: Date.now() };
 }
 

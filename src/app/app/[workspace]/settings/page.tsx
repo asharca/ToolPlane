@@ -6,7 +6,10 @@ import {
   getWorkspaceForUser,
   getWorkspaceMembers,
 } from "@/lib/workspace/queries";
-import { WorkspaceModelSettings } from "@/components/dashboard/models/WorkspaceModelSettings";
+import {
+  ModelRetrySetting,
+  WorkspaceModelSettings,
+} from "@/components/dashboard/models/WorkspaceModelSettings";
 import { DashboardPanel } from "@/components/dashboard/DashboardUI";
 import {
   RenameWorkspaceForm,
@@ -127,6 +130,12 @@ export default async function SettingsPage({
                 {management("ownerOnly")}
               </p>
             )}
+          </DashboardPanel>
+          <DashboardPanel title={t("modelRetry")}>
+            <ModelRetrySetting
+              slug={slug}
+              initialAttempts={ws.modelRetryAttempts}
+            />
           </DashboardPanel>
           {isOwner ? (
             <DashboardPanel title={t("dangerZone")} tone="danger">

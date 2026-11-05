@@ -187,6 +187,8 @@ model Workspace {
   defaultModel           String?
   titleModelProviderId   String?
   titleModel             String?
+  // Automatic retries of one failed model request inside a Pi turn (0 disables).
+  modelRetryAttempts     Int                      @default(3)
   ownerId                String
   owner                  User                     @relation("WorkspaceOwner", fields: [ownerId], references: [id], onDelete: Cascade)
   members                Membership[]

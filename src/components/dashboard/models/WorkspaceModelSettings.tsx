@@ -11,7 +11,11 @@ import {
   type ModelProviderOption,
   type ModelSelection,
 } from "@/components/dashboard/models/ModelPicker";
-import { updateWorkspaceModelPreferenceAction } from "@/lib/agents/actions";
+import {
+  updateWorkspaceModelPreferenceAction,
+  updateWorkspaceModelRetryAction,
+} from "@/lib/agents/actions";
+import { FormSelect } from "@/components/ui/FormSelect";
 
 function ModelPreferenceRow({
   slug,
@@ -144,6 +148,65 @@ export function WorkspaceModelSettings({
         preference="title"
         providers={providers}
         initialValue={titleModel}
+      />
+    </div>
+  );
+}
+
+export function ModelRetrySetting({
+  slug,
+  initialAttempts,
+}: {
+  slug: string;
+  initialAttempts: number;
+}) {
+  const t = useTranslations("console.settings");
+  const [value, setValue] = useState(String(initialAttempts));
+  const [error, setError] = useState(false);
+  const [pending, startTransition] = useTransition();
+
+  function save(next: string) {
+    const previous = value;
+    setValue(next);
+    setError(false);
+    startTransition(async () => {
+      const formData = new FormData();
+      formData.set("workspace", slug);
+      formData.set("attempts", next);
+      const result = await updateWorkspaceModelRetryAction({}, formData);
+      if (result.error) {
+        setValue(previous);
+        setError(true);
+      }
+    });
+  }
+
+  return (
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="min-w-0 sm:max-w-md">
+        <p className="text-sm font-medium text-foreground">
+          {t("modelRetryAttempts")}
+        </p>
+        <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
+          {t("modelRetryAttemptsDesc")}
+        </p>
+        {error ? (
+          <p role="alert" className="text-sm text-destructive">
+            {t("modelPreferenceSaveError")}
+          </p>
+        ) : null}
+      </div>
+      <FormSelect
+        className="sm:w-80"
+        label={t("modelRetryAttempts")}
+        value={value}
+        disabled={pending}
+        onValueChange={save}
+        options={Array.from({ length: 11 }, (_, count) => ({
+          value: String(count),
+          label:
+            count === 0 ? t("modelRetryOff") : t("modelRetryCount", { count }),
+        }))}
       />
     </div>
   );
